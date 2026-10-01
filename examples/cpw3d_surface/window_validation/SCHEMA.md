@@ -74,8 +74,11 @@ Rules:
     segments, fans (scale 1) by the corner's rows — so two fronts that see each other can never
     meet (0.4 + 0.4 < 1), whatever their corner geometry (two convex corners facing diagonally
     included). The exception is the first row, which is never dropped: a writer feature closer
-    than 2.5 r to a facing edge (r = the first-layer height: 0.025 um at r10, 0.125 um at r50)
-    cannot be meshed and is refused by the mesher's collision check with its location (the
+    than 2.5 r x the column's scale to a facing edge (r = the first-layer height; 2.5 r = 0.025 um
+    at r10, 0.125 um at r50 for straight columns; a scaled first row is r x scale long, so the
+    collision window scales with it: up to 2.83 r for two facing right-angle mitres, 5 r at the
+    120-deg mitre limit, r x 3.47 / 4.61 for the inward / wall-end columns of the production
+    sets) cannot be meshed and is refused by the mesher's collision check with its location (the
     backstop checks every band edge regardless). The finely polygonised chords of a small
     convex loop (chord shorter than ~3.2 um at r10, ~3.9 um at r50) cap the band inside that
     loop, because the next-but-one chord counts as a facing front.
@@ -108,7 +111,8 @@ Rules:
     only for two-plane sets, where delta is defined); a sub-delta strip between a polygon's
     outer loop and its own hole, self-proximity within one loop, or a single-plane set are
     NOT checked here — such features reach the mesher's band construction, where fronts
-    closer than 2.5 r collide and are refused with their location (see the band cap above).
+    closer than 2.5 r x the column's scale collide and are refused with their location (see
+    the band cap above).
     The manifest records the moved vertices, the maximum displacement, the inserted vertices
     and the coincident run length (`cross_plane_reconciliation`): the reference differs from
     the (unreconciled) thin geometry by at most delta on those runs.
