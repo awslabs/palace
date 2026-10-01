@@ -19,7 +19,8 @@ fillet suites, the arc-cluster set, the stack suite) and the joint-only layouts 
 
 The gate passes for a layout when every variant has the same GeometryDigest, the same
 multiset of features (Type, Signature, Chirality, Length to 1e-5), the same exclusion classes
-(class, count, length) and the same vertex types (type, turn) as the base mesh.
+(class, length; the segment count is a mesh quantity), the same vertex types (type, turn) and
+the same arcs (kind, radius, joints) as the base mesh.
 
     python3 -m surface_response_identification.subdivision_gate --output DIR \\
         --meshes DIR [DIR ...] [--subdivision-suite-meshes DIR] [--palace P] [--np 1] \\
@@ -76,7 +77,9 @@ def content(manifest_path):
     with open(manifest_path) as source:
         ident = json.load(source)["Identification"]
     features = sorted((f["Type"], json.dumps(f["Signature"], sort_keys=True), f["Chirality"], round(f["Length"], 5)) for f in ident["Features"])
-    exclusions = sorted((e["Class"], e["Count"], round(e["Length"], 5)) for e in ident["Exclusions"])
+    # Exclusions by class and length: the segment count is a mesh quantity (doubled by the
+    # subdivision), the excluded length is not.
+    exclusions = sorted((e["Class"], round(e["Length"], 5)) for e in ident["Exclusions"])
     vertices = sorted((v["Type"], round(v.get("TurnDegrees", 0.0), 5)) for v in ident["Vertices"])
     arcs = sorted((a.get("Kind"), round(a.get("RadiusOverR", 0.0), 6), a.get("Joints")) for a in ident.get("Arcs", []))
     return {"Digest": ident["GeometryDigest"], "Features": features, "Exclusions": exclusions, "Vertices": vertices, "Arcs": arcs}
