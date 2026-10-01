@@ -3168,7 +3168,8 @@ void Identifier::BuildDirectionClasses()
   for (auto &bucket : buckets)
   {
     bucket.representative = Normalize(bucket.sum);
-    double angle = std::atan2(Dot(bucket.representative, e2), Dot(bucket.representative, e1));
+    double angle =
+        std::atan2(Dot(bucket.representative, e2), Dot(bucket.representative, e1));
     if (angle < 0.0)
     {
       angle += pi;
@@ -3201,8 +3202,8 @@ void Identifier::BuildDirectionClasses()
         uf.Union(order[k], order[k + 1]);
       }
     }
-    if (j - i > 2 && Parallel(buckets[order[i]].representative,
-                              buckets[order[j - 1]].representative))
+    if (j - i > 2 &&
+        Parallel(buckets[order[i]].representative, buckets[order[j - 1]].representative))
     {
       uf.Union(order[i], order[j - 1]);  // the wrap of the direction angle at 0 / pi
     }
@@ -3630,8 +3631,8 @@ void Identifier::DetectArcs()
         return !JointIsNoise(joints[j].turn, std::min(PieceBefore(j), PieceAfter(j)),
                              noise_sagitta);
       };
-      auto ChordsResolved = [&](std::size_t i, std::size_t count, double radius,
-                                bool cyclic)
+      auto ChordsResolved =
+          [&](std::size_t i, std::size_t count, double radius, bool cyclic)
       {
         for (std::size_t q = 0; q + (cyclic ? 0 : 1) < count; q++)
         {
@@ -3642,8 +3643,7 @@ void Identifier::DetectArcs()
           {
             return false;
           }
-          const double sagitta =
-              radius - std::sqrt(radius * radius - 0.25 * chord * chord);
+          const double sagitta = radius - std::sqrt(radius * radius - 0.25 * chord * chord);
           if (!quantizer.Less(sagitta, noise_sagitta) && !RealJoint(j0) && !RealJoint(j1))
           {
             if (std::getenv("PALACE_IDENTIFICATION_DEBUG_ARCS") && input.log)
@@ -3652,10 +3652,11 @@ void Identifier::DetectArcs()
               dbg << std::setprecision(10) << "  DEBUG unresolved chord: range " << i << "+"
                   << count << " joints " << j0 << " (turn "
                   << joints[j0].turn * 180.0 / std::acos(-1.0) << " deg, pieces "
-                  << PieceBefore(j0) << " / " << PieceAfter(j0) << ") -> " << j1 << " (turn "
-                  << joints[j1].turn * 180.0 / std::acos(-1.0) << " deg, pieces "
-                  << PieceBefore(j1) << " / " << PieceAfter(j1) << ") chord " << chord
-                  << " sagitta " << sagitta / R << " R radius " << radius / R << " R at ("
+                  << PieceBefore(j0) << " / " << PieceAfter(j0) << ") -> " << j1
+                  << " (turn " << joints[j1].turn * 180.0 / std::acos(-1.0)
+                  << " deg, pieces " << PieceBefore(j1) << " / " << PieceAfter(j1)
+                  << ") chord " << chord << " sagitta " << sagitta / R << " R radius "
+                  << radius / R << " R at ("
                   << input.vertices[joints[j0].vertex].coordinate[0] << ", "
                   << input.vertices[joints[j0].vertex].coordinate[1] << ") m " << m
                   << (closed ? " closed" : " open") << " positions "
@@ -5088,7 +5089,8 @@ void Identifier::BuildBentPairs()
                        1.0 - kParallelCosineTolerance))
     {
       const Point3D delta = Sub(rb.start, ra.start);
-      const double line_distance = Norm(Sub(delta, Scale(Dot(delta, ra.tangent), ra.tangent)));
+      const double line_distance =
+          Norm(Sub(delta, Scale(Dot(delta, ra.tangent), ra.tangent)));
       if (std::abs(chord_distance - line_distance) <
           kSignatureParameterToleranceOverRadius * R)
       {
@@ -5548,13 +5550,16 @@ void Identifier::BuildBentPairs()
   // Sub-pieces of one status along a piece: consecutive samples with the same (constant,
   // interacting) flags; the cut between two samples of different status is halfway. The
   // sub-piece's separation reflects its own geometry (USER decision 184 (3), 2026-10-01,
-  // amending decision 85(1)'s "mean of the exact samples"): the length-weighted mean over
-  // the sub-piece of its samples' local separations (the exact reading where a sample has
-  // one, else its chord reading; the samples are equally spaced), and it is EXACT only
-  // when every sample has an exact reading and those readings agree within the signature
-  // parameter tolerance — a sub-piece holding a few exact samples at its narrow end and
-  // chord readings 85 % wider elsewhere (a 3.7 um launcher strip next to a 2 um lead,
-  // DS-CTX-003 E8-7) reads its own width, not the lead's.
+  // amending decision 85(1)'s "mean of the exact samples"): it is the EXACT value (the
+  // mean of the exact samples) only when the sub-piece has an exact sample and EVERY
+  // sample's local separation (the exact reading where the sample has one, else its chord
+  // reading) agrees with it within the signature parameter tolerance — the samples within R
+  // of a bend on a straight lead have no exact reading of their own but read the lead's
+  // separation off the chords; else it is the length-weighted mean over the sub-piece of
+  // the local separations (equally spaced samples) and not exact. A sub-piece holding a few
+  // exact samples at its narrow end and chord readings 85 % wider elsewhere (a 3.7 um
+  // launcher strip next to a 2 um lead, DS-CTX-003 E8-7) reads its own width, not the
+  // lead's.
   struct SubPiece
   {
     std::size_t run;
@@ -5592,34 +5597,38 @@ void Identifier::BuildBentPairs()
         if (s_hi - s_lo > Tol())
         {
           // Mean of the local separations over the sub-piece's samples (equally spaced
-          // along the run: the length-weighted mean over the sub-piece).
-          double local_sum = 0.0;
-          double exact_min = std::numeric_limits<double>::infinity(), exact_max = 0.0;
-          bool all_exact = true;
+          // along the run: the length-weighted mean over the sub-piece) and of the exact
+          // ones; exact iff every local separation lies within the parameter tolerance of
+          // the exact mean.
+          double local_sum = 0.0, exact_sum = 0.0;
+          int exact_count = 0;
           for (std::size_t q = i; q < j; q++)
           {
             const auto &exact = piece.samples[q].exact;
             local_sum += exact ? *exact : separation[k + q];
             if (exact)
             {
-              exact_min = std::min(exact_min, *exact);
-              exact_max = std::max(exact_max, *exact);
-            }
-            else
-            {
-              all_exact = false;
+              exact_sum += *exact;
+              exact_count++;
             }
           }
-          const bool exact_piece =
-              all_exact && quantizer.Less(exact_max - exact_min,
-                                          kSignatureParameterToleranceOverRadius * R);
+          const double exact_mean =
+              exact_count > 0 ? exact_sum / exact_count : std::nan("");
+          bool exact_piece = exact_count > 0;
+          for (std::size_t q = i; exact_piece && q < j; q++)
+          {
+            const auto &exact = piece.samples[q].exact;
+            const double local = exact ? *exact : separation[k + q];
+            exact_piece = quantizer.Less(std::abs(local - exact_mean),
+                                         kSignatureParameterToleranceOverRadius * R);
+          }
           out.push_back({piece.run,
                          {s_lo, s_hi},
                          piece.curved,
                          piece.max_kappa,
                          c,
                          inter,
-                         local_sum / static_cast<double>(j - i),
+                         exact_piece ? exact_mean : local_sum / static_cast<double>(j - i),
                          exact_piece});
         }
         i = j;
@@ -5814,9 +5823,10 @@ void Identifier::BuildBentPairs()
             continue;
           }
           if (exact_groups.empty() ||
-              !quantizer.Less(grouped[i].mean_separation -
-                                  grouped[exact_groups.back().members.back()].mean_separation,
-                              parameter_tolerance))
+              !quantizer.Less(
+                  grouped[i].mean_separation -
+                      grouped[exact_groups.back().members.back()].mean_separation,
+                  parameter_tolerance))
           {
             exact_groups.push_back({});
           }
@@ -10133,8 +10143,8 @@ IdentificationResult Identifier::Identify()
            << " mesh units = " << std::fixed << std::setprecision(1) << at_R / R
            << " R, of 2R: " << std::defaultfloat << at_2R << " mesh units = " << std::fixed
            << std::setprecision(1) << at_2R / R << " R; cluster composition changing at R "
-           << std::defaultfloat << "(1 -/+ " << kKnifeEdgeBandRelative << "): "
-           << composition["ClustersBelow"].get<std::size_t>() << " / "
+           << std::defaultfloat << "(1 -/+ " << kKnifeEdgeBandRelative
+           << "): " << composition["ClustersBelow"].get<std::size_t>() << " / "
            << composition["ClustersAbove"].get<std::size_t>() << " of "
            << composition["Clusters"].get<std::size_t>() << " clusters, "
            << composition["Below"].get<double>() << " / "
@@ -10754,7 +10764,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "straight (single-run) runs of one metal plane are parallel iff |cos| of their "
          "tangents exceeds 1 - ParallelCosineTolerance (1.4e-4 rad; dimensionless), the "
          "parallel classes are the connected components of that relation per plane (built "
-         "from the runs' 1e-9 direction buckets sorted by their in-plane angle, consecutive "
+         "from the runs' 1e-9 direction buckets sorted by their in-plane angle, "
+         "consecutive "
          "buckets within the tolerance linked, the 0 / pi wrap included: a canonical, "
          "numbering-independent partition). Parallel rigid runs pair and stack by the "
          "translational rule ONLY (their class), every other rigid pair by the bent-pair / "
@@ -10920,11 +10931,14 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "projection (closest-point distance = line distance within the parameter "
          "tolerance), or the radius difference of two fitted bend arcs whose centres "
          "coincide within the parameter tolerance. A sub-piece (consecutive samples of one "
-         "constancy / interaction status along a run) reads the mean of its samples' local "
-         "separations (exact where the sample has one, else chord; equally spaced samples: "
-         "the length-weighted mean over the sub-piece) and is exact only when all its "
-         "samples are exact within the parameter tolerance. The pieces of a chain pair are "
-         "grouped into links so that a link holds ONE separation: exact pieces within the "
+         "constancy / interaction status along a run) is exact only when it has an exact "
+         "sample and every sample's local separation (exact where the sample has one, else "
+         "chord) lies within the parameter tolerance of the exact mean, which it then "
+         "reads; "
+         "else it reads the mean of the local separations (equally spaced samples: the "
+         "length-weighted mean over the sub-piece) and is not exact. The pieces of a chain "
+         "pair are grouped into links so that a link holds ONE separation: exact pieces "
+         "within the "
          "parameter tolerance of each other form an exact group (value = their "
          "length-weighted mean), a chord piece joins the exact group within the pair "
          "tolerance (PairSeparationToleranceRelative) of its own separation (nearest), the "
