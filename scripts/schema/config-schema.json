@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-0-0",
+  "$id": "urn:palace:schema:2-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2907,6 +2907,12 @@
           "description": "Relative residual convergence tolerance for the iterative linear solver.",
           "minimum": 0.0,
           "default": 1e-06
+        },
+        "AbsTol": {
+          "type": "number",
+          "description": "Absolute residual convergence tolerance for the iterative linear solver. The solver converges when `||r|| <= max(Tol * ||b||, AbsTol)`. A value of 0.0 disables the absolute tolerance.",
+          "minimum": 0.0,
+          "default": 0.0
         },
         "MaxIts": {
           "type": "integer",
