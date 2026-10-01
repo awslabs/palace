@@ -209,18 +209,6 @@ public:
     value.FaceNbrData() *= GetScaleFactor<unit>();
   }
 
-  // Scale complex gridfunction and its neighbor face data in-place by given unit.
-  template <ValueType unit>
-  auto Dimensionalize(GridFunction &value) const
-  {
-    value *= GetScaleFactor<unit>();
-    value.Real().FaceNbrData() *= GetScaleFactor<unit>();
-    if (value.HasImag())
-    {
-      value.Imag().FaceNbrData() *= GetScaleFactor<unit>();
-    }
-  }
-
   // Return a copy of value scaled by inverse of given unit.
   template <ValueType unit, typename T>
   auto Nondimensionalize(T value) const
@@ -292,19 +280,6 @@ public:
   {
     value *= (1.0 / GetScaleFactor<unit>());
     value.FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-  }
-
-  // Scale complex gridfunction and its neighbor face data in-place by inverse of given
-  // unit.
-  template <ValueType unit>
-  auto Nondimensionalize(GridFunction &value) const
-  {
-    value *= (1.0 / GetScaleFactor<unit>());
-    value.Real().FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-    if (value.HasImag())
-    {
-      value.Imag().FaceNbrData() *= (1.0 / GetScaleFactor<unit>());
-    }
   }
 };
 
