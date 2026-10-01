@@ -118,14 +118,13 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
   }
   else
   {
-    mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
+    mfem::HypreParMatrix hR(
         test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
         test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
         const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));
     hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(*hR, AP), true);
+    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(hR, AP), true);
     hypre_ParCSRMatrixDestroy(AP);
-    delete hR;
   }
 
   hypre_ParCSRMatrixDiag(hA) = hA_diag;
