@@ -215,6 +215,12 @@ def write_bases(
         for output_index, knot_index in enumerate(free_indices, start=1)
     }
     open_paths = []
+    # A single-conductor stack (every edge of one conductor: a grounded CPW, S1p's 4-edge
+    # stack) has one portal and no conductor state: its free knots form one closed contour
+    # at the reference potential (the library model carries Reference, no OpenContourPaths),
+    # as the same-conductor strip does. Open paths connect two DISTINCT conductors.
+    if conductor_count == 1:
+        portals = []
     for index, (begin, conductor) in enumerate(portals):
         end, next_conductor = portals[(index + 1) % len(portals)]
         span = (end - begin) % perimeter
@@ -494,8 +500,6 @@ def write_library(
         "Topology": "ParallelEdgeCluster",
         "EdgeOffsetTolerance": edge_offset_tolerance,
         "Edges": edges,
-        "ConductorReferences": references,
-        "OpenContourPaths": open_paths,
         "FabricatedMatrix": "postpro/cluster_fabricated/domain-response-matrix.csv",
         "ThinMatrix": "postpro/cluster_thin/domain-response-matrix.csv",
         "FabricatedSurfaceMatrix":
@@ -509,6 +513,15 @@ def write_library(
         ],
         "CouponDepth": coupon_depth,
     }
+    if len(references) == 1:
+        # One conductor: the reference point alone; the free knots are one closed contour
+        # (Palace: ContourGroups default) and OpenContourPaths would need two conductors.
+        if open_paths:
+            raise ValueError("A single-conductor cluster has no open contour paths")
+        model["Reference"] = references[0]
+    else:
+        model["ConductorReferences"] = references
+        model["OpenContourPaths"] = open_paths
     library = {
         "Version": 3,
         "TraceLiftVersion": 2,
