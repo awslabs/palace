@@ -93,8 +93,9 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   icntl(4) = 0;
   icntl(5) = 0;   // assembled input
   icntl(18) = 3;  // distributed matrix entries
-  icntl(19) =
-      3;  // complete Schur, 2D block cyclic (here a 1 x 1 grid: centralized on rank 0)
+  // Complete Schur (if any Schur variables), 2D block cyclic on a 1 x 1 grid: centralized
+  // on rank 0.
+  icntl(19) = (n_schur > 0) ? 3 : 0;
   icntl(28) = 1;   // sequential analysis (the Schur option excludes parallel analysis)
   icntl(7) = 5;    // METIS ordering
   icntl(20) = 0;   // dense, centralized right-hand sides
@@ -122,7 +123,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   id.job = 1;  // analysis
   dmumps_c(&id);
   Check("analysis");
-  if (rank == 0)
+  if (rank == 0 && n_schur > 0)
   {
     id.schur_lld = std::max<MUMPS_INT>(1, id.schur_mloc);
     schur.assign(static_cast<std::size_t>(id.schur_lld) *

@@ -28,7 +28,6 @@
 #include "linalg/hodlr.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/ksp.hpp"
-#include "linalg/mumps.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
@@ -104,26 +103,53 @@ public:
   }
 };
 
-// Sparse direct solver for the environment and region factorizations: SuperLU_DIST,
-// STRUMPACK or MUMPS, whichever the build has (null without one).
+// Sparse direct solver for the environment and region factorizations: MUMPS, SuperLU_DIST
+// or STRUMPACK, in this order of preference (null without one).
 constexpr bool kHasDirectSolver =
-#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
     true;
 #else
     false;
 #endif
 
-std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata, MPI_Comm comm)
+#if defined(MFEM_USE_MUMPS)
+// MUMPS factorization of a symmetric operator (MumpsSchurSolver without Schur variables:
+// silent, and retried with a larger workspace when the estimate is too small).
+class MumpsDirectSolver : public mfem::Solver
 {
-#if defined(MFEM_USE_SUPERLU)
+public:
+  void SetOperator(const mfem::Operator &op) override
+  {
+    const auto *A = dynamic_cast<const mfem::HypreParMatrix *>(&op);
+    MFEM_VERIFY(A, "MumpsDirectSolver requires a HypreParMatrix operator!");
+    height = width = A->Height();
+    mumps = std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{});
+  }
+  void Mult(const mfem::Vector &x, mfem::Vector &y) const override
+  {
+    mumps->SolveInternal({&x}, {&y});
+  }
+  void ArrayMult(const mfem::Array<const mfem::Vector *> &X,
+                 mfem::Array<mfem::Vector *> &Y) const override
+  {
+    mumps->SolveInternal(std::vector<const mfem::Vector *>(X.begin(), X.end()),
+                         std::vector<mfem::Vector *>(Y.begin(), Y.end()));
+  }
+
+private:
+  std::unique_ptr<MumpsSchurSolver> mumps;
+};
+#endif
+
+std::unique_ptr<mfem::Solver> MakeDirectSolver([[maybe_unused]] const IoData &iodata,
+                                               [[maybe_unused]] MPI_Comm comm)
+{
+#if defined(MFEM_USE_MUMPS)
+  return std::make_unique<MumpsDirectSolver>();
+#elif defined(MFEM_USE_SUPERLU)
   return std::make_unique<SuperLUSolver>(iodata, comm, 0);
 #elif defined(MFEM_USE_STRUMPACK)
   return std::make_unique<StrumpackSolver>(iodata, comm, 0);
-#elif defined(MFEM_USE_MUMPS)
-  const auto &linear = iodata.solver.linear;
-  return std::make_unique<MumpsSolver>(comm, MatrixSymmetry::SYMMETRIC,
-                                       linear.sym_factorization, 0.0, linear.reorder_reuse,
-                                       0);
 #else
   return nullptr;
 #endif

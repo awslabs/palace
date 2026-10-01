@@ -24,8 +24,9 @@ class MumpsSchurSolver
 {
 public:
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
-  // Schur rows/columns should appear (replicated on all ranks). blr_tol > 0 enables a block
-  // low-rank (BLR) factorization with that relative accuracy (0: exact).
+  // Schur rows/columns should appear (replicated on all ranks); empty for a plain
+  // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
+  // relative accuracy (0: exact).
   MumpsSchurSolver(const mfem::HypreParMatrix &A,
                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0);
 
