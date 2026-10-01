@@ -206,6 +206,18 @@ struct IdentificationResult
   std::size_t stack_composition_cap_hits = 0;
   // Stack-end images merged into an existing breakpoint within the tolerance (decision 93).
   std::size_t stack_images_merged = 0;
+  // Sliver rule (decision 222): the portions shorter than the signature parameter tolerance
+  // (maximal contiguous stretches of one feature side along a chain) that joined their
+  // adjacent portion — count, total length and the longest, mesh units — and the stretches
+  // with no adjacent portion on their chain, which stay (counted, never joined).
+  struct SubTolerancePortions
+  {
+    std::size_t count = 0;
+    double length = 0.0;
+    double max_length = 0.0;
+    std::size_t isolated = 0;
+  };
+  SubTolerancePortions sub_tolerance_portions;
   // Cluster extension (decision 85(2)): passes to closure, absorbed single-edge portions
   // and length, vertex features that became clusters; the pair / stack length within 2R of
   // a cluster's claimed perimeter (the stack-end third body, not absorbed), mesh units.

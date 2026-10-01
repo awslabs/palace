@@ -9851,54 +9851,11 @@ void Identifier::Assign(IdentificationResult &result)
         input.log(dbg.str());
       }
     }
-    // Pieces below the signature grid are roundoff between the boundaries of two claims (a
-    // cluster ball cutting a pair piece, a claim ending next to a run end): each joins the
-    // adjacent portion on the run instead of standing as a feature the signature cannot
-    // resolve (DS-SCT-001: three CurvedSameConductorStrip features of 1.6e-7 um in total).
-    {
-      const double sliver = kSignatureLengthQuantumOverRadius * R;
-      for (const auto &piece :
-           SubtractIntervals({Interval{0.0, runs[r].length}}, taken, Tol()))
-      {
-        if (piece.second - piece.first <= sliver)
-        {
-          assigned[r].emplace_back(piece.first, piece.second, -1, 0);  // unclaimed sliver
-        }
-      }
-      std::sort(assigned[r].begin(), assigned[r].end());
-      auto &pieces = assigned[r];
-      for (std::size_t i = 0; i < pieces.size();)
-      {
-        auto &[lo, hi, feature, side] = pieces[i];
-        (void)side;
-        if (hi - lo > sliver && feature >= 0)
-        {
-          i++;
-          continue;
-        }
-        auto joins = [&](std::size_t j)
-        {
-          const auto &[jlo, jhi, jfeature, jside] = pieces[j];
-          (void)jside;
-          return jfeature >= 0 &&
-                 (std::abs(jhi - lo) <= Tol() || std::abs(hi - jlo) <= Tol());
-        };
-        if (i > 0 && joins(i - 1))
-        {
-          std::get<1>(pieces[i - 1]) = hi;
-        }
-        else if (i + 1 < pieces.size() && joins(i + 1))
-        {
-          std::get<0>(pieces[i + 1]) = lo;
-        }
-        else if (feature >= 0)
-        {
-          i++;  // a pair piece alone in the remainder keeps its feature
-          continue;
-        }
-        pieces.erase(pieces.begin() + i);
-      }
-    }
+    // Pieces shorter than the signature parameter tolerance between the boundaries of two
+    // claims (a cluster ball cutting a pair piece, a claim ending next to a run end, the
+    // foot of a neighbour's cut end) are joined to their adjacent portion by the sliver
+    // rule below, once every portion of the chain is known (decision 222).
+    std::sort(assigned[r].begin(), assigned[r].end());
   }
 
   // A pair / parallel cluster whose claim on one of its sides was lost entirely to an
@@ -10060,7 +10017,10 @@ void Identifier::Assign(IdentificationResult &result)
       for (int side = 0; side < feature_sides[feature]; side++)
       {
         const auto it = lengths.find(side);
-        if (it == lengths.end() || it->second <= kSignatureLengthQuantumOverRadius * R)
+        // A side whose surviving length is below the signature parameter tolerance is no
+        // side (its pieces would join their neighbours under the sliver rule, decision
+        // 222).
+        if (it == lengths.end() || it->second < kSignatureParameterToleranceOverRadius * R)
         {
           degenerate.insert(feature);
           break;
@@ -10194,16 +10154,233 @@ void Identifier::Assign(IdentificationResult &result)
       }
     }
     std::sort(assigned[r].begin(), assigned[r].end());
-    // Curvature annotation of every feature over its assigned portions.
+  }
+
+  // Sliver rule (supervisor decision 222, 2026-10-02): NO portion shorter than the
+  // signature parameter tolerance exists. A portion here is a maximal contiguous stretch of
+  // one feature side along a chain, across the runs and mesh segments of the chain (a
+  // sub-tolerance MESH SEGMENT inside a long edge continues that edge's portion and is not
+  // one). A stretch shorter than kSignatureParameterToleranceOverRadius x R is roundoff
+  // between the boundaries of two claims — a cluster ball cutting a pair piece, a claim
+  // ending next to a run end, the perpendicular foot of a neighbour's cut end on a
+  // near-parallel member (the S1p stage-1 window: the 3-edge stack owned a 1.94e-6 um piece
+  // at the y = -200 truncation cut 64 um from its stack end, 2 um x the 9.7e-7 rad tilt of
+  // the window set, and its twin on the next member read as a 2e-6 um IsolatedEdge; a
+  // sample placed on that piece pointed its lateral axis along the segment and the
+  // placement aborted) — which no signature parameter resolves (every length is matched
+  // within the tolerance) and no coupon models: it joins its adjacent portion on the chain,
+  // the LONGER of its two neighbours (ties: the one before it along the chain), taking that
+  // neighbour's feature and side. The former rule joined only pieces at or below the
+  // signature grid (1e-6 R), a knife-edge the S1p piece missed by 2.3 % (DS-SCT-001's
+  // three 1.6e-7 um CurvedSameConductorStrip pieces are the same class). A stretch with no
+  // adjacent portion on its chain (a whole chain, or a piece between two CrossLayer zones,
+  // shorter than the tolerance) has nothing to join and stays, counted. Deterministic and
+  // numbering-independent: the chain order and the neighbours' lengths decide, never a
+  // feature id. Reported as Diagnostics.SubTolerancePortionsJoined (count, length, longest,
+  // isolated).
+  {
+    const double tolerance = kSignatureParameterToleranceOverRadius * R;
+    struct ChainPiece
     {
-      const Chain &chain = chains[chain_index.at(runs[r].chain)];
-      const double offset = chain.run_offset[RunIndexInChain(chain, r)];
-      for (const auto &[lo, hi, feature, side] : assigned[r])
+      std::size_t run;
+      std::size_t index;  // into assigned[run]
+    };
+    struct Stretch
+    {
+      std::size_t first, last;  // chain piece indices (inclusive)
+      int feature, side;
+      double length;
+    };
+    std::set<std::size_t> touched_runs;
+    for (const Chain &chain : chains)
+    {
+      std::vector<ChainPiece> pieces;
+      for (const std::size_t r : chain.runs)
       {
-        (void)side;
-        feature_max_kappa[feature] = std::max(
-            feature_max_kappa[feature], MaxCurvature(chain, offset + lo, offset + hi));
+        if (runs[r].excluded)
+        {
+          continue;
+        }
+        for (std::size_t i = 0; i < assigned[r].size(); i++)
+        {
+          pieces.push_back({r, i});
+        }
       }
+      if (pieces.size() < 2)
+      {
+        if (pieces.size() == 1)
+        {
+          const auto &[lo, hi, feature, side] = assigned[pieces[0].run][pieces[0].index];
+          (void)feature;
+          (void)side;
+          if (hi - lo < tolerance)
+          {
+            result.sub_tolerance_portions.isolated++;
+          }
+        }
+        continue;
+      }
+      auto Entry = [&](const ChainPiece &p) -> std::tuple<double, double, int, int> &
+      { return assigned[p.run][p.index]; };
+      // Piece b follows piece a contiguously along the chain: on one run with touching
+      // intervals, or at the joint of two consecutive non-excluded runs of the chain (a's
+      // interval reaching its run's end, b's starting at its run's start); on a closed
+      // chain the last run's end meets the first run's start.
+      auto Adjacent = [&](const ChainPiece &a, const ChainPiece &b)
+      {
+        const auto &[alo, ahi, af, as] = Entry(a);
+        const auto &[blo, bhi, bf, bs] = Entry(b);
+        (void)alo;
+        (void)bhi;
+        (void)af;
+        (void)bf;
+        (void)as;
+        (void)bs;
+        if (a.run == b.run)
+        {
+          return std::abs(ahi - blo) <= Tol();
+        }
+        const std::size_t ka = runs[a.run].index_in_chain, kb = runs[b.run].index_in_chain;
+        const bool consecutive =
+            kb == ka + 1 || (chain.closed && ka + 1 == chain.runs.size() && kb == 0);
+        return consecutive && ahi >= runs[a.run].length - Tol() && blo <= Tol();
+      };
+      auto SameFeature = [&](const ChainPiece &a, const ChainPiece &b)
+      {
+        return std::get<2>(Entry(a)) == std::get<2>(Entry(b)) &&
+               std::get<3>(Entry(a)) == std::get<3>(Entry(b));
+      };
+      auto Length = [&](const ChainPiece &p)
+      { return std::get<1>(Entry(p)) - std::get<0>(Entry(p)); };
+      for (bool changed = true; changed;)
+      {
+        changed = false;
+        // Maximal contiguous stretches of one feature side, in chain order.
+        std::vector<Stretch> stretches;
+        for (std::size_t i = 0; i < pieces.size(); i++)
+        {
+          if (!stretches.empty() && Adjacent(pieces[i - 1], pieces[i]) &&
+              SameFeature(pieces[i - 1], pieces[i]))
+          {
+            stretches.back().last = i;
+            stretches.back().length += Length(pieces[i]);
+          }
+          else
+          {
+            stretches.push_back({i, i, std::get<2>(Entry(pieces[i])),
+                                 std::get<3>(Entry(pieces[i])), Length(pieces[i])});
+          }
+        }
+        // On a closed chain the first and the last stretch may be one.
+        const bool wraps =
+            chain.closed && stretches.size() > 1 && Adjacent(pieces.back(), pieces.front());
+        if (wraps && SameFeature(pieces.back(), pieces.front()))
+        {
+          stretches.back().last = stretches.front().last;
+          stretches.back().length += stretches.front().length;
+          stretches.erase(stretches.begin());
+        }
+        const std::size_t n = stretches.size();
+        for (std::size_t g = 0; g < n && !changed; g++)
+        {
+          const Stretch &stretch = stretches[g];
+          if (stretch.length >= tolerance)
+          {
+            continue;
+          }
+          // The neighbours: the stretch before (its last piece adjacent to this stretch's
+          // first) and after (this stretch's last piece adjacent to its first); on a closed
+          // chain of two stretches both are the other one.
+          const Stretch *before = nullptr, *after = nullptr;
+          if (g > 0 || wraps)
+          {
+            const std::size_t gb = g > 0 ? g - 1 : n - 1;
+            if (gb != g && Adjacent(pieces[stretches[gb].last], pieces[stretch.first]))
+            {
+              before = &stretches[gb];
+            }
+          }
+          if (g + 1 < n || wraps)
+          {
+            const std::size_t ga = g + 1 < n ? g + 1 : 0;
+            if (ga != g && Adjacent(pieces[stretch.last], pieces[stretches[ga].first]))
+            {
+              after = &stretches[ga];
+            }
+          }
+          const Stretch *target = before && after
+                                      ? (after->length > before->length ? after : before)
+                                      : (before ? before : after);
+          if (!target)
+          {
+            continue;  // nothing to join on this chain
+          }
+          // Relabel every piece of the stretch (wrapping on a closed chain).
+          for (std::size_t i = stretch.first;; i = (i + 1) % pieces.size())
+          {
+            auto &entry = Entry(pieces[i]);
+            std::get<2>(entry) = target->feature;
+            std::get<3>(entry) = target->side;
+            touched_runs.insert(pieces[i].run);
+            if (i == stretch.last)
+            {
+              break;
+            }
+          }
+          result.sub_tolerance_portions.count++;
+          result.sub_tolerance_portions.length += stretch.length;
+          result.sub_tolerance_portions.max_length =
+              std::max(result.sub_tolerance_portions.max_length, stretch.length);
+          changed = true;
+        }
+        if (!changed)
+        {
+          for (const Stretch &stretch : stretches)
+          {
+            if (stretch.length < tolerance)
+            {
+              result.sub_tolerance_portions.isolated++;
+            }
+          }
+        }
+      }
+    }
+    // Pieces of one feature side made contiguous by a join are one piece of the run.
+    for (const std::size_t r : touched_runs)
+    {
+      auto &pieces = assigned[r];
+      std::vector<std::tuple<double, double, int, int>> merged;
+      for (const auto &piece : pieces)
+      {
+        if (!merged.empty() && std::get<2>(merged.back()) == std::get<2>(piece) &&
+            std::get<3>(merged.back()) == std::get<3>(piece) &&
+            std::abs(std::get<1>(merged.back()) - std::get<0>(piece)) <= Tol())
+        {
+          std::get<1>(merged.back()) = std::get<1>(piece);
+        }
+        else
+        {
+          merged.push_back(piece);
+        }
+      }
+      pieces = std::move(merged);
+    }
+  }
+
+  // Curvature annotation of every feature over its assigned portions.
+  for (std::size_t r = 0; r < runs.size(); r++)
+  {
+    if (runs[r].excluded)
+    {
+      continue;
+    }
+    const Chain &chain = chains[chain_index.at(runs[r].chain)];
+    const double offset = chain.run_offset[RunIndexInChain(chain, r)];
+    for (const auto &[lo, hi, feature, side] : assigned[r])
+    {
+      (void)side;
+      feature_max_kappa[feature] = std::max(feature_max_kappa[feature],
+                                            MaxCurvature(chain, offset + lo, offset + hi));
     }
   }
 
@@ -10919,6 +11096,10 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.extension.cap_reached);
   w.Pod(result.extension.repeat_detected);
   w.Size(result.stack_images_merged);
+  w.Size(result.sub_tolerance_portions.count);
+  w.Pod(result.sub_tolerance_portions.length);
+  w.Pod(result.sub_tolerance_portions.max_length);
+  w.Size(result.sub_tolerance_portions.isolated);
   w.String(result.knife_edge_census);
   w.Size(result.features.size());
   for (const auto &f : result.features)
@@ -11032,6 +11213,10 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.extension.cap_reached = r.Pod<bool>();
   result.extension.repeat_detected = r.Pod<bool>();
   result.stack_images_merged = r.Size();
+  result.sub_tolerance_portions.count = r.Size();
+  result.sub_tolerance_portions.length = r.Pod<double>();
+  result.sub_tolerance_portions.max_length = r.Pod<double>();
+  result.sub_tolerance_portions.isolated = r.Size();
   result.knife_edge_census = r.String();
   result.features.resize(r.Size());
   for (auto &f : result.features)
@@ -11637,6 +11822,19 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "joins its group"},
         {"SignatureParameterToleranceOverR", kSignatureParameterToleranceOverRadius},
         {"SignatureAngleToleranceDegrees", kSignatureAngleToleranceDegrees},
+        {"PortionMinimumLengthOverR", kSignatureParameterToleranceOverRadius},
+        {"SliverRule",
+         "no portion shorter than PortionMinimumLengthOverR x R (= the signature parameter "
+         "tolerance) exists (supervisor decision 222, 2026-10-02): a portion is a maximal "
+         "contiguous stretch of one feature side along a chain (across its runs and mesh "
+         "segments); a shorter stretch is roundoff between two claim boundaries that no "
+         "signature parameter resolves and joins its adjacent portion on the chain, the "
+         "longer of its two neighbours (ties: the one before it along the chain), taking "
+         "its feature and side; a pair / stack side surviving below it is no side (the "
+         "feature dissolves); a stretch with no adjacent portion on its chain stays "
+         "(Diagnostics.SubTolerancePortionsJoined.Isolated). Dimensionless; replaces the "
+         "former join of pieces at or below the SignatureLengthQuantumOverR grid, the "
+         "knife-edge the S1p window's 1.0229e-6 R cut-end sliver missed"},
         {"SignatureMatching",
          "topology key = the signature with every continuous parameter (OffsetOverR, "
          "SeparationOverR, RadiusOverR, CornerRadiusOverR; AngleDegrees, ArmAnglesDegrees) "
@@ -11742,6 +11940,27 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"StackCompositionCap", kStackCompositionCap},
         {"StackImagesMerged", stack_images_merged},
         {"StackImageToleranceOverR", kStackImageToleranceOverRadius},
+        {"SubTolerancePortionsJoined",
+         {{"Count", sub_tolerance_portions.count},
+          {"Length", L(sub_tolerance_portions.length)},
+          {"MaxLength", L(sub_tolerance_portions.max_length)},
+          {"Isolated", sub_tolerance_portions.isolated},
+          {"ToleranceOverR", kSignatureParameterToleranceOverRadius},
+          {"Rule",
+           "sliver rule (supervisor decision 222, 2026-10-02): no portion shorter than "
+           "SignatureParameterToleranceOverR x R exists — a portion being a maximal "
+           "contiguous stretch of one feature side along a chain, across its runs and mesh "
+           "segments (a sub-tolerance mesh segment inside a long edge continues that "
+           "edge); "
+           "a shorter stretch (roundoff between two claim boundaries: a cluster ball "
+           "cutting "
+           "a pair piece, a claim ending next to a run end, the foot of a neighbour's cut "
+           "end on a near-parallel member) joins its adjacent portion on the chain, the "
+           "longer of its two neighbours (ties: the one before it along the chain), taking "
+           "its feature and side; Count / Length / MaxLength are the stretches joined, "
+           "Isolated the stretches with no adjacent portion on their chain (kept). "
+           "Replaces "
+           "the former join of pieces at or below the 1e-6 R signature grid"}}},
         {"ClusterExtension",
          {{"Passes", extension.passes},
           {"MaxPasses", kClusterExtensionMaxPasses},

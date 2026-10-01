@@ -460,11 +460,39 @@ smaller endpoint.
 5. **Isolated edges.** Every chain portion not claimed by a cluster, a vertex window or a
    translational feature is an `IsolatedEdge` portion; one feature per straight run
    (chain), signature = interface types + boundary law. Claims are resolved per run in the
-   order cluster > vertex window > translational; a claimed or unclaimed piece shorter than
-   `SignatureLengthQuantumOverR` x R is roundoff between two claim boundaries (a cluster ball
-   cutting a pair piece next to a run end) and joins the adjacent portion on its run — a
-   feature whose whole length is below the signature grid is not a feature (DS-SCT-001 had
-   three `CurvedSameConductorStrip` records of 1.6e-7 um in total).
+   order cluster > vertex window > translational. **Sliver rule (supervisor decision 222,
+   2026-10-02; `Conventions.SliverRule`, `PortionMinimumLengthOverR`):** NO portion shorter
+   than the signature parameter tolerance `SignatureParameterToleranceOverR` x R = 1e-3 R
+   exists, a portion being a maximal contiguous stretch of one feature side along a chain
+   (across the chain's runs and mesh segments: a sub-tolerance MESH SEGMENT inside a long edge
+   continues that edge's portion and is not one). A shorter stretch is roundoff between two
+   claim boundaries — a cluster ball cutting a pair piece, a claim ending next to a run end,
+   the perpendicular foot of a neighbour's cut end on a near-parallel member — that no
+   signature parameter resolves (every length is matched within the tolerance) and no coupon
+   models: it joins its adjacent portion on the chain, the LONGER of its two neighbours (ties:
+   the one before it along the chain), taking that neighbour's feature and side; the join is
+   decided by the chain order and the neighbours' lengths, never by a feature id. A pair /
+   stack side whose surviving length is below the tolerance is no side (the feature
+   dissolves, its pieces return to the run). A stretch with no adjacent portion on its chain
+   (a whole chain, or a piece between two `CrossLayer` zones, shorter than the tolerance) has
+   nothing to join and stays, counted. Reported as `Diagnostics.SubTolerancePortionsJoined`
+   (`Count`, `Length`, `MaxLength`, `Isolated`). Why the tolerance and not the signature grid:
+   the former rule joined only pieces at or below `SignatureLengthQuantumOverR` x R = 1e-6 R
+   (DS-SCT-001's three `CurvedSameConductorStrip` records of 1.6e-7 um in total), a knife-edge
+   the stage-1 S1p window missed by 2.3 %: its 4-edge flux-line stack's claim on two members
+   started at s = 1.9435e-6 um = 2 um x the 9.7e-7 rad near-parallel tilt of the window set
+   (the foot of the neighbour edge's cut end at the y = -200 truncation cut), the 1.0229e-6 R
+   remainder on one member belonged to the 3-edge stack whose real end lay 64 um away (a
+   sample placed on it pointed its lateral axis along the segment and the
+   `ParallelEdgeCluster` placement failed closed, `LongitudinalCellOffsets` |cos| 0.0627) and
+   its twin read as a 2e-6 um `IsolatedEdge`; the same class sat in the E1 windows S1 / S1p /
+   S4 and a 3.9e-4 um cluster portion of CTX C1. The tolerance is the length below which the
+   signature contract already treats two readings as one ("Signature tolerance and library
+   grouping" under item 7), so nothing a
+   coupon could distinguish is merged; the placement's `MFEM_VERIFY` stays as the fail-closed
+   net. Unit test `SurfaceResponseIdentificationSubTolerancePortions` (a near-parallel stack
+   whose members end on a truncation cut with a 1.5e-6 rad tilt; a 1 nm mesh segment inside a
+   long edge).
 7. **Curved-edge chain rule** (decision 73(1); phase 2). A chain is defined by its
    significant vertices only: collinear splits (refinement midpoints, second-order mid-edge
    nodes) merge into one run, and the joints between runs that remain inside a chain — the
@@ -1007,7 +1035,10 @@ smaller endpoint.
    neighbours claimed by the same feature — is an ordinary portion of that feature and is NOT
    exempt (the former per-segment predicate exempted 896 whole 1-2 nm segments of one 2,898 um
    `IsolatedEdge` on DS-SCT-001 at R 2.0, none of them facing; under the narrowed rule 0 exempt
-   portions at R 2.0 and 1 at R 1.9, both gates PASS). Diagnostics also record the stack assembly's
+   portions at R 2.0 and 1 at R 1.9, both gates PASS). Since the sliver rule of item (b) 5
+   (decision 222) such sub-tolerance remainders join their adjacent portion in the
+   identification itself, so the exemption is expected to count 0 on every manifest of this
+   version (it stays in the gate as the record of the class and for older manifests). Diagnostics also record the stack assembly's
    `StackCompositionCap` (64 members: far above any physical stack — the chip's widest has
    12 edges — bounding a runaway traversal through inconsistent links; hits counted,
    review m2) and `StackGeometricOffsetIntervals` (elementary intervals whose consecutive

@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -37,6 +38,11 @@ struct LoopSpec
   int conductor = 0;
   double subdivision = 1.0;
   double z = 0.0;  // metal plane of the loop
+  // Polygon edges (index i: points[i] -> points[i + 1]) lying on a simulation cut: their
+  // mesh segments are truncation segments (excluded, no chain) and their vertices lie on
+  // the truncation boundary (ENDPOINT of the physical chain, never a feature), as the
+  // perimeter extraction reports a metal polygon clipped by a window wall.
+  std::set<std::size_t> truncation_edges;
 };
 
 IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
@@ -69,6 +75,7 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     int conductor;
     int chain;
     double z;
+    bool truncation;
   };
   std::vector<Raw> raw;
   int chain = 0;
@@ -93,7 +100,8 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
                        outward,
                        loop.conductor,
                        chain,
-                       loop.z});
+                       loop.z,
+                       loop.truncation_edges.count(i) > 0});
       }
       chain++;
     }
@@ -108,16 +116,34 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     segment.p0 = {r.a[0], r.a[1], r.z};
     segment.p1 = {r.b[0], r.b[1], r.z};
     segment.vertices = {Vertex(r.a, r.z), Vertex(r.b, r.z)};
-    segment.chain = r.chain;
+    segment.chain = r.truncation ? -1 : r.chain;
+    segment.truncation = r.truncation;
     segment.conductor = r.conductor;
     segment.targets = {{InterfaceDielectric::MS, 1}};
     segment.gap_direction = {r.outward[0], r.outward[1], 0.0};
     segment.process_normal = {0.0, 0.0, 1.0};
     segment.boundary_law = "{\"Type\":\"PEC\"}";
-    input.vertices[segment.vertices[0]].segments.push_back(input.segments.size());
-    input.vertices[segment.vertices[1]].segments.push_back(input.segments.size());
+    for (const std::size_t v : segment.vertices)
+    {
+      input.vertices[v].segments.push_back(input.segments.size());
+      input.vertices[v].on_truncation_boundary |= r.truncation;
+    }
     input.segments.push_back(segment);
   }
+  // The vertex classification and the chains see the physical segments only (metaledge.cpp
+  // classifies the physical type on the non-truncation segments).
+  auto PhysicalSegments = [&](std::size_t v)
+  {
+    std::vector<std::size_t> physical;
+    for (const std::size_t s : input.vertices[v].segments)
+    {
+      if (!input.segments[s].truncation)
+      {
+        physical.push_back(s);
+      }
+    }
+    return physical;
+  };
   // Vertex types as metaledge.cpp: two segments -> a collinear continuation is regular,
   // otherwise corner iff the joint is not noise under the geometric rule (the implied
   // sagitta (c / 2) tan(turn / 4) on the shorter adjacent straight piece reaches
@@ -171,18 +197,19 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
   for (std::size_t v = 0; v < input.vertices.size(); v++)
   {
     auto &vertex = input.vertices[v];
-    if (vertex.segments.size() == 1)
+    const auto physical = PhysicalSegments(v);
+    if (physical.size() <= 1)
     {
       vertex.physical_type = MetalEdgeVertexType::ENDPOINT;
     }
-    else if (vertex.segments.size() > 2)
+    else if (physical.size() > 2)
     {
       vertex.physical_type = MetalEdgeVertexType::JUNCTION;
     }
     else
     {
-      const auto d0 = UnitDirection(v, OtherEnd(vertex.segments[0], v)).first;
-      const auto d1 = UnitDirection(v, OtherEnd(vertex.segments[1], v)).first;
+      const auto d0 = UnitDirection(v, OtherEnd(physical[0], v)).first;
+      const auto d1 = UnitDirection(v, OtherEnd(physical[1], v)).first;
       const double dot = d0[0] * d1[0] + d0[1] * d1[1] + d0[2] * d1[2];
       if (-dot >= 1.0 - 1.0e-12)
       {
@@ -191,7 +218,7 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
       }
       const double turn = std::acos(std::clamp(-dot, -1.0, 1.0));
       const double shorter =
-          std::min(PieceLength(v, vertex.segments[0]), PieceLength(v, vertex.segments[1]));
+          std::min(PieceLength(v, physical[0]), PieceLength(v, physical[1]));
       vertex.physical_type =
           JointIsNoise(turn, shorter, kJointNoiseSagittaOverRadius * radius)
               ? MetalEdgeVertexType::REGULAR
@@ -204,7 +231,7 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
   int next_chain = 0;
   for (std::size_t seed = 0; seed < input.segments.size(); seed++)
   {
-    if (chain_of[seed] >= 0)
+    if (chain_of[seed] >= 0 || input.segments[seed].truncation)
     {
       continue;
     }
@@ -222,7 +249,7 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
         }
         for (const std::size_t other : input.vertices[v].segments)
         {
-          if (chain_of[other] < 0)
+          if (chain_of[other] < 0 && !input.segments[other].truncation)
           {
             chain_of[other] = next_chain;
             stack.push_back(other);
@@ -3140,5 +3167,273 @@ TEST_CASE("SurfaceResponseIdentificationSymmetricCurvedPairOrientation",
         CHECK(other.first_side_outermost);
       }
     }
+  }
+}
+
+namespace
+{
+
+// Feature portions shorter than the signature parameter tolerance that continue into NO
+// portion of the same feature at either end (on the same segment or across the shared
+// vertex of the neighbouring segment): the slivers decision 222 forbids. A sub-tolerance
+// MESH SEGMENT inside a long edge of one feature is not one.
+struct SubTolerancePortion
+{
+  std::size_t segment;
+  double s0, s1;
+  int feature;
+};
+
+std::vector<SubTolerancePortion> SubTolerancePortions(const IdentificationInput &input,
+                                                      const IdentificationResult &result)
+{
+  const double tolerance = kSignatureParameterToleranceOverRadius * result.radius;
+  const double eps = 1.0e-9;
+  std::map<std::array<double, 3>, std::vector<std::size_t>> segments_at;
+  for (std::size_t i = 0; i < result.segments.size(); i++)
+  {
+    for (const auto &end : result.segments[i].key)
+    {
+      segments_at[end].push_back(i);
+    }
+  }
+  // Does the feature own a portion of segment j reaching the given endpoint of j?
+  auto ReachesEnd = [&](std::size_t j, const std::array<double, 3> &end, int feature)
+  {
+    const auto &segment = result.segments[j];
+    for (const auto &portion : segment.portions)
+    {
+      if (static_cast<int>(portion[2]) != feature)
+      {
+        continue;
+      }
+      if ((end == segment.key[0] && portion[0] <= eps) ||
+          (end == segment.key[1] && portion[1] >= segment.length - eps))
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+  std::vector<SubTolerancePortion> slivers;
+  for (std::size_t i = 0; i < result.segments.size(); i++)
+  {
+    const auto &segment = result.segments[i];
+    for (const auto &portion : segment.portions)
+    {
+      const double s0 = portion[0], s1 = portion[1];
+      const int feature = static_cast<int>(portion[2]);
+      if (s1 - s0 >= tolerance)
+      {
+        continue;
+      }
+      bool continues = false;
+      for (const auto &other : segment.portions)
+      {
+        if (static_cast<int>(other[2]) == feature && &other != &portion &&
+            (std::abs(other[1] - s0) <= eps || std::abs(other[0] - s1) <= eps))
+        {
+          continues = true;
+        }
+      }
+      for (int end = 0; end < 2 && !continues; end++)
+      {
+        if ((end == 0 && s0 > eps) || (end == 1 && s1 < segment.length - eps))
+        {
+          continue;
+        }
+        for (const std::size_t j : segments_at.at(segment.key[end]))
+        {
+          if (j != i && !input.segments[j].truncation &&
+              ReachesEnd(j, segment.key[end], feature))
+          {
+            continues = true;
+          }
+        }
+      }
+      if (!continues)
+      {
+        slivers.push_back({i, s0, s1, feature});
+      }
+    }
+  }
+  return slivers;
+}
+
+}  // namespace
+
+TEST_CASE("SurfaceResponseIdentificationSubTolerancePortions",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Supervisor decision 222 (the S1p stage-1 window): NO portion shorter than the signature
+  // parameter tolerance 1e-3 R exists — a remainder below it joins its adjacent portion on
+  // the chain (the longer neighbour; ties: the one before it), replacing the former
+  // knife-edge at the 1e-6 R signature grid. The reproducer: a near-parallel 4-edge stack
+  // whose members end on a truncation cut with a tilt of ~1e-6 rad between the two bodies,
+  // so that the perpendicular foot of one body's cut end lies a few 1e-6 um along the other
+  // body's edges and the stack's claim leaves a remainder > 1e-6 R and < 1e-3 R at the cut;
+  // on S1p that remainder belonged to the 3-edge stack whose real end lay 64 um away (a
+  // sample placed on it pointed its lateral axis along the segment: the placement aborted)
+  // and its twin read as a 2e-6 um IsolatedEdge.
+  const double R = 2.0;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  auto EdgeCount = [](const IdentifiedFeature &f)
+  { return f.signature.contains("Edges") ? f.signature["Edges"].size() : 0; };
+  SECTION("near-parallel stack members cut by a truncation line")
+  {
+    // Body A (x in [0, 2]) and body B (x in [4, 5] below y = -20, [4, 9] above) with all
+    // four edges exactly parallel, tilted by theta against the normal of the cut y = -60
+    // (the S1p configuration: the window set's edges are mutually parallel, the window wall
+    // is not perpendicular to them), so that the foot of every member's cut end on its
+    // right-hand neighbour lies 2 theta along it (3e-6 um = 1.5e-6 R: above the signature
+    // grid, far below the tolerance) and the stack's claim on the inner members starts
+    // there. Edges 0 / 2 / 4 / 5 are a 4-edge stack below y = -20, 0 / 2 / 4 a 3-edge stack
+    // above it (the x = 9 edge is 5 um = 2.5 R from x = 4). Edge 0 of each loop (its
+    // bottom) is the truncation cut y = -60.
+    const double theta = 1.5e-6;
+    const std::vector<Point2> body_b = {{4.0, -60.0},
+                                        {5.0, -60.0},
+                                        {5.0 + 40.0 * theta, -20.0},
+                                        {9.0 + 40.0 * theta, -20.0},
+                                        {9.0 + 60.0 * theta, 0.0},
+                                        {4.0 + 60.0 * theta, 0.0}};
+    const std::vector<Point2> body_a = {
+        {0.0, -60.0}, {2.0, -60.0}, {2.0 + 60.0 * theta, 0.0}, {60.0 * theta, 0.0}};
+    const auto input =
+        MakeInput({{body_a, 0, 1.0, 0.0, {0}}, {body_b, 0, 1.0, 0.0, {0}}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(result.same_priority_claim_overlaps == 0);
+    // The cut itself: both bottom edges excluded as TruncationCut, their vertices cuts.
+    int truncation_segments = 0, truncation_vertices = 0;
+    for (const auto &segment : result.segments)
+    {
+      truncation_segments +=
+          segment.exclusion && segment.exclusion->first == "TruncationCut" ? 1 : 0;
+    }
+    for (const auto &vertex : result.vertices)
+    {
+      truncation_vertices += vertex.type == "TruncationCut" ? 1 : 0;
+    }
+    CHECK(truncation_segments == 3);  // A's 2 um bottom in 2 pieces, B's 1 um bottom
+    CHECK(truncation_vertices == 5);  // their 4 corners and the midpoint of A's bottom
+    if (std::getenv("PALACE_IDENTIFICATION_TEST_LOG"))
+    {
+      for (std::size_t i = 0; i < input.segments.size(); i++)
+      {
+        const auto &segment = input.segments[i];
+        if (std::min(segment.p0[1], segment.p1[1]) > -59.0 || segment.truncation)
+        {
+          continue;
+        }
+        std::cout << "segment " << i << " (" << segment.p0[0] << ", " << segment.p0[1]
+                  << ") -> (" << segment.p1[0] << ", " << segment.p1[1] << ")\n";
+        for (const auto &portion : result.segments[i].portions)
+        {
+          const auto &feature = result.features[static_cast<int>(portion[2])];
+          std::cout << "  [" << std::setprecision(12) << portion[0] << ", " << portion[1]
+                    << "] feature " << feature.id << " " << feature.type << " edges "
+                    << (feature.signature.contains("Edges")
+                            ? feature.signature["Edges"].size()
+                            : 0)
+                    << " length " << feature.length << "\n";
+        }
+      }
+    }
+    const IdentifiedFeature *stack4 = nullptr, *stack3 = nullptr;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "ParallelEdgeCluster" && EdgeCount(feature) == 4)
+      {
+        CHECK(stack4 == nullptr);
+        stack4 = &feature;
+      }
+      else if (feature.type == "ParallelEdgeCluster" && EdgeCount(feature) == 3)
+      {
+        CHECK(stack3 == nullptr);
+        stack3 = &feature;
+      }
+    }
+    REQUIRE(stack4 != nullptr);
+    REQUIRE(stack3 != nullptr);
+    CHECK(stack4->exact_parameters);
+    CHECK(stack3->exact_parameters);
+    // The rule: no sub-tolerance sliver anywhere, no feature shorter than the tolerance.
+    const auto slivers = SubTolerancePortions(input, result);
+    for (const auto &sliver : slivers)
+    {
+      const auto &p0 = input.segments[sliver.segment].p0;
+      INFO("sliver on segment " << sliver.segment << " at (" << p0[0] << ", " << p0[1]
+                                << ") [" << sliver.s0 << ", " << sliver.s1 << "] feature "
+                                << sliver.feature << " "
+                                << result.features[sliver.feature].type);
+      CHECK(false);
+    }
+    CHECK(slivers.empty());
+    for (const auto &feature : result.features)
+    {
+      INFO("feature " << feature.id << " " << feature.type);
+      CHECK((feature.length >= tolerance || feature.length == 0.0));
+    }
+    // The 3-edge stack owns nothing at the cut: every portion of it lies above its stack
+    // end at y = -20 less the cluster reach there (2R).
+    for (const auto &portion : stack3->portions)
+    {
+      const auto &segment = input.segments[portion.segment];
+      INFO("3-edge stack portion on segment " << portion.segment << " at y "
+                                              << std::min(segment.p0[1], segment.p1[1]));
+      CHECK(std::min(segment.p0[1], segment.p1[1]) > -20.0 - 2.0 * R);
+    }
+    // The 4-edge stack reaches the cut on every member: its claim starts at the cut (the
+    // sub-tolerance remainders joined it).
+    std::map<int, double> side_start;
+    for (const auto &portion : stack4->portions)
+    {
+      const auto &segment = input.segments[portion.segment];
+      const double y_low = std::min(segment.p0[1], segment.p1[1]);
+      auto it = side_start.find(portion.side);
+      side_start[portion.side] =
+          it == side_start.end() ? y_low : std::min(it->second, y_low);
+    }
+    REQUIRE(side_start.size() == 4);
+    for (const auto &[side, y_low] : side_start)
+    {
+      INFO("side " << side);
+      CHECK_THAT(y_low, WithinAbs(-60.0, 1.0e-9));
+    }
+    // The census: the slivers of the former rule (two per body-B edge: the feet of A's two
+    // cut ends) joined; nothing left without a neighbour.
+    CHECK(result.sub_tolerance_portions.count >= 2);
+    CHECK(result.sub_tolerance_portions.max_length < tolerance);
+    CHECK(result.sub_tolerance_portions.max_length > kSignatureLengthQuantumOverRadius * R);
+    CHECK(result.sub_tolerance_portions.isolated == 0);
+  }
+  SECTION("a sub-tolerance mesh segment inside a long edge is not a sliver")
+  {
+    // Two exactly parallel strips with a 1 nm collinear mesh segment (5e-4 R) inside the
+    // trace's right edge: the stack's portion on that segment continues into its portions
+    // on both neighbouring segments, so the rule has nothing to join.
+    const std::vector<Point2> trace = {{0.0, -60.0},          {2.0, -60.0}, {2.0, -30.0},
+                                       {2.0, -30.0 + 1.0e-3}, {2.0, 0.0},   {0.0, 0.0}};
+    const auto input =
+        MakeInput({{trace, 0, 1.0}, {Rectangle(4.0, -60.0, 5.0, 0.0), 0, 1.0}}, R);
+    const auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    CHECK(SubTolerancePortions(input, result).empty());
+    CHECK(result.sub_tolerance_portions.count == 0);
+    CHECK(result.sub_tolerance_portions.isolated == 0);
+    bool found = false;
+    for (std::size_t i = 0; i < input.segments.size(); i++)
+    {
+      const double length = result.segments[i].length;
+      if (length < tolerance)
+      {
+        found = true;
+        REQUIRE(result.segments[i].portions.size() == 1);
+        CHECK(result.features[static_cast<int>(result.segments[i].portions[0][2])].type ==
+              "ParallelEdgeCluster");
+      }
+    }
+    CHECK(found);
   }
 }
