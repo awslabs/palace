@@ -1263,19 +1263,31 @@ BrokenProlongation::BrokenProlongation(const Operator &P,
   lx.UseDevice(true);
 }
 
+// The leading (original) blocks of the broken vectors are accessed through sub-vectors
+// (aliases), whose memory validity flags are independent of those of their base vector.
+// The base vectors are made valid where they are used before the aliases are created, and
+// results written through an alias are synchronized back to its base (for example, the
+// HypreParMatrix absolute value products write on the host), before the base is accessed
+// directly. Otherwise, a stale copy of the base would be used on the device.
+
 void BrokenProlongation::Mult(const Vector &x, Vector &y) const
 {
   MFEM_ASSERT(x.Size() == width && y.Size() == height,
               "Invalid vector sizes for BrokenProlongation::Mult!");
-  const Vector xt(const_cast<Vector &>(x), 0, tsize);
-  Vector yl(y, 0, vsize);
-  P.Mult(xt, yl);
+  const bool use_dev = x.UseDevice() || y.UseDevice();
+  x.Read(use_dev);
+  y.Write(use_dev);
+  {
+    const Vector xt(const_cast<Vector &>(x), 0, tsize);
+    Vector yl(y, 0, vsize);
+    P.Mult(xt, yl);
+    yl.SyncAliasMemory(y);
+    tx = xt;
+  }
 
   // Copies: y_c = (P z)[copy], with z = x with the split true DOFs replaced by their
   // copies. The second application of P is collective, so it is done on every process even
   // when there are no local copies.
-  const bool use_dev = x.UseDevice() || y.UseDevice();
-  tx = xt;
   Scatter(use_dev, split_tdofs, x.Read(use_dev) + tsize, tx.ReadWrite(use_dev));
   P.Mult(tx, lx);
   Gather(use_dev, copy_ldofs, lx.Read(use_dev), 1.0, 0.0, y.ReadWrite(use_dev) + vsize);
@@ -1303,15 +1315,22 @@ void BrokenProlongation::AddCopyTranspose(const Vector &x, double a, double b, V
   ZeroIndexed(use_dev, split_tdofs, tx.ReadWrite(use_dev));
   Vector yt(y, 0, tsize);
   yt.Add(a, tx);
+  yt.SyncAliasMemory(y);
 }
 
 void BrokenProlongation::MultTranspose(const Vector &x, Vector &y) const
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Invalid vector sizes for BrokenProlongation::MultTranspose!");
-  const Vector xl(const_cast<Vector &>(x), 0, vsize);
-  Vector yt(y, 0, tsize);
-  P.MultTranspose(xl, yt);
+  const bool use_dev = x.UseDevice() || y.UseDevice();
+  x.Read(use_dev);
+  y.Write(use_dev);
+  {
+    const Vector xl(const_cast<Vector &>(x), 0, vsize);
+    Vector yt(y, 0, tsize);
+    P.MultTranspose(xl, yt);
+    yt.SyncAliasMemory(y);
+  }
   AddCopyTranspose(x, 1.0, 0.0, y, false);
 }
 
@@ -1320,28 +1339,41 @@ void BrokenProlongation::AbsMultTranspose(double a, const Vector &x, double b,
 {
   MFEM_ASSERT(x.Size() == height && y.Size() == width,
               "Invalid vector sizes for BrokenProlongation::AbsMultTranspose!");
-  const Vector xl(const_cast<Vector &>(x), 0, vsize);
-  Vector yt(y, 0, tsize);
-  if (hP)
+  const bool use_dev = x.UseDevice() || y.UseDevice();
+  x.Read(use_dev);
+  if (b == 0.0)
   {
-    hP->AbsMultTranspose(a, xl, b, yt);
+    y.Write(use_dev);
   }
   else
   {
-    // The prolongation of a conforming space (not a HypreParMatrix) has only nonnegative
-    // entries.
-    Vector t(tsize);
-    t.UseDevice(true);
-    P.MultTranspose(xl, t);
-    if (b == 0.0)
+    y.ReadWrite(use_dev);
+  }
+  {
+    const Vector xl(const_cast<Vector &>(x), 0, vsize);
+    Vector yt(y, 0, tsize);
+    if (hP)
     {
-      yt = 0.0;
+      hP->AbsMultTranspose(a, xl, b, yt);
     }
     else
     {
-      yt *= b;
+      // The prolongation of a conforming space (not a HypreParMatrix) has only nonnegative
+      // entries.
+      Vector t(tsize);
+      t.UseDevice(true);
+      P.MultTranspose(xl, t);
+      if (b == 0.0)
+      {
+        yt = 0.0;
+      }
+      else
+      {
+        yt *= b;
+      }
+      yt.Add(a, t);
     }
-    yt.Add(a, t);
+    yt.SyncAliasMemory(y);
   }
   AddCopyTranspose(x, a, b, y, true);
 }
