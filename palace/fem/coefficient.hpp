@@ -1064,40 +1064,6 @@ public:
   }
 };
 
-// Compute z-directed Poynting power density for a waveguide mode on a 2D cross-section:
-//   Sn = Re{Ex Hy* - Ey Hx*} where Ht = μ⁻¹ Bt.
-// No 1/2 factor, consistent with the 3D PoyntingVectorCoefficient convention.
-class ModeSnCoefficient : public mfem::Coefficient
-{
-  const mfem::ParGridFunction &et_r, &et_i;
-  const mfem::ParGridFunction &bt_r, &bt_i;
-  const MaterialOperator &mat_op;
-
-public:
-  ModeSnCoefficient(const mfem::ParGridFunction &et_r, const mfem::ParGridFunction &et_i,
-                    const mfem::ParGridFunction &bt_r, const mfem::ParGridFunction &bt_i,
-                    const MaterialOperator &mat_op)
-    : et_r(et_r), et_i(et_i), bt_r(bt_r), bt_i(bt_i), mat_op(mat_op)
-  {
-  }
-
-  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
-  {
-    mfem::Vector etr(2), eti(2), btr(2), bti(2);
-    et_r.GetVectorValue(T, ip, etr);
-    et_i.GetVectorValue(T, ip, eti);
-    bt_r.GetVectorValue(T, ip, btr);
-    bt_i.GetVectorValue(T, ip, bti);
-
-    double muinv = mat_op.GetInvPermeabilityZZ(T.Attribute);
-    double hx_r = muinv * btr(0), hx_i = muinv * bti(0);
-    double hy_r = muinv * btr(1), hy_i = muinv * bti(1);
-
-    // Re{Ex(-Hy*) + Ey(Hx*)} = -Ex_r Hy_r - Ex_i Hy_i + Ey_r Hx_r + Ey_i Hx_i
-    return -etr(0) * hy_r - eti(0) * hy_i + etr(1) * hx_r + eti(1) * hx_i;
-  }
-};
-
 }  // namespace palace
 
 #endif  // PALACE_FEM_COEFFICIENT_HPP
