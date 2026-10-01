@@ -29,6 +29,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     London magnetostatic solve SPD-solvable by AMS.
     [PR 929](https://github.com/awslabs/palace/pull/929).
 
+- Introduced ``"AbsTol"`` option for linear solvers, defaulting to 0.0 to allow
+  using an absolute tolerance when defining convergence.
+  SchemaVer 1-1-0 [PR 734](https://github.com/awslabs/palace/pull/734).
+
 #### Interface Changes
 
   - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
