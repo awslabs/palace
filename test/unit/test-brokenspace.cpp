@@ -343,6 +343,18 @@ void JumpB(const mfem::Vector &x, mfem::Vector &B)
   B(2) = 0.5 * Jump(x(0));
 }
 
+// The parallel runs of the estimator tests cover a subset of the orders and element types
+// of the serial runs: their parallel aspects (interior boundaries on process boundaries,
+// shared and constrained entities, rebalancing and the reconstruction of the sides) do not
+// depend on them, and the cost of the parallel runs is dominated by the communication in
+// the iterative solves.
+template <typename T>
+std::vector<T> SerialOrParallel(MPI_Comm comm, std::vector<T> serial,
+                                std::vector<T> parallel)
+{
+  return (Mpi::Size(comm) > 1) ? parallel : serial;
+}
+
 struct EstimatorSetup
 {
   Mesh mesh;
@@ -809,9 +821,10 @@ TEST_CASE("Broken space error estimators",
           "[brokenspace][errorestimator][Serial][Parallel]")
 {
   const auto comm = MPI_COMM_WORLD;
-  const int order = GENERATE(1, 2);
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON,
-                             mfem::Element::PYRAMID);
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {2})));
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON, mfem::Element::PYRAMID},
+      {mfem::Element::TETRAHEDRON})));
   fem::DefaultIntegrationOrder::p_trial = order;
 
   config::MaterialData material;
@@ -928,8 +941,10 @@ TEST_CASE("Broken space error estimators (nonconforming)",
           "[brokenspace][errorestimator][Serial][Parallel]")
 {
   const auto comm = MPI_COMM_WORLD;
-  const int order = GENERATE(1, 2);
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {2})));
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON},
+      {mfem::Element::HEXAHEDRON})));
   fem::DefaultIntegrationOrder::p_trial = order;
 
   config::MaterialData material;
@@ -1048,8 +1063,10 @@ TEST_CASE("Broken space error estimators (saved nonconforming mesh)",
   // A nonconforming mesh refined in a previous simulation, saved and loaded as for a
   // restart: the interior boundary sides are reconstructed from the refinement hierarchy.
   const auto comm = MPI_COMM_WORLD;
-  const int order = GENERATE(1, 2);
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {1})));
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON},
+      {mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON})));
   fem::DefaultIntegrationOrder::p_trial = order;
   config::MaterialData material;
   material.attributes = {1};
@@ -1135,8 +1152,10 @@ TEST_CASE("Broken space error estimators (partial interior boundary)",
   // An interior boundary with a free edge (at y = 0.5), where the recovery remains
   // continuous, and a partitioning where some processes do not touch the interior boundary.
   const auto comm = MPI_COMM_WORLD;
-  const int order = GENERATE(1, 2);
-  const auto type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {1})));
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON},
+      {mfem::Element::TETRAHEDRON})));
   const bool nonconforming = GENERATE(false, true);
   fem::DefaultIntegrationOrder::p_trial = order;
   config::MaterialData material;
@@ -1204,8 +1223,10 @@ TEST_CASE("Broken space error estimators (2D)",
           "[brokenspace][errorestimator][Serial][Parallel]")
 {
   const auto comm = MPI_COMM_WORLD;
-  const int order = GENERATE(1, 2);
-  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {2})));
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL},
+      {mfem::Element::TRIANGLE})));
   fem::DefaultIntegrationOrder::p_trial = order;
 
   config::MaterialData material;
@@ -1263,8 +1284,10 @@ TEST_CASE("Broken space error estimators (2D nonconforming mesh without history)
   // a cut mesh (the limits in y are on element boundaries, so that the triangles on both
   // sides of an interior boundary edge are refined alike).
   const auto comm = MPI_COMM_WORLD;
-  const int order = GENERATE(1, 2);
-  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const int order = GENERATE_COPY(from_range(SerialOrParallel<int>(comm, {1, 2}, {1})));
+  const auto type = GENERATE_COPY(from_range(SerialOrParallel<mfem::Element::Type>(
+      comm, {mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL},
+      {mfem::Element::QUADRILATERAL})));
   fem::DefaultIntegrationOrder::p_trial = order;
   config::MaterialData material;
   material.attributes = {1};
