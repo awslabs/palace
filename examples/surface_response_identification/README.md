@@ -149,7 +149,17 @@ embedded sheets, mesh preparation):
     (pairs up to the truncation cut), `taper-slow` (3.0 -> 3.15 um over 20 R: one pair),
     `taper-fast` (80 deg: one cluster). The oracle mirrors the rule (`design_bent_pairs`: chain
     order, local windows, constant portions excluded from the event cores; corner pairs strictly
-    within 2R; `arc_bar(..., offset=, lead_end=, tee=)`).
+    within 2R; `arc_bar(..., offset=, lead_end=, tee=)`). **Exact stretches** (USER decision 203,
+    `ExactStretchMinLengthOverR` = 1): within a constant sub-piece the samples with an exact
+    reading agreeing within 1e-3 R form exact stretches (own exact sub-pieces when their exact
+    samples span >= R; a sub-piece that is one exact stretch stays exact at any length), the
+    judged samples without one form non-exact stretches by status, the near-bend samples join an
+    adjacent stretch within R (+ one sample spacing) of its last exact / judged sample or form a
+    non-exact stretch; a non-exact stretch is cut at the partner's run boundaries, and mutually
+    facing non-exact pieces belong to one link group (the piece spanning exactly its own run
+    decides a straddled threshold). A straight run facing a partner that is parallel over part
+    of its length keys that part exact and the rest at its own mean (the review's one-sided
+    taper: formerly two IsolatedEdges or, finely chorded, one exact strip at the lead's width).
   - **Legacy pair construction** (`surfaceresponseoperator.cpp` `VerifyParallelOverlap`): the
     parallel-overlap verification tolerance follows the parallel class (cosine deficit 1e-8 =
     sqrt(2e-8) rad times the projected lengths) instead of 1e-10 relative; DS-SCT-001 aborted on

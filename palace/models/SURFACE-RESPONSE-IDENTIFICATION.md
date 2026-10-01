@@ -206,10 +206,17 @@ smaller endpoint.
    = 0.05 R, the deviation from straight the noise rule itself cannot resolve: a finely
    chorded curve) or where one of the chord's end joints is a REAL joint (not noise under
    the geometric rule on its shorter piece: the design chord of a coarsely discretised
-   curve, which decision 122 reads as the curve whatever its sagitta). A chord deviating
+   curve, which decision 122 reads as the curve whatever its sagitta). ONE real end joint
+   suffices (not both; recorded choice, 2026-10-02): a concyclic long chord between one real
+   joint and one noise joint stays an arc chord — a straight lead leaving a circle is tangent
+   to it, not a chord, so the configuration is geometrically unlikely, and the choice is the
+   one consistent with decision 122's coarse-polyline exception. A chord deviating
    from the circle by more than the resolution between two NOISE joints is a straight
    edge and its range is no arc (`ChordsResolved`, applied to the tangent circle, the
-   least-squares bend and the closed circle alike): a 5,500 um straight trace edge whose
+   least-squares bend and the closed circle alike; the python audit mirror `perimeter.
+   arc_groups` carries the same clause since 2026-10-02 — without it the audit's A1 vertex
+   census still fitted the false bends and, at the DS-CTX-003 loop ends, read a 2-chord
+   1.0 um fillet into one, 8,486 vs the classifier's 8,490 rounded corners): a 5,500 um straight trace edge whose
    ends carry two 1.2 / 2.4 deg joints on 12 um pieces — the first chords of the bends the
    run enters, exactly concyclic by mirror symmetry — read as a 132 mm bend bowing 15 R off
    the metal, and the arc-aware cluster geometry found that bow within 2R of the parallel
@@ -760,7 +767,13 @@ smaller endpoint.
    stretches, one per 2e-3 R of separation change (the parameter-tolerance semantics; the
    stage log counts the sub-pieces cut into stretches and the exact stretches per chip); an
    exact stretch absorbs up to R of a slowly changing partner (a mis-keying of at most the
-   taper's slope x R: 0.006 R in the reproducer). Recorded census (asked for with the rule):
+   taper's slope x R: 0.006 R in the reproducer); the translational mortar-strip unit test's
+   pure-shear "bend" shape (both strip sides sheared by 8 deg at mid-length) reads TWO exact
+   strips, 0.25 and the perpendicular width 0.25 cos(8 deg) 1 % apart (two exact groups under
+   decision 85(1)'s 1e-3 R, since 2026-10-01; formerly one chord-chained strip at a mean), and
+   since the partner-run cut the clamped-foot region of the sheared side facing the straight
+   partner across the kink is its own portion of the 0.25 strip (both its Gauss patches on a
+   tilted frame; formerly one). Recorded census (asked for with the rule):
    the stage log lists the sub-R non-exact stretches that sit between two exact stretches of
    the same mean (fragmentation), with their sites. Considered alternative, not taken because
    it changes the judging globally: judging the near-bend samples too at the tolerance
