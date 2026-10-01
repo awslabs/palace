@@ -55,27 +55,6 @@ void AppendRule(RouteKey &key, const std::vector<mfem::IntegrationPoint> &points
   }
 }
 
-// The temporary references are released after libCEED takes its own operator references.
-struct CeedAssemblyScratch
-{
-  Ceed ceed;
-  std::vector<CeedVector> vecs;
-  std::vector<CeedElemRestriction> restrictions;
-
-  explicit CeedAssemblyScratch(Ceed ceed_) : ceed(ceed_) {}
-  ~CeedAssemblyScratch()
-  {
-    for (auto &vec : vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&vec));
-    }
-    for (auto &restriction : restrictions)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&restriction));
-    }
-  }
-};
-
 int SideAttribute(const mfem::ParMesh &pmesh, const FaceSamplingPlan::Entry &entry,
                   int side)
 {
@@ -240,7 +219,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
     auto AssembleRoute =
         [&](bool batched_complex, std::vector<fem::CeedGroupOperator> &groups)
     {
-      CeedAssemblyScratch scratch(ceed);
+      ceed::CeedAssemblyScratch scratch(ceed);
       std::vector<ceed::CeedFunctionalFieldInput> inputs;
       std::vector<std::pair<std::string, int>> field_sources;
       auto AddFixed = [&](const std::string &name, Vector &data, int num_comp,
@@ -256,7 +235,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
         ceed::InitCeedVector(data, ceed, &vector);
         inputs.push_back({name, vector, restriction, nullptr, ceed::EvalMode::None});
         scratch.vecs.push_back(vector);
-        scratch.restrictions.push_back(restriction);
+        scratch.restrs.push_back(restriction);
       };
       AddFixed("grad_x_f", face_jac, 6, nq, face_jac.Size(), geom_offsets);
       AddFixed("attr", attrs, 1, nq, attrs.Size(), attr_offsets);
@@ -275,7 +254,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
         inputs.push_back({name, vector, restriction, nullptr, ceed::EvalMode::None});
         field_sources.emplace_back(name, source);
         scratch.vecs.push_back(vector);
-        scratch.restrictions.push_back(restriction);
+        scratch.restrs.push_back(restriction);
       };
       if (batched_complex)
       {
@@ -298,7 +277,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
                     ceed, static_cast<CeedInt>(num_elem), nq, output_comp, trace_points,
                     static_cast<CeedSize>(output_comp) * trace_points, CEED_MEM_HOST,
                     CEED_COPY_VALUES, out_offsets.data(), &out_restriction));
-      scratch.restrictions.push_back(out_restriction);
+      scratch.restrs.push_back(out_restriction);
 
       std::vector<CeedIntScalar> ctx(9);
       ctx[0].second = route.normal_sign;

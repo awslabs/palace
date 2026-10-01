@@ -9,6 +9,7 @@
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/libceed/basis.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/integrator.hpp"
@@ -27,41 +28,6 @@ PalacePragmaDiagnosticPop
 
 namespace palace
 {
-
-namespace
-{
-
-// Holds libCEED object references created during operator assembly for destruction once
-// the assembled operator owns them.
-struct CeedAssemblyScratch
-{
-  Ceed ceed;
-  std::vector<CeedVector> vecs;
-  std::vector<CeedElemRestriction> restrs;
-  std::vector<CeedBasis> bases;
-
-  CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
-  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
-  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
-
-  ~CeedAssemblyScratch()
-  {
-    for (auto &v : vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
-    }
-    for (auto &r : restrs)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
-    }
-    for (auto &b : bases)
-    {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
-    }
-  }
-};
-
-}  // namespace
 
 DomainPointFieldEvaluator::DomainPointFieldEvaluator(
     Kind kind, const Mesh &mesh, const MaterialOperator &mat_op,
@@ -176,7 +142,7 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
   {
     const mfem::Geometry::Type geom = geom_indices.first;
     const auto &indices = geom_indices.second;
-    CeedAssemblyScratch scratch(ceed);
+    ceed::CeedAssemblyScratch scratch(ceed);
 
     ceed::CeedQFunctionInfo info;
     switch (kind)

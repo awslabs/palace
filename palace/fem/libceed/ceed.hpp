@@ -65,6 +65,36 @@ CeedElemTopology GetCeedTopology(mfem::Geometry::Type geom);
 // Convert a libCEED geometry type to an MFEM one.
 mfem::Geometry::Type GetMfemTopology(CeedElemTopology geom);
 
+// Holds libCEED object references created during operator assembly for destruction once
+// the assembled operator owns them.
+struct CeedAssemblyScratch
+{
+  Ceed ceed;
+  std::vector<CeedVector> vecs;
+  std::vector<CeedElemRestriction> restrs;
+  std::vector<CeedBasis> bases;
+
+  explicit CeedAssemblyScratch(Ceed ceed_) : ceed(ceed_) {}
+  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
+  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
+
+  ~CeedAssemblyScratch()
+  {
+    for (auto &v : vecs)
+    {
+      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
+    }
+    for (auto &r : restrs)
+    {
+      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
+    }
+    for (auto &b : bases)
+    {
+      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
+    }
+  }
+};
+
 namespace internal
 {
 
