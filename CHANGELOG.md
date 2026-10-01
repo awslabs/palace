@@ -83,6 +83,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
     reactions) in a single sweep over the port elements.
     [PR 909](https://github.com/awslabs/palace/pull/909).
+  - CSV output tables are now appended row by row instead of rewritten at every measurement,
+    so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
+    [PR 942](https://github.com/awslabs/palace/pull/942).
 
 #### Build system
 
