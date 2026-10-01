@@ -4,6 +4,7 @@
 #include <cmath>
 #include <complex>
 #include <functional>
+#include <limits>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -13,6 +14,7 @@
 #include "fem/mesh.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
+#include "models/modeoperatorassembly.hpp"
 #include "models/surfaceconductivityoperator.hpp"
 #include "models/surfaceimpedanceoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
@@ -45,6 +47,8 @@ struct ModeResult
   std::size_t first_target_basis_size = 0;
   double reduced_tol = 0.0;
   int complex_exact_converged = -1;
+  // Shift-and-invert target of the in-band solve that produced kn.
+  double kn_target = 0.0;
 };
 
 ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
@@ -125,9 +129,11 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
                               iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
                               nd_fespace.GetComm());
 
+  auto target_at = [&](std::complex<double> w)
+  { return w.real() * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon()); };
   auto solve_at = [&](std::complex<double> w)
   {
-    const double kn_target = w.real() * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon());
+    const double kn_target = target_at(w);
     const double sigma = -kn_target * kn_target;
     return std::make_pair(mode_solver.Solve(w, sigma), sigma);
   };
@@ -145,6 +151,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   auto result = solve_at(omega).first;
   ModeResult out;
   out.num_converged = result.num_converged;
+  out.kn_target = target_at(omega);
   for (int i = 0; i < result.num_converged; i++)
   {
     // Capture the first in-band evaluation, which is the reduced result under test.
@@ -364,6 +371,97 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
   CHECK(cond_reduced.reduced_stats.worst_residual <= cond_reduced.reduced_tol);
   CHECK_THAT(cond_reduced.kn[0].real(), WithinRel(cond_result.kn[0].real(), 1.0e-6));
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
+}
+
+TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
+{
+  using mode_assembly::TargetDistance;
+
+  // Port mode candidates of examples/cpw/cpw_wave_uniform.json at 0.1 GHz after a sweep to
+  // 50 GHz (nondimensional): the CPW mode and a strongly evanescent mode of the lossy
+  // cross-section (absorbing boundary) whose real part lies closer to the target. Ranking
+  // by |Re{kn} - kn_target| selected the evanescent mode (awslabs/palace#996).
+  const double kn_target = 2.981703e-2;
+  const std::complex<double> kn_cpw(1.988221e-2, -5.136255e-7);
+  const std::complex<double> kn_evanescent(3.341085e-2, 1.574046e1);
+  REQUIRE(std::abs(kn_evanescent.real() - kn_target) < std::abs(kn_cpw.real() - kn_target));
+  CHECK(TargetDistance(kn_cpw, kn_target) < TargetDistance(kn_evanescent, kn_target));
+
+  // Lossless propagating modes below the target rank by descending kn, ahead of all
+  // lossless evanescent modes, which rank by ascending attenuation.
+  const double kt = 1.0;
+  CHECK(TargetDistance(0.9 * kt, kt) < TargetDistance(0.5 * kt, kt));
+  CHECK(TargetDistance(0.5 * kt, kt) < TargetDistance(1.0e-3 * kt, kt));
+  CHECK(TargetDistance(1.0e-3 * kt, kt) <
+        TargetDistance(std::complex<double>(0.0, 1.0e-3 * kt), kt));
+  CHECK(TargetDistance(std::complex<double>(0.0, 1.0e-3 * kt), kt) <
+        TargetDistance(std::complex<double>(0.0, 10.0 * kt), kt));
+
+  // Invariant under conjugation: a near-cutoff mode may land on either side of the branch
+  // cut of the principal square root.
+  for (const auto kn : {kn_cpw, kn_evanescent, std::complex<double>(0.3, -0.7)})
+  {
+    CHECK(TargetDistance(std::conj(kn), kn_target) == TargetDistance(kn, kn_target));
+  }
+
+  // Non-finite values rank last, after any finite candidate.
+  const double inf = std::numeric_limits<double>::infinity();
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  CHECK(TargetDistance(std::complex<double>(nan, 0.0), kt) == inf);
+  CHECK(TargetDistance(std::complex<double>(0.0, nan), kt) == inf);
+  CHECK(TargetDistance(std::complex<double>(nan, inf), kt) == inf);
+  CHECK(TargetDistance(std::complex<double>(inf, 0.0), kt) == inf);
+  CHECK(TargetDistance(kn_evanescent, kt) < inf);
+}
+
+TEST_CASE("ModeEigenSolver ranks lossy modes by complex target distance",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A resistive top wall gives the modes attenuation comparable to the spacing of their
+  // phase constants, so ranking by |Re{kn} - kn_target| and by |kn - kn_target| disagree.
+  // Exact and reduced solves must both return the modes in ascending complex distance.
+  auto configure_resistive_wall = [](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 2, 4};
+    auto &imp = iodata.boundaries.impedance.emplace_back();
+    imp.attributes = {3};
+    imp.Rs = 377.0;
+  };
+  constexpr int num_modes = 3;
+  auto exact = SolveRectangularModes(1000.0, 500.0, 200.0, 4.0, 2, num_modes,
+                                     configure_resistive_wall);
+  REQUIRE(exact.num_converged >= num_modes);
+  const double kn_target = exact.kn_target;
+  for (int i = 1; i < exact.num_converged; i++)
+  {
+    CAPTURE(i, exact.kn[i - 1], exact.kn[i]);
+    CHECK(mode_assembly::TargetDistance(exact.kn[i - 1], kn_target) <=
+          mode_assembly::TargetDistance(exact.kn[i], kn_target));
+  }
+
+  // Guard the premise: some returned mode has a real part closer to the target than the
+  // first-ranked mode, so a real-part ranking would select differently.
+  bool real_part_ranking_differs = false;
+  for (int i = 1; i < exact.num_converged; i++)
+  {
+    real_part_ranking_differs =
+        real_part_ranking_differs ||
+        std::abs(exact.kn[i].real() - kn_target) < std::abs(exact.kn[0].real() - kn_target);
+  }
+  REQUIRE(real_part_ranking_differs);
+
+  // The reduced wave-port solve, trained with all ranked modes around the target, must
+  // select the same modes in the same order.
+  auto reduced = SolveRectangularModes(1000.0, 500.0, 200.0, 4.0, 2, num_modes,
+                                       configure_resistive_wall, true, 1, 16,
+                                       {0.95, 0.98, 1.02, 1.05}, 1.0e-2);
+  REQUIRE(reduced.reduced_stats.reduced_solves == 1);
+  REQUIRE(reduced.kn.size() == num_modes);
+  for (int i = 0; i < num_modes; i++)
+  {
+    CAPTURE(i, reduced.kn[i], exact.kn[i]);
+    CHECK(std::abs(reduced.kn[i] - exact.kn[i]) <= 1.0e-5 * std::abs(exact.kn[i]));
+  }
 }
 
 }  // namespace palace

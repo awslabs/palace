@@ -68,6 +68,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed numeric wave-port and boundary-mode mode ordering on lossy cross-sections (e.g. with
+    absorbing or finite-conductivity boundaries) that could select a strongly evanescent
+    mode instead of the intended propagating mode. Exact and reduced (adaptive sweep) mode
+    solves now rank modes by the complex distance of the propagation constant from the target.
+    [PR 1019](https://github.com/awslabs/palace/pull/1019).
 
 #### Performance Improvements
 
