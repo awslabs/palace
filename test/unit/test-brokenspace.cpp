@@ -502,14 +502,15 @@ struct EstimatorSetup
   {
   }
 
-  // Element-wise squared estimates for the gradient and curl flux estimators.
+  // Element-wise squared estimates for the gradient and curl flux estimators (with Jacobi
+  // or algebraic multigrid preconditioning for the flux recovery).
   std::pair<Vector, Vector> Estimate(void (*E)(const mfem::Vector &, mfem::Vector &),
                                      void (*B)(const mfem::Vector &, mfem::Vector &),
-                                     const std::vector<int> &crack_attr_list)
+                                     const std::vector<int> &crack_attr_list,
+                                     bool use_mg = false)
   {
     constexpr double tol = 1.0e-14;
     constexpr int max_it = 10000, print = 0;
-    constexpr bool use_mg = false;
     auto &nd_fespace = nd_fespaces.GetFinestFESpace();
     auto &rt_fespace = rt_fespaces.GetFinestFESpace();
     GradFluxErrorEstimator<Vector> grad(mat_op, nd_fespace, rt_fespaces, tol, max_it, print,
@@ -880,11 +881,13 @@ TEST_CASE("Broken space prolongation", "[brokenspace][Serial][Parallel][GPU]")
 
     // The vectors are used on the device. The results must not depend on where the output
     // vectors are valid before the products (only on the host, or only on the device with
-    // stale contents), as the original blocks of the broken vectors are accessed through
-    // aliases.
+    // stale contents).
     const Operator &P = *fespace.GetProlongationMatrix();
-    const auto *bP = dynamic_cast<const BrokenProlongation *>(&P);
+    const auto *bP = dynamic_cast<const mfem::HypreParMatrix *>(&P);
     REQUIRE(bP);
+    CHECK(bP == fespace.Dof_TrueDof_Matrix());
+    CHECK(bP->GetGlobalNumRows() == fespace.GlobalVSize());
+    CHECK(bP->GetGlobalNumCols() == fespace.GlobalTrueVSize());
     if (nonconforming)
     {
       CHECK(dynamic_cast<const mfem::HypreParMatrix *>(
@@ -1017,6 +1020,12 @@ TEST_CASE("Broken space error estimators",
     CompareEstimates(comm, curl_broken, curl_cut, "curl flux (broken vs. cut)");
     CompareEstimates(comm, grad_cut, grad_cut_ref, "gradient flux (cut)");
     CompareEstimates(comm, curl_cut, curl_cut_ref, "curl flux (cut)");
+
+    // The same with algebraic multigrid preconditioning, on the assembled operators.
+    const auto [grad_amg, curl_amg] =
+        uncut_setup.Estimate(SmoothE, SmoothB, attr_list, true);
+    CompareEstimates(comm, grad_amg, grad_broken, "gradient flux (AMG vs. Jacobi)");
+    CompareEstimates(comm, curl_amg, curl_broken, "curl flux (AMG vs. Jacobi)");
 
     // Without the broken recovery the estimates differ.
     const auto [grad_cont, curl_cont] =
@@ -1163,6 +1172,12 @@ TEST_CASE("Broken space error estimators (nonconforming)",
     };
     Compare(grad_broken, grad_cut, "gradient flux (broken vs. cut)");
     Compare(curl_broken, curl_cut, "curl flux (broken vs. cut)");
+
+    // The same with algebraic multigrid preconditioning, on the assembled operators.
+    const auto [grad_amg, curl_amg] =
+        uncut_setup.Estimate(SmoothE, SmoothB, attr_list, true);
+    CompareEstimates(comm, grad_amg, grad_broken, "gradient flux (AMG vs. Jacobi)");
+    CompareEstimates(comm, curl_amg, curl_broken, "curl flux (AMG vs. Jacobi)");
   }
 
   SECTION("Exact recovery of a jump with hanging entities across the interior boundary")
