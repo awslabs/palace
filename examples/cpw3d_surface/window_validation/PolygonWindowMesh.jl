@@ -823,11 +823,24 @@ end
 
 include("structured_band.jl")
 
+# The region mesh size (Gmsh `Mesh.MeshSizeMax`); also the largest plan size the graded sweep's
+# interior stacks are thinned to.
+const REGION_MESH_SIZE_MAX_UM = 30.0
+
+# A metal chain of the own band for the graded sweep: its columns as plan indices.
+struct GradedChain
+    closed::Bool
+    class::Int
+    plan_rows::Vector{Vector{Int}} # per column: plan index of the base, then of rows 1..n
+end
+
 struct PlanMesh
     xy::Vector{Point2}
     triangles::Vector{NTuple{3, Int}}
     triangle_class::Vector{Int} # index into classes
     classes::Vector{PartitionClass}
+    band_triangle::BitVector # a triangle of the own band (false: region / Gmsh mode)
+    chains::Vector{GradedChain} # the own band's chains (empty in Gmsh mode)
 end
 
 function mesh_plan(
@@ -901,7 +914,7 @@ function mesh_plan(
     gmsh.option.set_number("Mesh.MeshSizeFromCurvature", 0)
     gmsh.option.set_number("Mesh.MeshSizeExtendFromBoundary", 0)
     gmsh.option.set_number("Mesh.MeshSizeMin", radial_um)
-    gmsh.option.set_number("Mesh.MeshSizeMax", 30.0)
+    gmsh.option.set_number("Mesh.MeshSizeMax", REGION_MESH_SIZE_MAX_UM)
     gmsh.option.set_number("Mesh.BoundaryLayerFanElements", 7)
     gmsh.option.set_number("Mesh.Algorithm", 6)
     verbose && println(
@@ -923,6 +936,8 @@ function mesh_plan(
     )
 
     raw_triangles = Tuple{NTuple{3, Point2}, Int}[]
+    band_flags = BitVector()
+    raw_chains = Tuple{Bool, Int, Vector{BandColumn}}[]
     boundary_layer_ends = 0
     partition_rows = fill(radial_layers, length(surfaces))
     band_record = Dict{String, Any}("mode" => string(band_mode))
@@ -950,8 +965,11 @@ function mesh_plan(
                 raw_triangles,
                 statistics,
                 plan_model,
-                max(2.0 * heights[end], tangential_um)
+                max(2.0 * heights[end], tangential_um),
+                raw_chains
             )
+            append!(band_flags, trues(triangles))
+            append!(band_flags, falses(length(raw_triangles) - length(band_flags)))
             partition_rows[index] = minimum_rows
             band_triangles += triangles
             verbose && println(
@@ -1147,6 +1165,8 @@ function mesh_plan(
         end
     end # band_mode
     isempty(raw_triangles) && error("No plan triangles extracted")
+    band_mode == :own || append!(band_flags, falses(length(raw_triangles)))
+    length(band_flags) == length(raw_triangles) || error("Band flags out of step")
     band_cap_record["applied_rows_by_partition"] = partition_rows
     band_cap_record["applied_minimum_rows"] = minimum(partition_rows)
     band_record["applied_rows_by_partition"] = partition_rows
@@ -1178,7 +1198,24 @@ function mesh_plan(
         )
         push!(triangle_class, class)
     end
-    return PlanMesh(xy, triangles, triangle_class, class_list),
+    # The own band's chains as plan indices (every column node is a band triangle corner).
+    function welded_index(p::Point2)
+        key = (round(Int64, p[1] / merge_tolerance), round(Int64, p[2] / merge_tolerance))
+        index = get(coordinate_index, key, 0)
+        index > 0 || error("Band column node $p is not a plan node")
+        return index
+    end
+    chains = [
+        GradedChain(
+            closed,
+            class,
+            [
+                [welded_index(column.base); welded_index.(column.nodes)] for
+                column in columns
+            ]
+        ) for (closed, class, columns) in raw_chains
+    ]
+    return PlanMesh(xy, triangles, triangle_class, class_list, band_flags, chains),
     radial_layers,
     radial_thickness,
     boundary_layer_ends,
@@ -1332,6 +1369,8 @@ end
 
 # ---------------------------------------------------------------------------------------------
 
+include("graded_sweep.jl")
+
 signed_volume(p1, p2, p3, p4) =
     (
         (p2[1] - p1[1]) *
@@ -1352,20 +1391,24 @@ end
     mesh_polygon_window(spec, radial_um, tangential_um, output; verbose=true,
                         plan_only=false, band_mode=:own, fan_turn_angle_deg=90.0,
                         exact_band_thickness=false, cross_plane_snap_um=NaN,
-                        band_cap=:none) -> manifest
+                        band_cap=:none, sweep=:tensor, alpha=1.0, beta=3.0) -> manifest
 
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
 its JSON manifest next to it. `band_mode=:own` (default) builds the structured boundary-layer
 band itself with the per-segment, per-side band cap (structured_band.jl); `:gmsh` uses Gmsh's
 BoundaryLayer field as the recorded transmon generator did. `fan_turn_angle_deg`: outward
 corners turning more than this (by more than `FAN_TURN_TOLERANCE_DEG`) get a fan of columns,
-the others the scaled bisector column (90: the recorded corner treatment). Gmsh mode only: `exact_band_thickness=true` passes the exact
-geometric sum as the boundary-layer Thickness (the recorded transmon generator's formula; see
-the header); `band_cap` applies the local band cap rule (`:none`: the rule is only recorded;
-`:partition`: one band per partition, the minimum over its curves; `:curve`: one BoundaryLayer
-field per row count — Gmsh fails on many of its transitions). `cross_plane_snap_um` overrides
-the cross-plane snap distance 0.05 x MatchingRadius of a two-plane set (see
-`reconcile_planes`).
+the others the scaled bisector column (90: the recorded corner treatment). `sweep=:tensor`
+(default) sweeps every plan triangle through every z level (the recorded family);
+`sweep=:graded` (own band only) sweeps the graded (n, z) cross-section of graded_sweep.jl along
+the band columns with `alpha` (row k's z spacing >= alpha x its width) and `beta` (row k ends
+beta h_k beyond the metal), dimensionless. Gmsh mode only: `exact_band_thickness=true` passes
+the exact geometric sum as the boundary-layer Thickness (the recorded transmon generator's
+formula; see the header); `band_cap` applies the local band cap rule (`:none`: the rule is only
+recorded; `:partition`: one band per partition, the minimum over its curves; `:curve`: one
+BoundaryLayer field per row count — Gmsh fails on many of its transitions).
+`cross_plane_snap_um` overrides the cross-plane snap distance 0.05 x MatchingRadius of a
+two-plane set (see `reconcile_planes`).
 """
 function mesh_polygon_window(
     spec::PolygonSet,
@@ -1378,9 +1421,17 @@ function mesh_polygon_window(
     cross_plane_snap_um::Float64=NaN,
     band_cap::Symbol=:none,
     band_mode::Symbol=:own,
-    fan_turn_angle_deg::Float64=DEFAULT_FAN_TURN_ANGLE_DEG
+    fan_turn_angle_deg::Float64=DEFAULT_FAN_TURN_ANGLE_DEG,
+    sweep::Symbol=:tensor,
+    alpha::Float64=DEFAULT_GRADED_ALPHA,
+    beta::Float64=DEFAULT_GRADED_BETA
 )
     output = abspath(output)
+    sweep in (:tensor, :graded) || error("sweep must be :tensor or :graded")
+    sweep == :tensor ||
+        band_mode == :own ||
+        error("The graded sweep needs the own structured band (band_mode own)")
+    radial_growth = 2.0
     snap_delta, snap_rule = cross_plane_snap_distance(spec, cross_plane_snap_um)
     spec, reconciliation = reconcile_planes(spec, snap_delta)
     reconciliation["rule"] = snap_rule
@@ -1447,7 +1498,7 @@ function mesh_polygon_window(
         "polygon_set" => spec.name,
         "radial_target_um" => radial_um,
         "tangential_target_um" => tangential_um,
-        "radial_growth" => 2.0,
+        "radial_growth" => radial_growth,
         "radial_layers" => radial_layers,
         "radial_band_thickness_um" => radial_thickness,
         "radial_band_thickness_mode" =>
@@ -1482,6 +1533,7 @@ function mesh_polygon_window(
         "z_bounds_um" => Dict("bottom" => stack.z_bottom, "top" => stack.z_top),
         "substrate_backsides_z_um" => stack.backsides,
         "z_levels" => zs,
+        "sweep" => string(sweep),
         "attributes" => Dict(
             name => Dict("dimension" => d, "attribute" => a) for
             (d, a, name) in physical_names(spec)
@@ -1489,13 +1541,10 @@ function mesh_polygon_window(
     )
     plan_only && return manifest
 
-    # Sweep: every plan triangle x every z interval is a prism of one material (or excluded).
+    # Nodes: every plan node at every z level, (level - 1) x plan nodes + plan index; the
+    # unused ones (inside the metal, thinned away by the graded sweep) are compacted below.
     n_plan = length(plan.xy)
     n_levels = length(zs)
-    material_table = [
-        material(spec, class, 0.5 * (zs[i] + zs[i + 1])) for
-        class in plan.classes, i = 1:(n_levels - 1)
-    ]
     nodes = Vector{NTuple{3, Float64}}(undef, n_plan * n_levels)
     for level = 1:n_levels, index = 1:n_plan
         nodes[(level - 1) * n_plan + index] =
@@ -1503,40 +1552,66 @@ function mesh_polygon_window(
     end
     tetrahedra = NTuple{4, Int32}[]
     tetrahedron_attribute = Int8[]
-    sizehint!(tetrahedra, length(plan.triangles) * (n_levels - 1) * 3)
-    function push_prism!(a1, a2, a3, b1, b2, b3, attribute)
-        # Conforming split: the diagonal choice on every quad side follows global node order.
-        if a2 < a1 && a2 <= a3
-            a1, a2, a3 = a2, a3, a1
-            b1, b2, b3 = b2, b3, b1
-        elseif a3 < a1 && a3 <= a2
-            a1, a2, a3 = a3, a1, a2
-            b1, b2, b3 = b3, b1, b2
-        end
-        if a2 < a3
-            push!(tetrahedra, (a1, a2, a3, b3), (a1, a2, b3, b2), (a1, b2, b3, b1))
-        else
-            push!(tetrahedra, (a1, a2, a3, b2), (a1, a3, b3, b2), (a1, b2, b3, b1))
-        end
-        push!(tetrahedron_attribute, attribute, attribute, attribute)
-        return nothing
-    end
-    for (index, t) in enumerate(plan.triangles)
-        class = plan.triangle_class[index]
-        for interval = 1:(n_levels - 1)
-            attribute = material_table[class, interval]
-            attribute == 0 && continue
-            lower = Int32((interval - 1) * n_plan)
-            upper = Int32(interval * n_plan)
-            push_prism!(
-                lower + t[1],
-                lower + t[2],
-                lower + t[3],
-                upper + t[1],
-                upper + t[2],
-                upper + t[3],
-                attribute
+    tetrahedron_class = Int32[] # partition class per tetrahedron (horizontal face tags)
+    if sweep == :graded
+        tetrahedra, tetrahedron_attribute, tetrahedron_class, graded_record =
+            graded_sweep_elements(
+                spec,
+                plan,
+                topology,
+                stack,
+                radial_um,
+                radial_growth,
+                radial_layers,
+                alpha,
+                beta;
+                verbose=verbose
             )
+        manifest["graded_sweep"] = graded_record
+    else
+        # Tensor sweep: every plan triangle x every z interval is a prism of one material (or
+        # excluded).
+        material_table = [
+            material(spec, class, 0.5 * (zs[i] + zs[i + 1])) for
+            class in plan.classes, i = 1:(n_levels - 1)
+        ]
+        sizehint!(tetrahedra, length(plan.triangles) * (n_levels - 1) * 3)
+        function push_prism!(a1, a2, a3, b1, b2, b3, attribute, class)
+            # Conforming split: the diagonal choice on every quad side follows global node order.
+            if a2 < a1 && a2 <= a3
+                a1, a2, a3 = a2, a3, a1
+                b1, b2, b3 = b2, b3, b1
+            elseif a3 < a1 && a3 <= a2
+                a1, a2, a3 = a3, a1, a2
+                b1, b2, b3 = b3, b1, b2
+            end
+            if a2 < a3
+                push!(tetrahedra, (a1, a2, a3, b3), (a1, a2, b3, b2), (a1, b2, b3, b1))
+            else
+                push!(tetrahedra, (a1, a2, a3, b2), (a1, a3, b3, b2), (a1, b2, b3, b1))
+            end
+            push!(tetrahedron_attribute, attribute, attribute, attribute)
+            push!(tetrahedron_class, class, class, class)
+            return nothing
+        end
+        for (index, t) in enumerate(plan.triangles)
+            class = plan.triangle_class[index]
+            for interval = 1:(n_levels - 1)
+                attribute = material_table[class, interval]
+                attribute == 0 && continue
+                lower = Int32((interval - 1) * n_plan)
+                upper = Int32(interval * n_plan)
+                push_prism!(
+                    lower + t[1],
+                    lower + t[2],
+                    lower + t[3],
+                    upper + t[1],
+                    upper + t[2],
+                    upper + t[3],
+                    attribute,
+                    Int32(class)
+                )
+            end
         end
     end
     for index in eachindex(tetrahedra)
@@ -1550,8 +1625,8 @@ function mesh_polygon_window(
     end
     verbose && println("z levels: ", n_levels, ", tetrahedra: ", length(tetrahedra))
 
-    # Faces: count of owning tetrahedra and the sum of their attributes.
-    face_data = Dict{NTuple{3, Int32}, Tuple{Int8, Int8}}()
+    # Faces: count of owning tetrahedra, the sum of their attributes and the first owner.
+    face_data = Dict{NTuple{3, Int32}, Tuple{Int8, Int8, Int32}}()
     sizehint!(face_data, 2 * length(tetrahedra) + length(plan.triangles) * 4)
     for (index, t) in enumerate(tetrahedra)
         attribute = tetrahedron_attribute[index]
@@ -1561,8 +1636,9 @@ function mesh_polygon_window(
             a > b && ((a, b) = (b, a))
             b > c && ((b, c) = (c, b))
             a > b && ((a, b) = (b, a))
-            previous = get(face_data, (a, b, c), (Int8(0), Int8(0)))
-            face_data[(a, b, c)] = (previous[1] + Int8(1), previous[2] + attribute)
+            previous = get(face_data, (a, b, c), (Int8(0), Int8(0), Int32(index)))
+            face_data[(a, b, c)] =
+                (previous[1] + Int8(1), previous[2] + attribute, previous[3])
         end
     end
 
@@ -1573,10 +1649,6 @@ function mesh_polygon_window(
         plane_by_z[plane.surface_z + plane.facing * spec.metal_thickness] = (k, :air)
     end
     level_of_z = Dict(z => i for (i, z) in enumerate(zs))
-    plan_face_class = Dict{NTuple{3, Int}, Int}()
-    for (index, t) in enumerate(plan.triangles)
-        plan_face_class[Tuple(sort([t[1], t[2], t[3]]))] = plan.triangle_class[index]
-    end
     base_index(node) = mod(Int(node) - 1, n_plan) + 1
     level_index(node) = (Int(node) - 1) ÷ n_plan + 1
     lower_metal_top =
@@ -1586,7 +1658,7 @@ function mesh_polygon_window(
         spec.planes[2].surface_z + spec.planes[2].facing * spec.metal_thickness : NaN
 
     surface_elements = Tuple{Int, NTuple{3, Int32}}[]
-    for (face, (count, attribute_sum)) in face_data
+    for (face, (count, attribute_sum, owner)) in face_data
         if count == 1
             levels = (level_index(face[1]), level_index(face[2]), level_index(face[3]))
             coordinates = (nodes[face[1]], nodes[face[2]], nodes[face[3]])
@@ -1598,14 +1670,8 @@ function mesh_polygon_window(
                 else
                     haskey(plane_by_z, z) || error("Unclassified horizontal face at z=$z")
                     k, side = plane_by_z[z]
-                    class_index = get(
-                        plan_face_class,
-                        Tuple(sort(unique(base_index.(collect(face))))),
-                        0
-                    )
-                    class_index > 0 ||
-                        error("Horizontal face is not a plan triangle at z=$z")
-                    class = plan.classes[class_index]
+                    # The owning tetrahedron's partition (the metal face of its plan class).
+                    class = plan.classes[tetrahedron_class[owner]]
                     label = class.conductors[k]
                     isempty(label) &&
                         error("Horizontal metal face without conductor at z=$z")
@@ -1613,14 +1679,16 @@ function mesh_polygon_window(
                 end
             else
                 plan_nodes = unique(base_index.(collect(face)))
-                length(plan_nodes) == 2 || error("Non-vertical boundary face")
-                edge = Tuple(sort(plan_nodes))
                 if all(abs(p[1] - box[1]) <= 1.0e-6 for p in coordinates) ||
                    all(abs(p[1] - box[2]) <= 1.0e-6 for p in coordinates) ||
                    all(abs(p[2] - box[3]) <= 1.0e-6 for p in coordinates) ||
                    all(abs(p[2] - box[4]) <= 1.0e-6 for p in coordinates)
+                    # A box wall face (incl. the graded sweep's cross-section triangles at a
+                    # wall-end column, which span up to three plan nodes and two levels).
                     attribute = 3
                 else
+                    length(plan_nodes) == 2 || error("Non-vertical boundary face")
+                    edge = Tuple(sort(plan_nodes))
                     zmid = sum(p[3] for p in coordinates) / 3
                     label = ""
                     for (k, plane) in enumerate(spec.planes)

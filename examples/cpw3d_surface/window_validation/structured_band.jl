@@ -937,12 +937,13 @@ end
 
 """
     mesh_partition_band(partition, curves, nodes_by_curve, heights, radial_um, fan_turn,
-                        box, class, raw_triangles, statistics, plan_model, collision_cell_um)
-        -> (band area, region area, minimum rows, band triangles)
+                        box, class, raw_triangles, statistics, plan_model, collision_cell_um,
+                        chains_out) -> (band area, region area, minimum rows, band triangles)
 
 Build the structured band of one partition (its own elements), refuse collisions, mesh the
 remaining region with Gmsh, append every triangle (band and region) to `raw_triangles` with
-the partition's class, and check band + region = the OCC area.
+the partition's class, record every chain's columns in `chains_out` (closed flag, class,
+columns; the graded sweep's input), and check band + region = the OCC area.
 """
 function mesh_partition_band(
     partition::PartitionGeometry,
@@ -956,7 +957,8 @@ function mesh_partition_band(
     raw_triangles::Vector{Tuple{NTuple{3, Point2}, Int}},
     statistics::BandStatistics,
     plan_model::String,
-    collision_cell_um::Float64
+    collision_cell_um::Float64,
+    chains_out::Vector{Tuple{Bool, Int, Vector{BandColumn}}}
 )
     where = "partition $(partition.surface)"
     band = NTuple{3, Point2}[]
@@ -983,6 +985,7 @@ function mesh_partition_band(
             chain.closed &&
                 push_band_elements!(band, columns[end], columns[1], statistics, where)
             push!(tops, [column.nodes[end] for column in columns])
+            push!(chains_out, (chain.closed, class, columns))
         end
         push!(loops_edges, region_loop_edges(loop, chains, tops, curves))
     end

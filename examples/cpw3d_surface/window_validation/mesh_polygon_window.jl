@@ -7,8 +7,13 @@
 #   julia --project=. mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUTPUT.msh2
 #       [--plan-only] [--band-mode own|gmsh] [--fan-turn-angle-deg A]
 #       [--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none|partition|curve]
+#       [--sweep tensor|graded] [--alpha A] [--beta B]
 #
-# Writes OUTPUT.msh2 and OUTPUT.json (the manifest). `--plan-only` builds and checks the plan
+# Writes OUTPUT.msh2 and OUTPUT.json (the manifest). `--sweep tensor` (default) sweeps every
+# plan triangle through every z level (the recorded reference family); `--sweep graded` (own
+# band only) sweeps the graded (n, z) cross-section along the band columns (graded_sweep.jl):
+# `--alpha A` (default 1) sets row k's z spacing to at least A x its width, `--beta B` (default 3)
+# ends row k at B h_k beyond the metal. `--plan-only` builds and checks the plan
 # mesh only and prints the manifest (no volume mesh). `--band-mode own` (default) builds the
 # structured boundary-layer band itself with the per-segment, per-side band cap
 # (structured_band.jl); `gmsh` uses Gmsh's BoundaryLayer field as the recorded transmon
@@ -31,6 +36,9 @@ cross_plane_snap_um = NaN
 band_cap = :none
 band_mode = :own
 fan_turn_angle_deg = 90.0
+sweep = :tensor
+alpha = PolygonWindowMesh.DEFAULT_GRADED_ALPHA
+beta = PolygonWindowMesh.DEFAULT_GRADED_BETA
 let i = 1
     while i <= length(ARGS)
         argument = ARGS[i]
@@ -50,11 +58,20 @@ let i = 1
         elseif argument == "--fan-turn-angle-deg"
             global fan_turn_angle_deg = parse(Float64, ARGS[i + 1])
             i += 1
+        elseif argument == "--sweep"
+            global sweep = Symbol(ARGS[i + 1])
+            i += 1
+        elseif argument == "--alpha"
+            global alpha = parse(Float64, ARGS[i + 1])
+            i += 1
+        elseif argument == "--beta"
+            global beta = parse(Float64, ARGS[i + 1])
+            i += 1
         elseif startswith(argument, "--")
             error(
                 "Unknown option $argument; known: --plan-only --band-mode own|gmsh " *
                 "--fan-turn-angle-deg A --cross-plane-snap-um DELTA --exact-band-thickness " *
-                "--band-cap none|partition|curve"
+                "--band-cap none|partition|curve --sweep tensor|graded --alpha A --beta B"
             )
         else
             push!(positional, argument)
@@ -65,7 +82,8 @@ end
 length(positional) == 4 || error(
     "Usage: mesh_polygon_window.jl WINDOW.json RADIAL_UM TANGENTIAL_UM OUTPUT.msh2 " *
     "[--plan-only] [--band-mode own|gmsh] [--fan-turn-angle-deg A] " *
-    "[--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none|partition|curve]"
+    "[--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none|partition|curve] " *
+    "[--sweep tensor|graded] [--alpha A] [--beta B]"
 )
 spec = read_polygon_set(positional[1])
 manifest = mesh_polygon_window(
@@ -78,7 +96,10 @@ manifest = mesh_polygon_window(
     cross_plane_snap_um=cross_plane_snap_um,
     band_cap=band_cap,
     band_mode=band_mode,
-    fan_turn_angle_deg=fan_turn_angle_deg
+    fan_turn_angle_deg=fan_turn_angle_deg,
+    sweep=sweep,
+    alpha=alpha,
+    beta=beta
 )
 if plan_only
     JSON.print(stdout, manifest, 2)
