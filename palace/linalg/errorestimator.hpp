@@ -5,6 +5,7 @@
 #define PALACE_LINALG_ERROR_ESTIMATOR_HPP
 
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
@@ -68,6 +69,9 @@ class GradFluxErrorEstimator
   friend class BoundaryModeFluxErrorEstimator<VecType>;
 
 private:
+  // Recovery space which is discontinuous across interior boundaries, when there are any.
+  std::unique_ptr<FiniteElementSpaceHierarchy> broken_rt_fespaces;
+
   // Finite element spaces used to represent E and the recovered D.
   const FiniteElementSpace &nd_fespace, &rt_fespace;
 
@@ -81,9 +85,14 @@ private:
   mutable VecType E_gf, D, D_gf;
 
 public:
+  // The recovered D is allowed to be discontinuous across the interior boundaries formed
+  // by the boundary attributes in crack_attr_list (which are treated as physically
+  // separating the two sides, e.g. thin conducting sheets), using a broken finite element
+  // space as for a mesh cut along these interior boundaries.
   GradFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
                          FiniteElementSpaceHierarchy &rt_fespaces, double tol, int max_it,
-                         int print, bool use_mg);
+                         int print, bool use_mg,
+                         const std::vector<int> &crack_attr_list = {});
 
   // Compute elemental error indicators given the electric field as a vector of true dofs,
   // and fold into an existing indicator. The indicators are nondimensionalized using the
@@ -101,6 +110,9 @@ class CurlFluxErrorEstimator
   friend class BoundaryModeFluxErrorEstimator<VecType>;
 
 private:
+  // Recovery space which is discontinuous across interior boundaries, when there are any.
+  std::unique_ptr<FiniteElementSpaceHierarchy> broken_nd_fespaces;
+
   // Finite element space used to represent B and the recovered H.
   const FiniteElementSpace &rt_fespace, &nd_fespace;
 
@@ -114,9 +126,12 @@ private:
   mutable VecType B_gf, H, H_gf;
 
 public:
+  // The recovered H is allowed to be discontinuous across the interior boundaries formed
+  // by the boundary attributes in crack_attr_list, see GradFluxErrorEstimator.
   CurlFluxErrorEstimator(const MaterialOperator &mat_op, FiniteElementSpace &rt_fespace,
                          FiniteElementSpaceHierarchy &nd_fespaces, double tol, int max_it,
-                         int print, bool use_mg);
+                         int print, bool use_mg,
+                         const std::vector<int> &crack_attr_list = {});
 
   // Compute elemental error indicators given the magnetic flux density as a vector of true
   // dofs, and fold into an existing indicator. The indicators are nondimensionalized using
@@ -139,7 +154,8 @@ public:
   TimeDependentFluxErrorEstimator(const MaterialOperator &mat_op,
                                   FiniteElementSpaceHierarchy &nd_fespaces,
                                   FiniteElementSpaceHierarchy &rt_fespaces, double tol,
-                                  int max_it, int print, bool use_mg);
+                                  int max_it, int print, bool use_mg,
+                                  const std::vector<int> &crack_attr_list = {});
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;
@@ -161,7 +177,8 @@ public:
                                  FiniteElementSpaceHierarchy &rt_fespaces,
                                  FiniteElementSpace &curl_fespace,
                                  FiniteElementSpaceHierarchy &h1_fespaces, double tol,
-                                 int max_it, int print, bool use_mg);
+                                 int max_it, int print, bool use_mg,
+                                 const std::vector<int> &crack_attr_list = {});
 
   void AddErrorIndicator(const VecType &E, const VecType &B, double Et,
                          ErrorIndicator &indicator) const;

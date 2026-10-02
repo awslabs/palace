@@ -244,7 +244,7 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       mode_op.GetMaterialOp(), mode_op.GetNDSpaceHierarchy(), mode_op.GetRTSpaceHierarchy(),
       mode_op.GetCurlSpace(), mode_op.GetH1SpaceHierarchy(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
+      iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
 
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
 

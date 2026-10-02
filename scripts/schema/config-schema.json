@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:2-1-0",
+  "$id": "urn:palace:schema:3-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -97,9 +97,9 @@
         },
         "CrackInternalBoundaryElements": {
           "type": "boolean",
-          "description": "Duplicate nodes along internal boundary elements to create a crack.",
-          "default": true,
-          "x-palace-advanced": true
+          "description": "Duplicate nodes along interior boundaries to decouple the elements on either side (\"crack\" the mesh). If not specified, the mesh is cracked along interior boundaries with boundary conditions which apply to either side separately, [PMC](@ref config-boundaries-pmc) (or [ZeroCharge](@ref config-boundaries-zerocharge)) and [Absorbing](@ref config-boundaries-absorbing) boundaries, and along [Impedance](@ref config-boundaries-impedance), [RationalImpedance](@ref config-boundaries-rationalimpedance), and [Conductivity](@ref config-boundaries-conductivity) boundaries with `\"Crack\": true`. If `true`, the mesh is cracked along all interior boundaries with boundary conditions except for lumped ports (the behavior of previous versions). If `false`, the mesh is never cracked. Deprecated: the error estimate for adaptive mesh refinement no longer requires cracking the mesh, and cracking is a per-boundary modeling choice for impedance and conductivity boundaries.",
+          "x-palace-advanced": true,
+          "x-palace-deprecated": true
         },
         "RefineCrackElements": {
           "type": "boolean",
@@ -931,6 +931,11 @@
           "type": "number",
           "description": "Surface capacitance for this impedance boundary, F/sq.",
           "default": 0.0
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent surfaces, each carrying its own current, with no coupling through the sheet: this models a conductor much thicker than its penetration depth. The impedance of each face is scaled (twice the resistance and inductance, half the capacitance) such that equal currents on both faces give the same result as the uncut sheet. If `false`, the boundary is a thin sheet with a single tangential electric field on it, which couples the fields on its two sides: this models a film much thinner than its penetration depth. Only relevant for interior boundaries.",
+          "default": false
         }
       }
     },
@@ -988,6 +993,11 @@
           "minItems": 1,
           "contains": { "not": { "const": 0 } },
           "description": "Real polynomial coefficients of the denominator D(s), ordered from highest to lowest degree. At least one coefficient must be nonzero. The roots of D are the poles of Zs."
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent surfaces, each carrying its own current, with no coupling through the sheet: this models a conductor much thicker than its penetration depth. Each face has twice the given surface impedance, such that equal currents on both faces give the same result as the uncut sheet. If `false`, the boundary is a thin sheet with a single tangential electric field on it, which couples the fields on its two sides: this models a film much thinner than its penetration depth. Only relevant for interior boundaries.",
+          "default": false
         }
       }
     },
@@ -1042,7 +1052,12 @@
         },
         "External": {
           "type": "boolean",
-          "description": "Whether this boundary is on the exterior of the computational domain. Relevant for the thickness correction.",
+          "description": "Whether this boundary is on the exterior of the computational domain, with only one conductor surface. Relevant for the thickness correction, which otherwise assumes a conductor with a surface on either side (a cracked interior boundary, see `\"Crack\"`). Ignored for interior boundaries which are not cracked.",
+          "default": false
+        },
+        "Crack": {
+          "type": "boolean",
+          "description": "Crack the mesh along this boundary where it lies in the interior of the computational domain, duplicating the mesh vertices on it. If `true`, the two faces of the sheet are modeled as independent conductor surfaces, each carrying its own current with the surface impedance of the conductor, with no coupling through the sheet: this models a conductor much thicker than the skin depth. If `false`, the boundary is a thin sheet with a single tangential electric field on it and the admittance of both conductor surfaces, which couples the fields on its two sides: this models a film thinner than the skin depth. The two models give the same result when the currents on both faces are equal, and differ in the conductor loss (by up to a factor of two) when the current flows on one face only. Only relevant for interior boundaries.",
           "default": false
         }
       }

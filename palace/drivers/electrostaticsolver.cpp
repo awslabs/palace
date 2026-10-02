@@ -49,7 +49,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   GradFluxErrorEstimator estimator(
       laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
       iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_max_it, 0,
-      iodata.solver.linear.estimator_mg);
+      iodata.solver.linear.estimator_mg, iodata.boundaries.GetSheetAttributes());
   ErrorIndicator indicator;
 
   // Main loop over terminal boundaries.

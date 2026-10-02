@@ -105,24 +105,36 @@ mfem::HypreParMatrix &ParOperator::ParallelAssemble(bool skip_zeros) const
 
   hypre_ParCSRMatrix *hA = hypre_ParCSRMatrixCreate(
       trial_fespace.GetComm(), test_fespace.GlobalVSize(), trial_fespace.GlobalVSize(),
-      test_fespace.Get().GetDofOffsets(), trial_fespace.Get().GetDofOffsets(), 0, sA->NNZ(),
-      0);
+      test_fespace.GetDofOffsets(), trial_fespace.GetDofOffsets(), 0, sA->NNZ(), 0);
   hypre_CSRMatrix *hA_diag = hypre_ParCSRMatrixDiag(hA);
   hypre_ParCSRMatrixDiag(hA) = *const_cast<hypre::HypreCSRMatrix *>(sA);
   hypre_ParCSRMatrixInitialize(hA);
 
-  const mfem::HypreParMatrix *P = trial_fespace.Get().Dof_TrueDof_Matrix();
+  const mfem::HypreParMatrix *P = trial_fespace.Dof_TrueDof_Matrix();
   if (!use_R)
   {
-    const mfem::HypreParMatrix *Rt = test_fespace.Get().Dof_TrueDof_Matrix();
-    RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1),
-                                                 true);
+    const mfem::HypreParMatrix *Rt = test_fespace.Dof_TrueDof_Matrix();
+    if (trial_fespace.IsBroken() || test_fespace.IsBroken())
+    {
+      // hypre_ParCSRMatrixRAPKT reads out of bounds when a process has more columns of Rt
+      // (true DOFs) than rows of A (L-DOFs) and no off-diagonal columns of A P, which can
+      // happen for broken spaces, where a process owns the copies of split true DOFs which
+      // are read only by other processes. Compute Rtᵀ (A P) instead.
+      hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
+      RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRTMatMatKT(*Rt, AP, 1), true);
+      hypre_ParCSRMatrixDestroy(AP);
+    }
+    else
+    {
+      RAP = std::make_unique<mfem::HypreParMatrix>(
+          hypre_ParCSRMatrixRAPKT(*Rt, hA, *P, 1, 1), true);
+    }
   }
   else
   {
     mfem::HypreParMatrix *hR = new mfem::HypreParMatrix(
         test_fespace.GetComm(), test_fespace.GlobalTrueVSize(), test_fespace.GlobalVSize(),
-        test_fespace.Get().GetTrueDofOffsets(), test_fespace.Get().GetDofOffsets(),
+        test_fespace.GetTrueDofOffsets(), test_fespace.GetDofOffsets(),
         const_cast<mfem::SparseMatrix *>(test_fespace.GetRestrictionMatrix()));
     hypre_ParCSRMatrix *AP = hypre_ParCSRMatMat(hA, *P);
     RAP = std::make_unique<mfem::HypreParMatrix>(hypre_ParCSRMatMat(*hR, AP), true);

@@ -177,6 +177,79 @@ TEST_CASE("Config Domain Postprocessing", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")
+{
+  // Sheets (for error estimation and interface dielectric postprocessing) and the
+  // attributes along which the mesh is cracked, by default and with the deprecated global
+  // option.
+  json boundaries = {
+      {"PEC", {{"Attributes", {1}}}},
+      {"PMC", {{"Attributes", {2}}}},
+      {"Absorbing", {{"Attributes", {3}}}},
+      {"Impedance",
+       {{{"Attributes", {4}}, {"Ls", 1.0e-12}},
+        {{"Attributes", {5}}, {"Ls", 1.0e-12}, {"Crack", true}}}},
+      {"Conductivity",
+       {{{"Attributes", {6}}, {"Conductivity", 1.0e7}},
+        {{"Attributes", {7}}, {"Conductivity", 1.0e7}, {"Crack", true}}}},
+      {"RationalImpedance",
+       {{{"Attributes", {8}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}}}},
+      {"LumpedPort",
+       {{{"Index", 1}, {"Attributes", {9}}, {"R", 50.0}, {"Direction", "+X"}}}},
+      {"SurfaceCurrent", {{{"Index", 2}, {"Attributes", {10}}, {"Direction", "+X"}}}},
+      {"WavePortPEC", {{"Attributes", {11}}}}};
+  config::BoundaryData data(boundaries);
+  CHECK_FALSE(data.impedance[0].crack);
+  CHECK(data.impedance[1].crack);
+  CHECK_FALSE(data.conductivity[0].crack);
+  CHECK(data.conductivity[1].crack);
+  CHECK_FALSE(data.rational_impedance[0].crack);
+  CHECK(data.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
+  // All impedance sheets are sheets, including purely capacitive ones.
+  boundaries["Impedance"][0].erase("Ls");
+  boundaries["Impedance"][0]["Cs"] = 1.0e-15;
+  config::BoundaryData data_cs(boundaries);
+  CHECK(data_cs.GetSheetAttributes() == std::vector<int>{1, 4, 5, 6, 7, 8, 9, 10});
+  CHECK(data.GetMeshCrackAttributes(std::nullopt) == std::vector<int>{2, 3, 5, 7});
+  CHECK(data.GetMeshCrackAttributes(false).empty());
+  CHECK(data.GetMeshCrackAttributes(true) ==
+        std::vector<int>{1, 2, 3, 4, 5, 6, 7, 8, 10, 11});
+
+  // Superconductor sheets and flux loop films carry surface currents, but are never
+  // cracked (thin films), and flux loop holes are not sheets.
+  json sc_boundaries = {
+      {"PEC", {{"Attributes", {1}}}},
+      {"Superconductor", {{{"Attributes", {12}}, {"KineticInductance", 1.0e-12}}}},
+      {"FluxLoop",
+       {{{"Index", 1},
+         {"FilmAttributes", {13}},
+         {"HoleAttributes", {14}},
+         {"FluxAmounts", {1.0}}}}}};
+  config::BoundaryData sc_data(sc_boundaries);
+  CHECK(sc_data.GetSheetAttributes() == std::vector<int>{1, 12, 13});
+  CHECK(sc_data.GetMeshCrackAttributes(std::nullopt).empty());
+  CHECK(sc_data.GetMeshCrackAttributes(true) == std::vector<int>{1});
+
+  // The option is not available for boundaries which are never cracked.
+  json config = {{"Problem", {{"Type", "Eigenmode"}}},
+                 {"Model", {{"Mesh", "mesh.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries", {{"PEC", {{"Attributes", {1}}}}}},
+                 {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  std::string err = ValidateConfig(config);
+  INFO("schema validation error: " << err);
+  CHECK(err.empty());
+  config["Boundaries"]["PEC"]["Crack"] = true;
+  CHECK_FALSE(ValidateConfig(config).empty());
+  config["Boundaries"]["PEC"].erase("Crack");
+  config["Problem"]["Type"] = "Magnetostatic";
+  config["Boundaries"]["Superconductor"] = {
+      {{"Attributes", {2}}, {"KineticInductance", 1.0e-12}}};
+  CHECK(ValidateConfig(config).empty());
+  config["Boundaries"]["Superconductor"][0]["Crack"] = true;
+  CHECK_FALSE(ValidateConfig(config).empty());
+}
+
 TEST_CASE("Config Boundary Ports", "[config][Serial]")
 {
   SECTION("Basic passing config with bool excitation")
@@ -1462,6 +1535,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata2.boundaries.impedance[0].Rs == iodata1.boundaries.impedance[0].Rs);
     CHECK(iodata2.boundaries.impedance[0].Ls == iodata1.boundaries.impedance[0].Ls);
     CHECK(iodata2.boundaries.impedance[0].Cs == iodata1.boundaries.impedance[0].Cs);
+    CHECK(iodata2.boundaries.impedance[0].crack == iodata1.boundaries.impedance[0].crack);
+    CHECK(iodata2.boundaries.conductivity[0].crack ==
+          iodata1.boundaries.conductivity[0].crack);
     REQUIRE(iodata1.boundaries.rational_impedance.size() == 1);
     REQUIRE(iodata2.boundaries.rational_impedance.size() == 1);
     CHECK(iodata2.boundaries.rational_impedance[0].attributes ==
@@ -1502,8 +1578,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     // Coverage gates. Each schema scope this fixture exercises is checked here so a
     // future schema addition without matching Concretize emission fails this section.
+    // CrackInternalBoundaryElements is deprecated and only emitted when specified.
     auto model_gaps = SchemaCoverageGaps("/properties/Model", config["Model"],
-                                         /*skip=*/{"Lc"});
+                                         /*skip=*/{"Lc", "CrackInternalBoundaryElements"});
     INFO("Model missing keys: " << json(model_gaps).dump());
     CHECK(model_gaps.empty());
 

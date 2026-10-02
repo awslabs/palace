@@ -190,15 +190,15 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
     case InterfaceDielectric::DEFAULT:
       return std::make_unique<RestrictedCoefficient<
           InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>>>(
-          attr_list, E, mat_op, t, epsilon);
+          attr_list, E, mat_op, t, epsilon, &sum_sides_marker);
     case InterfaceDielectric::MA:
       return std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MA>>>(
-          attr_list, E, mat_op, t, epsilon);
+          attr_list, E, mat_op, t, epsilon, &sum_sides_marker);
     case InterfaceDielectric::MS:
       return std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(
-          attr_list, E, mat_op, t, epsilon);
+          attr_list, E, mat_op, t, epsilon, &sum_sides_marker);
     case InterfaceDielectric::SA:
       return std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::SA>>>(
@@ -220,7 +220,8 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
                                          ProblemType problem_type,
                                          const MaterialOperator &mat_op,
                                          mfem::ParFiniteElementSpace &h1_fespace,
-                                         mfem::ParFiniteElementSpace &nd_fespace)
+                                         mfem::ParFiniteElementSpace &nd_fespace,
+                                         const std::vector<int> &sheet_attributes)
   : mat_op(mat_op), h1_fespace(h1_fespace), nd_fespace(nd_fespace)
 {
   // Check that boundary attributes have been specified correctly.
@@ -257,7 +258,9 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
               "magnetostatic problems!");
   for (const auto &[idx, data] : postpro.dielectric)
   {
-    eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker);
+    auto &surf = eps_surfs.try_emplace(idx, data, *h1_fespace.GetParMesh(), bdr_attr_marker)
+                     .first->second;
+    surf.sum_sides_marker = mesh::AttrToMarker(bdr_attr_max, sheet_attributes, true);
   }
 
   // FarField postprocessing.
@@ -304,7 +307,7 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          mfem::ParFiniteElementSpace &h1_fespace,
                                          mfem::ParFiniteElementSpace &nd_fespace)
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
-                        nd_fespace)
+                        nd_fespace, iodata.boundaries.GetSheetAttributes())
 {
 }
 
@@ -385,9 +388,9 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx,
   auto &func = eps_funcs[idx];
   if (!func)
   {
-    func = std::make_unique<SurfaceFunctional>(mat_op.GetMesh(), attr_marker,
-                                               *E.ParFESpace(), mat_op, it->second.type,
-                                               it->second.t, it->second.epsilon);
+    func = std::make_unique<SurfaceFunctional>(
+        mat_op.GetMesh(), attr_marker, *E.ParFESpace(), mat_op, it->second.type,
+        it->second.t, it->second.epsilon, &it->second.sum_sides_marker);
   }
   if (func && func->IsValid())
   {

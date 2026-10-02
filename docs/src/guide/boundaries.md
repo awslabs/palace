@@ -86,6 +86,101 @@ information see the
 [Other boundary conditions](../reference.md#Other-boundary-conditions) section of the
 reference.
 
+On an interior boundary (a conducting sheet), the boundary condition represents the
+conductor surfaces on both sides of the sheet, each with the surface impedance of the
+conductor, as independent surfaces by default (see
+[Interior boundaries](#Interior-boundaries)). For a sheet on the exterior of the
+computational domain (only one conductor surface), the
+[`"External"`](../config/reference.md#config-boundaries-conductivity) flag should be set
+for the thickness correction.
+
+## Interior boundaries
+
+Boundary conditions can also be specified on interior boundaries of the computational
+domain, that is boundary elements with domain elements on both sides (wave ports and Floquet
+ports are always exterior boundaries). Boundary conditions which apply to either side
+separately, and would otherwise have no effect on an interior boundary, are imposed by
+duplicating the mesh vertices ("cracking" the mesh) along the boundary, such that the
+elements on the two sides are no longer coupled:
+[`"PMC"`](../config/reference.md#config-boundaries-pmc) (or
+[`"ZeroCharge"`](../config/reference.md#config-boundaries-zerocharge)) and
+[`"Absorbing"`](../config/reference.md#config-boundaries-absorbing) boundaries. Other
+boundary conditions on interior boundaries model sheets carrying a surface current or
+charge:
+
+  - [`"PEC"`](../config/reference.md#config-boundaries-pec) (or
+    [`"Ground"`](../config/reference.md#config-boundaries-ground)) and
+    [`"Terminal"`](../config/reference.md#config-boundaries-terminal) metal boundaries
+    are infinitely thin perfect conductors. The fields on the two sides are not coupled
+    through the sheet, since the tangential electric field vanishes on it.
+
+  - [`"Superconductor"`](../config/reference.md#config-boundaries-superconductor)
+    boundaries, and the films of
+    [`"FluxLoop"`](../config/reference.md#config-boundaries-fluxloop) boundaries, are
+    thin superconducting films with a kinetic sheet inductance. The mesh is never cracked
+    along them: the sheet carries a single tangential vector potential, and the sheet
+    current is given by the jump in the tangential magnetic field across the sheet.
+
+  - [`"LumpedPort"`](../config/reference.md#config-boundaries-lumpedport) and
+    [`"SurfaceCurrent"`](../config/reference.md#config-boundaries-surfacecurrent)
+    boundaries are sheets carrying the port or source surface current. The mesh is never
+    cracked along them.
+
+  - [`"Impedance"`](../config/reference.md#config-boundaries-impedance),
+    [`"RationalImpedance"`](../config/reference.md#config-boundaries-rationalimpedance),
+    and [`"Conductivity"`](../config/reference.md#config-boundaries-conductivity)
+    boundaries are sheets with a surface impedance. Their `"Crack"` option selects between
+    two physical models:
+
+      + `"Crack": false` models a film much thinner than its penetration depth (the London
+        penetration depth of a superconductor, or the skin depth of a normal metal). The
+        mesh is not modified, and the sheet carries a single tangential electric field,
+        with the surface current given by the jump in the tangential magnetic field across
+        the sheet. The film couples the fields on its two sides.
+      + `"Crack": true` models a conductor much thicker than its penetration depth. The
+        mesh is cracked along the boundary, such that the two faces are independent
+        surfaces, each carrying its own current, with no coupling through the conductor.
+        For impedance boundaries, each face uses twice the given resistance and
+        inductance and half the given capacitance per square, such that equal currents on
+        both faces give the same result as the uncut sheet; for conductivity boundaries,
+        each face uses the surface impedance of the conductor.
+
+    The default is `false`. The two models give the same result when the currents on the
+    two faces of the sheet are equal, and differ when they are not: for a conductor much
+    thicker than its penetration depth with fields on one side only, for example, the
+    uncracked sheet spreads the current over the conductance of both faces, which halves
+    the conductor loss. Use `"Crack": true` for such conductors.
+
+The fields on the two sides of an uncracked sheet are generally discontinuous: the normal
+component of the electric flux density jumps by the surface charge and the tangential
+magnetic field by the surface current. The error estimate for
+[adaptive mesh refinement](model.md#Mesh-refinement) therefore allows the recovered fluxes
+to be discontinuous across these interior boundaries, as it does for a cracked mesh. One
+difference remains with nonconformal refinement: where the elements on only one side of a
+sheet are refined, the recovered fluxes on the refined side are limited along the sheet to
+the resolution of the other side, which makes the error estimate larger there than on a
+cracked mesh.
+
+For postprocessing on uncracked sheets:
+
+  - [Interface dielectric](postprocessing.md#Boundary-postprocessing) energies are the same as
+    on a cracked mesh. Types `"MA"` and `"MS"` use the fields on the air side and on the
+    substrate side of a metal sheet, respectively, and type `"Default"` sums the
+    contributions of both faces, each with its own dielectric layer. On a sheet with the
+    same material on both sides, such as an air bridge, the `"MA"` (or `"MS"`) energies of
+    both faces are summed as well. These are models of a metal film: for a dielectric layer
+    on a substrate-air interface, with or without a sheet capacitance, use the `"SA"` type,
+    which evaluates the fields on the substrate and air sides separately.
+  - [Surface flux](postprocessing.md#Boundary-postprocessing) postprocessing with
+    `"TwoSided": true` gives the total flux through both faces of the sheet, as on a cracked
+    mesh, for example the charge on a metal sheet. With `"TwoSided": false`, it gives the
+    average of the fluxes on the two sides.
+
+The mesh cracking behavior of previous versions of *Palace*, where all interior boundaries
+with boundary conditions except for lumped ports are cracked, can be restored with the
+deprecated option
+[`config["Model"]["CrackInternalBoundaryElements"]`](../config/reference.md#config-model-crackinternalboundaryelements).
+
 ## Periodic boundary
 
 Periodic boundary conditions on an existing mesh can be specified using the
