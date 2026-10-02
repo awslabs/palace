@@ -560,6 +560,12 @@ public:
   // separated by excitation index.
   void UpdateMRI(int excitation_idx, double omega, const ComplexVector &u);
 
+  // Assemble and solve the PROM at the specified frequency. The reduced solution y is
+  // available from GetReducedSolution until the next solve, and is expanded into the
+  // high-dimensional space, u = V y, only when needed using ProlongateReducedSolution.
+  void SolvePROM(int excitation_idx, double omega);
+  void ProlongateReducedSolution(ComplexVector &u) const;
+
   // Assemble and solve the PROM at the specified frequency, expanding the solution back
   // into the high-dimensional space.
   void SolvePROM(int excitation_idx, double omega, ComplexVector &u);

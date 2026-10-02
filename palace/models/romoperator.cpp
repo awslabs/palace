@@ -1277,6 +1277,27 @@ void RomOperator::UpdateMRI(int excitation_idx, double omega, const ComplexVecto
 
 void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
 {
+  SolvePROM(excitation_idx, omega);
+  ProlongateReducedSolution(u);
+}
+
+void RomOperator::ProlongateReducedSolution(ComplexVector &u) const
+{
+  // The PROM is solved on every process so the matrix-vector product for vector expansion
+  // does not require communication. Without basis states, the solution is zero.
+  BlockTimer bt(Timer::SOLVE_PROM);
+  if (V.empty())
+  {
+    u = 0.0;
+    return;
+  }
+  MFEM_VERIFY(RHSr.size() == static_cast<Eigen::Index>(V.size()),
+              "PROM solution must be computed before prolongation!");
+  ProlongatePROMSolution(V.size(), V, RHSr, u);
+}
+
+void RomOperator::SolvePROM(int excitation_idx, double omega)
+{
   BlockTimer bt(Timer::SOLVE_PROM);
   SetExcitationIndex(excitation_idx);
 
@@ -1285,10 +1306,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
   // iω RHS1ᵣ + Vᴴ RHS2(ω). A2(ω) and RHS2(ω) are constructed only if required and are
   // only nonzero on boundaries, will be empty if not needed.
 
-  // No basis states ill-defined: return zero vector to match current behaviour.
+  // No basis states ill-defined: empty reduced solution.
   if (V.empty())
   {
-    u = 0.0;
+    RHSr.resize(0);
     return;
   }
 
@@ -1573,14 +1594,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     RHSr += (1i * omega) * RHS1r;
   }
 
-  // Compute PROM solution at the given frequency and expand into high-dimensional space.
-  // The PROM is solved on every process so the matrix-vector product for vector expansion
-  // does not require communication.
-  // QR solve, for maximal stability. The small system is cheap to compute but can be
-  // numerically poorly conditioned to due the splitting of HDM solutions into Re and Im
-  // into separate columns.
+  // Compute PROM solution at the given frequency. QR solve, for maximal stability. The
+  // small system is cheap to compute but can be numerically poorly conditioned to due the
+  // splitting of HDM solutions into Re and Im into separate columns.
   RHSr = Ar_solver.solve(RHSr);
-  ProlongatePROMSolution(V.size(), V, RHSr, u);
 }
 
 RomOperator::WavePortDispersionFit
