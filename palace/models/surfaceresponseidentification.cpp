@@ -2831,6 +2831,63 @@ private:
     return run_plane[site.runs_at_site.front()];
   }
 
+  // Signed process normal (substrate -> vacuum) of a spatial feature from its own runs:
+  // length weighted like ReferenceProcessNormal but WITHOUT SignCanonical, so that a
+  // feature of a flipped plane (a flip-chip top chip, normal -z) is framed with w pointing
+  // into ITS vacuum and the coupon's substrate half-space (w < 0) lands in its substrate
+  // (decision 266). The device-global n_ref is a planarity reference only (|dot| tests,
+  // plane numbering): it is sign-canonical and puts every flipped plane's coupon upside
+  // down. A feature whose runs disagree in sign has no process side: fail closed naming it.
+  // The returned direction is +-n_ref (every framed run is parallel to n_ref within
+  // kParallelCosineTolerance by the NonPlanar rule), oriented by the feature's own runs:
+  // single-plane devices keep their frames bit-identical.
+  Point3D FeatureProcessNormal(const std::vector<std::pair<std::size_t, double>> &weighted,
+                               const std::string &what) const
+  {
+    MFEM_VERIFY(!weighted.empty(), "Process normal of " << what << " without runs!");
+    Point3D sum{};
+    const Point3D first = runs[weighted.front().first].process_normal;
+    for (const auto &[r, weight] : weighted)
+    {
+      const Point3D &n = runs[r].process_normal;
+      MFEM_VERIFY(Dot(n, first) > 0.0,
+                  "Runs of " << what << " disagree on the sign of their process normal (["
+                             << first[0] << ", " << first[1] << ", " << first[2] << "] vs ["
+                             << n[0] << ", " << n[1] << ", " << n[2] << "] on run " << r
+                             << "): no common substrate -> vacuum side!");
+      sum = Add(sum, Scale(std::max(weight, 0.0), n));
+    }
+    if (Norm(sum) <= 0.0)
+    {
+      sum = first;  // zero-length weights: the (agreeing) direction itself
+    }
+    return SignedReferenceNormal(Normalize(sum), what);
+  }
+
+  // The reference normal with the sign of the given (parallel) process normal.
+  Point3D SignedReferenceNormal(const Point3D &n, const std::string &what) const
+  {
+    const double cosine = Dot(n, n_ref);
+    MFEM_VERIFY(!DirectionLess(std::abs(cosine), 1.0 - kParallelCosineTolerance),
+                "Process normal of "
+                    << what << " ([" << n[0] << ", " << n[1] << ", " << n[2]
+                    << "]) is not parallel to the reference process normal!");
+    return cosine < 0.0 ? Scale(-1.0, n_ref) : n_ref;
+  }
+
+  Point3D SiteProcessNormal(const VertexFeatureSite &site) const
+  {
+    std::vector<std::pair<std::size_t, double>> weighted;
+    for (const std::size_t r : site.runs_at_site)
+    {
+      weighted.emplace_back(r, runs[r].length);
+    }
+    std::ostringstream what;
+    what << site.type << " site at (" << site.point[0] << ", " << site.point[1] << ", "
+         << site.point[2] << ")";
+    return FeatureProcessNormal(weighted, what.str());
+  }
+
   std::vector<std::size_t> RunsAtVertex(std::size_t v) const
   {
     std::vector<std::size_t> result;
@@ -3307,11 +3364,13 @@ void Identifier::ClassifyVertices()
     else
     {
       site.type = "Junction";
-      // Arm angles around the process normal, as consecutive differences.
+      // Arm angles around the site's own signed process normal (the frame normal of the
+      // feature, decision 266), as consecutive differences.
+      const Point3D n_site = SiteProcessNormal(site);
       const Point3D x =
           Normalize(Sub(ArmDirection(incident[0], v),
-                        Scale(Dot(ArmDirection(incident[0], v), n_ref), n_ref)));
-      const Point3D y = Cross(n_ref, x);
+                        Scale(Dot(ArmDirection(incident[0], v), n_site), n_site)));
+      const Point3D y = Cross(n_site, x);
       std::vector<std::tuple<double, int, std::size_t>> arms;  // angle, conductor, run
       for (const std::size_t r : incident)
       {
@@ -9640,9 +9699,23 @@ void Identifier::EmitClusters()
     }
     MFEM_VERIFY(!portions.empty(), "A spatial cluster claims no perimeter!");
     largest_cluster_edges = std::max(largest_cluster_edges, portions.size());
+    // The cluster's own signed process normal (claimed-length weighted; decision 266), not
+    // the sign-canonical n_ref: on a flipped plane the canonical frame's w must point into
+    // that plane's vacuum.
+    Point3D n_cluster;
+    {
+      std::vector<std::pair<std::size_t, double>> weighted;
+      for (const auto &[r, interval] : cluster_claimed[c])
+      {
+        weighted.emplace_back(r, interval.second - interval.first);
+      }
+      n_cluster =
+          FeatureProcessNormal(weighted, "spatial cluster " + std::to_string(c) + " (" +
+                                             std::to_string(portions.size()) + " edges)");
+    }
     const auto signature_started = std::chrono::steady_clock::now();
     const auto canonical = CanonicalClusterSignature(
-        portions, vertices, n_ref, R,
+        portions, vertices, n_cluster, R,
         [&](std::size_t done, std::size_t total)
         {
           stage.Progress(done, total,
@@ -9966,22 +10039,26 @@ void Identifier::Assign(IdentificationResult &result)
     nlohmann::json signature = {{"Interfaces", site.interfaces},
                                 {"Law", site.boundary_law}};
     // Frame of the vertex feature (the patch frame of the library model, design (b) 4):
-    // x = the first arm away from the site, y in the process plane, z = n_ref. Corner: the
-    // arms ordered so that the second is counterclockwise from the first (a corner is its
-    // own mirror image); endpoint: y toward the gap; junction: x = the canonical first arm,
-    // y = +-(n x x) so that the canonical arm order proceeds counterclockwise in (x, y).
-    std::array<Point3D, 3> axes = {Point3D{}, Point3D{}, n_ref};
+    // x = the first arm away from the site, y in the process plane, z = the site's OWN
+    // signed process normal n (substrate -> vacuum; decision 266 — not the sign-canonical
+    // n_ref, which turns a flipped plane's coupon upside down). Corner: the arms ordered so
+    // that the second is counterclockwise about n from the first (a corner is its own
+    // mirror image), y = n x x (right-handed); endpoint: y toward the gap; junction: x =
+    // the canonical first arm, y = +-(n x x) so that the canonical arm order proceeds
+    // counterclockwise in (x, y) (the arm angles are measured about the same n).
+    const Point3D n_site = SiteProcessNormal(site);
+    std::array<Point3D, 3> axes = {Point3D{}, Point3D{}, n_site};
     if (site.type == "ConvexCorner" || site.type == "ConcaveCorner")
     {
       signature = CanonicalCornerSignature(site.interfaces, site.boundary_law,
                                            site.angle_degrees, site.corner_radius / R);
       Point3D first = site.arm_directions[0], second = site.arm_directions[1];
-      if (Dot(Cross(n_ref, first), second) < 0.0)
+      if (Dot(Cross(n_site, first), second) < 0.0)
       {
         std::swap(first, second);
       }
-      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_ref), n_ref)));
-      axes[1] = Normalize(Cross(n_ref, axes[0]));
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
+      axes[1] = Normalize(Cross(n_site, axes[0]));
     }
     else if (site.type == "Junction")
     {
@@ -9989,14 +10066,14 @@ void Identifier::Assign(IdentificationResult &result)
       signature = CanonicalJunctionSignature(site.interfaces, site.boundary_law,
                                              site.arm_angles, site.arm_conductors, &order);
       const Point3D first = site.arm_directions[order.first_arm];
-      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_ref), n_ref)));
-      axes[1] = Scale(order.reversed ? -1.0 : 1.0, Normalize(Cross(n_ref, axes[0])));
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
+      axes[1] = Scale(order.reversed ? -1.0 : 1.0, Normalize(Cross(n_site, axes[0])));
     }
     else if (!site.arm_directions.empty())
     {
       const Point3D first = site.arm_directions.front();
-      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_ref), n_ref)));
-      axes[1] = Normalize(Cross(n_ref, axes[0]));
+      axes[0] = Normalize(Sub(first, Scale(Dot(first, n_site), n_site)));
+      axes[1] = Normalize(Cross(n_site, axes[0]));
       if (Dot(axes[1], site.gap_direction) < 0.0)
       {
         axes[1] = Scale(-1.0, axes[1]);
@@ -10383,7 +10460,11 @@ void Identifier::Assign(IdentificationResult &result)
           signature.erase("Type");
           const int feature = NewFeature("CurvedEdge", signature);
           features[feature].origin = runs[r].At(curved_on_run[i].first);
-          features[feature].axes = {runs[r].tangent, Cross(n_ref, runs[r].tangent), n_ref};
+          // Representative frame (informative: the patches use the segment frames): the
+          // run's own signed process normal, right-handed (decision 266).
+          const Point3D n_run = SignedReferenceNormal(runs[r].process_normal,
+                                                      "isolated run " + std::to_string(r));
+          features[feature].axes = {runs[r].tangent, Cross(n_run, runs[r].tangent), n_run};
           it = isolated_features.emplace(key, feature).first;
         }
         assigned[r].emplace_back(curved_on_run[i].first, curved_on_run[i].second,
@@ -10402,7 +10483,11 @@ void Identifier::Assign(IdentificationResult &result)
           signature.erase("Type");
           const int feature = NewFeature("IsolatedEdge", signature);
           features[feature].origin = runs[r].start;
-          features[feature].axes = {runs[r].tangent, Cross(n_ref, runs[r].tangent), n_ref};
+          // Representative frame (informative: the patches use the segment frames): the
+          // run's own signed process normal, right-handed (decision 266).
+          const Point3D n_run = SignedReferenceNormal(runs[r].process_normal,
+                                                      "isolated run " + std::to_string(r));
+          features[feature].axes = {runs[r].tangent, Cross(n_run, runs[r].tangent), n_run};
           it = isolated_features.emplace(key, feature).first;
         }
         for (const auto &piece : straight)

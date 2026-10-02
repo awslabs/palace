@@ -1236,7 +1236,11 @@ hashed values. Version-1 records derived from a signature (Separation, CornerRad
 the signature grid.
 
 **Cluster frame and signature.** Origin = length-weighted centroid of the cluster's claimed
-portions; z = process normal. The in-plane x axis is chosen among the finite candidate set
+portions; z = the cluster's OWN signed process normal (substrate -> vacuum: the reference
+direction oriented by the claimed-length weighted mean of its runs' signed normals,
+`FeatureProcessNormal`, fail closed naming the cluster when its runs disagree in sign — see the
+frame rule below; never the sign-canonical device reference normal n_ref itself). The in-plane
+x axis is chosen among the finite candidate set
 {chain tangents of the cluster, both signs, and their in-plane perpendiculars}; for each
 candidate and each handedness (y = z x x or y = -(z x x)) the cluster is serialised (portions
 as `[x0, y0, x1, y1] / R` on the signature grid, gap side, interface types, conductor label by
@@ -1253,6 +1257,52 @@ frame rule (e.g. candidates restricted to the frames minimising the first serial
 pruning of the same lexicographic rule). This replaces the representative-event site
 (first closest pair in candidate order), the exhaustive spatial closure (4 x 2R merging) and the
 "nonparallel" omission of the legacy classifier.
+
+**Frame rule: every spatial / vertex feature is framed with its OWN signed process normal
+(decision 266, 2026-10-02; flip-chip devices).** The device-global `ReferenceProcessNormal`
+n_ref is sign-canonical (`SignCanonical`: the first nonzero component positive), so on a
+flip-chip device the upright bottom chip (normal +z) and the flipped top chip (normal -z, its
+substrate ABOVE its metal) share n_ref = +z; it is a planarity / parallelism reference only
+(|dot| tests for `NonPlanar`, the plane numbering, the in-plane direction classes, the
+translational lateral order) and is never a frame normal. A coupon is built upright (support
+w in [-1.95, +2.0] R: substrate at w < 0, vacuum at w > 0), so a frame whose w is n_ref on a
+flipped plane places the coupon's substrate in the vacuum gap and its vacuum in the top chip's
+substrate — the media swapped for every spatial feature of the flipped plane (the S1p defect:
+its two 19-edge clusters and its L2 corners, AxisW = +z at z = 4.8, while the translational /
+curved / stack patches, built from the segment frames with the segment's own signed normal
+(AxisV = -z), were right). The rule: `SpatialEdgeCluster` z = the signed normal of its runs
+(claimed-length weighted mean, `EmitClusters`), `ConvexCorner` / `ConcaveCorner` / `Endpoint` /
+`Junction` z = the signed normal of the site's incident runs (length weighted,
+`SiteProcessNormal`; the junction's arm angles are measured about the same normal), the
+isolated / curved representative axes (informative; their patches come from the segment
+frames) (t, n x t, n) with the run's own signed n; a feature whose runs disagree in sign has no
+substrate -> vacuum side and the identification fails closed naming the feature
+(`FeatureProcessNormal`). The direction returned is +-n_ref oriented by the feature's own runs
+(`SignedReferenceNormal`: every framed run is parallel to n_ref within the NonPlanar tolerance
+1e-8, so this IS the feature's normal, and single-plane frames stay bit-identical — the transmon
+patch CSV is byte-identical). The frames are right-handed (x, n x x, n) where the feature is its
+own mirror image or its canonical chirality is +1; the mirror frame (x, -(n x x), n) of a
+chirality -1 cluster (and the gap-side choice of an endpoint, the arm-order choice of a
+junction) is a PLAN-VIEW mirror, which keeps w on the vacuum side and maps the model onto its
+mirror-image feature exactly (the response is reflection invariant). Key changes of flipped-chip
+spatial features: NONE of the hashes — a cluster signature is serialised in both handedness
+values and its hash is handedness-invariant (a plan-view mirror image has the same hash with the
+opposite `Chirality`; corner and junction signatures are mirror-invariant by construction), so
+the fix changes, for every spatial / vertex feature of a flipped plane, the frame's w (-z instead
+of +z), the cluster's `Chirality` (its sign flips: the old reading was the mirror image's) and,
+for corners, the in-plane axes (x = the other arm, the frame rotated by 180 deg about the
+corner's bisector); the in-plane placement map of clusters, junctions and endpoints is
+unchanged (y = chirality x (n x x) is the same vector for both readings), so a Signature-keyed
+coupon built for the old key fits the new frame without a rebuild and only its w side turns
+over. Single-plane devices (the transmon) and the upright plane of a flip-chip device are
+unchanged (n = n_ref there): the transmon preflight digest 9ada660bf6e4, records and patch CSV
+are byte-identical. `GeometryDigest` hashes signature keys only and does not change. Unit test
+`SurfaceResponseIdentificationFlippedPlaneFrames`: two planes carrying congruent copies of one
+asymmetric cluster + corners (the flipped plane = the upright one rotated by 180 deg about an
+in-plane axis): on the flipped plane w = -z, the coupon's w < 0 half-space lands in that plane's
+substrate, (hash, chirality) and the rigid image of the upright frame are reproduced, the old
+reading (the same geometry framed with +z) is the mirror (same hash, opposite chirality, w = +z),
+the upright plane reads as alone, and a mixed-sign cluster aborts naming the cluster.
 
 ## (c) Behaviour at exactly R and 2R
 
@@ -1353,8 +1403,8 @@ Patch per class (weights in mesh units; `CouponDepth` = the model's longitudinal
 | `IsolatedEdge`, `CurvedEdge` | one per quadrature point of every portion (`2 x order` Gauss points) | u = gap direction, v = process normal of the segment | `(s1 - s0) x w_q / CouponDepth` |
 | pairs (`SameConductorGap`, `DifferentConductorGap`, `SameConductorStrip`, `Curved*`) | quadrature on **both** sides, side factor 1 / 2 (the longitudinal measure is the mean of the two sides: exact for a straight pair, the centreline for concentric arcs); at a sample p its foot q on the partner's portions | origin (e1 + e2) / 2, u from the model's first edge e1 toward e2, v = mean process normal; the first edge is the lower side along the feature's lateral axis `Frame.Axes[1]` (the higher one for `Chirality` -1: the canonical orientation is the mirror) | `(s1 - s0) x w_q x 1/2 / CouponDepth` |
 | `ParallelEdgeCluster` | quadrature on every side, side factor 1 / n; origin = the sample's foot on the canonical first side (the sample itself on that side); anchors = the feet on the first side of every conductor label | u = from the origin to its foot on the last side (the local lateral: a stack following straight-like bends turns with them — a feature-wide frame placed the meandering DS-SCT-001 flux-line stacks up to 49 deg off, found by the A10 placement audit), v = mean process normal | `(s1 - s0) x w_q / n / CouponDepth` |
-| `ConvexCorner`, `ConcaveCorner` (sharp or rounded), `Endpoint`, `Junction` | one patch at `Frame.Origin` (the vertex or the virtual corner of a fillet) | `Frame.Axes` (below) | model weight (1) |
-| `SpatialEdgeCluster` | one patch | a model carrying its `Signature` is built in that Signature's canonical frame and is placed with the identity map (m maps to `F.origin + F.axes^T m`; its stored `Edges`, when present, are verified at library load to lie on the Signature's portions — straight portions as segments, arc portions on their circle — within the signature tolerance, each edge on ONE portion whose relabelled `Conductor` is the edge's and whose `Interfaces` set is the set mapped to the edge's `InterfaceSlot` (a mirror-symmetric geometry with asymmetric labels lands on the portions but is refused), `VerifySpatialEdgesInSignatureFrame`, fail closed); a legacy model without a `Signature` maps a model-frame point m to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of its stored straight edges | model weight (1) |
+| `ConvexCorner`, `ConcaveCorner` (sharp or rounded), `Endpoint`, `Junction` | one patch at `Frame.Origin` (the vertex or the virtual corner of a fillet) | `Frame.Axes` (below; w = the site's own signed process normal, decision 266) | model weight (1) |
+| `SpatialEdgeCluster` | one patch | a model carrying its `Signature` is built in that Signature's canonical frame and is placed with the identity map (m maps to `F.origin + F.axes^T m`; `F.axes[2]` = the cluster's own signed process normal, decision 266, so the model's w > 0 is the feature's vacuum on a flipped plane too; its stored `Edges`, when present, are verified at library load to lie on the Signature's portions — straight portions as segments, arc portions on their circle — within the signature tolerance, each edge on ONE portion whose relabelled `Conductor` is the edge's and whose `Interfaces` set is the set mapped to the edge's `InterfaceSlot` (a mirror-symmetric geometry with asymmetric labels lands on the portions but is refused), `VerifySpatialEdgesInSignatureFrame`, fail closed); a legacy model without a `Signature` maps a model-frame point m to `F.origin + F.axes^T M.axes (m - M.origin)`, M from `CanonicalClusterSignature` of its stored straight edges | model weight (1) |
 
 **Longitudinal cell of a translational patch (`SurfaceMortar` strip; decision 152).** The
 weight is the patch's dimensionless MEASURE (the fraction of the model's `CouponDepth` it
@@ -1474,12 +1524,14 @@ by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks
 default and the forced-GSLIB locator path, the notch fail-closed case, and the misplaced
 coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
 
-**Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
-x = the first arm away from the (virtual) corner, the arms ordered so that the second is
-counterclockwise about the process normal (a corner is its own mirror image), y = n x x;
-endpoint: x = the arm, y = +-(n x x) toward the gap; junction: x = the canonical first arm of
-`CanonicalJunctionSignature`, y = +-(n x x) so that the canonical arm order proceeds
-counterclockwise in (x, y). A legacy junction model (absolute `ArmAngles`) is mapped by its own
+**Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): n = the
+site's OWN signed process normal (substrate -> vacuum, oriented by the length-weighted mean of
+its incident runs' normals; decision 266, frame rule of (b) — on a flipped plane n = -z, never
+the sign-canonical n_ref as such); corner: x = the first arm away from the (virtual) corner, the arms
+ordered so that the second is counterclockwise about n (a corner is its own mirror image),
+y = n x x (right-handed); endpoint: x = the arm, y = +-(n x x) toward the gap; junction: x = the
+canonical first arm of `CanonicalJunctionSignature`, the arm angles measured about n, y =
++-(n x x) so that the canonical arm order proceeds counterclockwise in (x, y). A legacy junction model (absolute `ArmAngles`) is mapped by its own
 canonical order (first arm angle theta, orientation): u = cos(theta) D - sigma sin(theta) (n x D),
 v = sigma (n x u), sigma = +1 when both orientations agree.
 

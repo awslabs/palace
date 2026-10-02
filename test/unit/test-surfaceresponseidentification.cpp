@@ -17,6 +17,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "models/surfaceresponseidentification.hpp"
 #include "utils/metaledge.hpp"
 
@@ -30,8 +31,8 @@ using Point2 = std::array<double, 2>;
 
 // Plan-view metal loops (counter-clockwise: metal inside) subdivided into mesh segments of
 // at most the given length, with the perimeter frames the classifier would supply (gap
-// direction = outward normal, process normal = +z, one PEC conductor per loop or a shared
-// one).
+// direction = outward normal, process normal = normal_sign x z, one PEC conductor per loop
+// or a shared one).
 struct LoopSpec
 {
   std::vector<Point2> points;
@@ -43,6 +44,9 @@ struct LoopSpec
   // the truncation boundary (ENDPOINT of the physical chain, never a feature), as the
   // perimeter extraction reports a metal polygon clipped by a window wall.
   std::set<std::size_t> truncation_edges;
+  // Sign of the loop's process normal (+1: metal facing +z, substrate below; -1: a flipped
+  // plane, a flip-chip top chip facing down with its substrate above).
+  double normal_sign = 1.0;
 };
 
 IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
@@ -76,6 +80,7 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     int chain;
     double z;
     bool truncation;
+    double normal_sign;
   };
   std::vector<Raw> raw;
   int chain = 0;
@@ -101,7 +106,8 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
                        loop.conductor,
                        chain,
                        loop.z,
-                       loop.truncation_edges.count(i) > 0});
+                       loop.truncation_edges.count(i) > 0,
+                       loop.normal_sign});
       }
       chain++;
     }
@@ -121,7 +127,7 @@ IdentificationInput MakeInput(const std::vector<LoopSpec> &loops, double radius,
     segment.conductor = r.conductor;
     segment.targets = {{InterfaceDielectric::MS, 1}};
     segment.gap_direction = {r.outward[0], r.outward[1], 0.0};
-    segment.process_normal = {0.0, 0.0, 1.0};
+    segment.process_normal = {0.0, 0.0, r.normal_sign};
     segment.boundary_law = "{\"Type\":\"PEC\"}";
     for (const std::size_t v : segment.vertices)
     {
@@ -3712,5 +3718,196 @@ TEST_CASE("SurfaceResponseIdentificationStackPieceInsideCluster",
     }
     CHECK(strips >= 1);
     CHECK(result.extension.translational_pieces == 0);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationFlippedPlaneFrames",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Decision 266 (flip-chip orientation): a spatial cluster and a vertex feature are framed
+  // with their OWN signed process normal (substrate -> vacuum), not with the device-global
+  // sign-canonical reference normal. Two planes carry congruent copies of one asymmetric
+  // scene (a pad corner near the end of an offset strip: an asymmetric cluster, plain
+  // convex corners elsewhere): the upright plane U at z = 0 facing +z, and the flipped
+  // plane F at z = 4.8 facing -z (a flip-chip top chip, its substrate above) = U rotated by
+  // 180 deg about the line {x = 30, z = 2.4} parallel to y (a proper rigid motion: (x, y,
+  // z) -> (60 - x, y, 4.8 - z), vectors (vx, vy, vz) -> (-vx, vy, -vz)).
+  const double R = 2.0;
+  const double flipped_z = 4.8, shift_x = 60.0;
+  const std::vector<Point2> pad = Rectangle(0.0, 0.0, 10.0, 10.0);
+  const std::vector<Point2> strip = Rectangle(-3.0, 3.0, -1.0, 20.0);
+  auto Image = [&](std::vector<Point2> points)
+  {
+    for (auto &p : points)
+    {
+      p = {shift_x - p[0], p[1]};
+    }
+    std::reverse(points.begin(), points.end());  // keep counter-clockwise in plan view
+    return points;
+  };
+  auto ImageVector = [](const std::array<double, 3> &v)
+  { return std::array<double, 3>{-v[0], v[1], -v[2]}; };
+  auto ImagePoint = [&](const std::array<double, 3> &p)
+  { return std::array<double, 3>{shift_x - p[0], p[1], flipped_z - p[2]}; };
+  auto Close = [](const std::array<double, 3> &a, const std::array<double, 3> &b)
+  {
+    return std::abs(a[0] - b[0]) < 1.0e-9 && std::abs(a[1] - b[1]) < 1.0e-9 &&
+           std::abs(a[2] - b[2]) < 1.0e-9;
+  };
+  auto Handedness = [](const IdentifiedFeature &f)
+  {
+    const auto &x = f.axes[0], &y = f.axes[1], &w = f.axes[2];
+    const std::array<double, 3> c = {x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2],
+                                     x[0] * y[1] - x[1] * y[0]};
+    return c[0] * w[0] + c[1] * w[1] + c[2] * w[2];
+  };
+  const std::vector<LoopSpec> upright = {{pad, 0, 1.0}, {strip, 0, 1.0}};
+  std::vector<LoopSpec> flipped = {{Image(pad), 0, 1.0}, {Image(strip), 0, 1.0}};
+  for (auto &loop : flipped)
+  {
+    loop.z = flipped_z;
+    loop.normal_sign = -1.0;
+  }
+  std::vector<LoopSpec> both = upright;
+  both.insert(both.end(), flipped.begin(), flipped.end());
+
+  const auto upright_input = MakeInput(upright, R);
+  const auto upright_alone = IdentifyMetalPerimeter(upright_input);
+  CheckPartition(upright_input, upright_alone);
+  const auto both_input = MakeInput(both, R);
+  const auto result = IdentifyMetalPerimeter(both_input);
+  CheckPartition(both_input, result);
+  CHECK(result.reference_process_normal == std::array<double, 3>{0.0, 0.0, 1.0});
+
+  auto PlaneOf = [&](const IdentifiedFeature &f)
+  {
+    REQUIRE(!f.portions.empty());
+    return both_input.segments[f.portions.front().segment].p0[2] > 0.5 * flipped_z ? 1 : 0;
+  };
+  std::vector<const IdentifiedFeature *> upright_features, flipped_features;
+  for (const auto &f : result.features)
+  {
+    (PlaneOf(f) == 1 ? flipped_features : upright_features).push_back(&f);
+  }
+  REQUIRE(upright_features.size() == upright_alone.features.size());
+  REQUIRE(flipped_features.size() == upright_alone.features.size());
+
+  // The upright plane reads exactly as it does alone: keys, chirality, frames.
+  {
+    auto Key = [](const IdentifiedFeature &f)
+    { return std::make_tuple(f.type, f.hash, f.chirality, f.origin, f.axes); };
+    std::multiset<decltype(Key(result.features.front()))> alone, together;
+    for (const auto &f : upright_alone.features)
+    {
+      alone.insert(Key(f));
+    }
+    for (const auto *f : upright_features)
+    {
+      together.insert(Key(*f));
+    }
+    CHECK(alone == together);
+  }
+
+  // Every spatial / vertex feature of the flipped plane: w = -z (its own vacuum side), the
+  // key AND chirality of its congruent upright counterpart (the hash of a cluster signature
+  // is handedness-invariant by design — a plan-view mirror image has the same hash with the
+  // opposite chirality — so the identity under test is the pair (hash, chirality)), the
+  // frame = the rigid image of the upright frame, and the coupon's substrate half-space
+  // (support w in [-1.95, 0)) inside the flipped plane's substrate (z > 4.8).
+  int clusters_checked = 0, corners_checked = 0, asymmetric_clusters = 0;
+  for (const auto *f : flipped_features)
+  {
+    if (f->type != "SpatialEdgeCluster" && f->type != "ConvexCorner" &&
+        f->type != "ConcaveCorner")
+    {
+      continue;
+    }
+    INFO("flipped " << f->type << " at (" << f->origin[0] << ", " << f->origin[1] << ")");
+    CHECK(Close(f->axes[2], {0.0, 0.0, -1.0}));
+    const double coupon_substrate_z = f->origin[2] - 1.95 * f->axes[2][2];
+    CHECK(coupon_substrate_z > flipped_z);
+    const IdentifiedFeature *counterpart = nullptr;
+    for (const auto &u : upright_alone.features)
+    {
+      if (u.type == f->type && Close(ImagePoint(u.origin), f->origin))
+      {
+        counterpart = &u;
+      }
+    }
+    REQUIRE(counterpart != nullptr);
+    CHECK(counterpart->hash == f->hash);
+    CHECK(counterpart->chirality == f->chirality);
+    CHECK(Close(counterpart->axes[2], {0.0, 0.0, 1.0}));
+    if (f->type == "SpatialEdgeCluster")
+    {
+      clusters_checked++;
+      if (f->chirality != 0)
+      {
+        // Unique canonical frame: the flipped frame is the image of the upright one, and
+        // its handedness is the chirality (right-handed for +1, the mirror frame for -1).
+        asymmetric_clusters++;
+        CHECK(Close(ImageVector(counterpart->axes[0]), f->axes[0]));
+        CHECK(Close(ImageVector(counterpart->axes[1]), f->axes[1]));
+        CHECK_THAT(Handedness(*f), WithinAbs(static_cast<double>(f->chirality), 1.0e-12));
+        CHECK_THAT(Handedness(*counterpart),
+                   WithinAbs(static_cast<double>(f->chirality), 1.0e-12));
+      }
+    }
+    else
+    {
+      // A corner frame is right-handed (x = the arm from which the other is
+      // counterclockwise about the plane's own normal, y = n x x): the flipped corner's
+      // frame is the rigid image of the upright one.
+      corners_checked++;
+      CHECK_THAT(Handedness(*f), WithinAbs(1.0, 1.0e-12));
+      CHECK(Close(ImageVector(counterpart->axes[0]), f->axes[0]));
+      CHECK(Close(ImageVector(counterpart->axes[1]), f->axes[1]));
+    }
+  }
+  CHECK(clusters_checked >= 2);
+  CHECK(asymmetric_clusters >= 1);
+  CHECK(corners_checked >= 2);
+
+  // The old reading (the flipped geometry framed with the sign-canonical +z normal) is the
+  // plan-view MIRROR of the congruent upright scene: the same hash with the opposite
+  // chirality and w = +z (the coupon upside down). The new frames differ from it exactly
+  // there.
+  {
+    std::vector<LoopSpec> mirror = {{Image(pad), 0, 1.0}, {Image(strip), 0, 1.0}};
+    const auto mirror_result = IdentifyMetalPerimeter(MakeInput(mirror, R));
+    for (const auto *f : flipped_features)
+    {
+      if (f->type != "SpatialEdgeCluster" || f->chirality == 0)
+      {
+        continue;
+      }
+      const IdentifiedFeature *old_reading = nullptr;
+      for (const auto &m : mirror_result.features)
+      {
+        if (m.type == "SpatialEdgeCluster" &&
+            std::abs(m.origin[0] - f->origin[0]) < 1.0e-9 &&
+            std::abs(m.origin[1] - f->origin[1]) < 1.0e-9)
+        {
+          old_reading = &m;
+        }
+      }
+      REQUIRE(old_reading != nullptr);
+      CHECK(old_reading->hash == f->hash);
+      CHECK(old_reading->chirality == -f->chirality);
+      CHECK(Close(old_reading->axes[2], {0.0, 0.0, 1.0}));
+      CHECK(Close(old_reading->axes[0], f->axes[0]));
+      CHECK(Close(old_reading->axes[1], f->axes[1]));  // the in-plane map is the same
+    }
+  }
+
+  // A cluster whose runs disagree on the sign of their process normal has no common
+  // substrate -> vacuum side: the identification fails closed naming the cluster (the strip
+  // of the same plane facing -z while the pad faces +z: the asymmetric cluster spans both).
+  {
+    std::vector<LoopSpec> mixed = {{pad, 0, 1.0}, {strip, 0, 1.0}};
+    mixed[1].normal_sign = -1.0;
+    CHECK_THROWS_WITH(IdentifyMetalPerimeter(MakeInput(mixed, R)),
+                      ContainsSubstring("disagree on the sign") &&
+                          ContainsSubstring("spatial cluster"));
   }
 }
