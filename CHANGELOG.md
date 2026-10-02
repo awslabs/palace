@@ -71,6 +71,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed issues affecting non-cracked 2D nonconformal meshes where the edges on the unrefined
+    side were not constrained.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
 
 #### Performance Improvements
 
