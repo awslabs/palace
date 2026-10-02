@@ -68,10 +68,11 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
-  MFEM_VERIFY(!mat_op.HasFrequencyDependentPermittivity() ||
-                  problem_type != ProblemType::EIGENMODE || mesh.back()->Dimension() == 3,
+  // The 2D driven and eigenmode paths use a different curl space and error estimator and
+  // have no coverage with dispersive materials, so they are rejected rather than assumed.
+  MFEM_VERIFY(!mat_op.HasFrequencyDependentPermittivity() || mesh.back()->Dimension() == 3,
               "Frequency-dependent material Permittivity is only supported for 3D "
-              "eigenmode simulations!");
+              "simulations!");
   SetUpFrequencyDependentPermittivityMassOperators();
 
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
@@ -173,12 +174,10 @@ void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficient(
 }
 
 void SpaceOperator::GetFrequencyDependentPermittivityA2Coefficients(
-    std::complex<double> omega, std::vector<double> &real, std::vector<double> &imag,
-    bool &has_real, bool &has_imag) const
+    std::complex<double> omega, std::vector<double> &real, std::vector<double> &imag) const
 {
   real.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
   imag.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
-  has_real = has_imag = false;
   const std::complex<double> s = 1i * omega;
   for (std::size_t i = 0; i < real.size(); i++)
   {
@@ -186,8 +185,6 @@ void SpaceOperator::GetFrequencyDependentPermittivityA2Coefficients(
         mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
     real[i] = value.real();
     imag[i] = value.imag();
-    has_real |= value.real() != 0.0 && frequency_dependent_permittivity_mass[i] != nullptr;
-    has_imag |= value.imag() != 0.0 && frequency_dependent_permittivity_mass[i] != nullptr;
   }
 }
 
@@ -198,8 +195,12 @@ void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
   const std::complex<double> s = 1i * omega;
   for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
   {
+    // The real part is mass-like (s²χ), so it follows the same shift as the ε∞ mass; a
+    // strongly dispersive material (Re χ > ε∞) would otherwise make the shifted
+    // preconditioner indefinite. The imaginary part is loss-like and is left as is.
     const std::complex<double> g = mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
-    AddFrequencyDependentPermittivityA2Coefficient(i, g.real(), fr);
+    AddFrequencyDependentPermittivityA2Coefficient(
+        i, pc_mat_shifted ? std::abs(g.real()) : g.real(), fr);
     AddFrequencyDependentPermittivityA2Coefficient(i, g.imag(), fi);
   }
 }
@@ -210,10 +211,11 @@ void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
   const std::complex<double> s = 1i * omega;
   for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
   {
-    // Real preconditioners use the existing A2 policy where its real and imaginary
-    // coefficient slots are accumulated into the same form.
+    // Real preconditioners accumulate the real and imaginary slots into the same form, as
+    // for other A2 terms, with the mass-like real part shifted like the ε∞ mass.
     const std::complex<double> g = mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
-    AddFrequencyDependentPermittivityA2Coefficient(i, g.real() + g.imag(), f);
+    AddFrequencyDependentPermittivityA2Coefficient(
+        i, (pc_mat_shifted ? std::abs(g.real()) : g.real()) + g.imag(), f);
   }
 }
 
@@ -583,46 +585,25 @@ void SpaceOperator::AssembleFrequencyDependentPermittivityA2Operators(
     return;
   }
 
+  // Always build both slots, including a zero wrapper when the contribution cancels at
+  // this frequency: nonlinear interpolation and PROM fallback selection require the same
+  // operator structure at every frequency.
   std::vector<double> model_A2_real, model_A2_imag;
-  bool has_model_A2_real, has_model_A2_imag;
-  GetFrequencyDependentPermittivityA2Coefficients(omega, model_A2_real, model_A2_imag,
-                                                  has_model_A2_real, has_model_A2_imag);
-  // Keep a zero A2 wrapper for a structurally nonlinear contribution that happens to
-  // cancel at this frequency. Nonlinear interpolation and PROM fallback selection require
-  // the same operator structure at every frequency.
-  const bool has_model_A2 = mat_op.HasFrequencyDependentPermittivityA2();
-  int empty[2] = {(AreExactlyZero(dfbr, fbr) && !has_model_A2_real && !has_model_A2),
-                  (AreExactlyZero(dfbi, fbi) && !has_model_A2_imag && !has_model_A2)};
-  Mpi::GlobalMin(2, empty, GetComm());
-  if (empty[0] && empty[1])
-  {
-    return;
-  }
+  GetFrequencyDependentPermittivityA2Coefficients(omega, model_A2_real, model_A2_imag);
   constexpr bool skip_zeros = false;
-  if (!empty[0])
+  std::unique_ptr<Operator> base_r, base_i;
+  if (!AreExactlyZero(dfbr, fbr))
   {
-    std::unique_ptr<Operator> base;
-    if (!AreExactlyZero(dfbr, fbr))
-    {
-      base = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr,
-                              skip_zeros);
-    }
-    ar = mat_op.HasFrequencyDependentPermittivityA2()
-             ? BuildFrequencyDependentPermittivityA2Operator(std::move(base), model_A2_real)
-             : std::move(base);
+    base_r =
+        AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros);
   }
-  if (!empty[1])
+  if (!AreExactlyZero(dfbi, fbi))
   {
-    std::unique_ptr<Operator> base;
-    if (!AreExactlyZero(dfbi, fbi))
-    {
-      base = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr,
-                              skip_zeros);
-    }
-    ai = mat_op.HasFrequencyDependentPermittivityA2()
-             ? BuildFrequencyDependentPermittivityA2Operator(std::move(base), model_A2_imag)
-             : std::move(base);
+    base_i =
+        AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
   }
+  ar = BuildFrequencyDependentPermittivityA2Operator(std::move(base_r), model_A2_real);
+  ai = BuildFrequencyDependentPermittivityA2Operator(std::move(base_i), model_A2_imag);
 }
 
 template <OperatorType OperType>
