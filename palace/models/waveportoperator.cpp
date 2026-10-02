@@ -596,6 +596,26 @@ AssembleReaction(const GridFunction &Et, const GridFunction &En,
   return R;
 }
 
+// Restricted modal n×H coefficient, with or without the ∇ₜEₙ gradient term.
+template <ValueType Type>
+std::unique_ptr<mfem::VectorCoefficient>
+MakeModeHCoefficient(bool include_gradient, const mfem::Array<int> &attr_list,
+                     const GridFunction &Et, const GridFunction &En,
+                     const MaterialOperator &mat_op, const mfem::ParSubMesh &port_submesh,
+                     const std::unordered_map<int, int> &submesh_parent_elems,
+                     std::complex<double> kn, std::complex<double> omega)
+{
+  if (include_gradient)
+  {
+    return std::make_unique<
+        RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<Type, true>>>(
+        attr_list, Et, En, mat_op, port_submesh, submesh_parent_elems, kn, omega);
+  }
+  return std::make_unique<
+      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<Type, false>>>(
+      attr_list, Et, En, mat_op, port_submesh, submesh_parent_elems, kn, omega);
+}
+
 }  // namespace
 
 WavePortData::WavePortData(const config::WavePortData &data,
@@ -1339,68 +1359,36 @@ std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetModeExcitationCoefficientReal(bool include_gradient) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  if (include_gradient)
-  {
-    return std::make_unique<
-        RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, true>>>(
-        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
-        kn0.real(), omega0);
-  }
-  return std::make_unique<
-      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, false>>>(
-      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
-      kn0.real(), omega0);
+  return MakeModeHCoefficient<ValueType::REAL>(include_gradient, attr_list, *port_E0t,
+                                               *port_E0n, mat_op, port_submesh,
+                                               submesh_parent_elems, kn0.real(), omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetModeExcitationCoefficientImag(bool include_gradient) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  if (include_gradient)
-  {
-    return std::make_unique<
-        RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, true>>>(
-        attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
-        kn0.real(), omega0);
-  }
-  return std::make_unique<
-      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, false>>>(
-      attr_list, *port_E0t, *port_E0n, mat_op, port_submesh, submesh_parent_elems,
-      kn0.real(), omega0);
+  return MakeModeHCoefficient<ValueType::IMAG>(include_gradient, attr_list, *port_E0t,
+                                               *port_E0n, mat_op, port_submesh,
+                                               submesh_parent_elems, kn0.real(), omega0);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetOmegaModeExcitationCoefficientReal(bool include_gradient) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  if (include_gradient)
-  {
-    return std::make_unique<
-        RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, true>>>(
-        attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh,
-        submesh_parent_elems, kn_recompute, omega_recompute);
-  }
-  return std::make_unique<
-      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::REAL, false>>>(
-      attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh, submesh_parent_elems,
-      kn_recompute, omega_recompute);
+  return MakeModeHCoefficient<ValueType::REAL>(
+      include_gradient, attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh,
+      submesh_parent_elems, kn_recompute, omega_recompute);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
 WavePortData::GetOmegaModeExcitationCoefficientImag(bool include_gradient) const
 {
   const auto &port_submesh = static_cast<const mfem::ParSubMesh &>(port_mesh->Get());
-  if (include_gradient)
-  {
-    return std::make_unique<
-        RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, true>>>(
-        attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh,
-        submesh_parent_elems, kn_recompute, omega_recompute);
-  }
-  return std::make_unique<
-      RestrictedVectorCoefficient<BdrSubmeshHVectorCoefficient<ValueType::IMAG, false>>>(
-      attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh, submesh_parent_elems,
-      kn_recompute, omega_recompute);
+  return MakeModeHCoefficient<ValueType::IMAG>(
+      include_gradient, attr_list, *port_Et_omega, *port_En_omega, mat_op, port_submesh,
+      submesh_parent_elems, kn_recompute, omega_recompute);
 }
 
 std::unique_ptr<mfem::VectorCoefficient>
@@ -2157,6 +2145,24 @@ std::unique_ptr<ComplexVector> AssembleNxHVector(FiniteElementSpace &nd_fespace,
   return s;
 }
 
+// Wrap the assembled rank-1 terms as the modal-correction operator, or nullptr if none.
+std::unique_ptr<ComplexOperator>
+BuildModalCorrectionOperator(std::vector<WavePortOperator::ModalCorrectionTerm> terms,
+                             FiniteElementSpace &nd_fespace)
+{
+  if (terms.empty())
+  {
+    return nullptr;
+  }
+  auto op = std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
+                                                      nd_fespace.GetTrueVSize());
+  for (auto &term : terms)
+  {
+    op->AddTerm(std::move(term.s), term.g);
+  }
+  return op;
+}
+
 }  // namespace
 
 std::vector<WavePortOperator::ModalCorrectionTerm>
@@ -2291,17 +2297,7 @@ WavePortOperator::GetModalCorrectionOperator(double omega, FiniteElementSpace &n
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  if (terms.empty())
-  {
-    return nullptr;
-  }
-  auto op = std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
-                                                      nd_fespace.GetTrueVSize());
-  for (auto &term : terms)
-  {
-    op->AddTerm(std::move(term.s), term.g);
-  }
-  return op;
+  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
 }
 
 std::unique_ptr<ComplexOperator>
@@ -2310,17 +2306,7 @@ WavePortOperator::GetModalCorrectionOperator(std::complex<double> omega,
                                              const mfem::Array<int> &nd_dbc_tdof_list)
 {
   auto terms = GetModalCorrectionTerms(omega, nd_fespace, nd_dbc_tdof_list);
-  if (terms.empty())
-  {
-    return nullptr;
-  }
-  auto op = std::make_unique<WavePortModalCorrection>(nd_fespace.GetComm(),
-                                                      nd_fespace.GetTrueVSize());
-  for (auto &term : terms)
-  {
-    op->AddTerm(std::move(term.s), term.g);
-  }
-  return op;
+  return BuildModalCorrectionOperator(std::move(terms), nd_fespace);
 }
 
 std::vector<int>
