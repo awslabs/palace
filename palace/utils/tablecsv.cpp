@@ -87,6 +87,19 @@ Column::Column(std::string name_, std::string header_text_, long column_group_id
   return max_col->n_rows();
 }
 
+// TODO(C++20): std::ranges::min over cols with &Column::n_rows as a projection, likewise
+// for the std::max_element in n_rows above.
+[[nodiscard]] std::size_t Table::n_complete_rows() const
+{
+  if (n_cols() == 0)
+  {
+    return 0;
+  }
+  auto min_col = std::min_element(cols.begin(), cols.end(), [](const auto &a, const auto &b)
+                                  { return a.n_rows() < b.n_rows(); });
+  return min_col->n_rows();
+}
+
 void Table::reserve(std::size_t n_rows, std::size_t n_cols)
 {
   reserve_n_rows = n_rows;
@@ -113,9 +126,19 @@ bool Table::insert(Column &&column)
   return true;
 }
 
+void Table::RebuildNameIndex()
+{
+  name_to_index.clear();
+  for (std::size_t i = 0; i < cols.size(); i++)
+  {
+    const bool inserted = name_to_index.emplace(cols[i].name, i).second;
+    MFEM_VERIFY(inserted, "Duplicate column name \"" << cols[i].name << "\" in table!");
+  }
+}
+
 Column &Table::operator[](std::string_view name)
 {
-  auto it = name_to_index.find(std::string(name));
+  auto it = name_to_index.find(name);
   if (it == name_to_index.end())
   {
     throw std::out_of_range(fmt::format("Column {} not found in table", name).c_str());
@@ -295,7 +318,16 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
   std::stringstream file_buffer_str;
   file_buffer_str << file_buffer.rdbuf();
   file_buffer.close();
-  table = Table(file_buffer_str.str());
+  const std::string contents = file_buffer_str.str();
+  table = Table(contents);
+  // A file cut off after its last value but before the row separator still parses as a
+  // complete row, but appending to it would join two rows on one line. Rewrite it whole
+  // on the next write instead.
+  const auto &sep = table.print_row_separator;
+  const bool ends_with_separator =
+      contents.size() >= sep.size() &&
+      contents.compare(contents.size() - sep.size(), sep.size(), sep) == 0;
+  rows_on_disk_ = ends_with_separator ? table.n_rows() : 0;
 }
 
 void TableWithCSVFile::WriteFullTableTrunc()
@@ -305,6 +337,58 @@ void TableWithCSVFile::WriteFullTableTrunc()
   auto file_buffer = fmt::output_file(
       csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
   file_buffer.print("{}", table.format_table());
+  rows_on_disk_ = table.n_rows();
+}
+
+void TableWithCSVFile::WriteTableIncremental()
+{
+  const std::size_t n_complete = table.n_complete_rows();
+  const bool complete = (n_complete == table.n_rows());
+  if (!complete)
+  {
+    wrote_partial_rows_ = true;
+  }
+  // A partially filled table, or one that has ever been partially filled, keeps the
+  // whole-file write. It is what produces the NULL-padded rows that restart validation
+  // reads the excitation fill state back from, and appends cannot revise a row already on
+  // disk.
+  if (!complete || wrote_partial_rows_)
+  {
+    WriteFullTableTrunc();
+    return;
+  }
+  // A file that vanished or has become a symlink cannot be appended to.
+  if (rows_on_disk_ > 0 &&
+      (fs::is_symlink(csv_file_fullpath_) || !fs::exists(csv_file_fullpath_)))
+  {
+    rows_on_disk_ = 0;
+  }
+  if (rows_on_disk_ == 0)
+  {
+    // Start a fresh file, so a previous run's output is never read as this run's. The
+    // header goes in even with no rows yet, matching a whole-file write of an empty table.
+    fs::remove(csv_file_fullpath_);
+    auto file_buffer = fmt::output_file(
+        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
+    file_buffer.print("{}", table.format_header());
+    for (std::size_t j = 0; j < n_complete; j++)
+    {
+      file_buffer.print("{}", table.format_row(j));
+    }
+    rows_on_disk_ = n_complete;
+    return;
+  }
+  if (n_complete <= rows_on_disk_)
+  {
+    return;
+  }
+  auto file_buffer = fmt::output_file(
+      csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::APPEND);
+  for (std::size_t j = rows_on_disk_; j < n_complete; j++)
+  {
+    file_buffer.print("{}", table.format_row(j));
+  }
+  rows_on_disk_ = n_complete;
 }
 
 }  // namespace palace

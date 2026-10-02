@@ -440,6 +440,10 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
       }
     }
   }
+  // The names above were restored from the reference table, so rebuild the index the
+  // name-based lookups use.
+  t_csv_base.table.RebuildNameIndex();
+
   // Match expected column group pattern.
   auto expected_ex_idx_nrows = _impl::table_expected_filling(
       row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
@@ -459,15 +463,11 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
 {
+  // Deferred tables are written together at a step boundary (the end of PrintAllCSVData
+  // or PrintReducedCSVData), so every file on disk ends on the same row.
   if (!defer_table_writes)
   {
-    table.WriteFullTableTrunc();
-    return;
-  }
-  constexpr auto flush_interval = std::chrono::seconds(10);
-  if (std::chrono::steady_clock::now() - last_deferred_flush >= flush_interval)
-  {
-    FlushDeferredTables();
+    table.WriteTableIncremental();
   }
 }
 
@@ -480,7 +480,7 @@ void PostOperatorCSV<solver_t>::WriteTable(std::optional<TableWithCSVFile> &tabl
   }
   if (table->table.n_rows() > 0)
   {
-    table->WriteFullTableTrunc();
+    table->WriteTableIncremental();
   }
   else
   {
@@ -1844,6 +1844,20 @@ void PostOperatorCSV<solver_t>::PrintAllCSVData(
     PrintModeKn();
     PrintModeZ();
     PrintModeV();
+  }
+
+  MaybeFlushDeferredTables();
+}
+
+template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::MaybeFlushDeferredTables()
+{
+  // Flush on a step boundary so every table on disk holds the same rows.
+  constexpr auto flush_interval = std::chrono::seconds(10);
+  if (defer_table_writes &&
+      std::chrono::steady_clock::now() - last_deferred_flush >= flush_interval)
+  {
+    FlushDeferredTables();
   }
 }
 

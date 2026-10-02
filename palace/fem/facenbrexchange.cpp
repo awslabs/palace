@@ -509,10 +509,10 @@ FaceNbrFieldExchange::FaceNbrFieldExchange(
       }
     }
     CeedElemRestriction out_restr;
-    PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem), nq,
-                                                   value_dim, 1, (CeedSize)export_size,
-                                                   CEED_MEM_HOST, CEED_COPY_VALUES,
-                                                   offsets.data(), &out_restr));
+    PalaceCeedCall(ceed, CeedElemRestrictionCreate(
+                             ceed, static_cast<CeedInt>(num_elem), nq, value_dim, 1,
+                             static_cast<CeedSize>(export_size), CEED_MEM_HOST,
+                             CEED_COPY_VALUES, offsets.data(), &out_restr));
 
     // The reply contains physical-space field values for Piola-mapped spaces, and scalar
     // values for H1/L2 spaces. The requester needs no neighbor element geometry.

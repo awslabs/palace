@@ -154,6 +154,12 @@ public:
         CHECK(post_op_csv.port_V->table[2].name == "re1_1");
         CHECK(post_op_csv.port_V->table[3].name == "im1_1");
 
+        // Name lookups go through the index, which must match the restored names.
+        CHECK(post_op_csv.port_V->table.has("inc1_1"));
+        CHECK(!post_op_csv.port_V->table.has("col_1"));
+        CHECK_NOTHROW(post_op_csv.port_V->table["idx"]);
+        CHECK(&post_op_csv.port_V->table["re1_1"] == &post_op_csv.port_V->table[2]);
+
         // Validate properties copied form reference table.
         CHECK(post_op_csv.port_V->table[0].column_group_idx ==
               -1);  // idx is column block -1

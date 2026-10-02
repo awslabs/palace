@@ -15,8 +15,7 @@ namespace palace::test
 namespace
 {
 
-// Create a new directory with a unique name in the temporary directory (mkdtemp, so tests
-// running concurrently never share one). Returns an empty path on failure.
+// New uniquely named temporary directory (empty path on failure).
 fs::path MakeUniqueTempDir(const std::string &prefix)
 {
   std::string tmpl = (fs::temp_directory_path() / (prefix + "XXXXXX")).string();

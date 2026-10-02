@@ -367,9 +367,10 @@ jobs:
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
 
-          # Disable Open MPI's default CPU binding: with OpenMP threads, a rank bound to
-          # a single core time-slices its threads (as in spack-macos.yml).
-          if [[ "${{ matrix.mpi }}" == 'openmpi' ]]; then
+          # Disable Open MPI's CPU binding (as in spack-macos.yml): with two ranks, each is
+          # bound to one core, shared by its OpenMP threads.
+          if [[ "${{ matrix.mpi }}" == 'openmpi' ]] && \
+             [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
             export OMPI_MCA_hwloc_base_binding_policy=none
             export PRTE_MCA_hwloc_default_binding_policy=none
           fi
@@ -452,12 +453,6 @@ jobs:
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
           fi
           export PATH=$(pwd)/palace-install/bin:$PATH
-          # Disable Open MPI's default CPU binding: with OpenMP threads, a rank bound to
-          # a single core time-slices its threads (as in spack-macos.yml).
-          if [[ "${{ matrix.mpi }}" == 'openmpi' ]]; then
-            export OMPI_MCA_hwloc_base_binding_policy=none
-            export PRTE_MCA_hwloc_default_binding_policy=none
-          fi
 
           cd palace-build/palace-build/test/unit
           # CTest pins OMP_NUM_THREADS and reserves PROCESSORS per case, so -j is

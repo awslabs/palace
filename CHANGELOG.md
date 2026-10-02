@@ -28,6 +28,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
     London magnetostatic solve SPD-solvable by AMS.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
+    an absolute tolerance when defining convergence. SchemaVer 2-1-0
+    [PR 734](https://github.com/awslabs/palace/pull/734).
   - Added substructuring for electrostatic and magnetostatic simulations
     (`config["Solver"]["Substructuring"]`): the environment of a region of interest is
     condensed exactly onto their shared interface, and the region is solved against it. A
@@ -38,8 +41,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"`
     excitations, with the films and `"Superconductor"` boundaries as London sheets (kinetic
     inductance included). Adds substructuring examples in `examples/transmon` and
-    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops). SchemaVer 2-1-0.
-    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops). SchemaVer 2-2-0.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes
 
@@ -73,6 +76,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
     generator and relaxes freely. Re-run existing `FluxLoop` cases; the regression references
     were re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Fixed CG, GMRES, and FGMRES returning NaN when the initial residual is exactly zero
+    (e.g. a zero right-hand side) and no absolute tolerance is set.
+    [PR 941](https://github.com/awslabs/palace/pull/941).
+  - Fixed driven-sweep restarts (`"Restart"` > 1) aborting with
+    `Column ... not found in table`, because reloaded CSV tables kept stale column-name
+    indices.
+    [PR 944](https://github.com/awslabs/palace/pull/944).
 
 #### Performance Improvements
 
@@ -88,6 +98,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
     reactions) in a single sweep over the port elements.
     [PR 909](https://github.com/awslabs/palace/pull/909).
+  - CSV output tables are now appended row by row instead of rewritten at every measurement,
+    so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
+    [PR 942](https://github.com/awslabs/palace/pull/942).
 
 #### Build system
 
