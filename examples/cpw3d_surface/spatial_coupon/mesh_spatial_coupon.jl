@@ -2471,6 +2471,13 @@ end
 # Tolerance of the arc fit of circular_arc_runs (fitted_arc_run), at radius `r`.
 arc_fit_tolerance(r, tolerance) = max(64tolerance, 2.0e-7 * r)
 
+# A junction whose two items' directions of travel differ by at most this angle
+# (radians) is tangent: the identification's joint noise (CSV rounding of the arc
+# vertices, ~1e-6) never makes a corner of a rounded joint, and a genuine corner
+# turns by far more. Its two shifted ends (apart by |distance| x the angle) snap to
+# the junction point; a larger turn is a corner (convex: a miter kite in the union).
+const JUNCTION_TANGENT_ANGLE = 1.0e-4
+
 perp2d(v) = (-v[2], v[1])
 
 unit2d(v) = (v[1] / hypot(v...), v[2] / hypot(v...))
@@ -2609,7 +2616,8 @@ end
 # offset), `items` (offset_item_geometry per item) and `junctions`, one per pair of
 # consecutive non-collapsed items: (before, after) item indices, `vertex` (the
 # loop vertex, or the two vertices of the collapsed arcs between them), `point`
-# (nothing when bridged) and `convex` (the metal turns convexly there).
+# (nothing when bridged), `tangent` (the items join within JUNCTION_TANGENT_ANGLE)
+# and `convex` (the metal turns convexly there).
 function curved_offset_loop(loop, distance, runs, tolerance)
     points = loop.points
     n = length(points)
@@ -2662,9 +2670,11 @@ function curved_offset_loop(loop, distance, runs, tolerance)
                 error("Plan-view taper has a singular boundary vertex at $(before.stop)")
             error("Plan-view taper produces an unresolved miter at $(before.stop)")
         end
-        turn = metal_side * cross2d(before.tangent_stop, after.tangent_start)
-        convex = !collapsed_between &&
-                 turn > tolerance * hypot(before.tangent_stop...) * hypot(after.tangent_start...)
+        turn = metal_side * atan(cross2d(before.tangent_stop, after.tangent_start),
+                                 before.tangent_stop[1] * after.tangent_start[1] +
+                                 before.tangent_stop[2] * after.tangent_start[2])
+        tangent = !collapsed_between && abs(turn) <= JUNCTION_TANGENT_ANGLE
+        convex = !collapsed_between && turn > JUNCTION_TANGENT_ANGLE
         append!(offset, before.interior)
         if resolved
             push!(offset, point)
@@ -2674,7 +2684,7 @@ function curved_offset_loop(loop, distance, runs, tolerance)
             push!(offset, after.shifted_start)
         end
         push!(junctions, (before=k, after=next, vertices=vertices,
-                          point=resolved ? point : nothing, convex=convex,
+                          point=resolved ? point : nothing, tangent=tangent, convex=convex,
                           collapsed=skipped))
     end
     # The cycle [interior_1, J_12, interior_2, ..., interior_m, J_m1] is the offset
@@ -2823,9 +2833,7 @@ function curved_collar_pieces(loop, distance, offset, lower, upper, tolerance)
     for junction in offset.junctions
         before = items[junction.before]
         after = items[junction.after]
-        gap = hypot(before.shifted_stop[1] - after.shifted_start[1],
-                    before.shifted_stop[2] - after.shifted_start[2])
-        if junction.point !== nothing && gap <= tolerance
+        if junction.point !== nothing && junction.tangent
             stop_corner[junction.before] = junction.point
             start_corner[junction.after] = junction.point
         elseif junction.point !== nothing && junction.convex
