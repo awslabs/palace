@@ -176,7 +176,7 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::DropSmallEntries()
 {
   const auto nnz_before = A->NNZ();

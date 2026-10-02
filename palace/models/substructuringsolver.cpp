@@ -667,7 +667,8 @@ struct SubstructuringSolver::Impl
                                             sc.lambda_L, sc.thickness);
       for (int a : sc.attributes)
       {
-        coef[a] = 1.0 / (Ls * (iodata.boundaries.cracked_attributes.count(a) ? 2.0 : 1.0));
+        coef[a] =
+            1.0 / (Ls * (iodata.boundaries.cracked_attributes.contains(a) ? 2.0 : 1.0));
       }
     }
     int local = 0, global = 0;
@@ -1685,7 +1686,7 @@ struct SubstructuringSolver::Impl
       has_dofs[a - 1] = (adofs.Size() > 0);
       for (int d : adofs)
       {
-        if (!ess_set.count(d))
+        if (!ess_set.contains(d))
         {
           all_in[a - 1] = 0;
           break;
@@ -3390,7 +3391,7 @@ SubstructuringSolver::RegionErrorIndicator(const std::vector<Vector> &region_fie
 
 Vector SubstructuringSolver::TerminalLift(int terminal_index) const
 {
-  MFEM_VERIFY(impl->terminal_tdofs.count(terminal_index),
+  MFEM_VERIFY(impl->terminal_tdofs.contains(terminal_index),
               "Unknown terminal index " << terminal_index << "!");
   return impl->TerminalMode(terminal_index);
 }

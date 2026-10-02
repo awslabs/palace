@@ -82,22 +82,16 @@ Column::Column(std::string name_, std::string header_text_, long column_group_id
   {
     return 0;
   }
-  auto max_col = std::max_element(cols.begin(), cols.end(), [](const auto &a, const auto &b)
-                                  { return a.n_rows() < b.n_rows(); });
-  return max_col->n_rows();
+  return std::ranges::max_element(cols, {}, &Column::n_rows)->n_rows();
 }
 
-// TODO(C++20): std::ranges::min over cols with &Column::n_rows as a projection, likewise
-// for the std::max_element in n_rows above.
 [[nodiscard]] std::size_t Table::n_complete_rows() const
 {
   if (n_cols() == 0)
   {
     return 0;
   }
-  auto min_col = std::min_element(cols.begin(), cols.end(), [](const auto &a, const auto &b)
-                                  { return a.n_rows() < b.n_rows(); });
-  return min_col->n_rows();
+  return std::ranges::min_element(cols, {}, &Column::n_rows)->n_rows();
 }
 
 void Table::reserve(std::size_t n_rows, std::size_t n_cols)
@@ -113,7 +107,7 @@ void Table::reserve(std::size_t n_rows, std::size_t n_cols)
 // Insert columns: map like interface.
 bool Table::insert(Column &&column)
 {
-  if (name_to_index.find(column.name) != name_to_index.end())
+  if (name_to_index.contains(column.name))
   {
     return false;
   }
@@ -146,7 +140,6 @@ Column &Table::operator[](std::string_view name)
   return cols[it->second];
 }
 
-// TODO: Improve all the functions below with ranges in C++20.
 template <typename T>
 void Table::append_header(T &buf) const
 {
@@ -274,7 +267,7 @@ Table::Table(std::string_view table_str,
       while (!entries.at_end())
       {
         auto entry_trim = trim_space(entries.next());
-        if ((entry_trim == col_options.empty_cell_val) || (entry_trim.size() == 0))
+        if ((entry_trim == col_options.empty_cell_val) || (entry_trim.empty()))
         {
         }
         else
@@ -323,11 +316,7 @@ TableWithCSVFile::TableWithCSVFile(std::string csv_file_fullpath, bool load_exis
   // A file cut off after its last value but before the row separator still parses as a
   // complete row, but appending to it would join two rows on one line. Rewrite it whole
   // on the next write instead.
-  const auto &sep = table.print_row_separator;
-  const bool ends_with_separator =
-      contents.size() >= sep.size() &&
-      contents.compare(contents.size() - sep.size(), sep.size(), sep) == 0;
-  rows_on_disk_ = ends_with_separator ? table.n_rows() : 0;
+  rows_on_disk_ = contents.ends_with(table.print_row_separator) ? table.n_rows() : 0;
 }
 
 void TableWithCSVFile::WriteFullTableTrunc()

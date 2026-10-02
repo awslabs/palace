@@ -4,6 +4,7 @@
 #include <complex>
 #include <fstream>
 #include <memory>
+#include <numbers>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -120,7 +121,7 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
   omega_nd.reserve(omega_GHz.size());
   for (double f_GHz : omega_GHz)
   {
-    omega_nd.push_back(2.0 * M_PI *
+    omega_nd.push_back(2.0 * std::numbers::pi *
                        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz));
   }
 
@@ -196,8 +197,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   auto &wp_op = space_op.GetWavePortOp();
   REQUIRE(wp_op.Size() > 0);
 
-  const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
 
   // The full applied wave-port operator: sparse local mass i·k_n·M plus the modal
   // correction (no Floquet ports here). This also triggers the per-port mode/reaction solve
@@ -293,8 +294,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
   REQUIRE(wp_op.Size() > 0);
   auto &nd_fespace = space_op.GetNDSpace();
   const int n = nd_fespace.GetTrueVSize();
-  const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
 
   // Real-ω operator (triggers Initialize(ω0=omega)), then the complex-ω operator reusing
   // the frozen reference; same (empty) essential-dof list so any difference is purely the
@@ -380,8 +381,8 @@ TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
     REQUIRE(Mp);
   }
 
-  const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   CHECK_FALSE(A2);
   auto A2_complex = space_op.GetExtraSystemMatrix(std::complex<double>(omega, 1.0e-3),
@@ -411,7 +412,7 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
   // Sample from just above the mode cutoff (~6.3 GHz), where the hybrid shape redistributes
   // fastest between slab and air, up through well-separated, to expose the rotation.
   const double f_lo = 6.5, f_hi = 13.0;
-  const double w_ref = 2.0 * M_PI * nd(0.5 * (f_lo + f_hi));
+  const double w_ref = 2.0 * std::numbers::pi * nd(0.5 * (f_lo + f_hi));
 
   auto ports = space_op.GetModalCorrectionSynthesisPorts(w_ref);
   REQUIRE(!ports.empty());
@@ -428,7 +429,7 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
     {
       const double fi = f_lo + (f_hi - f_lo) * i / (msamp - 1);
       auto smp = space_op.SampleModalCorrectionVectors(
-          port_idx, std::complex<double>(2.0 * M_PI * nd(fi), 0.0));
+          port_idx, std::complex<double>(2.0 * std::numbers::pi * nd(fi), 0.0));
       if (!smp.active)
       {
         continue;

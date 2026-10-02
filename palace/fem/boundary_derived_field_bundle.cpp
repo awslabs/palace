@@ -3,7 +3,7 @@
 
 #include "fem/boundary_derived_field_bundle.hpp"
 
-#include <cstring>
+#include <bit>
 #include <deque>
 #include <map>
 #include <utility>
@@ -35,23 +35,15 @@ namespace
 
 using RouteKey = std::vector<long long>;
 
-long long EncodeDouble(double x)
-{
-  static_assert(sizeof(long long) == sizeof(double));
-  long long bits;
-  std::memcpy(&bits, &x, sizeof(bits));
-  return bits;
-}
-
 void AppendRule(RouteKey &key, const std::vector<mfem::IntegrationPoint> &points)
 {
   key.push_back(static_cast<long long>(points.size()));
   for (const auto &ip : points)
   {
-    key.push_back(EncodeDouble(ip.x));
-    key.push_back(EncodeDouble(ip.y));
-    key.push_back(EncodeDouble(ip.z));
-    key.push_back(EncodeDouble(ip.weight));
+    key.push_back(std::bit_cast<long long>(ip.x));
+    key.push_back(std::bit_cast<long long>(ip.y));
+    key.push_back(std::bit_cast<long long>(ip.z));
+    key.push_back(std::bit_cast<long long>(ip.weight));
   }
 }
 
@@ -188,7 +180,8 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
 
   for (const auto &item : routes)
   {
-    const auto &route = item.second;  // Remove in C++20.
+    // Not a structured binding: Clang does not yet support capturing one under OpenMP.
+    const auto &route = item.second;
     const std::size_t num_elem = route.entries.size();
     MFEM_VERIFY(num_elem > 0, "Empty boundary derived route!");
     const auto &first = *route.entries.front();

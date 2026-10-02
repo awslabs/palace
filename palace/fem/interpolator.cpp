@@ -117,8 +117,8 @@ std::vector<std::complex<double>> InterpolationOperator::ProbeField(const GridFu
   {
     std::vector<double> vi = ProbeField(U.Imag());
     std::vector<std::complex<double>> vals(vr.size());
-    std::transform(vr.begin(), vr.end(), vi.begin(), vals.begin(),
-                   [](double xr, double xi) { return std::complex<double>(xr, xi); });
+    std::ranges::transform(vr, vi, vals.begin(), [](double xr, double xi)
+                           { return std::complex<double>(xr, xi); });
     return vals;
   }
   else

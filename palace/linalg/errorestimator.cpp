@@ -36,7 +36,7 @@ namespace palace
 namespace
 {
 
-template <typename OperType>
+template <OperatorType OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
                            const FiniteElementSpace &trial_fespace,
                            const FiniteElementSpace &test_fespace);
@@ -58,13 +58,13 @@ auto BuildLevelParOperator<ComplexOperator>(std::unique_ptr<Operator> &&a,
                                               test_fespace, false);
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&a, const FiniteElementSpace &fespace)
 {
   return BuildLevelParOperator<OperType>(std::move(a), fespace, fespace);
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &fespaces, double tol,
                            int max_it, int print, bool use_mg)
 {

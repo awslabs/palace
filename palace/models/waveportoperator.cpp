@@ -4,6 +4,7 @@
 #include "waveportoperator.hpp"
 #include <algorithm>
 #include <limits>
+#include <numbers>
 #include <fmt/ranges.h>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
@@ -1806,7 +1807,7 @@ void WavePortOperator::SetUpBoundaryProperties(const config::BoundaryData &bound
       }
       for (auto attr : other_data.attributes)
       {
-        if (std::binary_search(data.attributes.begin(), data.attributes.end(), attr))
+        if (std::ranges::binary_search(data.attributes, attr))
         {
           continue;
         }
@@ -1958,7 +1959,7 @@ void WavePortOperator::Initialize(double omega)
   {
     Mpi::Print(
         "\nCalculating boundary modes at wave ports for ω/2π = {:.3e} GHz ({:.3e})\n",
-        omega * fc / (2.0 * M_PI), omega);
+        omega * fc / (2.0 * std::numbers::pi), omega);
   }
   for (auto &[idx, data] : ports)
   {

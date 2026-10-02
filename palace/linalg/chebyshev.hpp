@@ -19,7 +19,7 @@ namespace palace
 // Reference: Phillips and Fischer, Optimal Chebyshev smoothers and one-sided V-cycles,
 //            arXiv:2210.03179v1 (2022).
 //
-template <typename OperType>
+template <OperatorType OperType>
 class ChebyshevSmoother : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;
@@ -82,7 +82,7 @@ public:
 // Reference: Adams et al., Parallel multigrid smoothing: polynomial versus Gauss–Seidel,
 //            JCP (2003).
 //
-template <typename OperType>
+template <OperatorType OperType>
 class ChebyshevSmoother1stKind : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;

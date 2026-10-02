@@ -5,6 +5,7 @@
 #define PALACE_LINALG_OPERATOR_HPP
 
 #include <complex>
+#include <concepts>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -67,6 +68,10 @@ public:
                                          const std::complex<double> a = 1.0) const;
 };
 
+// Palace's linear algebra templates are defined for real- and complex-valued operators.
+template <typename T>
+concept OperatorType = std::same_as<T, Operator> || std::same_as<T, ComplexOperator>;
+
 // A complex-valued operator represented using a block 2 x 2 equivalent-real formulation:
 //                          [ yr ]  =  [ Ar  -Ai ] [ xr ]
 //                          [ yi ]     [ Ai   Ar ] [ xi ] .
@@ -112,7 +117,7 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
-template <typename OperType>
+template <OperatorType OperType>
 struct SumOperatorTraits;
 
 template <>
@@ -131,13 +136,9 @@ struct SumOperatorTraits<ComplexOperator>
 
 // Wrap a sequence of operators of the same dimensions and optional coefficients. In
 // non-owning mode, the caller must ensure the referenced operators outlive this object.
-template <typename OperType>
+template <OperatorType OperType>
 class BaseSumOperator : public OperType
 {
-  static_assert(std::is_same_v<OperType, Operator> ||
-                    std::is_same_v<OperType, ComplexOperator>,
-                "BaseSumOperator is only defined for Operator and ComplexOperator!");
-
 public:
   using VecType = typename SumOperatorTraits<OperType>::VecType;
   using ScalarType = typename SumOperatorTraits<OperType>::ScalarType;
@@ -301,7 +302,7 @@ public:
   }
 };
 
-template <typename OperType>
+template <OperatorType OperType>
 class BaseProductOperator
   : public ProductOperatorHelper<BaseProductOperator<OperType>, OperType>
 {
@@ -378,7 +379,7 @@ public:
                                  const std::complex<double> a = 1.0) const override;
 };
 
-template <typename OperType>
+template <OperatorType OperType>
 class BaseDiagonalOperator
   : public DiagonalOperatorHelper<BaseDiagonalOperator<OperType>, OperType>
 {
@@ -418,7 +419,7 @@ using ComplexDiagonalOperator = BaseDiagonalOperator<ComplexOperator>;
 // Optionally includes operators for the auxiliary space at each level as well. The
 // Operators are stored from coarsest to finest level. The height and width of this operator
 // are never set.
-template <typename OperType>
+template <OperatorType OperType>
 class BaseMultigridOperator : public OperType
 {
   using VecType =

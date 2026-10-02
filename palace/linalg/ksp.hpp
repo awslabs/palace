@@ -33,13 +33,9 @@ MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata);
 //
 // Linear solver class composing an iterative solver and preconditioner object.
 //
-template <typename OperType>
+template <OperatorType OperType>
 class BaseKspSolver
 {
-  static_assert(std::is_same_v<OperType, Operator> ||
-                    std::is_same_v<OperType, ComplexOperator>,
-                "Solver can only be defined for OperType = Operator or ComplexOperator!");
-
   using VecType =
       std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
 

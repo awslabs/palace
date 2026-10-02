@@ -27,7 +27,7 @@ namespace palace
 // hierarchy of finite element spaces. Optionally can be configured to use auxiliary space
 // smoothing at each level.
 //
-template <typename OperType>
+template <OperatorType OperType>
 class GeometricMultigridSolver : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;
