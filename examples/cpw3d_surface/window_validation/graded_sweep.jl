@@ -76,7 +76,11 @@ function thin_levels(
             push!(kept, index)
             continue
         end
-        next = findnext(j -> is_interface(zs[levels[j]], interfaces), eachindex(levels), position)
+        next = findnext(
+            j -> is_interface(zs[levels[j]], interfaces),
+            eachindex(levels),
+            position
+        )
         room = next === nothing ? Inf : zs[levels[next]] - z
         if z - zs[kept[end]] >= spacing - LEVEL_TOLERANCE_UM &&
            room >= spacing - LEVEL_TOLERANCE_UM
@@ -187,7 +191,8 @@ function cross_section(stacks::GradedStacks, zs::Vector{Float64}, heights::Vecto
         coarse, fine, cl, fl =
             length(levels_L) <= length(levels_R) ? (L, R, levels_L, levels_R) :
             (R, L, levels_R, levels_L)
-        issubset(cl, fl) || error("Stacks of rows $L and $R are not nested in levels $la..$lb")
+        issubset(cl, fl) ||
+            error("Stacks of rows $L and $R are not nested in levels $la..$lb")
         (cl[1] == la && cl[end] == lb) ||
             error("Range ends $la..$lb are not levels of row $coarse")
         left = min(L, R)
@@ -336,13 +341,21 @@ function ladder_triangles!(
         elseif j == length(lq) || (i < length(lp) && lp[i + 1] < lq[j + 1])
             push!(
                 faces,
-                (global_index(p, lp[i]), global_index(q, lq[j]), global_index(p, lp[i + 1]))
+                (
+                    global_index(p, lp[i]),
+                    global_index(q, lq[j]),
+                    global_index(p, lp[i + 1])
+                )
             )
             i += 1
         else
             push!(
                 faces,
-                (global_index(p, lp[i]), global_index(q, lq[j]), global_index(q, lq[j + 1]))
+                (
+                    global_index(p, lp[i]),
+                    global_index(q, lq[j]),
+                    global_index(q, lq[j + 1])
+                )
             )
             j += 1
         end
@@ -544,8 +557,16 @@ function graded_sweep_elements(
                 empty!(faces)
                 push!(
                     faces,
-                    (global_index(t[1], la), global_index(t[2], la), global_index(t[3], la)),
-                    (global_index(t[1], lb), global_index(t[2], lb), global_index(t[3], lb))
+                    (
+                        global_index(t[1], la),
+                        global_index(t[2], la),
+                        global_index(t[3], la)
+                    ),
+                    (
+                        global_index(t[1], lb),
+                        global_index(t[2], lb),
+                        global_index(t[3], lb)
+                    )
                 )
                 for (u, v) in ((1, 2), (2, 3), (3, 1))
                     ladder_triangles!(faces, global_index, t[u], t[v], slices[u], slices[v])

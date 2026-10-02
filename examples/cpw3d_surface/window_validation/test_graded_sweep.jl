@@ -152,8 +152,7 @@ function mesh_checks(path; slab=(-0.05, 0.1))
         o = get(owners, face, Int[])
         ok =
             attribute in (6, 9) ? sort(o) == [1, 2] :
-            attribute == 3 ? length(o) == 1 :
-            attribute in (5, 8, 11) ? o == [1] : o == [2] # metal-substrate / metal-air
+            attribute == 3 ? length(o) == 1 : attribute in (5, 8, 11) ? o == [1] : o == [2] # metal-substrate / metal-air
         ok || (inconsistent += 1)
     end
     return (
@@ -233,8 +232,8 @@ end
     shorter = PWM.graded_stacks(zs, interfaces, heights, 1.0, 2.0, (0.0, 0.1), 30.0)
     @test shorter.levels == stacks.levels
     @test all(
-        zs[shorter.ranges[k][1]] >= ranges[k][1] && zs[shorter.ranges[k][2]] <= ranges[k][2]
-        for k = 1:6
+        zs[shorter.ranges[k][1]] >= ranges[k][1] &&
+        zs[shorter.ranges[k][2]] <= ranges[k][2] for k = 1:6
     )
     @test any(shorter.ranges[k] != stacks.ranges[k] for k = 1:6)
     @test_throws ErrorException PWM.graded_stacks(
@@ -346,7 +345,9 @@ end
         beta=2.0
     )
     @test cheaper["tetrahedra"] < first["tetrahedra"]
-    @test all(cheaper["graded_sweep"]["stack_sizes"] .<= first["graded_sweep"]["stack_sizes"])
+    @test all(
+        cheaper["graded_sweep"]["stack_sizes"] .<= first["graded_sweep"]["stack_sizes"]
+    )
 end
 
 @testset "CPW window with a terminal (open chains, wall ends)" begin
