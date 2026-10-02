@@ -591,6 +591,40 @@ contribution is large compared with the ``KCM`` part of the operator, the select
 can be less effective and the adaptive solve may require tighter tolerances, more samples,
 or additional validation against a uniform sweep.
 
+### Online postprocessing
+
+The postprocessed quantities at each output frequency are evaluated from the reduced
+solution ``\bm{x}_r`` without forming ``\bm{x} = \bm{Q}\bm{x}_r`` where possible. An output
+functional ``f`` linear in the field satisfies
+
+```math
+f(\bm{Q}\bm{x}_r) = \sum_j f(\bm{q}_j)\,x_{r,j} \,,
+```
+
+so it is evaluated once on each basis vector ``\bm{q}_j`` after the offline phase, and each
+output frequency then only costs a dot product of size ``n``. This applies to lumped port
+voltages, currents, and S-parameters, electric field probes, voltages along wave port voltage
+paths, and electric surface fluxes. Magnetic flux density probes and magnetic surface fluxes
+are linear in ``\bm{B} = -(1/i\omega)\nabla\times\bm{E}``, and use the functionals evaluated
+on ``\nabla\times\bm{q}_j``, scaled by ``-1/i\omega``. Domain field energies are quadratic
+in the field, and are evaluated as ``\frac{1}{2}\bm{x}_r^H(\bm{Q}^T\bm{M}\bm{Q})\bm{x}_r``
+with the mass matrices ``\bm{M}`` of the energy integrals projected once onto the basis.
+Wave port S-parameters are linear in the field, but the projection onto the port mode
+depends on frequency, so the projection is applied to the basis restricted to the port
+boundary at each frequency, at a cost proportional to the port size.
+
+The remaining quantities (power surface fluxes, interface dielectric energies, wave port
+power for ports with a voltage path, and far-field quantities) are evaluated from the
+high-dimensional field ``\bm{x} = \bm{Q}\bm{x}_r``, which is reconstructed at every output
+frequency when any of them is configured. All quantities at the frequencies where fields
+are saved for visualization (see for example
+[`config["Solver"]["Driven"]["Save"]`](config/reference.md#config-solver-driven-save)) are
+also evaluated from the high-dimensional field. At the first output frequency evaluated in
+reduced coordinates, every reduced quantity is compared to its evaluation from the
+high-dimensional field, and any quantity which disagrees beyond round-off is evaluated from
+the high-dimensional field for the rest of the sweep. Simulations with Floquet periodic
+boundary conditions use the high-dimensional field for all postprocessing.
+
 ### Finite-precision effects
 
 The rational interpolation assumes that the sampled HDM solutions are accurate. In practice,

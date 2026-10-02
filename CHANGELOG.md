@@ -89,6 +89,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - CSV output tables are now appended row by row instead of rewritten at every measurement,
     so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
     [PR 942](https://github.com/awslabs/palace/pull/942).
+  - The adaptive driven online sweep now evaluates measurements which are linear in the
+    fields (lumped port voltages, currents, and S-parameters, wave port S-parameters and
+    voltage path integrals, probes, and electric and magnetic surface fluxes) from their
+    values on the reduced-order basis, and only reconstructs the full field solution at an
+    output frequency for measurements without a reduced form (power surface flux,
+    interface dielectric energy, wave port power, and far-field) or for field output.
+    Previously, configuring any probe, surface flux, interface dielectric, far-field,
+    surface current excitation, or wave port voltage path disabled the reduced-coordinate
+    postprocessing entirely. Addresses
+    [issue 494](https://github.com/awslabs/palace/issues/494).
 
 #### Build system
 

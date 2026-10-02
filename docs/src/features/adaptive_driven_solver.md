@@ -70,6 +70,15 @@ adaptive solver this grid can usually be fine, since adding output frequencies i
 cheaper than adding full finite-element solves. The output files, such as `domain-E.csv` and
 `port-S.csv`, have the same format in both modes.
 
+Most postprocessed quantities, including port voltages and S-parameters, domain energies,
+probes, and electric and magnetic surface fluxes, are evaluated directly from the
+reduced-order solution at each output frequency. Power surface fluxes, interface dielectric
+energies, the power of wave ports with a `"VoltagePath"`, and far-field quantities require
+reconstructing the full finite-element field at every output frequency, as do the output
+frequencies at which fields are saved for visualization, which makes the evaluation over the
+output grid more expensive. See the [reference](../reference.md#Online-postprocessing) for
+details.
+
 When studying a new model, a good workflow is:
 
  1. Run a uniform sweep on a coarse output grid or at key frequencies.
