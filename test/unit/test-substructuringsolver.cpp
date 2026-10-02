@@ -1712,6 +1712,29 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
     }
   }
   CHECK(don <= 1.0e-9 * m);
+
+  // Online fields: the region solution with the environment interior recovered from its
+  // sources, as in the full-field path. They differ only in the zero-energy gauge (the
+  // regularization fixes it to rounding), so they are compared in the energy norm.
+  std::vector<Vector> fields_on;
+  on.SheetEnergyMatrix({1, 2}, a, &fields_on, 2);
+  REQUIRE(fields_on.size() == 2);
+  auto energy_norm = [&](const Vector &v)
+  {
+    Vector t1(v.Size()), t2(v.Size());
+    Kcc->Mult(v, t1);
+    Ms->Mult(v, t2);
+    t1 += t2;
+    return std::sqrt(std::max(0.0, mfem::InnerProduct(pmesh.GetComm(), v, t1)));
+  };
+  for (int k = 0; k < 2; k++)
+  {
+    Vector d(fields_on[k]);
+    d -= fields[k];
+    const double nd = energy_norm(d), nf = energy_norm(fields[k]);
+    CAPTURE(k, nd, nf);
+    CHECK(nd <= 1.0e-10 * nf);
+  }
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

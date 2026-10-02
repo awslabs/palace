@@ -205,12 +205,11 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   }
 
   // Use libCEED operators to perform the error estimate integration over each element.
-  // A process without elements (possible for a submesh) has an empty composite operator.
   const auto &mesh = fespace.GetMesh();
   Vector estimates(mesh.GetNE());
   estimates.UseDevice(true);
   estimates = 0.0;
-  if (mesh.GetNE() == 0)
+  if (mesh.GetNE() == 0)  // Possible for a submesh, with an empty libCEED operator
   {
     return estimates;
   }

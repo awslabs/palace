@@ -43,8 +43,8 @@ radius `r`, with a hole surface filling the inner circle. The region is a box of
 `region` around the middle ring. Lengths are in μm.
 
 Attributes: domains 1 (region) and 2 (environment); boundaries 1 (box walls), 10 + k (film
-of ring k), 40 + k (hole of ring k), with the rings k = 1, 2, ... numbered by rows of
-increasing y, then by increasing x.
+of ring k), h + k (hole of ring k) with h = max(40, 10 + n²), and the rings k = 1, 2, ...
+numbered by rows of increasing y, then by increasing x.
 """
 function generate_flux_lattice(;
     n=5,
@@ -98,9 +98,10 @@ function generate_flux_lattice(;
     gmsh.model.addPhysicalGroup(3, region_vol, 1, "region")
     gmsh.model.addPhysicalGroup(3, env_vol, 2, "environment")
     gmsh.model.addPhysicalGroup(2, walls, 1, "walls")
+    hole_offset = max(40, 10 + n * n)
     for k = 1:(n * n)
         gmsh.model.addPhysicalGroup(2, film_tags[k], 10 + k, "film_$k")
-        gmsh.model.addPhysicalGroup(2, hole_tags[k], 40 + k, "hole_$k")
+        gmsh.model.addPhysicalGroup(2, hole_tags[k], hole_offset + k, "hole_$k")
     end
 
     # Mesh size: fine at the hole edges, medium at the film edges, coarse elsewhere.

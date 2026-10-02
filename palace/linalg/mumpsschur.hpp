@@ -17,7 +17,7 @@ namespace palace
 // MUMPS partial factorization with a Schur complement: factors the symmetric parent-space
 // operator A (rows/cols outside the eliminated subsystem set to identity) with the given
 // Schur variables left unfactored, returning the dense Schur complement on rank 0 -- for
-// the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from ONE partial factorization instead of
+// the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from one partial factorization instead of
 // |Gamma| back-solves. The same factorization then solves the internal problem (A_EE, the
 // Schur variables fixed at 0), which serves every other environment solve.
 class MumpsSchurSolver

@@ -80,6 +80,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         adapt ? sub.RegionErrorIndicator(region_fields, C) : ErrorIndicator();
     return {indicator, sub.GlobalTrueVSize()};
   }
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs. The eliminated matrix is stored in order to construct the RHS vector for nonzero

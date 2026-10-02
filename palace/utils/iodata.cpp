@@ -716,12 +716,9 @@ void IoData::CheckConfiguration()
                 "Substructuring requires \"Solver.Device\": \"CPU\"!");
     MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
                 "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
-    // Adaptive refinement refines the region only, in an online run: the environment was
-    // condensed on its final mesh, so it must not change. Refine the full model before
-    // condensing it instead (adaptive run with "SaveAdaptMesh", then an offline run on the
-    // saved mesh). Nonconforming refinement without a level constraint keeps the refinement
-    // from spreading into the environment; the interface DOFs then stay those of the
-    // environment side.
+    // Adaptive refinement refines the region of an online run only: the environment was
+    // condensed on its final mesh, and nonconforming refinement without a level constraint
+    // does not spread into it.
     if (model.refinement.max_it > 0)
     {
       MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
@@ -739,10 +736,8 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // Magnetostatic substructuring condenses Dirichlet-lift (flux-loop) excitations;
-      // surface-current sources need a gauge-free treatment of the singular curl-curl
-      // operator, which it does not provide yet. Reject them here rather than silently
-      // skipping them in a mixed configuration.
+      // Surface-current sources need a gauge-free treatment of the singular curl-curl
+      // operator, which magnetostatic substructuring does not provide yet.
       MFEM_VERIFY(boundaries.current.empty(),
                   "Magnetostatic substructuring does not support \"SurfaceCurrent\" "
                   "excitations yet; use \"FluxLoop\" excitations or remove "
