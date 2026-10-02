@@ -2838,6 +2838,9 @@ private:
   // (decision 266). The device-global n_ref is a planarity reference only (|dot| tests,
   // plane numbering): it is sign-canonical and puts every flipped plane's coupon upside
   // down. A feature whose runs disagree in sign has no process side: fail closed naming it.
+  // The returned direction is +-n_ref (every framed run is parallel to n_ref within
+  // kParallelCosineTolerance by the NonPlanar rule), oriented by the feature's own runs:
+  // single-plane devices keep their frames bit-identical.
   Point3D FeatureProcessNormal(const std::vector<std::pair<std::size_t, double>> &weighted,
                                const std::string &what) const
   {
@@ -2858,7 +2861,18 @@ private:
     {
       sum = first;  // zero-length weights: the (agreeing) direction itself
     }
-    return Normalize(sum);
+    return SignedReferenceNormal(Normalize(sum), what);
+  }
+
+  // The reference normal with the sign of the given (parallel) process normal.
+  Point3D SignedReferenceNormal(const Point3D &n, const std::string &what) const
+  {
+    const double cosine = Dot(n, n_ref);
+    MFEM_VERIFY(!DirectionLess(std::abs(cosine), 1.0 - kParallelCosineTolerance),
+                "Process normal of "
+                    << what << " ([" << n[0] << ", " << n[1] << ", " << n[2]
+                    << "]) is not parallel to the reference process normal!");
+    return cosine < 0.0 ? Scale(-1.0, n_ref) : n_ref;
   }
 
   Point3D SiteProcessNormal(const VertexFeatureSite &site) const
@@ -10448,9 +10462,9 @@ void Identifier::Assign(IdentificationResult &result)
           features[feature].origin = runs[r].At(curved_on_run[i].first);
           // Representative frame (informative: the patches use the segment frames): the
           // run's own signed process normal, right-handed (decision 266).
-          features[feature].axes = {runs[r].tangent,
-                                    Cross(runs[r].process_normal, runs[r].tangent),
-                                    runs[r].process_normal};
+          const Point3D n_run = SignedReferenceNormal(runs[r].process_normal,
+                                                      "isolated run " + std::to_string(r));
+          features[feature].axes = {runs[r].tangent, Cross(n_run, runs[r].tangent), n_run};
           it = isolated_features.emplace(key, feature).first;
         }
         assigned[r].emplace_back(curved_on_run[i].first, curved_on_run[i].second,
@@ -10471,9 +10485,9 @@ void Identifier::Assign(IdentificationResult &result)
           features[feature].origin = runs[r].start;
           // Representative frame (informative: the patches use the segment frames): the
           // run's own signed process normal, right-handed (decision 266).
-          features[feature].axes = {runs[r].tangent,
-                                    Cross(runs[r].process_normal, runs[r].tangent),
-                                    runs[r].process_normal};
+          const Point3D n_run = SignedReferenceNormal(runs[r].process_normal,
+                                                      "isolated run " + std::to_string(r));
+          features[feature].axes = {runs[r].tangent, Cross(n_run, runs[r].tangent), n_run};
           it = isolated_features.emplace(key, feature).first;
         }
         for (const auto &piece : straight)

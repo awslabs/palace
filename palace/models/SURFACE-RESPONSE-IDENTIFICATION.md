@@ -1236,10 +1236,11 @@ hashed values. Version-1 records derived from a signature (Separation, CornerRad
 the signature grid.
 
 **Cluster frame and signature.** Origin = length-weighted centroid of the cluster's claimed
-portions; z = the cluster's OWN signed process normal (substrate -> vacuum; the claimed-length
-weighted mean of its runs' normals, `FeatureProcessNormal`, fail closed naming the cluster when
-its runs disagree in sign — see the frame rule below; never the sign-canonical device reference
-normal n_ref). The in-plane x axis is chosen among the finite candidate set
+portions; z = the cluster's OWN signed process normal (substrate -> vacuum: the reference
+direction oriented by the claimed-length weighted mean of its runs' signed normals,
+`FeatureProcessNormal`, fail closed naming the cluster when its runs disagree in sign — see the
+frame rule below; never the sign-canonical device reference normal n_ref itself). The in-plane
+x axis is chosen among the finite candidate set
 {chain tangents of the cluster, both signs, and their in-plane perpendiculars}; for each
 candidate and each handedness (y = z x x or y = -(z x x)) the cluster is serialised (portions
 as `[x0, y0, x1, y1] / R` on the signature grid, gap side, interface types, conductor label by
@@ -1269,14 +1270,17 @@ flipped plane places the coupon's substrate in the vacuum gap and its vacuum in 
 substrate — the media swapped for every spatial feature of the flipped plane (the S1p defect:
 its two 19-edge clusters and its L2 corners, AxisW = +z at z = 4.8, while the translational /
 curved / stack patches, built from the segment frames with the segment's own signed normal
-(AxisV = -z), were right). The rule: `SpatialEdgeCluster` z = the claimed-length weighted mean
-of its runs' signed normals (`EmitClusters`), `ConvexCorner` / `ConcaveCorner` / `Endpoint` /
-`Junction` z = the length-weighted mean of the site's incident runs' signed normals
-(`SiteProcessNormal`; the junction's arm angles are measured about the same normal), the
+(AxisV = -z), were right). The rule: `SpatialEdgeCluster` z = the signed normal of its runs
+(claimed-length weighted mean, `EmitClusters`), `ConvexCorner` / `ConcaveCorner` / `Endpoint` /
+`Junction` z = the signed normal of the site's incident runs (length weighted,
+`SiteProcessNormal`; the junction's arm angles are measured about the same normal), the
 isolated / curved representative axes (informative; their patches come from the segment
-frames) (t, n x t, n) with the run's own n; a feature whose runs disagree in sign has no
+frames) (t, n x t, n) with the run's own signed n; a feature whose runs disagree in sign has no
 substrate -> vacuum side and the identification fails closed naming the feature
-(`FeatureProcessNormal`). The frames are right-handed (x, n x x, n) where the feature is its
+(`FeatureProcessNormal`). The direction returned is +-n_ref oriented by the feature's own runs
+(`SignedReferenceNormal`: every framed run is parallel to n_ref within the NonPlanar tolerance
+1e-8, so this IS the feature's normal, and single-plane frames stay bit-identical — the transmon
+patch CSV is byte-identical). The frames are right-handed (x, n x x, n) where the feature is its
 own mirror image or its canonical chirality is +1; the mirror frame (x, -(n x x), n) of a
 chirality -1 cluster (and the gap-side choice of an endpoint, the arm-order choice of a
 junction) is a PLAN-VIEW mirror, which keeps w on the vacuum side and maps the model onto its
@@ -1521,9 +1525,9 @@ default and the forced-GSLIB locator path, the notch fail-closed case, and the m
 coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
 
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): n = the
-site's OWN signed process normal (substrate -> vacuum, the length-weighted mean of its incident
-runs' normals; decision 266, frame rule of (b) — on a flipped plane n = -z, never the
-sign-canonical n_ref); corner: x = the first arm away from the (virtual) corner, the arms
+site's OWN signed process normal (substrate -> vacuum, oriented by the length-weighted mean of
+its incident runs' normals; decision 266, frame rule of (b) — on a flipped plane n = -z, never
+the sign-canonical n_ref as such); corner: x = the first arm away from the (virtual) corner, the arms
 ordered so that the second is counterclockwise about n (a corner is its own mirror image),
 y = n x x (right-handed); endpoint: x = the arm, y = +-(n x x) toward the gap; junction: x = the
 canonical first arm of `CanonicalJunctionSignature`, the arm angles measured about n, y =
