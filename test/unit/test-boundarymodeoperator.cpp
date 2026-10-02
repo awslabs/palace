@@ -8,10 +8,12 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceconductivityoperator.hpp"
@@ -574,6 +576,144 @@ TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Paralle
     CAPTURE(n_exact, n_pec, n_eff);
     CHECK_THAT(n_eff - n_pec, WithinRel(n_exact - n_pec, 1.0e-5));
   }
+}
+
+TEST_CASE("BoundaryModeOperator interior PEC on a nonconforming mesh",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A PEC line through the interior of the cross-section at x = 4, and an interior boundary
+  // without boundary condition at y = 2 for x > 4, with the elements of the quadrant x > 4,
+  // y > 2 refined. The edges of both lines on the unrefined side are master edges without
+  // boundary elements: those of the PEC line must be essential, and those of the other line
+  // not.
+  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const int order = GENERATE(1, 2);
+  MPI_Comm comm = Mpi::World();
+  constexpr double width = 8.0, height = 4.0, x_pec = 4.0, y_other = 2.0, eps = 1.0e-9;
+  constexpr int pec_attr = 5, other_attr = 6;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(8, 4, type, false, width, height));
+  {
+    auto &smesh = *serial_mesh;
+    mfem::Array<int> v;
+    for (int f = 0; f < smesh.GetNumFaces(); f++)
+    {
+      int e1, e2;
+      smesh.GetFaceElements(f, &e1, &e2);
+      if (e1 < 0 || e2 < 0)
+      {
+        continue;
+      }
+      smesh.GetFaceVertices(f, v);
+      const double *a = smesh.GetVertex(v[0]), *b = smesh.GetVertex(v[1]);
+      if (std::abs(a[0] - x_pec) < eps && std::abs(b[0] - x_pec) < eps)
+      {
+        smesh.AddBdrSegment(v[0], v[1], pec_attr);
+      }
+      else if (std::abs(a[1] - y_other) < eps && std::abs(b[1] - y_other) < eps &&
+               std::min(a[0], b[0]) > x_pec - eps)
+      {
+        smesh.AddBdrSegment(v[0], v[1], other_attr);
+      }
+    }
+    smesh.FinalizeTopology();
+    smesh.Finalize(true, true);
+    smesh.EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      smesh.GetElementCenter(e, c);
+      if (c(0) > x_pec && c(1) > y_other)
+      {
+        marked.Append(e);
+      }
+    }
+    smesh.GeneralRefinement(marked, 1, 0);
+  }
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.Lc = 1.0;
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {1.0, 1.0, 1.0};
+  iodata.boundaries.pec.attributes = {pec_attr};
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = 1.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+
+  auto CheckDbcTDofs = [&](const FiniteElementSpace &fespace,
+                           const mfem::Array<int> &dbc_tdof_list, bool edge_dofs)
+  {
+    const auto &fes = fespace.Get();
+    const auto &pmesh = *fes.GetParMesh();
+    std::vector<bool> is_dbc(fes.GetTrueVSize(), false);
+    for (auto t : dbc_tdof_list)
+    {
+      is_dbc[t] = true;
+    }
+    // Numbers of checked true DOFs on the PEC line, on the other line, and on the master
+    // edges of the PEC line (which have DOFs if the space has edge DOFs).
+    int counts[3] = {0, 0, 0};
+    auto Check = [&](const mfem::Array<int> &dofs, bool pec, bool master)
+    {
+      for (auto d : dofs)
+      {
+        const int t = fes.GetLocalTDofNumber((d >= 0) ? d : -1 - d);
+        if (t < 0)
+        {
+          continue;
+        }
+        CHECK(is_dbc[t] == pec);
+        counts[pec ? 0 : 1]++;
+        counts[2] += (pec && master);
+      }
+    };
+    auto OnPEC = [&](const double *x) { return std::abs(x[0] - x_pec) < eps; };
+    auto OnOther = [&](const double *x)
+    { return std::abs(x[1] - y_other) < eps && x[0] > x_pec + eps && x[0] < width - eps; };
+    const auto &edge_list = pmesh.ncmesh->GetEdgeList();
+    mfem::Array<int> v, dofs;
+    for (int e = 0; e < pmesh.GetNEdges(); e++)
+    {
+      pmesh.GetEdgeVertices(e, v);
+      const double *a = pmesh.GetVertex(v[0]), *b = pmesh.GetVertex(v[1]);
+      const bool pec = OnPEC(a) && OnPEC(b);
+      const bool other = std::abs(a[1] - y_other) < eps && std::abs(b[1] - y_other) < eps &&
+                         std::min(a[0], b[0]) > x_pec - eps;
+      if (pec || other)
+      {
+        fes.GetEdgeInteriorDofs(e, dofs);
+        Check(dofs, pec,
+              edge_list.GetMeshIdAndType(e).type ==
+                  mfem::NCMesh::NCList::MeshIdType::MASTER);
+      }
+    }
+    for (int i = 0; i < pmesh.GetNV(); i++)
+    {
+      const double *x = pmesh.GetVertex(i);
+      if (OnPEC(x) || OnOther(x))
+      {
+        fes.GetVertexDofs(i, dofs);
+        Check(dofs, OnPEC(x), false);
+      }
+    }
+    Mpi::GlobalSum(3, counts, comm);
+    CHECK(counts[0] > 0);
+    CHECK(counts[1] > 0);
+    CHECK((counts[2] > 0) == edge_dofs);
+  };
+  CheckDbcTDofs(mode_op.GetNDSpace(), mode_op.GetNDDbcTDofLists().back(), true);
+  CheckDbcTDofs(mode_op.GetH1Space(), mode_op.GetH1DbcTDofLists().back(), order > 1);
 }
 
 }  // namespace palace
