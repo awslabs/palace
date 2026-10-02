@@ -42,6 +42,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed Dirichlet boundary conditions, such as PEC, on interior boundaries of 2D
+    nonconforming meshes refined on one side only, where the edges on the unrefined side
+    were not constrained: boundary mode simulations with adaptive mesh refinement of
+    interior PEC sheets which are not cracked (cracking disabled, or restarted from an
+    adapted mesh) gave wrong propagation constants and impedances. This patches MFEM with
+    [mfem/mfem#5531](https://github.com/mfem/mfem/pull/5531).
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
