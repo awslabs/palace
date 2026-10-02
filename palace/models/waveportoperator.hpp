@@ -77,6 +77,11 @@ public:
   std::complex<double> modal_reaction = 0.0;
   std::complex<double> modal_reaction_scalar = 0.0;
 
+  // Counter incremented every time the port mode (and the S-parameter and excitation forms
+  // derived from it) is recomputed, so that cached projections of the mode can be
+  // invalidated.
+  std::size_t mode_version = 0;
+
 private:
   // Raw-gauge reference reactions of the frozen e0 at ω0, cached for
   // ComputeComplexReactions to transport reactions into the ω0 gauge. Recomputed when

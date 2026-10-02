@@ -51,6 +51,7 @@ class DrivenPostOperatorTest : public PostOperator<ProblemType::DRIVEN>
 public:
   using PostOperator<ProblemType::DRIVEN>::PostOperator;
   const Measurement &GetMeasurement() const { return measurement_cache; }
+  auto &GetReducedPostData() { return reduced; }
 };
 
 class RomOperatorTest : public RomOperator
@@ -923,16 +924,67 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THAT(std::imag((*resistance_R_inv)(0, 0)), WithinAbs(0.0, 1e-15));
 }
 
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "RomOperator reduced postprocessing matches full evaluation",
-                 "[postoperator][romoperator][Serial][Parallel]")
+namespace
 {
-  MPI_Comm comm = Mpi::World();
+
+// Relative comparison helpers for reduced versus full postprocessing. Quantities which are
+// identical (including infinite quality factors) or vanish in both evaluations compare
+// equal.
+bool CloseRelative(double x, double y, double rtol)
+{
+  const double scale = std::max(std::abs(x), std::abs(y));
+  return x == y || std::abs(x - y) <= rtol * scale;
+}
+
+bool CloseRelative(std::complex<double> x, std::complex<double> y, double rtol)
+{
+  const double scale = std::max(std::abs(x), std::abs(y));
+  return x == y || std::abs(x - y) <= rtol * scale;
+}
+
+// Compare a vector of complex values against a reference, relative to the largest entry of
+// the reference (individual probe components may vanish up to round-off).
+void CheckCloseVector(const std::vector<std::complex<double>> &x,
+                      const std::vector<std::complex<double>> &y, double rtol)
+{
+  REQUIRE(x.size() == y.size());
+  double scale = 0.0;
+  for (const auto &v : y)
+  {
+    scale = std::max(scale, std::abs(v));
+  }
+  REQUIRE(scale > 0.0);
+  for (std::size_t i = 0; i < x.size(); i++)
+  {
+    CAPTURE(i, x[i], y[i]);
+    CHECK(std::abs(x[i] - y[i]) <= rtol * scale);
+  }
+}
+
+// Expand a reduced solution in the given basis: u = V y.
+ComplexVector ExpandReducedSolution(const std::vector<Vector> &V, const Eigen::VectorXcd &y)
+{
+  ComplexVector u(V.empty() ? 0 : V[0].Size());
+  u.UseDevice(true);
+  u = 0.0;
+  for (std::size_t i = 0; i < V.size(); i++)
+  {
+    linalg::AXPY(y(i).real(), V[i], u.Real());
+    linalg::AXPY(y(i).imag(), V[i], u.Imag());
+  }
+  return u;
+}
+
+// Lumped port excitation on a 3 x 2 x 1 box of unit cubes with domain energy and probe
+// postprocessing, and the given boundary postprocessing. Boundary attributes 1-12 are the
+// unit squares on z = 0 (odd) and z = 1 (even), 13-22 the unit squares on the y and x
+// faces.
+json ReducedPostprocessingConfig(const fs::path &output, const json &boundary_postpro)
+{
   const auto mesh_path =
       fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
-
   json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", output}};
   setup_json["Model"] = {{"Mesh", mesh_path},
                          {"Refinement", json::object({})},
                          {"CrackInternalBoundaryElements", false}};
@@ -943,9 +995,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                                   {"Permittivity", 1.0},
                                   {"LossTan", 0.0}})})},
       {"Postprocessing",
-       {{"Energy",
-         json::array({json::object(
-             {{"Index", 1}, {"Attributes", json::array({1, 2, 3, 4, 5, 6})}})})}}}};
+       {{"Energy", json::array({json::object(
+                       {{"Index", 1}, {"Attributes", json::array({1, 2, 3, 4, 5, 6})}})})},
+        {"Probe",
+         json::array(
+             {json::object({{"Index", 1}, {"Center", json::array({1.3, 0.8, 0.45})}}),
+              json::object({{"Index", 2}, {"Center", json::array({2.25, 0.4, 0.7})}})})}}}};
   setup_json["Boundaries"] = {
       {"LumpedPort",
        json::array({json::object(
@@ -955,7 +1010,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
             {"C", 1.0e-12},
             {"Excitation", uint(1)},
             {"Elements", json::array({json::object({{"Attributes", json::array({14})},
-                                                    {"Direction", "+Z"}})})}})})}};
+                                                    {"Direction", "+Z"}})})}})})},
+      {"Postprocessing", boundary_postpro}};
   setup_json["Solver"] = {
       {"Order", 1UL},
       {"Device", "CPU"},
@@ -967,8 +1023,52 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"FreqStep", 30.0}}},
       {"Linear",
        {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+  return setup_json;
+}
 
-  IoData iodata(setup_json, false);
+}  // namespace
+
+// The adaptive online sweep evaluates the measurements from the reduced solution y: linear
+// functionals from their values on the basis vectors, and domain energies from projected
+// quadratic forms. Measurements without a reduced form (power flux, interface dielectric
+// energy) are gated to the full field. Check every measurement against the full evaluation
+// of the same field E = V y, with and without such measurements configured. Without them,
+// the reduced path must not require the high-dimensional field after the one-time check.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced postprocessing matches full evaluation",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const bool full_field_outputs = GENERATE(false, true);
+  CAPTURE(full_field_outputs);
+
+  json flux_json = json::array(
+      {json::object(
+           {{"Index", 1}, {"Attributes", json::array({13})}, {"Type", "Electric"}}),
+       json::object(
+           {{"Index", 2}, {"Attributes", json::array({2, 4})}, {"Type", "Magnetic"}})});
+  json boundary_postpro = json::object();
+  if (full_field_outputs)
+  {
+    flux_json.push_back(json::object({{"Index", 3},
+                                      {"Attributes", json::array({16})},
+                                      {"Type", "Power"},
+                                      {"Center", json::array({1.5, 1.0, 0.5})}}));
+    boundary_postpro["Dielectric"] =
+        json::array({json::object({{"Index", 1},
+                                   {"Attributes", json::array({1, 3})},
+                                   {"Type", "SA"},
+                                   {"Thickness", 2.0e-3},
+                                   {"Permittivity", 10.0},
+                                   {"LossTan", 1.0e-3}}),
+                     json::object({{"Index", 2},
+                                   {"Attributes", json::array({6})},
+                                   {"Thickness", 2.0e-3},
+                                   {"Permittivity", 4.0}})});
+  }
+  boundary_postpro["SurfaceFlux"] = flux_json;
+
+  IoData iodata(ReducedPostprocessingConfig(temp_dir, boundary_postpro), false);
   auto mesh = LoadScaleParMesh2(iodata, comm);
   SpaceOperator space_op(iodata, mesh);
   RomOperator rom_op(iodata, space_op, 4);
@@ -985,25 +1085,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(rom_op.GetReducedDimension() > 0);
   post_op.ConfigureReducedPostprocessing(rom_op);
   REQUIRE(post_op.HasReducedPostprocessing());
+  REQUIRE(post_op.ReducedPostprocessingNeedsField());
 
   // Construct a deterministic complex field directly in the PROM space. This gives both
-  // electric and magnetic forms meaningful magnitude while testing the exact reduced
-  // quadratic forms independently of PROM solution accuracy.
+  // electric and magnetic forms meaningful magnitude while testing the exact reduced forms
+  // independently of PROM solution accuracy. The basis coefficients have distinct phases,
+  // so the field carries nonzero real power.
   Eigen::VectorXcd y(rom_op.GetReducedDimension());
   for (long i = 0; i < y.size(); i++)
   {
-    y(i) = std::complex<double>(1.0 / (i + 1.0), -0.25 / (i + 1.0));
+    y(i) = std::complex<double>(1.0 / (i + 1.0), -0.25 * (i + 1.0));
   }
-  ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
-  E.UseDevice(true);
-  E = 0.0;
-  for (std::size_t i = 0; i < rom_op.GetBasis().size(); i++)
-  {
-    linalg::AXPY(y(i).real(), rom_op.GetBasis()[i], E.Real());
-    linalg::AXPY(y(i).imag(), rom_op.GetBasis()[i], E.Imag());
-  }
-  post_op.MeasureAndPrintReduced(1, 0, E, omega_front, y);
+  const ComplexVector E = ExpandReducedSolution(rom_op.GetBasis(), y);
+
+  // The first reduced measurement compares against the full evaluation of the field.
+  post_op.MeasureAndPrintReduced(1, 0, omega_front, y, &E);
   REQUIRE(post_op.HasReducedPostprocessing());
+  CHECK(post_op.ReducedPostprocessingNeedsField() == full_field_outputs);
 
   ComplexVector B(space_op.GetCurlMatrix().Height());
   B.UseDevice(true);
@@ -1012,19 +1110,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega_back);
   post_op.MeasureAndPrintAll(1, 1, E, B, omega_back);
   const Measurement full = post_op.GetMeasurement();
-  post_op.MeasureAndPrintReduced(1, 1, E, omega_back, y);
+  post_op.MeasureAndPrintReduced(1, 1, omega_back, y, full_field_outputs ? &E : nullptr);
   const Measurement reduced = post_op.GetMeasurement();
   REQUIRE(post_op.HasReducedPostprocessing());
 
-  auto close = [](double x, double y)
-  {
-    const double scale = std::max(std::abs(x), std::abs(y));
-    return scale == 0.0 || std::abs(x - y) <= 1.0e-10 * scale;
-  };
+  constexpr double rtol = 1.0e-10;
+  auto close = [](double x, double y) { return CloseRelative(x, y, rtol); };
   auto check_complex = [](std::complex<double> x, std::complex<double> y)
   {
-    const double scale = std::max(std::abs(x), std::abs(y));
-    CHECK((scale == 0.0 || std::abs(x - y) <= 1.0e-10 * scale));
+    CAPTURE(x, y);
+    CHECK(CloseRelative(x, y, rtol));
   };
 
   CAPTURE(reduced.domain_E_field_energy_all, full.domain_E_field_energy_all,
@@ -1068,6 +1163,118 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(close(reduced_port.capacitor_energy, full_port.capacitor_energy));
   CHECK(close(reduced.lumped_port_inductor_energy, full.lumped_port_inductor_energy));
   CHECK(close(reduced.lumped_port_capacitor_energy, full.lumped_port_capacitor_energy));
+
+  // Probes: E and B at every probe location.
+  CheckCloseVector(reduced.probe_E_field, full.probe_E_field, rtol);
+  CheckCloseVector(reduced.probe_B_field, full.probe_B_field, rtol);
+
+  // Surface fluxes: electric and magnetic fluxes from reduced linear forms, and the power
+  // flux from the full field.
+  REQUIRE(reduced.surface_flux_i.size() == full.surface_flux_i.size());
+  REQUIRE(full.surface_flux_i.size() == (full_field_outputs ? 3 : 2));
+  for (std::size_t i = 0; i < full.surface_flux_i.size(); i++)
+  {
+    CAPTURE(full.surface_flux_i[i].idx);
+    CHECK(reduced.surface_flux_i[i].idx == full.surface_flux_i[i].idx);
+    CHECK(reduced.surface_flux_i[i].type == full.surface_flux_i[i].type);
+    REQUIRE(std::abs(full.surface_flux_i[i].Phi) > 0.0);
+    check_complex(reduced.surface_flux_i[i].Phi, full.surface_flux_i[i].Phi);
+  }
+
+  // Interface dielectric energies from the full field, normalized by the reduced energies.
+  REQUIRE(reduced.interface_eps_i.size() == full.interface_eps_i.size());
+  REQUIRE(full.interface_eps_i.size() == (full_field_outputs ? 2 : 0));
+  for (std::size_t i = 0; i < full.interface_eps_i.size(); i++)
+  {
+    CAPTURE(full.interface_eps_i[i].idx);
+    CHECK(reduced.interface_eps_i[i].idx == full.interface_eps_i[i].idx);
+    REQUIRE(full.interface_eps_i[i].energy > 0.0);
+    CHECK(close(reduced.interface_eps_i[i].energy, full.interface_eps_i[i].energy));
+    CHECK(close(reduced.interface_eps_i[i].energy_participation,
+                full.interface_eps_i[i].energy_participation));
+    CHECK(close(reduced.interface_eps_i[i].quality_factor,
+                full.interface_eps_i[i].quality_factor));
+  }
+}
+
+// A reduced measurement which disagrees with its full evaluation at the one-time comparison
+// (here, through corrupted lumped port and probe forms) is evaluated from the full field
+// for the remainder of the sweep, while the other reduced measurements remain in use.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced postprocessing falls back to the full field",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const json boundary_postpro = {
+      {"SurfaceFlux",
+       json::array({json::object(
+           {{"Index", 1}, {"Attributes", json::array({13})}, {"Type", "Electric"}})})}};
+  IoData iodata(ReducedPostprocessingConfig(temp_dir, boundary_postpro), false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperator rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+
+  const double omega_front = iodata.solver.driven.sample_f.front();
+  const double omega_back = iodata.solver.driven.sample_f.back();
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  linalg::SetRandom(comm, sample.Real(), 42);
+  linalg::SetRandom(comm, sample.Imag(), 43);
+  rom_op.UpdatePROM(sample, "fallback_sample");
+  post_op.ConfigureReducedPostprocessing(rom_op);
+  REQUIRE(post_op.HasReducedPostprocessing());
+
+  // Corrupt the lumped port and electric field probe forms.
+  auto &reduced = post_op.GetReducedPostData();
+  reduced.lumped_port_V.at(1) *= 2.0;
+  reduced.probe_E *= 2.0;
+
+  Eigen::VectorXcd y(rom_op.GetReducedDimension());
+  for (long i = 0; i < y.size(); i++)
+  {
+    y(i) = std::complex<double>(1.0 / (i + 1.0), -0.25 * (i + 1.0));
+  }
+  const ComplexVector E = ExpandReducedSolution(rom_op.GetBasis(), y);
+  auto measure_full = [&](int step, double omega)
+  {
+    ComplexVector B(space_op.GetCurlMatrix().Height());
+    B.UseDevice(true);
+    space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+    space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega);
+    post_op.MeasureAndPrintAll(1, step, E, B, omega);
+    return post_op.GetMeasurement();
+  };
+  auto check = [](const Measurement &reduced_meas, const Measurement &full)
+  {
+    constexpr double rtol = 1.0e-10;
+    const auto &reduced_port = reduced_meas.lumped_port_vi.at(1);
+    const auto &full_port = full.lumped_port_vi.at(1);
+    CAPTURE(reduced_port.V, full_port.V);
+    CHECK(CloseRelative(reduced_port.V, full_port.V, rtol));
+    CHECK(CloseRelative(reduced_port.S, full_port.S, rtol));
+    CheckCloseVector(reduced_meas.probe_E_field, full.probe_E_field, rtol);
+    CheckCloseVector(reduced_meas.probe_B_field, full.probe_B_field, rtol);
+    CHECK(CloseRelative(reduced_meas.domain_E_field_energy_all,
+                        full.domain_E_field_energy_all, rtol));
+    REQUIRE(reduced_meas.surface_flux_i.size() == 1);
+    CHECK(CloseRelative(reduced_meas.surface_flux_i[0].Phi, full.surface_flux_i[0].Phi,
+                        rtol));
+  };
+
+  post_op.MeasureAndPrintReduced(1, 0, omega_front, y, &E);
+  CHECK_FALSE(reduced.use.lumped_port);
+  CHECK_FALSE(reduced.use.probe);
+  CHECK(reduced.use.energy);
+  CHECK(reduced.use.flux);
+  CHECK(post_op.ReducedPostprocessingNeedsField());
+  const Measurement reduced_front = post_op.GetMeasurement();
+  check(reduced_front, measure_full(0, omega_front));
+
+  const Measurement full_back = measure_full(1, omega_back);
+  post_op.MeasureAndPrintReduced(1, 1, omega_back, y, &E);
+  check(post_op.GetMeasurement(), full_back);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -1126,6 +1333,225 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   DrivenPostOperatorTest post_op(iodata, space_op);
   post_op.ConfigureReducedPostprocessing(rom_op);
   CHECK_FALSE(post_op.HasReducedPostprocessing());
+}
+
+// Wave port S-parameters depend on frequency through the port mode, so the reduced path
+// applies the S-parameter functional to the basis restricted to each port (active or not)
+// at every frequency. The voltage along a VoltagePath is linear in the field and evaluated
+// from the basis, while the port power has no reduced form and is evaluated from the full
+// field.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced wave port postprocessing matches full evaluation",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  const bool voltage_path = GENERATE(false, true);
+  CAPTURE(voltage_path);
+
+  // 3 cm x 2 cm x 1 cm box: attributes 14 and 18 are non-adjacent 1 cm x 1 cm faces on the
+  // y = 2 cm side, used as an active and an inactive wave port with PEC on every other face
+  // (TE10 above cutoff over the 20-30 GHz band).
+  json pec_attributes = json::array();
+  for (int attr = 1; attr <= 22; attr++)
+  {
+    if (attr != 14 && attr != 18)
+    {
+      pec_attributes.push_back(attr);
+    }
+  }
+  json port_1 = json::object({{"Index", 1},
+                              {"Attributes", json::array({14})},
+                              {"Mode", 1},
+                              {"Offset", 0.0},
+                              {"Excitation", uint(1)}});
+  if (voltage_path)
+  {
+    port_1["VoltagePath"] =
+        json::array({json::array({0.5, 2.0, 0.1}), json::array({0.5, 2.0, 0.9})});
+  }
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", 1.0e-2},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"PEC", {{"Attributes", pec_attributes}}},
+      {"WavePort", json::array({port_1, json::object({{"Index", 2},
+                                                      {"Attributes", json::array({18})},
+                                                      {"Mode", 1},
+                                                      {"Offset", 0.0},
+                                                      {"Active", false}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 20.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperator rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+
+  REQUIRE(iodata.solver.driven.sample_f.size() == 2);
+  const double omega_front = iodata.solver.driven.sample_f.front();
+  const double omega_back = iodata.solver.driven.sample_f.back();
+  ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
+  sample.UseDevice(true);
+  for (int seed : {42, 44})
+  {
+    linalg::SetRandom(comm, sample.Real(), seed);
+    linalg::SetRandom(comm, sample.Imag(), seed + 1);
+    linalg::SetSubVector(sample.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    linalg::SetSubVector(sample.Imag(), space_op.GetNDDbcTDofLists().back(), 0.0);
+    rom_op.UpdatePROM(sample, fmt::format("wave_port_sample_{:d}", seed));
+  }
+  REQUIRE(rom_op.GetReducedDimension() > 0);
+  post_op.ConfigureReducedPostprocessing(rom_op);
+  REQUIRE(post_op.HasReducedPostprocessing());
+
+  Eigen::VectorXcd y(rom_op.GetReducedDimension());
+  for (long i = 0; i < y.size(); i++)
+  {
+    y(i) = std::complex<double>(1.0 / (i + 1.0), 0.5 / (i + 2.0));
+  }
+  const ComplexVector E = ExpandReducedSolution(rom_op.GetBasis(), y);
+  auto measure_full = [&](int step, double omega)
+  {
+    ComplexVector B(space_op.GetCurlMatrix().Height());
+    B.UseDevice(true);
+    space_op.GetCurlMatrix().Mult(E.Real(), B.Real());
+    space_op.GetCurlMatrix().Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (std::complex<double>(0.0, 1.0) * omega);
+    post_op.MeasureAndPrintAll(1, step, E, B, omega);
+    return post_op.GetMeasurement();
+  };
+  auto measure_reduced = [&](int step, double omega)
+  {
+    post_op.MeasureAndPrintReduced(
+        1, step, omega, y, post_op.ReducedPostprocessingNeedsField() ? &E : nullptr);
+    return post_op.GetMeasurement();
+  };
+  auto check = [&](const Measurement &reduced, const Measurement &full)
+  {
+    constexpr double rtol = 1.0e-10;
+    REQUIRE(reduced.wave_port_vi.size() == 2);
+    REQUIRE(full.wave_port_vi.size() == 2);
+    for (const auto &[idx, full_port] : full.wave_port_vi)
+    {
+      CAPTURE(idx);
+      const auto &reduced_port = reduced.wave_port_vi.at(idx);
+      REQUIRE(std::abs(full_port.S) > 0.0);
+      CAPTURE(reduced_port.S, full_port.S);
+      CHECK(CloseRelative(reduced_port.S, full_port.S, rtol));
+      if (idx == 1 && voltage_path)
+      {
+        REQUIRE(std::abs(full_port.V) > 0.0);
+        REQUIRE(std::abs(full_port.P) > 0.0);
+        CAPTURE(reduced_port.V, full_port.V, reduced_port.P, full_port.P);
+        CHECK(CloseRelative(reduced_port.V, full_port.V, rtol));
+        CHECK(CloseRelative(reduced_port.P, full_port.P, rtol));
+        CHECK(CloseRelative(reduced_port.Z_PV, full_port.Z_PV, rtol));
+      }
+    }
+  };
+
+  // The one-time comparison happens at the first frequency. The port power requires the
+  // full field afterwards, while the S-parameters and voltages do not.
+  space_op.GetWavePortOp().PrepareFrequency(omega_front);
+  const Measurement reduced_front = measure_reduced(0, omega_front);
+  CHECK(post_op.ReducedPostprocessingNeedsField() == voltage_path);
+  check(reduced_front, measure_full(0, omega_front));
+
+  // The port mode, and so the S-parameter functional, changes with frequency.
+  space_op.GetWavePortOp().PrepareFrequency(omega_back);
+  const Measurement full_back = measure_full(1, omega_back);
+  check(measure_reduced(1, omega_back), full_back);
+}
+
+// Solving the PROM in reduced coordinates and prolongating afterwards is the same as the
+// combined solve and prolongation.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator reduced solve and prolongation match expanded solve",
+                 "[romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh";
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"Refinement", json::object({})},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
+                                  {"Permeability", 1.0},
+                                  {"Permittivity", 1.0},
+                                  {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort",
+       json::array({json::object(
+           {{"Index", 1},
+            {"R", 50.0},
+            {"Excitation", uint(1)},
+            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
+                                                    {"Direction", "+Z"}})})}})})}};
+  setup_json["Solver"] = {
+      {"Order", 1UL},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3}, {"MinFreq", 2.0}, {"MaxFreq", 32.0}, {"FreqStep", 30.0}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperator rom_op(iodata, space_op, 4);
+  const double omega_front = iodata.solver.driven.sample_f.front();
+  const double omega_back = iodata.solver.driven.sample_f.back();
+
+  // Without basis states the solution is zero.
+  ComplexVector u(space_op.GetNDSpace().GetTrueVSize()), u_ref(u.Size());
+  u.UseDevice(true);
+  u_ref.UseDevice(true);
+  u = 1.0;
+  rom_op.SolvePROM(1, omega_front, u);
+  CHECK(linalg::Norml2(comm, u) == 0.0);
+
+  for (double omega : {omega_front, omega_back})
+  {
+    rom_op.SolveHDM(1, omega, u_ref);
+    rom_op.UpdatePROM(u_ref, "prolongation_sample");
+  }
+  const double omega = 0.5 * (omega_front + omega_back);
+  rom_op.SolvePROM(1, omega, u_ref);
+  rom_op.SolvePROM(1, omega);
+  const Eigen::VectorXcd y = rom_op.GetReducedSolution();
+  REQUIRE(y.size() == static_cast<Eigen::Index>(rom_op.GetReducedDimension()));
+  rom_op.ProlongateReducedSolution(u);
+  const ComplexVector u_expand = ExpandReducedSolution(rom_op.GetBasis(), y);
+
+  ComplexVector diff(u);
+  diff.Add(std::complex<double>(-1.0, 0.0), u_ref);
+  const double norm_ref = linalg::Norml2(comm, u_ref);
+  REQUIRE(norm_ref > 0.0);
+  CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_ref);
+  diff = u;
+  diff.Add(std::complex<double>(-1.0, 0.0), u_expand);
+  CHECK(linalg::Norml2(comm, diff) <= 1.0e-12 * norm_ref);
 }
 
 // Excited ports must always be included in synthesis. The configuration parser

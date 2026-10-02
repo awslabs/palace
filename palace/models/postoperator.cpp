@@ -92,6 +92,20 @@ std::string OutputFolderName(const ProblemType solver_t)
   }
 }
 
+// Evaluate a linear functional of the field E = V y in reduced coordinates, f(E) = Σⱼ fⱼ yⱼ
+// with fⱼ = f(vⱼ) the functional applied to the basis vectors.
+std::complex<double> ReducedLinear(const Eigen::VectorXcd &f, const Eigen::VectorXcd &y)
+{
+  return f.cwiseProduct(y).sum();
+}
+
+// Evaluate the field energy ½ Eᴴ M E = ½ yᴴ Q y in reduced coordinates, with Q = Vᵀ M V
+// the projected (symmetric) energy form.
+double ReducedQuadratic(const Eigen::MatrixXd &Q, const Eigen::VectorXcd &y)
+{
+  return 0.5 * std::real(y.dot(Q.cast<std::complex<double>>() * y));
+}
+
 }  // namespace
 
 template <ProblemType solver_t>
@@ -1580,7 +1594,12 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
           Measurement::DomainData{idx, 0.0, 0.0});
     }
   }
+  PrintDomainFieldEnergy();
+}
 
+template <ProblemType solver_t>
+void PostOperator<solver_t>::PrintDomainFieldEnergy() const
+{
   // Log Domain Energy.
   const auto domain_E = units.Dimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_E_field_energy_all);
@@ -1621,48 +1640,7 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       vi.V = port_voltages.at(idx);
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
-        // Compute current from the port impedance, separate contributions for R, L, C
-        // branches.
-        // Get value and make real: Matches current behaviour (even for eigensolver!).
-        MFEM_VERIFY(
-            measurement_cache.freq.real() > 0.0,
-            "Frequency domain lumped port postprocessing requires nonzero frequency!");
-        vi.I_RLC[0] =
-            (std::abs(data.R) > 0.0)
-                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
-                                                         LumpedPortData::Branch::R)
-                : 0.0;
-        vi.I_RLC[1] =
-            (std::abs(data.L) > 0.0)
-                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
-                                                         LumpedPortData::Branch::L)
-                : 0.0;
-        vi.I_RLC[2] =
-            (std::abs(data.C) > 0.0)
-                ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
-                                                         LumpedPortData::Branch::C)
-                : 0.0;
-        vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(),
-                               std::complex<double>{0.0, 0.0});
-        vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
-
-        // Add contribution due to all inductive lumped boundaries in the model:
-        //                      E_ind = ∑_j 1/2 L_j I_mj².
-        if (std::abs(data.L) > 0.0)
-        {
-          std::complex<double> I_mj = vi.I_RLC[1];
-          vi.inductor_energy = 0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj));
-          measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
-        }
-
-        // Add contribution due to all capacitive lumped boundaries in the model:
-        //                      E_cap = ∑_j 1/2 C_j V_mj².
-        if (std::abs(data.C) > 0.0)
-        {
-          std::complex<double> V_mj = vi.V;
-          vi.capacitor_energy = 0.5 * std::abs(data.C) * std::real(V_mj * std::conj(V_mj));
-          measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
-        }
+        MeasureLumpedPortCurrents(data, vi);
       }
       else
       {
@@ -1671,6 +1649,48 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
         vi.I = (std::abs(vi.V) > 0.0) ? std::conj(vi.P / vi.V) : 0.0;
       }
     }
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::MeasureLumpedPortCurrents(const LumpedPortData &data,
+                                                       Measurement::PortPostData &vi) const
+{
+  // Compute current from the port impedance, separate contributions for R, L, C branches.
+  // Get value and make real: Matches current behaviour (even for eigensolver!).
+  MFEM_VERIFY(measurement_cache.freq.real() > 0.0,
+              "Frequency domain lumped port postprocessing requires nonzero frequency!");
+  vi.I_RLC[0] = (std::abs(data.R) > 0.0)
+                    ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                             LumpedPortData::Branch::R)
+                    : 0.0;
+  vi.I_RLC[1] = (std::abs(data.L) > 0.0)
+                    ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                             LumpedPortData::Branch::L)
+                    : 0.0;
+  vi.I_RLC[2] = (std::abs(data.C) > 0.0)
+                    ? vi.V / data.GetCharacteristicImpedance(measurement_cache.freq.real(),
+                                                             LumpedPortData::Branch::C)
+                    : 0.0;
+  vi.I = std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(), std::complex<double>{0.0, 0.0});
+  vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
+
+  // Add contribution due to all inductive lumped boundaries in the model:
+  //                      E_ind = ∑_j 1/2 L_j I_mj².
+  if (std::abs(data.L) > 0.0)
+  {
+    std::complex<double> I_mj = vi.I_RLC[1];
+    vi.inductor_energy = 0.5 * std::abs(data.L) * std::real(I_mj * std::conj(I_mj));
+    measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
+  }
+
+  // Add contribution due to all capacitive lumped boundaries in the model:
+  //                      E_cap = ∑_j 1/2 C_j V_mj².
+  if (std::abs(data.C) > 0.0)
+  {
+    std::complex<double> V_mj = vi.V;
+    vi.capacitor_energy = 0.5 * std::abs(data.C) * std::real(V_mj * std::conj(V_mj));
+    measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
   }
 }
 
@@ -2083,54 +2103,105 @@ template <ProblemType U>
 auto PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &rom_op)
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
-  reduced_postprocessing_ready = false;
-  reduced_postprocessing_checked = false;
-  // The reduced magnetic form contains curl(E) only, while a Floquet wave vector adds a
-  // frequency-dependent k × E correction to the full magnetic flux density.
-  if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty() ||
-      fem_op->GetSurfaceCurrentOp().Size() > 0 || !surf_post_op.flux_surfs.empty() ||
-      !surf_post_op.eps_surfs.empty() || surf_post_op.farfield.size() > 0 ||
-      !interp_op.GetProbes().empty() || !fem_op->GetPortExcitations().IsMultipleSimple())
+  BlockTimer bt0(Timer::POSTPRO);
+  reduced = {};
+
+  // The reduced magnetic forms contain ∇ × E only, while a Floquet wave vector adds a
+  // frequency-dependent k × E correction to the full magnetic flux density. Floquet port
+  // postprocessing is not available in reduced coordinates.
+  if (fem_op->GetMaterialOp().HasWaveVector() || !fem_op->GetFloquetPortOp().Empty())
   {
     return;
   }
-  for (const auto &[excitation_idx, excitation_spec] : fem_op->GetPortExcitations())
-  {
-    const auto [is_simple, port_type, port_idx] = excitation_spec.IsSimple();
-    if (!is_simple ||
-        (port_type != PortType::LumpedPort && port_type != PortType::WavePort))
-    {
-      return;
-    }
-  }
-  for (const auto &[idx, data] : fem_op->GetWavePortOp())
-  {
-    if (data.HasVoltageCoords())
-    {
-      return;
-    }
-  }
-
   const auto &basis = rom_op.GetBasis();
   const std::size_t n = basis.size();
   if (n == 0)
   {
     return;
   }
+  const auto &lumped_port_op = fem_op->GetLumpedPortOp();
+  const auto &wave_port_op = fem_op->GetWavePortOp();
+  const bool has_probes = !interp_op.GetProbes().empty();
+
+  // Apply the linear measurement functionals to E = vⱼ and B = ∇ × vⱼ for each basis vector
+  // vⱼ. The grid function (local) dofs of the fields are kept for the projection of the
+  // domain energy forms below.
+  for (const auto &[idx, data] : lumped_port_op)
+  {
+    reduced.lumped_port_V[idx].resize(n);
+  }
+  for (const auto &[idx, data] : wave_port_op)
+  {
+    reduced.wave_port_basis[idx].resize(n);
+    reduced.wave_port_S[idx].resize(n);
+    if (data.HasVoltageCoords())
+    {
+      reduced.wave_port_V[idx].resize(n);
+    }
+  }
+  for (const auto &[idx, data] : surf_post_op.flux_surfs)
+  {
+    // The power flux is quadratic in the fields, and has no linear reduced form.
+    if (data.type != SurfaceFlux::POWER)
+    {
+      reduced.flux[idx].resize(n);
+    }
+  }
   std::vector<Vector> basis_E, basis_B;
   basis_E.reserve(n);
   basis_B.reserve(n);
   const auto &curl = fem_op->GetCurlMatrix();
-  Vector b_true(curl.Height());
-  for (const auto &v : basis)
+  ComplexVector e(curl.Width()), b(curl.Height());
+  e.UseDevice(true);
+  b.UseDevice(true);
+  e = 0.0;
+  b = 0.0;
+  for (std::size_t j = 0; j < n; j++)
   {
-    E->Real().SetFromTrueDofs(v);
+    e.Real() = basis[j];
+    curl.Mult(basis[j], b.Real());
+    SetEGridFunction(e);
+    SetBGridFunction(b);
     basis_E.emplace_back(E->Real());
-    curl.Mult(v, b_true);
-    B->Real().SetFromTrueDofs(b_true);
     basis_B.emplace_back(B->Real());
+
+    if (lumped_port_op.Size() > 0)
+    {
+      const auto port_voltages = lumped_port_op.GetVoltages(*E);
+      for (auto &[idx, f] : reduced.lumped_port_V)
+      {
+        f(j) = port_voltages.at(idx);
+      }
+    }
+    for (const auto &[idx, data] : wave_port_op)
+    {
+      data.RestrictToPort(E->Real(), reduced.wave_port_basis.at(idx)[j]);
+      if (data.HasVoltageCoords())
+      {
+        reduced.wave_port_V.at(idx)(j) = data.GetVoltage(*E);
+      }
+    }
+    if (has_probes)
+    {
+      const auto probe_E = interp_op.ProbeField(*E);
+      const auto probe_B = interp_op.ProbeField(*B);
+      if (j == 0)
+      {
+        reduced.probe_E.resize(static_cast<Eigen::Index>(probe_E.size()), n);
+        reduced.probe_B.resize(static_cast<Eigen::Index>(probe_B.size()), n);
+      }
+      reduced.probe_E.col(j) =
+          Eigen::Map<const Eigen::VectorXcd>(probe_E.data(), reduced.probe_E.rows());
+      reduced.probe_B.col(j) =
+          Eigen::Map<const Eigen::VectorXcd>(probe_B.data(), reduced.probe_B.rows());
+    }
+    for (auto &[idx, f] : reduced.flux)
+    {
+      f(j) = surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
+    }
   }
 
+  // Project the domain energy forms onto the basis.
   auto project = [&](const Operator *op,
                      const std::vector<Vector> &local_basis) -> Eigen::MatrixXd
   {
@@ -2151,140 +2222,441 @@ auto PostOperator<solver_t>::ConfigureReducedPostprocessing(const RomOperator &r
     Mpi::GlobalSum(static_cast<int>(n * n), result.data(), fem_op->GetComm());
     return 0.5 * (result + result.transpose()).eval();
   };
-
-  reduced_energy_E = project(dom_post_op.M_elec.get(), basis_E);
-  reduced_energy_H = project(dom_post_op.M_mag.get(), basis_B);
-  reduced_domain_energy.clear();
+  reduced.energy_E = project(dom_post_op.M_elec.get(), basis_E);
+  reduced.energy_H = project(dom_post_op.M_mag.get(), basis_B);
   for (const auto &[idx, ops] : dom_post_op.M_i)
   {
-    reduced_domain_energy.emplace(idx, std::make_pair(project(ops.first.get(), basis_E),
-                                                      project(ops.second.get(), basis_B)));
+    reduced.energy_i.emplace(idx, std::make_pair(project(ops.first.get(), basis_E),
+                                                 project(ops.second.get(), basis_B)));
   }
-  reduced_postprocessing_ready = true;
+
+  reduced.dim = n;
+  reduced.ready = true;
+  reduced.use = {true, true, true, true, true};
+  UpdateReducedFieldRequirements();
+
+  // Report the measurements which require the high-dimensional field at every frequency.
+  std::vector<std::string> full_field;
+  if (std::any_of(wave_port_op.begin(), wave_port_op.end(),
+                  [](const auto &port) { return port.second.HasVoltageCoords(); }))
+  {
+    full_field.emplace_back("wave port power");
+  }
+  if (std::any_of(surf_post_op.flux_surfs.begin(), surf_post_op.flux_surfs.end(),
+                  [](const auto &surf) { return surf.second.type == SurfaceFlux::POWER; }))
+  {
+    full_field.emplace_back("power surface flux");
+  }
+  if (!surf_post_op.eps_surfs.empty())
+  {
+    full_field.emplace_back("interface dielectric energy");
+  }
+  if (surf_post_op.farfield.size() > 0)
+  {
+    full_field.emplace_back("far-field");
+  }
+  if (!full_field.empty())
+  {
+    Mpi::Print("\nOnline postprocessing evaluates {} from the full field solution\n",
+               fmt::join(full_field, ", "));
+  }
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperator<solver_t>::UpdateReducedFieldRequirements()
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  // Determine the full fields required by measurements without a reduced form, or whose
+  // reduced form is disabled.
+  bool need_E = false, need_B = false;
+  auto Require = [&](bool condition, bool E_field, bool B_field)
+  {
+    if (condition)
+    {
+      need_E = need_E || E_field;
+      need_B = need_B || B_field;
+    }
+  };
+  Require(!reduced.use.energy, true, true);
+  Require(fem_op->GetLumpedPortOp().Size() > 0 && !reduced.use.lumped_port, true, false);
+  for (const auto &[idx, data] : fem_op->GetWavePortOp())
+  {
+    Require(!reduced.use.wave_port, true, false);
+    Require(data.HasVoltageCoords(), true, true);  // Port power
+  }
+  Require(!interp_op.GetProbes().empty() && !reduced.use.probe, true, true);
+  for (const auto &[idx, data] : surf_post_op.flux_surfs)
+  {
+    Require(data.type == SurfaceFlux::POWER, true, true);
+    Require(data.type == SurfaceFlux::ELECTRIC && !reduced.use.flux, true, false);
+    Require(data.type == SurfaceFlux::MAGNETIC && !reduced.use.flux, false, true);
+  }
+  Require(!surf_post_op.eps_surfs.empty(), true, false);
+  Require(surf_post_op.farfield.size() > 0, true, true);
+  reduced.need_E = need_E;
+  reduced.need_B = need_B;
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperator<solver_t>::UpdateReducedWavePortForms(double omega)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  // The wave port S-parameter functional depends on frequency through the port mode. For a
+  // real field e restricted to the port, it is S(e) = -conj(sᵀe) with s = sr + i si the
+  // port-space modal n×H form (see WavePortData::GetSParameter), applied to the restricted
+  // basis each time the port modes change.
+  const auto &wave_port_op = fem_op->GetWavePortOp();
+  std::vector<std::size_t> mode_versions;
+  mode_versions.reserve(wave_port_op.Size());
+  for (const auto &[idx, data] : wave_port_op)
+  {
+    MFEM_VERIFY(data.omega0 == omega, "Wave port modes must be computed at the measurement "
+                                      "frequency for reduced postprocessing!");
+    mode_versions.push_back(data.mode_version);
+  }
+  if (mode_versions == reduced.wave_port_mode_versions)
+  {
+    return;
+  }
+  const auto n = static_cast<Eigen::Index>(reduced.dim);
+  Eigen::MatrixXcd forms(n, static_cast<Eigen::Index>(wave_port_op.Size()));
+  Eigen::Index p = 0;
+  for (const auto &[idx, data] : wave_port_op)
+  {
+    const auto &port_basis = reduced.wave_port_basis.at(idx);
+    for (Eigen::Index j = 0; j < n; j++)
+    {
+      forms(j, p) = -std::conj(data.LocalModePairing(port_basis[j]).full);
+    }
+    p++;
+  }
+  Mpi::GlobalSum(static_cast<int>(forms.size()), forms.data(), fem_op->GetComm());
+  p = 0;
+  for (const auto &[idx, data] : wave_port_op)
+  {
+    reduced.wave_port_S.at(idx) = forms.col(p++);
+  }
+  reduced.wave_port_mode_versions = std::move(mode_versions);
+}
+
+template <ProblemType solver_t>
+template <ProblemType U>
+auto PostOperator<solver_t>::CheckReducedPostprocessing(const Eigen::VectorXcd &y,
+                                                        double omega)
+    -> std::enable_if_t<U == ProblemType::DRIVEN, void>
+{
+  // Compare each group of reduced-coordinate measurements once against its evaluation from
+  // the full fields E and B, which are set by the caller. The reduced measurements are
+  // exact up to round-off relative to Σⱼ |f(vⱼ)| |yⱼ| (or yᴴ |Q| y for the quadratic
+  // forms), so a group which disagrees indicates a measurement which is not linear
+  // (quadratic) in the field, and is evaluated from the full field for the remainder of the
+  // sweep.
+  struct Comparison
+  {
+    double error = 0.0, scale = 0.0;
+    void Add(std::complex<double> reduced_value, std::complex<double> full_value,
+             double reduced_scale)
+    {
+      error = std::max(error, std::abs(reduced_value - full_value));
+      scale = std::max({scale, reduced_scale, std::abs(full_value)});
+    }
+  };
+  auto Check = [](bool &use, const Comparison &cmp, const char *name)
+  {
+    constexpr double tol = 1.0e-9;
+    if (use && cmp.error > tol * cmp.scale)
+    {
+      use = false;
+      Mpi::Warning("Reduced {} postprocessing disagrees with the full evaluation (relative "
+                   "error {:.3e}); evaluating it from the full field for the remainder of "
+                   "the sweep.\n",
+                   name, cmp.error / cmp.scale);
+    }
+  };
+  const Eigen::VectorXd y_abs = y.cwiseAbs();
+  auto Linear = [&y](const Eigen::VectorXcd &f) { return ReducedLinear(f, y); };
+  auto LinearScale = [&y_abs](const Eigen::VectorXcd &f)
+  { return f.cwiseAbs().dot(y_abs); };
+  auto Quadratic = [&y](const Eigen::MatrixXd &Q) { return ReducedQuadratic(Q, y); };
+  auto QuadraticScale = [&y_abs](const Eigen::MatrixXd &Q)
+  { return 0.5 * y_abs.dot(Q.cwiseAbs() * y_abs); };
+  const std::complex<double> b_factor = 1i / omega;  // B = -1/(iω) ∇ × E
+  const double h_factor = 1.0 / (omega * omega);
+
+  // Domain energies.
+  {
+    Comparison cmp;
+    cmp.Add(Quadratic(reduced.energy_E), dom_post_op.GetElectricFieldEnergy(*E),
+            QuadraticScale(reduced.energy_E));
+    cmp.Add(h_factor * Quadratic(reduced.energy_H), dom_post_op.GetMagneticFieldEnergy(*B),
+            h_factor * QuadraticScale(reduced.energy_H));
+    for (const auto &[idx, forms] : reduced.energy_i)
+    {
+      cmp.Add(Quadratic(forms.first), dom_post_op.GetDomainElectricFieldEnergy(idx, *E),
+              QuadraticScale(forms.first));
+      cmp.Add(h_factor * Quadratic(forms.second),
+              dom_post_op.GetDomainMagneticFieldEnergy(idx, *B),
+              h_factor * QuadraticScale(forms.second));
+    }
+    Check(reduced.use.energy, cmp, "domain energy");
+  }
+
+  // Lumped port voltages.
+  if (fem_op->GetLumpedPortOp().Size() > 0)
+  {
+    Comparison cmp;
+    const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
+    for (const auto &[idx, f] : reduced.lumped_port_V)
+    {
+      cmp.Add(Linear(f), port_voltages.at(idx), LinearScale(f));
+    }
+    Check(reduced.use.lumped_port, cmp, "lumped port");
+  }
+
+  // Wave port S-parameters and voltages.
+  if (fem_op->GetWavePortOp().Size() > 0)
+  {
+    UpdateReducedWavePortForms(omega);
+    Comparison cmp_S, cmp_V;
+    for (const auto &[idx, data] : fem_op->GetWavePortOp())
+    {
+      const auto &f = reduced.wave_port_S.at(idx);
+      cmp_S.Add(Linear(f), data.GetSParameter(*E), LinearScale(f));
+      if (data.HasVoltageCoords())
+      {
+        const auto &g = reduced.wave_port_V.at(idx);
+        cmp_V.Add(Linear(g), data.GetVoltage(*E), LinearScale(g));
+      }
+    }
+    Check(reduced.use.wave_port, cmp_S, "wave port S-parameter");
+    Check(reduced.use.wave_port, cmp_V, "wave port voltage");
+  }
+
+  // Probe fields.
+  if (!interp_op.GetProbes().empty())
+  {
+    Comparison cmp_E, cmp_B;
+    const auto probe_E = interp_op.ProbeField(*E);
+    const auto probe_B = interp_op.ProbeField(*B);
+    const Eigen::VectorXcd reduced_E = reduced.probe_E * y;
+    const Eigen::VectorXcd reduced_B = b_factor * (reduced.probe_B * y);
+    const Eigen::VectorXd scale_E = reduced.probe_E.cwiseAbs() * y_abs;
+    const Eigen::VectorXd scale_B =
+        std::abs(b_factor) * (reduced.probe_B.cwiseAbs() * y_abs);
+    for (Eigen::Index i = 0; i < reduced_E.size(); i++)
+    {
+      cmp_E.Add(reduced_E(i), probe_E[i], scale_E(i));
+    }
+    for (Eigen::Index i = 0; i < reduced_B.size(); i++)
+    {
+      cmp_B.Add(reduced_B(i), probe_B[i], scale_B(i));
+    }
+    Check(reduced.use.probe, cmp_E, "electric field probe");
+    Check(reduced.use.probe, cmp_B, "magnetic flux density probe");
+  }
+
+  // Electric and magnetic surface fluxes.
+  if (!reduced.flux.empty())
+  {
+    Comparison cmp_E, cmp_B;
+    for (const auto &[idx, f] : reduced.flux)
+    {
+      const auto full_value = surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
+      if (surf_post_op.flux_surfs.at(idx).type == SurfaceFlux::MAGNETIC)
+      {
+        cmp_B.Add(b_factor * Linear(f), full_value, std::abs(b_factor) * LinearScale(f));
+      }
+      else
+      {
+        cmp_E.Add(Linear(f), full_value, LinearScale(f));
+      }
+    }
+    Check(reduced.use.flux, cmp_E, "electric surface flux");
+    Check(reduced.use.flux, cmp_B, "magnetic surface flux");
+  }
+
+  reduced.checked = true;
+  UpdateReducedFieldRequirements();
 }
 
 template <ProblemType solver_t>
 template <ProblemType U>
 auto PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
-                                                    const ComplexVector &e,
                                                     std::complex<double> omega,
-                                                    const Eigen::VectorXcd &y)
+                                                    const Eigen::VectorXcd &y,
+                                                    const ComplexVector *e)
     -> std::enable_if_t<U == ProblemType::DRIVEN, void>
 {
   BlockTimer bt0(Timer::POSTPRO);
-  MFEM_VERIFY(reduced_postprocessing_ready && y.size() == reduced_energy_E.rows(),
+  MFEM_VERIFY(reduced.ready && static_cast<std::size_t>(y.size()) == reduced.dim,
               "Invalid reduced postprocessing state!");
-  SetEGridFunction(e);
+  MFEM_VERIFY(e || !ReducedPostprocessingNeedsField(),
+              "Reduced postprocessing requires the high-dimensional field solution!");
 
-  auto quadratic = [&y](const Eigen::MatrixXd &Q)
-  { return 0.5 * std::real(y.dot(Q.cast<std::complex<double>>() * y)); };
+  // Set the full fields for the one-time comparison against the reduced measurements and
+  // for measurements without a reduced form.
+  const bool need_E = !reduced.checked || reduced.need_E;
+  const bool need_B = !reduced.checked || reduced.need_B;
+  if (need_E)
+  {
+    SetEGridFunction(*e);
+  }
+  if (need_B)
+  {
+    // Compute B = -1/(iω) ∇ x E on the true dofs.
+    const auto &curl = fem_op->GetCurlMatrix();
+    if (!reduced.b)
+    {
+      reduced.b = std::make_unique<ComplexVector>(curl.Height());
+      reduced.b->UseDevice(true);
+    }
+    curl.Mult(e->Real(), reduced.b->Real());
+    curl.Mult(e->Imag(), reduced.b->Imag());
+    *reduced.b *= -1.0 / (1i * omega);
+    SetBGridFunction(*reduced.b);
+  }
+
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
-  measurement_cache.domain_E_field_energy_all = quadratic(reduced_energy_E);
-  measurement_cache.domain_H_field_energy_all =
-      quadratic(reduced_energy_H) / (omega.real() * omega.real());
-  for (const auto &[idx, forms] : reduced_domain_energy)
+  if (!reduced.checked)
   {
-    const double energy_E = quadratic(forms.first);
-    const double energy_H = quadratic(forms.second) / (omega.real() * omega.real());
-    measurement_cache.domain_E_field_energy_i.push_back(
-        {idx, energy_E,
-         (measurement_cache.domain_E_field_energy_all != 0.0)
-             ? energy_E / measurement_cache.domain_E_field_energy_all
-             : 0.0});
-    measurement_cache.domain_H_field_energy_i.push_back(
-        {idx, energy_H,
-         (measurement_cache.domain_H_field_energy_all != 0.0)
-             ? energy_H / measurement_cache.domain_H_field_energy_all
-             : 0.0});
+    CheckReducedPostprocessing(y, omega.real());
   }
-  if (!reduced_postprocessing_checked)
-  {
-    ComplexVector b(fem_op->GetCurlMatrix().Height());
-    b.UseDevice(true);
-    fem_op->GetCurlMatrix().Mult(e.Real(), b.Real());
-    fem_op->GetCurlMatrix().Mult(e.Imag(), b.Imag());
-    b *= -1.0 / (1i * omega);
-    SetBGridFunction(b);
+  auto Linear = [&y](const Eigen::VectorXcd &f) { return ReducedLinear(f, y); };
+  const std::complex<double> b_factor = 1i / omega;  // B = -1/(iω) ∇ × E
 
-    double max_error = 0.0, max_reference = 0.0;
-    auto compare = [&](double reduced, double exact)
+  // Domain energies.
+  if (reduced.use.energy)
+  {
+    auto Quadratic = [&y](const Eigen::MatrixXd &Q) { return ReducedQuadratic(Q, y); };
+    const double h_factor = 1.0 / (omega.real() * omega.real());
+    measurement_cache.domain_E_field_energy_all = Quadratic(reduced.energy_E);
+    measurement_cache.domain_H_field_energy_all = h_factor * Quadratic(reduced.energy_H);
+    for (const auto &[idx, forms] : reduced.energy_i)
     {
-      max_error = std::max(max_error, std::abs(reduced - exact));
-      max_reference = std::max(max_reference, std::abs(exact));
-    };
-    const double exact_E = dom_post_op.GetElectricFieldEnergy(*E);
-    const double exact_H = dom_post_op.GetMagneticFieldEnergy(*B);
-    compare(measurement_cache.domain_E_field_energy_all, exact_E);
-    compare(measurement_cache.domain_H_field_energy_all, exact_H);
-    std::vector<Measurement::DomainData> exact_domain_E, exact_domain_H;
-    for (const auto &[idx, forms] : reduced_domain_energy)
-    {
-      const double energy_E = dom_post_op.GetDomainElectricFieldEnergy(idx, *E);
-      const double energy_H = dom_post_op.GetDomainMagneticFieldEnergy(idx, *B);
-      compare(measurement_cache.domain_E_field_energy_i[exact_domain_E.size()].energy,
-              energy_E);
-      compare(measurement_cache.domain_H_field_energy_i[exact_domain_H.size()].energy,
-              energy_H);
-      exact_domain_E.push_back(
-          {idx, energy_E, (exact_E != 0.0) ? energy_E / exact_E : 0.0});
-      exact_domain_H.push_back(
-          {idx, energy_H, (exact_H != 0.0) ? energy_H / exact_H : 0.0});
+      const double energy_E = Quadratic(forms.first);
+      const double energy_H = h_factor * Quadratic(forms.second);
+      measurement_cache.domain_E_field_energy_i.push_back(
+          {idx, energy_E,
+           (measurement_cache.domain_E_field_energy_all != 0.0)
+               ? energy_E / measurement_cache.domain_E_field_energy_all
+               : 0.0});
+      measurement_cache.domain_H_field_energy_i.push_back(
+          {idx, energy_H,
+           (measurement_cache.domain_H_field_energy_all != 0.0)
+               ? energy_H / measurement_cache.domain_H_field_energy_all
+               : 0.0});
     }
-    reduced_postprocessing_checked = true;
-    if (max_error > 1.0e-9 * std::max(max_reference, 1.0e-300))
+    PrintDomainFieldEnergy();
+  }
+  else
+  {
+    MeasureDomainFieldEnergy();
+  }
+
+  // Lumped ports: voltages, and the currents, S-parameters, and lumped element energies
+  // derived from them.
+  const auto &lumped_port_op = fem_op->GetLumpedPortOp();
+  if (lumped_port_op.Size() > 0)
+  {
+    std::map<int, std::complex<double>> port_voltages;
+    if (reduced.use.lumped_port)
     {
-      reduced_postprocessing_ready = false;
-      measurement_cache.domain_E_field_energy_all = exact_E;
-      measurement_cache.domain_H_field_energy_all = exact_H;
-      measurement_cache.domain_E_field_energy_i = std::move(exact_domain_E);
-      measurement_cache.domain_H_field_energy_i = std::move(exact_domain_H);
-      Mpi::Warning("Reduced domain-energy postprocessing disagrees with full evaluation "
-                   "(relative error {:.3e}); reverting to full postprocessing.\n",
-                   max_error / std::max(max_reference, 1.0e-300));
+      for (const auto &[idx, f] : reduced.lumped_port_V)
+      {
+        port_voltages.emplace(idx, Linear(f));
+      }
+    }
+    else
+    {
+      port_voltages = lumped_port_op.GetVoltages(*E);
+    }
+    for (const auto &[idx, data] : lumped_port_op)
+    {
+      auto &vi = measurement_cache.lumped_port_vi[idx];
+      vi.V = port_voltages.at(idx);
+      MeasureLumpedPortCurrents(data, vi);
     }
   }
-  const auto port_voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
-  for (const auto &[idx, data] : fem_op->GetLumpedPortOp())
+
+  // Wave ports: S-parameters, and for ports with voltage coordinates also the voltage, the
+  // power (no reduced form), and the mode characteristic impedance.
+  const auto &wave_port_op = fem_op->GetWavePortOp();
+  if (reduced.use.wave_port)
   {
-    auto &vi = measurement_cache.lumped_port_vi[idx];
-    vi.V = port_voltages.at(idx);
-    vi.I_RLC[0] = (std::abs(data.R) > 0.0)
-                      ? vi.V / data.GetCharacteristicImpedance(omega.real(),
-                                                               LumpedPortData::Branch::R)
-                      : 0.0;
-    vi.I_RLC[1] = (std::abs(data.L) > 0.0)
-                      ? vi.V / data.GetCharacteristicImpedance(omega.real(),
-                                                               LumpedPortData::Branch::L)
-                      : 0.0;
-    vi.I_RLC[2] = (std::abs(data.C) > 0.0)
-                      ? vi.V / data.GetCharacteristicImpedance(omega.real(),
-                                                               LumpedPortData::Branch::C)
-                      : 0.0;
-    vi.I =
-        std::accumulate(vi.I_RLC.begin(), vi.I_RLC.end(), std::complex<double>{0.0, 0.0});
-    vi.S = vi.V / std::sqrt(data.GetExcitationRefResistance());
-    if (std::abs(data.L) > 0.0)
-    {
-      vi.inductor_energy = 0.5 * std::abs(data.L) * std::norm(vi.I_RLC[1]);
-      measurement_cache.lumped_port_inductor_energy += vi.inductor_energy;
-    }
-    if (std::abs(data.C) > 0.0)
-    {
-      vi.capacitor_energy = 0.5 * std::abs(data.C) * std::norm(vi.V);
-      measurement_cache.lumped_port_capacitor_energy += vi.capacitor_energy;
-    }
+    UpdateReducedWavePortForms(omega.real());
   }
-  for (const auto &[idx, data] : fem_op->GetWavePortOp())
+  for (const auto &[idx, data] : wave_port_op)
   {
-    measurement_cache.wave_port_vi[idx].S = data.GetSParameter(*E);
+    auto &vi = measurement_cache.wave_port_vi[idx];
+    vi.S = reduced.use.wave_port ? Linear(reduced.wave_port_S.at(idx))
+                                 : data.GetSParameter(*E);
+    if (data.HasVoltageCoords())
+    {
+      vi.P = data.GetPower(*E, *B);
+      vi.V =
+          reduced.use.wave_port ? Linear(reduced.wave_port_V.at(idx)) : data.GetVoltage(*E);
+      vi.Z_PV = data.GetCharacteristicImpedance();
+    }
   }
   MeasureSParameter();
 
+  // Surface fluxes: the electric and magnetic fluxes are linear in E or B, while the power
+  // flux is evaluated from the full fields.
+  measurement_cache.surface_flux_i.reserve(surf_post_op.flux_surfs.size());
+  for (const auto &[idx, data] : surf_post_op.flux_surfs)
+  {
+    std::complex<double> Phi;
+    if (reduced.use.flux && data.type != SurfaceFlux::POWER)
+    {
+      Phi = Linear(reduced.flux.at(idx));
+      if (data.type == SurfaceFlux::MAGNETIC)
+      {
+        Phi *= b_factor;
+      }
+    }
+    else
+    {
+      Phi = surf_post_op.GetSurfaceFlux(idx, E.get(), B.get());
+    }
+    measurement_cache.surface_flux_i.emplace_back(
+        Measurement::FluxData{idx, Phi, data.type});
+  }
+
+  // Interface dielectric energies from the full field (normalized by the domain and lumped
+  // port energies above).
+  MeasureInterfaceEFieldEnergy();
+
+  // Probe fields.
+  if (!interp_op.GetProbes().empty())
+  {
+    if (reduced.use.probe)
+    {
+      const Eigen::VectorXcd probe_E = reduced.probe_E * y;
+      const Eigen::VectorXcd probe_B = b_factor * (reduced.probe_B * y);
+      measurement_cache.probe_E_field.assign(probe_E.data(),
+                                             probe_E.data() + probe_E.size());
+      measurement_cache.probe_B_field.assign(probe_B.data(),
+                                             probe_B.data() + probe_B.size());
+    }
+    else
+    {
+      MeasureProbes();
+    }
+  }
+
+  // Far-field from the full fields.
+  if (surf_post_op.farfield.size() > 0)
+  {
+    MeasureFarField();
+  }
+
   const std::complex<double> freq =
       units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI);
-  post_op_csv.PrintReducedCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
+  post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
 }
 
 template <ProblemType solver_t>
@@ -2838,8 +3210,8 @@ PostOperator<ProblemType::DRIVEN>::ConfigureReducedPostprocessing<ProblemType::D
 
 template auto
 PostOperator<ProblemType::DRIVEN>::MeasureAndPrintReduced<ProblemType::DRIVEN>(
-    int ex_idx, int step, const ComplexVector &e, std::complex<double> omega,
-    const Eigen::VectorXcd &y) -> void;
+    int ex_idx, int step, std::complex<double> omega, const Eigen::VectorXcd &y,
+    const ComplexVector *e) -> void;
 
 template auto
 PostOperator<ProblemType::EIGENMODE>::MeasureAndPrintAll<ProblemType::EIGENMODE>(

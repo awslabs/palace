@@ -465,8 +465,9 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * M_PI),
                Timer::Duration(Timer::Now() - t0).count());
 
-    // Assemble and solve the PROM linear system.
-    prom_op.SolvePROM(excitation_idx, omega, E);
+    // Assemble and solve the PROM linear system. The high-dimensional solution E = V y is
+    // only formed when the postprocessing requires it.
+    prom_op.SolvePROM(excitation_idx, omega);
     Mpi::Print("\n");
     if (omega_i == 0 && post_op.WillWriteFields())
     {
@@ -478,10 +479,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     if (post_op.HasReducedPostprocessing() &&
         !post_op.WillWriteFields(static_cast<int>(omega_i)))
     {
-      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), E, omega,
-                                     prom_op.GetReducedSolution());
+      const bool need_field = post_op.ReducedPostprocessingNeedsField();
+      if (need_field)
+      {
+        prom_op.ProlongateReducedSolution(E);
+      }
+      post_op.MeasureAndPrintReduced(excitation_idx, int(omega_i), omega,
+                                     prom_op.GetReducedSolution(),
+                                     need_field ? &E : nullptr);
       return;
     }
+    prom_op.ProlongateReducedSolution(E);
 
     // Start full post-processing.
     BlockTimer bt0(Timer::POSTPRO);

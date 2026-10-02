@@ -463,8 +463,8 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(TableWithCSVFile &t_csv_
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::WriteTable(TableWithCSVFile &table)
 {
-  // Deferred tables are written together at a step boundary (the end of PrintAllCSVData
-  // or PrintReducedCSVData), so every file on disk ends on the same row.
+  // Deferred tables are written together at a step boundary (the end of PrintAllCSVData),
+  // so every file on disk ends on the same row.
   if (!defer_table_writes)
   {
     table.WriteTableIncremental();

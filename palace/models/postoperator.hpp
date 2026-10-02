@@ -291,11 +291,58 @@ protected:
 
   mutable Measurement measurement_cache;
 
-  // Exact reduced-coordinate domain-energy forms for adaptive online postprocessing.
-  bool reduced_postprocessing_ready = false;
-  bool reduced_postprocessing_checked = false;
-  Eigen::MatrixXd reduced_energy_E, reduced_energy_H;
-  std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
+  // Reduced-coordinate postprocessing for the adaptive driven online sweep. With the PROM
+  // basis V and reduced solution y, the field is E = V y and B = -1/(iω) ∇ × E.
+  // Measurements linear in E (or B) satisfy f(E) = Σⱼ yⱼ f(vⱼ), so the functional is
+  // applied once to each basis vector vⱼ (or ∇ × vⱼ), and the quadratic domain energies use
+  // the projected forms Vᵀ M V. The high-dimensional field E = V y then only needs to be
+  // formed for measurements without a reduced form (power flux, interface dielectric
+  // energy, wave port power, and far-field). The wave port S-parameter functional depends
+  // on frequency through the port mode, so it is applied at each frequency to the basis
+  // restricted to the port.
+  struct ReducedPostData
+  {
+    // Whether reduced postprocessing is configured and whether the one-time comparison
+    // against the evaluation from the full field has been performed.
+    bool ready = false, checked = false;
+    std::size_t dim = 0;
+
+    // Measurement groups evaluated in reduced coordinates. A group which fails the
+    // one-time comparison is evaluated from the full field for the rest of the sweep.
+    struct Groups
+    {
+      bool energy = false, lumped_port = false, wave_port = false, probe = false,
+           flux = false;
+    } use;
+
+    // Projected domain energy forms Vᵀ M_ε V and (∇ × V)ᵀ M_μ⁻¹ (∇ × V), in total and
+    // per domain.
+    Eigen::MatrixXd energy_E, energy_H;
+    std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> energy_i;
+
+    // Lumped port voltage functionals applied to the basis vectors.
+    std::map<int, Eigen::VectorXcd> lumped_port_V;
+
+    // Basis restricted to each wave port, the S-parameter functionals applied to it for the
+    // port modes with the given versions (see WavePortData::mode_version), and the voltage
+    // path functionals applied to the basis vectors (ports with voltage coordinates only).
+    std::map<int, std::vector<mfem::Vector>> wave_port_basis;
+    std::map<int, Eigen::VectorXcd> wave_port_S, wave_port_V;
+    std::vector<std::size_t> wave_port_mode_versions;
+
+    // Probe E and B fields (rows ordered as the probe measurements) and electric or
+    // magnetic surface flux functionals, applied to the basis vectors vⱼ (E) or ∇ × vⱼ
+    // (B).
+    Eigen::MatrixXcd probe_E, probe_B;
+    std::map<int, Eigen::VectorXcd> flux;
+
+    // Whether the measurements require the full E or B fields.
+    bool need_E = false, need_B = false;
+
+    // Workspace for the magnetic flux density on the true dofs.
+    std::unique_ptr<ComplexVector> b;
+  };
+  ReducedPostData reduced;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -335,6 +382,24 @@ protected:
   void MeasureFarField() const;
   void MeasureInterfaceEFieldEnergy() const;  // Depends: LumpedPorts
   void MeasureProbes() const;
+
+  // Print the measured domain field energies.
+  void PrintDomainFieldEnergy() const;
+
+  // Frequency domain lumped port currents, S-parameter, and lumped element energies from
+  // the port voltage stored in vi (driven and eigenmode).
+  void MeasureLumpedPortCurrents(const LumpedPortData &data,
+                                 Measurement::PortPostData &vi) const;
+
+  // Helpers for the reduced-coordinate postprocessing of the adaptive driven online sweep.
+  template <ProblemType U = solver_t>
+  auto UpdateReducedFieldRequirements() -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto UpdateReducedWavePortForms(double omega)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
+  template <ProblemType U = solver_t>
+  auto CheckReducedPostprocessing(const Eigen::VectorXcd &y, double omega)
+      -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
 
   // Helper function called by all solvers. Has to ensure correct call order to deal with
   // dependent measurements.
@@ -468,17 +533,26 @@ public:
                           const ComplexVector &b, std::complex<double> omega)
       -> std::enable_if_t<U == ProblemType::DRIVEN, double>;
 
-  // Configure and evaluate the exact reduced-coordinate default output path (domain
-  // energies plus port S-parameters). Unsupported configured measurements leave the path
-  // disabled and use full postprocessing.
+  // Configure and evaluate the reduced-coordinate postprocessing of the adaptive online
+  // sweep (see ReducedPostData). Configuration is unavailable with Floquet periodicity,
+  // in which case the full postprocessing is used. MeasureAndPrintReduced writes the same
+  // measurements as MeasureAndPrintAll from the reduced solution y, and requires the
+  // high-dimensional solution e = V y (otherwise nullptr) only when
+  // ReducedPostprocessingNeedsField: for the one-time comparison of the reduced
+  // measurements against the full evaluation, and for configured measurements without a
+  // reduced form. Wave port modes must be prepared at the given frequency.
   template <ProblemType U = solver_t>
   auto ConfigureReducedPostprocessing(const RomOperator &rom_op)
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
   template <ProblemType U = solver_t>
-  auto MeasureAndPrintReduced(int ex_idx, int step, const ComplexVector &e,
-                              std::complex<double> omega, const Eigen::VectorXcd &y)
+  auto MeasureAndPrintReduced(int ex_idx, int step, std::complex<double> omega,
+                              const Eigen::VectorXcd &y, const ComplexVector *e)
       -> std::enable_if_t<U == ProblemType::DRIVEN, void>;
-  bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
+  bool HasReducedPostprocessing() const { return reduced.ready; }
+  bool ReducedPostprocessingNeedsField() const
+  {
+    return reduced.ready && (!reduced.checked || reduced.need_E || reduced.need_B);
+  }
 
   template <ProblemType U = solver_t>
   auto MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
