@@ -13908,10 +13908,15 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
       const auto records = FindTranslationalStretchInsideSpatialSupport(
           patches.patches, boxes, 3,
           kSignatureParameterToleranceOverRadius * patches.matching_radius);
-      manifest["Identification"]["Diagnostics"]
-              ["TranslationalStretchesInsideSpatialSupport"] =
-                  DescribeTranslationalOwnershipRecords(records, boxes, patches,
-                                                        coordinate_scale, skipped);
+      auto &diagnostics =
+          manifest["Identification"]["Diagnostics"]
+                  ["TranslationalStretchesInsideSpatialSupport"] =
+                      DescribeTranslationalOwnershipRecords(records, boxes, patches,
+                                                            coordinate_scale, skipped);
+      if (!records.empty())
+      {
+        Mpi::Warning("{}", DescribeTranslationalOwnershipWarning(diagnostics));
+      }
     }
     std::ofstream output(path);
     MFEM_VERIFY(output, "Unable to open surface-response requirements manifest \""
@@ -14209,6 +14214,29 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
        "count. Judged per stretch, never per cell: the first cells of every stack portion "
        "adjacent to a cluster lie inside its box legitimately. Lengths and coordinates in "
        "mesh units"}};
+}
+
+std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnostics)
+{
+  std::string lines;
+  for (const auto &entry : diagnostics["Records"])
+  {
+    lines += fmt::format(
+        "  feature {} stretch {} ({}, {} patches from patch {}, {:.6e} mesh units) inside "
+        "spatial patch {} ({}): {}\n",
+        entry["Feature"].get<int>(), entry["Stretch"].get<int>(),
+        entry["Model"].get<std::string>(), entry["Patches"].get<std::size_t>(),
+        entry["FirstPatch"].get<std::size_t>() + 1, entry["Length"].get<double>(),
+        entry["SpatialPatch"].get<std::size_t>() + 1,
+        entry["SpatialModel"].get<std::string>(), entry["Class"].get<std::string>());
+  }
+  return fmt::format(
+      "{:d} translational response-correction stretch(es) ({:.6e} mesh units; Continuation "
+      "{:d} / Foreign {:d}) lie wholly inside a spatial patch's matching volume (decision "
+      "236, recorded under Diagnostics.TranslationalStretchesInsideSpatialSupport):\n{}",
+      diagnostics["Count"].get<int>(), diagnostics["Length"].get<double>(),
+      diagnostics["Continuation"]["Count"].get<int>(),
+      diagnostics["Foreign"]["Count"].get<int>(), lines);
 }
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -14788,27 +14816,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           records, boxes, *config, coordinate_scale, skipped);
       if (!records.empty())
       {
-        std::string lines;
-        for (const auto &entry : ownership_diagnostics["Records"])
-        {
-          lines += fmt::format(
-              "  feature {} stretch {} ({}, {} patches from patch {}, {:.6e} mesh units) "
-              "inside spatial patch {} ({}): {}\n",
-              entry["Feature"].get<int>(), entry["Stretch"].get<int>(),
-              entry["Model"].get<std::string>(), entry["Patches"].get<std::size_t>(),
-              entry["FirstPatch"].get<std::size_t>() + 1, entry["Length"].get<double>(),
-              entry["SpatialPatch"].get<std::size_t>() + 1,
-              entry["SpatialModel"].get<std::string>(), entry["Class"].get<std::string>());
-        }
-        Mpi::Warning(fespace.GetComm(),
-                     "{:d} translational response-correction stretch(es) ({:.6e} mesh "
-                     "units; Continuation {:d} / Foreign {:d}) lie wholly inside a spatial "
-                     "patch's matching volume (decision 236, recorded under "
-                     "Diagnostics.TranslationalStretchesInsideSpatialSupport):\n{}",
-                     static_cast<int>(records.size()),
-                     ownership_diagnostics["Length"].get<double>(),
-                     ownership_diagnostics["Continuation"]["Count"].get<int>(),
-                     ownership_diagnostics["Foreign"]["Count"].get<int>(), lines);
+        Mpi::Warning(fespace.GetComm(), "{}",
+                     DescribeTranslationalOwnershipWarning(ownership_diagnostics));
       }
     }
   }

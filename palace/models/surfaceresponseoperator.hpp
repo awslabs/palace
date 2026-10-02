@@ -505,6 +505,9 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     double coordinate_scale, const std::vector<std::string> &skipped);
 
+// The warning logged for a non-empty Diagnostics entry (one line per record).
+std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnostics);
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_RESPONSE_OPERATOR_HPP

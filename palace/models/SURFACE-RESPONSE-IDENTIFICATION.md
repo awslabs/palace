@@ -987,19 +987,43 @@ smaller endpoint.
    the other leads of each follow as single-edge remainders) and re-keys the loop end to
    5ed91f8890c0 (38 edges, 197.8757 um). Two broader forms were tried the same day and
    rejected: the two-sided class alone (left the stack-end piece inside the loop end's
-   coupon volume, which the ownership check below refuses) and the "ball only" form (any
+   coupon volume, which the ownership record below lists) and the "ball only" form (any
    stretch adjacent to a cluster and within its ball: it ate 10 identity cells — DS-SCT-001
    +43.6 um of cluster, the arc bar of syn-arc-r5-step20, the gap middles of the
    syn-gap-different cells — and the bent-strip halves of the translational mortar strip
-   test). A translational stretch the rule leaves inside a spatial coupon's volume is a
-   genuinely foreign stretch and fails closed at the placement's ownership check: a
+   test). A translational stretch the rule leaves inside a spatial coupon's volume is
+   RECORDED by the placement's ownership record (decision 236, never an abort): a
    translational STRETCH (the identification's portion unit, carried as
    `IdentifiedPortion::stretch` and the patch provenance `Stretch` / geometry cache version
-   4) whose every longitudinal cell lies strictly inside one spatial support's box aborts
-   (`FindTranslationalStretchInsideSpatialSupport`; judged per stretch, never per cell: the
-   spatial box extends about R beyond the cluster's claims, so the first cells of every
-   stack portion adjacent to a cluster lie inside its box legitimately; the check lives in
-   the operator constructor — a preflight never runs it). Unit tests
+   5) whose every longitudinal cell lies strictly inside one spatial support's box is
+   listed under `Diagnostics.TranslationalStretchesInsideSpatialSupport` (feature, stretch,
+   model, length, box, class) with a warning (`FindTranslationalStretchInsideSpatialSupport`;
+   judged per stretch, never per cell). The spatial support's box is the bounding box of the
+   model's basis points placed by the patch frame = the cluster's claims + 3R past every
+   claim-cut end along its edge (the coupon generator's `coupon_bounds`: every claim-cut end
+   continued STRAIGHT by 2R, then R of padding; transversely R + R of padding = 2R; a coupon
+   exists only when the plan span of its box is <= 16 R — not "about R"), so the first cells
+   of every stack portion adjacent to a cluster lie inside its box legitimately.
+   The coupon is calibrated on its claims AND their straight continuations to the box face,
+   so a recorded stretch is classed Continuation when it continues a claimed portion of that
+   cluster through its claim cut: one of its cells lies on the claim's mesh segment (the
+   claim boundary cut that segment), or it runs parallel to the claim (within the signature
+   angle tolerance) and one of its ends abuts a claim end along the chain within the
+   signature parameter tolerance 1e-3 R and within R of it transversely (a claim boundary
+   snapped onto a mesh vertex; the cells of a pair sit on its midline, so collinearity with
+   the edge is not tested) — the double count the continuation ownership at placement
+   removes (the accepted transmon library `transmon-r1p9-folded-refined-corners`: 6 records,
+   all Continuation, 13.28 um, 0 Foreign, GeometryDigest 9ada660bf6e4 unchanged — the two
+   sides of each 2-um strip (features 0 / 1, 4 x 0.869 um from the 3-edge clusters' claim
+   cut at y = 540.131 to the feature split at y = 541.0, x = +-43) and the two 4.9-um
+   isolated edges (features 70 / 73, y = 12) continuing the 10-edge cluster's claims from
+   x = +-5.2, ending 0.8 um inside its box face at +-10.9 = 5.2 + 3R) — and Foreign
+   otherwise (metal absent from the coupon's twins: a second-order model mismatch, not a
+   double count). The record runs in the operator constructor (metadata
+   `SurfaceResponse.Diagnostics`, with the warning) and in the preflight on the spatial
+   models whose basis points the library provides (manifest `Identification.Diagnostics`
+   and the same warning; a signature placeholder of a Missing key has none and is listed
+   under `SpatialSupportsWithoutBasisPoints`). Unit tests
    `SurfaceResponseIdentificationStackPieceInsideCluster`,
    `SurfaceResponseOperatorTranslationalStretchOwnership`. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
@@ -1271,7 +1295,9 @@ the interval of its portion that its quadrature point integrates, as offsets alo
 AxisW from the origin in mesh units, ordered begin <= end (`longitudinal_cell`; `StripBegin`,
 `StripEnd` of the dry run in manifest units; `LongitudinalCell` of the geometry cache, version
 3; version 4 adds the patch's `Feature` / `Stretch` provenance for the ownership check of
-decision 224; older caches refused). The cells of one portion tile it exactly — cell q = [cumulative
+decision 224, version 5 the spatial cluster patch's `Claims` and the library's
+`MatchingRadius` for the ownership record's continuation class of decision 236; older
+caches refused). The cells of one portion tile it exactly — cell q = [cumulative
 Gauss weight before q, + w_q] in order of increasing position, so every cell contains its
 point (`LongitudinalQuadratureCells`; Gauss cells centred on their points would not tile) —
 and every patch built from a quadrature point carries the full cell whatever its weight
