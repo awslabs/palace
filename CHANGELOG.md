@@ -31,6 +31,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
+  - Added scalar frequency-dependent material `Permittivity` objects with additive Drude,
+    Debye, Lorentz, PoleResidue, and native Djordjevic-Sarkar terms. Existing scalar and
+    three-component `Permittivity` inputs remain supported. SchemaVer 2-2-0
+    [PR 877](https://github.com/awslabs/palace/pull/877).
 
 #### Interface Changes
 

@@ -65,6 +65,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
+  // A2 is non-null whenever a frequency-dependent material is present, even if its
+  // contribution cancels at the target, so it alone selects the nonlinear solver path.
   bool has_A2 = (A2 != nullptr);
 
   // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
@@ -301,7 +303,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth())
+      !space_op.GetMaterialOp().HasLondonDepth() &&
+      !space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
