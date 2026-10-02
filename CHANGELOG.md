@@ -71,6 +71,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux error
+    estimators on processes without elements of a submesh.
+    [PR 1022](https://github.com/awslabs/palace/pull/1022).
 
 #### Performance Improvements
 
