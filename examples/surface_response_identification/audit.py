@@ -24,6 +24,12 @@ given with --patches) the gates A7 check the Features-driven patch construction:
 of every matched feature is integrated by exactly one longitudinal quadrature (weights summing
 to one), every vertex / cluster feature carries one patch, the patched feature set equals the
 matched manifest features, and no patch touches an unmatched feature or an excluded segment.
+The dry run holds the PLACED cells (decision 236 (2)): a translational cell owned by a spatial
+coupon inside its box is written clipped (Weight and QuadratureWeight scaled by its kept
+fraction, 0 when wholly inside; origin and [StripBegin, StripEnd] on the kept interval) while
+[S0, S1) stays the unclipped portion, so a portion's quadrature weights sum to 1 - owned /
+portion length, read from Diagnostics.ContinuationOwnership.OwnedCells; a reader expecting the
+unclipped identification must add the owned cells back from that record.
 Placement (A10, placement_check.py): with the library the preflight ran with (``Library.Path``
 or --library), every matched cluster / corner / stack / pair model mapped through its dry-run
 patch frame lands on the feature's claimed portions within the signature tolerance.

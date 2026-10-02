@@ -6,6 +6,7 @@
 
 #include <array>
 #include <complex>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -444,6 +445,18 @@ public:
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path);
 
+// The response-geometry cache (PALACE_RESPONSE_GEOMETRY_CACHE): the automatically
+// constructed models and UNPLACED patches with the provenance the continuation ownership
+// needs (feature, mesh segment, chain stretch, own-edge offset, the cluster patches'
+// claims) and the matching radius; version 6, older caches refused. The reader returns the
+// request with its library, models and patches replaced by the cached ones.
+void WriteResponseGeometryCache(
+    const std::filesystem::path &path,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config);
+config::ElectrostaticSolverData::ResponseCorrectionData ReadResponseGeometryCache(
+    const std::filesystem::path &path,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request);
+
 // Ownership record of the translational patches against the spatial supports (decisions
 // 224 / 236): a translational STRETCH — the maximal contiguous stretch of one feature side
 // along its chain (patch provenance feature / stretch), the identification's portion unit —
@@ -453,15 +466,18 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
 // straight continuations to the box face, so a stretch that continues one of the cluster's
 // claims through its claim cut (class Continuation) is corrected by both the coupon and its
 // own patches, while any other stretch (class Foreign) is absent from the coupon's twins —
-// a model mismatch, not a double count. A stretch continues a claim when one of its cells
-// lies on the claim's mesh segment (the claim boundary cut that segment) or when it runs
-// parallel to the claim (within the signature angle tolerance), one of its ends abuts a
-// claim end along the chain within continuation_tolerance, within R of it transversely (a
-// claim boundary snapped onto a mesh vertex), AND it extends beyond that claim end (every
-// cell end on the outward side of the abutting end, away from the claim's other end,
-// within continuation_tolerance; a parallel stretch alongside the claim over the claim's
-// own range is Foreign); the cells of a pair sit on the pair's
-// midline, so collinearity with the edge is not tested. Judged per stretch, never per cell:
+// a model mismatch, not a double count. A stretch continues a claim only through the
+// side's OWN edge (decision 252): when one of its cells lies on the claim's mesh segment
+// (the claim boundary cut that segment) or when it runs parallel to the claim (within the
+// signature angle tolerance), one of its cell ends ON ITS OWN EDGE (the cell ends shifted
+// by the provenance edge_offset along AxisU: a pair's cells sit on the midline, a stack's
+// on the first side) abuts a claim end along the chain within continuation_tolerance and
+// within continuation_tolerance of it transversely (a claim boundary snapped onto a mesh
+// vertex of the same edge), AND it extends beyond that claim end (every cell end on the
+// outward side of the abutting end, away from the claim's other end, within
+// continuation_tolerance; a parallel stretch alongside the claim over the claim's own
+// range is Foreign). The side of a pair or stack whose own edge is not claimed never
+// continues the claim, whatever its cells' proximity. Judged per stretch, never per cell:
 // the box extends 3R past every claim-cut end along its edge (2R continuation + R padding;
 // 2R transversely), so the first cells of every stack portion adjacent to a cluster lie
 // inside its box legitimately. Cell ends are the strip ends along AxisW from the origin
@@ -566,9 +582,11 @@ ContinuationOwnership ApplyContinuationOwnership(
 
 // Coupon-vs-coupon margin overlap (decision 244): two spatial cluster supports whose boxes
 // overlap in their interiors are recorded, not aborted, when the overlap is MARGINS ONLY —
-// no claim of either lies strictly inside the other's claims hull (the bounding box of its
-// claims, patch units; z within the other's box). Each coupon's twins continue every claim
-// CUT end (a claim end no other claim of the same cluster shares within
+// no claim SEGMENT of either enters the other's claims hull (the bounding box of its
+// claims, patch units; a coplanar direction widened to the other's box) by a positive
+// length beyond continuation_tolerance — tested on the segment, so a claim crossing the
+// hull with both ends outside counts (decision 252). Each coupon's twins continue every
+// claim CUT end (a claim end no other claim of the same cluster shares within
 // continuation_tolerance) straight to its own box face; where that continuation lies on a
 // claim of the other coupon (margin-vs-claim) or on a continuation of the other coupon
 // (margin-vs-margin) both coupons correct the same edge: a double count the placement

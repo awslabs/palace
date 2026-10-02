@@ -7557,6 +7557,9 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.provenance.s0 = fp.s0;
         patch.provenance.s1 = fp.s1;
         patch.provenance.stretch = fp.stretch;
+        // The side's own edge point (the sample on its segment) relative to the placed
+        // origin (a single edge: 0; a pair: the midline; a stack: the first side).
+        patch.provenance.edge_offset = Dot(Subtract(point, patch.origin), patch.axis_u);
         patch.provenance.quadrature_weight = ip.weight;
         patch.provenance.side_factor = side_factor;
         patch.provenance.coupon_depth = term.coupon_depth;
@@ -13568,6 +13571,8 @@ std::optional<std::filesystem::path> ResponseGeometryCachePath()
   return std::filesystem::absolute(value).lexically_normal();
 }
 
+}  // namespace
+
 void WriteResponseGeometryCache(const std::filesystem::path &path,
                                 const ResponseCorrectionData &config)
 {
@@ -13651,7 +13656,9 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"MaxwellConductorAnchors", patch.maxwell_conductor_anchors},
                        {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec},
                        {"Feature", patch.provenance.feature},
+                       {"Segment", patch.provenance.segment},
                        {"Stretch", patch.provenance.stretch},
+                       {"EdgeOffset", patch.provenance.edge_offset},
                        {"Claims", claims}});
   }
   if (path.has_parent_path())
@@ -13661,7 +13668,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  output << nlohmann::json{{"Version", 5},
+  output << nlohmann::json{{"Version", 6},
                            {"MatchingRadius", config.matching_radius},
                            {"Models", std::move(models)},
                            {"Patches", std::move(patches)}}
@@ -13677,12 +13684,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 5,
+      data.value("Version", 0) == 6,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 5 carries the feature and chain stretch of every patch, the "
-             "claims of every spatial cluster patch and the matching radius for the "
-             "ownership record; delete a stale cache)!");
+          << " (version 6 carries the feature, mesh segment, chain stretch and own-edge "
+             "offset of every patch, the claims of every spatial cluster patch and the "
+             "matching radius for the continuation ownership; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -13760,7 +13767,9 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     patch.longitudinal_cell = entry.at("LongitudinalCell");
     patch.interpolation_group = entry.value("InterpolationGroup", 0);
     patch.provenance.feature = entry.at("Feature");
+    patch.provenance.segment = entry.at("Segment");
     patch.provenance.stretch = entry.at("Stretch");
+    patch.provenance.edge_offset = entry.at("EdgeOffset");
     for (const auto &claim : entry.at("Claims"))
     {
       patch.provenance.claims.push_back(
@@ -13775,6 +13784,9 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
               "Response-geometry cache contains no models or patches!");
   return result;
 }
+
+namespace
+{
 
 double QuadraticForm(const mfem::DenseMatrix &matrix, const Vector &x, Vector &workspace)
 {
@@ -13974,12 +13986,16 @@ namespace
 {
 
 // One feature side's maximal contiguous stretch along its chain (patch provenance feature /
-// stretch): its cells, their ends (patch units), the mesh segments they lie on, and the
-// AxisW of the first cell.
+// stretch): its cells, their ends (patch units), the ends of the same cells on the side's
+// OWN edge (the cell ends shifted by the provenance edge offset along AxisU: identical for
+// a single edge, half the separation off the midline for a pair side, the side's offset
+// off the first side for a stack side), the mesh segments they lie on, and the AxisW of
+// the first cell.
 struct TranslationalStretch
 {
   std::vector<std::size_t> patches;
   std::vector<std::array<double, 3>> ends;
+  std::vector<std::array<double, 3>> edge_ends;
   std::set<int> segments;
   std::array<double, 3> direction{};
   double length = 0.0;
@@ -14008,27 +14024,32 @@ CollectTranslationalStretches(const std::vector<ResponsePatchData> &patches, int
     stretch.length += patch.longitudinal_cell[1] - patch.longitudinal_cell[0];
     for (const double offset : patch.longitudinal_cell)
     {
-      std::array<double, 3> end{};
+      std::array<double, 3> end{}, edge_end{};
       for (int d = 0; d < dimension; d++)
       {
         end[d] = patch.origin[d] + offset * patch.axis_w[d];
+        edge_end[d] = end[d] + patch.provenance.edge_offset * patch.axis_u[d];
       }
       stretch.ends.push_back(end);
+      stretch.edge_ends.push_back(edge_end);
     }
   }
   return stretches;
 }
 
 // A stretch continues a claim when a cell lies on the claim's mesh segment, or when it
-// runs parallel to the claim, one of its ends abuts a claim end along the chain within
-// the tolerance and within R of it transversely (a pair's cells sit on its midline,
-// within the half separation < R of either edge; a stack's on its first side) AND it
+// runs parallel to the claim, one of the ends of its cells ON THE SIDE'S OWN EDGE (the
+// cell ends shifted by the provenance edge offset: a pair's cells sit on its midline, a
+// stack's on its first side) abuts a claim end along the chain within the tolerance and
+// within the same tolerance transversely — the own edge is the claim's edge — AND it
 // extends beyond that claim end: every cell end lies on the outward side of the abutting
-// end (away from the claim's other end) within the tolerance. A parallel stretch lying
-// alongside the claim over the claim's own range, one end aligned with a claim end, is
-// foreign: it does not go through the claim cut. Returns the claim end the stretch
-// continues from (the abutting end; on the segment branch the claim end nearest to the
-// stretch), nullopt when it does not continue the claim.
+// end (away from the claim's other end) within the tolerance. A side whose own edge is not
+// the claimed edge (the unclaimed edge of a pair, another side of a stack) does not
+// continue the claim whatever its cells' proximity to the claim end (decision 252); a
+// parallel stretch lying alongside the claim over the claim's own range, one end aligned
+// with a claim end, is foreign: it does not go through the claim cut. Returns the claim end
+// the stretch continues from (the abutting end; on the segment branch the claim end nearest
+// to the stretch), nullopt when it does not continue the claim.
 std::optional<std::array<double, 3>>
 ContinuedClaimEnd(const TranslationalStretch &stretch,
                   const ResponsePatchData::Provenance::Claim &claim, int dimension,
@@ -14054,8 +14075,6 @@ ContinuedClaimEnd(const TranslationalStretch &stretch,
     return nearest0 <= nearest1 ? claim.p0 : claim.p1;
   }
   const double parallel_cosine = std::cos(kSignatureAngleToleranceDegrees * M_PI / 180.0);
-  const double transverse_reach =
-      continuation_tolerance / kSignatureParameterToleranceOverRadius;
   std::array<double, 3> tangent{};
   double length2 = 0.0, cosine = 0.0;
   for (int d = 0; d < dimension; d++)
@@ -14076,7 +14095,7 @@ ContinuedClaimEnd(const TranslationalStretch &stretch,
   {
     return std::nullopt;
   }
-  for (const auto &end : stretch.ends)
+  for (const auto &end : stretch.edge_ends)
   {
     for (const auto *claim_end : {&claim.p0, &claim.p1})
     {
@@ -14087,13 +14106,13 @@ ContinuedClaimEnd(const TranslationalStretch &stretch,
       }
       const double distance2 = Distance2(end, *claim_end);
       if (!(std::abs(along) <= continuation_tolerance &&
-            distance2 - along * along <= transverse_reach * transverse_reach))
+            distance2 - along * along <= continuation_tolerance * continuation_tolerance))
       {
         continue;
       }
       // Outward = from the claim's other end toward this abutting end.
       const double outward = (claim_end == &claim.p1) ? 1.0 : -1.0;
-      const bool beyond = std::all_of(stretch.ends.begin(), stretch.ends.end(),
+      const bool beyond = std::all_of(stretch.edge_ends.begin(), stretch.edge_ends.end(),
                                       [&](const std::array<double, 3> &other)
                                       {
                                         double along_outward = 0.0;
@@ -14346,12 +14365,16 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
        "bbox of the model's basis points placed by the patch frame: claims + 3R past every "
        "claim-cut end along its edge, the 2R continuation + R padding; 2R transversely) is "
        "recorded, never an abort. Continuation = the stretch continues a claimed portion "
-       "of that cluster through the claim cut (a cell on the claim's mesh segment, or "
-       "parallel to the claim within the signature angle tolerance, abutting a claim "
-       "end along the chain within ContinuationToleranceOverR x R, within R of it "
-       "transversely, AND extending beyond that claim end: every cell end on the outward "
-       "side of the abutting end within the tolerance; a parallel stretch alongside the "
-       "claim over its own range is Foreign): the coupon continues "
+       "of that cluster through the claim cut by the side's OWN edge (decision 252: a cell "
+       "on the claim's mesh segment, or parallel to the claim within the signature angle "
+       "tolerance with a cell end on the side's own edge (the cell end shifted by the "
+       "provenance EdgeOffset along AxisU: a pair's cells sit on the midline, a stack's on "
+       "the first side) abutting a claim end along the chain within "
+       "ContinuationToleranceOverR x R and within the same tolerance transversely, AND "
+       "extending beyond that claim end: every cell end on the outward side of the "
+       "abutting end within the tolerance; the side of a pair or stack whose own edge is "
+       "not claimed is Foreign whatever its cells' proximity; a parallel stretch alongside "
+       "the claim over its own range is Foreign): the coupon continues "
        "the claim straight to the box face, so its defect and the stretch's own patches "
        "correct the same surface (the double count that the continuation ownership at "
        "placement removes). Foreign = any other stretch: absent "
@@ -14692,8 +14715,10 @@ FindSpatialSupportMarginOverlaps(const std::vector<SpatialSupportBounds> &suppor
     }
     return std::max(0.0, std::min(s1, la) - std::max(s0, 0.0));
   };
-  // A claim end of a strictly inside the bounding box of b's claims (the claims hull); in
-  // a direction where b's claims are coplanar (the plan of a planar cluster) b's box.
+  // A claim SEGMENT of a entering the bounding box of b's claims (the claims hull) by a
+  // positive length, strictly inside it beyond continuation_tolerance (both ends outside
+  // with the segment crossing the hull counts; an end strictly inside counts); in a
+  // direction where b's claims are coplanar (the plan of a planar cluster) b's box.
   auto ClaimInsideHull = [&](const SpatialSupportBounds &a, const SpatialSupportBounds &b)
   {
     if (b.claims.empty())
@@ -14722,18 +14747,30 @@ FindSpatialSupportMarginOverlaps(const std::vector<SpatialSupportBounds> &suppor
     }
     for (const auto &claim : a.claims)
     {
-      for (const auto *p : {&claim.p0, &claim.p1})
+      // The parameter interval of the segment p0 + t (p1 - p0), t in [0, 1], inside the
+      // open hull shrunk by the tolerance (slab clipping).
+      double t_lo = 0.0, t_hi = 1.0;
+      for (int d = 0; d < dimension && t_lo < t_hi; d++)
       {
-        bool inside = true;
-        for (int d = 0; d < dimension; d++)
+        const double slab_lo = lo[d] + continuation_tolerance;
+        const double slab_hi = hi[d] - continuation_tolerance;
+        const double direction = claim.p1[d] - claim.p0[d];
+        if (std::abs(direction) <= 1.0e-14 * std::max(1.0, std::abs(slab_hi - slab_lo)))
         {
-          inside &= (*p)[d] > lo[d] + continuation_tolerance &&
-                    (*p)[d] < hi[d] - continuation_tolerance;
+          if (!(claim.p0[d] > slab_lo && claim.p0[d] < slab_hi))
+          {
+            t_lo = t_hi = 0.0;
+          }
+          continue;
         }
-        if (inside)
-        {
-          return true;
-        }
+        const double ta = (slab_lo - claim.p0[d]) / direction;
+        const double tb = (slab_hi - claim.p0[d]) / direction;
+        t_lo = std::max(t_lo, std::min(ta, tb));
+        t_hi = std::min(t_hi, std::max(ta, tb));
+      }
+      if (t_hi > t_lo)
+      {
+        return true;
       }
     }
     return false;
@@ -14872,10 +14909,10 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
        "portion length. Foreign cells, cells outside the box and the stack-end cells of a "
        "stretch that continues no claim are untouched; a curved cell never continues a "
        "claim "
-       "(residual double count on arc-continues-arc); a pair's or stack's cell is owned "
-       "whole (every side's cells sit on the midline) even where only some of its edges "
-       "are "
-       "claimed. A shared cell's owned length is attributed per coupon by the midpoint "
+       "(residual double count on arc-continues-arc); a pair's or stack's SIDE is owned "
+       "only where its OWN edge continues the claim (decision 252: the segment branch or "
+       "the own-edge abutment of the Continuation criterion), the cells of an unclaimed "
+       "side stay. A shared cell's owned length is attributed per coupon by the midpoint "
        "between the two continued claim ends. Lengths in mesh units"}};
 }
 
@@ -14930,8 +14967,9 @@ nlohmann::json DescribeSpatialSupportMarginOverlaps(
       {"Rule",
        "decision 244 (2026-10-02): two spatial cluster supports whose boxes overlap in "
        "their "
-       "interiors are recorded when the overlap is margins only (no claim end of either "
-       "strictly inside the bounding box of the other's claims) and abort otherwise. Each "
+       "interiors are recorded when the overlap is margins only: no claim SEGMENT of "
+       "either enters the bounding box of the other's claims beyond the tolerance, ends "
+       "outside or not (decision 252); they abort otherwise. Each "
        "coupon's twins continue every claim CUT end (an end no other claim of the same "
        "cluster shares) straight to its own box face; the length of those continuations "
        "lying on the other coupon's claims (MarginOverClaims) or on the other coupon's "
