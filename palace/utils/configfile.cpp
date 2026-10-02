@@ -354,7 +354,7 @@ MaterialData::MaterialData(const json &domain)
   const auto &terms = permittivity->at("Terms");
   MFEM_VERIFY(terms.is_array() && !terms.empty(),
               "Material permittivity \"Terms\" must be a nonempty array!");
-  constexpr double ghz_to_angular_si = 2.0 * M_PI * 1.0e9;
+  constexpr double ghz_to_angular_si = 2.0 * std::numbers::pi * 1.0e9;
   for (const auto &term : terms)
   {
     const std::string type = term.at("Type").get<std::string>();
@@ -387,8 +387,11 @@ MaterialData::MaterialData(const json &domain)
       MFEM_VERIFY(f0 > 0.0 && fg >= 0.0,
                   "Lorentz ResonanceFrequency must be positive and DampingFrequency must "
                   "be nonnegative!");
-      MFEM_VERIFY(fg != 2.0 * f0,
-                  "A critically damped Lorentz term has a repeated pole and cannot be "
+      // Near critical damping the two poles merge and the residues grow without bound with
+      // opposite signs, so the pole-residue form loses about log10(1/|fg - 2 f0|) digits.
+      MFEM_VERIFY(std::abs(fg - 2.0 * f0) > 1.0e-6 * 2.0 * f0,
+                  "A critically damped Lorentz term (DampingFrequency within a relative "
+                  "1e-6 of 2 * ResonanceFrequency) has a repeated pole and cannot be "
                   "represented by simple pole-residue terms!");
       const double w0 = ghz_to_angular_si * f0;
       const double gamma = ghz_to_angular_si * fg;

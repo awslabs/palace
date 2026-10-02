@@ -6,6 +6,8 @@
 #include <complex>
 #include <initializer_list>
 #include <limits>
+#include <numbers>
+#include <utility>
 #include <vector>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -370,8 +372,8 @@ TEST_CASE("MaterialOperator scalar permittivity pole identities",
           {{{"Type", "Drude"},
             {"PlasmaFrequency", plasma_frequency},
             {"CollisionFrequency", collision_frequency}}}}}}});
-  const double wp = 2.0 * M_PI * 1.0e9 * plasma_frequency;
-  const double gamma = 2.0 * M_PI * 1.0e9 * collision_frequency;
+  const double wp = 2.0 * std::numbers::pi * 1.0e9 * plasma_frequency;
+  const double gamma = 2.0 * std::numbers::pi * 1.0e9 * collision_frequency;
   const double wp2 = wp * wp;
 
   MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
@@ -450,7 +452,7 @@ TEST_CASE("MaterialOperator named permittivity model evaluation",
   CHECK(mat_op.HasFrequencyDependentPermittivity());
   CHECK(mat_op.HasFrequencyDependentPermittivityA2());
 
-  constexpr double scale = 2.0 * M_PI * 1.0e9;
+  constexpr double scale = 2.0 * std::numbers::pi * 1.0e9;
   const std::complex<double> s{0.7e9, 2.3e10};
   const auto Lorentz = [s, scale](double delta, double f0, double fg)
   {
@@ -489,29 +491,57 @@ TEST_CASE("Djordjevic-Sarkar real-axis and analytic evaluation",
   MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
 
   constexpr double f = 2.5;
-  const double omega = 2.0 * M_PI * 1.0e9 * f;
+  const double omega = 2.0 * std::numbers::pi * 1.0e9 * f;
   const std::complex<double> s{0.0, omega};
   const auto epsilon_term = mat_op.EvaluateFrequencyDependentPermittivityA2(0, s) / (s * s);
   const double expected_real =
       0.5 * strength * std::log((f_upper * f_upper + f * f) / (f_lower * f_lower + f * f));
-  const double expected_sigma = 2.0 * M_PI * electromagnetics::epsilon0_ * strength * f *
-                                1.0e9 * (std::atan(f / f_lower) - std::atan(f / f_upper));
+  const double expected_sigma = 2.0 * std::numbers::pi * electromagnetics::epsilon0_ *
+                                strength * f * 1.0e9 *
+                                (std::atan(f / f_lower) - std::atan(f / f_upper));
   CHECK(epsilon_term.real() == Approx(expected_real).epsilon(2.0e-14));
   CHECK(-omega * electromagnetics::epsilon0_ * epsilon_term.imag() ==
         Approx(expected_sigma).epsilon(2.0e-14));
   CHECK(0.5 * strength == Approx(0.0287629));
-  CHECK(2.0 * M_PI * electromagnetics::epsilon0_ * strength ==
+  CHECK(2.0 * std::numbers::pi * electromagnetics::epsilon0_ * strength ==
         Approx(3.20031e-12).epsilon(2.0e-6));
 
   const std::complex<double> s_off_axis{4.0e8, 1.7e10};
   const std::complex<double> expected_off_axis =
-      strength * std::log((s_off_axis + 2.0 * M_PI * 1.0e9 * f_upper) /
-                          (s_off_axis + 2.0 * M_PI * 1.0e9 * f_lower));
+      strength * std::log((s_off_axis + 2.0 * std::numbers::pi * 1.0e9 * f_upper) /
+                          (s_off_axis + 2.0 * std::numbers::pi * 1.0e9 * f_lower));
   const auto evaluated_off_axis =
       mat_op.EvaluateFrequencyDependentPermittivityA2(0, s_off_axis) /
       (s_off_axis * s_off_axis);
   CHECK(std::abs(evaluated_off_axis - expected_off_axis) <
         1.0e-14 * std::max(1.0, std::abs(expected_off_axis)));
+}
+
+// Dispersive materials are supported only in 3D; a 2D driven problem must be rejected
+// rather than silently taking the untested 2D curl-space path.
+TEST_CASE("SpaceOperator rejects dispersive materials in 2D", "[materialoperator][Serial]")
+{
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(1, 1, mfem::Element::TRIANGLE));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r = config::SymmetricMatrixData<3>(1.0);
+  material.permittivity_pole_terms = {{{-1.0, 0.0}, {4.0, 0.0}}};
+  config::DomainData domains;
+  domains.materials = {material};
+
+  CHECK_THROWS_WITH(
+      SpaceOperator(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh),
+      Catch::Matchers::ContainsSubstring("only supported for 3D simulations"));
 }
 
 TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Serial]")
@@ -529,7 +559,6 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
   config::SolverData solver;
   solver.order = 1;
   solver.linear.mg_max_levels = 1;
-  solver.linear.pc_mat_shifted = 0;
   fem::DefaultIntegrationOrder::p_trial = solver.order;
   fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
   fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
@@ -570,9 +599,12 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
       config::DomainData dispersive_domains;
       dispersive_domains.materials = {dispersive_material};
 
-      for (bool pc_mat_real : {false, true})
+      for (auto [pc_mat_real, pc_mat_shifted] :
+           {std::pair{false, false}, std::pair{true, false}, std::pair{false, true},
+            std::pair{true, true}})
       {
         solver.linear.pc_mat_real = pc_mat_real;
+        solver.linear.pc_mat_shifted = pc_mat_shifted;
         auto dispersive_mesh = MakeMesh();
         auto reference_mesh = MakeMesh();
         SpaceOperator dispersive(solver, dispersive_domains, boundaries,
@@ -634,6 +666,13 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
           REQUIRE(A2_cancelled->Imag());
           A2_cancelled->Mult(x, y);
           CHECK(linalg::Norml2(Mpi::World(), y) < 1.0e-12);
+          // The eigenmode solver selects its nonlinear path from this operator alone, so
+          // the complex-ω overload must also return it where the contribution cancels.
+          auto A2_cancelled_complex = dispersive.GetExtraSystemMatrix(
+              std::complex<double>{1.0, 0.0}, Operator::DIAG_ZERO);
+          REQUIRE(A2_cancelled_complex);
+          A2_cancelled_complex->Mult(x, y);
+          CHECK(linalg::Norml2(Mpi::World(), y) < 1.0e-12);
         }
         CheckAction(*K, 0.0, K0.get());  // No pole-derived stiffness contribution.
         CheckAction(*M, 1.0);            // epsilon_inf remains in ordinary M.
@@ -662,11 +701,22 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
         const auto *mg =
             dynamic_cast<const BaseMultigridOperator<ComplexOperator> *>(pc.get());
         REQUIRE(mg);
-        if (pc_mat_real)
         {
+          // The shifted preconditioner takes |Re| of the mass-like terms, ε∞ and the
+          // dispersive s²χ alike (both have Re < 0 here), and keeps the loss-like Im parts.
+          const std::complex<double> s2 = s * s;
+          const double mass_re = pc_mat_shifted ? std::abs(s2.real()) : s2.real();
+          const double disp_re = pc_mat_shifted ? std::abs(g.real()) : g.real();
           K0->Mult(x, expected);
           B->Mult(x, tmp);
-          tmp *= (s * s).real() + g.real() + g.imag();
+          if (pc_mat_real)
+          {
+            tmp *= mass_re + disp_re + g.imag();
+          }
+          else
+          {
+            tmp *= std::complex<double>(mass_re + disp_re, s2.imag() + g.imag());
+          }
           expected += tmp;
         }
         mg->GetFinestOperator().Mult(x, y);
@@ -698,8 +748,8 @@ TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
         {{"HighFrequency", 2.08},
          {"Terms",
           {{{"Type", "Drude"}, {"PlasmaFrequency", fp}, {"CollisionFrequency", fg}}}}}}});
-  const double wp = 2.0 * M_PI * 1.0e9 * fp;
-  const double gamma = 2.0 * M_PI * 1.0e9 * fg;
+  const double wp = 2.0 * std::numbers::pi * 1.0e9 * fp;
+  const double gamma = 2.0 * std::numbers::pi * 1.0e9 * fg;
   config::MaterialData canonical_material;
   canonical_material.attributes = {1};
   canonical_material.epsilon_r = config::SymmetricMatrixData<3>(2.08);
@@ -729,7 +779,7 @@ TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
 
   auto C_named = named.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto C_canonical = canonical.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  const double omega = 2.0 * M_PI * 1.0e9 * 2.5;
+  const double omega = 2.0 * std::numbers::pi * 1.0e9 * 2.5;
   auto A2_named = named.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   auto A2_canonical =
       canonical.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);

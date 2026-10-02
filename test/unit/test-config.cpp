@@ -1094,7 +1094,7 @@ TEST_CASE("Config material permittivity models", "[config][Serial]")
     REQUIRE(data.permittivity_pole_terms.size() == 5);
     REQUIRE(data.djordjevic_sarkar_terms.size() == 1);
 
-    constexpr double scale = 2.0 * M_PI * 1.0e9;
+    constexpr double scale = 2.0 * std::numbers::pi * 1.0e9;
     const double wp = scale, gamma = 0.1 * scale;
     CHECK(data.permittivity_pole_terms[0].pole == std::complex<double>{0.0, 0.0});
     CHECK(data.permittivity_pole_terms[0].residue.real() == Catch::Approx(wp * wp / gamma));
@@ -1151,6 +1151,10 @@ TEST_CASE("Config material permittivity models", "[config][Serial]")
                   {"DeltaPermittivity", 1.0},
                   {"ResonanceFrequency", 1.0},
                   {"DampingFrequency", 2.0}});
+    CheckInvalid({{"Type", "Lorentz"},  // Within the near-critical tolerance
+                  {"DeltaPermittivity", 1.0},
+                  {"ResonanceFrequency", 1.0},
+                  {"DampingFrequency", 2.0 * (1.0 + 1.0e-8)}});
     CheckInvalid({{"Type", "PoleResidue"}, {"Pole", {-1.0, -2.0}}, {"Residue", 1.0}});
     CheckInvalid({{"Type", "DjordjevicSarkar"},
                   {"Strength", 1.0},
@@ -1180,6 +1184,11 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
            {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 1.0}, {"FreqStep", 1.0}}}}}}}}};
   };
 
+  // Match the message, so that a config rejected for an unrelated reason does not pass.
+  const std::string reason = "Frequency-dependent material Permittivity";
+  auto CheckRejected = [&reason](const json &config)
+  { CHECK_THROWS_WITH(IoData(config, false), Catch::Matchers::ContainsSubstring(reason)); };
+
   SECTION("Ordinary driven solve is accepted")
   {
     CHECK_NOTHROW(IoData(MakeConfig(), false));
@@ -1196,41 +1205,52 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
     const auto resolved = IoData::ConcretizeDefaults(iodata, config);
     CHECK(resolved["Domains"]["Materials"][0]["Permittivity"] == supplied);
   }
+  SECTION("Unsupported problem types are rejected")
+  {
+    for (const auto *type : {"Transient", "Electrostatic", "Magnetostatic", "BoundaryMode"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      CheckRejected(config);
+    }
+  }
   SECTION("Adaptive circuit synthesis is rejected")
   {
     auto config = MakeConfig();
     config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = true;
-    CHECK_THROWS(IoData(config, false));
+    CheckRejected(config);
   }
   SECTION("Numeric wave ports are rejected")
   {
     auto config = MakeConfig();
     config["Boundaries"]["WavePort"] = {{{"Index", 1}, {"Attributes", {2}}}};
-    CHECK_THROWS(IoData(config, false));
+    CheckRejected(config);
   }
   SECTION("Numeric wave port PEC boundaries are rejected")
   {
     auto config = MakeConfig();
     config["Boundaries"]["WavePortPEC"] = {{"Attributes", {2}}};
-    CHECK_THROWS(IoData(config, false));
+    CheckRejected(config);
   }
   SECTION("Absorbing boundaries are rejected")
   {
     auto config = MakeConfig();
     config["Boundaries"]["Absorbing"] = {{"Attributes", {2}}};
-    CHECK_THROWS(IoData(config, false));
+    CheckRejected(config);
   }
   SECTION("Floquet ports are rejected")
   {
     auto config = MakeConfig();
     config["Boundaries"]["FloquetPort"] = {{{"Index", 1}, {"Attributes", {2}}}};
-    CHECK_THROWS(IoData(config, false));
+    CheckRejected(config);
   }
   SECTION("Nonzero periodic Floquet wave vectors are rejected")
   {
     auto config = MakeConfig();
-    config["Boundaries"]["Periodic"] = {{"FloquetWaveVector", {0.0, 0.1, 0.0}}};
-    CHECK_THROWS(IoData(config, false));
+    config["Boundaries"]["Periodic"] = {
+        {"FloquetWaveVector", {0.0, 0.1, 0.0}},
+        {"BoundaryPairs", {{{"DonorAttributes", {2}}, {"ReceiverAttributes", {3}}}}}};
+    CheckRejected(config);
   }
 }
 
