@@ -24,6 +24,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     This speeds up the construction of the error estimator, which is repeated at every
     adaptive mesh refinement iteration.
     [PR 1134](https://github.com/awslabs/palace/pull/1134).
+  - The maximum eigenvalue estimate of each Chebyshev smoother now starts from the dominant
+    vector of the previous operator, which reduces the cost of rebuilding the multigrid
+    preconditioner at each frequency of a driven sweep.
+    [PR 1024](https://github.com/awslabs/palace/pull/1024).
 
 #### Bug Fixes
 

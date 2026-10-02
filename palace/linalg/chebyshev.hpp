@@ -40,6 +40,10 @@ private:
   // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
   double lambda_max, sf_max;
 
+  // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
+  // the next operator starts.
+  ComplexVector lambda_vec;
+
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
@@ -103,6 +107,10 @@ private:
   // Parameters depending on maximum and minimum operator eigenvalue estimates for Chebyshev
   // polynomial smoothing.
   double theta, delta, sf_max, sf_min;
+
+  // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
+  // the next operator starts.
+  ComplexVector lambda_vec;
 
   // Temporary vector for smoother application.
   mutable VecType d, r;
