@@ -7449,11 +7449,13 @@ TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
     const auto overlaps = FindSpatialSupportMarginOverlaps({a, reaching}, 3, tolerance);
     REQUIRE(overlaps.size() == 1);
     CHECK(overlaps.front().claim_in_hull);
-    // The claim SEGMENT is tested, not only its ends (decision 252): B's claim x = 585 from
-    // y = -105 to -125 crosses A's hull (y in [-120, -108.325]) with both ends outside it.
+    // The claim SEGMENT is tested, not only its ends (decision 252): B's claim y = -115
+    // from x = 582 to 588 crosses A's hull (x in [583.25, 587.05]) with both ends outside
+    // it, while B's own hull (x in [582, 593], y in [-115, -108.325]) holds no end of A's
+    // claims strictly inside (A's claims lie on its face y = -108.325).
     SpatialSupportBounds crossing = b;
     crossing.claims = {Claim{646, {589.95, y, 4.8}, {593.0, y, 4.8}},
-                       Claim{650, {585.0, -105.0, 4.8}, {585.0, -125.0, 4.8}}};
+                       Claim{650, {582.0, -115.0, 4.8}, {588.0, -115.0, 4.8}}};
     const auto crossed = FindSpatialSupportMarginOverlaps({a, crossing}, 3, tolerance);
     REQUIRE(crossed.size() == 1);
     CHECK(crossed.front().claim_in_hull);
