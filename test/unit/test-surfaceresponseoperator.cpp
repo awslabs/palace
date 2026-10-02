@@ -30,6 +30,7 @@
 #include "models/cornertracebasis.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
@@ -1729,7 +1730,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 3);
+      CHECK(cache["Version"] == 5);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3019,7 +3020,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 3);
+      CHECK(cache["Version"] == 5);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -6711,6 +6712,201 @@ TEST_CASE_METHOD(
     CHECK(constructed);
   }
 #endif
+}
+
+TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
+          "[surfaceresponseoperator][Serial]")
+{
+  // Decisions 224 / 236 / 242: a translational STRETCH (every longitudinal cell of one
+  // feature stretch) strictly inside one spatial support's box is RECORDED with its class —
+  // a Continuation (it continues a claim of the cluster through the claim cut: a cell on
+  // the claim's mesh segment, or parallel, abutting a claim end along the chain within the
+  // tolerance and within R transversely, AND extending beyond that claim end; the double
+  // count of the coupon's straight
+  // continuation) or Foreign (a model mismatch, not a double count) — never an
+  // abort; a stack end adjacent to a cluster, whose first cells lie inside the box while
+  // the stretch continues outside, is the ordinary stack-end configuration and records
+  // nothing. Cells of a 3-cell portion along +x from the origin x = 0: [0, 1], [1, 2.5],
+  // [2.5, 4] (mesh units).
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  auto Cell = [](int feature, int stretch, double begin, double end, double y = 0.0)
+  {
+    Patch patch;
+    patch.origin = {0.5 * (begin + end), y, 0.0};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    return patch;
+  };
+  // A spatial support over x in [-3, 1.5] (its claims end at x = 0, the box reaches R = 1.5
+  // beyond them), |y| <= 3, |z| <= 2; the cluster claims the edge y = 0 from x = -2.5 to 0
+  // (on mesh segment 3) and the edge x = -2.5 from y = 0 to 1 (segment 5); the cells above
+  // lie on mesh segment 7.
+  const double R = 1.5;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  using Claim = Patch::Provenance::Claim;
+  SpatialSupportBounds box;
+  box.patch = 0;
+  box.min = {-3.0, -3.0, -2.0};
+  box.max = {1.5, 3.0, 2.0};
+  box.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+                Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
+  SECTION("a stack end adjacent to the cluster records nothing")
+  {
+    const std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.5),
+                                        Cell(4, 0, 2.5, 4.0)};
+    CHECK(
+        FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3, tolerance).empty());
+    // Two sides of a pair on one stretch index are judged by their own cells: the far side
+    // outside the box keeps its stretch outside too.
+    std::vector<Patch> sides = patches;
+    sides.push_back(Cell(4, 0, 0.0, 1.0, 2.0));
+    CHECK(FindTranslationalStretchInsideSpatialSupport(sides, {box}, 3, tolerance).empty());
+  }
+  SECTION("a stretch wholly inside the box on a claim's segment is its continuation")
+  {
+    // The claim boundary cut mesh segment 7 (a claim on it from x = -2.5 to 0): the stretch
+    // beyond the cut is recorded as a Continuation whatever its lateral offset (the cells
+    // of a pair sit on the pair's midline, here y = 0.5).
+    std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.5),
+                                  Cell(4, 0, 2.5, 4.0), Cell(4, 1, 0.3, 0.8, 0.5),
+                                  Cell(4, 1, 0.8, 1.2, 0.5)};
+    SpatialSupportBounds cut = box;
+    cut.claims.push_back(Claim{7, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}});
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(patches, {cut}, 3, tolerance);
+    REQUIRE(records.size() == 1);
+    const auto &record = records.front();
+    CHECK(record.feature == 4);
+    CHECK(record.stretch == 1);
+    CHECK(record.first_patch == 3);
+    CHECK(record.patch_count == 2);
+    CHECK(record.spatial_patch == 0);
+    CHECK_THAT(record.length, WithinAbs(0.9, 1.0e-12));
+    CHECK_THAT(record.lo[0], WithinAbs(0.3, 1.0e-12));
+    CHECK_THAT(record.hi[0], WithinAbs(1.2, 1.0e-12));
+    CHECK(record.continuation);
+    // Without the cut segment among the claims the same stretch (0.3 past the claim end,
+    // beyond the tolerance) is foreign.
+    const auto foreign =
+        FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3, tolerance);
+    REQUIRE(foreign.size() == 1);
+    CHECK(!foreign.front().continuation);
+  }
+  SECTION("a stretch abutting a claim end along the chain is its continuation")
+  {
+    // The claim boundary snapped onto the mesh vertex at x = 0 (segment 3 ends there, the
+    // stretch starts on segment 7): parallel, abutting within 1e-3 R and within R
+    // transversely (a pair midline at y = 0.5), every cell beyond the claim end ->
+    // Continuation; a perpendicular stretch starting there, a parallel one 0.3 away along
+    // the chain, or one abutting the claim x = -2.5 along y but 3.4 away from it
+    // transversely, is foreign. A parallel stretch 0.7 from the claim x = -2.5 lying
+    // BESIDE it over the claim's own range y in [0, 1] (one end aligned with each claim
+    // end) is foreign: it does not extend through the claim cut; the same stretch beyond
+    // the claim end (y in [1, 2]) is its continuation.
+    const std::vector<Patch> abutting = {Cell(4, 1, 1.0e-4 * R, 0.5, 0.5),
+                                         Cell(4, 1, 0.5, 1.2, 0.5)};
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(abutting, {box}, 3, tolerance);
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().continuation);
+    CHECK_THAT(records.front().length, WithinAbs(1.2 - 1.0e-4 * R, 1.0e-12));
+    Patch perpendicular = Cell(4, 1, 0.0, 1.0);
+    perpendicular.origin = {0.9, 0.5, 0.0};
+    perpendicular.axis_w = {0.0, 1.0, 0.0};
+    perpendicular.axis_u = {1.0, 0.0, 0.0};
+    const auto turned =
+        FindTranslationalStretchInsideSpatialSupport({perpendicular}, {box}, 3, tolerance);
+    REQUIRE(turned.size() == 1);
+    CHECK(!turned.front().continuation);
+    perpendicular.origin = {-1.8, 0.5,
+                            0.0};  // y in [0, 1] at x = -1.8: alongside the claim
+    const auto beside =
+        FindTranslationalStretchInsideSpatialSupport({perpendicular}, {box}, 3, tolerance);
+    REQUIRE(beside.size() == 1);
+    CHECK(!beside.front().continuation);
+    Patch beyond_cell = perpendicular;  // y in [1, 2] at x = -1.8: past the claim end y = 1
+    beyond_cell.origin = {-1.8, 1.5, 0.0};
+    const auto beyond =
+        FindTranslationalStretchInsideSpatialSupport({beyond_cell}, {box}, 3, tolerance);
+    REQUIRE(beyond.size() == 1);
+    CHECK(beyond.front().continuation);
+    CHECK_THAT(beyond.front().length, WithinAbs(1.0, 1.0e-12));
+    // Starting within the tolerance before the claim end still counts as beyond it; a
+    // stretch straddling the claim end (cells y in [0.7, 1] and [1, 1.7], one cell end
+    // exactly on the claim end) reaches back alongside the claim and does not.
+    beyond_cell.origin = {-1.8, 1.5 - 0.5e-3 * R, 0.0};
+    CHECK(FindTranslationalStretchInsideSpatialSupport({beyond_cell}, {box}, 3, tolerance)
+              .front()
+              .continuation);
+    Patch straddle_before = perpendicular, straddle_after = perpendicular;
+    straddle_before.origin = {-1.8, 0.85, 0.0};
+    straddle_before.longitudinal_cell = {-0.15, 0.15};
+    straddle_after.origin = {-1.8, 1.35, 0.0};
+    straddle_after.longitudinal_cell = {-0.35, 0.35};
+    const auto straddle = FindTranslationalStretchInsideSpatialSupport(
+        {straddle_before, straddle_after}, {box}, 3, tolerance);
+    REQUIRE(straddle.size() == 1);
+    CHECK_THAT(straddle.front().length, WithinAbs(1.0, 1.0e-12));
+    CHECK(!straddle.front().continuation);
+    // The direction test also applies to the x = 0 claim end: cells over x in [-1, 0] at
+    // y = 0.5 abut it but lie alongside the claim.
+    const auto back = FindTranslationalStretchInsideSpatialSupport(
+        {Cell(4, 1, -1.0, -0.4, 0.5), Cell(4, 1, -0.4, 0.0, 0.5)}, {box}, 3, tolerance);
+    REQUIRE(back.size() == 1);
+    CHECK(!back.front().continuation);
+    const auto apart = FindTranslationalStretchInsideSpatialSupport(
+        {Cell(4, 1, 0.3, 0.8, 0.5), Cell(4, 1, 0.8, 1.2, 0.5)}, {box}, 3, tolerance);
+    REQUIRE(apart.size() == 1);
+    CHECK(!apart.front().continuation);
+  }
+  SECTION("a stretch wholly inside the box off every claim is foreign")
+  {
+    const std::vector<Patch> patches = {Cell(4, 1, -2.0, -1.5, 0.5),
+                                        Cell(4, 1, -1.5, -0.8, 0.5)};
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3, tolerance);
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().feature == 4);
+    CHECK(records.front().stretch == 1);
+    CHECK_THAT(records.front().length, WithinAbs(1.2, 1.0e-12));
+    CHECK(!records.front().continuation);
+  }
+  SECTION("every stretch inside is recorded, in (feature, stretch) order")
+  {
+    const std::vector<Patch> patches = {Cell(9, 0, -2.0, -1.0, 0.5), Cell(4, 2, 0.0, 1.2),
+                                        Cell(4, 1, -1.0, -0.5, 1.5)};
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3, tolerance);
+    REQUIRE(records.size() == 3);
+    CHECK(records[0].feature == 4);
+    CHECK(records[0].stretch == 1);
+    CHECK(!records[0].continuation);
+    CHECK(records[1].feature == 4);
+    CHECK(records[1].stretch == 2);
+    CHECK(records[1].continuation);
+    CHECK(records[2].feature == 9);
+    CHECK(records[2].stretch == 0);
+    CHECK(!records[2].continuation);
+  }
+  SECTION("touching the box face is not inside")
+  {
+    const std::vector<Patch> patches = {Cell(4, 1, -2.0, -1.5), Cell(4, 1, -1.5, 1.5)};
+    CHECK(
+        FindTranslationalStretchInsideSpatialSupport(patches, {box}, 3, tolerance).empty());
+  }
+  SECTION("point-in-z and unattributed patches are never judged")
+  {
+    Patch spatial = Cell(5, 0, -1.0, -1.0);  // {0, 0} cell
+    Patch explicit_patch = Cell(-1, -1, -2.0, -1.0);
+    CHECK(FindTranslationalStretchInsideSpatialSupport({spatial, explicit_patch}, {box}, 3,
+                                                       tolerance)
+              .empty());
+  }
 }
 
 }  // namespace palace

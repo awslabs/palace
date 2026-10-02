@@ -92,6 +92,11 @@ struct IdentifiedPortion
   // chain. Not hashed. The first-order curvature term of a straight-like feature is this
   // turn times the family's curvature derivative (design (b)7).
   double turn = 0.0;
+  // The maximal contiguous stretch of this feature side along its chain that the portion
+  // belongs to (index per feature, in chain order; the sliver rule's notion of a portion,
+  // decision 222). Not hashed; the placement's ownership check tests whole stretches
+  // (decision 224).
+  int stretch = -1;
 };
 
 struct IdentifiedFeature
@@ -206,6 +211,18 @@ struct IdentificationResult
   std::size_t stack_composition_cap_hits = 0;
   // Stack-end images merged into an existing breakpoint within the tolerance (decision 93).
   std::size_t stack_images_merged = 0;
+  // Sliver rule (decision 222): the portions shorter than the signature parameter tolerance
+  // (maximal contiguous stretches of one feature side along a chain) that joined their
+  // adjacent portion — count, total length and the longest, mesh units — and the stretches
+  // with no adjacent portion on their chain, which stay (counted, never joined).
+  struct SubTolerancePortions
+  {
+    std::size_t count = 0;
+    double length = 0.0;
+    double max_length = 0.0;
+    std::size_t isolated = 0;
+  };
+  SubTolerancePortions sub_tolerance_portions;
   // Cluster extension (decision 85(2)): passes to closure, absorbed single-edge portions
   // and length, vertex features that became clusters; the pair / stack length within 2R of
   // a cluster's claimed perimeter (the stack-end third body, not absorbed), mesh units.
@@ -220,6 +237,17 @@ struct IdentificationResult
     // sub-tolerance pass.
     bool cap_reached = false;
     bool repeat_detected = false;
+    // Pair / stack stretches that exist only because a cluster's claim boundary cut them
+    // (decision 224; the one exception to "pairs / stacks are never absorbed"), absorbed by
+    // that cluster: count, length, longest, mesh units; the two-sided class (bounded at
+    // both ends by claims of the same cluster) separately, the rest being stack-end
+    // recomposition pieces (adjacent to the cluster at one end, continuing the larger stack
+    // at the other). Both lie entirely within the cluster ball radius of the claims.
+    std::size_t translational_pieces = 0;
+    double translational_length = 0.0;
+    double translational_max_length = 0.0;
+    std::size_t translational_two_sided = 0;
+    double translational_two_sided_length = 0.0;
   };
   ClusterExtension extension;
   // Knife-edge census (decision 82(4)): the perimeter length whose interaction distance

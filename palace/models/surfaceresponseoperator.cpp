@@ -7344,6 +7344,7 @@ FeaturePatchSummary BuildFeaturePatches(
     double s0 = 0.0, s1 = 0.0;
     int side = 0;
     double turn = 0.0;  // signed windowed turn toward the metal (radians)
+    int stretch = -1;   // the chain stretch of the portion (IdentifiedPortion::stretch)
   };
   auto Frame = [&](const IdentifiedPortion &portion)
   {
@@ -7363,6 +7364,7 @@ FeaturePatchSummary BuildFeaturePatches(
     fp.s1 = portion.s1;
     fp.side = portion.side;
     fp.turn = portion.turn;
+    fp.stretch = portion.stretch;
     return fp;
   };
   auto IsPec = [](const EdgeSegment3D &segment)
@@ -7554,6 +7556,7 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.provenance.segment = static_cast<int>(fp.geometry_index);
         patch.provenance.s0 = fp.s0;
         patch.provenance.s1 = fp.s1;
+        patch.provenance.stretch = fp.stretch;
         patch.provenance.quadrature_weight = ip.weight;
         patch.provenance.side_factor = side_factor;
         patch.provenance.coupon_depth = term.coupon_depth;
@@ -8066,6 +8069,16 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.maxwell_conductor_anchors.push_back(
             TransformLocalPoint(patch.origin, axes, reference));
       }
+      // The cluster's claimed portions (mesh segment and global ends): the ownership
+      // record's continuation class (a translational stretch inside the box that continues
+      // one of them through the claim cut).
+      for (const auto &portion : feature.portions)
+      {
+        const auto fp = Frame(portion);
+        patch.provenance.claims.push_back({static_cast<int>(fp.geometry_index),
+                                           Interpolate(*fp.segment, fp.a),
+                                           Interpolate(*fp.segment, fp.b)});
+      }
       Emit(std::move(patch), model_index, runtime, feature);
     }
     else
@@ -8268,6 +8281,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.translational_domain_correction = request.translational_domain_correction;
   result.trace_coupling = request.trace_coupling;
   result.mortar_oversampling = request.mortar_oversampling;
+  result.matching_radius = library.matching_radius;
   int next_model_index = 1;
   int next_interpolation_group = 1;
   int matched_intervals = 0;
@@ -13620,6 +13634,11 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   nlohmann::json patches = nlohmann::json::array();
   for (const auto &patch : config.patches)
   {
+    nlohmann::json claims = nlohmann::json::array();
+    for (const auto &claim : patch.provenance.claims)
+    {
+      claims.push_back({{"Segment", claim.segment}, {"P0", claim.p0}, {"P1", claim.p1}});
+    }
     patches.push_back({{"Model", patch.model},
                        {"Origin", patch.origin},
                        {"AxisU", patch.axis_u},
@@ -13630,7 +13649,10 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"LongitudinalCell", patch.longitudinal_cell},
                        {"InterpolationGroup", patch.interpolation_group},
                        {"MaxwellConductorAnchors", patch.maxwell_conductor_anchors},
-                       {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec}});
+                       {"MaxwellReferenceIsPEC", patch.maxwell_reference_is_pec},
+                       {"Feature", patch.provenance.feature},
+                       {"Stretch", patch.provenance.stretch},
+                       {"Claims", claims}});
   }
   if (path.has_parent_path())
   {
@@ -13639,7 +13661,8 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  output << nlohmann::json{{"Version", 3},
+  output << nlohmann::json{{"Version", 5},
+                           {"MatchingRadius", config.matching_radius},
                            {"Models", std::move(models)},
                            {"Patches", std::move(patches)}}
                 .dump(2)
@@ -13653,15 +13676,18 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   MFEM_VERIFY(input, "Unable to read response-geometry cache \"" << path.string() << "\"!");
   nlohmann::json data;
   input >> data;
-  MFEM_VERIFY(data.value("Version", 0) == 3,
-              "Unsupported response-geometry cache version "
-                  << data.value("Version", 0)
-                  << " (version 3 carries the longitudinal cell of every patch; delete a "
-                     "stale cache)!");
+  MFEM_VERIFY(
+      data.value("Version", 0) == 5,
+      "Unsupported response-geometry cache version "
+          << data.value("Version", 0)
+          << " (version 5 carries the feature and chain stretch of every patch, the "
+             "claims of every spatial cluster patch and the matching radius for the "
+             "ownership record; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
   result.patches.clear();
+  result.matching_radius = data.at("MatchingRadius");
   for (const auto &entry : data.at("Models"))
   {
     ResponseModelData model;
@@ -13733,6 +13759,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     patch.weight = entry.at("Weight");
     patch.longitudinal_cell = entry.at("LongitudinalCell");
     patch.interpolation_group = entry.value("InterpolationGroup", 0);
+    patch.provenance.feature = entry.at("Feature");
+    patch.provenance.stretch = entry.at("Stretch");
+    for (const auto &claim : entry.at("Claims"))
+    {
+      patch.provenance.claims.push_back(
+          {claim.at("Segment"), claim.at("P0"), claim.at("P1")});
+    }
     patch.maxwell_conductor_anchors =
         entry.value("MaxwellConductorAnchors", std::vector<std::array<double, 3>>{});
     patch.maxwell_reference_is_pec = entry.value("MaxwellReferenceIsPEC", true);
@@ -13849,6 +13882,42 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     auto manifest = requirements.Build();
     manifest["MeshDimension"] = parallel_mesh.Dimension();
     manifest["Maxwell"] = maxwell;
+    if (parallel_mesh.Dimension() == 3 && manifest.contains("Identification"))
+    {
+      // The ownership record (decision 236) on the spatial models whose basis points the
+      // library provides (a signature placeholder of a Missing key has none).
+      const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+      std::map<int, std::vector<std::array<double, 3>>> basis_points;
+      for (const auto &model : patches.models)
+      {
+        if (model.spatial_basis && (!model.constructed_basis_points.empty() ||
+                                    std::filesystem::is_regular_file(model.basis_points)))
+        {
+          basis_points.emplace(model.idx, ModelBasisPoints(model));
+        }
+      }
+      std::vector<std::string> skipped;
+      const auto boxes = CollectSpatialSupports(
+          patches,
+          [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+          {
+            const auto it = basis_points.find(model_idx);
+            return it == basis_points.end() ? nullptr : &it->second;
+          },
+          coordinate_scale, 3, &skipped);
+      const auto records = FindTranslationalStretchInsideSpatialSupport(
+          patches.patches, boxes, 3,
+          kSignatureParameterToleranceOverRadius * patches.matching_radius);
+      auto &diagnostics =
+          manifest["Identification"]["Diagnostics"]
+                  ["TranslationalStretchesInsideSpatialSupport"] =
+                      DescribeTranslationalOwnershipRecords(records, boxes, patches,
+                                                            coordinate_scale, skipped);
+      if (!records.empty())
+      {
+        Mpi::Warning("{}", DescribeTranslationalOwnershipWarning(diagnostics));
+      }
+    }
     std::ofstream output(path);
     MFEM_VERIFY(output, "Unable to open surface-response requirements manifest \""
                             << path << "\"!");
@@ -13877,6 +13946,321 @@ struct SurfaceResponseGeometry::Impl
   bool maxwell = false;
   int dimension = 0;
 };
+
+std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialSupport(
+    const std::vector<ResponsePatchData> &patches,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double continuation_tolerance)
+{
+  struct TranslationalStretch
+  {
+    std::vector<std::size_t> patches;
+    std::vector<std::array<double, 3>> ends;
+    std::set<int> segments;
+    std::array<double, 3> direction{};  // AxisW of the first cell
+    double length = 0.0;
+  };
+  std::map<std::pair<int, int>, TranslationalStretch> stretches;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    const auto &patch = patches[patch_idx];
+    if (patch.longitudinal_cell[1] <= patch.longitudinal_cell[0] ||
+        patch.provenance.feature < 0 || patch.provenance.stretch < 0)
+    {
+      continue;  // a point-in-z (2D, spatial, explicit) patch, or no provenance
+    }
+    auto &stretch =
+        stretches[std::make_pair(patch.provenance.feature, patch.provenance.stretch)];
+    if (stretch.patches.empty())
+    {
+      stretch.direction = patch.axis_w;
+    }
+    stretch.patches.push_back(patch_idx);
+    stretch.segments.insert(patch.provenance.segment);
+    stretch.length += patch.longitudinal_cell[1] - patch.longitudinal_cell[0];
+    for (const double offset : patch.longitudinal_cell)
+    {
+      std::array<double, 3> end{};
+      for (int d = 0; d < dimension; d++)
+      {
+        end[d] = patch.origin[d] + offset * patch.axis_w[d];
+      }
+      stretch.ends.push_back(end);
+    }
+  }
+  // A stretch continues a claim when a cell lies on the claim's mesh segment, or when it
+  // runs parallel to the claim, one of its ends abuts a claim end along the chain within
+  // the tolerance and within R of it transversely (a pair's cells sit on its midline,
+  // within the half separation < R of either edge; a stack's on its first side) AND it
+  // extends beyond that claim end: every cell end lies on the outward side of the abutting
+  // end (away from the claim's other end) within the tolerance. A parallel stretch lying
+  // alongside the claim over the claim's own range, one end aligned with a claim end, is
+  // foreign: it does not go through the claim cut.
+  const double parallel_cosine = std::cos(kSignatureAngleToleranceDegrees * M_PI / 180.0);
+  const double transverse_reach =
+      continuation_tolerance / kSignatureParameterToleranceOverRadius;
+  auto Continues = [&](const TranslationalStretch &stretch,
+                       const ResponsePatchData::Provenance::Claim &claim)
+  {
+    if (claim.segment >= 0 && stretch.segments.count(claim.segment))
+    {
+      return true;
+    }
+    std::array<double, 3> tangent{};
+    double length2 = 0.0, cosine = 0.0;
+    for (int d = 0; d < dimension; d++)
+    {
+      tangent[d] = claim.p1[d] - claim.p0[d];
+      length2 += tangent[d] * tangent[d];
+    }
+    if (length2 <= 0.0)
+    {
+      return false;
+    }
+    for (int d = 0; d < dimension; d++)
+    {
+      tangent[d] /= std::sqrt(length2);
+      cosine += tangent[d] * stretch.direction[d];
+    }
+    if (std::abs(cosine) < parallel_cosine)
+    {
+      return false;
+    }
+    for (const auto &end : stretch.ends)
+    {
+      for (const auto *claim_end : {&claim.p0, &claim.p1})
+      {
+        double along = 0.0, distance2 = 0.0;
+        for (int d = 0; d < dimension; d++)
+        {
+          const double delta = end[d] - (*claim_end)[d];
+          along += delta * tangent[d];
+          distance2 += delta * delta;
+        }
+        if (!(std::abs(along) <= continuation_tolerance &&
+              distance2 - along * along <= transverse_reach * transverse_reach))
+        {
+          continue;
+        }
+        // Outward = from the claim's other end toward this abutting end.
+        const double outward = (claim_end == &claim.p1) ? 1.0 : -1.0;
+        const bool beyond = std::all_of(stretch.ends.begin(), stretch.ends.end(),
+                                        [&](const std::array<double, 3> &other)
+                                        {
+                                          double along_outward = 0.0;
+                                          for (int d = 0; d < dimension; d++)
+                                          {
+                                            along_outward += (other[d] - (*claim_end)[d]) *
+                                                             tangent[d] * outward;
+                                          }
+                                          return along_outward >= -continuation_tolerance;
+                                        });
+        if (beyond)
+        {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  std::vector<TranslationalOwnershipRecord> records;
+  for (const auto &entry : stretches)
+  {
+    const auto &key = entry.first;
+    const auto &stretch = entry.second;
+    for (const auto &support : supports)
+    {
+      // Strictly inside: a stretch touching the box face is not inside.
+      const bool inside =
+          std::all_of(stretch.ends.begin(), stretch.ends.end(),
+                      [&](const std::array<double, 3> &end)
+                      {
+                        for (int d = 0; d < dimension; d++)
+                        {
+                          if (!(end[d] > support.min[d] && end[d] < support.max[d]))
+                          {
+                            return false;
+                          }
+                        }
+                        return true;
+                      });
+      if (!inside)
+      {
+        continue;
+      }
+      TranslationalOwnershipRecord record;
+      record.feature = key.first;
+      record.stretch = key.second;
+      record.first_patch = stretch.patches.front();
+      record.patch_count = stretch.patches.size();
+      record.spatial_patch = support.patch;
+      record.length = stretch.length;
+      record.lo = record.hi = stretch.ends.front();
+      for (const auto &end : stretch.ends)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          record.lo[d] = std::min(record.lo[d], end[d]);
+          record.hi[d] = std::max(record.hi[d], end[d]);
+        }
+      }
+      record.continuation =
+          std::any_of(support.claims.begin(), support.claims.end(),
+                      [&](const auto &claim) { return Continues(stretch, claim); });
+      records.push_back(record);
+    }
+  }
+  return records;
+}
+
+std::vector<SpatialSupportBounds> CollectSpatialSupports(
+    const ResponseCorrectionData &config,
+    const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
+        &basis_points,
+    double coordinate_scale, int dimension, std::vector<std::string> *skipped)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  std::vector<SpatialSupportBounds> supports;
+  for (std::size_t patch_idx = 0; patch_idx < config.patches.size(); patch_idx++)
+  {
+    const auto &patch = config.patches[patch_idx];
+    const auto model_it = models.find(patch.model);
+    MFEM_VERIFY(model_it != models.end(), "Unknown response model!");
+    if (!model_it->second->spatial_basis)
+    {
+      continue;
+    }
+    const auto *points = basis_points(patch.model);
+    if (!points)
+    {
+      if (skipped)
+      {
+        skipped->push_back(model_it->second->name);
+      }
+      continue;
+    }
+    SpatialSupportBounds support;
+    support.patch = patch_idx;
+    support.claims = patch.provenance.claims;
+    bool first = true;
+    for (const auto &local : *points)
+    {
+      for (int d = 0; d < dimension; d++)
+      {
+        const double coordinate =
+            patch.origin[d] + (local[0] * patch.axis_u[d] + local[1] * patch.axis_v[d] +
+                               local[2] * patch.axis_w[d]) /
+                                  coordinate_scale;
+        support.min[d] = first ? coordinate : std::min(support.min[d], coordinate);
+        support.max[d] = first ? coordinate : std::max(support.max[d], coordinate);
+      }
+      first = false;
+    }
+    supports.push_back(std::move(support));
+  }
+  return supports;
+}
+
+nlohmann::json DescribeTranslationalOwnershipRecords(
+    const std::vector<TranslationalOwnershipRecord> &records,
+    const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
+    double coordinate_scale, const std::vector<std::string> &skipped)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  auto Scaled = [&](const std::array<double, 3> &point)
+  {
+    return std::array<double, 3>{point[0] * coordinate_scale, point[1] * coordinate_scale,
+                                 point[2] * coordinate_scale};
+  };
+  nlohmann::json entries = nlohmann::json::array();
+  int continuation_count = 0, foreign_count = 0;
+  double continuation_length = 0.0, foreign_length = 0.0;
+  for (const auto &record : records)
+  {
+    const auto support = std::find_if(supports.begin(), supports.end(), [&](const auto &s)
+                                      { return s.patch == record.spatial_patch; });
+    MFEM_VERIFY(support != supports.end(), "An ownership record names no spatial support!");
+    const auto &patch = config.patches[record.first_patch];
+    const auto &spatial = config.patches[record.spatial_patch];
+    const double length = record.length * coordinate_scale;
+    (record.continuation ? continuation_count : foreign_count)++;
+    (record.continuation ? continuation_length : foreign_length) += length;
+    entries.push_back(
+        {{"Feature", record.feature},
+         {"Stretch", record.stretch},
+         {"Model", models.at(patch.model)->name},
+         {"Topology", models.at(patch.model)->topology},
+         {"FirstPatch", record.first_patch},
+         {"Patches", record.patch_count},
+         {"Length", length},
+         {"Extent", {{"Min", Scaled(record.lo)}, {"Max", Scaled(record.hi)}}},
+         {"SpatialPatch", record.spatial_patch},
+         {"SpatialFeature", spatial.provenance.feature},
+         {"SpatialModel", models.at(spatial.model)->name},
+         {"Box", {{"Min", Scaled(support->min)}, {"Max", Scaled(support->max)}}},
+         {"Class", record.continuation ? "Continuation" : "Foreign"}});
+  }
+  return {
+      {"Count", static_cast<int>(records.size())},
+      {"Length", continuation_length + foreign_length},
+      {"Continuation", {{"Count", continuation_count}, {"Length", continuation_length}}},
+      {"Foreign", {{"Count", foreign_count}, {"Length", foreign_length}}},
+      {"SpatialSupports", static_cast<int>(supports.size())},
+      {"SpatialSupportsWithoutBasisPoints", skipped},
+      {"ContinuationToleranceOverR", kSignatureParameterToleranceOverRadius},
+      {"Records", std::move(entries)},
+      {"Rule",
+       "decision 236 (2026-10-01): a translational stretch (one feature side's maximal "
+       "contiguous stretch along its chain, the patch provenance Feature / Stretch) whose "
+       "every longitudinal cell lies strictly inside the box of a spatial support (the "
+       "bbox of the model's basis points placed by the patch frame: claims + 3R past every "
+       "claim-cut end along its edge, the 2R continuation + R padding; 2R transversely) is "
+       "recorded, never an abort. Continuation = the stretch continues a claimed portion "
+       "of that cluster through the claim cut (a cell on the claim's mesh segment, or "
+       "parallel to the claim within the signature angle tolerance, abutting a claim "
+       "end along the chain within ContinuationToleranceOverR x R, within R of it "
+       "transversely, AND extending beyond that claim end: every cell end on the outward "
+       "side of the abutting end within the tolerance; a parallel stretch alongside the "
+       "claim over its own range is Foreign): the coupon continues "
+       "the claim straight to the box face, so its defect and the stretch's own patches "
+       "correct the same surface (the double count that the continuation ownership at "
+       "placement removes). Foreign = any other stretch: absent "
+       "from the coupon's twins, a second-order model mismatch of the coupon, not a double "
+       "count. Judged per stretch, never per cell: the first cells of every stack portion "
+       "adjacent to a cluster lie inside its box legitimately. Lengths and coordinates in "
+       "mesh units"}};
+}
+
+std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnostics)
+{
+  std::string lines;
+  for (const auto &entry : diagnostics["Records"])
+  {
+    lines += fmt::format(
+        "  feature {} stretch {} ({}, {} patches from patch {}, {:.6e} mesh units) inside "
+        "spatial patch {} ({}): {}\n",
+        entry["Feature"].get<int>(), entry["Stretch"].get<int>(),
+        entry["Model"].get<std::string>(), entry["Patches"].get<std::size_t>(),
+        entry["FirstPatch"].get<std::size_t>() + 1, entry["Length"].get<double>(),
+        entry["SpatialPatch"].get<std::size_t>() + 1,
+        entry["SpatialModel"].get<std::string>(), entry["Class"].get<std::string>());
+  }
+  return fmt::format(
+      "{:d} translational response-correction stretch(es) ({:.6e} mesh units; Continuation "
+      "{:d} / Foreign {:d}) lie wholly inside a spatial patch's matching volume (decision "
+      "236, recorded under Diagnostics.TranslationalStretchesInsideSpatialSupport):\n{}",
+      diagnostics["Count"].get<int>(), diagnostics["Length"].get<double>(),
+      diagnostics["Continuation"]["Count"].get<int>(),
+      diagnostics["Foreign"]["Count"].get<int>(), lines);
+}
 
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
@@ -14433,6 +14817,30 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    << ") overlap without complete spatial-cluster ownership. Replace "
                       "them with one coupled spatial model or an explicit nonoverlapping "
                       "partition!");
+      }
+    }
+    // Translational patches against the spatial supports (decisions 224 / 236): every
+    // translational stretch wholly inside one spatial support is recorded (Diagnostics +
+    // warning), never an abort — a Continuation stretch is the double count the
+    // continuation ownership at placement removes, a Foreign one a model mismatch of the
+    // coupon (the S1p 41-edge loop end: three leads split by 1.738 um pieces of a 3-edge
+    // stack between the cluster's claims, now absorbed by the identification; the accepted
+    // transmon library: four stretches continuing claimed edges through their claim cuts).
+    {
+      std::vector<std::string> skipped;
+      const auto boxes = CollectSpatialSupports(
+          *config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+          { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale,
+          dimension, &skipped);
+      const auto records = FindTranslationalStretchInsideSpatialSupport(
+          config->patches, boxes, dimension,
+          kSignatureParameterToleranceOverRadius * config->matching_radius);
+      ownership_diagnostics = DescribeTranslationalOwnershipRecords(
+          records, boxes, *config, coordinate_scale, skipped);
+      if (!records.empty())
+      {
+        Mpi::Warning(fespace.GetComm(), "{}",
+                     DescribeTranslationalOwnershipWarning(ownership_diagnostics));
       }
     }
   }
@@ -17530,6 +17938,11 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
                              {"PatchWeight", model_patch_weights[i]}});
   }
   result["ModelCatalog"] = std::move(model_catalog);
+  if (!ownership_diagnostics.is_null())
+  {
+    result["Diagnostics"]["TranslationalStretchesInsideSpatialSupport"] =
+        ownership_diagnostics;
+  }
   result["Correction"] = {{"Models", Replicated(models.size(), "Models")},
                           {"Patches", global_patch_count},
                           {"TraceCoefficients", global_basis_size},
