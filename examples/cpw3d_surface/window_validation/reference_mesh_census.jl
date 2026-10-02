@@ -120,8 +120,9 @@ for (dim, attribute) in gmsh.model.get_physical_groups(2)
                 a, b, c = node_index[fn[f]], node_index[fn[f + 1]], node_index[fn[f + 2]]
                 pa, pb, pc = (X[1, a], X[2, a]), (X[1, b], X[2, b]), (X[1, c], X[2, c])
                 same(u, v) = abs(u[1] - v[1]) < 1.0e-9 && abs(u[2] - v[2]) < 1.0e-9
-                pair = same(pa, pb) ? (pa, pc) : same(pa, pc) ? (pa, pb) :
-                       same(pb, pc) ? (pa, pb) : nothing
+                pair =
+                    same(pa, pb) ? (pa, pc) :
+                    same(pa, pc) ? (pa, pb) : same(pb, pc) ? (pa, pb) : nothing
                 pair === nothing && continue
                 u, v = pair
                 key = u < v ? (u[1], u[2], v[1], v[2]) : (v[1], v[2], u[1], u[2])
@@ -171,8 +172,10 @@ plan_distance = fill(Inf, length(plan_positions))
 # Uniform grid over the segments for the nearest-segment query.
 xs = [s[1] for s in segs]
 ys = [s[2] for s in segs]
-xmin, xmax = minimum(min.(xs, [s[3] for s in segs])), maximum(max.(xs, [s[3] for s in segs]))
-ymin, ymax = minimum(min.(ys, [s[4] for s in segs])), maximum(max.(ys, [s[4] for s in segs]))
+xmin, xmax =
+    minimum(min.(xs, [s[3] for s in segs])), maximum(max.(xs, [s[3] for s in segs]))
+ymin, ymax =
+    minimum(min.(ys, [s[4] for s in segs])), maximum(max.(ys, [s[4] for s in segs]))
 cell = max(5.0, (xmax - xmin) / 200)
 nx = max(1, ceil(Int, (xmax - xmin) / cell))
 ny = max(1, ceil(Int, (ymax - ymin) / cell))
@@ -193,7 +196,9 @@ for (key, index) in plan_positions
     best = Inf
     ring = 0
     while true
-        for i = max(1, ci - ring):min(nx, ci + ring), j = max(1, cj - ring):min(ny, cj + ring)
+        for i = max(1, ci - ring):min(nx, ci + ring),
+            j = max(1, cj - ring):min(ny, cj + ring)
+
             (abs(i - ci) == ring || abs(j - cj) == ring) || continue
             for k in grid[i, j]
                 d = segment_distance(px, py, segs[k])
@@ -201,7 +206,10 @@ for (key, index) in plan_positions
             end
         end
         # Every segment closer than (ring) cells has been seen once ring * cell >= best.
-        (best <= ring * cell || (ci - ring < 1 && ci + ring > nx && cj - ring < 1 && cj + ring > ny)) && break
+        (
+            best <= ring * cell ||
+            (ci - ring < 1 && ci + ring > nx && cj - ring < 1 && cj + ring > ny)
+        ) && break
         ring += 1
     end
     plan_distance[index] = best
@@ -249,8 +257,12 @@ println()
 print_row(rows[end])
 
 println("\n-- by plan distance to the nearest metal edge (um) --")
-edge_bins = [(0.0, 0.1, "edge < 0.1 (rows 1-4)"), (0.1, band_um, "0.1 <= edge < $(band_um) (outer band)"),
-    (band_um, 10.0, "$(band_um) <= edge < 10"), (10.0, Inf, "edge >= 10 (plan interior)")]
+edge_bins = [
+    (0.0, 0.1, "edge < 0.1 (rows 1-4)"),
+    (0.1, band_um, "0.1 <= edge < $(band_um) (outer band)"),
+    (band_um, 10.0, "$(band_um) <= edge < 10"),
+    (10.0, Inf, "edge >= 10 (plan interior)")
+]
 for (lo, hi, label) in edge_bins
     m = (dedge .>= lo) .& (dedge .< hi)
     row = summary_row(label, q[m], g[m], ar[m], total)
@@ -259,9 +271,13 @@ for (lo, hi, label) in edge_bins
 end
 
 println("\n-- by z distance to the nearest metal slab (um) --")
-plane_bins = [(0.0, 1.0e-12, "inside the metal thickness range"), (1.0e-12, 0.1, "plane < 0.1"),
-    (0.1, slab_um, "0.1 <= plane < $(slab_um)"), (slab_um, 10.0, "$(slab_um) <= plane < 10"),
-    (10.0, Inf, "plane >= 10 (far field)")]
+plane_bins = [
+    (0.0, 1.0e-12, "inside the metal thickness range"),
+    (1.0e-12, 0.1, "plane < 0.1"),
+    (0.1, slab_um, "0.1 <= plane < $(slab_um)"),
+    (slab_um, 10.0, "$(slab_um) <= plane < 10"),
+    (10.0, Inf, "plane >= 10 (far field)")
+]
 for (lo, hi, label) in plane_bins
     m = (dplane .>= lo) .& (dplane .< hi)
     row = summary_row(label, q[m], g[m], ar[m], total)
@@ -284,9 +300,14 @@ for (m, label) in (
 end
 
 println("\n-- by sweep interval height dz (um) --")
-dz_bins = [(0.0, 0.015, "dz <= 0.01 (metal / trench levels)"), (0.015, 0.11, "0.01 < dz <= 0.1"),
-    (0.11, 1.1, "0.1 < dz <= 1"), (1.1, 11.0, "1 < dz <= 10"), (11.0, 110.0, "10 < dz <= 100"),
-    (110.0, Inf, "dz > 100")]
+dz_bins = [
+    (0.0, 0.015, "dz <= 0.01 (metal / trench levels)"),
+    (0.015, 0.11, "0.01 < dz <= 0.1"),
+    (0.11, 1.1, "0.1 < dz <= 1"),
+    (1.1, 11.0, "1 < dz <= 10"),
+    (11.0, 110.0, "10 < dz <= 100"),
+    (110.0, Inf, "dz > 100")
+]
 for (lo, hi, label) in dz_bins
     m = (dz .> lo) .& (dz .<= hi)
     row = summary_row(label, q[m], g[m], ar[m], total)
@@ -296,7 +317,13 @@ end
 
 # Needle attribution: the share of tets whose edge ratio exceeds 100 by construction class.
 needles = ar .> 100
-println("\n-- tets with edge ratio > 100: ", count(needles), " (", round(100 * count(needles) / nt; digits=1), " %) --")
+println(
+    "\n-- tets with edge ratio > 100: ",
+    count(needles),
+    " (",
+    round(100 * count(needles) / nt; digits=1),
+    " %) --"
+)
 attribution = Dict{String, Any}()
 for (m, label) in (
     (band .& near, "band x near plane"),
@@ -305,8 +332,17 @@ for (m, label) in (
     (.!band .& .!near, "interior x far from plane")
 )
     c = count(needles .& m)
-    attribution[label] = Dict("needles" => c, "share_of_needles" => round(c / max(1, count(needles)); digits=4))
-    println(rpad(label, 40), lpad(c, 9), "  ", round(100 * c / max(1, count(needles)); digits=1), " % of the needles")
+    attribution[label] = Dict(
+        "needles" => c,
+        "share_of_needles" => round(c / max(1, count(needles)); digits=4)
+    )
+    println(
+        rpad(label, 40),
+        lpad(c, 9),
+        "  ",
+        round(100 * c / max(1, count(needles)); digits=1),
+        " % of the needles"
+    )
 end
 
 levels = sort(unique(round.(X[3, :]; digits=6)))
@@ -328,7 +364,12 @@ result = Dict(
     "share_edge_ratio_above_1000" => round(count(>(1000), ar) / nt; digits=4)
 )
 open(replace(MESH, r"\.msh2?$" => "") * ".census.json", "w") do io
-    JSON.print(io, result, 2)
+    return JSON.print(io, result, 2)
 end
-println("\nz levels ", length(levels), "  wrote ", replace(MESH, r"\.msh2?$" => "") * ".census.json")
+println(
+    "\nz levels ",
+    length(levels),
+    "  wrote ",
+    replace(MESH, r"\.msh2?$" => "") * ".census.json"
+)
 gmsh.finalize()

@@ -120,7 +120,8 @@ function thin(levels::Vector{Float64}, spacing::Float64)
         if is_interface(z)
             push!(kept, z)
         else
-            next_interface = findfirst(j -> j > i && is_interface(levels[j]), eachindex(levels))
+            next_interface =
+                findfirst(j -> j > i && is_interface(levels[j]), eachindex(levels))
             room = next_interface === nothing ? Inf : levels[next_interface] - z
             if z - kept[end] >= spacing - 1.0e-12 && room >= spacing - 1.0e-12
                 push!(kept, z)
@@ -238,7 +239,8 @@ function cs_node(li, z)
         return length(node_yz)
     end
 end
-active_levels(li) = [z for z in lines[li].stack if lines[li].lo - 1.0e-9 <= z <= lines[li].hi + 1.0e-9]
+active_levels(li) =
+    [z for z in lines[li].stack if lines[li].lo - 1.0e-9 <= z <= lines[li].hi + 1.0e-9]
 for li in eachindex(lines), z in active_levels(li)
     cs_node(li, z)
 end
@@ -275,8 +277,9 @@ function cells_between!(L, R, za, zb, bottom_hanging, top_hanging)
         (R, L, levels_R, levels_L)
     all(any(abs(z - w) <= 1.0e-9 for w in fl) for z in cl) ||
         error("Stacks not nested between y=$(lines[L].y) and y=$(lines[R].y) in [$za, $zb]")
-    (abs(cl[1] - za) <= 1.0e-9 && abs(cl[end] - zb) <= 1.0e-9) ||
-        error("Range ends [$za, $zb] are not levels of the coarse line y=$(lines[coarse].y)")
+    (abs(cl[1] - za) <= 1.0e-9 && abs(cl[end] - zb) <= 1.0e-9) || error(
+        "Range ends [$za, $zb] are not levels of the coarse line y=$(lines[coarse].y)"
+    )
     left = min(L, R)
     for ci = 1:(length(cl) - 1)
         z0, z1 = cl[ci], cl[ci + 1]
@@ -344,11 +347,15 @@ for (edge, side) in ((e1, -1), (e1, +1), (e2, -1), (e2, +1))
     end
 end
 # Full-range pairs: the outermost rows with their interior neighbours and the interior lines.
-full = [li for li in eachindex(lines) if lines[li].lo <= z_bottom + 1.0e-9 && lines[li].hi >= z_top - 1.0e-9]
+full = [
+    li for li in eachindex(lines) if
+    lines[li].lo <= z_bottom + 1.0e-9 && lines[li].hi >= z_top - 1.0e-9
+]
 for i = 1:(length(full) - 1)
     L, R = full[i], full[i + 1]
     # Skip (base, row K) pairs: they are covered above (the base lines are full-range too).
-    any(abs(lines[L].y - e) <= 1.0e-9 || abs(lines[R].y - e) <= 1.0e-9 for e in (e1, e2)) && continue
+    any(abs(lines[L].y - e) <= 1.0e-9 || abs(lines[R].y - e) <= 1.0e-9 for e in (e1, e2)) &&
+        continue
     cells_between!(L, R, z_bottom, z_top, Int[], Int[])
 end
 println("cross-section triangles: ", length(triangles))
@@ -378,10 +385,21 @@ let band_near = 0, band_far = 0, int_near = 0, int_far = 0
         !band && !near && (int_far += 1)
     end
     println(
-        "cross-section triangles: band x near ", band_near, "  band x far ", band_far,
-        "  interior x near ", int_near, "  interior x far ", int_far,
-        " (tensor sweep per column pair: band rows x intervals = ", rows_max, " x ",
-        length(z_all) - 1, " x 2 = ", 2 * rows_max * (length(z_all) - 1), " per side)"
+        "cross-section triangles: band x near ",
+        band_near,
+        "  band x far ",
+        band_far,
+        "  interior x near ",
+        int_near,
+        "  interior x far ",
+        int_far,
+        " (tensor sweep per column pair: band rows x intervals = ",
+        rows_max,
+        " x ",
+        length(z_all) - 1,
+        " x 2 = ",
+        2 * rows_max * (length(z_all) - 1),
+        " per side)"
     )
 end
 
@@ -398,7 +416,10 @@ function material(y, z)
     end
     return Int8(2)
 end
-cs_material = [material(sum(node_yz[n][1] for n in t) / 3, sum(node_yz[n][2] for n in t) / 3) for t in triangles]
+cs_material = [
+    material(sum(node_yz[n][1] for n in t) / 3, sum(node_yz[n][2] for n in t) / 3) for
+    t in triangles
+]
 
 # ---------------------------------------------------------------------------------------------
 # Sweep along x: stations every tangential_um; node (station s, cs node n).
@@ -433,14 +454,24 @@ for (ti, t) in enumerate(triangles)
     for s = 0:(nx - 1)
         lower = Int32(s * n_cs)
         upper = Int32((s + 1) * n_cs)
-        push_prism!(lower + t[1], lower + t[2], lower + t[3], upper + t[1], upper + t[2], upper + t[3], attribute)
+        push_prism!(
+            lower + t[1],
+            lower + t[2],
+            lower + t[3],
+            upper + t[1],
+            upper + t[2],
+            upper + t[3],
+            attribute
+        )
     end
 end
 function signed_volume(p1, p2, p3, p4)
     ax, ay, az = p2[1] - p1[1], p2[2] - p1[2], p2[3] - p1[3]
     bx, by, bz = p3[1] - p1[1], p3[2] - p1[2], p3[3] - p1[3]
     cx, cy, cz = p4[1] - p1[1], p4[2] - p1[2], p4[3] - p1[3]
-    return (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6
+    return (
+        ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)
+    ) / 6
 end
 for index in eachindex(tetrahedra)
     t = tetrahedra[index]
@@ -458,7 +489,8 @@ face_data = Dict{NTuple{3, Int32}, Tuple{Int8, Int8}}()
 sizehint!(face_data, 2 * length(tetrahedra))
 for (index, t) in enumerate(tetrahedra)
     attribute = tetrahedron_attribute[index]
-    for face in ((t[1], t[2], t[3]), (t[1], t[2], t[4]), (t[1], t[3], t[4]), (t[2], t[3], t[4]))
+    for face in
+        ((t[1], t[2], t[3]), (t[1], t[2], t[4]), (t[1], t[3], t[4]), (t[2], t[3], t[4]))
         a, b, c = face
         a > b && ((a, b) = (b, a))
         b > c && ((b, c) = (c, b))
@@ -473,9 +505,12 @@ for (face, (count, attribute_sum)) in face_data
     p = (nodes[face[1]], nodes[face[2]], nodes[face[3]])
     if count == 1
         attribute = 0
-        if all(near(q[1], box_x[1]) for q in p) || all(near(q[1], box_x[2]) for q in p) ||
-           all(near(q[2], box_y[1]) for q in p) || all(near(q[2], box_y[2]) for q in p) ||
-           all(near(q[3], z_bottom) for q in p) || all(near(q[3], z_top) for q in p)
+        if all(near(q[1], box_x[1]) for q in p) ||
+           all(near(q[1], box_x[2]) for q in p) ||
+           all(near(q[2], box_y[1]) for q in p) ||
+           all(near(q[2], box_y[2]) for q in p) ||
+           all(near(q[3], z_bottom) for q in p) ||
+           all(near(q[3], z_top) for q in p)
             attribute = 3
         elseif all(near(q[3], surface_z + metal_thickness) for q in p)
             attribute = 4 # metal top
@@ -483,7 +518,8 @@ for (face, (count, attribute_sum)) in face_data
             attribute = 5 # metal bottom
         elseif all(near(q[2], e1) for q in p) || all(near(q[2], e2) for q in p)
             zmid = sum(q[3] for q in p) / 3
-            surface_z < zmid < surface_z + metal_thickness || error("Sidewall face off the metal at z=$zmid")
+            surface_z < zmid < surface_z + metal_thickness ||
+                error("Sidewall face off the metal at z=$zmid")
             attribute = 4 # sidewall
         else
             error("Unclassified boundary face at $(p[1])")
@@ -507,7 +543,8 @@ for i in eachindex(nodes)
     end
 end
 tetrahedra = [(remap[t[1]], remap[t[2]], remap[t[3]], remap[t[4]]) for t in tetrahedra]
-surface_elements = [(a, (remap[f[1]], remap[f[2]], remap[f[3]])) for (a, f) in surface_elements]
+surface_elements =
+    [(a, (remap[f[1]], remap[f[2]], remap[f[3]])) for (a, f) in surface_elements]
 nodes = compacted
 face_area(p1, p2, p3) = begin
     ux, uy, uz = p2[1] - p1[1], p2[2] - p1[2], p2[3] - p1[3]
@@ -518,17 +555,27 @@ surface_counts = Dict{String, Int}()
 surface_areas = Dict{String, Float64}()
 for (a, f) in surface_elements
     surface_counts[string(a)] = get(surface_counts, string(a), 0) + 1
-    surface_areas[string(a)] = get(surface_areas, string(a), 0.0) + face_area(nodes[f[1]], nodes[f[2]], nodes[f[3]])
+    surface_areas[string(a)] =
+        get(surface_areas, string(a), 0.0) +
+        face_area(nodes[f[1]], nodes[f[2]], nodes[f[3]])
 end
 volumes = Dict{String, Float64}()
 volume_counts = Dict{String, Int}()
 for (i, t) in enumerate(tetrahedra)
     key = string(tetrahedron_attribute[i])
     volume_counts[key] = get(volume_counts, key, 0) + 1
-    volumes[key] = get(volumes, key, 0.0) + signed_volume(nodes[t[1]], nodes[t[2]], nodes[t[3]], nodes[t[4]])
+    volumes[key] =
+        get(volumes, key, 0.0) +
+        signed_volume(nodes[t[1]], nodes[t[2]], nodes[t[3]], nodes[t[4]])
 end
-names = [(3, 1, "substrate"), (3, 2, "vacuum"), (2, 3, "exterior_boundary"), (2, 4, "ground_air"),
-    (2, 5, "ground_substrate"), (2, 6, "substrate_air")]
+names = [
+    (3, 1, "substrate"),
+    (3, 2, "vacuum"),
+    (2, 3, "exterior_boundary"),
+    (2, 4, "ground_air"),
+    (2, 5, "ground_substrate"),
+    (2, 6, "substrate_air")
+]
 mkpath(dirname(output))
 open(output, "w") do stream
     print(stream, "\$MeshFormat\n2.2 0 8\n\$EndMeshFormat\n")
@@ -540,7 +587,10 @@ open(output, "w") do stream
     for (i, p) in enumerate(nodes)
         @printf(stream, "%d %.16g %.16g %.16g\n", i, p[1], p[2], p[3])
     end
-    print(stream, "\$EndNodes\n\$Elements\n$(length(surface_elements) + length(tetrahedra))\n")
+    print(
+        stream,
+        "\$EndNodes\n\$Elements\n$(length(surface_elements) + length(tetrahedra))\n"
+    )
     e = 0
     for (a, f) in surface_elements
         e += 1
@@ -584,5 +634,21 @@ open(replace(output, r"\.msh2$" => ".json"), "w") do stream
     JSON.print(stream, manifest, 2)
     return println(stream)
 end
-println("Saved ", output, ": nodes ", length(nodes), ", tetrahedra ", length(tetrahedra), ", surface triangles ", length(surface_elements))
-println("Surface counts: ", surface_counts, "\nSurface areas (um^2): ", surface_areas, "\nVolumes (um^3): ", volumes)
+println(
+    "Saved ",
+    output,
+    ": nodes ",
+    length(nodes),
+    ", tetrahedra ",
+    length(tetrahedra),
+    ", surface triangles ",
+    length(surface_elements)
+)
+println(
+    "Surface counts: ",
+    surface_counts,
+    "\nSurface areas (um^2): ",
+    surface_areas,
+    "\nVolumes (um^3): ",
+    volumes
+)
