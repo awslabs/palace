@@ -836,6 +836,40 @@ class PatchGateTest(unittest.TestCase):
         self.assertEqual(status["A7-patch-weights"], "FAIL")
         self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "quadrature x model weights do not sum to 1 - owned / portion")
 
+    def test_domain_boundary_exclusion_keeps_the_portion_tiled(self):
+        # Decision 258: a patch whose placed coupon section leaves the device mesh is written
+        # with Weight 0 and its unscaled quadrature weight (the portion stays tiled), listed
+        # in Diagnostics.DomainBoundaryExclusions with its cell length.
+        ident = self.identification()
+        rows = self.patches()
+        rows[0]["Weight"] = 0.0
+        ident["Diagnostics"] = {"DomainBoundaryExclusions": {"Count": 1, "Patches": [
+            {"Patch": 0, "Feature": 0, "Segment": 0, "S0": 0.0, "S1": 3.0, "CellLength": 1.5, "PortionLength": 3.0, "OutsidePoints": 3},
+        ]}}
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "PASS", detail["A7-patch-weights"])
+        self.assertEqual(status["A7-patch-coverage"], "PASS")
+        self.assertEqual(detail["A7-patch-weights"]["DomainBoundaryExcludedPatches"], 1)
+        self.assertAlmostEqual(detail["A7-patch-weights"]["DomainBoundaryExcludedLength"], 1.5)
+        # The record's cell length must be the patch's quadrature x portion.
+        ident["Diagnostics"]["DomainBoundaryExclusions"]["Patches"][0]["CellLength"] = 3.0
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "domain-boundary record cell length is not the patch cell")
+        # Without the record a zero weight is the weight-formula defect (fail-before); with
+        # the record a nonzero weight on an excluded patch is a defect.
+        del ident["Diagnostics"]
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "weight formula")
+        rows[0]["Weight"] = 0.5 * 3.0 / 2.0
+        ident["Diagnostics"] = {"DomainBoundaryExclusions": {"Count": 1, "Patches": [
+            {"Patch": 0, "Feature": 0, "Segment": 0, "S0": 0.0, "S1": 3.0, "CellLength": 1.5, "PortionLength": 3.0, "OutsidePoints": 3},
+        ]}}
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "domain-boundary excluded patch with a nonzero weight")
+
 
 class SignatureLibraryTest(unittest.TestCase):
     LAW = "{\"Type\":\"PEC\"}"
