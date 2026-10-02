@@ -335,6 +335,14 @@ end
           isapprox(runs[1].angle, pi; atol=1.0e-9)
     offset = curved_offset_loop(narrow, -collar, runs, TOLERANCE)
     @test offset.bridged && count(item -> item.collapsed, offset.items) == 1
+    # A bridged offset is never a simple offset: the non-collar callers
+    # (offset_loop_points: retained-mask / metal lofts, rounding primitives) fail
+    # closed; only collar_loop_points routes it to the union.
+    message = guard_message(() -> offset_loop_points(narrow, -collar, TOLERANCE))
+    @test occursin("bridges a collapsed circular arc", message) &&
+          occursin("not a simple offset", message)
+    @test offset_loop_points(narrow, -0.3, TOLERANCE) ==
+          curved_offset_loop(narrow, -0.3, runs, TOLERANCE).points
     absorbed = Dict{String, Any}[]
     rule = collar_island_rule(narrow, -collar, box, radius, TOLERANCE)
     points, construction = collar_loop_points(
@@ -659,6 +667,87 @@ end
     )
     @test plain_construction == "MiterOffset" && isempty(absorbed)
     @test !point_in_polygon((0.0, 17.0), plain_points, TOLERANCE)
+end
+
+@testset "island rule: a kite-bounded island fails closed when the measured excess exceeds the cap" begin
+    radius = 2.0
+    collar = 3radius
+    excess = 0.03 * radius
+    box = ([-20.0, -10.0], [20.0, 30.0])
+    # A stepped keyhole: entry 8 wide, a narrow chamber (2 x collar + 2 x excess)
+    # wide from y = 4 to 11, then a wide chamber (16 wide) up to the top wall y = 22.
+    # The step corners (-/+ (collar + excess), 11) are convex metal corners whose
+    # miter kites (squares of side collar) bound the island laterally above y = 11:
+    # the island is x in -/+ excess, y in (10, 16), bound = excess (half its width),
+    # but its points are farther than the collar from every metal point (the step
+    # corners, the top wall, the far walls): the exact excess reaches ~1.17 = 0.58 R.
+    half = collar + excess
+    stepped = exterior(
+        [
+            (-20.0, 0.0),
+            (-4.0, 0.0),
+            (-4.0, 4.0),
+            (-half, 4.0),
+            (-half, 11.0),
+            (-8.0, 11.0),
+            (-8.0, 22.0),
+            (8.0, 22.0),
+            (8.0, 11.0),
+            (half, 11.0),
+            (half, 4.0),
+            (4.0, 4.0),
+            (4.0, 0.0),
+            (20.0, 0.0),
+            (20.0, 30.0),
+            (-20.0, 30.0)
+        ];
+        classes=vcat(fill("Physical", 13), fill("Continuation", 3))
+    )
+    rule = collar_island_rule(stepped, -collar, box, radius, TOLERANCE)
+    island = [(-excess, 10.0), (excess, 10.0), (excess, 16.0), (-excess, 16.0)]
+    @test isapprox(island_excess_bound(island), excess; atol=1.0e-12)
+    @test island_excess_bound(island) <= rule.cap
+    measured, at = island_maximum_excess(island, rule, TOLERANCE)
+    @test 1.1 <= measured <= 1.2 && measured > rule.cap
+    @test abs(at[1]) <= 1.0e-3 && 14.5 <= at[2] <= 15.2
+    # The bound alone would admit the island; the gate also needs the measurement.
+    message = guard_message(
+        () -> collar_loop_points(
+            stepped,
+            -collar,
+            box,
+            TOLERANCE;
+            island_rule=rule,
+            absorbed=Dict{String, Any}[]
+        )
+    )
+    @test occursin("ScopeGuard[FootprintTopology]", message) &&
+          occursin("above the admitted", message) &&
+          occursin("the measurement exceeds the bound", message)
+    # The same stepped chamber with its top wall at y = 16.1 leaves the island
+    # x in -/+ excess, y in (10, 10.1), still bounded below by the entry corners'
+    # kites, but its measured excess (the narrow walls, excess; the top wall, 0.05)
+    # agrees with the cap: absorbed and recorded with both measures within the cap.
+    low = exterior(
+        [p[2] == 22.0 ? (p[1], 16.1) : p for p in stepped.points];
+        classes=stepped.classes
+    )
+    absorbed = Dict{String, Any}[]
+    points, construction = collar_loop_points(
+        low,
+        -collar,
+        box,
+        TOLERANCE;
+        island_rule=collar_island_rule(low, -collar, box, radius, TOLERANCE),
+        absorbed=absorbed
+    )
+    @test construction == "CollarUnion" && length(absorbed) == 1
+    record = absorbed[1]
+    @test isapprox(record["Area"], 2excess * 0.1; atol=1.0e-9)
+    @test isapprox(record["MaximumExcessBound"], 0.05; atol=1.0e-9)
+    @test isapprox(record["MaximumExcess"], excess; atol=1.0e-3 * excess)
+    @test record["MaximumExcess"] <= record["ExcessCap"] &&
+          record["MaximumExcessBound"] <= record["ExcessCap"]
 end
 
 @testset "hole shrink of a rounded-rectangle hole: concentric arcs, collapse, vanishing" begin

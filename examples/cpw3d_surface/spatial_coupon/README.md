@@ -146,16 +146,32 @@ offset exactly (decision 246): a convex-metal arc grows to r + collar, a
 concave one shrinks to r - collar, an arc smaller than the collar collapses onto
 its neighbours' junction, tangent joints stay continuous and the union takes an
 annular sector per arc; the hole-shrink path erodes a convex hole by the chords
-of its concentric arcs. The collar stands for the real overetch, which removes
-all exposed substrate, so an un-etched island created only by the collar
-geometry is an artefact: an island bounded entirely by collar boundaries, away
-from the box face, whose every point lies within `0.05 x Radius` beyond the
+of its concentric arcs. Two caveats bound "exact": a junction turning by at most
+`JUNCTION_TANGENT_ANGLE` = 1e-4 rad is tangent and its two shifted ends (apart by
+at most collar x 1e-4, 0.57 nm for the 5.7 um collar) snap to one point, the one
+sub-nanometre tolerance the offsets carry; and where an offset arc crosses
+another collar front on a `CollarUnion` boundary the crossing vertex is the
+intersection of the chord polyline with that front (within the chord sagitta,
+r(1 - cos(chord angle / 2)), of the exact arc) and the arc run is interrupted
+there (that chord stays straight in CAD). A bridged curved offset (a collapsed
+arc whose neighbours' offsets do not meet) is never a simple offset: only the
+collar lofts take it, through the union; the retained-mask / metal lofts and the
+rounding primitives fail closed on it. The collar stands for the real overetch,
+which removes all exposed substrate, so an un-etched island created only by the
+collar geometry is an artefact: an island bounded entirely by collar boundaries,
+away from the box face, whose every point lies within `0.05 x Radius` beyond the
 collar (`COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS`) is absorbed into the etched
 collar and recorded in the census (`FootprintPolygons[].AbsorbedIslands`: area,
 maximum excess found and its rigorous bound; `FootprintSimplification`
-totals). A larger island, or an un-etched region touching the box face, fails
-closed as before (`ScopeGuard[FootprintTopology]`, decision 229's per-case
-override path).
+totals). The bound (half the island's smallest width) measures beyond the
+constructed collar boundary, convex-corner miter kites included; the maximum
+excess found measures the exact metal distance; both must stay within the cap,
+so an island bounded by a kite edge (beyond the round offset) fails closed when
+the two disagree. A larger island, or an un-etched region touching the box
+face, fails closed as before (`ScopeGuard[FootprintTopology]`, decision 229's
+per-case override path). The S1p loop end 5ed91f8890c0 is the reference case:
+one island of 0.013 um^2 whose excess beyond its 5.7 um collar is at least
+0.0348 um (0.018 R, found) and at most 0.0417 um (0.022 R, bound).
 
 `audit_trace_continuity.py` detects side/cap T-junction jumps, and
 `repair_triangle_trace_caps.py` writes separate corrected traces while recording

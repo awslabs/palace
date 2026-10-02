@@ -2404,11 +2404,21 @@ end
 # Physical side (`distance` < 0: away from the metal; Continuation sides, on the
 # box, never move). A straight loop is the miter polygon of its shifted sides; a
 # loop with recognised circular arcs (circular_arc_runs) is offset exactly by
-# curved_offset_loop: concentric arcs, tangent joints, collapsed degenerate arcs.
+# curved_offset_loop: concentric arcs, tangent joints, collapsed degenerate arcs. A
+# bridged curved offset (a collapsed arc whose neighbours' offsets do not meet) is
+# never a simple offset: it fails closed here; only collar_loop_points, which
+# routes it to the collar union, accepts it.
 function offset_loop_points(loop, distance, tolerance)
     abs(distance)<=tolerance && return loop.points
     runs = circular_arc_runs(loop.points, tolerance)
-    isempty(runs) || return curved_offset_loop(loop, distance, runs, tolerance).points
+    if !isempty(runs)
+        offset = curved_offset_loop(loop, distance, runs, tolerance)
+        offset.bridged &&
+            error("Offset $distance of the plan-view loop of conductor $(loop.conductor) on " *
+                  "plane $(loop.plane) bridges a collapsed circular arc whose neighbours' " *
+                  "offsets do not meet: not a simple offset (only the collar union takes it)")
+        return offset.points
+    end
     metal_side=loop_orientation(loop.points)*(loop.hole ? -1.0 : 1.0)
     shifted = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
     for index in eachindex(loop.points)
@@ -2666,8 +2676,13 @@ function curved_offset_loop(loop, distance, runs, tolerance)
             hypot(point[1] - v[1], point[2] - v[2]) <= 8.0 * max(abs(distance), tolerance)
             for v in vertices)
         if !resolved && !collapsed_between
-            point === nothing &&
+            if point === nothing && before.kind == :line && after.kind == :line
                 error("Plan-view taper has a singular boundary vertex at $(before.stop)")
+            elseif point === nothing
+                error("Plan-view taper offset by $distance: the shifted straight side misses " *
+                      "the offset circle of the circular arc it meets at $(before.stop) (a " *
+                      "line-arc kink whose offsets do not meet)")
+            end
             error("Plan-view taper produces an unresolved miter at $(before.stop)")
         end
         turn = metal_side * atan(cross2d(before.tangent_stop, after.tangent_start),
@@ -3004,9 +3019,11 @@ metal_distance(point, primitives, tolerance) =
     minimum(point_primitive_distance(point, primitive, tolerance) for primitive in primitives)
 
 # Half the smallest width of the island polygon over its edge normals: an upper
-# bound of its inradius, hence of the excess of any of its points beyond the collar
-# (every boundary point is on the collar boundary, at the collar distance from the
-# metal, and the metal distance is 1-Lipschitz).
+# bound of its inradius, hence of the excess of any of its points beyond the
+# CONSTRUCTED collar boundary (every boundary point is on that boundary, at the
+# collar distance from the metal along the rectangles and arcs but farther along a
+# convex-corner miter kite, and the metal distance is 1-Lipschitz). The exact metal
+# distance is measured by island_maximum_excess; the gate needs both within the cap.
 function island_excess_bound(points)
     n = length(points)
     bound = Inf
@@ -3098,12 +3115,20 @@ function absorb_collar_islands!(absorbed, rule, vertices, starts, stops, outgoin
                         "applies inside the box only)")
         bound = island_excess_bound(island)
         excess, at = island_maximum_excess(island, rule, tolerance)
-        bound <= rule.cap ||
+        # The bound measures beyond the CONSTRUCTED collar boundary (which carries
+        # the convex-corner miter kites), the measurement the exact metal distance:
+        # an island bounded by a kite edge can exceed the cap by measurement while
+        # its bound passes. Both must pass; they fail closed when they disagree.
+        bound <= rule.cap && excess <= rule.cap ||
             scope_error("FootprintTopology",
                         "the collar region encloses an un-etched island of " *
                         "$(length(island)) boundary sub-segments near $at whose excess beyond " *
-                        "the collar $(rule.collar) is up to $bound (found $excess), above the " *
-                        "admitted $(rule.cap)")
+                        "the collar $(rule.collar) is bounded by $bound (half its smallest " *
+                        "width) and measured $excess (exact metal distance), above the " *
+                        "admitted $(rule.cap)" *
+                        (excess > bound ? " (the measurement exceeds the bound: the island " *
+                                          "is bounded by a convex-corner miter kite, beyond " *
+                                          "the round offset)" : ""))
         absorbed === nothing || push!(absorbed, Dict{String, Any}(
             "Vertices" => length(island), "Area" => 0.5 * abs(polygon_area2(island)),
             "Points" => [collect(p) for p in island],
@@ -6712,14 +6737,27 @@ function generate_spatial_coupon(;
                                           "offset exactly as concentric arcs (r + collar for a " *
                                           "convex-metal arc, r - collar for a concave one, " *
                                           "collapsed onto its neighbours' junction when " *
-                                          "r <= collar), tangent joints staying continuous, " *
-                                          "and the union takes an annular sector per arc",
+                                          "r <= collar), tangent joints staying continuous " *
+                                          "(a junction turning by at most " *
+                                          "$JUNCTION_TANGENT_ANGLE rad snaps its two shifted " *
+                                          "ends, at most collar x that angle apart, to one " *
+                                          "point: the one sub-nanometre tolerance of the exact " *
+                                          "offsets), and the union " *
+                                          "takes an annular sector per arc; where an offset " *
+                                          "arc crosses another collar front on the union " *
+                                          "boundary the crossing vertex is the chord-polyline " *
+                                          "intersection (within the chord sagitta of the " *
+                                          "exact arc) and the arc run is interrupted there",
                     "IslandRule" => "an un-etched region bounded entirely by collar " *
                                     "boundaries (not touching the box face) whose every " *
                                     "point lies within IslandExcessCap beyond the collar is " *
                                     "absorbed into the etched collar and recorded " *
                                     "(AbsorbedIslands of its polygon: area, maximum excess " *
-                                    "found and its bound); a larger island fails closed " *
+                                    "found and its bound); the bound (half the island's " *
+                                    "smallest width) measures beyond the constructed collar " *
+                                    "boundary, kites included, the maximum excess found " *
+                                    "measures the exact metal distance, and both must stay " *
+                                    "within the cap; a larger island fails closed " *
                                     "(ScopeGuard FootprintTopology)",
                     "IslandExcessCapOverRadius" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS,
                     "IslandExcessCap" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS * radius,
