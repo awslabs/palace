@@ -454,9 +454,12 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
 // own patches, while any other stretch (class Foreign) is absent from the coupon's twins —
 // a model mismatch, not a double count. A stretch continues a claim when one of its cells
 // lies on the claim's mesh segment (the claim boundary cut that segment) or when it runs
-// parallel to the claim (within the signature angle tolerance) and one of its ends abuts a
+// parallel to the claim (within the signature angle tolerance), one of its ends abuts a
 // claim end along the chain within continuation_tolerance, within R of it transversely (a
-// claim boundary snapped onto a mesh vertex); the cells of a pair sit on the pair's
+// claim boundary snapped onto a mesh vertex), AND it extends beyond that claim end (every
+// cell end on the outward side of the abutting end, away from the claim's other end,
+// within continuation_tolerance; a parallel stretch alongside the claim over the claim's
+// own range is Foreign); the cells of a pair sit on the pair's
 // midline, so collinearity with the edge is not tested. Judged per stretch, never per cell:
 // the box extends 3R past every claim-cut end along its edge (2R continuation + R padding;
 // 2R transversely), so the first cells of every stack portion adjacent to a cluster lie

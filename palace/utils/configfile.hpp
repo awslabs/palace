@@ -1062,8 +1062,8 @@ public:
       // the mesh segment each lies on and its ends as global points (patch length units).
       // The placement's ownership record classifies a translational stretch inside the
       // cluster's box as the continuation of one of these claims (the same segment cut by
-      // the claim boundary, or parallel and abutting its end along the chain) or as foreign
-      // (decision 236).
+      // the claim boundary, or parallel, abutting its end along the chain and extending
+      // beyond that end) or as foreign (decision 236).
       struct Claim
       {
         int segment = -1;

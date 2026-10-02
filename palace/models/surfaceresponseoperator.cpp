@@ -13989,9 +13989,13 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
     }
   }
   // A stretch continues a claim when a cell lies on the claim's mesh segment, or when it
-  // runs parallel to the claim and one of its ends abuts a claim end along the chain within
+  // runs parallel to the claim, one of its ends abuts a claim end along the chain within
   // the tolerance and within R of it transversely (a pair's cells sit on its midline,
-  // within the half separation < R of either edge; a stack's on its first side).
+  // within the half separation < R of either edge; a stack's on its first side) AND it
+  // extends beyond that claim end: every cell end lies on the outward side of the abutting
+  // end (away from the claim's other end) within the tolerance. A parallel stretch lying
+  // alongside the claim over the claim's own range, one end aligned with a claim end, is
+  // foreign: it does not go through the claim cut.
   const double parallel_cosine = std::cos(kSignatureAngleToleranceDegrees * M_PI / 180.0);
   const double transverse_reach =
       continuation_tolerance / kSignatureParameterToleranceOverRadius;
@@ -14033,8 +14037,25 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
           along += delta * tangent[d];
           distance2 += delta * delta;
         }
-        if (std::abs(along) <= continuation_tolerance &&
-            distance2 - along * along <= transverse_reach * transverse_reach)
+        if (!(std::abs(along) <= continuation_tolerance &&
+              distance2 - along * along <= transverse_reach * transverse_reach))
+        {
+          continue;
+        }
+        // Outward = from the claim's other end toward this abutting end.
+        const double outward = (claim_end == &claim.p1) ? 1.0 : -1.0;
+        const bool beyond = std::all_of(stretch.ends.begin(), stretch.ends.end(),
+                                        [&](const std::array<double, 3> &other)
+                                        {
+                                          double along_outward = 0.0;
+                                          for (int d = 0; d < dimension; d++)
+                                          {
+                                            along_outward += (other[d] - (*claim_end)[d]) *
+                                                             tangent[d] * outward;
+                                          }
+                                          return along_outward >= -continuation_tolerance;
+                                        });
+        if (beyond)
         {
           return true;
         }
@@ -14204,9 +14225,11 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
        "claim-cut end along its edge, the 2R continuation + R padding; 2R transversely) is "
        "recorded, never an abort. Continuation = the stretch continues a claimed portion "
        "of that cluster through the claim cut (a cell on the claim's mesh segment, or "
-       "parallel to the claim within the signature angle tolerance and abutting a claim "
+       "parallel to the claim within the signature angle tolerance, abutting a claim "
        "end along the chain within ContinuationToleranceOverR x R, within R of it "
-       "transversely): the coupon continues "
+       "transversely, AND extending beyond that claim end: every cell end on the outward "
+       "side of the abutting end within the tolerance; a parallel stretch alongside the "
+       "claim over its own range is Foreign): the coupon continues "
        "the claim straight to the box face, so its defect and the stretch's own patches "
        "correct the same surface (the double count that the continuation ownership at "
        "placement removes). Foreign = any other stretch: absent "

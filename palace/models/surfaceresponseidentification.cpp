@@ -12326,7 +12326,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
            "R, after a pass repeating the previous one (same absorbed length and "
            "portion count) or after MaxPasses passes (decision 93), the last pass "
            "applied without a further recomposition); pairs / stacks are never "
-           "absorbed (decision 85(2), across rule ratified 88(2))"}}},
+           "absorbed (decision 85(2), across rule ratified 88(2)) — with ONE exception "
+           "(decision 224): the claim-boundary artefacts of TranslationalPiecesAbsorbed "
+           "(TwoSided / StackEndRecomposition within ClusterBallOverR x R of the "
+           "cluster's claims)"}}},
         {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)},
         {"StackEndThirdBodyRule",
          "pair / stack claimed length within 2R (3D, strict) of a cluster's claimed "

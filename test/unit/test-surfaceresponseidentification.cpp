@@ -3616,6 +3616,78 @@ TEST_CASE("SurfaceResponseIdentificationStackPieceInsideCluster",
     CHECK(!reading.leads_owned_by_cluster);
     CHECK(result.extension.translational_pieces == 0);
   }
+  SECTION("a stack-end recomposition piece next to a cluster is absorbed, the stack kept")
+  {
+    // Decision 230 (ii), class StackEndRecomposition (the gate's stack-k3-1p5-3 /
+    // stack-k4-1-1p5-3 layouts): a trace bar between grounds whose edges reach the
+    // truncation box (no ground corners). At each trace end the cluster's claims reach
+    // unequally far along the members (the ground within 2R of the end corners' cores
+    // farther than the trace edges), so between the claim ends the stack is recomposed as a
+    // SMALLER cross-section continuing the larger stack toward the cluster: adjacent to the
+    // cluster at one end, continuing the k-edge stack at the other, within the 1 R ball —
+    // absorbed; the k-edge stack itself (reaching far beyond the ball) is kept.
+    auto GroundBar = [&](double y0, double y1)
+    {
+      LoopSpec ground{Rectangle(-40.0, y0, 40.0, y1), 0, 1.0};
+      ground.truncation_edges = {1, 3};  // the x = +-40 sides lie on the window walls
+      return ground;
+    };
+    auto Count = [&](const IdentificationResult &result, const std::string &type)
+    {
+      int count = 0;
+      for (const auto &feature : result.features)
+      {
+        count += feature.type == type ? 1 : 0;
+      }
+      return count;
+    };
+    {
+      // k = 3: ground | 1.5 um gap | 3 um trace (offsets 0 / 0.75 / 2.25 R). The trace
+      // strip between the ground's claim end and the trace's own (0.75 R from the cores vs
+      // the trace's edges) continues the 3-edge stack: one recomposition piece per end.
+      const auto input = MakeInput(
+          {LoopSpec{Rectangle(-30.0, 0.0, 30.0, 3.0), 0, 1.0}, GroundBar(-9.5, -1.5)}, R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      CHECK(Count(result, "SpatialEdgeCluster") == 2);
+      CHECK(Count(result, "ParallelEdgeCluster") >= 1);
+      CHECK(Count(result, "SameConductorStrip") == 0);
+      CHECK(result.extension.translational_two_sided == 0);
+      CHECK(result.extension.translational_pieces -
+                result.extension.translational_two_sided ==
+            2);
+      CHECK_THAT(result.extension.translational_length, WithinAbs(1.3542, 0.001));
+      CHECK_THAT(result.extension.translational_max_length, WithinAbs(0.6771, 0.001));
+      double stack_length = 0.0;
+      for (const auto &feature : result.features)
+      {
+        stack_length += feature.type == "ParallelEdgeCluster" ? feature.length : 0.0;
+      }
+      CHECK(stack_length > 3.0 * 40.0);  // the 3 members over most of the 60 um bar
+    }
+    {
+      // k = 4: ground | 1 | trace 1.5 | 3 | ground (offsets 0 / 0.5 / 1.25 / 2.75 R): the
+      // 3-edge stack (trace | 3 | ground) then the DifferentConductorGap (trace top |
+      // ground) each continue the larger cross-section toward the cluster: three pieces
+      // per end over successive passes (the ball grows with the claims), the 4-edge stack
+      // kept.
+      const auto input = MakeInput({LoopSpec{Rectangle(-30.0, 0.0, 30.0, 1.5), 0, 1.0},
+                                    GroundBar(-9.0, -1.0), GroundBar(4.5, 12.5)},
+                                   R);
+      const auto result = IdentifyMetalPerimeter(input);
+      CheckPartition(input, result);
+      CHECK(Count(result, "SpatialEdgeCluster") == 2);
+      CHECK(Count(result, "ParallelEdgeCluster") >= 1);
+      CHECK(Count(result, "DifferentConductorGap") == 0);
+      CHECK(result.extension.translational_two_sided == 0);
+      CHECK(result.extension.translational_pieces -
+                result.extension.translational_two_sided ==
+            6);
+      CHECK_THAT(result.extension.translational_length, WithinAbs(2.9904, 0.001));
+      CHECK_THAT(result.extension.translational_max_length, WithinAbs(0.9593, 0.001));
+      CHECK(result.extension.passes >= 3);
+    }
+  }
   SECTION("a bent strip's halves next to their end clusters are genuine pairs")
   {
     // A 2.5 um strip (1.25 R) of 7.5 um between its own end corners, bent by 8 deg at

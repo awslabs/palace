@@ -476,7 +476,12 @@ smaller endpoint.
    dissolves, its pieces return to the run). A stretch with no adjacent portion on its chain
    (a whole chain, or a piece between two `CrossLayer` zones, shorter than the tolerance) has
    nothing to join and stays, counted. Reported as `Diagnostics.SubTolerancePortionsJoined`
-   (`Count`, `Length`, `MaxLength`, `Isolated`). Why the tolerance and not the signature grid:
+   (`Count`, `Length`, `MaxLength`, `Isolated`). The cluster signatures (`EmitClusters`,
+   the `Portions` of a cluster's key) are emitted BEFORE this rule runs in `Assign`, so a
+   cluster's signature and its assigned portions (hence the spatial patch `Claims`) can
+   differ by one sub-1e-3 R sliver joined to or from the cluster — within the matching
+   tolerance by construction, and no worse than the former 1e-6 R join. Why the tolerance
+   and not the signature grid:
    the former rule joined only pieces at or below `SignatureLengthQuantumOverR` x R = 1e-6 R
    (DS-SCT-001's three `CurvedSameConductorStrip` records of 1.6e-7 um in total), a knife-edge
    the stage-1 S1p window missed by 2.3 %: its 4-edge flux-line stack's claim on two members
@@ -962,7 +967,10 @@ smaller endpoint.
    stretch is a maximal contiguous run of one cross-section's claims (one signature key; the
    stack assembly can emit one feature per mesh segment) along a chain; it must lie ENTIRELY
    within the cluster ball radius `ClusterBallOverR` x R of the cluster's claimed pieces (the
-   3D distance sublevel sets of the cluster's own claims, arcs included) — shorter than the
+   3D distance sublevel sets of the cluster's own claims, arcs included; the claims AT THAT
+   PASS — the ball grows with the absorptions, so a k-member stack end sheds up to k - 1
+   recomposition pieces over successive passes, e.g. stack-k4-1-1p5-3: 0.959 + 0.268 +
+   0.268 um per end over three passes) — shorter than the
    interaction distance from the cluster's own claims, so the cluster's coupon describes it
    while the stack's translational patches would correct the same surface a second time —
    and be one of two classes, counted separately (`TwoSided` / `StackEndRecomposition`):
@@ -974,7 +982,10 @@ smaller endpoint.
    69ca648cc16f, the six free ends being claim cuts inside the cluster); STACK-END
    RECOMPOSITION, adjacent to the cluster at one end and continuing, at the other, a pair /
    stack claim of a cross-section with strictly more members containing its own = the
-   members a cluster takes later continue past the member it takes first (the S1p 3-edge
+   members a cluster takes later continue past the member it takes first (the members are
+   compared as sets of CHAINS, `feature_members`; the device path splits physical chains at
+   corners, so a pair's two edges are two chains and the member test is exact — two edges of
+   one pair sharing a chain would not be told apart) (the S1p 3-edge
    stack end, 3 x 1.0 um at y = -136.3 between the 4-edge stack and the loop end's claims on
    the leads, inside the loop end's hull). Absorbed in the same pass as the single-edge
    absorptions (the next pass recomposes the stacks around the enlarged claims; the stretch
@@ -1008,10 +1019,14 @@ smaller endpoint.
    so a recorded stretch is classed Continuation when it continues a claimed portion of that
    cluster through its claim cut: one of its cells lies on the claim's mesh segment (the
    claim boundary cut that segment), or it runs parallel to the claim (within the signature
-   angle tolerance) and one of its ends abuts a claim end along the chain within the
+   angle tolerance), one of its ends abuts a claim end along the chain within the
    signature parameter tolerance 1e-3 R and within R of it transversely (a claim boundary
    snapped onto a mesh vertex; the cells of a pair sit on its midline, so collinearity with
-   the edge is not tested) — the double count the continuation ownership at placement
+   the edge is not tested) AND it extends beyond that claim end (every cell end on the
+   outward side of the abutting end, away from the claim's other end, within the tolerance;
+   a parallel stretch lying alongside the claim over the claim's own range, one end aligned
+   with a claim end, is Foreign — it does not go through the claim cut) — the double count
+   the continuation ownership at placement
    removes (the accepted transmon library `transmon-r1p9-folded-refined-corners`: 6 records,
    all Continuation, 13.28 um, 0 Foreign, GeometryDigest 9ada660bf6e4 unchanged — the two
    sides of each 2-um strip (features 0 / 1, 4 x 0.869 um from the 3-edge clusters' claim

@@ -6717,11 +6717,12 @@ TEST_CASE_METHOD(
 TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
           "[surfaceresponseoperator][Serial]")
 {
-  // Decisions 224 / 236: a translational STRETCH (every longitudinal cell of one feature
-  // stretch) strictly inside one spatial support's box is RECORDED with its class — a
-  // Continuation (it continues a claim of the cluster through the claim cut: a cell on the
-  // claim's mesh segment, or parallel and abutting a claim end along the chain within the
-  // tolerance and within R transversely; the double count of the coupon's straight
+  // Decisions 224 / 236 / 242: a translational STRETCH (every longitudinal cell of one
+  // feature stretch) strictly inside one spatial support's box is RECORDED with its class —
+  // a Continuation (it continues a claim of the cluster through the claim cut: a cell on
+  // the claim's mesh segment, or parallel, abutting a claim end along the chain within the
+  // tolerance and within R transversely, AND extending beyond that claim end; the double
+  // count of the coupon's straight
   // continuation) or Foreign (a model mismatch, not a double count) — never an
   // abort; a stack end adjacent to a cluster, whose first cells lie inside the box while
   // the stretch continues outside, is the ordinary stack-end configuration and records
@@ -6800,9 +6801,13 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
   {
     // The claim boundary snapped onto the mesh vertex at x = 0 (segment 3 ends there, the
     // stretch starts on segment 7): parallel, abutting within 1e-3 R and within R
-    // transversely (a pair midline at y = 0.5) -> Continuation; a perpendicular stretch
-    // starting there, a parallel one 0.3 away along the chain, or one abutting the claim
-    // x = -2.5 along y but 3.4 away from it transversely, is foreign.
+    // transversely (a pair midline at y = 0.5), every cell beyond the claim end ->
+    // Continuation; a perpendicular stretch starting there, a parallel one 0.3 away along
+    // the chain, or one abutting the claim x = -2.5 along y but 3.4 away from it
+    // transversely, is foreign. A parallel stretch 0.7 from the claim x = -2.5 lying
+    // BESIDE it over the claim's own range y in [0, 1] (one end aligned with each claim
+    // end) is foreign: it does not extend through the claim cut; the same stretch beyond
+    // the claim end (y in [1, 2]) is its continuation.
     const std::vector<Patch> abutting = {Cell(4, 1, 1.0e-4 * R, 0.5, 0.5),
                                          Cell(4, 1, 0.5, 1.2, 0.5)};
     const auto records =
@@ -6818,11 +6823,42 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
         FindTranslationalStretchInsideSpatialSupport({perpendicular}, {box}, 3, tolerance);
     REQUIRE(turned.size() == 1);
     CHECK(!turned.front().continuation);
-    perpendicular.origin = {-1.8, 0.5, 0.0};  // 0.7 from the claim x = -2.5: within R
+    perpendicular.origin = {-1.8, 0.5,
+                            0.0};  // y in [0, 1] at x = -1.8: alongside the claim
     const auto beside =
         FindTranslationalStretchInsideSpatialSupport({perpendicular}, {box}, 3, tolerance);
     REQUIRE(beside.size() == 1);
-    CHECK(beside.front().continuation);
+    CHECK(!beside.front().continuation);
+    Patch beyond_cell = perpendicular;  // y in [1, 2] at x = -1.8: past the claim end y = 1
+    beyond_cell.origin = {-1.8, 1.5, 0.0};
+    const auto beyond =
+        FindTranslationalStretchInsideSpatialSupport({beyond_cell}, {box}, 3, tolerance);
+    REQUIRE(beyond.size() == 1);
+    CHECK(beyond.front().continuation);
+    CHECK_THAT(beyond.front().length, WithinAbs(1.0, 1.0e-12));
+    // Starting within the tolerance before the claim end still counts as beyond it; a
+    // stretch straddling the claim end (cells y in [0.7, 1] and [1, 1.7], one cell end
+    // exactly on the claim end) reaches back alongside the claim and does not.
+    beyond_cell.origin = {-1.8, 1.5 - 0.5e-3 * R, 0.0};
+    CHECK(FindTranslationalStretchInsideSpatialSupport({beyond_cell}, {box}, 3, tolerance)
+              .front()
+              .continuation);
+    Patch straddle_before = perpendicular, straddle_after = perpendicular;
+    straddle_before.origin = {-1.8, 0.85, 0.0};
+    straddle_before.longitudinal_cell = {-0.15, 0.15};
+    straddle_after.origin = {-1.8, 1.35, 0.0};
+    straddle_after.longitudinal_cell = {-0.35, 0.35};
+    const auto straddle = FindTranslationalStretchInsideSpatialSupport(
+        {straddle_before, straddle_after}, {box}, 3, tolerance);
+    REQUIRE(straddle.size() == 1);
+    CHECK_THAT(straddle.front().length, WithinAbs(1.0, 1.0e-12));
+    CHECK(!straddle.front().continuation);
+    // The direction test also applies to the x = 0 claim end: cells over x in [-1, 0] at
+    // y = 0.5 abut it but lie alongside the claim.
+    const auto back = FindTranslationalStretchInsideSpatialSupport(
+        {Cell(4, 1, -1.0, -0.4, 0.5), Cell(4, 1, -0.4, 0.0, 0.5)}, {box}, 3, tolerance);
+    REQUIRE(back.size() == 1);
+    CHECK(!back.front().continuation);
     const auto apart = FindTranslationalStretchInsideSpatialSupport(
         {Cell(4, 1, 0.3, 0.8, 0.5), Cell(4, 1, 0.8, 1.2, 0.5)}, {box}, 3, tolerance);
     REQUIRE(apart.size() == 1);
