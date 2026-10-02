@@ -167,5 +167,8 @@ the plan band, the z levels, the attribute table and the surface areas / volumes
 sweep and changes only the volume discretisation (see the README). The manifest records the
 mode (`sweep`) and, for the graded sweep, `graded_sweep` with the dimensionless `alpha`
 (default 1: row k's z spacing at least alpha x its width) and `beta` (default 3: row k ends
-beta h_k beyond the metal), the stacks, the row ranges and the cell counts by kind. The sweep
+beta h_k beyond the faces of the fabricated step), the stacks, the row ranges, the capped
+columns and fan sectors, the cell counts by kind (swept cells, strip / collapse prisms, plain /
+hanging region prisms; `region_hanging_node_incidences` counts a hanging node once per region
+prism it hangs on) and the analytic volume per material the mesh is checked against. The sweep
 mode never changes what the writer has to emit.
