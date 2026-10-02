@@ -442,7 +442,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
@@ -489,7 +489,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
@@ -525,7 +525,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
@@ -572,14 +572,14 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
 {
   return GetExtraSystemMatrix<OperType>(omega, diag_policy, /*include_wave_ports=*/true);
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy,
                                     bool include_wave_ports)
@@ -656,7 +656,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   return A;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
                                              Operator::DiagonalPolicy diag_policy)
@@ -690,7 +690,7 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
                                                  bool imag_slot)
@@ -735,7 +735,7 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
                                                     Operator::DiagonalPolicy diag_policy)
@@ -771,7 +771,7 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
     int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)
 {
@@ -816,7 +816,7 @@ std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
                                                  Operator::DiagonalPolicy diag_policy)
@@ -969,7 +969,7 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
 namespace
 {
 
-template <typename OperType>
+template <OperatorType OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&br, std::unique_ptr<Operator> &&bi,
                            const FiniteElementSpace &fespace);
 

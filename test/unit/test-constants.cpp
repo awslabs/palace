@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <numbers>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include "utils/constants.hpp"
@@ -15,5 +16,5 @@ TEST_CASE("EM Constant Check", "[units][Serial]")
 
   CHECK_THAT(epsilon0_, Catch::Matchers::WithinAbs(8.8541878188e-12, 14e-24));
   CHECK_THAT(Z0_, Catch::Matchers::WithinAbs(376.730313412, 59e-12));
-  CHECK_THAT(mu0_, Catch::Matchers::WithinRel(4e-7 * M_PI, 1.6e-10));
+  CHECK_THAT(mu0_, Catch::Matchers::WithinRel(4e-7 * std::numbers::pi, 1.6e-10));
 }

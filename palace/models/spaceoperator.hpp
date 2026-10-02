@@ -236,13 +236,13 @@ public:
   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω).
   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument
   // ω is required only for the constructing the "extra" matrix A2(ω).
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType> GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy);
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
 
@@ -250,7 +250,7 @@ public:
   // the reduced-order model to apply the wave-port term separately via per-port factored
   // operators while keeping the slow path for any remaining ω-dependent BCs (e.g.
   // second-order farfield, surface conductivity).
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy,
                                                  bool include_wave_ports);
@@ -273,7 +273,7 @@ public:
   // decide whether to stamp the physical termination. Returns a null pointer if the port
   // boundary contributes no DoFs on any rank (the check is collective, so the null contract
   // is rank-uniform).
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
@@ -286,7 +286,7 @@ public:
   // convention (i·f(ω)·M with the i baked in) so it can be folded into circuit synthesis
   // uniformly with wave ports. Returns null if the farfield BC order < 2 or contributes no
   // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
                                     bool imag_slot = false);
@@ -299,7 +299,7 @@ public:
   // contributes no DoFs on any rank (the check is collective, so the null contract is
   // rank-uniform). Used to fold surface conductivity into circuit synthesis.
   // `NumSurfaceConductivityGroups()` gives the group count.
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);
 
@@ -311,7 +311,7 @@ public:
   // pointer if the boundary contributes no DoFs on any rank (the check is collective, so
   // the null contract is rank-uniform). Used by the NLEPS HYBRID fit-or-freeze seed
   // strategy.
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy,
                                          bool imag_slot = false);
@@ -320,7 +320,7 @@ public:
   // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with
   // γ₀ the (0,0) specular propagation constant. Returns null if the port contributes no
   // DoFs on any rank (the check is collective, so the null contract is rank-uniform).
-  template <typename OperType>
+  template <OperatorType OperType>
   std::unique_ptr<OperType>
   GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 

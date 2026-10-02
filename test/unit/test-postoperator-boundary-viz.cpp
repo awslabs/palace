@@ -601,7 +601,7 @@ void RequireInteriorBoundaryWasWritten(std::string_view xml, const mfem::ParMesh
 {
   const auto attributes = ReadIntDataArray(xml, "attribute");
   REQUIRE(attributes.size() == static_cast<std::size_t>(pmesh.GetNBE()));
-  CHECK(std::find(attributes.begin(), attributes.end(), 7) != attributes.end());
+  CHECK(std::ranges::find(attributes, 7) != attributes.end());
 }
 
 ErrorStats CompareVectorDomainField(const std::vector<double> &values, mfem::ParMesh &pmesh,

@@ -29,7 +29,7 @@ class SurfaceConductivityOperator;
 class SurfaceImpedanceOperator;
 class SurfaceRationalImpedanceOperator;
 
-template <typename OperType>
+template <OperatorType OperType>
 class BlockDiagonalPreconditioner;
 
 namespace config

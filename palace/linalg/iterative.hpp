@@ -22,7 +22,7 @@ namespace palace
 
 // Base class for iterative solvers based on Krylov subspace methods with optional
 // preconditioning.
-template <typename OperType>
+template <OperatorType OperType>
 class IterativeSolver : public Solver<OperType>
 {
 protected:
@@ -114,7 +114,7 @@ public:
 };
 
 // Preconditioned Conjugate Gradient (CG) method for SPD linear systems.
-template <typename OperType>
+template <OperatorType OperType>
 class CgSolver : public IterativeSolver<OperType>
 {
 protected:
@@ -150,7 +150,7 @@ public:
 
 // Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
 // linear systems.
-template <typename OperType>
+template <OperatorType OperType>
 class GmresSolver : public IterativeSolver<OperType>
 {
 protected:
@@ -217,7 +217,7 @@ public:
 
 // Preconditioned Flexible Generalized Minimum Residual Method (FGMRES) for general
 // nonsymmetric linear systems with a non-constant preconditioner.
-template <typename OperType>
+template <OperatorType OperType>
 class FgmresSolver : public GmresSolver<OperType>
 {
 protected:

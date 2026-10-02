@@ -113,7 +113,7 @@ CurlCurlOperator::CurlCurlOperator(const IoData &iodata,
   {
     for (int attr : data.film_attributes)
     {
-      if (london_flux_film_attr_.count(attr))
+      if (london_flux_film_attr_.contains(attr))
       {
         london_flux_loops_.insert(idx);
         break;
@@ -191,7 +191,7 @@ mfem::Array<int> CurlCurlOperator::SetUpBoundaryProperties(
       MFEM_VERIFY(attr > 0 && attr <= bdr_attr_max && bdr_attr_marker[attr - 1],
                   "Unknown FilmAttributes boundary attribute "
                       << attr << " for FluxLoop index " << idx << "!");
-      if (sc_attrs.count(attr))
+      if (sc_attrs.contains(attr))
       {
         // London flux film: keep the interior free (sheet term), do not clamp Dirichlet.
         london_flux_film_attr_.insert(attr);
