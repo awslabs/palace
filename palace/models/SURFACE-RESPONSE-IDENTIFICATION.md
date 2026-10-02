@@ -1397,6 +1397,83 @@ point (Lc the mesh's characteristic length): 3.8 cells on the transmon (Lc 4 mm,
 below the mortar resolution (small islands); the fixed-trace and self-consistent trace maps both
 change with the fix wherever the strips were not already single slices.
 
+**Domain-boundary exclusion (decision 258, 2026-10-02; `FindDomainBoundaryExclusions`).** A
+coupon's trace coupling is undefined beyond the device domain: its basis points sample the
+device field on the coupon contour, and a contour point outside the mesh has no value (the
+mortar-resolution lookup at the model's first basis point and the point location both fail
+closed — the S1p thin runs 3a / 3b aborted in the constructor on two isolated-edge patches,
+216 / 222, where the L1 / L2 leads meet the window's left cut x = 290 at ~13 deg to its
+normal). This happens wherever a metal edge meets an ARTIFICIAL domain cut — a window cut,
+a chip outline (decision 193 coverage item) — within ~R |sin theta| of it, theta the angle
+between the edge and the cut's normal: the cross-section at the edge end sticks out of the
+cut by R |sin theta| on one side (0.42 um on S1p; a perpendicular lead, theta = 0, sticks out
+nothing and its first cell ends exactly on the cut). RULE: a library-placed 3D patch any of
+whose PLACED COUPON POINTS lies outside the device mesh is NOT applied and is recorded as a
+`DomainBoundary` exclusion. The placed points are the model's basis (contour) points and its
+conductor references in the patch frame, at the patch origin cross-section and, for a
+translational patch with a longitudinal cell, at both cell ends moved
+`kSignatureParameterToleranceOverRadius` x R = 1e-3 R inward along AxisW (the only
+tolerance, dimensionless in R: a cut lead's first cell ends exactly ON the cut and the
+S1p bottom-wall cluster strips end on the wall within 8e-6 um of a 1e-6-rad frame tilt;
+their sample slices lie at least half a slice inside; without the end sections a longer
+cut portion whose origin section is inside would pass the preflight and abort on its
+strip slices — the unit case's second cell). ONE containment test decides for the
+preflight and the solve: every rank locates every tested point in its local mesh with the
+operator's own `ElementPointLocator` (its reference-space tolerance 1e-9 on linear
+simplices, the inverse transformation otherwise, the routing box tolerance) and the found
+flags are OR-reduced over the communicator, so the decision is the partition's union —
+identical for any rank count and for both of the operator's locator paths
+(`ElementPointLocator` below 64 ranks, `FindPointsGSLIB` at 64 and above or with
+`PALACE_RESPONSE_USE_GSLIB_POINTS`), which afterwards locate the APPLIED patches' points
+only. An excluded patch keeps weight 0 (the operator skips it like a wholly owned cell; the
+dry run writes it with Weight 0, its unscaled QuadratureWeight and cell, no new column) and
+its portion stays tiled (the A7 identity holds; the audit reads the record). RECORD
+(`Identification.Diagnostics.DomainBoundaryExclusions` of the preflight manifest, the
+operator's `Diagnostics` in the metadata, one summary line in both logs with the test's
+wall time): per patch the feature, model, origin, CELL (begin / end offsets and
+`CellLength` = the length left uncorrected: quadrature weight x portion), PORTION
+(`Segment`, `S0`, `S1`, `PortionLength`), tested / outside point counts, the outside point
+nearest the mesh with `NearestDistance` = its distance to the nearest element bounding box
+(exact under an axis-aligned cut, a lower bound under a tilted face, 0 when the point
+lies inside a sheared element's box); totals `CellLength`, `PortionLength`, `ByFeature`.
+INVENTORY: `Summary.Counts.DomainBoundary` (patches) and `Summary.TotalEdgeLengths.
+DomainBoundary` (the CELL length) next to Missing — it is not a library gap, the matched
+totals are untouched — so the B1 gap bound can include it; `Summary.DomainBoundary` adds
+`Features` and the portion sum `PortionLength` (information: on S1p the two excluded
+cells are 1.0145 + 0.9637 = 1.978 um of 2 x 3 patches on portions of 3.652 + 3.469 =
+7.121 um; the "~7.12 um" of decision 258 is that portion sum). The excluded cells REMAIN
+inside `Exact` (they are matched; S1p: 1.978 of Exact 2,364.778 um): `Exact` +
+`Interpolated` + `Missing` is the identified length and `DomainBoundary` is the part of
+`Exact` left uncorrected — a consumer (the B1 bound) adds `DomainBoundary` to `Missing`
+and must NEVER sum Exact + Interpolated + Missing + DomainBoundary. FAIL CLOSED (decision
+260, review MAJOR-1): the exclusion is for a cut THROUGH a placed coupon; a candidate whose
+FIRST conductor reference at the origin section (the metal-edge point, which lies on a mesh
+face for every correctly placed patch, a metal edge on a chip-outline face included) is
+not located, or none of whose tested points is, is a misplaced or mis-scaled coupon (a
+library in the wrong units, a radius beyond the domain) and the test aborts naming the
+patch (0-based, as in the record and the dry run), model, point and coordinates; after the
+exclusion at least one applied patch must remain when there were candidates
+(`MFEM_VERIFY`). Explicit (configured) 2D patches are never excluded: a point of theirs
+outside the mesh aborts as before, and every point of an applied patch the operator cannot
+locate still fails closed, the message naming the point, its coordinates and the patch
+(model). The candidate set is the placed patches after the continuation ownership; the
+operator additionally omits the vertex patches subordinated to an overlapping cluster box
+before the test — a KNOWN LIMIT of the preflight (S1p tests 2494 patches in the
+preflight, 2490 in the operator, the same 2 excluded): that subordination lives in the
+operator's pairwise spatial-support loop with its overlap abort, and the preflight does
+not reproduce it. The totals cannot differ: a subordinated vertex patch is spatial, its
+`longitudinal_cell` is {0, 0} and it carries no portion (`Segment` -1), so it contributes
+0 to `CellLength` and `PortionLength`; only `Count` could show one more entry in the
+preflight record. The log summary prints patch indices 1-based like the ownership
+summaries and names the base; the record and the dry run are 0-based. Cost: all ranks test all points (3 sections x (basis + references)
+per translational patch): transmon 10,366 patches / 2.98 M points in 1.8 s on 1 rank, S1p
+2,494 / 763 k in 0.24 s on 2 ranks; the transmon preflight digest 9ada660bf6e4, record and
+dry run are unchanged (no exclusion: its domain is far from the metal). Unit test
+`SurfaceResponseOperator domain-boundary exclusion` (`test-domainboundary.cpp`): a lead cut
+by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks, the
+default and the forced-GSLIB locator path, the notch fail-closed case, and the misplaced
+coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
+
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
 x = the first arm away from the (virtual) corner, the arms ordered so that the second is
 counterclockwise about the process normal (a corner is its own mirror image), y = n x x;

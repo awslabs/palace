@@ -624,6 +624,68 @@ nlohmann::json DescribeSpatialSupportMarginOverlaps(
 std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &diagnostics);
 std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnostics);
 
+// Domain-boundary exclusion (decision 258): a coupon's trace coupling is undefined beyond
+// the device domain, which a placed coupon reaches wherever a metal edge meets an
+// artificial domain cut (a window cut, a chip outline) within ~R |sin theta| of it (theta
+// the angle between the edge and the cut's normal: the cross-section at the edge end sticks
+// out of the cut by R |sin theta| on one side). A library-placed 3D patch any of whose
+// placed coupon points — its model's basis (contour) points and its conductor references,
+// at the patch origin cross-section and, for a translational patch with a longitudinal
+// cell, at both cell ends moved kSignatureParameterToleranceOverRadius x R inward along
+// AxisW (a cut lead's first cell ends exactly on the cut; a strip ending on a domain face
+// keeps its sample slices inside) — lies outside the mesh is NOT applied: its weight
+// becomes 0 (the operator skips it, the dry run writes it like a wholly owned cell) and it
+// is recorded here (the preflight manifest's
+// Identification.Diagnostics.DomainBoundaryExclusions and the operator's Diagnostics; the
+// inventory total next to Missing). The containment test is the operator's own element
+// point locator on every rank over every tested point, the found flags OR-reduced over the
+// communicator: the decision is the same for any rank count and locator path (the
+// operator's later point location runs on the applied patches only, and any point it cannot
+// locate still fails closed naming the patch). The record's nearest outside point is the
+// excluded patch's outside point with the smallest distance to an element bounding box
+// (exact for an axis-aligned cut; a lower bound of the distance to the mesh otherwise).
+// Fail closed (decision 260): a candidate whose first conductor reference at the origin
+// section (the metal-edge point, on a mesh face for every correctly placed patch) is not
+// located, or none of whose tested points is, is a misplaced or mis-scaled coupon and
+// aborts naming the patch (0-based), model and point; when there were candidates at least
+// one applied patch must remain. Every patch of `skipped` (already not applied) is left
+// alone; `points` are the local model basis points in patch units (origin + points /
+// scale); `model_name` names a model for the abort; coordinates and lengths of the result
+// in mesh units. Collective over the mesh's communicator.
+struct DomainBoundaryExclusion
+{
+  std::size_t patch = 0;
+  int tested_points = 0;
+  int outside_points = 0;
+  std::array<double, 3> nearest_outside_point{};
+  double nearest_distance = 0.0;
+};
+struct DomainBoundaryExclusions
+{
+  std::vector<DomainBoundaryExclusion> patches;  // ascending patch index
+  long long int tested_patches = 0;
+  long long int tested_points = 0;
+  double wall_time = 0.0;  // of the containment test, seconds
+};
+DomainBoundaryExclusions FindDomainBoundaryExclusions(
+    mfem::ParMesh &mesh,
+    std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
+    const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
+        &basis_points,
+    const std::function<bool(int model_idx)> &spatial_basis,
+    const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
+    double matching_radius, const std::set<std::size_t> &skipped);
+
+// The Diagnostics entry of the exclusions (per patch: feature, model, cell and portion
+// with their lengths, outside-point count, the nearest outside point; totals: the CELL
+// length left uncorrected and the portion sum; lengths and coordinates in mesh units) and
+// the summary printed for a non-empty entry.
+nlohmann::json DescribeDomainBoundaryExclusions(
+    const DomainBoundaryExclusions &exclusions,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnostics);
+
 }  // namespace palace
 
 #endif  // PALACE_MODELS_SURFACE_RESPONSE_OPERATOR_HPP

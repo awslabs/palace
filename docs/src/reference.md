@@ -911,7 +911,15 @@ portion and weights of every patch without any field solve. The dry run holds th
 cells: a translational cell owned by a spatial coupon inside its box (see below) is written
 clipped, with its weight and quadrature weight scaled by the kept fraction (zero when wholly
 inside) and its origin and strip on the kept interval, while its segment portion stays the
-unclipped one; the owned cells are listed under `Diagnostics.ContinuationOwnership`.
+unclipped one; the owned cells are listed under `Diagnostics.ContinuationOwnership`. A
+patch whose placed coupon section leaves the device mesh (see the domain-boundary exclusion
+below) is written with weight zero and its unscaled quadrature weight and cell, and is
+listed under `Diagnostics.DomainBoundaryExclusions`; the manifest's `Summary` reports the
+excluded cell length next to `Missing` (`TotalEdgeLengths.DomainBoundary`), separately
+from the matched inventory, since it is not a library gap. The excluded cells remain
+counted in `Exact` (they are matched cells left uncorrected): the uncorrected length is
+`Missing` + `DomainBoundary`, and `Exact` + `Interpolated` + `Missing` + `DomainBoundary`
+double counts them.
 
 `CorrectionMode` selects `PostprocessOnly`, `SelfConsistent`, or `Both` (the default).
 Postprocessing-only mode evaluates fixed-trace and fixed-flux responses on the raw field
@@ -1341,6 +1349,31 @@ lies inside the other's claims); the edge length corrected by both coupons there
 coupon's continuation over the other's claims or over the other's continuation — is
 recorded under `Diagnostics.SpatialSupportMarginOverlaps` with a warning and cannot be
 removed at placement. A claim inside the other cluster's claims remains an error.
+
+A coupon's trace coupling is defined on the device domain only: its basis points sample the
+device field on the coupon contour, so a contour point outside the mesh has no value.
+Wherever a metal edge meets an artificial domain cut — a window cut through a chip layout,
+a chip outline — obliquely, the coupon cross-sections at the edge end stick out of the cut
+by up to R |sin θ| (θ the angle between the edge and the cut's normal). A library-placed
+patch any of whose placed coupon points (its model's basis points and conductor references
+at the patch origin cross-section and, for a translational cell, at both cell ends moved
+10⁻³ R inward, so that a cell ending exactly on the cut stays inside) lies outside the
+device mesh is therefore not applied and is recorded as a domain-boundary exclusion under
+`Diagnostics.DomainBoundaryExclusions` (per patch: feature, model, cell and portion with
+their lengths, the number of points outside, the outside point nearest the mesh), with a
+summary line in the log. One containment test — the operator's own element point locator
+on every rank, with the found flags reduced over all ranks — decides for the preflight and
+the solve alike, so the decision does not depend on the number of ranks or on the point
+locator used afterwards. Only the applied patches are then located; a point of an applied
+patch (or of an explicitly configured patch) that cannot be located remains an error naming
+the patch. The exclusion is for a cut through a placed coupon: a patch whose first
+conductor reference at the origin cross-section (the metal-edge point, which lies on a mesh
+face for every correctly placed patch) is not located, or none of whose tested points is,
+is a misplaced or mis-scaled coupon and is an error naming the patch (0-based, as in the
+record), model, point and coordinates; the exclusion must leave at least one applied patch.
+The excluded cell length is the surface left uncorrected and is reported in the manifest
+`Summary` next to `Missing` for the coverage bound; the matched inventory (`Exact`) is
+unchanged and still contains the excluded cells.
 
 A three-dimensional spatial-vertex coupon is added to the same library. For example, a
 corner model has the form:

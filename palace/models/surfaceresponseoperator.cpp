@@ -399,6 +399,47 @@ public:
 
   const ElementBox &GetBounds() const { return nodes.front().box; }
 
+  // Distance from a point to the nearest local element bounding box (0 inside one): a
+  // lower bound of the distance to the local mesh, exact for an axis-aligned domain face.
+  double BoxDistance(const std::array<double, 3> &point) const
+  {
+    auto Distance = [&](const ElementBox &box)
+    {
+      double distance2 = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        const double excess = std::max({box.min[d] - point[d], point[d] - box.max[d], 0.0});
+        distance2 += excess * excess;
+      }
+      return std::sqrt(distance2);
+    };
+    double best = mfem::infinity();
+    std::vector<int> stack = {0};
+    while (!stack.empty())
+    {
+      const auto &node = nodes[stack.back()];
+      stack.pop_back();
+      if (Distance(node.box) >= best)
+      {
+        continue;
+      }
+      if (node.IsLeaf())
+      {
+        for (std::size_t i = node.begin; i < node.end; i++)
+        {
+          best = std::min(best, Distance(element_boxes[indices[i]]));
+        }
+        continue;
+      }
+      // Nearer child last (visited first).
+      const bool left_nearer =
+          Distance(nodes[node.left].box) <= Distance(nodes[node.right].box);
+      stack.push_back(left_nearer ? node.right : node.left);
+      stack.push_back(left_nearer ? node.left : node.right);
+    }
+    return best;
+  }
+
   bool SupportsExactSegmentIntersections() const
   {
     if (!linear_mesh)
@@ -13889,70 +13930,115 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
   requirements.SetStatistics(BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics));
   const auto patches_path =
       (std::filesystem::path(path).parent_path() / "surface-response-patches.csv").string();
-  if (Mpi::Root(parallel_mesh.GetComm()))
+  auto manifest = requirements.Build();
+  manifest["MeshDimension"] = parallel_mesh.Dimension();
+  manifest["Maxwell"] = maxwell;
+  // The identification is recorded on the root only; its placement records below include a
+  // collective containment test, so every rank follows the root's decision.
+  int identification_recorded =
+      parallel_mesh.Dimension() == 3 && manifest.contains("Identification") ? 1 : 0;
+  Mpi::Broadcast(1, &identification_recorded, 0, parallel_mesh.GetComm());
+  if (identification_recorded)
   {
-    auto manifest = requirements.Build();
-    manifest["MeshDimension"] = parallel_mesh.Dimension();
-    manifest["Maxwell"] = maxwell;
-    if (parallel_mesh.Dimension() == 3 && manifest.contains("Identification"))
+    // The placement's records on the dry run, computed on every rank (the geometry-only
+    // ownership is deterministic; the domain-boundary containment test is collective): the
+    // ownership record (decision 236) on the spatial models whose basis points the library
+    // provides (a signature placeholder of a Missing key has none), the margin overlaps
+    // (decision 244) and the domain-boundary exclusions (decision 258).
+    const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
+    std::map<int, std::vector<std::array<double, 3>>> basis_points;
+    std::map<int, bool> spatial_basis;
+    std::map<int, std::string> model_names;
+    for (const auto &model : patches.models)
     {
-      // The ownership record (decision 236) on the spatial models whose basis points the
-      // library provides (a signature placeholder of a Missing key has none).
-      const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
-      std::map<int, std::vector<std::array<double, 3>>> basis_points;
-      for (const auto &model : patches.models)
+      spatial_basis.emplace(model.idx, model.spatial_basis);
+      model_names.emplace(model.idx, model.name);
+      if (!model.constructed_basis_points.empty() ||
+          std::filesystem::is_regular_file(model.basis_points))
       {
-        if (model.spatial_basis && (!model.constructed_basis_points.empty() ||
-                                    std::filesystem::is_regular_file(model.basis_points)))
-        {
-          basis_points.emplace(model.idx, ModelBasisPoints(model));
-        }
-      }
-      std::vector<std::string> skipped;
-      const auto boxes = CollectSpatialSupports(
-          patches,
-          [&](int model_idx) -> const std::vector<std::array<double, 3>> *
-          {
-            const auto it = basis_points.find(model_idx);
-            return it == basis_points.end() ? nullptr : &it->second;
-          },
-          coordinate_scale, 3, &skipped);
-      const double continuation_tolerance =
-          kSignatureParameterToleranceOverRadius * patches.matching_radius;
-      const auto records = FindTranslationalStretchInsideSpatialSupport(
-          patches.patches, boxes, 3, continuation_tolerance);
-      // The placement's continuation ownership (decision 236 (2)) on the dry run: the
-      // written patches are the placed ones (clipped cells, weight 0 inside the boxes).
-      const auto ownership =
-          ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance);
-      auto &diagnostics = manifest["Identification"]["Diagnostics"];
-      diagnostics["TranslationalStretchesInsideSpatialSupport"] =
-          DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
-                                                skipped, &ownership);
-      diagnostics["ContinuationOwnership"] =
-          DescribeContinuationOwnership(ownership, boxes, patches, coordinate_scale);
-      if (!records.empty())
-      {
-        Mpi::Warning("{}", DescribeTranslationalOwnershipWarning(
-                               diagnostics["TranslationalStretchesInsideSpatialSupport"]));
-      }
-      if (!ownership.cells.empty())
-      {
-        Mpi::Print("{}", DescribeContinuationOwnershipSummary(
-                             diagnostics["ContinuationOwnership"]));
-      }
-      // Coupon-vs-coupon margin overlaps (decision 244): recorded here; the placement
-      // aborts on a claim inside the other cluster's claims.
-      const auto margin_overlaps =
-          FindSpatialSupportMarginOverlaps(boxes, 3, continuation_tolerance);
-      if (!margin_overlaps.empty())
-      {
-        diagnostics["SpatialSupportMarginOverlaps"] = DescribeSpatialSupportMarginOverlaps(
-            margin_overlaps, patches, coordinate_scale);
-        Mpi::Warning("{}", DescribeSpatialSupportMarginOverlapWarning(
-                               diagnostics["SpatialSupportMarginOverlaps"]));
+        basis_points.emplace(model.idx, ModelBasisPoints(model));
       }
     }
+    auto BasisPoints = [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+    {
+      const auto it = basis_points.find(model_idx);
+      return it == basis_points.end() ? nullptr : &it->second;
+    };
+    std::vector<std::string> skipped;
+    const auto boxes = CollectSpatialSupports(
+        patches,
+        [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+        {
+          const auto it = basis_points.find(model_idx);
+          return it == basis_points.end() || !spatial_basis.at(model_idx) ? nullptr
+                                                                          : &it->second;
+        },
+        coordinate_scale, 3, &skipped);
+    const double continuation_tolerance =
+        kSignatureParameterToleranceOverRadius * patches.matching_radius;
+    const auto records = FindTranslationalStretchInsideSpatialSupport(
+        patches.patches, boxes, 3, continuation_tolerance);
+    // The placement's continuation ownership (decision 236 (2)) on the dry run: the
+    // written patches are the placed ones (clipped cells, weight 0 inside the boxes).
+    const auto ownership =
+        ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance);
+    auto &diagnostics = manifest["Identification"]["Diagnostics"];
+    diagnostics["TranslationalStretchesInsideSpatialSupport"] =
+        DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
+                                              skipped, &ownership);
+    diagnostics["ContinuationOwnership"] =
+        DescribeContinuationOwnership(ownership, boxes, patches, coordinate_scale);
+    if (!records.empty())
+    {
+      Mpi::Warning("{}", DescribeTranslationalOwnershipWarning(
+                             diagnostics["TranslationalStretchesInsideSpatialSupport"]));
+    }
+    if (!ownership.cells.empty())
+    {
+      Mpi::Print(
+          "{}", DescribeContinuationOwnershipSummary(diagnostics["ContinuationOwnership"]));
+    }
+    // Coupon-vs-coupon margin overlaps (decision 244): recorded here; the placement
+    // aborts on a claim inside the other cluster's claims.
+    const auto margin_overlaps =
+        FindSpatialSupportMarginOverlaps(boxes, 3, continuation_tolerance);
+    if (!margin_overlaps.empty())
+    {
+      diagnostics["SpatialSupportMarginOverlaps"] =
+          DescribeSpatialSupportMarginOverlaps(margin_overlaps, patches, coordinate_scale);
+      Mpi::Warning("{}", DescribeSpatialSupportMarginOverlapWarning(
+                             diagnostics["SpatialSupportMarginOverlaps"]));
+    }
+    // Domain-boundary exclusions (decision 258) on the placed dry run: the excluded
+    // patches are written with weight 0; their uncorrected CELL length enters the
+    // inventory next to Missing (not a library gap), the portion sum alongside.
+    const auto exclusions = FindDomainBoundaryExclusions(
+        const_cast<mfem::ParMesh &>(parallel_mesh), patches.patches, BasisPoints,
+        [&](int model_idx) { return spatial_basis.at(model_idx); },
+        [&](int model_idx) { return model_names.at(model_idx); }, coordinate_scale,
+        patches.matching_radius, {});
+    diagnostics["DomainBoundaryExclusions"] =
+        DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
+    const auto &exclusion_diagnostics = diagnostics["DomainBoundaryExclusions"];
+    manifest["Summary"]["Counts"]["DomainBoundary"] = exclusion_diagnostics["Count"];
+    manifest["Summary"]["TotalEdgeLengths"]["DomainBoundary"] =
+        exclusion_diagnostics["CellLength"];
+    manifest["Summary"]["DomainBoundary"] = {
+        {"Patches", exclusion_diagnostics["Count"]},
+        {"Features", exclusion_diagnostics["Features"]},
+        {"CellLength", exclusion_diagnostics["CellLength"]},
+        {"PortionLength", exclusion_diagnostics["PortionLength"]}};
+    Mpi::Print(
+        parallel_mesh.GetComm(),
+        " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
+        exclusions.tested_patches, exclusions.tested_points, exclusions.wall_time);
+    if (!exclusions.patches.empty())
+    {
+      Mpi::Print("{}", DescribeDomainBoundaryExclusionSummary(exclusion_diagnostics));
+    }
+  }
+  if (Mpi::Root(parallel_mesh.GetComm()))
+  {
     std::ofstream output(path);
     MFEM_VERIFY(output, "Unable to open surface-response requirements manifest \""
                             << path << "\"!");
@@ -15027,6 +15113,313 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
       diagnostics["OwnedLength"].get<double>(), lines);
 }
 
+DomainBoundaryExclusions FindDomainBoundaryExclusions(
+    mfem::ParMesh &mesh, std::vector<ResponsePatchData> &patches,
+    const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
+        &basis_points,
+    const std::function<bool(int model_idx)> &spatial_basis,
+    const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
+    double matching_radius, const std::set<std::size_t> &skipped)
+{
+  const auto start = std::chrono::steady_clock::now();
+  const int dimension = mesh.Dimension();
+  MFEM_VERIFY(dimension == 3 && mesh.SpaceDimension() == 3,
+              "The domain-boundary exclusion applies to three-dimensional devices!");
+  const auto comm = mesh.GetComm();
+  DomainBoundaryExclusions result;
+
+  // The tested points of every candidate patch (the same list on every rank).
+  const double inset = kSignatureParameterToleranceOverRadius * matching_radius;
+  constexpr std::size_t no_reference = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> candidates;
+  std::vector<std::size_t> point_offsets = {0};
+  // Per candidate, the index of its first conductor reference at the origin section (the
+  // metal-edge point, which lies on a mesh face for every correctly placed patch, a metal
+  // edge on a chip-outline face included): its absence is a misplaced or mis-scaled
+  // coupon, never a domain cut, and fails closed below (decision 260).
+  std::vector<std::size_t> origin_references;
+  std::vector<std::array<double, 3>> points;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    const auto &patch = patches[patch_idx];
+    const auto *local_points = basis_points(patch.model);
+    if (skipped.count(patch_idx) || patch.weight <= 0.0 || !local_points)
+    {
+      continue;
+    }
+    origin_references.push_back(patch.conductor_references.empty()
+                                    ? no_reference
+                                    : points.size() + local_points->size());
+    const bool spatial = spatial_basis(patch.model);
+    // The cross-sections: the origin and, for a longitudinal cell, both ends moved inward.
+    std::vector<double> sections = {0.0};
+    const auto &cell = patch.longitudinal_cell;
+    if (!spatial && cell[1] > cell[0])
+    {
+      sections.push_back(std::min(0.0, cell[0] + inset));
+      sections.push_back(std::max(0.0, cell[1] - inset));
+    }
+    for (const double section : sections)
+    {
+      for (const auto &local : *local_points)
+      {
+        std::array<double, 3> point{};
+        for (int d = 0; d < 3; d++)
+        {
+          point[d] = patch.origin[d] +
+                     (local[0] * patch.axis_u[d] + local[1] * patch.axis_v[d] +
+                      (spatial ? local[2] * patch.axis_w[d] : 0.0)) /
+                         coordinate_scale +
+                     section * patch.axis_w[d];
+        }
+        points.push_back(point);
+      }
+      for (const auto &reference : patch.conductor_references)
+      {
+        std::array<double, 3> point{};
+        for (int d = 0; d < 3; d++)
+        {
+          point[d] = patch.origin[d] + reference[0] * patch.axis_u[d] +
+                     reference[1] * patch.axis_v[d] +
+                     (reference[2] + section) * patch.axis_w[d];
+        }
+        points.push_back(point);
+      }
+    }
+    candidates.push_back(patch_idx);
+    point_offsets.push_back(points.size());
+  }
+  result.tested_patches = static_cast<long long int>(candidates.size());
+  result.tested_points = static_cast<long long int>(points.size());
+  MFEM_VERIFY(points.size() <= static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Too many domain-boundary test points for one reduction!");
+
+  // Every rank locates every point in its local mesh with the operator's locator and its
+  // tolerances; the found flags are OR-reduced, so the decision is the partition's union.
+  ElementPointLocator locator(mesh, dimension);
+  double locator_scale = 0.0;
+  for (int d = 0; d < dimension; d++)
+  {
+    locator_scale = std::max({locator_scale, std::abs(locator.GetBounds().min[d]),
+                              std::abs(locator.GetBounds().max[d]),
+                              locator.GetBounds().max[d] - locator.GetBounds().min[d]});
+  }
+  Mpi::GlobalMax(1, &locator_scale, comm);
+  const double box_tolerance =
+      1.0e-11 * locator_scale +
+      64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, locator_scale);
+  std::vector<unsigned char> found(points.size(), 0);
+  {
+    std::vector<int> element_candidates;
+    int element;
+    mfem::IntegrationPoint reference;
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      if (locator.Find(points[i], box_tolerance, element, reference, element_candidates))
+      {
+        found[i] = 1;
+      }
+    }
+  }
+  if (!found.empty())
+  {
+    Mpi::GlobalMax(static_cast<int>(found.size()), found.data(), comm);
+  }
+  // Fail closed on a metal-edge reference outside the mesh (the found flags are identical
+  // on every rank after the reduction, so every rank aborts together).
+  auto DescribeMisplacedPatch = [&](std::size_t c, std::size_t point, const char *reason)
+  {
+    const auto &patch = patches[candidates[c]];
+    return fmt::format(
+        "Surface-response patch {:d} (0-based, as in the record and the dry run; model {}) "
+        "is a misplaced or mis-scaled coupon: {} lies outside the device mesh (tested "
+        "point {:d} of {:d} at ({:.9e}, {:.9e}, {:.9e}) mesh units)!",
+        candidates[c], model_name(patch.model), reason, point - point_offsets[c],
+        point_offsets[c + 1] - point_offsets[c], points[point][0] * coordinate_scale,
+        points[point][1] * coordinate_scale, points[point][2] * coordinate_scale);
+  };
+  for (std::size_t c = 0; c < candidates.size(); c++)
+  {
+    const std::size_t reference = origin_references[c];
+    if (reference != no_reference && !found[reference])
+    {
+      MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
+    }
+  }
+  // The distance of every outside point to the nearest element box, over the ranks.
+  std::vector<std::size_t> outside;
+  for (std::size_t i = 0; i < points.size(); i++)
+  {
+    if (!found[i])
+    {
+      outside.push_back(i);
+    }
+  }
+  std::vector<double> distances(outside.size());
+  for (std::size_t k = 0; k < outside.size(); k++)
+  {
+    distances[k] = locator.BoxDistance(points[outside[k]]);
+  }
+  if (!distances.empty())
+  {
+    Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
+  }
+
+  std::size_t k = 0;
+  for (std::size_t c = 0; c < candidates.size(); c++)
+  {
+    const std::size_t begin = point_offsets[c], end = point_offsets[c + 1];
+    DomainBoundaryExclusion exclusion;
+    exclusion.patch = candidates[c];
+    exclusion.tested_points = static_cast<int>(end - begin);
+    exclusion.nearest_distance = mfem::infinity();
+    while (k < outside.size() && outside[k] < end)
+    {
+      exclusion.outside_points++;
+      if (distances[k] < exclusion.nearest_distance)
+      {
+        exclusion.nearest_distance = distances[k];
+        exclusion.nearest_outside_point = points[outside[k]];
+      }
+      k++;
+    }
+    if (exclusion.outside_points > 0)
+    {
+      // No tested point inside: not a cut through the coupon but a coupon off the mesh.
+      if (exclusion.outside_points == exclusion.tested_points)
+      {
+        MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+      }
+      patches[exclusion.patch].weight = 0.0;
+      result.patches.push_back(exclusion);
+    }
+  }
+  MFEM_VERIFY(candidates.empty() || result.patches.size() < candidates.size(),
+              "The domain-boundary exclusion leaves no applied surface-response patch: all "
+                  << candidates.size()
+                  << " tested patches have placed coupon points outside the device mesh "
+                     "(misplaced or mis-scaled coupons)!");
+  result.wall_time =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  Mpi::GlobalMax(1, &result.wall_time, comm);
+  return result;
+}
+
+nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &exclusions,
+                                                const ResponseCorrectionData &config,
+                                                double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  nlohmann::json entries = nlohmann::json::array();
+  std::map<int, std::pair<int, double>> by_feature;
+  double cell_length = 0.0, portion_length = 0.0;
+  for (const auto &exclusion : exclusions.patches)
+  {
+    const auto &patch = config.patches[exclusion.patch];
+    const auto &provenance = patch.provenance;
+    const double cell =
+        (patch.longitudinal_cell[1] - patch.longitudinal_cell[0]) * coordinate_scale;
+    const double portion =
+        provenance.segment >= 0 ? (provenance.s1 - provenance.s0) * coordinate_scale : 0.0;
+    cell_length += cell;
+    portion_length += portion;
+    auto &feature = by_feature[provenance.feature];
+    feature.first++;
+    feature.second += cell;
+    entries.push_back(
+        {{"Patch", exclusion.patch},
+         {"Feature", provenance.feature},
+         {"Model", models.at(patch.model)->name},
+         {"Topology", models.at(patch.model)->topology},
+         {"Origin",
+          {patch.origin[0] * coordinate_scale, patch.origin[1] * coordinate_scale,
+           patch.origin[2] * coordinate_scale}},
+         {"Cell",
+          {patch.longitudinal_cell[0] * coordinate_scale,
+           patch.longitudinal_cell[1] * coordinate_scale}},
+         {"CellLength", cell},
+         {"Segment", provenance.segment},
+         {"S0", provenance.s0 * coordinate_scale},
+         {"S1", provenance.s1 * coordinate_scale},
+         {"PortionLength", portion},
+         {"TestedPoints", exclusion.tested_points},
+         {"OutsidePoints", exclusion.outside_points},
+         {"NearestOutsidePoint",
+          {exclusion.nearest_outside_point[0] * coordinate_scale,
+           exclusion.nearest_outside_point[1] * coordinate_scale,
+           exclusion.nearest_outside_point[2] * coordinate_scale}},
+         {"NearestDistance", exclusion.nearest_distance * coordinate_scale}});
+  }
+  nlohmann::json features = nlohmann::json::array();
+  for (const auto &[feature, count_length] : by_feature)
+  {
+    features.push_back({{"Feature", feature},
+                        {"Patches", count_length.first},
+                        {"CellLength", count_length.second}});
+  }
+  return {
+      {"Count", static_cast<int>(exclusions.patches.size())},
+      {"Features", static_cast<int>(by_feature.size())},
+      {"CellLength", cell_length},
+      {"PortionLength", portion_length},
+      {"TestedPatches", exclusions.tested_patches},
+      {"TestedPoints", exclusions.tested_points},
+      {"WallTime", exclusions.wall_time},
+      {"CellEndInsetOverRadius", kSignatureParameterToleranceOverRadius},
+      {"ByFeature", std::move(features)},
+      {"Patches", std::move(entries)},
+      {"Rule",
+       "decision 258 (2026-10-02): a library-placed patch any of whose placed coupon "
+       "points "
+       "(its model's basis points and conductor references at the origin cross-section "
+       "and, for a translational cell, at both cell ends moved CellEndInsetOverRadius x R "
+       "inward) lies outside the device mesh is not applied (weight 0) and recorded here: "
+       "the coupon's trace coupling is undefined beyond the device domain, which happens "
+       "where a metal edge meets an artificial domain cut (a window cut, a chip outline) "
+       "within ~R |sin theta| of it. One containment test (the operator's element point "
+       "locator on every rank, OR-reduced) decides for the preflight and the solve, "
+       "independent of the rank count and locator path; the applied patches' points still "
+       "fail closed when not located. CellLength is the length left uncorrected (the "
+       "inventory total next to Missing; not a library gap); PortionLength the sum of the "
+       "excluded patches' portions (information). NearestDistance is to the nearest "
+       "element bounding box. Lengths in mesh units"}};
+}
+
+std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnostics)
+{
+  std::string lines;
+  for (const auto &entry : diagnostics["Patches"])
+  {
+    const auto &point = entry["NearestOutsidePoint"];
+    lines += fmt::format(
+        "  patch {} (0-based {}; feature {}, {}): cell {:.6e} mesh units of portion "
+        "[{:.6e}, {:.6e}] on segment {}, {} / {} points outside, nearest ({:.6e}, {:.6e}, "
+        "{:.6e}) at {:.3e}\n",
+        entry["Patch"].get<std::size_t>() + 1, entry["Patch"].get<std::size_t>(),
+        entry["Feature"].get<int>(), entry["Model"].get<std::string>(),
+        entry["CellLength"].get<double>(), entry["S0"].get<double>(),
+        entry["S1"].get<double>(), entry["Segment"].get<int>(),
+        entry["OutsidePoints"].get<int>(), entry["TestedPoints"].get<int>(),
+        point[0].get<double>(), point[1].get<double>(), point[2].get<double>(),
+        entry["NearestDistance"].get<double>());
+  }
+  return fmt::format(
+      "DomainBoundary exclusion (decision 258): {:d} patch(es) on {:d} feature(s) with "
+      "placed coupon points outside the device mesh not applied, {:.6e} mesh units of "
+      "cells left uncorrected (portions {:.6e}); {:d} patches / {:d} points tested in "
+      "{:.3f} s (patch indices 1-based like the ownership summaries, 0-based in the "
+      "record and the dry run)\n{}",
+      diagnostics["Count"].get<int>(), diagnostics["Features"].get<int>(),
+      diagnostics["CellLength"].get<double>(), diagnostics["PortionLength"].get<double>(),
+      diagnostics["TestedPatches"].get<long long int>(),
+      diagnostics["TestedPoints"].get<long long int>(),
+      diagnostics["WallTime"].get<double>(), lines);
+}
+
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
     std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
@@ -15656,6 +16049,35 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                        ownership_diagnostics["ContinuationOwnership"]));
       }
     }
+    // Domain-boundary exclusion (decision 258): the placed patches with coupon points
+    // outside the device mesh are not applied (weight 0, recorded). The same collective
+    // test as the preflight's, on the placed patches not already owned; the mortar
+    // resolution lookup and the point location below see applied patches only.
+    {
+      auto exclusions = FindDomainBoundaryExclusions(
+          response_mesh, placed_patches,
+          [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+          { return &basis_points[model_indices.at(model_idx)]; },
+          [&](int model_idx) { return models[model_indices.at(model_idx)].spatial_basis; },
+          [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
+          coordinate_scale, config->matching_radius, spatially_owned_patches);
+      for (const auto &exclusion : exclusions.patches)
+      {
+        spatially_owned_patches.insert(exclusion.patch);
+      }
+      ownership_diagnostics["DomainBoundaryExclusions"] =
+          DescribeDomainBoundaryExclusions(exclusions, *config, coordinate_scale);
+      Mpi::Print(
+          fespace.GetComm(),
+          " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
+          exclusions.tested_patches, exclusions.tested_points, exclusions.wall_time);
+      if (!exclusions.patches.empty())
+      {
+        Mpi::Print(fespace.GetComm(), "{}",
+                   DescribeDomainBoundaryExclusionSummary(
+                       ownership_diagnostics["DomainBoundaryExclusions"]));
+      }
+    }
   }
 
   const int rank = Mpi::Rank(fespace.GetComm());
@@ -15747,9 +16169,20 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     finder.Interpolate(size_field, local_resolution);
     for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
     {
-      MFEM_VERIFY(finder.GetCode()[i] != 2 && std::isfinite(local_resolution[i]) &&
-                      local_resolution[i] > 0.0,
-                  "Unable to determine a local surface-mortar mesh resolution!");
+      // The applied patches only (decision 258): a patch whose placed coupon section
+      // leaves the mesh was excluded above, so a failure here is an error of the mesh or
+      // of the placement, named.
+      const auto &patch = patches[mortar_patch_indices[i]];
+      MFEM_VERIFY(
+          finder.GetCode()[i] != 2 && std::isfinite(local_resolution[i]) &&
+              local_resolution[i] > 0.0,
+          "Unable to determine a local surface-mortar mesh resolution at the first "
+          "basis point ("
+              << centers(0 * mortar_patch_indices.size() + i) << ", "
+              << centers(1 * mortar_patch_indices.size() + i) << ", "
+              << (dimension == 3 ? centers(2 * mortar_patch_indices.size() + i) : 0.0)
+              << ") of patch " << patch.global_index + 1 << " (model "
+              << models[patch.model].name << ")!");
       patches[mortar_patch_indices[i]].mortar_resolution =
           local_resolution[i] / config->mortar_oversampling;
     }
@@ -17126,6 +17559,28 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
   std::vector<int> point_owners(point_query_count, size);
   std::vector<int> point_elements(point_query_count, -1);
   std::vector<double> point_references(dimension * point_query_count);
+  // Fail closed on an unlocated point, naming its patch (decision 258: the domain-boundary
+  // exclusion removes the patches whose placed coupon sections leave the mesh before this
+  // point location; anything else not located is an error, never silently dropped).
+  auto DescribeUnlocatedPoint = [&](int point)
+  {
+    const auto coordinate = GetPoint(point);
+    std::string description =
+        fmt::format("Surface-response contour point {:d} at ({:.9e}, {:.9e}, {:.9e}) (mesh "
+                    "units) could not be located in the device mesh",
+                    point, coordinate[0], coordinate[1], coordinate[2]);
+    for (const auto &patch : patches)
+    {
+      if (patch.point_count > 0 && point >= patch.point_offset &&
+          point < patch.point_offset + patch.point_count)
+      {
+        description += fmt::format(" (patch {:d}, model {})", patch.global_index + 1,
+                                   models[patch.model].name);
+        break;
+      }
+    }
+    return description + "!";
+  };
   const char *gslib_environment = std::getenv("PALACE_RESPONSE_USE_GSLIB_POINTS");
   const bool use_gslib =
       size >= 64 || (gslib_environment && std::string_view(gslib_environment) != "0" &&
@@ -17140,8 +17595,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     const auto &reference = finder.GetReferencePosition();
     for (int point = 0; point < point_query_count; point++)
     {
-      MFEM_VERIFY(finder.GetCode()[point] != 2,
-                  "Surface-response contour point " << point << " could not be located!");
+      MFEM_VERIFY(finder.GetCode()[point] != 2, DescribeUnlocatedPoint(point));
       point_owners[point] = static_cast<int>(finder.GetProc()[point]);
       point_elements[point] = static_cast<int>(finder.GetElem()[point]);
       for (int d = 0; d < dimension; d++)
@@ -17298,8 +17752,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
       for (std::size_t i = 0; i < fallback_indices.size(); i++)
       {
         const int point = fallback_indices[i];
-        MFEM_VERIFY(finder.GetCode()[i] != 2,
-                    "Surface-response contour point " << point << " could not be located!");
+        MFEM_VERIFY(finder.GetCode()[i] != 2, DescribeUnlocatedPoint(point));
         point_owners[point] = static_cast<int>(finder.GetProc()[i]);
         point_elements[point] = static_cast<int>(finder.GetElem()[i]);
         for (int d = 0; d < dimension; d++)
