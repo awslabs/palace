@@ -36,7 +36,8 @@ from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT
                                     LAYER_ADJACENT_BAND_RULE)
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, audit_manifest_evidence, case_gates,
-                                   layer_covered_band, run_manifest, sha256, validate_manifest,
+                                   element_cap_override, layer_covered_band, run_manifest, sha256,
+                                   validate_case_element_cap_override, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
 from mesh_stage_contract import (CANONICAL_STAGE_ORDER, canonical_stage_order,
@@ -3438,6 +3439,84 @@ class MixedMeshTest(unittest.TestCase):
                    "Tetrahedra": 1659373, "Prisms": 172692, "Pyramids": 13284}
         self.assertEqual([h1_dofs_from_counts(gallery, p) for p in (3, 4, 5)],
                          [10593238, 24844050, 48216650])
+
+
+class ProductionElementCapOverrideTest(unittest.TestCase):
+    """A PRODUCTION case may carry a recorded, approved element cap above the manifest gate
+    (GateOverrides.MaximumElements; supervisor decision of 2026-10-02 for the S1p loop-end
+    coupon, one closed 38-edge feature of ~12-13 M elements against the 6 M gate): it judges
+    that case alone (case_gates, the estimate gate), the manifest gate and every other case
+    are unchanged, and an unlabeled / unapproved / too-small override is refused."""
+
+    def setUp(self):
+        self.path = HERE / "geometry-independence-suite.json"
+        self.production = json.loads(self.path.read_text())
+        self.gate = self.production["Gates"]["MaximumElements"]
+        self.assertEqual(self.gate, 6000000)
+
+    def overridden(self, **changes):
+        manifest = copy.deepcopy(self.production)
+        case = next(case for case in manifest["Cases"] if case["Id"] == "four-edge-9d2cb9bbb3fe")
+        case["GateOverrides"] = element_cap_override(16000000, self.gate, approval="supervisor 2026-10-02 (iv)/(ii)",
+                                                     reason="one closed 38-edge feature; the box cannot be split")
+        for key, value in changes.items():
+            if value is None:
+                case["GateOverrides"]["MaximumElements"].pop(key, None)
+            else:
+                case["GateOverrides"]["MaximumElements"][key] = value
+        return manifest, case
+
+    def test_override_judges_its_case_alone_and_is_recorded(self):
+        manifest, case = self.overridden()
+        validate_manifest(manifest, self.path, check_available_files=False)
+        self.assertEqual(validate_case_element_cap_override(manifest, case), 16000000)
+        self.assertEqual(case_gates(manifest, case)["MaximumElements"], 16000000)
+        self.assertEqual(manifest["Gates"]["MaximumElements"], self.gate)
+        for other in (item for item in manifest["Cases"] if item is not case):
+            self.assertIsNone(validate_case_element_cap_override(manifest, other))
+            self.assertEqual(case_gates(manifest, other)["MaximumElements"], self.gate)
+        block = case["GateOverrides"]["MaximumElements"]
+        self.assertEqual((block["Value"], block["Production"]), (16000000, self.gate))
+        self.assertIn("supervisor", block["Approval"])
+        self.assertIn("cannot be split", block["Reason"])
+        self.assertIn("case_gates", block["Rule"])
+        # The evidence audit of the overridden case accepts 12.8 M elements and refuses 16 M + 1.
+        case_judged = case_gates(manifest, case)
+        resources = {"Resources": {"ExitCode": 0, "Seconds": 1., "PeakRSSGiB": 1., "Elements": 12800000,
+                                   "CanonicalBuild": {"Seconds": 1., "PeakRSSGiB": 1.},
+                                   "PlacementPublication": {"Seconds": 1., "PeakRSSGiB": 1.}}}
+        contract = load_semantic_contract(
+            HERE / case["Source"]["Directory"].split("spatial_coupon/", 1)[1] / "semantic-contract.json")
+        binding = {"CaseId": case["Id"], "Variant": "identity", "Transform": case["Variants"][0]["Transform"],
+                   "TransformSHA256": "x", "InputSHA256": {"Process": "p", "SemanticContract": "s", "MeshRecipe": "r"},
+                   "ToolSHA256": {}, "StageToolSHA256": {}}
+        self.assertNotIn("bounded-resources", audit_manifest_evidence(resources, case_judged, contract, binding))
+        self.assertIn("bounded-resources", audit_manifest_evidence(resources, manifest["Gates"], contract, binding))
+        beyond = copy.deepcopy(resources)
+        beyond["Resources"]["Elements"] = 16000001
+        self.assertIn("bounded-resources", audit_manifest_evidence(beyond, case_judged, contract, binding))
+
+    def test_override_must_be_an_approved_recorded_integer_above_the_gate(self):
+        for changes, message in (
+                ({"Value": 6000000}, "not a recorded, approved integer above the manifest gate"),
+                ({"Value": 16000000.0}, "not a recorded, approved integer"),
+                ({"Production": 4000000}, "not a recorded, approved integer"),
+                ({"Approval": None}, "not a recorded, approved integer"),
+                ({"Approval": "  "}, "not a recorded, approved integer"),
+                ({"Reason": None}, "not a recorded, approved integer")):
+            manifest, case = self.overridden(**changes)
+            with self.assertRaisesRegex(ValueError, message):
+                validate_case_element_cap_override(manifest, case)
+            with self.assertRaisesRegex(ValueError, message):
+                validate_manifest(manifest, self.path, check_available_files=False)
+        manifest, case = self.overridden()
+        case["GateOverrides"]["MaximumSeconds"] = 7200
+        with self.assertRaisesRegex(ValueError, "gate overrides other than MaximumElements"):
+            case_gates(manifest, case)
+        with self.assertRaisesRegex(ValueError, "must be an integer above the manifest gate"):
+            element_cap_override(6000000, self.gate, approval="a", reason="b")
+        with self.assertRaisesRegex(ValueError, "non-empty approval and reason"):
+            element_cap_override(16000000, self.gate, approval="", reason="b")
 
 
 class AchievedAnisotropyDesignGateTest(unittest.TestCase):

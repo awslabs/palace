@@ -1590,13 +1590,28 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             1.0,
         )
         self.assertEqual(len(points), 8)
-        with self.assertRaisesRegex(ValueError, "exceeds 16R"):
+        with self.assertRaisesRegex(ValueError, "spans 16.20R .* above the cap of 16R"):
             SPATIAL.matching_support_points(
                 np.asarray([-8.1, -3.0, -1.0]),
                 np.asarray([8.1, 3.0, 1.0]),
                 frame,
                 1.0,
             )
+
+    def test_spatial_matching_support_span_cap_is_raised_per_coupon_only(self):
+        """A single closed feature wider than 16R (the S1p loop end, 18.24 R) builds with an
+        explicit --support-span-cap; the default stays 16R, the cap must be positive and
+        the span is still judged against the raised cap."""
+        frame = np.eye(3)
+        lower, upper = np.asarray([-9.12, -7.0, -1.0]), np.asarray([9.12, 7.0, 1.0])
+        self.assertEqual(SPATIAL.DEFAULT_SUPPORT_SPAN_CAP_OVER_R, 16.0)
+        with self.assertRaisesRegex(ValueError, "spans 18.24R .* above the cap of 16R"):
+            SPATIAL.matching_support_points(lower, upper, frame, 1.0)
+        self.assertEqual(len(SPATIAL.matching_support_points(lower, upper, frame, 1.0, 20.0)), 8)
+        with self.assertRaisesRegex(ValueError, "above the cap of 18R"):
+            SPATIAL.matching_support_points(lower, upper, frame, 1.0, 18.0)
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            SPATIAL.matching_support_points(lower, upper, frame, 1.0, 0.0)
 
     def test_spatial_library_uses_reference_for_single_conductor(self):
         coupon = {

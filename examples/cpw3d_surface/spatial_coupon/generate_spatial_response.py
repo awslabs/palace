@@ -354,15 +354,27 @@ def coupon_bounds(edges, radius, metal_thickness, overetch):
     return lower, upper
 
 
-def matching_support_points(lower, upper, frame, radius):
+# Exhaustive ownership can merge support-overlapping neighborhoods whose centers span
+# up to 12R; continuation and matching padding add up to 4R, so a matching box is
+# bounded to 16R by default.  A single closed feature wider than that (the S1p SQUID
+# loop end: 38 claimed portions, plan span 18.24 R) cannot be split without cutting the
+# loop: --support-span-cap raises the bound for that coupon alone (recorded in its
+# basis-contract.json MatchingSupport); the default stays 16R.
+DEFAULT_SUPPORT_SPAN_CAP_OVER_R = 16.0
+
+
+def matching_support_points(
+    lower, upper, frame, radius, span_cap_over_r=DEFAULT_SUPPORT_SPAN_CAP_OVER_R
+):
     plan_span = np.max(upper[:2] - lower[:2])
-    # Exhaustive ownership can merge support-overlapping neighborhoods whose centers
-    # span up to 12R. Continuation and matching padding add up to 4R, so the resulting
-    # matching box is bounded to 16R.
-    if plan_span > 16.0 * radius * (1.0 + 1.0e-12):
+    if span_cap_over_r <= 0.0:
+        raise ValueError("the matching-support span cap must be positive")
+    if plan_span > span_cap_over_r * radius * (1.0 + 1.0e-12):
         raise ValueError(
-            "Spatial coupon matching support exceeds 16R in the process plane; "
-            "split the interaction component or increase the matching radius"
+            f"Spatial coupon matching support spans {plan_span / radius:.2f}R in the "
+            f"process plane, above the cap of {span_cap_over_r:g}R; split the interaction "
+            "component, increase the matching radius, or raise --support-span-cap for "
+            "a single closed feature that cannot be split"
         )
     local = np.asarray(
         [
@@ -1924,6 +1936,7 @@ def write_basis_contract(
     cap_triangulation="ear-clipping",
     cap_interior_spacing=0.0,
     interior_trace_count=0,
+    matching_support=None,
 ):
     """basis-contract.json of a freshly built trace basis (the layout of
     rebuild_box_coupon_inputs: Version 1, the model, the source counts, the box-trace
@@ -1992,6 +2005,8 @@ def write_basis_contract(
         },
         "LibraryQualified": False,
     }
+    if matching_support is not None:
+        report["MatchingSupport"] = dict(matching_support)
     (output / "basis-contract.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -2010,6 +2025,18 @@ def main():
     parser.add_argument("--trench-rounding", type=float, required=True)
     parser.add_argument("--substrate-permittivity", type=float, default=11.47)
     parser.add_argument("--ring-size", type=int, default=32)
+    parser.add_argument(
+        "--support-span-cap",
+        type=float,
+        default=DEFAULT_SUPPORT_SPAN_CAP_OVER_R,
+        metavar="OVER_R",
+        help=(
+            "Largest plan span (in units of the matching radius R) of the matching "
+            f"support box (default {DEFAULT_SUPPORT_SPAN_CAP_OVER_R:g}: the exhaustive-"
+            "ownership bound 12R + 4R of padding); raised per coupon for a single closed "
+            "feature that cannot be split (recorded in basis-contract.json MatchingSupport)"
+        ),
+    )
     parser.add_argument(
         "--cap-triangulation",
         choices=CAP_TRIANGULATIONS,
@@ -2063,6 +2090,8 @@ def main():
     args = parser.parse_args()
     if args.radius <= 0.0 or args.metal_thickness <= 0.0:
         parser.error("radius and metal thickness must be positive")
+    if not args.support_span_cap > 0.0:
+        parser.error("--support-span-cap must be positive")
     if not 0.0 <= args.overetch_depth < args.radius:
         parser.error("overetch depth must lie in [0, radius)")
     if not 0.0 < args.sidewall_angle <= 90.0:
@@ -2101,7 +2130,20 @@ def main():
     lower, upper = coupon_bounds(
         edges, args.radius, args.metal_thickness, args.overetch_depth
     )
-    support_points = matching_support_points(lower, upper, frame, args.radius)
+    support_points = matching_support_points(
+        lower, upper, frame, args.radius, args.support_span_cap
+    )
+    matching_support = {
+        "PlanSpanOverR": float(np.max(upper[:2] - lower[:2]) / args.radius),
+        "SpanCapOverR": float(args.support_span_cap),
+        "DefaultSpanCapOverR": DEFAULT_SUPPORT_SPAN_CAP_OVER_R,
+        "Rule": (
+            "matching_support_points: the matching box's plan span (coupon_bounds: claims "
+            "+ 2R continuation + R padding) must not exceed SpanCapOverR x R; the default "
+            "is the exhaustive-ownership bound 12R + 4R, raised only by --support-span-cap "
+            "for a single closed feature that cannot be split"
+        ),
+    }
     mask_path = output / "plan-view-mask.csv"
     boundary_path = output / "plan-view-boundary.csv"
     if facets:
@@ -2249,6 +2291,7 @@ def main():
             cap_triangulation=args.cap_triangulation,
             cap_interior_spacing=args.cap_interior_spacing,
             interior_trace_count=interior_trace_count,
+            matching_support=matching_support,
         )
         print(output / "mesh-signature.csv")
         print(output / "basis-contract.json")

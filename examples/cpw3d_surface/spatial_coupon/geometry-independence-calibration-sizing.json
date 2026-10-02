@@ -69,7 +69,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "3659e8a8ff7410d75fc3b3f57b56aa781d93358fd97f7c17fa988123378cf315"
+      "SHA256": "6dfb82a1e45ee3325c10e510db75c25eea25a5c818b75b6b00c3c4640196c5f7"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -94,7 +94,7 @@
     {
       "Name": "estimate_build_cost.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
-      "SHA256": "5bfd4c38a47b8da6d066b39a9b5661a9fdfd4dd144b2b3328a1d55b98f8cd23e"
+      "SHA256": "c0dcc6677e184b65c332b4fbe73788d44848a4a7baf9ada952853ee26aa321f8"
     },
     {
       "Name": "audit_edge_metric_mesh.py",

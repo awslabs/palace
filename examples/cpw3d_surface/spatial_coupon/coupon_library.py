@@ -107,6 +107,7 @@ def build_parser():
                        help="with --device: the Missing requirement(s) whose Hash starts with this prefix get no discovery "
                             "placeholder and are not built (repeatable); they stay Missing against the library and are "
                             "recorded out of scope with Method OmittedRequirement (a prefix matching nothing fails closed)")
+    device_coupons.add_requirement_option_arguments(build)
     qualify = commands.add_parser("qualify", help="physics qualification of the built coupons against their references")
     qualify_library.add_arguments(qualify)
     continuity = commands.add_parser("continuity", help="library continuity gate (decision 82(4)): a pair / stack model at 2R "
@@ -133,6 +134,8 @@ def main(argv=None):
         parser.error("--device requires --palace (the discovery preflights)")
     if args.omit_requirement and args.device is None:
         parser.error("--omit-requirement applies to the --device discovery only")
+    if (args.support_span_cap or args.element_cap) and args.device is None:
+        parser.error("--support-span-cap / --element-cap apply to the --device coupons only")
     registered = []
     extra = None
     if args.device is not None:
@@ -143,7 +146,7 @@ def main(argv=None):
             device_record = device_coupons.prepare_device_sources(
                 args.device, palace=args.palace, output=device_output, manifest_path=args.manifest, ring_size=args.ring_size,
                 cap_triangulation=args.cap_triangulation, cap_interior_spacing=args.cap_interior_spacing,
-                python=args.python, omit_requirements=args.omit_requirement)
+                python=args.python, omit_requirements=args.omit_requirement, **device_coupons.requirement_option_kwargs(args))
             device_coupons.register_device_sources(device_record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe,
                                                    work=(args.work or device_output / "register"), python=args.python,
                                                    julia=args.julia, jobs=args.register_jobs, thin=not args.no_thin)
