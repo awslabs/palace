@@ -1730,7 +1730,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 5);
+      CHECK(cache["Version"] == 6);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3020,7 +3020,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 5);
+      CHECK(cache["Version"] == 6);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -6717,19 +6717,22 @@ TEST_CASE_METHOD(
 TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
           "[surfaceresponseoperator][Serial]")
 {
-  // Decisions 224 / 236 / 242: a translational STRETCH (every longitudinal cell of one
-  // feature stretch) strictly inside one spatial support's box is RECORDED with its class —
-  // a Continuation (it continues a claim of the cluster through the claim cut: a cell on
-  // the claim's mesh segment, or parallel, abutting a claim end along the chain within the
-  // tolerance and within R transversely, AND extending beyond that claim end; the double
-  // count of the coupon's straight
+  // Decisions 224 / 236 / 242 / 252: a translational STRETCH (every longitudinal cell of
+  // one feature stretch) strictly inside one spatial support's box is RECORDED with its
+  // class — a Continuation (it continues a claim of the cluster through the claim cut by
+  // the side's OWN edge: a cell on the claim's mesh segment, or parallel, a cell end on the
+  // side's own edge (the cell end shifted by the provenance edge offset along AxisU)
+  // abutting a claim end along the chain and transversely within the tolerance, AND
+  // extending beyond that claim end; the double count of the coupon's straight
   // continuation) or Foreign (a model mismatch, not a double count) — never an
   // abort; a stack end adjacent to a cluster, whose first cells lie inside the box while
   // the stretch continues outside, is the ordinary stack-end configuration and records
   // nothing. Cells of a 3-cell portion along +x from the origin x = 0: [0, 1], [1, 2.5],
-  // [2.5, 4] (mesh units).
+  // [2.5, 4] (mesh units); a pair's cells sit on its midline y with its own edge at
+  // y + edge_offset (AxisU = +y).
   using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
-  auto Cell = [](int feature, int stretch, double begin, double end, double y = 0.0)
+  auto Cell = [](int feature, int stretch, double begin, double end, double y = 0.0,
+                 double edge_offset = 0.0)
   {
     Patch patch;
     patch.origin = {0.5 * (begin + end), y, 0.0};
@@ -6740,6 +6743,7 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
     patch.provenance.feature = feature;
     patch.provenance.stretch = stretch;
     patch.provenance.segment = 7;
+    patch.provenance.edge_offset = edge_offset;
     return patch;
   };
   // A spatial support over x in [-3, 1.5] (its claims end at x = 0, the box reaches R = 1.5
@@ -6800,21 +6804,40 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
   SECTION("a stretch abutting a claim end along the chain is its continuation")
   {
     // The claim boundary snapped onto the mesh vertex at x = 0 (segment 3 ends there, the
-    // stretch starts on segment 7): parallel, abutting within 1e-3 R and within R
-    // transversely (a pair midline at y = 0.5), every cell beyond the claim end ->
-    // Continuation; a perpendicular stretch starting there, a parallel one 0.3 away along
-    // the chain, or one abutting the claim x = -2.5 along y but 3.4 away from it
-    // transversely, is foreign. A parallel stretch 0.7 from the claim x = -2.5 lying
-    // BESIDE it over the claim's own range y in [0, 1] (one end aligned with each claim
-    // end) is foreign: it does not extend through the claim cut; the same stretch beyond
-    // the claim end (y in [1, 2]) is its continuation.
-    const std::vector<Patch> abutting = {Cell(4, 1, 1.0e-4 * R, 0.5, 0.5),
-                                         Cell(4, 1, 0.5, 1.2, 0.5)};
+    // stretch starts on segment 7): parallel, the side's own edge (a pair midline at
+    // y = 0.5 whose own edge is y = 0: edge offset -0.5) abutting within 1e-3 R along and
+    // across, every cell beyond the claim end -> Continuation; the pair's OTHER side (the
+    // same midline cells, own edge y = 1, segment 8) is foreign (decision 252: never on
+    // midline proximity alone), as is a perpendicular stretch starting there, a parallel
+    // one 0.3 away along the chain, or one abutting the claim x = -2.5 along y but 3.4 away
+    // from it transversely. A parallel stretch whose own edge is the claim x = -2.5 (cells
+    // at x = -1.8, edge offset -0.7) lying BESIDE it over the claim's own range y in [0, 1]
+    // (one end aligned with each claim end) is foreign: it does not extend through the
+    // claim cut; the same stretch beyond the claim end (y in [1, 2]) is its continuation.
+    const std::vector<Patch> abutting = {Cell(4, 1, 1.0e-4 * R, 0.5, 0.5, -0.5),
+                                         Cell(4, 1, 0.5, 1.2, 0.5, -0.5)};
     const auto records =
         FindTranslationalStretchInsideSpatialSupport(abutting, {box}, 3, tolerance);
     REQUIRE(records.size() == 1);
     CHECK(records.front().continuation);
     CHECK_THAT(records.front().length, WithinAbs(1.2 - 1.0e-4 * R, 1.0e-12));
+    std::vector<Patch> far_side = {Cell(4, 2, 1.0e-4 * R, 0.5, 0.5, 0.5),
+                                   Cell(4, 2, 0.5, 1.2, 0.5, 0.5)};
+    for (auto &patch : far_side)
+    {
+      patch.provenance.segment = 8;
+    }
+    const auto unclaimed =
+        FindTranslationalStretchInsideSpatialSupport(far_side, {box}, 3, tolerance);
+    REQUIRE(unclaimed.size() == 1);
+    CHECK(!unclaimed.front().continuation);
+    // The pre-252 criterion (the midline cells within R of the claim end, no edge identity)
+    // would have called the far side a continuation too: with no edge offset the midline
+    // itself is the own edge, 0.5 off the claim's line, foreign.
+    const auto midline = FindTranslationalStretchInsideSpatialSupport(
+        {Cell(4, 1, 1.0e-4 * R, 0.5, 0.5), Cell(4, 1, 0.5, 1.2, 0.5)}, {box}, 3, tolerance);
+    REQUIRE(midline.size() == 1);
+    CHECK(!midline.front().continuation);
     Patch perpendicular = Cell(4, 1, 0.0, 1.0);
     perpendicular.origin = {0.9, 0.5, 0.0};
     perpendicular.axis_w = {0.0, 1.0, 0.0};
@@ -6825,6 +6848,7 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
     CHECK(!turned.front().continuation);
     perpendicular.origin = {-1.8, 0.5,
                             0.0};  // y in [0, 1] at x = -1.8: alongside the claim
+    perpendicular.provenance.edge_offset = -0.7;  // the own edge is the claim x = -2.5
     const auto beside =
         FindTranslationalStretchInsideSpatialSupport({perpendicular}, {box}, 3, tolerance);
     REQUIRE(beside.size() == 1);
@@ -6836,6 +6860,14 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
     REQUIRE(beyond.size() == 1);
     CHECK(beyond.front().continuation);
     CHECK_THAT(beyond.front().length, WithinAbs(1.0, 1.0e-12));
+    // The same cells as the pair's other side (own edge x = -1.1, unclaimed) are foreign.
+    Patch beyond_far_side = beyond_cell;
+    beyond_far_side.provenance.edge_offset = 0.7;
+    beyond_far_side.provenance.segment = 8;
+    CHECK(!FindTranslationalStretchInsideSpatialSupport({beyond_far_side}, {box}, 3,
+                                                        tolerance)
+               .front()
+               .continuation);
     // Starting within the tolerance before the claim end still counts as beyond it; a
     // stretch straddling the claim end (cells y in [0.7, 1] and [1, 1.7], one cell end
     // exactly on the claim end) reaches back alongside the claim and does not.
@@ -6854,13 +6886,15 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
     CHECK_THAT(straddle.front().length, WithinAbs(1.0, 1.0e-12));
     CHECK(!straddle.front().continuation);
     // The direction test also applies to the x = 0 claim end: cells over x in [-1, 0] at
-    // y = 0.5 abut it but lie alongside the claim.
+    // y = 0.5 (own edge y = 0) abut it but lie alongside the claim.
     const auto back = FindTranslationalStretchInsideSpatialSupport(
-        {Cell(4, 1, -1.0, -0.4, 0.5), Cell(4, 1, -0.4, 0.0, 0.5)}, {box}, 3, tolerance);
+        {Cell(4, 1, -1.0, -0.4, 0.5, -0.5), Cell(4, 1, -0.4, 0.0, 0.5, -0.5)}, {box}, 3,
+        tolerance);
     REQUIRE(back.size() == 1);
     CHECK(!back.front().continuation);
     const auto apart = FindTranslationalStretchInsideSpatialSupport(
-        {Cell(4, 1, 0.3, 0.8, 0.5), Cell(4, 1, 0.8, 1.2, 0.5)}, {box}, 3, tolerance);
+        {Cell(4, 1, 0.3, 0.8, 0.5, -0.5), Cell(4, 1, 0.8, 1.2, 0.5, -0.5)}, {box}, 3,
+        tolerance);
     REQUIRE(apart.size() == 1);
     CHECK(!apart.front().continuation);
   }
@@ -6906,6 +6940,542 @@ TEST_CASE("SurfaceResponseOperatorTranslationalStretchOwnership",
     CHECK(FindTranslationalStretchInsideSpatialSupport({spatial, explicit_patch}, {box}, 3,
                                                        tolerance)
               .empty());
+  }
+}
+
+TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
+          "[surfaceresponseoperator][Serial]")
+{
+  // Decisions 236 (2) / 244: the cells of a translational stretch that continues a
+  // cluster's claim are owned by that coupon inside its box and clipped exactly at the box
+  // face; foreign cells, cells outside the box and the stack-end cells of a stretch that
+  // continues no claim are untouched; a cell on the continuations of two coupons is removed
+  // once and attributed by the midpoint between the two continued claim ends. A pair's or
+  // stack's side is owned only where its OWN edge continues the claim (decision 252). Cells
+  // along +x on mesh segment 7 at y = 0 carry weight 0.1 x length (the weight is linear in
+  // the cell length) and a Maxwell anchor at the origin; a pair's cells sit on its midline
+  // y with the side's own edge at y + edge_offset (AxisU = +y).
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  auto Cell = [](int feature, int stretch, double begin, double end, double y = 0.0,
+                 double edge_offset = 0.0)
+  {
+    Patch patch;
+    patch.origin = {0.5 * (begin + end), y, 0.0};
+    patch.axis_u = {0.0, 1.0, 0.0};
+    patch.axis_v = {0.0, 0.0, 1.0};
+    patch.axis_w = {1.0, 0.0, 0.0};
+    patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+    patch.weight = 0.1 * (end - begin);
+    patch.provenance.feature = feature;
+    patch.provenance.stretch = stretch;
+    patch.provenance.segment = 7;
+    patch.provenance.edge_offset = edge_offset;
+    patch.provenance.s0 = 0.0;
+    patch.provenance.s1 = 4.0;
+    patch.provenance.quadrature_weight = (end - begin) / 4.0;
+    patch.maxwell_conductor_anchors = {patch.origin};
+    return patch;
+  };
+  auto Same = [](const Patch &a, const Patch &b)
+  {
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(a.origin[d], WithinAbs(b.origin[d], 1.0e-12));
+      CHECK_THAT(a.maxwell_conductor_anchors.front()[d],
+                 WithinAbs(b.maxwell_conductor_anchors.front()[d], 1.0e-12));
+    }
+    CHECK_THAT(a.longitudinal_cell[0], WithinAbs(b.longitudinal_cell[0], 1.0e-12));
+    CHECK_THAT(a.longitudinal_cell[1], WithinAbs(b.longitudinal_cell[1], 1.0e-12));
+    CHECK_THAT(a.weight, WithinAbs(b.weight, 1.0e-12));
+    CHECK_THAT(a.provenance.quadrature_weight,
+               WithinAbs(b.provenance.quadrature_weight, 1.0e-12));
+  };
+  // The spatial support of the stretch-record case: box x in [-3, 1.5], |y| <= 3, |z| <= 2;
+  // the cluster claims the edge y = 0 from x = -2.5 to 0 (segment 3) and the edge x = -2.5
+  // from y = 0 to 1 (segment 5); its claim cut at x = 0 continues along +x to the face
+  // x = 1.5 (R = 1.5).
+  const double R = 1.5;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  using Claim = Patch::Provenance::Claim;
+  SpatialSupportBounds box;
+  box.patch = 0;
+  box.min = {-3.0, -3.0, -2.0};
+  box.max = {1.5, 3.0, 2.0};
+  box.claims = {Claim{3, {-2.5, 0.0, 0.0}, {0.0, 0.0, 0.0}},
+                Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
+  SECTION("a continuation cell wholly inside the box keeps weight 0")
+  {
+    std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 1.4)};
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    REQUIRE(ownership.cells.size() == 2);
+    CHECK(ownership.wholly_owned_cells == 2);
+    CHECK(ownership.clipped_cells == 0);
+    CHECK(ownership.shared_cells == 0);
+    CHECK_THAT(ownership.owned_length, WithinAbs(1.4, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(1.4, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(4, 0, std::size_t{0})),
+               WithinAbs(1.4, 1.0e-12));
+    for (const auto &patch : patches)
+    {
+      CHECK(patch.weight == 0.0);
+      CHECK(patch.provenance.quadrature_weight == 0.0);
+      CHECK(patch.longitudinal_cell == std::array<double, 2>{0.0, 0.0});
+    }
+    CHECK(ownership.cells[0].owners == std::vector<std::size_t>{0});
+    CHECK_THAT(ownership.cells[0].attributed.front(), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(ownership.cells[1].owned_length, WithinAbs(0.4, 1.0e-12));
+  }
+  SECTION("a straddling cell keeps exactly its fraction outside, as a cell of the kept "
+          "interval")
+  {
+    std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.5),
+                                  Cell(4, 0, 2.5, 4.0)};
+    const auto before = patches;
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    REQUIRE(ownership.cells.size() == 2);
+    CHECK(ownership.wholly_owned_cells == 1);
+    CHECK(ownership.clipped_cells == 1);
+    CHECK_THAT(ownership.owned_length, WithinAbs(1.5, 1.0e-12));
+    CHECK(ownership.cells[1].patch == 1);
+    CHECK_THAT(ownership.cells[1].owned_length, WithinAbs(0.5, 1.0e-12));
+    CHECK_THAT(ownership.cells[1].cell_length, WithinAbs(1.5, 1.0e-12));
+    // The clipped cell [1, 2.5] keeps [1.5, 2.5]: weight x 1 / 1.5, origin at x = 2, the
+    // cell symmetric about it, the quadrature weight scaled alike, the anchor moved with
+    // the origin — identical to a cell built directly on [1.5, 2.5].
+    Same(patches[1], Cell(4, 0, 1.5, 2.5));
+    CHECK_THAT(patches[1].weight, WithinAbs(before[1].weight / 1.5, 1.0e-12));
+    CHECK_THAT(patches[1].provenance.quadrature_weight,
+               WithinAbs(before[1].provenance.quadrature_weight / 1.5, 1.0e-12));
+    CHECK(patches[1].provenance.s0 == before[1].provenance.s0);
+    CHECK(patches[1].provenance.s1 == before[1].provenance.s1);
+    // (iv) The cell beyond the box is untouched.
+    Same(patches[2], before[2]);
+    // Idempotent: the placed cells are owned no further.
+    auto again = patches;
+    const auto repeat = ApplyContinuationOwnership(again, {box}, 3, tolerance);
+    CHECK(repeat.owned_length == 0.0);
+    Same(again[1], patches[1]);
+    // (v) Energy consistency: the correction is additive in the weights, so the removed
+    // weight is exactly the owned fraction of every owned cell, once.
+    double removed = 0.0, expected = 0.0;
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      removed += before[i].weight - patches[i].weight;
+    }
+    for (const auto &cell : ownership.cells)
+    {
+      expected += before[cell.patch].weight * cell.owned_length / cell.cell_length;
+    }
+    CHECK_THAT(removed, WithinAbs(expected, 1.0e-12));
+    CHECK_THAT(removed, WithinAbs(0.1 * 1.5, 1.0e-12));
+  }
+  SECTION("a foreign cell inside the box is unchanged")
+  {
+    // Off every claim (y = 2, x in [-2, -0.8]) and alongside the claim x = -2.5 over its
+    // own range (x = -1.8, y in [0, 1]): foreign, untouched.
+    Patch beside = Cell(4, 2, 0.0, 1.0);
+    beside.origin = {-1.8, 0.5, 0.0};
+    beside.axis_w = {0.0, 1.0, 0.0};
+    beside.axis_u = {1.0, 0.0, 0.0};
+    beside.maxwell_conductor_anchors = {beside.origin};
+    std::vector<Patch> patches = {Cell(4, 1, -2.0, -1.5, 2.0), Cell(4, 1, -1.5, -0.8, 2.0),
+                                  beside};
+    const auto before = patches;
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    CHECK(ownership.cells.empty());
+    CHECK(ownership.owned_length == 0.0);
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      Same(patches[i], before[i]);
+    }
+  }
+  SECTION("a stack end adjacent to the cluster is owned up to the face, unchanged beyond")
+  {
+    // The stack's cells sit on its first side y = 0.5; the side whose own edge is the
+    // claimed edge y = 0 (edge offset -0.5) continues the claim through its cut (abutting
+    // x = 0): owned inside the box; the cells past the face keep their patches. A
+    // perpendicular stretch starting at the claim end continues nothing and keeps its
+    // first cell inside the box.
+    Patch perpendicular = Cell(5, 0, 0.0, 1.0);
+    perpendicular.origin = {0.0, 0.5, 0.0};
+    perpendicular.axis_w = {0.0, 1.0, 0.0};
+    perpendicular.axis_u = {1.0, 0.0, 0.0};
+    perpendicular.maxwell_conductor_anchors = {perpendicular.origin};
+    std::vector<Patch> patches = {
+        Cell(4, 0, 0.0, 1.0, 0.5, -0.5), Cell(4, 0, 1.0, 2.5, 0.5, -0.5),
+        Cell(4, 0, 2.5, 4.0, 0.5, -0.5), Cell(4, 0, 4.0, 5.0, 0.5, -0.5), perpendicular};
+    const auto before = patches;
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    REQUIRE(ownership.cells.size() == 2);
+    CHECK_THAT(ownership.owned_length, WithinAbs(1.5, 1.0e-12));
+    CHECK(patches[0].weight == 0.0);
+    Same(patches[1], Cell(4, 0, 1.5, 2.5, 0.5, -0.5));
+    Same(patches[2], before[2]);
+    Same(patches[3], before[3]);
+    Same(patches[4], before[4]);
+  }
+  SECTION("a pair with one edge claimed: the claimed side owned, the other side untouched")
+  {
+    // A pair of separation 1 whose both sides' cells sit on the midline y = 0.5 beyond the
+    // claim end x = 0: side 0's own edge is the claimed edge y = 0 (segment 7 continues
+    // segment 3 at the mesh vertex x = 0; edge offset -0.5), side 1's own edge y = 1
+    // (segment 8, edge offset +0.5) is not claimed. Decision 252: side 0 is owned inside
+    // the box (its first cell wholly, its second clipped at the face x = 1.5), side 1's
+    // cells stay whole although they abut the same claim end within R — the coupon's
+    // twins do not carry that edge. The removed weight is side 0's owned fraction only.
+    std::vector<Patch> patches = {
+        Cell(4, 0, 0.0, 1.0, 0.5, -0.5), Cell(4, 0, 1.0, 2.5, 0.5, -0.5),
+        Cell(4, 1, 0.0, 1.0, 0.5, 0.5), Cell(4, 1, 1.0, 2.5, 0.5, 0.5)};
+    patches[2].provenance.segment = patches[3].provenance.segment = 8;
+    const auto before = patches;
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    REQUIRE(ownership.cells.size() == 2);
+    CHECK(ownership.cells[0].patch == 0);
+    CHECK(ownership.cells[1].patch == 1);
+    CHECK(ownership.wholly_owned_cells == 1);
+    CHECK(ownership.clipped_cells == 1);
+    CHECK_THAT(ownership.owned_length, WithinAbs(1.5, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(4, 0, std::size_t{0})),
+               WithinAbs(1.5, 1.0e-12));
+    CHECK(ownership.owned_by_stretch.count(std::make_tuple(4, 1, std::size_t{0})) == 0);
+    CHECK(patches[0].weight == 0.0);
+    Same(patches[1], Cell(4, 0, 1.5, 2.5, 0.5, -0.5));
+    Same(patches[2], before[2]);
+    Same(patches[3], before[3]);
+    double removed = 0.0;
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      removed += before[i].weight - patches[i].weight;
+    }
+    CHECK_THAT(removed, WithinAbs(0.1 * 1.5, 1.0e-12));
+    // The record agrees (one classifier): side 0 wholly inside is a Continuation, side 1
+    // Foreign.
+    const std::vector<Patch> inside = {Cell(4, 0, 0.0, 1.0, 0.5, -0.5),
+                                       Cell(4, 1, 0.0, 1.0, 0.5, 0.5)};
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(inside, {box}, 3, tolerance);
+    REQUIRE(records.size() == 2);
+    CHECK(records[0].stretch == 0);
+    CHECK(records[0].continuation);
+    CHECK(records[1].stretch == 1);
+    CHECK(!records[1].continuation);
+    // The segment branch is the own edge too: side 1 on the claimed segment 3 (a claim cut
+    // mid-segment) is owned whatever its offset.
+    std::vector<Patch> on_claimed_segment = {Cell(4, 1, 0.0, 1.0, 0.5, 0.5)};
+    on_claimed_segment[0].provenance.segment = 3;
+    CHECK_THAT(
+        ApplyContinuationOwnership(on_claimed_segment, {box}, 3, tolerance).owned_length,
+        WithinAbs(1.0, 1.0e-12));
+  }
+  SECTION("fresh and cache-round-tripped patches classify identically")
+  {
+    // The geometry cache (version 6) carries the mesh segment and the own-edge offset of
+    // every patch with the cluster patch's claims: the ownership on the cached patches is
+    // the ownership on the fresh ones (a cache without the segment would send every
+    // stretch through the abutment branch; without the offset every pair side would be
+    // judged on its midline).
+    test::SharedTempDir temp;
+    config::ElectrostaticSolverData::ResponseCorrectionData data;
+    data.matching_radius = R;
+    data.models.emplace_back().idx = 1;
+    data.models.back().name = "gap";
+    data.models.back().fabricated_matrix = "fabricated.csv";
+    data.models.back().thin_matrix = "thin.csv";
+    data.models.back().basis_points = "points.csv";
+    data.models.emplace_back().idx = 2;
+    data.models.back().name = "cluster";
+    data.models.back().fabricated_matrix = "fabricated.csv";
+    data.models.back().thin_matrix = "thin.csv";
+    data.models.back().basis_points = "points.csv";
+    data.models.back().spatial_basis = true;
+    data.patches = {Cell(4, 0, 0.0, 1.0, 0.5, -0.5), Cell(4, 0, 1.0, 2.5, 0.5, -0.5),
+                    Cell(4, 1, 0.0, 1.0, 0.5, 0.5),  Cell(4, 1, 1.0, 2.5, 0.5, 0.5),
+                    Cell(4, 2, 0.3, 0.8, 0.5, 0.5),  Patch{}};
+    for (auto &patch : data.patches)
+    {
+      patch.model = 1;
+    }
+    data.patches[2].provenance.segment = data.patches[3].provenance.segment = 8;
+    data.patches[4].provenance.segment = 3;
+    data.patches.back().model = 2;
+    data.patches.back().provenance.feature = 8;
+    data.patches.back().provenance.claims = box.claims;
+    const auto cache_path = temp.temp_dir / "response-geometry-ownership.json";
+    WriteResponseGeometryCache(cache_path, data);
+    const auto cached = ReadResponseGeometryCache(cache_path, data);
+    REQUIRE(cached.patches.size() == data.patches.size());
+    for (std::size_t i = 0; i < data.patches.size(); i++)
+    {
+      CHECK(cached.patches[i].provenance.feature == data.patches[i].provenance.feature);
+      CHECK(cached.patches[i].provenance.segment == data.patches[i].provenance.segment);
+      CHECK(cached.patches[i].provenance.stretch == data.patches[i].provenance.stretch);
+      CHECK(cached.patches[i].provenance.edge_offset ==
+            data.patches[i].provenance.edge_offset);
+      CHECK(cached.patches[i].provenance.claims.size() ==
+            data.patches[i].provenance.claims.size());
+    }
+    const auto fresh_records =
+        FindTranslationalStretchInsideSpatialSupport(data.patches, {box}, 3, tolerance);
+    const auto cached_records =
+        FindTranslationalStretchInsideSpatialSupport(cached.patches, {box}, 3, tolerance);
+    REQUIRE(fresh_records.size() == 1);  // stretch 2 wholly inside, on the claimed segment
+    CHECK(fresh_records.front().continuation);
+    REQUIRE(cached_records.size() == fresh_records.size());
+    CHECK(cached_records.front().continuation == fresh_records.front().continuation);
+    auto fresh = data.patches, reloaded = cached.patches;
+    const auto fresh_ownership = ApplyContinuationOwnership(fresh, {box}, 3, tolerance);
+    const auto cached_ownership = ApplyContinuationOwnership(reloaded, {box}, 3, tolerance);
+    CHECK_THAT(fresh_ownership.owned_length, WithinAbs(1.5 + 0.5, 1.0e-12));
+    CHECK_THAT(cached_ownership.owned_length,
+               WithinAbs(fresh_ownership.owned_length, 1.0e-12));
+    REQUIRE(cached_ownership.cells.size() == fresh_ownership.cells.size());
+    for (std::size_t i = 0; i < fresh_ownership.cells.size(); i++)
+    {
+      CHECK(cached_ownership.cells[i].patch == fresh_ownership.cells[i].patch);
+      CHECK_THAT(cached_ownership.cells[i].owned_length,
+                 WithinAbs(fresh_ownership.cells[i].owned_length, 1.0e-12));
+    }
+    for (std::size_t i = 0; i < fresh.size(); i++)
+    {
+      CHECK_THAT(reloaded[i].weight, WithinAbs(fresh[i].weight, 1.0e-12));
+    }
+    // A version-5 cache (no segment, no edge offset) is refused.
+    std::ifstream input(cache_path);
+    nlohmann::json stale = nlohmann::json::parse(input);
+    input.close();
+    CHECK(stale["Version"] == 6);
+    stale["Version"] = 5;
+    const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
+    {
+      std::ofstream output(stale_path);
+      output << stale.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(stale_path, data),
+                      Catch::Matchers::ContainsSubstring("cache version 5"));
+  }
+  SECTION("a cell on the continuations of two coupons is removed once, attributed by the "
+          "midpoint between the claim ends")
+  {
+    // A second cluster whose box spans x in [0.5, 6] claims the edge y = 0 from x = 2 to 4
+    // (segment 9): the bridge x in [0, 2] continues both claims (A's end x = 0 and B's end
+    // x = 2); the cell [1, 2] lies inside both boxes, the cell [0, 1] inside A wholly and
+    // inside B over [0.5, 1]. Both are removed wholly (the complement of every owning box),
+    // once; the attribution splits at the midpoint x = 1 between the claim ends: A owns
+    // [0, 1], B owns [1, 2]. The cell [4, 5] beyond B's claim is B's continuation on the
+    // far side, inside B's box only.
+    SpatialSupportBounds other;
+    other.patch = 9;
+    other.min = {0.5, -3.0, -2.0};
+    other.max = {6.0, 3.0, 2.0};
+    other.claims = {Claim{9, {2.0, 0.0, 0.0}, {4.0, 0.0, 0.0}},
+                    Claim{11, {4.0, 0.0, 0.0}, {4.0, 1.0, 0.0}}};
+    std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.0),
+                                  Cell(6, 0, 4.0, 5.0), Cell(6, 0, 5.0, 7.0)};
+    const auto before = patches;
+    const auto ownership = ApplyContinuationOwnership(patches, {box, other}, 3, tolerance);
+    REQUIRE(ownership.cells.size() == 4);
+    CHECK(ownership.shared_cells == 2);
+    CHECK_THAT(ownership.shared_length, WithinAbs(2.0, 1.0e-12));
+    CHECK_THAT(ownership.owned_length, WithinAbs(2.0 + 1.0 + 1.0, 1.0e-12));
+    CHECK(patches[0].weight == 0.0);
+    CHECK(patches[1].weight == 0.0);
+    CHECK(patches[2].weight == 0.0);
+    Same(patches[3], Cell(6, 0, 6.0, 7.0));
+    CHECK(ownership.cells[0].owners == std::vector<std::size_t>{0, 9});
+    CHECK_THAT(ownership.cells[0].attributed[0], WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(ownership.cells[0].attributed[1], WithinAbs(0.0, 1.0e-12));
+    CHECK(ownership.cells[1].owners == std::vector<std::size_t>{0, 9});
+    CHECK_THAT(ownership.cells[1].attributed[0], WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT(ownership.cells[1].attributed[1], WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(9), WithinAbs(1.0 + 2.0, 1.0e-12));
+    // The removed weight equals the owned fraction of every owned cell, once.
+    double removed = 0.0, expected = 0.0;
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      removed += before[i].weight - patches[i].weight;
+    }
+    for (const auto &cell : ownership.cells)
+    {
+      expected += before[cell.patch].weight * cell.owned_length / cell.cell_length;
+    }
+    CHECK_THAT(removed, WithinAbs(expected, 1.0e-12));
+    CHECK_THAT(removed, WithinAbs(0.1 * 4.0, 1.0e-12));
+  }
+  SECTION("the stretch record carries the owned length per record and in total")
+  {
+    // The 0.9-long stretch 1 lies wholly inside the box on the claim's own segment 3 (a
+    // claim cut mid-segment); stretch 0 straddles the face. The spatial patch is patch 4.
+    config::ElectrostaticSolverData::ResponseCorrectionData data;
+    data.models.emplace_back().idx = 1;
+    data.models.back().name = "isolated-edge";
+    data.models.emplace_back().idx = 2;
+    data.models.back().name = "cluster";
+    data.models.back().spatial_basis = true;
+    data.patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.5), Cell(4, 1, 0.3, 0.8, 0.5),
+                    Cell(4, 1, 0.8, 1.2, 0.5), Patch{}};
+    for (auto &patch : data.patches)
+    {
+      patch.model = 1;
+    }
+    data.patches[2].provenance.segment = data.patches[3].provenance.segment = 3;
+    data.patches.back().model = 2;
+    data.patches.back().provenance.feature = 8;
+    SpatialSupportBounds spatial = box;
+    spatial.patch = 4;
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(data.patches, {spatial}, 3, tolerance);
+    REQUIRE(records.size() == 1);
+    CHECK(records.front().continuation);
+    const auto ownership =
+        ApplyContinuationOwnership(data.patches, {spatial}, 3, tolerance);
+    const auto description = DescribeTranslationalOwnershipRecords(records, {spatial}, data,
+                                                                   2.0, {}, &ownership);
+    CHECK_THAT(description["OwnedLength"].get<double>(), WithinAbs(2.0 * 0.9, 1.0e-12));
+    CHECK_THAT(description["OwnedLengthTotal"].get<double>(),
+               WithinAbs(2.0 * (0.9 + 1.5), 1.0e-12));
+    CHECK_THAT(description["Records"][0]["OwnedLength"].get<double>(),
+               WithinAbs(2.0 * 0.9, 1.0e-12));
+    const auto summary = DescribeContinuationOwnership(ownership, {spatial}, data, 2.0);
+    CHECK(summary["Cells"] == 4);
+    CHECK(summary["WhollyOwnedCells"] == 3);
+    CHECK(summary["ClippedCells"] == 1);
+    CHECK_THAT(summary["OwnedLength"].get<double>(), WithinAbs(2.0 * 2.4, 1.0e-12));
+    CHECK(summary["BySupport"][0]["SpatialPatch"] == 4);
+    CHECK(summary["BySupport"][0]["SpatialModel"] == "cluster");
+    CHECK_THAT(summary["BySupport"][0]["OwnedLength"].get<double>(),
+               WithinAbs(2.0 * 2.4, 1.0e-12));
+    CHECK(summary["OwnedCells"][1]["Owners"][0]["SpatialFeature"] == 8);
+    CHECK(DescribeContinuationOwnershipSummary(summary).find("4 translational cell(s)") !=
+          std::string::npos);
+  }
+}
+
+TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
+          "[surfaceresponseoperator][Serial]")
+{
+  // Decision 244: the two 19-edge coupons of the S1p re-preflight (R = 1.9, boxes
+  // x in [568.55, 592.75] and [583.05, 607.25], the same y and z): A's claim on
+  // y = -108.325 ends at its cut x = 587.05 and continues to A's face 592.75 over 2.80 of
+  // B's claim [589.95, 593.0]; B's cut at 589.95 continues to B's face 583.05 over 3.80 of
+  // A's claims [583.25, 587.05]; the two continuations share the bridge [587.05, 589.95]
+  // (2.90): 9.50 of edge corrected by both coupons, recorded (no claim of either inside
+  // the other's claims hull). A claim of B reaching into A's hull is a true overlap.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.9;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  const double y = -108.325;
+  SpatialSupportBounds a, b;
+  a.patch = 204;
+  a.min = {568.55, -128.2, 2.85};
+  a.max = {592.75, -102.625, 6.8};
+  a.claims = {Claim{494, {583.25, y, 4.8}, {583.55, y, 4.8}},
+              Claim{514, {583.55, y, 4.8}, {587.05, y, 4.8}},
+              Claim{520, {583.25, y, 4.8}, {583.25, -120.0, 4.8}}};
+  b.patch = 205;
+  b.min = {583.05, -128.2, 2.85};
+  b.max = {607.25, -102.625, 6.8};
+  b.claims = {Claim{646, {589.95, y, 4.8}, {593.0, y, 4.8}},
+              Claim{650, {593.0, y, 4.8}, {593.0, -120.0, 4.8}}};
+  SECTION("a margins-only overlap is recorded with the S1p pair's 9.50 um")
+  {
+    const auto overlaps = FindSpatialSupportMarginOverlaps({a, b}, 3, tolerance);
+    REQUIRE(overlaps.size() == 1);
+    const auto &overlap = overlaps.front();
+    CHECK(overlap.first_patch == 204);
+    CHECK(overlap.second_patch == 205);
+    CHECK(!overlap.claim_in_hull);
+    CHECK_THAT(overlap.overlap_min[0], WithinAbs(583.05, 1.0e-12));
+    CHECK_THAT(overlap.overlap_max[0], WithinAbs(592.75, 1.0e-12));
+    CHECK_THAT(overlap.first_margin_over_second_claims, WithinAbs(2.80, 1.0e-9));
+    CHECK_THAT(overlap.second_margin_over_first_claims, WithinAbs(3.80, 1.0e-9));
+    CHECK_THAT(overlap.margin_over_margin, WithinAbs(2.90, 1.0e-9));
+    config::ElectrostaticSolverData::ResponseCorrectionData data;
+    data.models.emplace_back().idx = 1;
+    data.models.back().name = "spatialedgecluster_edgecount-19";
+    data.models.back().spatial_basis = true;
+    data.patches.resize(206);
+    for (auto &patch : data.patches)
+    {
+      patch.model = 1;
+    }
+    const auto description = DescribeSpatialSupportMarginOverlaps(overlaps, data, 1.0);
+    CHECK(description["Count"] == 1);
+    CHECK(description["ClaimInHull"] == 0);
+    CHECK_THAT(description["DoubleCountedLength"].get<double>(), WithinAbs(9.50, 1.0e-9));
+    CHECK_THAT(description["MarginOverClaimsLength"].get<double>(),
+               WithinAbs(6.60, 1.0e-9));
+    CHECK_THAT(description["MarginOverMarginLength"].get<double>(),
+               WithinAbs(2.90, 1.0e-9));
+    CHECK(description["Pairs"][0]["ClaimInHull"] == false);
+    CHECK(DescribeSpatialSupportMarginOverlapWarning(description).find("9.500000e+00") !=
+          std::string::npos);
+    // The bridge's cells (feature 26: 0.8056 + 1.2889 + 0.8056) continue both claims: owned
+    // once, 1.45 attributed to each coupon by the midpoint x = 588.5 of the claim ends.
+    auto Cell = [&](double begin, double end)
+    {
+      Patch patch;
+      patch.origin = {0.5 * (begin + end), y, 4.8};
+      patch.axis_u = {0.0, 1.0, 0.0};
+      patch.axis_v = {0.0, 0.0, 1.0};
+      patch.axis_w = {1.0, 0.0, 0.0};
+      patch.longitudinal_cell = {begin - patch.origin[0], end - patch.origin[0]};
+      patch.weight = end - begin;
+      patch.provenance.feature = 26;
+      patch.provenance.stretch = 0;
+      patch.provenance.segment = 646;
+      return patch;
+    };
+    std::vector<Patch> bridge = {Cell(587.05, 587.8556), Cell(587.8556, 589.1444),
+                                 Cell(589.1444, 589.95)};
+    const auto ownership = ApplyContinuationOwnership(bridge, {a, b}, 3, tolerance);
+    CHECK(ownership.shared_cells == 3);
+    CHECK_THAT(ownership.owned_length, WithinAbs(2.90, 1.0e-9));
+    CHECK_THAT(ownership.owned_by_support.at(204), WithinAbs(1.45, 1.0e-9));
+    CHECK_THAT(ownership.owned_by_support.at(205), WithinAbs(1.45, 1.0e-9));
+    for (const auto &patch : bridge)
+    {
+      CHECK(patch.weight == 0.0);
+    }
+  }
+  SECTION("a claim inside the other's claims hull is a true overlap")
+  {
+    // B's second claim turns into A's hull: x = 586 from y to -115 (its far end strictly
+    // inside A's claims' bounding box x in [583.25, 587.05], y in [-120, -108.325]).
+    SpatialSupportBounds reaching = b;
+    reaching.claims = {Claim{646, {586.0, y, 4.8}, {593.0, y, 4.8}},
+                       Claim{650, {586.0, y, 4.8}, {586.0, -115.0, 4.8}}};
+    const auto overlaps = FindSpatialSupportMarginOverlaps({a, reaching}, 3, tolerance);
+    REQUIRE(overlaps.size() == 1);
+    CHECK(overlaps.front().claim_in_hull);
+    // The claim SEGMENT is tested, not only its ends (decision 252): B's claim y = -115
+    // from x = 582 to 588 crosses A's hull (x in [583.25, 587.05]) with both ends outside
+    // it, while B's own hull (x in [582, 593], y in [-115, -108.325]) holds no end of A's
+    // claims strictly inside (A's claims lie on its face y = -108.325).
+    SpatialSupportBounds crossing = b;
+    crossing.claims = {Claim{646, {589.95, y, 4.8}, {593.0, y, 4.8}},
+                       Claim{650, {582.0, -115.0, 4.8}, {588.0, -115.0, 4.8}}};
+    const auto crossed = FindSpatialSupportMarginOverlaps({a, crossing}, 3, tolerance);
+    REQUIRE(crossed.size() == 1);
+    CHECK(crossed.front().claim_in_hull);
+    // A claim lying on A's hull face x = 587.05 (A's claims' cut) over y in [-110, -115]
+    // touches the hull within the tolerance and is not inside it.
+    SpatialSupportBounds grazing = b;
+    grazing.claims = {Claim{646, {589.95, y, 4.8}, {593.0, y, 4.8}},
+                      Claim{650, {587.05, -110.0, 4.8}, {587.05, -115.0, 4.8}}};
+    const auto grazed = FindSpatialSupportMarginOverlaps({a, grazing}, 3, tolerance);
+    REQUIRE(grazed.size() == 1);
+    CHECK(!grazed.front().claim_in_hull);
+  }
+  SECTION("separate boxes and claim-less (corner) supports are not pairs")
+  {
+    SpatialSupportBounds apart = b;
+    apart.min[0] = 592.75;
+    CHECK(FindSpatialSupportMarginOverlaps({a, apart}, 3, tolerance).empty());
+    SpatialSupportBounds corner = b;
+    corner.claims.clear();
+    CHECK(FindSpatialSupportMarginOverlaps({a, corner}, 3, tolerance).empty());
   }
 }
 

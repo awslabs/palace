@@ -217,7 +217,14 @@ Phase 4 (decision 74, the Features-driven patch construction; design doc section
     automatically (or `--patches`) and gates **A7**: patched features = matched features, every
     portion of a matched feature covered exactly once, weights (quadrature x model = 1 per interval,
     `Weight = ModelWeight x QuadratureWeight x (S1 - S0) x SideFactor / CouponDepth`), no patch on
-    an unmatched feature or an excluded segment / portion.
+    an unmatched feature or an excluded segment / portion. The dry run holds the PLACED cells
+    (decision 236 (2)): a translational cell owned by a spatial coupon inside its box is written
+    clipped — weight and `QuadratureWeight` scaled by its kept fraction (0 when wholly inside),
+    origin at the kept interval's midpoint, `[StripBegin, StripEnd]` the kept interval — while
+    `[S0, S1)` stays the unclipped portion; `audit.py` reconciles the portion sums with
+    `Diagnostics.ContinuationOwnership.OwnedCells`, any other reader of the CSV that expects the
+    unclipped identification (census or replica tools) must add the owned cells back from that
+    record.
   - `signature_library.py MANIFEST OUT.json` builds the **signature-only library** (one model per
     distinct feature hash, `Signature` + version-1 parameters derived from it, placeholder matrix
     paths; the library keys clusters by signature without `Edges`, curved classes `CurvedEdge` /

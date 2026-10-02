@@ -6,12 +6,14 @@
 
 #include <array>
 #include <complex>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -443,6 +445,18 @@ public:
 void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                                       const std::string &path);
 
+// The response-geometry cache (PALACE_RESPONSE_GEOMETRY_CACHE): the automatically
+// constructed models and UNPLACED patches with the provenance the continuation ownership
+// needs (feature, mesh segment, chain stretch, own-edge offset, the cluster patches'
+// claims) and the matching radius; version 6, older caches refused. The reader returns the
+// request with its library, models and patches replaced by the cached ones.
+void WriteResponseGeometryCache(
+    const std::filesystem::path &path,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config);
+config::ElectrostaticSolverData::ResponseCorrectionData ReadResponseGeometryCache(
+    const std::filesystem::path &path,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request);
+
 // Ownership record of the translational patches against the spatial supports (decisions
 // 224 / 236): a translational STRETCH — the maximal contiguous stretch of one feature side
 // along its chain (patch provenance feature / stretch), the identification's portion unit —
@@ -452,15 +466,18 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
 // straight continuations to the box face, so a stretch that continues one of the cluster's
 // claims through its claim cut (class Continuation) is corrected by both the coupon and its
 // own patches, while any other stretch (class Foreign) is absent from the coupon's twins —
-// a model mismatch, not a double count. A stretch continues a claim when one of its cells
-// lies on the claim's mesh segment (the claim boundary cut that segment) or when it runs
-// parallel to the claim (within the signature angle tolerance), one of its ends abuts a
-// claim end along the chain within continuation_tolerance, within R of it transversely (a
-// claim boundary snapped onto a mesh vertex), AND it extends beyond that claim end (every
-// cell end on the outward side of the abutting end, away from the claim's other end,
-// within continuation_tolerance; a parallel stretch alongside the claim over the claim's
-// own range is Foreign); the cells of a pair sit on the pair's
-// midline, so collinearity with the edge is not tested. Judged per stretch, never per cell:
+// a model mismatch, not a double count. A stretch continues a claim only through the
+// side's OWN edge (decision 252): when one of its cells lies on the claim's mesh segment
+// (the claim boundary cut that segment) or when it runs parallel to the claim (within the
+// signature angle tolerance), one of its cell ends ON ITS OWN EDGE (the cell ends shifted
+// by the provenance edge_offset along AxisU: a pair's cells sit on the midline, a stack's
+// on the first side) abuts a claim end along the chain within continuation_tolerance and
+// within continuation_tolerance of it transversely (a claim boundary snapped onto a mesh
+// vertex of the same edge), AND it extends beyond that claim end (every cell end on the
+// outward side of the abutting end, away from the claim's other end, within
+// continuation_tolerance; a parallel stretch alongside the claim over the claim's own
+// range is Foreign). The side of a pair or stack whose own edge is not claimed never
+// continues the claim, whatever its cells' proximity. Judged per stretch, never per cell:
 // the box extends 3R past every claim-cut end along its edge (2R continuation + R padding;
 // 2R transversely), so the first cells of every stack portion adjacent to a cluster lie
 // inside its box legitimately. Cell ends are the strip ends along AxisW from the origin
@@ -502,14 +519,110 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
     double coordinate_scale, int dimension, std::vector<std::string> *skipped = nullptr);
 
 // The Diagnostics entry of the ownership records (lengths and coordinates in mesh units).
+struct ContinuationOwnership;
 nlohmann::json DescribeTranslationalOwnershipRecords(
     const std::vector<TranslationalOwnershipRecord> &records,
     const std::vector<SpatialSupportBounds> &supports,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
-    double coordinate_scale, const std::vector<std::string> &skipped);
+    double coordinate_scale, const std::vector<std::string> &skipped,
+    const ContinuationOwnership *ownership = nullptr);
 
 // The warning logged for a non-empty Diagnostics entry (one line per record).
 std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnostics);
+
+// Continuation ownership at placement (decisions 236 (2) / 244): a translational cell of a
+// stretch that continues a claim of a spatial support (the Continuation criterion of the
+// stretch record above, judged on the whole stretch, inside the box or not) is owned by
+// that coupon inside the box — the coupon's twins carry the straight continuation of its
+// claims to the box face, so the cell's own patch there is the double count. The cell is
+// CLIPPED exactly at the box face: its kept part is the part outside EVERY box whose claims
+// its stretch continues (the complement intersection: symmetric for a cell on the
+// continuations of two coupons, exact, idempotent); the patch keeps weight x kept / cell
+// (the weight is linear in the cell length), its origin moves to the kept interval's
+// midpoint with the cell re-expressed symmetric about it, its provenance quadrature weight
+// scales by the same fraction (the portion [s0, s1) stays, so the dry run's weight formula
+// holds and the quadrature weights of a portion sum to 1 - owned / portion length), and
+// the Maxwell conductor anchors move with the origin. A cell wholly inside keeps weight 0
+// (the operator skips it). Cells of foreign stretches, cells of a continuing stretch
+// outside the box and the stack-end cells of a stretch that does not continue a claim are
+// untouched. The owned length of a cell shared by two coupons is attributed per coupon by
+// the midpoint between the two coupons' inside intervals along the cell (the per-coupon
+// lengths sum to the removed length). Fails closed when a box's inside interval lies
+// strictly inside a cell (two kept pieces: a cell longer than a coupon box along its own
+// direction is no translational cell of a coupon library). Curved cells never continue a
+// claim (the Continuation criterion is parallel within the signature angle tolerance), so
+// an arc continuing an arc claim keeps its patches: a residual double count the record
+// lengths show. Lengths in patch units.
+struct ContinuationOwnership
+{
+  struct Cell
+  {
+    std::size_t patch = 0;
+    int feature = -1;
+    int stretch = -1;
+    double cell_length = 0.0;
+    double owned_length = 0.0;  // removed from the cell (once, whatever the owner count)
+    std::vector<std::size_t> owners;  // spatial patches, ascending
+    std::vector<double> attributed;   // owned length per owner (midpoint rule)
+  };
+  std::vector<Cell> cells;  // in patch order
+  // Owned length per (feature, stretch, spatial patch) and per spatial patch.
+  std::map<std::tuple<int, int, std::size_t>, double> owned_by_stretch;
+  std::map<std::size_t, double> owned_by_support;
+  double owned_length = 0.0;
+  double shared_length = 0.0;  // of cells with two or more owners
+  int shared_cells = 0;
+  int wholly_owned_cells = 0;
+  int clipped_cells = 0;
+};
+ContinuationOwnership ApplyContinuationOwnership(
+    std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double continuation_tolerance);
+
+// Coupon-vs-coupon margin overlap (decision 244): two spatial cluster supports whose boxes
+// overlap in their interiors are recorded, not aborted, when the overlap is MARGINS ONLY —
+// no claim SEGMENT of either enters the other's claims hull (the bounding box of its
+// claims, patch units; a coplanar direction widened to the other's box) by a positive
+// length beyond continuation_tolerance — tested on the segment, so a claim crossing the
+// hull with both ends outside counts (decision 252). Each coupon's twins continue every
+// claim CUT end (a claim end no other claim of the same cluster shares within
+// continuation_tolerance) straight to its own box face; where that continuation lies on a
+// claim of the other coupon (margin-vs-claim) or on a continuation of the other coupon
+// (margin-vs-margin) both coupons correct the same edge: a double count the placement
+// cannot remove (the dense coupon operator is not clippable), quantified here per pair
+// (the continuations are tested parallel within the signature angle tolerance and within
+// continuation_tolerance transversely). A claim inside the other's claims hull is a true
+// overlap of two coupons' domains: claim_in_hull = true, and the placement aborts.
+struct SpatialSupportMarginOverlap
+{
+  std::size_t first_patch = 0, second_patch = 0;
+  std::array<double, 3> overlap_min{}, overlap_max{};
+  double first_margin_over_second_claims = 0.0;
+  double second_margin_over_first_claims = 0.0;
+  double margin_over_margin = 0.0;
+  bool claim_in_hull = false;
+};
+std::vector<SpatialSupportMarginOverlap>
+FindSpatialSupportMarginOverlaps(const std::vector<SpatialSupportBounds> &supports,
+                                 int dimension, double continuation_tolerance);
+
+// The Diagnostics entries of the continuation ownership and of the margin overlaps
+// (lengths and coordinates in mesh units).
+nlohmann::json DescribeContinuationOwnership(
+    const ContinuationOwnership &ownership,
+    const std::vector<SpatialSupportBounds> &supports,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+nlohmann::json DescribeSpatialSupportMarginOverlaps(
+    const std::vector<SpatialSupportMarginOverlap> &overlaps,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+
+// The warning logged for a non-empty margin-overlap entry and the summary printed for a
+// non-empty continuation-ownership entry.
+std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &diagnostics);
+std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnostics);
 
 }  // namespace palace
 

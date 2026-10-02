@@ -24,6 +24,12 @@ given with --patches) the gates A7 check the Features-driven patch construction:
 of every matched feature is integrated by exactly one longitudinal quadrature (weights summing
 to one), every vertex / cluster feature carries one patch, the patched feature set equals the
 matched manifest features, and no patch touches an unmatched feature or an excluded segment.
+The dry run holds the PLACED cells (decision 236 (2)): a translational cell owned by a spatial
+coupon inside its box is written clipped (Weight and QuadratureWeight scaled by its kept
+fraction, 0 when wholly inside; origin and [StripBegin, StripEnd] on the kept interval) while
+[S0, S1) stays the unclipped portion, so a portion's quadrature weights sum to 1 - owned /
+portion length, read from Diagnostics.ContinuationOwnership.OwnedCells; a reader expecting the
+unclipped identification must add the owned cells back from that record.
 Placement (A10, placement_check.py): with the library the preflight ran with (``Library.Path``
 or --library), every matched cluster / corner / stack / pair model mapped through its dry-run
 patch frame lands on the feature's claimed portions within the signature tolerance.
@@ -547,6 +553,13 @@ def patch_gates(identification, patches, radius):
     coverage_defects = []
     covered_length = 0.0
     weight_defects = []
+    # Continuation ownership (decision 236 (2)): the placed dry run keeps the portion
+    # [S0, S1) of an owned cell and scales its quadrature weight by the kept fraction, so a
+    # portion's quadrature x model weights sum to 1 - owned / portion length, the owned
+    # length per patch read from Diagnostics.ContinuationOwnership.OwnedCells (mesh units).
+    owned_by_patch = {}
+    for cell in identification.get("Diagnostics", {}).get("ContinuationOwnership", {}).get("OwnedCells", []):
+        owned_by_patch[cell["Patch"]] = float(cell["OwnedLength"])
     for feature_id in sorted(matched):
         feature = features[feature_id]
         rows = rows_by_feature.get(feature_id, [])
@@ -568,8 +581,10 @@ def patch_gates(identification, patches, radius):
             expected_side = 1.0 / len(sides) if feature["Type"] not in ("IsolatedEdge", "CurvedEdge") else 1.0
             for key, group in groups.items():
                 quadrature = sum(r["QuadratureWeight"] * r["ModelWeight"] for r in group)
-                if abs(quadrature - 1.0) > 1.0e-9:
-                    weight_defects.append({"Feature": feature_id, "Interval": key, "Defect": "quadrature x model weights do not sum to 1", "Sum": quadrature})
+                portion_length = key[2] - key[1]
+                owned = sum(owned_by_patch.get(r["Patch"], 0.0) * r["ModelWeight"] for r in group) / portion_length if portion_length > 0 else 0.0
+                if abs(quadrature - (1.0 - owned)) > 1.0e-9:
+                    weight_defects.append({"Feature": feature_id, "Interval": key, "Defect": "quadrature x model weights do not sum to 1 - owned / portion", "Sum": quadrature, "OwnedFraction": owned})
                 for r in group:
                     expected = r["ModelWeight"] * r["QuadratureWeight"] * (r["S1"] - r["S0"]) * r["SideFactor"] / r["CouponDepth"] if r["CouponDepth"] > 0 else float("nan")
                     # S0 / S1 / CouponDepth are written on the manifest's length grid (<= 1e-10 R):
@@ -601,7 +616,7 @@ def patch_gates(identification, patches, radius):
             {"Defects": len(coverage_defects), "Examples": coverage_defects[:10], "CoveredLength": covered_length, "MatchedLength": matched_length, "AssignedLength": assigned_length, "CoveredFractionOfAssigned": covered_length / assigned_length if assigned_length else None, "Basis": "every portion of a matched longitudinal feature is one quadrature interval; a vertex / cluster feature is one patch"},
         )
     )
-    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "Basis": "per interval sum(quadrature x model weight) = 1; weight = model x quadrature x length x side factor / coupon depth; side factor = 1 / chains of a pair or parallel cluster"}))
+    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2)); weight = model x quadrature x length x side factor / coupon depth; side factor = 1 / chains of a pair or parallel cluster"}))
     summary = {
         "Patches": len(patches),
         "PatchesByTopology": dict(Counter(r["Topology"] for r in patches)),

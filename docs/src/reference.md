@@ -907,7 +907,11 @@ excluded segments are never corrected. `Legacy` keeps the former per-interface-g
 classification for comparison only. The geometry-only preflight
 (`--surface-response-preflight`) is also the patch dry run: it writes
 `surface-response-patches.csv` next to the manifest with the feature id, model, segment
-portion and weights of every patch without any field solve.
+portion and weights of every patch without any field solve. The dry run holds the placed
+cells: a translational cell owned by a spatial coupon inside its box (see below) is written
+clipped, with its weight and quadrature weight scaled by the kept fraction (zero when wholly
+inside) and its origin and strip on the kept interval, while its segment portion stays the
+unclipped one; the owned cells are listed under `Diagnostics.ContinuationOwnership`.
 
 `CorrectionMode` selects `PostprocessOnly`, `SelfConsistent`, or `Both` (the default).
 Postprocessing-only mode evaluates fixed-trace and fixed-flux responses on the raw field
@@ -1310,6 +1314,33 @@ permitted so one coupon can support different selected subsets. Absent, incomple
 ambiguous, or geometrically mismatched cross-layer coupons retain the normal
 `UnmatchedPolicy` behavior. `Slot` defaults to zero in `Interfaces`, preserving existing
 single-group libraries.
+
+A spatial cluster coupon is calibrated on the cluster's claimed edge portions and their
+straight continuations to the faces of its box (the bounding box of the model's
+`BasisPoints` placed by the patch frame: the claims plus 3R past every claim-cut end
+along its edge). Where a translational feature (an isolated edge, a pair, or a parallel
+stack) continues one of those claims through the claim cut, its longitudinal cells inside
+the box would correct the same surface a second time. At placement the cells of every
+translational stretch that continues a cluster's claim are therefore owned by that coupon
+inside its box and clipped exactly at the box face: the kept part of a cell is the part
+outside every box whose claims its stretch continues (a cell on the continuations of two
+coupons is removed once), the patch weight scales by the kept fraction (a cell wholly
+inside keeps weight zero and is skipped), and the patch origin moves to the midpoint of
+the kept interval. A stretch continues a claim only through its own edge: for a pair or a
+parallel stack, whose cells sit on the midline or the first side, each side is judged by
+its own edge (a cell on the claimed mesh segment, or the side's edge abutting the claim end
+within the signature parameter tolerance along and across the chain), so the side whose edge
+the cluster does not claim keeps its cells. Cells of foreign features inside the box keep
+their patches (the coupon's twins do not contain that metal; the mismatch is second order).
+The response-geometry cache (`PALACE_RESPONSE_GEOMETRY_CACHE`, version 6) stores the
+unplaced patches with the provenance this needs; older caches are refused. The placed cells
+are reported under `Diagnostics.ContinuationOwnership` (per cell, per coupon) and the
+stretch record `Diagnostics.TranslationalStretchesInsideSpatialSupport` carries the owned
+length per record. Two cluster boxes may overlap in their margins only (no claim of either
+lies inside the other's claims); the edge length corrected by both coupons there — one
+coupon's continuation over the other's claims or over the other's continuation — is
+recorded under `Diagnostics.SpatialSupportMarginOverlaps` with a warning and cannot be
+removed at placement. A claim inside the other cluster's claims remains an error.
 
 A three-dimensional spatial-vertex coupon is added to the same library. For example, a
 corner model has the form:

@@ -1050,6 +1050,13 @@ public:
       // the unit of the placement's translational-vs-spatial ownership record (decisions
       // 224 / 236), which judges whole stretches, never single cells.
       int stretch = -1;
+      // The lateral offset (along the patch AxisU, patch length units) of the side's OWN
+      // edge from the patch origin: 0 for a single edge whose cells lie on it, -/+ half
+      // the separation for the two sides of a pair (whose cells sit on the midline), the
+      // side's offset from the first side for a parallel stack (whose cells sit on the
+      // first side). The edge identity of the placement's continuation ownership
+      // (decision 252): a side's stretch continues a claim only through its own edge.
+      double edge_offset = 0.0;
       double quadrature_weight = 1.0;
       double model_weight = 1.0;
       // Longitudinal patches: weight = model_weight x quadrature_weight x (s1 - s0) x

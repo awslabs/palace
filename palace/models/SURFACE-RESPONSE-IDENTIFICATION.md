@@ -1006,7 +1006,7 @@ smaller endpoint.
    RECORDED by the placement's ownership record (decision 236, never an abort): a
    translational STRETCH (the identification's portion unit, carried as
    `IdentifiedPortion::stretch` and the patch provenance `Stretch` / geometry cache version
-   5) whose every longitudinal cell lies strictly inside one spatial support's box is
+   6) whose every longitudinal cell lies strictly inside one spatial support's box is
    listed under `Diagnostics.TranslationalStretchesInsideSpatialSupport` (feature, stretch,
    model, length, box, class) with a warning (`FindTranslationalStretchInsideSpatialSupport`;
    judged per stretch, never per cell). The spatial support's box is the bounding box of the
@@ -1017,16 +1017,23 @@ smaller endpoint.
    of every stack portion adjacent to a cluster lie inside its box legitimately.
    The coupon is calibrated on its claims AND their straight continuations to the box face,
    so a recorded stretch is classed Continuation when it continues a claimed portion of that
-   cluster through its claim cut: one of its cells lies on the claim's mesh segment (the
-   claim boundary cut that segment), or it runs parallel to the claim (within the signature
-   angle tolerance), one of its ends abuts a claim end along the chain within the
-   signature parameter tolerance 1e-3 R and within R of it transversely (a claim boundary
-   snapped onto a mesh vertex; the cells of a pair sit on its midline, so collinearity with
-   the edge is not tested) AND it extends beyond that claim end (every cell end on the
-   outward side of the abutting end, away from the claim's other end, within the tolerance;
-   a parallel stretch lying alongside the claim over the claim's own range, one end aligned
-   with a claim end, is Foreign — it does not go through the claim cut) — the double count
-   the continuation ownership at placement
+   cluster through its claim cut BY THE SIDE'S OWN EDGE (decision 252): one of its cells lies
+   on the claim's mesh segment (the claim boundary cut that segment), or it runs parallel to
+   the claim (within the signature angle tolerance), one of its cell ends ON ITS OWN EDGE —
+   the cell end shifted by the patch provenance `EdgeOffset` along AxisU: 0 for a single
+   edge, -/+ half the separation for the two sides of a pair (whose cells sit on the
+   midline), the side's offset from the first side for a stack (whose cells sit on the first
+   side); carried by geometry cache version 6 with the mesh `Segment` — abuts a claim end
+   along the chain within the signature parameter tolerance 1e-3 R and within the same
+   tolerance transversely (a claim boundary snapped onto a mesh vertex of the same edge) AND
+   it extends beyond that claim end (every cell end on the outward side of the abutting end,
+   away from the claim's other end, within the tolerance; a parallel stretch lying alongside
+   the claim over the claim's own range, one end aligned with a claim end, is Foreign — it
+   does not go through the claim cut). The side of a pair or stack whose own edge the cluster
+   does not claim is Foreign whatever its cells' proximity to the claim end (before decision
+   252 the transverse reach was R on the midline cells, so the unclaimed edge's half of a
+   pair correction was removed wherever its cells abutted a claimed neighbour's cut) — the
+   double count the continuation ownership at placement
    removes (the accepted transmon library `transmon-r1p9-folded-refined-corners`: 6 records,
    all Continuation, 13.28 um, 0 Foreign, GeometryDigest 9ada660bf6e4 unchanged — the two
    sides of each 2-um strip (features 0 / 1, 4 x 0.869 um from the 3-edge clusters' claim
@@ -1038,9 +1045,56 @@ smaller endpoint.
    `SurfaceResponse.Diagnostics`, with the warning) and in the preflight on the spatial
    models whose basis points the library provides (manifest `Identification.Diagnostics`
    and the same warning; a signature placeholder of a Missing key has none and is listed
-   under `SpatialSupportsWithoutBasisPoints`). Unit tests
+   under `SpatialSupportsWithoutBasisPoints`). HOW THE COUPON'S MARGIN AND THE
+   TRANSLATIONAL PATCHES MEET (continuation ownership at placement, decision 236 (2) / 244,
+   2026-10-02, `ApplyContinuationOwnership`): the cells of every translational stretch that
+   continues a cluster's claim (the Continuation criterion above, judged on the whole
+   stretch whether or not it lies inside the box) are OWNED by that coupon inside its box —
+   the coupon's twins already carry the straight continuation of the claim to the box
+   face — and CLIPPED exactly at the face: the kept part of a cell is the part outside
+   EVERY box whose claims its stretch continues (a cell on the continuations of two coupons
+   is removed once; no first-wins), the patch weight and its provenance quadrature weight
+   scale by kept / cell (a cell wholly inside keeps weight 0 and the operator skips it;
+   the portion [S0, S1) stays, so a portion's quadrature weights sum to 1 - owned /
+   portion length, which the A7 audit reconciles from the record), the origin moves to the
+   kept interval's midpoint with the cell symmetric about it (the clipped cell equals a cell
+   built directly on the kept interval), the Maxwell anchors move with it. Foreign cells,
+   the cells of a continuing stretch outside the box and the stack-end cells of a stretch
+   that continues no claim are untouched; a curved cell never continues a claim (parallel
+   within the signature angle tolerance), so an arc continuing an arc claim keeps its
+   patches — a residual double count the record lengths show; the cell of one SIDE is the
+   quantum: a pair's or stack's side is owned only where its own edge continues the claim
+   (the segment branch or the own-edge abutment above), the cells of an unclaimed side stay
+   (unit case: a pair with one edge claimed — that side owned, the other untouched; the
+   transmon's owned strips have both edges claimed and every owned stretch is classed by the
+   segment branch, so its record is unchanged). `Diagnostics.ContinuationOwnership` lists every owned
+   cell (patch, feature, stretch, portion, owned length, owners with the attributed length —
+   a shared cell split at the midpoint between the two continued claim ends) and the owned
+   length per spatial support; `TranslationalStretchesInsideSpatialSupport` carries the
+   owned length per record and in total. The accepted transmon library: 128 cells / 112.40 um
+   owned (110 wholly, 18 clipped; 44.0 um of isolated-edge cells on the 3-edge and 10-edge
+   coupons' continuations + 68.4 um of 2-um strip midline cells whose both edges the 3-edge
+   and 4-edge clusters claim), 9.5e-4 of the translational patch weight. COUPON VS COUPON
+   (decision 244, `FindSpatialSupportMarginOverlaps`): two cluster boxes overlapping in
+   their interiors no longer abort when the overlap is MARGINS ONLY — no claim SEGMENT of
+   either enters the bounding box of the other's claims by a positive length beyond the
+   tolerance (tested on the segment, so a claim crossing the hull with both ends outside
+   counts; decision 252); a claim inside the other's claims still aborts. Each coupon continues every claim CUT end (an end no other
+   claim of the same cluster shares within 1e-3 R) straight to its own box face; the length
+   of those continuations lying on the other coupon's claims (margin over claims) or on the
+   other coupon's continuations (margin over margin, the bridging piece between two claim
+   cuts) is corrected by both coupons — a double count the placement cannot remove (the
+   dense coupon operator is not clippable), recorded under
+   `Diagnostics.SpatialSupportMarginOverlaps` per pair with a warning (the S1p 19-edge
+   pair 5f0ccfcb3b8b / bd43654a77c6: boxes x [568.55, 592.75] and [583.05, 607.25], margin
+   over claims 2.80 + 3.80 um, margin over margin 2.90 um = 9.50 um, 7.8 % of the two
+   coupons' 122.2 um of claims, 0.33 % of the device's corrected edge length). FOLLOW-UP
+   (option D of the design note): shrinking the continuation from 2R to R reduces every
+   margin double count, with library rebuilds. Unit tests
    `SurfaceResponseIdentificationStackPieceInsideCluster`,
-   `SurfaceResponseOperatorTranslationalStretchOwnership`. The extension
+   `SurfaceResponseOperatorTranslationalStretchOwnership`,
+   `SurfaceResponseOperatorContinuationOwnership`,
+   `SurfaceResponseOperatorSpatialSupportMarginOverlaps`. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
    recomposes the members on the new claims) and the recomposed stacks leave new single-edge
    portions to test; the loop stops when a pass absorbs at most the signature parameter
@@ -1311,8 +1365,10 @@ AxisW from the origin in mesh units, ordered begin <= end (`longitudinal_cell`; 
 `StripEnd` of the dry run in manifest units; `LongitudinalCell` of the geometry cache, version
 3; version 4 adds the patch's `Feature` / `Stretch` provenance for the ownership check of
 decision 224, version 5 the spatial cluster patch's `Claims` and the library's
-`MatchingRadius` for the ownership record's continuation class of decision 236; older
-caches refused). The cells of one portion tile it exactly — cell q = [cumulative
+`MatchingRadius` for the ownership record's continuation class of decision 236, version 6
+the patch's mesh `Segment` and own-edge `EdgeOffset` for the per-side continuation
+ownership of decision 252 — a version-5 cache dropped the segment, so cached patches were
+classified by the abutment branch alone; older caches refused). The cells of one portion tile it exactly — cell q = [cumulative
 Gauss weight before q, + w_q] in order of increasing position, so every cell contains its
 point (`LongitudinalQuadratureCells`; Gauss cells centred on their points would not tile) —
 and every patch built from a quadrature point carries the full cell whatever its weight
