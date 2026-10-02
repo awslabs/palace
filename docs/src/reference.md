@@ -1311,6 +1311,27 @@ ambiguous, or geometrically mismatched cross-layer coupons retain the normal
 `UnmatchedPolicy` behavior. `Slot` defaults to zero in `Interfaces`, preserving existing
 single-group libraries.
 
+A spatial cluster coupon is calibrated on the cluster's claimed edge portions and their
+straight continuations to the faces of its box (the bounding box of the model's
+`BasisPoints` placed by the patch frame: the claims plus 3R past every claim-cut end
+along its edge). Where a translational feature (an isolated edge, a pair, or a parallel
+stack) continues one of those claims through the claim cut, its longitudinal cells inside
+the box would correct the same surface a second time. At placement the cells of every
+translational stretch that continues a cluster's claim are therefore owned by that coupon
+inside its box and clipped exactly at the box face: the kept part of a cell is the part
+outside every box whose claims its stretch continues (a cell on the continuations of two
+coupons is removed once), the patch weight scales by the kept fraction (a cell wholly
+inside keeps weight zero and is skipped), and the patch origin moves to the midpoint of
+the kept interval. Cells of foreign features inside the box keep their patches (the
+coupon's twins do not contain that metal; the mismatch is second order). The placed cells
+are reported under `Diagnostics.ContinuationOwnership` (per cell, per coupon) and the
+stretch record `Diagnostics.TranslationalStretchesInsideSpatialSupport` carries the owned
+length per record. Two cluster boxes may overlap in their margins only (no claim of either
+lies inside the other's claims); the edge length corrected by both coupons there — one
+coupon's continuation over the other's claims or over the other's continuation — is
+recorded under `Diagnostics.SpatialSupportMarginOverlaps` with a warning and cannot be
+removed at placement. A claim inside the other cluster's claims remains an error.
+
 A three-dimensional spatial-vertex coupon is added to the same library. For example, a
 corner model has the form:
 

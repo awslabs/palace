@@ -811,6 +811,31 @@ class PatchGateTest(unittest.TestCase):
         status, _, _ = self.gates(ident, rows)
         self.assertEqual(status["A7-patch-weights"], "FAIL")
 
+    def test_continuation_ownership_scales_the_quadrature_weights(self):
+        # Decision 236 (2): a cell owned by a spatial coupon keeps its portion [S0, S1) with
+        # its quadrature weight scaled by the kept fraction; the manifest's
+        # ContinuationOwnership.OwnedCells reconciles the portion's sum (1 - owned / length).
+        ident = self.identification()
+        rows = self.patches()
+        # Feature 0, segment 0 (portion [0, 3], two half cells of 1.5): the first cell wholly
+        # owned (weight 0), the second clipped to its outer 0.9 (kept fraction 0.6).
+        rows[0]["QuadratureWeight"] = 0.0
+        rows[0]["Weight"] = 0.0
+        rows[1]["QuadratureWeight"] = 0.5 * 0.6
+        rows[1]["Weight"] = 0.5 * 0.6 * 3.0 / 2.0
+        ident["Diagnostics"] = {"ContinuationOwnership": {"OwnedCells": [
+            {"Patch": 0, "Feature": 0, "Segment": 0, "S0": 0.0, "S1": 3.0, "CellLength": 1.5, "OwnedLength": 1.5},
+            {"Patch": 1, "Feature": 0, "Segment": 0, "S0": 0.0, "S1": 3.0, "CellLength": 1.5, "OwnedLength": 0.6},
+        ]}}
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "PASS", detail["A7-patch-weights"])
+        self.assertEqual(status["A7-patch-coverage"], "PASS")
+        # Without the record the scaled weights are a defect (fail-before).
+        del ident["Diagnostics"]
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "quadrature x model weights do not sum to 1 - owned / portion")
+
 
 class SignatureLibraryTest(unittest.TestCase):
     LAW = "{\"Type\":\"PEC\"}"

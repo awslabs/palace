@@ -1038,9 +1038,52 @@ smaller endpoint.
    `SurfaceResponse.Diagnostics`, with the warning) and in the preflight on the spatial
    models whose basis points the library provides (manifest `Identification.Diagnostics`
    and the same warning; a signature placeholder of a Missing key has none and is listed
-   under `SpatialSupportsWithoutBasisPoints`). Unit tests
+   under `SpatialSupportsWithoutBasisPoints`). HOW THE COUPON'S MARGIN AND THE
+   TRANSLATIONAL PATCHES MEET (continuation ownership at placement, decision 236 (2) / 244,
+   2026-10-02, `ApplyContinuationOwnership`): the cells of every translational stretch that
+   continues a cluster's claim (the Continuation criterion above, judged on the whole
+   stretch whether or not it lies inside the box) are OWNED by that coupon inside its box —
+   the coupon's twins already carry the straight continuation of the claim to the box
+   face — and CLIPPED exactly at the face: the kept part of a cell is the part outside
+   EVERY box whose claims its stretch continues (a cell on the continuations of two coupons
+   is removed once; no first-wins), the patch weight and its provenance quadrature weight
+   scale by kept / cell (a cell wholly inside keeps weight 0 and the operator skips it;
+   the portion [S0, S1) stays, so a portion's quadrature weights sum to 1 - owned /
+   portion length, which the A7 audit reconciles from the record), the origin moves to the
+   kept interval's midpoint with the cell symmetric about it (the clipped cell equals a cell
+   built directly on the kept interval), the Maxwell anchors move with it. Foreign cells,
+   the cells of a continuing stretch outside the box and the stack-end cells of a stretch
+   that continues no claim are untouched; a curved cell never continues a claim (parallel
+   within the signature angle tolerance), so an arc continuing an arc claim keeps its
+   patches — a residual double count the record lengths show; the cell is the quantum: a
+   pair's or stack's cell is owned whole (every side's cells sit on the midline) even where
+   only some of its edges are claimed. `Diagnostics.ContinuationOwnership` lists every owned
+   cell (patch, feature, stretch, portion, owned length, owners with the attributed length —
+   a shared cell split at the midpoint between the two continued claim ends) and the owned
+   length per spatial support; `TranslationalStretchesInsideSpatialSupport` carries the
+   owned length per record and in total. The accepted transmon library: 128 cells / 112.40 um
+   owned (110 wholly, 18 clipped; 44.0 um of isolated-edge cells on the 3-edge and 10-edge
+   coupons' continuations + 68.4 um of 2-um strip midline cells whose both edges the 3-edge
+   and 4-edge clusters claim), 9.5e-4 of the translational patch weight. COUPON VS COUPON
+   (decision 244, `FindSpatialSupportMarginOverlaps`): two cluster boxes overlapping in
+   their interiors no longer abort when the overlap is MARGINS ONLY — no claim end of
+   either lies strictly inside the bounding box of the other's claims; a claim inside the
+   other's claims still aborts. Each coupon continues every claim CUT end (an end no other
+   claim of the same cluster shares within 1e-3 R) straight to its own box face; the length
+   of those continuations lying on the other coupon's claims (margin over claims) or on the
+   other coupon's continuations (margin over margin, the bridging piece between two claim
+   cuts) is corrected by both coupons — a double count the placement cannot remove (the
+   dense coupon operator is not clippable), recorded under
+   `Diagnostics.SpatialSupportMarginOverlaps` per pair with a warning (the S1p 19-edge
+   pair 5f0ccfcb3b8b / bd43654a77c6: boxes x [568.55, 592.75] and [583.05, 607.25], margin
+   over claims 2.80 + 3.80 um, margin over margin 2.90 um = 9.50 um, 7.8 % of the two
+   coupons' 122.2 um of claims, 0.33 % of the device's corrected edge length). FOLLOW-UP
+   (option D of the design note): shrinking the continuation from 2R to R reduces every
+   margin double count, with library rebuilds. Unit tests
    `SurfaceResponseIdentificationStackPieceInsideCluster`,
-   `SurfaceResponseOperatorTranslationalStretchOwnership`. The extension
+   `SurfaceResponseOperatorTranslationalStretchOwnership`,
+   `SurfaceResponseOperatorContinuationOwnership`,
+   `SurfaceResponseOperatorSpatialSupportMarginOverlaps`. The extension
    iterates to closure: an enlarged claim moves the stack ends (the stack-end rule
    recomposes the members on the new claims) and the recomposed stacks leave new single-edge
    portions to test; the loop stops when a pass absorbs at most the signature parameter
