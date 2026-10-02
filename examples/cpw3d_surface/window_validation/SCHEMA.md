@@ -157,3 +157,15 @@ The resulting attribute table is written to the manifest (`OUT.json`, key `attri
 substrate / 2 vacuum; 2D 3 `exterior_boundary`, 4 / 5 `ground_air` / `ground_substrate`,
 6 `substrate_air`, 7 / 8 `trace_l1_air` / `_substrate`, 9 `substrate_backside`, 10 / 11
 `island_331_air` / `_substrate`.
+
+## Sweep mode (not part of the input)
+
+The same polygon set is meshed by either sweep of `mesh_polygon_window.jl`: the default tensor
+sweep (every plan triangle through every z level, the recorded reference family) or the graded
+cross-section sweep (`--sweep graded [--alpha A] [--beta B]`, USER decision 263), which keeps
+the plan band, the z levels, the attribute table and the surface areas / volumes of the tensor
+sweep and changes only the volume discretisation (see the README). The manifest records the
+mode (`sweep`) and, for the graded sweep, `graded_sweep` with the dimensionless `alpha`
+(default 1: row k's z spacing at least alpha x its width) and `beta` (default 3: row k ends
+beta h_k beyond the metal), the stacks, the row ranges and the cell counts by kind. The sweep
+mode never changes what the writer has to emit.
