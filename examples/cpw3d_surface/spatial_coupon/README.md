@@ -136,6 +136,27 @@ full-scale source-contract checks and remaining qualification gates. Retained
 artificial etch collars can be exported with `export_etch_footprint.jl` and
 supplied explicitly using `--etch-boundary`; this preserves their actual planar
 footprint rather than changing process geometry during a mesh comparison.
+
+The producer-default etch collar (3 x Radius around every Physical side of a
+plan-view loop) is the miter offset of the loop while that polygon is simple
+(`MiterOffset`), else the outer boundary of the union of the loop, its per-side
+collar rectangles and convex-corner kites clipped to the coupon box
+(`CollarUnion`, decision 54a). Circular arcs of a loop (`circular_arc_runs`) are
+offset exactly (decision 246): a convex-metal arc grows to r + collar, a
+concave one shrinks to r - collar, an arc smaller than the collar collapses onto
+its neighbours' junction, tangent joints stay continuous and the union takes an
+annular sector per arc; the hole-shrink path erodes a convex hole by the chords
+of its concentric arcs. The collar stands for the real overetch, which removes
+all exposed substrate, so an un-etched island created only by the collar
+geometry is an artefact: an island bounded entirely by collar boundaries, away
+from the box face, whose every point lies within `0.05 x Radius` beyond the
+collar (`COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS`) is absorbed into the etched
+collar and recorded in the census (`FootprintPolygons[].AbsorbedIslands`: area,
+maximum excess found and its rigorous bound; `FootprintSimplification`
+totals). A larger island, or an un-etched region touching the box face, fails
+closed as before (`ScopeGuard[FootprintTopology]`, decision 229's per-case
+override path).
+
 `audit_trace_continuity.py` detects side/cap T-junction jumps, and
 `repair_triangle_trace_caps.py` writes separate corrected traces while recording
 that the source functions changed. Such repairs require matched controls and
