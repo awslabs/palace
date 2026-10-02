@@ -239,6 +239,9 @@ private:
   }
 
 public:
+  BlockTimer(const BlockTimer &) = delete;
+  BlockTimer &operator=(const BlockTimer &) = delete;
+
   BlockTimer(Index i, bool count = true) : count(count)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.
