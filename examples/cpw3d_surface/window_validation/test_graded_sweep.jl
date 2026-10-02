@@ -1,16 +1,20 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Tests of the graded cross-section sweep (graded_sweep.jl; Block G milestone 1):
+# Tests of the graded cross-section sweep (graded_sweep.jl; Block G milestones 1 and 2):
 #   julia --project=. test_graded_sweep.jl
-# The nested stacks and row ranges (the Q2 probe's values on the strip window), the 2D
-# cross-section (area closure, every node used), the graded sweep of synthetic one-plane
-# windows (a straight strip, a CPW with a terminal, a slot with a backside) against the tensor
-# sweep: areas / volumes equal to 1e-9, boundary closure and tag consistency in process, every
-# node used, the maximum edge ratio <= t / r (+0.1 %), deterministic bytes, alpha / beta
-# economics, the refusals (Gmsh band, two planes), and the default tensor output unchanged
-# (the recorded probe sha of the strip window). WINDOW_MESH_LONG_TESTS=1 adds the external
-# validator and census runs (Julia subprocesses, ~10 s each).
+# The nested stacks and row ranges (the Q2 probe's strip values with the fabricated step's
+# faces), the 2D cross-section (area closure, every node used), the graded sweep of synthetic
+# one-plane windows against the tensor sweep — a straight strip, a CPW with a terminal, a slot
+# with a backside, a facing-down strip, a metal spike (a fan, clearance-capped columns, an
+# inward mitre scaled 4x, collapse) and a 1-um channel (facing-capped columns, collapse in
+# both directions, a region strip between capped tops): areas / volumes equal to 1e-9, metal
+# face counts equal, boundary closure and tag consistency in process, every node used, the
+# maximum edge ratio <= t / r (+ the scaled columns' reach, + 0.1 %), deterministic bytes,
+# alpha / beta economics, the refusals (Gmsh band, two planes, a box too short for the rows),
+# and the default tensor output unchanged (the recorded probe sha of the strip window).
+# WINDOW_MESH_LONG_TESTS=1 adds the external validator and census runs (Julia subprocesses,
+# ~10 s each).
 
 using Test
 using JSON
@@ -23,7 +27,16 @@ include(joinpath(@__DIR__, "synthetic_two_level_window.jl"))
 const PWM = PolygonWindowMesh
 const LONG_TESTS = get(ENV, "WINDOW_MESH_LONG_TESTS", "0") == "1"
 
-function one_plane_window(name, box_x, box_y, polygons; substrate, below=0.0, above)
+function one_plane_window(
+    name,
+    box_x,
+    box_y,
+    polygons;
+    substrate,
+    below=0.0,
+    above,
+    facing="up"
+)
     return read_polygon_set(
         Dict(
             "Version" => 1,
@@ -34,7 +47,7 @@ function one_plane_window(name, box_x, box_y, polygons; substrate, below=0.0, ab
                 Dict(
                     "Name" => "L1",
                     "SurfaceZ" => 0.0,
-                    "Facing" => "up",
+                    "Facing" => facing,
                     "SubstrateThickness" => substrate,
                     "Polygons" => polygons
                 )
@@ -84,6 +97,62 @@ slot_window() = one_plane_window(
     below=20.0,
     above=50.0
 )
+# The strip facing down (the metal below the surface, the substrate above, a backside against
+# the vacuum above).
+strip_down_window() = one_plane_window(
+    "strip_down",
+    [0.0, 50.0],
+    [0.0, 60.0],
+    [Dict("Conductor" => "ground", "Outer" => [[0, 20], [50, 20], [50, 40], [0, 40]])];
+    substrate=100.0,
+    below=100.0,
+    above=20.0,
+    facing="down"
+)
+# A ground with a 28-degree spike: for the vacuum a 152-degree outward turn (a fan of 7
+# columns) and two inward mitres; for the metal an inward mitre scaled 1 / cos(76 deg) = 4.1
+# with the clearance caps along both edges (4 rows at the tip, 5 at the base corners, 6
+# elsewhere: collapse in both directions); four wall ends.
+spike_window() = one_plane_window(
+    "spike",
+    [0.0, 30.0],
+    [0.0, 30.0],
+    [
+        Dict(
+            "Conductor" => "ground",
+            "Outer" =>
+                [[0, 0], [30, 0], [30, 10], [17, 10], [15, 18], [13, 10], [0, 10]]
+        )
+    ];
+    substrate=50.0,
+    above=50.0
+)
+# A hole with a 1-um channel: the facing rule caps the channel's columns at 4 rows (0.4 um)
+# against 6 on the square, so the hole chain collapses at the channel mouth and the region in
+# the channel has both corners on capped tops; eight inward / outward 90-degree mitres.
+channel_window() = one_plane_window(
+    "channel",
+    [0.0, 30.0],
+    [0.0, 30.0],
+    [
+        Dict(
+            "Conductor" => "ground",
+            "Outer" => [[0, 0], [30, 0], [30, 30], [0, 30]],
+            "Holes" => [[
+                [10, 10],
+                [18, 10],
+                [18, 18],
+                [14.5, 18],
+                [14.5, 26],
+                [13.5, 26],
+                [13.5, 18],
+                [10, 18]
+            ]]
+        )
+    ];
+    substrate=50.0,
+    above=50.0
+)
 
 # ASCII MSH2 reader for the in-process checks.
 function read_msh2(path)
@@ -118,11 +187,18 @@ end
 
 sorted3(a, b, c) = Tuple(sort([a, b, c]))
 
+# The z range of the fabricated step (trench bottom to metal top) of a one-plane set.
+function step_slab(spec)
+    plane = spec.planes[1]
+    s, f = plane.surface_z, plane.facing
+    return minmax(s - f * spec.overetch, s + f * spec.metal_thickness)
+end
+
 # Boundary closure and tag consistency, every node used, the maximum edge-length ratio
-# overall and off the metal / trench slab (tetrahedra not inside z in [-0.05, 0.1]: the
+# overall and off the metal / trench slab (tetrahedra not inside the step's z range: the
 # interfaces are kept in every stack, so a 30-um region triangle over the 0.05-um trench is
 # an inherent 600 in both sweeps; everything else must stay within the designed t / r).
-function mesh_checks(path; slab=(-0.05, 0.1))
+function mesh_checks(path, slab)
     nodes, triangles, tetrahedra = read_msh2(path)
     owners = Dict{NTuple{3, Int}, Vector{Int}}()
     used = falses(length(nodes))
@@ -186,7 +262,7 @@ let directory = mktempdir()
         verbose=false,
         sweep=:graded
     )
-    mesh_checks(joinpath(directory, "graded.msh2"))
+    mesh_checks(joinpath(directory, "graded.msh2"), step_slab(tiny))
 end
 
 @testset "graded stacks and row ranges (the Q2 probe's strip values)" begin
@@ -196,7 +272,8 @@ end
     @test length(zs) == 40
     interfaces = [-0.05, 0.0, 0.1, stack.z_bottom, stack.z_top]
     heights = PWM.band_heights(0.01, 2.0, 7)
-    stacks = PWM.graded_stacks(zs, interfaces, heights, 1.0, 3.0, (0.0, 0.1), 30.0)
+    step = (-0.05, 0.1)
+    stacks = PWM.graded_stacks(zs, interfaces, heights, 1.0, 3.0, step, 30.0)
     @test stacks.rows == 7
     @test [length(l) for l in stacks.levels] == [40, 40, 32, 28, 25, 23, 22, 20, 18, 16, 14, 12, 10]
     @test stacks.spacings ≈
@@ -211,11 +288,32 @@ end
             @test zs[b] - zs[a] >= stacks.spacings[s - 1] - 1.0e-9
         end
     end
+    # Row ranges from the fabricated step's faces (M1 review MAJOR-1): the trench foot at
+    # -0.05 lies strictly inside row 1's range; with the metal faces alone (the probe's rule)
+    # row 1 ended at -0.03 and the foot fell to row 2.
     ranges = [(zs[lo], zs[hi]) for (lo, hi) in stacks.ranges]
-    probe_ranges =
-        [(-0.03, 0.15), (-0.1, 0.2), (-0.5, 0.5), (-1.0, 1.0), (-2.0, 2.0), (-5.0, 5.0)]
-    @test all(all(isapprox.(ranges[k], probe_ranges[k]; atol=1.0e-9)) for k = 1:6)
+    step_ranges =
+        [(-0.1, 0.15), (-0.2, 0.2), (-0.5, 0.5), (-1.0, 1.0), (-2.0, 2.0), (-5.0, 5.0)]
+    @test all(all(isapprox.(ranges[k], step_ranges[k]; atol=1.0e-9)) for k = 1:6)
     @test ranges[7] == (-525.0, 525.0)
+    @test ranges[1][1] < -0.05 - 3 * heights[1]
+    metal_only = PWM.graded_stacks(zs, interfaces, heights, 1.0, 3.0, (0.0, 0.1), 30.0)
+    @test zs[metal_only.ranges[1][1]] ≈ -0.03 atol = 1.0e-9
+    @test zs[metal_only.ranges[2][1]] ≈ -0.1 atol = 1.0e-9
+    @test metal_only.ranges[3:7] == stacks.ranges[3:7]
+    # The top list of a column with n rows: Z_n within row n's range, the innermost active
+    # row's stack beyond; a full column's is Z_K.
+    tops = PWM.column_top_levels(stacks)
+    @test tops[7] == stacks.levels[8]
+    for n = 1:6
+        @test issubset(stacks.levels[8], tops[n]) && issubset(tops[n], stacks.levels[n + 1])
+        lo, hi = stacks.ranges[n]
+        @test filter(i -> lo <= i <= hi, tops[n]) ==
+              filter(i -> lo <= i <= hi, stacks.levels[n + 1])
+        @test filter(i -> i > stacks.ranges[6][2], tops[n]) ==
+              filter(i -> i > stacks.ranges[6][2], stacks.levels[8])
+    end
+    @test all(issubset(tops[n + 1], tops[n]) for n = 1:6)
     # Strictly nested; every range end is a level of the next row's stack.
     for k = 2:7
         @test ranges[k][1] < ranges[k - 1][1] && ranges[k][2] > ranges[k - 1][2]
@@ -226,10 +324,10 @@ end
     end
     # alpha 2: coarser stacks (nested thinning at twice the spacing); beta 2 at the same
     # alpha: rows end at the same or a nearer level.
-    coarser = PWM.graded_stacks(zs, interfaces, heights, 2.0, 3.0, (0.0, 0.1), 30.0)
+    coarser = PWM.graded_stacks(zs, interfaces, heights, 2.0, 3.0, step, 30.0)
     @test all(length.(coarser.levels) .<= length.(stacks.levels))
     @test sum(length.(coarser.levels)) < sum(length.(stacks.levels))
-    shorter = PWM.graded_stacks(zs, interfaces, heights, 1.0, 2.0, (0.0, 0.1), 30.0)
+    shorter = PWM.graded_stacks(zs, interfaces, heights, 1.0, 2.0, step, 30.0)
     @test shorter.levels == stacks.levels
     @test all(
         zs[shorter.ranges[k][1]] >= ranges[k][1] &&
@@ -242,13 +340,25 @@ end
         heights,
         0.0,
         3.0,
-        (0.0, 0.1),
+        step,
         30.0
     )
-    section = PWM.cross_section(stacks, zs, heights)
-    @test length(section.nodes) == 128 && length(section.triangles) == 194
-    @test sum(n for (_, n) in section.pair_triangles) == 194
+    # A box shorter than beta h_(K-1) beyond the step is refused (M1 review MINOR-6).
+    short = filter(z -> -3.0 <= z <= 3.0, zs)
+    message = try
+        PWM.graded_stacks(short, [-0.05, 0.0, 0.1, -3.0, 3.0], heights, 1.0, 3.0, step, 30.0)
+        ""
+    catch err
+        sprint(showerror, err)
+    end
+    @test occursin("box face", message)
+    section = PWM.cross_section(stacks, zs, heights, 0.0)
+    @test length(section.nodes) == 132 && length(section.triangles) == 202
+    @test sum(n for (_, n) in section.pair_triangles) == 202
     @test length(section.pair_triangles) == 1 + 2 * 6 + 6
+    @test length(section.triangle_pair) == 202 &&
+          count(pair -> pair[1] == 0, section.triangle_pair) ==
+          sum(n for (pair, n) in section.pair_triangles if pair[1] == 0)
 end
 
 function compare_sweeps(spec, radial_um, tangential_um, directory; kwargs...)
@@ -284,23 +394,34 @@ function compare_sweeps(spec, radial_um, tangential_um, directory; kwargs...)
         @test graded["surface_attribute_counts"][attribute] ==
               tensor["surface_attribute_counts"][attribute]
     end
-    checks = mesh_checks(joinpath(directory, "graded.msh2"))
+    checks = mesh_checks(joinpath(directory, "graded.msh2"), step_slab(spec))
     @test checks.nodes == graded["nodes"] && checks.tetrahedra == graded["tetrahedra"]
     @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
-    # The designed anisotropy t / r off the slab: + 2 for the mitre column of a convex corner
-    # (its row-k node lies h_k < 2 w_k farther along the edge, the same plan edge as in the
-    # tensor sweep) and + 0.1 % for the prism diagonals; the slab region prisms are bounded by
-    # the region size over the overetch (30 / 0.05 = 600).
-    @test checks.max_edge_ratio_off_slab <=
-          (tangential_um / radial_um + 2.0) * (1.0 + 1.0e-3)
+    # The designed anisotropy t / r off the slab: the longest band edge is a plan-cell
+    # diagonal sqrt(t^2 + h_K^2) (the strip prisms split the band quads), plus the reach of
+    # the scaled columns (a column scaled by c puts its row-K node (c - 1) h_K farther along
+    # the band than its neighbours', the same plan edge as in the tensor sweep), plus 0.1 %;
+    # the slab region prisms are bounded by the region size over the overetch (30 / 0.05 =
+    # 600).
+    band = graded["band"]
+    thickness = maximum(band["heights_um"])
+    scale =
+        max(band["max_mitre_scale"], band["max_inward_scale"], band["max_wall_end_scale"])
+    longest = hypot(tangential_um, thickness) + (scale - 1.0) * thickness
+    @test checks.max_edge_ratio_off_slab <= longest / radial_um * (1.0 + 1.0e-3)
     @test checks.max_edge_ratio <=
-          max(tangential_um / radial_um, PWM.REGION_MESH_SIZE_MAX_UM / spec.overetch) *
+          max(longest / radial_um, PWM.REGION_MESH_SIZE_MAX_UM / spec.overetch) *
           (1.0 + 1.0e-3)
     record = graded["graded_sweep"]
     @test record["alpha"] == get(kwargs, :alpha, 1.0) &&
           record["beta"] == get(kwargs, :beta, 3.0)
     @test record["band_tetrahedra"] + record["region_tetrahedra"] == graded["tetrahedra"]
-    @test record["band_tetrahedra"] == 3 * record["band_prisms"]
+    @test record["band_swept_elements"] > 0 && record["band_strip_prisms"] > 0
+    @test record["region_prisms_plain"] + record["region_prisms_hanging"] > 0
+    # The swept volume closes on the plan's analytic volume (checked in process too).
+    for (attribute, volume) in record["expected_volume_um3"]
+        @test graded["volume_um3"][attribute] ≈ volume rtol = 1.0e-9
+    end
     return tensor, graded, checks
 end
 
@@ -309,10 +430,15 @@ end
     # Recorded: tensor 63,768 tets (the probe's baseline); the probe's graded alpha 1 / beta 3
     # had 32,460 with a structured interior finer than Gmsh's region (kept here).
     tensor, graded, checks = compare_sweeps(strip_window(), 0.01, 5.0, directory)
-    # Gmsh's region triangulation (and so the counts) is pinned where the probe ran (macOS).
-    Sys.isapple() && @test tensor["tetrahedra"] == 63768 && graded["tetrahedra"] == 23216
-    @test graded["graded_sweep"]["chains"] == 4 && graded["graded_sweep"]["columns"] == 44
-    @test graded["graded_sweep"]["region_prisms_hanging"] > 0
+    # Gmsh's region triangulation (and so the counts) is pinned where the probe ran (macOS);
+    # M1 had 23,216 graded tetrahedra with the metal-only range rule.
+    Sys.isapple() && @test tensor["tetrahedra"] == 63768 && graded["tetrahedra"] == 24176
+    record = graded["graded_sweep"]
+    @test record["chains"] == 4 && record["columns"] == 44
+    @test record["capped_columns"] == 0 && record["fan_sectors"] == 0
+    @test record["band_collapse_prisms"] == 0 && record["band_strip_prisms_hanging"] > 0
+    @test record["region_prisms_hanging"] > 0 &&
+          record["region_hanging_node_incidences"] > 0
     @test checks.max_edge_ratio ≈ 500.0 rtol = 1.0e-3
 end
 
@@ -363,6 +489,40 @@ end
     @test slot["graded_sweep"]["chains"] == 2
     @test haskey(slot["surface_area_um2"], "9")
     @test slot["surface_area_um2"]["9"] ≈ 800.0 rtol = 1.0e-9
+end
+
+@testset "strip facing down (the mirrored construction, backside above)" begin
+    tensor, down, _ = compare_sweeps(strip_down_window(), 0.02, 5.0, mktempdir())
+    @test down["planes"][1]["facing"] == "down"
+    @test haskey(down["surface_area_um2"], "9") && down["surface_area_um2"]["9"] ≈ 3000.0
+    @test down["graded_sweep"]["capped_columns"] == 0
+    # The row ranges are mirrored about the surface: the step is [-0.1, 0.05].
+    ranges = down["graded_sweep"]["row_ranges_z_um"]
+    @test ranges[1][2] > 0.05 + 3 * 0.02 && ranges[1][1] < -0.1 - 3 * 0.02
+end
+
+@testset "spike window (a fan, clearance caps, a 4x inward mitre, collapse, wall ends)" begin
+    tensor, spike, _ = compare_sweeps(spike_window(), 0.02, 5.0, mktempdir())
+    band = tensor["band"]
+    @test band["fans"] == 1 && band["clearance_capped_columns"] > 0
+    @test band["collapse_triangles"] > 0 && band["max_inward_scale"] > 4.0
+    record = spike["graded_sweep"]
+    @test record["fan_sectors"] == PWM.FAN_COLUMNS - 1
+    @test record["capped_columns"] > 0 && record["band_collapse_prisms"] > 0
+    @test sum(record["plan_nodes_by_capped_top_list"]) == record["capped_columns"]
+    @test record["chains"] == 2
+end
+
+@testset "channel window (facing caps, collapse both ways, capped tops in the region)" begin
+    tensor, channel, _ = compare_sweeps(channel_window(), 0.02, 5.0, mktempdir())
+    band = tensor["band"]
+    @test band["collapse_triangles"] > 0 && band["fans"] == 0
+    @test band["inward_corners"] == 8 && band["mitre_outward_corners"] == 8
+    record = channel["graded_sweep"]
+    @test record["capped_columns"] >= 8 && record["band_collapse_prisms"] > 0
+    @test record["fan_sectors"] == 0
+    # Region prisms with a capped top as a corner carry its hanging levels.
+    @test record["region_prisms_hanging"] > 0
 end
 
 @testset "graded sweep refusals and the default tensor output" begin

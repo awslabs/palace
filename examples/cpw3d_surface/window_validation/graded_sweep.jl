@@ -16,31 +16,56 @@
 #     alpha w_K 2^j) chosen by their plan size (the shortest incident plan edge, at most the
 #     region mesh size);
 #   * row ranges: row line k is active for z in [lo_k, hi_k] = the first level of Z_{k+1} beyond
-#     the metal faces -/+ beta h_k, strictly nested (inner rows end first); row K spans the box;
+#     the faces of the fabricated step (trench bottom, substrate surface, metal top) -/+
+#     beta h_k, strictly nested (inner rows end first); row K spans the box;
 #   * the cross-section per column: between two neighbouring active lines the cells are the
 #     consecutive levels of the COARSER stack; the finer line's extra levels hang on one vertical
 #     edge and the end node of the row that ended at the cell's bottom (started at its top)
-#     hangs on that horizontal edge; a fan from the coarse line's node at the hanging-free
-#     horizontal edge triangulates every cell without a degenerate triangle;
-#   * the sweep: cross-section node (k, z) is attached to the row-k plan node of every column
-#     (exactly the plan band's geometry), consecutive columns are joined into prisms;
-#   * the region: plan triangle x interval of the coarsest stack of its three nodes; the finer
-#     nodes' extra levels hang on their vertical edges;
+#     hangs on that horizontal edge; a fan triangulates every cell without a degenerate
+#     triangle — from that row-end node where there is one, else from the coarse line's node at
+#     the horizontal edge farther from the substrate surface;
+#   * the sweep between two consecutive columns of a chain (plan nodes P_0..P_n and Q_0..Q_m,
+#     n and m rows) has three kinds of cells:
+#       - the (0, k) cross-section cells (from the base line to row k beyond row k-1's range)
+#         are swept as triangles: node (k, z) sits on P_min(k, n) and Q_min(k, m); coincident
+#         nodes (a capped column: rows above m collapse onto the shorter column's top line; a
+#         fan: the seven columns share the base) turn the prism into a pyramid or a tetrahedron,
+#         the 3D analogue of the plan band's collapse / fan triangles;
+#       - the (k-1, k) strips within row k-1's range are right prisms over the plan band cells
+#         (the quad P_{k-1} P_k Q_k Q_{k-1} split by the diagonal through its lowest plan index,
+#         or the collapse triangle P_{k-1} P_k Q_m) between consecutive levels of Z_k with the
+#         rows' stacks hanging on the vertical edges (the region rule below); clamping the
+#         hanging fan triangles of such a strip onto one column top would give three collinear
+#         nodes, so the strips are not swept;
+#       - the region: plan triangle x interval of the coarsest of its nodes' level lists; the
+#         finer nodes' extra levels hang on their vertical edges. The top node of a column with
+#         n rows carries the list the band puts on it: Z_n within row n's range and Z_k where
+#         row k is the innermost active row beyond (for a full column, Z_K);
 #   * tetrahedra: every element is a fan from one apex over its boundary triangulation, and
 #     every face is triangulated by a rule of the face alone, so neighbours always agree: a quad
-#     takes the diagonal through its lowest global node index; a vertical face with hanging
-#     nodes is a merge ladder from the bottom (a quad where both sides step together, a triangle
-#     advancing the lower side otherwise); the apex is the lowest global index among the
+#     takes the diagonal through its lowest-ORDERED node; a vertical face with hanging nodes is
+#     a merge ladder from the substrate-surface side (a quad where both sides step together, a
+#     triangle advancing the nearer side otherwise); the apex is the lowest-ordered among the
 #     element's corners on hanging-free vertical edges (the fan over a quad through that
-#     corner's diagonal is exact, the ladder from a hanging-free bottom corner is a fan from it).
-#     Global node index = (level - 1) x plan nodes + plan index, as in the tensor sweep, so a
-#     plain prism gets the production three-tetrahedron split and the surface tagging is shared.
+#     corner's diagonal is exact, the ladder from a hanging-free near corner is a fan from it).
+#     The node ORDER used by these rules is (z level by distance to the substrate surface, then
+#     the plan node by band row DESCENDING, taller columns first, then the welding order): the
+#     apex of every cell is then its node nearest the metal, the construction is mirror-
+#     symmetric about the surface, and at a row end next to a capped column the apex is the
+#     row-end node — the swept corner cell there is a pyramid over the vertical face of the
+#     band-top edge whose side quad must be split through that node (with the welding order
+#     the rule picks the other diagonal, and below the surface the three diagonals twist into
+#     a Schoenhardt prism: not tetrahedralisable). The written mesh uses the tensor sweep's
+#     numbering (level - 1) x plan nodes + plan index (remapped at the end), so the surface
+#     tagging is shared.
+#   * backstop: every tetrahedron is checked positive where it is built (naming the cell), and
+#     the swept volume per material must equal the plan's analytic volume to 1e-9 (an overlap
+#     or a gap of a single cell is refused).
 #
-# M1 scope (decision 263): one plane, no bumps, every column of a chain with the same row count
-# and no fans; capped columns / collapse, fans and two planes are refused with a message
-# (milestones M2 / M3). alpha and beta are dimensionless (defaults 1 and 3): alpha = 1 keeps the
-# r x r edge cell of the recorded family; the z-coarsened outer rows are a deliberate deviation
-# to be shown harmless by the acceptance solves.
+# Scope (decision 263): one plane, no bumps (two planes and bumps are refused with a message,
+# milestone M3). alpha and beta are dimensionless (defaults 1 and 3): alpha = 1 keeps the r x r
+# edge cell of the recorded family; the z-coarsened outer rows are a deliberate deviation to be
+# shown harmless by the acceptance solves.
 
 const DEFAULT_GRADED_ALPHA = 1.0
 const DEFAULT_GRADED_BETA = 3.0
@@ -49,6 +74,10 @@ const LEVEL_TOLERANCE_UM = 1.0e-9
 # nesting), compared with a tolerance three decades below it.
 const RANGE_NUDGE_UM = 1.0e-9
 const RANGE_COMPARE_UM = 1.0e-12
+# A region node whose plan size is within this (in log2) of a power of two of the last row's
+# width takes the coarser ladder step.
+const LADDER_LOG2_TOLERANCE = 1.0e-9
+const VOLUME_CLOSURE_TOLERANCE = 1.0e-9
 
 struct GradedStacks
     levels::Vector{Vector{Int}} # stack s = 0..K+J as sorted indices into the z levels
@@ -91,11 +120,14 @@ function thin_levels(
 end
 
 """
-    graded_stacks(zs, interfaces, heights, alpha, beta, metal_faces, region_size_max) -> GradedStacks
+    graded_stacks(zs, interfaces, heights, alpha, beta, step_faces, region_size_max) -> GradedStacks
 
 The nested stacks Z_0..Z_K of the band rows (heights h_1..h_K), the region ladder beyond
 Z_K up to the spacing alpha w_K 2^J <= alpha region_size_max, and the active range of every
-row (the first level of Z_{k+1} at or beyond the metal faces -/+ beta h_k; row K spans the box).
+row: the first level of Z_{k+1} at or beyond the fabricated step's faces (`step_faces` = the
+lowest and highest of trench bottom, substrate surface and metal top) -/+ beta h_k, strictly
+nested; row K spans the box. A row k < K whose range would reach a box face is refused (the
+box must extend more than beta h_{K-1} beyond the step).
 """
 function graded_stacks(
     zs::Vector{Float64},
@@ -103,7 +135,7 @@ function graded_stacks(
     heights::Vector{Float64},
     alpha::Float64,
     beta::Float64,
-    metal_faces::NTuple{2, Float64},
+    step_faces::NTuple{2, Float64},
     region_size_max::Float64
 )
     alpha > 0.0 || error("alpha must be positive")
@@ -130,19 +162,47 @@ function graded_stacks(
             continue
         end
         coarser = levels[k + 2]
-        limit_lo = metal_faces[1] - beta * heights[k]
-        limit_hi = metal_faces[2] + beta * heights[k]
+        limit_lo = step_faces[1] - beta * heights[k]
+        limit_hi = step_faces[2] + beta * heights[k]
         if k > 1
             limit_lo = min(limit_lo, zs[ranges[k - 1][1]] - RANGE_NUDGE_UM)
             limit_hi = max(limit_hi, zs[ranges[k - 1][2]] + RANGE_NUDGE_UM)
         end
         lo = findlast(i -> zs[i] <= limit_lo + RANGE_COMPARE_UM, coarser)
         hi = findfirst(i -> zs[i] >= limit_hi - RANGE_COMPARE_UM, coarser)
-        lo = coarser[lo === nothing ? 1 : lo]
-        hi = coarser[hi === nothing ? length(coarser) : hi]
-        ranges[k] = (lo, hi)
+        (lo !== nothing && lo > 1 && hi !== nothing && hi < length(coarser)) || error(
+            "Graded sweep: row $k of $rows would end on a box face (its range reaches " *
+            "beyond [$limit_lo, $limit_hi] um); the box must extend more than beta h_(K-1) = " *
+            "$(beta * heights[rows - 1]) um beyond the fabricated step on both sides"
+        )
+        ranges[k] = (coarser[lo], coarser[hi])
     end
     return GradedStacks(levels, spacings, rows, ranges)
+end
+
+# The innermost active row at level index i (row K beyond every other range).
+function innermost_row(stacks::GradedStacks, i::Int)
+    for k = 1:(stacks.rows)
+        lo, hi = stacks.ranges[k]
+        lo <= i <= hi && return k
+    end
+    return stacks.rows
+end
+
+"""
+    column_top_levels(stacks) -> Vector{Vector{Int}}
+
+The level list the band puts on the top node of a column with n = 1..K rows: Z_n within row
+n's range, Z_k where row k > n is the innermost active row beyond it (the (0, k) cells collapse
+onto the top line there). For n = K this is Z_K.
+"""
+function column_top_levels(stacks::GradedStacks)
+    return [
+        [
+            i for i in stacks.levels[1] if
+            i in stacks.levels[max(n, innermost_row(stacks, i)) + 1]
+        ] for n = 1:(stacks.rows)
+    ]
 end
 
 # ---------------------------------------------------------------------------------------------
@@ -151,10 +211,16 @@ end
 struct CrossSection
     nodes::Vector{NTuple{2, Int}} # (row 0..K, level index)
     triangles::Vector{NTuple{3, Int}}
+    triangle_pair::Vector{NTuple{2, Int}} # (line, line) of every triangle's cell
     pair_triangles::Vector{Tuple{NTuple{2, Int}, Int}} # ((line, line), triangles) per pair
 end
 
-function cross_section(stacks::GradedStacks, zs::Vector{Float64}, heights::Vector{Float64})
+function cross_section(
+    stacks::GradedStacks,
+    zs::Vector{Float64},
+    heights::Vector{Float64},
+    surface_z::Float64
+)
     rows = stacks.rows
     node_index = Dict{NTuple{2, Int}, Int}()
     nodes = NTuple{2, Int}[]
@@ -166,13 +232,14 @@ function cross_section(stacks::GradedStacks, zs::Vector{Float64}, heights::Vecto
     line_range(row) = row == 0 ? (1, length(zs)) : stacks.ranges[row]
     levels_in(row, la, lb) = [i for i in stacks.levels[row + 1] if la <= i <= lb]
     triangles = NTuple{3, Int}[]
+    triangle_pair = NTuple{2, Int}[]
     pair_triangles = Tuple{NTuple{2, Int}, Int}[]
     orient2(a, b, c) = begin
         (ra, la), (rb, lb), (rc, lc) = nodes[a], nodes[b], nodes[c]
         (position(rb) - position(ra)) * (zs[lc] - zs[la]) -
         (zs[lb] - zs[la]) * (position(rc) - position(ra))
     end
-    function fan!(apex, chain)
+    function fan!(apex, chain, pair)
         for i = 1:(length(chain) - 1)
             a, b, c = apex, chain[i], chain[i + 1]
             orient2(a, b, c) > 0.0 || ((b, c) = (c, b))
@@ -180,22 +247,29 @@ function cross_section(stacks::GradedStacks, zs::Vector{Float64}, heights::Vecto
                 "Degenerate cross-section triangle (row, z) $(nodes[a]) $(nodes[b]) $(nodes[c])"
             )
             push!(triangles, (a, b, c))
+            push!(triangle_pair, pair)
         end
     end
     # Cells between lines L and R (rows) over the level range [la, lb]; `bottom_hanging` /
-    # `top_hanging`: rows whose end node hangs on the first cell's bottom / last cell's top.
+    # `top_hanging`: the row whose end node hangs on the first cell's bottom / last cell's
+    # top. A cell with a hanging row end is fanned FROM that node (every swept element of the
+    # cell then contains it, and the node order makes it their apex, which is what keeps the
+    # row-end cells next to a capped column star-shaped); any other cell is fanned from the
+    # coarse line's node at the horizontal edge farther from the substrate surface (the swept
+    # elements' apex is then their base node nearer the surface, on the diagonal of every
+    # quad through it).
     function cells_between!(L, R, la, lb, bottom_hanging, top_hanging)
         lb > la || return
         before = length(triangles)
         levels_L, levels_R = levels_in(L, la, lb), levels_in(R, la, lb)
+        # The coarser line (ties to the higher row, so the apex of a (0, k) cell is on line k).
         coarse, fine, cl, fl =
-            length(levels_L) <= length(levels_R) ? (L, R, levels_L, levels_R) :
+            length(levels_L) < length(levels_R) ? (L, R, levels_L, levels_R) :
             (R, L, levels_R, levels_L)
         issubset(cl, fl) ||
             error("Stacks of rows $L and $R are not nested in levels $la..$lb")
         (cl[1] == la && cl[end] == lb) ||
             error("Range ends $la..$lb are not levels of row $coarse")
-        left = min(L, R)
         for ci = 1:(length(cl) - 1)
             l0, l1 = cl[ci], cl[ci + 1]
             fine_levels = [i for i in fl if l0 <= i <= l1]
@@ -203,47 +277,36 @@ function cross_section(stacks::GradedStacks, zs::Vector{Float64}, heights::Vecto
             top = ci == length(cl) - 1 ? top_hanging : Int[]
             (isempty(bottom) || isempty(top)) ||
                 error("Cross-section cell with hanging nodes on both horizontal edges")
+            length(bottom) <= 1 && length(top) <= 1 ||
+                error("Cross-section cell with two rows ending on one horizontal edge")
             chain = Int[]
-            if isempty(top)
+            if !isempty(bottom)
+                # Around the cell from the coarse bottom corner, leaving out the bottom edge.
+                apex = node(bottom[1], l0)
+                push!(chain, node(coarse, l0), node(coarse, l1))
+                for i in reverse(fine_levels)
+                    push!(chain, node(fine, i))
+                end
+            elseif !isempty(top)
+                apex = node(top[1], l1)
+                push!(chain, node(coarse, l1), node(coarse, l0))
+                for i in fine_levels
+                    push!(chain, node(fine, i))
+                end
+            elseif abs(zs[l1] - surface_z) >= abs(zs[l0] - surface_z)
                 apex = node(coarse, l1)
-                if coarse == left
-                    push!(chain, node(coarse, l0))
-                    for row in sort(bottom)
-                        push!(chain, node(row, l0))
-                    end
-                    for i in fine_levels
-                        push!(chain, node(fine, i))
-                    end
-                else
-                    for i in reverse(fine_levels)
-                        push!(chain, node(fine, i))
-                    end
-                    for row in sort(bottom; rev=true)
-                        push!(chain, node(row, l0))
-                    end
-                    push!(chain, node(coarse, l0))
+                push!(chain, node(coarse, l0))
+                for i in fine_levels
+                    push!(chain, node(fine, i))
                 end
             else
                 apex = node(coarse, l0)
-                if coarse == left
-                    for i in fine_levels
-                        push!(chain, node(fine, i))
-                    end
-                    for row in sort(top; rev=true)
-                        push!(chain, node(row, l1))
-                    end
-                    push!(chain, node(coarse, l1))
-                else
-                    push!(chain, node(coarse, l1))
-                    for row in sort(top)
-                        push!(chain, node(row, l1))
-                    end
-                    for i in reverse(fine_levels)
-                        push!(chain, node(fine, i))
-                    end
+                push!(chain, node(coarse, l1))
+                for i in reverse(fine_levels)
+                    push!(chain, node(fine, i))
                 end
             end
-            fan!(apex, chain)
+            fan!(apex, chain, (L, R))
         end
         push!(pair_triangles, ((L, R), length(triangles) - before))
         return nothing
@@ -275,7 +338,7 @@ function cross_section(stacks::GradedStacks, zs::Vector{Float64}, heights::Vecto
         used[n] = true
     end
     all(used) || error("$(count(!, used)) unused cross-section nodes")
-    return CrossSection(nodes, triangles, pair_triangles)
+    return CrossSection(nodes, triangles, triangle_pair, pair_triangles)
 end
 
 # ---------------------------------------------------------------------------------------------
@@ -290,8 +353,9 @@ function quad_triangles(q1::Int32, q2::Int32, q3::Int32, q4::Int32)
     return (q1, q2, q4), (q2, q3, q4)
 end
 
-# A prism (a1 a2 a3 below b1 b2 b3): the fan from its lowest global index over the faces not
-# containing it — 3 tetrahedra, the production conforming split.
+# A prism (a1 a2 a3 with its normal toward b1 b2 b3): the fan from its lowest-ordered node
+# over the outward-oriented faces not containing it — 3 tetrahedra, the production conforming
+# split; every tetrahedron (apex, u, v, w) is positive when the fan is valid.
 function push_prism_fan!(
     tetrahedra::Vector{NTuple{4, Int32}},
     a1::Int32,
@@ -303,7 +367,7 @@ function push_prism_fan!(
 )
     apex = min(a1, a2, a3, b1, b2, b3)
     faces = (
-        (a1, a2, a3),
+        (a1, a3, a2),
         (b1, b2, b3),
         quad_triangles(a1, a2, b2, b1)...,
         quad_triangles(a2, a3, b3, b2)...,
@@ -316,8 +380,69 @@ function push_prism_fan!(
     return nothing
 end
 
+# A boundary triangle of a fan: skipped when degenerate or when it contains the apex.
+function push_face_fan!(
+    tetrahedra::Vector{NTuple{4, Int32}},
+    apex::Int32,
+    u::Int32,
+    v::Int32,
+    w::Int32
+)
+    (u == v || v == w || w == u) && return nothing
+    (u == apex || v == apex || w == apex) && return nothing
+    push!(tetrahedra, (apex, u, v, w))
+    return nothing
+end
+
+# A swept quad whose cyclically adjacent corners may coincide (a collapsed or a fan edge): a
+# quad takes the lowest-index diagonal, a triangle stays, less is no face.
+function push_quad_fan!(
+    tetrahedra::Vector{NTuple{4, Int32}},
+    apex::Int32,
+    q1::Int32,
+    q2::Int32,
+    q3::Int32,
+    q4::Int32
+)
+    corners = (q1, q2, q3, q4)
+    distinct = Int32[]
+    for i = 1:4
+        corners[i] == corners[mod1(i - 1, 4)] || push!(distinct, corners[i])
+    end
+    if length(distinct) == 4
+        t1, t2 = quad_triangles(distinct[1], distinct[2], distinct[3], distinct[4])
+        push_face_fan!(tetrahedra, apex, t1...)
+        push_face_fan!(tetrahedra, apex, t2...)
+    elseif length(distinct) == 3
+        push_face_fan!(tetrahedra, apex, distinct[1], distinct[2], distinct[3])
+    end
+    return nothing
+end
+
+# A cross-section triangle swept between two columns (a1 a2 a3 on the first, with its normal
+# toward b1 b2 b3 on the second) with coincidences allowed: the fan from the lowest-ordered
+# node over the outward-oriented faces not containing it (a prism, a pyramid or a tetrahedron).
+function push_swept_fan!(
+    tetrahedra::Vector{NTuple{4, Int32}},
+    a1::Int32,
+    a2::Int32,
+    a3::Int32,
+    b1::Int32,
+    b2::Int32,
+    b3::Int32
+)
+    apex = min(a1, a2, a3, b1, b2, b3)
+    push_face_fan!(tetrahedra, apex, a1, a3, a2)
+    push_face_fan!(tetrahedra, apex, b1, b2, b3)
+    push_quad_fan!(tetrahedra, apex, a1, a2, b2, b1)
+    push_quad_fan!(tetrahedra, apex, a2, a3, b3, b2)
+    push_quad_fan!(tetrahedra, apex, a3, a1, b1, b3)
+    return nothing
+end
+
 # Vertical face between plan nodes P and Q with level lists `lp` / `lq` (the same first and
-# last level): the merge ladder from the bottom.
+# last level, both listed from the substrate-surface side: ascending above it, descending
+# below): the merge ladder from that side.
 function ladder_triangles!(
     faces::Vector{NTuple{3, Int32}},
     global_index,
@@ -326,6 +451,8 @@ function ladder_triangles!(
     lp::AbstractVector{Int},
     lq::AbstractVector{Int}
 )
+    ascending = lp[end] > lp[1]
+    nearer(a, b) = ascending ? a < b : a > b
     i, j = 1, 1
     while i < length(lp) || j < length(lq)
         if i < length(lp) && j < length(lq) && lp[i + 1] == lq[j + 1]
@@ -338,7 +465,7 @@ function ladder_triangles!(
             push!(faces, t1, t2)
             i += 1
             j += 1
-        elseif j == length(lq) || (i < length(lp) && lp[i + 1] < lq[j + 1])
+        elseif j == length(lq) || (i < length(lp) && nearer(lp[i + 1], lq[j + 1]))
             push!(
                 faces,
                 (
@@ -372,13 +499,86 @@ function stack_slice(levels::Vector{Int}, la::Int, lb::Int)
     return view(levels, first:last)
 end
 
+# A right prism over the counter-clockwise plan triangle `t` between levels la and lb whose
+# vertical edges carry the level lists `lists` (each containing la and lb): plain when no list
+# has a level inside,
+# else the fan from the lowest-ordered hanging-free corner on the substrate-surface side
+# (`near_is_bottom`: la is the nearer level) over the merge-ladder faces. Returns (hanging,
+# incidences).
+function push_hanging_prism!(
+    tetrahedra::Vector{NTuple{4, Int32}},
+    faces::Vector{NTuple{3, Int32}},
+    global_index,
+    t::NTuple{3, Int},
+    la::Int,
+    lb::Int,
+    lists::NTuple{3, Vector{Int}},
+    near_is_bottom::Bool
+)
+    slices = (
+        stack_slice(lists[1], la, lb),
+        stack_slice(lists[2], la, lb),
+        stack_slice(lists[3], la, lb)
+    )
+    # A node is hanging-free in THIS interval when its list has no level inside it; the apex
+    # is the lowest-ordered hanging-free corner at the near level, so every adjacent face is a
+    # fan from it.
+    free = map(slice -> length(slice) == 2, slices)
+    if all(free)
+        push_prism_fan!(
+            tetrahedra,
+            global_index(t[1], la),
+            global_index(t[2], la),
+            global_index(t[3], la),
+            global_index(t[1], lb),
+            global_index(t[2], lb),
+            global_index(t[3], lb)
+        )
+        return false, 0
+    end
+    any(free) || error(
+        "Prism over plan nodes $t between levels $la and $lb has hanging nodes on all three " *
+        "vertical edges (the level lists are not nested)"
+    )
+    # Faces oriented outward (`t` counter-clockwise in plan): the bottom reversed, the top as
+    # is, the ladders walked from the near side (edge u -> v below the surface, v -> u above).
+    empty!(faces)
+    push!(
+        faces,
+        (global_index(t[1], la), global_index(t[3], la), global_index(t[2], la)),
+        (global_index(t[1], lb), global_index(t[2], lb), global_index(t[3], lb))
+    )
+    near = near_is_bottom ? la : lb
+    from_near(slice) = near_is_bottom ? slice : view(slice, length(slice):-1:1)
+    for (u, v) in ((1, 2), (2, 3), (3, 1))
+        p, q = near_is_bottom ? (u, v) : (v, u)
+        ladder_triangles!(
+            faces,
+            global_index,
+            t[p],
+            t[q],
+            from_near(slices[p]),
+            from_near(slices[q])
+        )
+    end
+    apex = minimum(global_index(t[u], near) for u = 1:3 if free[u])
+    for (u, v, w) in faces
+        (u == apex || v == apex || w == apex) && continue
+        push!(tetrahedra, (apex, u, v, w))
+    end
+    return true, sum(length(slice) - 2 for slice in slices)
+end
+
 mutable struct GradedCounts
-    band_prisms::Int
+    band_swept_elements::Int
+    band_strip_prisms::Int
+    band_strip_prisms_hanging::Int
+    band_collapse_prisms::Int
     band_tetrahedra::Int
     region_prisms_plain::Int
     region_prisms_hanging::Int
     region_tetrahedra::Int
-    region_hanging_nodes::Int
+    region_hanging_node_incidences::Int
 end
 
 """
@@ -386,8 +586,11 @@ end
                           alpha, beta; verbose) -> (tetrahedra, attributes, classes, record)
 
 Build the graded cross-section sweep of a one-plane plan mesh with its own structured band:
-the band prisms along the chains' columns and the region prisms with hanging nodes. Node
-indices are (level - 1) x plan nodes + plan index (the tensor sweep's).
+the band cells along the chains' columns (swept (0, k) cells, strip prisms, collapse prisms)
+and the region prisms with hanging nodes. Node indices are (level - 1) x plan nodes + plan
+index (the tensor sweep's). Every tetrahedron is checked positive and the volume per material
+against the plan's analytic volume (`record["expected_volume_um3"]` is checked again by the
+caller on the written mesh).
 """
 function graded_sweep_elements(
     spec::PolygonSet,
@@ -420,37 +623,50 @@ function graded_sweep_elements(
         heights,
         alpha,
         beta,
-        (min(s, metal_top), max(s, metal_top)),
+        (min(trench, s, metal_top), max(trench, s, metal_top)),
         REGION_MESH_SIZE_MAX_UM
     )
-    section = cross_section(stacks, zs, heights)
+    section = cross_section(stacks, zs, heights, s)
     rows = stacks.rows
     n_stacks = length(stacks.levels)
+    top_levels = column_top_levels(stacks)
+    # Level lists by id: the stacks Z_0..Z_{K+J}, then the top lists of columns with 1..K-1
+    # rows (a full column's top list is Z_K).
+    lists = vcat(stacks.levels, top_levels[1:(rows - 1)])
+    top_list_id(n) = n == rows ? rows + 1 : n_stacks + n
 
-    # Stack of every plan node: band nodes by row (consistent across chains), region nodes
-    # by plan size (the shortest incident edge) on the ladder.
-    node_stack = fill(-1, n_plan)
-    columns = 0
+    # Plan nodes of the band: row (-1 for a region node), the most rows of a column through
+    # the node, and, for column tops, the list id; the capped columns and the fans.
+    node_row = fill(-1, n_plan)
+    node_column_rows = zeros(Int, n_plan)
+    node_list = zeros(Int, n_plan)
+    columns, capped_columns, fan_sectors = 0, 0, 0
     for chain in plan.chains
-        for plan_rows in chain.plan_rows
-            length(plan_rows) == rows + 1 || error(
-                "Graded sweep: a column with $(length(plan_rows) - 1) of $rows rows " *
-                "(a capped column) is not supported yet (milestone M2)"
-            )
+        m = length(chain.plan_rows)
+        for (c, plan_rows) in enumerate(chain.plan_rows)
+            n = length(plan_rows) - 1
+            1 <= n <= rows ||
+                error("Graded sweep: a column with $n rows (the band has $rows)")
             columns += 1
+            n < rows && (capped_columns += 1)
             for (k, p) in enumerate(plan_rows)
                 row = k - 1
-                node_stack[p] in (-1, row) || error(
-                    "Plan node $p at $(plan.xy[p]) is row $(node_stack[p]) of one chain and " *
+                node_row[p] in (-1, row) || error(
+                    "Plan node $p at $(plan.xy[p]) is row $(node_row[p]) of one column and " *
                     "row $row of another"
                 )
-                node_stack[p] = row
+                node_row[p] = row
+                node_column_rows[p] = max(node_column_rows[p], n)
             end
-        end
-        for c = 1:(length(chain.plan_rows) - (chain.closed ? 0 : 1))
-            d = mod1(c + 1, length(chain.plan_rows))
-            chain.plan_rows[c][1] != chain.plan_rows[d][1] ||
-                error("Graded sweep: fan columns are not supported yet (milestone M2)")
+            top = plan_rows[end]
+            node_list[top] in (0, top_list_id(n)) || error(
+                "Plan node $top at $(plan.xy[top]) is the top of columns with different rows"
+            )
+            node_list[top] = top_list_id(n)
+            d = mod1(c + 1, m)
+            (chain.closed || c < m) &&
+                chain.plan_rows[c][1] == chain.plan_rows[d][1] &&
+                (fan_sectors += 1)
         end
     end
     node_size = fill(Inf, n_plan)
@@ -463,123 +679,300 @@ function graded_sweep_elements(
     ladder = n_stacks - 1 - rows
     region_nodes = 0
     for p = 1:n_plan
-        node_stack[p] == -1 || continue
+        node_row[p] == -1 || continue
         region_nodes += 1
         size = min(node_size[p], REGION_MESH_SIZE_MAX_UM)
-        j = size > width_last ? floor(Int, log2(size / width_last) + LEVEL_TOLERANCE_UM) : 0
-        node_stack[p] = rows + clamp(j, 0, ladder)
+        j =
+            size > width_last ?
+            floor(Int, log2(size / width_last) + LADDER_LOG2_TOLERANCE) : 0
+        node_list[p] = rows + clamp(j, 0, ladder) + 1
     end
-    nodes_by_stack = [count(==(s - 1), node_stack) for s = 1:n_stacks]
+    nodes_by_list = [count(==(id), node_list) for id = 1:length(lists)]
 
-    global_index(p::Int, level::Int) = Int32((level - 1) * n_plan + p)
+    # The node order of the face rules (see the header): levels by distance to the substrate
+    # surface, plan nodes by band row descending, taller columns first, then the welding
+    # order; region nodes last. The tetrahedra are remapped to the tensor sweep's numbering
+    # (level - 1) x plan nodes + plan index before they are returned.
+    level_by_rank = sortperm(zs; by=z -> (abs(z - s), -z))
+    rank_of_level = invperm(level_by_rank)
+    plan_by_order = sortperm(
+        1:n_plan;
+        by=p -> (node_row[p] == -1, -node_row[p], -node_column_rows[p], p)
+    )
+    order_of_plan = invperm(plan_by_order)
+    global_index(p::Int, level::Int) =
+        Int32((rank_of_level[level] - 1) * n_plan + order_of_plan[p])
+    plan_of(index::Int32) = plan_by_order[mod(Int(index) - 1, n_plan) + 1]
+    level_of(index::Int32) = level_by_rank[(Int(index) - 1) ÷ n_plan + 1]
+    tail_index(index::Int32) = Int32((level_of(index) - 1) * n_plan + plan_of(index))
+    point(index::Int32) = begin
+        p, level = plan_of(index), level_of(index)
+        (plan.xy[p][1], plan.xy[p][2], zs[level])
+    end
+    near_is_bottom(la::Int, lb::Int) = abs(zs[la] - s) < abs(zs[lb] - s)
+    centroid(indices) = begin
+        points = map(point, indices)
+        ntuple(i -> sum(p[i] for p in points) / length(points), 3)
+    end
+    ccw(t::NTuple{3, Int}) =
+        orient(plan.xy[t[1]], plan.xy[t[2]], plan.xy[t[3]]) > 0.0 ? t : (t[1], t[3], t[2])
     tetrahedra = NTuple{4, Int32}[]
     tetrahedron_attribute = Int8[]
-    tetrahedron_class = Int32[]
-    counts = GradedCounts(0, 0, 0, 0, 0, 0)
-    function push_element_tetrahedra!(before, attribute, class)
-        for _ = (before + 1):length(tetrahedra)
+    tetrahedron_class = Int16[]
+    counts = GradedCounts(0, 0, 0, 0, 0, 0, 0, 0, 0)
+    # Every tetrahedron of a cell is checked positive where it is built (the 3D backstop: the
+    # faces are oriented outward, so a non-positive fan tetrahedron means the apex does not
+    # see that face from inside — the cell is not star-shaped from it).
+    function finish_cell!(before, attribute, class, describe)
+        for index = (before + 1):length(tetrahedra)
+            t = tetrahedra[index]
+            volume = signed_volume(point(t[1]), point(t[2]), point(t[3]), point(t[4]))
+            volume > 0.0 || error(
+                "Graded sweep: non-positive tetrahedron (volume $volume) in " *
+                describe() *
+                " (nodes $(point(t[1])) $(point(t[2])) $(point(t[3])) $(point(t[4])))"
+            )
             push!(tetrahedron_attribute, attribute)
             push!(tetrahedron_class, class)
         end
         return length(tetrahedra) - before
     end
 
-    # Band prisms: cross-section triangle x consecutive columns.
+    # Band cells per column pair.
     section_material = [
         begin
             zc = sum(zs[section.nodes[n][2]] for n in t) / 3
             [material(spec, class, zc) for class in plan.classes]
         end for t in section.triangles
     ]
-    for chain in plan.chains
+    swept = [pair[1] == 0 for pair in section.triangle_pair]
+    faces = NTuple{3, Int32}[]
+    for (chain_index, chain) in enumerate(plan.chains)
         m = length(chain.plan_rows)
+        class = chain.class
         for c = 1:(chain.closed ? m : m - 1)
-            lower, upper = chain.plan_rows[c], chain.plan_rows[mod1(c + 1, m)]
+            d = mod1(c + 1, m)
+            P, Q = chain.plan_rows[c], chain.plan_rows[d]
+            n_P, n_Q = length(P) - 1, length(Q) - 1
+            describe_pair() = "chain $chain_index columns $c / $d of class $class"
+            # (0, k) cells swept with the rows clamped to each column's row count (at a row
+            # end next to a capped column the corner triangle (k, l1) (k-1, l0) (k, l0) sweeps
+            # a vertical segment onto a triangle: a pyramid from the row-end node, see the
+            # header).
             for (ti, t) in enumerate(section.triangles)
-                attribute = section_material[ti][chain.class]
+                swept[ti] || continue
+                attribute = section_material[ti][class]
                 attribute == 0 && continue
-                counts.band_prisms += 1
                 before = length(tetrahedra)
                 (r1, l1), (r2, l2), (r3, l3) =
                     section.nodes[t[1]], section.nodes[t[2]], section.nodes[t[3]]
-                push_prism_fan!(
-                    tetrahedra,
-                    global_index(lower[r1 + 1], l1),
-                    global_index(lower[r2 + 1], l2),
-                    global_index(lower[r3 + 1], l3),
-                    global_index(upper[r1 + 1], l1),
-                    global_index(upper[r2 + 1], l2),
-                    global_index(upper[r3 + 1], l3)
+                a = (
+                    global_index(P[min(r1, n_P) + 1], l1),
+                    global_index(P[min(r2, n_P) + 1], l2),
+                    global_index(P[min(r3, n_P) + 1], l3)
                 )
-                counts.band_tetrahedra +=
-                    push_element_tetrahedra!(before, attribute, chain.class)
+                b = (
+                    global_index(Q[min(r1, n_Q) + 1], l1),
+                    global_index(Q[min(r2, n_Q) + 1], l2),
+                    global_index(Q[min(r3, n_Q) + 1], l3)
+                )
+                # The first triangle's normal must point toward the second (outward faces);
+                # a collapsed first triangle is judged from the second.
+                toward = signed_volume(point(a[1]), point(a[2]), point(a[3]), centroid(b))
+                toward == 0.0 && (
+                    toward =
+                        -signed_volume(point(b[1]), point(b[2]), point(b[3]), centroid(a))
+                )
+                toward != 0.0 || continue
+                if toward < 0.0
+                    a, b = (a[1], a[3], a[2]), (b[1], b[3], b[2])
+                end
+                push_swept_fan!(tetrahedra, a..., b...)
+                length(tetrahedra) > before || continue
+                counts.band_swept_elements += 1
+                counts.band_tetrahedra += finish_cell!(
+                    before,
+                    attribute,
+                    Int16(class),
+                    () ->
+                        "swept cell (rows, z) $(section.nodes[t[1]]) " *
+                        "$(section.nodes[t[2]]) $(section.nodes[t[3]]) of " *
+                        describe_pair()
+                )
+            end
+            # (k-1, k) strips within row k-1's range as prisms over the plan band cells.
+            function strip_prisms!(triangle, lists_of, k, collapse)
+                if ccw(triangle) != triangle
+                    triangle = (triangle[1], triangle[3], triangle[2])
+                    lists_of = (lists_of[1], lists_of[3], lists_of[2])
+                end
+                lo, hi = stacks.ranges[k - 1]
+                levels = stack_slice(stacks.levels[k + 1], lo, hi)
+                for interval = 1:(length(levels) - 1)
+                    la, lb = levels[interval], levels[interval + 1]
+                    attribute = material(spec, plan.classes[class], 0.5 * (zs[la] + zs[lb]))
+                    attribute == 0 && continue
+                    before = length(tetrahedra)
+                    hanging, _ = push_hanging_prism!(
+                        tetrahedra,
+                        faces,
+                        global_index,
+                        triangle,
+                        la,
+                        lb,
+                        lists_of,
+                        near_is_bottom(la, lb)
+                    )
+                    if collapse
+                        counts.band_collapse_prisms += 1
+                    else
+                        counts.band_strip_prisms += 1
+                        hanging && (counts.band_strip_prisms_hanging += 1)
+                    end
+                    counts.band_tetrahedra += finish_cell!(
+                        before,
+                        attribute,
+                        Int16(class),
+                        () ->
+                            "$(collapse ? "collapse" : "strip") prism over plan nodes " *
+                            "$triangle between z $(zs[la]) and $(zs[lb]) (rows $(k - 1), " *
+                            "$k) of " *
+                            describe_pair()
+                    )
+                end
+                return nothing
+            end
+            n_min, n_max = minmax(n_P, n_Q)
+            for k = 2:n_min
+                # The quad P_{k-1} P_k Q_k Q_{k-1} split by the diagonal through its lowest-
+                # ordered node (the rule of its horizontal faces).
+                corners = (P[k], P[k + 1], Q[k + 1], Q[k])
+                t1, t2 = quad_triangles(
+                    Int32(order_of_plan[corners[1]]),
+                    Int32(order_of_plan[corners[2]]),
+                    Int32(order_of_plan[corners[3]]),
+                    Int32(order_of_plan[corners[4]])
+                )
+                list_of = Dict(
+                    P[k] => stacks.levels[k],
+                    P[k + 1] => stacks.levels[k + 1],
+                    Q[k] => stacks.levels[k],
+                    Q[k + 1] => stacks.levels[k + 1]
+                )
+                for t in (t1, t2)
+                    triangle =
+                        (plan_by_order[t[1]], plan_by_order[t[2]], plan_by_order[t[3]])
+                    strip_prisms!(
+                        triangle,
+                        (list_of[triangle[1]], list_of[triangle[2]], list_of[triangle[3]]),
+                        k,
+                        false
+                    )
+                end
+            end
+            # Collapse triangles of the taller column onto the shorter column's top.
+            tall, short = n_P >= n_Q ? (P, Q) : (Q, P)
+            for k = (n_min + 1):n_max
+                strip_prisms!(
+                    (tall[k], tall[k + 1], short[end]),
+                    (stacks.levels[k], stacks.levels[k + 1], top_levels[n_min]),
+                    k,
+                    true
+                )
             end
         end
     end
 
-    # Region prisms: plan triangle x interval of the coarsest of its nodes' stacks, hanging
-    # nodes of the finer stacks on their vertical edges.
-    faces = NTuple{3, Int32}[]
+    # Region prisms: plan triangle x interval of the coarsest of its nodes' level lists
+    # (nested, so the coarsest is one of them), hanging nodes of the finer lists on their
+    # vertical edges.
     for (index, t) in enumerate(plan.triangles)
         plan.band_triangle[index] && continue
         class = plan.triangle_class[index]
-        stack_ids = (node_stack[t[1]], node_stack[t[2]], node_stack[t[3]])
-        element_stack = maximum(stack_ids)
-        levels = stacks.levels[element_stack + 1]
+        for p in t
+            node_list[p] > 0 || error(
+                "Region triangle corner $p at $(plan.xy[p]) is a band node that is not a " *
+                "column top"
+            )
+        end
+        t = ccw(t)
+        node_lists =
+            (lists[node_list[t[1]]], lists[node_list[t[2]]], lists[node_list[t[3]]])
+        coarsest = argmin(length.(node_lists))
+        levels = node_lists[coarsest]
+        all(issubset(levels, l) for l in node_lists) ||
+            error("Region triangle $t: the corners' level lists are not nested")
         for interval = 1:(length(levels) - 1)
             la, lb = levels[interval], levels[interval + 1]
             attribute = material(spec, plan.classes[class], 0.5 * (zs[la] + zs[lb]))
             attribute == 0 && continue
             before = length(tetrahedra)
-            slices = (
-                stack_slice(stacks.levels[stack_ids[1] + 1], la, lb),
-                stack_slice(stacks.levels[stack_ids[2] + 1], la, lb),
-                stack_slice(stacks.levels[stack_ids[3] + 1], la, lb)
+            hanging, incidences = push_hanging_prism!(
+                tetrahedra,
+                faces,
+                global_index,
+                t,
+                la,
+                lb,
+                node_lists,
+                near_is_bottom(la, lb)
             )
-            # A node is hanging-free in THIS interval when its stack has no level inside it
-            # (a finer stack may still have none here); the apex is the lowest global index
-            # among the hanging-free bottom corners, so every adjacent face is a fan from it.
-            free = map(slice -> length(slice) == 2, slices)
-            if all(free)
-                counts.region_prisms_plain += 1
-                push_prism_fan!(
-                    tetrahedra,
-                    global_index(t[1], la),
-                    global_index(t[2], la),
-                    global_index(t[3], la),
-                    global_index(t[1], lb),
-                    global_index(t[2], lb),
-                    global_index(t[3], lb)
-                )
-            else
+            if hanging
                 counts.region_prisms_hanging += 1
-                counts.region_hanging_nodes += sum(length(sl) - 2 for sl in slices)
-                empty!(faces)
-                push!(
-                    faces,
-                    (
-                        global_index(t[1], la),
-                        global_index(t[2], la),
-                        global_index(t[3], la)
-                    ),
-                    (
-                        global_index(t[1], lb),
-                        global_index(t[2], lb),
-                        global_index(t[3], lb)
-                    )
-                )
-                for (u, v) in ((1, 2), (2, 3), (3, 1))
-                    ladder_triangles!(faces, global_index, t[u], t[v], slices[u], slices[v])
-                end
-                apex = minimum(global_index(t[u], la) for u = 1:3 if free[u])
-                for (u, v, w) in faces
-                    (u == apex || v == apex || w == apex) && continue
-                    push!(tetrahedra, (apex, u, v, w))
-                end
+                counts.region_hanging_node_incidences += incidences
+            else
+                counts.region_prisms_plain += 1
             end
-            counts.region_tetrahedra += push_element_tetrahedra!(before, attribute, class)
+            counts.region_tetrahedra += finish_cell!(
+                before,
+                attribute,
+                Int16(class),
+                () ->
+                    "region prism over plan nodes $t between z $(zs[la]) and $(zs[lb])"
+            )
         end
     end
+
+    # Analytic volume per material of the plan (every plan triangle through every z interval,
+    # the tensor sweep's), checked against the swept volume here and on the written mesh.
+    material_table = [
+        material(spec, class, 0.5 * (zs[i] + zs[i + 1])) for
+        class in plan.classes, i = 1:(length(zs) - 1)
+    ]
+    expected_volume = Dict{String, Float64}()
+    for (index, t) in enumerate(plan.triangles)
+        area = triangle_area(plan.xy[t[1]], plan.xy[t[2]], plan.xy[t[3]])
+        class = plan.triangle_class[index]
+        for i = 1:(length(zs) - 1)
+            attribute = material_table[class, i]
+            attribute == 0 && continue
+            key = string(attribute)
+            expected_volume[key] =
+                get(expected_volume, key, 0.0) + area * (zs[i + 1] - zs[i])
+        end
+    end
+    swept_volume = Dict{String, Float64}()
+    for (index, t) in enumerate(tetrahedra)
+        key = string(tetrahedron_attribute[index])
+        swept_volume[key] =
+            get(swept_volume, key, 0.0) +
+            signed_volume(point(t[1]), point(t[2]), point(t[3]), point(t[4]))
+    end
+    for (key, expected) in expected_volume
+        actual = get(swept_volume, key, 0.0)
+        abs(actual - expected) <= VOLUME_CLOSURE_TOLERANCE * expected || error(
+            "Graded sweep: the volume of material $key, $actual um^3, differs from the " *
+            "plan's $expected um^3 (an overlap or a gap)"
+        )
+    end
+    keys(swept_volume) == keys(expected_volume) ||
+        error("Graded sweep: materials $(keys(swept_volume)) vs $(keys(expected_volume))")
+    for index in eachindex(tetrahedra)
+        t = tetrahedra[index]
+        tetrahedra[index] =
+            (tail_index(t[1]), tail_index(t[2]), tail_index(t[3]), tail_index(t[4]))
+    end
+
     record = Dict{String, Any}(
         "alpha" => alpha,
         "beta" => beta,
@@ -589,24 +982,32 @@ function graded_sweep_elements(
         "stack_sizes" => [length(l) for l in stacks.levels],
         "stack_levels_z_um" => [[zs[i] for i in l] for l in stacks.levels],
         "row_ranges_z_um" => [[zs[lo], zs[hi]] for (lo, hi) in stacks.ranges],
+        "column_top_list_sizes" => [length(l) for l in top_levels],
         "region_ladder_stacks" => ladder,
         "region_size_max_um" => REGION_MESH_SIZE_MAX_UM,
-        "plan_nodes_by_stack" => nodes_by_stack,
+        "plan_nodes_by_stack" => nodes_by_list[1:n_stacks],
+        "plan_nodes_by_capped_top_list" => nodes_by_list[(n_stacks + 1):end],
         "region_plan_nodes" => region_nodes,
         "chains" => length(plan.chains),
         "columns" => columns,
+        "capped_columns" => capped_columns,
+        "fan_sectors" => fan_sectors,
         "cross_section_nodes" => length(section.nodes),
         "cross_section_triangles" => length(section.triangles),
         "cross_section_triangles_by_line_pair" => [
             Dict("lines" => collect(pair), "triangles" => n) for
             (pair, n) in section.pair_triangles
         ],
-        "band_prisms" => counts.band_prisms,
+        "band_swept_elements" => counts.band_swept_elements,
+        "band_strip_prisms" => counts.band_strip_prisms,
+        "band_strip_prisms_hanging" => counts.band_strip_prisms_hanging,
+        "band_collapse_prisms" => counts.band_collapse_prisms,
         "band_tetrahedra" => counts.band_tetrahedra,
         "region_prisms_plain" => counts.region_prisms_plain,
         "region_prisms_hanging" => counts.region_prisms_hanging,
-        "region_hanging_nodes" => counts.region_hanging_nodes,
-        "region_tetrahedra" => counts.region_tetrahedra
+        "region_hanging_node_incidences" => counts.region_hanging_node_incidences,
+        "region_tetrahedra" => counts.region_tetrahedra,
+        "expected_volume_um3" => expected_volume
     )
     verbose && println(
         "Graded sweep: alpha ",
@@ -621,13 +1022,26 @@ function graded_sweep_elements(
         length(section.nodes),
         " nodes / ",
         length(section.triangles),
-        " triangles, band prisms ",
-        counts.band_prisms,
+        " triangles, columns ",
+        columns,
+        " (capped ",
+        capped_columns,
+        ", fan sectors ",
+        fan_sectors,
+        "), swept cells ",
+        counts.band_swept_elements,
+        ", strip prisms ",
+        counts.band_strip_prisms,
+        " (hanging ",
+        counts.band_strip_prisms_hanging,
+        "), collapse prisms ",
+        counts.band_collapse_prisms,
         ", region prisms ",
         counts.region_prisms_plain,
         " plain + ",
         counts.region_prisms_hanging,
-        " hanging"
+        " hanging; volume closes to ",
+        maximum(abs(swept_volume[k] - v) / v for (k, v) in expected_volume; init=0.0)
     )
     return tetrahedra, tetrahedron_attribute, tetrahedron_class, record
 end

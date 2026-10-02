@@ -1552,7 +1552,7 @@ function mesh_polygon_window(
     end
     tetrahedra = NTuple{4, Int32}[]
     tetrahedron_attribute = Int8[]
-    tetrahedron_class = Int32[] # partition class per tetrahedron (horizontal face tags)
+    tetrahedron_class = Int16[] # partition class per tetrahedron (horizontal face tags)
     if sweep == :graded
         tetrahedra, tetrahedron_attribute, tetrahedron_class, graded_record =
             graded_sweep_elements(
@@ -1609,7 +1609,7 @@ function mesh_polygon_window(
                     upper + t[2],
                     upper + t[3],
                     attribute,
-                    Int32(class)
+                    Int16(class)
                 )
             end
         end
@@ -1767,6 +1767,19 @@ function mesh_polygon_window(
             a != 9 &&
             !haskey(surface_counts, string(a)) &&
             error("Physical surface $name (attribute $a) is empty")
+    end
+    if sweep == :graded
+        # The 3D backstop on the written mesh: positive tetrahedra (above) whose volume per
+        # material equals the plan's analytic volume, so no cell overlaps or is missing.
+        expected_volume = manifest["graded_sweep"]["expected_volume_um3"]
+        keys(volumes) == keys(expected_volume) ||
+            error("Graded sweep: materials $(keys(volumes)) vs $(keys(expected_volume))")
+        for (key, expected) in expected_volume
+            abs(volumes[key] - expected) <= VOLUME_CLOSURE_TOLERANCE * expected || error(
+                "Graded sweep: the written volume of material $key, $(volumes[key]) um^3, " *
+                "differs from the plan's $expected um^3"
+            )
+        end
     end
 
     mkpath(dirname(output))
