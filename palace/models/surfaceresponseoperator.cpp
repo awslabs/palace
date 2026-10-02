@@ -13905,17 +13905,40 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
             return it == basis_points.end() ? nullptr : &it->second;
           },
           coordinate_scale, 3, &skipped);
+      const double continuation_tolerance =
+          kSignatureParameterToleranceOverRadius * patches.matching_radius;
       const auto records = FindTranslationalStretchInsideSpatialSupport(
-          patches.patches, boxes, 3,
-          kSignatureParameterToleranceOverRadius * patches.matching_radius);
-      auto &diagnostics =
-          manifest["Identification"]["Diagnostics"]
-                  ["TranslationalStretchesInsideSpatialSupport"] =
-                      DescribeTranslationalOwnershipRecords(records, boxes, patches,
-                                                            coordinate_scale, skipped);
+          patches.patches, boxes, 3, continuation_tolerance);
+      // The placement's continuation ownership (decision 236 (2)) on the dry run: the
+      // written patches are the placed ones (clipped cells, weight 0 inside the boxes).
+      const auto ownership =
+          ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance);
+      auto &diagnostics = manifest["Identification"]["Diagnostics"];
+      diagnostics["TranslationalStretchesInsideSpatialSupport"] =
+          DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
+                                                skipped, &ownership);
+      diagnostics["ContinuationOwnership"] =
+          DescribeContinuationOwnership(ownership, boxes, patches, coordinate_scale);
       if (!records.empty())
       {
-        Mpi::Warning("{}", DescribeTranslationalOwnershipWarning(diagnostics));
+        Mpi::Warning("{}", DescribeTranslationalOwnershipWarning(
+                               diagnostics["TranslationalStretchesInsideSpatialSupport"]));
+      }
+      if (!ownership.cells.empty())
+      {
+        Mpi::Print("{}", DescribeContinuationOwnershipSummary(
+                             diagnostics["ContinuationOwnership"]));
+      }
+      // Coupon-vs-coupon margin overlaps (decision 244): recorded here; the placement
+      // aborts on a claim inside the other cluster's claims.
+      const auto margin_overlaps =
+          FindSpatialSupportMarginOverlaps(boxes, 3, continuation_tolerance);
+      if (!margin_overlaps.empty())
+      {
+        diagnostics["SpatialSupportMarginOverlaps"] = DescribeSpatialSupportMarginOverlaps(
+            margin_overlaps, patches, coordinate_scale);
+        Mpi::Warning("{}", DescribeSpatialSupportMarginOverlapWarning(
+                               diagnostics["SpatialSupportMarginOverlaps"]));
       }
     }
     std::ofstream output(path);
@@ -13947,19 +13970,24 @@ struct SurfaceResponseGeometry::Impl
   int dimension = 0;
 };
 
-std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialSupport(
-    const std::vector<ResponsePatchData> &patches,
-    const std::vector<SpatialSupportBounds> &supports, int dimension,
-    double continuation_tolerance)
+namespace
 {
-  struct TranslationalStretch
-  {
-    std::vector<std::size_t> patches;
-    std::vector<std::array<double, 3>> ends;
-    std::set<int> segments;
-    std::array<double, 3> direction{};  // AxisW of the first cell
-    double length = 0.0;
-  };
+
+// One feature side's maximal contiguous stretch along its chain (patch provenance feature /
+// stretch): its cells, their ends (patch units), the mesh segments they lie on, and the
+// AxisW of the first cell.
+struct TranslationalStretch
+{
+  std::vector<std::size_t> patches;
+  std::vector<std::array<double, 3>> ends;
+  std::set<int> segments;
+  std::array<double, 3> direction{};
+  double length = 0.0;
+};
+
+std::map<std::pair<int, int>, TranslationalStretch>
+CollectTranslationalStretches(const std::vector<ResponsePatchData> &patches, int dimension)
+{
   std::map<std::pair<int, int>, TranslationalStretch> stretches;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -13988,81 +14016,161 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
       stretch.ends.push_back(end);
     }
   }
-  // A stretch continues a claim when a cell lies on the claim's mesh segment, or when it
-  // runs parallel to the claim, one of its ends abuts a claim end along the chain within
-  // the tolerance and within R of it transversely (a pair's cells sit on its midline,
-  // within the half separation < R of either edge; a stack's on its first side) AND it
-  // extends beyond that claim end: every cell end lies on the outward side of the abutting
-  // end (away from the claim's other end) within the tolerance. A parallel stretch lying
-  // alongside the claim over the claim's own range, one end aligned with a claim end, is
-  // foreign: it does not go through the claim cut.
+  return stretches;
+}
+
+// A stretch continues a claim when a cell lies on the claim's mesh segment, or when it
+// runs parallel to the claim, one of its ends abuts a claim end along the chain within
+// the tolerance and within R of it transversely (a pair's cells sit on its midline,
+// within the half separation < R of either edge; a stack's on its first side) AND it
+// extends beyond that claim end: every cell end lies on the outward side of the abutting
+// end (away from the claim's other end) within the tolerance. A parallel stretch lying
+// alongside the claim over the claim's own range, one end aligned with a claim end, is
+// foreign: it does not go through the claim cut. Returns the claim end the stretch
+// continues from (the abutting end; on the segment branch the claim end nearest to the
+// stretch), nullopt when it does not continue the claim.
+std::optional<std::array<double, 3>>
+ContinuedClaimEnd(const TranslationalStretch &stretch,
+                  const ResponsePatchData::Provenance::Claim &claim, int dimension,
+                  double continuation_tolerance)
+{
+  auto Distance2 = [&](const std::array<double, 3> &a, const std::array<double, 3> &b)
+  {
+    double distance2 = 0.0;
+    for (int d = 0; d < dimension; d++)
+    {
+      distance2 += (a[d] - b[d]) * (a[d] - b[d]);
+    }
+    return distance2;
+  };
+  if (claim.segment >= 0 && stretch.segments.count(claim.segment))
+  {
+    double nearest0 = mfem::infinity(), nearest1 = mfem::infinity();
+    for (const auto &end : stretch.ends)
+    {
+      nearest0 = std::min(nearest0, Distance2(end, claim.p0));
+      nearest1 = std::min(nearest1, Distance2(end, claim.p1));
+    }
+    return nearest0 <= nearest1 ? claim.p0 : claim.p1;
+  }
   const double parallel_cosine = std::cos(kSignatureAngleToleranceDegrees * M_PI / 180.0);
   const double transverse_reach =
       continuation_tolerance / kSignatureParameterToleranceOverRadius;
-  auto Continues = [&](const TranslationalStretch &stretch,
-                       const ResponsePatchData::Provenance::Claim &claim)
+  std::array<double, 3> tangent{};
+  double length2 = 0.0, cosine = 0.0;
+  for (int d = 0; d < dimension; d++)
   {
-    if (claim.segment >= 0 && stretch.segments.count(claim.segment))
+    tangent[d] = claim.p1[d] - claim.p0[d];
+    length2 += tangent[d] * tangent[d];
+  }
+  if (length2 <= 0.0)
+  {
+    return std::nullopt;
+  }
+  for (int d = 0; d < dimension; d++)
+  {
+    tangent[d] /= std::sqrt(length2);
+    cosine += tangent[d] * stretch.direction[d];
+  }
+  if (std::abs(cosine) < parallel_cosine)
+  {
+    return std::nullopt;
+  }
+  for (const auto &end : stretch.ends)
+  {
+    for (const auto *claim_end : {&claim.p0, &claim.p1})
     {
-      return true;
-    }
-    std::array<double, 3> tangent{};
-    double length2 = 0.0, cosine = 0.0;
-    for (int d = 0; d < dimension; d++)
-    {
-      tangent[d] = claim.p1[d] - claim.p0[d];
-      length2 += tangent[d] * tangent[d];
-    }
-    if (length2 <= 0.0)
-    {
-      return false;
-    }
-    for (int d = 0; d < dimension; d++)
-    {
-      tangent[d] /= std::sqrt(length2);
-      cosine += tangent[d] * stretch.direction[d];
-    }
-    if (std::abs(cosine) < parallel_cosine)
-    {
-      return false;
-    }
-    for (const auto &end : stretch.ends)
-    {
-      for (const auto *claim_end : {&claim.p0, &claim.p1})
+      double along = 0.0;
+      for (int d = 0; d < dimension; d++)
       {
-        double along = 0.0, distance2 = 0.0;
-        for (int d = 0; d < dimension; d++)
-        {
-          const double delta = end[d] - (*claim_end)[d];
-          along += delta * tangent[d];
-          distance2 += delta * delta;
-        }
-        if (!(std::abs(along) <= continuation_tolerance &&
-              distance2 - along * along <= transverse_reach * transverse_reach))
-        {
-          continue;
-        }
-        // Outward = from the claim's other end toward this abutting end.
-        const double outward = (claim_end == &claim.p1) ? 1.0 : -1.0;
-        const bool beyond = std::all_of(stretch.ends.begin(), stretch.ends.end(),
-                                        [&](const std::array<double, 3> &other)
+        along += (end[d] - (*claim_end)[d]) * tangent[d];
+      }
+      const double distance2 = Distance2(end, *claim_end);
+      if (!(std::abs(along) <= continuation_tolerance &&
+            distance2 - along * along <= transverse_reach * transverse_reach))
+      {
+        continue;
+      }
+      // Outward = from the claim's other end toward this abutting end.
+      const double outward = (claim_end == &claim.p1) ? 1.0 : -1.0;
+      const bool beyond = std::all_of(stretch.ends.begin(), stretch.ends.end(),
+                                      [&](const std::array<double, 3> &other)
+                                      {
+                                        double along_outward = 0.0;
+                                        for (int d = 0; d < dimension; d++)
                                         {
-                                          double along_outward = 0.0;
-                                          for (int d = 0; d < dimension; d++)
-                                          {
-                                            along_outward += (other[d] - (*claim_end)[d]) *
-                                                             tangent[d] * outward;
-                                          }
-                                          return along_outward >= -continuation_tolerance;
-                                        });
-        if (beyond)
-        {
-          return true;
-        }
+                                          along_outward += (other[d] - (*claim_end)[d]) *
+                                                           tangent[d] * outward;
+                                        }
+                                        return along_outward >= -continuation_tolerance;
+                                      });
+      if (beyond)
+      {
+        return *claim_end;
       }
     }
-    return false;
-  };
+  }
+  return std::nullopt;
+}
+
+// The claim end of the support the stretch continues from (the first claim in the
+// support's order that it continues), nullopt when it continues none.
+std::optional<std::array<double, 3>>
+ContinuedSupportClaimEnd(const TranslationalStretch &stretch,
+                         const SpatialSupportBounds &support, int dimension,
+                         double continuation_tolerance)
+{
+  for (const auto &claim : support.claims)
+  {
+    if (const auto end =
+            ContinuedClaimEnd(stretch, claim, dimension, continuation_tolerance))
+    {
+      return end;
+    }
+  }
+  return std::nullopt;
+}
+
+// The offsets along a cell's AxisW line (relative to the patch origin) strictly inside a
+// box, intersected with the cell [c0, c1]; nullopt when the cell does not enter the box.
+std::optional<std::array<double, 2>> CellInsideBox(const ResponsePatchData &patch,
+                                                   const SpatialSupportBounds &box,
+                                                   int dimension)
+{
+  double lo = patch.longitudinal_cell[0], hi = patch.longitudinal_cell[1];
+  for (int d = 0; d < dimension; d++)
+  {
+    const double w = patch.axis_w[d];
+    if (std::abs(w) <= 1.0e-14)
+    {
+      if (!(patch.origin[d] > box.min[d] && patch.origin[d] < box.max[d]))
+      {
+        return std::nullopt;
+      }
+      continue;
+    }
+    const double a = (box.min[d] - patch.origin[d]) / w;
+    const double b = (box.max[d] - patch.origin[d]) / w;
+    lo = std::max(lo, std::min(a, b));
+    hi = std::min(hi, std::max(a, b));
+  }
+  const double scale =
+      std::max(1.0, patch.longitudinal_cell[1] - patch.longitudinal_cell[0]);
+  if (hi - lo <= 1.0e-12 * scale)
+  {
+    return std::nullopt;
+  }
+  return std::array<double, 2>{lo, hi};
+}
+
+}  // namespace
+
+std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialSupport(
+    const std::vector<ResponsePatchData> &patches,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double continuation_tolerance)
+{
+  const auto stretches = CollectTranslationalStretches(patches, dimension);
   std::vector<TranslationalOwnershipRecord> records;
   for (const auto &entry : stretches)
   {
@@ -14105,8 +14213,8 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
         }
       }
       record.continuation =
-          std::any_of(support.claims.begin(), support.claims.end(),
-                      [&](const auto &claim) { return Continues(stretch, claim); });
+          ContinuedSupportClaimEnd(stretch, support, dimension, continuation_tolerance)
+              .has_value();
       records.push_back(record);
     }
   }
@@ -14168,7 +14276,8 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
 nlohmann::json DescribeTranslationalOwnershipRecords(
     const std::vector<TranslationalOwnershipRecord> &records,
     const std::vector<SpatialSupportBounds> &supports, const ResponseCorrectionData &config,
-    double coordinate_scale, const std::vector<std::string> &skipped)
+    double coordinate_scale, const std::vector<std::string> &skipped,
+    const ContinuationOwnership *ownership)
 {
   std::unordered_map<int, const ResponseModelData *> models;
   for (const auto &model : config.models)
@@ -14182,7 +14291,7 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
   };
   nlohmann::json entries = nlohmann::json::array();
   int continuation_count = 0, foreign_count = 0;
-  double continuation_length = 0.0, foreign_length = 0.0;
+  double continuation_length = 0.0, foreign_length = 0.0, owned_length = 0.0;
   for (const auto &record : records)
   {
     const auto support = std::find_if(supports.begin(), supports.end(), [&](const auto &s)
@@ -14193,8 +14302,17 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
     const double length = record.length * coordinate_scale;
     (record.continuation ? continuation_count : foreign_count)++;
     (record.continuation ? continuation_length : foreign_length) += length;
+    double owned = 0.0;
+    if (ownership)
+    {
+      const auto it = ownership->owned_by_stretch.find(
+          std::make_tuple(record.feature, record.stretch, record.spatial_patch));
+      owned = it == ownership->owned_by_stretch.end() ? 0.0 : it->second * coordinate_scale;
+    }
+    owned_length += owned;
     entries.push_back(
         {{"Feature", record.feature},
+         {"OwnedLength", owned},
          {"Stretch", record.stretch},
          {"Model", models.at(patch.model)->name},
          {"Topology", models.at(patch.model)->topology},
@@ -14213,6 +14331,10 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
       {"Length", continuation_length + foreign_length},
       {"Continuation", {{"Count", continuation_count}, {"Length", continuation_length}}},
       {"Foreign", {{"Count", foreign_count}, {"Length", foreign_length}}},
+      // The continuation ownership's removed length: per record (the stretch's cells inside
+      // that box, clipped exactly) and in total over every stretch, inside or straddling.
+      {"OwnedLength", owned_length},
+      {"OwnedLengthTotal", ownership ? ownership->owned_length * coordinate_scale : 0.0},
       {"SpatialSupports", static_cast<int>(supports.size())},
       {"SpatialSupportsWithoutBasisPoints", skipped},
       {"ContinuationToleranceOverR", kSignatureParameterToleranceOverRadius},
@@ -14260,6 +14382,611 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
       diagnostics["Count"].get<int>(), diagnostics["Length"].get<double>(),
       diagnostics["Continuation"]["Count"].get<int>(),
       diagnostics["Foreign"]["Count"].get<int>(), lines);
+}
+
+ContinuationOwnership
+ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
+                           const std::vector<SpatialSupportBounds> &supports, int dimension,
+                           double continuation_tolerance)
+{
+  ContinuationOwnership ownership;
+  const auto stretches = CollectTranslationalStretches(patches, dimension);
+  for (const auto &entry : stretches)
+  {
+    const auto &key = entry.first;
+    const auto &stretch = entry.second;
+    // The supports (by index) this stretch continues, with the claim end it continues from.
+    std::vector<std::pair<std::size_t, std::array<double, 3>>> continued;
+    for (std::size_t s = 0; s < supports.size(); s++)
+    {
+      if (const auto end = ContinuedSupportClaimEnd(stretch, supports[s], dimension,
+                                                    continuation_tolerance))
+      {
+        continued.emplace_back(s, *end);
+      }
+    }
+    if (continued.empty())
+    {
+      continue;
+    }
+    for (const std::size_t patch_idx : stretch.patches)
+    {
+      auto &patch = patches[patch_idx];
+      const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+      const double cell_length = c1 - c0;
+      // The inside interval per owning support, in ascending spatial patch order, with the
+      // continued claim end's offset along the cell's AxisW line.
+      struct Owner
+      {
+        std::size_t support = 0;
+        std::array<double, 2> inside{};
+        double claim_end = 0.0;
+      };
+      std::vector<Owner> inside;
+      for (const auto &[s, claim_end] : continued)
+      {
+        if (const auto interval = CellInsideBox(patch, supports[s], dimension))
+        {
+          double offset = 0.0;
+          for (int d = 0; d < dimension; d++)
+          {
+            offset += (claim_end[d] - patch.origin[d]) * patch.axis_w[d];
+          }
+          inside.push_back({s, *interval, offset});
+        }
+      }
+      if (inside.empty())
+      {
+        continue;
+      }
+      std::sort(inside.begin(), inside.end(), [&](const Owner &a, const Owner &b)
+                { return supports[a.support].patch < supports[b.support].patch; });
+      // The union of the inside intervals must leave at most one kept piece: a box's inside
+      // interval touches a cell end (the stretch starts at the claim cut inside the box, so
+      // the box's inside interval along the stretch begins at the stretch's first end), and
+      // two boxes continued by one straight stretch leave no gap between their inside
+      // intervals (both contain that first end). Verified, not assumed.
+      const double scale = std::max(1.0, cell_length);
+      std::vector<std::array<double, 2>> sorted_inside;
+      for (const auto &owner : inside)
+      {
+        sorted_inside.push_back(owner.inside);
+      }
+      std::sort(sorted_inside.begin(), sorted_inside.end());
+      double removed_lo = sorted_inside.front()[0], removed_hi = sorted_inside.front()[1];
+      for (const auto &interval : sorted_inside)
+      {
+        MFEM_VERIFY(interval[0] <= removed_hi + 1.0e-12 * scale,
+                    "Continuation ownership: the boxes owning the longitudinal cell of "
+                    "patch "
+                        << patch_idx + 1 << " leave a gap inside the cell!");
+        removed_hi = std::max(removed_hi, interval[1]);
+      }
+      const bool at_begin = removed_lo <= c0 + 1.0e-12 * scale;
+      const bool at_end = removed_hi >= c1 - 1.0e-12 * scale;
+      MFEM_VERIFY(at_begin || at_end,
+                  "Continuation ownership: the box of spatial patch "
+                      << supports[inside.front().support].patch + 1
+                      << " lies strictly inside the longitudinal cell of patch "
+                      << patch_idx + 1 << " (feature " << key.first << ", stretch "
+                      << key.second
+                      << "): a translational cell longer than a coupon box along its own "
+                         "direction cannot be clipped into one piece!");
+      const double owned_length = std::min(removed_hi - removed_lo, cell_length);
+      const double kept_lo = at_begin ? removed_hi : c0;
+      const double kept_hi = at_begin ? c1 : removed_lo;
+      const double kept_length = std::max(0.0, kept_hi - kept_lo);
+      const bool wholly = kept_length <= 1.0e-12 * scale;
+      // Attribution per owner: the owned interval is split at the midpoints between the
+      // consecutive continued claim ends along the cell (one owner takes the whole owned
+      // length).
+      ContinuationOwnership::Cell cell;
+      cell.patch = patch_idx;
+      cell.feature = key.first;
+      cell.stretch = key.second;
+      cell.cell_length = cell_length;
+      cell.owned_length = owned_length;
+      if (inside.size() == 1)
+      {
+        cell.owners.push_back(supports[inside.front().support].patch);
+        cell.attributed.push_back(owned_length);
+      }
+      else
+      {
+        std::vector<std::pair<double, std::size_t>> claim_ends;
+        for (std::size_t i = 0; i < inside.size(); i++)
+        {
+          claim_ends.emplace_back(inside[i].claim_end, i);
+        }
+        std::sort(claim_ends.begin(), claim_ends.end());
+        std::vector<double> cuts = {removed_lo};
+        for (std::size_t i = 1; i < claim_ends.size(); i++)
+        {
+          cuts.push_back(std::clamp(0.5 * (claim_ends[i - 1].first + claim_ends[i].first),
+                                    removed_lo, removed_hi));
+        }
+        cuts.push_back(removed_hi);
+        std::vector<double> share(inside.size(), 0.0);
+        for (std::size_t i = 0; i < claim_ends.size(); i++)
+        {
+          share[claim_ends[i].second] = std::max(0.0, cuts[i + 1] - cuts[i]);
+        }
+        for (std::size_t i = 0; i < inside.size(); i++)
+        {
+          cell.owners.push_back(supports[inside[i].support].patch);
+          cell.attributed.push_back(share[i]);
+        }
+        ownership.shared_cells++;
+        ownership.shared_length += owned_length;
+      }
+      for (std::size_t i = 0; i < cell.owners.size(); i++)
+      {
+        ownership
+            .owned_by_stretch[std::make_tuple(key.first, key.second, cell.owners[i])] +=
+            cell.attributed[i];
+        ownership.owned_by_support[cell.owners[i]] += cell.attributed[i];
+      }
+      ownership.owned_length += owned_length;
+      // Clip: the kept interval becomes the cell of a patch at its midpoint (the quadrature
+      // point of the kept piece), weight and quadrature weight scaled by kept / cell.
+      const double fraction = wholly ? 0.0 : kept_length / cell_length;
+      const double shift = wholly ? 0.0 : 0.5 * (kept_lo + kept_hi);
+      for (int d = 0; d < 3; d++)
+      {
+        patch.origin[d] += shift * patch.axis_w[d];
+        for (auto &anchor : patch.maxwell_conductor_anchors)
+        {
+          anchor[d] += shift * patch.axis_w[d];
+        }
+      }
+      patch.longitudinal_cell =
+          wholly ? std::array<double, 2>{0.0, 0.0}
+                 : std::array<double, 2>{-0.5 * kept_length, 0.5 * kept_length};
+      patch.weight *= fraction;
+      patch.provenance.quadrature_weight *= fraction;
+      (wholly ? ownership.wholly_owned_cells : ownership.clipped_cells)++;
+      ownership.cells.push_back(std::move(cell));
+    }
+  }
+  std::sort(ownership.cells.begin(), ownership.cells.end(),
+            [](const auto &a, const auto &b) { return a.patch < b.patch; });
+  return ownership;
+}
+
+std::vector<SpatialSupportMarginOverlap>
+FindSpatialSupportMarginOverlaps(const std::vector<SpatialSupportBounds> &supports,
+                                 int dimension, double continuation_tolerance)
+{
+  const double parallel_cosine = std::cos(kSignatureAngleToleranceDegrees * M_PI / 180.0);
+  // The straight continuations of a support's claim CUT ends to its box face.
+  struct Continuation
+  {
+    std::array<double, 3> p0{}, p1{};
+  };
+  auto Continuations = [&](const SpatialSupportBounds &support)
+  {
+    std::vector<Continuation> continuations;
+    for (std::size_t i = 0; i < support.claims.size(); i++)
+    {
+      const auto &claim = support.claims[i];
+      std::array<double, 3> tangent{};
+      double length = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        tangent[d] = claim.p1[d] - claim.p0[d];
+        length += tangent[d] * tangent[d];
+      }
+      length = std::sqrt(length);
+      if (length <= 0.0)
+      {
+        continue;
+      }
+      for (int d = 0; d < dimension; d++)
+      {
+        tangent[d] /= length;
+      }
+      for (const double sign : {-1.0, 1.0})
+      {
+        const auto &end = sign > 0.0 ? claim.p1 : claim.p0;
+        bool shared = false;
+        for (std::size_t j = 0; j < support.claims.size() && !shared; j++)
+        {
+          if (j == i)
+          {
+            continue;
+          }
+          for (const auto *other : {&support.claims[j].p0, &support.claims[j].p1})
+          {
+            double distance2 = 0.0;
+            for (int d = 0; d < dimension; d++)
+            {
+              distance2 += (end[d] - (*other)[d]) * (end[d] - (*other)[d]);
+            }
+            shared |= distance2 <= continuation_tolerance * continuation_tolerance;
+          }
+        }
+        if (shared)
+        {
+          continue;
+        }
+        // Distance along the outward tangent from the cut end to the box boundary.
+        double reach = mfem::infinity();
+        for (int d = 0; d < dimension; d++)
+        {
+          const double w = sign * tangent[d];
+          if (std::abs(w) <= 1.0e-14)
+          {
+            continue;
+          }
+          for (const double face : {support.min[d], support.max[d]})
+          {
+            const double s = (face - end[d]) / w;
+            if (s > 1.0e-12)
+            {
+              reach = std::min(reach, s);
+            }
+          }
+        }
+        if (!std::isfinite(reach))
+        {
+          continue;
+        }
+        Continuation continuation;
+        continuation.p0 = end;
+        for (int d = 0; d < 3; d++)
+        {
+          continuation.p1[d] = end[d] + reach * sign * tangent[d];
+        }
+        continuations.push_back(continuation);
+      }
+    }
+    return continuations;
+  };
+  // Length of segment b lying on segment a: parallel within the signature angle tolerance,
+  // within continuation_tolerance of a's line transversely, the overlap of the projections.
+  auto Overlap = [&](const std::array<double, 3> &a0, const std::array<double, 3> &a1,
+                     const std::array<double, 3> &b0, const std::array<double, 3> &b1)
+  {
+    std::array<double, 3> ta{}, tb{};
+    double la = 0.0, lb = 0.0, cosine = 0.0;
+    for (int d = 0; d < dimension; d++)
+    {
+      ta[d] = a1[d] - a0[d];
+      tb[d] = b1[d] - b0[d];
+      la += ta[d] * ta[d];
+      lb += tb[d] * tb[d];
+    }
+    la = std::sqrt(la);
+    lb = std::sqrt(lb);
+    if (la <= 0.0 || lb <= 0.0)
+    {
+      return 0.0;
+    }
+    for (int d = 0; d < dimension; d++)
+    {
+      cosine += ta[d] * tb[d] / (la * lb);
+    }
+    if (std::abs(cosine) < parallel_cosine)
+    {
+      return 0.0;
+    }
+    double s0 = 0.0, s1 = 0.0;
+    for (const auto *b : {&b0, &b1})
+    {
+      double along = 0.0, distance2 = 0.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        const double delta = (*b)[d] - a0[d];
+        along += delta * ta[d] / la;
+        distance2 += delta * delta;
+      }
+      if (distance2 - along * along > continuation_tolerance * continuation_tolerance)
+      {
+        return 0.0;
+      }
+      (b == &b0 ? s0 : s1) = along;
+    }
+    if (s0 > s1)
+    {
+      std::swap(s0, s1);
+    }
+    return std::max(0.0, std::min(s1, la) - std::max(s0, 0.0));
+  };
+  // A claim end of a strictly inside the bounding box of b's claims (the claims hull); in
+  // a direction where b's claims are coplanar (the plan of a planar cluster) b's box.
+  auto ClaimInsideHull = [&](const SpatialSupportBounds &a, const SpatialSupportBounds &b)
+  {
+    if (b.claims.empty())
+    {
+      return false;
+    }
+    std::array<double, 3> lo = b.claims.front().p0, hi = b.claims.front().p0;
+    for (const auto &claim : b.claims)
+    {
+      for (const auto *p : {&claim.p0, &claim.p1})
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          lo[d] = std::min(lo[d], (*p)[d]);
+          hi[d] = std::max(hi[d], (*p)[d]);
+        }
+      }
+    }
+    for (int d = 0; d < dimension; d++)
+    {
+      if (hi[d] - lo[d] <= continuation_tolerance)
+      {
+        lo[d] = b.min[d];
+        hi[d] = b.max[d];
+      }
+    }
+    for (const auto &claim : a.claims)
+    {
+      for (const auto *p : {&claim.p0, &claim.p1})
+      {
+        bool inside = true;
+        for (int d = 0; d < dimension; d++)
+        {
+          inside &= (*p)[d] > lo[d] + continuation_tolerance &&
+                    (*p)[d] < hi[d] - continuation_tolerance;
+        }
+        if (inside)
+        {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  std::vector<SpatialSupportMarginOverlap> overlaps;
+  for (std::size_t i = 0; i < supports.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < supports.size(); j++)
+    {
+      const auto &a = supports[i];
+      const auto &b = supports[j];
+      if (a.claims.empty() || b.claims.empty())
+      {
+        continue;  // corner / vertex supports carry no claims: the cluster priority rule
+      }
+      double scale = 1.0;
+      for (int d = 0; d < dimension; d++)
+      {
+        scale = std::max({scale, std::abs(a.min[d]), std::abs(a.max[d]), std::abs(b.min[d]),
+                          std::abs(b.max[d])});
+      }
+      const double tolerance = 1.0e-12 * scale;
+      SpatialSupportMarginOverlap overlap;
+      bool interior = true;
+      for (int d = 0; d < dimension; d++)
+      {
+        overlap.overlap_min[d] = std::max(a.min[d], b.min[d]);
+        overlap.overlap_max[d] = std::min(a.max[d], b.max[d]);
+        interior &= overlap.overlap_max[d] - overlap.overlap_min[d] > tolerance;
+      }
+      if (!interior)
+      {
+        continue;
+      }
+      overlap.first_patch = a.patch;
+      overlap.second_patch = b.patch;
+      overlap.claim_in_hull = ClaimInsideHull(a, b) || ClaimInsideHull(b, a);
+      const auto a_continuations = Continuations(a);
+      const auto b_continuations = Continuations(b);
+      for (const auto &c : a_continuations)
+      {
+        for (const auto &claim : b.claims)
+        {
+          overlap.first_margin_over_second_claims +=
+              Overlap(c.p0, c.p1, claim.p0, claim.p1);
+        }
+        for (const auto &other : b_continuations)
+        {
+          overlap.margin_over_margin += Overlap(c.p0, c.p1, other.p0, other.p1);
+        }
+      }
+      for (const auto &c : b_continuations)
+      {
+        for (const auto &claim : a.claims)
+        {
+          overlap.second_margin_over_first_claims +=
+              Overlap(c.p0, c.p1, claim.p0, claim.p1);
+        }
+      }
+      overlaps.push_back(overlap);
+    }
+  }
+  return overlaps;
+}
+
+nlohmann::json
+DescribeContinuationOwnership(const ContinuationOwnership &ownership,
+                              const std::vector<SpatialSupportBounds> &supports,
+                              const ResponseCorrectionData &config, double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  nlohmann::json cells = nlohmann::json::array();
+  for (const auto &cell : ownership.cells)
+  {
+    const auto &patch = config.patches[cell.patch];
+    nlohmann::json owners = nlohmann::json::array();
+    for (std::size_t i = 0; i < cell.owners.size(); i++)
+    {
+      const auto &spatial = config.patches[cell.owners[i]];
+      owners.push_back({{"SpatialPatch", cell.owners[i]},
+                        {"SpatialFeature", spatial.provenance.feature},
+                        {"SpatialModel", models.at(spatial.model)->name},
+                        {"Length", cell.attributed[i] * coordinate_scale}});
+    }
+    cells.push_back({{"Patch", cell.patch},
+                     {"Feature", cell.feature},
+                     {"Stretch", cell.stretch},
+                     {"Segment", patch.provenance.segment},
+                     {"S0", patch.provenance.s0 * coordinate_scale},
+                     {"S1", patch.provenance.s1 * coordinate_scale},
+                     {"Model", models.at(patch.model)->name},
+                     {"CellLength", cell.cell_length * coordinate_scale},
+                     {"OwnedLength", cell.owned_length * coordinate_scale},
+                     {"Owners", std::move(owners)}});
+  }
+  nlohmann::json by_support = nlohmann::json::array();
+  for (const auto &support : supports)
+  {
+    const auto it = ownership.owned_by_support.find(support.patch);
+    const auto &spatial = config.patches[support.patch];
+    by_support.push_back(
+        {{"SpatialPatch", support.patch},
+         {"SpatialFeature", spatial.provenance.feature},
+         {"SpatialModel", models.at(spatial.model)->name},
+         {"OwnedLength",
+          (it == ownership.owned_by_support.end() ? 0.0 : it->second) * coordinate_scale}});
+  }
+  return {
+      {"Cells", static_cast<int>(ownership.cells.size())},
+      {"WhollyOwnedCells", ownership.wholly_owned_cells},
+      {"ClippedCells", ownership.clipped_cells},
+      {"OwnedLength", ownership.owned_length * coordinate_scale},
+      {"Shared",
+       {{"Cells", ownership.shared_cells},
+        {"Length", ownership.shared_length * coordinate_scale}}},
+      {"BySupport", std::move(by_support)},
+      {"OwnedCells", std::move(cells)},
+      {"Rule",
+       "decision 236 (2) / 244 (2026-10-02): a translational cell of a stretch that "
+       "continues "
+       "a claim of a spatial cluster (the Continuation criterion of "
+       "TranslationalStretchesInsideSpatialSupport, judged on the whole stretch) is owned "
+       "by "
+       "that coupon inside its box: the kept part of the cell is the part outside EVERY "
+       "box "
+       "whose claims the stretch continues (symmetric for a cell on two coupons' "
+       "continuations, exact, idempotent), the patch weight and quadrature weight scale by "
+       "kept / cell (a cell wholly inside keeps weight 0 and is skipped), the origin moves "
+       "to "
+       "the kept interval's midpoint with the cell symmetric about it; the provenance "
+       "portion [S0, S1) stays, so a portion's quadrature weights sum to 1 - OwnedLength / "
+       "portion length. Foreign cells, cells outside the box and the stack-end cells of a "
+       "stretch that continues no claim are untouched; a curved cell never continues a "
+       "claim "
+       "(residual double count on arc-continues-arc); a pair's or stack's cell is owned "
+       "whole (every side's cells sit on the midline) even where only some of its edges "
+       "are "
+       "claimed. A shared cell's owned length is attributed per coupon by the midpoint "
+       "between the two continued claim ends. Lengths in mesh units"}};
+}
+
+nlohmann::json DescribeSpatialSupportMarginOverlaps(
+    const std::vector<SpatialSupportMarginOverlap> &overlaps,
+    const ResponseCorrectionData &config, double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  auto Scaled = [&](const std::array<double, 3> &point)
+  {
+    return std::array<double, 3>{point[0] * coordinate_scale, point[1] * coordinate_scale,
+                                 point[2] * coordinate_scale};
+  };
+  nlohmann::json pairs = nlohmann::json::array();
+  double margin_over_claims = 0.0, margin_over_margin = 0.0;
+  int claim_in_hull = 0;
+  for (const auto &overlap : overlaps)
+  {
+    const auto &first = config.patches[overlap.first_patch];
+    const auto &second = config.patches[overlap.second_patch];
+    margin_over_claims +=
+        overlap.first_margin_over_second_claims + overlap.second_margin_over_first_claims;
+    margin_over_margin += overlap.margin_over_margin;
+    claim_in_hull += overlap.claim_in_hull ? 1 : 0;
+    pairs.push_back(
+        {{"FirstPatch", overlap.first_patch},
+         {"FirstFeature", first.provenance.feature},
+         {"FirstModel", models.at(first.model)->name},
+         {"SecondPatch", overlap.second_patch},
+         {"SecondFeature", second.provenance.feature},
+         {"SecondModel", models.at(second.model)->name},
+         {"Overlap",
+          {{"Min", Scaled(overlap.overlap_min)}, {"Max", Scaled(overlap.overlap_max)}}},
+         {"FirstMarginOverSecondClaims",
+          overlap.first_margin_over_second_claims * coordinate_scale},
+         {"SecondMarginOverFirstClaims",
+          overlap.second_margin_over_first_claims * coordinate_scale},
+         {"MarginOverMargin", overlap.margin_over_margin * coordinate_scale},
+         {"ClaimInHull", overlap.claim_in_hull}});
+  }
+  return {
+      {"Count", static_cast<int>(overlaps.size())},
+      {"ClaimInHull", claim_in_hull},
+      {"MarginOverClaimsLength", margin_over_claims * coordinate_scale},
+      {"MarginOverMarginLength", margin_over_margin * coordinate_scale},
+      {"DoubleCountedLength", (margin_over_claims + margin_over_margin) * coordinate_scale},
+      {"Pairs", std::move(pairs)},
+      {"Rule",
+       "decision 244 (2026-10-02): two spatial cluster supports whose boxes overlap in "
+       "their "
+       "interiors are recorded when the overlap is margins only (no claim end of either "
+       "strictly inside the bounding box of the other's claims) and abort otherwise. Each "
+       "coupon's twins continue every claim CUT end (an end no other claim of the same "
+       "cluster shares) straight to its own box face; the length of those continuations "
+       "lying on the other coupon's claims (MarginOverClaims) or on the other coupon's "
+       "continuations (MarginOverMargin) is corrected by both coupons: a double count the "
+       "placement cannot remove (the dense coupon operator is not clippable; the "
+       "translational cell on a shared continuation is removed once by the continuation "
+       "ownership). Follow-up: shrinking the continuation from 2R to R (option D) reduces "
+       "every margin double count, with library rebuilds. Lengths in mesh units"}};
+}
+
+std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &diagnostics)
+{
+  std::string lines;
+  for (const auto &entry : diagnostics["Pairs"])
+  {
+    lines += fmt::format(
+        "  spatial patches {} ({}) and {} ({}): margin over the other's claims {:.6e} / "
+        "{:.6e}, margin over margin {:.6e} mesh units{}\n",
+        entry["FirstPatch"].get<std::size_t>() + 1, entry["FirstModel"].get<std::string>(),
+        entry["SecondPatch"].get<std::size_t>() + 1,
+        entry["SecondModel"].get<std::string>(),
+        entry["FirstMarginOverSecondClaims"].get<double>(),
+        entry["SecondMarginOverFirstClaims"].get<double>(),
+        entry["MarginOverMargin"].get<double>(),
+        entry["ClaimInHull"].get<bool>() ? " (a claim inside the other's claims)" : "");
+  }
+  return fmt::format(
+      "{:d} pair(s) of spatial cluster supports overlap in their margins (decision 244, "
+      "recorded under Diagnostics.SpatialSupportMarginOverlaps): {:.6e} mesh units of edge "
+      "corrected by both coupons\n{}",
+      diagnostics["Count"].get<int>(), diagnostics["DoubleCountedLength"].get<double>(),
+      lines);
+}
+
+std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnostics)
+{
+  std::string lines;
+  for (const auto &entry : diagnostics["BySupport"])
+  {
+    if (entry["OwnedLength"].get<double>() <= 0.0)
+    {
+      continue;
+    }
+    lines += fmt::format("  spatial patch {} ({}): {:.6e} mesh units owned\n",
+                         entry["SpatialPatch"].get<std::size_t>() + 1,
+                         entry["SpatialModel"].get<std::string>(),
+                         entry["OwnedLength"].get<double>());
+  }
+  return fmt::format(
+      "Continuation ownership (decision 236 (2)): {:d} translational cell(s) owned by the "
+      "spatial coupons whose claims they continue ({:d} wholly, {:d} clipped at a box "
+      "face; {:d} shared by two coupons), {:.6e} mesh units removed\n{}",
+      diagnostics["Cells"].get<int>(), diagnostics["WhollyOwnedCells"].get<int>(),
+      diagnostics["ClippedCells"].get<int>(), diagnostics["Shared"]["Cells"].get<int>(),
+      diagnostics["OwnedLength"].get<double>(), lines);
 }
 
 SurfaceResponseOperator::SurfaceResponseOperator(
@@ -14748,8 +15475,17 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   };
   std::vector<SpatialSupport> spatial_supports;
   std::set<std::size_t> spatially_owned_patches;
+  // The placed patches: the configured ones with the continuation ownership applied (3D).
+  std::vector<ResponsePatchData> placed_patches = config->patches;
   if (dimension == 3)
   {
+    std::vector<std::string> skipped;
+    const auto boxes = CollectSpatialSupports(
+        *config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+        { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale, dimension,
+        &skipped);
+    const auto margin_overlaps = FindSpatialSupportMarginOverlaps(
+        boxes, dimension, kSignatureParameterToleranceOverRadius * config->matching_radius);
     for (std::size_t patch_idx = 0; patch_idx < config->patches.size(); patch_idx++)
     {
       const auto &patch_config = config->patches[patch_idx];
@@ -14811,36 +15547,75 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           spatially_owned_patches.insert(spatial_supports[subordinate].patch);
           continue;
         }
+        // Two clusters (decision 244): a margins-only overlap (no claim of either inside
+        // the other's claims hull) is recorded below with its double-counted length; a
+        // claim inside the other's hull is a true overlap of two coupon domains.
+        const auto overlap = std::find_if(
+            margin_overlaps.begin(), margin_overlaps.end(), [&](const auto &entry)
+            { return entry.first_patch == first && entry.second_patch == second; });
+        if (first_cluster && second_cluster && overlap != margin_overlaps.end() &&
+            !overlap->claim_in_hull)
+        {
+          continue;
+        }
         MFEM_ABORT("Three-dimensional response-correction matching volumes for patches "
                    << first + 1 << " (" << first_model.name << ") and " << second + 1
                    << " (" << second_model.name
-                   << ") overlap without complete spatial-cluster ownership. Replace "
-                      "them with one coupled spatial model or an explicit nonoverlapping "
-                      "partition!");
+                   << ") overlap without complete spatial-cluster ownership"
+                   << (first_cluster && second_cluster
+                           ? " (a claim of one cluster lies inside the other's claims)"
+                           : "")
+                   << ". Replace them with one coupled spatial model or an explicit "
+                      "nonoverlapping partition!");
       }
     }
-    // Translational patches against the spatial supports (decisions 224 / 236): every
-    // translational stretch wholly inside one spatial support is recorded (Diagnostics +
-    // warning), never an abort — a Continuation stretch is the double count the
-    // continuation ownership at placement removes, a Foreign one a model mismatch of the
-    // coupon (the S1p 41-edge loop end: three leads split by 1.738 um pieces of a 3-edge
-    // stack between the cluster's claims, now absorbed by the identification; the accepted
-    // transmon library: four stretches continuing claimed edges through their claim cuts).
+    if (!margin_overlaps.empty())
     {
-      std::vector<std::string> skipped;
-      const auto boxes = CollectSpatialSupports(
-          *config, [&](int model_idx) -> const std::vector<std::array<double, 3>> *
-          { return &basis_points[model_indices.at(model_idx)]; }, coordinate_scale,
-          dimension, &skipped);
+      ownership_diagnostics["SpatialSupportMarginOverlaps"] =
+          DescribeSpatialSupportMarginOverlaps(margin_overlaps, *config, coordinate_scale);
+      Mpi::Warning(fespace.GetComm(), "{}",
+                   DescribeSpatialSupportMarginOverlapWarning(
+                       ownership_diagnostics["SpatialSupportMarginOverlaps"]));
+    }
+    // Translational patches against the spatial supports (decisions 224 / 236 / 244):
+    // every translational stretch wholly inside one spatial support is recorded
+    // (Diagnostics + warning), never an abort — a Foreign one is a model mismatch of the
+    // coupon (the S1p 41-edge loop end: three leads split by 1.738 um pieces of a 3-edge
+    // stack between the cluster's claims, now absorbed by the identification); then the
+    // continuation ownership clips the placed cells of every stretch continuing a
+    // cluster's claims at that cluster's box face (the accepted transmon library: 112.4 um
+    // of isolated-edge and strip cells on the continuations of its five coupons).
+    {
       const auto records = FindTranslationalStretchInsideSpatialSupport(
-          config->patches, boxes, dimension,
+          placed_patches, boxes, dimension,
           kSignatureParameterToleranceOverRadius * config->matching_radius);
-      ownership_diagnostics = DescribeTranslationalOwnershipRecords(
-          records, boxes, *config, coordinate_scale, skipped);
+      const auto ownership = ApplyContinuationOwnership(
+          placed_patches, boxes, dimension,
+          kSignatureParameterToleranceOverRadius * config->matching_radius);
+      for (const auto &cell : ownership.cells)
+      {
+        if (placed_patches[cell.patch].weight <= 0.0)
+        {
+          spatially_owned_patches.insert(cell.patch);
+        }
+      }
+      ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
+          DescribeTranslationalOwnershipRecords(records, boxes, *config, coordinate_scale,
+                                                skipped, &ownership);
+      ownership_diagnostics["ContinuationOwnership"] =
+          DescribeContinuationOwnership(ownership, boxes, *config, coordinate_scale);
       if (!records.empty())
       {
-        Mpi::Warning(fespace.GetComm(), "{}",
-                     DescribeTranslationalOwnershipWarning(ownership_diagnostics));
+        Mpi::Warning(
+            fespace.GetComm(), "{}",
+            DescribeTranslationalOwnershipWarning(
+                ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"]));
+      }
+      if (!ownership.cells.empty())
+      {
+        Mpi::Print(fespace.GetComm(), "{}",
+                   DescribeContinuationOwnershipSummary(
+                       ownership_diagnostics["ContinuationOwnership"]));
       }
     }
   }
@@ -14849,13 +15624,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   const int size = Mpi::Size(fespace.GetComm());
   int point_count = 0;
   std::vector<std::size_t> local_patch_indices;
-  for (std::size_t patch_idx = 0; patch_idx < config->patches.size(); patch_idx++)
+  for (std::size_t patch_idx = 0; patch_idx < placed_patches.size(); patch_idx++)
   {
     if (spatially_owned_patches.count(patch_idx))
     {
       continue;
     }
-    const auto &patch_config = config->patches[patch_idx];
+    const auto &patch_config = placed_patches[patch_idx];
     const auto model_it = model_indices.find(patch_config.model);
     MFEM_VERIFY(model_it != model_indices.end(),
                 "Response-correction patch refers to an unknown model index!");
@@ -14915,7 +15690,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     {
       const std::size_t patch_idx = mortar_patch_indices[i];
       const auto &patch = patches[patch_idx];
-      const auto &patch_config = config->patches[local_patch_indices[patch_idx]];
+      const auto &patch_config = placed_patches[local_patch_indices[patch_idx]];
       const auto &point = basis_points[patch.model].front();
       for (int d = 0; d < dimension; d++)
       {
@@ -15027,8 +15802,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   std::vector<std::vector<Point2D>> polygons;
   if (dimension == 2)
   {
-    polygons.reserve(config->patches.size());
-    for (const auto &patch_config : config->patches)
+    polygons.reserve(placed_patches.size());
+    for (const auto &patch_config : placed_patches)
     {
       const auto model_it = model_indices.find(patch_config.model);
       MFEM_ASSERT(model_it != model_indices.end(), "Unknown response model!");
@@ -15050,7 +15825,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
     const auto &patch = patches[patch_idx];
-    const auto &patch_config = config->patches[local_patch_indices[patch_idx]];
+    const auto &patch_config = placed_patches[local_patch_indices[patch_idx]];
     const auto &model = models[patch.model];
     const auto &local_points = basis_points[patch.model];
     auto axis_w = patch_config.axis_w;
@@ -15235,9 +16010,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   {
     for (std::size_t j = i + 1; j < polygons.size(); j++)
     {
-      const int interpolation_group = config->patches[i].interpolation_group;
+      const int interpolation_group = placed_patches[i].interpolation_group;
       if (interpolation_group > 0 &&
-          interpolation_group == config->patches[j].interpolation_group)
+          interpolation_group == placed_patches[j].interpolation_group)
       {
         continue;
       }
@@ -17940,8 +18715,10 @@ nlohmann::json SurfaceResponseOperator::GetStatistics() const
   result["ModelCatalog"] = std::move(model_catalog);
   if (!ownership_diagnostics.is_null())
   {
-    result["Diagnostics"]["TranslationalStretchesInsideSpatialSupport"] =
-        ownership_diagnostics;
+    for (const auto &[key, value] : ownership_diagnostics.items())
+    {
+      result["Diagnostics"][key] = value;
+    }
   }
   result["Correction"] = {{"Models", Replicated(models.size(), "Models")},
                           {"Patches", global_patch_count},
