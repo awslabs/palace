@@ -44,6 +44,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     relative tolerance of 10⁻³. Its right-hand side is already at round-off, which the
     projection previously reduced to machine precision.
     [PR 1138](https://github.com/awslabs/palace/pull/1138).
+  - The maximum eigenvalue estimate of each Chebyshev smoother now starts from the dominant
+    vector of the previous operator, which reduces the cost of rebuilding the multigrid
+    preconditioner at each frequency of a driven sweep.
+    [PR 1024](https://github.com/awslabs/palace/pull/1024).
 
 #### Bug Fixes
 

@@ -574,18 +574,19 @@ std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const ComplexOpe
   return Dot(comm, Ax, y);
 }
 
-double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, double tol, int max_it)
+double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, ComplexVector *x0,
+                    double tol, int max_it)
 {
   ComplexWrapperOperator Ar(const_cast<Operator *>(&A), nullptr);  // Non-owning constructor
-  return SpectralNorm(comm, Ar, sym, tol, max_it);
+  return SpectralNorm(comm, Ar, sym, x0, tol, max_it);
 }
 
-double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double tol,
-                    int max_it)
+double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, ComplexVector *x0,
+                    double tol, int max_it)
 {
   // XX TODO: Use ARPACK or SLEPc for this when configured.
 #if defined(PALACE_WITH_SLEPC)
-  return slepc::GetMaxSingularValue(comm, A, herm, tol, max_it);
+  return slepc::GetMaxSingularValue(comm, A, herm, tol, max_it, x0);
 #else
   // Power iteration loop: ||A||₂² = λₙ(Aᴴ A).
   int it = 0;
@@ -594,7 +595,14 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double t
   ComplexVector u(A.Height()), v(A.Height());
   u.UseDevice(true);
   v.UseDevice(true);
-  SetRandom(comm, u);
+  if (x0 && x0->Size() == A.Height())
+  {
+    u = *x0;
+  }
+  else
+  {
+    SetRandom(comm, u);
+  }
   Normalize(comm, u);
   while (it < max_it)
   {
@@ -625,6 +633,12 @@ double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm, double t
                  "Power iteration did not converge in {:d} iterations, res = {:.3e}, "
                  "lambda = {:.3e}!\n",
                  it, res, l);
+  }
+  if (x0)
+  {
+    x0->SetSize(u.Size());
+    x0->UseDevice(true);
+    *x0 = u;
   }
   return herm ? l : std::sqrt(l);
 #endif
