@@ -644,9 +644,14 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
 // locate still fails closed naming the patch). The record's nearest outside point is the
 // excluded patch's outside point with the smallest distance to an element bounding box
 // (exact for an axis-aligned cut; a lower bound of the distance to the mesh otherwise).
-// Every patch of `skipped` (already not applied) is left alone; `points` are the local
-// model basis points in patch units (origin + points / scale); coordinates and lengths of
-// the result in mesh units. Collective over the mesh's communicator.
+// Fail closed (decision 260): a candidate whose first conductor reference at the origin
+// section (the metal-edge point, on a mesh face for every correctly placed patch) is not
+// located, or none of whose tested points is, is a misplaced or mis-scaled coupon and
+// aborts naming the patch (0-based), model and point; when there were candidates at least
+// one applied patch must remain. Every patch of `skipped` (already not applied) is left
+// alone; `points` are the local model basis points in patch units (origin + points /
+// scale); `model_name` names a model for the abort; coordinates and lengths of the result
+// in mesh units. Collective over the mesh's communicator.
 struct DomainBoundaryExclusion
 {
   std::size_t patch = 0;
@@ -667,7 +672,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
         &basis_points,
-    const std::function<bool(int model_idx)> &spatial_basis, double coordinate_scale,
+    const std::function<bool(int model_idx)> &spatial_basis,
+    const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
     double matching_radius, const std::set<std::size_t> &skipped);
 
 // The Diagnostics entry of the exclusions (per patch: feature, model, cell and portion

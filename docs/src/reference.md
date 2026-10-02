@@ -916,7 +916,10 @@ patch whose placed coupon section leaves the device mesh (see the domain-boundar
 below) is written with weight zero and its unscaled quadrature weight and cell, and is
 listed under `Diagnostics.DomainBoundaryExclusions`; the manifest's `Summary` reports the
 excluded cell length next to `Missing` (`TotalEdgeLengths.DomainBoundary`), separately
-from the matched inventory, since it is not a library gap.
+from the matched inventory, since it is not a library gap. The excluded cells remain
+counted in `Exact` (they are matched cells left uncorrected): the uncorrected length is
+`Missing` + `DomainBoundary`, and `Exact` + `Interpolated` + `Missing` + `DomainBoundary`
+double counts them.
 
 `CorrectionMode` selects `PostprocessOnly`, `SelfConsistent`, or `Both` (the default).
 Postprocessing-only mode evaluates fixed-trace and fixed-flux responses on the raw field
@@ -1363,9 +1366,14 @@ on every rank, with the found flags reduced over all ranks — decides for the p
 the solve alike, so the decision does not depend on the number of ranks or on the point
 locator used afterwards. Only the applied patches are then located; a point of an applied
 patch (or of an explicitly configured patch) that cannot be located remains an error naming
-the patch. The excluded cell length is the surface left uncorrected and is reported in the
-manifest `Summary` next to `Missing` for the coverage bound; the matched inventory is
-unchanged.
+the patch. The exclusion is for a cut through a placed coupon: a patch whose first
+conductor reference at the origin cross-section (the metal-edge point, which lies on a mesh
+face for every correctly placed patch) is not located, or none of whose tested points is,
+is a misplaced or mis-scaled coupon and is an error naming the patch (0-based, as in the
+record), model, point and coordinates; the exclusion must leave at least one applied patch.
+The excluded cell length is the surface left uncorrected and is reported in the manifest
+`Summary` next to `Missing` for the coverage bound; the matched inventory (`Exact`) is
+unchanged and still contains the excluded cells.
 
 A three-dimensional spatial-vertex coupon is added to the same library. For example, a
 corner model has the form:

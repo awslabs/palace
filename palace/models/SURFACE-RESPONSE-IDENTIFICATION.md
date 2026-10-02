@@ -1441,20 +1441,38 @@ DomainBoundary` (the CELL length) next to Missing — it is not a library gap, t
 totals are untouched — so the B1 gap bound can include it; `Summary.DomainBoundary` adds
 `Features` and the portion sum `PortionLength` (information: on S1p the two excluded
 cells are 1.0145 + 0.9637 = 1.978 um of 2 x 3 patches on portions of 3.652 + 3.469 =
-7.121 um; the "~7.12 um" of decision 258 is that portion sum). Explicit (configured) 2D
-patches are never excluded: a point of theirs outside the mesh aborts as before, and every
-point of an applied patch the operator cannot locate still fails closed, the message
-naming the point, its coordinates and the patch (model). The candidate set is the placed
-patches after the continuation ownership; the operator additionally omits the vertex
-patches subordinated to an overlapping cluster box before the test (the preflight does not
-model that subordination: S1p tests 2494 patches in the preflight, 2490 in the operator,
-the same 2 excluded). Cost: all ranks test all points (3 sections x (basis + references)
+7.121 um; the "~7.12 um" of decision 258 is that portion sum). The excluded cells REMAIN
+inside `Exact` (they are matched; S1p: 1.978 of Exact 2,364.778 um): `Exact` +
+`Interpolated` + `Missing` is the identified length and `DomainBoundary` is the part of
+`Exact` left uncorrected — a consumer (the B1 bound) adds `DomainBoundary` to `Missing`
+and must NEVER sum Exact + Interpolated + Missing + DomainBoundary. FAIL CLOSED (decision
+260, review MAJOR-1): the exclusion is for a cut THROUGH a placed coupon; a candidate whose
+FIRST conductor reference at the origin section (the metal-edge point, which lies on a mesh
+face for every correctly placed patch, a metal edge on a chip-outline face included) is
+not located, or none of whose tested points is, is a misplaced or mis-scaled coupon (a
+library in the wrong units, a radius beyond the domain) and the test aborts naming the
+patch (0-based, as in the record and the dry run), model, point and coordinates; after the
+exclusion at least one applied patch must remain when there were candidates
+(`MFEM_VERIFY`). Explicit (configured) 2D patches are never excluded: a point of theirs
+outside the mesh aborts as before, and every point of an applied patch the operator cannot
+locate still fails closed, the message naming the point, its coordinates and the patch
+(model). The candidate set is the placed patches after the continuation ownership; the
+operator additionally omits the vertex patches subordinated to an overlapping cluster box
+before the test — a KNOWN LIMIT of the preflight (S1p tests 2494 patches in the
+preflight, 2490 in the operator, the same 2 excluded): that subordination lives in the
+operator's pairwise spatial-support loop with its overlap abort, and the preflight does
+not reproduce it. The totals cannot differ: a subordinated vertex patch is spatial, its
+`longitudinal_cell` is {0, 0} and it carries no portion (`Segment` -1), so it contributes
+0 to `CellLength` and `PortionLength`; only `Count` could show one more entry in the
+preflight record. The log summary prints patch indices 1-based like the ownership
+summaries and names the base; the record and the dry run are 0-based. Cost: all ranks test all points (3 sections x (basis + references)
 per translational patch): transmon 10,366 patches / 2.98 M points in 1.8 s on 1 rank, S1p
 2,494 / 763 k in 0.24 s on 2 ranks; the transmon preflight digest 9ada660bf6e4, record and
 dry run are unchanged (no exclusion: its domain is far from the metal). Unit test
 `SurfaceResponseOperator domain-boundary exclusion` (`test-domainboundary.cpp`): a lead cut
 by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks, the
-default and the forced-GSLIB locator path, the notch fail-closed case.
+default and the forced-GSLIB locator path, the notch fail-closed case, and the misplaced
+coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
 
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): corner:
 x = the first arm away from the (virtual) corner, the arms ordered so that the second is

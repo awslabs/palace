@@ -13948,9 +13948,11 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
     std::map<int, std::vector<std::array<double, 3>>> basis_points;
     std::map<int, bool> spatial_basis;
+    std::map<int, std::string> model_names;
     for (const auto &model : patches.models)
     {
       spatial_basis.emplace(model.idx, model.spatial_basis);
+      model_names.emplace(model.idx, model.name);
       if (!model.constructed_basis_points.empty() ||
           std::filesystem::is_regular_file(model.basis_points))
       {
@@ -14012,7 +14014,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     // inventory next to Missing (not a library gap), the portion sum alongside.
     const auto exclusions = FindDomainBoundaryExclusions(
         const_cast<mfem::ParMesh &>(parallel_mesh), patches.patches, BasisPoints,
-        [&](int model_idx) { return spatial_basis.at(model_idx); }, coordinate_scale,
+        [&](int model_idx) { return spatial_basis.at(model_idx); },
+        [&](int model_idx) { return model_names.at(model_idx); }, coordinate_scale,
         patches.matching_radius, {});
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
@@ -15114,7 +15117,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh, std::vector<ResponsePatchData> &patches,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
         &basis_points,
-    const std::function<bool(int model_idx)> &spatial_basis, double coordinate_scale,
+    const std::function<bool(int model_idx)> &spatial_basis,
+    const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
     double matching_radius, const std::set<std::size_t> &skipped)
 {
   const auto start = std::chrono::steady_clock::now();
@@ -15126,8 +15130,14 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
 
   // The tested points of every candidate patch (the same list on every rank).
   const double inset = kSignatureParameterToleranceOverRadius * matching_radius;
+  constexpr std::size_t no_reference = std::numeric_limits<std::size_t>::max();
   std::vector<std::size_t> candidates;
   std::vector<std::size_t> point_offsets = {0};
+  // Per candidate, the index of its first conductor reference at the origin section (the
+  // metal-edge point, which lies on a mesh face for every correctly placed patch, a metal
+  // edge on a chip-outline face included): its absence is a misplaced or mis-scaled
+  // coupon, never a domain cut, and fails closed below (decision 260).
+  std::vector<std::size_t> origin_references;
   std::vector<std::array<double, 3>> points;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -15137,6 +15147,9 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     {
       continue;
     }
+    origin_references.push_back(patch.conductor_references.empty()
+                                    ? no_reference
+                                    : points.size() + local_points->size());
     const bool spatial = spatial_basis(patch.model);
     // The cross-sections: the origin and, for a longitudinal cell, both ends moved inward.
     std::vector<double> sections = {0.0};
@@ -15212,6 +15225,27 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   {
     Mpi::GlobalMax(static_cast<int>(found.size()), found.data(), comm);
   }
+  // Fail closed on a metal-edge reference outside the mesh (the found flags are identical
+  // on every rank after the reduction, so every rank aborts together).
+  auto DescribeMisplacedPatch = [&](std::size_t c, std::size_t point, const char *reason)
+  {
+    const auto &patch = patches[candidates[c]];
+    return fmt::format(
+        "Surface-response patch {:d} (0-based, as in the record and the dry run; model {}) "
+        "is a misplaced or mis-scaled coupon: {} lies outside the device mesh (tested "
+        "point {:d} of {:d} at ({:.9e}, {:.9e}, {:.9e}) mesh units)!",
+        candidates[c], model_name(patch.model), reason, point - point_offsets[c],
+        point_offsets[c + 1] - point_offsets[c], points[point][0] * coordinate_scale,
+        points[point][1] * coordinate_scale, points[point][2] * coordinate_scale);
+  };
+  for (std::size_t c = 0; c < candidates.size(); c++)
+  {
+    const std::size_t reference = origin_references[c];
+    if (reference != no_reference && !found[reference])
+    {
+      MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
+    }
+  }
   // The distance of every outside point to the nearest element box, over the ranks.
   std::vector<std::size_t> outside;
   for (std::size_t i = 0; i < points.size(); i++)
@@ -15251,10 +15285,20 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     }
     if (exclusion.outside_points > 0)
     {
+      // No tested point inside: not a cut through the coupon but a coupon off the mesh.
+      if (exclusion.outside_points == exclusion.tested_points)
+      {
+        MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+      }
       patches[exclusion.patch].weight = 0.0;
       result.patches.push_back(exclusion);
     }
   }
+  MFEM_VERIFY(candidates.empty() || result.patches.size() < candidates.size(),
+              "The domain-boundary exclusion leaves no applied surface-response patch: all "
+                  << candidates.size()
+                  << " tested patches have placed coupon points outside the device mesh "
+                     "(misplaced or mis-scaled coupons)!");
   result.wall_time =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   Mpi::GlobalMax(1, &result.wall_time, comm);
@@ -15352,12 +15396,13 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
   {
     const auto &point = entry["NearestOutsidePoint"];
     lines += fmt::format(
-        "  patch {} (feature {}, {}): cell {:.6e} mesh units of portion [{:.6e}, {:.6e}] "
-        "on "
-        "segment {}, {} / {} points outside, nearest ({:.6e}, {:.6e}, {:.6e}) at {:.3e}\n",
-        entry["Patch"].get<std::size_t>() + 1, entry["Feature"].get<int>(),
-        entry["Model"].get<std::string>(), entry["CellLength"].get<double>(),
-        entry["S0"].get<double>(), entry["S1"].get<double>(), entry["Segment"].get<int>(),
+        "  patch {} (0-based {}; feature {}, {}): cell {:.6e} mesh units of portion "
+        "[{:.6e}, {:.6e}] on segment {}, {} / {} points outside, nearest ({:.6e}, {:.6e}, "
+        "{:.6e}) at {:.3e}\n",
+        entry["Patch"].get<std::size_t>() + 1, entry["Patch"].get<std::size_t>(),
+        entry["Feature"].get<int>(), entry["Model"].get<std::string>(),
+        entry["CellLength"].get<double>(), entry["S0"].get<double>(),
+        entry["S1"].get<double>(), entry["Segment"].get<int>(),
         entry["OutsidePoints"].get<int>(), entry["TestedPoints"].get<int>(),
         point[0].get<double>(), point[1].get<double>(), point[2].get<double>(),
         entry["NearestDistance"].get<double>());
@@ -15365,9 +15410,9 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
   return fmt::format(
       "DomainBoundary exclusion (decision 258): {:d} patch(es) on {:d} feature(s) with "
       "placed coupon points outside the device mesh not applied, {:.6e} mesh units of "
-      "cells "
-      "left uncorrected (portions {:.6e}); {:d} patches / {:d} points tested in {:.3f} "
-      "s\n{}",
+      "cells left uncorrected (portions {:.6e}); {:d} patches / {:d} points tested in "
+      "{:.3f} s (patch indices 1-based like the ownership summaries, 0-based in the "
+      "record and the dry run)\n{}",
       diagnostics["Count"].get<int>(), diagnostics["Features"].get<int>(),
       diagnostics["CellLength"].get<double>(), diagnostics["PortionLength"].get<double>(),
       diagnostics["TestedPatches"].get<long long int>(),
@@ -16014,6 +16059,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           [&](int model_idx) -> const std::vector<std::array<double, 3>> *
           { return &basis_points[model_indices.at(model_idx)]; },
           [&](int model_idx) { return models[model_indices.at(model_idx)].spatial_basis; },
+          [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
           coordinate_scale, config->matching_radius, spatially_owned_patches);
       for (const auto &exclusion : exclusions.patches)
       {

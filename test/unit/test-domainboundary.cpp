@@ -516,7 +516,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
     }
 
-    // The operator: the same decision (6 applied patches, the same record), with the
+    // The operator: the same decision (14 applied patches, the same record), with the
     // default locator path and with FindPointsGSLIB forced.
     auto Construct = [&](const char *gslib)
     {
@@ -559,7 +559,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   SECTION("a point not located for any other reason still fails closed, naming the patch")
   {
     // The notch is not seen by the placed sections (their knots are not in the cavity), so
-    // the record is the same two cells; the mortar's ring samples of the left edge's
+    // the record is the same four cells; the mortar's ring samples of the left edge's
     // applied cell cross the cavity and the construction aborts.
     const json manifest = Preflight(true);
     const auto rows = ReadDryRun(patches_path);
@@ -581,6 +581,85 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
                       ContainsSubstring("could not be located") &&
                           ContainsSubstring("patch") && ContainsSubstring("isolated"));
+  }
+
+  SECTION("a coupon placed off the mesh fails closed as misplaced, naming the patch")
+  {
+    // Decision 260 (MAJOR-1 of the block-D review): the exclusion is for a cut THROUGH a
+    // placed coupon; a patch whose metal-edge reference (the first conductor reference at
+    // the origin section) is not located, or none of whose tested points is, is a
+    // misplaced or mis-scaled coupon and aborts, and the exclusion may never leave no
+    // applied patch. Patches in the lead's frame (u from the metal into the gap, v the
+    // plane normal, w along the edge) on the sheared mesh, tested directly through the
+    // collective containment test (identical on 1 and 2 ranks).
+    using ResponsePatchData = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+    auto mesh = MakeObliqueCutLeadMesh(shear, false);
+    const std::vector<std::array<double, 3>> wide_basis_points = {
+        {-2.0, -2.0, 0.0}, {2.0, -2.0, 0.0}, {2.0, 2.0, 0.0}, {-2.0, 2.0, 0.0}};
+    auto BasisPoints = [&](int model_idx) -> const std::vector<std::array<double, 3>> *
+    { return model_idx == 1 ? &wide_basis_points : &basis_points; };
+    auto Spatial = [](int) { return false; };
+    auto Name = [](int model_idx) { return std::string(model_idx == 1 ? "wide" : "edge"); };
+    auto Patch = [&](const std::array<double, 3> &origin, int model)
+    {
+      ResponsePatchData patch;
+      patch.model = model;
+      patch.origin = origin;
+      patch.axis_u = {-1.0, 0.0, 0.0};
+      patch.axis_v = {0.0, 1.0, 0.0};
+      patch.axis_w = {0.0, 0.0, 1.0};
+      patch.longitudinal_cell = {-0.03, 0.03};
+      return patch;
+    };
+    auto Find = [&](std::vector<ResponsePatchData> &patches)
+    {
+      return FindDomainBoundaryExclusions(*mesh, patches, BasisPoints, Spatial, Name, 1.0,
+                                          R, {});
+    };
+    // A well-placed cell on the left long edge (x = 0.25, y = 0.5) far from the cut, and
+    // one at z = 0.02 whose section sticks out of the tilted cut (the S1p pattern) while
+    // its reference is inside: one exclusion, one applied patch, no abort.
+    {
+      std::vector<ResponsePatchData> patches = {Patch({0.25, 0.5, 0.3}, 0),
+                                                Patch({0.25, 0.5, 0.02}, 0)};
+      const auto exclusions = Find(patches);
+      REQUIRE(exclusions.tested_patches == 2);
+      REQUIRE(exclusions.patches.size() == 1);
+      CHECK(exclusions.patches[0].patch == 1);
+      CHECK(exclusions.patches[0].outside_points > 0);
+      CHECK(exclusions.patches[0].outside_points < exclusions.patches[0].tested_points);
+      CHECK(patches[0].weight == 1.0);
+      CHECK(patches[1].weight == 0.0);
+    }
+    // The metal-edge reference off the mesh: a misplaced coupon, named 0-based with its
+    // model and point, whatever the other patches.
+    {
+      std::vector<ResponsePatchData> patches = {Patch({0.25, 0.5, 0.3}, 0),
+                                                Patch({2.0, 0.5, 0.3}, 0)};
+      CHECK_THROWS_WITH(Find(patches),
+                        ContainsSubstring("misplaced or mis-scaled coupon") &&
+                            ContainsSubstring("patch 1 (0-based") &&
+                            ContainsSubstring("model edge") &&
+                            ContainsSubstring("metal-edge reference") &&
+                            ContainsSubstring("2.000000000e+00"));
+    }
+    // Without a conductor reference, every tested point outside aborts the same way.
+    {
+      std::vector<ResponsePatchData> patches = {Patch({0.25, 0.5, 0.3}, 0),
+                                                Patch({2.0, 0.5, 0.3}, 0)};
+      patches[1].conductor_references.clear();
+      CHECK_THROWS_WITH(Find(patches),
+                        ContainsSubstring("misplaced or mis-scaled coupon") &&
+                            ContainsSubstring("patch 1 (0-based") &&
+                            ContainsSubstring("every one of its tested points"));
+    }
+    // A mis-scaled coupon (basis points 2.0 beyond a 1.0 domain) with its reference inside
+    // is excluded; alone, it leaves no applied patch and the exclusion fails closed.
+    {
+      std::vector<ResponsePatchData> patches = {Patch({0.5, 0.5, 0.5}, 1)};
+      CHECK_THROWS_WITH(Find(patches),
+                        ContainsSubstring("leaves no applied surface-response patch"));
+    }
   }
 #endif
 }
