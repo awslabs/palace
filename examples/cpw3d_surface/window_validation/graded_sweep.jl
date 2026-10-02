@@ -13,8 +13,8 @@
 #     (w_k = h_k - h_{k-1} the row's width; a level is kept iff it is a material interface or at
 #     least alpha w_k from the last kept level and from the next interface), nested by
 #     construction; the region (Gmsh interior) nodes carry the ladder Z_{K+j} = thin(Z_{K+j-1},
-#     alpha w_K 2^j) chosen by their plan size (the shortest incident plan edge, at most the
-#     region mesh size);
+#     w_K 2^j) (no alpha: alpha grades the band rows only) chosen by their plan size (the
+#     shortest incident plan edge, at most the region mesh size);
 #   * row ranges: row line k is active for z in [lo_k, hi_k] = the first level of Z_{k+1} beyond
 #     the faces of the fabricated step (trench bottom, substrate surface, metal top) -/+
 #     beta h_k, strictly nested (inner rows end first); row K spans the box;
@@ -123,7 +123,7 @@ end
     graded_stacks(zs, interfaces, heights, alpha, beta, step_faces, region_size_max) -> GradedStacks
 
 The nested stacks Z_0..Z_K of the band rows (heights h_1..h_K), the region ladder beyond
-Z_K up to the spacing alpha w_K 2^J <= alpha region_size_max, and the active range of every
+Z_K with spacings w_K 2^j up to the region size (no alpha), and the active range of every
 row: the first level of Z_{k+1} at or beyond the fabricated step's faces (`step_faces` = the
 lowest and highest of trench bottom, substrate surface and metal top) -/+ beta h_k, strictly
 nested; row K spans the box. A row k < K whose range would reach a box face is refused (the
@@ -149,10 +149,13 @@ function graded_stacks(
         push!(spacings, alpha * widths[k])
         push!(levels, thin_levels(zs, levels[end], spacings[end], interfaces))
     end
+    # The region ladder beyond Z_K: spacing w_K 2^j up to the region size — the design's
+    # "Z_K thinned to min(plan size, 30 um)" (DESIGN.md 4.1), without alpha, which scales the
+    # BAND rows' z spacing only (M1 review MINOR-2).
     ladder = 0
     while widths[rows] * 2.0^(ladder + 1) <= region_size_max
         ladder += 1
-        push!(spacings, alpha * widths[rows] * 2.0^ladder)
+        push!(spacings, widths[rows] * 2.0^ladder)
         push!(levels, thin_levels(zs, levels[end], spacings[end], interfaces))
     end
     ranges = Vector{NTuple{2, Int}}(undef, rows)
