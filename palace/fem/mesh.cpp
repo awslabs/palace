@@ -47,10 +47,10 @@ auto BuildCeedAttributes(const mfem::ParMesh &mesh)
 {
   // Set up sparse map from global domain attributes to local ones on this process.
   // Include ghost elements for all shared faces so we have their material properties
-  // stored locally. New attributes for libCEED are contiguous and 1-based.
+  // stored locally. New attributes for libCEED are contiguous and 1-based. Ghost elements
+  // are read from the face-neighbor data (the shared face transformations crash for
+  // nonconforming domain submeshes).
   std::unordered_map<int, int> loc_attr;
-  mfem::FaceElementTransformations FET;
-  mfem::IsoparametricTransformation T1, T2;
   int count = 0;
   for (int i = 0; i < mesh.GetNE(); i++)
   {
@@ -60,15 +60,9 @@ auto BuildCeedAttributes(const mfem::ParMesh &mesh)
       loc_attr[attr] = ++count;
     }
   }
-  for (int i = 0; i < mesh.GetNSharedFaces(); i++)
+  for (const mfem::Element *el : mesh.face_nbr_elements)
   {
-    mesh.GetSharedFaceTransformations(i, FET, T1, T2);
-    int attr = FET.Elem1->Attribute;
-    if (loc_attr.find(attr) == loc_attr.end())
-    {
-      loc_attr[attr] = ++count;
-    }
-    attr = FET.Elem2->Attribute;
+    const int attr = el->GetAttribute();
     if (loc_attr.find(attr) == loc_attr.end())
     {
       loc_attr[attr] = ++count;
