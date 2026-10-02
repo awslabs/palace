@@ -141,7 +141,6 @@ void MaterialOperator::SetUpMaterialProperties(
   frequency_dependent_permittivity_attributes.resize(materials.size());
   permittivity_pole_terms.resize(materials.size());
   djordjevic_sarkar_terms.resize(materials.size());
-  frequency_dependent_permittivity_material.assign(materials.size(), false);
   frequency_dependent_permittivity_support.assign(materials.size(), false);
   std::vector<double> permittivity_pole_conductivity(materials.size(), 0.0);
   has_frequency_dependent_permittivity = false;
@@ -158,7 +157,6 @@ void MaterialOperator::SetUpMaterialProperties(
     }
 
     has_frequency_dependent_permittivity = true;
-    frequency_dependent_permittivity_material[i] = true;
     MFEM_VERIFY(internal::mat::IsIsotropic(data.epsilon_r),
                 "Frequency-dependent material Permittivity must be scalar!");
     MFEM_VERIFY(std::all_of(data.tandelta.s.begin(), data.tandelta.s.end(),
