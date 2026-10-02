@@ -74,7 +74,7 @@ wishing to model both superconducting and normal currents.
 
 ### Frequency-dependent permittivity
 
-For driven frequency-domain and three-dimensional eigenmode simulations, scalar additive
+For three-dimensional driven frequency-domain and eigenmode simulations, scalar additive
 permittivity models use the object form
 
 ```json
@@ -86,20 +86,32 @@ permittivity models use the object form
 }
 ```
 
-`HighFrequency` is the scalar ``\epsilon_\infty`` and `Terms` is a nonempty additive array.
-The available terms are:
+`HighFrequency` is the scalar ``\epsilon_\infty`` and `Terms` is a nonempty additive array,
+so that ``\epsilon(s) = \epsilon_\infty + \sum_k \chi_k(s)`` with ``s = i\omega`` (*Palace*
+uses an ``e^{i\omega t}`` time dependence). Frequency inputs are ordinary frequencies ``f`` in
+GHz, converted to angular rates as ``\omega = 2\pi f``. In particular, `CollisionFrequency`
+and `DampingFrequency` give ``\gamma = 2\pi f``, so a damping specified as an inverse time
+``1/\tau`` corresponds to ``f = 1/(2\pi\tau)``. The available terms are:
 
-  - `Drude`: positive `PlasmaFrequency` and `CollisionFrequency`, both in GHz.
-  - `Debye`: signed, nonzero `DeltaPermittivity` and positive `RelaxationTime` in ns.
+  - `Drude`: positive `PlasmaFrequency` and `CollisionFrequency`, both in GHz, with
+    ``\chi(s) = \omega_p^2/(s(s+\gamma))``.
+  - `Debye`: signed, nonzero `DeltaPermittivity` and positive `RelaxationTime` ``\tau`` in
+    ns, with ``\chi(s) = \Delta\epsilon/(1+s\tau)``.
   - `Lorentz`: signed, nonzero `DeltaPermittivity`, positive `ResonanceFrequency`, and
-    nonnegative `DampingFrequency`, both frequencies in GHz. The exactly critically damped
-    case is not supported.
+    nonnegative `DampingFrequency`, both frequencies in GHz, with
+    ``\chi(s) = \Delta\epsilon\,\omega_0^2/(s^2+\gamma s+\omega_0^2)``. The critically
+    damped case ``\gamma = 2\omega_0``, to within a relative ``10^{-6}``, is not supported.
   - `PoleResidue`: the explicit escape hatch ``r/(s-p)`` with `Pole` and `Residue` in SI
     angular rates (rad/s). Values are real or `[real, imag]`; upper-half-plane poles include
     their conjugates automatically.
   - `DjordjevicSarkar`: signed, nonzero `Strength` and positive `LowerFrequency` and
     `UpperFrequency` bounds in GHz, with the upper bound larger than the lower. This native
-    term is ``\mathrm{Strength}\,\log((s+\omega_\mathrm{hi})/(s+\omega_\mathrm{lo}))``.
+    term is ``\mathrm{Strength}\,\log((s+\omega_\mathrm{hi})/(s+\omega_\mathrm{lo}))``, so a
+    static increment ``\Delta\epsilon`` corresponds to
+    ``\mathrm{Strength} = \Delta\epsilon/\log(\omega_\mathrm{hi}/\omega_\mathrm{lo})``.
+
+Passivity is not checked: a negative `DeltaPermittivity` or `Strength`, or an arbitrary
+`PoleResidue` term, can describe a material with gain.
 
 The object form requires scalar permittivity and cannot be combined with `LossTan`;
 ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
@@ -112,6 +124,8 @@ synthesis are not supported with this material model. The eigenmode divergence-f
 projection is disabled because longitudinal plasma modes can be physical.
 
 Frequency-aware postprocessing is not yet available. Domain electric energy, EPR, and
-quality factor; permittivity-based error indicators; electric `SurfaceFlux`; and automatic
-electric boundary charge ``Q_s`` all use ``\epsilon_\infty``, not ``\epsilon(s)``. Do not
+quality factor; permittivity-based error indicators; electric `SurfaceFlux`; automatic
+electric boundary charge ``Q_s``; the displacement field ``\mathbf{D}``; electric energy
+density probes; and the Stratton–Chu far field all use ``\epsilon_\infty``, not
+``\epsilon(s)``. Do not
 use these outputs as physical validation of a frequency-dependent material.

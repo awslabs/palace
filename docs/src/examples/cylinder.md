@@ -187,8 +187,9 @@ Here ``\varepsilon_\infty=2.08``, ``\omega_p=2\pi\times 1\text{ GHz}``, and
 For a cavity mode with geometric angular frequency ``\Omega_0``, the expected root
 satisfies ``(\Omega_0^2+\varepsilon_\infty s^2)(s+\gamma)+\omega_p^2s=0``. For the
 lowest mode this predicts ``f=2.9852+0.0026947i\text{ GHz}``; the computed result is
-``2.9866+0.0026921i\text{ GHz}``. Domain energy postprocessing is omitted because it uses
-``\varepsilon_\infty`` rather than the frequency-dependent permittivity for this model.
+``2.9866+0.0026921i\text{ GHz}``. The domain energy postprocessing is not physically
+meaningful for this model, because it uses ``\varepsilon_\infty`` rather than the
+frequency-dependent permittivity.
 
 ### Mesh convergence
 

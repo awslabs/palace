@@ -131,14 +131,14 @@ private:
                                                       MaterialPropertyCoefficient &f) const;
   void GetFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
                                                        std::vector<double> &real,
-                                                       std::vector<double> &imag,
-                                                       bool &has_real,
-                                                       bool &has_imag) const;
+                                                       std::vector<double> &imag) const;
   void AssembleFrequencyDependentPermittivityA2Operators(
       std::complex<double> omega, const MaterialPropertyCoefficient &dfbr,
       const MaterialPropertyCoefficient &dfbi, const MaterialPropertyCoefficient &fbr,
       const MaterialPropertyCoefficient &fbi, std::unique_ptr<Operator> &ar,
       std::unique_ptr<Operator> &ai);
+  // Preconditioner coefficients for the volume A2 terms. With pc_mat_shifted, the
+  // mass-like real part is shifted like the ε∞ mass.
   void
   AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
                                                   MaterialPropertyCoefficient &fr,
@@ -273,6 +273,10 @@ public:
   std::unique_ptr<OperType> GetDampingMatrix(Operator::DiagonalPolicy diag_policy);
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetMassMatrix(Operator::DiagonalPolicy diag_policy);
+  // The frequency-dependent part A2(ω) of the system matrix, or null when there is none.
+  // With frequency-dependent material permittivity the result is never null, even at a
+  // frequency where that contribution cancels, so callers can select the nonlinear or
+  // per-frequency path from the returned operator alone.
   template <OperatorType OperType>
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);

@@ -65,11 +65,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
-  // A complete multipole contribution may cancel at the target while remaining nonzero
-  // elsewhere. Its frequency-independent structure must therefore select the nonlinear
-  // solver path.
-  bool has_A2 =
-      (A2 != nullptr) || space_op.GetMaterialOp().HasFrequencyDependentPermittivityA2();
+  // A2 is non-null whenever a frequency-dependent material is present, even if its
+  // contribution cancels at the target, so it alone selects the nonlinear solver path.
+  bool has_A2 = (A2 != nullptr);
 
   // Freeze the wave-port modal reference at the target so funcA2_full's complex-ω
   // correction W can extrapolate k_n(ω) around it (used by both the SLP and Quasi-Newton

@@ -61,8 +61,7 @@ private:
   std::vector<std::vector<int>> frequency_dependent_permittivity_attributes;
   std::vector<std::vector<PermittivityPoleTerm>> permittivity_pole_terms;
   std::vector<std::vector<config::DjordjevicSarkarData>> djordjevic_sarkar_terms;
-  std::vector<bool> frequency_dependent_permittivity_material,
-      frequency_dependent_permittivity_support;
+  std::vector<bool> frequency_dependent_permittivity_support;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
@@ -167,10 +166,6 @@ public:
   std::size_t NumFrequencyDependentPermittivityMaterials() const
   {
     return frequency_dependent_permittivity_attributes.size();
-  }
-  bool HasFrequencyDependentPermittivity(std::size_t material_idx) const
-  {
-    return frequency_dependent_permittivity_material.at(material_idx);
   }
   bool HasFrequencyDependentPermittivityA2(std::size_t material_idx) const
   {
