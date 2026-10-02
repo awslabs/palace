@@ -309,7 +309,8 @@ end
     # Recorded: tensor 63,768 tets (the probe's baseline); the probe's graded alpha 1 / beta 3
     # had 32,460 with a structured interior finer than Gmsh's region (kept here).
     tensor, graded, checks = compare_sweeps(strip_window(), 0.01, 5.0, directory)
-    @test tensor["tetrahedra"] == 63768 && graded["tetrahedra"] == 23216
+    # Gmsh's region triangulation (and so the counts) is pinned where the probe ran (macOS).
+    Sys.isapple() && @test tensor["tetrahedra"] == 63768 && graded["tetrahedra"] == 23216
     @test graded["graded_sweep"]["chains"] == 4 && graded["graded_sweep"]["columns"] == 44
     @test graded["graded_sweep"]["region_prisms_hanging"] > 0
     @test checks.max_edge_ratio ≈ 500.0 rtol = 1.0e-3
@@ -409,9 +410,10 @@ end
         verbose=false
     )
     @test tensor["sweep"] == "tensor" && !haskey(tensor, "graded_sweep")
-    @test tensor["nodes"] == 12418 && tensor["tetrahedra"] == 63768
-    @test tensor["bytes"] == 2635089
+    @test tensor["plan_perimeter_edges"] == 20 && tensor["radial_layers"] == 7
     if Sys.isapple()
+        @test tensor["nodes"] == 12418 && tensor["tetrahedra"] == 63768
+        @test tensor["bytes"] == 2635089
         @test tensor["sha256"] ==
               "8f234e5b0933f90aaef640399f991e73f950b5fb102766f840565d9b934980f6"
     end
