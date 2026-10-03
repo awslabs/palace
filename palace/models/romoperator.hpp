@@ -186,19 +186,17 @@ protected:
   // Mp_r.imag() to recover the real symmetric M_proj used for SVD-based augmentation.
   std::map<int, std::unique_ptr<ComplexOperator>> Mwp_p;
   std::map<int, Eigen::MatrixXcd> Mwp_p_r;
-  // Structural volume A2 detection is separate from boundary contributors because any
-  // nonzero material pole must force exact per-frequency projection of the complete A2,
-  // even when factored boundary operators are available or the volume scalar cancels at a
-  // probe frequency. has_other_A2 also includes all non-wave-port boundary contributors.
-  bool has_volume_A2 = false;
+  // Whether GetExtraSystemMatrix has any non-wave-port contribution (frequency-dependent
+  // boundaries or dispersive volumes). Frequency-dependent permittivity always assembles
+  // both A2 slots, so the probe detects it even where its scalar cancels.
   bool has_other_A2 = false;
   // One-time self-check state for the factored online A2_other path (SolvePROM). On the
   // first factored online solve we verify that the factored sum (0.5/ω·M_ff_r +
-  // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r) reproduces the full HDM projection of A2_other(ω)
-  // to round-off. This guards against a future ω-dependent non-wave-port BC being added to
-  // GetExtraSystemMatrix without a matching factored operator (which would otherwise be
-  // silently dropped). On failure we set other_A2_factored_ok = false and permanently use
-  // the slow per-ω HDM fallback.
+  // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r + ... + Σ_m f_m(ω)·Avol_m_r) reproduces the full
+  // HDM projection of A2_other(ω) to round-off. This guards against a future ω-dependent
+  // non-wave-port BC being added to GetExtraSystemMatrix without a matching factored
+  // operator (which would otherwise be silently dropped). On failure we set
+  // other_A2_factored_ok = false and permanently use the slow per-ω HDM fallback.
   mutable bool other_A2_self_checked = false;
   mutable bool other_A2_factored_ok = true;
 
@@ -244,6 +242,12 @@ protected:
   std::map<int, Eigen::MatrixXcd> M_floquet_p_r;
   std::vector<std::unique_ptr<ComplexOperator>> Arz_b_;
   std::vector<Eigen::MatrixXcd> Arz_b_r;
+  // Frequency-dependent permittivity volume mass, one entry per dispersive material m
+  // (borrowed from SpaceOperator, imaginary slot, matching the convention above):
+  // f_m(ω) = g_m(iω)/i with g_m(s) = s²χ_m(s) for the nonlinear part of the material's
+  // susceptibility (EvaluateFrequencyDependentPermittivityA2). Closed form online.
+  std::vector<std::unique_ptr<ComplexOperator>> Avol_m_;
+  std::vector<Eigen::MatrixXcd> Avol_m_r;
 
   // Sweep band [ω_min, ω_max] (nondimensional, rad) captured from iodata at construction
   // time. Used to (a) sample kₙ,p(ω) for the synthesis polynomial fit, and (b) define the
