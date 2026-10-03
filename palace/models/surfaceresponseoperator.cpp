@@ -16289,6 +16289,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         model_config, model.basis_size, iodata.units, target_matching_radius);
     model.fabricated_surfaces = std::move(surface_response.fabricated);
     model.surface_defects = std::move(surface_response.defects);
+    // The conductor-consistency gate (decision 277) probes the trace mesh's conductor
+    // vertices through the surface mortar only: a spatial model applied collocated keeps
+    // its metal cross-sections unprobed, which is said once here.
+    if (model.spatial_basis && !model.spatial_mortar && dimension == 3 &&
+        HasExplicitTraceMesh(model_config))
+    {
+      Mpi::Warning(fespace.GetComm(),
+                   "Conductor-consistency gate (decision 277) not evaluated for response "
+                   "model \"{}\": its metal cross-sections are probed through the surface "
+                   "mortar only (TraceCoupling \"SurfaceMortar\"), not collocated\n",
+                   model.name);
+    }
     model_indices.emplace(model.idx, static_cast<int>(models.size()));
     models.push_back(std::move(model));
     basis_points.push_back(std::move(points));
