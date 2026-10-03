@@ -70,7 +70,79 @@ public:
     std::array<double, 3> axis_v{};
     std::array<double, 3> axis_w{};
     double weight = 0.0;
+    // The patch's global (placed, 0-based) index: the key of the solve-time records.
+    int global_index = -1;
   };
+
+  // Conductor-consistency gate (decision 277 (A)): the record of one spatial patch at one
+  // excitation. A spatial coupon holds its metal cross-sections on the box faces at the
+  // conductor potentials, while the surface mortar imposes the DEVICE potential on the free
+  // knots around them; where the coupon's metal is not the device's (a straight 3R
+  // continuation past a device corner, a mis-keyed or misplaced coupon) the device
+  // potential at the coupon's metal differs from the conductor's and the coupon's energies
+  // under the device trace are wrong (the S1p 19-edge MS surplus, decisions 271-277). The
+  // probe: the device potential at every conductor vertex of the trace mesh ON THE PROCESS
+  // PLANE (w = 0, the coupon's metal bottom = the device's metal sheet, a Dirichlet surface
+  // for real metal) minus the potential at that conductor's reference point, relative to
+  // the patch's trace amplitude max(|c_i|, |V_state|) floored at
+  // kConductorConsistencyAmplitudeFloor x the excitation's largest potential. Real metal
+  // reads ~0 (the knot lies on the device conductor), fictitious metal reads the device gap
+  // potential (S1p: 0.20 to 0.43). Information only (recorded, not gated): the conductor
+  // vertices OFF the plane
+  // (the coupon's metal top, 0.1 um into the device's gap vacuum for a thin device: reads
+  // the normal field x the thickness, S1p 0.013-0.028) and the ADJACENT free knots (sharing
+  // a trace-triangle edge with a plane conductor vertex in the same column, the 50-nm
+  // trench-floor row): their mortar coefficient minus the conductor value reads the
+  // near-edge field x 50 nm, up to 0.27 of the amplitude on the transmon's real metal, so
+  // it cannot discriminate (the calibration of conductor-consistency-20261003).
+  struct ConductorConsistencyRecord
+  {
+    int patch = -1;  // global 0-based index
+    int model = 0;   // runtime model index (ModelCatalog)
+    int source = 0;  // the excitation index
+    int plane_knots = 0;
+    int off_plane_knots = 0;
+    int adjacent_knots = 0;
+    double amplitude = 0.0;  // max |trace coefficient| incl. the conductor states
+    double state = 0.0;      // max |conductor state| (0 for a single-conductor coupon)
+    // The excitation's largest potential, max |x| over the device (the largest terminal
+    // potential: the maximum principle), and the ratio's denominator max(amplitude,
+    // kConductorConsistencyAmplitudeFloor x excitation_potential).
+    double excitation_potential = 0.0;
+    double normalization = 0.0;
+    double max_deviation = 0.0;  // max |V_device(knot) - V_conductor| over the plane knots
+    double max_ratio = 0.0;      // max_deviation / normalization
+    int worst_vertex = -1;       // trace-mesh vertex (0-based) of max_deviation
+    int worst_conductor = 0;     // its conductor (1-based)
+    // Nondimensional mesh coordinates; the record and the log multiply by the mesh
+    // coordinate scale (mesh-file units = the device coordinates).
+    std::array<double, 3> worst_point{};
+    double off_plane_max_ratio = 0.0;
+    double adjacent_max_ratio = 0.0;
+    double claim_length =
+        0.0;  // the cluster's claimed portions (nondimensional; 0 otherwise)
+    double cell_length =
+        0.0;  // the longitudinal cell (nondimensional; 0 for a spatial patch)
+    bool excluded = false;
+  };
+  // The dimensionless tolerance of the gate: max_ratio above it excludes the patch (weight
+  // 0, like a DomainBoundary cell). Calibrated (conductor-consistency-20261003/gate): the
+  // plane knots of real metal read <= 7e-7 on the S1p c0 field (31 knots) and exactly the
+  // Dirichlet value in the operator; the two S1p fictitious blocks read 0.20-0.43 of the
+  // amplitude (0.22-0.48 of the state); 0.02 is x10 below the weakest flagged knot and
+  // ~3e4 above the measured real-metal maximum, and of the order of a metal-thickness
+  // (0.1 um) offset normal to the plane. A 5 % potential mismatch would already shift the
+  // 15 %-residual MS closure by O(several points), so the tolerance is not larger.
+  static constexpr double kConductorConsistencyTolerance = 0.02;
+  // The normalization floor of the ratio (decision 279, MINOR-3): the denominator is
+  // max(amplitude, kConductorConsistencyAmplitudeFloor x the excitation's largest
+  // potential), so a patch whose trace amplitude is a near-zero fraction of the excitation
+  // (noise over noise) cannot be excluded spuriously; the record notes FloorApplied. A
+  // patch below the floor carries at most floor^2 = 1e-6 of a unit-amplitude patch's
+  // energy (energy ~ amplitude^2), and a defective coupon is still excluded at the
+  // excitation that fields it (the exclusion is sticky). The S1p flagged coupons read
+  // amplitude ~1.1 x the 1-V state, far above the floor.
+  static constexpr double kConductorConsistencyAmplitudeFloor = 1.0e-3;
 
 private:
   struct MaxwellLine
@@ -192,6 +264,13 @@ private:
     mfem::DenseMatrix mortar_mass_inverse;
     mfem::Vector mortar_constant_load;
     std::vector<mfem::Vector> mortar_conductor_loads;
+    // Conductor-consistency gate (decision 277): the conductor vertices of the trace mesh
+    // on the process plane (the probes of the gate), those off it (the metal top rows,
+    // recorded) and the free knots adjacent to a plane conductor vertex in its column
+    // (free vertex, plane conductor vertex; recorded).
+    std::vector<int> plane_conductor_vertices;
+    std::vector<int> off_plane_conductor_vertices;
+    std::vector<std::pair<int, int>> adjacent_free_vertices;
   };
 
   struct Patch
@@ -209,6 +288,16 @@ private:
     int mortar_longitudinal_subdivisions = 1;
     double mortar_resolution = 0.0;
     double weight = 1.0;
+    // Conductor-consistency probes (decision 277): the device potential at the conductor
+    // vertices of a spatial surface-mortar trace mesh, sampled as the last
+    // probe_point_count points of the patch (after the quadrature points and the
+    // conductor references; the trace walks stop before them). Their mesh coordinates
+    // and the patch's provenance for the record.
+    int probe_point_count = 0;
+    std::vector<std::array<double, 3>> probe_points;
+    int feature = -1;
+    double claim_length = 0.0;
+    double cell_length = 0.0;
   };
 
   const FiniteElementSpace &fespace;
@@ -298,6 +387,15 @@ private:
   void BuildMaxwellTraceTranspose(const Vector &values, Vector &line_values) const;
   void ApplyTrace(const Vector &x, Vector &values) const;
   void ApplyTraceTranspose(const Vector &values, Vector &y) const;
+  // The conductor-consistency probes of a spatial surface-mortar model (decision 277):
+  // the conductor vertices on the process plane, off it, and the adjacent free knots; fails
+  // closed when a conductor of the trace mesh has no vertex on the plane. A trace mesh
+  // without any conductor vertex gets no probes (the constructor records the model under
+  // Diagnostics.ConductorConsistency.UnprobedModels and warns).
+  static void ConfigureConductorConsistencyProbes(ResponseModel &model);
+  // The Diagnostics.ConductorConsistency object with its defaults (tolerance, floor, the
+  // counters, the empty lists and the rule), created on first use.
+  nlohmann::json &ConductorConsistencyDiagnostics();
   void ApplyUneliminated(const Vector &x, Vector &y) const;
   void ConfigureMaxwellResponse(
       const IoData &iodata, const MaterialOperator &mat_op,
@@ -404,6 +502,22 @@ public:
   // three-dimensional spatial response patch. The result is ordered by global patch
   // index and replicated on all ranks.
   std::vector<PatchTrace> GetSpatialPatchTraces(const Vector &x) const;
+
+  // Conductor-consistency gate (decision 277 (A)), solve time only: measure every applied
+  // spatial surface-mortar patch on the potential x of excitation `source`
+  // (ConductorConsistencyRecord), exclude the patches whose max_ratio exceeds
+  // kConductorConsistencyTolerance (weight 0 from now on, like a DomainBoundary cell: the
+  // fixed-trace energies, the self-consistent operator and the ModelCatalog weights of
+  // this and every later excitation omit them), append the records to the Diagnostics
+  // ("ConductorConsistency": every tested patch of every excitation, the excluded ones
+  // with their claim / cell lengths next to the DomainBoundary record) and return the
+  // records of this excitation (ordered by global patch index, replicated on all ranks).
+  // Collective. The preflight (dry run) cannot evaluate it: it needs the device trace.
+  std::vector<ConductorConsistencyRecord> ApplyConductorConsistencyGate(const Vector &x,
+                                                                        int source);
+  // Whether any patch carries conductor-consistency probes (a spatial surface-mortar
+  // model with conductor vertices on the process plane).
+  bool HasConductorConsistencyProbes() const;
 
   // Evaluate a postprocessing-only response for a complex Nedelec Maxwell field. Coupon
   // voltages are reconstructed from transverse contour integrals and applied through

@@ -20,6 +20,7 @@
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -862,10 +863,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<SurfaceResponseOperator> response_correction;
   std::unique_ptr<SumOperator> corrected_K;
   const Operator *system_K = K.get();
-  if (response_config)
+  // The patch table (surface-response-patches.csv): written at construction and rewritten
+  // when the conductor-consistency gate (decision 277) excludes a patch at solve time (its
+  // weight becomes 0, like a DomainBoundary cell).
+  auto WritePatchTable = [&]()
   {
-    response_correction =
-        std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
     if (root && !response_correction->GetPatchAssignments().empty())
     {
       TableWithCSVFile patches(post_dir / "surface-response-patches.csv");
@@ -899,6 +901,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       patches.WriteFullTableTrunc();
     }
+  };
+  if (response_config)
+  {
+    response_correction =
+        std::make_unique<SurfaceResponseOperator>(iodata, laplace_op, &response_geometry);
+    WritePatchTable();
     if (self_consistent_response)
     {
       corrected_K = std::make_unique<SumOperator>(*K, *response_correction);
@@ -1049,9 +1057,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Vector corrected_rhs;
     if (self_consistent_response)
     {
+      // The initial guess (the essential values; the corrected right-hand side is formed
+      // after the conductor-consistency gate below, on the patches it leaves applied).
       V_corrected[step] = V[step];
-      corrected_rhs = RHS;
-      response_correction->EliminateRHS(V_corrected[step], corrected_rhs);
     }
     if (!zero_response)
     {
@@ -1130,6 +1138,26 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     if (response_correction)
     {
       BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
+      // The conductor-consistency gate (decision 277): the device potential at the spatial
+      // coupons' metal cross-sections on their box faces against the conductor potentials,
+      // before any energy of this excitation is formed; an excluded patch leaves every
+      // later evaluation (fixed trace, self-consistent) and the patch table.
+      if (response_correction->HasConductorConsistencyProbes())
+      {
+        BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
+        const auto records =
+            response_correction->ApplyConductorConsistencyGate(V[step], idx);
+        if (std::any_of(records.begin(), records.end(),
+                        [](const auto &record) { return record.excluded; }))
+        {
+          WritePatchTable();
+        }
+      }
+      if (self_consistent_response)
+      {
+        corrected_rhs = RHS;
+        response_correction->EliminateRHS(V_corrected[step], corrected_rhs);
+      }
       SurfaceResponseOperator::ElectrostaticResponse response;
       if (postprocess_response)
       {
