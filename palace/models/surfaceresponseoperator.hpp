@@ -33,6 +33,7 @@ class BoundaryModeOperator;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
+struct IdentifiedFeature;
 
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
 // finite-element point interpolation is still rebuilt for every refined mesh.
@@ -564,6 +565,27 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
 // needs (feature, mesh segment, chain stretch, own-edge offset, the cluster patches'
 // claims) and the matching radius; version 6, older caches refused. The reader returns the
 // request with its library, models and patches replaced by the cached ones.
+// Legacy-contract alias of a library model (USER decision 283): an explicit mapping from a
+// contract-3 key (a SpatialEdgeCluster signature carrying Box + Context) to a legacy model
+// built under the decision-236 straight-continuation contract, listed by the library under
+// the model's "LegacyContractAliases" with the key's context digest. Resolved by the
+// matching pass ONLY for the listed key, never as a fallback for any other key.
+struct LegacyContractAlias
+{
+  std::string key;             // the v3 feature hash (64 hex)
+  std::string context_digest;  // SpatialSupportContextDigest of the v3 signature (64 hex)
+  std::string reason;
+  nlohmann::json context;  // the recorded Box + Context (informative)
+};
+
+// The alias record of a feature whose hash is the alias key: fails closed (MFEM_ABORT) when
+// the feature's context digest differs from the alias's or when the feature's claims-only
+// signature is not the legacy model's Signature (the alias names another geometry).
+nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
+                                          const nlohmann::json &model_signature,
+                                          const LegacyContractAlias &alias,
+                                          const IdentifiedFeature &feature);
+
 void WriteResponseGeometryCache(
     const std::filesystem::path &path,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config);

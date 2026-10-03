@@ -112,6 +112,24 @@ class SpatialSupportContractTest(unittest.TestCase):
         signature["Portions"][0]["P"] = [-0.5, 0.0, 0.5, 0.0]
         self.assertEqual(L.cluster_support_box(signature), [-1.5, -2.0, 4.0, 2.0])
 
+    def test_legacy_contract_alias(self):
+        signature = dict(self.SIGNATURE)
+        signature["Box"] = list(self.CPP_BOX)
+        signature["Context"] = [{"Chain": True, "Conductor": 1, "Gap": [0.0, -1.0], "Interfaces": ["MS"], "Law": "{}", "P": [2.281441, -0.5, 5.281441, -0.5]}]
+        digest = L.context_digest(signature)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(L.context_digest(self.SIGNATURE), "")
+        feature = {"Id": 7, "Hash": L.signature_hash(signature), "Signature": signature, "SpatialSupport": {"ContextDigest": digest, "ClaimsKey": L.signature_hash(self.SIGNATURE)}}
+        alias = L.legacy_contract_alias(feature, "unit test")
+        self.assertEqual(alias["Key"], feature["Hash"])
+        self.assertEqual(alias["ContextDigest"], digest)
+        self.assertEqual(alias["ClaimsKey"], L.signature_hash(self.SIGNATURE))
+        self.assertEqual(alias["Context"]["Box"], self.CPP_BOX)
+        with self.assertRaises(ValueError):
+            L.legacy_contract_alias({"Id": 8, "Hash": "x", "Signature": self.SIGNATURE}, "claims only")
+        with self.assertRaises(ValueError):
+            L.legacy_contract_alias(dict(feature, SpatialSupport={"ContextDigest": "0" * 64}), "digest mismatch")
+
     def test_context_entries_follow_the_claims(self):
         signature = dict(self.SIGNATURE)
         signature["Box"] = list(self.CPP_BOX)

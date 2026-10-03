@@ -19,6 +19,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "models/surfaceresponseidentification.hpp"
+#include "models/surfaceresponseoperator.hpp"
 #include "utils/metaledge.hpp"
 
 using namespace palace;
@@ -4056,10 +4057,12 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
     CHECK(support["Growth"]["Grown"] == false);
     CHECK(support["Context"]["ForeignPieces"] == 0);
     CHECK(support["Context"]["ChainPieces"] == 4);  // the four straight continuations
-    CHECK_THAT(support["LegacyContract"]["FictitiousContinuationLengthOverR"].get<double>(),
-               WithinAbs(0.0, 1.0e-9));
-    CHECK_THAT(support["LegacyContract"]["StraightContinuationLengthOverR"].get<double>(),
-               WithinAbs(12.0, 1.0e-5));
+    CHECK_THAT(
+        support["LegacyContinuation"]["FictitiousContinuationLengthOverR"].get<double>(),
+        WithinAbs(0.0, 1.0e-9));
+    CHECK_THAT(
+        support["LegacyContinuation"]["StraightContinuationLengthOverR"].get<double>(),
+        WithinAbs(12.0, 1.0e-5));
     const auto box = DeviceBox(*cluster, "Box", R);
     CHECK_THAT(box[0], WithinAbs(-12.872984, 1.0e-5));
     CHECK_THAT(box[2], WithinAbs(12.872984, 1.0e-5));
@@ -4154,8 +4157,9 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
                                     support["Context"]["ChainVertices"][0][1], R);
     CHECK_THAT(corner[0], WithinAbs(10.0, 1.0e-5));
     CHECK_THAT(corner[1], WithinAbs(0.0, 1.0e-5));
-    CHECK_THAT(support["LegacyContract"]["FictitiousContinuationLengthOverR"].get<double>(),
-               WithinAbs((12.872984 - 10.0) / R, 1.0e-5));
+    CHECK_THAT(
+        support["LegacyContinuation"]["FictitiousContinuationLengthOverR"].get<double>(),
+        WithinAbs((12.872984 - 10.0) / R, 1.0e-5));
     // Every context piece lies on the device perimeter (no fictitious metal boundary) and
     // the pad's right edge below the corner is among them, flagged Chain.
     bool right_edge = false;
@@ -4405,4 +4409,136 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
         DeserializeIdentificationResult(SerializeIdentificationResult(result));
     CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
   }
+}
+
+TEST_CASE("SurfaceResponseIdentificationLegacyContractAlias",
+          "[surfaceresponseidentification][surfaceresponseoperator][Serial]")
+{
+  // USER decision 283: a legacy model (built under the decision-236 straight-continuation
+  // contract) serves a contract-3 key ONLY through an explicit library alias naming that
+  // key and its context digest; the alias resolves to a recorded LegacyContract match and
+  // fails closed on a digest or claims mismatch. The scene of
+  // SurfaceResponseIdentificationSpatialSupportContract: the legacy model's Signature is
+  // the claims-only signature of the corner-far cluster (Contract 2), the aliased key the
+  // corner-at-10 cluster's (Contract 3, the same claims, a foreign-free chain context).
+  const double R = 2.0;
+  auto Scene = [&](double corner_x)
+  {
+    return std::vector<LoopSpec>{{Rectangle(-40.0, -10.0, corner_x, 0.0), 0, 100.0},
+                                 {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0}};
+  };
+  const auto legacy_input = MakeInput(Scene(40.0), R);
+  const auto legacy = IdentifyMetalPerimeter(legacy_input);
+  const auto v3_input = MakeInput(Scene(10.0), R);
+  const auto v3 = IdentifyMetalPerimeter(v3_input);
+  const auto *legacy_cluster = ClusterContaining(legacy, legacy_input, {0.0, 1.0});
+  const auto *v3_cluster = ClusterContaining(v3, v3_input, {0.0, 1.0});
+  REQUIRE(legacy_cluster != nullptr);
+  REQUIRE(v3_cluster != nullptr);
+  REQUIRE(legacy_cluster->spatial_support["Contract"] == 2);
+  REQUIRE(v3_cluster->spatial_support["Contract"] == 3);
+  const auto *other_cluster = ClusterContaining(v3, v3_input, {0.0, 40.0});  // the lead end
+  REQUIRE(other_cluster != nullptr);
+  REQUIRE(other_cluster->hash != legacy_cluster->hash);
+
+  // The context digest: of the Box + Context only (the claims-only signature has none), and
+  // recorded by the identification for every contract-3 feature.
+  const std::string digest = SpatialSupportContextDigest(v3_cluster->signature);
+  CHECK(digest.size() == 64);
+  CHECK(SpatialSupportContextDigest(legacy_cluster->signature).empty());
+  CHECK(v3_cluster->spatial_support["ContextDigest"] == digest);
+  CHECK(legacy_cluster->spatial_support["ContextDigest"].is_null());
+  // The recorded claims-only key of the v3 cluster IS the legacy key (the v3 Portions are
+  // serialised in the Box + Context frame, so the key is recorded, not re-derived).
+  CHECK(v3_cluster->spatial_support["ClaimsKey"] == legacy_cluster->hash);
+  CHECK(legacy_cluster->spatial_support["ClaimsKey"] == legacy_cluster->hash);
+  // Neither feature carries an alias record out of the identification itself.
+  CHECK(v3_cluster->legacy_contract.is_null());
+  CHECK(legacy_cluster->legacy_contract.is_null());
+  // The claims-only frame of the v3 cluster is the legacy cluster's frame (the same claims
+  // canonicalised alone): the frame a legacy model is placed in. The v3 frame differs here
+  // (the context breaks the mirror symmetry: chirality -+1 vs 0).
+  CHECK(v3_cluster->claims_chirality == legacy_cluster->chirality);
+  CHECK(v3_cluster->claims_chirality != v3_cluster->chirality);
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK_THAT(v3_cluster->claims_origin[d], WithinAbs(legacy_cluster->origin[d], 1.0e-9));
+    for (int k = 0; k < 3; k++)
+    {
+      CHECK_THAT(v3_cluster->claims_axes[k][d],
+                 WithinAbs(legacy_cluster->axes[k][d], 1.0e-12));
+    }
+  }
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK_THAT(legacy_cluster->claims_origin[d], WithinAbs(legacy_cluster->origin[d], 0.0));
+  }
+
+  LegacyContractAlias alias;
+  alias.key = v3_cluster->hash;
+  alias.context_digest = digest;
+  alias.reason = "unit test: USER decision 283";
+  const nlohmann::json record = ResolveLegacyContractAlias(
+      "legacy-model", legacy_cluster->signature, alias, *v3_cluster);
+  CHECK(record["Model"] == "legacy-model");
+  CHECK(record["Key"] == v3_cluster->hash);
+  CHECK(record["ContextDigest"] == digest);
+  CHECK(record["ClaimsKey"] == legacy_cluster->hash);
+  CHECK(record["Reason"] == alias.reason);
+  CHECK(record["Context"]["Box"] == v3_cluster->signature["Box"]);
+  CHECK(record["Context"]["Context"] == v3_cluster->signature["Context"]);
+
+  // Fail closed: a context digest that is not the feature's.
+  LegacyContractAlias wrong_digest = alias;
+  wrong_digest.context_digest = std::string(64, '0');
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                               wrong_digest, *v3_cluster),
+                    ContainsSubstring("does not match the alias's ContextDigest"));
+  // Fail closed: the alias on a model whose claims are not the feature's.
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("other-model", other_cluster->signature,
+                                               alias, *v3_cluster),
+                    ContainsSubstring("is not the legacy model's key"));
+  // Fail closed: an alias resolved for a feature other than its key (never a fallback).
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                               alias, *legacy_cluster),
+                    ContainsSubstring("is not the alias key"));
+  // A contract-2 feature carries no context: an alias naming it cannot verify a digest.
+  LegacyContractAlias claims_alias = alias;
+  claims_alias.key = legacy_cluster->hash;
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                               claims_alias, *legacy_cluster),
+                    ContainsSubstring("(no Box)"));
+
+  // The record survives the broadcast form and reaches the manifest's Match entry.
+  IdentificationResult copy_source = v3;
+  for (auto &feature : copy_source.features)
+  {
+    if (feature.id == v3_cluster->id)
+    {
+      feature.legacy_contract = record;
+      feature.matched_model = "legacy-model";
+      feature.match_deviation = 0.0;
+    }
+  }
+  const auto copy =
+      DeserializeIdentificationResult(SerializeIdentificationResult(copy_source));
+  CHECK(copy.ToJson(1.0) == copy_source.ToJson(1.0));
+  bool found = false;
+  const nlohmann::json manifest = copy.ToJson(1.0);
+  for (const auto &entry : manifest["Features"])
+  {
+    if (entry["Id"].get<int>() == v3_cluster->id)
+    {
+      found = true;
+      CHECK(entry["Match"]["Status"] == "Matched");
+      CHECK(entry["Match"]["Model"] == "legacy-model");
+      CHECK(entry["Match"]["LegacyContract"]["Key"] == v3_cluster->hash);
+      CHECK(entry["ClaimsFrame"]["Chirality"] == legacy_cluster->chirality);
+    }
+    else
+    {
+      CHECK(!entry["Match"].contains("LegacyContract"));
+    }
+  }
+  CHECK(found);
 }

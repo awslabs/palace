@@ -2137,6 +2137,18 @@ std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
   return best;
 }
 
+std::string SpatialSupportContextDigest(const nlohmann::json &signature)
+{
+  if (!signature.is_object() || !signature.contains("Box"))
+  {
+    return {};
+  }
+  const nlohmann::json context = {
+      {"Box", signature.at("Box")},
+      {"Context", signature.value("Context", nlohmann::json::array())}};
+  return Sha256HexImpl(context.dump());
+}
+
 // Rule B2 (the coupon generator's `coupon_bounds` / `edge_rows` / `extended_interval` in
 // the canonical frame, units of R): see SupportBoxFromSignature in the header.
 std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature)
@@ -10904,7 +10916,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         {"ForeignConductors", foreign_conductors.size()},
         {"ChainVertices", chain_vertices},
         {"ForeignVertices", foreign_vertices}}},
-      {"LegacyContract",
+      {"LegacyContinuation",
        {{"StraightContinuationLengthOverR", Q(continuation_length / R)},
         {"FictitiousContinuationLengthOverR", Q(out.fictitious_continuation_length / R)}}},
       {"Truncation",
@@ -11022,7 +11034,23 @@ void Identifier::EmitClusters()
     const int feature = NewFeature("SpatialEdgeCluster", signature, chirality);
     features[feature].origin = origin;
     features[feature].axes = axes;
+    features[feature].claims_origin = canonical.origin;
+    features[feature].claims_axes = canonical.axes;
+    features[feature].claims_chirality = canonical.chirality;
     support.record["Contract"] = contract;
+    // The claims-only (contract-2) key of the cluster: the key a legacy model built under
+    // the decision-236 contract carries; equal to Hash for contract 2. A legacy-contract
+    // alias (USER decision 283) is verified against it.
+    {
+      nlohmann::json claims_signature = canonical.signature;
+      claims_signature["EdgeCount"] = portions.size();
+      support.record["ClaimsKey"] =
+          SignatureKeyAndHash(claims_signature, "SpatialEdgeCluster").second;
+    }
+    support.record["ContextDigest"] =
+        contract == 3
+            ? nlohmann::json(SpatialSupportContextDigest(features[feature].signature))
+            : nlohmann::json(nullptr);
     features[feature].spatial_support = support.record;
     spatial_support_summary.clusters++;
     spatial_support_summary.claims_keyed += contract == 2 ? 1 : 0;
@@ -12841,6 +12869,13 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Pod(f.match_note.has_value());
     w.String(f.match_note.value_or(""));
     w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
+    w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
+    w.Point(f.claims_origin);
+    for (const auto &axis : f.claims_axes)
+    {
+      w.Point(axis);
+    }
+    w.Pod(f.claims_chirality);
   }
   w.Size(result.spatial_support.clusters);
   w.Size(result.spatial_support.claims_keyed);
@@ -12993,6 +13028,15 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     const std::string support = r.String();
     f.spatial_support =
         support.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(support);
+    const std::string legacy = r.String();
+    f.legacy_contract =
+        legacy.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(legacy);
+    f.claims_origin = r.Point();
+    for (auto &axis : f.claims_axes)
+    {
+      axis = r.Point();
+    }
+    f.claims_chirality = r.Pod<int>();
   }
   result.spatial_support.clusters = r.Size();
   result.spatial_support.claims_keyed = r.Size();
@@ -13173,6 +13217,13 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     {
       entry["Match"]["Note"] = *feature.match_note;
     }
+    if (!feature.legacy_contract.is_null())
+    {
+      // Matched through an explicit legacy-contract alias of the library (USER decision
+      // 283): the legacy model, the aliased v3 key, the verified context digest and the
+      // recorded context.
+      entry["Match"]["LegacyContract"] = feature.legacy_contract;
+    }
     if (!feature.spatial_support.is_null())
     {
       // Spatial-support record (contract v3, decision 282; units of R in the feature's
@@ -13180,6 +13231,13 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       // census (chain / foreign pieces and vertices), the legacy contract's fictitious
       // straight continuation, the window truncation inside the box.
       entry["SpatialSupport"] = feature.spatial_support;
+      // The claims-only canonical frame (the placement frame of a legacy-contract alias,
+      // USER decision 283); equal to Frame unless the key is contract 3.
+      entry["ClaimsFrame"] = {{"Origin", P(feature.claims_origin)},
+                              {"Axes",
+                               {D(feature.claims_axes[0]), D(feature.claims_axes[1]),
+                                D(feature.claims_axes[2])}},
+                              {"Chirality", feature.claims_chirality}};
     }
     if (multi_sided)
     {
@@ -13725,7 +13783,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "migration); the record is written in every case. The straight continuation of "
          "the "
          "decision-236 contract and the part of it lying on no device edge are recorded "
-         "per feature (LegacyContract: the fictitious island metal of D2 / D3-C) and "
+         "per feature (LegacyContinuation: the fictitious island metal of D2 / D3-C) and "
          "summed "
          "under Diagnostics.SpatialSupport; vertex features (corners) inside a box on a "
          "chain are listed (Context.ChainVertices: [x, y, Type, distance from the nearest "

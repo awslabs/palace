@@ -7200,10 +7200,22 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     data.patches.back().model = 2;
     data.patches.back().provenance.feature = 8;
     data.patches.back().provenance.claims = box.claims;
+    // A legacy-contract alias record (USER decision 283) rides along in the cache.
+    data.legacy_contract = {{"legacy-model",
+                             std::string(64, 'a'),
+                             std::string(64, 'b'),
+                             "unit test: USER decision 283",
+                             {8, 12}}};
     const auto cache_path = temp.temp_dir / "response-geometry-ownership.json";
     WriteResponseGeometryCache(cache_path, data);
     const auto cached = ReadResponseGeometryCache(cache_path, data);
     REQUIRE(cached.patches.size() == data.patches.size());
+    REQUIRE(cached.legacy_contract.size() == 1);
+    CHECK(cached.legacy_contract.front().model == "legacy-model");
+    CHECK(cached.legacy_contract.front().key == std::string(64, 'a'));
+    CHECK(cached.legacy_contract.front().context_digest == std::string(64, 'b'));
+    CHECK(cached.legacy_contract.front().reason == "unit test: USER decision 283");
+    CHECK(cached.legacy_contract.front().features == std::vector<int>{8, 12});
     for (std::size_t i = 0; i < data.patches.size(); i++)
     {
       CHECK(cached.patches[i].provenance.feature == data.patches[i].provenance.feature);

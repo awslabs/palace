@@ -332,6 +332,36 @@ def signature_hash(signature):
     return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
 
 
+def context_digest(signature):
+    """sha256 of the serialised {"Box", "Context"} of a contract-3 SpatialEdgeCluster signature
+    (surfaceresponseidentification SpatialSupportContextDigest; the manifest records it as
+    SpatialSupport.ContextDigest); '' for a claims-only signature."""
+    import hashlib
+    if "Box" not in signature:
+        return ""
+    context = {"Box": signature["Box"], "Context": signature.get("Context", [])}
+    return hashlib.sha256(json.dumps(context, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+
+
+def legacy_contract_alias(feature, reason):
+    """The library-side legacy-contract alias (USER decision 283) a legacy SpatialEdgeCluster
+    model lists under ``LegacyContractAliases`` so that the contract-3 key of this manifest
+    feature resolves to it: {"Key", "ContextDigest", "Reason", "Context", "ClaimsKey"}. The
+    feature's claims-only key (the manifest's SpatialSupport.ClaimsKey, returned as ClaimsKey)
+    must be the legacy model's key (checked by Palace at match time, fail closed); the digest
+    is cross-checked against the manifest's record when present."""
+    signature = feature["Signature"]
+    if "Box" not in signature:
+        raise ValueError(f"feature {feature.get('Id')} has a claims-only (contract-2) signature: nothing to alias")
+    digest = context_digest(signature)
+    recorded = (feature.get("SpatialSupport") or {}).get("ContextDigest")
+    if recorded is not None and recorded != digest:
+        raise ValueError(f"feature {feature.get('Id')}: the Python context digest {digest[:12]} differs from the manifest's {str(recorded)[:12]}")
+    return {"Key": feature["Hash"], "ContextDigest": digest, "Reason": reason,
+            "Context": {"Box": signature["Box"], "Context": signature.get("Context", [])},
+            "ClaimsKey": (feature.get("SpatialSupport") or {}).get("ClaimsKey")}
+
+
 def signature_model(feature_type, signature, radius, model_name, matrix_directory="signature-only-matrices"):
     """A geometry-only library model keyed by its canonical ``Signature`` (placeholder matrix
     paths; the version-1 geometry parameters the library reader validates are derived from

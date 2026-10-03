@@ -1258,6 +1258,21 @@ public:
     // Integer quadrature refinement factor for experimental surface-mortar traces.
     int mortar_oversampling = 2;
 
+    // Legacy-contract aliases resolved by the matching pass (USER decision 283): a
+    // library model used for a contract-3 key the library lists explicitly as its alias
+    // (the feature ids, the aliased key, the verified context digest, the recorded
+    // reason); carried into the operator record (SurfaceResponse.Diagnostics) and the
+    // geometry cache.
+    struct LegacyContractAliasData
+    {
+      std::string model;
+      std::string key;
+      std::string context_digest;
+      std::string reason;
+      std::vector<int> features;
+    };
+    std::vector<LegacyContractAliasData> legacy_contract;
+
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.
     std::vector<ResponseCorrectionModelData> models;

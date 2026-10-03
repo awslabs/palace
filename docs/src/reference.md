@@ -1293,6 +1293,20 @@ physical boundaries while keeping continuation cuts vertical.
 and defaults to zero. Edges belonging to one physical fabrication layer use the same
 slot.
 
+A `SpatialEdgeCluster` entry carrying the identification's canonical `Signature` may list
+`LegacyContractAliases`: explicit mappings from a contract-3 signature key (a cluster
+signature carrying `Box` + `Context`, the device plan clipped to the support box) to this
+model, built under the earlier straight-continuation contract. Each entry gives the aliased
+`Key` (the feature's 64-hex hash), the `ContextDigest` (the 64-hex SHA-256 of the signature's
+serialized `{"Box", "Context"}`, recorded by the preflight as `SpatialSupport.ContextDigest`)
+and a `Reason`; an optional `Context` copy is informative. The matching pass resolves an
+alias only for a feature whose hash is exactly the listed key, verifies the feature's context
+digest and its claims-only key (`SpatialSupport.ClaimsKey`) against the alias and the model's
+`Signature` (a mismatch aborts), places the model in the feature's claims-only canonical frame
+and records the match as `Match.LegacyContract` (manifest), `Summary.LegacyContract` /
+`Summary.Counts.LegacyContract` (inventory) and `SurfaceResponse.Diagnostics.LegacyContract`
+(operator record). An alias is never a fallback for any other key.
+
 Palace forms interaction events from the minimum-distance approach of each pair of
 physical edge chains and groups nearby events into local neighborhoods. It matches the
 complete edge count using one rigid transformation, a one-to-one edge assignment, and a

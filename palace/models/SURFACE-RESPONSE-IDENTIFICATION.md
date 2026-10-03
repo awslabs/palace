@@ -1406,6 +1406,47 @@ regions follow from the arrangement of Portions and Context with the box (the me
 edge-distance tree (B5) and the face knots of every conductor cross-section follow from the
 mask (B6).
 
+**Legacy-contract aliases (USER decision 283, 2026-10-03).** The transmon's 3-edge cluster
+`spatialedgecluster_edgecount-3_da0179c64591` (claims-only key 7c4b31a894f9, two mirror
+instances) is kept as a LEGACY-CONTRACT key: its accepted coupon (the decision-236
+straight-continuation geometry) stays in the accepted library `transmon-r1p9-folded-refined-
+corners` until the next transmon rebuild, its v3 context (16.9 um^2 of foreign ground beyond R,
+0 fictitious; closure shift expected <= 0.1 point) recorded, not rebuilt. Under v3 its key is
+35b2900ae07f (contract 3: one foreign ground piece), so the accepted library would read it
+Missing; instead the library lists an EXPLICIT alias on the legacy model
+(`LegacyContractAliases: [{Key, ContextDigest, Reason, Context}]`, `Key` = the v3 hash,
+`ContextDigest` = `SpatialSupportContextDigest` = sha256 of the serialised `{Box, Context}`,
+recorded per contract-3 feature as `SpatialSupport.ContextDigest`;
+`signature_library.legacy_contract_alias(feature, reason)` writes the entry from a manifest).
+The library load refuses an alias on a model that is not a Signature-keyed
+`SpatialEdgeCluster`, a key / digest that is not 64 hex, an alias of the model's own key or one
+key listed twice. The matching pass (`RunGeometryIdentification`) looks an alias up by the
+feature's EXACT hash only after the normal key match fails, then `ResolveLegacyContractAlias`
+fails closed unless the feature's context digest equals the alias's AND the feature's
+claims-only key (`SpatialSupport.ClaimsKey`: the claims canonicalised alone, recorded by the
+identification — the Portions of a contract-3 signature are serialised in the frame minimising
+Box + Context and cannot be re-keyed by removing those members) equals the legacy model's
+Signature key; the feature is then PLACED in its claims-only canonical frame
+(`Features[].ClaimsFrame`: the legacy model's Edges and basis points live there; the v3 frame
+may differ by a rotation / reflection — on the transmon it did, and the continuation-ownership
+clipping with it) and the match is recorded: `Match.LegacyContract` (model, key, digest,
+claims key, reason, the recorded Box + Context, the placement frame) and `Match.Note` on the
+feature, `LegacyContract` on the version-1 requirement record (Status Exact: the legacy coupon
+is applied), `Summary.LegacyContract` + `Summary.Counts.LegacyContract` /
+`TotalEdgeLengths.LegacyContract` in the preflight inventory (the features are counted in Exact
+as well), `SurfaceResponse.Diagnostics.LegacyContract` in the operator record (through
+`ResponseCorrectionData.legacy_contract`, carried by the geometry cache under
+`LegacyContract`, optional) with a warning. Never a fallback: a feature whose hash is not a
+listed key is Missing as before. Verified on the transmon with the accepted library + the alias
+(`device-plan-coupons-20261003/r1/transmon/library-alias`): the 3-edge features 8 / 12 resolve
+to `spatialedgecluster_edgecount-3_da0179c64591` with `LegacyContract`, every feature matched
+to the same model in the same placement frame as the accepted preflight, Counts Exact 3,099 /
+35,296.81 um unchanged, the patches CSV BYTE-IDENTICAL (b362840fcc34) and the
+ContinuationOwnership record identical; a wrong digest aborts the preflight. Unit tests
+`SurfaceResponseIdentificationLegacyContractAlias` (resolution, the three abort paths, the
+claims frame, the broadcast / manifest record) and the cache round trip in
+`SurfaceResponseOperatorContinuationOwnership`.
+
 ## (c) Behaviour at exactly R and 2R
 
 All length decisions use the decision-69 quantizer: lengths are rounded to the grid
@@ -2144,7 +2185,9 @@ matching pass). The new top-level `Identification` object carries the contract:
                  "PortionTurns": [t, ...] (features with a bend: signed turn toward the metal per portion, radians),
                  "TurnTowardMetal": t (one-sided features with a bend),
                  "Frame": {"Origin": [...], "Axes": [[...],[...],[...]]},
-                 "SpatialSupport": {"Contract": 2 | 3 | 0, "ClaimsBox": [x0, y0, x1, y1], "Box": [...], "SpanOverR": s,
+                 "ClaimsFrame": {"Origin": [...], "Axes": [[...],[...],[...]], "Chirality": c} (SpatialEdgeCluster: the claims-only canonical frame),
+                 "SpatialSupport": {"Contract": 2 | 3 | 0, "ClaimsKey": "sha256", "ContextDigest": "sha256" | null,
+                                    "ClaimsBox": [x0, y0, x1, y1], "Box": [...], "SpanOverR": s,
                                     "SpanCapOverR": 16, "ExceedsSpanCap": b, "LegacyEquivalent": b,
                                     "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "Grown": b},
                                     "FaceRules": {"SnapOverR": 1e-3, "ClearanceOverR": 0.25, "SliversDropped": n, "Crossings": [4 counts],
@@ -2152,11 +2195,13 @@ matching pass). The new top-level `Identification` object carries the contract:
                                                   "NarrowCrossSections": n, "ThresholdBandRelative": 0.01, "ThresholdBandHits": n},
                                     "Context": {"Pieces": n, "ChainPieces": n, "ForeignPieces": n, "ChainLengthOverR": L, "ForeignLengthOverR": L,
                                                 "ForeignConductors": n, "ChainVertices": [[x, y, "Type", face distance / R], ...], "ForeignVertices": [...]},
-                                    "LegacyContract": {"StraightContinuationLengthOverR": L, "FictitiousContinuationLengthOverR": L},
+                                    "LegacyContinuation": {"StraightContinuationLengthOverR": L, "FictitiousContinuationLengthOverR": L},
                                     "Truncation": {"Segments": n, "LengthOverR": L}, "Unboxable": null | "reason"}
                                    (SpatialEdgeCluster only; units of R in the feature's frame; the spatial-support contract v3 below),
                  "Match": {"Status": "Matched" | "Missing", "Model": "name", "Deviation": d,
-                           "Note": "curvature family: <rule> at kappa k (<convexity>)" | "curvature family: <refusal reason>"} } ],
+                           "Note": "curvature family: <rule> at kappa k (<convexity>)" | "curvature family: <refusal reason>",
+                           "LegacyContract": {"Model", "Key", "ContextDigest", "ClaimsKey", "Reason", "Context": {"Box", "Context"},
+                                              "PlacementFrame", "Rule"} (matched through a library alias, USER decision 283)} } ],
   "Segments":  [ {"Key": [[x0,y0,z0],[x1,y1,z1]], "Length": L, "Chain": c, "Arc": a (chord of Arcs[a]; absent otherwise),
                   "Portions": [[s0, s1, feature], ...] } | {"Key": ..., "Length": L,
                   "Exclusion": {"Class": "...", "Reason": "..."}} ],

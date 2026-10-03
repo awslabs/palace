@@ -141,6 +141,20 @@ struct IdentifiedFeature
   // context is non-empty or the box grew (Contract 3); otherwise the key is the claims-only
   // key (Contract 2) and the record is informative.
   nlohmann::json spatial_support;
+  // The claims-only canonical frame of a SpatialEdgeCluster (origin, axes, chirality of
+  // CanonicalClusterSignature over the claims alone): equal to origin / axes / chirality
+  // for contract 2 and 0; for contract 3 the signature's frame minimises Box + Context and
+  // may differ. A legacy model resolved through a legacy-contract alias (USER decision 283)
+  // is PLACED in this frame (its Edges and basis points live in the claims-only frame), so
+  // the matching pass swaps the feature's frame to it. Manifest Features[].ClaimsFrame.
+  std::array<double, 3> claims_origin{};
+  std::array<std::array<double, 3>, 3> claims_axes{};
+  int claims_chirality = 1;
+  // Legacy-contract alias record (USER decision 283; null unless the matching pass
+  // resolved this feature's contract-3 key through an alias the library lists explicitly
+  // for a legacy model): {Model, Key, ContextDigest, Reason, Context}. Manifest
+  // Features[].Match.LegacyContract; never a fallback for any other key.
+  nlohmann::json legacy_contract;
 };
 
 struct IdentifiedSegment
@@ -392,6 +406,12 @@ constexpr double kSupportSpanCapOverRadius = 16.0;
 // Python builder reads), quantised on the signature grid. Shared by the identification and
 // the two-language identity test.
 std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature);
+
+// The context digest of a contract-3 signature: sha256 of the serialised {"Box", "Context"}
+// of the signature (empty when the signature carries no Box). A legacy-contract alias (USER
+// decision 283) names a v3 key AND this digest, and the matching pass fails closed when the
+// feature's digest differs from the alias's.
+std::string SpatialSupportContextDigest(const nlohmann::json &signature);
 
 // A context piece of the v3 signature: a portion (p0, p1, gap, conductor, interfaces, law,
 // arc) with its ownership class.

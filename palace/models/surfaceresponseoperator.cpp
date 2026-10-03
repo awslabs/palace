@@ -702,6 +702,8 @@ struct LibraryModel
   // Version-2 identification signature (the feature's canonical Signature object,
   // dimensionless parameters) which the key-based matching pass looks up directly.
   std::optional<nlohmann::json> identification_signature;
+  // Legacy-contract aliases (USER decision 283): contract-3 keys this legacy model serves.
+  std::vector<LegacyContractAlias> legacy_contract_aliases;
 
   // Curvature family node (curved coupons built on axisymmetric (r, z) meshes): the
   // coupon's kappa = R / rho and whether the metal lies inside the circle (convex, a disk
@@ -1559,6 +1561,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   MFEM_VERIFY(allow_empty_models || !models.empty(),
               "Fabrication-process response library must contain at least one model!");
   std::set<std::string> names;
+  std::set<std::string> legacy_alias_keys;
   std::set<InterfaceDielectric> mapped_interface_types;
   for (const auto &entry : models)
   {
@@ -1588,6 +1591,49 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                   "Fabrication-process response model \""
                       << model.name << "\" Signature.Type does not match its Topology!");
       model.identification_signature = *signature;
+    }
+    if (auto aliases = entry.find("LegacyContractAliases"); aliases != entry.end())
+    {
+      MFEM_VERIFY(aliases->is_array(), "Fabrication-process response model \""
+                                           << model.name
+                                           << "\" LegacyContractAliases must be an array!");
+      MFEM_VERIFY(model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER &&
+                      model.identification_signature,
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" lists LegacyContractAliases but is not a SpatialEdgeCluster "
+                         "model with a Signature (USER decision 283)!");
+      const std::string own_hash =
+          SignatureKeyAndHash(*model.identification_signature, "SpatialEdgeCluster").second;
+      auto Hex64 = [](const std::string &text)
+      {
+        return text.size() == 64 &&
+               std::all_of(text.begin(), text.end(), [](char c)
+                           { return std::isxdigit(static_cast<unsigned char>(c)); });
+      };
+      for (const auto &alias_entry : *aliases)
+      {
+        LegacyContractAlias alias;
+        alias.key = alias_entry.value("Key", std::string{});
+        alias.context_digest = alias_entry.value("ContextDigest", std::string{});
+        alias.reason = alias_entry.value("Reason", std::string{});
+        alias.context = alias_entry.value("Context", nlohmann::json(nullptr));
+        MFEM_VERIFY(Hex64(alias.key) && Hex64(alias.context_digest) &&
+                        !alias.reason.empty(),
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" LegacyContractAliases entries need a 64-hex Key, a 64-hex "
+                           "ContextDigest and a Reason!");
+        MFEM_VERIFY(alias.key != own_hash,
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" lists its own key as a legacy-contract alias!");
+        MFEM_VERIFY(legacy_alias_keys.insert(alias.key).second,
+                    "Fabrication-process response library lists the legacy-contract alias "
+                    "key "
+                        << alias.key << " twice (model \"" << model.name << "\")!");
+        model.legacy_contract_aliases.push_back(std::move(alias));
+      }
     }
     model.arm_angles = entry.value("ArmAngles", std::vector<double>{});
     model.arm_angle_tolerance =
@@ -6513,6 +6559,25 @@ public:
 
   std::size_t Size() const { return entries.size(); }
 
+  // Legacy-contract aliases (USER decision 283), keyed by the aliased v3 hash: the legacy
+  // model's name and Signature with the alias. Looked up by the exact hash only.
+  struct AliasEntry
+  {
+    std::string model;
+    nlohmann::json model_signature;
+    LegacyContractAlias alias;
+  };
+  void AddAlias(const std::string &model, const nlohmann::json &model_signature,
+                const LegacyContractAlias &alias)
+  {
+    aliases.emplace(alias.key, AliasEntry{model, model_signature, alias});
+  }
+  const AliasEntry *FindAlias(const std::string &hash) const
+  {
+    const auto it = aliases.find(hash);
+    return it == aliases.end() ? nullptr : &it->second;
+  }
+
 private:
   struct Entry
   {
@@ -6522,7 +6587,61 @@ private:
   };
   std::vector<Entry> entries;
   std::map<std::string, std::vector<std::size_t>> by_topology;
+  std::map<std::string, AliasEntry> aliases;
 };
+
+}  // namespace
+
+nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
+                                          const nlohmann::json &model_signature,
+                                          const LegacyContractAlias &alias,
+                                          const IdentifiedFeature &feature)
+{
+  MFEM_VERIFY(feature.hash == alias.key,
+              "Legacy-contract alias of model \""
+                  << model_name << "\" resolved for a feature whose key " << feature.hash
+                  << " is not the alias key " << alias.key << "!");
+  const std::string digest = SpatialSupportContextDigest(feature.signature);
+  MFEM_VERIFY(!digest.empty() && digest == alias.context_digest,
+              "Legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the feature's context digest "
+                  << (digest.empty() ? std::string("(no Box)") : digest)
+                  << " does not match the alias's ContextDigest " << alias.context_digest
+                  << " (USER decision 283: fail closed)!");
+  // The feature's claims-only key (the claims canonicalised alone, recorded by the
+  // identification: the Portions of a contract-3 signature are serialised in the frame
+  // that minimises Box + Context, so they cannot be re-keyed by removing those members).
+  const std::string claims_hash =
+      feature.spatial_support.is_object()
+          ? feature.spatial_support.value("ClaimsKey", std::string{})
+          : std::string{};
+  const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
+  (void)model_key;
+  MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
+              "Legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the feature's claims-only key " << claims_hash
+                  << " is not the legacy model's key " << model_hash
+                  << " (the alias names another geometry; fail closed)!");
+  return nlohmann::json{
+      {"Model", model_name},
+      {"Key", alias.key},
+      {"ContextDigest", alias.context_digest},
+      {"ClaimsKey", claims_hash},
+      {"Reason", alias.reason},
+      {"Context",
+       {{"Box", feature.signature.value("Box", nlohmann::json(nullptr))},
+        {"Context", feature.signature.value("Context", nlohmann::json::array())}}},
+      {"Rule", "USER decision 283: an explicit library-side alias from a contract-3 "
+               "key to a legacy model (decision-236 straight-continuation coupon); "
+               "usable ONLY for the listed key, never a fallback; the feature's "
+               "context digest and claims-only key are verified against the alias "
+               "and the model (mismatch aborts)"}};
+}
+
+namespace
+{
 
 LibrarySignatureIndex
 LibrarySignatureKeys(const ProcessLibrary &library,
@@ -6558,6 +6677,10 @@ LibrarySignatureKeys(const ProcessLibrary &library,
       index.Add(*model.identification_signature,
                 model.identification_signature->at("Type").get<std::string>(), model.name,
                 rank);
+      for (const auto &alias : model.legacy_contract_aliases)
+      {
+        index.AddAlias(model.name, *model.identification_signature, alias);
+      }
       continue;
     }
     switch (model.topology)
@@ -6845,6 +6968,28 @@ IdentificationResult RunGeometryIdentification(
       feature.matched_model = match->first;
       feature.match_deviation = match->second;
     }
+    else if (const auto *alias = library_keys.FindAlias(feature.hash))
+    {
+      // Legacy-contract alias (USER decision 283): the library lists this contract-3 key
+      // explicitly for a legacy model; verified (digest, claims) or aborted, recorded.
+      feature.legacy_contract = ResolveLegacyContractAlias(
+          alias->model, alias->model_signature, alias->alias, feature);
+      // The legacy model's Edges and basis points live in the claims-only canonical frame:
+      // the feature is placed in that frame (the contract-3 frame minimises Box + Context
+      // and may differ by a rotation / reflection), so that the patches are the legacy
+      // library's patches exactly.
+      feature.origin = feature.claims_origin;
+      feature.axes = feature.claims_axes;
+      feature.chirality = feature.claims_chirality;
+      feature.legacy_contract["PlacementFrame"] =
+          "the claims-only canonical frame (Features[].ClaimsFrame), the legacy model's";
+      feature.matched_model = alias->model;
+      feature.match_deviation = 0.0;
+      feature.match_note =
+          "legacy contract (USER decision 283): key " + feature.hash.substr(0, 12) +
+          " resolved through the alias of \"" + alias->model + "\" (context digest " +
+          alias->alias.context_digest.substr(0, 12) + " verified)";
+    }
     else if (StraightTopologyOfCurvedFeature(feature.type) && !feature.portions.empty())
     {
       // Curvature family (never silently straight): matched at its kappa or reported with
@@ -7041,6 +7186,7 @@ IdentificationResult RunGeometryIdentification(
     nlohmann::json curvature_family;  // the family selection of a curved feature
     nlohmann::json corner_family;     // the family selection of an interpolated corner
     std::set<std::string> notes;      // matching notes (family refusals)
+    nlohmann::json legacy_contract;   // the alias record (USER decision 283) + Features
   };
   struct GroupBase
   {
@@ -7113,6 +7259,15 @@ IdentificationResult RunGeometryIdentification(
     {
       instance->second.models.insert(*feature.matched_model);
     }
+    if (!feature.legacy_contract.is_null())
+    {
+      if (instance->second.legacy_contract.is_null())
+      {
+        instance->second.legacy_contract = feature.legacy_contract;
+        instance->second.legacy_contract["Features"] = nlohmann::json::array();
+      }
+      instance->second.legacy_contract["Features"].push_back(feature.id);
+    }
     if (const auto record = curvature_records.find(feature.id);
         record != curvature_records.end())
     {
@@ -7171,6 +7326,7 @@ IdentificationResult RunGeometryIdentification(
       double length = 0.0;
       std::set<std::string> models, notes;
       nlohmann::json curvature_family, corner_family;
+      nlohmann::json legacy_contract = nlohmann::json::array();
       bool exact = true;
       for (const std::size_t i : members)
       {
@@ -7181,6 +7337,10 @@ IdentificationResult RunGeometryIdentification(
         length += instance.length;
         models.insert(instance.models.begin(), instance.models.end());
         notes.insert(instance.notes.begin(), instance.notes.end());
+        if (!instance.legacy_contract.is_null())
+        {
+          legacy_contract.push_back(instance.legacy_contract);
+        }
         if (curvature_family.is_null() && !instance.curvature_family.is_null())
         {
           curvature_family = instance.curvature_family;
@@ -7245,6 +7405,12 @@ IdentificationResult RunGeometryIdentification(
       if (!notes.empty())
       {
         record["Notes"] = notes;
+      }
+      if (!legacy_contract.empty())
+      {
+        // Matched through the library's explicit legacy-contract alias (USER decision
+        // 283): Status Exact (the legacy coupon is applied), flagged with the record.
+        record["LegacyContract"] = legacy_contract;
       }
       requirements->AddFeatureRecord(record, count, length);
     }
@@ -9188,6 +9354,43 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             requirements ? *requirements : law_describer, diagnostics,
                             result, curved_matches, corner_matches);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    // Legacy-contract aliases resolved by the matching pass (USER decision 283): one record
+    // per alias with the features it served, carried into the operator record and the
+    // geometry cache.
+    result.legacy_contract.clear();
+    for (const auto &feature : identification.features)
+    {
+      if (feature.legacy_contract.is_null())
+      {
+        continue;
+      }
+      const std::string key = feature.legacy_contract.at("Key").get<std::string>();
+      auto it = std::find_if(result.legacy_contract.begin(), result.legacy_contract.end(),
+                             [&](const auto &entry) { return entry.key == key; });
+      if (it == result.legacy_contract.end())
+      {
+        result.legacy_contract.push_back(
+            {feature.legacy_contract.at("Model").get<std::string>(),
+             key,
+             feature.legacy_contract.at("ContextDigest").get<std::string>(),
+             feature.legacy_contract.at("Reason").get<std::string>(),
+             {}});
+        it = std::prev(result.legacy_contract.end());
+      }
+      it->features.push_back(feature.id);
+    }
+    if (!result.legacy_contract.empty())
+    {
+      std::string text;
+      for (const auto &entry : result.legacy_contract)
+      {
+        text += fmt::format("{}{} <- key {} ({:d} feature{})", text.empty() ? "" : ", ",
+                            entry.model, entry.key.substr(0, 12), entry.features.size(),
+                            entry.features.size() == 1 ? "" : "s");
+      }
+      Mpi::Print(mesh.GetComm(), " Legacy-contract aliases (USER decision 283): {}\n",
+                 text);
+    }
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
     {
@@ -13709,12 +13912,25 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  output << nlohmann::json{{"Version", 6},
-                           {"MatchingRadius", config.matching_radius},
-                           {"Models", std::move(models)},
-                           {"Patches", std::move(patches)}}
-                .dump(2)
-         << '\n';
+  nlohmann::json cache = {{"Version", 6},
+                          {"MatchingRadius", config.matching_radius},
+                          {"Models", std::move(models)},
+                          {"Patches", std::move(patches)}};
+  if (!config.legacy_contract.empty())
+  {
+    // Legacy-contract aliases resolved for this geometry (USER decision 283).
+    nlohmann::json aliases = nlohmann::json::array();
+    for (const auto &entry : config.legacy_contract)
+    {
+      aliases.push_back({{"Model", entry.model},
+                         {"Key", entry.key},
+                         {"ContextDigest", entry.context_digest},
+                         {"Reason", entry.reason},
+                         {"Features", entry.features}});
+    }
+    cache["LegacyContract"] = std::move(aliases);
+  }
+  output << cache.dump(2) << '\n';
 }
 
 ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &path,
@@ -13735,6 +13951,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   result.library.clear();
   result.models.clear();
   result.patches.clear();
+  result.legacy_contract.clear();
   result.matching_radius = data.at("MatchingRadius");
   for (const auto &entry : data.at("Models"))
   {
@@ -13823,6 +14040,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   }
   MFEM_VERIFY(!result.models.empty() && !result.patches.empty(),
               "Response-geometry cache contains no models or patches!");
+  for (const auto &entry : data.value("LegacyContract", nlohmann::json::array()))
+  {
+    result.legacy_contract.push_back(
+        {entry.at("Model").get<std::string>(), entry.at("Key").get<std::string>(),
+         entry.at("ContextDigest").get<std::string>(), entry.value("Reason", std::string{}),
+         entry.value("Features", std::vector<int>{})});
+  }
   return result;
 }
 
@@ -14028,6 +14252,53 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         {"Features", exclusion_diagnostics["Features"]},
         {"CellLength", exclusion_diagnostics["CellLength"]},
         {"PortionLength", exclusion_diagnostics["PortionLength"]}};
+    // Legacy-contract aliases (USER decision 283) in the inventory: the features matched
+    // through an explicit alias (Status Exact, the legacy coupon applied), their claimed
+    // length and the aliases.
+    {
+      nlohmann::json aliases = nlohmann::json::array();
+      int legacy_features = 0;
+      double legacy_length = 0.0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (!feature["Match"].contains("LegacyContract"))
+        {
+          continue;
+        }
+        legacy_features++;
+        legacy_length += feature["Length"].get<double>();
+        const auto &record = feature["Match"]["LegacyContract"];
+        auto it = std::find_if(aliases.begin(), aliases.end(), [&](const nlohmann::json &a)
+                               { return a["Key"] == record["Key"]; });
+        if (it == aliases.end())
+        {
+          aliases.push_back({{"Model", record["Model"]},
+                             {"Key", record["Key"]},
+                             {"ContextDigest", record["ContextDigest"]},
+                             {"Reason", record["Reason"]},
+                             {"Features", nlohmann::json::array()}});
+          it = std::prev(aliases.end());
+        }
+        (*it)["Features"].push_back(feature["Id"]);
+      }
+      manifest["Summary"]["Counts"]["LegacyContract"] = legacy_features;
+      manifest["Summary"]["TotalEdgeLengths"]["LegacyContract"] = legacy_length;
+      manifest["Summary"]["LegacyContract"] = {
+          {"Features", legacy_features},
+          {"Length", legacy_length},
+          {"Aliases", aliases},
+          {"Rule", "USER decision 283: features whose contract-3 key the library maps "
+                   "explicitly (LegacyContractAliases: key + context digest, verified) to "
+                   "a legacy model built under the decision-236 straight-continuation "
+                   "contract; counted in Exact as well (the legacy coupon is applied); "
+                   "never a fallback for any other key"}};
+      if (legacy_features > 0)
+      {
+        Mpi::Warning("{:d} feature(s) matched through legacy-contract aliases (USER "
+                     "decision 283); see Summary.LegacyContract!\n",
+                     legacy_features);
+      }
+    }
     // The conductor-consistency gate (decision 277) needs the device trace: it is evaluated
     // by the operator at solve time (every excitation, before any energy) and reported in
     // the operator's Diagnostics.ConductorConsistency (palace.json), never by the dry run.
@@ -16468,6 +16739,30 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    << ". Replace them with one coupled spatial model or an explicit "
                       "nonoverlapping partition!");
       }
+    }
+    if (!config->legacy_contract.empty())
+    {
+      // Legacy-contract aliases (USER decision 283) in the operator record: the legacy
+      // models applied for contract-3 keys the library lists explicitly.
+      nlohmann::json aliases = nlohmann::json::array();
+      for (const auto &entry : config->legacy_contract)
+      {
+        aliases.push_back({{"Model", entry.model},
+                           {"Key", entry.key},
+                           {"ContextDigest", entry.context_digest},
+                           {"Reason", entry.reason},
+                           {"Features", entry.features}});
+      }
+      ownership_diagnostics["LegacyContract"] = {
+          {"Count", aliases.size()},
+          {"Aliases", std::move(aliases)},
+          {"Rule", "USER decision 283: a legacy model (decision-236 straight-continuation "
+                   "coupon) applied for a contract-3 key through the library's explicit "
+                   "LegacyContractAliases entry (key + verified context digest); never a "
+                   "fallback for any other key"}};
+      Mpi::Warning("Legacy-contract aliases applied (USER decision 283): {:d} model(s) "
+                   "serve contract-3 keys through explicit library aliases!\n",
+                   static_cast<int>(config->legacy_contract.size()));
     }
     if (!margin_overlaps.empty())
     {
