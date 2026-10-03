@@ -1236,11 +1236,19 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
       CheckRejected(config);
     }
   }
-  SECTION("Adaptive circuit synthesis is rejected")
+  SECTION("Adaptive circuit synthesis is accepted")
   {
     auto config = MakeConfig();
+    config["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-3;
     config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = true;
-    CheckRejected(config);
+    json port;
+    port["Index"] = 1;
+    port["Attributes"] = {2};
+    port["R"] = 50.0;
+    port["Direction"] = "+X";
+    port["Excitation"] = true;
+    config["Boundaries"]["LumpedPort"] = json::array({port});
+    CHECK_NOTHROW(IoData(config, false));
   }
   SECTION("Numeric wave ports are rejected")
   {

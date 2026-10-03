@@ -335,9 +335,6 @@ void IoData::CheckConfiguration()
                     problem.type == ProblemType::EIGENMODE,
                 "Frequency-dependent material Permittivity is only supported for Driven "
                 "and Eigenmode simulations!");
-    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
-                "Frequency-dependent material Permittivity does not support "
-                "AdaptiveCircuitSynthesis!");
     MFEM_VERIFY(boundaries.waveport.empty() && boundaries.auxpec.empty(),
                 "Frequency-dependent material Permittivity does not support numeric "
                 "WavePort or WavePortPEC boundary conditions!");
