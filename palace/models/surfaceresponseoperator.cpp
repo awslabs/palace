@@ -15420,6 +15420,391 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
       diagnostics["WallTime"].get<double>(), lines);
 }
 
+void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel &model)
+{
+  model.plane_conductor_vertices.clear();
+  model.off_plane_conductor_vertices.clear();
+  model.adjacent_free_vertices.clear();
+  const int vertex_count = static_cast<int>(model.mortar_vertices.size());
+  // The process plane is w = 0 of the coupon frame (the metal bottom, where the device's
+  // metal sheet lies); the tolerance is relative to the trace mesh's extent normal to it.
+  double extent = 0.0;
+  for (const auto &vertex : model.mortar_vertices)
+  {
+    extent = std::max(extent, std::abs(vertex.point[2]));
+  }
+  const double plane_tolerance = 1.0e-6 * extent;
+  std::set<int> conductors, plane_conductors;
+  for (int v = 0; v < vertex_count; v++)
+  {
+    const auto &vertex = model.mortar_vertices[v];
+    if (vertex.conductor <= 0)
+    {
+      continue;
+    }
+    conductors.insert(vertex.conductor);
+    if (std::abs(vertex.point[2]) <= plane_tolerance)
+    {
+      model.plane_conductor_vertices.push_back(v);
+      plane_conductors.insert(vertex.conductor);
+    }
+    else
+    {
+      model.off_plane_conductor_vertices.push_back(v);
+    }
+  }
+  for (const int conductor : conductors)
+  {
+    MFEM_VERIFY(plane_conductors.count(conductor),
+                "Conductor-consistency gate (decision 277): conductor "
+                    << conductor << " of the trace mesh of response model \"" << model.name
+                    << "\" has no vertex on the process plane (w = 0), so its metal "
+                       "cross-section on the box faces cannot be probed!");
+  }
+  if (model.plane_conductor_vertices.empty())
+  {
+    return;
+  }
+  // The adjacent free knots: sharing a trace-triangle edge with a plane conductor vertex,
+  // in its column (the same in-plane position), a basis knot (no slave, no conductor) and
+  // next to vertices of one conductor only.
+  std::vector<std::set<int>> neighbors(vertex_count);
+  for (const auto &triangle : model.mortar_triangles)
+  {
+    for (const int a : triangle.vertices)
+    {
+      for (const int b : triangle.vertices)
+      {
+        if (a != b)
+        {
+          neighbors[a].insert(b);
+        }
+      }
+    }
+  }
+  std::map<int, std::set<int>> free_conductors;
+  std::map<int, int> free_plane_vertex;
+  for (const int p : model.plane_conductor_vertices)
+  {
+    const auto &plane = model.mortar_vertices[p];
+    for (const int n : neighbors[p])
+    {
+      const auto &free = model.mortar_vertices[n];
+      if (free.conductor > 0 || free.basis < 0 || free.second_basis >= 0 ||
+          std::abs(free.point[0] - plane.point[0]) > plane_tolerance ||
+          std::abs(free.point[1] - plane.point[1]) > plane_tolerance)
+      {
+        continue;
+      }
+      free_conductors[n].insert(plane.conductor);
+      free_plane_vertex.try_emplace(n, p);
+    }
+  }
+  for (const auto &[n, conductor_set] : free_conductors)
+  {
+    if (conductor_set.size() == 1)
+    {
+      model.adjacent_free_vertices.emplace_back(n, free_plane_vertex.at(n));
+    }
+  }
+}
+
+bool SurfaceResponseOperator::HasConductorConsistencyProbes() const
+{
+  int local = 0;
+  for (const auto &patch : patches)
+  {
+    if (!models[patch.model].plane_conductor_vertices.empty())
+    {
+      local = 1;
+      break;
+    }
+  }
+  Mpi::GlobalMax(1, &local, fespace.GetComm());
+  return local > 0;
+}
+
+std::vector<SurfaceResponseOperator::ConductorConsistencyRecord>
+SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int source)
+{
+  MFEM_VERIFY(!maxwell, "The conductor-consistency gate applies to electrostatic response "
+                        "correction only!");
+  // The trace walk also samples the probe points (the device potential at the conductor
+  // vertices) into `correction`.
+  ApplyTrace(x, trace);
+  constexpr int record_size = 20;
+  std::vector<double> local_records;
+  for (auto &patch : patches)
+  {
+    const auto &model = models[patch.model];
+    if (patch.probe_point_count == 0 || patch.weight <= 0.0)
+    {
+      continue;
+    }
+    MFEM_ASSERT(patch.probe_point_count ==
+                    static_cast<int>(model.plane_conductor_vertices.size() +
+                                     model.off_plane_conductor_vertices.size()),
+                "Inconsistent conductor-consistency probe count!");
+    const int reference_offset = patch.point_offset + patch.point_count -
+                                 patch.probe_point_count - model.conductor_state_count - 1;
+    const int probe_offset =
+        patch.point_offset + patch.point_count - patch.probe_point_count;
+    auto ConductorValue = [&](int conductor)
+    { return correction(reference_offset + conductor - 1); };
+    ConductorConsistencyRecord record;
+    record.patch = patch.global_index;
+    record.model = model.idx;
+    record.source = source;
+    record.plane_knots = static_cast<int>(model.plane_conductor_vertices.size());
+    record.off_plane_knots = static_cast<int>(model.off_plane_conductor_vertices.size());
+    record.adjacent_knots = static_cast<int>(model.adjacent_free_vertices.size());
+    record.claim_length = patch.claim_length;
+    record.cell_length = patch.cell_length;
+    for (int i = 0; i < model.basis_size; i++)
+    {
+      record.amplitude =
+          std::max(record.amplitude, std::abs(trace(patch.trace_offset + i)));
+    }
+    for (int state = 0; state < model.conductor_state_count; state++)
+    {
+      record.state = std::max(
+          record.state, std::abs(trace(patch.trace_offset + model.contour_size + state)));
+    }
+    auto Ratio = [&](double deviation)
+    {
+      if (record.amplitude > 0.0)
+      {
+        return std::abs(deviation) / record.amplitude;
+      }
+      return deviation == 0.0 ? 0.0 : mfem::infinity();
+    };
+    int probe = 0;
+    for (const int v : model.plane_conductor_vertices)
+    {
+      const auto &vertex = model.mortar_vertices[v];
+      const double deviation =
+          correction(probe_offset + probe) - ConductorValue(vertex.conductor);
+      if (probe == 0 || std::abs(deviation) > record.max_deviation)
+      {
+        record.max_deviation = std::abs(deviation);
+        record.max_ratio = Ratio(deviation);
+        record.worst_vertex = v;
+        record.worst_conductor = vertex.conductor;
+        record.worst_point = patch.probe_points[probe];
+      }
+      probe++;
+    }
+    for (const int v : model.off_plane_conductor_vertices)
+    {
+      const auto &vertex = model.mortar_vertices[v];
+      const double deviation =
+          correction(probe_offset + probe) - ConductorValue(vertex.conductor);
+      record.off_plane_max_ratio = std::max(record.off_plane_max_ratio, Ratio(deviation));
+      probe++;
+    }
+    for (const auto &[free, plane] : model.adjacent_free_vertices)
+    {
+      const int conductor = model.mortar_vertices[plane].conductor;
+      // Trace coefficients are relative to conductor 1; conductor c >= 2 is its state.
+      const double conductor_trace =
+          conductor == 1 ? 0.0
+                         : trace(patch.trace_offset + model.contour_size + conductor - 2);
+      const double deviation =
+          trace(patch.trace_offset + model.mortar_vertices[free].basis) - conductor_trace;
+      record.adjacent_max_ratio = std::max(record.adjacent_max_ratio, Ratio(deviation));
+    }
+    record.excluded = record.max_ratio > kConductorConsistencyTolerance;
+    if (record.excluded)
+    {
+      patch.weight = 0.0;
+    }
+    local_records.insert(local_records.end(), {static_cast<double>(record.patch),
+                                               static_cast<double>(record.model),
+                                               static_cast<double>(record.source),
+                                               static_cast<double>(record.plane_knots),
+                                               static_cast<double>(record.off_plane_knots),
+                                               static_cast<double>(record.adjacent_knots),
+                                               record.amplitude,
+                                               record.state,
+                                               record.max_deviation,
+                                               record.max_ratio,
+                                               static_cast<double>(record.worst_vertex),
+                                               static_cast<double>(record.worst_conductor),
+                                               record.worst_point[0],
+                                               record.worst_point[1],
+                                               record.worst_point[2],
+                                               record.off_plane_max_ratio,
+                                               record.adjacent_max_ratio,
+                                               record.claim_length,
+                                               record.cell_length,
+                                               record.excluded ? 1.0 : 0.0});
+  }
+  MFEM_VERIFY(local_records.size() <=
+                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Local conductor-consistency data exceeds the MPI count limit!");
+  const int local_value_count = static_cast<int>(local_records.size());
+  std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
+  Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
+  std::vector<int> value_offsets(value_counts.size());
+  int total_values = 0;
+  for (std::size_t rank = 0; rank < value_counts.size(); rank++)
+  {
+    value_offsets[rank] = total_values;
+    total_values += value_counts[rank];
+  }
+  std::vector<double> values(total_values);
+  Mpi::Allgatherv(local_value_count, local_records.data(), values.data(),
+                  value_counts.data(), value_offsets.data(), fespace.GetComm());
+  MFEM_VERIFY(values.size() % record_size == 0, "Truncated conductor-consistency record!");
+  std::vector<ConductorConsistencyRecord> records;
+  for (std::size_t offset = 0; offset < values.size(); offset += record_size)
+  {
+    const double *r = values.data() + offset;
+    ConductorConsistencyRecord record;
+    record.patch = static_cast<int>(std::llround(r[0]));
+    record.model = static_cast<int>(std::llround(r[1]));
+    record.source = static_cast<int>(std::llround(r[2]));
+    record.plane_knots = static_cast<int>(std::llround(r[3]));
+    record.off_plane_knots = static_cast<int>(std::llround(r[4]));
+    record.adjacent_knots = static_cast<int>(std::llround(r[5]));
+    record.amplitude = r[6];
+    record.state = r[7];
+    record.max_deviation = r[8];
+    record.max_ratio = r[9];
+    record.worst_vertex = static_cast<int>(std::llround(r[10]));
+    record.worst_conductor = static_cast<int>(std::llround(r[11]));
+    record.worst_point = {r[12], r[13], r[14]};
+    record.off_plane_max_ratio = r[15];
+    record.adjacent_max_ratio = r[16];
+    record.claim_length = r[17];
+    record.cell_length = r[18];
+    record.excluded = r[19] > 0.5;
+    records.push_back(record);
+  }
+  std::sort(records.begin(), records.end(),
+            [](const auto &a, const auto &b) { return a.patch < b.patch; });
+
+  // The record (every rank holds the same): one entry per tested patch and excitation,
+  // the excluded patches' claim / cell lengths totalled next to the DomainBoundary record.
+  std::map<int, std::string> model_names = GetModelNames();
+  auto &diagnostics = ownership_diagnostics["ConductorConsistency"];
+  if (diagnostics.is_null())
+  {
+    diagnostics = {
+        {"Tolerance", kConductorConsistencyTolerance},
+        {"Count", 0},
+        {"ClaimLength", 0.0},
+        {"CellLength", 0.0},
+        {"TestedPatches", 0},
+        {"ExcludedPatches", nlohmann::json::array()},
+        {"Records", nlohmann::json::array()},
+        {"Rule",
+         "decision 277 (2026-10-03): solve-time gate on every applied spatial "
+         "surface-mortar "
+         "patch, per excitation. MaxRatio = max over the trace mesh's conductor vertices "
+         "on "
+         "the process plane (w = 0: the coupon's metal bottom on the device's metal sheet) "
+         "of |V_device(knot) - V_device(conductor reference)| / Amplitude, Amplitude = max "
+         "|trace coefficient| of the patch incl. its conductor states (= the state for a "
+         "two-conductor coupon without overshoots; State alongside). Real metal reads ~0 "
+         "(the knot lies on a Dirichlet surface of the device), coupon metal where the "
+         "device has gap reads the gap potential. MaxRatio > Tolerance excludes the patch "
+         "(weight 0 from this excitation on, like a DomainBoundary cell; the patches CSV "
+         "is rewritten); ClaimLength is the excluded spatial clusters' claimed portion "
+         "length (left uncorrected; B1 adds it to Missing and DomainBoundary), CellLength "
+         "the excluded longitudinal cells (0 for spatial patches). Information only: "
+         "OffPlaneMaxRatio (the metal top rows, in the device gap for a thin device) and "
+         "AdjacentMaxRatio (the free knots adjacent to a plane conductor vertex in its "
+         "column: their mortar coefficient vs the conductor; near-edge field x 50 nm, up "
+         "to 0.27 of the amplitude on real metal). Not evaluated by the preflight (no "
+         "device trace). Lengths and coordinates in mesh units"}};
+  }
+  int excluded_count = 0;
+  double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
+  int max_patch = -1;
+  for (const auto &record : records)
+  {
+    nlohmann::json entry = {{"Patch", record.patch},
+                            {"Model", model_names.at(record.model)},
+                            {"ModelIndex", record.model},
+                            {"Source", record.source},
+                            {"PlaneKnots", record.plane_knots},
+                            {"OffPlaneKnots", record.off_plane_knots},
+                            {"AdjacentKnots", record.adjacent_knots},
+                            {"Amplitude", record.amplitude},
+                            {"State", record.state},
+                            {"MaxDeviation", record.max_deviation},
+                            {"MaxRatio", record.max_ratio},
+                            {"MaxRatioOverState", record.state > 0.0
+                                                      ? record.max_deviation / record.state
+                                                      : 0.0},
+                            {"WorstVertex", record.worst_vertex},
+                            {"WorstConductor", record.worst_conductor},
+                            {"WorstPoint",
+                             {record.worst_point[0] * mesh_coordinate_scale,
+                              record.worst_point[1] * mesh_coordinate_scale,
+                              record.worst_point[2] * mesh_coordinate_scale}},
+                            {"OffPlaneMaxRatio", record.off_plane_max_ratio},
+                            {"AdjacentMaxRatio", record.adjacent_max_ratio},
+                            {"ClaimLength", record.claim_length * mesh_coordinate_scale},
+                            {"CellLength", record.cell_length * mesh_coordinate_scale},
+                            {"Excluded", record.excluded}};
+    diagnostics["Records"].push_back(entry);
+    if (record.excluded)
+    {
+      diagnostics["ExcludedPatches"].push_back(entry);
+      excluded_count++;
+      excluded_claims += record.claim_length * mesh_coordinate_scale;
+      excluded_cells += record.cell_length * mesh_coordinate_scale;
+      // The root's patch table (the patches CSV) follows the exclusion.
+      for (auto &assignment : patch_assignments)
+      {
+        if (assignment.global_index == record.patch)
+        {
+          assignment.weight = 0.0;
+        }
+      }
+    }
+    if (record.max_ratio > max_ratio || max_patch < 0)
+    {
+      max_ratio = record.max_ratio;
+      max_patch = record.patch;
+    }
+  }
+  diagnostics["Count"] = diagnostics["Count"].get<int>() + excluded_count;
+  diagnostics["ClaimLength"] = diagnostics["ClaimLength"].get<double>() + excluded_claims;
+  diagnostics["CellLength"] = diagnostics["CellLength"].get<double>() + excluded_cells;
+  diagnostics["TestedPatches"] =
+      diagnostics["TestedPatches"].get<int>() + static_cast<int>(records.size());
+  if (!records.empty())
+  {
+    Mpi::Print(" Conductor-consistency gate (decision 277), excitation {:d}: {:d} spatial "
+               "patch(es) probed, max ratio {:.3e} (patch {:d}, 0-based), {:d} excluded "
+               "(tolerance {:.3e}; claims {:.6e}, cells {:.6e} mesh units left "
+               "uncorrected)\n",
+               source, static_cast<int>(records.size()), max_ratio, max_patch,
+               excluded_count, kConductorConsistencyTolerance, excluded_claims,
+               excluded_cells);
+    for (const auto &record : records)
+    {
+      if (record.excluded)
+      {
+        Mpi::Print(
+            "  patch {:d} (0-based; {}): |dV| {:.6e} = {:.3e} of the amplitude "
+            "{:.6e} (state {:.6e}) at trace vertex {:d} of conductor {:d}, point "
+            "({:.6e}, {:.6e}, {:.6e}) mesh units; claims {:.6e} mesh units EXCLUDED\n",
+            record.patch, model_names.at(record.model), record.max_deviation,
+            record.max_ratio, record.amplitude, record.state, record.worst_vertex,
+            record.worst_conductor, record.worst_point[0] * mesh_coordinate_scale,
+            record.worst_point[1] * mesh_coordinate_scale,
+            record.worst_point[2] * mesh_coordinate_scale,
+            record.claim_length * mesh_coordinate_scale);
+      }
+    }
+  }
+  return records;
+}
+
 SurfaceResponseOperator::SurfaceResponseOperator(
     const IoData &iodata, const LaplaceOperator &laplace_op,
     std::shared_ptr<const SurfaceResponseGeometry> *automatic_geometry)
@@ -15798,6 +16183,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         }
         MFEM_VERIFY(!model.mortar_triangles.empty(),
                     "A spatial surface mortar has no nondegenerate triangles!");
+        ConfigureConductorConsistencyProbes(model);
       }
       else
       {
@@ -16099,7 +16485,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     {
       patch_assignments.push_back({model.idx, patch_config.origin, patch_config.axis_u,
                                    patch_config.axis_v, patch_config.axis_w,
-                                   patch_config.weight});
+                                   patch_config.weight, static_cast<int>(patch_idx)});
     }
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
@@ -16117,6 +16503,22 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 "Response-correction patch longitudinal cells must be ordered intervals!");
     patches.push_back(Patch{static_cast<int>(patch_idx), model_it->second, 0, basis_size, 0,
                             patch_config.longitudinal_cell, 1, 0.0, patch_config.weight});
+    // The provenance of the conductor-consistency record (decision 277): the feature, the
+    // claimed portions of a spatial cluster and the longitudinal cell, mesh units.
+    auto &placed = patches.back();
+    placed.feature = patch_config.provenance.feature;
+    placed.cell_length =
+        patch_config.longitudinal_cell[1] - patch_config.longitudinal_cell[0];
+    for (const auto &claim : patch_config.provenance.claims)
+    {
+      double length_squared = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = claim.p1[d] - claim.p0[d];
+        length_squared += delta * delta;
+      }
+      placed.claim_length += std::sqrt(length_squared);
+    }
     basis_size += model.basis_size;
   }
 
@@ -16210,6 +16612,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           surface_sample_count += 4 * subdivisions * subdivisions;
         }
         patch.point_count = surface_sample_count + model.conductor_state_count + 1;
+        // The conductor-consistency probes (decision 277) follow the references.
+        patch.probe_point_count =
+            static_cast<int>(model.plane_conductor_vertices.size() +
+                             model.off_plane_conductor_vertices.size());
+        patch.point_count += patch.probe_point_count;
       }
       else
       {
@@ -16240,6 +16647,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   global_basis_size = basis_size;
   long long int global_point_count = point_count;
   Mpi::GlobalSum(1, &global_point_count, fespace.GetComm());
+  long long int global_probe_count = 0;
+  for (const auto &patch : patches)
+  {
+    global_probe_count += patch.probe_point_count;
+  }
+  Mpi::GlobalSum(1, &global_probe_count, fespace.GetComm());
   // Runaway guard, not a memory model: every point stores its element stencil on the
   // owning rank (one int and one double per element dof: ~0.7 kB at p5 on tetrahedra,
   // 56 dofs; ~2.6 kB on hexahedra, 216 dofs) plus ~50 B of query bookkeeping, so the
@@ -16388,6 +16801,31 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           }
           point++;
         }
+        // The conductor-consistency probes: the conductor vertices of the trace mesh, the
+        // plane ones first (the gate), then those off the plane (recorded).
+        auto &probes = patches[patch_idx].probe_points;
+        probes.clear();
+        for (const auto *vertices :
+             {&model.plane_conductor_vertices, &model.off_plane_conductor_vertices})
+        {
+          for (const int v : *vertices)
+          {
+            const auto &local = model.mortar_vertices[v].point;
+            std::array<double, 3> probe{};
+            for (int d = 0; d < dimension; d++)
+            {
+              probe[d] = patch_config.origin[d] +
+                         (local[0] * patch_config.axis_u[d] +
+                          local[1] * patch_config.axis_v[d] + local[2] * axis_w[d]) /
+                             coordinate_scale;
+              xyz(d * point_count + point) = probe[d];
+            }
+            probes.push_back(probe);
+            point++;
+          }
+        }
+        MFEM_ASSERT(static_cast<int>(probes.size()) == patch.probe_point_count,
+                    "Incorrect conductor-consistency probe count!");
       }
       else
       {
@@ -16511,7 +16949,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       domain_mode_patch_count[static_cast<std::size_t>(DomainCorrectionMode::DISABLED)],
       domain_mode_patch_count[static_cast<std::size_t>(DomainCorrectionMode::FIXED_TRACE)],
       domain_mode_patch_count[static_cast<std::size_t>(DomainCorrectionMode::FIXED_FLUX)],
-      global_point_count, global_basis_size);
+      global_point_count - global_probe_count, global_basis_size);
+  if (global_probe_count > 0)
+  {
+    Mpi::Print(" Conductor-consistency probe points (decision 277): {:d}\n",
+               global_probe_count);
+  }
 #else
   MFEM_ABORT("Surface response correction requires MFEM_USE_GSLIB!");
 #endif
@@ -16784,7 +17227,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     {
       patch_assignments.push_back({model.idx, patch_config.origin, patch_config.axis_u,
                                    patch_config.axis_v, patch_config.axis_w,
-                                   patch_config.weight});
+                                   patch_config.weight, static_cast<int>(patch_index)});
     }
     MFEM_VERIFY(std::isfinite(patch_config.weight) && patch_config.weight > 0.0,
                 "Response-correction patch weights must be positive!");
@@ -18299,7 +18742,7 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
           }
         }
       }
-      MFEM_ASSERT(point == patch.point_offset + patch.point_count,
+      MFEM_ASSERT(point == patch.point_offset + patch.point_count - patch.probe_point_count,
                   "Incorrect surface-mortar point count!");
       mortar_coefficients.SetSize(model.contour_size);
       model.mortar_mass_inverse.Mult(mortar_load, mortar_coefficients);
@@ -18461,7 +18904,7 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
           }
         }
       }
-      MFEM_ASSERT(point == patch.point_offset + patch.point_count,
+      MFEM_ASSERT(point == patch.point_offset + patch.point_count - patch.probe_point_count,
                   "Incorrect surface-mortar point count!");
       continue;
     }
