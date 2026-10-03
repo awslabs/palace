@@ -602,6 +602,7 @@ struct ZStack
     z_bottom::Float64
     z_top::Float64
     backsides::Vector{Float64} # substrate faces against vacuum beyond the box
+    gap_midpoint::Float64 # two planes: the level halfway between the metal tops (else NaN)
 end
 
 function z_levels(spec::PolygonSet, metal_layers::Int, trench_layers::Int)
@@ -610,6 +611,7 @@ function z_levels(spec::PolygonSet, metal_layers::Int, trench_layers::Int)
     levels = Float64[]
     backsides = Float64[]
     metal_tops = Float64[]
+    midpoint = NaN
     for plane in planes
         s, f = plane.surface_z, plane.facing
         # The r-resolved trench and metal bands, then the graded substrate side.
@@ -667,7 +669,7 @@ function z_levels(spec::PolygonSet, metal_layers::Int, trench_layers::Int)
     for z in levels[2:end]
         z - merged[end] > 1.0e-9 && push!(merged, z)
     end
-    return ZStack(merged, z_bottom, z_top, backsides)
+    return ZStack(merged, z_bottom, z_top, backsides, midpoint)
 end
 
 # Material of a prism at height z for a partition class: 1 substrate, 2 vacuum, 0 excluded.
@@ -826,6 +828,11 @@ include("structured_band.jl")
 # The region mesh size (Gmsh `Mesh.MeshSizeMax`); also the largest plan size the graded sweep's
 # interior stacks are thinned to.
 const REGION_MESH_SIZE_MAX_UM = 30.0
+# Region size grading of the graded sweep's plan (decision 275): the region mesh size grows from
+# the band's station size t at the band tops with this slope (size per unit distance,
+# dimensionless) up to REGION_MESH_SIZE_MAX_UM; the Gmsh Distance field's sampling per curve.
+const REGION_GRADING_SLOPE = 1.0
+const REGION_GRADING_DISTANCE_SAMPLING = 20
 
 # A metal chain of the own band for the graded sweep: its columns as plan indices.
 struct GradedChain
@@ -853,11 +860,13 @@ function mesh_plan(
     band_cap::Symbol=:none,
     band_mode::Symbol=:own,
     fan_turn_angle_deg::Float64=DEFAULT_FAN_TURN_ANGLE_DEG,
+    region_grading::Bool=false,
     verbose::Bool=true
 )
     band_cap in (:none, :partition, :curve) ||
         error("band_cap must be :none, :partition or :curve")
     band_mode in (:own, :gmsh) || error("band_mode must be :own or :gmsh")
+    region_grading && band_mode != :own && error("region_grading needs band_mode own")
     0.0 <= fan_turn_angle_deg <= MAX_FAN_TURN_ANGLE_DEG || error(
         "fan_turn_angle_deg must lie in [0, $(MAX_FAN_TURN_ANGLE_DEG)]: above it the mitre " *
         "column 1 / cos(turn / 2) exceeds twice the band"
@@ -966,7 +975,8 @@ function mesh_plan(
                 statistics,
                 plan_model,
                 max(2.0 * heights[end], tangential_um),
-                raw_chains
+                raw_chains,
+                region_grading ? tangential_um : 0.0
             )
             append!(band_flags, trues(triangles))
             append!(band_flags, falses(length(raw_triangles) - length(band_flags)))
@@ -1018,6 +1028,16 @@ function mesh_plan(
                 "max_inward_scale" => statistics.max_inward_scale,
                 "max_wall_end_scale" => statistics.max_wall_end_scale,
                 "region_area_tolerance" => REGION_AREA_TOLERANCE,
+                "region_grading" =>
+                    region_grading ?
+                    Dict{String, Any}(
+                        "size_min_um" => tangential_um,
+                        "size_max_um" => REGION_MESH_SIZE_MAX_UM,
+                        "slope" => REGION_GRADING_SLOPE,
+                        "distance_max_um" =>
+                            (REGION_MESH_SIZE_MAX_UM - tangential_um) /
+                            REGION_GRADING_SLOPE
+                    ) : false,
                 "wall_end_columns" => statistics.wall_end_columns,
                 "segments_below_2p5r" => statistics.segments_below_2p5r,
                 "quad_min_abs_sin" => statistics.quad_min_abs_sin,
@@ -1391,7 +1411,8 @@ end
     mesh_polygon_window(spec, radial_um, tangential_um, output; verbose=true,
                         plan_only=false, band_mode=:own, fan_turn_angle_deg=90.0,
                         exact_band_thickness=false, cross_plane_snap_um=NaN,
-                        band_cap=:none, sweep=:tensor, alpha=1.0, beta=3.0) -> manifest
+                        band_cap=:none, sweep=:tensor, alpha=1.0, beta=3.0,
+                        region_grading=(sweep == :graded), region_ring=true) -> manifest
 
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
 its JSON manifest next to it. `band_mode=:own` (default) builds the structured boundary-layer
@@ -1402,7 +1423,12 @@ the others the scaled bisector column (90: the recorded corner treatment). `swee
 (default) sweeps every plan triangle through every z level (the recorded family);
 `sweep=:graded` (own band only) sweeps the graded (n, z) cross-section of graded_sweep.jl along
 the band columns with `alpha` (row k's z spacing >= alpha x its width) and `beta` (row k ends
-beta h_k beyond the metal), dimensionless. Gmsh mode only: `exact_band_thickness=true` passes
+beta h_k beyond the fabricated step), dimensionless. Graded sweep only (decision 275, both on by
+default): `region_grading` grades the Gmsh region's plan size from the band's station size t at
+the band tops with the slope `REGION_GRADING_SLOPE` up to `REGION_MESH_SIZE_MAX_UM` (the tensor
+sweep's plan is the recorded family's and cannot be graded); `region_ring` puts the region
+nodes adjacent to the band on the band's outermost stack Z_K instead of their plan-size ladder
+step. Gmsh mode only: `exact_band_thickness=true` passes
 the exact geometric sum as the boundary-layer Thickness (the recorded transmon generator's
 formula; see the header); `band_cap` applies the local band cap rule (`:none`: the rule is only
 recorded; `:partition`: one band per partition, the minimum over its curves; `:curve`: one
@@ -1424,13 +1450,20 @@ function mesh_polygon_window(
     fan_turn_angle_deg::Float64=DEFAULT_FAN_TURN_ANGLE_DEG,
     sweep::Symbol=:tensor,
     alpha::Float64=DEFAULT_GRADED_ALPHA,
-    beta::Float64=DEFAULT_GRADED_BETA
+    beta::Float64=DEFAULT_GRADED_BETA,
+    region_grading::Bool=(sweep == :graded),
+    region_ring::Bool=true
 )
     output = abspath(output)
     sweep in (:tensor, :graded) || error("sweep must be :tensor or :graded")
     sweep == :tensor ||
         band_mode == :own ||
         error("The graded sweep needs the own structured band (band_mode own)")
+    sweep == :graded ||
+        !region_grading ||
+        error(
+            "region_grading belongs to the graded sweep (the tensor sweep's plan is fixed)"
+        )
     radial_growth = 2.0
     snap_delta, snap_rule = cross_plane_snap_distance(spec, cross_plane_snap_um)
     spec, reconciliation = reconcile_planes(spec, snap_delta)
@@ -1459,6 +1492,7 @@ function mesh_polygon_window(
             band_cap=band_cap,
             band_mode=band_mode,
             fan_turn_angle_deg=fan_turn_angle_deg,
+            region_grading=region_grading,
             verbose=verbose
         )
     finally
@@ -1565,6 +1599,7 @@ function mesh_polygon_window(
                 radial_layers,
                 alpha,
                 beta;
+                region_ring=region_ring,
                 verbose=verbose
             )
         manifest["graded_sweep"] = graded_record

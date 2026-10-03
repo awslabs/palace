@@ -1,18 +1,23 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Tests of the graded cross-section sweep (graded_sweep.jl; Block G milestones 1 and 2):
+# Tests of the graded cross-section sweep (graded_sweep.jl; Block G milestones 1-3):
 #   julia --project=. test_graded_sweep.jl
 # The nested stacks and row ranges (the Q2 probe's strip values with the fabricated step's
-# faces), the 2D cross-section (area closure, every node used), the graded sweep of synthetic
-# one-plane windows against the tensor sweep — a straight strip, a CPW with a terminal, a slot
-# with a backside, a facing-down strip, a metal spike (a fan, clearance-capped columns, an
-# inward mitre scaled 4x, collapse) and a 1-um channel (facing-capped columns, collapse in
-# both directions, a region strip between capped tops): areas / volumes equal to 1e-9, metal
-# face counts equal, boundary closure and tag consistency in process, every node used, the
-# maximum edge ratio <= t / r (+ the scaled columns' reach, + 0.1 %), deterministic bytes,
-# alpha / beta economics, the refusals (Gmsh band, two planes, a box too short for the rows),
-# and the default tensor output unchanged (the recorded probe sha of the strip window).
+# faces; two planes: the gap midpoint kept, one plane's rows capped there), the 2D
+# cross-section (area closure, every node used), the graded sweep of synthetic windows against
+# the tensor sweep — one plane: a straight strip, a CPW with a terminal, a slot with a backside,
+# a facing-down strip, a metal spike (a fan, clearance-capped columns, an inward mitre scaled
+# 4x, collapse) and a 1-um channel (facing-capped columns, collapse in both directions, a
+# region strip between capped tops); two planes: the synthetic two-level window (crossing
+# edges, a bump), a flip-chip window with pure-L1, pure-L2 and mixed chains, facing tops of
+# both planes 2 um apart and a bump, and a coincident cross-plane run: areas / volumes equal
+# to 1e-9, metal face counts equal (same plan), boundary closure and tag consistency in
+# process, every node used, the maximum edge ratio <= t / r (+ the scaled columns' reach,
+# + 0.1 %) off the step slabs, deterministic bytes, alpha / beta economics, the M3 defaults
+# (region size grading of the graded plan, the region ring at Z_K; the tensor plan unchanged),
+# the refusals (Gmsh band, a gap too small for beta, a box too short for the rows), and the
+# default tensor output unchanged (the recorded probe sha of the strip window).
 # WINDOW_MESH_LONG_TESTS=1 adds the external validator and census runs (Julia subprocesses,
 # ~10 s each).
 
@@ -154,6 +159,108 @@ channel_window() = one_plane_window(
     above=50.0
 )
 
+# A flip-chip window with chains of every cross-section variant: L1 (z 0, up) and L2 (z 4.8,
+# down) grounds with nested rectangular holes whose edges run 2 um apart in plan (facing tops
+# of the two planes with a region strip between them: capped columns on both, region triangles
+# with three top corners of two variants), an L1 trace inside both holes (a pure L1 chain,
+# capped at the gap midpoint), an L2 trace inside both holes (pure L2), and a ground bump on the
+# common ground frame (a bump chain: every row active across the gap).
+function two_plane_window(; gap_z=4.8, beta_probe=false)
+    return read_polygon_set(
+        Dict(
+            "Version" => 1,
+            "Name" => "two_plane",
+            "MatchingRadius" => 1.9,
+            "Box" => Dict("X" => [0.0, 80.0], "Y" => [0.0, 60.0]),
+            "Process" => Dict("MetalThickness" => 0.1, "Overetch" => 0.05),
+            "Planes" => [
+                Dict(
+                    "Name" => "L1",
+                    "SurfaceZ" => 0.0,
+                    "Facing" => "up",
+                    "SubstrateThickness" => 20.0,
+                    "Polygons" => [
+                        Dict(
+                            "Conductor" => "ground",
+                            "Outer" => [[0, 0], [80, 0], [80, 60], [0, 60]],
+                            "Holes" => [[[14, 14], [66, 14], [66, 46], [14, 46]]]
+                        ),
+                        Dict(
+                            "Conductor" => "trace_l1",
+                            "Outer" => [[20, 28], [40, 28], [40, 32], [20, 32]]
+                        )
+                    ]
+                ),
+                Dict(
+                    "Name" => "L2",
+                    "SurfaceZ" => gap_z,
+                    "Facing" => "down",
+                    "SubstrateThickness" => 20.0,
+                    "Polygons" => [
+                        Dict(
+                            "Conductor" => "ground",
+                            "Outer" => [[0, 0], [80, 0], [80, 60], [0, 60]],
+                            "Holes" => [[[12, 12], [68, 12], [68, 48], [12, 48]]]
+                        ),
+                        Dict(
+                            "Conductor" => "trace_l2",
+                            "Outer" => [[44, 28], [60, 28], [60, 32], [44, 32]]
+                        )
+                    ]
+                )
+            ],
+            "Bumps" => [
+                Dict(
+                    "Conductor" => "ground",
+                    "Footprint" => regular_polygon(6.0, 6.0, 4.0, 16)
+                )
+            ],
+            "Vacuum" => Dict("Below" => 0.0, "Above" => 0.0),
+            "Terminals" => ["trace_l1", "trace_l2"]
+        )
+    )
+end
+# Two grounds whose plan edges coincide exactly (x = 40 on both planes): one plan curve that
+# is a metal edge of both planes (a "both" chain without a bump), and the empty half.
+function coincident_edge_window()
+    return read_polygon_set(
+        Dict(
+            "Version" => 1,
+            "Name" => "coincident",
+            "MatchingRadius" => 1.9,
+            "Box" => Dict("X" => [0.0, 80.0], "Y" => [0.0, 30.0]),
+            "Process" => Dict("MetalThickness" => 0.1, "Overetch" => 0.05),
+            "Planes" => [
+                Dict(
+                    "Name" => "L1",
+                    "SurfaceZ" => 0.0,
+                    "Facing" => "up",
+                    "SubstrateThickness" => 20.0,
+                    "Polygons" => [
+                        Dict(
+                            "Conductor" => "ground",
+                            "Outer" => [[0, 0], [40, 0], [40, 30], [0, 30]]
+                        )
+                    ]
+                ),
+                Dict(
+                    "Name" => "L2",
+                    "SurfaceZ" => 4.8,
+                    "Facing" => "down",
+                    "SubstrateThickness" => 20.0,
+                    "Polygons" => [
+                        Dict(
+                            "Conductor" => "ground",
+                            "Outer" => [[0, 0], [40, 0], [40, 30], [0, 30]]
+                        )
+                    ]
+                )
+            ],
+            "Vacuum" => Dict("Below" => 0.0, "Above" => 0.0)
+        )
+    )
+end
+
 # ASCII MSH2 reader for the in-process checks.
 function read_msh2(path)
     lines = readlines(path)
@@ -187,18 +294,23 @@ end
 
 sorted3(a, b, c) = Tuple(sort([a, b, c]))
 
-# The z range of the fabricated step (trench bottom to metal top) of a one-plane set.
-function step_slab(spec)
-    plane = spec.planes[1]
-    s, f = plane.surface_z, plane.facing
-    return minmax(s - f * spec.overetch, s + f * spec.metal_thickness)
+# The z ranges of the fabricated steps (trench bottom to metal top) of a set's planes.
+function step_slabs(spec)
+    return [
+        minmax(
+            plane.surface_z - plane.facing * spec.overetch,
+            plane.surface_z + plane.facing * spec.metal_thickness
+        ) for plane in spec.planes
+    ]
 end
 
 # Boundary closure and tag consistency, every node used, the maximum edge-length ratio
-# overall and off the metal / trench slab (tetrahedra not inside the step's z range: the
+# overall and off the metal / trench slabs (tetrahedra not inside a step's z range: the
 # interfaces are kept in every stack, so a 30-um region triangle over the 0.05-um trench is
 # an inherent 600 in both sweeps; everything else must stay within the designed t / r).
-function mesh_checks(path, slab)
+# `metal_substrate`: the attributes of the metal-substrate faces (from the manifest's
+# attribute table: `*_substrate` surfaces).
+function mesh_checks(path, slabs, metal_substrate)
     nodes, triangles, tetrahedra = read_msh2(path)
     owners = Dict{NTuple{3, Int}, Vector{Int}}()
     used = falses(length(nodes))
@@ -217,7 +329,10 @@ function mesh_checks(path, slab)
         ratio = maximum(edges) / minimum(edges)
         max_ratio = max(max_ratio, ratio)
         z = [nodes[n][3] for n in t]
-        in_slab = minimum(z) >= slab[1] - 1.0e-9 && maximum(z) <= slab[2] + 1.0e-9
+        in_slab = any(
+            minimum(z) >= slab[1] - 1.0e-9 && maximum(z) <= slab[2] + 1.0e-9 for
+            slab in slabs
+        )
         in_slab || (max_ratio_off_slab = max(max_ratio_off_slab, ratio))
     end
     tagged = Dict(sorted3(t...) => attribute for (attribute, t) in triangles)
@@ -228,7 +343,8 @@ function mesh_checks(path, slab)
         o = get(owners, face, Int[])
         ok =
             attribute in (6, 9) ? sort(o) == [1, 2] :
-            attribute == 3 ? length(o) == 1 : attribute in (5, 8, 11) ? o == [1] : o == [2] # metal-substrate / metal-air
+            attribute == 3 ? length(o) == 1 :
+            attribute in metal_substrate ? o == [1] : o == [2]
         ok || (inconsistent += 1)
     end
     return (
@@ -262,8 +378,16 @@ let directory = mktempdir()
         verbose=false,
         sweep=:graded
     )
-    mesh_checks(joinpath(directory, "graded.msh2"), step_slab(tiny))
+    mesh_checks(joinpath(directory, "graded.msh2"), step_slabs(tiny), Set([5]))
 end
+
+metal_substrate_attributes(manifest) =
+    Set(
+        entry["attribute"] for
+        (name, entry) in manifest["attributes"] if entry["dimension"] == 2 &&
+            endswith(name, "_substrate") &&
+            name != "ground_substrate"
+    ) ∪ Set([5])
 
 @testset "graded stacks and row ranges (the Q2 probe's strip values)" begin
     spec = strip_window()
@@ -352,7 +476,7 @@ end
         sprint(showerror, err)
     end
     @test occursin("box face", message)
-    section = PWM.cross_section(stacks, zs, heights, 0.0)
+    section = PWM.cross_section(stacks, zs, heights, abs.(zs))
     @test length(section.nodes) == 132 && length(section.triangles) == 202
     @test sum(n for (_, n) in section.pair_triangles) == 202
     @test length(section.pair_triangles) == 1 + 2 * 6 + 6
@@ -361,7 +485,20 @@ end
           sum(n for (pair, n) in section.pair_triangles if pair[1] == 0)
 end
 
-function compare_sweeps(spec, radial_um, tangential_um, directory; kwargs...)
+# The graded sweep against the tensor sweep of the same polygon set. The graded call gets
+# `kwargs` on top of the plan-preserving options (region_grading / region_ring off), so the
+# plan, the band and the z levels are those of the tensor mesh unless a test asks otherwise;
+# with the plan unchanged the metal faces must be the same plan quads / triangles. The graded
+# mesh must have fewer than `fewer_than` x the tensor's tetrahedra (0.5 on the one-plane windows
+# with their 50-525-um boxes; the small two-plane test boxes save less).
+function compare_sweeps(
+    spec,
+    radial_um,
+    tangential_um,
+    directory;
+    fewer_than=0.5,
+    kwargs...
+)
     tensor = mesh_polygon_window(
         spec,
         radial_um,
@@ -369,6 +506,7 @@ function compare_sweeps(spec, radial_um, tangential_um, directory; kwargs...)
         joinpath(directory, "tensor.msh2");
         verbose=false
     )
+    options = merge((; region_grading=false, region_ring=false), (; kwargs...))
     graded = mesh_polygon_window(
         spec,
         radial_um,
@@ -376,11 +514,11 @@ function compare_sweeps(spec, radial_um, tangential_um, directory; kwargs...)
         joinpath(directory, "graded.msh2");
         verbose=false,
         sweep=:graded,
-        kwargs...
+        options...
     )
     @test tensor["sweep"] == "tensor" && graded["sweep"] == "graded"
     @test graded["nonpositive"] == 0 && tensor["nonpositive"] == 0
-    @test graded["tetrahedra"] < 0.5 * tensor["tetrahedra"]
+    @test graded["tetrahedra"] < fewer_than * tensor["tetrahedra"]
     @test keys(graded["surface_area_um2"]) == keys(tensor["surface_area_um2"])
     for (attribute, area) in tensor["surface_area_um2"]
         @test graded["surface_area_um2"][attribute] ≈ area rtol = 1.0e-9
@@ -388,26 +526,42 @@ function compare_sweeps(spec, radial_um, tangential_um, directory; kwargs...)
     for (attribute, volume) in tensor["volume_um3"]
         @test graded["volume_um3"][attribute] ≈ volume rtol = 1.0e-9
     end
-    # Metal faces are the same plan quads / triangles in both sweeps.
-    for attribute in ("4", "5", "7", "8")
-        haskey(tensor["surface_attribute_counts"], attribute) || continue
-        @test graded["surface_attribute_counts"][attribute] ==
-              tensor["surface_attribute_counts"][attribute]
+    @test (tensor["band"]["region_grading"] == false) &&
+          (graded["band"]["region_grading"] == false) == !options.region_grading
+    if !options.region_grading
+        @test graded["plan_triangles"] == tensor["plan_triangles"]
+        # One plane: the metal faces (the attributes from 4 on except 6 / 9) are the same plan
+        # elements. Two planes: the metal faces of one plane under the OTHER plane's band are
+        # the (0, K) cells' faces there (one quad per station: that plane's rows have ended at
+        # the gap midpoint), not the tensor's row-split quads, so only the areas agree.
+        if length(spec.planes) == 1
+            for (attribute, count) in tensor["surface_attribute_counts"]
+                parse(Int, attribute) >= 4 && attribute != "6" && attribute != "9" ||
+                    continue
+                @test graded["surface_attribute_counts"][attribute] == count
+            end
+        end
     end
-    checks = mesh_checks(joinpath(directory, "graded.msh2"), step_slab(spec))
+    checks = mesh_checks(
+        joinpath(directory, "graded.msh2"),
+        step_slabs(spec),
+        metal_substrate_attributes(graded)
+    )
     @test checks.nodes == graded["nodes"] && checks.tetrahedra == graded["tetrahedra"]
     @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
-    # The designed anisotropy t / r off the slab: the longest band edge is a plan-cell
-    # diagonal sqrt(t^2 + h_K^2) (the strip prisms split the band quads), plus the reach of
-    # the scaled columns (a column scaled by c puts its row-K node (c - 1) h_K farther along
-    # the band than its neighbours', the same plan edge as in the tensor sweep), plus 0.1 %;
-    # the slab region prisms are bounded by the region size over the overetch (30 / 0.05 =
-    # 600).
+    # The designed anisotropy t / r off the slabs: the longest band plan edge is a station t
+    # plus the spread of the scaled corner columns at both ends (a column scaled by c puts its
+    # row-K node up to c h_K along the band from its base: the top edge of a short segment
+    # between two outward corners is t + 2 c h_K, the same plan edge as in the tensor sweep),
+    # as a cell diagonal with h_K (the strip prisms split the band quads), plus 0.1 %; the slab
+    # region prisms are bounded by the region size over the overetch (30 / 0.05 = 600). The
+    # shortest edge off the slabs is a z spacing >= r (two planes: the other plane's 0.05-um
+    # offsets hang on the metal edge line, >= r at the production r).
     band = graded["band"]
     thickness = maximum(band["heights_um"])
     scale =
         max(band["max_mitre_scale"], band["max_inward_scale"], band["max_wall_end_scale"])
-    longest = hypot(tangential_um, thickness) + (scale - 1.0) * thickness
+    longest = hypot(tangential_um + 2.0 * scale * thickness, thickness)
     @test checks.max_edge_ratio_off_slab <= longest / radial_um * (1.0 + 1.0e-3)
     @test checks.max_edge_ratio <=
           max(longest / radial_um, PWM.REGION_MESH_SIZE_MAX_UM / spec.overetch) *
@@ -415,7 +569,14 @@ function compare_sweeps(spec, radial_um, tangential_um, directory; kwargs...)
     record = graded["graded_sweep"]
     @test record["alpha"] == get(kwargs, :alpha, 1.0) &&
           record["beta"] == get(kwargs, :beta, 3.0)
+    @test record["region_ring"] == options.region_ring
     @test record["band_tetrahedra"] + record["region_tetrahedra"] == graded["tetrahedra"]
+    @test sum(c["chains"] for c in record["cross_sections"]) == record["chains"]
+    @test sum(c["columns"] for c in record["cross_sections"]) == record["columns"]
+    @test sum(c["capped_columns"] for c in record["cross_sections"]) ==
+          record["capped_columns"]
+    @test sum(c["fan_sectors"] for c in record["cross_sections"]) == record["fan_sectors"]
+    length(spec.planes) == 1 && @test length(record["cross_sections"]) == 1
     @test record["band_swept_elements"] > 0 && record["band_strip_prisms"] > 0
     @test record["region_prisms_plain"] + record["region_prisms_hanging"] > 0
     # The swept volume closes on the plan's analytic volume (checked in process too).
@@ -497,7 +658,7 @@ end
     @test haskey(down["surface_area_um2"], "9") && down["surface_area_um2"]["9"] ≈ 3000.0
     @test down["graded_sweep"]["capped_columns"] == 0
     # The row ranges are mirrored about the surface: the step is [-0.1, 0.05].
-    ranges = down["graded_sweep"]["row_ranges_z_um"]
+    ranges = only(down["graded_sweep"]["cross_sections"])["row_ranges_z_um"]
     @test ranges[1][2] > 0.05 + 3 * 0.02 && ranges[1][1] < -0.1 - 3 * 0.02
 end
 
@@ -509,7 +670,8 @@ end
     record = spike["graded_sweep"]
     @test record["fan_sectors"] == PWM.FAN_COLUMNS - 1
     @test record["capped_columns"] > 0 && record["band_collapse_prisms"] > 0
-    @test sum(record["plan_nodes_by_capped_top_list"]) == record["capped_columns"]
+    @test sum(only(record["cross_sections"])["plan_nodes_by_capped_top_list"]) ==
+          record["capped_columns"]
     @test record["chains"] == 2
 end
 
@@ -523,6 +685,211 @@ end
     @test record["fan_sectors"] == 0
     # Region prisms with a capped top as a corner carry its hanging levels.
     @test record["region_prisms_hanging"] > 0
+end
+
+@testset "M3 defaults on the strip: region size grading and the region ring (graded only)" begin
+    directory = mktempdir()
+    tensor = mesh_polygon_window(
+        strip_window(),
+        0.01,
+        5.0,
+        joinpath(directory, "tensor.msh2");
+        verbose=false
+    )
+    plain = mesh_polygon_window(
+        strip_window(),
+        0.01,
+        5.0,
+        joinpath(directory, "plain.msh2");
+        verbose=false,
+        sweep=:graded,
+        region_grading=false,
+        region_ring=false
+    )
+    ring = mesh_polygon_window(
+        strip_window(),
+        0.01,
+        5.0,
+        joinpath(directory, "ring.msh2");
+        verbose=false,
+        sweep=:graded,
+        region_grading=false
+    )
+    graded = mesh_polygon_window(
+        strip_window(),
+        0.01,
+        5.0,
+        joinpath(directory, "graded.msh2");
+        verbose=false,
+        sweep=:graded
+    )
+    # The ring: the region nodes adjacent to the band move to Z_K (the same plan); the
+    # grading: a finer region plan next to the band (more plan triangles and region nodes),
+    # the band and the z levels unchanged; areas / volumes equal to the tensor's throughout.
+    @test ring["plan_triangles"] == plain["plan_triangles"] == tensor["plan_triangles"]
+    @test ring["graded_sweep"]["region_ring"] && !plain["graded_sweep"]["region_ring"]
+    @test ring["graded_sweep"]["region_ring_plan_nodes"] > 0 &&
+          plain["graded_sweep"]["region_ring_plan_nodes"] == 0
+    @test ring["graded_sweep"]["plan_nodes_by_stack"][8] >
+          plain["graded_sweep"]["plan_nodes_by_stack"][8]
+    @test ring["tetrahedra"] > plain["tetrahedra"]
+    @test graded["plan_triangles"] > tensor["plan_triangles"]
+    @test graded["graded_sweep"]["region_plan_nodes"] >
+          plain["graded_sweep"]["region_plan_nodes"]
+    @test graded["band"]["region_grading"]["size_min_um"] == 5.0 &&
+          graded["band"]["region_grading"]["size_max_um"] == PWM.REGION_MESH_SIZE_MAX_UM &&
+          graded["band"]["region_grading"]["slope"] == PWM.REGION_GRADING_SLOPE
+    @test graded["band"]["heights_um"] == tensor["band"]["heights_um"] &&
+          graded["band"]["quads"] == tensor["band"]["quads"]
+    @test graded["z_levels"] == tensor["z_levels"]
+    for m in (ring, graded), (attribute, area) in tensor["surface_area_um2"]
+        @test m["surface_area_um2"][attribute] ≈ area rtol = 1.0e-9
+    end
+    for m in (ring, graded), (attribute, volume) in tensor["volume_um3"]
+        @test m["volume_um3"][attribute] ≈ volume rtol = 1.0e-9
+    end
+    checks = mesh_checks(
+        joinpath(directory, "graded.msh2"),
+        step_slabs(strip_window()),
+        metal_substrate_attributes(graded)
+    )
+    @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
+    @test checks.max_edge_ratio <= 600.0 * (1.0 + 1.0e-3)
+    @test graded["tetrahedra"] < 0.5 * tensor["tetrahedra"]
+    # The tensor sweep's plan cannot be graded (the recorded family's plan is fixed).
+    @test_throws ErrorException mesh_polygon_window(
+        strip_window(),
+        0.05,
+        5.0,
+        joinpath(directory, "bad.msh2");
+        verbose=false,
+        region_grading=true
+    )
+end
+
+@testset "two planes: stacks keep the gap midpoint, one plane's rows end there at the latest" begin
+    spec = two_plane_window()
+    stack = PWM.z_levels(spec, 2, 1)
+    zs = stack.levels
+    @test stack.gap_midpoint ≈ 2.4
+    @test any(z -> abs(z - 2.4) <= 1.0e-9, zs)
+    interfaces = [-0.05, 0.0, 0.1, 4.85, 4.8, 4.7, 2.4, stack.z_bottom, stack.z_top]
+    heights = PWM.band_heights(0.05, 2.0, 5)
+    # L1's band (facing up): capped at the midpoint from above; L2's from below; a band of both
+    # planes' edges spans both steps.
+    l1 = PWM.graded_stacks(
+        zs,
+        interfaces,
+        heights,
+        1.0,
+        3.0,
+        (-0.05, 0.1),
+        30.0;
+        range_cap=(-Inf, 2.4)
+    )
+    l2 = PWM.graded_stacks(
+        zs,
+        interfaces,
+        heights,
+        1.0,
+        3.0,
+        (4.7, 4.85),
+        30.0;
+        range_cap=(2.4, Inf)
+    )
+    both = PWM.graded_stacks(zs, interfaces, heights, 1.0, 3.0, (-0.05, 4.85), 30.0)
+    @test l1.levels == l2.levels == both.levels
+    for s = 2:length(l1.levels)
+        @test all(any(i -> abs(zs[i] - w) <= 1.0e-9, l1.levels[s]) for w in interfaces)
+    end
+    @test all(zs[l1.ranges[k][2]] <= 2.4 + 1.0e-9 for k = 1:4)
+    @test all(zs[l2.ranges[k][1]] >= 2.4 - 1.0e-9 for k = 1:4)
+    @test zs[l1.ranges[4][2]] ≈ 2.4 && zs[l2.ranges[4][1]] ≈ 2.4
+    @test all(zs[both.ranges[k][1]] < -0.05 && zs[both.ranges[k][2]] > 4.85 for k = 1:4)
+    @test all(zs[l1.ranges[k][1]] == zs[both.ranges[k][1]] for k = 1:4)
+    # beta 4: row 4's limit 3.1 um passes the midpoint and is capped there; beta 8 would need
+    # rows 3 and 4 both on the midpoint: refused.
+    capped = PWM.graded_stacks(
+        zs,
+        interfaces,
+        heights,
+        1.0,
+        4.0,
+        (-0.05, 0.1),
+        30.0;
+        range_cap=(-Inf, 2.4)
+    )
+    @test zs[capped.ranges[4][2]] ≈ 2.4 && zs[capped.ranges[3][2]] < 2.4
+    message = try
+        PWM.graded_stacks(
+            zs,
+            interfaces,
+            heights,
+            1.0,
+            8.0,
+            (-0.05, 0.1),
+            30.0;
+            range_cap=(-Inf, 2.4)
+        )
+        ""
+    catch err
+        sprint(showerror, err)
+    end
+    @test occursin("gap midpoint", message)
+    distance = [min(abs(z), abs(z - 4.8)) for z in zs]
+    for stacks in (l1, l2, both)
+        section = PWM.cross_section(stacks, zs, heights, distance)
+        @test length(section.nodes) > 0 &&
+              sum(n for (_, n) in section.pair_triangles) == length(section.triangles)
+    end
+end
+
+@testset "two planes: the synthetic two-level window (crossing edges, a bump; every chain of both planes)" begin
+    spec = read_polygon_set(synthetic_two_level_window())
+    # Every chain keeps every row across the 4.8-um gap and the box is 20 um of substrate on
+    # either side: the saving is in the far field only (1.6x here).
+    tensor, graded, checks = compare_sweeps(spec, 0.05, 5.0, mktempdir(); fewer_than=0.7)
+    record = graded["graded_sweep"]
+    @test record["gap_midpoint_z_um"] ≈ 2.4
+    @test length(record["cross_sections"]) == 1
+    section = only(record["cross_sections"])
+    @test section["planes"] == ["L1", "L2"]
+    @test section["step_faces_z_um"] ≈ [-0.05, 4.85]
+    @test all(r[1] < -0.05 && r[2] > 4.85 for r in section["row_ranges_z_um"][1:(end - 1)])
+    @test record["capped_columns"] > 0 && record["band_collapse_prisms"] > 0
+    @test haskey(graded["surface_area_um2"], "10") &&
+          haskey(graded["surface_area_um2"], "11")
+    @test graded["bumps"] == 1
+end
+
+@testset "two planes: pure L1 / pure L2 / both chains, facing tops of both planes, a bump" begin
+    spec = two_plane_window()
+    tensor, graded, checks = compare_sweeps(spec, 0.05, 5.0, mktempdir(); fewer_than=0.7)
+    record = graded["graded_sweep"]
+    sections = Dict(join(c["planes"], "+") => c for c in record["cross_sections"])
+    @test Set(keys(sections)) == Set(["L1", "L2", "L1+L2"])
+    l1, l2, both = sections["L1"], sections["L2"], sections["L1+L2"]
+    @test l1["chains"] >= 1 && l2["chains"] >= 1 && both["chains"] >= 1
+    @test all(r[2] <= 2.4 + 1.0e-9 for r in l1["row_ranges_z_um"][1:(end - 1)])
+    @test all(r[1] >= 2.4 - 1.0e-9 for r in l2["row_ranges_z_um"][1:(end - 1)])
+    @test all(r[1] < -0.05 && r[2] > 4.85 for r in both["row_ranges_z_um"][1:(end - 1)])
+    @test l1["step_faces_z_um"] ≈ [-0.05, 0.1] && l2["step_faces_z_um"] ≈ [4.7, 4.85]
+    # The 2-um-apart hole edges cap both planes' columns (0.4 x 2 um = 0.8 um -> 4 of 5 rows)
+    # and the region strip between their tops has triangles whose three corners are tops of
+    # different variants: nested interval by interval only (the intersection rule).
+    @test l1["capped_columns"] > 0 && l2["capped_columns"] > 0
+    @test record["region_prisms_hanging"] > 0
+    @test graded["bumps"] == 1 && graded["surface_area_um2"]["4"] > 0
+end
+
+@testset "two planes: a coincident cross-plane run (one plan curve, a metal edge of both planes)" begin
+    tensor, graded, checks =
+        compare_sweeps(coincident_edge_window(), 0.05, 5.0, mktempdir(); fewer_than=0.7)
+    record = graded["graded_sweep"]
+    @test length(record["cross_sections"]) == 1
+    @test only(record["cross_sections"])["planes"] == ["L1", "L2"]
+    @test tensor["cross_plane_reconciliation"]["coincident_segments"] > 0
+    @test graded["surface_attribute_counts"]["4"] == tensor["surface_attribute_counts"]["4"]
 end
 
 @testset "graded sweep refusals and the default tensor output" begin
@@ -544,12 +911,13 @@ end
         verbose=false,
         sweep=:slanted
     )
+    # A flip-chip gap too small for beta h_(K-2): two rows would end on the midpoint.
     message = try
         mesh_polygon_window(
-            read_polygon_set(synthetic_two_level_window()),
-            0.2,
+            two_plane_window(; gap_z=1.4),
+            0.05,
             5.0,
-            joinpath(directory, "two.msh2");
+            joinpath(directory, "narrow.msh2");
             verbose=false,
             sweep=:graded
         )
@@ -557,25 +925,31 @@ end
     catch err
         sprint(showerror, err)
     end
-    @test occursin("two planes", message) && occursin("M3", message)
+    @test occursin("gap midpoint", message)
     # The default sweep reproduces the recorded tensor mesh of the probe window bit for bit
     # (reference-quality-20261002/mesher-scoping/probe/strip_tensor_r10_t5.json, generated on
     # macOS; Gmsh's region triangulation may differ on another platform, so the sha is pinned
-    # there only and the counts everywhere).
-    tensor = mesh_polygon_window(
-        strip_window(),
-        0.01,
-        5.0,
-        joinpath(directory, "strip_tensor.msh2");
-        verbose=false
-    )
-    @test tensor["sweep"] == "tensor" && !haskey(tensor, "graded_sweep")
-    @test tensor["plan_perimeter_edges"] == 20 && tensor["radial_layers"] == 7
-    if Sys.isapple()
-        @test tensor["nodes"] == 12418 && tensor["tetrahedra"] == 63768
-        @test tensor["bytes"] == 2635089
-        @test tensor["sha256"] ==
-              "8f234e5b0933f90aaef640399f991e73f950b5fb102766f840565d9b934980f6"
+    # there only and the counts everywhere). The M3 options (region grading / ring) do not
+    # touch the tensor sweep: the same sha with them named explicitly off.
+    for (name, kwargs) in
+        (("strip_tensor", (;)), ("strip_tensor_off", (; region_ring=false)))
+        tensor = mesh_polygon_window(
+            strip_window(),
+            0.01,
+            5.0,
+            joinpath(directory, "$name.msh2");
+            verbose=false,
+            kwargs...
+        )
+        @test tensor["sweep"] == "tensor" && !haskey(tensor, "graded_sweep")
+        @test tensor["band"]["region_grading"] == false
+        @test tensor["plan_perimeter_edges"] == 20 && tensor["radial_layers"] == 7
+        if Sys.isapple()
+            @test tensor["nodes"] == 12418 && tensor["tetrahedra"] == 63768
+            @test tensor["bytes"] == 2635089
+            @test tensor["sha256"] ==
+                  "8f234e5b0933f90aaef640399f991e73f950b5fb102766f840565d9b934980f6"
+        end
     end
 end
 

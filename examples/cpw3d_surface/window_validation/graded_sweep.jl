@@ -10,14 +10,24 @@
 # 30-um plan interior. Here the structured band's columns carry a GRADED (n, z) cross-section:
 #
 #   * stacks: Z_0 = the production z levels; row k = 1..K carries Z_k = thin(Z_{k-1}, alpha w_k)
-#     (w_k = h_k - h_{k-1} the row's width; a level is kept iff it is a material interface or at
-#     least alpha w_k from the last kept level and from the next interface), nested by
-#     construction; the region (Gmsh interior) nodes carry the ladder Z_{K+j} = thin(Z_{K+j-1},
-#     w_K 2^j) (no alpha: alpha grades the band rows only) chosen by their plan size (the
-#     shortest incident plan edge, at most the region mesh size);
+#     (w_k = h_k - h_{k-1} the row's width; a level is kept iff it is a material interface —
+#     the trench bottom, substrate surface and metal top of every plane, the box ends, the
+#     backsides and, with two planes, the gap midpoint — or at least alpha w_k from the last
+#     kept level and from the next interface), nested by construction; the region (Gmsh
+#     interior) nodes carry the ladder Z_{K+j} = thin(Z_{K+j-1}, w_K 2^j) (no alpha: alpha
+#     grades the band rows only) chosen by their plan size (the shortest incident plan edge,
+#     at most the region mesh size), except the ring of region nodes adjacent to the band,
+#     which carries Z_K (`region_ring`, decision 275);
 #   * row ranges: row line k is active for z in [lo_k, hi_k] = the first level of Z_{k+1} beyond
 #     the faces of the fabricated step (trench bottom, substrate surface, metal top) -/+
-#     beta h_k, strictly nested (inner rows end first); row K spans the box;
+#     beta h_k, strictly nested (inner rows end first); row K spans the box. With two planes
+#     the step is that of the planes the chain's edges belong to (a plan edge is a metal edge
+#     of plane k when the conductor changes across it on that plane; a bump footprint edge
+#     belongs to both planes), the union over the chain: the band of one plane's edges ends at
+#     the gap midpoint at the latest (a gap too small for that is refused), a band whose
+#     chain belongs to both planes — a coincident cross-plane run, a chain turning from one
+#     plane's edge onto the other's, a bump — keeps every row active across the gap (the
+#     design's bump rule). One cross-section per such variant; the stacks are shared;
 #   * the cross-section per column: between two neighbouring active lines the cells are the
 #     consecutive levels of the COARSER stack; the finer line's extra levels hang on one vertical
 #     edge and the end node of the row that ended at the cell's bottom (started at its top)
@@ -37,10 +47,13 @@
 #         rows' stacks hanging on the vertical edges (the region rule below); clamping the
 #         hanging fan triangles of such a strip onto one column top would give three collinear
 #         nodes, so the strips are not swept;
-#       - the region: plan triangle x interval of the coarsest of its nodes' level lists; the
+#       - the region: plan triangle x interval of the levels common to its corners' lists; the
 #         finer nodes' extra levels hang on their vertical edges. The top node of a column with
 #         n rows carries the list the band puts on it: Z_n within row n's range and Z_k where
-#         row k is the innermost active row beyond (for a full column, Z_K);
+#         row k is the innermost active row beyond (for a full column, Z_K). With two planes
+#         the tops of chains of different variants are fine near their own plane and Z_K near
+#         the other, so their lists are nested interval by interval, not globally: the common
+#         list is the intersection and one corner is hanging-free in every interval;
 #   * tetrahedra: every element is a fan from one apex over its boundary triangulation, and
 #     every face is triangulated by a rule of the face alone, so neighbours always agree: a quad
 #     takes the diagonal through its lowest-ORDERED node; a vertical face with hanging nodes is
@@ -48,8 +61,9 @@
 #     triangle advancing the nearer side otherwise); the apex is the lowest-ordered among the
 #     element's corners on hanging-free vertical edges (the fan over a quad through that
 #     corner's diagonal is exact, the ladder from a hanging-free near corner is a fan from it).
-#     The node ORDER used by these rules is (z level by distance to the substrate surface, then
-#     the plan node by band row DESCENDING, taller columns first, then the welding order): the
+#     The node ORDER used by these rules is (z level by distance to the nearest substrate
+#     surface, then the plan node by band row DESCENDING, taller columns first, then the
+#     welding order): the
 #     apex of every cell is then its node nearest the metal, the construction is mirror-
 #     symmetric about the surface, and at a row end next to a capped column the apex is the
 #     row-end node — the swept corner cell there is a pyramid over the vertical face of the
@@ -62,10 +76,10 @@
 #     the swept volume per material must equal the plan's analytic volume to 1e-9 (an overlap
 #     or a gap of a single cell is refused).
 #
-# Scope (decision 263): one plane, no bumps (two planes and bumps are refused with a message,
-# milestone M3). alpha and beta are dimensionless (defaults 1 and 3): alpha = 1 keeps the r x r
-# edge cell of the recorded family; the z-coarsened outer rows are a deliberate deviation to be
-# shown harmless by the acceptance solves.
+# Scope (decision 263): one or two planes with bumps (M3). alpha and beta are dimensionless
+# (defaults 1 and 3): alpha = 1 keeps the r x r edge cell of the recorded family; the
+# z-coarsened outer rows are a deliberate deviation to be shown harmless by the acceptance
+# solves.
 
 const DEFAULT_GRADED_ALPHA = 1.0
 const DEFAULT_GRADED_BETA = 3.0
@@ -120,14 +134,18 @@ function thin_levels(
 end
 
 """
-    graded_stacks(zs, interfaces, heights, alpha, beta, step_faces, region_size_max) -> GradedStacks
+    graded_stacks(zs, interfaces, heights, alpha, beta, step_faces, region_size_max;
+                  range_cap=(-Inf, Inf)) -> GradedStacks
 
 The nested stacks Z_0..Z_K of the band rows (heights h_1..h_K), the region ladder beyond
 Z_K with spacings w_K 2^j up to the region size (no alpha), and the active range of every
 row: the first level of Z_{k+1} at or beyond the fabricated step's faces (`step_faces` = the
-lowest and highest of trench bottom, substrate surface and metal top) -/+ beta h_k, strictly
-nested; row K spans the box. A row k < K whose range would reach a box face is refused (the
-box must extend more than beta h_{K-1} beyond the step).
+lowest and highest of trench bottom, substrate surface and metal top over the planes the
+band's edges belong to) -/+ beta h_k, strictly nested; row K spans the box. `range_cap`
+bounds the limits of the rows k < K (two planes: the band of one plane's edges ends at the
+gap midpoint at the latest, DESIGN.md 4.2); a row whose nested range would pass a cap is
+refused (two rows would have to end on the same level). A row k < K whose range would reach
+a box face is refused (the box must extend more than beta h_{K-1} beyond the step).
 """
 function graded_stacks(
     zs::Vector{Float64},
@@ -136,7 +154,8 @@ function graded_stacks(
     alpha::Float64,
     beta::Float64,
     step_faces::NTuple{2, Float64},
-    region_size_max::Float64
+    region_size_max::Float64;
+    range_cap::NTuple{2, Float64}=(-Inf, Inf)
 )
     alpha > 0.0 || error("alpha must be positive")
     beta > 0.0 || error("beta must be positive")
@@ -165,8 +184,8 @@ function graded_stacks(
             continue
         end
         coarser = levels[k + 2]
-        limit_lo = step_faces[1] - beta * heights[k]
-        limit_hi = step_faces[2] + beta * heights[k]
+        limit_lo = max(step_faces[1] - beta * heights[k], range_cap[1])
+        limit_hi = min(step_faces[2] + beta * heights[k], range_cap[2])
         if k > 1
             limit_lo = min(limit_lo, zs[ranges[k - 1][1]] - RANGE_NUDGE_UM)
             limit_hi = max(limit_hi, zs[ranges[k - 1][2]] + RANGE_NUDGE_UM)
@@ -177,6 +196,14 @@ function graded_stacks(
             "Graded sweep: row $k of $rows would end on a box face (its range reaches " *
             "beyond [$limit_lo, $limit_hi] um); the box must extend more than beta h_(K-1) = " *
             "$(beta * heights[rows - 1]) um beyond the fabricated step on both sides"
+        )
+        (
+            zs[coarser[lo]] >= range_cap[1] - RANGE_COMPARE_UM &&
+            zs[coarser[hi]] <= range_cap[2] + RANGE_COMPARE_UM
+        ) || error(
+            "Graded sweep: row $k of $rows would end beyond the range cap $range_cap um " *
+            "(the flip-chip gap is too small for beta h_k = $(beta * heights[k]) um: rows " *
+            "$(k - 1) and $k would both end on the gap midpoint); lower beta or the row count"
         )
         ranges[k] = (coarser[lo], coarser[hi])
     end
@@ -218,11 +245,13 @@ struct CrossSection
     pair_triangles::Vector{Tuple{NTuple{2, Int}, Int}} # ((line, line), triangles) per pair
 end
 
+# `surface_distance[level]`: the distance of a level to the nearest substrate surface (the
+# "near" side of every face rule).
 function cross_section(
     stacks::GradedStacks,
     zs::Vector{Float64},
     heights::Vector{Float64},
-    surface_z::Float64
+    surface_distance::Vector{Float64}
 )
     rows = stacks.rows
     node_index = Dict{NTuple{2, Int}, Int}()
@@ -296,7 +325,7 @@ function cross_section(
                 for i in fine_levels
                     push!(chain, node(fine, i))
                 end
-            elseif abs(zs[l1] - surface_z) >= abs(zs[l0] - surface_z)
+            elseif surface_distance[l1] >= surface_distance[l0]
                 apex = node(coarse, l1)
                 push!(chain, node(coarse, l0))
                 for i in fine_levels
@@ -541,7 +570,7 @@ function push_hanging_prism!(
     end
     any(free) || error(
         "Prism over plan nodes $t between levels $la and $lb has hanging nodes on all three " *
-        "vertical edges (the level lists are not nested)"
+        "vertical edges (no corner carries the common levels only)"
     )
     # Faces oriented outward (`t` counter-clockwise in plan): the bottom reversed, the top as
     # is, the ladders walked from the near side (edge u -> v below the surface, v -> u above).
@@ -584,16 +613,54 @@ mutable struct GradedCounts
     region_hanging_node_incidences::Int
 end
 
+# The cross-section variant of a set of planes (DESIGN.md 4.2 / 4.5): the row ranges around
+# the fabricated steps of exactly those planes (one plane's band ends at the gap midpoint at
+# the latest; a band whose edges belong to both planes — a coincident cross-plane run, a
+# chain turning from one plane's edge onto the other's, a bump footprint — keeps every row
+# active across the gap), its cross-section, the capped column tops' level lists (ids
+# `list_offset + n` for n = 1..K-1) and the material of every cross-section triangle per
+# partition class. The stacks are the same in every variant (only the ranges differ).
+struct SweepVariant
+    planes::Vector{Int}
+    stacks::GradedStacks
+    section::CrossSection
+    top_levels::Vector{Vector{Int}}
+    list_offset::Int
+    section_material::Vector{Vector{Int8}}
+    swept::Vector{Bool}
+end
+
+# The planes whose fabricated step a chain's edges belong to: a base edge is a metal edge of
+# plane k when the conductor changes across it on that plane; a bump footprint edge belongs
+# to both planes (the bump sidewall spans the gap). The union over the chain's base edges.
+function chain_planes(chain::GradedChain, spec::PolygonSet, topology::PlanTopology)
+    planes = Set{Int}()
+    m = length(chain.plan_rows)
+    for c = 1:(chain.closed ? m : m - 1)
+        a, b = chain.plan_rows[c][1], chain.plan_rows[mod1(c + 1, m)][1]
+        a == b && continue # a fan's shared base
+        edge = a < b ? (a, b) : (b, a)
+        for k in eachindex(spec.planes)
+            haskey(topology.plane_edge_conductor[k], edge) && push!(planes, k)
+        end
+        haskey(topology.bump_edge_conductor, edge) && union!(planes, eachindex(spec.planes))
+    end
+    isempty(planes) &&
+        error("Graded sweep: a band chain whose base edges are no metal edge")
+    return sort!(collect(planes))
+end
+
 """
     graded_sweep_elements(spec, plan, topology, stack, radial_um, radial_growth, radial_layers,
-                          alpha, beta; verbose) -> (tetrahedra, attributes, classes, record)
+                          alpha, beta; region_ring, verbose) -> (tetrahedra, attributes, classes, record)
 
-Build the graded cross-section sweep of a one-plane plan mesh with its own structured band:
-the band cells along the chains' columns (swept (0, k) cells, strip prisms, collapse prisms)
-and the region prisms with hanging nodes. Node indices are (level - 1) x plan nodes + plan
-index (the tensor sweep's). Every tetrahedron is checked positive and the volume per material
-against the plan's analytic volume (`record["expected_volume_um3"]` is checked again by the
-caller on the written mesh).
+Build the graded cross-section sweep of a plan mesh (one or two planes, bumps) with its own
+structured band: the band cells along the chains' columns (swept (0, k) cells, strip prisms,
+collapse prisms) with the cross-section variant of the planes the chain's edges belong to,
+and the region prisms with hanging nodes (`region_ring`: the region nodes adjacent to the
+band carry Z_K). Node indices are (level - 1) x plan nodes + plan index (the tensor sweep's).
+Every tetrahedron is checked positive and the volume per material against the plan's analytic
+volume (`record["expected_volume_um3"]` is checked again by the caller on the written mesh).
 """
 function graded_sweep_elements(
     spec::PolygonSet,
@@ -605,38 +672,102 @@ function graded_sweep_elements(
     radial_layers::Int,
     alpha::Float64,
     beta::Float64;
+    region_ring::Bool=true,
     verbose::Bool=true
 )
-    length(spec.planes) == 1 ||
-        error("Graded sweep: two planes are not supported yet (milestone M3)")
-    isempty(spec.bumps) || error("Graded sweep: bumps are not supported yet (milestone M3)")
     isempty(plan.chains) &&
         error("Graded sweep needs the own structured band (band_mode own)")
     zs = stack.levels
     n_plan = length(plan.xy)
-    plane = spec.planes[1]
-    s, f = plane.surface_z, plane.facing
-    metal_top = s + f * spec.metal_thickness
-    trench = s - f * spec.overetch
-    interfaces = [trench, s, metal_top, stack.z_bottom, stack.z_top, stack.backsides...]
+    n_planes = length(spec.planes)
+    # The fabricated step of every plane (trench bottom, substrate surface, metal top); the
+    # interfaces every stack keeps: the steps' faces, the box ends, the backsides and, with
+    # two planes, the gap midpoint (the gap's own far field, where one plane's band ends).
+    step_faces = [
+        begin
+            s, f = plane.surface_z, plane.facing
+            faces = (s - f * spec.overetch, s, s + f * spec.metal_thickness)
+            (minimum(faces), maximum(faces))
+        end for plane in spec.planes
+    ]
+    interfaces = Float64[]
+    for plane in spec.planes
+        s, f = plane.surface_z, plane.facing
+        push!(interfaces, s - f * spec.overetch, s, s + f * spec.metal_thickness)
+    end
+    push!(interfaces, stack.z_bottom, stack.z_top, stack.backsides...)
+    midpoint = n_planes == 2 ? stack.gap_midpoint : NaN
+    n_planes == 2 && push!(interfaces, midpoint)
+    surface_distance =
+        [minimum(abs(z - plane.surface_z) for plane in spec.planes) for z in zs]
     heights = band_heights(radial_um, radial_growth, radial_layers)
-    stacks = graded_stacks(
+    rows = radial_layers
+    # The shared stacks (no range cap, the first plane's step: the levels do not depend on
+    # the ranges) and the variants by plane set, built as the chains need them.
+    shared = graded_stacks(
         zs,
         interfaces,
         heights,
         alpha,
         beta,
-        (min(trench, s, metal_top), max(trench, s, metal_top)),
+        step_faces[1],
         REGION_MESH_SIZE_MAX_UM
     )
-    section = cross_section(stacks, zs, heights, s)
-    rows = stacks.rows
-    n_stacks = length(stacks.levels)
-    top_levels = column_top_levels(stacks)
-    # Level lists by id: the stacks Z_0..Z_{K+J}, then the top lists of columns with 1..K-1
-    # rows (a full column's top list is Z_K).
-    lists = vcat(stacks.levels, top_levels[1:(rows - 1)])
-    top_list_id(n) = n == rows ? rows + 1 : n_stacks + n
+    n_stacks = length(shared.levels)
+    lists = copy(shared.levels)
+    variants = Dict{Vector{Int}, SweepVariant}()
+    variant_order = Vector{Int}[]
+    function variant_of(planes::Vector{Int})
+        return get!(variants, planes) do
+            step = (
+                minimum(step_faces[k][1] for k in planes),
+                maximum(step_faces[k][2] for k in planes)
+            )
+            # One plane's band of a two-plane set ends at the gap midpoint on the gap side.
+            cap = (-Inf, Inf)
+            if n_planes == 2 && length(planes) == 1
+                toward_gap = spec.planes[planes[1]].facing
+                cap = toward_gap == 1 ? (-Inf, midpoint) : (midpoint, Inf)
+            end
+            stacks = graded_stacks(
+                zs,
+                interfaces,
+                heights,
+                alpha,
+                beta,
+                step,
+                REGION_MESH_SIZE_MAX_UM;
+                range_cap=cap
+            )
+            stacks.levels == shared.levels ||
+                error("Graded sweep: the stacks differ between cross-section variants")
+            section = cross_section(stacks, zs, heights, surface_distance)
+            top_levels = column_top_levels(stacks)
+            list_offset = length(lists)
+            append!(lists, top_levels[1:(rows - 1)])
+            section_material = [
+                begin
+                    zc = sum(zs[section.nodes[n][2]] for n in t) / 3
+                    [material(spec, class, zc) for class in plan.classes]
+                end for t in section.triangles
+            ]
+            swept = [pair[1] == 0 for pair in section.triangle_pair]
+            push!(variant_order, planes)
+            return SweepVariant(
+                planes,
+                stacks,
+                section,
+                top_levels,
+                list_offset,
+                section_material,
+                swept
+            )
+        end
+    end
+    top_list_id(variant::SweepVariant, n::Int) =
+        n == rows ? rows + 1 : variant.list_offset + n
+    chain_variant =
+        [variant_of(chain_planes(chain, spec, topology)) for chain in plan.chains]
 
     # Plan nodes of the band: row (-1 for a region node), the most rows of a column through
     # the node, and, for column tops, the list id; the capped columns and the fans.
@@ -644,7 +775,8 @@ function graded_sweep_elements(
     node_column_rows = zeros(Int, n_plan)
     node_list = zeros(Int, n_plan)
     columns, capped_columns, fan_sectors = 0, 0, 0
-    for chain in plan.chains
+    for (chain_index, chain) in enumerate(plan.chains)
+        variant = chain_variant[chain_index]
         m = length(chain.plan_rows)
         for (c, plan_rows) in enumerate(chain.plan_rows)
             n = length(plan_rows) - 1
@@ -662,10 +794,11 @@ function graded_sweep_elements(
                 node_column_rows[p] = max(node_column_rows[p], n)
             end
             top = plan_rows[end]
-            node_list[top] in (0, top_list_id(n)) || error(
-                "Plan node $top at $(plan.xy[top]) is the top of columns with different rows"
+            node_list[top] in (0, top_list_id(variant, n)) || error(
+                "Plan node $top at $(plan.xy[top]) is the top of columns with different " *
+                "rows or cross-section variants"
             )
-            node_list[top] = top_list_id(n)
+            node_list[top] = top_list_id(variant, n)
             d = mod1(c + 1, m)
             (chain.closed || c < m) &&
                 chain.plan_rows[c][1] == chain.plan_rows[d][1] &&
@@ -680,7 +813,18 @@ function graded_sweep_elements(
     end
     width_last = heights[rows] - (rows == 1 ? 0.0 : heights[rows - 1])
     ladder = n_stacks - 1 - rows
-    region_nodes = 0
+    # The region ring (decision 275; "ladder0" in the M2 recovery diagnostic): a region node
+    # adjacent to the band (sharing a plan edge with a band node, i.e. a column top) carries
+    # the band's outermost stack Z_K, so the ring of region triangles touching the band keeps
+    # the band's z resolution; the plan-size ladder applies beyond.
+    ring_node = falses(n_plan)
+    if region_ring
+        for (a, b) in keys(topology.edge_incidence)
+            (node_row[a] == -1) == (node_row[b] == -1) && continue
+            ring_node[node_row[a] == -1 ? a : b] = true
+        end
+    end
+    region_nodes, ring_nodes = 0, 0
     for p = 1:n_plan
         node_row[p] == -1 || continue
         region_nodes += 1
@@ -688,6 +832,10 @@ function graded_sweep_elements(
         j =
             size > width_last ?
             floor(Int, log2(size / width_last) + LADDER_LOG2_TOLERANCE) : 0
+        if ring_node[p]
+            j = 0
+            ring_nodes += 1
+        end
         node_list[p] = rows + clamp(j, 0, ladder) + 1
     end
     nodes_by_list = [count(==(id), node_list) for id = 1:length(lists)]
@@ -696,7 +844,7 @@ function graded_sweep_elements(
     # surface, plan nodes by band row descending, taller columns first, then the welding
     # order; region nodes last. The tetrahedra are remapped to the tensor sweep's numbering
     # (level - 1) x plan nodes + plan index before they are returned.
-    level_by_rank = sortperm(zs; by=z -> (abs(z - s), -z))
+    level_by_rank = sortperm(eachindex(zs); by=i -> (surface_distance[i], -zs[i]))
     rank_of_level = invperm(level_by_rank)
     plan_by_order = sortperm(
         1:n_plan;
@@ -712,7 +860,7 @@ function graded_sweep_elements(
         p, level = plan_of(index), level_of(index)
         (plan.xy[p][1], plan.xy[p][2], zs[level])
     end
-    near_is_bottom(la::Int, lb::Int) = abs(zs[la] - s) < abs(zs[lb] - s)
+    near_is_bottom(la::Int, lb::Int) = surface_distance[la] < surface_distance[lb]
     centroid(indices) = begin
         points = map(point, indices)
         ntuple(i -> sum(p[i] for p in points) / length(points), 3)
@@ -741,16 +889,12 @@ function graded_sweep_elements(
         return length(tetrahedra) - before
     end
 
-    # Band cells per column pair.
-    section_material = [
-        begin
-            zc = sum(zs[section.nodes[n][2]] for n in t) / 3
-            [material(spec, class, zc) for class in plan.classes]
-        end for t in section.triangles
-    ]
-    swept = [pair[1] == 0 for pair in section.triangle_pair]
+    # Band cells per column pair, with the chain's cross-section variant.
     faces = NTuple{3, Int32}[]
     for (chain_index, chain) in enumerate(plan.chains)
+        variant = chain_variant[chain_index]
+        stacks, section, top_levels = variant.stacks, variant.section, variant.top_levels
+        section_material, swept = variant.section_material, variant.swept
         m = length(chain.plan_rows)
         class = chain.class
         for c = 1:(chain.closed ? m : m - 1)
@@ -886,9 +1030,11 @@ function graded_sweep_elements(
         end
     end
 
-    # Region prisms: plan triangle x interval of the coarsest of its nodes' level lists
-    # (nested, so the coarsest is one of them), hanging nodes of the finer lists on their
-    # vertical edges.
+    # Region prisms: plan triangle x interval of the common levels of its corners' lists (one
+    # plane: the lists are nested and the coarsest is one of them; two planes: the tops of
+    # chains of different variants are fine near their own plane and Z_K near the other, so
+    # the common list is their intersection and, interval by interval, one corner is still
+    # hanging-free), hanging nodes of the finer lists on their vertical edges.
     for (index, t) in enumerate(plan.triangles)
         plan.band_triangle[index] && continue
         class = plan.triangle_class[index]
@@ -901,10 +1047,9 @@ function graded_sweep_elements(
         t = ccw(t)
         node_lists =
             (lists[node_list[t[1]]], lists[node_list[t[2]]], lists[node_list[t[3]]])
-        coarsest = argmin(length.(node_lists))
-        levels = node_lists[coarsest]
-        all(issubset(levels, l) for l in node_lists) ||
-            error("Region triangle $t: the corners' level lists are not nested")
+        levels = sort!(intersect(node_lists...))
+        (levels[1] == 1 && levels[end] == length(zs)) ||
+            error("Region triangle $t: the corners' common levels miss a box face")
         for interval = 1:(length(levels) - 1)
             la, lb = levels[interval], levels[interval + 1]
             attribute = material(spec, plan.classes[class], 0.5 * (zs[la] + zs[lb]))
@@ -976,31 +1121,69 @@ function graded_sweep_elements(
             (tail_index(t[1]), tail_index(t[2]), tail_index(t[3]), tail_index(t[4]))
     end
 
+    # The chains, columns, capped columns and fan sectors per variant.
+    variant_counts = Dict(planes => zeros(Int, 4) for planes in variant_order)
+    for (chain_index, chain) in enumerate(plan.chains)
+        v = variant_counts[chain_variant[chain_index].planes]
+        v[1] += 1
+        m = length(chain.plan_rows)
+        for (c, plan_rows) in enumerate(chain.plan_rows)
+            v[2] += 1
+            length(plan_rows) - 1 < rows && (v[3] += 1)
+            d = mod1(c + 1, m)
+            (chain.closed || c < m) &&
+                chain.plan_rows[c][1] == chain.plan_rows[d][1] &&
+                (v[3 + 1] += 1)
+        end
+    end
+    cross_sections = [
+        begin
+            variant = variants[planes]
+            v = variant_counts[planes]
+            Dict{String, Any}(
+                "planes" => [spec.planes[k].name for k in planes],
+                "step_faces_z_um" => [
+                    minimum(step_faces[k][1] for k in planes),
+                    maximum(step_faces[k][2] for k in planes)
+                ],
+                "row_ranges_z_um" =>
+                    [[zs[lo], zs[hi]] for (lo, hi) in variant.stacks.ranges],
+                "column_top_list_sizes" => [length(l) for l in variant.top_levels],
+                "plan_nodes_by_capped_top_list" =>
+                    nodes_by_list[(variant.list_offset + 1):(variant.list_offset + rows - 1)],
+                "chains" => v[1],
+                "columns" => v[2],
+                "capped_columns" => v[3],
+                "fan_sectors" => v[4],
+                "cross_section_nodes" => length(variant.section.nodes),
+                "cross_section_triangles" => length(variant.section.triangles),
+                "cross_section_triangles_by_line_pair" => [
+                    Dict("lines" => collect(pair), "triangles" => n) for
+                    (pair, n) in variant.section.pair_triangles
+                ]
+            )
+        end for planes in variant_order
+    ]
     record = Dict{String, Any}(
         "alpha" => alpha,
         "beta" => beta,
         "rows" => rows,
         "heights_um" => heights,
-        "stack_spacings_um" => stacks.spacings,
-        "stack_sizes" => [length(l) for l in stacks.levels],
-        "stack_levels_z_um" => [[zs[i] for i in l] for l in stacks.levels],
-        "row_ranges_z_um" => [[zs[lo], zs[hi]] for (lo, hi) in stacks.ranges],
-        "column_top_list_sizes" => [length(l) for l in top_levels],
+        "stack_spacings_um" => shared.spacings,
+        "stack_sizes" => [length(l) for l in shared.levels],
+        "stack_levels_z_um" => [[zs[i] for i in l] for l in shared.levels],
+        "gap_midpoint_z_um" => n_planes == 2 ? midpoint : nothing,
+        "cross_sections" => cross_sections,
         "region_ladder_stacks" => ladder,
         "region_size_max_um" => REGION_MESH_SIZE_MAX_UM,
+        "region_ring" => region_ring,
+        "region_ring_plan_nodes" => ring_nodes,
         "plan_nodes_by_stack" => nodes_by_list[1:n_stacks],
-        "plan_nodes_by_capped_top_list" => nodes_by_list[(n_stacks + 1):end],
         "region_plan_nodes" => region_nodes,
         "chains" => length(plan.chains),
         "columns" => columns,
         "capped_columns" => capped_columns,
         "fan_sectors" => fan_sectors,
-        "cross_section_nodes" => length(section.nodes),
-        "cross_section_triangles" => length(section.triangles),
-        "cross_section_triangles_by_line_pair" => [
-            Dict("lines" => collect(pair), "triangles" => n) for
-            (pair, n) in section.pair_triangles
-        ],
         "band_swept_elements" => counts.band_swept_elements,
         "band_strip_prisms" => counts.band_strip_prisms,
         "band_strip_prisms_hanging" => counts.band_strip_prisms_hanging,
@@ -1019,13 +1202,12 @@ function graded_sweep_elements(
         beta,
         ", stacks ",
         record["stack_sizes"],
-        ", row ranges ",
-        record["row_ranges_z_um"],
-        ", cross-section ",
-        length(section.nodes),
-        " nodes / ",
-        length(section.triangles),
-        " triangles, columns ",
+        ", cross-sections ",
+        [
+            (section["planes"], section["row_ranges_z_um"], section["chains"]) for
+            section in cross_sections
+        ],
+        ", columns ",
         columns,
         " (capped ",
         capped_columns,
@@ -1043,7 +1225,9 @@ function graded_sweep_elements(
         counts.region_prisms_plain,
         " plain + ",
         counts.region_prisms_hanging,
-        " hanging; volume closes to ",
+        " hanging (ring nodes ",
+        ring_nodes,
+        "); volume closes to ",
         maximum(abs(swept_volume[k] - v) / v for (k, v) in expected_volume; init=0.0)
     )
     return tetrahedra, tetrahedron_attribute, tetrahedron_class, record
