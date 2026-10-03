@@ -1058,7 +1058,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const mfem::DenseMatrix C_off = off.CapacitanceMatrix(terms);
 
   // Strip the terminal-mode section: keep the header (2 ints), signature (nG x 3), S_E (nG
-  // x nG) and environment fingerprint (1 int + 4 doubles).
+  // x nG) and environment fingerprint (1 int + 5 doubles).
   if (Mpi::Root(Mpi::World()))
   {
     int nG = 0;
@@ -1067,7 +1067,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       f.read(reinterpret_cast<char *>(&nG), sizeof(int));
     }
     const auto kept = static_cast<std::uintmax_t>(3 * sizeof(int)) +
-                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 4);
+                      static_cast<std::uintmax_t>(sizeof(double)) * (nG * 3 + nG * nG + 5);
     REQUIRE(std::filesystem::file_size(model_path) > kept);
     std::filesystem::resize_file(model_path, kept);
   }

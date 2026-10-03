@@ -351,7 +351,7 @@ struct SubstructuringSolver::Impl
   mfem::ParFiniteElementSpace parent_fes;
   int nt;
 
-  std::unique_ptr<mfem::HypreParMatrix> A_region, A_env, A_region_free;
+  std::unique_ptr<mfem::HypreParMatrix> A_region, A_region_free;
   mfem::Array<int> ra_arr, ea_arr;
   // Iterative environment interior solve on the environment submesh (Gamma essential),
   // with geometric multigrid for higher-order H1.
@@ -408,12 +408,13 @@ struct SubstructuringSolver::Impl
   mfem::Array<int> reg_ess;
   mutable mfem::ParGridFunction reg_pgf, reg_sgf;
   mutable mfem::Vector reg_srhs, reg_ssol;
-  // Energy operators: the solve operators (electrostatics), the pure curl-curl
+  // Region energy operator: the solve operator (electrostatics), the pure curl-curl
   // (magnetostatics).
-  std::unique_ptr<mfem::HypreParMatrix> A_region_energy, A_env_energy;
-  mfem::HypreParMatrix *K_region_e = nullptr, *K_env_e = nullptr;
+  std::unique_ptr<mfem::HypreParMatrix> A_region_energy;
+  mfem::HypreParMatrix *K_region_e = nullptr;
   std::vector<char> is_gamma, is_env_int, is_region_free;
   mfem::Array<int> dbc_tdofs;
+  int env_dbc_local = 0;                           // owned Dirichlet DOFs of env elements
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
 
   std::unique_ptr<RegionCondensedOperator> region_op;
@@ -452,8 +453,7 @@ struct SubstructuringSolver::Impl
   bool have_sk = false, have_gk = false;
   std::unique_ptr<Hodlr> hodlr_K;
   std::unique_ptr<MaterializedDtN> mat_dtn_K;
-  std::unique_ptr<mfem::HypreParMatrix> D_env;  // A_env - K_env (magnetostatics)
-  bool env_built = false;                       // environment interior solver set up
+  bool env_built = false;  // environment interior solver set up
 
   Impl(const IoData &iodata, mfem::ParMesh &parent)
     : iodata(iodata), parent(parent),
@@ -544,6 +544,7 @@ struct SubstructuringSolver::Impl
     {
       if (dir_mark[i])
       {
+        env_dbc_local += em[i] ? 1 : 0;
         continue;
       }
       const bool r = rm[i], e = em[i];
@@ -610,26 +611,196 @@ struct SubstructuringSolver::Impl
       mag_eps = has_sheets ? kMagRegularizationSheets : kMagRegularization;
     }
     A_region = AssembleParent(region_eps, magnetostatic, true, &sheet_region);
-    A_env = AssembleParent(env_eps, magnetostatic, true, &sheet_env);
     if (magnetostatic)
     {
-      // Energy operators: the pure curl-curl (see SheetEnergyMatrix for the London sheets).
+      // Energy operator: the pure curl-curl (see SheetEnergyMatrix for the London sheets).
       A_region_energy = AssembleParent(region_eps, false);
-      A_env_energy = AssembleParent(env_eps, false);
       K_region_e = A_region_energy.get();
-      K_env_e = A_env_energy.get();
       if (has_sheets)
       {
-        M_sheet = AssembleParent({}, false, false, &sheet_all);
         M_sheet_region = AssembleParent({}, false, false, &sheet_region);
-        M_sheet_env = AssembleParent({}, false, false, &sheet_env);
       }
     }
     else
     {
       K_region_e = A_region.get();
-      K_env_e = A_env.get();
     }
+  }
+
+  // Environment operators (whole-mesh size), assembled on first use. Collective. An online
+  // run with a matching saved model does not assemble them (its reuse checks run element by
+  // element, see ForEachEnvElement).
+  std::unique_ptr<mfem::HypreParMatrix> A_env, K_env, D_env, M_sheet, M_sheet_env;
+  const mfem::HypreParMatrix &Aenv()
+  {
+    if (!A_env)
+    {
+      A_env = AssembleParent(env_eps, magnetostatic, true, &sheet_env);
+    }
+    return *A_env;
+  }
+  // Energy operator: A_env for electrostatics, the pure curl-curl for magnetostatics.
+  const mfem::HypreParMatrix &Kenv()
+  {
+    if (!magnetostatic)
+    {
+      return Aenv();
+    }
+    if (!K_env)
+    {
+      K_env = AssembleParent(env_eps, false);
+    }
+    return *K_env;
+  }
+  // D_env = A_env - K_env = eps M_env (magnetostatics).
+  const mfem::HypreParMatrix &Denv()
+  {
+    if (!D_env)
+    {
+      D_env = AssembleParent(env_eps, true, false);
+    }
+    return *D_env;
+  }
+  // Sheet masses on both sides and on the environment side.
+  const mfem::HypreParMatrix &Msheet()
+  {
+    if (!M_sheet)
+    {
+      M_sheet = AssembleParent({}, false, false, &sheet_all);
+    }
+    return *M_sheet;
+  }
+  const mfem::HypreParMatrix &MsheetEnv()
+  {
+    if (!M_sheet_env)
+    {
+      M_sheet_env = AssembleParent({}, false, false, &sheet_env);
+    }
+    return *M_sheet_env;
+  }
+
+  // The environment operator element by element, without assembling it: f(vdofs, A_e) for
+  // each local environment element (volume terms) and environment-side sheet face (London
+  // terms) for which use(vdofs) is true, with the integrators and quadrature of
+  // AssembleParent and MFEM's DOF transformation.
+  void ForEachEnvElement(
+      bool volume, bool sheets, const std::function<bool(const mfem::Array<int> &)> &use,
+      const std::function<void(const mfem::Array<int> &, const mfem::DenseMatrix &)> &f)
+      const
+  {
+    PWMatrixCoefficient coef(parent.Dimension(), env_eps);
+    mfem::Vector mass(parent.attributes.Size() ? parent.attributes.Max() : 1);
+    mass = mag_eps;
+    mfem::PWConstCoefficient mcoef(mass);
+    NativeQuadrature<mfem::CurlCurlIntegrator> curlcurl(coef);
+    NativeQuadrature<mfem::VectorFEMassIntegrator> regularization(mcoef);
+    NativeQuadrature<mfem::DiffusionIntegrator> diffusion(coef);
+    mfem::Array<int> vdofs;
+    mfem::DofTransformation doftrans;
+    mfem::DenseMatrix Ae, Me;
+    for (int e = 0; volume && e < parent.GetNE(); e++)
+    {
+      if (!env_eps.contains(parent.GetAttribute(e)))
+      {
+        continue;
+      }
+      parent_fes.GetElementVDofs(e, vdofs, doftrans);
+      if (!use(vdofs))
+      {
+        continue;
+      }
+      const mfem::FiniteElement &fe = *parent_fes.GetFE(e);
+      mfem::ElementTransformation &T = *parent_fes.GetElementTransformation(e);
+      if (magnetostatic)
+      {
+        curlcurl.AssembleElementMatrix(fe, T, Ae);
+        regularization.AssembleElementMatrix(fe, T, Me);
+        Ae += Me;
+      }
+      else
+      {
+        diffusion.AssembleElementMatrix(fe, T, Ae);
+      }
+      doftrans.TransformDual(Ae);
+      f(vdofs, Ae);
+    }
+    if (sheets && magnetostatic && has_sheets)
+    {
+      ElementCoefficient sheet_coef(sheet_env);
+      NativeQuadrature<mfem::VectorFEMassIntegrator> sheet(sheet_coef);
+      for (int be = 0; be < parent.GetNBE(); be++)
+      {
+        if (sheet_env[be] == 0.0)
+        {
+          continue;
+        }
+        parent_fes.GetBdrElementVDofs(be, vdofs, doftrans);
+        if (!use(vdofs))
+        {
+          continue;
+        }
+        sheet.AssembleElementMatrix(*parent_fes.GetBE(be),
+                                    *parent_fes.GetBdrElementTransformation(be), Ae);
+        doftrans.TransformDual(Ae);
+        f(vdofs, Ae);
+      }
+    }
+  }
+
+  // Y_k = A_env X_k for true-DOF vectors X_k, element by element over the elements the X_k
+  // touch (volume and/or sheet terms). Collective.
+  std::vector<mfem::Vector> EnvApply(const std::vector<const mfem::Vector *> &X,
+                                     bool volume = true, bool sheets = true) const
+  {
+    const int n = static_cast<int>(X.size());
+    const mfem::Operator &P = *parent_fes.GetProlongationMatrix();
+    std::vector<mfem::Vector> XL(n, mfem::Vector(parent_fes.GetVSize())),
+        YL(n, mfem::Vector(parent_fes.GetVSize()));
+    for (int k = 0; k < n; k++)
+    {
+      P.Mult(*X[k], XL[k]);
+      YL[k] = 0.0;
+    }
+    std::vector<char> touched(n, 0);
+    auto use = [&](const mfem::Array<int> &vdofs)
+    {
+      bool any = false;
+      for (int k = 0; k < n; k++)
+      {
+        touched[k] = 0;
+        for (int d : vdofs)
+        {
+          if (XL[k](d >= 0 ? d : -1 - d) != 0.0)
+          {
+            touched[k] = 1;
+            break;
+          }
+        }
+        any = any || touched[k];
+      }
+      return any;
+    };
+    mfem::Vector xe, ye;
+    ForEachEnvElement(volume, sheets, use,
+                      [&](const mfem::Array<int> &vdofs, const mfem::DenseMatrix &Ae)
+                      {
+                        for (int k = 0; k < n; k++)
+                        {
+                          if (touched[k])
+                          {
+                            XL[k].GetSubVector(vdofs, xe);
+                            ye.SetSize(xe.Size());
+                            Ae.Mult(xe, ye);
+                            YL[k].AddElementVector(vdofs, ye);
+                          }
+                        }
+                      });
+    std::vector<mfem::Vector> Y(n, mfem::Vector(nt));
+    for (int k = 0; k < n; k++)
+    {
+      P.MultTranspose(YL[k], Y[k]);
+    }
+    return Y;
   }
 
   // Mass regularization eps M making the singular magnetostatic curl-curl definite; the
@@ -687,7 +858,7 @@ struct SubstructuringSolver::Impl
       const bool region = ra.Find(FET.Elem1->Attribute) >= 0 ||
                           (FET.Elem2 && ra.Find(FET.Elem2->Attribute) >= 0);
       (region ? sheet_region : sheet_env)[be] = it->second;
-      sheet_all[be] = it->second;  // all sheet faces, for M_sheet
+      sheet_all[be] = it->second;  // all sheet faces, for Msheet()
       local = 1;
     }
     MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, parent.GetComm());
@@ -695,7 +866,7 @@ struct SubstructuringSolver::Impl
   }
 
   // Sheet masses (both sides, and per side), for the flux-loop sources and energies.
-  std::unique_ptr<mfem::HypreParMatrix> M_sheet, M_sheet_region, M_sheet_env;
+  std::unique_ptr<mfem::HypreParMatrix> M_sheet_region;
 
   // Source modes of London flux states (see ComputeSourceModes): ids, fingerprints of the
   // environment sources, the interface load g, the energy coupling h (Gamma rows) and the
@@ -708,8 +879,7 @@ struct SubstructuringSolver::Impl
   // Environment source b^E = M_sheet^E a (zero on the Dirichlet DOFs) and its fingerprint.
   mfem::Vector EnvSource(const mfem::Vector &a, std::array<double, 2> &fp) const
   {
-    mfem::Vector b(nt);
-    M_sheet_env->Mult(a, b);
+    mfem::Vector b = std::move(EnvApply({&a}, false, true)[0]);
     for (int d = 0; d < dbc_tdofs.Size(); d++)
     {
       b(dbc_tdofs[d]) = 0.0;
@@ -767,12 +937,12 @@ struct SubstructuringSolver::Impl
     SG_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
     for (int k = 0; k < K; k++)
     {
-      A_env->Mult(W[k], t);
+      Aenv().Mult(W[k], t);
       t.Neg();
       t += b[k];  // g_k = b^E_k|_Gamma - (A_env W_k)|_Gamma
       rows(SG_rows, k, t);
       // q_k = (A_env - D_env) W_k - b^E_k, then z_k = A_EE^-1 q_k|_E.
-      A_env->Mult(W[k], q[k]);
+      Aenv().Mult(W[k], q[k]);
       Denv().Mult(W[k], t);
       q[k] -= t;
       q[k] -= b[k];
@@ -787,7 +957,7 @@ struct SubstructuringSolver::Impl
     SH_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
     for (int k = 0; k < K; k++)
     {
-      A_env->Mult(z[k], t);
+      Aenv().Mult(z[k], t);
       t.Neg();
       t += q[k];  // h_k = q_k|_Gamma - (A_env z_k)|_Gamma
       rows(SH_rows, k, t);
@@ -797,10 +967,10 @@ struct SubstructuringSolver::Impl
         D(K, mfem::Vector(nt));
     for (int k = 0; k < K; k++)
     {
-      K_env_e->Mult(W[k], KW[k]);
+      Kenv().Mult(W[k], KW[k]);
       D[k] = W[k];
       D[k] -= a[k];
-      M_sheet_env->Mult(D[k], MD[k]);
+      MsheetEnv().Mult(D[k], MD[k]);
     }
     for (int i = 0; i < K; i++)
     {
@@ -951,7 +1121,7 @@ struct SubstructuringSolver::Impl
         other.Append(i);
       }
     }
-    mfem::HypreParMatrix A_sch(*A_env);
+    mfem::HypreParMatrix A_sch(Aenv());
     {
       std::unique_ptr<mfem::HypreParMatrix> e(A_sch.EliminateRowsCols(other));
     }
@@ -1006,7 +1176,7 @@ struct SubstructuringSolver::Impl
     std::vector<mfem::Vector *> Y(n);
     for (int k = 0; k < n; k++)
     {
-      A_env->Mult(u[k], rhs[k]);
+      Aenv().Mult(u[k], rhs[k]);
       rhs[k].Neg();
       if (f)
       {
@@ -1046,15 +1216,6 @@ struct SubstructuringSolver::Impl
   // Whether the energy operator differs from the solve operator (magnetostatics).
   bool EnergyDiffers() const { return magnetostatic; }
 
-  const mfem::HypreParMatrix &Denv()
-  {
-    if (!D_env)
-    {
-      D_env = AssembleParent(env_eps, true, false);  // eps M_env
-    }
-    return *D_env;
-  }
-
   // Partition-invariant fingerprint of a lift's environment side: (x^T A_env x,
   // |(A_env x)|_Gamma|_2). Collective.
   std::array<double, 2> LiftFingerprint(const mfem::Vector &x, const mfem::Vector &t) const
@@ -1084,9 +1245,16 @@ struct SubstructuringSolver::Impl
     std::vector<mfem::Vector> t(K, mfem::Vector(nt)), w(K, mfem::Vector(nt));
     std::vector<int> touches(K, 0);
     mode_fp.assign(2 * K, 0.0);
+    {
+      std::vector<const mfem::Vector *> X(K);
+      for (int k = 0; k < K; k++)
+      {
+        X[k] = &x[k];
+      }
+      t = EnvApply(X);
+    }
     for (int k = 0; k < K; k++)
     {
-      A_env->Mult(x[k], t[k]);
       const auto fp = LiftFingerprint(x[k], t[k]);
       mode_fp[2 * k] = fp[0];
       mode_fp[2 * k + 1] = fp[1];
@@ -1128,7 +1296,7 @@ struct SubstructuringSolver::Impl
       Grows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
       for (int k = 0; k < K; k++)
       {
-        A_env->Mult(b[k], tmp);
+        Aenv().Mult(b[k], tmp);
         for (int i = 0; i < nt; i++)
         {
           if (is_gamma[i])
@@ -1190,7 +1358,12 @@ struct SubstructuringSolver::Impl
   {
     col.assign(ids.size(), -1);
     bool ok = modes_ready;
-    mfem::Vector t(nt);
+    std::vector<const mfem::Vector *> X(x.size());
+    for (std::size_t j = 0; j < x.size(); j++)
+    {
+      X[j] = &x[j];
+    }
+    const std::vector<mfem::Vector> t = EnvApply(X);
     for (std::size_t j = 0; j < ids.size(); j++)
     {
       for (std::size_t k = 0; k < mode_ids.size(); k++)
@@ -1200,8 +1373,7 @@ struct SubstructuringSolver::Impl
           col[j] = static_cast<int>(k);
         }
       }
-      A_env->Mult(x[j], t);
-      const auto fp = LiftFingerprint(x[j], t);  // collective: always evaluated
+      const auto fp = LiftFingerprint(x[j], t[j]);
       if (col[j] < 0)
       {
         ok = false;
@@ -1264,52 +1436,78 @@ struct SubstructuringSolver::Impl
                  MPI_DOUBLE, rows.data(), gamma_nloc * w, MPI_DOUBLE, 0, comm);
   }
 
-  // Model-file sections following S_E: [kEnvFpMagic][environment fingerprint, 4 doubles],
+  // Model-file sections following S_E: [kEnvFpMagic][environment fingerprint, 5 doubles],
   // [kSKenMagic][S^K nG x nG] (magnetostatics),
   // [kModesMagic][K][ids][fingerprints 2K][has_GK][G nG x K][G^K nG x K if has_GK][Cmode
   // KxK], and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK].
   static constexpr int kSKenMagic = 0x4e454b53;   // "SKEN"
   static constexpr int kModesMagic = 0x32444f4d;  // "MOD2"
-  static constexpr int kEnvFpMagic = 0x32564e45;  // "ENV2"
+  static constexpr int kEnvFpMagic = 0x33564e45;  // "ENV3"
   // Fingerprint of the environment: global counts of the environment-closure DOFs and of
-  // its Dirichlet DOFs, and the trace and Frobenius norm of A_env. Independent of the
-  // region (A_env has no region contribution), of the partition and of the DOF numbering
-  // (and of H(curl) orientation signs), but it changes with the environment mesh,
-  // materials, order, physics or Dirichlet boundaries. Collective.
-  std::array<double, 4> EnvironmentFingerprint() const
+  // the Dirichlet DOFs of environment elements, and the energies r^T A_env r of three fixed
+  // fields (projected polynomials). Independent of the region (A_env has no region
+  // contribution), of the partition, the DOF numbering and the H(curl) orientations, but it
+  // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
+  // Computed element by element (no assembled A_env). Collective.
+  std::array<double, 5> EnvironmentFingerprint()
   {
-    mfem::SparseMatrix diag;
-    A_env->GetDiag(diag);
-    double trace = 0.0;
-    for (int i = 0; i < diag.Height(); i++)
-    {
-      trace += diag.Elem(i, i);
-    }
-    // Environment-closure DOFs: free (interior and interface) and Dirichlet (touched by an
-    // environment element: a nonzero diagonal of A_env, which is assembled with a zero
-    // coefficient on the region).
-    double loc[3] = {trace, 0.0, 0.0};
+    double loc[2] = {0.0, static_cast<double>(env_dbc_local)};
     for (int i = 0; i < nt; i++)
     {
-      loc[1] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
+      loc[0] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
     }
-    for (int d = 0; d < dbc_tdofs.Size(); d++)
+    std::vector<mfem::Vector> r(3, mfem::Vector(nt));
     {
-      const int i = dbc_tdofs[d];
-      loc[2] += (diag.Elem(i, i) != 0.0) ? 1.0 : 0.0;
+      mfem::ParGridFunction gf(&parent_fes);
+      for (int k = 0; k < 3; k++)
+      {
+        if (magnetostatic)
+        {
+          mfem::VectorFunctionCoefficient c(
+              3,
+              [k](const mfem::Vector &x, mfem::Vector &v)
+              {
+                const double X = x(0), Y = x(1), Z = x(2);
+                const double f[3][3] = {
+                    {Z, X, Y}, {Y * Y, Z * Z, X * X}, {X * Y, Y * Z, Z * X}};
+                v.SetSize(3);
+                for (int d = 0; d < 3; d++)
+                {
+                  v(d) = f[k][d];
+                }
+              });
+          gf.ProjectCoefficient(c);
+        }
+        else
+        {
+          mfem::FunctionCoefficient c(
+              [k](const mfem::Vector &x)
+              {
+                const double X = x(0), Y = x(1), Z = x.Size() > 2 ? x(2) : 0.0;
+                return (k == 0) ? X : (k == 1) ? Y + Z * Z : X * Y * Z;
+              });
+          gf.ProjectCoefficient(c);
+        }
+        gf.GetTrueDofs(r[k]);
+      }
     }
-    double glob[3];
-    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
-    return {glob[1], glob[2], glob[0], A_env->FNorm()};
+    const std::vector<mfem::Vector> Ar = EnvApply({&r[0], &r[1], &r[2]});
+    double glob[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
+    MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
+    for (int k = 0; k < 3; k++)
+    {
+      glob[2 + k] = mfem::InnerProduct(parent_fes.GetComm(), r[k], Ar[k]);
+    }
+    return {glob[0], glob[1], glob[2], glob[3], glob[4]};
   }
 
   // Environment fingerprint of a loaded model.
-  std::array<double, 4> saved_env_fp = {0.0, 0.0, 0.0, 0.0};
+  std::array<double, 5> saved_env_fp = {0.0, 0.0, 0.0, 0.0, 0.0};
   bool have_env_fp = false;
 
-  void AppendEnvFingerprint(const std::string &path) const
+  void AppendEnvFingerprint(const std::string &path)
   {
-    const std::array<double, 4> fp = EnvironmentFingerprint();  // collective
+    const std::array<double, 5> fp = EnvironmentFingerprint();  // collective
     if (Mpi::Root(parent_fes.GetComm()))
     {
       std::ofstream f(path, std::ios::binary | std::ios::app);
@@ -1320,14 +1518,14 @@ struct SubstructuringSolver::Impl
 
   // Abort if a loaded model was condensed from a different environment than the current
   // one.
-  void CheckEnvFingerprint() const
+  void CheckEnvFingerprint()
   {
-    const std::array<double, 4> fp = EnvironmentFingerprint();  // collective
+    const std::array<double, 5> fp = EnvironmentFingerprint();  // collective
     MFEM_VERIFY(have_env_fp,
                 "The saved substructuring model has no environment "
                 "fingerprint: rerun in \"Offline\" mode to condense it again!");
     bool ok = (fp[0] == saved_env_fp[0] && fp[1] == saved_env_fp[1]);
-    for (int q = 2; q < 4; q++)
+    for (int q = 2; q < 5; q++)
     {
       ok = ok && std::abs(fp[q] - saved_env_fp[q]) <=
                      1.0e-10 * std::max(std::abs(fp[q]), std::abs(saved_env_fp[q]));
@@ -1422,7 +1620,7 @@ struct SubstructuringSolver::Impl
           f.read(reinterpret_cast<char *>(saved_env_fp.data()),
                  sizeof(double) * saved_env_fp.size());
         }
-        MPI_Bcast(saved_env_fp.data(), 4, MPI_DOUBLE, 0, comm);
+        MPI_Bcast(saved_env_fp.data(), 5, MPI_DOUBLE, 0, comm);
         have_env_fp = true;
       }
       else if (magic == kSKenMagic)
@@ -1551,7 +1749,7 @@ struct SubstructuringSolver::Impl
           non_env_int.Append(i);
         }
       }
-      env_A_ee_parent = std::make_unique<mfem::HypreParMatrix>(*A_env);
+      env_A_ee_parent = std::make_unique<mfem::HypreParMatrix>(Aenv());
       {
         std::unique_ptr<mfem::HypreParMatrix> e(
             env_A_ee_parent->EliminateRowsCols(non_env_int));
@@ -2483,9 +2681,9 @@ void SubstructuringSolver::CondenseEnvironment()
       // size at kMaterializeBlock), with the thin couplings G = A_env E_Gamma and R =
       // E_Gamma^T A_env. Each rank stores its own rows.
       std::unique_ptr<mfem::HypreParMatrix> E = impl->AssembleSelection(impl->is_gamma);
-      std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(impl->A_env.get(), E.get()));
+      std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&impl->Aenv(), E.get()));
       std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
-      std::unique_ptr<mfem::HypreParMatrix> R(mfem::ParMult(Et.get(), impl->A_env.get()));
+      std::unique_ptr<mfem::HypreParMatrix> R(mfem::ParMult(Et.get(), &impl->Aenv()));
       E.reset();
       Et.reset();
       const int B = Impl::kMaterializeBlock;
@@ -2502,7 +2700,7 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
         impl->have_sk = true;
       }
-      const mfem::HypreParMatrix &Dm = with_sk ? impl->Denv() : *impl->A_env;
+      const mfem::HypreParMatrix &Dm = with_sk ? impl->Denv() : impl->Aenv();
       std::vector<double> agg(static_cast<std::size_t>(B) * nloc);  // A_GG e_c, own rows
       for (int c0 = 0; c0 < nG; c0 += B)
       {
@@ -2851,7 +3049,7 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   std::vector<int> touches(n, 0);
   for (int k = 0; k < n; k++)
   {
-    impl->A_env->Mult(dbcs[k], t[k]);
+    impl->Aenv().Mult(dbcs[k], t[k]);
     for (int i = 0; i < nt && !touches[k]; i++)
     {
       if (impl->is_env_int[i] && t[k](i) != 0.0)
@@ -2886,7 +3084,7 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
     {
       if (touches[k])
       {
-        impl->A_env->Mult(gE[k], t2);
+        impl->Aenv().Mult(gE[k], t2);
         for (int i = 0; i < nt; i++)
         {
           gE[k](i) = t[k](i) - t2(i);
@@ -2955,7 +3153,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
   }
   w = 0.0;
   impl->ApplyAeeInv(fE, w);
-  impl->A_env->Mult(w, Aw);  // assembled: each rank reads its own interface entries
+  impl->Aenv().Mult(w, Aw);  // assembled: each rank reads its own interface entries
 
   // RHS: region/interface source minus the environment source correction on the interface.
   Vector b(nt);
@@ -2981,7 +3179,7 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
 
   // Recover environment interior: u_E = A_EE^-1 (f_E - (A_env u)|_E).
   Vector Au(nt), rhs(nt), uE(nt);
-  impl->A_env->Mult(u, Au);
+  impl->Aenv().Mult(u, Au);
   rhs = 0.0;
   for (int i = 0; i < nt; i++)
   {
@@ -3038,7 +3236,7 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
     Vector b(nt);
     for (int k = 0; k < n; k++)
     {
-      impl->M_sheet->Mult(a[k], b);
+      impl->Msheet().Mult(a[k], b);
       for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
       {
         b(impl->dbc_tdofs[d]) = 0.0;
@@ -3050,7 +3248,7 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
     {
       for (int j = 0; j < n; j++)
       {
-        double loc = kinetic(u[i], u[j], a[i], a[j], *impl->M_sheet), glob = 0.0;
+        double loc = kinetic(u[i], u[j], a[i], a[j], impl->Msheet()), glob = 0.0;
         MPI_Allreduce(&loc, &glob, 1, MPI_DOUBLE, MPI_SUM, comm);
         E(i, j) = MutualEnergy(u[i], u[j]) + glob;
       }
@@ -3420,7 +3618,7 @@ double SubstructuringSolver::MutualEnergy(const Vector &ui, const Vector &uj) co
 {
   Vector t(impl->nt), t2(impl->nt);
   impl->K_region_e->Mult(uj, t);
-  impl->K_env_e->Mult(uj, t2);
+  impl->Kenv().Mult(uj, t2);
   t += t2;
   double local = 0.0;
   for (int i = 0; i < impl->nt; i++)

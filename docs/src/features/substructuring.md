@@ -37,8 +37,8 @@ with ``\bm{S}_E``, so terminal energies need no environment solve.
 
 The environment model (``\bm{S}_E`` and the terminal couplings) can be saved to a file. A later
 run loads it and solves only the region, possibly after re-meshing the region: its solves then
-follow the size of the region rather than of the device (the whole mesh is still read and the
-environment operator assembled, to check that the model applies).
+follow the size of the region rather than of the device (the whole mesh is still read, and the
+environment is checked element by element against the model, without assembling it).
 
 ## Configuration
 
