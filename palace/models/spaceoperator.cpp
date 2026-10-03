@@ -161,6 +161,23 @@ std::unique_ptr<Operator> SpaceOperator::BuildFrequencyDependentPermittivityA2Op
   return sum;
 }
 
+std::unique_ptr<ComplexOperator> SpaceOperator::GetFrequencyDependentPermittivityMassMatrix(
+    std::size_t material_idx, Operator::DiagonalPolicy diag_policy) const
+{
+  // The cache entry exists on every rank exactly when the material has a nonlinear term
+  // with global support (SetUpFrequencyDependentPermittivityMassOperators), so the null
+  // contract is rank-uniform.
+  const auto &B = frequency_dependent_permittivity_mass.at(material_idx);
+  if (!B)
+  {
+    return {};
+  }
+  auto B_op =
+      std::make_unique<ComplexParOperator>(nullptr, &B->LocalOperator(), GetNDSpace());
+  B_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return B_op;
+}
+
 void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficient(
     std::size_t material_idx, double coeff, MaterialPropertyCoefficient &f) const
 {
