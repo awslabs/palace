@@ -14028,6 +14028,21 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         {"Features", exclusion_diagnostics["Features"]},
         {"CellLength", exclusion_diagnostics["CellLength"]},
         {"PortionLength", exclusion_diagnostics["PortionLength"]}};
+    // The conductor-consistency gate (decision 277) needs the device trace: it is evaluated
+    // by the operator at solve time (every excitation, before any energy) and reported in
+    // the operator's Diagnostics.ConductorConsistency (palace.json), never by the dry run.
+    manifest["Summary"]["ConductorConsistency"] = {
+        {"Evaluated", false},
+        {"Tolerance", SurfaceResponseOperator::kConductorConsistencyTolerance},
+        {"Note",
+         "solve-time gate (decision 277): the device potential at every spatial "
+         "coupon's metal cross-sections on its box faces (the trace mesh's conductor "
+         "vertices on the process plane) against the conductor potential, relative "
+         "to the patch's trace amplitude; above Tolerance the patch is excluded "
+         "(weight 0) like a DomainBoundary cell and its claimed length is left "
+         "uncorrected (B1 adds it to Missing and DomainBoundary). The dry run has no "
+         "device trace: see the operator record SurfaceResponse.Diagnostics."
+         "ConductorConsistency of the solve"}};
     Mpi::Print(
         parallel_mesh.GetComm(),
         " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
