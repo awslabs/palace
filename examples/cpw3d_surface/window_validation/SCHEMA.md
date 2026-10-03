@@ -162,8 +162,7 @@ substrate / 2 vacuum; 2D 3 `exterior_boundary`, 4 / 5 `ground_air` / `ground_sub
 
 The same polygon set is meshed by either sweep of `mesh_polygon_window.jl`: the default tensor
 sweep (every plan triangle through every z level, the recorded reference family) or the graded
-cross-section sweep (`--sweep graded [--alpha A] [--beta B] [--region-grading on|off]
-[--region-ring on|off]`, USER decision 263; the M3 defaults of decision 275 both on), which
+cross-section sweep (`--sweep graded [--alpha A] [--beta B] [--region-grading on|off] [--region-ring on|off]`, USER decision 263; the M3 defaults of decision 275 both on), which
 keeps the plan band, the z levels, the attribute table and the surface areas / volumes of the
 tensor sweep and changes the volume discretisation and, with the region grading, the Gmsh
 region's plan size next to the band (see the README). The manifest records the mode (`sweep`),

@@ -954,7 +954,7 @@ end
 end
 
 if LONG_TESTS
-    @testset "validator and census on the strip (long)" begin
+    @testset "validator and census on the strip and the two-plane window (long)" begin
         directory = mktempdir()
         meshes = Dict(
             "tensor" => mesh_polygon_window(
@@ -969,6 +969,26 @@ if LONG_TESTS
                 0.01,
                 5.0,
                 joinpath(directory, "graded.msh2");
+                verbose=false,
+                sweep=:graded,
+                region_grading=false,
+                region_ring=false
+            ),
+            "defaults" => mesh_polygon_window(
+                strip_window(),
+                0.01,
+                5.0,
+                joinpath(directory, "defaults.msh2");
+                verbose=false,
+                sweep=:graded
+            ),
+            # r 0.02: the census takes the metal slabs from the sidewall faces of the
+            # r-resolved levels (<= 0.02 um tall).
+            "two_plane" => mesh_polygon_window(
+                two_plane_window(),
+                0.02,
+                5.0,
+                joinpath(directory, "two_plane.msh2");
                 verbose=false,
                 sweep=:graded
             )
@@ -991,5 +1011,10 @@ if LONG_TESTS
         @test all_graded["edge_ratio_max"] <= 500.0 * (1.0 + 1.0e-3)
         @test all_tensor["edge_ratio_max"] > 1.0e4
         @test all_graded["sicn_min"] > 10 * all_tensor["sicn_min"]
+        # The region grading shortens the slab region prisms' plan edges (30 -> ~t um).
+        @test overall("defaults")["edge_ratio_max"] <=
+              all_graded["edge_ratio_max"] * (1.0 + 1.0e-3)
+        # Two planes: the census finds both metal slabs (the bump columns do not merge them).
+        @test length(census["two_plane"]["metal_slabs_z"]) == 2
     end
 end
