@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">66.7&nbsp;%</td>
@@ -106,7 +106,7 @@
 <span id="L36"><span class="lineNum">      36</span>              : namespace</span>
 <span id="L37"><span class="lineNum">      37</span>              : {</span>
 <span id="L38"><span class="lineNum">      38</span>              : </span>
-<span id="L39"><span class="lineNum">      39</span>              : template &lt;typename OperType&gt;</span>
+<span id="L39"><span class="lineNum">      39</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L40"><span class="lineNum">      40</span>              : auto BuildLevelParOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;a,</span>
 <span id="L41"><span class="lineNum">      41</span>              :                            const FiniteElementSpace &amp;trial_fespace,</span>
 <span id="L42"><span class="lineNum">      42</span>              :                            const FiniteElementSpace &amp;test_fespace);</span>
@@ -128,13 +128,13 @@
 <span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">          12 :                                               test_fespace, false);</span></span>
 <span id="L59"><span class="lineNum">      59</span>              : }</span>
 <span id="L60"><span class="lineNum">      60</span>              : </span>
-<span id="L61"><span class="lineNum">      61</span>              : template &lt;typename OperType&gt;</span>
+<span id="L61"><span class="lineNum">      61</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L62"><span class="lineNum">      62</span>              : auto BuildLevelParOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;a, const FiniteElementSpace &amp;fespace)</span>
 <span id="L63"><span class="lineNum">      63</span>              : {</span>
 <span id="L64"><span class="lineNum">      64</span>              :   return BuildLevelParOperator&lt;OperType&gt;(std::move(a), fespace, fespace);</span>
 <span id="L65"><span class="lineNum">      65</span>              : }</span>
 <span id="L66"><span class="lineNum">      66</span>              : </span>
-<span id="L67"><span class="lineNum">      67</span>              : template &lt;typename OperType&gt;</span>
+<span id="L67"><span class="lineNum">      67</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">          36 : auto ConfigureLinearSolver(const FiniteElementSpaceHierarchy &amp;fespaces, double tol,</span></span>
 <span id="L69"><span class="lineNum">      69</span>              :                            int max_it, int print, bool use_mg)</span>
 <span id="L70"><span class="lineNum">      70</span>              : {</span>
@@ -261,7 +261,7 @@
 <span id="L191"><span class="lineNum">     191</span>              :   // (recovery) and populate the corresponding grid functions.</span>
 <span id="L192"><span class="lineNum">     192</span> <span class="tlaGNC">          42 :   BlockTimer bt(Timer::ESTIMATION);</span></span>
 <span id="L193"><span class="lineNum">     193</span> <span class="tlaGNC">          42 :   projector.Mult(F, G);</span></span>
-<span id="L194"><span class="lineNum">     194</span>              :   if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L194"><span class="lineNum">     194</span>              :   if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L195"><span class="lineNum">     195</span>              :   {</span>
 <span id="L196"><span class="lineNum">     196</span> <span class="tlaGNC">           6 :     fespace.GetProlongationMatrix()-&gt;Mult(F.Real(), F_gf.Real());</span></span>
 <span id="L197"><span class="lineNum">     197</span> <span class="tlaGNC">           6 :     fespace.GetProlongationMatrix()-&gt;Mult(F.Imag(), F_gf.Imag());</span></span>
@@ -302,7 +302,7 @@
 <span id="L232"><span class="lineNum">     232</span>              :       PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &amp;F_gf_vec));</span>
 <span id="L233"><span class="lineNum">     233</span>              :       PalaceCeedCall(ceed, CeedOperatorGetFieldByName(sub_ops[0], &quot;u_2&quot;, &amp;field));</span>
 <span id="L234"><span class="lineNum">     234</span>              :       PalaceCeedCall(ceed, CeedOperatorFieldGetVector(field, &amp;G_gf_vec));</span>
-<span id="L235"><span class="lineNum">     235</span>              :       if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L235"><span class="lineNum">     235</span>              :       if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L236"><span class="lineNum">     236</span>              :       {</span>
 <span id="L237"><span class="lineNum">     237</span>              :         ceed::InitCeedVector(F_gf.Real(), ceed, &amp;F_gf_vec, false);</span>
 <span id="L238"><span class="lineNum">     238</span>              :         ceed::InitCeedVector(G_gf.Real(), ceed, &amp;G_gf_vec, false);</span>
@@ -323,7 +323,7 @@
 <span id="L253"><span class="lineNum">     253</span>              :     PalaceCeedCall(ceed,</span>
 <span id="L254"><span class="lineNum">     254</span>              :                    CeedOperatorApplyAdd(integ_op[utils::GetThreadNum()], CEED_VECTOR_NONE,</span>
 <span id="L255"><span class="lineNum">     255</span>              :                                         estimates_vec, CEED_REQUEST_IMMEDIATE));</span>
-<span id="L256"><span class="lineNum">     256</span>              :     if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L256"><span class="lineNum">     256</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L257"><span class="lineNum">     257</span>              :     {</span>
 <span id="L258"><span class="lineNum">     258</span>              :       ceed::InitCeedVector(F_gf.Imag(), ceed, &amp;F_gf_vec, false);</span>
 <span id="L259"><span class="lineNum">     259</span>              :       ceed::InitCeedVector(G_gf.Imag(), ceed, &amp;G_gf_vec, false);</span>
@@ -372,7 +372,7 @@
 <span id="L302"><span class="lineNum">     302</span>              :     // that ComputeErrorEstimates can re-point the passive inputs once through any</span>
 <span id="L303"><span class="lineNum">     303</span>              :     // sub-operator (in particular between the real and imaginary parts of complex fields).</span>
 <span id="L304"><span class="lineNum">     304</span>              :     CeedVector E_gf_vec, D_gf_vec;</span>
-<span id="L305"><span class="lineNum">     305</span>              :     if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L305"><span class="lineNum">     305</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L306"><span class="lineNum">     306</span>              :     {</span>
 <span id="L307"><span class="lineNum">     307</span>              :       ceed::InitCeedVector(E_gf.Real(), ceed, &amp;E_gf_vec);</span>
 <span id="L308"><span class="lineNum">     308</span>              :       ceed::InitCeedVector(D_gf.Real(), ceed, &amp;D_gf_vec);</span>
@@ -495,7 +495,7 @@
 <span id="L425"><span class="lineNum">     425</span>              :     // that ComputeErrorEstimates can re-point the passive inputs once through any</span>
 <span id="L426"><span class="lineNum">     426</span>              :     // sub-operator (in particular between the real and imaginary parts of complex fields).</span>
 <span id="L427"><span class="lineNum">     427</span>              :     CeedVector B_gf_vec, H_gf_vec;</span>
-<span id="L428"><span class="lineNum">     428</span>              :     if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L428"><span class="lineNum">     428</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L429"><span class="lineNum">     429</span>              :     {</span>
 <span id="L430"><span class="lineNum">     430</span>              :       ceed::InitCeedVector(B_gf.Real(), ceed, &amp;B_gf_vec);</span>
 <span id="L431"><span class="lineNum">     431</span>              :       ceed::InitCeedVector(H_gf.Real(), ceed, &amp;H_gf_vec);</span>

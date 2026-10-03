@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">96.4&nbsp;%</td>
@@ -484,7 +484,7 @@
 <span id="L414"><span class="lineNum">     414</span> <span class="tlaGNC">           1 :     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) == 4);</span></span>
 <span id="L415"><span class="lineNum">     415</span>              :     // A tet has no quadrilateral faces, so the SQUARE key must be absent (not</span>
 <span id="L416"><span class="lineNum">     416</span>              :     // present-zero).</span>
-<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">           2 :     CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">           2 :     CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::SQUARE));</span></span>
 <span id="L418"><span class="lineNum">     418</span> <span class="tlaGNC">           1 :     CHECK(counts.cells.at(mfem::Geometry::TETRAHEDRON) == 1);</span></span>
 <span id="L419"><span class="lineNum">     419</span> <span class="tlaGNC">           1 :     CHECK(counts.cells.size() == 1);</span></span>
 <span id="L420"><span class="lineNum">     420</span>              :     // The (single) cell count must agree with the mesh's own global element count.</span>
@@ -554,7 +554,7 @@
 <span id="L484"><span class="lineNum">     484</span> <span class="tlaGNC">           1 :     CHECK(counts.true_vertices &gt; 0);</span></span>
 <span id="L485"><span class="lineNum">     485</span> <span class="tlaGNC">           1 :     CHECK(counts.true_edges &gt; 0);</span></span>
 <span id="L486"><span class="lineNum">     486</span> <span class="tlaGNC">           1 :     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) &gt; 0);</span></span>
-<span id="L487"><span class="lineNum">     487</span> <span class="tlaGNC">           2 :     CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);</span></span>
+<span id="L487"><span class="lineNum">     487</span> <span class="tlaGNC">           2 :     CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::SQUARE));</span></span>
 <span id="L488"><span class="lineNum">     488</span> <span class="tlaGNC">           1 :     CHECK(counts.true_vertices &lt; leaf_vertices);</span></span>
 <span id="L489"><span class="lineNum">     489</span> <span class="tlaGNC">           1 :     CHECK(counts.true_edges &lt; leaf_edges);</span></span>
 <span id="L490"><span class="lineNum">     490</span>              :     // Cheap sanity check that the face discount happened.</span>
@@ -639,7 +639,7 @@
 <span id="L569"><span class="lineNum">     569</span> <span class="tlaGNC">           1 :     CHECK(counts.dim == 3);</span></span>
 <span id="L570"><span class="lineNum">     570</span>              :     // A hex mesh has only quadrilateral faces: SQUARE present-positive, TRIANGLE absent.</span>
 <span id="L571"><span class="lineNum">     571</span> <span class="tlaGNC">           1 :     CHECK(counts.true_faces.at(mfem::Geometry::SQUARE) &gt; 0);</span></span>
-<span id="L572"><span class="lineNum">     572</span> <span class="tlaGNC">           2 :     CHECK(counts.true_faces.count(mfem::Geometry::TRIANGLE) == 0);</span></span>
+<span id="L572"><span class="lineNum">     572</span> <span class="tlaGNC">           2 :     CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::TRIANGLE));</span></span>
 <span id="L573"><span class="lineNum">     573</span> <span class="tlaGNC">           2 :     CHECK(counts.cells.count(mfem::Geometry::CUBE) == 1);</span></span>
 <span id="L574"><span class="lineNum">     574</span> <span class="tlaGNC">           1 :     CheckReconstructionOracle(counts, serial_mesh);</span></span>
 <span id="L575"><span class="lineNum">     575</span>              :   }</span>
@@ -890,7 +890,7 @@
 <span id="L820"><span class="lineNum">     820</span> <span class="tlaGNC">           2 :     REQUIRE(counts.valid);</span></span>
 <span id="L821"><span class="lineNum">     821</span> <span class="tlaGNC">           1 :     CHECK(counts.dim == 3);</span></span>
 <span id="L822"><span class="lineNum">     822</span> <span class="tlaGNC">           1 :     CHECK(counts.true_faces.at(mfem::Geometry::TRIANGLE) &gt; 0);</span></span>
-<span id="L823"><span class="lineNum">     823</span> <span class="tlaGNC">           2 :     CHECK(counts.true_faces.count(mfem::Geometry::SQUARE) == 0);</span></span>
+<span id="L823"><span class="lineNum">     823</span> <span class="tlaGNC">           2 :     CHECK_FALSE(counts.true_faces.contains(mfem::Geometry::SQUARE));</span></span>
 <span id="L824"><span class="lineNum">     824</span>              :     // Partition-invariant: the gathered root counts reproduce the serial true DOF sizes.</span>
 <span id="L825"><span class="lineNum">     825</span> <span class="tlaGNC">           1 :     CheckReconstructionOracle(counts, serial_mesh);</span></span>
 <span id="L826"><span class="lineNum">     826</span>              :   }</span>

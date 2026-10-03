@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">57.1&nbsp;%</td>
@@ -268,7 +268,7 @@
 <span id="L198"><span class="lineNum">     198</span>              : </span>
 <span id="L199"><span class="lineNum">     199</span>              : }  // namespace</span>
 <span id="L200"><span class="lineNum">     200</span>              : </span>
-<span id="L201"><span class="lineNum">     201</span>              : template &lt;typename OperType&gt;</span>
+<span id="L201"><span class="lineNum">     201</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC tlaBgGNC">          76 : ChebyshevSmoother&lt;OperType&gt;::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,</span></span>
 <span id="L203"><span class="lineNum">     203</span>              :                                                double sf_max)</span>
 <span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">          76 :   : Solver&lt;OperType&gt;(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),</span></span>
@@ -277,7 +277,7 @@
 <span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">          76 :   MFEM_VERIFY(order &gt; 0, &quot;Polynomial order for Chebyshev smoothing must be positive!&quot;);</span></span>
 <span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">          76 : }</span></span>
 <span id="L209"><span class="lineNum">     209</span>              : </span>
-<span id="L210"><span class="lineNum">     210</span>              : template &lt;typename OperType&gt;</span>
+<span id="L210"><span class="lineNum">     210</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">          12 : void ChebyshevSmoother&lt;OperType&gt;::SetOperator(const OperType &amp;op)</span></span>
 <span id="L212"><span class="lineNum">     212</span>              : {</span>
 <span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">          12 :   A = &amp;op;</span></span>
@@ -298,7 +298,7 @@
 <span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">           6 :   this-&gt;width = op.Width();</span></span>
 <span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC">           6 : }</span></span>
 <span id="L230"><span class="lineNum">     230</span>              : </span>
-<span id="L231"><span class="lineNum">     231</span>              : template &lt;typename OperType&gt;</span>
+<span id="L231"><span class="lineNum">     231</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC">           6 : void ChebyshevSmoother&lt;OperType&gt;::Mult2(const VecType &amp;x, VecType &amp;y, VecType &amp;r) const</span></span>
 <span id="L233"><span class="lineNum">     233</span>              : {</span>
 <span id="L234"><span class="lineNum">     234</span>              :   // Apply smoother: y = y + p(A) (x - A y) .</span>
@@ -330,7 +330,7 @@
 <span id="L260"><span class="lineNum">     260</span>              :   }</span>
 <span id="L261"><span class="lineNum">     261</span> <span class="tlaGNC">           6 : }</span></span>
 <span id="L262"><span class="lineNum">     262</span>              : </span>
-<span id="L263"><span class="lineNum">     263</span>              : template &lt;typename OperType&gt;</span>
+<span id="L263"><span class="lineNum">     263</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L264"><span class="lineNum">     264</span> <span class="tlaUNC tlaBgUNC">           0 : ChebyshevSmoother1stKind&lt;OperType&gt;::ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it,</span></span>
 <span id="L265"><span class="lineNum">     265</span>              :                                                              int poly_order, double sf_max,</span>
 <span id="L266"><span class="lineNum">     266</span>              :                                                              double sf_min)</span>
@@ -340,7 +340,7 @@
 <span id="L270"><span class="lineNum">     270</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(order &gt; 0, &quot;Polynomial order for Chebyshev smoothing must be positive!&quot;);</span></span>
 <span id="L271"><span class="lineNum">     271</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L272"><span class="lineNum">     272</span>              : </span>
-<span id="L273"><span class="lineNum">     273</span>              : template &lt;typename OperType&gt;</span>
+<span id="L273"><span class="lineNum">     273</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L274"><span class="lineNum">     274</span> <span class="tlaUNC">           0 : void ChebyshevSmoother1stKind&lt;OperType&gt;::SetOperator(const OperType &amp;op)</span></span>
 <span id="L275"><span class="lineNum">     275</span>              : {</span>
 <span id="L276"><span class="lineNum">     276</span> <span class="tlaUNC">           0 :   A = &amp;op;</span></span>
@@ -368,7 +368,7 @@
 <span id="L298"><span class="lineNum">     298</span> <span class="tlaUNC">           0 :   this-&gt;width = op.Width();</span></span>
 <span id="L299"><span class="lineNum">     299</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L300"><span class="lineNum">     300</span>              : </span>
-<span id="L301"><span class="lineNum">     301</span>              : template &lt;typename OperType&gt;</span>
+<span id="L301"><span class="lineNum">     301</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L302"><span class="lineNum">     302</span> <span class="tlaUNC">           0 : void ChebyshevSmoother1stKind&lt;OperType&gt;::Mult2(const VecType &amp;x, VecType &amp;y,</span></span>
 <span id="L303"><span class="lineNum">     303</span>              :                                                VecType &amp;r) const</span>
 <span id="L304"><span class="lineNum">     304</span>              : {</span>

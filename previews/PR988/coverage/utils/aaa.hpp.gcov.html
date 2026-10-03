@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryHi">92.7&nbsp;%</td>
-            <td class="headerCovTableEntry">232</td>
-            <td class="headerCovTableEntry">215</td>
+            <td class="headerCovTableEntryHi">92.8&nbsp;%</td>
+            <td class="headerCovTableEntry">235</td>
+            <td class="headerCovTableEntry">218</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -201,7 +201,7 @@
 <span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">           4 :   std::vector&lt;bool&gt; is_support(M, false);</span></span>
 <span id="L132"><span class="lineNum">     132</span>              :   // Greedy iteration.</span>
 <span id="L133"><span class="lineNum">     133</span> <span class="tlaGNC">           4 :   Eigen::VectorXcd R = Eigen::VectorXcd::Constant(M, F.mean());</span></span>
-<span id="L134"><span class="lineNum">     134</span>              :   std::vector&lt;std::size_t&gt; support_indices;</span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">           4 :   std::vector&lt;std::size_t&gt; support_indices;</span></span>
 <span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">           4 :   support_indices.reserve(m_max);</span></span>
 <span id="L136"><span class="lineNum">     136</span> <span class="tlaGNC">           4 :   Eigen::VectorXcd zj_buf(m_max), fj_buf(m_max);</span></span>
 <span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">           4 :   Eigen::VectorXcd wj_buf;</span></span>
@@ -324,7 +324,7 @@
 <span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC tlaBgGNC">           1 :   const double abs_tol = tol * F_norm;</span></span>
 <span id="L255"><span class="lineNum">     255</span>              : </span>
 <span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">           1 :   std::vector&lt;bool&gt; is_support(M, false);</span></span>
-<span id="L257"><span class="lineNum">     257</span>              :   std::vector&lt;std::size_t&gt; support_indices;</span>
+<span id="L257"><span class="lineNum">     257</span> <span class="tlaGNC">           1 :   std::vector&lt;std::size_t&gt; support_indices;</span></span>
 <span id="L258"><span class="lineNum">     258</span> <span class="tlaGNC">           1 :   support_indices.reserve(m_max);</span></span>
 <span id="L259"><span class="lineNum">     259</span> <span class="tlaUNC tlaBgUNC">           0 :   Eigen::MatrixXcd R = F.colwise().mean().replicate(static_cast&lt;long&gt;(M), 1);</span></span>
 <span id="L260"><span class="lineNum">     260</span> <span class="tlaGNC tlaBgGNC">           1 :   Eigen::VectorXcd zj_buf(m_max), wj_buf;</span></span>
@@ -526,7 +526,7 @@
 <span id="L456"><span class="lineNum">     456</span> <span class="tlaGNC">           6 :   trim_leading_zeros(numerator);</span></span>
 <span id="L457"><span class="lineNum">     457</span>              : </span>
 <span id="L458"><span class="lineNum">     458</span> <span class="tlaGNC">           6 :   auto remainder = numerator;</span></span>
-<span id="L459"><span class="lineNum">     459</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; quotient;</span>
+<span id="L459"><span class="lineNum">     459</span> <span class="tlaGNC">           6 :   std::vector&lt;std::complex&lt;double&gt;&gt; quotient;</span></span>
 <span id="L460"><span class="lineNum">     460</span> <span class="tlaGNC">           6 :   if (numerator.size() &gt;= denominator.size())</span></span>
 <span id="L461"><span class="lineNum">     461</span>              :   {</span>
 <span id="L462"><span class="lineNum">     462</span> <span class="tlaGNC">           5 :     quotient.assign(numerator.size() - denominator.size() + 1, 0.0);</span></span>

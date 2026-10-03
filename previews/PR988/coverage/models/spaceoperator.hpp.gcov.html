@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryMed">75.0&nbsp;%</td>
-            <td class="headerCovTableEntry">16</td>
-            <td class="headerCovTableEntry">12</td>
+            <td class="headerCovTableEntryMed">77.8&nbsp;%</td>
+            <td class="headerCovTableEntry">18</td>
+            <td class="headerCovTableEntry">14</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -245,8 +245,8 @@
 <span id="L175"><span class="lineNum">     175</span> <span class="tlaUNC tlaBgUNC">           0 :   auto &amp;GetFloquetPortOp() { return floquet_port_op; }</span></span>
 <span id="L176"><span class="lineNum">     176</span> <span class="tlaGNC tlaBgGNC">          22 :   auto &amp;GetSurfaceCurrentOp() { return surf_j_op; }</span></span>
 <span id="L177"><span class="lineNum">     177</span> <span class="tlaGNC">          27 :   auto &amp;GetSurfaceConductivityOp() { return surf_sigma_op; }</span></span>
-<span id="L178"><span class="lineNum">     178</span>              :   const auto &amp;GetLumpedPortOp() const { return lumped_port_op; }</span>
-<span id="L179"><span class="lineNum">     179</span>              :   const auto &amp;GetWavePortOp() const { return wave_port_op; }</span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">          12 :   const auto &amp;GetLumpedPortOp() const { return lumped_port_op; }</span></span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">          12 :   const auto &amp;GetWavePortOp() const { return wave_port_op; }</span></span>
 <span id="L180"><span class="lineNum">     180</span>              :   const auto &amp;GetFloquetPortOp() const { return floquet_port_op; }</span>
 <span id="L181"><span class="lineNum">     181</span>              :   const auto &amp;GetSurfaceCurrentOp() const { return surf_j_op; }</span>
 <span id="L182"><span class="lineNum">     182</span> <span class="tlaUNC tlaBgUNC">           0 :   const auto &amp;GetRationalImpedanceOp() const { return surf_rz_op; }</span></span>
@@ -306,13 +306,13 @@
 <span id="L236"><span class="lineNum">     236</span>              :   //                     A = K + iω C - ω² (Mr + i Mi) + A2(ω).</span>
 <span id="L237"><span class="lineNum">     237</span>              :   // For time domain problems, any one of K, C, or M = Mr can be constructed. The argument</span>
 <span id="L238"><span class="lineNum">     238</span>              :   // ω is required only for the constructing the &quot;extra&quot; matrix A2(ω).</span>
-<span id="L239"><span class="lineNum">     239</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L239"><span class="lineNum">     239</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L240"><span class="lineNum">     240</span>              :   std::unique_ptr&lt;OperType&gt; GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy);</span>
-<span id="L241"><span class="lineNum">     241</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L241"><span class="lineNum">     241</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L242"><span class="lineNum">     242</span>              :   std::unique_ptr&lt;OperType&gt; GetDampingMatrix(Operator::DiagonalPolicy diag_policy);</span>
-<span id="L243"><span class="lineNum">     243</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L243"><span class="lineNum">     243</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L244"><span class="lineNum">     244</span>              :   std::unique_ptr&lt;OperType&gt; GetMassMatrix(Operator::DiagonalPolicy diag_policy);</span>
-<span id="L245"><span class="lineNum">     245</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L245"><span class="lineNum">     245</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L246"><span class="lineNum">     246</span>              :   std::unique_ptr&lt;OperType&gt; GetExtraSystemMatrix(double omega,</span>
 <span id="L247"><span class="lineNum">     247</span>              :                                                  Operator::DiagonalPolicy diag_policy);</span>
 <span id="L248"><span class="lineNum">     248</span>              : </span>
@@ -320,7 +320,7 @@
 <span id="L250"><span class="lineNum">     250</span>              :   // the reduced-order model to apply the wave-port term separately via per-port factored</span>
 <span id="L251"><span class="lineNum">     251</span>              :   // operators while keeping the slow path for any remaining ω-dependent BCs (e.g.</span>
 <span id="L252"><span class="lineNum">     252</span>              :   // second-order farfield, surface conductivity).</span>
-<span id="L253"><span class="lineNum">     253</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L253"><span class="lineNum">     253</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L254"><span class="lineNum">     254</span>              :   std::unique_ptr&lt;OperType&gt; GetExtraSystemMatrix(double omega,</span>
 <span id="L255"><span class="lineNum">     255</span>              :                                                  Operator::DiagonalPolicy diag_policy,</span>
 <span id="L256"><span class="lineNum">     256</span>              :                                                  bool include_wave_ports);</span>
@@ -343,7 +343,7 @@
 <span id="L273"><span class="lineNum">     273</span>              :   // decide whether to stamp the physical termination. Returns a null pointer if the port</span>
 <span id="L274"><span class="lineNum">     274</span>              :   // boundary contributes no DoFs on any rank (the check is collective, so the null contract</span>
 <span id="L275"><span class="lineNum">     275</span>              :   // is rank-uniform).</span>
-<span id="L276"><span class="lineNum">     276</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L276"><span class="lineNum">     276</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L277"><span class="lineNum">     277</span>              :   std::unique_ptr&lt;OperType&gt;</span>
 <span id="L278"><span class="lineNum">     278</span>              :   GetWavePortBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);</span>
 <span id="L279"><span class="lineNum">     279</span>              : </span>
@@ -356,7 +356,7 @@
 <span id="L286"><span class="lineNum">     286</span>              :   // convention (i·f(ω)·M with the i baked in) so it can be folded into circuit synthesis</span>
 <span id="L287"><span class="lineNum">     287</span>              :   // uniformly with wave ports. Returns null if the farfield BC order &lt; 2 or contributes no</span>
 <span id="L288"><span class="lineNum">     288</span>              :   // DoFs on any rank (the check is collective, so the null contract is rank-uniform).</span>
-<span id="L289"><span class="lineNum">     289</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L289"><span class="lineNum">     289</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L290"><span class="lineNum">     290</span>              :   std::unique_ptr&lt;OperType&gt;</span>
 <span id="L291"><span class="lineNum">     291</span>              :   GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,</span>
 <span id="L292"><span class="lineNum">     292</span>              :                                     bool imag_slot = false);</span>
@@ -369,7 +369,7 @@
 <span id="L299"><span class="lineNum">     299</span>              :   // contributes no DoFs on any rank (the check is collective, so the null contract is</span>
 <span id="L300"><span class="lineNum">     300</span>              :   // rank-uniform). Used to fold surface conductivity into circuit synthesis.</span>
 <span id="L301"><span class="lineNum">     301</span>              :   // `NumSurfaceConductivityGroups()` gives the group count.</span>
-<span id="L302"><span class="lineNum">     302</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L302"><span class="lineNum">     302</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L303"><span class="lineNum">     303</span>              :   std::unique_ptr&lt;OperType&gt;</span>
 <span id="L304"><span class="lineNum">     304</span>              :   GetSurfaceConductivityBoundaryMatrix(int group_idx, Operator::DiagonalPolicy diag_policy);</span>
 <span id="L305"><span class="lineNum">     305</span>              : </span>
@@ -381,7 +381,7 @@
 <span id="L311"><span class="lineNum">     311</span>              :   // pointer if the boundary contributes no DoFs on any rank (the check is collective, so</span>
 <span id="L312"><span class="lineNum">     312</span>              :   // the null contract is rank-uniform). Used by the NLEPS HYBRID fit-or-freeze seed</span>
 <span id="L313"><span class="lineNum">     313</span>              :   // strategy.</span>
-<span id="L314"><span class="lineNum">     314</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L314"><span class="lineNum">     314</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L315"><span class="lineNum">     315</span>              :   std::unique_ptr&lt;OperType&gt;</span>
 <span id="L316"><span class="lineNum">     316</span>              :   GetRationalImpedanceBoundaryMassMatrix(int idx, Operator::DiagonalPolicy diag_policy,</span>
 <span id="L317"><span class="lineNum">     317</span>              :                                          bool imag_slot = false);</span>
@@ -390,7 +390,7 @@
 <span id="L320"><span class="lineNum">     320</span>              :   // placed on the imaginary slot. The full online term is i·γ₀,p(ω)·M_floquet_p with</span>
 <span id="L321"><span class="lineNum">     321</span>              :   // γ₀ the (0,0) specular propagation constant. Returns null if the port contributes no</span>
 <span id="L322"><span class="lineNum">     322</span>              :   // DoFs on any rank (the check is collective, so the null contract is rank-uniform).</span>
-<span id="L323"><span class="lineNum">     323</span>              :   template &lt;typename OperType&gt;</span>
+<span id="L323"><span class="lineNum">     323</span>              :   template &lt;OperatorType OperType&gt;</span>
 <span id="L324"><span class="lineNum">     324</span>              :   std::unique_ptr&lt;OperType&gt;</span>
 <span id="L325"><span class="lineNum">     325</span>              :   GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);</span>
 <span id="L326"><span class="lineNum">     326</span>              : </span>

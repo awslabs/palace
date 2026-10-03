@@ -32,12 +32,12 @@
             <td></td>
             <td class="headerItem">Lines:</td>
             <td class="headerCovTableEntryHi">99.7&nbsp;%</td>
-            <td class="headerCovTableEntry">317</td>
-            <td class="headerCovTableEntry">316</td>
+            <td class="headerCovTableEntry">321</td>
+            <td class="headerCovTableEntry">320</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -95,7 +95,7 @@
 <span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC">           6 :   auto par_mesh = std::make_unique&lt;mfem::ParMesh&gt;(Mpi::World(), *serial_mesh);</span></span>
 <span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">           6 :   Mesh palace_mesh(std::move(par_mesh));</span></span>
 <span id="L27"><span class="lineNum">      27</span>              : </span>
-<span id="L28"><span class="lineNum">      28</span>              :   config::PeriodicBoundaryData periodic;</span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">           6 :   config::PeriodicBoundaryData periodic;</span></span>
 <span id="L29"><span class="lineNum">      29</span>              : </span>
 <span id="L30"><span class="lineNum">      30</span> <span class="tlaGNC">           6 :   SECTION(&quot;Trivial isotropic material&quot;)</span></span>
 <span id="L31"><span class="lineNum">      31</span>              :   {</span>
@@ -351,15 +351,15 @@
 <span id="L281"><span class="lineNum">     281</span> <span class="tlaGNC">           6 :   Mesh palace_mesh(std::move(par_mesh));</span></span>
 <span id="L282"><span class="lineNum">     282</span>              : </span>
 <span id="L283"><span class="lineNum">     283</span>              :   const auto &amp;local_attributes = palace_mesh.GetCeedAttributes();</span>
-<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">           6 :   const bool has_attr2 = local_attributes.find(2) != local_attributes.end();</span></span>
+<span id="L284"><span class="lineNum">     284</span> <span class="tlaGNC">           6 :   const bool has_attr2 = local_attributes.contains(2);</span></span>
 <span id="L285"><span class="lineNum">     285</span> <span class="tlaGNC">           6 :   CHECK(has_attr2 == (Mpi::Rank(comm) == 0));</span></span>
 <span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">           6 :   CHECK(palace_mesh.GetNE() &gt; 0);</span></span>
 <span id="L287"><span class="lineNum">     287</span>              : </span>
 <span id="L288"><span class="lineNum">     288</span> <span class="tlaGNC">           6 :   config::MaterialData material1;</span></span>
 <span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">           6 :   material1.attributes = {1};</span></span>
 <span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">           6 :   config::MaterialData material2;</span></span>
-<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">          12 :   material2.attributes = {2};</span></span>
-<span id="L292"><span class="lineNum">     292</span>              :   config::PeriodicBoundaryData periodic;</span>
+<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">           6 :   material2.attributes = {2};</span></span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">           6 :   config::PeriodicBoundaryData periodic;</span></span>
 <span id="L293"><span class="lineNum">     293</span>              : </span>
 <span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">           6 :   SECTION(&quot;All retained attributes have materials&quot;)</span></span>
 <span id="L295"><span class="lineNum">     295</span>              :   {</span>
@@ -389,7 +389,7 @@
 <span id="L319"><span class="lineNum">     319</span> <span class="tlaGNC">           1 :   material.mu_r.s = {4.0, 1.0, 1.0};</span></span>
 <span id="L320"><span class="lineNum">     320</span> <span class="tlaGNC">           1 :   material.epsilon_r.s = {1.0, 4.0, 1.0};</span></span>
 <span id="L321"><span class="lineNum">     321</span>              : </span>
-<span id="L322"><span class="lineNum">     322</span>              :   config::PeriodicBoundaryData periodic;</span>
+<span id="L322"><span class="lineNum">     322</span> <span class="tlaGNC">           1 :   config::PeriodicBoundaryData periodic;</span></span>
 <span id="L323"><span class="lineNum">     323</span> <span class="tlaGNC">           2 :   MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);</span></span>
 <span id="L324"><span class="lineNum">     324</span>              : </span>
 <span id="L325"><span class="lineNum">     325</span>              :   // Same-axis products max(mu_i * epsilon_i) are only 4, but a wave polarized with E</span>
@@ -570,8 +570,8 @@
 <span id="L500"><span class="lineNum">     500</span>              :   const auto &amp;local_attributes = palace_mesh.GetCeedAttributes();</span>
 <span id="L501"><span class="lineNum">     501</span> <span class="tlaGNC">           2 :   if (owns_elements)</span></span>
 <span id="L502"><span class="lineNum">     502</span>              :   {</span>
-<span id="L503"><span class="lineNum">     503</span> <span class="tlaGNC">           2 :     CHECK(local_attributes.find(1) != local_attributes.end());</span></span>
-<span id="L504"><span class="lineNum">     504</span> <span class="tlaGNC">           2 :     CHECK(local_attributes.find(7) != local_attributes.end());</span></span>
+<span id="L503"><span class="lineNum">     503</span> <span class="tlaGNC">           2 :     CHECK(local_attributes.contains(1));</span></span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaGNC">           2 :     CHECK(local_attributes.contains(7));</span></span>
 <span id="L505"><span class="lineNum">     505</span>              :     // The remap must refresh the cached distinct-attribute array.</span>
 <span id="L506"><span class="lineNum">     506</span> <span class="tlaGNC">           2 :     CHECK(palace_mesh.Get().attributes.Max() == 7);</span></span>
 <span id="L507"><span class="lineNum">     507</span>              :   }</span>
@@ -581,8 +581,8 @@
 <span id="L511"><span class="lineNum">     511</span>              :   }</span>
 <span id="L512"><span class="lineNum">     512</span>              : </span>
 <span id="L513"><span class="lineNum">     513</span> <span class="tlaGNC tlaBgGNC">           2 :   config::MaterialData material;</span></span>
-<span id="L514"><span class="lineNum">     514</span> <span class="tlaGNC">           4 :   material.attributes = {7};</span></span>
-<span id="L515"><span class="lineNum">     515</span>              :   config::PeriodicBoundaryData periodic;</span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaGNC">           2 :   material.attributes = {7};</span></span>
+<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">           2 :   config::PeriodicBoundaryData periodic;</span></span>
 <span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">           6 :   CHECK_NOTHROW(MaterialOperator({material}, periodic, ProblemType::DRIVEN, palace_mesh));</span></span>
 <span id="L517"><span class="lineNum">     517</span> <span class="tlaGNC">           6 : }</span></span>
 <span id="L518"><span class="lineNum">     518</span>              : </span>

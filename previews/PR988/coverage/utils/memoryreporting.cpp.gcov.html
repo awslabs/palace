@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryMed">80.0&nbsp;%</td>
@@ -120,7 +120,7 @@
 <span id="L50"><span class="lineNum">      50</span>              :   std::string line;</span>
 <span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">         138 :   while (std::getline(status, line))</span></span>
 <span id="L52"><span class="lineNum">      52</span>              :   {</span>
-<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">         138 :     if (line.compare(0, 6, &quot;VmRSS:&quot;) == 0)</span></span>
+<span id="L53"><span class="lineNum">      53</span> <span class="tlaGNC">         138 :     if (line.starts_with(&quot;VmRSS:&quot;))</span></span>
 <span id="L54"><span class="lineNum">      54</span>              :     {</span>
 <span id="L55"><span class="lineNum">      55</span>              :       // Value is in kilobytes.</span>
 <span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">          12 :       return std::stol(line.substr(6)) * 1024;</span></span>
@@ -137,17 +137,17 @@
 <span id="L67"><span class="lineNum">      67</span>              : // (https://man7.org/linux/man-pages/man2/getrusage.2.html for Linux)</span>
 <span id="L68"><span class="lineNum">      68</span>              : //</span>
 <span id="L69"><span class="lineNum">      69</span>              : // Note that Linux reports the result in kilobytes, MacOS in bytes.</span>
-<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">       23927 : long GetPeakMemory()</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">       23952 : long GetPeakMemory()</span></span>
 <span id="L71"><span class="lineNum">      71</span>              : {</span>
 <span id="L72"><span class="lineNum">      72</span>              :   struct rusage usage;</span>
-<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">       23927 :   if (getrusage(RUSAGE_SELF, &amp;usage) == 0)</span></span>
+<span id="L73"><span class="lineNum">      73</span> <span class="tlaGNC">       23952 :   if (getrusage(RUSAGE_SELF, &amp;usage) == 0)</span></span>
 <span id="L74"><span class="lineNum">      74</span>              :   {</span>
 <span id="L75"><span class="lineNum">      75</span>              : #if defined(__APPLE__)</span>
 <span id="L76"><span class="lineNum">      76</span>              :     // macOS reports ru_maxrss in bytes.</span>
 <span id="L77"><span class="lineNum">      77</span>              :     return usage.ru_maxrss;</span>
 <span id="L78"><span class="lineNum">      78</span>              : #else</span>
 <span id="L79"><span class="lineNum">      79</span>              :     // Linux reports ru_maxrss in kilobytes.</span>
-<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">       23927 :     return usage.ru_maxrss * 1024;</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">       23952 :     return usage.ru_maxrss * 1024;</span></span>
 <span id="L81"><span class="lineNum">      81</span>              : #endif</span>
 <span id="L82"><span class="lineNum">      82</span>              :   }</span>
 <span id="L83"><span class="lineNum">      83</span>              :   return 0;</span>

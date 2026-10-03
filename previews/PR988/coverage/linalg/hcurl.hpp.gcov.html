@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
@@ -100,8 +100,8 @@
 <span id="L30"><span class="lineNum">      30</span>              : template &lt;typename VecType&gt;</span>
 <span id="L31"><span class="lineNum">      31</span>              : class WeightedHCurlNormSolver</span>
 <span id="L32"><span class="lineNum">      32</span>              : {</span>
-<span id="L33"><span class="lineNum">      33</span>              :   using OperType = typename std::conditional&lt;std::is_same&lt;VecType, ComplexVector&gt;::value,</span>
-<span id="L34"><span class="lineNum">      34</span>              :                                              ComplexOperator, Operator&gt;::type;</span>
+<span id="L33"><span class="lineNum">      33</span>              :   using OperType =</span>
+<span id="L34"><span class="lineNum">      34</span>              :       std::conditional_t&lt;std::is_same_v&lt;VecType, ComplexVector&gt;, ComplexOperator, Operator&gt;;</span>
 <span id="L35"><span class="lineNum">      35</span>              : </span>
 <span id="L36"><span class="lineNum">      36</span>              : private:</span>
 <span id="L37"><span class="lineNum">      37</span>              :   // H(curl) norm operator A = K + M and its projection Gᵀ A G.</span>

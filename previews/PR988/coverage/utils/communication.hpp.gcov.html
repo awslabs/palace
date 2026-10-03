@@ -37,11 +37,11 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
-            <td class="headerCovTableEntryLo">32.3&nbsp;%</td>
-            <td class="headerCovTableEntry">133</td>
+            <td class="headerCovTableEntryLo">32.1&nbsp;%</td>
+            <td class="headerCovTableEntry">134</td>
             <td class="headerCovTableEntry">43</td>
           </tr>
           <tr>
@@ -261,32 +261,32 @@
 <span id="L191"><span class="lineNum">     191</span>              :   }</span>
 <span id="L192"><span class="lineNum">     192</span>              :   static void Init(int &amp;argc, char **&amp;argv, int requested = default_thread_required)</span>
 <span id="L193"><span class="lineNum">     193</span>              :   {</span>
-<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC tlaBgGNC">         394 :     Init(&amp;argc, &amp;argv, requested);</span></span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaGNC tlaBgGNC">         419 :     Init(&amp;argc, &amp;argv, requested);</span></span>
 <span id="L195"><span class="lineNum">     195</span>              :   }</span>
 <span id="L196"><span class="lineNum">     196</span>              : </span>
 <span id="L197"><span class="lineNum">     197</span>              :   // Finalize MPI (if it has been initialized and not yet already finalized).</span>
-<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">         394 :   static void Finalize()</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaGNC">         419 :   static void Finalize()</span></span>
 <span id="L199"><span class="lineNum">     199</span>              :   {</span>
 <span id="L200"><span class="lineNum">     200</span>              :     if (IsInitialized() &amp;&amp; !IsFinalized())</span>
 <span id="L201"><span class="lineNum">     201</span>              :     {</span>
-<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">         394 :       MPI_Finalize();</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">         419 :       MPI_Finalize();</span></span>
 <span id="L203"><span class="lineNum">     203</span>              :     }</span>
-<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">         394 :   }</span></span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">         419 :   }</span></span>
 <span id="L205"><span class="lineNum">     205</span>              : </span>
 <span id="L206"><span class="lineNum">     206</span>              :   // Return true if MPI has been initialized.</span>
 <span id="L207"><span class="lineNum">     207</span>              :   static bool IsInitialized()</span>
 <span id="L208"><span class="lineNum">     208</span>              :   {</span>
 <span id="L209"><span class="lineNum">     209</span>              :     int is_init;</span>
-<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">         394 :     int ierr = MPI_Initialized(&amp;is_init);</span></span>
-<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">         788 :     return ierr == MPI_SUCCESS &amp;&amp; is_init;</span></span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">         419 :     int ierr = MPI_Initialized(&amp;is_init);</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaGNC">         838 :     return ierr == MPI_SUCCESS &amp;&amp; is_init;</span></span>
 <span id="L212"><span class="lineNum">     212</span>              :   }</span>
 <span id="L213"><span class="lineNum">     213</span>              : </span>
 <span id="L214"><span class="lineNum">     214</span>              :   // Return true if MPI has been finalized.</span>
 <span id="L215"><span class="lineNum">     215</span>              :   static bool IsFinalized()</span>
 <span id="L216"><span class="lineNum">     216</span>              :   {</span>
 <span id="L217"><span class="lineNum">     217</span>              :     int is_finalized;</span>
-<span id="L218"><span class="lineNum">     218</span> <span class="tlaGNC">         394 :     int ierr = MPI_Finalized(&amp;is_finalized);</span></span>
-<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">         394 :     return ierr == MPI_SUCCESS &amp;&amp; is_finalized;</span></span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaGNC">         419 :     int ierr = MPI_Finalized(&amp;is_finalized);</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">         419 :     return ierr == MPI_SUCCESS &amp;&amp; is_finalized;</span></span>
 <span id="L220"><span class="lineNum">     220</span>              :   }</span>
 <span id="L221"><span class="lineNum">     221</span>              : </span>
 <span id="L222"><span class="lineNum">     222</span>              :   // Call MPI_Abort with the given error code.</span>
@@ -299,16 +299,16 @@
 <span id="L229"><span class="lineNum">     229</span>              :   static int Rank(MPI_Comm comm)</span>
 <span id="L230"><span class="lineNum">     230</span>              :   {</span>
 <span id="L231"><span class="lineNum">     231</span>              :     int rank;</span>
-<span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC">        9999 :     MPI_Comm_rank(comm, &amp;rank);</span></span>
-<span id="L233"><span class="lineNum">     233</span> <span class="tlaGNC">        9962 :     return rank;</span></span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC">       10037 :     MPI_Comm_rank(comm, &amp;rank);</span></span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaGNC">       10000 :     return rank;</span></span>
 <span id="L234"><span class="lineNum">     234</span>              :   }</span>
 <span id="L235"><span class="lineNum">     235</span>              : </span>
 <span id="L236"><span class="lineNum">     236</span>              :   // Return communicator size.</span>
 <span id="L237"><span class="lineNum">     237</span>              :   static int Size(MPI_Comm comm)</span>
 <span id="L238"><span class="lineNum">     238</span>              :   {</span>
 <span id="L239"><span class="lineNum">     239</span>              :     int size;</span>
-<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">       18941 :     MPI_Comm_size(comm, &amp;size);</span></span>
-<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">       18938 :     return size;</span></span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">       18969 :     MPI_Comm_size(comm, &amp;size);</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">       18966 :     return size;</span></span>
 <span id="L242"><span class="lineNum">     242</span>              :   }</span>
 <span id="L243"><span class="lineNum">     243</span>              : </span>
 <span id="L244"><span class="lineNum">     244</span>              :   // Return communicator size.</span>
@@ -318,7 +318,7 @@
 <span id="L248"><span class="lineNum">     248</span>              :   template &lt;typename T&gt;</span>
 <span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">        1839 :   static void GlobalOp(int len, T *buff, MPI_Op op, MPI_Comm comm)</span></span>
 <span id="L250"><span class="lineNum">     250</span>              :   {</span>
-<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">       75329 :     MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType&lt;T&gt;(), op, comm);</span></span>
+<span id="L251"><span class="lineNum">     251</span> <span class="tlaGNC">       75375 :     MPI_Allreduce(MPI_IN_PLACE, buff, len, mpi::DataType&lt;T&gt;(), op, comm);</span></span>
 <span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">        2717 :   }</span></span>
 <span id="L253"><span class="lineNum">     253</span>              : </span>
 <span id="L254"><span class="lineNum">     254</span>              :   // Global minimum (in-place, result is broadcast to all processes).</span>
@@ -434,19 +434,19 @@
 <span id="L364"><span class="lineNum">     364</span>              : </span>
 <span id="L365"><span class="lineNum">     365</span>              :   // Print methods only print on the root process of MPI_COMM_WORLD or a given MPI_Comm.</span>
 <span id="L366"><span class="lineNum">     366</span>              :   template &lt;typename... T&gt;</span>
-<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">        8175 :   static void Print(MPI_Comm comm, fmt::format_string&lt;T...&gt; fmt, T &amp;&amp;...args)</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">        8200 :   static void Print(MPI_Comm comm, fmt::format_string&lt;T...&gt; fmt, T &amp;&amp;...args)</span></span>
 <span id="L368"><span class="lineNum">     368</span>              :   {</span>
-<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">        8175 :     if (Root(comm))</span></span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">        8200 :     if (Root(comm))</span></span>
 <span id="L370"><span class="lineNum">     370</span>              :     {</span>
-<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">        7185 :       fmt::print(fmt, std::forward&lt;T&gt;(args)...);</span></span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">        7205 :       fmt::print(fmt, std::forward&lt;T&gt;(args)...);</span></span>
 <span id="L372"><span class="lineNum">     372</span>              :     }</span>
-<span id="L373"><span class="lineNum">     373</span> <span class="tlaGNC">        8175 :   }</span></span>
+<span id="L373"><span class="lineNum">     373</span> <span class="tlaGNC">        8200 :   }</span></span>
 <span id="L374"><span class="lineNum">     374</span>              : </span>
 <span id="L375"><span class="lineNum">     375</span>              :   template &lt;typename... T&gt;</span>
 <span id="L376"><span class="lineNum">     376</span>              :   static void Print(fmt::format_string&lt;T...&gt; fmt, T &amp;&amp;...args)</span>
 <span id="L377"><span class="lineNum">     377</span>              :   {</span>
-<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">        2277 :     Print(World(), fmt, std::forward&lt;T&gt;(args)...);</span></span>
-<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">        1886 :   }</span></span>
+<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">        2302 :     Print(World(), fmt, std::forward&lt;T&gt;(args)...);</span></span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">        1911 :   }</span></span>
 <span id="L380"><span class="lineNum">     380</span>              : </span>
 <span id="L381"><span class="lineNum">     381</span>              :   template &lt;typename... T&gt;</span>
 <span id="L382"><span class="lineNum">     382</span>              :   static void Printf(MPI_Comm comm, const char *format, T &amp;&amp;...args)</span>
@@ -490,27 +490,27 @@
 <span id="L420"><span class="lineNum">     420</span>              : private:</span>
 <span id="L421"><span class="lineNum">     421</span>              :   // Prevent direct construction of objects of this class.</span>
 <span id="L422"><span class="lineNum">     422</span>              :   Mpi() = default;</span>
-<span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">         394 :   ~Mpi() { Finalize(); }</span></span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">         419 :   ~Mpi() { Finalize(); }</span></span>
 <span id="L424"><span class="lineNum">     424</span>              : </span>
 <span id="L425"><span class="lineNum">     425</span>              :   // Access the singleton instance.</span>
-<span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">         394 :   static Mpi &amp;Instance()</span></span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">         419 :   static Mpi &amp;Instance()</span></span>
 <span id="L427"><span class="lineNum">     427</span>              :   {</span>
-<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">         788 :     static Mpi mpi;</span></span>
-<span id="L429"><span class="lineNum">     429</span> <span class="tlaGNC">         394 :     return mpi;</span></span>
+<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">         838 :     static Mpi mpi;</span></span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaGNC">         419 :     return mpi;</span></span>
 <span id="L430"><span class="lineNum">     430</span>              :   }</span>
 <span id="L431"><span class="lineNum">     431</span>              : </span>
-<span id="L432"><span class="lineNum">     432</span> <span class="tlaGNC">         394 :   static void Init(int *argc, char ***argv, int requested)</span></span>
+<span id="L432"><span class="lineNum">     432</span> <span class="tlaGNC">         419 :   static void Init(int *argc, char ***argv, int requested)</span></span>
 <span id="L433"><span class="lineNum">     433</span>              :   {</span>
 <span id="L434"><span class="lineNum">     434</span>              :     // The Mpi object below needs to be created after MPI_Init() for some MPI</span>
 <span id="L435"><span class="lineNum">     435</span>              :     // implementations.</span>
 <span id="L436"><span class="lineNum">     436</span> <span class="tlaUNC tlaBgUNC">           0 :     MFEM_VERIFY(!IsInitialized(), &quot;MPI should not be initialized more than once!&quot;);</span></span>
 <span id="L437"><span class="lineNum">     437</span>              :     int provided;</span>
-<span id="L438"><span class="lineNum">     438</span> <span class="tlaGNC tlaBgGNC">         394 :     MPI_Init_thread(argc, argv, requested, &amp;provided);</span></span>
-<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">         394 :     MFEM_VERIFY(provided &gt;= requested,</span></span>
+<span id="L438"><span class="lineNum">     438</span> <span class="tlaGNC tlaBgGNC">         419 :     MPI_Init_thread(argc, argv, requested, &amp;provided);</span></span>
+<span id="L439"><span class="lineNum">     439</span> <span class="tlaGNC">         419 :     MFEM_VERIFY(provided &gt;= requested,</span></span>
 <span id="L440"><span class="lineNum">     440</span>              :                 &quot;MPI could not provide the requested level of thread support!&quot;);</span>
 <span id="L441"><span class="lineNum">     441</span>              :     // Initialize the singleton Instance.</span>
-<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">         394 :     Instance();</span></span>
-<span id="L443"><span class="lineNum">     443</span> <span class="tlaGNC">         394 :   }</span></span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">         419 :     Instance();</span></span>
+<span id="L443"><span class="lineNum">     443</span> <span class="tlaGNC">         419 :   }</span></span>
 <span id="L444"><span class="lineNum">     444</span>              : };</span>
 <span id="L445"><span class="lineNum">     445</span>              : </span>
 <span id="L446"><span class="lineNum">     446</span>              : }  // namespace palace</span>

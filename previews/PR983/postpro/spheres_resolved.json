@@ -132,6 +132,7 @@
       "GSOrthogonalization": "MGS",
       "InitialGuess": true,
       "KSPType": "CG",
+      "LondonPCShift": 0.1,
       "MGAuxiliarySmoother": false,
       "MGCoarsenType": "Logarithmic",
       "MGCycleIts": 1,

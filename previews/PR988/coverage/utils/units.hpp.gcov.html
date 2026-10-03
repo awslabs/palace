@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -206,181 +206,180 @@
 <span id="L136"><span class="lineNum">     136</span>              : </span>
 <span id="L137"><span class="lineNum">     137</span>              :   // Return a copy of value scaled by given unit.</span>
 <span id="L138"><span class="lineNum">     138</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L139"><span class="lineNum">     139</span>              :   auto Dimensionalize(T value) const</span>
-<span id="L140"><span class="lineNum">     140</span>              :       -&gt; std::enable_if_t&lt;!std::is_same_v&lt;T, Vector&gt; &amp;&amp; !std::is_same_v&lt;T, ComplexVector&gt;,</span>
-<span id="L141"><span class="lineNum">     141</span>              :                           T&gt;</span>
-<span id="L142"><span class="lineNum">     142</span>              :   {</span>
-<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">    34561728 :     return value * GetScaleFactor&lt;unit&gt;();</span></span>
-<span id="L144"><span class="lineNum">     144</span>              :   }</span>
-<span id="L145"><span class="lineNum">     145</span>              : </span>
-<span id="L146"><span class="lineNum">     146</span>              :   // Return a copy of array scaled by given unit.</span>
-<span id="L147"><span class="lineNum">     147</span>              :   template &lt;ValueType unit, typename T, std::size_t N&gt;</span>
-<span id="L148"><span class="lineNum">     148</span>              :   auto Dimensionalize(std::array&lt;T, N&gt; value) const</span>
-<span id="L149"><span class="lineNum">     149</span>              :   {</span>
-<span id="L150"><span class="lineNum">     150</span>              :     std::transform(value.begin(), value.end(), value.begin(),</span>
-<span id="L151"><span class="lineNum">     151</span>              :                    [this](T v) { return Dimensionalize&lt;unit&gt;(v); });</span>
-<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">        4122 :     return value;</span></span>
-<span id="L153"><span class="lineNum">     153</span>              :   }</span>
-<span id="L154"><span class="lineNum">     154</span>              : </span>
-<span id="L155"><span class="lineNum">     155</span>              :   // Return a copy of vector scaled by given unit.</span>
-<span id="L156"><span class="lineNum">     156</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L157"><span class="lineNum">     157</span> <span class="tlaGNC">          31 :   auto Dimensionalize(std::vector&lt;T&gt; value) const</span></span>
-<span id="L158"><span class="lineNum">     158</span>              :   {</span>
-<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC">          31 :     std::transform(value.begin(), value.end(), value.begin(),</span></span>
-<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">          10 :                    [this](T v) { return Dimensionalize&lt;unit&gt;(v); });</span></span>
-<span id="L161"><span class="lineNum">     161</span> <span class="tlaGNC">          31 :     return value;</span></span>
-<span id="L162"><span class="lineNum">     162</span>              :   }</span>
-<span id="L163"><span class="lineNum">     163</span>              : </span>
-<span id="L164"><span class="lineNum">     164</span>              :   // Return a copy Vector or ComplexVector scaled by given unit.</span>
-<span id="L165"><span class="lineNum">     165</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L166"><span class="lineNum">     166</span>              :   auto Dimensionalize(T value) const</span>
-<span id="L167"><span class="lineNum">     167</span>              :       -&gt; std::enable_if_t&lt;std::is_same_v&lt;T, Vector&gt; || std::is_same_v&lt;T, ComplexVector&gt;, T&gt;</span>
-<span id="L168"><span class="lineNum">     168</span>              :   {</span>
-<span id="L169"><span class="lineNum">     169</span> <span class="tlaUNC tlaBgUNC">           0 :     value *= GetScaleFactor&lt;unit&gt;();</span></span>
-<span id="L170"><span class="lineNum">     170</span> <span class="tlaUNC">           0 :     return value;</span></span>
-<span id="L171"><span class="lineNum">     171</span>              :   }</span>
-<span id="L172"><span class="lineNum">     172</span>              : </span>
-<span id="L173"><span class="lineNum">     173</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
-<span id="L174"><span class="lineNum">     174</span>              :   // Neighbor face data is also scaled.</span>
-<span id="L175"><span class="lineNum">     175</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L176"><span class="lineNum">     176</span>              :   auto Dimensionalize(mfem::ParGridFunction value) const</span>
-<span id="L177"><span class="lineNum">     177</span>              :   {</span>
-<span id="L178"><span class="lineNum">     178</span>              :     value *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L179"><span class="lineNum">     179</span>              :     value.FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L180"><span class="lineNum">     180</span>              :     return value;</span>
-<span id="L181"><span class="lineNum">     181</span>              :   }</span>
-<span id="L182"><span class="lineNum">     182</span>              : </span>
-<span id="L183"><span class="lineNum">     183</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
-<span id="L184"><span class="lineNum">     184</span>              :   // Neighbor face data is also scaled.</span>
-<span id="L185"><span class="lineNum">     185</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L186"><span class="lineNum">     186</span>              :   auto Dimensionalize(GridFunction value) const</span>
-<span id="L187"><span class="lineNum">     187</span>              :   {</span>
-<span id="L188"><span class="lineNum">     188</span>              :     value *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L189"><span class="lineNum">     189</span>              :     value.Real().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L190"><span class="lineNum">     190</span>              :     if (value.HasImag())</span>
-<span id="L191"><span class="lineNum">     191</span>              :     {</span>
-<span id="L192"><span class="lineNum">     192</span>              :       value.Imag().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L193"><span class="lineNum">     193</span>              :     }</span>
-<span id="L194"><span class="lineNum">     194</span>              :     return value;</span>
-<span id="L195"><span class="lineNum">     195</span>              :   }</span>
-<span id="L196"><span class="lineNum">     196</span>              : </span>
-<span id="L197"><span class="lineNum">     197</span>              :   // Scale value in-place by given unit.</span>
-<span id="L198"><span class="lineNum">     198</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L199"><span class="lineNum">     199</span>              :   void DimensionalizeInPlace(T &amp;value) const</span>
-<span id="L200"><span class="lineNum">     200</span>              :   {</span>
-<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC tlaBgGNC">          85 :     value *= GetScaleFactor&lt;unit&gt;();</span></span>
-<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">          85 :   }</span></span>
-<span id="L203"><span class="lineNum">     203</span>              : </span>
-<span id="L204"><span class="lineNum">     204</span>              :   // Scale gridfunction and its neighbor face data in-place by given unit.</span>
-<span id="L205"><span class="lineNum">     205</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L206"><span class="lineNum">     206</span> <span class="tlaGNC">          19 :   void DimensionalizeInPlace(mfem::ParGridFunction &amp;value) const</span></span>
-<span id="L207"><span class="lineNum">     207</span>              :   {</span>
-<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">          19 :     value *= GetScaleFactor&lt;unit&gt;();</span></span>
-<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">          19 :     value.FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span></span>
-<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">          19 :   }</span></span>
-<span id="L211"><span class="lineNum">     211</span>              : </span>
-<span id="L212"><span class="lineNum">     212</span>              :   // Scale complex gridfunction and its neighbor face data in-place by given unit.</span>
-<span id="L213"><span class="lineNum">     213</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L214"><span class="lineNum">     214</span>              :   auto Dimensionalize(GridFunction &amp;value) const</span>
-<span id="L215"><span class="lineNum">     215</span>              :   {</span>
-<span id="L216"><span class="lineNum">     216</span>              :     value *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L217"><span class="lineNum">     217</span>              :     value.Real().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L218"><span class="lineNum">     218</span>              :     if (value.HasImag())</span>
-<span id="L219"><span class="lineNum">     219</span>              :     {</span>
-<span id="L220"><span class="lineNum">     220</span>              :       value.Imag().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
-<span id="L221"><span class="lineNum">     221</span>              :     }</span>
-<span id="L222"><span class="lineNum">     222</span>              :   }</span>
-<span id="L223"><span class="lineNum">     223</span>              : </span>
-<span id="L224"><span class="lineNum">     224</span>              :   // Return a copy of value scaled by inverse of given unit.</span>
-<span id="L225"><span class="lineNum">     225</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L226"><span class="lineNum">     226</span>              :   auto Nondimensionalize(T value) const</span>
-<span id="L227"><span class="lineNum">     227</span>              :   {</span>
-<span id="L228"><span class="lineNum">     228</span> <span class="tlaGNC">      318238 :     return value / GetScaleFactor&lt;unit&gt;();</span></span>
-<span id="L229"><span class="lineNum">     229</span>              :   }</span>
-<span id="L230"><span class="lineNum">     230</span>              : </span>
-<span id="L231"><span class="lineNum">     231</span>              :   // Return a copy of array scaled by inverse of given unit.</span>
-<span id="L232"><span class="lineNum">     232</span>              :   template &lt;ValueType unit, typename T, std::size_t N&gt;</span>
-<span id="L233"><span class="lineNum">     233</span>              :   auto Nondimensionalize(std::array&lt;T, N&gt; value) const</span>
-<span id="L234"><span class="lineNum">     234</span>              :   {</span>
-<span id="L235"><span class="lineNum">     235</span>              :     std::transform(value.begin(), value.end(), value.begin(),</span>
-<span id="L236"><span class="lineNum">     236</span>              :                    [this](T v) { return Nondimensionalize&lt;unit&gt;(v); });</span>
-<span id="L237"><span class="lineNum">     237</span> <span class="tlaGNC">          10 :     return value;</span></span>
-<span id="L238"><span class="lineNum">     238</span>              :   }</span>
-<span id="L239"><span class="lineNum">     239</span>              : </span>
-<span id="L240"><span class="lineNum">     240</span>              :   // Return a copy of array scaled by inverse of given unit.</span>
-<span id="L241"><span class="lineNum">     241</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">           2 :   auto Nondimensionalize(std::vector&lt;T&gt; value) const</span></span>
-<span id="L243"><span class="lineNum">     243</span>              :   {</span>
-<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">           2 :     std::transform(value.begin(), value.end(), value.begin(),</span></span>
-<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">          10 :                    [this](T v) { return Nondimensionalize&lt;unit&gt;(v); });</span></span>
-<span id="L246"><span class="lineNum">     246</span> <span class="tlaGNC">           2 :     return value;</span></span>
-<span id="L247"><span class="lineNum">     247</span>              :   }</span>
-<span id="L248"><span class="lineNum">     248</span>              : </span>
-<span id="L249"><span class="lineNum">     249</span>              :   // Return a copy of Vector of ComplexVector scaled by inverse of given unit.</span>
-<span id="L250"><span class="lineNum">     250</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L251"><span class="lineNum">     251</span>              :   auto Nondimensionalize(T value) const</span>
-<span id="L252"><span class="lineNum">     252</span>              :       -&gt; std::enable_if_t&lt;std::is_same_v&lt;T, Vector&gt; || std::is_same_v&lt;T, ComplexVector&gt;, T&gt;</span>
-<span id="L253"><span class="lineNum">     253</span>              :   {</span>
-<span id="L254"><span class="lineNum">     254</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L255"><span class="lineNum">     255</span>              :     return value;</span>
-<span id="L256"><span class="lineNum">     256</span>              :   }</span>
-<span id="L257"><span class="lineNum">     257</span>              : </span>
-<span id="L258"><span class="lineNum">     258</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
-<span id="L259"><span class="lineNum">     259</span>              :   // Neighbor face data is also scaled.</span>
-<span id="L260"><span class="lineNum">     260</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L261"><span class="lineNum">     261</span>              :   auto Nondimensionalize(mfem::ParGridFunction value) const</span>
-<span id="L262"><span class="lineNum">     262</span>              :   {</span>
-<span id="L263"><span class="lineNum">     263</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L264"><span class="lineNum">     264</span>              :     value.FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L265"><span class="lineNum">     265</span>              :     return value;</span>
-<span id="L266"><span class="lineNum">     266</span>              :   }</span>
-<span id="L267"><span class="lineNum">     267</span>              : </span>
-<span id="L268"><span class="lineNum">     268</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
-<span id="L269"><span class="lineNum">     269</span>              :   // Neighbor face data is also scaled.</span>
-<span id="L270"><span class="lineNum">     270</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L271"><span class="lineNum">     271</span>              :   auto Nondimensionalize(GridFunction value) const</span>
-<span id="L272"><span class="lineNum">     272</span>              :   {</span>
-<span id="L273"><span class="lineNum">     273</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L274"><span class="lineNum">     274</span>              :     value.Real().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L275"><span class="lineNum">     275</span>              :     if (value.HasImag())</span>
-<span id="L276"><span class="lineNum">     276</span>              :     {</span>
-<span id="L277"><span class="lineNum">     277</span>              :       value.Imag().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L278"><span class="lineNum">     278</span>              :     }</span>
-<span id="L279"><span class="lineNum">     279</span>              :     return value;</span>
-<span id="L280"><span class="lineNum">     280</span>              :   }</span>
-<span id="L281"><span class="lineNum">     281</span>              : </span>
-<span id="L282"><span class="lineNum">     282</span>              :   // Scale value in-place by inverse of given unit.</span>
-<span id="L283"><span class="lineNum">     283</span>              :   template &lt;ValueType unit, typename T&gt;</span>
-<span id="L284"><span class="lineNum">     284</span>              :   void NondimensionalizeInPlace(T &amp;value) const</span>
-<span id="L285"><span class="lineNum">     285</span>              :   {</span>
-<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">          85 :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span></span>
-<span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">          85 :   }</span></span>
-<span id="L288"><span class="lineNum">     288</span>              : </span>
-<span id="L289"><span class="lineNum">     289</span>              :   // Scale gridfunction and its neighbor face data in-place by inverse of given unit.</span>
-<span id="L290"><span class="lineNum">     290</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">          19 :   void NondimensionalizeInPlace(mfem::ParGridFunction &amp;value) const</span></span>
-<span id="L292"><span class="lineNum">     292</span>              :   {</span>
-<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">          19 :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span></span>
-<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">          19 :     value.FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span></span>
-<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">          19 :   }</span></span>
-<span id="L296"><span class="lineNum">     296</span>              : </span>
-<span id="L297"><span class="lineNum">     297</span>              :   // Scale complex gridfunction and its neighbor face data in-place by inverse of given</span>
-<span id="L298"><span class="lineNum">     298</span>              :   // unit.</span>
-<span id="L299"><span class="lineNum">     299</span>              :   template &lt;ValueType unit&gt;</span>
-<span id="L300"><span class="lineNum">     300</span>              :   auto Nondimensionalize(GridFunction &amp;value) const</span>
-<span id="L301"><span class="lineNum">     301</span>              :   {</span>
-<span id="L302"><span class="lineNum">     302</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L303"><span class="lineNum">     303</span>              :     value.Real().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L304"><span class="lineNum">     304</span>              :     if (value.HasImag())</span>
-<span id="L305"><span class="lineNum">     305</span>              :     {</span>
-<span id="L306"><span class="lineNum">     306</span>              :       value.Imag().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
-<span id="L307"><span class="lineNum">     307</span>              :     }</span>
-<span id="L308"><span class="lineNum">     308</span>              :   }</span>
-<span id="L309"><span class="lineNum">     309</span>              : };</span>
-<span id="L310"><span class="lineNum">     310</span>              : </span>
-<span id="L311"><span class="lineNum">     311</span>              : }  // namespace palace</span>
-<span id="L312"><span class="lineNum">     312</span>              : </span>
-<span id="L313"><span class="lineNum">     313</span>              : #endif  // PALACE_UTILS_UNITS_HPP</span>
+<span id="L139"><span class="lineNum">     139</span>              :   T Dimensionalize(T value) const</span>
+<span id="L140"><span class="lineNum">     140</span>              :     requires(!std::is_same_v&lt;T, Vector&gt; &amp;&amp; !std::is_same_v&lt;T, ComplexVector&gt;)</span>
+<span id="L141"><span class="lineNum">     141</span>              :   {</span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">    34561728 :     return value * GetScaleFactor&lt;unit&gt;();</span></span>
+<span id="L143"><span class="lineNum">     143</span>              :   }</span>
+<span id="L144"><span class="lineNum">     144</span>              : </span>
+<span id="L145"><span class="lineNum">     145</span>              :   // Return a copy of array scaled by given unit.</span>
+<span id="L146"><span class="lineNum">     146</span>              :   template &lt;ValueType unit, typename T, std::size_t N&gt;</span>
+<span id="L147"><span class="lineNum">     147</span>              :   auto Dimensionalize(std::array&lt;T, N&gt; value) const</span>
+<span id="L148"><span class="lineNum">     148</span>              :   {</span>
+<span id="L149"><span class="lineNum">     149</span>              :     std::transform(value.begin(), value.end(), value.begin(),</span>
+<span id="L150"><span class="lineNum">     150</span>              :                    [this](T v) { return Dimensionalize&lt;unit&gt;(v); });</span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">        4122 :     return value;</span></span>
+<span id="L152"><span class="lineNum">     152</span>              :   }</span>
+<span id="L153"><span class="lineNum">     153</span>              : </span>
+<span id="L154"><span class="lineNum">     154</span>              :   // Return a copy of vector scaled by given unit.</span>
+<span id="L155"><span class="lineNum">     155</span>              :   template &lt;ValueType unit, typename T&gt;</span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaGNC">          31 :   auto Dimensionalize(std::vector&lt;T&gt; value) const</span></span>
+<span id="L157"><span class="lineNum">     157</span>              :   {</span>
+<span id="L158"><span class="lineNum">     158</span> <span class="tlaGNC">          31 :     std::transform(value.begin(), value.end(), value.begin(),</span></span>
+<span id="L159"><span class="lineNum">     159</span> <span class="tlaGNC">          10 :                    [this](T v) { return Dimensionalize&lt;unit&gt;(v); });</span></span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">          31 :     return value;</span></span>
+<span id="L161"><span class="lineNum">     161</span>              :   }</span>
+<span id="L162"><span class="lineNum">     162</span>              : </span>
+<span id="L163"><span class="lineNum">     163</span>              :   // Return a copy Vector or ComplexVector scaled by given unit.</span>
+<span id="L164"><span class="lineNum">     164</span>              :   template &lt;ValueType unit, typename T&gt;</span>
+<span id="L165"><span class="lineNum">     165</span>              :   T Dimensionalize(T value) const</span>
+<span id="L166"><span class="lineNum">     166</span>              :     requires(std::is_same_v&lt;T, Vector&gt; || std::is_same_v&lt;T, ComplexVector&gt;)</span>
+<span id="L167"><span class="lineNum">     167</span>              :   {</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC tlaBgUNC">           0 :     value *= GetScaleFactor&lt;unit&gt;();</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaUNC">           0 :     return value;</span></span>
+<span id="L170"><span class="lineNum">     170</span>              :   }</span>
+<span id="L171"><span class="lineNum">     171</span>              : </span>
+<span id="L172"><span class="lineNum">     172</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
+<span id="L173"><span class="lineNum">     173</span>              :   // Neighbor face data is also scaled.</span>
+<span id="L174"><span class="lineNum">     174</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L175"><span class="lineNum">     175</span>              :   auto Dimensionalize(mfem::ParGridFunction value) const</span>
+<span id="L176"><span class="lineNum">     176</span>              :   {</span>
+<span id="L177"><span class="lineNum">     177</span>              :     value *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L178"><span class="lineNum">     178</span>              :     value.FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L179"><span class="lineNum">     179</span>              :     return value;</span>
+<span id="L180"><span class="lineNum">     180</span>              :   }</span>
+<span id="L181"><span class="lineNum">     181</span>              : </span>
+<span id="L182"><span class="lineNum">     182</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
+<span id="L183"><span class="lineNum">     183</span>              :   // Neighbor face data is also scaled.</span>
+<span id="L184"><span class="lineNum">     184</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L185"><span class="lineNum">     185</span>              :   auto Dimensionalize(GridFunction value) const</span>
+<span id="L186"><span class="lineNum">     186</span>              :   {</span>
+<span id="L187"><span class="lineNum">     187</span>              :     value *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L188"><span class="lineNum">     188</span>              :     value.Real().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L189"><span class="lineNum">     189</span>              :     if (value.HasImag())</span>
+<span id="L190"><span class="lineNum">     190</span>              :     {</span>
+<span id="L191"><span class="lineNum">     191</span>              :       value.Imag().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L192"><span class="lineNum">     192</span>              :     }</span>
+<span id="L193"><span class="lineNum">     193</span>              :     return value;</span>
+<span id="L194"><span class="lineNum">     194</span>              :   }</span>
+<span id="L195"><span class="lineNum">     195</span>              : </span>
+<span id="L196"><span class="lineNum">     196</span>              :   // Scale value in-place by given unit.</span>
+<span id="L197"><span class="lineNum">     197</span>              :   template &lt;ValueType unit, typename T&gt;</span>
+<span id="L198"><span class="lineNum">     198</span>              :   void DimensionalizeInPlace(T &amp;value) const</span>
+<span id="L199"><span class="lineNum">     199</span>              :   {</span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaGNC tlaBgGNC">          85 :     value *= GetScaleFactor&lt;unit&gt;();</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">          85 :   }</span></span>
+<span id="L202"><span class="lineNum">     202</span>              : </span>
+<span id="L203"><span class="lineNum">     203</span>              :   // Scale gridfunction and its neighbor face data in-place by given unit.</span>
+<span id="L204"><span class="lineNum">     204</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">          19 :   void DimensionalizeInPlace(mfem::ParGridFunction &amp;value) const</span></span>
+<span id="L206"><span class="lineNum">     206</span>              :   {</span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">          19 :     value *= GetScaleFactor&lt;unit&gt;();</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">          19 :     value.FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span></span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">          19 :   }</span></span>
+<span id="L210"><span class="lineNum">     210</span>              : </span>
+<span id="L211"><span class="lineNum">     211</span>              :   // Scale complex gridfunction and its neighbor face data in-place by given unit.</span>
+<span id="L212"><span class="lineNum">     212</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L213"><span class="lineNum">     213</span>              :   auto Dimensionalize(GridFunction &amp;value) const</span>
+<span id="L214"><span class="lineNum">     214</span>              :   {</span>
+<span id="L215"><span class="lineNum">     215</span>              :     value *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L216"><span class="lineNum">     216</span>              :     value.Real().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L217"><span class="lineNum">     217</span>              :     if (value.HasImag())</span>
+<span id="L218"><span class="lineNum">     218</span>              :     {</span>
+<span id="L219"><span class="lineNum">     219</span>              :       value.Imag().FaceNbrData() *= GetScaleFactor&lt;unit&gt;();</span>
+<span id="L220"><span class="lineNum">     220</span>              :     }</span>
+<span id="L221"><span class="lineNum">     221</span>              :   }</span>
+<span id="L222"><span class="lineNum">     222</span>              : </span>
+<span id="L223"><span class="lineNum">     223</span>              :   // Return a copy of value scaled by inverse of given unit.</span>
+<span id="L224"><span class="lineNum">     224</span>              :   template &lt;ValueType unit, typename T&gt;</span>
+<span id="L225"><span class="lineNum">     225</span>              :   auto Nondimensionalize(T value) const</span>
+<span id="L226"><span class="lineNum">     226</span>              :   {</span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaGNC">      318238 :     return value / GetScaleFactor&lt;unit&gt;();</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :   }</span>
+<span id="L229"><span class="lineNum">     229</span>              : </span>
+<span id="L230"><span class="lineNum">     230</span>              :   // Return a copy of array scaled by inverse of given unit.</span>
+<span id="L231"><span class="lineNum">     231</span>              :   template &lt;ValueType unit, typename T, std::size_t N&gt;</span>
+<span id="L232"><span class="lineNum">     232</span>              :   auto Nondimensionalize(std::array&lt;T, N&gt; value) const</span>
+<span id="L233"><span class="lineNum">     233</span>              :   {</span>
+<span id="L234"><span class="lineNum">     234</span>              :     std::transform(value.begin(), value.end(), value.begin(),</span>
+<span id="L235"><span class="lineNum">     235</span>              :                    [this](T v) { return Nondimensionalize&lt;unit&gt;(v); });</span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaGNC">          10 :     return value;</span></span>
+<span id="L237"><span class="lineNum">     237</span>              :   }</span>
+<span id="L238"><span class="lineNum">     238</span>              : </span>
+<span id="L239"><span class="lineNum">     239</span>              :   // Return a copy of array scaled by inverse of given unit.</span>
+<span id="L240"><span class="lineNum">     240</span>              :   template &lt;ValueType unit, typename T&gt;</span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">           2 :   auto Nondimensionalize(std::vector&lt;T&gt; value) const</span></span>
+<span id="L242"><span class="lineNum">     242</span>              :   {</span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaGNC">           2 :     std::transform(value.begin(), value.end(), value.begin(),</span></span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">          10 :                    [this](T v) { return Nondimensionalize&lt;unit&gt;(v); });</span></span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">           2 :     return value;</span></span>
+<span id="L246"><span class="lineNum">     246</span>              :   }</span>
+<span id="L247"><span class="lineNum">     247</span>              : </span>
+<span id="L248"><span class="lineNum">     248</span>              :   // Return a copy of Vector of ComplexVector scaled by inverse of given unit.</span>
+<span id="L249"><span class="lineNum">     249</span>              :   template &lt;ValueType unit, typename T&gt;</span>
+<span id="L250"><span class="lineNum">     250</span>              :   T Nondimensionalize(T value) const</span>
+<span id="L251"><span class="lineNum">     251</span>              :     requires(std::is_same_v&lt;T, Vector&gt; || std::is_same_v&lt;T, ComplexVector&gt;)</span>
+<span id="L252"><span class="lineNum">     252</span>              :   {</span>
+<span id="L253"><span class="lineNum">     253</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L254"><span class="lineNum">     254</span>              :     return value;</span>
+<span id="L255"><span class="lineNum">     255</span>              :   }</span>
+<span id="L256"><span class="lineNum">     256</span>              : </span>
+<span id="L257"><span class="lineNum">     257</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
+<span id="L258"><span class="lineNum">     258</span>              :   // Neighbor face data is also scaled.</span>
+<span id="L259"><span class="lineNum">     259</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L260"><span class="lineNum">     260</span>              :   auto Nondimensionalize(mfem::ParGridFunction value) const</span>
+<span id="L261"><span class="lineNum">     261</span>              :   {</span>
+<span id="L262"><span class="lineNum">     262</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L263"><span class="lineNum">     263</span>              :     value.FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L264"><span class="lineNum">     264</span>              :     return value;</span>
+<span id="L265"><span class="lineNum">     265</span>              :   }</span>
+<span id="L266"><span class="lineNum">     266</span>              : </span>
+<span id="L267"><span class="lineNum">     267</span>              :   // Return a copy of the gridfunction scaled by given unit.</span>
+<span id="L268"><span class="lineNum">     268</span>              :   // Neighbor face data is also scaled.</span>
+<span id="L269"><span class="lineNum">     269</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L270"><span class="lineNum">     270</span>              :   auto Nondimensionalize(GridFunction value) const</span>
+<span id="L271"><span class="lineNum">     271</span>              :   {</span>
+<span id="L272"><span class="lineNum">     272</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L273"><span class="lineNum">     273</span>              :     value.Real().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L274"><span class="lineNum">     274</span>              :     if (value.HasImag())</span>
+<span id="L275"><span class="lineNum">     275</span>              :     {</span>
+<span id="L276"><span class="lineNum">     276</span>              :       value.Imag().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L277"><span class="lineNum">     277</span>              :     }</span>
+<span id="L278"><span class="lineNum">     278</span>              :     return value;</span>
+<span id="L279"><span class="lineNum">     279</span>              :   }</span>
+<span id="L280"><span class="lineNum">     280</span>              : </span>
+<span id="L281"><span class="lineNum">     281</span>              :   // Scale value in-place by inverse of given unit.</span>
+<span id="L282"><span class="lineNum">     282</span>              :   template &lt;ValueType unit, typename T&gt;</span>
+<span id="L283"><span class="lineNum">     283</span>              :   void NondimensionalizeInPlace(T &amp;value) const</span>
+<span id="L284"><span class="lineNum">     284</span>              :   {</span>
+<span id="L285"><span class="lineNum">     285</span> <span class="tlaGNC">          85 :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span></span>
+<span id="L286"><span class="lineNum">     286</span> <span class="tlaGNC">          85 :   }</span></span>
+<span id="L287"><span class="lineNum">     287</span>              : </span>
+<span id="L288"><span class="lineNum">     288</span>              :   // Scale gridfunction and its neighbor face data in-place by inverse of given unit.</span>
+<span id="L289"><span class="lineNum">     289</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">          19 :   void NondimensionalizeInPlace(mfem::ParGridFunction &amp;value) const</span></span>
+<span id="L291"><span class="lineNum">     291</span>              :   {</span>
+<span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">          19 :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span></span>
+<span id="L293"><span class="lineNum">     293</span> <span class="tlaGNC">          19 :     value.FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span></span>
+<span id="L294"><span class="lineNum">     294</span> <span class="tlaGNC">          19 :   }</span></span>
+<span id="L295"><span class="lineNum">     295</span>              : </span>
+<span id="L296"><span class="lineNum">     296</span>              :   // Scale complex gridfunction and its neighbor face data in-place by inverse of given</span>
+<span id="L297"><span class="lineNum">     297</span>              :   // unit.</span>
+<span id="L298"><span class="lineNum">     298</span>              :   template &lt;ValueType unit&gt;</span>
+<span id="L299"><span class="lineNum">     299</span>              :   auto Nondimensionalize(GridFunction &amp;value) const</span>
+<span id="L300"><span class="lineNum">     300</span>              :   {</span>
+<span id="L301"><span class="lineNum">     301</span>              :     value *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L302"><span class="lineNum">     302</span>              :     value.Real().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L303"><span class="lineNum">     303</span>              :     if (value.HasImag())</span>
+<span id="L304"><span class="lineNum">     304</span>              :     {</span>
+<span id="L305"><span class="lineNum">     305</span>              :       value.Imag().FaceNbrData() *= (1.0 / GetScaleFactor&lt;unit&gt;());</span>
+<span id="L306"><span class="lineNum">     306</span>              :     }</span>
+<span id="L307"><span class="lineNum">     307</span>              :   }</span>
+<span id="L308"><span class="lineNum">     308</span>              : };</span>
+<span id="L309"><span class="lineNum">     309</span>              : </span>
+<span id="L310"><span class="lineNum">     310</span>              : }  // namespace palace</span>
+<span id="L311"><span class="lineNum">     311</span>              : </span>
+<span id="L312"><span class="lineNum">     312</span>              : #endif  // PALACE_UTILS_UNITS_HPP</span>
         </pre>
               </td>
             </tr>

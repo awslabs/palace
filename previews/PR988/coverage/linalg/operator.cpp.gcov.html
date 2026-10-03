@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">44.1&nbsp;%</td>
@@ -125,21 +125,21 @@
 <span id="L55"><span class="lineNum">      55</span> <span class="tlaUNC">           0 :   MFEM_ABORT(&quot;Base class ComplexOperator does not implement AddMultHermitianTranspose!&quot;);</span></span>
 <span id="L56"><span class="lineNum">      56</span>              : }</span>
 <span id="L57"><span class="lineNum">      57</span>              : </span>
-<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC tlaBgGNC">        1214 : ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;dAr,</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC tlaBgGNC">        1217 : ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;dAr,</span></span>
 <span id="L59"><span class="lineNum">      59</span>              :                                                std::unique_ptr&lt;Operator&gt; &amp;&amp;dAi,</span>
-<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">        1214 :                                                const Operator *pAr, const Operator *pAi)</span></span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">        1217 :                                                const Operator *pAr, const Operator *pAi)</span></span>
 <span id="L61"><span class="lineNum">      61</span>              :   : ComplexOperator(), data_Ar(std::move(dAr)), data_Ai(std::move(dAi)),</span>
-<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">        1840 :     Ar((data_Ar != nullptr) ? data_Ar.get() : pAr),</span></span>
-<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">        2042 :     Ai((data_Ai != nullptr) ? data_Ai.get() : pAi)</span></span>
+<span id="L62"><span class="lineNum">      62</span> <span class="tlaGNC">        1843 :     Ar((data_Ar != nullptr) ? data_Ar.get() : pAr),</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">        2045 :     Ai((data_Ai != nullptr) ? data_Ai.get() : pAi)</span></span>
 <span id="L64"><span class="lineNum">      64</span>              : {</span>
-<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">        1214 :   MFEM_VERIFY(Ar || Ai, &quot;Cannot construct ComplexWrapperOperator from an empty matrix!&quot;);</span></span>
-<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">        1214 :   MFEM_VERIFY((!Ar || !Ai) || (Ar-&gt;Height() == Ai-&gt;Height() &amp;&amp; Ar-&gt;Width() == Ai-&gt;Width()),</span></span>
+<span id="L65"><span class="lineNum">      65</span> <span class="tlaGNC">        1217 :   MFEM_VERIFY(Ar || Ai, &quot;Cannot construct ComplexWrapperOperator from an empty matrix!&quot;);</span></span>
+<span id="L66"><span class="lineNum">      66</span> <span class="tlaGNC">        1217 :   MFEM_VERIFY((!Ar || !Ai) || (Ar-&gt;Height() == Ai-&gt;Height() &amp;&amp; Ar-&gt;Width() == Ai-&gt;Width()),</span></span>
 <span id="L67"><span class="lineNum">      67</span>              :               &quot;Mismatch in dimension of real and imaginary matrix parts!&quot;);</span>
-<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">        1214 :   tx.UseDevice(true);</span></span>
-<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">        1214 :   ty.UseDevice(true);</span></span>
-<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">        1214 :   height = Ar ? Ar-&gt;Height() : Ai-&gt;Height();</span></span>
-<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">        1214 :   width = Ar ? Ar-&gt;Width() : Ai-&gt;Width();</span></span>
-<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">        1214 : }</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">        1217 :   tx.UseDevice(true);</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">        1217 :   ty.UseDevice(true);</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">        1217 :   height = Ar ? Ar-&gt;Height() : Ai-&gt;Height();</span></span>
+<span id="L71"><span class="lineNum">      71</span> <span class="tlaGNC">        1217 :   width = Ar ? Ar-&gt;Width() : Ai-&gt;Width();</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC">        1217 : }</span></span>
 <span id="L73"><span class="lineNum">      73</span>              : </span>
 <span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">         674 : ComplexWrapperOperator::ComplexWrapperOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;Ar,</span></span>
 <span id="L75"><span class="lineNum">      75</span> <span class="tlaGNC">         674 :                                                std::unique_ptr&lt;Operator&gt; &amp;&amp;Ai)</span></span>
@@ -147,10 +147,10 @@
 <span id="L77"><span class="lineNum">      77</span>              : {</span>
 <span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">         674 : }</span></span>
 <span id="L79"><span class="lineNum">      79</span>              : </span>
-<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">         540 : ComplexWrapperOperator::ComplexWrapperOperator(const Operator *Ar, const Operator *Ai)</span></span>
-<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">        1080 :   : ComplexWrapperOperator(nullptr, nullptr, Ar, Ai)</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">         543 : ComplexWrapperOperator::ComplexWrapperOperator(const Operator *Ar, const Operator *Ai)</span></span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">        1086 :   : ComplexWrapperOperator(nullptr, nullptr, Ar, Ai)</span></span>
 <span id="L82"><span class="lineNum">      82</span>              : {</span>
-<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">         540 : }</span></span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">         543 : }</span></span>
 <span id="L84"><span class="lineNum">      84</span>              : </span>
 <span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">          12 : void ComplexWrapperOperator::AssembleDiagonal(ComplexVector &amp;diag) const</span></span>
 <span id="L86"><span class="lineNum">      86</span>              : {</span>

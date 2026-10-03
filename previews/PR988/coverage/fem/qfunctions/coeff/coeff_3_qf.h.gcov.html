@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">-</td>
@@ -79,17 +79,17 @@
 <span id="L9"><span class="lineNum">       9</span>              : CEED_QFUNCTION_HELPER void CoeffUnpack3(const CeedIntScalar *ctx, const CeedInt attr,</span>
 <span id="L10"><span class="lineNum">      10</span>              :                                         CeedScalar coeff[9])</span>
 <span id="L11"><span class="lineNum">      11</span>              : {</span>
-<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC tlaBgGNC">    99607320 :   const CeedInt k = (NumAttr(ctx) &gt; 0) ? AttrMat(ctx)[attr - 1].first : 0;</span></span>
+<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC tlaBgGNC">    99610400 :   const CeedInt k = (NumAttr(ctx) &gt; 0) ? AttrMat(ctx)[attr - 1].first : 0;</span></span>
 <span id="L13"><span class="lineNum">      13</span>              :   const CeedIntScalar *mat_coeff = MatCoeff(ctx);</span>
-<span id="L14"><span class="lineNum">      14</span> <span class="tlaGNC">    99968384 :   coeff[0] = mat_coeff[9 * k + 0].second;</span></span>
-<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC">    99968384 :   coeff[1] = mat_coeff[9 * k + 1].second;</span></span>
-<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">    99968384 :   coeff[2] = mat_coeff[9 * k + 2].second;</span></span>
-<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">    99968384 :   coeff[3] = mat_coeff[9 * k + 3].second;</span></span>
-<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">    99968384 :   coeff[4] = mat_coeff[9 * k + 4].second;</span></span>
-<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">    99968384 :   coeff[5] = mat_coeff[9 * k + 5].second;</span></span>
-<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">    99968384 :   coeff[6] = mat_coeff[9 * k + 6].second;</span></span>
-<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">    99968384 :   coeff[7] = mat_coeff[9 * k + 7].second;</span></span>
-<span id="L22"><span class="lineNum">      22</span> <span class="tlaGNC">    99970224 :   coeff[8] = mat_coeff[9 * k + 8].second;</span></span>
+<span id="L14"><span class="lineNum">      14</span> <span class="tlaGNC">    99971464 :   coeff[0] = mat_coeff[9 * k + 0].second;</span></span>
+<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC">    99971464 :   coeff[1] = mat_coeff[9 * k + 1].second;</span></span>
+<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">    99971464 :   coeff[2] = mat_coeff[9 * k + 2].second;</span></span>
+<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">    99971464 :   coeff[3] = mat_coeff[9 * k + 3].second;</span></span>
+<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">    99971464 :   coeff[4] = mat_coeff[9 * k + 4].second;</span></span>
+<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">    99971464 :   coeff[5] = mat_coeff[9 * k + 5].second;</span></span>
+<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">    99971464 :   coeff[6] = mat_coeff[9 * k + 6].second;</span></span>
+<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">    99971464 :   coeff[7] = mat_coeff[9 * k + 7].second;</span></span>
+<span id="L22"><span class="lineNum">      22</span> <span class="tlaGNC">    99973304 :   coeff[8] = mat_coeff[9 * k + 8].second;</span></span>
 <span id="L23"><span class="lineNum">      23</span>              : }</span>
 <span id="L24"><span class="lineNum">      24</span>              : </span>
 <span id="L25"><span class="lineNum">      25</span>              : #endif  // PALACE_LIBCEED_COEFF_3_QF_H</span>

@@ -32,12 +32,12 @@
             <td></td>
             <td class="headerItem">Lines:</td>
             <td class="headerCovTableEntryHi">99.2&nbsp;%</td>
-            <td class="headerCovTableEntry">127</td>
-            <td class="headerCovTableEntry">126</td>
+            <td class="headerCovTableEntry">129</td>
+            <td class="headerCovTableEntry">128</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -124,8 +124,8 @@
 <span id="L54"><span class="lineNum">      54</span> <span class="tlaGNC">          18 :   REQUIRE(palace_mesh.GetNE() &gt; 0);</span></span>
 <span id="L55"><span class="lineNum">      55</span>              : </span>
 <span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC">          18 :   config::MaterialData material;</span></span>
-<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">          36 :   material.attributes = {1};</span></span>
-<span id="L58"><span class="lineNum">      58</span>              :   config::PeriodicBoundaryData periodic;</span>
+<span id="L57"><span class="lineNum">      57</span> <span class="tlaGNC">          18 :   material.attributes = {1};</span></span>
+<span id="L58"><span class="lineNum">      58</span> <span class="tlaGNC">          18 :   config::PeriodicBoundaryData periodic;</span></span>
 <span id="L59"><span class="lineNum">      59</span> <span class="tlaGNC">          36 :   MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);</span></span>
 <span id="L60"><span class="lineNum">      60</span>              : </span>
 <span id="L61"><span class="lineNum">      61</span>              :   Units units(1.0, 1.0);</span>
@@ -148,7 +148,7 @@
 <span id="L78"><span class="lineNum">      78</span>              : </span>
 <span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">          27 :   auto make_data = [&amp;](const std::vector&lt;double&gt; &amp;n, const std::vector&lt;double&gt; &amp;d)</span></span>
 <span id="L80"><span class="lineNum">      80</span>              :   {</span>
-<span id="L81"><span class="lineNum">      81</span>              :     config::RationalImpedanceData data;</span>
+<span id="L81"><span class="lineNum">      81</span> <span class="tlaGNC">          27 :     config::RationalImpedanceData data;</span></span>
 <span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">          27 :     data.num = n;</span></span>
 <span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">          27 :     data.den = d;</span></span>
 <span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">          27 :     data.attributes = {1, 2};</span></span>

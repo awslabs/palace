@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -77,25 +77,25 @@
 <span id="L7"><span class="lineNum">       7</span>              : #include &quot;../coeff/coeff_3_qf.h&quot;</span>
 <span id="L8"><span class="lineNum">       8</span>              : #include &quot;utils_33_qf.h&quot;</span>
 <span id="L9"><span class="lineNum">       9</span>              : </span>
-<span id="L10"><span class="lineNum">      10</span> <span class="tlaGNC tlaBgGNC">      104783 : CEED_QFUNCTION(f_apply_hcurl_33)(void *__restrict__ ctx, CeedInt Q,</span></span>
+<span id="L10"><span class="lineNum">      10</span> <span class="tlaGNC tlaBgGNC">      104788 : CEED_QFUNCTION(f_apply_hcurl_33)(void *__restrict__ ctx, CeedInt Q,</span></span>
 <span id="L11"><span class="lineNum">      11</span>              :                                  const CeedScalar *const *in, CeedScalar *const *out)</span>
 <span id="L12"><span class="lineNum">      12</span>              : {</span>
-<span id="L13"><span class="lineNum">      13</span> <span class="tlaGNC">      104783 :   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];</span></span>
-<span id="L14"><span class="lineNum">      14</span> <span class="tlaGNC">      104783 :   CeedScalar *v = out[0];</span></span>
+<span id="L13"><span class="lineNum">      13</span> <span class="tlaGNC">      104788 :   const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q, *u = in[1];</span></span>
+<span id="L14"><span class="lineNum">      14</span> <span class="tlaGNC">      104788 :   CeedScalar *v = out[0];</span></span>
 <span id="L15"><span class="lineNum">      15</span>              : </span>
-<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">    28592271 :   CeedPragmaSIMD for (CeedInt i = 0; i &lt; Q; i++)</span></span>
+<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">    28595356 :   CeedPragmaSIMD for (CeedInt i = 0; i &lt; Q; i++)</span></span>
 <span id="L17"><span class="lineNum">      17</span>              :   {</span>
-<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">    28487488 :     const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};</span></span>
+<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">    28490568 :     const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};</span></span>
 <span id="L19"><span class="lineNum">      19</span>              :     CeedScalar coeff[9], adjJt_loc[9], v_loc[3];</span>
-<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">    28487488 :     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);</span></span>
-<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">    28487488 :     MatUnpack33(adjJt + i, Q, adjJt_loc);</span></span>
+<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">    28490568 :     CoeffUnpack3((const CeedIntScalar *)ctx, (CeedInt)attr[i], coeff);</span></span>
+<span id="L21"><span class="lineNum">      21</span> <span class="tlaGNC">    28490568 :     MatUnpack33(adjJt + i, Q, adjJt_loc);</span></span>
 <span id="L22"><span class="lineNum">      22</span>              :     MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);</span>
 <span id="L23"><span class="lineNum">      23</span>              : </span>
-<span id="L24"><span class="lineNum">      24</span> <span class="tlaGNC">    28487488 :     v[i + Q * 0] = wdetJ[i] * v_loc[0];</span></span>
-<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC">    28487488 :     v[i + Q * 1] = wdetJ[i] * v_loc[1];</span></span>
-<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">    28487488 :     v[i + Q * 2] = wdetJ[i] * v_loc[2];</span></span>
+<span id="L24"><span class="lineNum">      24</span> <span class="tlaGNC">    28490568 :     v[i + Q * 0] = wdetJ[i] * v_loc[0];</span></span>
+<span id="L25"><span class="lineNum">      25</span> <span class="tlaGNC">    28490568 :     v[i + Q * 1] = wdetJ[i] * v_loc[1];</span></span>
+<span id="L26"><span class="lineNum">      26</span> <span class="tlaGNC">    28490568 :     v[i + Q * 2] = wdetJ[i] * v_loc[2];</span></span>
 <span id="L27"><span class="lineNum">      27</span>              :   }</span>
-<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">      104783 :   return 0;</span></span>
+<span id="L28"><span class="lineNum">      28</span> <span class="tlaGNC">      104788 :   return 0;</span></span>
 <span id="L29"><span class="lineNum">      29</span>              : }</span>
 <span id="L30"><span class="lineNum">      30</span>              : </span>
 <span id="L31"><span class="lineNum">      31</span>              : #endif  // PALACE_LIBCEED_HCURL_33_QF_H</span>

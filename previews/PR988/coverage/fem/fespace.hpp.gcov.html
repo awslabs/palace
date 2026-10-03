@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">93.8&nbsp;%</td>
@@ -169,7 +169,7 @@
 <span id="L99"><span class="lineNum">      99</span> <span class="tlaUNC tlaBgUNC">           0 :   auto SpaceDimension() const { return mesh.Get().SpaceDimension(); }</span></span>
 <span id="L100"><span class="lineNum">     100</span> <span class="tlaGNC tlaBgGNC">          48 :   auto GetMaxElementOrder() const { return Get().GetMaxElementOrder(); }</span></span>
 <span id="L101"><span class="lineNum">     101</span>              : </span>
-<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">       44203 :   const auto *GetProlongationMatrix() const { return Get().GetProlongationMatrix(); }</span></span>
+<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC">       44207 :   const auto *GetProlongationMatrix() const { return Get().GetProlongationMatrix(); }</span></span>
 <span id="L103"><span class="lineNum">     103</span> <span class="tlaGNC">          20 :   const auto *GetRestrictionMatrix() const { return Get().GetRestrictionMatrix(); }</span></span>
 <span id="L104"><span class="lineNum">     104</span>              : </span>
 <span id="L105"><span class="lineNum">     105</span>              :   // Return the discrete gradient, curl, or divergence matrix interpolating from the</span>
@@ -221,7 +221,7 @@
 <span id="L151"><span class="lineNum">     151</span>              :   auto &amp;GetTVector() const</span>
 <span id="L152"><span class="lineNum">     152</span>              :   {</span>
 <span id="L153"><span class="lineNum">     153</span> <span class="tlaGNC">       11884 :     tx.SetSize(GetTrueVSize());</span></span>
-<span id="L154"><span class="lineNum">     154</span>              :     if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L154"><span class="lineNum">     154</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L155"><span class="lineNum">     155</span>              :     {</span>
 <span id="L156"><span class="lineNum">     156</span>              :       return tx;</span>
 <span id="L157"><span class="lineNum">     157</span>              :     }</span>
@@ -234,8 +234,8 @@
 <span id="L164"><span class="lineNum">     164</span>              :   template &lt;typename VecType&gt;</span>
 <span id="L165"><span class="lineNum">     165</span>              :   auto &amp;GetLVector() const</span>
 <span id="L166"><span class="lineNum">     166</span>              :   {</span>
-<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">       21062 :     lx.SetSize(GetVSize());</span></span>
-<span id="L168"><span class="lineNum">     168</span>              :     if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">       21064 :     lx.SetSize(GetVSize());</span></span>
+<span id="L168"><span class="lineNum">     168</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L169"><span class="lineNum">     169</span>              :     {</span>
 <span id="L170"><span class="lineNum">     170</span>              :       return lx;</span>
 <span id="L171"><span class="lineNum">     171</span>              :     }</span>
@@ -248,8 +248,8 @@
 <span id="L178"><span class="lineNum">     178</span>              :   template &lt;typename VecType&gt;</span>
 <span id="L179"><span class="lineNum">     179</span>              :   auto &amp;GetLVector2() const</span>
 <span id="L180"><span class="lineNum">     180</span>              :   {</span>
-<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">       20591 :     ly.SetSize(GetVSize());</span></span>
-<span id="L182"><span class="lineNum">     182</span>              :     if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaGNC">       20593 :     ly.SetSize(GetVSize());</span></span>
+<span id="L182"><span class="lineNum">     182</span>              :     if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L183"><span class="lineNum">     183</span>              :     {</span>
 <span id="L184"><span class="lineNum">     184</span>              :       return ly;</span>
 <span id="L185"><span class="lineNum">     185</span>              :     }</span>

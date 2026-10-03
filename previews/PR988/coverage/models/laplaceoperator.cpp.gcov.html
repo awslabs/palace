@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryLo">39.0&nbsp;%</td>
-            <td class="headerCovTableEntry">118</td>
+            <td class="headerCovTableEntryLo">39.3&nbsp;%</td>
+            <td class="headerCovTableEntry">117</td>
             <td class="headerCovTableEntry">46</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">57.1&nbsp;%</td>
@@ -203,126 +203,123 @@
 <span id="L133"><span class="lineNum">     133</span>              :   {</span>
 <span id="L134"><span class="lineNum">     134</span> <span class="tlaUNC tlaBgUNC">           0 :     mfem::Array&lt;int&gt; &amp;attr_list = attr_lists[idx];</span></span>
 <span id="L135"><span class="lineNum">     135</span> <span class="tlaUNC">           0 :     attr_list.Reserve(static_cast&lt;int&gt;(data.attributes.size()));</span></span>
-<span id="L136"><span class="lineNum">     136</span> <span class="tlaUNC">           0 :     for (auto attr : data.attributes)</span></span>
-<span id="L137"><span class="lineNum">     137</span>              :     {</span>
-<span id="L138"><span class="lineNum">     138</span> <span class="tlaUNC">           0 :       attr_list.Append(attr);</span></span>
-<span id="L139"><span class="lineNum">     139</span>              :     }</span>
-<span id="L140"><span class="lineNum">     140</span>              :   }</span>
-<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC tlaBgGNC">           3 :   return attr_lists;</span></span>
-<span id="L142"><span class="lineNum">     142</span>              : }</span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaUNC">           0 :     attr_list.Append(data.attributes.data(), static_cast&lt;int&gt;(data.attributes.size()));</span></span>
+<span id="L137"><span class="lineNum">     137</span>              :   }</span>
+<span id="L138"><span class="lineNum">     138</span> <span class="tlaGNC tlaBgGNC">           3 :   return attr_lists;</span></span>
+<span id="L139"><span class="lineNum">     139</span>              : }</span>
+<span id="L140"><span class="lineNum">     140</span>              : </span>
+<span id="L141"><span class="lineNum">     141</span>              : namespace</span>
+<span id="L142"><span class="lineNum">     142</span>              : {</span>
 <span id="L143"><span class="lineNum">     143</span>              : </span>
-<span id="L144"><span class="lineNum">     144</span>              : namespace</span>
-<span id="L145"><span class="lineNum">     145</span>              : {</span>
-<span id="L146"><span class="lineNum">     146</span>              : </span>
-<span id="L147"><span class="lineNum">     147</span> <span class="tlaUNC tlaBgUNC">           0 : void PrintHeader(const mfem::ParFiniteElementSpace &amp;h1_fespace,</span></span>
-<span id="L148"><span class="lineNum">     148</span>              :                  const mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
-<span id="L149"><span class="lineNum">     149</span>              :                  const mfem::ParFiniteElementSpace &amp;rt_fespace, bool &amp;print_hdr)</span>
-<span id="L150"><span class="lineNum">     150</span>              : {</span>
-<span id="L151"><span class="lineNum">     151</span> <span class="tlaUNC">           0 :   if (print_hdr)</span></span>
-<span id="L152"><span class="lineNum">     152</span>              :   {</span>
-<span id="L153"><span class="lineNum">     153</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot;\nAssembling system matrices, number of global unknowns:\n&quot;</span></span>
-<span id="L154"><span class="lineNum">     154</span>              :                &quot; H1 (p = {:d}): {:d}, ND (p = {:d}): {:d}, RT (p = {:d}): {:d}\n Operator &quot;</span>
-<span id="L155"><span class="lineNum">     155</span>              :                &quot;assembly level: {}\n&quot;,</span>
-<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :                h1_fespace.GetMaxElementOrder(), h1_fespace.GlobalTrueVSize(),</span></span>
-<span id="L157"><span class="lineNum">     157</span> <span class="tlaUNC">           0 :                nd_fespace.GetMaxElementOrder(), nd_fespace.GlobalTrueVSize(),</span></span>
-<span id="L158"><span class="lineNum">     158</span> <span class="tlaUNC">           0 :                rt_fespace.GetMaxElementOrder(), rt_fespace.GlobalTrueVSize(),</span></span>
-<span id="L159"><span class="lineNum">     159</span> <span class="tlaUNC">           0 :                (h1_fespace.GetMaxElementOrder() &gt;= BilinearForm::pa_order_threshold)</span></span>
-<span id="L160"><span class="lineNum">     160</span> <span class="tlaUNC">           0 :                    ? &quot;Partial&quot;</span></span>
-<span id="L161"><span class="lineNum">     161</span>              :                    : &quot;Full&quot;);</span>
-<span id="L162"><span class="lineNum">     162</span>              : </span>
-<span id="L163"><span class="lineNum">     163</span>              :     const auto &amp;mesh = *h1_fespace.GetParMesh();</span>
-<span id="L164"><span class="lineNum">     164</span> <span class="tlaUNC">           0 :     const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes(mesh.Dimension());</span></span>
-<span id="L165"><span class="lineNum">     165</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Mesh geometries:\n&quot;);</span></span>
-<span id="L166"><span class="lineNum">     166</span> <span class="tlaUNC">           0 :     for (auto geom : geom_types)</span></span>
-<span id="L167"><span class="lineNum">     167</span>              :     {</span>
-<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC">           0 :       const auto *fe = nd_fespace.FEColl()-&gt;FiniteElementForGeometry(geom);</span></span>
-<span id="L169"><span class="lineNum">     169</span> <span class="tlaUNC">           0 :       MFEM_VERIFY(fe, &quot;MFEM does not support ND spaces on geometry = &quot;</span></span>
-<span id="L170"><span class="lineNum">     170</span>              :                           &lt;&lt; mfem::Geometry::Name[geom] &lt;&lt; &quot;!&quot;);</span>
-<span id="L171"><span class="lineNum">     171</span> <span class="tlaUNC">           0 :       const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);</span></span>
-<span id="L172"><span class="lineNum">     172</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot;  {}: P = {:d}, Q = {:d} (quadrature order = {:d}){}\n&quot;,</span></span>
-<span id="L173"><span class="lineNum">     173</span> <span class="tlaUNC">           0 :                  mfem::Geometry::Name[geom], fe-&gt;GetDof(),</span></span>
-<span id="L174"><span class="lineNum">     174</span> <span class="tlaUNC">           0 :                  mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order,</span></span>
-<span id="L175"><span class="lineNum">     175</span> <span class="tlaUNC">           0 :                  (geom == geom_types.back()) ? &quot;&quot; : &quot;,&quot;);</span></span>
-<span id="L176"><span class="lineNum">     176</span>              :     }</span>
-<span id="L177"><span class="lineNum">     177</span>              : </span>
-<span id="L178"><span class="lineNum">     178</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot;\nAssembling multigrid hierarchy:\n&quot;);</span></span>
-<span id="L179"><span class="lineNum">     179</span>              :   }</span>
-<span id="L180"><span class="lineNum">     180</span> <span class="tlaUNC">           0 : }</span></span>
-<span id="L181"><span class="lineNum">     181</span>              : </span>
-<span id="L182"><span class="lineNum">     182</span>              : }  // namespace</span>
-<span id="L183"><span class="lineNum">     183</span>              : </span>
-<span id="L184"><span class="lineNum">     184</span> <span class="tlaUNC">           0 : std::unique_ptr&lt;Operator&gt; LaplaceOperator::GetStiffnessMatrix()</span></span>
-<span id="L185"><span class="lineNum">     185</span>              : {</span>
-<span id="L186"><span class="lineNum">     186</span>              :   // When partially assembled, the coarse operators can reuse the fine operator quadrature</span>
-<span id="L187"><span class="lineNum">     187</span>              :   // data if the spaces correspond to the same mesh.</span>
-<span id="L188"><span class="lineNum">     188</span> <span class="tlaUNC">           0 :   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);</span></span>
-<span id="L189"><span class="lineNum">     189</span>              : </span>
-<span id="L190"><span class="lineNum">     190</span>              :   constexpr bool skip_zeros = false;</span>
-<span id="L191"><span class="lineNum">     191</span>              :   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),</span>
-<span id="L192"><span class="lineNum">     192</span> <span class="tlaUNC">           0 :                                            mat_op.GetPermittivityReal());</span></span>
-<span id="L193"><span class="lineNum">     193</span>              :   BilinearForm k(GetH1Space());</span>
-<span id="L194"><span class="lineNum">     194</span> <span class="tlaUNC">           0 :   k.AddDomainIntegrator&lt;DiffusionIntegrator&gt;(epsilon_func);</span></span>
-<span id="L195"><span class="lineNum">     195</span>              :   // k.AssembleQuadratureData();</span>
-<span id="L196"><span class="lineNum">     196</span> <span class="tlaUNC">           0 :   auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);</span></span>
-<span id="L197"><span class="lineNum">     197</span> <span class="tlaUNC">           0 :   auto K = std::make_unique&lt;MultigridOperator&gt;(GetH1Spaces().GetNumLevels());</span></span>
-<span id="L198"><span class="lineNum">     198</span> <span class="tlaUNC">           0 :   for (std::size_t l = 0; l &lt; GetH1Spaces().GetNumLevels(); l++)</span></span>
-<span id="L199"><span class="lineNum">     199</span>              :   {</span>
-<span id="L200"><span class="lineNum">     200</span>              :     const auto &amp;h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);</span>
-<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC">           0 :     if (print_hdr)</span></span>
-<span id="L202"><span class="lineNum">     202</span>              :     {</span>
-<span id="L203"><span class="lineNum">     203</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot; Level {:d} (p = {:d}): {:d} unknowns&quot;, l,</span></span>
-<span id="L204"><span class="lineNum">     204</span> <span class="tlaUNC">           0 :                  h1_fespace_l.GetMaxElementOrder(), h1_fespace_l.GlobalTrueVSize());</span></span>
-<span id="L205"><span class="lineNum">     205</span> <span class="tlaUNC">           0 :       if (const auto *k_spm = dynamic_cast&lt;const hypre::HypreCSRMatrix *&gt;(k_vec[l].get()))</span></span>
-<span id="L206"><span class="lineNum">     206</span>              :       {</span>
-<span id="L207"><span class="lineNum">     207</span> <span class="tlaUNC">           0 :         HYPRE_BigInt nnz = k_spm-&gt;NNZ();</span></span>
-<span id="L208"><span class="lineNum">     208</span>              :         Mpi::GlobalSum(1, &amp;nnz, h1_fespace_l.GetComm());</span>
-<span id="L209"><span class="lineNum">     209</span> <span class="tlaUNC">           0 :         Mpi::Print(&quot;, {:d} NNZ\n&quot;, nnz);</span></span>
-<span id="L210"><span class="lineNum">     210</span>              :       }</span>
-<span id="L211"><span class="lineNum">     211</span>              :       else</span>
-<span id="L212"><span class="lineNum">     212</span>              :       {</span>
-<span id="L213"><span class="lineNum">     213</span> <span class="tlaUNC">           0 :         Mpi::Print(&quot;\n&quot;);</span></span>
-<span id="L214"><span class="lineNum">     214</span>              :       }</span>
-<span id="L215"><span class="lineNum">     215</span>              :     }</span>
-<span id="L216"><span class="lineNum">     216</span> <span class="tlaUNC">           0 :     auto K_l = std::make_unique&lt;ParOperator&gt;(std::move(k_vec[l]), h1_fespace_l);</span></span>
-<span id="L217"><span class="lineNum">     217</span> <span class="tlaUNC">           0 :     K_l-&gt;SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);</span></span>
-<span id="L218"><span class="lineNum">     218</span> <span class="tlaUNC">           0 :     K-&gt;AddOperator(std::move(K_l));</span></span>
-<span id="L219"><span class="lineNum">     219</span>              :   }</span>
-<span id="L220"><span class="lineNum">     220</span>              : </span>
-<span id="L221"><span class="lineNum">     221</span> <span class="tlaUNC">           0 :   print_hdr = false;</span></span>
-<span id="L222"><span class="lineNum">     222</span> <span class="tlaUNC">           0 :   return K;</span></span>
-<span id="L223"><span class="lineNum">     223</span> <span class="tlaUNC">           0 : }</span></span>
-<span id="L224"><span class="lineNum">     224</span>              : </span>
-<span id="L225"><span class="lineNum">     225</span> <span class="tlaUNC">           0 : void LaplaceOperator::GetExcitationVector(int idx, const Operator &amp;K, Vector &amp;X,</span></span>
-<span id="L226"><span class="lineNum">     226</span>              :                                           Vector &amp;RHS)</span>
-<span id="L227"><span class="lineNum">     227</span>              : {</span>
-<span id="L228"><span class="lineNum">     228</span>              :   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the</span>
-<span id="L229"><span class="lineNum">     229</span>              :   // given index, V = 0 on all ground and other terminal boundaries.</span>
-<span id="L230"><span class="lineNum">     230</span> <span class="tlaUNC">           0 :   mfem::ParGridFunction x(&amp;GetH1Space().Get());</span></span>
-<span id="L231"><span class="lineNum">     231</span>              :   x = 0.0;</span>
-<span id="L232"><span class="lineNum">     232</span>              : </span>
-<span id="L233"><span class="lineNum">     233</span>              :   // Get a marker of all boundary attributes with the given source surface index.</span>
-<span id="L234"><span class="lineNum">     234</span>              :   const mfem::ParMesh &amp;mesh = GetMesh();</span>
-<span id="L235"><span class="lineNum">     235</span> <span class="tlaUNC">           0 :   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;</span></span>
-<span id="L236"><span class="lineNum">     236</span> <span class="tlaUNC">           0 :   mfem::Array&lt;int&gt; source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);</span></span>
-<span id="L237"><span class="lineNum">     237</span>              :   mfem::ConstantCoefficient one(1.0);</span>
-<span id="L238"><span class="lineNum">     238</span>              :   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master</span>
-<span id="L239"><span class="lineNum">     239</span>              : </span>
-<span id="L240"><span class="lineNum">     240</span>              :   // Eliminate the essential BC to get the RHS vector.</span>
-<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 :   X.SetSize(GetH1Space().GetTrueVSize());</span></span>
-<span id="L242"><span class="lineNum">     242</span> <span class="tlaUNC">           0 :   RHS.SetSize(GetH1Space().GetTrueVSize());</span></span>
-<span id="L243"><span class="lineNum">     243</span> <span class="tlaUNC">           0 :   X.UseDevice(true);</span></span>
-<span id="L244"><span class="lineNum">     244</span> <span class="tlaUNC">           0 :   RHS.UseDevice(true);</span></span>
-<span id="L245"><span class="lineNum">     245</span> <span class="tlaUNC">           0 :   X = 0.0;</span></span>
-<span id="L246"><span class="lineNum">     246</span> <span class="tlaUNC">           0 :   RHS = 0.0;</span></span>
-<span id="L247"><span class="lineNum">     247</span> <span class="tlaUNC">           0 :   x.ParallelProject(X);  // Restrict to the true dofs</span></span>
-<span id="L248"><span class="lineNum">     248</span> <span class="tlaUNC">           0 :   const auto *mg_K = dynamic_cast&lt;const MultigridOperator *&gt;(&amp;K);</span></span>
-<span id="L249"><span class="lineNum">     249</span> <span class="tlaUNC">           0 :   const auto *PtAP_K = mg_K ? dynamic_cast&lt;const ParOperator *&gt;(&amp;mg_K-&gt;GetFinestOperator())</span></span>
-<span id="L250"><span class="lineNum">     250</span> <span class="tlaUNC">           0 :                             : dynamic_cast&lt;const ParOperator *&gt;(&amp;K);</span></span>
-<span id="L251"><span class="lineNum">     251</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(PtAP_K, &quot;LaplaceOperator requires ParOperator for RHS elimination!&quot;);</span></span>
-<span id="L252"><span class="lineNum">     252</span> <span class="tlaUNC">           0 :   PtAP_K-&gt;EliminateRHS(X, RHS);</span></span>
-<span id="L253"><span class="lineNum">     253</span> <span class="tlaUNC">           0 : }</span></span>
-<span id="L254"><span class="lineNum">     254</span>              : </span>
-<span id="L255"><span class="lineNum">     255</span>              : }  // namespace palace</span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaUNC tlaBgUNC">           0 : void PrintHeader(const mfem::ParFiniteElementSpace &amp;h1_fespace,</span></span>
+<span id="L145"><span class="lineNum">     145</span>              :                  const mfem::ParFiniteElementSpace &amp;nd_fespace,</span>
+<span id="L146"><span class="lineNum">     146</span>              :                  const mfem::ParFiniteElementSpace &amp;rt_fespace, bool &amp;print_hdr)</span>
+<span id="L147"><span class="lineNum">     147</span>              : {</span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaUNC">           0 :   if (print_hdr)</span></span>
+<span id="L149"><span class="lineNum">     149</span>              :   {</span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot;\nAssembling system matrices, number of global unknowns:\n&quot;</span></span>
+<span id="L151"><span class="lineNum">     151</span>              :                &quot; H1 (p = {:d}): {:d}, ND (p = {:d}): {:d}, RT (p = {:d}): {:d}\n Operator &quot;</span>
+<span id="L152"><span class="lineNum">     152</span>              :                &quot;assembly level: {}\n&quot;,</span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaUNC">           0 :                h1_fespace.GetMaxElementOrder(), h1_fespace.GlobalTrueVSize(),</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaUNC">           0 :                nd_fespace.GetMaxElementOrder(), nd_fespace.GlobalTrueVSize(),</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaUNC">           0 :                rt_fespace.GetMaxElementOrder(), rt_fespace.GlobalTrueVSize(),</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :                (h1_fespace.GetMaxElementOrder() &gt;= BilinearForm::pa_order_threshold)</span></span>
+<span id="L157"><span class="lineNum">     157</span> <span class="tlaUNC">           0 :                    ? &quot;Partial&quot;</span></span>
+<span id="L158"><span class="lineNum">     158</span>              :                    : &quot;Full&quot;);</span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span>              :     const auto &amp;mesh = *h1_fespace.GetParMesh();</span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaUNC">           0 :     const auto geom_types = mesh::CheckElements(mesh).GetGeomTypes(mesh.Dimension());</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Mesh geometries:\n&quot;);</span></span>
+<span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :     for (auto geom : geom_types)</span></span>
+<span id="L164"><span class="lineNum">     164</span>              :     {</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaUNC">           0 :       const auto *fe = nd_fespace.FEColl()-&gt;FiniteElementForGeometry(geom);</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaUNC">           0 :       MFEM_VERIFY(fe, &quot;MFEM does not support ND spaces on geometry = &quot;</span></span>
+<span id="L167"><span class="lineNum">     167</span>              :                           &lt;&lt; mfem::Geometry::Name[geom] &lt;&lt; &quot;!&quot;);</span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaUNC">           0 :       const int q_order = fem::DefaultIntegrationOrder::Get(mesh, geom);</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot;  {}: P = {:d}, Q = {:d} (quadrature order = {:d}){}\n&quot;,</span></span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaUNC">           0 :                  mfem::Geometry::Name[geom], fe-&gt;GetDof(),</span></span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaUNC">           0 :                  mfem::IntRules.Get(geom, q_order).GetNPoints(), q_order,</span></span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaUNC">           0 :                  (geom == geom_types.back()) ? &quot;&quot; : &quot;,&quot;);</span></span>
+<span id="L173"><span class="lineNum">     173</span>              :     }</span>
+<span id="L174"><span class="lineNum">     174</span>              : </span>
+<span id="L175"><span class="lineNum">     175</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot;\nAssembling multigrid hierarchy:\n&quot;);</span></span>
+<span id="L176"><span class="lineNum">     176</span>              :   }</span>
+<span id="L177"><span class="lineNum">     177</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L178"><span class="lineNum">     178</span>              : </span>
+<span id="L179"><span class="lineNum">     179</span>              : }  // namespace</span>
+<span id="L180"><span class="lineNum">     180</span>              : </span>
+<span id="L181"><span class="lineNum">     181</span> <span class="tlaUNC">           0 : std::unique_ptr&lt;Operator&gt; LaplaceOperator::GetStiffnessMatrix()</span></span>
+<span id="L182"><span class="lineNum">     182</span>              : {</span>
+<span id="L183"><span class="lineNum">     183</span>              :   // When partially assembled, the coarse operators can reuse the fine operator quadrature</span>
+<span id="L184"><span class="lineNum">     184</span>              :   // data if the spaces correspond to the same mesh.</span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaUNC">           0 :   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);</span></span>
+<span id="L186"><span class="lineNum">     186</span>              : </span>
+<span id="L187"><span class="lineNum">     187</span>              :   constexpr bool skip_zeros = false;</span>
+<span id="L188"><span class="lineNum">     188</span>              :   MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),</span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaUNC">           0 :                                            mat_op.GetPermittivityReal());</span></span>
+<span id="L190"><span class="lineNum">     190</span>              :   BilinearForm k(GetH1Space());</span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaUNC">           0 :   k.AddDomainIntegrator&lt;DiffusionIntegrator&gt;(epsilon_func);</span></span>
+<span id="L192"><span class="lineNum">     192</span>              :   // k.AssembleQuadratureData();</span>
+<span id="L193"><span class="lineNum">     193</span> <span class="tlaUNC">           0 :   auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);</span></span>
+<span id="L194"><span class="lineNum">     194</span> <span class="tlaUNC">           0 :   auto K = std::make_unique&lt;MultigridOperator&gt;(GetH1Spaces().GetNumLevels());</span></span>
+<span id="L195"><span class="lineNum">     195</span> <span class="tlaUNC">           0 :   for (std::size_t l = 0; l &lt; GetH1Spaces().GetNumLevels(); l++)</span></span>
+<span id="L196"><span class="lineNum">     196</span>              :   {</span>
+<span id="L197"><span class="lineNum">     197</span>              :     const auto &amp;h1_fespace_l = GetH1Spaces().GetFESpaceAtLevel(l);</span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaUNC">           0 :     if (print_hdr)</span></span>
+<span id="L199"><span class="lineNum">     199</span>              :     {</span>
+<span id="L200"><span class="lineNum">     200</span> <span class="tlaUNC">           0 :       Mpi::Print(&quot; Level {:d} (p = {:d}): {:d} unknowns&quot;, l,</span></span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaUNC">           0 :                  h1_fespace_l.GetMaxElementOrder(), h1_fespace_l.GlobalTrueVSize());</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaUNC">           0 :       if (const auto *k_spm = dynamic_cast&lt;const hypre::HypreCSRMatrix *&gt;(k_vec[l].get()))</span></span>
+<span id="L203"><span class="lineNum">     203</span>              :       {</span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaUNC">           0 :         HYPRE_BigInt nnz = k_spm-&gt;NNZ();</span></span>
+<span id="L205"><span class="lineNum">     205</span>              :         Mpi::GlobalSum(1, &amp;nnz, h1_fespace_l.GetComm());</span>
+<span id="L206"><span class="lineNum">     206</span> <span class="tlaUNC">           0 :         Mpi::Print(&quot;, {:d} NNZ\n&quot;, nnz);</span></span>
+<span id="L207"><span class="lineNum">     207</span>              :       }</span>
+<span id="L208"><span class="lineNum">     208</span>              :       else</span>
+<span id="L209"><span class="lineNum">     209</span>              :       {</span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaUNC">           0 :         Mpi::Print(&quot;\n&quot;);</span></span>
+<span id="L211"><span class="lineNum">     211</span>              :       }</span>
+<span id="L212"><span class="lineNum">     212</span>              :     }</span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaUNC">           0 :     auto K_l = std::make_unique&lt;ParOperator&gt;(std::move(k_vec[l]), h1_fespace_l);</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaUNC">           0 :     K_l-&gt;SetEssentialTrueDofs(dbc_tdof_lists[l], Operator::DiagonalPolicy::DIAG_ONE);</span></span>
+<span id="L215"><span class="lineNum">     215</span> <span class="tlaUNC">           0 :     K-&gt;AddOperator(std::move(K_l));</span></span>
+<span id="L216"><span class="lineNum">     216</span>              :   }</span>
+<span id="L217"><span class="lineNum">     217</span>              : </span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaUNC">           0 :   print_hdr = false;</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaUNC">           0 :   return K;</span></span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L221"><span class="lineNum">     221</span>              : </span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaUNC">           0 : void LaplaceOperator::GetExcitationVector(int idx, const Operator &amp;K, Vector &amp;X,</span></span>
+<span id="L223"><span class="lineNum">     223</span>              :                                           Vector &amp;RHS)</span>
+<span id="L224"><span class="lineNum">     224</span>              : {</span>
+<span id="L225"><span class="lineNum">     225</span>              :   // Apply the Dirichlet BCs to the solution vector: V = 1 on terminal boundaries with the</span>
+<span id="L226"><span class="lineNum">     226</span>              :   // given index, V = 0 on all ground and other terminal boundaries.</span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :   mfem::ParGridFunction x(&amp;GetH1Space().Get());</span></span>
+<span id="L228"><span class="lineNum">     228</span>              :   x = 0.0;</span>
+<span id="L229"><span class="lineNum">     229</span>              : </span>
+<span id="L230"><span class="lineNum">     230</span>              :   // Get a marker of all boundary attributes with the given source surface index.</span>
+<span id="L231"><span class="lineNum">     231</span>              :   const mfem::ParMesh &amp;mesh = GetMesh();</span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaUNC">           0 :   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;</span></span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaUNC">           0 :   mfem::Array&lt;int&gt; source_marker = mesh::AttrToMarker(bdr_attr_max, source_attr_lists[idx]);</span></span>
+<span id="L234"><span class="lineNum">     234</span>              :   mfem::ConstantCoefficient one(1.0);</span>
+<span id="L235"><span class="lineNum">     235</span>              :   x.ProjectBdrCoefficient(one, source_marker);  // Values are only correct on master</span>
+<span id="L236"><span class="lineNum">     236</span>              : </span>
+<span id="L237"><span class="lineNum">     237</span>              :   // Eliminate the essential BC to get the RHS vector.</span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaUNC">           0 :   X.SetSize(GetH1Space().GetTrueVSize());</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaUNC">           0 :   RHS.SetSize(GetH1Space().GetTrueVSize());</span></span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaUNC">           0 :   X.UseDevice(true);</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaUNC">           0 :   RHS.UseDevice(true);</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaUNC">           0 :   X = 0.0;</span></span>
+<span id="L243"><span class="lineNum">     243</span> <span class="tlaUNC">           0 :   RHS = 0.0;</span></span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaUNC">           0 :   x.ParallelProject(X);  // Restrict to the true dofs</span></span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaUNC">           0 :   const auto *mg_K = dynamic_cast&lt;const MultigridOperator *&gt;(&amp;K);</span></span>
+<span id="L246"><span class="lineNum">     246</span> <span class="tlaUNC">           0 :   const auto *PtAP_K = mg_K ? dynamic_cast&lt;const ParOperator *&gt;(&amp;mg_K-&gt;GetFinestOperator())</span></span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaUNC">           0 :                             : dynamic_cast&lt;const ParOperator *&gt;(&amp;K);</span></span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(PtAP_K, &quot;LaplaceOperator requires ParOperator for RHS elimination!&quot;);</span></span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaUNC">           0 :   PtAP_K-&gt;EliminateRHS(X, RHS);</span></span>
+<span id="L250"><span class="lineNum">     250</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L251"><span class="lineNum">     251</span>              : </span>
+<span id="L252"><span class="lineNum">     252</span>              : }  // namespace palace</span>
         </pre>
               </td>
             </tr>

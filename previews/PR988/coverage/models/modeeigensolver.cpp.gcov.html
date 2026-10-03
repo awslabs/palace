@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">68.2&nbsp;%</td>
@@ -397,599 +397,600 @@
 <span id="L327"><span class="lineNum">     327</span> <span class="tlaGNC">         169 :   const double kn_target = std::sqrt(-sigma);</span></span>
 <span id="L328"><span class="lineNum">     328</span> <span class="tlaGNC">         169 :   mode_perm.resize(num_conv);</span></span>
 <span id="L329"><span class="lineNum">     329</span>              :   std::iota(mode_perm.begin(), mode_perm.end(), 0);</span>
-<span id="L330"><span class="lineNum">     330</span> <span class="tlaGNC">         169 :   std::sort(mode_perm.begin(), mode_perm.end(),</span></span>
-<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">         896 :             [this, sigma, kn_target](int a, int b)</span></span>
-<span id="L332"><span class="lineNum">     332</span>              :             {</span>
-<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">         896 :               auto kn_a = std::sqrt(-sigma - 1.0 / eigen-&gt;GetEigenvalue(a));</span></span>
-<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">         896 :               auto kn_b = std::sqrt(-sigma - 1.0 / eigen-&gt;GetEigenvalue(b));</span></span>
-<span id="L335"><span class="lineNum">     335</span> <span class="tlaGNC">         896 :               return std::abs(kn_a.real() - kn_target) &lt; std::abs(kn_b.real() - kn_target);</span></span>
-<span id="L336"><span class="lineNum">     336</span>              :             });</span>
-<span id="L337"><span class="lineNum">     337</span>              : </span>
-<span id="L338"><span class="lineNum">     338</span> <span class="tlaGNC">         169 :   if (real_frequency &amp;&amp; num_conv &gt; 0)</span></span>
-<span id="L339"><span class="lineNum">     339</span>              :   {</span>
-<span id="L340"><span class="lineNum">     340</span> <span class="tlaGNC">         156 :     const int selected = std::min(num_modes - 1, num_conv - 1);</span></span>
-<span id="L341"><span class="lineNum">     341</span> <span class="tlaGNC">         156 :     warm_start.SetSize(nd_size + h1_size);</span></span>
-<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">         156 :     warm_start.UseDevice(true);</span></span>
-<span id="L343"><span class="lineNum">     343</span> <span class="tlaGNC">         156 :     eigen-&gt;GetEigenvector(mode_perm[selected], warm_start);</span></span>
-<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">         156 :     linalg::Normalize(solver_comm, warm_start);</span></span>
-<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">         156 :     reduced_model-&gt;ObserveExactEigenvectors(num_conv, *eigen, mode_perm);</span></span>
-<span id="L346"><span class="lineNum">     346</span>              :   }</span>
-<span id="L347"><span class="lineNum">     347</span> <span class="tlaGNC">         169 :   return {num_conv, sigma};</span></span>
-<span id="L348"><span class="lineNum">     348</span>              : }</span>
-<span id="L349"><span class="lineNum">     349</span>              : </span>
-<span id="L350"><span class="lineNum">     350</span> <span class="tlaUNC tlaBgUNC">           0 : void ModeEigenSolver::SetSynthesisTol(double eig_tol_new, double ksp_tol_new)</span></span>
-<span id="L351"><span class="lineNum">     351</span>              : {</span>
-<span id="L352"><span class="lineNum">     352</span> <span class="tlaUNC">           0 :   eig_tol = eig_tol_new;</span></span>
-<span id="L353"><span class="lineNum">     353</span> <span class="tlaUNC">           0 :   if (eigen)</span></span>
-<span id="L354"><span class="lineNum">     354</span>              :   {</span>
-<span id="L355"><span class="lineNum">     355</span> <span class="tlaUNC">           0 :     eigen-&gt;SetTol(eig_tol);</span></span>
-<span id="L356"><span class="lineNum">     356</span>              :   }</span>
-<span id="L357"><span class="lineNum">     357</span> <span class="tlaUNC">           0 :   if (ksp)</span></span>
-<span id="L358"><span class="lineNum">     358</span>              :   {</span>
-<span id="L359"><span class="lineNum">     359</span>              :     ksp-&gt;SetRelTol(ksp_tol_new);</span>
-<span id="L360"><span class="lineNum">     360</span>              :   }</span>
-<span id="L361"><span class="lineNum">     361</span> <span class="tlaUNC">           0 : }</span></span>
-<span id="L362"><span class="lineNum">     362</span>              : </span>
-<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC tlaBgGNC">           9 : void ModeEigenSolver::ConfigureReducedModelTraining(std::size_t max_basis_size)</span></span>
-<span id="L364"><span class="lineNum">     364</span>              : {</span>
-<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">           9 :   reduced_model-&gt;ConfigureTraining(max_basis_size);</span></span>
-<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">           9 : }</span></span>
-<span id="L367"><span class="lineNum">     367</span>              : </span>
-<span id="L368"><span class="lineNum">     368</span> <span class="tlaGNC">           9 : void ModeEigenSolver::EnableReducedModel(double adaptive_tol)</span></span>
-<span id="L369"><span class="lineNum">     369</span>              : {</span>
-<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">           9 :   int has_basis = reduced_model-&gt;HasBasis() ? 1 : 0;</span></span>
-<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">           9 :   Mpi::GlobalMax(1, &amp;has_basis, nd_fespace.GetComm());</span></span>
-<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">           9 :   reduced_model-&gt;Enable(has_basis != 0, adaptive_tol, opA.get(), last_assembled_omega,</span></span>
-<span id="L373"><span class="lineNum">     373</span>              :                         last_assembled_sigma);</span>
-<span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC">           9 : }</span></span>
-<span id="L375"><span class="lineNum">     375</span>              : </span>
-<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">         221 : std::complex&lt;double&gt; ModeEigenSolver::GetEigenvalue(int i) const</span></span>
-<span id="L377"><span class="lineNum">     377</span>              : {</span>
-<span id="L378"><span class="lineNum">     378</span> <span class="tlaGNC">         221 :   return reduced_model-&gt;HasSolution() ? reduced_model-&gt;GetEigenvalue(i)</span></span>
-<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">         194 :                                       : eigen-&gt;GetEigenvalue(mode_perm[i]);</span></span>
-<span id="L380"><span class="lineNum">     380</span>              : }</span>
-<span id="L381"><span class="lineNum">     381</span>              : </span>
-<span id="L382"><span class="lineNum">     382</span> <span class="tlaGNC">          30 : double ModeEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) const</span></span>
-<span id="L383"><span class="lineNum">     383</span>              : {</span>
-<span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC">          30 :   if (reduced_model-&gt;HasSolution())</span></span>
-<span id="L385"><span class="lineNum">     385</span>              :   {</span>
-<span id="L386"><span class="lineNum">     386</span> <span class="tlaGNC">          27 :     MFEM_VERIFY(type == EigenvalueSolver::ErrorType::BACKWARD,</span></span>
-<span id="L387"><span class="lineNum">     387</span>              :                 &quot;Reduced mode solutions only provide backward errors!&quot;);</span>
-<span id="L388"><span class="lineNum">     388</span> <span class="tlaGNC">          27 :     return reduced_model-&gt;GetBackwardError(i);</span></span>
-<span id="L389"><span class="lineNum">     389</span>              :   }</span>
-<span id="L390"><span class="lineNum">     390</span> <span class="tlaGNC">           3 :   return eigen-&gt;GetError(mode_perm[i], type);</span></span>
-<span id="L391"><span class="lineNum">     391</span>              : }</span>
-<span id="L392"><span class="lineNum">     392</span>              : </span>
-<span id="L393"><span class="lineNum">     393</span> <span class="tlaGNC">         133 : void ModeEigenSolver::GetEigenvector(int i, ComplexVector &amp;x) const</span></span>
-<span id="L394"><span class="lineNum">     394</span>              : {</span>
-<span id="L395"><span class="lineNum">     395</span> <span class="tlaGNC">         133 :   if (reduced_model-&gt;HasSolution())</span></span>
-<span id="L396"><span class="lineNum">     396</span>              :   {</span>
-<span id="L397"><span class="lineNum">     397</span> <span class="tlaUNC tlaBgUNC">           0 :     reduced_model-&gt;GetEigenvector(i, x);</span></span>
-<span id="L398"><span class="lineNum">     398</span>              :   }</span>
-<span id="L399"><span class="lineNum">     399</span>              :   else</span>
-<span id="L400"><span class="lineNum">     400</span>              :   {</span>
-<span id="L401"><span class="lineNum">     401</span> <span class="tlaGNC tlaBgGNC">         133 :     eigen-&gt;GetEigenvector(mode_perm[i], x);</span></span>
-<span id="L402"><span class="lineNum">     402</span>              :   }</span>
-<span id="L403"><span class="lineNum">     403</span> <span class="tlaGNC">         133 : }</span></span>
-<span id="L404"><span class="lineNum">     404</span>              : </span>
-<span id="L405"><span class="lineNum">     405</span> <span class="tlaGNC">          88 : std::complex&lt;double&gt; ModeEigenSolver::GetPropagationConstant(int i) const</span></span>
-<span id="L406"><span class="lineNum">     406</span>              : {</span>
-<span id="L407"><span class="lineNum">     407</span> <span class="tlaGNC">          88 :   return std::sqrt(-sigma_cached - 1.0 / GetEigenvalue(i));</span></span>
-<span id="L408"><span class="lineNum">     408</span>              : }</span>
-<span id="L409"><span class="lineNum">     409</span> <span class="tlaUNC tlaBgUNC">           0 : bool ModeEigenSolver::IsPropagating(std::complex&lt;double&gt; kn)</span></span>
-<span id="L410"><span class="lineNum">     410</span>              : {</span>
-<span id="L411"><span class="lineNum">     411</span> <span class="tlaUNC">           0 :   return std::abs(kn.imag()) &lt; 0.1 * std::abs(kn.real()) &amp;&amp; std::abs(kn.real()) &gt; 0.0;</span></span>
-<span id="L412"><span class="lineNum">     412</span>              : }</span>
-<span id="L413"><span class="lineNum">     413</span> <span class="tlaGNC tlaBgGNC">         106 : ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixB(</span></span>
-<span id="L414"><span class="lineNum">     414</span>              :     const mfem::HypreParMatrix *Bttr, const mfem::HypreParMatrix *Btti,</span>
-<span id="L415"><span class="lineNum">     415</span>              :     const mfem::HypreParMatrix *Btnr, const mfem::HypreParMatrix *Btni,</span>
-<span id="L416"><span class="lineNum">     416</span>              :     const mfem::HypreParMatrix *Dnn) const</span>
-<span id="L417"><span class="lineNum">     417</span>              : {</span>
-<span id="L418"><span class="lineNum">     418</span>              :   // Construct the 2x2 block matrices for the eigenvalue problem A e = lambda B e.</span>
-<span id="L419"><span class="lineNum">     419</span>              :   // B = [Btt, 0; Btn, Dnn] where Btn = Atn^T and Dnn is the zero diagonal.</span>
-<span id="L420"><span class="lineNum">     420</span>              :   mfem::Array2D&lt;const mfem::HypreParMatrix *&gt; blocks(2, 2);</span>
-<span id="L421"><span class="lineNum">     421</span> <span class="tlaGNC">         106 :   blocks(0, 0) = Bttr;</span></span>
-<span id="L422"><span class="lineNum">     422</span> <span class="tlaGNC">         106 :   blocks(0, 1) = nullptr;</span></span>
-<span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">         106 :   blocks(1, 0) = Btnr;</span></span>
-<span id="L424"><span class="lineNum">     424</span> <span class="tlaGNC">         106 :   blocks(1, 1) = Dnn;</span></span>
-<span id="L425"><span class="lineNum">     425</span> <span class="tlaGNC">         106 :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; Br(mfem::HypreParMatrixFromBlocks(blocks));</span></span>
-<span id="L426"><span class="lineNum">     426</span>              : </span>
-<span id="L427"><span class="lineNum">     427</span>              :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; Bi;</span>
-<span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">         106 :   if (Btti || Btni)</span></span>
-<span id="L429"><span class="lineNum">     429</span>              :   {</span>
-<span id="L430"><span class="lineNum">     430</span>              :     // NOTE: Currently unreachable (Btt, Btn are real for real permeability). If complex</span>
-<span id="L431"><span class="lineNum">     431</span>              :     // permeability is added, zero placeholder blocks would be needed here too (same as</span>
-<span id="L432"><span class="lineNum">     432</span>              :     // the imaginary A block above) to prevent HypreParMatrixFromBlocks sizing errors.</span>
-<span id="L433"><span class="lineNum">     433</span> <span class="tlaUNC tlaBgUNC">           0 :     blocks(0, 0) = Btti;</span></span>
-<span id="L434"><span class="lineNum">     434</span> <span class="tlaUNC">           0 :     blocks(0, 1) = nullptr;</span></span>
-<span id="L435"><span class="lineNum">     435</span> <span class="tlaUNC">           0 :     blocks(1, 0) = Btni;</span></span>
-<span id="L436"><span class="lineNum">     436</span> <span class="tlaUNC">           0 :     blocks(1, 1) = nullptr;</span></span>
-<span id="L437"><span class="lineNum">     437</span> <span class="tlaUNC">           0 :     Bi.reset(mfem::HypreParMatrixFromBlocks(blocks));</span></span>
-<span id="L438"><span class="lineNum">     438</span>              :   }</span>
-<span id="L439"><span class="lineNum">     439</span>              : </span>
-<span id="L440"><span class="lineNum">     440</span>              :   // Eliminate boundary true dofs constrained by Dirichlet BCs.</span>
-<span id="L441"><span class="lineNum">     441</span> <span class="tlaGNC tlaBgGNC">         106 :   Br-&gt;EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);</span></span>
-<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC">         106 :   if (Bi)</span></span>
-<span id="L443"><span class="lineNum">     443</span>              :   {</span>
-<span id="L444"><span class="lineNum">     444</span> <span class="tlaUNC tlaBgUNC">           0 :     Bi-&gt;EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);</span></span>
-<span id="L445"><span class="lineNum">     445</span>              :   }</span>
-<span id="L446"><span class="lineNum">     446</span>              : </span>
-<span id="L447"><span class="lineNum">     447</span> <span class="tlaGNC tlaBgGNC">         106 :   return {std::move(Br), std::move(Bi)};</span></span>
-<span id="L448"><span class="lineNum">     448</span>              : }</span>
-<span id="L449"><span class="lineNum">     449</span>              : </span>
-<span id="L450"><span class="lineNum">     450</span> <span class="tlaGNC">          84 : void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)</span></span>
-<span id="L451"><span class="lineNum">     451</span>              : {</span>
-<span id="L452"><span class="lineNum">     452</span>              :   // GMRES iterative solver preconditioned with a sparse direct solver.</span>
-<span id="L453"><span class="lineNum">     453</span> <span class="tlaGNC">          84 :   auto gmres = std::make_unique&lt;GmresSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
-<span id="L454"><span class="lineNum">     454</span> <span class="tlaGNC">          84 :   gmres-&gt;SetInitialGuess(false);</span></span>
-<span id="L455"><span class="lineNum">     455</span> <span class="tlaGNC">          84 :   gmres-&gt;SetRelTol(linear.tol);</span></span>
-<span id="L456"><span class="lineNum">     456</span> <span class="tlaGNC">          84 :   gmres-&gt;SetMaxIter(linear.max_it);</span></span>
-<span id="L457"><span class="lineNum">     457</span> <span class="tlaGNC">          84 :   gmres-&gt;SetRestartDim(linear.max_size);</span></span>
-<span id="L458"><span class="lineNum">     458</span>              :   gmres-&gt;EnableTimer();</span>
-<span id="L459"><span class="lineNum">     459</span>              : </span>
-<span id="L460"><span class="lineNum">     460</span>              :   // Select sparse direct solver type. Multigrid (AMS, BoomerAMG) is not applicable for</span>
-<span id="L461"><span class="lineNum">     461</span>              :   // the combined ND+H1 block system, so fall back to a sparse direct solver.</span>
-<span id="L462"><span class="lineNum">     462</span> <span class="tlaGNC">          84 :   LinearSolver pc_type = linear.type;</span></span>
-<span id="L463"><span class="lineNum">     463</span> <span class="tlaGNC">          84 :   if (pc_type == LinearSolver::DEFAULT || pc_type == LinearSolver::AMS ||</span></span>
-<span id="L464"><span class="lineNum">     464</span>              :       pc_type == LinearSolver::BOOMER_AMG)</span>
-<span id="L465"><span class="lineNum">     465</span>              :   {</span>
-<span id="L466"><span class="lineNum">     466</span>              : #if defined(MFEM_USE_SUPERLU)</span>
-<span id="L467"><span class="lineNum">     467</span>              :     pc_type = LinearSolver::SUPERLU;</span>
-<span id="L468"><span class="lineNum">     468</span>              : #elif defined(MFEM_USE_STRUMPACK)</span>
-<span id="L469"><span class="lineNum">     469</span> <span class="tlaUNC tlaBgUNC">           0 :     pc_type = LinearSolver::STRUMPACK;</span></span>
-<span id="L470"><span class="lineNum">     470</span>              : #elif defined(MFEM_USE_MUMPS)</span>
-<span id="L471"><span class="lineNum">     471</span>              :     pc_type = LinearSolver::MUMPS;</span>
-<span id="L472"><span class="lineNum">     472</span>              : #elif defined(MFEM_USE_CUDSS)</span>
-<span id="L473"><span class="lineNum">     473</span>              :     pc_type = LinearSolver::CUDSS;</span>
-<span id="L474"><span class="lineNum">     474</span>              : #else</span>
-<span id="L475"><span class="lineNum">     475</span>              :     MFEM_ABORT(&quot;ModeEigenSolver requires building with SuperLU_DIST, STRUMPACK, &quot;</span>
-<span id="L476"><span class="lineNum">     476</span>              :                &quot;MUMPS, or cuDSS!&quot;);</span>
-<span id="L477"><span class="lineNum">     477</span>              : #endif</span>
-<span id="L478"><span class="lineNum">     478</span>              :   }</span>
-<span id="L479"><span class="lineNum">     479</span>              :   else if (pc_type == LinearSolver::SUPERLU)</span>
-<span id="L480"><span class="lineNum">     480</span>              :   {</span>
-<span id="L481"><span class="lineNum">     481</span>              : #if !defined(MFEM_USE_SUPERLU)</span>
-<span id="L482"><span class="lineNum">     482</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with SuperLU_DIST support, please choose a &quot;</span></span>
-<span id="L483"><span class="lineNum">     483</span>              :                &quot;different solver!&quot;);</span>
-<span id="L484"><span class="lineNum">     484</span>              : #endif</span>
-<span id="L485"><span class="lineNum">     485</span>              :   }</span>
-<span id="L486"><span class="lineNum">     486</span>              :   else if (pc_type == LinearSolver::STRUMPACK || pc_type == LinearSolver::STRUMPACK_MP)</span>
-<span id="L487"><span class="lineNum">     487</span>              :   {</span>
-<span id="L488"><span class="lineNum">     488</span>              : #if !defined(MFEM_USE_STRUMPACK)</span>
-<span id="L489"><span class="lineNum">     489</span>              :     MFEM_ABORT(&quot;Solver was not built with STRUMPACK support, please choose a &quot;</span>
-<span id="L490"><span class="lineNum">     490</span>              :                &quot;different solver!&quot;);</span>
-<span id="L491"><span class="lineNum">     491</span>              : #endif</span>
-<span id="L492"><span class="lineNum">     492</span>              :   }</span>
-<span id="L493"><span class="lineNum">     493</span>              :   else if (pc_type == LinearSolver::MUMPS)</span>
-<span id="L494"><span class="lineNum">     494</span>              :   {</span>
-<span id="L495"><span class="lineNum">     495</span>              : #if !defined(MFEM_USE_MUMPS)</span>
-<span id="L496"><span class="lineNum">     496</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with MUMPS support, please choose a &quot;</span></span>
-<span id="L497"><span class="lineNum">     497</span>              :                &quot;different solver!&quot;);</span>
-<span id="L498"><span class="lineNum">     498</span>              : #endif</span>
-<span id="L499"><span class="lineNum">     499</span>              :   }</span>
-<span id="L500"><span class="lineNum">     500</span>              :   else if (pc_type == LinearSolver::CUDSS)</span>
-<span id="L501"><span class="lineNum">     501</span>              :   {</span>
-<span id="L502"><span class="lineNum">     502</span>              : #if !defined(MFEM_USE_CUDSS)</span>
-<span id="L503"><span class="lineNum">     503</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with cuDSS support, please choose a &quot;</span></span>
-<span id="L504"><span class="lineNum">     504</span>              :                &quot;different solver&quot;);</span>
-<span id="L505"><span class="lineNum">     505</span>              : #endif</span>
-<span id="L506"><span class="lineNum">     506</span>              :   }</span>
-<span id="L507"><span class="lineNum">     507</span>              : </span>
-<span id="L508"><span class="lineNum">     508</span>              :   // A wave-port exact solve can transition between real and complex frequencies, changing</span>
-<span id="L509"><span class="lineNum">     509</span>              :   // the doubled-real sparsity pattern. Disable symbolic reuse only for that case; preserve</span>
-<span id="L510"><span class="lineNum">     510</span>              :   // the existing behavior for BoundaryMode and real-matrix preconditioners.</span>
-<span id="L511"><span class="lineNum">     511</span> <span class="tlaGNC tlaBgGNC">          84 :   const bool reorder_reuse = !normal || !linear.complex_coarse_solve || linear.pc_mat_real;</span></span>
-<span id="L512"><span class="lineNum">     512</span>              :   auto pc = std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L513"><span class="lineNum">     513</span> <span class="tlaGNC">         252 :       [&amp;]() -&gt; std::unique_ptr&lt;mfem::Solver&gt;</span></span>
-<span id="L514"><span class="lineNum">     514</span>              :       {</span>
-<span id="L515"><span class="lineNum">     515</span> <span class="tlaGNC">          84 :         if (pc_type == LinearSolver::SUPERLU)</span></span>
-<span id="L516"><span class="lineNum">     516</span>              :         {</span>
-<span id="L517"><span class="lineNum">     517</span>              : #if defined(MFEM_USE_SUPERLU)</span>
-<span id="L518"><span class="lineNum">     518</span>              :           return std::make_unique&lt;SuperLUSolver&gt;(comm, linear.sym_factorization,</span>
-<span id="L519"><span class="lineNum">     519</span>              :                                                  linear.superlu_3d, reorder_reuse,</span>
-<span id="L520"><span class="lineNum">     520</span>              :                                                  verbose - 1);</span>
-<span id="L521"><span class="lineNum">     521</span>              : #endif</span>
-<span id="L522"><span class="lineNum">     522</span>              :         }</span>
-<span id="L523"><span class="lineNum">     523</span> <span class="tlaGNC">          84 :         else if (pc_type == LinearSolver::STRUMPACK ||</span></span>
-<span id="L524"><span class="lineNum">     524</span>              :                  pc_type == LinearSolver::STRUMPACK_MP)</span>
-<span id="L525"><span class="lineNum">     525</span>              :         {</span>
-<span id="L526"><span class="lineNum">     526</span>              : #if defined(MFEM_USE_STRUMPACK)</span>
-<span id="L527"><span class="lineNum">     527</span> <span class="tlaGNC">         168 :           return std::make_unique&lt;StrumpackSolver&gt;(</span></span>
-<span id="L528"><span class="lineNum">     528</span> <span class="tlaGNC">          84 :               comm, linear.sym_factorization, linear.strumpack_compression_type,</span></span>
-<span id="L529"><span class="lineNum">     529</span> <span class="tlaGNC">          84 :               linear.strumpack_lr_tol, linear.strumpack_butterfly_l,</span></span>
-<span id="L530"><span class="lineNum">     530</span> <span class="tlaGNC">          84 :               linear.strumpack_lossy_precision, reorder_reuse, verbose - 1);</span></span>
-<span id="L531"><span class="lineNum">     531</span>              : #endif</span>
-<span id="L532"><span class="lineNum">     532</span>              :         }</span>
-<span id="L533"><span class="lineNum">     533</span>              :         else if (pc_type == LinearSolver::MUMPS)</span>
-<span id="L534"><span class="lineNum">     534</span>              :         {</span>
-<span id="L535"><span class="lineNum">     535</span>              : #if defined(MFEM_USE_MUMPS)</span>
-<span id="L536"><span class="lineNum">     536</span>              :           return std::make_unique&lt;MumpsSolver&gt;(</span>
-<span id="L537"><span class="lineNum">     537</span>              :               comm, MatrixSymmetry::UNSYMMETRIC, linear.sym_factorization,</span>
-<span id="L538"><span class="lineNum">     538</span>              :               linear.strumpack_lr_tol, reorder_reuse, verbose - 1);</span>
-<span id="L539"><span class="lineNum">     539</span>              : #endif</span>
-<span id="L540"><span class="lineNum">     540</span>              :         }</span>
-<span id="L541"><span class="lineNum">     541</span>              :         else if (pc_type == LinearSolver::CUDSS)</span>
-<span id="L542"><span class="lineNum">     542</span>              :         {</span>
-<span id="L543"><span class="lineNum">     543</span>              : #if defined(MFEM_USE_CUDSS)</span>
-<span id="L544"><span class="lineNum">     544</span>              :           return std::make_unique&lt;CuDSSSolver&gt;(comm, MatrixSymmetry::UNSYMMETRIC,</span>
-<span id="L545"><span class="lineNum">     545</span>              :                                                linear.sym_factorization, reorder_reuse,</span>
-<span id="L546"><span class="lineNum">     546</span>              :                                                verbose - 1);</span>
-<span id="L547"><span class="lineNum">     547</span>              : #endif</span>
-<span id="L548"><span class="lineNum">     548</span>              :         }</span>
-<span id="L549"><span class="lineNum">     549</span> <span class="tlaUNC tlaBgUNC">           0 :         MFEM_ABORT(&quot;Unsupported linear solver type for boundary mode solver!&quot;);</span></span>
-<span id="L550"><span class="lineNum">     550</span>              :         return {};</span>
-<span id="L551"><span class="lineNum">     551</span> <span class="tlaGNC tlaBgGNC">         168 :       }(),</span></span>
-<span id="L552"><span class="lineNum">     552</span> <span class="tlaGNC">          84 :       false, false, false, reorder_reuse);</span></span>
-<span id="L553"><span class="lineNum">     553</span> <span class="tlaGNC">         168 :   ksp = std::make_unique&lt;ComplexKspSolver&gt;(std::move(gmres), std::move(pc));</span></span>
-<span id="L554"><span class="lineNum">     554</span> <span class="tlaGNC">          84 : }</span></span>
-<span id="L555"><span class="lineNum">     555</span>              : </span>
-<span id="L556"><span class="lineNum">     556</span> <span class="tlaUNC tlaBgUNC">           0 : void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)</span></span>
-<span id="L557"><span class="lineNum">     557</span>              : {</span>
-<span id="L558"><span class="lineNum">     558</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(bmo, &quot;Multigrid linear solver requires BMO ctor (2D domain path)!&quot;);</span></span>
-<span id="L559"><span class="lineNum">     559</span> <span class="tlaUNC">           0 :   const int print = verbose - 1;</span></span>
-<span id="L560"><span class="lineNum">     560</span>              : </span>
-<span id="L561"><span class="lineNum">     561</span>              :   // Determine coarse solver types for the ND and H1 blocks from the config. The default</span>
-<span id="L562"><span class="lineNum">     562</span>              :   // type is resolved in IoData (sparse direct for frequency-domain problems, AMS</span>
-<span id="L563"><span class="lineNum">     563</span>              :   // otherwise). For the H1 block, AMS is not applicable — use BoomerAMG instead.</span>
-<span id="L564"><span class="lineNum">     564</span> <span class="tlaUNC">           0 :   LinearSolver nd_pc_type = linear.type;</span></span>
-<span id="L565"><span class="lineNum">     565</span>              :   LinearSolver h1_pc_type = linear.type;</span>
-<span id="L566"><span class="lineNum">     566</span>              : </span>
-<span id="L567"><span class="lineNum">     567</span> <span class="tlaUNC">           0 :   if (nd_pc_type == LinearSolver::BOOMER_AMG)</span></span>
-<span id="L568"><span class="lineNum">     568</span>              :   {</span>
-<span id="L569"><span class="lineNum">     569</span> <span class="tlaUNC">           0 :     Mpi::Warning(comm,</span></span>
-<span id="L570"><span class="lineNum">     570</span>              :                  &quot;BoomerAMG is not well-suited for the Nedelec system matrix, consider &quot;</span>
-<span id="L571"><span class="lineNum">     571</span>              :                  &quot;using another solver.\n&quot;);</span>
-<span id="L572"><span class="lineNum">     572</span>              :   }</span>
-<span id="L573"><span class="lineNum">     573</span> <span class="tlaUNC">           0 :   if (h1_pc_type == LinearSolver::AMS)</span></span>
-<span id="L574"><span class="lineNum">     574</span>              :   {</span>
-<span id="L575"><span class="lineNum">     575</span>              :     h1_pc_type = LinearSolver::BOOMER_AMG;</span>
-<span id="L576"><span class="lineNum">     576</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Multigrid coarse solve: AMS for ND block, BoomerAMG for H1 block\n&quot;);</span></span>
-<span id="L577"><span class="lineNum">     577</span>              :   }</span>
-<span id="L578"><span class="lineNum">     578</span>              : </span>
-<span id="L579"><span class="lineNum">     579</span>              :   // Helper to create a coarse solver from the type.</span>
-<span id="L580"><span class="lineNum">     580</span>              :   auto MakeCoarseSolver =</span>
-<span id="L581"><span class="lineNum">     581</span> <span class="tlaUNC">           0 :       [&amp;](LinearSolver type) -&gt; std::unique_ptr&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;</span></span>
-<span id="L582"><span class="lineNum">     582</span>              :   {</span>
-<span id="L583"><span class="lineNum">     583</span> <span class="tlaUNC">           0 :     switch (type)</span></span>
-<span id="L584"><span class="lineNum">     584</span>              :     {</span>
-<span id="L585"><span class="lineNum">     585</span> <span class="tlaUNC">           0 :       case LinearSolver::AMS:</span></span>
-<span id="L586"><span class="lineNum">     586</span> <span class="tlaUNC">           0 :         MFEM_VERIFY(bmo, &quot;AMS coarse solver requires BMO ctor (2D domain path)!&quot;);</span></span>
-<span id="L587"><span class="lineNum">     587</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L588"><span class="lineNum">     588</span> <span class="tlaUNC">           0 :             std::make_unique&lt;HypreAmsSolver&gt;(</span></span>
-<span id="L589"><span class="lineNum">     589</span>              :                 bmo-&gt;GetNDSpaceHierarchy().GetFESpaceAtLevel(0),</span>
-<span id="L590"><span class="lineNum">     590</span> <span class="tlaUNC">           0 :                 bmo-&gt;GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(0), linear.ams_max_it,</span></span>
-<span id="L591"><span class="lineNum">     591</span> <span class="tlaUNC">           0 :                 linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,</span></span>
-<span id="L592"><span class="lineNum">     592</span> <span class="tlaUNC">           0 :                 linear.amg_agg_coarsen, print),</span></span>
-<span id="L593"><span class="lineNum">     593</span> <span class="tlaUNC">           0 :             true, linear.complex_coarse_solve, linear.drop_small_entries,</span></span>
-<span id="L594"><span class="lineNum">     594</span> <span class="tlaUNC">           0 :             linear.reorder_reuse);</span></span>
-<span id="L595"><span class="lineNum">     595</span> <span class="tlaUNC">           0 :       case LinearSolver::BOOMER_AMG:</span></span>
-<span id="L596"><span class="lineNum">     596</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L597"><span class="lineNum">     597</span> <span class="tlaUNC">           0 :             std::make_unique&lt;BoomerAmgSolver&gt;(1, linear.mg_smooth_it,</span></span>
-<span id="L598"><span class="lineNum">     598</span> <span class="tlaUNC">           0 :                                               linear.amg_agg_coarsen, print),</span></span>
-<span id="L599"><span class="lineNum">     599</span> <span class="tlaUNC">           0 :             true, linear.complex_coarse_solve, linear.drop_small_entries,</span></span>
-<span id="L600"><span class="lineNum">     600</span> <span class="tlaUNC">           0 :             linear.reorder_reuse);</span></span>
-<span id="L601"><span class="lineNum">     601</span> <span class="tlaUNC">           0 :       case LinearSolver::SUPERLU:</span></span>
-<span id="L602"><span class="lineNum">     602</span>              : #if defined(MFEM_USE_SUPERLU)</span>
-<span id="L603"><span class="lineNum">     603</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L604"><span class="lineNum">     604</span>              :             std::make_unique&lt;SuperLUSolver&gt;(comm, linear.sym_factorization,</span>
-<span id="L605"><span class="lineNum">     605</span>              :                                             linear.superlu_3d, true, print),</span>
-<span id="L606"><span class="lineNum">     606</span>              :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span>
-<span id="L607"><span class="lineNum">     607</span>              :             linear.reorder_reuse);</span>
-<span id="L608"><span class="lineNum">     608</span>              : #else</span>
-<span id="L609"><span class="lineNum">     609</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Solver was not built with SuperLU_DIST support!&quot;);</span></span>
-<span id="L610"><span class="lineNum">     610</span>              :         return {};</span>
-<span id="L611"><span class="lineNum">     611</span>              : #endif</span>
-<span id="L612"><span class="lineNum">     612</span> <span class="tlaUNC">           0 :       case LinearSolver::STRUMPACK:</span></span>
-<span id="L613"><span class="lineNum">     613</span>              :       case LinearSolver::STRUMPACK_MP:</span>
-<span id="L614"><span class="lineNum">     614</span>              : #if defined(MFEM_USE_STRUMPACK)</span>
-<span id="L615"><span class="lineNum">     615</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L616"><span class="lineNum">     616</span> <span class="tlaUNC">           0 :             std::make_unique&lt;StrumpackSolver&gt;(</span></span>
-<span id="L617"><span class="lineNum">     617</span> <span class="tlaUNC">           0 :                 comm, linear.sym_factorization, linear.strumpack_compression_type,</span></span>
-<span id="L618"><span class="lineNum">     618</span> <span class="tlaUNC">           0 :                 linear.strumpack_lr_tol, linear.strumpack_butterfly_l,</span></span>
-<span id="L619"><span class="lineNum">     619</span> <span class="tlaUNC">           0 :                 linear.strumpack_lossy_precision, true, print),</span></span>
-<span id="L620"><span class="lineNum">     620</span> <span class="tlaUNC">           0 :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span></span>
-<span id="L621"><span class="lineNum">     621</span> <span class="tlaUNC">           0 :             linear.reorder_reuse);</span></span>
-<span id="L622"><span class="lineNum">     622</span>              : #else</span>
-<span id="L623"><span class="lineNum">     623</span>              :         MFEM_ABORT(&quot;Solver was not built with STRUMPACK support!&quot;);</span>
-<span id="L624"><span class="lineNum">     624</span>              :         return {};</span>
-<span id="L625"><span class="lineNum">     625</span>              : #endif</span>
-<span id="L626"><span class="lineNum">     626</span> <span class="tlaUNC">           0 :       case LinearSolver::MUMPS:</span></span>
-<span id="L627"><span class="lineNum">     627</span>              : #if defined(MFEM_USE_MUMPS)</span>
-<span id="L628"><span class="lineNum">     628</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L629"><span class="lineNum">     629</span>              :             std::make_unique&lt;MumpsSolver&gt;(comm, MatrixSymmetry::UNSYMMETRIC,</span>
-<span id="L630"><span class="lineNum">     630</span>              :                                           linear.sym_factorization, linear.strumpack_lr_tol,</span>
-<span id="L631"><span class="lineNum">     631</span>              :                                           true, print),</span>
-<span id="L632"><span class="lineNum">     632</span>              :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span>
-<span id="L633"><span class="lineNum">     633</span>              :             linear.reorder_reuse);</span>
-<span id="L634"><span class="lineNum">     634</span>              : #else</span>
-<span id="L635"><span class="lineNum">     635</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Solver was not built with MUMPS support!&quot;);</span></span>
-<span id="L636"><span class="lineNum">     636</span>              :         return {};</span>
-<span id="L637"><span class="lineNum">     637</span>              : #endif</span>
-<span id="L638"><span class="lineNum">     638</span> <span class="tlaUNC">           0 :       case LinearSolver::CUDSS:</span></span>
-<span id="L639"><span class="lineNum">     639</span>              : #if defined(MFEM_USE_CUDSS)</span>
-<span id="L640"><span class="lineNum">     640</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L641"><span class="lineNum">     641</span>              :             std::make_unique&lt;CuDSSSolver&gt;(comm, MatrixSymmetry::UNSYMMETRIC,</span>
-<span id="L642"><span class="lineNum">     642</span>              :                                           linear.sym_factorization, true, print),</span>
-<span id="L643"><span class="lineNum">     643</span>              :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span>
-<span id="L644"><span class="lineNum">     644</span>              :             linear.reorder_reuse);</span>
-<span id="L645"><span class="lineNum">     645</span>              : #else</span>
-<span id="L646"><span class="lineNum">     646</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Solver was not built with cuDSS support!&quot;);</span></span>
-<span id="L647"><span class="lineNum">     647</span>              :         return {};</span>
-<span id="L648"><span class="lineNum">     648</span>              : #endif</span>
-<span id="L649"><span class="lineNum">     649</span> <span class="tlaUNC">           0 :       default:</span></span>
-<span id="L650"><span class="lineNum">     650</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Unsupported coarse solver type for multigrid boundary mode solver!&quot;);</span></span>
-<span id="L651"><span class="lineNum">     651</span>              :         return {};</span>
-<span id="L652"><span class="lineNum">     652</span>              :     }</span>
-<span id="L653"><span class="lineNum">     653</span> <span class="tlaUNC">           0 :   };</span></span>
-<span id="L654"><span class="lineNum">     654</span>              : </span>
-<span id="L655"><span class="lineNum">     655</span>              :   // ND block: p-multigrid with Hiptmair distributive relaxation smoothing.</span>
-<span id="L656"><span class="lineNum">     656</span> <span class="tlaUNC">           0 :   const auto nd_P = bmo-&gt;GetNDSpaceHierarchy().GetProlongationOperators();</span></span>
-<span id="L657"><span class="lineNum">     657</span>              :   const auto nd_G =</span>
-<span id="L658"><span class="lineNum">     658</span> <span class="tlaUNC">           0 :       bmo-&gt;GetNDSpaceHierarchy().GetDiscreteInterpolators(bmo-&gt;GetH1AuxSpaceHierarchy());</span></span>
-<span id="L659"><span class="lineNum">     659</span>              :   auto nd_gmg = std::make_unique&lt;GeometricMultigridSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L660"><span class="lineNum">     660</span> <span class="tlaUNC">           0 :       comm, MakeCoarseSolver(nd_pc_type), nd_P, &amp;nd_G, linear.mg_cycle_it,</span></span>
-<span id="L661"><span class="lineNum">     661</span> <span class="tlaUNC">           0 :       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,</span></span>
-<span id="L662"><span class="lineNum">     662</span> <span class="tlaUNC">           0 :       linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);</span></span>
-<span id="L663"><span class="lineNum">     663</span>              :   nd_gmg-&gt;EnableTimer();</span>
-<span id="L664"><span class="lineNum">     664</span>              : </span>
-<span id="L665"><span class="lineNum">     665</span>              :   // H1 block: p-multigrid with Chebyshev smoothing.</span>
-<span id="L666"><span class="lineNum">     666</span> <span class="tlaUNC">           0 :   const auto h1_P = bmo-&gt;GetH1SpaceHierarchy().GetProlongationOperators();</span></span>
-<span id="L667"><span class="lineNum">     667</span>              :   auto h1_gmg = std::make_unique&lt;GeometricMultigridSolver&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L668"><span class="lineNum">     668</span> <span class="tlaUNC">           0 :       comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,</span></span>
-<span id="L669"><span class="lineNum">     669</span> <span class="tlaUNC">           0 :       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,</span></span>
-<span id="L670"><span class="lineNum">     670</span> <span class="tlaUNC">           0 :       linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);</span></span>
-<span id="L671"><span class="lineNum">     671</span>              :   h1_gmg-&gt;EnableTimer();</span>
-<span id="L672"><span class="lineNum">     672</span>              : </span>
-<span id="L673"><span class="lineNum">     673</span>              :   // Combine into block-diagonal preconditioner.</span>
-<span id="L674"><span class="lineNum">     674</span>              :   auto block_pc = std::make_unique&lt;BlockDiagonalPreconditioner&lt;ComplexOperator&gt;&gt;(</span>
-<span id="L675"><span class="lineNum">     675</span> <span class="tlaUNC">           0 :       nd_size, std::move(nd_gmg), std::move(h1_gmg));</span></span>
-<span id="L676"><span class="lineNum">     676</span> <span class="tlaUNC">           0 :   block_pc_ptr = block_pc.get();</span></span>
-<span id="L677"><span class="lineNum">     677</span>              : </span>
-<span id="L678"><span class="lineNum">     678</span>              :   // Outer Krylov solver — use the user-configured type from Solver.Linear.KSPType.</span>
-<span id="L679"><span class="lineNum">     679</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;IterativeSolver&lt;ComplexOperator&gt;&gt; krylov;</span></span>
-<span id="L680"><span class="lineNum">     680</span> <span class="tlaUNC">           0 :   switch (linear.krylov_solver)</span></span>
-<span id="L681"><span class="lineNum">     681</span>              :   {</span>
-<span id="L682"><span class="lineNum">     682</span> <span class="tlaUNC">           0 :     case KrylovSolver::CG:</span></span>
-<span id="L683"><span class="lineNum">     683</span> <span class="tlaUNC">           0 :       krylov = std::make_unique&lt;CgSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
-<span id="L684"><span class="lineNum">     684</span> <span class="tlaUNC">           0 :       break;</span></span>
-<span id="L685"><span class="lineNum">     685</span> <span class="tlaUNC">           0 :     case KrylovSolver::FGMRES:</span></span>
-<span id="L686"><span class="lineNum">     686</span>              :       {</span>
-<span id="L687"><span class="lineNum">     687</span> <span class="tlaUNC">           0 :         auto fgmres = std::make_unique&lt;FgmresSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
-<span id="L688"><span class="lineNum">     688</span> <span class="tlaUNC">           0 :         fgmres-&gt;SetRestartDim(linear.max_size);</span></span>
-<span id="L689"><span class="lineNum">     689</span>              :         krylov = std::move(fgmres);</span>
-<span id="L690"><span class="lineNum">     690</span>              :       }</span>
-<span id="L691"><span class="lineNum">     691</span> <span class="tlaUNC">           0 :       break;</span></span>
-<span id="L692"><span class="lineNum">     692</span> <span class="tlaUNC">           0 :     case KrylovSolver::GMRES:</span></span>
-<span id="L693"><span class="lineNum">     693</span>              :     case KrylovSolver::DEFAULT:</span>
-<span id="L694"><span class="lineNum">     694</span>              :     default:</span>
-<span id="L695"><span class="lineNum">     695</span>              :       {</span>
-<span id="L696"><span class="lineNum">     696</span> <span class="tlaUNC">           0 :         auto gmres = std::make_unique&lt;GmresSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
-<span id="L697"><span class="lineNum">     697</span> <span class="tlaUNC">           0 :         gmres-&gt;SetRestartDim(linear.max_size);</span></span>
-<span id="L698"><span class="lineNum">     698</span>              :         krylov = std::move(gmres);</span>
-<span id="L699"><span class="lineNum">     699</span>              :       }</span>
-<span id="L700"><span class="lineNum">     700</span> <span class="tlaUNC">           0 :       break;</span></span>
-<span id="L701"><span class="lineNum">     701</span>              :   }</span>
-<span id="L702"><span class="lineNum">     702</span> <span class="tlaUNC">           0 :   krylov-&gt;SetInitialGuess(linear.initial_guess);</span></span>
-<span id="L703"><span class="lineNum">     703</span> <span class="tlaUNC">           0 :   krylov-&gt;SetRelTol(linear.tol);</span></span>
-<span id="L704"><span class="lineNum">     704</span> <span class="tlaUNC">           0 :   krylov-&gt;SetMaxIter(linear.max_it);</span></span>
-<span id="L705"><span class="lineNum">     705</span>              :   krylov-&gt;EnableTimer();</span>
-<span id="L706"><span class="lineNum">     706</span>              : </span>
-<span id="L707"><span class="lineNum">     707</span> <span class="tlaUNC">           0 :   ksp = std::make_unique&lt;ComplexKspSolver&gt;(std::move(krylov), std::move(block_pc));</span></span>
-<span id="L708"><span class="lineNum">     708</span> <span class="tlaUNC">           0 : }</span></span>
-<span id="L709"><span class="lineNum">     709</span>              : </span>
-<span id="L710"><span class="lineNum">     710</span>              : std::unique_ptr&lt;ComplexMultigridOperator&gt;</span>
-<span id="L711"><span class="lineNum">     711</span> <span class="tlaUNC">           0 : ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const</span></span>
-<span id="L712"><span class="lineNum">     712</span>              : {</span>
-<span id="L713"><span class="lineNum">     713</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(bmo, &quot;AssembleAttPreconditioner requires BMO ctor (2D domain path)!&quot;);</span></span>
-<span id="L714"><span class="lineNum">     714</span> <span class="tlaUNC">           0 :   const auto n_levels = bmo-&gt;GetNDSpaceHierarchy().GetNumLevels();</span></span>
-<span id="L715"><span class="lineNum">     715</span> <span class="tlaUNC">           0 :   auto B = std::make_unique&lt;ComplexMultigridOperator&gt;(n_levels);</span></span>
-<span id="L716"><span class="lineNum">     716</span>              : </span>
-<span id="L717"><span class="lineNum">     717</span>              :   // Material coefficients (same at all levels — indexed by element attribute, not by p).</span>
-<span id="L718"><span class="lineNum">     718</span>              :   // The 2D MaterialOperator exposes the scalar out-of-plane μ⁻¹ directly via</span>
-<span id="L719"><span class="lineNum">     719</span>              :   // GetCurlCurlInvPermeability(); material rotation (if any) was baked into iodata before</span>
-<span id="L720"><span class="lineNum">     720</span>              :   // the operator was built.</span>
-<span id="L721"><span class="lineNum">     721</span>              :   MaterialPropertyCoefficient muinv_cc_func(mat_op.GetAttributeToMaterial(),</span>
-<span id="L722"><span class="lineNum">     722</span> <span class="tlaUNC">           0 :                                             mat_op.GetCurlCurlInvPermeability());</span></span>
-<span id="L723"><span class="lineNum">     723</span>              : </span>
-<span id="L724"><span class="lineNum">     724</span>              :   // Preconditioner mass coefficient: -omega^2 eps - sigma/mu (+ London). When</span>
-<span id="L725"><span class="lineNum">     725</span>              :   // pc_mat_shifted is enabled (config), use absolute values to ensure well-conditioning</span>
-<span id="L726"><span class="lineNum">     726</span>              :   // near the shift target (where -omega^2 eps + kn^2/mu ≈ 0). This follows</span>
-<span id="L727"><span class="lineNum">     727</span>              :   // SpaceOperator's pc_mat_shifted pattern.</span>
-<span id="L728"><span class="lineNum">     728</span> <span class="tlaUNC">           0 :   const bool shifted = linear.pc_mat_shifted;</span></span>
-<span id="L729"><span class="lineNum">     729</span> <span class="tlaUNC">           0 :   const double mass_coeff = shifted ? std::abs(omega * omega) : (-omega * omega);</span></span>
-<span id="L730"><span class="lineNum">     730</span> <span class="tlaUNC">           0 :   const double shift_coeff = shifted ? std::abs(sigma) : (-sigma);</span></span>
-<span id="L731"><span class="lineNum">     731</span>              : </span>
-<span id="L732"><span class="lineNum">     732</span>              :   MaterialPropertyCoefficient eps_shifted_pc(mat_op.GetAttributeToMaterial(),</span>
-<span id="L733"><span class="lineNum">     733</span> <span class="tlaUNC">           0 :                                              mat_op.GetPermittivityReal(), mass_coeff);</span></span>
-<span id="L734"><span class="lineNum">     734</span> <span class="tlaUNC">           0 :   eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),</span></span>
-<span id="L735"><span class="lineNum">     735</span> <span class="tlaUNC">           0 :                                 mat_op.GetInvPermeability(), shift_coeff);</span></span>
-<span id="L736"><span class="lineNum">     736</span> <span class="tlaUNC">           0 :   if (mat_op.HasLondonDepth())</span></span>
-<span id="L737"><span class="lineNum">     737</span>              :   {</span>
-<span id="L738"><span class="lineNum">     738</span> <span class="tlaUNC">           0 :     eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),</span></span>
-<span id="L739"><span class="lineNum">     739</span>              :                                   mat_op.GetInvLondonDepth(), 1.0);</span>
-<span id="L740"><span class="lineNum">     740</span>              :   }</span>
-<span id="L741"><span class="lineNum">     741</span>              : </span>
-<span id="L742"><span class="lineNum">     742</span>              :   // Boundary coefficients for preconditioner (real part only, matching SpaceOperator).</span>
-<span id="L743"><span class="lineNum">     743</span> <span class="tlaUNC">           0 :   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();</span></span>
-<span id="L744"><span class="lineNum">     744</span> <span class="tlaUNC">           0 :   MaterialPropertyCoefficient fbr(max_bdr_attr);</span></span>
-<span id="L745"><span class="lineNum">     745</span> <span class="tlaUNC">           0 :   surf_z_op.AddStiffnessBdrCoefficients(1.0, fbr);</span></span>
-<span id="L746"><span class="lineNum">     746</span> <span class="tlaUNC">           0 :   surf_z_op.AddMassBdrCoefficients(shifted ? std::abs(omega * omega) : (-omega * omega),</span></span>
-<span id="L747"><span class="lineNum">     747</span>              :                                    fbr);</span>
-<span id="L748"><span class="lineNum">     748</span> <span class="tlaUNC">           0 :   farfield_op.AddDampingBdrCoefficients(omega, fbr);</span></span>
-<span id="L749"><span class="lineNum">     749</span> <span class="tlaUNC">           0 :   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);</span></span>
-<span id="L750"><span class="lineNum">     750</span> <span class="tlaUNC">           0 :   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);</span></span>
-<span id="L751"><span class="lineNum">     751</span>              : </span>
-<span id="L752"><span class="lineNum">     752</span>              :   // Assemble ND operators at all levels from one BilinearForm. Unlike SpaceOperator's</span>
-<span id="L753"><span class="lineNum">     753</span>              :   // configured-coarse/active-fine split, these domain coefficients are always nonzero.</span>
-<span id="L754"><span class="lineNum">     754</span>              :   constexpr bool assemble_q_data = false;</span>
-<span id="L755"><span class="lineNum">     755</span>              :   {</span>
-<span id="L756"><span class="lineNum">     756</span> <span class="tlaUNC">           0 :     BilinearForm att(bmo-&gt;GetNDSpaceHierarchy().GetFinestFESpace());</span></span>
-<span id="L757"><span class="lineNum">     757</span> <span class="tlaUNC">           0 :     att.AddDomainIntegrator&lt;CurlCurlMassIntegrator&gt;(muinv_cc_func, eps_shifted_pc);</span></span>
-<span id="L758"><span class="lineNum">     758</span> <span class="tlaUNC">           0 :     if (!fbr.empty())</span></span>
-<span id="L759"><span class="lineNum">     759</span>              :     {</span>
-<span id="L760"><span class="lineNum">     760</span> <span class="tlaUNC">           0 :       att.AddBoundaryIntegrator&lt;VectorFEMassIntegrator&gt;(fbr);</span></span>
-<span id="L761"><span class="lineNum">     761</span>              :     }</span>
-<span id="L762"><span class="lineNum">     762</span> <span class="tlaUNC">           0 :     auto att_ops = att.Assemble(bmo-&gt;GetNDSpaceHierarchy(), skip_zeros);</span></span>
-<span id="L763"><span class="lineNum">     763</span>              : </span>
-<span id="L764"><span class="lineNum">     764</span>              :     // Assemble the auxiliary H1 operators for Hiptmair smoothing from the same always-</span>
-<span id="L765"><span class="lineNum">     765</span>              :     // nonzero mass coefficient.</span>
-<span id="L766"><span class="lineNum">     766</span> <span class="tlaUNC">           0 :     BilinearForm att_aux(bmo-&gt;GetH1AuxSpaceHierarchy().GetFinestFESpace());</span></span>
-<span id="L767"><span class="lineNum">     767</span> <span class="tlaUNC">           0 :     att_aux.AddDomainIntegrator&lt;DiffusionIntegrator&gt;(eps_shifted_pc);</span></span>
-<span id="L768"><span class="lineNum">     768</span> <span class="tlaUNC">           0 :     if (!fbr.empty())</span></span>
-<span id="L769"><span class="lineNum">     769</span>              :     {</span>
-<span id="L770"><span class="lineNum">     770</span> <span class="tlaUNC">           0 :       att_aux.AddBoundaryIntegrator&lt;DiffusionIntegrator&gt;(fbr);</span></span>
-<span id="L771"><span class="lineNum">     771</span>              :     }</span>
-<span id="L772"><span class="lineNum">     772</span> <span class="tlaUNC">           0 :     auto att_aux_ops = att_aux.Assemble(bmo-&gt;GetH1AuxSpaceHierarchy(), skip_zeros);</span></span>
-<span id="L773"><span class="lineNum">     773</span>              : </span>
-<span id="L774"><span class="lineNum">     774</span> <span class="tlaUNC">           0 :     for (std::size_t l = 0; l &lt; n_levels; l++)</span></span>
-<span id="L775"><span class="lineNum">     775</span>              :     {</span>
-<span id="L776"><span class="lineNum">     776</span> <span class="tlaUNC">           0 :       const auto &amp;nd_fespace_l = bmo-&gt;GetNDSpaceHierarchy().GetFESpaceAtLevel(l);</span></span>
-<span id="L777"><span class="lineNum">     777</span> <span class="tlaUNC">           0 :       auto B_l = std::make_unique&lt;ComplexParOperator&gt;(std::move(att_ops[l]), nullptr,</span></span>
-<span id="L778"><span class="lineNum">     778</span> <span class="tlaUNC">           0 :                                                       nd_fespace_l);</span></span>
-<span id="L779"><span class="lineNum">     779</span> <span class="tlaUNC">           0 :       if (l &lt; bmo-&gt;GetNDDbcTDofLists().size())</span></span>
-<span id="L780"><span class="lineNum">     780</span>              :       {</span>
-<span id="L781"><span class="lineNum">     781</span> <span class="tlaUNC">           0 :         B_l-&gt;SetEssentialTrueDofs(bmo-&gt;GetNDDbcTDofLists()[l],</span></span>
-<span id="L782"><span class="lineNum">     782</span>              :                                   Operator::DiagonalPolicy::DIAG_ONE);</span>
-<span id="L783"><span class="lineNum">     783</span>              :       }</span>
-<span id="L784"><span class="lineNum">     784</span> <span class="tlaUNC">           0 :       B-&gt;AddOperator(std::move(B_l));</span></span>
-<span id="L785"><span class="lineNum">     785</span>              : </span>
-<span id="L786"><span class="lineNum">     786</span> <span class="tlaUNC">           0 :       const auto &amp;h1_aux_l = bmo-&gt;GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(l);</span></span>
-<span id="L787"><span class="lineNum">     787</span>              :       auto B_aux_l = std::make_unique&lt;ComplexParOperator&gt;(std::move(att_aux_ops[l]),</span>
-<span id="L788"><span class="lineNum">     788</span> <span class="tlaUNC">           0 :                                                           nullptr, h1_aux_l);</span></span>
-<span id="L789"><span class="lineNum">     789</span> <span class="tlaUNC">           0 :       if (l &lt; bmo-&gt;GetH1AuxDbcTDofLists().size())</span></span>
-<span id="L790"><span class="lineNum">     790</span>              :       {</span>
-<span id="L791"><span class="lineNum">     791</span> <span class="tlaUNC">           0 :         B_aux_l-&gt;SetEssentialTrueDofs(bmo-&gt;GetH1AuxDbcTDofLists()[l],</span></span>
-<span id="L792"><span class="lineNum">     792</span>              :                                       Operator::DiagonalPolicy::DIAG_ONE);</span>
-<span id="L793"><span class="lineNum">     793</span>              :       }</span>
-<span id="L794"><span class="lineNum">     794</span> <span class="tlaUNC">           0 :       B-&gt;AddAuxiliaryOperator(std::move(B_aux_l));</span></span>
-<span id="L795"><span class="lineNum">     795</span>              :     }</span>
-<span id="L796"><span class="lineNum">     796</span> <span class="tlaUNC">           0 :   }</span></span>
-<span id="L797"><span class="lineNum">     797</span>              : </span>
-<span id="L798"><span class="lineNum">     798</span> <span class="tlaUNC">           0 :   return B;</span></span>
-<span id="L799"><span class="lineNum">     799</span> <span class="tlaUNC">           0 : }</span></span>
-<span id="L800"><span class="lineNum">     800</span>              : </span>
-<span id="L801"><span class="lineNum">     801</span>              : std::unique_ptr&lt;ComplexMultigridOperator&gt;</span>
-<span id="L802"><span class="lineNum">     802</span> <span class="tlaUNC">           0 : ModeEigenSolver::AssembleAnnPreconditioner(double omega) const</span></span>
-<span id="L803"><span class="lineNum">     803</span>              : {</span>
-<span id="L804"><span class="lineNum">     804</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(bmo, &quot;AssembleAnnPreconditioner requires BMO ctor (2D domain path)!&quot;);</span></span>
-<span id="L805"><span class="lineNum">     805</span> <span class="tlaUNC">           0 :   const auto n_levels = bmo-&gt;GetH1SpaceHierarchy().GetNumLevels();</span></span>
-<span id="L806"><span class="lineNum">     806</span> <span class="tlaUNC">           0 :   auto B = std::make_unique&lt;ComplexMultigridOperator&gt;(n_levels);</span></span>
-<span id="L807"><span class="lineNum">     807</span>              : </span>
-<span id="L808"><span class="lineNum">     808</span>              :   // Material coefficients matching AssembleAnn (real part only). The negative diffusion</span>
-<span id="L809"><span class="lineNum">     809</span>              :   // sign from the IBP is preserved — this matches the actual operator. In-plane tensors</span>
-<span id="L810"><span class="lineNum">     810</span>              :   // (μ⁻¹, ε) and scalar out-of-plane components are already in the local frame.</span>
-<span id="L811"><span class="lineNum">     811</span>              :   MaterialPropertyCoefficient neg_muinv_func(mat_op.GetAttributeToMaterial(),</span>
-<span id="L812"><span class="lineNum">     812</span> <span class="tlaUNC">           0 :                                              mat_op.GetInvPermeability(), -1.0);</span></span>
-<span id="L813"><span class="lineNum">     813</span>              : </span>
-<span id="L814"><span class="lineNum">     814</span>              :   MaterialPropertyCoefficient poseps_h1_func(mat_op.GetAttributeToMaterial(),</span>
-<span id="L815"><span class="lineNum">     815</span> <span class="tlaUNC">           0 :                                              mat_op.GetPermittivityScalar(), omega * omega);</span></span>
-<span id="L816"><span class="lineNum">     816</span> <span class="tlaUNC">           0 :   if (mat_op.HasLondonDepth())</span></span>
-<span id="L817"><span class="lineNum">     817</span>              :   {</span>
-<span id="L818"><span class="lineNum">     818</span> <span class="tlaUNC">           0 :     poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),</span></span>
-<span id="L819"><span class="lineNum">     819</span>              :                                   mat_op.GetInvLondonDepthScalar());</span>
-<span id="L820"><span class="lineNum">     820</span>              :   }</span>
-<span id="L821"><span class="lineNum">     821</span>              : </span>
-<span id="L822"><span class="lineNum">     822</span>              :   // Boundary coefficients (real part only).</span>
-<span id="L823"><span class="lineNum">     823</span> <span class="tlaUNC">           0 :   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();</span></span>
-<span id="L824"><span class="lineNum">     824</span> <span class="tlaUNC">           0 :   MaterialPropertyCoefficient nn_fbr(max_bdr_attr);</span></span>
-<span id="L825"><span class="lineNum">     825</span> <span class="tlaUNC">           0 :   surf_z_op.AddStiffnessBdrCoefficients(-1.0, nn_fbr);</span></span>
-<span id="L826"><span class="lineNum">     826</span> <span class="tlaUNC">           0 :   surf_z_op.AddMassBdrCoefficients(omega * omega, nn_fbr);</span></span>
-<span id="L827"><span class="lineNum">     827</span>              :   {</span>
-<span id="L828"><span class="lineNum">     828</span> <span class="tlaUNC">           0 :     MaterialPropertyCoefficient cond_r(max_bdr_attr);</span></span>
-<span id="L829"><span class="lineNum">     829</span> <span class="tlaUNC">           0 :     surf_sigma_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);</span></span>
-<span id="L830"><span class="lineNum">     830</span> <span class="tlaUNC">           0 :     surf_rz_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);</span></span>
-<span id="L831"><span class="lineNum">     831</span> <span class="tlaUNC">           0 :     if (!cond_r.empty())</span></span>
-<span id="L832"><span class="lineNum">     832</span>              :     {</span>
-<span id="L833"><span class="lineNum">     833</span> <span class="tlaUNC">           0 :       cond_r *= -1.0;</span></span>
-<span id="L834"><span class="lineNum">     834</span> <span class="tlaUNC">           0 :       nn_fbr.AddCoefficient(cond_r.GetAttributeToMaterial(),</span></span>
-<span id="L835"><span class="lineNum">     835</span>              :                             cond_r.GetMaterialProperties());</span>
-<span id="L836"><span class="lineNum">     836</span>              :     }</span>
-<span id="L837"><span class="lineNum">     837</span> <span class="tlaUNC">           0 :   }</span></span>
-<span id="L838"><span class="lineNum">     838</span>              : </span>
-<span id="L839"><span class="lineNum">     839</span>              :   // Assemble H1 operators at all levels using hierarchy-aware assembly.</span>
-<span id="L840"><span class="lineNum">     840</span>              :   {</span>
-<span id="L841"><span class="lineNum">     841</span> <span class="tlaUNC">           0 :     BilinearForm ann(bmo-&gt;GetH1SpaceHierarchy().GetFinestFESpace());</span></span>
-<span id="L842"><span class="lineNum">     842</span> <span class="tlaUNC">           0 :     ann.AddDomainIntegrator&lt;DiffusionMassIntegrator&gt;(neg_muinv_func, poseps_h1_func);</span></span>
-<span id="L843"><span class="lineNum">     843</span> <span class="tlaUNC">           0 :     if (!nn_fbr.empty())</span></span>
-<span id="L844"><span class="lineNum">     844</span>              :     {</span>
-<span id="L845"><span class="lineNum">     845</span> <span class="tlaUNC">           0 :       ann.AddBoundaryIntegrator&lt;MassIntegrator&gt;(nn_fbr);</span></span>
-<span id="L846"><span class="lineNum">     846</span>              :     }</span>
-<span id="L847"><span class="lineNum">     847</span> <span class="tlaUNC">           0 :     auto ann_ops = ann.Assemble(bmo-&gt;GetH1SpaceHierarchy(), skip_zeros);</span></span>
-<span id="L848"><span class="lineNum">     848</span>              : </span>
-<span id="L849"><span class="lineNum">     849</span> <span class="tlaUNC">           0 :     for (std::size_t l = 0; l &lt; n_levels; l++)</span></span>
-<span id="L850"><span class="lineNum">     850</span>              :     {</span>
-<span id="L851"><span class="lineNum">     851</span> <span class="tlaUNC">           0 :       const auto &amp;h1_fespace_l = bmo-&gt;GetH1SpaceHierarchy().GetFESpaceAtLevel(l);</span></span>
-<span id="L852"><span class="lineNum">     852</span> <span class="tlaUNC">           0 :       auto B_l = std::make_unique&lt;ComplexParOperator&gt;(std::move(ann_ops[l]), nullptr,</span></span>
-<span id="L853"><span class="lineNum">     853</span> <span class="tlaUNC">           0 :                                                       h1_fespace_l);</span></span>
-<span id="L854"><span class="lineNum">     854</span> <span class="tlaUNC">           0 :       if (l &lt; bmo-&gt;GetH1DbcTDofLists().size())</span></span>
-<span id="L855"><span class="lineNum">     855</span>              :       {</span>
-<span id="L856"><span class="lineNum">     856</span> <span class="tlaUNC">           0 :         B_l-&gt;SetEssentialTrueDofs(bmo-&gt;GetH1DbcTDofLists()[l],</span></span>
-<span id="L857"><span class="lineNum">     857</span>              :                                   Operator::DiagonalPolicy::DIAG_ONE);</span>
-<span id="L858"><span class="lineNum">     858</span>              :       }</span>
-<span id="L859"><span class="lineNum">     859</span> <span class="tlaUNC">           0 :       B-&gt;AddOperator(std::move(B_l));</span></span>
-<span id="L860"><span class="lineNum">     860</span>              :     }</span>
-<span id="L861"><span class="lineNum">     861</span> <span class="tlaUNC">           0 :   }</span></span>
-<span id="L862"><span class="lineNum">     862</span>              : </span>
-<span id="L863"><span class="lineNum">     863</span> <span class="tlaUNC">           0 :   return B;</span></span>
-<span id="L864"><span class="lineNum">     864</span> <span class="tlaUNC">           0 : }</span></span>
-<span id="L865"><span class="lineNum">     865</span>              : </span>
-<span id="L866"><span class="lineNum">     866</span> <span class="tlaGNC tlaBgGNC">          84 : void ModeEigenSolver::SetUpEigenSolver(MPI_Comm comm)</span></span>
-<span id="L867"><span class="lineNum">     867</span>              : {</span>
-<span id="L868"><span class="lineNum">     868</span> <span class="tlaGNC">          84 :   constexpr int print = 0;</span></span>
-<span id="L869"><span class="lineNum">     869</span> <span class="tlaGNC">          84 :   EigenSolverBackend type = eigen_backend;</span></span>
-<span id="L870"><span class="lineNum">     870</span>              : </span>
-<span id="L871"><span class="lineNum">     871</span> <span class="tlaGNC">          84 :   if (type == EigenSolverBackend::SLEPC)</span></span>
-<span id="L872"><span class="lineNum">     872</span>              :   {</span>
-<span id="L873"><span class="lineNum">     873</span>              : #if !defined(PALACE_WITH_SLEPC)</span>
-<span id="L874"><span class="lineNum">     874</span>              :     MFEM_ABORT(&quot;Solver was not built with SLEPc support, please choose a &quot;</span>
-<span id="L875"><span class="lineNum">     875</span>              :                &quot;different solver!&quot;);</span>
-<span id="L876"><span class="lineNum">     876</span>              : #endif</span>
-<span id="L877"><span class="lineNum">     877</span>              :   }</span>
-<span id="L878"><span class="lineNum">     878</span> <span class="tlaUNC tlaBgUNC">           0 :   else if (type == EigenSolverBackend::ARPACK)</span></span>
-<span id="L879"><span class="lineNum">     879</span>              :   {</span>
-<span id="L880"><span class="lineNum">     880</span>              : #if !defined(PALACE_WITH_ARPACK)</span>
-<span id="L881"><span class="lineNum">     881</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with ARPACK support, please choose a &quot;</span></span>
-<span id="L882"><span class="lineNum">     882</span>              :                &quot;different solver!&quot;);</span>
-<span id="L883"><span class="lineNum">     883</span>              : #endif</span>
-<span id="L884"><span class="lineNum">     884</span>              :   }</span>
-<span id="L885"><span class="lineNum">     885</span>              :   else  // Default choice</span>
-<span id="L886"><span class="lineNum">     886</span>              :   {</span>
-<span id="L887"><span class="lineNum">     887</span>              : #if defined(PALACE_WITH_SLEPC)</span>
-<span id="L888"><span class="lineNum">     888</span>              :     type = EigenSolverBackend::SLEPC;</span>
-<span id="L889"><span class="lineNum">     889</span>              : #elif defined(PALACE_WITH_ARPACK)</span>
-<span id="L890"><span class="lineNum">     890</span>              :     type = EigenSolverBackend::ARPACK;</span>
-<span id="L891"><span class="lineNum">     891</span>              : #else</span>
-<span id="L892"><span class="lineNum">     892</span>              : #error &quot;ModeEigenSolver requires building with ARPACK or SLEPc!&quot;</span>
-<span id="L893"><span class="lineNum">     893</span>              : #endif</span>
-<span id="L894"><span class="lineNum">     894</span>              :   }</span>
-<span id="L895"><span class="lineNum">     895</span>              : </span>
-<span id="L896"><span class="lineNum">     896</span>              :   if (type == EigenSolverBackend::ARPACK)</span>
-<span id="L897"><span class="lineNum">     897</span>              :   {</span>
-<span id="L898"><span class="lineNum">     898</span>              : #if defined(PALACE_WITH_ARPACK)</span>
-<span id="L899"><span class="lineNum">     899</span>              :     auto arpack = std::make_unique&lt;arpack::ArpackEPSSolver&gt;(comm, print);</span>
-<span id="L900"><span class="lineNum">     900</span>              :     arpack-&gt;SetNumModes(num_modes, num_vec);</span>
-<span id="L901"><span class="lineNum">     901</span>              :     arpack-&gt;SetTol(eig_tol);</span>
-<span id="L902"><span class="lineNum">     902</span>              :     arpack-&gt;SetWhichEigenpairs(which_eig);</span>
-<span id="L903"><span class="lineNum">     903</span>              :     arpack-&gt;SetLinearSolver(*ksp);</span>
-<span id="L904"><span class="lineNum">     904</span>              :     eigen = std::move(arpack);</span>
-<span id="L905"><span class="lineNum">     905</span>              : #endif</span>
-<span id="L906"><span class="lineNum">     906</span>              :   }</span>
-<span id="L907"><span class="lineNum">     907</span>              :   else  // EigenSolverBackend::SLEPC</span>
-<span id="L908"><span class="lineNum">     908</span>              :   {</span>
-<span id="L909"><span class="lineNum">     909</span>              : #if defined(PALACE_WITH_SLEPC)</span>
-<span id="L910"><span class="lineNum">     910</span> <span class="tlaGNC tlaBgGNC">          84 :     auto slepc = std::make_unique&lt;slepc::SlepcEPSSolver&gt;(comm, print);</span></span>
-<span id="L911"><span class="lineNum">     911</span> <span class="tlaGNC">          84 :     slepc-&gt;SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);</span></span>
-<span id="L912"><span class="lineNum">     912</span> <span class="tlaGNC">          84 :     slepc-&gt;SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);</span></span>
-<span id="L913"><span class="lineNum">     913</span> <span class="tlaGNC">          84 :     slepc-&gt;SetNumModes(num_modes, num_vec);</span></span>
-<span id="L914"><span class="lineNum">     914</span> <span class="tlaGNC">          84 :     slepc-&gt;SetTol(eig_tol);</span></span>
-<span id="L915"><span class="lineNum">     915</span> <span class="tlaGNC">          84 :     slepc-&gt;SetWhichEigenpairs(which_eig);</span></span>
-<span id="L916"><span class="lineNum">     916</span> <span class="tlaGNC">          84 :     slepc-&gt;SetLinearSolver(*ksp);</span></span>
-<span id="L917"><span class="lineNum">     917</span>              :     eigen = std::move(slepc);</span>
-<span id="L918"><span class="lineNum">     918</span>              : #endif</span>
-<span id="L919"><span class="lineNum">     919</span>              :   }</span>
-<span id="L920"><span class="lineNum">     920</span> <span class="tlaGNC">          84 : }</span></span>
-<span id="L921"><span class="lineNum">     921</span>              : </span>
-<span id="L922"><span class="lineNum">     922</span>              : }  // namespace palace</span>
+<span id="L330"><span class="lineNum">     330</span>              :   std::ranges::sort(mode_perm,</span>
+<span id="L331"><span class="lineNum">     331</span> <span class="tlaGNC">         896 :                     [this, sigma, kn_target](int a, int b)</span></span>
+<span id="L332"><span class="lineNum">     332</span>              :                     {</span>
+<span id="L333"><span class="lineNum">     333</span> <span class="tlaGNC">         896 :                       auto kn_a = std::sqrt(-sigma - 1.0 / eigen-&gt;GetEigenvalue(a));</span></span>
+<span id="L334"><span class="lineNum">     334</span> <span class="tlaGNC">         896 :                       auto kn_b = std::sqrt(-sigma - 1.0 / eigen-&gt;GetEigenvalue(b));</span></span>
+<span id="L335"><span class="lineNum">     335</span> <span class="tlaGNC">         896 :                       return std::abs(kn_a.real() - kn_target) &lt;</span></span>
+<span id="L336"><span class="lineNum">     336</span> <span class="tlaGNC">         896 :                              std::abs(kn_b.real() - kn_target);</span></span>
+<span id="L337"><span class="lineNum">     337</span>              :                     });</span>
+<span id="L338"><span class="lineNum">     338</span>              : </span>
+<span id="L339"><span class="lineNum">     339</span> <span class="tlaGNC">         169 :   if (real_frequency &amp;&amp; num_conv &gt; 0)</span></span>
+<span id="L340"><span class="lineNum">     340</span>              :   {</span>
+<span id="L341"><span class="lineNum">     341</span> <span class="tlaGNC">         156 :     const int selected = std::min(num_modes - 1, num_conv - 1);</span></span>
+<span id="L342"><span class="lineNum">     342</span> <span class="tlaGNC">         156 :     warm_start.SetSize(nd_size + h1_size);</span></span>
+<span id="L343"><span class="lineNum">     343</span> <span class="tlaGNC">         156 :     warm_start.UseDevice(true);</span></span>
+<span id="L344"><span class="lineNum">     344</span> <span class="tlaGNC">         156 :     eigen-&gt;GetEigenvector(mode_perm[selected], warm_start);</span></span>
+<span id="L345"><span class="lineNum">     345</span> <span class="tlaGNC">         156 :     linalg::Normalize(solver_comm, warm_start);</span></span>
+<span id="L346"><span class="lineNum">     346</span> <span class="tlaGNC">         156 :     reduced_model-&gt;ObserveExactEigenvectors(num_conv, *eigen, mode_perm);</span></span>
+<span id="L347"><span class="lineNum">     347</span>              :   }</span>
+<span id="L348"><span class="lineNum">     348</span> <span class="tlaGNC">         169 :   return {num_conv, sigma};</span></span>
+<span id="L349"><span class="lineNum">     349</span>              : }</span>
+<span id="L350"><span class="lineNum">     350</span>              : </span>
+<span id="L351"><span class="lineNum">     351</span> <span class="tlaUNC tlaBgUNC">           0 : void ModeEigenSolver::SetSynthesisTol(double eig_tol_new, double ksp_tol_new)</span></span>
+<span id="L352"><span class="lineNum">     352</span>              : {</span>
+<span id="L353"><span class="lineNum">     353</span> <span class="tlaUNC">           0 :   eig_tol = eig_tol_new;</span></span>
+<span id="L354"><span class="lineNum">     354</span> <span class="tlaUNC">           0 :   if (eigen)</span></span>
+<span id="L355"><span class="lineNum">     355</span>              :   {</span>
+<span id="L356"><span class="lineNum">     356</span> <span class="tlaUNC">           0 :     eigen-&gt;SetTol(eig_tol);</span></span>
+<span id="L357"><span class="lineNum">     357</span>              :   }</span>
+<span id="L358"><span class="lineNum">     358</span> <span class="tlaUNC">           0 :   if (ksp)</span></span>
+<span id="L359"><span class="lineNum">     359</span>              :   {</span>
+<span id="L360"><span class="lineNum">     360</span>              :     ksp-&gt;SetRelTol(ksp_tol_new);</span>
+<span id="L361"><span class="lineNum">     361</span>              :   }</span>
+<span id="L362"><span class="lineNum">     362</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L363"><span class="lineNum">     363</span>              : </span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC tlaBgGNC">           9 : void ModeEigenSolver::ConfigureReducedModelTraining(std::size_t max_basis_size)</span></span>
+<span id="L365"><span class="lineNum">     365</span>              : {</span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">           9 :   reduced_model-&gt;ConfigureTraining(max_basis_size);</span></span>
+<span id="L367"><span class="lineNum">     367</span> <span class="tlaGNC">           9 : }</span></span>
+<span id="L368"><span class="lineNum">     368</span>              : </span>
+<span id="L369"><span class="lineNum">     369</span> <span class="tlaGNC">           9 : void ModeEigenSolver::EnableReducedModel(double adaptive_tol)</span></span>
+<span id="L370"><span class="lineNum">     370</span>              : {</span>
+<span id="L371"><span class="lineNum">     371</span> <span class="tlaGNC">           9 :   int has_basis = reduced_model-&gt;HasBasis() ? 1 : 0;</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">           9 :   Mpi::GlobalMax(1, &amp;has_basis, nd_fespace.GetComm());</span></span>
+<span id="L373"><span class="lineNum">     373</span> <span class="tlaGNC">           9 :   reduced_model-&gt;Enable(has_basis != 0, adaptive_tol, opA.get(), last_assembled_omega,</span></span>
+<span id="L374"><span class="lineNum">     374</span>              :                         last_assembled_sigma);</span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaGNC">           9 : }</span></span>
+<span id="L376"><span class="lineNum">     376</span>              : </span>
+<span id="L377"><span class="lineNum">     377</span> <span class="tlaGNC">         221 : std::complex&lt;double&gt; ModeEigenSolver::GetEigenvalue(int i) const</span></span>
+<span id="L378"><span class="lineNum">     378</span>              : {</span>
+<span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">         221 :   return reduced_model-&gt;HasSolution() ? reduced_model-&gt;GetEigenvalue(i)</span></span>
+<span id="L380"><span class="lineNum">     380</span> <span class="tlaGNC">         194 :                                       : eigen-&gt;GetEigenvalue(mode_perm[i]);</span></span>
+<span id="L381"><span class="lineNum">     381</span>              : }</span>
+<span id="L382"><span class="lineNum">     382</span>              : </span>
+<span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">          30 : double ModeEigenSolver::GetError(int i, EigenvalueSolver::ErrorType type) const</span></span>
+<span id="L384"><span class="lineNum">     384</span>              : {</span>
+<span id="L385"><span class="lineNum">     385</span> <span class="tlaGNC">          30 :   if (reduced_model-&gt;HasSolution())</span></span>
+<span id="L386"><span class="lineNum">     386</span>              :   {</span>
+<span id="L387"><span class="lineNum">     387</span> <span class="tlaGNC">          27 :     MFEM_VERIFY(type == EigenvalueSolver::ErrorType::BACKWARD,</span></span>
+<span id="L388"><span class="lineNum">     388</span>              :                 &quot;Reduced mode solutions only provide backward errors!&quot;);</span>
+<span id="L389"><span class="lineNum">     389</span> <span class="tlaGNC">          27 :     return reduced_model-&gt;GetBackwardError(i);</span></span>
+<span id="L390"><span class="lineNum">     390</span>              :   }</span>
+<span id="L391"><span class="lineNum">     391</span> <span class="tlaGNC">           3 :   return eigen-&gt;GetError(mode_perm[i], type);</span></span>
+<span id="L392"><span class="lineNum">     392</span>              : }</span>
+<span id="L393"><span class="lineNum">     393</span>              : </span>
+<span id="L394"><span class="lineNum">     394</span> <span class="tlaGNC">         133 : void ModeEigenSolver::GetEigenvector(int i, ComplexVector &amp;x) const</span></span>
+<span id="L395"><span class="lineNum">     395</span>              : {</span>
+<span id="L396"><span class="lineNum">     396</span> <span class="tlaGNC">         133 :   if (reduced_model-&gt;HasSolution())</span></span>
+<span id="L397"><span class="lineNum">     397</span>              :   {</span>
+<span id="L398"><span class="lineNum">     398</span> <span class="tlaUNC tlaBgUNC">           0 :     reduced_model-&gt;GetEigenvector(i, x);</span></span>
+<span id="L399"><span class="lineNum">     399</span>              :   }</span>
+<span id="L400"><span class="lineNum">     400</span>              :   else</span>
+<span id="L401"><span class="lineNum">     401</span>              :   {</span>
+<span id="L402"><span class="lineNum">     402</span> <span class="tlaGNC tlaBgGNC">         133 :     eigen-&gt;GetEigenvector(mode_perm[i], x);</span></span>
+<span id="L403"><span class="lineNum">     403</span>              :   }</span>
+<span id="L404"><span class="lineNum">     404</span> <span class="tlaGNC">         133 : }</span></span>
+<span id="L405"><span class="lineNum">     405</span>              : </span>
+<span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">          88 : std::complex&lt;double&gt; ModeEigenSolver::GetPropagationConstant(int i) const</span></span>
+<span id="L407"><span class="lineNum">     407</span>              : {</span>
+<span id="L408"><span class="lineNum">     408</span> <span class="tlaGNC">          88 :   return std::sqrt(-sigma_cached - 1.0 / GetEigenvalue(i));</span></span>
+<span id="L409"><span class="lineNum">     409</span>              : }</span>
+<span id="L410"><span class="lineNum">     410</span> <span class="tlaUNC tlaBgUNC">           0 : bool ModeEigenSolver::IsPropagating(std::complex&lt;double&gt; kn)</span></span>
+<span id="L411"><span class="lineNum">     411</span>              : {</span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaUNC">           0 :   return std::abs(kn.imag()) &lt; 0.1 * std::abs(kn.real()) &amp;&amp; std::abs(kn.real()) &gt; 0.0;</span></span>
+<span id="L413"><span class="lineNum">     413</span>              : }</span>
+<span id="L414"><span class="lineNum">     414</span> <span class="tlaGNC tlaBgGNC">         106 : ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixB(</span></span>
+<span id="L415"><span class="lineNum">     415</span>              :     const mfem::HypreParMatrix *Bttr, const mfem::HypreParMatrix *Btti,</span>
+<span id="L416"><span class="lineNum">     416</span>              :     const mfem::HypreParMatrix *Btnr, const mfem::HypreParMatrix *Btni,</span>
+<span id="L417"><span class="lineNum">     417</span>              :     const mfem::HypreParMatrix *Dnn) const</span>
+<span id="L418"><span class="lineNum">     418</span>              : {</span>
+<span id="L419"><span class="lineNum">     419</span>              :   // Construct the 2x2 block matrices for the eigenvalue problem A e = lambda B e.</span>
+<span id="L420"><span class="lineNum">     420</span>              :   // B = [Btt, 0; Btn, Dnn] where Btn = Atn^T and Dnn is the zero diagonal.</span>
+<span id="L421"><span class="lineNum">     421</span>              :   mfem::Array2D&lt;const mfem::HypreParMatrix *&gt; blocks(2, 2);</span>
+<span id="L422"><span class="lineNum">     422</span> <span class="tlaGNC">         106 :   blocks(0, 0) = Bttr;</span></span>
+<span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">         106 :   blocks(0, 1) = nullptr;</span></span>
+<span id="L424"><span class="lineNum">     424</span> <span class="tlaGNC">         106 :   blocks(1, 0) = Btnr;</span></span>
+<span id="L425"><span class="lineNum">     425</span> <span class="tlaGNC">         106 :   blocks(1, 1) = Dnn;</span></span>
+<span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">         106 :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; Br(mfem::HypreParMatrixFromBlocks(blocks));</span></span>
+<span id="L427"><span class="lineNum">     427</span>              : </span>
+<span id="L428"><span class="lineNum">     428</span>              :   std::unique_ptr&lt;mfem::HypreParMatrix&gt; Bi;</span>
+<span id="L429"><span class="lineNum">     429</span> <span class="tlaGNC">         106 :   if (Btti || Btni)</span></span>
+<span id="L430"><span class="lineNum">     430</span>              :   {</span>
+<span id="L431"><span class="lineNum">     431</span>              :     // NOTE: Currently unreachable (Btt, Btn are real for real permeability). If complex</span>
+<span id="L432"><span class="lineNum">     432</span>              :     // permeability is added, zero placeholder blocks would be needed here too (same as</span>
+<span id="L433"><span class="lineNum">     433</span>              :     // the imaginary A block above) to prevent HypreParMatrixFromBlocks sizing errors.</span>
+<span id="L434"><span class="lineNum">     434</span> <span class="tlaUNC tlaBgUNC">           0 :     blocks(0, 0) = Btti;</span></span>
+<span id="L435"><span class="lineNum">     435</span> <span class="tlaUNC">           0 :     blocks(0, 1) = nullptr;</span></span>
+<span id="L436"><span class="lineNum">     436</span> <span class="tlaUNC">           0 :     blocks(1, 0) = Btni;</span></span>
+<span id="L437"><span class="lineNum">     437</span> <span class="tlaUNC">           0 :     blocks(1, 1) = nullptr;</span></span>
+<span id="L438"><span class="lineNum">     438</span> <span class="tlaUNC">           0 :     Bi.reset(mfem::HypreParMatrixFromBlocks(blocks));</span></span>
+<span id="L439"><span class="lineNum">     439</span>              :   }</span>
+<span id="L440"><span class="lineNum">     440</span>              : </span>
+<span id="L441"><span class="lineNum">     441</span>              :   // Eliminate boundary true dofs constrained by Dirichlet BCs.</span>
+<span id="L442"><span class="lineNum">     442</span> <span class="tlaGNC tlaBgGNC">         106 :   Br-&gt;EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);</span></span>
+<span id="L443"><span class="lineNum">     443</span> <span class="tlaGNC">         106 :   if (Bi)</span></span>
+<span id="L444"><span class="lineNum">     444</span>              :   {</span>
+<span id="L445"><span class="lineNum">     445</span> <span class="tlaUNC tlaBgUNC">           0 :     Bi-&gt;EliminateBC(dbc_tdof_list, Operator::DIAG_ZERO);</span></span>
+<span id="L446"><span class="lineNum">     446</span>              :   }</span>
+<span id="L447"><span class="lineNum">     447</span>              : </span>
+<span id="L448"><span class="lineNum">     448</span> <span class="tlaGNC tlaBgGNC">         106 :   return {std::move(Br), std::move(Bi)};</span></span>
+<span id="L449"><span class="lineNum">     449</span>              : }</span>
+<span id="L450"><span class="lineNum">     450</span>              : </span>
+<span id="L451"><span class="lineNum">     451</span> <span class="tlaGNC">          84 : void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)</span></span>
+<span id="L452"><span class="lineNum">     452</span>              : {</span>
+<span id="L453"><span class="lineNum">     453</span>              :   // GMRES iterative solver preconditioned with a sparse direct solver.</span>
+<span id="L454"><span class="lineNum">     454</span> <span class="tlaGNC">          84 :   auto gmres = std::make_unique&lt;GmresSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
+<span id="L455"><span class="lineNum">     455</span> <span class="tlaGNC">          84 :   gmres-&gt;SetInitialGuess(false);</span></span>
+<span id="L456"><span class="lineNum">     456</span> <span class="tlaGNC">          84 :   gmres-&gt;SetRelTol(linear.tol);</span></span>
+<span id="L457"><span class="lineNum">     457</span> <span class="tlaGNC">          84 :   gmres-&gt;SetMaxIter(linear.max_it);</span></span>
+<span id="L458"><span class="lineNum">     458</span> <span class="tlaGNC">          84 :   gmres-&gt;SetRestartDim(linear.max_size);</span></span>
+<span id="L459"><span class="lineNum">     459</span>              :   gmres-&gt;EnableTimer();</span>
+<span id="L460"><span class="lineNum">     460</span>              : </span>
+<span id="L461"><span class="lineNum">     461</span>              :   // Select sparse direct solver type. Multigrid (AMS, BoomerAMG) is not applicable for</span>
+<span id="L462"><span class="lineNum">     462</span>              :   // the combined ND+H1 block system, so fall back to a sparse direct solver.</span>
+<span id="L463"><span class="lineNum">     463</span> <span class="tlaGNC">          84 :   LinearSolver pc_type = linear.type;</span></span>
+<span id="L464"><span class="lineNum">     464</span> <span class="tlaGNC">          84 :   if (pc_type == LinearSolver::DEFAULT || pc_type == LinearSolver::AMS ||</span></span>
+<span id="L465"><span class="lineNum">     465</span>              :       pc_type == LinearSolver::BOOMER_AMG)</span>
+<span id="L466"><span class="lineNum">     466</span>              :   {</span>
+<span id="L467"><span class="lineNum">     467</span>              : #if defined(MFEM_USE_SUPERLU)</span>
+<span id="L468"><span class="lineNum">     468</span>              :     pc_type = LinearSolver::SUPERLU;</span>
+<span id="L469"><span class="lineNum">     469</span>              : #elif defined(MFEM_USE_STRUMPACK)</span>
+<span id="L470"><span class="lineNum">     470</span> <span class="tlaUNC tlaBgUNC">           0 :     pc_type = LinearSolver::STRUMPACK;</span></span>
+<span id="L471"><span class="lineNum">     471</span>              : #elif defined(MFEM_USE_MUMPS)</span>
+<span id="L472"><span class="lineNum">     472</span>              :     pc_type = LinearSolver::MUMPS;</span>
+<span id="L473"><span class="lineNum">     473</span>              : #elif defined(MFEM_USE_CUDSS)</span>
+<span id="L474"><span class="lineNum">     474</span>              :     pc_type = LinearSolver::CUDSS;</span>
+<span id="L475"><span class="lineNum">     475</span>              : #else</span>
+<span id="L476"><span class="lineNum">     476</span>              :     MFEM_ABORT(&quot;ModeEigenSolver requires building with SuperLU_DIST, STRUMPACK, &quot;</span>
+<span id="L477"><span class="lineNum">     477</span>              :                &quot;MUMPS, or cuDSS!&quot;);</span>
+<span id="L478"><span class="lineNum">     478</span>              : #endif</span>
+<span id="L479"><span class="lineNum">     479</span>              :   }</span>
+<span id="L480"><span class="lineNum">     480</span>              :   else if (pc_type == LinearSolver::SUPERLU)</span>
+<span id="L481"><span class="lineNum">     481</span>              :   {</span>
+<span id="L482"><span class="lineNum">     482</span>              : #if !defined(MFEM_USE_SUPERLU)</span>
+<span id="L483"><span class="lineNum">     483</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with SuperLU_DIST support, please choose a &quot;</span></span>
+<span id="L484"><span class="lineNum">     484</span>              :                &quot;different solver!&quot;);</span>
+<span id="L485"><span class="lineNum">     485</span>              : #endif</span>
+<span id="L486"><span class="lineNum">     486</span>              :   }</span>
+<span id="L487"><span class="lineNum">     487</span>              :   else if (pc_type == LinearSolver::STRUMPACK || pc_type == LinearSolver::STRUMPACK_MP)</span>
+<span id="L488"><span class="lineNum">     488</span>              :   {</span>
+<span id="L489"><span class="lineNum">     489</span>              : #if !defined(MFEM_USE_STRUMPACK)</span>
+<span id="L490"><span class="lineNum">     490</span>              :     MFEM_ABORT(&quot;Solver was not built with STRUMPACK support, please choose a &quot;</span>
+<span id="L491"><span class="lineNum">     491</span>              :                &quot;different solver!&quot;);</span>
+<span id="L492"><span class="lineNum">     492</span>              : #endif</span>
+<span id="L493"><span class="lineNum">     493</span>              :   }</span>
+<span id="L494"><span class="lineNum">     494</span>              :   else if (pc_type == LinearSolver::MUMPS)</span>
+<span id="L495"><span class="lineNum">     495</span>              :   {</span>
+<span id="L496"><span class="lineNum">     496</span>              : #if !defined(MFEM_USE_MUMPS)</span>
+<span id="L497"><span class="lineNum">     497</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with MUMPS support, please choose a &quot;</span></span>
+<span id="L498"><span class="lineNum">     498</span>              :                &quot;different solver!&quot;);</span>
+<span id="L499"><span class="lineNum">     499</span>              : #endif</span>
+<span id="L500"><span class="lineNum">     500</span>              :   }</span>
+<span id="L501"><span class="lineNum">     501</span>              :   else if (pc_type == LinearSolver::CUDSS)</span>
+<span id="L502"><span class="lineNum">     502</span>              :   {</span>
+<span id="L503"><span class="lineNum">     503</span>              : #if !defined(MFEM_USE_CUDSS)</span>
+<span id="L504"><span class="lineNum">     504</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with cuDSS support, please choose a &quot;</span></span>
+<span id="L505"><span class="lineNum">     505</span>              :                &quot;different solver&quot;);</span>
+<span id="L506"><span class="lineNum">     506</span>              : #endif</span>
+<span id="L507"><span class="lineNum">     507</span>              :   }</span>
+<span id="L508"><span class="lineNum">     508</span>              : </span>
+<span id="L509"><span class="lineNum">     509</span>              :   // A wave-port exact solve can transition between real and complex frequencies, changing</span>
+<span id="L510"><span class="lineNum">     510</span>              :   // the doubled-real sparsity pattern. Disable symbolic reuse only for that case; preserve</span>
+<span id="L511"><span class="lineNum">     511</span>              :   // the existing behavior for BoundaryMode and real-matrix preconditioners.</span>
+<span id="L512"><span class="lineNum">     512</span> <span class="tlaGNC tlaBgGNC">          84 :   const bool reorder_reuse = !normal || !linear.complex_coarse_solve || linear.pc_mat_real;</span></span>
+<span id="L513"><span class="lineNum">     513</span>              :   auto pc = std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaGNC">         252 :       [&amp;]() -&gt; std::unique_ptr&lt;mfem::Solver&gt;</span></span>
+<span id="L515"><span class="lineNum">     515</span>              :       {</span>
+<span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">          84 :         if (pc_type == LinearSolver::SUPERLU)</span></span>
+<span id="L517"><span class="lineNum">     517</span>              :         {</span>
+<span id="L518"><span class="lineNum">     518</span>              : #if defined(MFEM_USE_SUPERLU)</span>
+<span id="L519"><span class="lineNum">     519</span>              :           return std::make_unique&lt;SuperLUSolver&gt;(comm, linear.sym_factorization,</span>
+<span id="L520"><span class="lineNum">     520</span>              :                                                  linear.superlu_3d, reorder_reuse,</span>
+<span id="L521"><span class="lineNum">     521</span>              :                                                  verbose - 1);</span>
+<span id="L522"><span class="lineNum">     522</span>              : #endif</span>
+<span id="L523"><span class="lineNum">     523</span>              :         }</span>
+<span id="L524"><span class="lineNum">     524</span> <span class="tlaGNC">          84 :         else if (pc_type == LinearSolver::STRUMPACK ||</span></span>
+<span id="L525"><span class="lineNum">     525</span>              :                  pc_type == LinearSolver::STRUMPACK_MP)</span>
+<span id="L526"><span class="lineNum">     526</span>              :         {</span>
+<span id="L527"><span class="lineNum">     527</span>              : #if defined(MFEM_USE_STRUMPACK)</span>
+<span id="L528"><span class="lineNum">     528</span> <span class="tlaGNC">         168 :           return std::make_unique&lt;StrumpackSolver&gt;(</span></span>
+<span id="L529"><span class="lineNum">     529</span> <span class="tlaGNC">          84 :               comm, linear.sym_factorization, linear.strumpack_compression_type,</span></span>
+<span id="L530"><span class="lineNum">     530</span> <span class="tlaGNC">          84 :               linear.strumpack_lr_tol, linear.strumpack_butterfly_l,</span></span>
+<span id="L531"><span class="lineNum">     531</span> <span class="tlaGNC">          84 :               linear.strumpack_lossy_precision, reorder_reuse, verbose - 1);</span></span>
+<span id="L532"><span class="lineNum">     532</span>              : #endif</span>
+<span id="L533"><span class="lineNum">     533</span>              :         }</span>
+<span id="L534"><span class="lineNum">     534</span>              :         else if (pc_type == LinearSolver::MUMPS)</span>
+<span id="L535"><span class="lineNum">     535</span>              :         {</span>
+<span id="L536"><span class="lineNum">     536</span>              : #if defined(MFEM_USE_MUMPS)</span>
+<span id="L537"><span class="lineNum">     537</span>              :           return std::make_unique&lt;MumpsSolver&gt;(</span>
+<span id="L538"><span class="lineNum">     538</span>              :               comm, MatrixSymmetry::UNSYMMETRIC, linear.sym_factorization,</span>
+<span id="L539"><span class="lineNum">     539</span>              :               linear.strumpack_lr_tol, reorder_reuse, verbose - 1);</span>
+<span id="L540"><span class="lineNum">     540</span>              : #endif</span>
+<span id="L541"><span class="lineNum">     541</span>              :         }</span>
+<span id="L542"><span class="lineNum">     542</span>              :         else if (pc_type == LinearSolver::CUDSS)</span>
+<span id="L543"><span class="lineNum">     543</span>              :         {</span>
+<span id="L544"><span class="lineNum">     544</span>              : #if defined(MFEM_USE_CUDSS)</span>
+<span id="L545"><span class="lineNum">     545</span>              :           return std::make_unique&lt;CuDSSSolver&gt;(comm, MatrixSymmetry::UNSYMMETRIC,</span>
+<span id="L546"><span class="lineNum">     546</span>              :                                                linear.sym_factorization, reorder_reuse,</span>
+<span id="L547"><span class="lineNum">     547</span>              :                                                verbose - 1);</span>
+<span id="L548"><span class="lineNum">     548</span>              : #endif</span>
+<span id="L549"><span class="lineNum">     549</span>              :         }</span>
+<span id="L550"><span class="lineNum">     550</span> <span class="tlaUNC tlaBgUNC">           0 :         MFEM_ABORT(&quot;Unsupported linear solver type for boundary mode solver!&quot;);</span></span>
+<span id="L551"><span class="lineNum">     551</span>              :         return {};</span>
+<span id="L552"><span class="lineNum">     552</span> <span class="tlaGNC tlaBgGNC">         168 :       }(),</span></span>
+<span id="L553"><span class="lineNum">     553</span> <span class="tlaGNC">          84 :       false, false, false, reorder_reuse);</span></span>
+<span id="L554"><span class="lineNum">     554</span> <span class="tlaGNC">         168 :   ksp = std::make_unique&lt;ComplexKspSolver&gt;(std::move(gmres), std::move(pc));</span></span>
+<span id="L555"><span class="lineNum">     555</span> <span class="tlaGNC">          84 : }</span></span>
+<span id="L556"><span class="lineNum">     556</span>              : </span>
+<span id="L557"><span class="lineNum">     557</span> <span class="tlaUNC tlaBgUNC">           0 : void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)</span></span>
+<span id="L558"><span class="lineNum">     558</span>              : {</span>
+<span id="L559"><span class="lineNum">     559</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(bmo, &quot;Multigrid linear solver requires BMO ctor (2D domain path)!&quot;);</span></span>
+<span id="L560"><span class="lineNum">     560</span> <span class="tlaUNC">           0 :   const int print = verbose - 1;</span></span>
+<span id="L561"><span class="lineNum">     561</span>              : </span>
+<span id="L562"><span class="lineNum">     562</span>              :   // Determine coarse solver types for the ND and H1 blocks from the config. The default</span>
+<span id="L563"><span class="lineNum">     563</span>              :   // type is resolved in IoData (sparse direct for frequency-domain problems, AMS</span>
+<span id="L564"><span class="lineNum">     564</span>              :   // otherwise). For the H1 block, AMS is not applicable — use BoomerAMG instead.</span>
+<span id="L565"><span class="lineNum">     565</span> <span class="tlaUNC">           0 :   LinearSolver nd_pc_type = linear.type;</span></span>
+<span id="L566"><span class="lineNum">     566</span>              :   LinearSolver h1_pc_type = linear.type;</span>
+<span id="L567"><span class="lineNum">     567</span>              : </span>
+<span id="L568"><span class="lineNum">     568</span> <span class="tlaUNC">           0 :   if (nd_pc_type == LinearSolver::BOOMER_AMG)</span></span>
+<span id="L569"><span class="lineNum">     569</span>              :   {</span>
+<span id="L570"><span class="lineNum">     570</span> <span class="tlaUNC">           0 :     Mpi::Warning(comm,</span></span>
+<span id="L571"><span class="lineNum">     571</span>              :                  &quot;BoomerAMG is not well-suited for the Nedelec system matrix, consider &quot;</span>
+<span id="L572"><span class="lineNum">     572</span>              :                  &quot;using another solver.\n&quot;);</span>
+<span id="L573"><span class="lineNum">     573</span>              :   }</span>
+<span id="L574"><span class="lineNum">     574</span> <span class="tlaUNC">           0 :   if (h1_pc_type == LinearSolver::AMS)</span></span>
+<span id="L575"><span class="lineNum">     575</span>              :   {</span>
+<span id="L576"><span class="lineNum">     576</span>              :     h1_pc_type = LinearSolver::BOOMER_AMG;</span>
+<span id="L577"><span class="lineNum">     577</span> <span class="tlaUNC">           0 :     Mpi::Print(&quot; Multigrid coarse solve: AMS for ND block, BoomerAMG for H1 block\n&quot;);</span></span>
+<span id="L578"><span class="lineNum">     578</span>              :   }</span>
+<span id="L579"><span class="lineNum">     579</span>              : </span>
+<span id="L580"><span class="lineNum">     580</span>              :   // Helper to create a coarse solver from the type.</span>
+<span id="L581"><span class="lineNum">     581</span>              :   auto MakeCoarseSolver =</span>
+<span id="L582"><span class="lineNum">     582</span> <span class="tlaUNC">           0 :       [&amp;](LinearSolver type) -&gt; std::unique_ptr&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;</span></span>
+<span id="L583"><span class="lineNum">     583</span>              :   {</span>
+<span id="L584"><span class="lineNum">     584</span> <span class="tlaUNC">           0 :     switch (type)</span></span>
+<span id="L585"><span class="lineNum">     585</span>              :     {</span>
+<span id="L586"><span class="lineNum">     586</span> <span class="tlaUNC">           0 :       case LinearSolver::AMS:</span></span>
+<span id="L587"><span class="lineNum">     587</span> <span class="tlaUNC">           0 :         MFEM_VERIFY(bmo, &quot;AMS coarse solver requires BMO ctor (2D domain path)!&quot;);</span></span>
+<span id="L588"><span class="lineNum">     588</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L589"><span class="lineNum">     589</span> <span class="tlaUNC">           0 :             std::make_unique&lt;HypreAmsSolver&gt;(</span></span>
+<span id="L590"><span class="lineNum">     590</span>              :                 bmo-&gt;GetNDSpaceHierarchy().GetFESpaceAtLevel(0),</span>
+<span id="L591"><span class="lineNum">     591</span> <span class="tlaUNC">           0 :                 bmo-&gt;GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(0), linear.ams_max_it,</span></span>
+<span id="L592"><span class="lineNum">     592</span> <span class="tlaUNC">           0 :                 linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,</span></span>
+<span id="L593"><span class="lineNum">     593</span> <span class="tlaUNC">           0 :                 linear.amg_agg_coarsen, print),</span></span>
+<span id="L594"><span class="lineNum">     594</span> <span class="tlaUNC">           0 :             true, linear.complex_coarse_solve, linear.drop_small_entries,</span></span>
+<span id="L595"><span class="lineNum">     595</span> <span class="tlaUNC">           0 :             linear.reorder_reuse);</span></span>
+<span id="L596"><span class="lineNum">     596</span> <span class="tlaUNC">           0 :       case LinearSolver::BOOMER_AMG:</span></span>
+<span id="L597"><span class="lineNum">     597</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L598"><span class="lineNum">     598</span> <span class="tlaUNC">           0 :             std::make_unique&lt;BoomerAmgSolver&gt;(1, linear.mg_smooth_it,</span></span>
+<span id="L599"><span class="lineNum">     599</span> <span class="tlaUNC">           0 :                                               linear.amg_agg_coarsen, print),</span></span>
+<span id="L600"><span class="lineNum">     600</span> <span class="tlaUNC">           0 :             true, linear.complex_coarse_solve, linear.drop_small_entries,</span></span>
+<span id="L601"><span class="lineNum">     601</span> <span class="tlaUNC">           0 :             linear.reorder_reuse);</span></span>
+<span id="L602"><span class="lineNum">     602</span> <span class="tlaUNC">           0 :       case LinearSolver::SUPERLU:</span></span>
+<span id="L603"><span class="lineNum">     603</span>              : #if defined(MFEM_USE_SUPERLU)</span>
+<span id="L604"><span class="lineNum">     604</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L605"><span class="lineNum">     605</span>              :             std::make_unique&lt;SuperLUSolver&gt;(comm, linear.sym_factorization,</span>
+<span id="L606"><span class="lineNum">     606</span>              :                                             linear.superlu_3d, true, print),</span>
+<span id="L607"><span class="lineNum">     607</span>              :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span>
+<span id="L608"><span class="lineNum">     608</span>              :             linear.reorder_reuse);</span>
+<span id="L609"><span class="lineNum">     609</span>              : #else</span>
+<span id="L610"><span class="lineNum">     610</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Solver was not built with SuperLU_DIST support!&quot;);</span></span>
+<span id="L611"><span class="lineNum">     611</span>              :         return {};</span>
+<span id="L612"><span class="lineNum">     612</span>              : #endif</span>
+<span id="L613"><span class="lineNum">     613</span> <span class="tlaUNC">           0 :       case LinearSolver::STRUMPACK:</span></span>
+<span id="L614"><span class="lineNum">     614</span>              :       case LinearSolver::STRUMPACK_MP:</span>
+<span id="L615"><span class="lineNum">     615</span>              : #if defined(MFEM_USE_STRUMPACK)</span>
+<span id="L616"><span class="lineNum">     616</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L617"><span class="lineNum">     617</span> <span class="tlaUNC">           0 :             std::make_unique&lt;StrumpackSolver&gt;(</span></span>
+<span id="L618"><span class="lineNum">     618</span> <span class="tlaUNC">           0 :                 comm, linear.sym_factorization, linear.strumpack_compression_type,</span></span>
+<span id="L619"><span class="lineNum">     619</span> <span class="tlaUNC">           0 :                 linear.strumpack_lr_tol, linear.strumpack_butterfly_l,</span></span>
+<span id="L620"><span class="lineNum">     620</span> <span class="tlaUNC">           0 :                 linear.strumpack_lossy_precision, true, print),</span></span>
+<span id="L621"><span class="lineNum">     621</span> <span class="tlaUNC">           0 :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span></span>
+<span id="L622"><span class="lineNum">     622</span> <span class="tlaUNC">           0 :             linear.reorder_reuse);</span></span>
+<span id="L623"><span class="lineNum">     623</span>              : #else</span>
+<span id="L624"><span class="lineNum">     624</span>              :         MFEM_ABORT(&quot;Solver was not built with STRUMPACK support!&quot;);</span>
+<span id="L625"><span class="lineNum">     625</span>              :         return {};</span>
+<span id="L626"><span class="lineNum">     626</span>              : #endif</span>
+<span id="L627"><span class="lineNum">     627</span> <span class="tlaUNC">           0 :       case LinearSolver::MUMPS:</span></span>
+<span id="L628"><span class="lineNum">     628</span>              : #if defined(MFEM_USE_MUMPS)</span>
+<span id="L629"><span class="lineNum">     629</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L630"><span class="lineNum">     630</span>              :             std::make_unique&lt;MumpsSolver&gt;(comm, MatrixSymmetry::UNSYMMETRIC,</span>
+<span id="L631"><span class="lineNum">     631</span>              :                                           linear.sym_factorization, linear.strumpack_lr_tol,</span>
+<span id="L632"><span class="lineNum">     632</span>              :                                           true, print),</span>
+<span id="L633"><span class="lineNum">     633</span>              :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span>
+<span id="L634"><span class="lineNum">     634</span>              :             linear.reorder_reuse);</span>
+<span id="L635"><span class="lineNum">     635</span>              : #else</span>
+<span id="L636"><span class="lineNum">     636</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Solver was not built with MUMPS support!&quot;);</span></span>
+<span id="L637"><span class="lineNum">     637</span>              :         return {};</span>
+<span id="L638"><span class="lineNum">     638</span>              : #endif</span>
+<span id="L639"><span class="lineNum">     639</span> <span class="tlaUNC">           0 :       case LinearSolver::CUDSS:</span></span>
+<span id="L640"><span class="lineNum">     640</span>              : #if defined(MFEM_USE_CUDSS)</span>
+<span id="L641"><span class="lineNum">     641</span>              :         return std::make_unique&lt;MfemWrapperSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L642"><span class="lineNum">     642</span>              :             std::make_unique&lt;CuDSSSolver&gt;(comm, MatrixSymmetry::UNSYMMETRIC,</span>
+<span id="L643"><span class="lineNum">     643</span>              :                                           linear.sym_factorization, true, print),</span>
+<span id="L644"><span class="lineNum">     644</span>              :             false, linear.complex_coarse_solve, linear.drop_small_entries,</span>
+<span id="L645"><span class="lineNum">     645</span>              :             linear.reorder_reuse);</span>
+<span id="L646"><span class="lineNum">     646</span>              : #else</span>
+<span id="L647"><span class="lineNum">     647</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Solver was not built with cuDSS support!&quot;);</span></span>
+<span id="L648"><span class="lineNum">     648</span>              :         return {};</span>
+<span id="L649"><span class="lineNum">     649</span>              : #endif</span>
+<span id="L650"><span class="lineNum">     650</span> <span class="tlaUNC">           0 :       default:</span></span>
+<span id="L651"><span class="lineNum">     651</span> <span class="tlaUNC">           0 :         MFEM_ABORT(&quot;Unsupported coarse solver type for multigrid boundary mode solver!&quot;);</span></span>
+<span id="L652"><span class="lineNum">     652</span>              :         return {};</span>
+<span id="L653"><span class="lineNum">     653</span>              :     }</span>
+<span id="L654"><span class="lineNum">     654</span> <span class="tlaUNC">           0 :   };</span></span>
+<span id="L655"><span class="lineNum">     655</span>              : </span>
+<span id="L656"><span class="lineNum">     656</span>              :   // ND block: p-multigrid with Hiptmair distributive relaxation smoothing.</span>
+<span id="L657"><span class="lineNum">     657</span> <span class="tlaUNC">           0 :   const auto nd_P = bmo-&gt;GetNDSpaceHierarchy().GetProlongationOperators();</span></span>
+<span id="L658"><span class="lineNum">     658</span>              :   const auto nd_G =</span>
+<span id="L659"><span class="lineNum">     659</span> <span class="tlaUNC">           0 :       bmo-&gt;GetNDSpaceHierarchy().GetDiscreteInterpolators(bmo-&gt;GetH1AuxSpaceHierarchy());</span></span>
+<span id="L660"><span class="lineNum">     660</span>              :   auto nd_gmg = std::make_unique&lt;GeometricMultigridSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L661"><span class="lineNum">     661</span> <span class="tlaUNC">           0 :       comm, MakeCoarseSolver(nd_pc_type), nd_P, &amp;nd_G, linear.mg_cycle_it,</span></span>
+<span id="L662"><span class="lineNum">     662</span> <span class="tlaUNC">           0 :       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,</span></span>
+<span id="L663"><span class="lineNum">     663</span> <span class="tlaUNC">           0 :       linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);</span></span>
+<span id="L664"><span class="lineNum">     664</span>              :   nd_gmg-&gt;EnableTimer();</span>
+<span id="L665"><span class="lineNum">     665</span>              : </span>
+<span id="L666"><span class="lineNum">     666</span>              :   // H1 block: p-multigrid with Chebyshev smoothing.</span>
+<span id="L667"><span class="lineNum">     667</span> <span class="tlaUNC">           0 :   const auto h1_P = bmo-&gt;GetH1SpaceHierarchy().GetProlongationOperators();</span></span>
+<span id="L668"><span class="lineNum">     668</span>              :   auto h1_gmg = std::make_unique&lt;GeometricMultigridSolver&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L669"><span class="lineNum">     669</span> <span class="tlaUNC">           0 :       comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,</span></span>
+<span id="L670"><span class="lineNum">     670</span> <span class="tlaUNC">           0 :       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,</span></span>
+<span id="L671"><span class="lineNum">     671</span> <span class="tlaUNC">           0 :       linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);</span></span>
+<span id="L672"><span class="lineNum">     672</span>              :   h1_gmg-&gt;EnableTimer();</span>
+<span id="L673"><span class="lineNum">     673</span>              : </span>
+<span id="L674"><span class="lineNum">     674</span>              :   // Combine into block-diagonal preconditioner.</span>
+<span id="L675"><span class="lineNum">     675</span>              :   auto block_pc = std::make_unique&lt;BlockDiagonalPreconditioner&lt;ComplexOperator&gt;&gt;(</span>
+<span id="L676"><span class="lineNum">     676</span> <span class="tlaUNC">           0 :       nd_size, std::move(nd_gmg), std::move(h1_gmg));</span></span>
+<span id="L677"><span class="lineNum">     677</span> <span class="tlaUNC">           0 :   block_pc_ptr = block_pc.get();</span></span>
+<span id="L678"><span class="lineNum">     678</span>              : </span>
+<span id="L679"><span class="lineNum">     679</span>              :   // Outer Krylov solver — use the user-configured type from Solver.Linear.KSPType.</span>
+<span id="L680"><span class="lineNum">     680</span> <span class="tlaUNC">           0 :   std::unique_ptr&lt;IterativeSolver&lt;ComplexOperator&gt;&gt; krylov;</span></span>
+<span id="L681"><span class="lineNum">     681</span> <span class="tlaUNC">           0 :   switch (linear.krylov_solver)</span></span>
+<span id="L682"><span class="lineNum">     682</span>              :   {</span>
+<span id="L683"><span class="lineNum">     683</span> <span class="tlaUNC">           0 :     case KrylovSolver::CG:</span></span>
+<span id="L684"><span class="lineNum">     684</span> <span class="tlaUNC">           0 :       krylov = std::make_unique&lt;CgSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
+<span id="L685"><span class="lineNum">     685</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L686"><span class="lineNum">     686</span> <span class="tlaUNC">           0 :     case KrylovSolver::FGMRES:</span></span>
+<span id="L687"><span class="lineNum">     687</span>              :       {</span>
+<span id="L688"><span class="lineNum">     688</span> <span class="tlaUNC">           0 :         auto fgmres = std::make_unique&lt;FgmresSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
+<span id="L689"><span class="lineNum">     689</span> <span class="tlaUNC">           0 :         fgmres-&gt;SetRestartDim(linear.max_size);</span></span>
+<span id="L690"><span class="lineNum">     690</span>              :         krylov = std::move(fgmres);</span>
+<span id="L691"><span class="lineNum">     691</span>              :       }</span>
+<span id="L692"><span class="lineNum">     692</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L693"><span class="lineNum">     693</span> <span class="tlaUNC">           0 :     case KrylovSolver::GMRES:</span></span>
+<span id="L694"><span class="lineNum">     694</span>              :     case KrylovSolver::DEFAULT:</span>
+<span id="L695"><span class="lineNum">     695</span>              :     default:</span>
+<span id="L696"><span class="lineNum">     696</span>              :       {</span>
+<span id="L697"><span class="lineNum">     697</span> <span class="tlaUNC">           0 :         auto gmres = std::make_unique&lt;GmresSolver&lt;ComplexOperator&gt;&gt;(comm, verbose);</span></span>
+<span id="L698"><span class="lineNum">     698</span> <span class="tlaUNC">           0 :         gmres-&gt;SetRestartDim(linear.max_size);</span></span>
+<span id="L699"><span class="lineNum">     699</span>              :         krylov = std::move(gmres);</span>
+<span id="L700"><span class="lineNum">     700</span>              :       }</span>
+<span id="L701"><span class="lineNum">     701</span> <span class="tlaUNC">           0 :       break;</span></span>
+<span id="L702"><span class="lineNum">     702</span>              :   }</span>
+<span id="L703"><span class="lineNum">     703</span> <span class="tlaUNC">           0 :   krylov-&gt;SetInitialGuess(linear.initial_guess);</span></span>
+<span id="L704"><span class="lineNum">     704</span> <span class="tlaUNC">           0 :   krylov-&gt;SetRelTol(linear.tol);</span></span>
+<span id="L705"><span class="lineNum">     705</span> <span class="tlaUNC">           0 :   krylov-&gt;SetMaxIter(linear.max_it);</span></span>
+<span id="L706"><span class="lineNum">     706</span>              :   krylov-&gt;EnableTimer();</span>
+<span id="L707"><span class="lineNum">     707</span>              : </span>
+<span id="L708"><span class="lineNum">     708</span> <span class="tlaUNC">           0 :   ksp = std::make_unique&lt;ComplexKspSolver&gt;(std::move(krylov), std::move(block_pc));</span></span>
+<span id="L709"><span class="lineNum">     709</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L710"><span class="lineNum">     710</span>              : </span>
+<span id="L711"><span class="lineNum">     711</span>              : std::unique_ptr&lt;ComplexMultigridOperator&gt;</span>
+<span id="L712"><span class="lineNum">     712</span> <span class="tlaUNC">           0 : ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const</span></span>
+<span id="L713"><span class="lineNum">     713</span>              : {</span>
+<span id="L714"><span class="lineNum">     714</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(bmo, &quot;AssembleAttPreconditioner requires BMO ctor (2D domain path)!&quot;);</span></span>
+<span id="L715"><span class="lineNum">     715</span> <span class="tlaUNC">           0 :   const auto n_levels = bmo-&gt;GetNDSpaceHierarchy().GetNumLevels();</span></span>
+<span id="L716"><span class="lineNum">     716</span> <span class="tlaUNC">           0 :   auto B = std::make_unique&lt;ComplexMultigridOperator&gt;(n_levels);</span></span>
+<span id="L717"><span class="lineNum">     717</span>              : </span>
+<span id="L718"><span class="lineNum">     718</span>              :   // Material coefficients (same at all levels — indexed by element attribute, not by p).</span>
+<span id="L719"><span class="lineNum">     719</span>              :   // The 2D MaterialOperator exposes the scalar out-of-plane μ⁻¹ directly via</span>
+<span id="L720"><span class="lineNum">     720</span>              :   // GetCurlCurlInvPermeability(); material rotation (if any) was baked into iodata before</span>
+<span id="L721"><span class="lineNum">     721</span>              :   // the operator was built.</span>
+<span id="L722"><span class="lineNum">     722</span>              :   MaterialPropertyCoefficient muinv_cc_func(mat_op.GetAttributeToMaterial(),</span>
+<span id="L723"><span class="lineNum">     723</span> <span class="tlaUNC">           0 :                                             mat_op.GetCurlCurlInvPermeability());</span></span>
+<span id="L724"><span class="lineNum">     724</span>              : </span>
+<span id="L725"><span class="lineNum">     725</span>              :   // Preconditioner mass coefficient: -omega^2 eps - sigma/mu (+ London). When</span>
+<span id="L726"><span class="lineNum">     726</span>              :   // pc_mat_shifted is enabled (config), use absolute values to ensure well-conditioning</span>
+<span id="L727"><span class="lineNum">     727</span>              :   // near the shift target (where -omega^2 eps + kn^2/mu ≈ 0). This follows</span>
+<span id="L728"><span class="lineNum">     728</span>              :   // SpaceOperator's pc_mat_shifted pattern.</span>
+<span id="L729"><span class="lineNum">     729</span> <span class="tlaUNC">           0 :   const bool shifted = linear.pc_mat_shifted;</span></span>
+<span id="L730"><span class="lineNum">     730</span> <span class="tlaUNC">           0 :   const double mass_coeff = shifted ? std::abs(omega * omega) : (-omega * omega);</span></span>
+<span id="L731"><span class="lineNum">     731</span> <span class="tlaUNC">           0 :   const double shift_coeff = shifted ? std::abs(sigma) : (-sigma);</span></span>
+<span id="L732"><span class="lineNum">     732</span>              : </span>
+<span id="L733"><span class="lineNum">     733</span>              :   MaterialPropertyCoefficient eps_shifted_pc(mat_op.GetAttributeToMaterial(),</span>
+<span id="L734"><span class="lineNum">     734</span> <span class="tlaUNC">           0 :                                              mat_op.GetPermittivityReal(), mass_coeff);</span></span>
+<span id="L735"><span class="lineNum">     735</span> <span class="tlaUNC">           0 :   eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),</span></span>
+<span id="L736"><span class="lineNum">     736</span> <span class="tlaUNC">           0 :                                 mat_op.GetInvPermeability(), shift_coeff);</span></span>
+<span id="L737"><span class="lineNum">     737</span> <span class="tlaUNC">           0 :   if (mat_op.HasLondonDepth())</span></span>
+<span id="L738"><span class="lineNum">     738</span>              :   {</span>
+<span id="L739"><span class="lineNum">     739</span> <span class="tlaUNC">           0 :     eps_shifted_pc.AddCoefficient(mat_op.GetAttributeToMaterial(),</span></span>
+<span id="L740"><span class="lineNum">     740</span>              :                                   mat_op.GetInvLondonDepth(), 1.0);</span>
+<span id="L741"><span class="lineNum">     741</span>              :   }</span>
+<span id="L742"><span class="lineNum">     742</span>              : </span>
+<span id="L743"><span class="lineNum">     743</span>              :   // Boundary coefficients for preconditioner (real part only, matching SpaceOperator).</span>
+<span id="L744"><span class="lineNum">     744</span> <span class="tlaUNC">           0 :   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();</span></span>
+<span id="L745"><span class="lineNum">     745</span> <span class="tlaUNC">           0 :   MaterialPropertyCoefficient fbr(max_bdr_attr);</span></span>
+<span id="L746"><span class="lineNum">     746</span> <span class="tlaUNC">           0 :   surf_z_op.AddStiffnessBdrCoefficients(1.0, fbr);</span></span>
+<span id="L747"><span class="lineNum">     747</span> <span class="tlaUNC">           0 :   surf_z_op.AddMassBdrCoefficients(shifted ? std::abs(omega * omega) : (-omega * omega),</span></span>
+<span id="L748"><span class="lineNum">     748</span>              :                                    fbr);</span>
+<span id="L749"><span class="lineNum">     749</span> <span class="tlaUNC">           0 :   farfield_op.AddDampingBdrCoefficients(omega, fbr);</span></span>
+<span id="L750"><span class="lineNum">     750</span> <span class="tlaUNC">           0 :   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);</span></span>
+<span id="L751"><span class="lineNum">     751</span> <span class="tlaUNC">           0 :   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbr);</span></span>
+<span id="L752"><span class="lineNum">     752</span>              : </span>
+<span id="L753"><span class="lineNum">     753</span>              :   // Assemble ND operators at all levels from one BilinearForm. Unlike SpaceOperator's</span>
+<span id="L754"><span class="lineNum">     754</span>              :   // configured-coarse/active-fine split, these domain coefficients are always nonzero.</span>
+<span id="L755"><span class="lineNum">     755</span>              :   constexpr bool assemble_q_data = false;</span>
+<span id="L756"><span class="lineNum">     756</span>              :   {</span>
+<span id="L757"><span class="lineNum">     757</span> <span class="tlaUNC">           0 :     BilinearForm att(bmo-&gt;GetNDSpaceHierarchy().GetFinestFESpace());</span></span>
+<span id="L758"><span class="lineNum">     758</span> <span class="tlaUNC">           0 :     att.AddDomainIntegrator&lt;CurlCurlMassIntegrator&gt;(muinv_cc_func, eps_shifted_pc);</span></span>
+<span id="L759"><span class="lineNum">     759</span> <span class="tlaUNC">           0 :     if (!fbr.empty())</span></span>
+<span id="L760"><span class="lineNum">     760</span>              :     {</span>
+<span id="L761"><span class="lineNum">     761</span> <span class="tlaUNC">           0 :       att.AddBoundaryIntegrator&lt;VectorFEMassIntegrator&gt;(fbr);</span></span>
+<span id="L762"><span class="lineNum">     762</span>              :     }</span>
+<span id="L763"><span class="lineNum">     763</span> <span class="tlaUNC">           0 :     auto att_ops = att.Assemble(bmo-&gt;GetNDSpaceHierarchy(), skip_zeros);</span></span>
+<span id="L764"><span class="lineNum">     764</span>              : </span>
+<span id="L765"><span class="lineNum">     765</span>              :     // Assemble the auxiliary H1 operators for Hiptmair smoothing from the same always-</span>
+<span id="L766"><span class="lineNum">     766</span>              :     // nonzero mass coefficient.</span>
+<span id="L767"><span class="lineNum">     767</span> <span class="tlaUNC">           0 :     BilinearForm att_aux(bmo-&gt;GetH1AuxSpaceHierarchy().GetFinestFESpace());</span></span>
+<span id="L768"><span class="lineNum">     768</span> <span class="tlaUNC">           0 :     att_aux.AddDomainIntegrator&lt;DiffusionIntegrator&gt;(eps_shifted_pc);</span></span>
+<span id="L769"><span class="lineNum">     769</span> <span class="tlaUNC">           0 :     if (!fbr.empty())</span></span>
+<span id="L770"><span class="lineNum">     770</span>              :     {</span>
+<span id="L771"><span class="lineNum">     771</span> <span class="tlaUNC">           0 :       att_aux.AddBoundaryIntegrator&lt;DiffusionIntegrator&gt;(fbr);</span></span>
+<span id="L772"><span class="lineNum">     772</span>              :     }</span>
+<span id="L773"><span class="lineNum">     773</span> <span class="tlaUNC">           0 :     auto att_aux_ops = att_aux.Assemble(bmo-&gt;GetH1AuxSpaceHierarchy(), skip_zeros);</span></span>
+<span id="L774"><span class="lineNum">     774</span>              : </span>
+<span id="L775"><span class="lineNum">     775</span> <span class="tlaUNC">           0 :     for (std::size_t l = 0; l &lt; n_levels; l++)</span></span>
+<span id="L776"><span class="lineNum">     776</span>              :     {</span>
+<span id="L777"><span class="lineNum">     777</span> <span class="tlaUNC">           0 :       const auto &amp;nd_fespace_l = bmo-&gt;GetNDSpaceHierarchy().GetFESpaceAtLevel(l);</span></span>
+<span id="L778"><span class="lineNum">     778</span> <span class="tlaUNC">           0 :       auto B_l = std::make_unique&lt;ComplexParOperator&gt;(std::move(att_ops[l]), nullptr,</span></span>
+<span id="L779"><span class="lineNum">     779</span> <span class="tlaUNC">           0 :                                                       nd_fespace_l);</span></span>
+<span id="L780"><span class="lineNum">     780</span> <span class="tlaUNC">           0 :       if (l &lt; bmo-&gt;GetNDDbcTDofLists().size())</span></span>
+<span id="L781"><span class="lineNum">     781</span>              :       {</span>
+<span id="L782"><span class="lineNum">     782</span> <span class="tlaUNC">           0 :         B_l-&gt;SetEssentialTrueDofs(bmo-&gt;GetNDDbcTDofLists()[l],</span></span>
+<span id="L783"><span class="lineNum">     783</span>              :                                   Operator::DiagonalPolicy::DIAG_ONE);</span>
+<span id="L784"><span class="lineNum">     784</span>              :       }</span>
+<span id="L785"><span class="lineNum">     785</span> <span class="tlaUNC">           0 :       B-&gt;AddOperator(std::move(B_l));</span></span>
+<span id="L786"><span class="lineNum">     786</span>              : </span>
+<span id="L787"><span class="lineNum">     787</span> <span class="tlaUNC">           0 :       const auto &amp;h1_aux_l = bmo-&gt;GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(l);</span></span>
+<span id="L788"><span class="lineNum">     788</span>              :       auto B_aux_l = std::make_unique&lt;ComplexParOperator&gt;(std::move(att_aux_ops[l]),</span>
+<span id="L789"><span class="lineNum">     789</span> <span class="tlaUNC">           0 :                                                           nullptr, h1_aux_l);</span></span>
+<span id="L790"><span class="lineNum">     790</span> <span class="tlaUNC">           0 :       if (l &lt; bmo-&gt;GetH1AuxDbcTDofLists().size())</span></span>
+<span id="L791"><span class="lineNum">     791</span>              :       {</span>
+<span id="L792"><span class="lineNum">     792</span> <span class="tlaUNC">           0 :         B_aux_l-&gt;SetEssentialTrueDofs(bmo-&gt;GetH1AuxDbcTDofLists()[l],</span></span>
+<span id="L793"><span class="lineNum">     793</span>              :                                       Operator::DiagonalPolicy::DIAG_ONE);</span>
+<span id="L794"><span class="lineNum">     794</span>              :       }</span>
+<span id="L795"><span class="lineNum">     795</span> <span class="tlaUNC">           0 :       B-&gt;AddAuxiliaryOperator(std::move(B_aux_l));</span></span>
+<span id="L796"><span class="lineNum">     796</span>              :     }</span>
+<span id="L797"><span class="lineNum">     797</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L798"><span class="lineNum">     798</span>              : </span>
+<span id="L799"><span class="lineNum">     799</span> <span class="tlaUNC">           0 :   return B;</span></span>
+<span id="L800"><span class="lineNum">     800</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L801"><span class="lineNum">     801</span>              : </span>
+<span id="L802"><span class="lineNum">     802</span>              : std::unique_ptr&lt;ComplexMultigridOperator&gt;</span>
+<span id="L803"><span class="lineNum">     803</span> <span class="tlaUNC">           0 : ModeEigenSolver::AssembleAnnPreconditioner(double omega) const</span></span>
+<span id="L804"><span class="lineNum">     804</span>              : {</span>
+<span id="L805"><span class="lineNum">     805</span> <span class="tlaUNC">           0 :   MFEM_VERIFY(bmo, &quot;AssembleAnnPreconditioner requires BMO ctor (2D domain path)!&quot;);</span></span>
+<span id="L806"><span class="lineNum">     806</span> <span class="tlaUNC">           0 :   const auto n_levels = bmo-&gt;GetH1SpaceHierarchy().GetNumLevels();</span></span>
+<span id="L807"><span class="lineNum">     807</span> <span class="tlaUNC">           0 :   auto B = std::make_unique&lt;ComplexMultigridOperator&gt;(n_levels);</span></span>
+<span id="L808"><span class="lineNum">     808</span>              : </span>
+<span id="L809"><span class="lineNum">     809</span>              :   // Material coefficients matching AssembleAnn (real part only). The negative diffusion</span>
+<span id="L810"><span class="lineNum">     810</span>              :   // sign from the IBP is preserved — this matches the actual operator. In-plane tensors</span>
+<span id="L811"><span class="lineNum">     811</span>              :   // (μ⁻¹, ε) and scalar out-of-plane components are already in the local frame.</span>
+<span id="L812"><span class="lineNum">     812</span>              :   MaterialPropertyCoefficient neg_muinv_func(mat_op.GetAttributeToMaterial(),</span>
+<span id="L813"><span class="lineNum">     813</span> <span class="tlaUNC">           0 :                                              mat_op.GetInvPermeability(), -1.0);</span></span>
+<span id="L814"><span class="lineNum">     814</span>              : </span>
+<span id="L815"><span class="lineNum">     815</span>              :   MaterialPropertyCoefficient poseps_h1_func(mat_op.GetAttributeToMaterial(),</span>
+<span id="L816"><span class="lineNum">     816</span> <span class="tlaUNC">           0 :                                              mat_op.GetPermittivityScalar(), omega * omega);</span></span>
+<span id="L817"><span class="lineNum">     817</span> <span class="tlaUNC">           0 :   if (mat_op.HasLondonDepth())</span></span>
+<span id="L818"><span class="lineNum">     818</span>              :   {</span>
+<span id="L819"><span class="lineNum">     819</span> <span class="tlaUNC">           0 :     poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),</span></span>
+<span id="L820"><span class="lineNum">     820</span>              :                                   mat_op.GetInvLondonDepthScalar());</span>
+<span id="L821"><span class="lineNum">     821</span>              :   }</span>
+<span id="L822"><span class="lineNum">     822</span>              : </span>
+<span id="L823"><span class="lineNum">     823</span>              :   // Boundary coefficients (real part only).</span>
+<span id="L824"><span class="lineNum">     824</span> <span class="tlaUNC">           0 :   int max_bdr_attr = mat_op.MaxCeedBdrAttribute();</span></span>
+<span id="L825"><span class="lineNum">     825</span> <span class="tlaUNC">           0 :   MaterialPropertyCoefficient nn_fbr(max_bdr_attr);</span></span>
+<span id="L826"><span class="lineNum">     826</span> <span class="tlaUNC">           0 :   surf_z_op.AddStiffnessBdrCoefficients(-1.0, nn_fbr);</span></span>
+<span id="L827"><span class="lineNum">     827</span> <span class="tlaUNC">           0 :   surf_z_op.AddMassBdrCoefficients(omega * omega, nn_fbr);</span></span>
+<span id="L828"><span class="lineNum">     828</span>              :   {</span>
+<span id="L829"><span class="lineNum">     829</span> <span class="tlaUNC">           0 :     MaterialPropertyCoefficient cond_r(max_bdr_attr);</span></span>
+<span id="L830"><span class="lineNum">     830</span> <span class="tlaUNC">           0 :     surf_sigma_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);</span></span>
+<span id="L831"><span class="lineNum">     831</span> <span class="tlaUNC">           0 :     surf_rz_op.AddExtraSystemBdrCoefficients(omega, cond_r, cond_r);</span></span>
+<span id="L832"><span class="lineNum">     832</span> <span class="tlaUNC">           0 :     if (!cond_r.empty())</span></span>
+<span id="L833"><span class="lineNum">     833</span>              :     {</span>
+<span id="L834"><span class="lineNum">     834</span> <span class="tlaUNC">           0 :       cond_r *= -1.0;</span></span>
+<span id="L835"><span class="lineNum">     835</span> <span class="tlaUNC">           0 :       nn_fbr.AddCoefficient(cond_r.GetAttributeToMaterial(),</span></span>
+<span id="L836"><span class="lineNum">     836</span>              :                             cond_r.GetMaterialProperties());</span>
+<span id="L837"><span class="lineNum">     837</span>              :     }</span>
+<span id="L838"><span class="lineNum">     838</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L839"><span class="lineNum">     839</span>              : </span>
+<span id="L840"><span class="lineNum">     840</span>              :   // Assemble H1 operators at all levels using hierarchy-aware assembly.</span>
+<span id="L841"><span class="lineNum">     841</span>              :   {</span>
+<span id="L842"><span class="lineNum">     842</span> <span class="tlaUNC">           0 :     BilinearForm ann(bmo-&gt;GetH1SpaceHierarchy().GetFinestFESpace());</span></span>
+<span id="L843"><span class="lineNum">     843</span> <span class="tlaUNC">           0 :     ann.AddDomainIntegrator&lt;DiffusionMassIntegrator&gt;(neg_muinv_func, poseps_h1_func);</span></span>
+<span id="L844"><span class="lineNum">     844</span> <span class="tlaUNC">           0 :     if (!nn_fbr.empty())</span></span>
+<span id="L845"><span class="lineNum">     845</span>              :     {</span>
+<span id="L846"><span class="lineNum">     846</span> <span class="tlaUNC">           0 :       ann.AddBoundaryIntegrator&lt;MassIntegrator&gt;(nn_fbr);</span></span>
+<span id="L847"><span class="lineNum">     847</span>              :     }</span>
+<span id="L848"><span class="lineNum">     848</span> <span class="tlaUNC">           0 :     auto ann_ops = ann.Assemble(bmo-&gt;GetH1SpaceHierarchy(), skip_zeros);</span></span>
+<span id="L849"><span class="lineNum">     849</span>              : </span>
+<span id="L850"><span class="lineNum">     850</span> <span class="tlaUNC">           0 :     for (std::size_t l = 0; l &lt; n_levels; l++)</span></span>
+<span id="L851"><span class="lineNum">     851</span>              :     {</span>
+<span id="L852"><span class="lineNum">     852</span> <span class="tlaUNC">           0 :       const auto &amp;h1_fespace_l = bmo-&gt;GetH1SpaceHierarchy().GetFESpaceAtLevel(l);</span></span>
+<span id="L853"><span class="lineNum">     853</span> <span class="tlaUNC">           0 :       auto B_l = std::make_unique&lt;ComplexParOperator&gt;(std::move(ann_ops[l]), nullptr,</span></span>
+<span id="L854"><span class="lineNum">     854</span> <span class="tlaUNC">           0 :                                                       h1_fespace_l);</span></span>
+<span id="L855"><span class="lineNum">     855</span> <span class="tlaUNC">           0 :       if (l &lt; bmo-&gt;GetH1DbcTDofLists().size())</span></span>
+<span id="L856"><span class="lineNum">     856</span>              :       {</span>
+<span id="L857"><span class="lineNum">     857</span> <span class="tlaUNC">           0 :         B_l-&gt;SetEssentialTrueDofs(bmo-&gt;GetH1DbcTDofLists()[l],</span></span>
+<span id="L858"><span class="lineNum">     858</span>              :                                   Operator::DiagonalPolicy::DIAG_ONE);</span>
+<span id="L859"><span class="lineNum">     859</span>              :       }</span>
+<span id="L860"><span class="lineNum">     860</span> <span class="tlaUNC">           0 :       B-&gt;AddOperator(std::move(B_l));</span></span>
+<span id="L861"><span class="lineNum">     861</span>              :     }</span>
+<span id="L862"><span class="lineNum">     862</span> <span class="tlaUNC">           0 :   }</span></span>
+<span id="L863"><span class="lineNum">     863</span>              : </span>
+<span id="L864"><span class="lineNum">     864</span> <span class="tlaUNC">           0 :   return B;</span></span>
+<span id="L865"><span class="lineNum">     865</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L866"><span class="lineNum">     866</span>              : </span>
+<span id="L867"><span class="lineNum">     867</span> <span class="tlaGNC tlaBgGNC">          84 : void ModeEigenSolver::SetUpEigenSolver(MPI_Comm comm)</span></span>
+<span id="L868"><span class="lineNum">     868</span>              : {</span>
+<span id="L869"><span class="lineNum">     869</span> <span class="tlaGNC">          84 :   constexpr int print = 0;</span></span>
+<span id="L870"><span class="lineNum">     870</span> <span class="tlaGNC">          84 :   EigenSolverBackend type = eigen_backend;</span></span>
+<span id="L871"><span class="lineNum">     871</span>              : </span>
+<span id="L872"><span class="lineNum">     872</span> <span class="tlaGNC">          84 :   if (type == EigenSolverBackend::SLEPC)</span></span>
+<span id="L873"><span class="lineNum">     873</span>              :   {</span>
+<span id="L874"><span class="lineNum">     874</span>              : #if !defined(PALACE_WITH_SLEPC)</span>
+<span id="L875"><span class="lineNum">     875</span>              :     MFEM_ABORT(&quot;Solver was not built with SLEPc support, please choose a &quot;</span>
+<span id="L876"><span class="lineNum">     876</span>              :                &quot;different solver!&quot;);</span>
+<span id="L877"><span class="lineNum">     877</span>              : #endif</span>
+<span id="L878"><span class="lineNum">     878</span>              :   }</span>
+<span id="L879"><span class="lineNum">     879</span> <span class="tlaUNC tlaBgUNC">           0 :   else if (type == EigenSolverBackend::ARPACK)</span></span>
+<span id="L880"><span class="lineNum">     880</span>              :   {</span>
+<span id="L881"><span class="lineNum">     881</span>              : #if !defined(PALACE_WITH_ARPACK)</span>
+<span id="L882"><span class="lineNum">     882</span> <span class="tlaUNC">           0 :     MFEM_ABORT(&quot;Solver was not built with ARPACK support, please choose a &quot;</span></span>
+<span id="L883"><span class="lineNum">     883</span>              :                &quot;different solver!&quot;);</span>
+<span id="L884"><span class="lineNum">     884</span>              : #endif</span>
+<span id="L885"><span class="lineNum">     885</span>              :   }</span>
+<span id="L886"><span class="lineNum">     886</span>              :   else  // Default choice</span>
+<span id="L887"><span class="lineNum">     887</span>              :   {</span>
+<span id="L888"><span class="lineNum">     888</span>              : #if defined(PALACE_WITH_SLEPC)</span>
+<span id="L889"><span class="lineNum">     889</span>              :     type = EigenSolverBackend::SLEPC;</span>
+<span id="L890"><span class="lineNum">     890</span>              : #elif defined(PALACE_WITH_ARPACK)</span>
+<span id="L891"><span class="lineNum">     891</span>              :     type = EigenSolverBackend::ARPACK;</span>
+<span id="L892"><span class="lineNum">     892</span>              : #else</span>
+<span id="L893"><span class="lineNum">     893</span>              : #error &quot;ModeEigenSolver requires building with ARPACK or SLEPc!&quot;</span>
+<span id="L894"><span class="lineNum">     894</span>              : #endif</span>
+<span id="L895"><span class="lineNum">     895</span>              :   }</span>
+<span id="L896"><span class="lineNum">     896</span>              : </span>
+<span id="L897"><span class="lineNum">     897</span>              :   if (type == EigenSolverBackend::ARPACK)</span>
+<span id="L898"><span class="lineNum">     898</span>              :   {</span>
+<span id="L899"><span class="lineNum">     899</span>              : #if defined(PALACE_WITH_ARPACK)</span>
+<span id="L900"><span class="lineNum">     900</span>              :     auto arpack = std::make_unique&lt;arpack::ArpackEPSSolver&gt;(comm, print);</span>
+<span id="L901"><span class="lineNum">     901</span>              :     arpack-&gt;SetNumModes(num_modes, num_vec);</span>
+<span id="L902"><span class="lineNum">     902</span>              :     arpack-&gt;SetTol(eig_tol);</span>
+<span id="L903"><span class="lineNum">     903</span>              :     arpack-&gt;SetWhichEigenpairs(which_eig);</span>
+<span id="L904"><span class="lineNum">     904</span>              :     arpack-&gt;SetLinearSolver(*ksp);</span>
+<span id="L905"><span class="lineNum">     905</span>              :     eigen = std::move(arpack);</span>
+<span id="L906"><span class="lineNum">     906</span>              : #endif</span>
+<span id="L907"><span class="lineNum">     907</span>              :   }</span>
+<span id="L908"><span class="lineNum">     908</span>              :   else  // EigenSolverBackend::SLEPC</span>
+<span id="L909"><span class="lineNum">     909</span>              :   {</span>
+<span id="L910"><span class="lineNum">     910</span>              : #if defined(PALACE_WITH_SLEPC)</span>
+<span id="L911"><span class="lineNum">     911</span> <span class="tlaGNC tlaBgGNC">          84 :     auto slepc = std::make_unique&lt;slepc::SlepcEPSSolver&gt;(comm, print);</span></span>
+<span id="L912"><span class="lineNum">     912</span> <span class="tlaGNC">          84 :     slepc-&gt;SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);</span></span>
+<span id="L913"><span class="lineNum">     913</span> <span class="tlaGNC">          84 :     slepc-&gt;SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);</span></span>
+<span id="L914"><span class="lineNum">     914</span> <span class="tlaGNC">          84 :     slepc-&gt;SetNumModes(num_modes, num_vec);</span></span>
+<span id="L915"><span class="lineNum">     915</span> <span class="tlaGNC">          84 :     slepc-&gt;SetTol(eig_tol);</span></span>
+<span id="L916"><span class="lineNum">     916</span> <span class="tlaGNC">          84 :     slepc-&gt;SetWhichEigenpairs(which_eig);</span></span>
+<span id="L917"><span class="lineNum">     917</span> <span class="tlaGNC">          84 :     slepc-&gt;SetLinearSolver(*ksp);</span></span>
+<span id="L918"><span class="lineNum">     918</span>              :     eigen = std::move(slepc);</span>
+<span id="L919"><span class="lineNum">     919</span>              : #endif</span>
+<span id="L920"><span class="lineNum">     920</span>              :   }</span>
+<span id="L921"><span class="lineNum">     921</span> <span class="tlaGNC">          84 : }</span></span>
+<span id="L922"><span class="lineNum">     922</span>              : </span>
+<span id="L923"><span class="lineNum">     923</span>              : }  // namespace palace</span>
         </pre>
               </td>
             </tr>

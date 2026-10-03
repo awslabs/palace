@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -139,15 +139,15 @@
 <span id="L69"><span class="lineNum">      69</span>              : }</span>
 <span id="L70"><span class="lineNum">      70</span>              : </span>
 <span id="L71"><span class="lineNum">      71</span>              : template &lt;bool Transpose = false&gt;</span>
-<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC tlaBgGNC">        7298 : inline void Apply(const Vector &amp;dinv, const Vector &amp;x, Vector &amp;y)</span></span>
+<span id="L72"><span class="lineNum">      72</span> <span class="tlaGNC tlaBgGNC">        7300 : inline void Apply(const Vector &amp;dinv, const Vector &amp;x, Vector &amp;y)</span></span>
 <span id="L73"><span class="lineNum">      73</span>              : {</span>
-<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">        7298 :   const bool use_dev = dinv.UseDevice() || x.UseDevice() || y.UseDevice();</span></span>
+<span id="L74"><span class="lineNum">      74</span> <span class="tlaGNC">        7300 :   const bool use_dev = dinv.UseDevice() || x.UseDevice() || y.UseDevice();</span></span>
 <span id="L75"><span class="lineNum">      75</span>              :   const int N = dinv.Size();</span>
-<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">        7298 :   const auto *DI = dinv.Read(use_dev);</span></span>
-<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">        7298 :   const auto *X = x.Read(use_dev);</span></span>
-<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">        7298 :   auto *Y = y.Write(use_dev);</span></span>
-<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">        7298 :   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = DI[i] * X[i]; });</span></span>
-<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">        7298 : }</span></span>
+<span id="L76"><span class="lineNum">      76</span> <span class="tlaGNC">        7300 :   const auto *DI = dinv.Read(use_dev);</span></span>
+<span id="L77"><span class="lineNum">      77</span> <span class="tlaGNC">        7300 :   const auto *X = x.Read(use_dev);</span></span>
+<span id="L78"><span class="lineNum">      78</span> <span class="tlaGNC">        7300 :   auto *Y = y.Write(use_dev);</span></span>
+<span id="L79"><span class="lineNum">      79</span> <span class="tlaGNC">        7300 :   mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i) { Y[i] = DI[i] * X[i]; });</span></span>
+<span id="L80"><span class="lineNum">      80</span> <span class="tlaGNC">        7300 : }</span></span>
 <span id="L81"><span class="lineNum">      81</span>              : </span>
 <span id="L82"><span class="lineNum">      82</span>              : template &lt;bool Transpose = false&gt;</span>
 <span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">         420 : inline void Apply(const ComplexVector &amp;dinv, const ComplexVector &amp;x, ComplexVector &amp;y)</span></span>
@@ -182,17 +182,17 @@
 <span id="L112"><span class="lineNum">     112</span>              : </span>
 <span id="L113"><span class="lineNum">     113</span>              : }  // namespace</span>
 <span id="L114"><span class="lineNum">     114</span>              : </span>
-<span id="L115"><span class="lineNum">     115</span>              : template &lt;typename OperType&gt;</span>
-<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">         362 : void JacobiSmoother&lt;OperType&gt;::SetOperator(const OperType &amp;op)</span></span>
+<span id="L115"><span class="lineNum">     115</span>              : template &lt;OperatorType OperType&gt;</span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">         365 : void JacobiSmoother&lt;OperType&gt;::SetOperator(const OperType &amp;op)</span></span>
 <span id="L117"><span class="lineNum">     117</span>              : {</span>
-<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">         362 :   dinv.SetSize(op.Height());</span></span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">         365 :   dinv.SetSize(op.Height());</span></span>
 <span id="L119"><span class="lineNum">     119</span> <span class="tlaGNC">          12 :   dinv.UseDevice(true);</span></span>
-<span id="L120"><span class="lineNum">     120</span> <span class="tlaGNC">         362 :   op.AssembleDiagonal(dinv);</span></span>
-<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC">         362 :   dinv.Reciprocal();</span></span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaGNC">         365 :   op.AssembleDiagonal(dinv);</span></span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC">         365 :   dinv.Reciprocal();</span></span>
 <span id="L122"><span class="lineNum">     122</span>              : </span>
 <span id="L123"><span class="lineNum">     123</span>              :   // Damping factor. If the given damping is zero, estimate the spectral radius-minimizing</span>
 <span id="L124"><span class="lineNum">     124</span>              :   // damping factor.</span>
-<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">         362 :   if (omega == 0.0)</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">         365 :   if (omega == 0.0)</span></span>
 <span id="L126"><span class="lineNum">     126</span>              :   {</span>
 <span id="L127"><span class="lineNum">     127</span> <span class="tlaGNC">          51 :     const auto lambda_max = GetLambdaMax(comm, op, dinv);</span></span>
 <span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC">          45 :     MFEM_VERIFY(std::isfinite(lambda_max) &amp;&amp; lambda_max &gt; 0.0,</span></span>
@@ -204,21 +204,21 @@
 <span id="L134"><span class="lineNum">     134</span>              :                 &quot;denominator!&quot;);</span>
 <span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">          42 :     omega = 2.0 / denominator;</span></span>
 <span id="L136"><span class="lineNum">     136</span>              :   }</span>
-<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">         353 :   if (omega != 1.0)</span></span>
+<span id="L137"><span class="lineNum">     137</span> <span class="tlaGNC">         356 :   if (omega != 1.0)</span></span>
 <span id="L138"><span class="lineNum">     138</span>              :   {</span>
 <span id="L139"><span class="lineNum">     139</span> <span class="tlaGNC">          42 :     dinv *= omega;</span></span>
 <span id="L140"><span class="lineNum">     140</span>              :   }</span>
 <span id="L141"><span class="lineNum">     141</span>              : </span>
-<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">         353 :   this-&gt;height = op.Height();</span></span>
-<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">         353 :   this-&gt;width = op.Width();</span></span>
-<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">         353 : }</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">         356 :   this-&gt;height = op.Height();</span></span>
+<span id="L143"><span class="lineNum">     143</span> <span class="tlaGNC">         356 :   this-&gt;width = op.Width();</span></span>
+<span id="L144"><span class="lineNum">     144</span> <span class="tlaGNC">         356 : }</span></span>
 <span id="L145"><span class="lineNum">     145</span>              : </span>
-<span id="L146"><span class="lineNum">     146</span>              : template &lt;typename OperType&gt;</span>
-<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">        7718 : void JacobiSmoother&lt;OperType&gt;::Mult(const VecType &amp;x, VecType &amp;y) const</span></span>
+<span id="L146"><span class="lineNum">     146</span>              : template &lt;OperatorType OperType&gt;</span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">        7720 : void JacobiSmoother&lt;OperType&gt;::Mult(const VecType &amp;x, VecType &amp;y) const</span></span>
 <span id="L148"><span class="lineNum">     148</span>              : {</span>
 <span id="L149"><span class="lineNum">     149</span>              :   MFEM_ASSERT(!this-&gt;initial_guess, &quot;JacobiSmoother does not use initial guess!&quot;);</span>
-<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">        7718 :   Apply(dinv, x, y);</span></span>
-<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">        7718 : }</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">        7720 :   Apply(dinv, x, y);</span></span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">        7720 : }</span></span>
 <span id="L152"><span class="lineNum">     152</span>              : </span>
 <span id="L153"><span class="lineNum">     153</span>              : template class JacobiSmoother&lt;Operator&gt;;</span>
 <span id="L154"><span class="lineNum">     154</span>              : template class JacobiSmoother&lt;ComplexOperator&gt;;</span>

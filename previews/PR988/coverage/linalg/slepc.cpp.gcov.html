@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">28.2&nbsp;%</td>
@@ -180,10 +180,10 @@
 <span id="L110"><span class="lineNum">     110</span>              : namespace</span>
 <span id="L111"><span class="lineNum">     111</span>              : {</span>
 <span id="L112"><span class="lineNum">     112</span>              : </span>
-<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC tlaBgGNC">         394 : inline PetscErrorCode ConfigurePetscDevice()</span></span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC tlaBgGNC">         419 : inline PetscErrorCode ConfigurePetscDevice()</span></span>
 <span id="L114"><span class="lineNum">     114</span>              : {</span>
 <span id="L115"><span class="lineNum">     115</span>              :   // Tell PETSc to use the same CUDA or HIP device as MFEM.</span>
-<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">         394 :   if (mfem::Device::Allows(mfem::Backend::CUDA_MASK))</span></span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">         419 :   if (mfem::Device::Allows(mfem::Backend::CUDA_MASK))</span></span>
 <span id="L117"><span class="lineNum">     117</span>              :   {</span>
 <span id="L118"><span class="lineNum">     118</span> <span class="tlaUNC tlaBgUNC">           0 :     PetscCall(PetscOptionsSetValue(NULL, &quot;-use_gpu_aware_mpi&quot;,</span></span>
 <span id="L119"><span class="lineNum">     119</span>              :                                    mfem::Device::GetGPUAwareMPI() ? &quot;1&quot; : &quot;0&quot;));</span>
@@ -192,7 +192,7 @@
 <span id="L122"><span class="lineNum">     122</span>              :     // PetscCall(PetscOptionsSetValue(NULL, &quot;-bv_type&quot;, &quot;svec&quot;));</span>
 <span id="L123"><span class="lineNum">     123</span>              :     // PetscCall(PetscOptionsSetValue(NULL, &quot;-vec_type&quot;, &quot;cuda&quot;));</span>
 <span id="L124"><span class="lineNum">     124</span>              :   }</span>
-<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC tlaBgGNC">         394 :   if (mfem::Device::Allows(mfem::Backend::HIP_MASK))</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC tlaBgGNC">         419 :   if (mfem::Device::Allows(mfem::Backend::HIP_MASK))</span></span>
 <span id="L126"><span class="lineNum">     126</span>              :   {</span>
 <span id="L127"><span class="lineNum">     127</span> <span class="tlaUNC tlaBgUNC">           0 :     PetscCall(PetscOptionsSetValue(NULL, &quot;-use_gpu_aware_mpi&quot;,</span></span>
 <span id="L128"><span class="lineNum">     128</span>              :                                    mfem::Device::GetGPUAwareMPI() ? &quot;1&quot; : &quot;0&quot;));</span>
@@ -299,20 +299,20 @@
 <span id="L229"><span class="lineNum">     229</span> <span class="tlaUNC">           0 :   PalacePetscCall(PetscPopSignalHandler());</span></span>
 <span id="L230"><span class="lineNum">     230</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L231"><span class="lineNum">     231</span>              : </span>
-<span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC tlaBgGNC">         394 : void Initialize()</span></span>
+<span id="L232"><span class="lineNum">     232</span> <span class="tlaGNC tlaBgGNC">         419 : void Initialize()</span></span>
 <span id="L233"><span class="lineNum">     233</span>              : {</span>
-<span id="L234"><span class="lineNum">     234</span> <span class="tlaGNC">         394 :   ConfigurePetscDevice();</span></span>
-<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">         394 :   PalacePetscCall(SlepcInitializeNoArguments());</span></span>
+<span id="L234"><span class="lineNum">     234</span> <span class="tlaGNC">         419 :   ConfigurePetscDevice();</span></span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">         419 :   PalacePetscCall(SlepcInitializeNoArguments());</span></span>
 <span id="L236"><span class="lineNum">     236</span>              : </span>
 <span id="L237"><span class="lineNum">     237</span>              :   // Remove default PETSc signal handling, since it can be confusing when the errors occur</span>
 <span id="L238"><span class="lineNum">     238</span>              :   // not from within SLEPc/PETSc.</span>
-<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">         394 :   PalacePetscCall(PetscPopSignalHandler());</span></span>
-<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">         394 : }</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">         419 :   PalacePetscCall(PetscPopSignalHandler());</span></span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">         419 : }</span></span>
 <span id="L241"><span class="lineNum">     241</span>              : </span>
-<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">         394 : void Finalize()</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">         419 : void Finalize()</span></span>
 <span id="L243"><span class="lineNum">     243</span>              : {</span>
-<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">         394 :   PalacePetscCall(SlepcFinalize());</span></span>
-<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">         394 : }</span></span>
+<span id="L244"><span class="lineNum">     244</span> <span class="tlaGNC">         419 :   PalacePetscCall(SlepcFinalize());</span></span>
+<span id="L245"><span class="lineNum">     245</span> <span class="tlaGNC">         419 : }</span></span>
 <span id="L246"><span class="lineNum">     246</span>              : </span>
 <span id="L247"><span class="lineNum">     247</span> <span class="tlaGNC">          57 : PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &amp;A, bool herm,</span></span>
 <span id="L248"><span class="lineNum">     248</span>              :                               PetscReal tol, PetscInt max_it)</span>
@@ -773,7 +773,7 @@
 <span id="L703"><span class="lineNum">     703</span>              : </span>
 <span id="L704"><span class="lineNum">     704</span>              :   // Compute and store the eigenpair residuals.</span>
 <span id="L705"><span class="lineNum">     705</span> <span class="tlaGNC tlaBgGNC">         169 :   RescaleEigenvectors(num_conv);</span></span>
-<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">         169 :   return (int)num_conv;</span></span>
+<span id="L706"><span class="lineNum">     706</span> <span class="tlaGNC">         169 :   return static_cast&lt;int&gt;(num_conv);</span></span>
 <span id="L707"><span class="lineNum">     707</span>              : }</span>
 <span id="L708"><span class="lineNum">     708</span>              : </span>
 <span id="L709"><span class="lineNum">     709</span> <span class="tlaGNC">        2602 : std::complex&lt;double&gt; SlepcEPSSolverBase::GetEigenvalue(int i) const</span></span>
@@ -1254,7 +1254,7 @@
 <span id="L1184"><span class="lineNum">    1184</span>              : </span>
 <span id="L1185"><span class="lineNum">    1185</span>              :   // Compute and store the eigenpair residuals.</span>
 <span id="L1186"><span class="lineNum">    1186</span> <span class="tlaUNC">           0 :   RescaleEigenvectors(num_conv);</span></span>
-<span id="L1187"><span class="lineNum">    1187</span> <span class="tlaUNC">           0 :   return (int)num_conv;</span></span>
+<span id="L1187"><span class="lineNum">    1187</span> <span class="tlaUNC">           0 :   return static_cast&lt;int&gt;(num_conv);</span></span>
 <span id="L1188"><span class="lineNum">    1188</span>              : }</span>
 <span id="L1189"><span class="lineNum">    1189</span>              : </span>
 <span id="L1190"><span class="lineNum">    1190</span> <span class="tlaUNC">           0 : std::complex&lt;double&gt; SlepcPEPSolverBase::GetEigenvalue(int i) const</span></span>
@@ -1598,7 +1598,7 @@
 <span id="L1528"><span class="lineNum">    1528</span>              :   }</span>
 <span id="L1529"><span class="lineNum">    1529</span>              : </span>
 <span id="L1530"><span class="lineNum">    1530</span>              :   // Compute and store the ordered eigenpair residuals.</span>
-<span id="L1531"><span class="lineNum">    1531</span> <span class="tlaUNC">           0 :   const int nev = (int)num_conv;</span></span>
+<span id="L1531"><span class="lineNum">    1531</span> <span class="tlaUNC">           0 :   const int nev = static_cast&lt;int&gt;(num_conv);</span></span>
 <span id="L1532"><span class="lineNum">    1532</span> <span class="tlaUNC">           0 :   perm = std::make_unique&lt;int[]&gt;(nev);</span></span>
 <span id="L1533"><span class="lineNum">    1533</span> <span class="tlaUNC">           0 :   std::vector&lt;std::complex&lt;double&gt;&gt; eig(nev);</span></span>
 <span id="L1534"><span class="lineNum">    1534</span> <span class="tlaUNC">           0 :   for (int i = 0; i &lt; nev; i++)</span></span>

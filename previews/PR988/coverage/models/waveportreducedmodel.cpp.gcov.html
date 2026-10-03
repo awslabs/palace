@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -169,9 +169,9 @@
 <span id="L99"><span class="lineNum">      99</span>              :                    discrepancy);</span>
 <span id="L100"><span class="lineNum">     100</span>              :     }</span>
 <span id="L101"><span class="lineNum">     101</span>              :   }</span>
-<span id="L102"><span class="lineNum">     102</span> <span class="tlaGNC tlaBgGNC">          32 : }</span></span>
+<span id="L102"><span class="lineNum">     102</span>              : }</span>
 <span id="L103"><span class="lineNum">     103</span>              : </span>
-<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC">          12 : void WavePortReducedModel::UpdateProjection(std::size_t old_basis_size)</span></span>
+<span id="L104"><span class="lineNum">     104</span> <span class="tlaGNC tlaBgGNC">          12 : void WavePortReducedModel::UpdateProjection(std::size_t old_basis_size)</span></span>
 <span id="L105"><span class="lineNum">     105</span>              : {</span>
 <span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">          12 :   if (solver_comm == MPI_COMM_NULL)</span></span>
 <span id="L107"><span class="lineNum">     107</span>              :   {</span>
@@ -364,7 +364,7 @@
 <span id="L294"><span class="lineNum">     294</span>              :   }</span>
 <span id="L295"><span class="lineNum">     295</span>              : </span>
 <span id="L296"><span class="lineNum">     296</span> <span class="tlaGNC">          72 :   Eigen::MatrixXcd Ar = Eigen::MatrixXcd::Zero(n, n);</span></span>
-<span id="L297"><span class="lineNum">     297</span>              :   std::vector&lt;std::complex&lt;double&gt;&gt; coefficients;</span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">          72 :   std::vector&lt;std::complex&lt;double&gt;&gt; coefficients;</span></span>
 <span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">          72 :   coefficients.reserve(components.size());</span></span>
 <span id="L299"><span class="lineNum">     299</span> <span class="tlaGNC">         296 :   for (const auto &amp;component : components)</span></span>
 <span id="L300"><span class="lineNum">     300</span>              :   {</span>
@@ -489,7 +489,7 @@
 <span id="L419"><span class="lineNum">     419</span>              :     double residual;</span>
 <span id="L420"><span class="lineNum">     420</span>              :     double distance;</span>
 <span id="L421"><span class="lineNum">     421</span>              :   };</span>
-<span id="L422"><span class="lineNum">     422</span>              :   std::vector&lt;Candidate&gt; candidates;</span>
+<span id="L422"><span class="lineNum">     422</span> <span class="tlaGNC">          72 :   std::vector&lt;Candidate&gt; candidates;</span></span>
 <span id="L423"><span class="lineNum">     423</span> <span class="tlaGNC">          72 :   candidates.reserve(n);</span></span>
 <span id="L424"><span class="lineNum">     424</span> <span class="tlaGNC">          72 :   const double kn_target = std::sqrt(-sigma);</span></span>
 <span id="L425"><span class="lineNum">     425</span> <span class="tlaGNC">         338 :   for (int k = 0; k &lt; n; k++)</span></span>
@@ -562,8 +562,8 @@
 <span id="L492"><span class="lineNum">     492</span> <span class="tlaGNC">         390 :     candidates.push_back({lambda, kn, std::move(y), eta, std::abs(kn.real() - kn_target)});</span></span>
 <span id="L493"><span class="lineNum">     493</span>              :   }</span>
 <span id="L494"><span class="lineNum">     494</span>              : </span>
-<span id="L495"><span class="lineNum">     495</span> <span class="tlaGNC">          72 :   std::sort(candidates.begin(), candidates.end(),</span></span>
-<span id="L496"><span class="lineNum">     496</span> <span class="tlaGNC">         315 :             [](const Candidate &amp;a, const Candidate &amp;b) { return a.distance &lt; b.distance; });</span></span>
+<span id="L495"><span class="lineNum">     495</span>              :   std::ranges::sort(candidates, [](const Candidate &amp;a, const Candidate &amp;b)</span>
+<span id="L496"><span class="lineNum">     496</span> <span class="tlaGNC">         315 :                     { return a.distance &lt; b.distance; });</span></span>
 <span id="L497"><span class="lineNum">     497</span> <span class="tlaGNC">          72 :   if (candidates.size() &lt; static_cast&lt;std::size_t&gt;(num_modes))</span></span>
 <span id="L498"><span class="lineNum">     498</span>              :   {</span>
 <span id="L499"><span class="lineNum">     499</span>              :     return false;</span>

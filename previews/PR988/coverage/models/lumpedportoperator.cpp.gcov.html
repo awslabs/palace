@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryLo">69.7&nbsp;%</td>
-            <td class="headerCovTableEntry">366</td>
-            <td class="headerCovTableEntry">255</td>
+            <td class="headerCovTableEntryLo">69.9&nbsp;%</td>
+            <td class="headerCovTableEntry">369</td>
+            <td class="headerCovTableEntry">258</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryMed">84.0&nbsp;%</td>
@@ -449,7 +449,7 @@
 <span id="L379"><span class="lineNum">     379</span>              :   // S-parameters, with the voltage normalization coefficient.</span>
 <span id="L380"><span class="lineNum">     380</span> <span class="tlaGNC">         960 :   if (!v_func)</span></span>
 <span id="L381"><span class="lineNum">     381</span>              :   {</span>
-<span id="L382"><span class="lineNum">     382</span>              :     std::vector&lt;SurfaceModeCoefficient&gt; modes;</span>
+<span id="L382"><span class="lineNum">     382</span> <span class="tlaGNC">         180 :     std::vector&lt;SurfaceModeCoefficient&gt; modes;</span></span>
 <span id="L383"><span class="lineNum">     383</span> <span class="tlaGNC">         180 :     modes.reserve(elems.size());</span></span>
 <span id="L384"><span class="lineNum">     384</span> <span class="tlaGNC">         516 :     for (const auto &amp;elem : elems)</span></span>
 <span id="L385"><span class="lineNum">     385</span>              :     {</span>
@@ -586,8 +586,8 @@
 <span id="L516"><span class="lineNum">     516</span>              :     {</span>
 <span id="L517"><span class="lineNum">     517</span> <span class="tlaUNC tlaBgUNC">           0 :       continue;</span></span>
 <span id="L518"><span class="lineNum">     518</span>              :     }</span>
-<span id="L519"><span class="lineNum">     519</span>              :     std::vector&lt;std::string&gt; active_port_str;</span>
-<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC tlaBgGNC">         248 :     if (std::abs(data.R) &gt; 0.0)</span></span>
+<span id="L519"><span class="lineNum">     519</span> <span class="tlaGNC tlaBgGNC">         248 :     std::vector&lt;std::string&gt; active_port_str;</span></span>
+<span id="L520"><span class="lineNum">     520</span> <span class="tlaGNC">         248 :     if (std::abs(data.R) &gt; 0.0)</span></span>
 <span id="L521"><span class="lineNum">     521</span>              :     {</span>
 <span id="L522"><span class="lineNum">     522</span> <span class="tlaGNC">         230 :       active_port_str.emplace_back(</span></span>
 <span id="L523"><span class="lineNum">     523</span> <span class="tlaGNC">         460 :           fmt::format(&quot;R = {:.3e} Ω&quot;, units.Dimensionalize&lt;VT::IMPEDANCE&gt;(data.R)));</span></span>
@@ -776,7 +776,7 @@
 <span id="L706"><span class="lineNum">     706</span>              :       }</span>
 <span id="L707"><span class="lineNum">     707</span>              :       batched_voltage_bins.port_indices.clear();</span>
 <span id="L708"><span class="lineNum">     708</span>              : </span>
-<span id="L709"><span class="lineNum">     709</span>              :       std::vector&lt;SurfaceModeCoefficient&gt; modes;</span>
+<span id="L709"><span class="lineNum">     709</span> <span class="tlaGNC">          27 :       std::vector&lt;SurfaceModeCoefficient&gt; modes;</span></span>
 <span id="L710"><span class="lineNum">     710</span>              :       std::set&lt;int&gt; seen_attrs;</span>
 <span id="L711"><span class="lineNum">     711</span> <span class="tlaGNC">          27 :       bool can_batch = true;</span></span>
 <span id="L712"><span class="lineNum">     712</span>              :       int bin = 0;</span>

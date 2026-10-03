@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryMed">84.6&nbsp;%</td>
-            <td class="headerCovTableEntry">39</td>
-            <td class="headerCovTableEntry">33</td>
+            <td class="headerCovTableEntryMed">85.0&nbsp;%</td>
+            <td class="headerCovTableEntry">40</td>
+            <td class="headerCovTableEntry">34</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -97,8 +97,8 @@
 <span id="L27"><span class="lineNum">      27</span>              : {</span>
 <span id="L28"><span class="lineNum">      28</span>              :   // If the solver will use a LOR preconditioner, we need to construct with a specific basis</span>
 <span id="L29"><span class="lineNum">      29</span>              :   // type.</span>
-<span id="L30"><span class="lineNum">      30</span>              :   constexpr int pmin = (std::is_base_of&lt;mfem::H1_FECollection, FECollection&gt;::value ||</span>
-<span id="L31"><span class="lineNum">      31</span>              :                         std::is_base_of&lt;mfem::ND_FECollection, FECollection&gt;::value)</span>
+<span id="L30"><span class="lineNum">      30</span>              :   constexpr int pmin = (std::is_base_of_v&lt;mfem::H1_FECollection, FECollection&gt; ||</span>
+<span id="L31"><span class="lineNum">      31</span>              :                         std::is_base_of_v&lt;mfem::ND_FECollection, FECollection&gt;)</span>
 <span id="L32"><span class="lineNum">      32</span>              :                            ? 1</span>
 <span id="L33"><span class="lineNum">      33</span>              :                            : 0;</span>
 <span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">         693 :   MFEM_VERIFY(p &gt;= pmin, &quot;FE space order must not be less than &quot; &lt;&lt; pmin &lt;&lt; &quot;!&quot;);</span></span>
@@ -110,11 +110,11 @@
 <span id="L40"><span class="lineNum">      40</span>              : </span>
 <span id="L41"><span class="lineNum">      41</span>              :   // Construct the p-multigrid hierarchy, first finest to coarsest and then reverse the</span>
 <span id="L42"><span class="lineNum">      42</span>              :   // order.</span>
-<span id="L43"><span class="lineNum">      43</span>              :   std::vector&lt;std::unique_ptr&lt;FECollection&gt;&gt; fecs;</span>
-<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC tlaBgGNC">        1216 :   for (int l = 0; l &lt; std::max(1, mg_max_levels); l++)</span></span>
+<span id="L43"><span class="lineNum">      43</span> <span class="tlaGNC tlaBgGNC">         693 :   std::vector&lt;std::unique_ptr&lt;FECollection&gt;&gt; fecs;</span></span>
+<span id="L44"><span class="lineNum">      44</span> <span class="tlaGNC">        1216 :   for (int l = 0; l &lt; std::max(1, mg_max_levels); l++)</span></span>
 <span id="L45"><span class="lineNum">      45</span>              :   {</span>
-<span id="L46"><span class="lineNum">      46</span>              :     if constexpr (std::is_base_of&lt;mfem::ND_FECollection, FECollection&gt;::value ||</span>
-<span id="L47"><span class="lineNum">      47</span>              :                   std::is_base_of&lt;mfem::RT_FECollection, FECollection&gt;::value)</span>
+<span id="L46"><span class="lineNum">      46</span>              :     if constexpr (std::is_base_of_v&lt;mfem::ND_FECollection, FECollection&gt; ||</span>
+<span id="L47"><span class="lineNum">      47</span>              :                   std::is_base_of_v&lt;mfem::RT_FECollection, FECollection&gt;)</span>
 <span id="L48"><span class="lineNum">      48</span>              :     {</span>
 <span id="L49"><span class="lineNum">      49</span> <span class="tlaGNC">         650 :       fecs.push_back(std::make_unique&lt;FECollection&gt;(p, dim, b1, b2));</span></span>
 <span id="L50"><span class="lineNum">      50</span>              :     }</span>

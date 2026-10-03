@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">62.7&nbsp;%</td>
@@ -82,7 +82,7 @@
 <span id="L12"><span class="lineNum">      12</span>              : namespace palace</span>
 <span id="L13"><span class="lineNum">      13</span>              : {</span>
 <span id="L14"><span class="lineNum">      14</span>              : </span>
-<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC tlaBgGNC">      196330 : ComplexVector::ComplexVector(int size) : xr(size), xi(size) {}</span></span>
+<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC tlaBgGNC">      196372 : ComplexVector::ComplexVector(int size) : xr(size), xi(size) {}</span></span>
 <span id="L16"><span class="lineNum">      16</span>              : </span>
 <span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">        3926 : ComplexVector::ComplexVector(const ComplexVector &amp;y) : ComplexVector(y.Size())</span></span>
 <span id="L18"><span class="lineNum">      18</span>              : {</span>
@@ -109,17 +109,17 @@
 <span id="L39"><span class="lineNum">      39</span> <span class="tlaUNC">           0 :   MakeRef(y, offset, size);</span></span>
 <span id="L40"><span class="lineNum">      40</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L41"><span class="lineNum">      41</span>              : </span>
-<span id="L42"><span class="lineNum">      42</span> <span class="tlaGNC tlaBgGNC">       84725 : void ComplexVector::UseDevice(bool use_dev)</span></span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaGNC tlaBgGNC">       84740 : void ComplexVector::UseDevice(bool use_dev)</span></span>
 <span id="L43"><span class="lineNum">      43</span>              : {</span>
 <span id="L44"><span class="lineNum">      44</span>              :   xr.UseDevice(use_dev);</span>
 <span id="L45"><span class="lineNum">      45</span>              :   xi.UseDevice(use_dev);</span>
-<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">       84725 : }</span></span>
+<span id="L46"><span class="lineNum">      46</span> <span class="tlaGNC">       84740 : }</span></span>
 <span id="L47"><span class="lineNum">      47</span>              : </span>
-<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">       59411 : void ComplexVector::SetSize(int size)</span></span>
+<span id="L48"><span class="lineNum">      48</span> <span class="tlaGNC">       59424 : void ComplexVector::SetSize(int size)</span></span>
 <span id="L49"><span class="lineNum">      49</span>              : {</span>
-<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">       59411 :   xr.SetSize(size);</span></span>
-<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">       59411 :   xi.SetSize(size);</span></span>
-<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">       59411 : }</span></span>
+<span id="L50"><span class="lineNum">      50</span> <span class="tlaGNC">       59424 :   xr.SetSize(size);</span></span>
+<span id="L51"><span class="lineNum">      51</span> <span class="tlaGNC">       59424 :   xi.SetSize(size);</span></span>
+<span id="L52"><span class="lineNum">      52</span> <span class="tlaGNC">       59424 : }</span></span>
 <span id="L53"><span class="lineNum">      53</span>              : </span>
 <span id="L54"><span class="lineNum">      54</span> <span class="tlaUNC tlaBgUNC">           0 : void ComplexVector::MakeRef(Vector &amp;y, int offset, int size)</span></span>
 <span id="L55"><span class="lineNum">      55</span>              : {</span>
@@ -130,13 +130,13 @@
 <span id="L60"><span class="lineNum">      60</span> <span class="tlaUNC">           0 :   xi.MakeRef(y, offset + size, size);</span></span>
 <span id="L61"><span class="lineNum">      61</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L62"><span class="lineNum">      62</span>              : </span>
-<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC tlaBgGNC">        4087 : void ComplexVector::Set(const ComplexVector &amp;y)</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC tlaBgGNC">        4093 : void ComplexVector::Set(const ComplexVector &amp;y)</span></span>
 <span id="L64"><span class="lineNum">      64</span>              : {</span>
 <span id="L65"><span class="lineNum">      65</span>              :   MFEM_ASSERT(y.Size() == Size(),</span>
 <span id="L66"><span class="lineNum">      66</span>              :               &quot;Mismatch in dimension of provided parts in ComplexVector!&quot;);</span>
-<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">        4087 :   Real() = y.Real();</span></span>
-<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">        4087 :   Imag() = y.Imag();</span></span>
-<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">        4087 : }</span></span>
+<span id="L67"><span class="lineNum">      67</span> <span class="tlaGNC">        4093 :   Real() = y.Real();</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaGNC">        4093 :   Imag() = y.Imag();</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC">        4093 : }</span></span>
 <span id="L70"><span class="lineNum">      70</span>              : </span>
 <span id="L71"><span class="lineNum">      71</span> <span class="tlaUNC tlaBgUNC">           0 : void ComplexVector::Set(const Vector &amp;yr, const Vector &amp;yi)</span></span>
 <span id="L72"><span class="lineNum">      72</span>              : {</span>
@@ -232,11 +232,11 @@
 <span id="L162"><span class="lineNum">     162</span>              :   }</span>
 <span id="L163"><span class="lineNum">     163</span> <span class="tlaGNC tlaBgGNC">        7312 : }</span></span>
 <span id="L164"><span class="lineNum">     164</span>              : </span>
-<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">        7436 : ComplexVector &amp;ComplexVector::operator=(std::complex&lt;double&gt; s)</span></span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">        7445 : ComplexVector &amp;ComplexVector::operator=(std::complex&lt;double&gt; s)</span></span>
 <span id="L166"><span class="lineNum">     166</span>              : {</span>
-<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">        7436 :   Real() = s.real();</span></span>
-<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">        7436 :   Imag() = s.imag();</span></span>
-<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">        7436 :   return *this;</span></span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">        7445 :   Real() = s.real();</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">        7445 :   Imag() = s.imag();</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">        7445 :   return *this;</span></span>
 <span id="L170"><span class="lineNum">     170</span>              : }</span>
 <span id="L171"><span class="lineNum">     171</span>              : </span>
 <span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">          12 : void ComplexVector::SetBlocks(const std::vector&lt;const ComplexVector *&gt; &amp;y,</span></span>
@@ -362,21 +362,21 @@
 <span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">       34936 :   if (ai == 0.0)</span></span>
 <span id="L293"><span class="lineNum">     293</span>              :   {</span>
 <span id="L294"><span class="lineNum">     294</span>              :     mfem::forall_switch(use_dev, N,</span>
-<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">        4156 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L295"><span class="lineNum">     295</span> <span class="tlaGNC">        4164 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L296"><span class="lineNum">     296</span>              :                         {</span>
-<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">     9450253 :                           YR[i] += ar * XR[i];</span></span>
-<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">     9450253 :                           YI[i] += ar * XI[i];</span></span>
-<span id="L299"><span class="lineNum">     299</span> <span class="tlaGNC">     9450253 :                         });</span></span>
+<span id="L297"><span class="lineNum">     297</span> <span class="tlaGNC">     9452669 :                           YR[i] += ar * XR[i];</span></span>
+<span id="L298"><span class="lineNum">     298</span> <span class="tlaGNC">     9452669 :                           YI[i] += ar * XI[i];</span></span>
+<span id="L299"><span class="lineNum">     299</span> <span class="tlaGNC">     9452669 :                         });</span></span>
 <span id="L300"><span class="lineNum">     300</span>              :   }</span>
 <span id="L301"><span class="lineNum">     301</span>              :   else</span>
 <span id="L302"><span class="lineNum">     302</span>              :   {</span>
 <span id="L303"><span class="lineNum">     303</span>              :     mfem::forall_switch(use_dev, N,</span>
-<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">       30780 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L304"><span class="lineNum">     304</span> <span class="tlaGNC">       30772 :                         [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L305"><span class="lineNum">     305</span>              :                         {</span>
-<span id="L306"><span class="lineNum">     306</span> <span class="tlaGNC">    31629522 :                           const auto t = ai * XR[i] + ar * XI[i];</span></span>
-<span id="L307"><span class="lineNum">     307</span> <span class="tlaGNC">    31629522 :                           YR[i] += ar * XR[i] - ai * XI[i];</span></span>
-<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">    31629522 :                           YI[i] += t;</span></span>
-<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">    31629522 :                         });</span></span>
+<span id="L306"><span class="lineNum">     306</span> <span class="tlaGNC">    31627106 :                           const auto t = ai * XR[i] + ar * XI[i];</span></span>
+<span id="L307"><span class="lineNum">     307</span> <span class="tlaGNC">    31627106 :                           YR[i] += ar * XR[i] - ai * XI[i];</span></span>
+<span id="L308"><span class="lineNum">     308</span> <span class="tlaGNC">    31627106 :                           YI[i] += t;</span></span>
+<span id="L309"><span class="lineNum">     309</span> <span class="tlaGNC">    31627106 :                         });</span></span>
 <span id="L310"><span class="lineNum">     310</span>              :   }</span>
 <span id="L311"><span class="lineNum">     311</span> <span class="tlaGNC">       34936 : }</span></span>
 <span id="L312"><span class="lineNum">     312</span>              : </span>
@@ -428,22 +428,22 @@
 <span id="L358"><span class="lineNum">     358</span> <span class="tlaGNC">         405 :     if (ai == 0.0 &amp;&amp; bi == 0.0)</span></span>
 <span id="L359"><span class="lineNum">     359</span>              :     {</span>
 <span id="L360"><span class="lineNum">     360</span>              :       mfem::forall_switch(use_dev, N,</span>
-<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">          48 :                           [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L361"><span class="lineNum">     361</span> <span class="tlaGNC">          67 :                           [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L362"><span class="lineNum">     362</span>              :                           {</span>
-<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">       10579 :                             YR[i] = ar * XR[i] + br * YR[i];</span></span>
-<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">       10579 :                             YI[i] = ar * XI[i] + br * YI[i];</span></span>
-<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">       10579 :                           });</span></span>
-<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">          48 :     }</span></span>
+<span id="L363"><span class="lineNum">     363</span> <span class="tlaGNC">       13901 :                             YR[i] = ar * XR[i] + br * YR[i];</span></span>
+<span id="L364"><span class="lineNum">     364</span> <span class="tlaGNC">       13901 :                             YI[i] = ar * XI[i] + br * YI[i];</span></span>
+<span id="L365"><span class="lineNum">     365</span> <span class="tlaGNC">       13901 :                           });</span></span>
+<span id="L366"><span class="lineNum">     366</span> <span class="tlaGNC">          67 :     }</span></span>
 <span id="L367"><span class="lineNum">     367</span>              :     else</span>
 <span id="L368"><span class="lineNum">     368</span>              :     {</span>
 <span id="L369"><span class="lineNum">     369</span>              :       mfem::forall_switch(use_dev, N,</span>
-<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">         357 :                           [=] MFEM_HOST_DEVICE(int i)</span></span>
+<span id="L370"><span class="lineNum">     370</span> <span class="tlaGNC">         338 :                           [=] MFEM_HOST_DEVICE(int i)</span></span>
 <span id="L371"><span class="lineNum">     371</span>              :                           {</span>
-<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">       67111 :                             const auto t =</span></span>
-<span id="L373"><span class="lineNum">     373</span> <span class="tlaGNC">       67111 :                                 ai * XR[i] + ar * XI[i] + bi * YR[i] + br * YI[i];</span></span>
-<span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC">       67111 :                             YR[i] = ar * XR[i] - ai * XI[i] + br * YR[i] - bi * YI[i];</span></span>
-<span id="L375"><span class="lineNum">     375</span> <span class="tlaGNC">       67111 :                             YI[i] = t;</span></span>
-<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">       67111 :                           });</span></span>
+<span id="L372"><span class="lineNum">     372</span> <span class="tlaGNC">       63789 :                             const auto t =</span></span>
+<span id="L373"><span class="lineNum">     373</span> <span class="tlaGNC">       63789 :                                 ai * XR[i] + ar * XI[i] + bi * YR[i] + br * YI[i];</span></span>
+<span id="L374"><span class="lineNum">     374</span> <span class="tlaGNC">       63789 :                             YR[i] = ar * XR[i] - ai * XI[i] + br * YR[i] - bi * YI[i];</span></span>
+<span id="L375"><span class="lineNum">     375</span> <span class="tlaGNC">       63789 :                             YI[i] = t;</span></span>
+<span id="L376"><span class="lineNum">     376</span> <span class="tlaGNC">       63789 :                           });</span></span>
 <span id="L377"><span class="lineNum">     377</span>              :     }</span>
 <span id="L378"><span class="lineNum">     378</span>              :   }</span>
 <span id="L379"><span class="lineNum">     379</span> <span class="tlaGNC">        1002 : }</span></span>
@@ -732,25 +732,25 @@
 <span id="L662"><span class="lineNum">     662</span>              :                       });</span>
 <span id="L663"><span class="lineNum">     663</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L664"><span class="lineNum">     664</span>              : </span>
-<span id="L665"><span class="lineNum">     665</span> <span class="tlaGNC tlaBgGNC">      152922 : double LocalDot(const Vector &amp;x, const Vector &amp;y)</span></span>
+<span id="L665"><span class="lineNum">     665</span> <span class="tlaGNC tlaBgGNC">      152977 : double LocalDot(const Vector &amp;x, const Vector &amp;y)</span></span>
 <span id="L666"><span class="lineNum">     666</span>              : {</span>
-<span id="L667"><span class="lineNum">     667</span> <span class="tlaGNC">      153118 :   static hypre::HypreVector X, Y;</span></span>
+<span id="L667"><span class="lineNum">     667</span> <span class="tlaGNC">      153203 :   static hypre::HypreVector X, Y;</span></span>
 <span id="L668"><span class="lineNum">     668</span>              :   MFEM_ASSERT(x.Size() == y.Size(), &quot;Size mismatch for vector inner product!&quot;);</span>
-<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">      152922 :   X.Update(x);</span></span>
-<span id="L670"><span class="lineNum">     670</span> <span class="tlaGNC">      152922 :   Y.Update(y);</span></span>
-<span id="L671"><span class="lineNum">     671</span> <span class="tlaGNC">      152922 :   return hypre_SeqVectorInnerProd(X, Y);</span></span>
+<span id="L669"><span class="lineNum">     669</span> <span class="tlaGNC">      152977 :   X.Update(x);</span></span>
+<span id="L670"><span class="lineNum">     670</span> <span class="tlaGNC">      152977 :   Y.Update(y);</span></span>
+<span id="L671"><span class="lineNum">     671</span> <span class="tlaGNC">      152977 :   return hypre_SeqVectorInnerProd(X, Y);</span></span>
 <span id="L672"><span class="lineNum">     672</span>              : }</span>
 <span id="L673"><span class="lineNum">     673</span>              : </span>
-<span id="L674"><span class="lineNum">     674</span> <span class="tlaGNC">       38237 : std::complex&lt;double&gt; LocalDot(const ComplexVector &amp;x, const ComplexVector &amp;y)</span></span>
+<span id="L674"><span class="lineNum">     674</span> <span class="tlaGNC">       38240 : std::complex&lt;double&gt; LocalDot(const ComplexVector &amp;x, const ComplexVector &amp;y)</span></span>
 <span id="L675"><span class="lineNum">     675</span>              : {</span>
-<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC">       38237 :   if (&amp;x == &amp;y)</span></span>
+<span id="L676"><span class="lineNum">     676</span> <span class="tlaGNC">       38240 :   if (&amp;x == &amp;y)</span></span>
 <span id="L677"><span class="lineNum">     677</span>              :   {</span>
 <span id="L678"><span class="lineNum">     678</span> <span class="tlaGNC">       12602 :     return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()), 0.0};</span></span>
 <span id="L679"><span class="lineNum">     679</span>              :   }</span>
 <span id="L680"><span class="lineNum">     680</span>              :   else</span>
 <span id="L681"><span class="lineNum">     681</span>              :   {</span>
-<span id="L682"><span class="lineNum">     682</span> <span class="tlaGNC">       25635 :     return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),</span></span>
-<span id="L683"><span class="lineNum">     683</span> <span class="tlaGNC">       25635 :             LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};</span></span>
+<span id="L682"><span class="lineNum">     682</span> <span class="tlaGNC">       25638 :     return {LocalDot(x.Real(), y.Real()) + LocalDot(x.Imag(), y.Imag()),</span></span>
+<span id="L683"><span class="lineNum">     683</span> <span class="tlaGNC">       25638 :             LocalDot(x.Imag(), y.Real()) - LocalDot(x.Real(), y.Imag())};</span></span>
 <span id="L684"><span class="lineNum">     684</span>              :   }</span>
 <span id="L685"><span class="lineNum">     685</span>              : }</span>
 <span id="L686"><span class="lineNum">     686</span>              : </span>
@@ -794,10 +794,10 @@
 <span id="L724"><span class="lineNum">     724</span> <span class="tlaGNC">          54 : }</span></span>
 <span id="L725"><span class="lineNum">     725</span>              : </span>
 <span id="L726"><span class="lineNum">     726</span>              : template &lt;&gt;</span>
-<span id="L727"><span class="lineNum">     727</span> <span class="tlaGNC">        6745 : void AXPBY(double alpha, const Vector &amp;x, double beta, Vector &amp;y)</span></span>
+<span id="L727"><span class="lineNum">     727</span> <span class="tlaGNC">        6759 : void AXPBY(double alpha, const Vector &amp;x, double beta, Vector &amp;y)</span></span>
 <span id="L728"><span class="lineNum">     728</span>              : {</span>
-<span id="L729"><span class="lineNum">     729</span> <span class="tlaGNC">        6745 :   add(alpha, x, beta, y, y);</span></span>
-<span id="L730"><span class="lineNum">     730</span> <span class="tlaGNC">        6745 : }</span></span>
+<span id="L729"><span class="lineNum">     729</span> <span class="tlaGNC">        6759 :   add(alpha, x, beta, y, y);</span></span>
+<span id="L730"><span class="lineNum">     730</span> <span class="tlaGNC">        6759 : }</span></span>
 <span id="L731"><span class="lineNum">     731</span>              : </span>
 <span id="L732"><span class="lineNum">     732</span>              : template &lt;&gt;</span>
 <span id="L733"><span class="lineNum">     733</span> <span class="tlaGNC">         405 : void AXPBY(std::complex&lt;double&gt; alpha, const ComplexVector &amp;x, std::complex&lt;double&gt; beta,</span></span>

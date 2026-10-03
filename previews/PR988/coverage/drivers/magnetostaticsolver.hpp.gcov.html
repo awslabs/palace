@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">-</td>
@@ -101,18 +101,20 @@
 <span id="L31"><span class="lineNum">      31</span>              :                             const SurfaceFluxOperator &amp;surf_flux_op,</span>
 <span id="L32"><span class="lineNum">      32</span>              :                             const std::vector&lt;Vector&gt; &amp;A, const std::vector&lt;double&gt; &amp;I_inc,</span>
 <span id="L33"><span class="lineNum">      33</span>              :                             const std::vector&lt;double&gt; &amp;Phi_inc,</span>
-<span id="L34"><span class="lineNum">      34</span>              :                             const mfem::DenseMatrix &amp;linked_flux) const;</span>
-<span id="L35"><span class="lineNum">      35</span>              : </span>
-<span id="L36"><span class="lineNum">      36</span>              :   std::pair&lt;ErrorIndicator, long long int&gt;</span>
-<span id="L37"><span class="lineNum">      37</span>              :   Solve(const std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; &amp;mesh) const override;</span>
-<span id="L38"><span class="lineNum">      38</span>              : </span>
-<span id="L39"><span class="lineNum">      39</span>              : public:</span>
-<span id="L40"><span class="lineNum">      40</span> <span class="tlaUNC tlaBgUNC">           0 :   using BaseSolver::BaseSolver;</span></span>
-<span id="L41"><span class="lineNum">      41</span>              : };</span>
-<span id="L42"><span class="lineNum">      42</span>              : </span>
-<span id="L43"><span class="lineNum">      43</span>              : }  // namespace palace</span>
+<span id="L34"><span class="lineNum">      34</span>              :                             const mfem::DenseMatrix &amp;linked_flux,</span>
+<span id="L35"><span class="lineNum">      35</span>              :                             const std::vector&lt;Vector&gt; &amp;london_ah,</span>
+<span id="L36"><span class="lineNum">      36</span>              :                             const std::vector&lt;Vector&gt; &amp;london_ms_shifted) const;</span>
+<span id="L37"><span class="lineNum">      37</span>              : </span>
+<span id="L38"><span class="lineNum">      38</span>              :   std::pair&lt;ErrorIndicator, long long int&gt;</span>
+<span id="L39"><span class="lineNum">      39</span>              :   Solve(const std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; &amp;mesh) const override;</span>
+<span id="L40"><span class="lineNum">      40</span>              : </span>
+<span id="L41"><span class="lineNum">      41</span>              : public:</span>
+<span id="L42"><span class="lineNum">      42</span> <span class="tlaUNC tlaBgUNC">           0 :   using BaseSolver::BaseSolver;</span></span>
+<span id="L43"><span class="lineNum">      43</span>              : };</span>
 <span id="L44"><span class="lineNum">      44</span>              : </span>
-<span id="L45"><span class="lineNum">      45</span>              : #endif  // PALACE_DRIVERS_MAGNETOSTATIC_SOLVER_HPP</span>
+<span id="L45"><span class="lineNum">      45</span>              : }  // namespace palace</span>
+<span id="L46"><span class="lineNum">      46</span>              : </span>
+<span id="L47"><span class="lineNum">      47</span>              : #endif  // PALACE_DRIVERS_MAGNETOSTATIC_SOLVER_HPP</span>
         </pre>
               </td>
             </tr>

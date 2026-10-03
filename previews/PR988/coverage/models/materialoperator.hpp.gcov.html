@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryMed">83.3&nbsp;%</td>
@@ -128,7 +128,7 @@
 <span id="L58"><span class="lineNum">      58</span>              :   auto AttrToMat(int attr) const</span>
 <span id="L59"><span class="lineNum">      59</span>              :   {</span>
 <span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC tlaBgGNC">     1731667 :     const auto &amp;loc_attr = mesh.GetCeedAttributes();</span></span>
-<span id="L61"><span class="lineNum">      61</span>              :     MFEM_ASSERT(loc_attr.find(attr) != loc_attr.end(),</span>
+<span id="L61"><span class="lineNum">      61</span>              :     MFEM_ASSERT(loc_attr.contains(attr),</span>
 <span id="L62"><span class="lineNum">      62</span>              :                 &quot;Missing libCEED domain attribute for attribute &quot; &lt;&lt; attr &lt;&lt; &quot;!&quot;);</span>
 <span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">     1545858 :     return attr_mat[loc_attr.at(attr) - 1];</span></span>
 <span id="L64"><span class="lineNum">      64</span>              :   }</span>

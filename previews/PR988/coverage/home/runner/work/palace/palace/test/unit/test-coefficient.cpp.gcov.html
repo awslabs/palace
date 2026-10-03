@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryHi">98.6&nbsp;%</td>
+            <td class="headerCovTableEntryHi">98.7&nbsp;%</td>
+            <td class="headerCovTableEntry">75</td>
             <td class="headerCovTableEntry">74</td>
-            <td class="headerCovTableEntry">73</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -150,8 +150,8 @@
 <span id="L80"><span class="lineNum">      80</span>              :   auto &amp;pmesh = mesh.Get();</span>
 <span id="L81"><span class="lineNum">      81</span>              : </span>
 <span id="L82"><span class="lineNum">      82</span> <span class="tlaGNC">           1 :   config::MaterialData material;</span></span>
-<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">           2 :   material.attributes = {1};</span></span>
-<span id="L84"><span class="lineNum">      84</span>              :   config::PeriodicBoundaryData periodic;</span>
+<span id="L83"><span class="lineNum">      83</span> <span class="tlaGNC">           1 :   material.attributes = {1};</span></span>
+<span id="L84"><span class="lineNum">      84</span> <span class="tlaGNC">           1 :   config::PeriodicBoundaryData periodic;</span></span>
 <span id="L85"><span class="lineNum">      85</span> <span class="tlaGNC">           2 :   MaterialOperator mat_op({material}, periodic, ProblemType::MAGNETOSTATIC, mesh);</span></span>
 <span id="L86"><span class="lineNum">      86</span>              : </span>
 <span id="L87"><span class="lineNum">      87</span> <span class="tlaGNC">           1 :   mfem::H1_FECollection fec(1, 3);</span></span>

@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">66.7&nbsp;%</td>
@@ -80,12 +80,12 @@
 <span id="L10"><span class="lineNum">      10</span>              : namespace palace::utils</span>
 <span id="L11"><span class="lineNum">      11</span>              : {</span>
 <span id="L12"><span class="lineNum">      12</span>              : </span>
-<span id="L13"><span class="lineNum">      13</span> <span class="tlaGNC tlaBgGNC">         394 : void SetNumThreads(int nt)</span></span>
+<span id="L13"><span class="lineNum">      13</span> <span class="tlaGNC tlaBgGNC">         419 : void SetNumThreads(int nt)</span></span>
 <span id="L14"><span class="lineNum">      14</span>              : {</span>
 <span id="L15"><span class="lineNum">      15</span>              : #if defined(MFEM_USE_OPENMP)</span>
-<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">         394 :   omp_set_num_threads(nt);</span></span>
+<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">         419 :   omp_set_num_threads(nt);</span></span>
 <span id="L17"><span class="lineNum">      17</span>              : #endif</span>
-<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">         394 : }</span></span>
+<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">         419 : }</span></span>
 <span id="L19"><span class="lineNum">      19</span>              : </span>
 <span id="L20"><span class="lineNum">      20</span> <span class="tlaUNC tlaBgUNC">           0 : int GetMaxThreads()</span></span>
 <span id="L21"><span class="lineNum">      21</span>              : {</span>
@@ -96,19 +96,19 @@
 <span id="L26"><span class="lineNum">      26</span>              : #endif</span>
 <span id="L27"><span class="lineNum">      27</span>              : }</span>
 <span id="L28"><span class="lineNum">      28</span>              : </span>
-<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC tlaBgGNC">         394 : int GetNumActiveThreads()</span></span>
+<span id="L29"><span class="lineNum">      29</span> <span class="tlaGNC tlaBgGNC">         419 : int GetNumActiveThreads()</span></span>
 <span id="L30"><span class="lineNum">      30</span>              : {</span>
 <span id="L31"><span class="lineNum">      31</span>              : #if defined(MFEM_USE_OPENMP)</span>
-<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">         394 :   return omp_get_num_threads();</span></span>
+<span id="L32"><span class="lineNum">      32</span> <span class="tlaGNC">         419 :   return omp_get_num_threads();</span></span>
 <span id="L33"><span class="lineNum">      33</span>              : #else</span>
 <span id="L34"><span class="lineNum">      34</span>              :   return 1;</span>
 <span id="L35"><span class="lineNum">      35</span>              : #endif</span>
 <span id="L36"><span class="lineNum">      36</span>              : }</span>
 <span id="L37"><span class="lineNum">      37</span>              : </span>
-<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">      265016 : int GetThreadNum()</span></span>
+<span id="L38"><span class="lineNum">      38</span> <span class="tlaGNC">      265020 : int GetThreadNum()</span></span>
 <span id="L39"><span class="lineNum">      39</span>              : {</span>
 <span id="L40"><span class="lineNum">      40</span>              : #if defined(MFEM_USE_OPENMP)</span>
-<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">      265016 :   return omp_get_thread_num();</span></span>
+<span id="L41"><span class="lineNum">      41</span> <span class="tlaGNC">      265020 :   return omp_get_thread_num();</span></span>
 <span id="L42"><span class="lineNum">      42</span>              : #else</span>
 <span id="L43"><span class="lineNum">      43</span>              :   return 0;</span>
 <span id="L44"><span class="lineNum">      44</span>              : #endif</span>
@@ -123,21 +123,21 @@
 <span id="L53"><span class="lineNum">      53</span>              : #endif</span>
 <span id="L54"><span class="lineNum">      54</span>              : }</span>
 <span id="L55"><span class="lineNum">      55</span>              : </span>
-<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC tlaBgGNC">         394 : int ConfigureOmp()</span></span>
+<span id="L56"><span class="lineNum">      56</span> <span class="tlaGNC tlaBgGNC">         419 : int ConfigureOmp()</span></span>
 <span id="L57"><span class="lineNum">      57</span>              : {</span>
 <span id="L58"><span class="lineNum">      58</span>              : #if defined(MFEM_USE_OPENMP)</span>
 <span id="L59"><span class="lineNum">      59</span>              :   int nt;</span>
-<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">         394 :   const char *env = std::getenv(&quot;OMP_NUM_THREADS&quot;);</span></span>
-<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">         394 :   if (env)</span></span>
+<span id="L60"><span class="lineNum">      60</span> <span class="tlaGNC">         419 :   const char *env = std::getenv(&quot;OMP_NUM_THREADS&quot;);</span></span>
+<span id="L61"><span class="lineNum">      61</span> <span class="tlaGNC">         419 :   if (env)</span></span>
 <span id="L62"><span class="lineNum">      62</span>              :   {</span>
-<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">         394 :     std::sscanf(env, &quot;%d&quot;, &amp;nt);</span></span>
+<span id="L63"><span class="lineNum">      63</span> <span class="tlaGNC">         419 :     std::sscanf(env, &quot;%d&quot;, &amp;nt);</span></span>
 <span id="L64"><span class="lineNum">      64</span>              :   }</span>
 <span id="L65"><span class="lineNum">      65</span>              :   else</span>
 <span id="L66"><span class="lineNum">      66</span>              :   {</span>
 <span id="L67"><span class="lineNum">      67</span> <span class="tlaUNC tlaBgUNC">           0 :     nt = 1;</span></span>
 <span id="L68"><span class="lineNum">      68</span>              :   }</span>
-<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC tlaBgGNC">         394 :   utils::SetNumThreads(nt);</span></span>
-<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">         394 :   return nt;</span></span>
+<span id="L69"><span class="lineNum">      69</span> <span class="tlaGNC tlaBgGNC">         419 :   utils::SetNumThreads(nt);</span></span>
+<span id="L70"><span class="lineNum">      70</span> <span class="tlaGNC">         419 :   return nt;</span></span>
 <span id="L71"><span class="lineNum">      71</span>              : #else</span>
 <span id="L72"><span class="lineNum">      72</span>              :   return 0;</span>
 <span id="L73"><span class="lineNum">      73</span>              : #endif</span>

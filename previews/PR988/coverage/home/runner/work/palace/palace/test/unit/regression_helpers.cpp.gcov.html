@@ -32,12 +32,12 @@
             <td></td>
             <td class="headerItem">Lines:</td>
             <td class="headerCovTableEntryLo">4.0&nbsp;%</td>
-            <td class="headerCovTableEntry">224</td>
+            <td class="headerCovTableEntry">226</td>
             <td class="headerCovTableEntry">9</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">13.0&nbsp;%</td>
@@ -135,7 +135,7 @@
 <span id="L65"><span class="lineNum">      65</span> <span class="tlaUNC">           0 :     if (it-&gt;is_directory())</span></span>
 <span id="L66"><span class="lineNum">      66</span>              :     {</span>
 <span id="L67"><span class="lineNum">      67</span> <span class="tlaUNC">           0 :       out.dirs.insert(std::filesystem::relative(it-&gt;path(), root).generic_string());</span></span>
-<span id="L68"><span class="lineNum">      68</span> <span class="tlaUNC">           0 :       if (skip_dirs.count(it-&gt;path().filename().string()))</span></span>
+<span id="L68"><span class="lineNum">      68</span> <span class="tlaUNC">           0 :       if (skip_dirs.contains(it-&gt;path().filename().string()))</span></span>
 <span id="L69"><span class="lineNum">      69</span>              :       {</span>
 <span id="L70"><span class="lineNum">      70</span> <span class="tlaUNC">           0 :         it.disable_recursion_pending();</span></span>
 <span id="L71"><span class="lineNum">      71</span>              :       }</span>
@@ -476,18 +476,18 @@
 <span id="L406"><span class="lineNum">     406</span>              : </span>
 <span id="L407"><span class="lineNum">     407</span>              : }  // namespace</span>
 <span id="L408"><span class="lineNum">     408</span>              : </span>
-<span id="L409"><span class="lineNum">     409</span> <span class="tlaGNC tlaBgGNC">         394 : void SetRegressionRunDirOverride(std::string value)</span></span>
+<span id="L409"><span class="lineNum">     409</span> <span class="tlaGNC tlaBgGNC">         419 : void SetRegressionRunDirOverride(std::string value)</span></span>
 <span id="L410"><span class="lineNum">     410</span>              : {</span>
-<span id="L411"><span class="lineNum">     411</span> <span class="tlaGNC">         394 :   g_regression_run_dir_override = std::move(value);</span></span>
-<span id="L412"><span class="lineNum">     412</span> <span class="tlaGNC">         394 : }</span></span>
-<span id="L413"><span class="lineNum">     413</span> <span class="tlaGNC">         394 : void SetSolverOverride(std::string value)</span></span>
+<span id="L411"><span class="lineNum">     411</span> <span class="tlaGNC">         419 :   g_regression_run_dir_override = std::move(value);</span></span>
+<span id="L412"><span class="lineNum">     412</span> <span class="tlaGNC">         419 : }</span></span>
+<span id="L413"><span class="lineNum">     413</span> <span class="tlaGNC">         419 : void SetSolverOverride(std::string value)</span></span>
 <span id="L414"><span class="lineNum">     414</span>              : {</span>
-<span id="L415"><span class="lineNum">     415</span> <span class="tlaGNC">         394 :   g_solver_override = std::move(value);</span></span>
-<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">         394 : }</span></span>
-<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">         394 : void SetEigenSolverOverride(std::string value)</span></span>
+<span id="L415"><span class="lineNum">     415</span> <span class="tlaGNC">         419 :   g_solver_override = std::move(value);</span></span>
+<span id="L416"><span class="lineNum">     416</span> <span class="tlaGNC">         419 : }</span></span>
+<span id="L417"><span class="lineNum">     417</span> <span class="tlaGNC">         419 : void SetEigenSolverOverride(std::string value)</span></span>
 <span id="L418"><span class="lineNum">     418</span>              : {</span>
-<span id="L419"><span class="lineNum">     419</span> <span class="tlaGNC">         394 :   g_eigensolver_override = std::move(value);</span></span>
-<span id="L420"><span class="lineNum">     420</span> <span class="tlaGNC">         394 : }</span></span>
+<span id="L419"><span class="lineNum">     419</span> <span class="tlaGNC">         419 :   g_eigensolver_override = std::move(value);</span></span>
+<span id="L420"><span class="lineNum">     420</span> <span class="tlaGNC">         419 : }</span></span>
 <span id="L421"><span class="lineNum">     421</span>              : </span>
 <span id="L422"><span class="lineNum">     422</span> <span class="tlaUNC tlaBgUNC">           0 : std::filesystem::path GetRegressionRunDir()</span></span>
 <span id="L423"><span class="lineNum">     423</span>              : {</span>
@@ -580,9 +580,9 @@
 <span id="L510"><span class="lineNum">     510</span>              :     // listing so their absence in the reference tree is not flagged as a missing file.</span>
 <span id="L511"><span class="lineNum">     511</span> <span class="tlaUNC">           0 :     for (auto it = got.csv_files.begin(); it != got.csv_files.end();)</span></span>
 <span id="L512"><span class="lineNum">     512</span>              :     {</span>
-<span id="L513"><span class="lineNum">     513</span>              :       const bool unstored = std::any_of(</span>
-<span id="L514"><span class="lineNum">     514</span>              :           effective_opts.unstored_files.begin(), effective_opts.unstored_files.end(),</span>
-<span id="L515"><span class="lineNum">     515</span>              :           [&amp;it](const std::string &amp;pat) { return it-&gt;find(pat) != std::string::npos; });</span>
+<span id="L513"><span class="lineNum">     513</span>              :       const bool unstored =</span>
+<span id="L514"><span class="lineNum">     514</span> <span class="tlaUNC">           0 :           std::ranges::any_of(effective_opts.unstored_files, [&amp;it](const std::string &amp;pat)</span></span>
+<span id="L515"><span class="lineNum">     515</span>              :                               { return it-&gt;find(pat) != std::string::npos; });</span>
 <span id="L516"><span class="lineNum">     516</span> <span class="tlaUNC">           0 :       it = unstored ? got.csv_files.erase(it) : std::next(it);</span></span>
 <span id="L517"><span class="lineNum">     517</span>              :     }</span>
 <span id="L518"><span class="lineNum">     518</span>              : </span>
@@ -607,9 +607,9 @@
 <span id="L537"><span class="lineNum">     537</span>              : </span>
 <span id="L538"><span class="lineNum">     538</span>              :       // Presence in both trees is already established above; skip excluded files</span>
 <span id="L539"><span class="lineNum">     539</span>              :       // before any shape/header/value comparison.</span>
-<span id="L540"><span class="lineNum">     540</span>              :       const bool excluded = std::any_of(</span>
-<span id="L541"><span class="lineNum">     541</span>              :           effective_opts.excluded_files.begin(), effective_opts.excluded_files.end(),</span>
-<span id="L542"><span class="lineNum">     542</span>              :           [&amp;rel](const std::string &amp;pat) { return rel.find(pat) != std::string::npos; });</span>
+<span id="L540"><span class="lineNum">     540</span>              :       const bool excluded =</span>
+<span id="L541"><span class="lineNum">     541</span> <span class="tlaUNC">           0 :           std::ranges::any_of(effective_opts.excluded_files, [&amp;rel](const std::string &amp;pat)</span></span>
+<span id="L542"><span class="lineNum">     542</span>              :                               { return rel.find(pat) != std::string::npos; });</span>
 <span id="L543"><span class="lineNum">     543</span> <span class="tlaUNC">           0 :       if (excluded)</span></span>
 <span id="L544"><span class="lineNum">     544</span>              :       {</span>
 <span id="L545"><span class="lineNum">     545</span> <span class="tlaUNC">           0 :         continue;</span></span>

@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -71,22 +71,23 @@
 <span id="L1"><span class="lineNum">       1</span>              : // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.</span>
 <span id="L2"><span class="lineNum">       2</span>              : // SPDX-License-Identifier: Apache-2.0</span>
 <span id="L3"><span class="lineNum">       3</span>              : </span>
-<span id="L4"><span class="lineNum">       4</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
-<span id="L5"><span class="lineNum">       5</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
-<span id="L6"><span class="lineNum">       6</span>              : #include &quot;utils/constants.hpp&quot;</span>
-<span id="L7"><span class="lineNum">       7</span>              : </span>
-<span id="L8"><span class="lineNum">       8</span>              : using namespace palace;</span>
-<span id="L9"><span class="lineNum">       9</span>              : using namespace palace::electromagnetics;</span>
-<span id="L10"><span class="lineNum">      10</span>              : </span>
-<span id="L11"><span class="lineNum">      11</span> <span class="tlaGNC tlaBgGNC">           1 : TEST_CASE(&quot;EM Constant Check&quot;, &quot;[units][Serial]&quot;)</span></span>
-<span id="L12"><span class="lineNum">      12</span>              : {</span>
-<span id="L13"><span class="lineNum">      13</span>              :   // This test Should be EXACT within double, so no matcher.</span>
-<span id="L14"><span class="lineNum">      14</span> <span class="tlaGNC">           1 :   CHECK(epsilon0_ * mu0_ * c0_ * c0_ == 1.0);</span></span>
-<span id="L15"><span class="lineNum">      15</span>              : </span>
-<span id="L16"><span class="lineNum">      16</span> <span class="tlaGNC">           3 :   CHECK_THAT(epsilon0_, Catch::Matchers::WithinAbs(8.8541878188e-12, 14e-24));</span></span>
-<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">           3 :   CHECK_THAT(Z0_, Catch::Matchers::WithinAbs(376.730313412, 59e-12));</span></span>
-<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">           3 :   CHECK_THAT(mu0_, Catch::Matchers::WithinRel(4e-7 * M_PI, 1.6e-10));</span></span>
-<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">           1 : }</span></span>
+<span id="L4"><span class="lineNum">       4</span>              : #include &lt;numbers&gt;</span>
+<span id="L5"><span class="lineNum">       5</span>              : #include &lt;catch2/catch_test_macros.hpp&gt;</span>
+<span id="L6"><span class="lineNum">       6</span>              : #include &lt;catch2/matchers/catch_matchers_floating_point.hpp&gt;</span>
+<span id="L7"><span class="lineNum">       7</span>              : #include &quot;utils/constants.hpp&quot;</span>
+<span id="L8"><span class="lineNum">       8</span>              : </span>
+<span id="L9"><span class="lineNum">       9</span>              : using namespace palace;</span>
+<span id="L10"><span class="lineNum">      10</span>              : using namespace palace::electromagnetics;</span>
+<span id="L11"><span class="lineNum">      11</span>              : </span>
+<span id="L12"><span class="lineNum">      12</span> <span class="tlaGNC tlaBgGNC">           1 : TEST_CASE(&quot;EM Constant Check&quot;, &quot;[units][Serial]&quot;)</span></span>
+<span id="L13"><span class="lineNum">      13</span>              : {</span>
+<span id="L14"><span class="lineNum">      14</span>              :   // This test Should be EXACT within double, so no matcher.</span>
+<span id="L15"><span class="lineNum">      15</span> <span class="tlaGNC">           1 :   CHECK(epsilon0_ * mu0_ * c0_ * c0_ == 1.0);</span></span>
+<span id="L16"><span class="lineNum">      16</span>              : </span>
+<span id="L17"><span class="lineNum">      17</span> <span class="tlaGNC">           3 :   CHECK_THAT(epsilon0_, Catch::Matchers::WithinAbs(8.8541878188e-12, 14e-24));</span></span>
+<span id="L18"><span class="lineNum">      18</span> <span class="tlaGNC">           3 :   CHECK_THAT(Z0_, Catch::Matchers::WithinAbs(376.730313412, 59e-12));</span></span>
+<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC">           3 :   CHECK_THAT(mu0_, Catch::Matchers::WithinRel(4e-7 * std::numbers::pi, 1.6e-10));</span></span>
+<span id="L20"><span class="lineNum">      20</span> <span class="tlaGNC">           1 : }</span></span>
         </pre>
               </td>
             </tr>

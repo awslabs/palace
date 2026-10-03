@@ -32,12 +32,12 @@
             <td></td>
             <td class="headerItem">Lines:</td>
             <td class="headerCovTableEntryMed">75.8&nbsp;%</td>
-            <td class="headerCovTableEntry">714</td>
-            <td class="headerCovTableEntry">541</td>
+            <td class="headerCovTableEntry">716</td>
+            <td class="headerCovTableEntry">543</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">67.1&nbsp;%</td>
@@ -470,7 +470,7 @@
 <span id="L400"><span class="lineNum">     400</span>              :   // have no symbolic structure to preserve, so exact-zero terms are omitted there.</span>
 <span id="L401"><span class="lineNum">     401</span>              :   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));</span>
 <span id="L402"><span class="lineNum">     402</span> <span class="tlaGNC">          18 :   AddConfiguredIntegrators(coarse, df, f, dfb, fb, fp);</span></span>
-<span id="L403"><span class="lineNum">     403</span>              :   std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; ops;</span>
+<span id="L403"><span class="lineNum">     403</span> <span class="tlaGNC">          18 :   std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; ops;</span></span>
 <span id="L404"><span class="lineNum">     404</span> <span class="tlaGNC">          18 :   ops.reserve(fespaces.GetNumLevels());</span></span>
 <span id="L405"><span class="lineNum">     405</span> <span class="tlaGNC">          36 :   ops.push_back(coarse.Assemble(skip_zeros));</span></span>
 <span id="L406"><span class="lineNum">     406</span> <span class="tlaGNC">          18 :   if (fespaces.GetNumLevels() &gt; 1)</span></span>
@@ -494,7 +494,7 @@
 <span id="L424"><span class="lineNum">     424</span>              :   // Match the configured coarse-support policy of the primary hierarchy above.</span>
 <span id="L425"><span class="lineNum">     425</span>              :   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));</span>
 <span id="L426"><span class="lineNum">     426</span> <span class="tlaGNC">          18 :   AddConfiguredAuxIntegrators(coarse, f, fb);</span></span>
-<span id="L427"><span class="lineNum">     427</span>              :   std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; ops;</span>
+<span id="L427"><span class="lineNum">     427</span> <span class="tlaGNC">          18 :   std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; ops;</span></span>
 <span id="L428"><span class="lineNum">     428</span> <span class="tlaGNC">          18 :   ops.reserve(fespaces.GetNumLevels());</span></span>
 <span id="L429"><span class="lineNum">     429</span> <span class="tlaGNC">          36 :   ops.push_back(coarse.Assemble(skip_zeros));</span></span>
 <span id="L430"><span class="lineNum">     430</span> <span class="tlaGNC">          18 :   if (fespaces.GetNumLevels() &gt; 1)</span></span>
@@ -512,7 +512,7 @@
 <span id="L442"><span class="lineNum">     442</span>              : </span>
 <span id="L443"><span class="lineNum">     443</span>              : }  // namespace</span>
 <span id="L444"><span class="lineNum">     444</span>              : </span>
-<span id="L445"><span class="lineNum">     445</span>              : template &lt;typename OperType&gt;</span>
+<span id="L445"><span class="lineNum">     445</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L446"><span class="lineNum">     446</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L447"><span class="lineNum">     447</span> <span class="tlaGNC tlaBgGNC">          46 : SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)</span></span>
 <span id="L448"><span class="lineNum">     448</span>              : {</span>
@@ -543,7 +543,7 @@
 <span id="L473"><span class="lineNum">     473</span>              :     ki =</span>
 <span id="L474"><span class="lineNum">     474</span> <span class="tlaGNC">           6 :         AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &amp;fc, skip_zeros);</span></span>
 <span id="L475"><span class="lineNum">     475</span>              :   }</span>
-<span id="L476"><span class="lineNum">     476</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L476"><span class="lineNum">     476</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L477"><span class="lineNum">     477</span>              :   {</span>
 <span id="L478"><span class="lineNum">     478</span> <span class="tlaGNC">          46 :     auto K =</span></span>
 <span id="L479"><span class="lineNum">     479</span>              :         std::make_unique&lt;ComplexParOperator&gt;(std::move(kr), std::move(ki), GetNDSpace());</span>
@@ -559,7 +559,7 @@
 <span id="L489"><span class="lineNum">     489</span>              :   }</span>
 <span id="L490"><span class="lineNum">     490</span> <span class="tlaGNC tlaBgGNC">          46 : }</span></span>
 <span id="L491"><span class="lineNum">     491</span>              : </span>
-<span id="L492"><span class="lineNum">     492</span>              : template &lt;typename OperType&gt;</span>
+<span id="L492"><span class="lineNum">     492</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L493"><span class="lineNum">     493</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L494"><span class="lineNum">     494</span> <span class="tlaGNC">          46 : SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)</span></span>
 <span id="L495"><span class="lineNum">     495</span>              : {</span>
@@ -581,7 +581,7 @@
 <span id="L511"><span class="lineNum">     511</span>              :   }</span>
 <span id="L512"><span class="lineNum">     512</span>              :   constexpr bool skip_zeros = false;</span>
 <span id="L513"><span class="lineNum">     513</span> <span class="tlaGNC">          40 :   auto c = AssembleOperator(GetNDSpace(), nullptr, &amp;f, nullptr, &amp;fb, &amp;fp, skip_zeros);</span></span>
-<span id="L514"><span class="lineNum">     514</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L514"><span class="lineNum">     514</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L515"><span class="lineNum">     515</span>              :   {</span>
 <span id="L516"><span class="lineNum">     516</span> <span class="tlaGNC">          40 :     auto C = std::make_unique&lt;ComplexParOperator&gt;(std::move(c), nullptr, GetNDSpace());</span></span>
 <span id="L517"><span class="lineNum">     517</span> <span class="tlaGNC">          40 :     C-&gt;SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);</span></span>
@@ -595,7 +595,7 @@
 <span id="L525"><span class="lineNum">     525</span>              :   }</span>
 <span id="L526"><span class="lineNum">     526</span> <span class="tlaGNC tlaBgGNC">          46 : }</span></span>
 <span id="L527"><span class="lineNum">     527</span>              : </span>
-<span id="L528"><span class="lineNum">     528</span>              : template &lt;typename OperType&gt;</span>
+<span id="L528"><span class="lineNum">     528</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L529"><span class="lineNum">     529</span> <span class="tlaGNC">          46 : std::unique_ptr&lt;OperType&gt; SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)</span></span>
 <span id="L530"><span class="lineNum">     530</span>              : {</span>
 <span id="L531"><span class="lineNum">     531</span> <span class="tlaGNC">          46 :   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);</span></span>
@@ -607,7 +607,7 @@
 <span id="L537"><span class="lineNum">     537</span>              :   {</span>
 <span id="L538"><span class="lineNum">     538</span> <span class="tlaUNC tlaBgUNC">           0 :     AddRealPeriodicCoefficients(-1.0, fr);</span></span>
 <span id="L539"><span class="lineNum">     539</span>              :   }</span>
-<span id="L540"><span class="lineNum">     540</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L540"><span class="lineNum">     540</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L541"><span class="lineNum">     541</span>              :   {</span>
 <span id="L542"><span class="lineNum">     542</span> <span class="tlaGNC tlaBgGNC">          46 :     AddImagMassCoefficients(1.0, fi);</span></span>
 <span id="L543"><span class="lineNum">     543</span>              :   }</span>
@@ -627,7 +627,7 @@
 <span id="L557"><span class="lineNum">     557</span>              :   {</span>
 <span id="L558"><span class="lineNum">     558</span> <span class="tlaUNC tlaBgUNC">           0 :     mi = AssembleOperator(GetNDSpace(), nullptr, &amp;fi, nullptr, &amp;fbi, nullptr, skip_zeros);</span></span>
 <span id="L559"><span class="lineNum">     559</span>              :   }</span>
-<span id="L560"><span class="lineNum">     560</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L560"><span class="lineNum">     560</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L561"><span class="lineNum">     561</span>              :   {</span>
 <span id="L562"><span class="lineNum">     562</span> <span class="tlaGNC tlaBgGNC">          46 :     auto M =</span></span>
 <span id="L563"><span class="lineNum">     563</span>              :         std::make_unique&lt;ComplexParOperator&gt;(std::move(mr), std::move(mi), GetNDSpace());</span>
@@ -642,14 +642,14 @@
 <span id="L572"><span class="lineNum">     572</span>              :   }</span>
 <span id="L573"><span class="lineNum">     573</span> <span class="tlaGNC tlaBgGNC">          46 : }</span></span>
 <span id="L574"><span class="lineNum">     574</span>              : </span>
-<span id="L575"><span class="lineNum">     575</span>              : template &lt;typename OperType&gt;</span>
+<span id="L575"><span class="lineNum">     575</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L576"><span class="lineNum">     576</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L577"><span class="lineNum">     577</span> <span class="tlaGNC">          12 : SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)</span></span>
 <span id="L578"><span class="lineNum">     578</span>              : {</span>
 <span id="L579"><span class="lineNum">     579</span> <span class="tlaGNC">          12 :   return GetExtraSystemMatrix&lt;OperType&gt;(omega, diag_policy, /*include_wave_ports=*/true);</span></span>
 <span id="L580"><span class="lineNum">     580</span>              : }</span>
 <span id="L581"><span class="lineNum">     581</span>              : </span>
-<span id="L582"><span class="lineNum">     582</span>              : template &lt;typename OperType&gt;</span>
+<span id="L582"><span class="lineNum">     582</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L583"><span class="lineNum">     583</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L584"><span class="lineNum">     584</span> <span class="tlaGNC">          61 : SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy,</span></span>
 <span id="L585"><span class="lineNum">     585</span>              :                                     bool include_wave_ports)</span>
@@ -675,7 +675,7 @@
 <span id="L605"><span class="lineNum">     605</span>              :   {</span>
 <span id="L606"><span class="lineNum">     606</span> <span class="tlaGNC">          24 :     ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &amp;dfbi, &amp;fbi, nullptr, skip_zeros);</span></span>
 <span id="L607"><span class="lineNum">     607</span>              :   }</span>
-<span id="L608"><span class="lineNum">     608</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L608"><span class="lineNum">     608</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L609"><span class="lineNum">     609</span>              :   {</span>
 <span id="L610"><span class="lineNum">     610</span> <span class="tlaGNC">          12 :     auto A =</span></span>
 <span id="L611"><span class="lineNum">     611</span>              :         std::make_unique&lt;ComplexParOperator&gt;(std::move(ar), std::move(ai), GetNDSpace());</span>
@@ -726,7 +726,7 @@
 <span id="L656"><span class="lineNum">     656</span>              :   return A;</span>
 <span id="L657"><span class="lineNum">     657</span> <span class="tlaGNC tlaBgGNC">           3 : }</span></span>
 <span id="L658"><span class="lineNum">     658</span>              : </span>
-<span id="L659"><span class="lineNum">     659</span>              : template &lt;typename OperType&gt;</span>
+<span id="L659"><span class="lineNum">     659</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L660"><span class="lineNum">     660</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L661"><span class="lineNum">     661</span> <span class="tlaGNC">          36 : SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,</span></span>
 <span id="L662"><span class="lineNum">     662</span>              :                                              Operator::DiagonalPolicy diag_policy)</span>
@@ -746,7 +746,7 @@
 <span id="L676"><span class="lineNum">     676</span>              :   constexpr bool skip_zeros = false;</span>
 <span id="L677"><span class="lineNum">     677</span> <span class="tlaGNC">          36 :   auto m =</span></span>
 <span id="L678"><span class="lineNum">     678</span>              :       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &amp;fb, nullptr, skip_zeros);</span>
-<span id="L679"><span class="lineNum">     679</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L679"><span class="lineNum">     679</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L680"><span class="lineNum">     680</span>              :   {</span>
 <span id="L681"><span class="lineNum">     681</span> <span class="tlaGNC">          36 :     auto M_op = std::make_unique&lt;ComplexParOperator&gt;(nullptr, std::move(m), GetNDSpace());</span></span>
 <span id="L682"><span class="lineNum">     682</span> <span class="tlaGNC">          36 :     M_op-&gt;SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);</span></span>
@@ -760,7 +760,7 @@
 <span id="L690"><span class="lineNum">     690</span>              :   }</span>
 <span id="L691"><span class="lineNum">     691</span> <span class="tlaGNC tlaBgGNC">          36 : }</span></span>
 <span id="L692"><span class="lineNum">     692</span>              : </span>
-<span id="L693"><span class="lineNum">     693</span>              : template &lt;typename OperType&gt;</span>
+<span id="L693"><span class="lineNum">     693</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L694"><span class="lineNum">     694</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L695"><span class="lineNum">     695</span> <span class="tlaGNC">          46 : SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,</span></span>
 <span id="L696"><span class="lineNum">     696</span>              :                                                  bool imag_slot)</span>
@@ -785,7 +785,7 @@
 <span id="L715"><span class="lineNum">     715</span>              :   constexpr bool skip_zeros = false;</span>
 <span id="L716"><span class="lineNum">     716</span> <span class="tlaUNC tlaBgUNC">           0 :   auto m =</span></span>
 <span id="L717"><span class="lineNum">     717</span>              :       AssembleOperator(GetNDSpace(), nullptr, nullptr, &amp;df, nullptr, nullptr, skip_zeros);</span>
-<span id="L718"><span class="lineNum">     718</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L718"><span class="lineNum">     718</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L719"><span class="lineNum">     719</span>              :   {</span>
 <span id="L720"><span class="lineNum">     720</span> <span class="tlaUNC">           0 :     auto M_op =</span></span>
 <span id="L721"><span class="lineNum">     721</span>              :         imag_slot</span>
@@ -805,7 +805,7 @@
 <span id="L735"><span class="lineNum">     735</span>              :   }</span>
 <span id="L736"><span class="lineNum">     736</span> <span class="tlaGNC tlaBgGNC">          46 : }</span></span>
 <span id="L737"><span class="lineNum">     737</span>              : </span>
-<span id="L738"><span class="lineNum">     738</span>              : template &lt;typename OperType&gt;</span>
+<span id="L738"><span class="lineNum">     738</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L739"><span class="lineNum">     739</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L740"><span class="lineNum">     740</span> <span class="tlaUNC tlaBgUNC">           0 : SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,</span></span>
 <span id="L741"><span class="lineNum">     741</span>              :                                                     Operator::DiagonalPolicy diag_policy)</span>
@@ -827,7 +827,7 @@
 <span id="L757"><span class="lineNum">     757</span>              :   constexpr bool skip_zeros = false;</span>
 <span id="L758"><span class="lineNum">     758</span> <span class="tlaUNC">           0 :   auto m =</span></span>
 <span id="L759"><span class="lineNum">     759</span>              :       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &amp;fb, nullptr, skip_zeros);</span>
-<span id="L760"><span class="lineNum">     760</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L760"><span class="lineNum">     760</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L761"><span class="lineNum">     761</span>              :   {</span>
 <span id="L762"><span class="lineNum">     762</span> <span class="tlaUNC">           0 :     auto M_op = std::make_unique&lt;ComplexParOperator&gt;(nullptr, std::move(m), GetNDSpace());</span></span>
 <span id="L763"><span class="lineNum">     763</span> <span class="tlaUNC">           0 :     M_op-&gt;SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);</span></span>
@@ -841,7 +841,7 @@
 <span id="L771"><span class="lineNum">     771</span>              :   }</span>
 <span id="L772"><span class="lineNum">     772</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L773"><span class="lineNum">     773</span>              : </span>
-<span id="L774"><span class="lineNum">     774</span>              : template &lt;typename OperType&gt;</span>
+<span id="L774"><span class="lineNum">     774</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L775"><span class="lineNum">     775</span> <span class="tlaUNC">           0 : std::unique_ptr&lt;OperType&gt; SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(</span></span>
 <span id="L776"><span class="lineNum">     776</span>              :     int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)</span>
 <span id="L777"><span class="lineNum">     777</span>              : {</span>
@@ -866,7 +866,7 @@
 <span id="L796"><span class="lineNum">     796</span>              :   constexpr bool skip_zeros = false;</span>
 <span id="L797"><span class="lineNum">     797</span> <span class="tlaUNC">           0 :   auto m =</span></span>
 <span id="L798"><span class="lineNum">     798</span>              :       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &amp;fb, nullptr, skip_zeros);</span>
-<span id="L799"><span class="lineNum">     799</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L799"><span class="lineNum">     799</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L800"><span class="lineNum">     800</span>              :   {</span>
 <span id="L801"><span class="lineNum">     801</span> <span class="tlaUNC">           0 :     auto M_op =</span></span>
 <span id="L802"><span class="lineNum">     802</span>              :         imag_slot</span>
@@ -886,7 +886,7 @@
 <span id="L816"><span class="lineNum">     816</span>              :   }</span>
 <span id="L817"><span class="lineNum">     817</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L818"><span class="lineNum">     818</span>              : </span>
-<span id="L819"><span class="lineNum">     819</span>              : template &lt;typename OperType&gt;</span>
+<span id="L819"><span class="lineNum">     819</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L820"><span class="lineNum">     820</span>              : std::unique_ptr&lt;OperType&gt;</span>
 <span id="L821"><span class="lineNum">     821</span> <span class="tlaUNC">           0 : SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,</span></span>
 <span id="L822"><span class="lineNum">     822</span>              :                                                  Operator::DiagonalPolicy diag_policy)</span>
@@ -913,7 +913,7 @@
 <span id="L843"><span class="lineNum">     843</span>              :   constexpr bool skip_zeros = false;</span>
 <span id="L844"><span class="lineNum">     844</span> <span class="tlaUNC">           0 :   auto m =</span></span>
 <span id="L845"><span class="lineNum">     845</span>              :       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &amp;fb, nullptr, skip_zeros);</span>
-<span id="L846"><span class="lineNum">     846</span>              :   if constexpr (std::is_same&lt;OperType, ComplexOperator&gt;::value)</span>
+<span id="L846"><span class="lineNum">     846</span>              :   if constexpr (std::is_same_v&lt;OperType, ComplexOperator&gt;)</span>
 <span id="L847"><span class="lineNum">     847</span>              :   {</span>
 <span id="L848"><span class="lineNum">     848</span> <span class="tlaUNC">           0 :     auto M_op = std::make_unique&lt;ComplexParOperator&gt;(nullptr, std::move(m), GetNDSpace());</span></span>
 <span id="L849"><span class="lineNum">     849</span> <span class="tlaUNC">           0 :     M_op-&gt;SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);</span></span>
@@ -1039,7 +1039,7 @@
 <span id="L969"><span class="lineNum">     969</span>              : namespace</span>
 <span id="L970"><span class="lineNum">     970</span>              : {</span>
 <span id="L971"><span class="lineNum">     971</span>              : </span>
-<span id="L972"><span class="lineNum">     972</span>              : template &lt;typename OperType&gt;</span>
+<span id="L972"><span class="lineNum">     972</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L973"><span class="lineNum">     973</span>              : auto BuildLevelParOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;br, std::unique_ptr&lt;Operator&gt; &amp;&amp;bi,</span>
 <span id="L974"><span class="lineNum">     974</span>              :                            const FiniteElementSpace &amp;fespace);</span>
 <span id="L975"><span class="lineNum">     975</span>              : </span>
@@ -1307,7 +1307,7 @@
 <span id="L1237"><span class="lineNum">    1237</span> <span class="tlaGNC">          12 :   const auto n_levels = GetNDSpaces().GetNumLevels();</span></span>
 <span id="L1238"><span class="lineNum">    1238</span> <span class="tlaGNC">          12 :   std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; br_vec(n_levels), bi_vec(n_levels),</span></span>
 <span id="L1239"><span class="lineNum">    1239</span> <span class="tlaGNC">          12 :       br_aux_vec(n_levels), bi_aux_vec(n_levels);</span></span>
-<span id="L1240"><span class="lineNum">    1240</span> <span class="tlaGNC">           6 :   if (std::is_same&lt;OperType, ComplexOperator&gt;::value &amp;&amp; !pc_mat_real)</span></span>
+<span id="L1240"><span class="lineNum">    1240</span> <span class="tlaGNC">           6 :   if (std::is_same_v&lt;OperType, ComplexOperator&gt; &amp;&amp; !pc_mat_real)</span></span>
 <span id="L1241"><span class="lineNum">    1241</span>              :   {</span>
 <span id="L1242"><span class="lineNum">    1242</span> <span class="tlaGNC">           6 :     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec);</span></span>
 <span id="L1243"><span class="lineNum">    1243</span>              :   }</span>

@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryHi">98.9&nbsp;%</td>
-            <td class="headerCovTableEntry">661</td>
-            <td class="headerCovTableEntry">654</td>
+            <td class="headerCovTableEntryHi">99.0&nbsp;%</td>
+            <td class="headerCovTableEntry">669</td>
+            <td class="headerCovTableEntry">662</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -356,7 +356,7 @@
 <span id="L286"><span class="lineNum">     286</span>              : </span>
 <span id="L287"><span class="lineNum">     287</span> <span class="tlaGNC">           9 : std::vector&lt;char&gt; DecodeBase64(std::string_view encoded)</span></span>
 <span id="L288"><span class="lineNum">     288</span>              : {</span>
-<span id="L289"><span class="lineNum">     289</span>              :   std::vector&lt;char&gt; decoded;</span>
+<span id="L289"><span class="lineNum">     289</span> <span class="tlaGNC">           9 :   std::vector&lt;char&gt; decoded;</span></span>
 <span id="L290"><span class="lineNum">     290</span> <span class="tlaGNC">           9 :   const auto clean = RemoveWhitespace(encoded);</span></span>
 <span id="L291"><span class="lineNum">     291</span> <span class="tlaGNC">           9 :   mfem::bin_io::DecodeBase64(clean.c_str(), clean.size(), decoded);</span></span>
 <span id="L292"><span class="lineNum">     292</span> <span class="tlaGNC">           9 :   return decoded;</span></span>
@@ -488,7 +488,7 @@
 <span id="L418"><span class="lineNum">     418</span> <span class="tlaGNC">          62 : std::vector&lt;double&gt; DecodeFloatDataArray(std::string_view tag,</span></span>
 <span id="L419"><span class="lineNum">     419</span>              :                                          const std::vector&lt;char&gt; &amp;bytes)</span>
 <span id="L420"><span class="lineNum">     420</span>              : {</span>
-<span id="L421"><span class="lineNum">     421</span>              :   std::vector&lt;double&gt; values;</span>
+<span id="L421"><span class="lineNum">     421</span> <span class="tlaGNC">          62 :   std::vector&lt;double&gt; values;</span></span>
 <span id="L422"><span class="lineNum">     422</span> <span class="tlaGNC">          62 :   if (tag.find(&quot;type=\&quot;Float32\&quot;&quot;) != std::string_view::npos)</span></span>
 <span id="L423"><span class="lineNum">     423</span>              :   {</span>
 <span id="L424"><span class="lineNum">     424</span> <span class="tlaGNC">          62 :     REQUIRE(bytes.size() % sizeof(float) == 0);</span></span>
@@ -671,7 +671,7 @@
 <span id="L601"><span class="lineNum">     601</span>              : {</span>
 <span id="L602"><span class="lineNum">     602</span> <span class="tlaGNC">           2 :   const auto attributes = ReadIntDataArray(xml, &quot;attribute&quot;);</span></span>
 <span id="L603"><span class="lineNum">     603</span> <span class="tlaGNC">           2 :   REQUIRE(attributes.size() == static_cast&lt;std::size_t&gt;(pmesh.GetNBE()));</span></span>
-<span id="L604"><span class="lineNum">     604</span> <span class="tlaGNC">           2 :   CHECK(std::find(attributes.begin(), attributes.end(), 7) != attributes.end());</span></span>
+<span id="L604"><span class="lineNum">     604</span> <span class="tlaGNC">           4 :   CHECK(std::ranges::find(attributes, 7) != attributes.end());</span></span>
 <span id="L605"><span class="lineNum">     605</span> <span class="tlaGNC">           2 : }</span></span>
 <span id="L606"><span class="lineNum">     606</span>              : </span>
 <span id="L607"><span class="lineNum">     607</span> <span class="tlaGNC">           4 : ErrorStats CompareVectorDomainField(const std::vector&lt;double&gt; &amp;values, mfem::ParMesh &amp;pmesh,</span></span>
@@ -727,7 +727,7 @@
 <span id="L657"><span class="lineNum">     657</span> <span class="tlaGNC">           1 :   collection.SetHighOrderOutput(true);</span></span>
 <span id="L658"><span class="lineNum">     658</span> <span class="tlaGNC">           1 :   collection.SetLevelsOfDetail(1);</span></span>
 <span id="L659"><span class="lineNum">     659</span>              : </span>
-<span id="L660"><span class="lineNum">     660</span>              :   std::vector&lt;int&gt; bases;</span>
+<span id="L660"><span class="lineNum">     660</span> <span class="tlaGNC">           1 :   std::vector&lt;int&gt; bases;</span></span>
 <span id="L661"><span class="lineNum">     661</span> <span class="tlaGNC">           1 :   int num_points = 0;</span></span>
 <span id="L662"><span class="lineNum">     662</span> <span class="tlaGNC">          57 :   for (int i = 0; i &lt; pmesh.GetNBE(); i++)</span></span>
 <span id="L663"><span class="lineNum">     663</span>              :   {</span>
@@ -850,7 +850,7 @@
 <span id="L780"><span class="lineNum">     780</span> <span class="tlaGNC">           1 :   collection.SetHighOrderOutput(true);</span></span>
 <span id="L781"><span class="lineNum">     781</span> <span class="tlaGNC">           1 :   collection.SetLevelsOfDetail(1);</span></span>
 <span id="L782"><span class="lineNum">     782</span>              : </span>
-<span id="L783"><span class="lineNum">     783</span>              :   std::vector&lt;int&gt; bases;</span>
+<span id="L783"><span class="lineNum">     783</span> <span class="tlaGNC">           1 :   std::vector&lt;int&gt; bases;</span></span>
 <span id="L784"><span class="lineNum">     784</span> <span class="tlaGNC">           1 :   int num_points = 0;</span></span>
 <span id="L785"><span class="lineNum">     785</span> <span class="tlaGNC">          49 :   for (int i = 0; i &lt; pmesh.GetNE(); i++)</span></span>
 <span id="L786"><span class="lineNum">     786</span>              :   {</span>
@@ -911,7 +911,7 @@
 <span id="L841"><span class="lineNum">     841</span> <span class="tlaGNC">           2 :   collection.SetHighOrderOutput(true);</span></span>
 <span id="L842"><span class="lineNum">     842</span> <span class="tlaGNC">           2 :   collection.SetLevelsOfDetail(1);</span></span>
 <span id="L843"><span class="lineNum">     843</span>              : </span>
-<span id="L844"><span class="lineNum">     844</span>              :   std::vector&lt;int&gt; bases;</span>
+<span id="L844"><span class="lineNum">     844</span> <span class="tlaGNC">           2 :   std::vector&lt;int&gt; bases;</span></span>
 <span id="L845"><span class="lineNum">     845</span> <span class="tlaGNC">           2 :   int num_points = 0;</span></span>
 <span id="L846"><span class="lineNum">     846</span> <span class="tlaGNC">           3 :   for (int i = 0; i &lt; pmesh.GetNBE(); i++)</span></span>
 <span id="L847"><span class="lineNum">     847</span>              :   {</span>
@@ -988,7 +988,7 @@
 <span id="L918"><span class="lineNum">     918</span> <span class="tlaGNC">           1 :   iodata.NondimensionalizeInputs(serial_mesh);</span></span>
 <span id="L919"><span class="lineNum">     919</span>              : </span>
 <span id="L920"><span class="lineNum">     920</span> <span class="tlaGNC">           1 :   auto par_mesh = std::make_unique&lt;mfem::ParMesh&gt;(comm, *serial_mesh);</span></span>
-<span id="L921"><span class="lineNum">     921</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span>
+<span id="L921"><span class="lineNum">     921</span> <span class="tlaGNC">           1 :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span></span>
 <span id="L922"><span class="lineNum">     922</span> <span class="tlaGNC">           2 :   mesh.push_back(std::make_unique&lt;Mesh&gt;(std::move(par_mesh)));</span></span>
 <span id="L923"><span class="lineNum">     923</span>              :   auto &amp;pmesh = mesh.front()-&gt;Get();</span>
 <span id="L924"><span class="lineNum">     924</span> <span class="tlaGNC">           2 :   REQUIRE(pmesh.bdr_attributes.Find(7) &gt;= 0);</span></span>
@@ -1156,7 +1156,7 @@
 <span id="L1086"><span class="lineNum">    1086</span> <span class="tlaGNC">           1 :   iodata.NondimensionalizeInputs(serial_mesh);</span></span>
 <span id="L1087"><span class="lineNum">    1087</span>              : </span>
 <span id="L1088"><span class="lineNum">    1088</span> <span class="tlaGNC">           1 :   auto par_mesh = std::make_unique&lt;mfem::ParMesh&gt;(comm, *serial_mesh);</span></span>
-<span id="L1089"><span class="lineNum">    1089</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span>
+<span id="L1089"><span class="lineNum">    1089</span> <span class="tlaGNC">           1 :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span></span>
 <span id="L1090"><span class="lineNum">    1090</span> <span class="tlaGNC">           2 :   mesh.push_back(std::make_unique&lt;Mesh&gt;(std::move(par_mesh)));</span></span>
 <span id="L1091"><span class="lineNum">    1091</span>              :   auto &amp;pmesh = mesh.front()-&gt;Get();</span>
 <span id="L1092"><span class="lineNum">    1092</span> <span class="tlaGNC">           2 :   REQUIRE(pmesh.bdr_attributes.Find(7) &gt;= 0);</span></span>
@@ -1310,7 +1310,7 @@
 <span id="L1240"><span class="lineNum">    1240</span> <span class="tlaGNC">           1 :   iodata.NondimensionalizeInputs(serial_mesh);</span></span>
 <span id="L1241"><span class="lineNum">    1241</span>              : </span>
 <span id="L1242"><span class="lineNum">    1242</span> <span class="tlaGNC">           1 :   auto par_mesh = std::make_unique&lt;mfem::ParMesh&gt;(comm, *serial_mesh);</span></span>
-<span id="L1243"><span class="lineNum">    1243</span>              :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span>
+<span id="L1243"><span class="lineNum">    1243</span> <span class="tlaGNC">           1 :   std::vector&lt;std::unique_ptr&lt;Mesh&gt;&gt; mesh;</span></span>
 <span id="L1244"><span class="lineNum">    1244</span> <span class="tlaGNC">           2 :   mesh.push_back(std::make_unique&lt;Mesh&gt;(std::move(par_mesh)));</span></span>
 <span id="L1245"><span class="lineNum">    1245</span>              :   auto &amp;pmesh = mesh.front()-&gt;Get();</span>
 <span id="L1246"><span class="lineNum">    1246</span>              : </span>

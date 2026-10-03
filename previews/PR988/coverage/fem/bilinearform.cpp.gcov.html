@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryHi">98.0&nbsp;%</td>
-            <td class="headerCovTableEntry">51</td>
-            <td class="headerCovTableEntry">50</td>
+            <td class="headerCovTableEntryHi">98.1&nbsp;%</td>
+            <td class="headerCovTableEntry">53</td>
+            <td class="headerCovTableEntry">52</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryHi">100.0&nbsp;%</td>
@@ -233,7 +233,7 @@
 <span id="L163"><span class="lineNum">     163</span>              :   // First partially assemble all of the operators.</span>
 <span id="L164"><span class="lineNum">     164</span> <span class="tlaGNC">          36 :   MFEM_VERIFY(l0 &lt; fespaces.GetNumLevels(),</span></span>
 <span id="L165"><span class="lineNum">     165</span>              :               &quot;No levels available for operator coarsening (l0 = &quot; &lt;&lt; l0 &lt;&lt; &quot;)!&quot;);</span>
-<span id="L166"><span class="lineNum">     166</span>              :   std::vector&lt;std::unique_ptr&lt;ceed::Operator&gt;&gt; pa_ops;</span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">          36 :   std::vector&lt;std::unique_ptr&lt;ceed::Operator&gt;&gt; pa_ops;</span></span>
 <span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">          36 :   pa_ops.reserve(fespaces.GetNumLevels() - l0);</span></span>
 <span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">          84 :   for (std::size_t l = l0; l &lt; fespaces.GetNumLevels(); l++)</span></span>
 <span id="L169"><span class="lineNum">     169</span>              :   {</span>
@@ -253,7 +253,7 @@
 <span id="L183"><span class="lineNum">     183</span>              :   // Construct the final operators using full or partial assemble as needed. We do not</span>
 <span id="L184"><span class="lineNum">     184</span>              :   // force the coarse-level operator to be fully assembled always, it will be only assembled</span>
 <span id="L185"><span class="lineNum">     185</span>              :   // as needed for parallel assembly.</span>
-<span id="L186"><span class="lineNum">     186</span>              :   std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; ops;</span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">          36 :   std::vector&lt;std::unique_ptr&lt;Operator&gt;&gt; ops;</span></span>
 <span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">          36 :   ops.reserve(fespaces.GetNumLevels() - l0);</span></span>
 <span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">          84 :   for (std::size_t l = l0; l &lt; fespaces.GetNumLevels(); l++)</span></span>
 <span id="L189"><span class="lineNum">     189</span>              :   {</span>

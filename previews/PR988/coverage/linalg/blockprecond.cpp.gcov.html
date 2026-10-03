@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
@@ -124,7 +124,7 @@
 <span id="L54"><span class="lineNum">      54</span> <span class="tlaUNC">           0 :   CopySubVector(src.Imag(), dst.Imag(), 0, offset, size);</span></span>
 <span id="L55"><span class="lineNum">      55</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L56"><span class="lineNum">      56</span>              : </span>
-<span id="L57"><span class="lineNum">      57</span>              : template &lt;typename OperType&gt;</span>
+<span id="L57"><span class="lineNum">      57</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L58"><span class="lineNum">      58</span> <span class="tlaUNC">           0 : BlockDiagonalPreconditioner&lt;OperType&gt;::BlockDiagonalPreconditioner(</span></span>
 <span id="L59"><span class="lineNum">      59</span>              :     int block0_size, std::unique_ptr&lt;Solver&lt;OperType&gt;&gt; &amp;&amp;pc0,</span>
 <span id="L60"><span class="lineNum">      60</span>              :     std::unique_ptr&lt;Solver&lt;OperType&gt;&gt; &amp;&amp;pc1)</span>
@@ -132,7 +132,7 @@
 <span id="L62"><span class="lineNum">      62</span>              : {</span>
 <span id="L63"><span class="lineNum">      63</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L64"><span class="lineNum">      64</span>              : </span>
-<span id="L65"><span class="lineNum">      65</span>              : template &lt;typename OperType&gt;</span>
+<span id="L65"><span class="lineNum">      65</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L66"><span class="lineNum">      66</span> <span class="tlaUNC">           0 : void BlockDiagonalPreconditioner&lt;OperType&gt;::SetBlockOperators(const OperType &amp;op0,</span></span>
 <span id="L67"><span class="lineNum">      67</span>              :                                                               const OperType &amp;op1)</span>
 <span id="L68"><span class="lineNum">      68</span>              : {</span>
@@ -143,7 +143,7 @@
 <span id="L73"><span class="lineNum">      73</span> <span class="tlaUNC">           0 :   this-&gt;width = this-&gt;height;</span></span>
 <span id="L74"><span class="lineNum">      74</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L75"><span class="lineNum">      75</span>              : </span>
-<span id="L76"><span class="lineNum">      76</span>              : template &lt;typename OperType&gt;</span>
+<span id="L76"><span class="lineNum">      76</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L77"><span class="lineNum">      77</span> <span class="tlaUNC">           0 : void BlockDiagonalPreconditioner&lt;OperType&gt;::SetOperator(const OperType &amp;op)</span></span>
 <span id="L78"><span class="lineNum">      78</span>              : {</span>
 <span id="L79"><span class="lineNum">      79</span>              :   // No-op: use SetBlockOperators to set each block's operator independently.</span>
@@ -151,7 +151,7 @@
 <span id="L81"><span class="lineNum">      81</span> <span class="tlaUNC">           0 :   this-&gt;width = op.Width();</span></span>
 <span id="L82"><span class="lineNum">      82</span> <span class="tlaUNC">           0 : }</span></span>
 <span id="L83"><span class="lineNum">      83</span>              : </span>
-<span id="L84"><span class="lineNum">      84</span>              : template &lt;typename OperType&gt;</span>
+<span id="L84"><span class="lineNum">      84</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L85"><span class="lineNum">      85</span> <span class="tlaUNC">           0 : void BlockDiagonalPreconditioner&lt;OperType&gt;::Mult(const VecType &amp;x, VecType &amp;y) const</span></span>
 <span id="L86"><span class="lineNum">      86</span>              : {</span>
 <span id="L87"><span class="lineNum">      87</span> <span class="tlaUNC">           0 :   const int n0 = block0_size;</span></span>

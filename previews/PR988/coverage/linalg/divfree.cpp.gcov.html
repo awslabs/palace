@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
@@ -91,7 +91,7 @@
 <span id="L21"><span class="lineNum">      21</span>              : namespace</span>
 <span id="L22"><span class="lineNum">      22</span>              : {</span>
 <span id="L23"><span class="lineNum">      23</span>              : </span>
-<span id="L24"><span class="lineNum">      24</span>              : template &lt;typename OperType&gt;</span>
+<span id="L24"><span class="lineNum">      24</span>              : template &lt;OperatorType OperType&gt;</span>
 <span id="L25"><span class="lineNum">      25</span>              : auto BuildLevelParOperator(std::unique_ptr&lt;Operator&gt; &amp;&amp;a,</span>
 <span id="L26"><span class="lineNum">      26</span>              :                            const FiniteElementSpace &amp;fespace);</span>
 <span id="L27"><span class="lineNum">      27</span>              : </span>
@@ -227,7 +227,7 @@
 <span id="L157"><span class="lineNum">     157</span> <span class="tlaUNC">           0 :   BlockTimer bt(Timer::DIV_FREE);</span></span>
 <span id="L158"><span class="lineNum">     158</span>              : </span>
 <span id="L159"><span class="lineNum">     159</span>              :   // Compute the divergence of y.</span>
-<span id="L160"><span class="lineNum">     160</span>              :   if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L160"><span class="lineNum">     160</span>              :   if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L161"><span class="lineNum">     161</span>              :   {</span>
 <span id="L162"><span class="lineNum">     162</span> <span class="tlaUNC">           0 :     WeakDiv-&gt;Mult(y.Real(), rhs.Real());</span></span>
 <span id="L163"><span class="lineNum">     163</span> <span class="tlaUNC">           0 :     WeakDiv-&gt;Mult(y.Imag(), rhs.Imag());</span></span>
@@ -245,7 +245,7 @@
 <span id="L175"><span class="lineNum">     175</span> <span class="tlaUNC">           0 :   ksp-&gt;Mult(rhs, psi);</span></span>
 <span id="L176"><span class="lineNum">     176</span>              : </span>
 <span id="L177"><span class="lineNum">     177</span>              :   // Compute the irrotational portion of y and subtract.</span>
-<span id="L178"><span class="lineNum">     178</span>              :   if constexpr (std::is_same&lt;VecType, ComplexVector&gt;::value)</span>
+<span id="L178"><span class="lineNum">     178</span>              :   if constexpr (std::is_same_v&lt;VecType, ComplexVector&gt;)</span>
 <span id="L179"><span class="lineNum">     179</span>              :   {</span>
 <span id="L180"><span class="lineNum">     180</span> <span class="tlaUNC">           0 :     Grad-&gt;AddMult(psi.Real(), y.Real(), 1.0);</span></span>
 <span id="L181"><span class="lineNum">     181</span> <span class="tlaUNC">           0 :     Grad-&gt;AddMult(psi.Imag(), y.Imag(), 1.0);</span></span>

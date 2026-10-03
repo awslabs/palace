@@ -37,7 +37,7 @@
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">0.0&nbsp;%</td>
@@ -85,8 +85,8 @@
 <span id="L15"><span class="lineNum">      15</span>              : // Simple Jacobi smoother using the diagonal vector from OperType::AssembleDiagonal(),</span>
 <span id="L16"><span class="lineNum">      16</span>              : // which allows for (approximate) diagonal construction for matrix-free operators.</span>
 <span id="L17"><span class="lineNum">      17</span>              : //</span>
-<span id="L18"><span class="lineNum">      18</span>              : template &lt;typename OperType&gt;</span>
-<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC tlaBgGNC">          15 : class JacobiSmoother : public Solver&lt;OperType&gt;</span></span>
+<span id="L18"><span class="lineNum">      18</span>              : template &lt;OperatorType OperType&gt;</span>
+<span id="L19"><span class="lineNum">      19</span> <span class="tlaGNC tlaBgGNC">          18 : class JacobiSmoother : public Solver&lt;OperType&gt;</span></span>
 <span id="L20"><span class="lineNum">      20</span>              : {</span>
 <span id="L21"><span class="lineNum">      21</span>              :   using VecType = typename Solver&lt;OperType&gt;::VecType;</span>
 <span id="L22"><span class="lineNum">      22</span>              : </span>
@@ -101,8 +101,8 @@
 <span id="L31"><span class="lineNum">      31</span>              :   double omega, sf_max;</span>
 <span id="L32"><span class="lineNum">      32</span>              : </span>
 <span id="L33"><span class="lineNum">      33</span>              : public:</span>
-<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">         329 :   JacobiSmoother(MPI_Comm comm, double omega = 1.0, double sf_max = 1.0)</span></span>
-<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">         329 :     : Solver&lt;OperType&gt;(), comm(comm), omega(omega), sf_max(sf_max)</span></span>
+<span id="L34"><span class="lineNum">      34</span> <span class="tlaGNC">         332 :   JacobiSmoother(MPI_Comm comm, double omega = 1.0, double sf_max = 1.0)</span></span>
+<span id="L35"><span class="lineNum">      35</span> <span class="tlaGNC">         332 :     : Solver&lt;OperType&gt;(), comm(comm), omega(omega), sf_max(sf_max)</span></span>
 <span id="L36"><span class="lineNum">      36</span>              :   {</span>
 <span id="L37"><span class="lineNum">      37</span> <span class="tlaUNC tlaBgUNC">           0 :   }</span></span>
 <span id="L38"><span class="lineNum">      38</span>              : </span>

@@ -31,13 +31,13 @@
             <td class="headerValue">Palace Coverage Report</td>
             <td></td>
             <td class="headerItem">Lines:</td>
-            <td class="headerCovTableEntryLo">38.8&nbsp;%</td>
-            <td class="headerCovTableEntry">209</td>
-            <td class="headerCovTableEntry">81</td>
+            <td class="headerCovTableEntryLo">39.0&nbsp;%</td>
+            <td class="headerCovTableEntry">210</td>
+            <td class="headerCovTableEntry">82</td>
           </tr>
           <tr>
             <td class="headerItem">Test Date:</td>
-            <td class="headerValue">2026-09-29 23:35:59</td>
+            <td class="headerValue">2026-10-03 02:50:24</td>
             <td></td>
             <td class="headerItem">Functions:</td>
             <td class="headerCovTableEntryLo">50.0&nbsp;%</td>
@@ -190,7 +190,7 @@
 <span id="L120"><span class="lineNum">     120</span>              :     }</span>
 <span id="L121"><span class="lineNum">     121</span>              :     else</span>
 <span id="L122"><span class="lineNum">     122</span>              :     {</span>
-<span id="L123"><span class="lineNum">     123</span>              :       std::copy(data.center.begin(), data.center.end(), center.begin());</span>
+<span id="L123"><span class="lineNum">     123</span>              :       std::ranges::copy(data.center, center.begin());</span>
 <span id="L124"><span class="lineNum">     124</span>              :     }</span>
 <span id="L125"><span class="lineNum">     125</span>              :   }</span>
 <span id="L126"><span class="lineNum">     126</span> <span class="tlaUNC">           0 : }</span></span>
@@ -500,7 +500,7 @@
 <span id="L430"><span class="lineNum">     430</span> <span class="tlaGNC">           8 :   BlockTimer bt0(Timer::POSTPRO_FARFIELD);</span></span>
 <span id="L431"><span class="lineNum">     431</span>              : </span>
 <span id="L432"><span class="lineNum">     432</span>              :   // Compute target unit vectors from the given theta and phis.</span>
-<span id="L433"><span class="lineNum">     433</span>              :   std::vector&lt;std::array&lt;double, 3&gt;&gt; r_naughts;</span>
+<span id="L433"><span class="lineNum">     433</span> <span class="tlaGNC">           8 :   std::vector&lt;std::array&lt;double, 3&gt;&gt; r_naughts;</span></span>
 <span id="L434"><span class="lineNum">     434</span> <span class="tlaGNC">           8 :   r_naughts.reserve(theta_phi_pairs.size());</span></span>
 <span id="L435"><span class="lineNum">     435</span> <span class="tlaGNC">        4116 :   for (const auto &amp;[theta, phi] : theta_phi_pairs)</span></span>
 <span id="L436"><span class="lineNum">     436</span>              :   {</span>
