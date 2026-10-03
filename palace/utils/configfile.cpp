@@ -52,6 +52,7 @@ PALACE_JSON_SERIALIZE_ENUM(Excitation)
 PALACE_JSON_SERIALIZE_ENUM(LinearSolver)
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver)
 PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening)
+PALACE_JSON_SERIALIZE_ENUM(SubstructuringMode)
 PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
 PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
@@ -1500,6 +1501,20 @@ LinearSolverData::LinearSolverData(const json &linear)
   gs_orthog = linear.value("GSOrthogonalization", gs_orthog);
 }
 
+SubstructuringData::SubstructuringData(const json &substructuring)
+{
+  region_attributes =
+      substructuring.at("Region").at("Attributes").get<std::vector<int>>();  // Required
+  environment_attributes = substructuring.at("Environment")
+                               .at("Attributes")
+                               .get<std::vector<int>>();  // Required
+  mode = substructuring.value("Mode", mode);
+  save_model = substructuring.value("SaveModel", save_model);
+  interface_offdiag_tol =
+      substructuring.value("InterfaceOffdiagTol", interface_offdiag_tol);
+  factorization_tol = substructuring.value("FactorizationTol", factorization_tol);
+}
+
 SolverData::SolverData(const json &solver)
 {
   order = solver.value("Order", order);
@@ -1516,6 +1531,10 @@ SolverData::SolverData(const json &solver)
   transient = ParseOptional<TransientSolverData>(solver, "Transient");
   boundary_mode = ParseOptional<BoundaryModeSolverData>(solver, "BoundaryMode");
   linear = ParseOptional<LinearSolverData>(solver, "Linear");
+  if (auto it = solver.find("Substructuring"); it != solver.end())
+  {
+    substructuring = SubstructuringData(*it);
+  }
 }
 
 int GetNumSteps(double start, double end, double delta)

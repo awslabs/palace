@@ -702,6 +702,58 @@ void IoData::CheckConfiguration()
               "Linear solver cuDSS requested but Palace was not built with cuDSS support!");
 #endif
 
+  // Validate substructuring configuration: region and environment attribute sets must be
+  // nonempty and disjoint (a well-posed complementary split).
+  if (solver.substructuring)
+  {
+    const auto &sub = *solver.substructuring;
+    MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
+                    problem.type == ProblemType::MAGNETOSTATIC,
+                "Substructuring is only supported for electrostatic and magnetostatic "
+                "problem types!");
+    MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
+                "Substructuring requires nonempty Region and Environment attribute sets!");
+    MFEM_VERIFY(solver.device == Device::CPU,
+                "Substructuring requires \"Solver.Device\": \"CPU\"!");
+    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.save_model.empty(),
+                "\"Online\" substructuring requires the saved model path \"SaveModel\"!");
+    // Adaptive refinement refines the region of an online run only: the environment was
+    // condensed on its final mesh, and nonconforming refinement without a level constraint
+    // does not spread into it.
+    if (model.refinement.max_it > 0)
+    {
+      MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC,
+                  "Adaptive mesh refinement with substructuring is only supported for "
+                  "electrostatic problems!");
+      MFEM_VERIFY(sub.mode == SubstructuringMode::ONLINE,
+                  "Adaptive mesh refinement with substructuring refines the region of an "
+                  "\"Online\" run; to refine the full model, run the adaptation without "
+                  "\"Solver.Substructuring\" (with \"SaveAdaptMesh\") and condense the "
+                  "saved mesh offline!");
+      MFEM_VERIFY(model.refinement.nonconformal && model.refinement.max_nc_levels == 0,
+                  "Adaptive mesh refinement with substructuring requires nonconforming "
+                  "refinement (\"Nonconformal\": true) without a level constraint "
+                  "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
+    }
+    if (problem.type == ProblemType::MAGNETOSTATIC)
+    {
+      // Surface-current sources need a gauge-free treatment of the singular curl-curl
+      // operator, which magnetostatic substructuring does not provide yet.
+      MFEM_VERIFY(boundaries.current.empty(),
+                  "Magnetostatic substructuring does not support \"SurfaceCurrent\" "
+                  "excitations yet; use \"FluxLoop\" excitations or remove "
+                  "\"Solver.Substructuring\"!");
+    }
+    std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
+    for (int a : sub.environment_attributes)
+    {
+      MFEM_VERIFY(region_set.find(a) == region_set.end(),
+                  "Substructuring Region and Environment attribute sets must be disjoint "
+                  "(attribute "
+                      << a << " appears in both)!");
+    }
+  }
+
   // Configure settings for quadrature rules and partial assembly.
   BilinearForm::pa_order_threshold = solver.pa_order_threshold;
   fem::DefaultIntegrationOrder::p_trial = solver.order;

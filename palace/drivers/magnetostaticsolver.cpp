@@ -18,10 +18,12 @@
 #include "linalg/operator.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/substructuringsolver.hpp"
 #include "models/surfacecurlsolver.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -104,6 +106,82 @@ void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
+  // Substructuring for flux-loop excitations: condense the environment, solve each London
+  // flux state in the region against it, and form the inductance matrix M = R^-1 from the
+  // reluctance R_ij = E_ij / (Phi_i Phi_j).
+  if (iodata.solver.substructuring)
+  {
+    BlockTimer bt(Timer::CONSTRUCT);
+    CurlCurlOperator curlcurl_op(iodata, mesh);
+    PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
+    const int n = static_cast<int>(curlcurl_op.GetSurfaceFluxOp().Size());
+    MFEM_VERIFY(n > 0, "Magnetostatic substructuring requires flux-loop excitations!");
+
+    // Fluxoid generators of the flux loops, solved as one batch.
+    std::vector<Vector> generators;
+    std::vector<double> Phi;
+    std::vector<int> idxs;
+    Vector RHS, boundary_values;
+    for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+    {
+      curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
+      generators.push_back(boundary_values);
+      Phi.push_back(data.GetExcitationFlux());
+      idxs.push_back(idx);
+    }
+    Mpi::Print("\nSubstructuring flux-loop sweep: {:d} excitation{}\n", n,
+               (n > 1) ? "s" : "");
+    // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
+    // Superconductor). Only the fields to be saved need the environment interior.
+    const int n_save = std::min(iodata.solver.magnetostatic.n_post, n);
+    std::vector<Vector> A;
+    const mfem::DenseMatrix E = sub.SheetEnergyMatrix(idxs, generators, &A, n_save);
+    mfem::DenseMatrix Minv(n);
+    for (int i = 0; i < n; i++)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        Minv(i, k) = E(i, k) / (Phi[i] * Phi[k]);
+      }
+    }
+    mfem::DenseMatrix M(Minv);
+    M.Invert();  // inductance = reluctance^-1
+    if (root)
+    {
+      const double H = iodata.units.Dimensionalize<Units::ValueType::INDUCTANCE>(1.0);
+      TableWithCSVFile output(post_dir / "terminal-M.csv");
+      output.table.insert(Column("i", "i", 0, 0, 2, ""));
+      for (int k = 0; k < n; k++)
+      {
+        output.table.insert(fmt::format("M{}", idxs[k]),
+                            fmt::format("M[i][{}] (H)", idxs[k]));
+      }
+      for (int i = 0; i < n; i++)
+      {
+        output.table["i"] << static_cast<double>(idxs[i]);
+      }
+      for (int k = 0; k < n; k++)
+      {
+        auto &col = output.table[fmt::format("M{}", idxs[k])];
+        for (int i = 0; i < n; i++)
+        {
+          col << M(i, k) * H;
+        }
+      }
+      output.WriteFullTableTrunc();
+    }
+    if (n_save > 0)
+    {
+      sub.WriteParaView(post_dir.string(),
+                        std::vector<int>(idxs.begin(), idxs.begin() + n_save), A);
+    }
+    Mpi::Print("\nSubstructuring inductance sweep complete ({:d} flux loop{})\n", n,
+               (n > 1) ? "s" : "");
+    return {ErrorIndicator(), sub.GlobalTrueVSize()};
+  }
+
   // Construct the system matrix defining the linear operator. Dirichlet boundaries are
   // handled eliminating the rows and columns of the system matrix for the corresponding
   // dofs.
