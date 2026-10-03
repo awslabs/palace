@@ -103,6 +103,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
     [PR 918](https://github.com/awslabs/palace/pull/918).
+  - Moved the superbuild to the libCEED commit used by the Spack build (`d6367d2d6`) and to
+    LIBXSMM 2.1.0. [PR 983](https://github.com/awslabs/palace/pull/983).
+  - Fixed concretization of static Spack builds with LIBXSMM (`palace~shared+libxsmm`).
+    [PR 983](https://github.com/awslabs/palace/pull/983).
 
 ## [0.18.1] - 2026-09-21
 

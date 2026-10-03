@@ -355,15 +355,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm@2: blas=0")
         depends_on("libxsmm+debug", when="build_type=Debug")
         depends_on("libceed+libxsmm", when="@0.14:")
-        # NOTE: libxsmm builds on MacOS have linker issues
-        # https://github.com/libxsmm/libxsmm/issues/883
-        depends_on("libxsmm+shared")
+        # From 0.14, libCEED matches its libxsmm linkage to its own, which follows Palace's.
+        # Earlier versions build libCEED internally as a shared library.
+        depends_on("libxsmm+shared", when="@:0.13")
 
     with when("@0.14:"):
         # The builtin recipe has no libCEED release newer than 0.12.0, so an open range
         # resolves to an unpinned develop. Pin per Palace release. The 0.14-0.17 pins match
-        # cmake/ExternalGitTags.cmake; 0.18 uses the libCEED main merge of the same change
-        # (the superbuild commit predates libCEED's libxsmm 2.0 requirement).
+        # that release's cmake/ExternalGitTags.cmake; 0.18 uses the libCEED main merge of its
+        # superbuild commit, which predates libCEED's libxsmm 2.0 requirement. From 0.19 the
+        # superbuild uses the same commit as this pin.
         depends_on(
             "libceed@develop commit=204f3be0a8a44f14c6b90cf1319bc5c5bd195020", when="@0.14"
         )
