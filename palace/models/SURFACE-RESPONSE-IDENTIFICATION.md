@@ -1524,6 +1524,61 @@ by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks
 default and the forced-GSLIB locator path, the notch fail-closed case, and the misplaced
 coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
 
+**Conductor-consistency gate (decision 277 (A), 2026-10-03;
+`SurfaceResponseOperator::ApplyConductorConsistencyGate`, SOLVE TIME ONLY).** A spatial
+coupon holds its metal cross-sections on the box faces at the conductor potentials (the
+trace mesh's conductor vertices, fixed in the surface mortar) while the device trace is
+imposed on the free knots around them. Where the coupon's metal is not the device's — the
+S1p 19-edge junction-lead coupons continue the island protrusion's edge straight 3R past
+the device's corner, inventing 20-27 um^2 of island metal over device gap at 10-19 V
+(decisions 271-277: an MS-specific surplus of x1.92 the reference, 39 points of the window
+MS) — the device potential at the coupon's metal differs from the conductor's and every
+energy of the patch under the device trace is wrong. The gate PROBES the device potential
+at every conductor vertex of the trace mesh on the PROCESS PLANE (w = 0: the coupon's metal
+bottom, which lies on the device's metal sheet, a Dirichlet surface for real metal) — the
+probe points are appended to the patch's sampled point list after the conductor references
+and the trace walks stop before them — and forms, per applied spatial surface-mortar patch
+and per excitation, MaxRatio = max |V_device(knot) - V_device(conductor reference)| /
+Amplitude with Amplitude = max |trace coefficient| of the patch incl. its conductor states
+(= |state| for a two-conductor coupon without Gibbs overshoots; dimensionless, defined for
+single-conductor coupons and for excitations whose conductors sit at one potential).
+MaxRatio > `kConductorConsistencyTolerance` = 0.02 EXCLUDES the patch like a DomainBoundary
+cell: weight 0 from that excitation on (fixed-trace energies, the self-consistent operator
+and its right-hand side, ModelCatalog weights), `surface-response-patches.csv` rewritten,
+the record `SurfaceResponse.Diagnostics.ConductorConsistency` of palace.json (every tested
+patch of every excitation: Amplitude, State, MaxDeviation, MaxRatio, MaxRatioOverState,
+the worst knot's vertex / conductor / device point, OffPlaneMaxRatio, AdjacentMaxRatio,
+ClaimLength, CellLength, Excluded; `ExcludedPatches`, `Count`, `ClaimLength` = the excluded
+clusters' claimed portion length left uncorrected, which B1 adds to Missing and
+DomainBoundary, `CellLength`) and a log summary. CALIBRATION
+(`coupon-accuracy-assessment-20260913/conductor-consistency-20261003/gate/`): real metal
+reads exactly the Dirichlet value — S1p c0 field at the 31 real-metal plane knots of the two
+19-edge coupons <= 7e-7, the operator on the S1p thin smoke <= 1.5e-9 on 6 corner patches,
+0 on the transmon-like unit case — while the fictitious blocks read 0.20-0.43 of the
+amplitude (0.22-0.48 of the state; 3 + 4 knots); 0.02 is x10 below the weakest flagged knot
+and >= 3e4 above the real-metal maximum, and a 5 % potential mismatch would already move
+the 15 %-residual MS closure by several points (so the tolerance is not larger). RECORDED
+ONLY, never gated: the conductor vertices OFF the plane (the metal top rows, 0.1 um into
+the device gap for a thin device: the normal field x the thickness, 1.3-2.8 % on S1p real
+metal) and the ADJACENT free knots (sharing a trace-triangle edge with a plane conductor
+vertex in its column, the 50-nm trench-floor row; their mortar coefficient against the
+conductor value reads the near-edge field x 50 nm: up to 0.27 of the amplitude on the
+transmon's real metal (10-edge junction coupon), 0.11-0.17 on its corners — they cannot
+discriminate real metal from the S1p blocks' 0.21-0.36 and are information). FAIL CLOSED: a
+conductor of the trace mesh without a vertex on the process plane aborts at construction
+naming the model and conductor (its cross-section cannot be probed). The PREFLIGHT cannot
+evaluate the gate (no device trace): the manifest states so under
+`Summary.ConductorConsistency` (`Evaluated` false, the tolerance, where the record lives);
+its digest, inventory and dry run are unchanged. Transmon: no probe reads above 0 on real
+metal by construction (its 33 spatial patches are all real-metal cross-sections) — the
+preflight digest 9ada660bf6e4, record and CSV unchanged; S1p thin smoke: exactly the two
+19-edge patches excluded (0.411 / 0.395 of the amplitude at the fictitious-block face
+knots), 122.2 um of claims left uncorrected, raw / C identical, every other model's
+fixed-trace energy identical. Unit test `SurfaceResponseOperator conductor-consistency
+gate` (`test-conductorconsistency.cpp`): a hand-placed two-conductor coupon across the gap
+between two islands (consistent: applied, MaxRatio 0; a conductor vertex over the gap:
+excluded, recorded, sc operator 0, sticky; conductor off the plane: aborts), 1 and 2 ranks.
+
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): n = the
 site's OWN signed process normal (substrate -> vacuum, oriented by the length-weighted mean of
 its incident runs' normals; decision 266, frame rule of (b) — on a flipped plane n = -z, never

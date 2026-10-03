@@ -1375,6 +1375,22 @@ The excluded cell length is the surface left uncorrected and is reported in the 
 `Summary` next to `Missing` for the coverage bound; the matched inventory (`Exact`) is
 unchanged and still contains the excluded cells.
 
+A spatial coupon holds its metal cross-sections on its box faces at the conductor
+potentials while the device trace is imposed around them. At solve time, before any energy
+of an excitation is formed, the conductor-consistency gate samples the device potential at
+every conductor vertex of the coupon's trace mesh on the process plane (the coupon's metal
+bottom, which lies on the device's metal sheet) and compares it with the potential at that
+conductor's reference point, relative to the patch's trace amplitude. Real metal reads the
+conductor potential exactly; coupon metal where the device has gap (a straight continuation
+past a device corner, a mis-keyed or misplaced coupon) reads the gap potential. A patch
+whose worst knot exceeds 2 % of the amplitude is excluded like a domain-boundary cell
+(weight zero for that and every later excitation; `surface-response-patches.csv` is
+rewritten) and recorded under `Diagnostics.ConductorConsistency` of the solve's
+`palace.json` with the claimed edge length left uncorrected (to be added to `Missing` and
+`DomainBoundary` by a coverage bound), next to every tested patch's reading. The geometry
+preflight has no device trace and cannot evaluate this gate; its manifest says so under
+`Summary.ConductorConsistency`.
+
 A three-dimensional spatial-vertex coupon is added to the same library. For example, a
 corner model has the form:
 
