@@ -18,8 +18,8 @@
 # grades the Gmsh region's plan size from the station size t at the band tops up to the region
 # size; `--region-ring` (graded only, default on) puts the region nodes adjacent to the band on
 # the band's outermost z stack; `--region-z-grading` (graded only, default off) puts every region
-node on the geometric z stack grown from the fabricated steps' faces (decision 276 option
-(ii)). `--plan-only` builds and checks the plan
+# node on the geometric z stack grown from the fabricated steps' faces (decision 276 option
+# (ii)). `--plan-only` builds and checks the plan
 # mesh only and prints the manifest (no volume mesh). `--band-mode own` (default) builds the
 # structured boundary-layer band itself with the per-segment, per-side band cap
 # (structured_band.jl); `gmsh` uses Gmsh's BoundaryLayer field as the recorded transmon

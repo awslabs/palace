@@ -17,7 +17,9 @@
 # + 0.1 %) off the step slabs, deterministic bytes, alpha / beta economics, the M3 defaults
 # (region size grading of the graded plan, the region ring at Z_K; the tensor plan unchanged),
 # the refusals (Gmsh band, a gap too small for beta, a box too short for the rows), and the
-# default tensor output unchanged (the recorded probe sha of the strip window).
+# default tensor output unchanged (the recorded probe sha of the strip window), and the CLI
+# (mesh_polygon_window.jl --plan-only on the strip in both sweeps, a Julia subprocess each)
+# against the in-process plan manifest.
 # WINDOW_MESH_LONG_TESTS=1 adds the external validator and census runs (Julia subprocesses,
 # ~10 s each).
 
@@ -32,7 +34,9 @@ include(joinpath(@__DIR__, "synthetic_two_level_window.jl"))
 const PWM = PolygonWindowMesh
 const LONG_TESTS = get(ENV, "WINDOW_MESH_LONG_TESTS", "0") == "1"
 
-function one_plane_window(
+# The polygon-set JSON document (SCHEMA.md) of a one-plane window; `one_plane_window` reads
+# it in process, the CLI smoke test writes it to a file.
+function one_plane_window_data(
     name,
     box_x,
     box_y,
@@ -42,28 +46,28 @@ function one_plane_window(
     above,
     facing="up"
 )
-    return read_polygon_set(
-        Dict(
-            "Version" => 1,
-            "Name" => name,
-            "Box" => Dict("X" => box_x, "Y" => box_y),
-            "Process" => Dict("MetalThickness" => 0.1, "Overetch" => 0.05),
-            "Planes" => [
-                Dict(
-                    "Name" => "L1",
-                    "SurfaceZ" => 0.0,
-                    "Facing" => facing,
-                    "SubstrateThickness" => substrate,
-                    "Polygons" => polygons
-                )
-            ],
-            "Vacuum" => Dict("Below" => below, "Above" => above)
-        )
+    return Dict(
+        "Version" => 1,
+        "Name" => name,
+        "Box" => Dict("X" => box_x, "Y" => box_y),
+        "Process" => Dict("MetalThickness" => 0.1, "Overetch" => 0.05),
+        "Planes" => [
+            Dict(
+                "Name" => "L1",
+                "SurfaceZ" => 0.0,
+                "Facing" => facing,
+                "SubstrateThickness" => substrate,
+                "Polygons" => polygons
+            )
+        ],
+        "Vacuum" => Dict("Below" => below, "Above" => above)
     )
 end
+one_plane_window(name, box_x, box_y, polygons; kwargs...) =
+    read_polygon_set(one_plane_window_data(name, box_x, box_y, polygons; kwargs...))
 
 # The Q2 probe's strip window (reference-quality-20261002/mesher-scoping/probe/strip_window.json).
-strip_window() = one_plane_window(
+strip_window_data() = one_plane_window_data(
     "strip_probe",
     [0.0, 50.0],
     [0.0, 60.0],
@@ -71,6 +75,7 @@ strip_window() = one_plane_window(
     substrate=525.0,
     above=525.0
 )
+strip_window() = read_polygon_set(strip_window_data())
 # A CPW cut by the window on both sides: two grounds and a terminal trace (open chains with
 # wall ends, two conductors).
 cpw_window() = one_plane_window(
@@ -1007,6 +1012,55 @@ end
             @test tensor["sha256"] ==
                   "8f234e5b0933f90aaef640399f991e73f950b5fb102766f840565d9b934980f6"
         end
+    end
+end
+
+# The production entry point (the stage-1 lanes and the PBS scripts call it, no suite loads
+# it otherwise): the CLI must load and build the plan in both sweeps, and its printed manifest
+# must match the in-process one. --plan-only keeps each subprocess to the Julia start-up plus
+# the plan (no volume mesh).
+@testset "CLI smoke test: mesh_polygon_window.jl --plan-only in both sweeps" begin
+    directory = mktempdir()
+    window = joinpath(directory, "strip.json")
+    open(io -> JSON.print(io, strip_window_data()), window, "w")
+    julia = `$(Base.julia_cmd()) --project=$(@__DIR__)`
+    script = joinpath(@__DIR__, "mesh_polygon_window.jl")
+    for (sweep, options) in (("tensor", String[]), ("graded", ["--sweep", "graded"]))
+        output = joinpath(directory, "$sweep.msh2")
+        log = joinpath(directory, "$sweep.log")
+        command = `$julia $script $window 0.05 5.0 $output --plan-only $options`
+        process = run(pipeline(command; stdout=log, stderr=log); wait=false)
+        wait(process)
+        @test success(process)
+        # The manifest is the last JSON object printed (the mesher's progress lines precede it).
+        lines = readlines(log)
+        start = findlast(==("{"), lines)
+        @test start !== nothing
+        success(process) && start !== nothing || continue
+        printed = JSON.parse(join(lines[start:end], '\n'))
+        expected = mesh_polygon_window(
+            strip_window(),
+            0.05,
+            5.0,
+            output;
+            verbose=false,
+            plan_only=true,
+            sweep=Symbol(sweep)
+        )
+        @test printed["sweep"] == sweep == expected["sweep"]
+        # The region size grading is on for the graded sweep only (a record of its parameters)
+        # and off (false) for the tensor sweep.
+        if sweep == "graded"
+            @test printed["band"]["region_grading"]["size_min_um"] == 5.0
+        else
+            @test printed["band"]["region_grading"] == false
+        end
+        @test printed["band"]["region_grading"] == expected["band"]["region_grading"]
+        for key in ("plan_nodes", "plan_triangles", "plan_perimeter_edges", "radial_layers")
+            @test printed[key] == expected[key]
+        end
+        @test printed["z_levels"] == expected["z_levels"]
+        @test printed["plan_perimeter_edges"] == 20 && printed["radial_layers"] == 5
     end
 end
 
