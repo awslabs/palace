@@ -408,7 +408,11 @@ def build_signature_library(manifest, name="signature-only", matrix_directory="s
     identification = manifest["Identification"]
     radius = float(identification["MatchingRadius"])
     models = []
-    modelled = [f for f in identification["Features"] if f["Type"] not in UNMODELLED_TYPES]
+    # An UnboxableFeature key (decision 282, "Unboxable": true) is a Missing placeholder no
+    # builder makes and no library may serve: skipped, listed under Unboxable.
+    unboxable = [f["Id"] for f in identification["Features"] if f.get("Signature", {}).get("Unboxable")]
+    modelled = [f for f in identification["Features"]
+                if f["Type"] not in UNMODELLED_TYPES and not f.get("Signature", {}).get("Unboxable")]
     for representative, members, spread in group_features(modelled):
         feature_type = members[0]["Type"]
         model_name = f"{feature_type}-{signature_hash(representative)[:12]}"
@@ -417,7 +421,10 @@ def build_signature_library(manifest, name="signature-only", matrix_directory="s
         model["DistinctSignatures"] = len({json.dumps(f["Signature"], sort_keys=True) for f in members})
         model["ParameterSpread"] = spread
         models.append(model)
-    return {"Version": 2, "Name": name, "MatchingRadius": radius, "TraceLiftVersion": 2, "Models": models}
+    library = {"Version": 2, "Name": name, "MatchingRadius": radius, "TraceLiftVersion": 2, "Models": models}
+    if unboxable:
+        library["UnboxableFeatures"] = unboxable
+    return library
 
 
 def main(argv=None):

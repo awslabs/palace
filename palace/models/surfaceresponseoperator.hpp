@@ -638,6 +638,14 @@ struct SpatialSupportBounds
   std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionPatchData::Provenance::Claim>
       claims;
+  // A contract-3 model's support box and chain pieces in the patch's local frame (units of
+  // the matching radius; rule B4), copied from the patch provenance; empty for a legacy
+  // model.
+  bool has_support_box = false;
+  std::array<double, 4> support_box{};
+  std::vector<std::array<double, 4>> chain;
+  // The bounds come from the Signature's box (a placeholder without basis points).
+  bool from_signature_box = false;
 };
 std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialSupport(
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
@@ -710,6 +718,26 @@ struct ContinuationOwnership
   int shared_cells = 0;
   int wholly_owned_cells = 0;
   int clipped_cells = 0;
+  // Vertex ownership (decision 282 rule B4, decision 285 (4)): a vertex feature's patch
+  // (corner / junction / endpoint coupon: coupon_depth 0, no claims) whose vertex lies on a
+  // chain piece END of a contract-3 coupon's continuation chain, inside that coupon's box,
+  // is owned by the coupon — the device-plan coupon contains the real corner, so the corner
+  // coupon's band on the chain arms would be counted twice. The patch keeps weight 0 (once,
+  // whatever the owner count; a vertex inside two boxes lists both owners, review MINOR-1
+  // (b)); its face distance is recorded and a vertex closer than R to a face (an arm partly
+  // outside the box, MINOR-1 (a)) is flagged. A vertex on another cluster's CLAIMS is never
+  // a chain vertex (the chain stops at those claims) and is never owned here.
+  struct Vertex
+  {
+    std::size_t patch = 0;
+    int feature = -1;
+    std::vector<std::size_t> owners;    // spatial patches, ascending
+    double face_distance_over_r = 0.0;  // from the nearest face of the first owner's box
+    double chain_end_distance_over_r = 0.0;
+    bool arm_outside_box = false;
+  };
+  std::vector<Vertex> vertices;  // in patch order
+  int shared_vertices = 0;
 };
 ContinuationOwnership ApplyContinuationOwnership(
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,

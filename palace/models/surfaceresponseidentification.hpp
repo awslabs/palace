@@ -409,6 +409,29 @@ constexpr double kSupportSpanCapOverRadius = 16.0;
 std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
                                               std::size_t *band_hits = nullptr);
 
+// The chords of one serialised portion / context entry of a cluster signature (units of R
+// in the signature frame): P = [x0, y0, x1, y1] and the chord's gap direction; an arc is
+// chorded at the builder's step (ClusterArcChordStepDegrees /
+// ClusterArcChordMaxLengthOverR).
+struct SerializedPortionChord
+{
+  std::array<double, 4> P{};
+  std::array<double, 2> gap{};
+};
+std::vector<SerializedPortionChord> ChordSerializedPortion(const nlohmann::json &portion);
+
+// The chorded Context pieces of a contract-3 signature with their class (Chain = the
+// coupon's own continuation chain, rule B3) and canonical conductor label; empty without a
+// Context. The placement reads them for the vertex ownership (rule B4) and the A10 check
+// extended to the context.
+struct ContextPieceChord
+{
+  std::array<double, 4> P{};
+  bool chain = false;
+  int conductor = 0;
+};
+std::vector<ContextPieceChord> ContextPieceChords(const nlohmann::json &signature);
+
 // The context digest of a contract-3 signature: sha256 of the serialised {"Box", "Context"}
 // of the signature (empty when the signature carries no Box). A legacy-contract alias (USER
 // decision 283) names a v3 key AND this digest, and the matching pass fails closed when the

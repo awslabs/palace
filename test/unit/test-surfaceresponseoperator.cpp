@@ -1730,7 +1730,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 6);
+      CHECK(cache["Version"] == 7);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3020,7 +3020,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 6);
+      CHECK(cache["Version"] == 7);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -7169,8 +7169,9 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
   }
   SECTION("fresh and cache-round-tripped patches classify identically")
   {
-    // The geometry cache (version 6) carries the mesh segment and the own-edge offset of
-    // every patch with the cluster patch's claims: the ownership on the cached patches is
+    // The geometry cache (version 7) carries the mesh segment and the own-edge offset of
+    // every patch with the cluster patch's claims, support box and chain: the ownership on
+    // the cached patches is
     // the ownership on the fresh ones (a cache without the segment would send every
     // stretch through the abutment branch; without the offset every pair side would be
     // judged on its midline).
@@ -7200,6 +7201,10 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     data.patches.back().model = 2;
     data.patches.back().provenance.feature = 8;
     data.patches.back().provenance.claims = box.claims;
+    // A contract-3 model's support box and chain (rule B4) ride along in the cache (v7).
+    data.patches.back().provenance.has_support_box = true;
+    data.patches.back().provenance.support_box = {-2.0, -2.0, 1.0, 2.0};
+    data.patches.back().provenance.chain = {{0.0, 0.0, 1.0, 0.0}, {-1.5, 0.0, -1.5, 1.0}};
     // A legacy-contract alias record (USER decision 283) rides along in the cache.
     data.legacy_contract = {{"legacy-model",
                              std::string(64, 'a'),
@@ -7225,6 +7230,11 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
             data.patches[i].provenance.edge_offset);
       CHECK(cached.patches[i].provenance.claims.size() ==
             data.patches[i].provenance.claims.size());
+      CHECK(cached.patches[i].provenance.has_support_box ==
+            data.patches[i].provenance.has_support_box);
+      CHECK(cached.patches[i].provenance.support_box ==
+            data.patches[i].provenance.support_box);
+      CHECK(cached.patches[i].provenance.chain == data.patches[i].provenance.chain);
     }
     const auto fresh_records =
         FindTranslationalStretchInsideSpatialSupport(data.patches, {box}, 3, tolerance);
@@ -7251,19 +7261,120 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     {
       CHECK_THAT(reloaded[i].weight, WithinAbs(fresh[i].weight, 1.0e-12));
     }
-    // A version-5 cache (no segment, no edge offset) is refused.
+    // A version-6 cache (no support box, no chain) is refused.
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 6);
-    stale["Version"] = 5;
+    CHECK(stale["Version"] == 7);
+    stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
       std::ofstream output(stale_path);
       output << stale.dump(2) << "\n";
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(stale_path, data),
-                      Catch::Matchers::ContainsSubstring("cache version 5"));
+                      Catch::Matchers::ContainsSubstring("cache version 6"));
+  }
+  SECTION("vertex ownership (rule B4): a corner patch on a chain piece end inside a "
+          "contract-3 box is owned once; interior chain points, other planes, other boxes "
+          "and legacy models are not")
+  {
+    // The contract-3 support in its local frame (units of R = 1.5): box x in [-2, 1],
+    // y in [-2, 2]; the chain runs from the claim cut (0, 0) along +x to the device corner
+    // (0.6, 0) and up to the face (0.6, 2). The spatial patch frame is the identity about
+    // the origin; a second support (patch 1) has its frame origin 0.9 R further along x
+    // and its own chain reaching the SAME device corner (local (-0.3, 0)), so the corner
+    // lies on a chain end inside both boxes.
+    auto Spatial = [&](double shift_x, std::vector<std::array<double, 4>> chain)
+    {
+      Patch patch;
+      patch.origin = {shift_x * R, 0.0, 0.0};
+      patch.axis_u = {1.0, 0.0, 0.0};
+      patch.axis_v = {0.0, 1.0, 0.0};
+      patch.axis_w = {0.0, 0.0, 1.0};
+      patch.weight = 1.0;
+      patch.provenance.feature = 8;
+      patch.provenance.claims = box.claims;
+      patch.provenance.has_support_box = true;
+      patch.provenance.support_box = {-2.0, -2.0, 1.0, 2.0};
+      patch.provenance.chain = std::move(chain);
+      return patch;
+    };
+    const std::vector<std::array<double, 4>> chain_a = {{0.0, 0.0, 0.6, 0.0},
+                                                        {0.6, 0.0, 0.6, 2.0}};
+    const std::vector<std::array<double, 4>> chain_b = {{-0.9, 0.0, -0.3, 0.0},
+                                                        {-0.3, 0.0, -0.3, 2.0}};
+    auto Corner = [&](int feature, double x, double y, double z = 0.0)
+    {
+      Patch patch;
+      patch.origin = {x * R, y * R, z * R};
+      patch.axis_u = {1.0, 0.0, 0.0};
+      patch.axis_v = {0.0, 1.0, 0.0};
+      patch.axis_w = {0.0, 0.0, 1.0};
+      patch.weight = 1.0;
+      patch.provenance.feature = feature;
+      return patch;
+    };
+    std::vector<Patch> patches = {Spatial(0.0, chain_a),     Spatial(0.9, chain_b),
+                                  Corner(20, 0.6, 0.0),       // the chain corner (both)
+                                  Corner(21, 0.3, 0.0),       // on a chain piece interior
+                                  Corner(22, 0.6, 0.0, 0.5),  // another plane
+                                  Corner(23, 0.6, 2.4),       // outside both boxes
+                                  Corner(24, 1.5, 0.0)};      // inside box B, off its chain
+    std::vector<SpatialSupportBounds> supports;
+    for (std::size_t i = 0; i < 2; i++)
+    {
+      SpatialSupportBounds support = box;
+      support.patch = i;
+      support.has_support_box = true;
+      support.support_box = patches[i].provenance.support_box;
+      support.chain = patches[i].provenance.chain;
+      supports.push_back(support);
+    }
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance);
+    REQUIRE(ownership.vertices.size() == 1);
+    CHECK(ownership.shared_vertices == 1);
+    const auto &shared = ownership.vertices[0];
+    CHECK(shared.patch == 2);
+    CHECK(shared.feature == 20);
+    CHECK(shared.owners == std::vector<std::size_t>{0, 1});
+    CHECK_THAT(shared.face_distance_over_r, WithinAbs(0.4, 1.0e-12));  // to x = 1
+    CHECK(shared.arm_outside_box);
+    CHECK_THAT(patches[2].weight, WithinAbs(0.0, 1.0e-15));
+    for (const std::size_t untouched : {3, 4, 5, 6})
+    {
+      CHECK_THAT(patches[untouched].weight, WithinAbs(1.0, 1.0e-15));
+    }
+    // Idempotent: a second pass owns nothing more (weight-0 patches are skipped).
+    const auto repeat = ApplyContinuationOwnership(patches, supports, 3, tolerance);
+    CHECK(repeat.vertices.empty());
+    // A legacy (claims-only) support owns no vertex.
+    std::vector<Patch> legacy = {Spatial(0.0, chain_a), Corner(20, 0.6, 0.0)};
+    legacy[0].provenance.has_support_box = false;
+    legacy[0].provenance.chain.clear();
+    std::vector<SpatialSupportBounds> legacy_supports = {box};
+    CHECK(
+        ApplyContinuationOwnership(legacy, legacy_supports, 3, tolerance).vertices.empty());
+    CHECK_THAT(legacy[1].weight, WithinAbs(1.0, 1.0e-15));
+    // The Diagnostics entry lists the records with Kind Vertex.
+    config::ElectrostaticSolverData::ResponseCorrectionData data;
+    data.matching_radius = R;
+    data.models.emplace_back().idx = 0;
+    data.models.back().name = "cluster";
+    data.models.back().spatial_basis = true;
+    data.models.emplace_back().idx = 1;
+    data.models.back().name = "corner";
+    for (auto &patch : patches)
+    {
+      patch.model = patch.provenance.has_support_box ? 0 : 1;
+    }
+    data.patches = patches;
+    const auto record = DescribeContinuationOwnership(ownership, supports, data, 1.0);
+    CHECK(record["Vertices"]["Count"] == 1);
+    CHECK(record["Vertices"]["Shared"] == 1);
+    CHECK(record["Vertices"]["Records"][0]["Kind"] == "Vertex");
+    CHECK(record["Vertices"]["Records"][0]["Owners"].size() == 2);
+    CHECK(record["Vertices"]["Records"][0]["ArmOutsideBox"] == true);
   }
   SECTION("a cell on the continuations of two coupons is removed once, attributed by the "
           "midpoint between the claim ends")

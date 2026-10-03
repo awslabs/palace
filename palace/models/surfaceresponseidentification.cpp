@@ -2149,6 +2149,84 @@ std::string SpatialSupportContextDigest(const nlohmann::json &signature)
   return Sha256HexImpl(context.dump());
 }
 
+// The chords of one serialised portion (the builder's chording,
+// signature_library.cluster_plan_view_edges): a straight portion is its own chord; an arc
+// portion is cut into n equal chords from a to b through the midpoint m, n = max(ceil(sweep
+// / step), ceil(arc length / max chord), 1), a closed circle (equal ends) over 2 pi, each
+// chord's gap direction the arc's radial direction at the chord's middle.
+std::vector<SerializedPortionChord> ChordSerializedPortion(const nlohmann::json &portion)
+{
+  using Point2 = std::array<double, 2>;
+  std::vector<SerializedPortionChord> chords;
+  const double pi = std::acos(-1.0);
+  const auto &P = portion.at("P");
+  const Point2 a = {P[0].get<double>(), P[1].get<double>()},
+               b = {P[2].get<double>(), P[3].get<double>()};
+  if (!portion.contains("Arc"))
+  {
+    const auto &G = portion.at("Gap");
+    chords.push_back({{a[0], a[1], b[0], b[1]}, {G[0].get<double>(), G[1].get<double>()}});
+    return chords;
+  }
+  const auto &A = portion.at("Arc");
+  const Point2 c = {A[0].get<double>(), A[1].get<double>()},
+               m = {A[2].get<double>(), A[3].get<double>()};
+  const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
+  auto Angle = [&](const Point2 &q) { return std::atan2(q[1] - c[1], q[0] - c[0]); };
+  const double ta = Angle(a), tb = Angle(b), tm = Angle(m);
+  const bool closed = std::hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * std::max(r, 1.0);
+  double sweep;
+  if (closed)
+  {
+    sweep = 2.0 * pi;
+  }
+  else
+  {
+    auto Mod = [&](double v)
+    {
+      double w = std::fmod(v, 2.0 * pi);
+      return w < 0.0 ? w + 2.0 * pi : w;
+    };
+    const double ccw = Mod(tb - ta);
+    sweep = Mod(tm - ta) <= ccw + 1.0e-12 ? ccw : ccw - 2.0 * pi;
+  }
+  const int n =
+      std::max({static_cast<int>(std::ceil(
+                    std::abs(sweep) / (kClusterArcChordStepDegrees * pi / 180.0) - 1.0e-9)),
+                static_cast<int>(std::ceil(
+                    r * std::abs(sweep) / kClusterArcChordMaxLengthOverRadius - 1.0e-9)),
+                1});
+  const double sign = portion.at("GapRadial").get<int>();
+  for (int k = 0; k < n; k++)
+  {
+    const double t0 = ta + sweep * k / n, t1 = ta + sweep * (k + 1) / n,
+                 tmid = 0.5 * (t0 + t1);
+    chords.push_back({{c[0] + r * std::cos(t0), c[1] + r * std::sin(t0),
+                       c[0] + r * std::cos(t1), c[1] + r * std::sin(t1)},
+                      {sign * std::cos(tmid), sign * std::sin(tmid)}});
+  }
+  return chords;
+}
+
+std::vector<ContextPieceChord> ContextPieceChords(const nlohmann::json &signature)
+{
+  std::vector<ContextPieceChord> pieces;
+  if (!signature.contains("Context"))
+  {
+    return pieces;
+  }
+  for (const auto &entry : signature.at("Context"))
+  {
+    const bool chain = entry.value("Chain", false);
+    const int conductor = entry.value("Conductor", 0);
+    for (const auto &chord : ChordSerializedPortion(entry))
+    {
+      pieces.push_back({chord.P, chain, conductor});
+    }
+  }
+  return pieces;
+}
+
 // Rule B2 (the coupon generator's `coupon_bounds` / `edge_rows` / `extended_interval` in
 // the canonical frame, units of R): see SupportBoxFromSignature in the header.
 std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
@@ -2160,7 +2238,6 @@ std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
     Point2 p0, p1, gap;
   };
   std::vector<Edge> edges;
-  const double pi = std::acos(-1.0);
   std::size_t hits = 0;
   // The box rule's two thresholds read within the knife-edge band (review MINOR-4): the
   // end coincidence and the "row end at or beyond R continues by 2R" rule.
@@ -2176,54 +2253,9 @@ std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
               "A support box needs the claimed portions!");
   for (const auto &portion : portion_list)
   {
-    const auto &P = portion.at("P");
-    const Point2 a = {P[0].get<double>(), P[1].get<double>()},
-                 b = {P[2].get<double>(), P[3].get<double>()};
-    if (!portion.contains("Arc"))
+    for (const auto &chord : ChordSerializedPortion(portion))
     {
-      const auto &G = portion.at("Gap");
-      edges.push_back({a, b, {G[0].get<double>(), G[1].get<double>()}});
-      continue;
-    }
-    // The builder's chording (signature_library.cluster_plan_view_edges): n equal chords
-    // of the arc from a to b through the midpoint m, n = max(ceil(sweep / step), ceil(arc
-    // length / max chord), 1); a closed circle (equal ends) over 2 pi.
-    const auto &A = portion.at("Arc");
-    const Point2 c = {A[0].get<double>(), A[1].get<double>()},
-                 m = {A[2].get<double>(), A[3].get<double>()};
-    const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
-    auto Angle = [&](const Point2 &q) { return std::atan2(q[1] - c[1], q[0] - c[0]); };
-    const double ta = Angle(a), tb = Angle(b), tm = Angle(m);
-    const bool closed = std::hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * std::max(r, 1.0);
-    double sweep;
-    if (closed)
-    {
-      sweep = 2.0 * pi;
-    }
-    else
-    {
-      auto Mod = [&](double v)
-      {
-        double w = std::fmod(v, 2.0 * pi);
-        return w < 0.0 ? w + 2.0 * pi : w;
-      };
-      const double ccw = Mod(tb - ta);
-      sweep = Mod(tm - ta) <= ccw + 1.0e-12 ? ccw : ccw - 2.0 * pi;
-    }
-    const int n = std::max(
-        {static_cast<int>(std::ceil(
-             std::abs(sweep) / (kClusterArcChordStepDegrees * pi / 180.0) - 1.0e-9)),
-         static_cast<int>(
-             std::ceil(r * std::abs(sweep) / kClusterArcChordMaxLengthOverRadius - 1.0e-9)),
-         1});
-    const double sign = portion.at("GapRadial").get<int>();
-    for (int k = 0; k < n; k++)
-    {
-      const double t0 = ta + sweep * k / n, t1 = ta + sweep * (k + 1) / n,
-                   tmid = 0.5 * (t0 + t1);
-      edges.push_back({{c[0] + r * std::cos(t0), c[1] + r * std::sin(t0)},
-                       {c[0] + r * std::cos(t1), c[1] + r * std::sin(t1)},
-                       {sign * std::cos(tmid), sign * std::sin(tmid)}});
+      edges.push_back({{chord.P[0], chord.P[1]}, {chord.P[2], chord.P[3]}, chord.gap});
     }
   }
   std::vector<Point2> vertex_points;
@@ -10126,6 +10158,13 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
            p[1] >= box[1] - tolerance && p[1] <= box[3] + tolerance;
   };
 
+  // A plan piece: a run-parameter interval of a run, or (run == kExcludedRun) a parameter
+  // interval of a perimeter SEGMENT excluded before the identification (a port cut, an
+  // undetermined process side, a non-manifold or non-planar edge: rule B1, nothing inside
+  // the box is omitted — such a segment is device geometry the coupon must carry, but it
+  // is no feature edge: foreign context, never a chain piece, excluded from the within-R
+  // accounting like the device's own perimeter excludes it).
+  constexpr std::size_t kExcludedRun = std::numeric_limits<std::size_t>::max();
   struct Piece
   {
     std::size_t run;
@@ -10133,6 +10172,84 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     // The piece lies on another cluster's claimed interval (decision 285 (1)): owned by
     // that coupon, never part of this cluster's chain.
     std::optional<std::size_t> claimed_by;
+    std::size_t segment = kExcludedRun;  // the excluded segment of a kExcludedRun piece
+    bool Excluded() const { return run == kExcludedRun; }
+    std::pair<std::size_t, std::size_t> Key() const { return {run, segment}; }
+  };
+  auto SegmentLength = [&](std::size_t i)
+  { return Distance(input.segments[i].p0, input.segments[i].p1); };
+  auto SegmentAt = [&](std::size_t i, double s)
+  {
+    const auto &segment = input.segments[i];
+    const double length = SegmentLength(i);
+    return length > 0.0 ? Add(segment.p0, Scale(s / length, Sub(segment.p1, segment.p0)))
+                        : segment.p0;
+  };
+  // The geometry of a piece between the parameters s0 and s1 (a run piece on its fitted
+  // arc, an excluded segment straight).
+  auto PieceCurve = [&](const Piece &piece, double s0, double s1)
+  {
+    if (!piece.Excluded())
+    {
+      return RunPiece(piece.run, s0, s1);
+    }
+    CurvePiece curve;
+    curve.a = SegmentAt(piece.segment, s0);
+    curve.b = SegmentAt(piece.segment, s1);
+    return curve;
+  };
+  // The in-plane gap direction of an excluded segment (unset on the segment: a port cut has
+  // no target interface): the normal pointing away from the metal, read at an end vertex
+  // from an adjacent feature run — a point just inside the run's metal (one step along the
+  // run away from the vertex and one step away from its gap) lies on the metal side of the
+  // segment. Zero when no adjacent run exists (the piece is then recorded, not oriented).
+  auto ExcludedGapDirection = [&](std::size_t i) -> Point3D
+  {
+    const auto &segment = input.segments[i];
+    if (Norm(segment.gap_direction) > 0.0)
+    {
+      return Normalize(segment.gap_direction);
+    }
+    const Point3D normal = Normalize(Cross(x, y));
+    const Point3D t = Normalize(Sub(segment.p1, segment.p0));
+    const Point3D n0 = Normalize(Cross(t, normal));
+    for (const std::size_t v : segment.vertices)
+    {
+      if (v >= input.vertices.size())
+      {
+        continue;
+      }
+      const Point3D &vertex = input.vertices[v].coordinate;
+      for (const std::size_t s : input.vertices[v].segments)
+      {
+        if (s == i || s >= run_of_segment.size() || run_of_segment[s] < 0)
+        {
+          continue;
+        }
+        const Run &run = runs[static_cast<std::size_t>(run_of_segment[s])];
+        if (run.excluded || Norm(run.gap_direction) <= 0.0)
+        {
+          continue;
+        }
+        const auto &adjacent = input.segments[s];
+        const Point3D far = Distance(adjacent.p0, vertex) > Distance(adjacent.p1, vertex)
+                                ? adjacent.p0
+                                : adjacent.p1;
+        const Point3D along = Normalize(Sub(far, vertex));
+        const Point3D inside = Sub(along, Normalize(run.gap_direction));
+        const double side = Dot(inside, n0);
+        if (std::abs(side) > 1.0e-9)
+        {
+          return side < 0.0 ? n0 : Scale(-1.0, n0);
+        }
+      }
+    }
+    return Point3D{};
+  };
+  auto PieceGapDirection = [&](const Piece &piece) -> Point3D
+  {
+    return piece.Excluded() ? ExcludedGapDirection(piece.segment)
+                            : runs[piece.run].gap_direction;
   };
   struct ArcLocal
   {
@@ -10163,6 +10280,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   // Length of a run piece (mesh units): the chord, or the arc length on the fitted arc.
   auto PieceLength = [&](const Piece &piece)
   {
+    if (piece.Excluded())
+    {
+      return piece.s.second - piece.s.first;
+    }
     const auto &geometry = run_arcs[piece.run];
     if (geometry)
     {
@@ -10381,8 +10502,65 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         pieces.push_back(piece);
       }
     }
+    // The excluded perimeter segments on the plane inside the clip (rule B1): straight,
+    // clipped by Liang-Barsky, never on the cluster's claims (claims are feature runs).
+    const Point3D plane_normal = Normalize(Cross(x, y));
+    for (std::size_t i = 0; i < input.segments.size(); i++)
+    {
+      const auto &segment = input.segments[i];
+      const bool excluded =
+          !segment.truncation &&
+          (segment.exclusion || (i < segment_exclusion.size() && segment_exclusion[i]));
+      if (!excluded)
+      {
+        continue;
+      }
+      if (std::abs(Dot(Sub(segment.p0, origin), plane_normal)) > 2.0 * Tol() ||
+          std::abs(Dot(Sub(segment.p1, origin), plane_normal)) > 2.0 * Tol())
+      {
+        continue;
+      }
+      const double length = SegmentLength(i);
+      if (length <= 0.0)
+      {
+        continue;
+      }
+      const Point2 p = Local(segment.p0), q = Local(segment.p1);
+      double t0 = 0.0, t1 = 1.0;
+      bool empty = false;
+      for (int axis = 0; axis < 2 && !empty; axis++)
+      {
+        const double lo_a = clip[static_cast<std::size_t>(axis)],
+                     hi_a = clip[static_cast<std::size_t>(axis + 2)];
+        const double d = q[axis] - p[axis];
+        if (std::abs(d) <= 1.0e-15)
+        {
+          empty = p[axis] < lo_a - snap || p[axis] > hi_a + snap;
+          continue;
+        }
+        double ta = (lo_a - p[axis]) / d, tb = (hi_a - p[axis]) / d;
+        if (ta > tb)
+        {
+          std::swap(ta, tb);
+        }
+        t0 = std::max(t0, ta);
+        t1 = std::min(t1, tb);
+        empty = t0 >= t1;
+      }
+      if (empty)
+      {
+        continue;
+      }
+      Piece piece{kExcludedRun, Interval{t0 * length, t1 * length}, std::nullopt, i};
+      if (PieceLength(piece) < snap * R)
+      {
+        slivers_dropped++;
+        continue;
+      }
+      pieces.push_back(piece);
+    }
     std::sort(pieces.begin(), pieces.end(), [](const Piece &a, const Piece &b)
-              { return a.run != b.run ? a.run < b.run : a.s < b.s; });
+              { return a.Key() != b.Key() ? a.Key() < b.Key() : a.s < b.s; });
     return pieces;
   };
   auto ClipPlan = [&]() { return ClipPlanTo(box); };
@@ -10431,7 +10609,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     std::array<std::vector<Crossing>, 4> crossings;
     for (const Piece &piece : pieces)
     {
-      const CurvePiece geometry = RunPiece(piece.run, piece.s.first, piece.s.second);
+      const CurvePiece geometry = PieceCurve(piece, piece.s.first, piece.s.second);
       const Point2 a = Local(geometry.a), b = Local(geometry.b);
       std::optional<ArcLocal> arc;
       if (geometry.arc)
@@ -10456,14 +10634,14 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         {
           const double theta = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
           const Point3D radial = geometry.arc->Radial(theta);
-          const double sign = Dot(runs[piece.run].gap_direction,
+          const double sign = Dot(PieceGapDirection(piece),
                                   geometry.arc->Radial(0.5 * (geometry.arc->theta0 +
                                                               geometry.arc->theta1))) >= 0.0
                                   ? 1.0
                                   : -1.0;
           return LocalDirection(Scale(sign, radial));
         }
-        return LocalDirection(runs[piece.run].gap_direction);
+        return LocalDirection(PieceGapDirection(piece));
       };
       for (const bool at_a : {true, false})
       {
@@ -10557,10 +10735,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     // representable on it: the face fails and grows over it (T3). The exterior tail of a
     // face crossing (from the face to the shell boundary) is the crossing itself.
     {
-      std::map<std::size_t, std::vector<Interval>> inside_by_run;
+      std::map<std::pair<std::size_t, std::size_t>, std::vector<Interval>> inside_by_run;
       for (const Piece &piece : pieces)
       {
-        inside_by_run[piece.run].push_back(piece.s);
+        inside_by_run[piece.Key()].push_back(piece.s);
       }
       std::array<double, 4> dilated = box;
       for (int f = 0; f < 4; f++)
@@ -10584,18 +10762,20 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       for (const Piece &piece : shell)
       {
         std::vector<Interval> exterior = {piece.s};
-        if (auto it = inside_by_run.find(piece.run); it != inside_by_run.end())
+        if (auto it = inside_by_run.find(piece.Key()); it != inside_by_run.end())
         {
           exterior = SubtractIntervals(exterior, it->second, Tol());
         }
         for (const auto &interval : exterior)
         {
-          const Piece part{piece.run, interval, std::nullopt};
+          Piece part = piece;
+          part.s = interval;
+          part.claimed_by.reset();
           if (PieceLength(part) < snap * R)
           {
             continue;
           }
-          const CurvePiece geometry = RunPiece(part.run, interval.first, interval.second);
+          const CurvePiece geometry = PieceCurve(part, interval.first, interval.second);
           const Point2 a = Local(geometry.a), b = Local(geometry.b),
                        m = Local(geometry.At(0.5));
           if (Inside(m, snap))
@@ -10774,11 +10954,39 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   // cluster's claims stops the chain and never joins it, decision 285 (1)) or foreign.
   std::vector<SignaturePortion> context_portions;
   std::vector<std::optional<std::size_t>> context_claimed_by;
+  std::vector<bool> context_excluded;
+  std::size_t excluded_pieces = 0;
+  double excluded_length = 0.0;
+  nlohmann::json excluded_entries = nlohmann::json::array();
   {
     std::map<std::optional<std::size_t>, std::vector<std::pair<std::size_t, Interval>>>
         groups;
     for (const Piece &piece : pieces)
     {
+      if (piece.Excluded())
+      {
+        const auto &segment = input.segments[piece.segment];
+        SignaturePortion portion;
+        portion.p0 = SegmentAt(piece.segment, piece.s.first);
+        portion.p1 = SegmentAt(piece.segment, piece.s.second);
+        portion.gap_direction = ExcludedGapDirection(piece.segment);
+        portion.conductor = segment.conductor;
+        portion.interfaces = InterfaceNames(segment.targets);
+        portion.boundary_law = segment.boundary_law;
+        const Point2 c0 = Local(portion.p0), c1 = Local(portion.p1);
+        const auto &exclusion =
+            segment.exclusion ? *segment.exclusion : *segment_exclusion[piece.segment];
+        excluded_entries.push_back({{"P", {Q(c0[0]), Q(c0[1]), Q(c1[0]), Q(c1[1])}},
+                                    {"LengthOverR", Q(PieceLength(piece) / R)},
+                                    {"Class", exclusion.first},
+                                    {"Reason", exclusion.second}});
+        excluded_pieces++;
+        excluded_length += PieceLength(piece);
+        context_portions.push_back(std::move(portion));
+        context_claimed_by.push_back(std::nullopt);
+        context_excluded.push_back(true);
+        continue;
+      }
       groups[piece.claimed_by].emplace_back(piece.run, piece.s);
     }
     for (const auto &[owner, intervals] : groups)
@@ -10787,6 +10995,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       {
         context_portions.push_back(std::move(portion));
         context_claimed_by.push_back(owner);
+        context_excluded.push_back(false);
       }
     }
   }
@@ -10803,7 +11012,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     changed = false;
     for (std::size_t k = 0; k < context_portions.size(); k++)
     {
-      if (is_chain[k] || context_claimed_by[k])
+      if (is_chain[k] || context_claimed_by[k] || context_excluded[k])
       {
         continue;
       }
@@ -10870,6 +11079,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     std::set<std::size_t> candidate_sites;
     for (const Piece &piece : pieces)
     {
+      if (piece.Excluded())
+      {
+        continue;
+      }
       for (auto it = sites_by_run.lower_bound(piece.run);
            it != sites_by_run.end() && it->first == piece.run; ++it)
       {
@@ -11099,21 +11312,16 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     }
   }
 
-  // Truncation segments (window cuts) inside the box: the plan is cut there. Omitted
-  // segments inside the box (review MINOR-5): segments excluded before the identification
-  // (untargeted interface, undetermined process side, ...) or belonging to an excluded run
-  // on the cluster's plane never become plan pieces — recorded so that rule B1 ("nothing
-  // inside the box is omitted") is auditable.
-  std::size_t truncation_segments = 0, omitted_segments = 0;
-  double truncation_length = 0.0, omitted_length = 0.0;
+  // Truncation segments (window cuts) inside the box: the plan is cut there (the excluded
+  // perimeter segments inside the box are context pieces, Context.ExcludedSegments: review
+  // MINOR-5, rule B1).
+  std::size_t truncation_segments = 0;
+  double truncation_length = 0.0;
   const Point3D plane_normal = Normalize(Cross(x, y));
   for (std::size_t i = 0; i < input.segments.size(); i++)
   {
     const auto &segment = input.segments[i];
-    const bool omitted =
-        !segment.truncation &&
-        (segment.exclusion || (i < segment_exclusion.size() && segment_exclusion[i]));
-    if (!segment.truncation && !omitted)
+    if (!segment.truncation)
     {
       continue;
     }
@@ -11152,16 +11360,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     }
     if (!empty)
     {
-      if (omitted)
-      {
-        omitted_segments++;
-        omitted_length += (t1 - t0) * Distance(segment.p0, segment.p1);
-      }
-      else
-      {
-        truncation_segments++;
-        truncation_length += (t1 - t0) * Distance(segment.p0, segment.p1);
-      }
+      truncation_segments++;
+      truncation_length += (t1 - t0) * Distance(segment.p0, segment.p1);
     }
   }
 
@@ -11211,6 +11411,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
          {{"Pieces", other_claimed_pieces},
           {"LengthOverR", Q(other_claimed_length / R)},
           {"Entries", claimed_by_other}}},
+        {"ExcludedSegments",
+         {{"Pieces", excluded_pieces},
+          {"LengthOverR", Q(excluded_length / R)},
+          {"Entries", excluded_entries}}},
         {"ChainVertices", chain_vertices},
         {"ForeignVertices", foreign_vertices}}},
       {"LegacyContinuation",
@@ -11218,8 +11422,6 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         {"FictitiousContinuationLengthOverR", Q(out.fictitious_continuation_length / R)}}},
       {"Truncation",
        {{"Segments", truncation_segments}, {"LengthOverR", Q(truncation_length / R)}}},
-      {"OmittedSegments",
-       {{"Segments", omitted_segments}, {"LengthOverR", Q(omitted_length / R)}}},
       {"Unboxable", unboxable ? nlohmann::json(*unboxable) : nlohmann::json(nullptr)},
       {"UnboxableReason",
        unboxable_reason ? nlohmann::json(*unboxable_reason) : nlohmann::json(nullptr)}};

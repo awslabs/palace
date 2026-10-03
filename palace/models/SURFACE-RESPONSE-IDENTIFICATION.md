@@ -1380,10 +1380,14 @@ signature carries `"Unboxable": true` (a Missing placeholder no builder makes â€
 knife-edge coupon) and the record names the face and the reason (`Unboxable` text,
 `UnboxableReason` = `GrowthStepsExhausted` | `SpanCapRefusedGrowth`). The two thresholds of
 the box rule itself (the 1e-5 end coincidence, the 2R continuation of a connected row end at
-R) are read within the knife-edge band too (`FaceRules.BoxRuleThresholdBandHits`), and the
-perimeter segments inside the box that never become plan pieces (excluded before the
-identification: untargeted interface, undetermined process side, ...) are counted under
-`OmittedSegments` so that rule B1 ("nothing inside the box is omitted") is auditable. KEY
+R) are read within the knife-edge band too (`FaceRules.BoxRuleThresholdBandHits`). The
+perimeter segments inside the box excluded before the identification (a port cut, an
+undetermined process side, a non-manifold or non-planar edge â€” never a window truncation
+cut) ARE plan pieces (rule B1, "nothing inside the box is omitted": a lead ending on a lumped
+port keeps its end edge in the coupon's metal boundary): straight, foreign (`Chain: false`,
+never entered by the chain, excluded from the within-R accounting as the device's own
+perimeter excludes them), hashed with the context and listed under
+`Context.ExcludedSegments` with their exclusion class. KEY
 RULE (ruling MAJOR-1, option (i)): `Box` + `Context` enter the hashed signature ONLY when the
 context is not what the decision-236 contract already draws, i.e. unless every context piece
 is a straight chain piece abutting a claim-cut end, collinear with that claim and reaching a
@@ -2224,10 +2228,11 @@ matching pass). The new top-level `Identification` object carries the contract:
                                     "Context": {"Pieces": n, "ChainPieces": n, "ForeignPieces": n, "ChainLengthOverR": L, "ForeignLengthOverR": L,
                                                 "ForeignConductors": n,
                                                 "ClaimedByOtherFeature": {"Pieces": n, "LengthOverR": L, "Entries": [{"P": [x0, y0, x1, y1], "LengthOverR": L, "Cluster": c, "Feature": k}, ...]},
+                                                "ExcludedSegments": {"Pieces": n, "LengthOverR": L, "Entries": [{"P": [...], "LengthOverR": L, "Class": "Port" | ..., "Reason": "..."}, ...]},
                                                 "ChainVertices": [{"P": [x, y], "Type": "...", "FaceDistanceOverR": d, "Site": s, "Cluster": c | null, "Feature": k | null}, ...],
                                                 "ForeignVertices": [...]},
                                     "LegacyContinuation": {"StraightContinuationLengthOverR": L, "FictitiousContinuationLengthOverR": L},
-                                    "Truncation": {"Segments": n, "LengthOverR": L}, "OmittedSegments": {"Segments": n, "LengthOverR": L},
+                                    "Truncation": {"Segments": n, "LengthOverR": L},
                                     "Unboxable": null | "reason", "UnboxableReason": null | "GrowthStepsExhausted" | "SpanCapRefusedGrowth"}
                                    (SpatialEdgeCluster only; units of R in the feature's frame; the spatial-support contract v3 below),
                  "Match": {"Status": "Matched" | "Missing", "Model": "name", "Deviation": d,

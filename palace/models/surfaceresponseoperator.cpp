@@ -1590,6 +1590,13 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       TopologyIdentifier(model.topology),
                   "Fabrication-process response model \""
                       << model.name << "\" Signature.Type does not match its Topology!");
+      // An UnboxableFeature key (decision 282: no box satisfies the face rules) is a
+      // Missing placeholder no builder makes: a library may not serve it.
+      MFEM_VERIFY(!signature->value("Unboxable", false),
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" is keyed by an UnboxableFeature signature (\"Unboxable\": "
+                         "true): no coupon exists for such a key!");
       model.identification_signature = *signature;
     }
     if (auto aliases = entry.find("LegacyContractAliases"); aliases != entry.end())
@@ -7448,7 +7455,37 @@ struct FeaturePatchSummary
   int first_order_missing_features = 0;
   double first_order_missing_turn = 0.0;  // |turn| (radians) left uncorrected
   std::set<std::string> first_order_missing_nodes;
+  // A10 extended to the context (decision 282 section 3): context piece ends of the placed
+  // contract-3 models verified to lie on device edges.
+  std::size_t context_points_checked = 0;
 };
+
+// Distance from a point to the device perimeter of the identification (its segments' keys
+// as straight chords): the A10 check extended to the context reads it for the placed
+// context piece ends.
+double DevicePerimeterDistance(const IdentificationResult &identification, const Point3D &q)
+{
+  double best = std::numeric_limits<double>::infinity();
+  for (const auto &segment : identification.segments)
+  {
+    const auto &a = segment.key[0], &b = segment.key[1];
+    // Bounding-box rejection against the best distance so far.
+    bool outside = false;
+    for (int d = 0; d < 3 && !outside; d++)
+    {
+      outside = q[d] < std::min(a[d], b[d]) - best || q[d] > std::max(a[d], b[d]) + best;
+    }
+    if (outside)
+    {
+      continue;
+    }
+    const Point3D ab = Subtract(b, a), aq = Subtract(q, a);
+    const double length2 = Dot(ab, ab);
+    const double t = length2 > 0.0 ? std::clamp(Dot(aq, ab) / length2, 0.0, 1.0) : 0.0;
+    best = std::min(best, Norm(Subtract(q, Add(a, Scale(t, ab)))));
+  }
+  return best;
+}
 
 // A pair's sample-to-partner distances must agree with its separation within twice the
 // pair tolerance (the mean separation of a 5 % taper is within 5 % of every sample; the
@@ -8288,6 +8325,57 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.provenance.claims.push_back({static_cast<int>(fp.geometry_index),
                                            Interpolate(*fp.segment, fp.a),
                                            Interpolate(*fp.segment, fp.b)});
+      }
+      // A contract-3 (device-plan) model: its support box and continuation chain in the
+      // patch frame (rule B4, the placement's vertex ownership), and the A10 check extended
+      // to the context (decision 282 section 3): every context piece of the model's
+      // Signature, placed by the patch frame, lies on a device run within the signature
+      // tolerance — a mis-keyed library or a frame defect fails closed here.
+      if (model.identification_signature &&
+          model.identification_signature->contains("Box") &&
+          feature.legacy_contract.is_null())
+      {
+        const auto &signature = *model.identification_signature;
+        patch.provenance.support_box = signature.at("Box").get<std::array<double, 4>>();
+        patch.provenance.has_support_box = true;
+        MFEM_VERIFY(feature.signature.contains("Context") &&
+                        signature.value("Context", nlohmann::json::array()) ==
+                            feature.signature["Context"],
+                    "The Context of model \"" << model.name
+                                              << "\" differs from the matched feature's!");
+        const double tolerance = kSignatureParameterToleranceOverRadius * R;
+        auto Global = [&](double x, double y)
+        {
+          return Add(patch.origin,
+                     Add(Scale(x * R, patch.axis_u), Scale(y * R, patch.axis_v)));
+        };
+        std::size_t checked = 0;
+        for (const auto &piece : ContextPieceChords(signature))
+        {
+          if (piece.chain)
+          {
+            patch.provenance.chain.push_back(piece.P);
+          }
+        }
+        // The ENDS of every context entry are device vertices or face crossings of device
+        // edges (an arc entry's chords lie on the fitted circle, the device polyline up to
+        // its chord sagitta away: its ends are the test).
+        for (const auto &entry : signature.at("Context"))
+        {
+          const auto P = entry.at("P").get<std::array<double, 4>>();
+          for (const auto &q : {Global(P[0], P[1]), Global(P[2], P[3])})
+          {
+            const double distance = DevicePerimeterDistance(identification, q);
+            MFEM_VERIFY(distance <= tolerance,
+                        "Context piece of model \""
+                            << model.name << "\" placed for feature " << feature.id
+                            << " lies " << distance / R
+                            << " R from every device edge (A10 extended to the context: a "
+                               "mis-keyed library or a placement frame defect)!");
+            checked++;
+          }
+        }
+        summary.context_points_checked += checked;
       }
       Emit(std::move(patch), model_index, runtime, feature);
     }
@@ -9413,13 +9501,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                " Runtime models: {:d}\n"
                " Curvature: {:d} feature(s) on a curvature family, {:d} straight-like "
                "feature(s) with a first-order term\n"
-               " Corners: {:d} feature(s) on an angle-interpolated corner family\n",
+               " Corners: {:d} feature(s) on an angle-interpolated corner family\n"
+               " Context (A10 extended): {:d} placed context piece end(s) verified on "
+               "device edges\n",
                library.name, summary.matched_features,
                summary.matched_length * coordinate_scale, summary.unmatched_features,
                summary.unmatched_length * coordinate_scale, unmatched,
                static_cast<int>(result.patches.size()), patches,
                static_cast<int>(result.models.size()), summary.curved_family_features,
-               summary.first_order_features, summary.corner_family_features);
+               summary.first_order_features, summary.corner_family_features,
+               static_cast<int>(summary.context_points_checked));
     if (summary.first_order_missing_features > 0)
     {
       std::string nodes;
@@ -13891,7 +13982,14 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
     {
       claims.push_back({{"Segment", claim.segment}, {"P0", claim.p0}, {"P1", claim.p1}});
     }
+    nlohmann::json support_box = nullptr;
+    if (patch.provenance.has_support_box)
+    {
+      support_box = patch.provenance.support_box;
+    }
     patches.push_back({{"Model", patch.model},
+                       {"SupportBox", support_box},
+                       {"Chain", patch.provenance.chain},
                        {"Origin", patch.origin},
                        {"AxisU", patch.axis_u},
                        {"AxisV", patch.axis_v},
@@ -13915,7 +14013,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 6},
+  nlohmann::json cache = {{"Version", 7},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -13944,12 +14042,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 6,
+      data.value("Version", 0) == 7,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 6 carries the feature, mesh segment, chain stretch and own-edge "
-             "offset of every patch, the claims of every spatial cluster patch and the "
-             "matching radius for the continuation ownership; delete a stale cache)!");
+          << " (version 7 carries the feature, mesh segment, chain stretch and own-edge "
+             "offset of every patch, the claims, support box and chain of every spatial "
+             "cluster patch and the matching radius for the continuation and vertex "
+             "ownership; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -14036,6 +14135,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
       patch.provenance.claims.push_back(
           {claim.at("Segment"), claim.at("P0"), claim.at("P1")});
     }
+    if (const auto box = entry.find("SupportBox"); box != entry.end() && !box->is_null())
+    {
+      patch.provenance.support_box = box->get<std::array<double, 4>>();
+      patch.provenance.has_support_box = true;
+    }
+    patch.provenance.chain = entry.value("Chain", std::vector<std::array<double, 4>>{});
     patch.maxwell_conductor_anchors =
         entry.value("MaxwellConductorAnchors", std::vector<std::array<double, 3>>{});
     patch.maxwell_reference_is_pec = entry.value("MaxwellReferenceIsPEC", true);
@@ -14638,6 +14743,34 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
       continue;
     }
     const auto *points = basis_points(patch.model);
+    SpatialSupportBounds support;
+    support.patch = patch_idx;
+    support.claims = patch.provenance.claims;
+    support.has_support_box = patch.provenance.has_support_box;
+    support.support_box = patch.provenance.support_box;
+    support.chain = patch.provenance.chain;
+    // A contract-3 placeholder without basis points (a signature-only library, the
+    // preflight of a Missing key): the box is the Signature's support box placed by the
+    // patch frame, R above and below the plane (the coupon's cap and substrate reach at
+    // least R), so that the ownership records of the dry run are complete.
+    std::vector<std::array<double, 3>> box_corners;
+    if (!points && support.has_support_box)
+    {
+      const auto &b = support.support_box;
+      for (const double x : {b[0], b[2]})
+      {
+        for (const double y : {b[1], b[3]})
+        {
+          for (const double z : {-1.0, 1.0})
+          {
+            box_corners.push_back({x * config.matching_radius, y * config.matching_radius,
+                                   z * config.matching_radius});
+          }
+        }
+      }
+      points = &box_corners;
+      support.from_signature_box = true;
+    }
     if (!points)
     {
       if (skipped)
@@ -14646,9 +14779,6 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
       }
       continue;
     }
-    SpatialSupportBounds support;
-    support.patch = patch_idx;
-    support.claims = patch.provenance.claims;
     bool first = true;
     for (const auto &local : *points)
     {
@@ -14949,6 +15079,81 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
   }
   std::sort(ownership.cells.begin(), ownership.cells.end(),
             [](const auto &a, const auto &b) { return a.patch < b.patch; });
+
+  // Vertex ownership (rule B4): the vertex patches against the chain piece ends of every
+  // contract-3 support, in the support's local frame (units of R).
+  const double R = continuation_tolerance / kSignatureParameterToleranceOverRadius;
+  const double snap = kSupportFaceSnapOverRadius;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    auto &patch = patches[patch_idx];
+    const auto &provenance = patch.provenance;
+    const bool vertex_patch = provenance.coupon_depth == 0.0 && provenance.claims.empty() &&
+                              provenance.stretch < 0 && !provenance.has_support_box;
+    if (!vertex_patch || patch.weight <= 0.0)
+    {
+      continue;
+    }
+    ContinuationOwnership::Vertex record;
+    record.patch = patch_idx;
+    record.feature = provenance.feature;
+    for (const auto &support : supports)
+    {
+      if (!support.has_support_box || support.chain.empty())
+      {
+        continue;
+      }
+      const auto &owner = patches[support.patch];
+      std::array<double, 3> local{};
+      for (int d = 0; d < dimension; d++)
+      {
+        const double r = patch.origin[d] - owner.origin[d];
+        local[0] += r * owner.axis_u[d] / R;
+        local[1] += r * owner.axis_v[d] / R;
+        local[2] += r * owner.axis_w[d] / R;
+      }
+      if (std::abs(local[2]) > kSignatureParameterToleranceOverRadius)
+      {
+        continue;  // another plane
+      }
+      const auto &box = support.support_box;
+      if (local[0] < box[0] - snap || local[0] > box[2] + snap ||
+          local[1] < box[1] - snap || local[1] > box[3] + snap)
+      {
+        continue;
+      }
+      double end_distance = std::numeric_limits<double>::infinity();
+      for (const auto &piece : support.chain)
+      {
+        end_distance =
+            std::min({end_distance, std::hypot(local[0] - piece[0], local[1] - piece[1]),
+                      std::hypot(local[0] - piece[2], local[1] - piece[3])});
+      }
+      if (end_distance > kSignatureParameterToleranceOverRadius)
+      {
+        continue;
+      }
+      if (record.owners.empty())
+      {
+        record.face_distance_over_r = std::min(
+            {local[0] - box[0], box[2] - local[0], local[1] - box[1], box[3] - local[1]});
+        record.arm_outside_box = record.face_distance_over_r < 1.0;
+        record.chain_end_distance_over_r = end_distance;
+      }
+      record.owners.push_back(support.patch);
+    }
+    if (record.owners.empty())
+    {
+      continue;
+    }
+    std::sort(record.owners.begin(), record.owners.end());
+    if (record.owners.size() > 1)
+    {
+      ownership.shared_vertices++;
+    }
+    patch.weight = 0.0;
+    ownership.vertices.push_back(std::move(record));
+  }
   return ownership;
 }
 
@@ -15255,8 +15460,34 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
         {{"SpatialPatch", support.patch},
          {"SpatialFeature", spatial.provenance.feature},
          {"SpatialModel", models.at(spatial.model)->name},
+         {"FromSignatureBox", support.from_signature_box},
          {"OwnedLength",
           (it == ownership.owned_by_support.end() ? 0.0 : it->second) * coordinate_scale}});
+  }
+  nlohmann::json vertices = nlohmann::json::array();
+  for (const auto &vertex : ownership.vertices)
+  {
+    const auto &patch = config.patches[vertex.patch];
+    nlohmann::json owners = nlohmann::json::array();
+    for (const std::size_t owner : vertex.owners)
+    {
+      const auto &spatial = config.patches[owner];
+      owners.push_back({{"SpatialPatch", owner},
+                        {"SpatialFeature", spatial.provenance.feature},
+                        {"SpatialModel", models.at(spatial.model)->name}});
+    }
+    vertices.push_back(
+        {{"Kind", "Vertex"},
+         {"Patch", vertex.patch},
+         {"Feature", vertex.feature},
+         {"Model", models.at(patch.model)->name},
+         {"Origin", std::array<double, 3>{patch.origin[0] * coordinate_scale,
+                                          patch.origin[1] * coordinate_scale,
+                                          patch.origin[2] * coordinate_scale}},
+         {"FaceDistanceOverR", vertex.face_distance_over_r},
+         {"ChainEndDistanceOverR", vertex.chain_end_distance_over_r},
+         {"ArmOutsideBox", vertex.arm_outside_box},
+         {"Owners", std::move(owners)}});
   }
   return {
       {"Cells", static_cast<int>(ownership.cells.size())},
@@ -15268,6 +15499,20 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
         {"Length", ownership.shared_length * coordinate_scale}}},
       {"BySupport", std::move(by_support)},
       {"OwnedCells", std::move(cells)},
+      {"Vertices",
+       {{"Count", static_cast<int>(ownership.vertices.size())},
+        {"Shared", ownership.shared_vertices},
+        {"Records", std::move(vertices)},
+        {"Rule",
+         "decision 282 rule B4 / decision 285 (4): a vertex feature's patch (corner / "
+         "junction / endpoint coupon) whose vertex lies on a chain piece END of a "
+         "contract-3 coupon's continuation chain (the Signature's Chain context, placed by "
+         "the patch frame) inside that coupon's support box is owned by the coupon (weight "
+         "0, once; every owner listed); a vertex closer than R to a face has an arm partly "
+         "outside the box (ArmOutsideBox); a vertex on another cluster's claims is never "
+         "on "
+         "a chain. The vertex feature's claimed length is in the identification manifest "
+         "(Features[].Length), not in the patch"}}},
       {"Rule",
        "decision 236 (2) / 244 (2026-10-02): a translational cell of a stretch that "
        "continues "
@@ -16796,6 +17041,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         {
           spatially_owned_patches.insert(cell.patch);
         }
+      }
+      for (const auto &vertex : ownership.vertices)
+      {
+        spatially_owned_patches.insert(vertex.patch);
       }
       ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
           DescribeTranslationalOwnershipRecords(records, boxes, *config, coordinate_scale,

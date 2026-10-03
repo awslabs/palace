@@ -214,6 +214,21 @@ def local_edges(model, frame):
     return edges
 
 
+def foreign_edge_segments(model, frame):
+    """The model's ForeignEdges (a device-plan coupon, decision 282 rule B5: 3D segments in the
+    process-library frame, mesh units) in the mesh frame: the run config's EdgeExcludeSegments.
+    Empty for a legacy (claims-only) model."""
+    segments = []
+    for segment in model.get("ForeignEdges", []):
+        values = [float(v) for v in segment]
+        if len(values) != 6:
+            raise CaseInputError(f"the model's ForeignEdges entry {segment} is not a 3D segment")
+        p0 = frame @ np.asarray(values[:3])
+        p1 = frame @ np.asarray(values[3:])
+        segments.append([float(v) + 0.0 for v in (*p0, *p1)])
+    return segments
+
+
 def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, output_root="<output>", traces_remote=None,
            radial_shells=None):
     """The run inputs of a case: (config, record).  `mesh` is the value written into
@@ -246,6 +261,12 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
                                          paths["ProcessLibrary"])
     labels = np.array([int(row["conductor"]) for row in read_signature_rows(paths["TraceVertices"])])
     edges = local_edges(model, basis["Frame"])
+    # A device-plan coupon (decision 282): the context rows (continuation chains, foreign
+    # edges) carry the plan's further conductors into the config (terminal attributes,
+    # conductor count); the foreign edges leave the within-R perimeter (rule B5).
+    context_edges = local_edges({"Edges": model.get("ContextEdges", [])}, basis["Frame"])
+    foreign_edges = foreign_edge_segments(model, basis["Frame"])
+    edges = edges + context_edges
     conductors = sorted({int(edge["Conductor"]) for edge in edges})
     if conductors != list(range(1, len(conductors) + 1)):
         raise CaseInputError(f"the model's conductors are not 1..N: {conductors}")
@@ -289,7 +310,8 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
         [f"{traces_remote}/{path.name}" for path in traces], f"{traces_remote}/{zero_trace.name}",
         terminal_conductors, fabricated, physics_run["Order"], radius, float(fabrication["SubstratePermittivity"]),
         layers, interfaces, edges, available_attributes=config_available,
-        terminal_traces={conductor: f"{traces_remote}/{path.name}" for conductor, path in conductor_traces.items()})
+        terminal_traces={conductor: f"{traces_remote}/{path.name}" for conductor, path in conductor_traces.items()},
+        edge_exclude_segments=foreign_edges)
     config["Problem"]["Output"] = output_root
     config["Solver"]["Linear"]["Tol"] = physics_run["LinearTol"]
     base_config, shell_map = None, None

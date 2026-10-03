@@ -1088,6 +1088,16 @@ public:
         std::array<double, 3> p0{}, p1{};
       };
       std::vector<Claim> claims;
+      // A spatial cluster patch of a contract-3 (device-plan) model: the model's support
+      // box [x0, y0, x1, y1] and its continuation CHAIN pieces (the Signature's Context
+      // entries flagged Chain, arcs chorded), both in the patch's local frame in units of
+      // the matching radius (M = identity for a Signature-keyed model). The placement's
+      // vertex ownership (decision 282 rule B4): a vertex feature whose vertex lies on a
+      // chain piece end inside the box is owned by this coupon. Empty for a legacy
+      // (claims-only) model.
+      std::array<double, 4> support_box{};
+      bool has_support_box = false;
+      std::vector<std::array<double, 4>> chain;
     };
     Provenance provenance;
   };

@@ -29,6 +29,18 @@ coupon is therefore built as a pure function of the signature, in the canonical 
 Every geometric decision is checked and fails closed: chains crossing inside the box, a face
 whose bounding portions disagree on the metal side or the conductor, a face bounded by the
 box alone, a portion end whose interface types match no slot of the record.
+
+Spatial-support contract v3 (USER decision 281, decisions 282 / 285 / 286): a signature
+carrying ``Box`` + ``Context`` (the identification keyed it with the device plan clipped to the
+box: non-legacy context or a grown box) is built in its OWN frame (the canonical frame, M =
+identity) inside the signature's Box, and its metal is the arrangement of the claims plus the
+Context pieces (the continuation chains, ``Chain`` true, and the foreign edges): no straight
+extension, no fictitious metal (the D2 / D3-C defect). The coupon then carries
+``Geometry.SupportBox`` (the generator's box), ``Geometry.Edges`` = the claims rows plus the
+context rows (``Context`` true, ``Chain``: the mesher's owner lookup and attributes for every
+conductor of the plan) and ``Geometry.ForeignEdges`` (the foreign pieces as 3D segments: the
+config's ``EdgeExcludeSegments``, rule B5). A claims-only signature takes the legacy path
+unchanged (byte-identical generator inputs, test_cluster_signature_geometry).
 """
 import json
 import math
@@ -54,6 +66,44 @@ MASK_REGULARIZATION = {"Version": 1, "PhysicalBoundary": "TaperAndRound", "Conti
 
 class SignatureGeometryError(ValueError):
     """The signature admits no unambiguous coupon geometry (the reason is named)."""
+
+
+def context_from_signature(signature, radius):
+    """The Context pieces of a contract-v3 SpatialEdgeCluster signature (decision 282 rule B1 /
+    B3: the device plan clipped to the Box, minus the claims) in mesh units (canonical frame),
+    chorded like the portions, each with its ``Chain`` flag (True = the coupon's own
+    continuation chain, False = a FOREIGN edge: present in the geometry, excluded from the
+    within-R accounting by ``EdgeExcludeSegments``, rule B5). Empty for a claims-only
+    (contract-2) signature."""
+    pieces = []
+    if "Context" not in signature:
+        return pieces
+    for edge in signature_library.cluster_plan_view_edges(signature, radius, include_context=True):
+        if not edge.get("Context"):
+            continue
+        p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
+        gap = np.asarray(edge["Gap"], dtype=float)
+        length = float(np.linalg.norm(p1 - p0))
+        norm = np.linalg.norm(gap)
+        if length <= 0.0 or norm <= 0.0:
+            raise SignatureGeometryError(f"context piece {edge['Portion']} has zero length or an invalid Gap")
+        pieces.append({"P0": p0, "P1": p1, "Gap": gap / norm, "Length": length, "Conductor": int(edge["Conductor"]),
+                       "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
+                       "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False))})
+    return pieces
+
+
+def support_box(signature, radius):
+    """The signature's support box [x0, y0, x1, y1] in mesh units (canonical frame): the
+    serialised ``Box`` of a contract-v3 signature (rule B2 + the face rules T1-T3, grown by the
+    identification); None for a claims-only signature (the generator's own ``coupon_bounds``
+    then applies, as before)."""
+    if "Box" not in signature:
+        return None
+    box = [float(v) * radius for v in signature["Box"]]
+    if len(box) != 4 or box[2] <= box[0] or box[3] <= box[1]:
+        raise SignatureGeometryError(f"the signature's Box {signature['Box']} is not a box")
+    return box
 
 
 def portions_from_signature(signature, radius):
@@ -145,6 +195,57 @@ def edge_rows(portions, states, radius, record_interfaces, boundary_condition):
                      "Conductor": portion["Conductor"], "InterfaceSlot": slot_of(portion["Interfaces"], record_interfaces),
                      "BoundaryCondition": json.loads(law) if isinstance(law, str) else dict(law or boundary_condition)})
     return rows
+
+
+def context_slot(piece, pieces_and_portions, record_interfaces):
+    """The interface slot of a context piece: its own interface types' slot; a piece without
+    interface types (a perimeter segment excluded before the identification — a port cut has
+    no target interface) takes the slot of the nearest claim or context piece of its conductor
+    that has one (its edge surfaces are built like its neighbours')."""
+    if piece["Interfaces"]:
+        return slot_of(piece["Interfaces"], record_interfaces)
+    best = None
+    for other in pieces_and_portions:
+        if other is piece or not other["Interfaces"] or other["Conductor"] != piece["Conductor"]:
+            continue
+        distance = min(np.linalg.norm(a - b) for a in (piece["P0"], piece["P1"]) for b in (other["P0"], other["P1"]))
+        if best is None or distance < best[0]:
+            best = (distance, other)
+    if best is None:
+        raise SignatureGeometryError("a context piece without interface types has no neighbour of its conductor "
+                                     "to take its interface slot from")
+    return slot_of(best[1]["Interfaces"], record_interfaces)
+
+
+def context_rows(pieces, record_interfaces, boundary_condition, portions=()):
+    """The generator's Edges rows of the context pieces (canonical frame): Point at the piece's
+    midpoint, the exact Interval [-L/2, L/2] along the generator's tangent (no lengthening: a
+    context piece already reaches the face it crosses, the box is the signature's), flagged
+    ``Context`` (the trace basis ignores them: knot columns come from the mask vertices on the
+    faces, interior cap hats stay within R of the CLAIMS) with the ``Chain`` class."""
+    rows = []
+    for piece in pieces:
+        gap = piece["Gap"]
+        midpoint = 0.5 * (piece["P0"] + piece["P1"])
+        half = 0.5 * piece["Length"]
+        law = piece["Law"]
+        rows.append({"Point": [float(midpoint[0]), float(midpoint[1]), 0.0],
+                     "GapDirection": [float(gap[0]), float(gap[1]), 0.0],
+                     "ProcessNormal": list(PROCESS_NORMAL), "Interval": [-half, half],
+                     "Conductor": piece["Conductor"],
+                     "InterfaceSlot": context_slot(piece, list(portions) + list(pieces), record_interfaces),
+                     "BoundaryCondition": json.loads(law) if isinstance(law, str) else dict(law or boundary_condition),
+                     "Context": True, "Chain": bool(piece["Chain"])})
+    return rows
+
+
+def foreign_edge_segments(pieces):
+    """The FOREIGN context pieces (Chain false) as 3D segments [x0, y0, z, x1, y1, z] in mesh
+    units of the canonical frame (z = 0, the process plane): the coupon config's
+    ``EdgeExcludeSegments`` (rule B5), so that the within-R accounting covers the coupon's own
+    edges only."""
+    return [[float(p["P0"][0]), float(p["P0"][1]), 0.0, float(p["P1"][0]), float(p["P1"][1]), 0.0]
+            for p in pieces if not p["Chain"]]
 
 
 def exact_portion_edges(portions, rows):
@@ -387,21 +488,52 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
     states = end_states(portions, vertices, radius)
     boundary_condition = record.get("BoundaryCondition", {"Type": "PEC"})
     rows = edge_rows(portions, states, radius, record["Interfaces"], boundary_condition)
+    exact_rows = rows
     coupon = {"Topology": "SpatialEdgeCluster",
               "Geometry": {"EdgeCount": len(rows), "Edges": rows, "Signature": signature},
               "Interfaces": record["Interfaces"], "BoundaryCondition": boundary_condition}
-    # The generator's own frame and box (a rotation about the process normal of the canonical
-    # frame): the mask is built inside that box and returned in the canonical frame.
-    frame, local_edges, _ = spatial_generator.normalize_geometry(coupon, radius)
-    lower, upper = spatial_generator.coupon_bounds(local_edges, radius, metal_thickness, overetch)
-    box = ((float(lower[0]), float(lower[1])), (float(upper[0]), float(upper[1])))
-    rotation = np.asarray(frame)[:2, :2]
+    box_from_signature = support_box(signature, radius)
+    if box_from_signature is None:
+        # The legacy contract (contract 2, decision 236; every context piece a straight
+        # continuation of a claim, no growth): the generator's own frame and box (a rotation
+        # about the process normal of the canonical frame), the free ends extended straight
+        # to the box; the mask is built inside that box and returned in the canonical frame.
+        # Byte-identical to the pre-v3 builder.
+        frame, local_edges, _ = spatial_generator.normalize_geometry(coupon, radius)
+        lower, upper = spatial_generator.coupon_bounds(local_edges, radius, metal_thickness, overetch)
+        box = ((float(lower[0]), float(lower[1])), (float(upper[0]), float(upper[1])))
+        rotation = np.asarray(frame)[:2, :2]
 
-    def to_local(point):
-        return rotation @ np.asarray(point)
+        def to_local(point):
+            return rotation @ np.asarray(point)
 
-    local_portions = [{**p, "P0": to_local(p["P0"]), "P1": to_local(p["P1"]), "Gap": to_local(p["Gap"])} for p in portions]
-    segments = extended_chain_segments(local_portions, states, box, radius)
+        local_portions = [{**p, "P0": to_local(p["P0"]), "P1": to_local(p["P1"]), "Gap": to_local(p["Gap"])} for p in portions]
+        segments = extended_chain_segments(local_portions, states, box, radius)
+        conductors = {p["Conductor"] for p in portions}
+    else:
+        # Contract 3 (decision 282 rules B1-B3, the R1a ruling MAJOR-2): the box frame IS the
+        # canonical frame (M = identity), the box the signature's grown Box, the metal the
+        # device plan: the claims plus the Context pieces (own continuation chains and foreign
+        # edges), cut at the faces by the identification; nothing is continued straight past a
+        # device vertex and no fictitious metal boundary exists.
+        frame = np.identity(3)
+        pieces = context_from_signature(signature, radius)
+        box = ((box_from_signature[0], box_from_signature[1]), (box_from_signature[2], box_from_signature[3]))
+        (x0, y0), (x1, y1) = box
+        for item in portions + pieces:
+            for point in (item["P0"], item["P1"]):
+                if not (x0 - 1.0e-6 * radius <= point[0] <= x1 + 1.0e-6 * radius and
+                        y0 - 1.0e-6 * radius <= point[1] <= y1 + 1.0e-6 * radius):
+                    raise SignatureGeometryError("a claimed portion or context piece lies outside the signature's Box")
+        segments = [{"P0": p["P0"], "P1": p["P1"], "Gap": p["Gap"], "Conductor": p["Conductor"]} for p in portions + pieces]
+        # The claims rows exactly (no lengthening: the continuation is in the context) and
+        # the context rows.
+        rows = exact_portion_edges(portions, rows) + context_rows(pieces, record["Interfaces"], boundary_condition, portions)
+        coupon["Geometry"]["Edges"] = rows
+        coupon["Geometry"]["SupportBox"] = list(box_from_signature)
+        coupon["Geometry"]["ForeignEdges"] = foreign_edge_segments(pieces)
+        coupon["Geometry"]["ContextEdgeCount"] = len(pieces)
+        conductors = {p["Conductor"] for p in portions} | {p["Conductor"] for p in pieces}
     faces = plan_view_faces(segments, box, radius)
     facets = []
     for polygon, is_metal, conductor in faces:
@@ -410,10 +542,9 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
         for triangle in triangulate(polygon):
             points = [(np.asarray(frame).T @ np.asarray([x, y, 0.0])).tolist() for x, y in triangle]
             facets.append({"Conductor": conductor, "Points": points})
-    conductors = {p["Conductor"] for p in portions}
     if {f["Conductor"] for f in facets} != conductors:
         raise SignatureGeometryError("the plan-view mask does not cover every conductor of the signature")
     coupon["Geometry"]["PlanViewFacets"] = facets
     coupon["Geometry"]["PlanViewBoundary"] = planner.canonical_plan_view_boundary(facets, radius, 2)
     coupon["Geometry"]["MaskRegularization"] = dict(MASK_REGULARIZATION)
-    return coupon, exact_portion_edges(portions, rows)
+    return coupon, exact_portion_edges(portions, exact_rows)
