@@ -404,8 +404,10 @@ constexpr double kSupportSpanCapOverRadius = 16.0;
 // The claims-derived support box [x0, y0, x1, y1] in units of R of a serialised cluster
 // signature {"Portions", "Vertices"} in its frame (rule B2 above; the same numbers the
 // Python builder reads), quantised on the signature grid. Shared by the identification and
-// the two-language identity test.
-std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature);
+// the two-language identity test. With `band_hits`, the number of box-rule threshold
+// readings inside the knife-edge band (end coincidence, the 2R continuation at R).
+std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
+                                              std::size_t *band_hits = nullptr);
 
 // The context digest of a contract-3 signature: sha256 of the serialised {"Box", "Context"}
 // of the signature (empty when the signature carries no Box). A legacy-contract alias (USER

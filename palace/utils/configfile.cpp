@@ -647,6 +647,10 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   automatic_edges = dielectric.value("AutomaticEdges", automatic_edges);
   edge_exclude_attributes = dielectric.value("EdgeExcludeAttributes", std::vector<int>{});
   std::sort(edge_exclude_attributes.begin(), edge_exclude_attributes.end());
+  edge_exclude_segments =
+      dielectric.value("EdgeExcludeSegments", std::vector<std::array<double, 6>>{});
+  edge_exclude_segment_tolerance =
+      dielectric.value("EdgeExcludeSegmentTolerance", edge_exclude_segment_tolerance);
   edge_distances = dielectric.value("EdgeDistances", std::vector<double>{});
   std::sort(edge_distances.begin(), edge_distances.end());
   edge_distance_smoothing =
@@ -713,6 +717,32 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
   MFEM_VERIFY(std::all_of(edge_distances.begin(), edge_distances.end(), [](double distance)
                           { return std::isfinite(distance) && distance > 0.0; }),
               "Interface dielectric \"EdgeDistances\" must be finite and positive!");
+  MFEM_VERIFY(
+      edge_exclude_segments.empty() ||
+          (!edge_distances.empty() && (automatic_edges || !edge_attributes.empty())),
+      "\"EdgeExcludeSegments\" requires \"EdgeDistances\" and exactly one of "
+      "\"EdgeAttributes\" or \"AutomaticEdges\" for interface dielectric "
+      "postprocessing!");
+  MFEM_VERIFY(std::all_of(edge_exclude_segments.begin(), edge_exclude_segments.end(),
+                          [](const std::array<double, 6> &segment)
+                          {
+                            return std::all_of(segment.begin(), segment.end(),
+                                               [](double v) { return std::isfinite(v); }) &&
+                                   (segment[0] != segment[3] || segment[1] != segment[4] ||
+                                    segment[2] != segment[5]);
+                          }),
+              "Interface dielectric \"EdgeExcludeSegments\" must be finite segments of "
+              "nonzero length!");
+  MFEM_VERIFY(std::isfinite(edge_exclude_segment_tolerance) &&
+                  edge_exclude_segment_tolerance >= 0.0,
+              "Interface dielectric \"EdgeExcludeSegmentTolerance\" must be finite and "
+              "nonnegative!");
+  MFEM_VERIFY(edge_exclude_segment_tolerance == 0.0 || !edge_exclude_segments.empty(),
+              "\"EdgeExcludeSegmentTolerance\" requires \"EdgeExcludeSegments\"!");
+  if (!edge_exclude_segments.empty() && edge_exclude_segment_tolerance == 0.0)
+  {
+    edge_exclude_segment_tolerance = 1.0e-3 * edge_distances.front();
+  }
   MFEM_VERIFY(std::adjacent_find(edge_distances.begin(), edge_distances.end()) ==
                   edge_distances.end(),
               "Interface dielectric \"EdgeDistances\" must be unique!");
@@ -2046,6 +2076,14 @@ void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
   data.t /= units.GetMeshLengthRelativeScale();
   std::transform(data.edge_distances.begin(), data.edge_distances.end(),
                  data.edge_distances.begin(), LengthScaler(units));
+  for (auto &segment : data.edge_exclude_segments)
+  {
+    for (auto &x : segment)
+    {
+      x /= units.GetMeshLengthRelativeScale();
+    }
+  }
+  data.edge_exclude_segment_tolerance /= units.GetMeshLengthRelativeScale();
   if (data.edge_refinement)
   {
     data.edge_refinement->radius /= units.GetMeshLengthRelativeScale();

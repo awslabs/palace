@@ -8408,6 +8408,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         GetInterfaceMetalEdgeSegmentIndices(geometry, index, dielectric.type);
     ExcludeMetalEdgeSegmentIndices(mesh, geometry, dielectric.edge_exclude_attributes,
                                    segment_indices);
+    ExcludeCoincidentMetalEdgeSegmentIndices(geometry, dielectric.edge_exclude_segments,
+                                             dielectric.edge_exclude_segment_tolerance,
+                                             mesh.SpaceDimension(), segment_indices);
     selections.push_back({dielectric.type, index, std::move(segment_indices),
                           dielectric.edge_frame_normal ? std::optional<Point3D>(Normalize(
                                                              *dielectric.edge_frame_normal))

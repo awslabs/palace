@@ -710,6 +710,17 @@ public:
   // perimeter used for edge-distance postprocessing.
   std::vector<int> edge_exclude_attributes = {};
 
+  // Explicit 3D segments [x0, y0, z0, x1, y1, z1] (mesh length units) whose coincident
+  // perimeter segments are excluded from the metal perimeter used for edge-distance
+  // postprocessing (a spatial coupon's FOREIGN edges: present in the geometry, owned by
+  // another coupon; decision 282 rule B5). A perimeter segment is dropped when both its
+  // ends lie within EdgeExcludeSegmentTolerance of one listed segment.
+  std::vector<std::array<double, 6>> edge_exclude_segments = {};
+
+  // Coincidence tolerance of EdgeExcludeSegments [mesh length units]; by default 1e-3 of
+  // the smallest matching radius.
+  double edge_exclude_segment_tolerance = 0.0;
+
   // Matching radii for edge-distance postprocessing [m].
   std::vector<double> edge_distances = {};
 

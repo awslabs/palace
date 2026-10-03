@@ -1631,7 +1631,12 @@ python3 examples/transmon/plot_surface_response_assignments.py \
 ```
 
 `EdgeExcludeAttributes` may be used to remove perimeter segments that lie on artificial
-boundaries, such as the front and back faces of an extruded geometry. In 3D, the
+boundaries, such as the front and back faces of an extruded geometry. `EdgeExcludeSegments`
+lists explicit segments `[x0, y0, z0, x1, y1, z1]` (mesh length units) whose coincident
+perimeter segments are removed as well (both ends and the midpoint within
+`EdgeExcludeSegmentTolerance`, by default 1e-3 of the smallest matching radius): a spatial
+coupon built from the device plan lists its foreign device edges here so that the
+within-radius edge energy covers its own edges only. In 3D, the
 perimeter is represented by straight segments joining the endpoints of the selected
 surface mesh edges; curved high-order edges are therefore approximated by their
 piecewise-linear mesh geometry.

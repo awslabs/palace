@@ -115,7 +115,9 @@ file. These include:
     truncation, and associates the remaining physical segments with each explicit SA,
     MS, or MA interface. The manual `EdgeAttributes` path remains available;
     `EdgeExcludeAttributes` can remove its perimeter segments on artificial boundaries
-    such as extrusion end faces. For localized automatic diagnostics, Palace infers each
+    such as extrusion end faces, and `EdgeExcludeSegments` removes the perimeter segments
+    coincident with explicitly listed 3D segments (a coupon's foreign edges). For
+    localized automatic diagnostics, Palace infers each
     segment's process normal from its supporting metal faces and orients it from the
     lower-wave-speed substrate side toward the higher-wave-speed air side.
     `EdgeFrameNormal` remains an optional fallback for materially ambiguous surfaces.

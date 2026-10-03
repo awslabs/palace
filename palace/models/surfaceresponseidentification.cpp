@@ -2151,7 +2151,8 @@ std::string SpatialSupportContextDigest(const nlohmann::json &signature)
 
 // Rule B2 (the coupon generator's `coupon_bounds` / `edge_rows` / `extended_interval` in
 // the canonical frame, units of R): see SupportBoxFromSignature in the header.
-std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature)
+std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
+                                              std::size_t *band_hits)
 {
   using Point2 = std::array<double, 2>;
   struct Edge
@@ -2160,6 +2161,16 @@ std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature)
   };
   std::vector<Edge> edges;
   const double pi = std::acos(-1.0);
+  std::size_t hits = 0;
+  // The box rule's two thresholds read within the knife-edge band (review MINOR-4): the
+  // end coincidence and the "row end at or beyond R continues by 2R" rule.
+  auto Band = [&](double value, double threshold)
+  {
+    if (std::abs(value / threshold - 1.0) <= kKnifeEdgeBandRelative)
+    {
+      hits++;
+    }
+  };
   const auto &portion_list = signature.at("Portions");
   MFEM_VERIFY(portion_list.is_array() && !portion_list.empty(),
               "A support box needs the claimed portions!");
@@ -2233,6 +2244,7 @@ std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature)
   {
     for (const auto &v : vertex_points)
     {
+      Band(std::hypot(point[0] - v[0], point[1] - v[1]), coincidence);
       if (Near(point, v, coincidence))
       {
         return true;
@@ -2240,8 +2252,15 @@ std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature)
     }
     for (std::size_t j = 0; j < edges.size(); j++)
     {
-      if (j != i &&
-          (Near(point, edges[j].p0, coincidence) || Near(point, edges[j].p1, coincidence)))
+      if (j == i)
+      {
+        continue;
+      }
+      for (const Point2 &other : {edges[j].p0, edges[j].p1})
+      {
+        Band(std::hypot(point[0] - other[0], point[1] - other[1]), coincidence);
+      }
+      if (Near(point, edges[j].p0, coincidence) || Near(point, edges[j].p1, coincidence))
       {
         return true;
       }
@@ -2271,6 +2290,15 @@ std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature)
     double end = end_is_free ? std::max(half, 1.0) : half;
     // extended_interval: a row end at or beyond R from the row point continues by 2R.
     const double tolerance = 1.0e-10;
+    // (A free end is lengthened to >= R and always continues: no threshold there.)
+    if (!begin_is_free)
+    {
+      Band(half, 1.0);
+    }
+    if (!end_is_free)
+    {
+      Band(half, 1.0);
+    }
     if (begin <= -1.0 + tolerance)
     {
       begin -= kSupportContinuationOverRadius;
@@ -2293,6 +2321,10 @@ std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature)
     }
   }
   const double padding = kSupportPaddingOverRadius;
+  if (band_hits)
+  {
+    *band_hits = hits;
+  }
   return {RoundTo(x0 - padding, kSignatureLengthQuantumOverRadius),
           RoundTo(y0 - padding, kSignatureLengthQuantumOverRadius),
           RoundTo(x1 + padding, kSignatureLengthQuantumOverRadius),
@@ -3241,6 +3273,7 @@ private:
   void BuildClusters();
   double ExtendClusters(bool measure_joint_claims = false);
   void EmitClusters();
+  void RecordContextFeatureIds(int feature);
   std::vector<SignaturePortion> ClusterSignaturePortions(
       const std::vector<std::pair<std::size_t, Interval>> &claimed) const;
   // Spatial-support contract v3 (decision 282): the support of cluster c in the candidate
@@ -3268,6 +3301,13 @@ private:
                                       const Point3D &y) const;
   // Sites (vertex features) incident to every run, for the context's vertex census.
   std::multimap<std::size_t, std::size_t> sites_by_run;
+  // Every cluster's claimed intervals per run (interval, cluster): the context pieces of a
+  // cluster's box lying on ANOTHER cluster's claims are split at the claim cuts and never
+  // chain (decision 285 (1): owned by the other coupon).
+  std::map<std::size_t, std::vector<std::pair<Interval, std::size_t>>> claims_by_run;
+  // Feature index of every cluster (EmitClusters) and of every free site (Assign), for the
+  // non-hashed ownership records of the context census.
+  std::vector<int> cluster_feature, site_feature;
   // Spatial-support summary over the clusters (IdentificationResult::spatial_support).
   IdentificationResult::SpatialSupportSummary spatial_support_summary;
   void BuildVertexWindows();
@@ -10062,7 +10102,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
 
   // Rule B2: the claims-derived box from the claims serialised in this frame.
   const nlohmann::json claims = SerializeInFrame(portions, vertices, origin, x, y, R);
-  const std::array<double, 4> claims_box = SupportBoxFromSignature(claims);
+  std::size_t box_band_hits = 0;
+  const std::array<double, 4> claims_box = SupportBoxFromSignature(claims, &box_band_hits);
   std::array<double, 4> box = claims_box;
   const int plane = run_plane[cluster_claimed[c].front().first];
   std::map<std::size_t, std::vector<Interval>> claimed_by_run;
@@ -10089,6 +10130,9 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   {
     std::size_t run;
     Interval s;
+    // The piece lies on another cluster's claimed interval (decision 285 (1)): owned by
+    // that coupon, never part of this cluster's chain.
+    std::optional<std::size_t> claimed_by;
   };
   struct ArcLocal
   {
@@ -10131,18 +10175,25 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     return piece.s.second - piece.s.first;
   };
 
-  // The device plan clipped to the current box: run-parameter intervals inside the box
-  // minus the cluster's claims, pieces shorter than the snap quantum dropped (T1).
+  // The device plan clipped to a box (the current box, or the box dilated by the clearance
+  // for the two-sided face rule): run-parameter intervals inside it minus the cluster's
+  // claims, split at the other clusters' claim cuts, pieces shorter than the snap quantum
+  // dropped (T1).
   std::size_t slivers_dropped = 0;
-  auto ClipPlan = [&]()
+  auto ClipPlanTo = [&](const std::array<double, 4> &clip)
   {
     std::vector<Piece> pieces;
     slivers_dropped = 0;
+    auto InsideClip = [&](const Point2 &p, double tolerance)
+    {
+      return p[0] >= clip[0] - tolerance && p[0] <= clip[2] + tolerance &&
+             p[1] >= clip[1] - tolerance && p[1] <= clip[3] + tolerance;
+    };
     Point3D lo{}, hi{};
     bool first = true;
-    for (const double bx : {box[0], box[2]})
+    for (const double bx : {clip[0], clip[2]})
     {
-      for (const double by : {box[1], box[3]})
+      for (const double by : {clip[1], clip[3]})
       {
         const Point3D corner = Add(origin, Add(Scale(bx * R, x), Scale(by * R, y)));
         if (first)
@@ -10175,8 +10226,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         bool empty = false;
         for (int axis = 0; axis < 2 && !empty; axis++)
         {
-          const double lo_a = box[static_cast<std::size_t>(axis)],
-                       hi_a = box[static_cast<std::size_t>(axis + 2)];
+          const double lo_a = clip[static_cast<std::size_t>(axis)],
+                       hi_a = clip[static_cast<std::size_t>(axis + 2)];
           const double d = q[axis] - p[axis];
           if (std::abs(d) <= 1.0e-15)
           {
@@ -10216,7 +10267,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
           {
             continue;
           }
-          const double cosine = (FaceLine(f) - a.center[axis]) / (a.radius * amplitude);
+          const double cosine =
+              (clip[static_cast<std::size_t>(f)] - a.center[axis]) / (a.radius * amplitude);
           if (std::abs(cosine) > 1.0)
           {
             continue;
@@ -10248,7 +10300,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
             continue;
           }
           const double mid = 0.5 * (breaks[k] + breaks[k + 1]);
-          if (Inside(ArcPointLocal(a, mid), 0.0))
+          if (InsideClip(ArcPointLocal(a, mid), 0.0))
           {
             double s0 = ToS(breaks[k]), s1 = ToS(breaks[k + 1]);
             if (s0 > s1)
@@ -10268,9 +10320,59 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       {
         inside = SubtractIntervals(inside, it->second, Tol());
       }
+      // Split at the other clusters' claim cuts on this run and class every piece lying on
+      // such a claim by its owner (decision 285 (1)).
+      std::vector<std::pair<Interval, std::size_t>> other_claims;
+      if (auto it = claims_by_run.find(r); it != claims_by_run.end())
+      {
+        for (const auto &[interval, owner] : it->second)
+        {
+          if (owner != c)
+          {
+            other_claims.emplace_back(interval, owner);
+          }
+        }
+      }
+      if (!other_claims.empty())
+      {
+        std::vector<Interval> split;
+        for (const auto &interval : inside)
+        {
+          std::vector<double> cuts = {interval.first, interval.second};
+          for (const auto &[claim, owner] : other_claims)
+          {
+            (void)owner;
+            for (const double cut : {claim.first, claim.second})
+            {
+              if (cut > interval.first + Tol() && cut < interval.second - Tol())
+              {
+                cuts.push_back(cut);
+              }
+            }
+          }
+          std::sort(cuts.begin(), cuts.end());
+          for (std::size_t k = 0; k + 1 < cuts.size(); k++)
+          {
+            if (cuts[k + 1] > cuts[k] + Tol())
+            {
+              split.emplace_back(cuts[k], cuts[k + 1]);
+            }
+          }
+        }
+        inside = std::move(split);
+      }
       for (const auto &interval : inside)
       {
-        const Piece piece{r, interval};
+        Piece piece{r, interval, std::nullopt};
+        const double mid = 0.5 * (interval.first + interval.second);
+        for (const auto &[claim, owner] : other_claims)
+        {
+          if (mid >= claim.first - Tol() && mid <= claim.second + Tol())
+          {
+            piece.claimed_by = owner;
+            break;
+          }
+        }
         if (PieceLength(piece) < snap * R)
         {
           slivers_dropped++;
@@ -10283,6 +10385,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
               { return a.run != b.run ? a.run < b.run : a.s < b.s; });
     return pieces;
   };
+  auto ClipPlan = [&]() { return ClipPlanTo(box); };
 
   // T2 on the current box and pieces: the failing faces and the record of the pass.
   struct FaceCheck
@@ -10292,9 +10395,12 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     std::optional<double> min_clearance, min_crossing_sine, min_cross_section;
     std::size_t narrow_cross_sections = 0;
     std::size_t band_hits = 0;
+    // Two-sided T2 (decision 285 (2)): device vertices / edges inside the clearance shell
+    // OUTSIDE a face that do not cross it.
+    std::size_t exterior_vertices = 0, exterior_edges = 0;
     std::string first_failure;
   };
-  auto CheckFaces = [&](const std::vector<Piece> &pieces)
+  auto CheckFaces = [&](const std::vector<Piece> &pieces, const std::vector<Piece> &shell)
   {
     FaceCheck check;
     auto Fail = [&](int f, const std::string &why)
@@ -10444,6 +10550,121 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         }
       }
     }
+    // Two-sided T2 (decision 285 (2)): the plan inside the shell between a face and the
+    // face moved outward by the clearance. A run end there (a device vertex or joint) that
+    // lies on neither boundary, or a piece that enters and leaves the shell without
+    // crossing the face, sits within the clearance of the face trace without being
+    // representable on it: the face fails and grows over it (T3). The exterior tail of a
+    // face crossing (from the face to the shell boundary) is the crossing itself.
+    {
+      std::map<std::size_t, std::vector<Interval>> inside_by_run;
+      for (const Piece &piece : pieces)
+      {
+        inside_by_run[piece.run].push_back(piece.s);
+      }
+      std::array<double, 4> dilated = box;
+      for (int f = 0; f < 4; f++)
+      {
+        dilated[static_cast<std::size_t>(f)] += (f < 2 ? -1.0 : 1.0) * clearance;
+      }
+      auto OnBoundary = [&](const Point2 &e, const std::array<double, 4> &b)
+      {
+        for (int f = 0; f < 4; f++)
+        {
+          const int axis = FaceAxis(f), other = 1 - axis;
+          if (std::abs(e[axis] - b[static_cast<std::size_t>(f)]) <= snap &&
+              e[other] >= b[static_cast<std::size_t>(other)] - snap &&
+              e[other] <= b[static_cast<std::size_t>(other + 2)] + snap)
+          {
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const Piece &piece : shell)
+      {
+        std::vector<Interval> exterior = {piece.s};
+        if (auto it = inside_by_run.find(piece.run); it != inside_by_run.end())
+        {
+          exterior = SubtractIntervals(exterior, it->second, Tol());
+        }
+        for (const auto &interval : exterior)
+        {
+          const Piece part{piece.run, interval, std::nullopt};
+          if (PieceLength(part) < snap * R)
+          {
+            continue;
+          }
+          const CurvePiece geometry = RunPiece(part.run, interval.first, interval.second);
+          const Point2 a = Local(geometry.a), b = Local(geometry.b),
+                       m = Local(geometry.At(0.5));
+          if (Inside(m, snap))
+          {
+            continue;  // an arc's exterior part read inside: nothing outside this face
+          }
+          std::vector<int> beyond;
+          for (int f = 0; f < 4; f++)
+          {
+            const double side = (f < 2 ? -1.0 : 1.0) * (m[FaceAxis(f)] - FaceLine(f));
+            if (side > snap)
+            {
+              beyond.push_back(f);
+            }
+          }
+          if (beyond.empty())
+          {
+            continue;
+          }
+          bool interior_end = false, box_end = false;
+          double vertex_distance = std::numeric_limits<double>::infinity();
+          for (const Point2 &e : {a, b})
+          {
+            if (OnBoundary(e, box))
+            {
+              box_end = true;
+            }
+            else if (!OnBoundary(e, dilated))
+            {
+              interior_end = true;
+              for (const int f : beyond)
+              {
+                vertex_distance =
+                    std::min(vertex_distance, std::abs(e[FaceAxis(f)] - FaceLine(f)));
+              }
+            }
+          }
+          if (interior_end)
+          {
+            Clearance(vertex_distance);
+            check.exterior_vertices++;
+            for (const int f : beyond)
+            {
+              Fail(f, "a device vertex lies " + std::to_string(vertex_distance) +
+                          " R outside face " + std::to_string(f));
+            }
+          }
+          else if (!box_end)
+          {
+            double edge_distance = std::numeric_limits<double>::infinity();
+            for (const int f : beyond)
+            {
+              for (const Point2 &e : {a, b, m})
+              {
+                edge_distance =
+                    std::min(edge_distance, std::abs(e[FaceAxis(f)] - FaceLine(f)));
+              }
+            }
+            Clearance(edge_distance);
+            check.exterior_edges++;
+            for (const int f : beyond)
+            {
+              Fail(f, "a device edge runs " + std::to_string(edge_distance) +
+                          " R outside face " + std::to_string(f) + " without crossing it");
+            }
+          }
+        }
+      }
+    }
     // Two crossings of one face closer than the clearance bound metal (a narrow lead:
     // allowed, recorded) or gap (a channel the trace basis cannot resolve: the face fails).
     for (int f = 0; f < 4; f++)
@@ -10475,14 +10696,25 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   };
 
   // T3: grow every failing face by one step until every face passes or a cap refuses.
-  std::array<int, 4> steps{};
+  // `steps` counts the applied steps per face, `attempted` every step a failing face asked
+  // for (a refused step is attempted, not applied; review MINOR-2).
+  std::array<int, 4> steps{}, attempted{};
+  std::vector<std::string> step_reasons;  // the first failure behind every applied step
   std::vector<Piece> pieces;
   FaceCheck check;
-  std::optional<std::string> unboxable;
+  std::optional<std::string> unboxable, unboxable_reason;
   for (;;)
   {
     pieces = ClipPlan();
-    check = CheckFaces(pieces);
+    std::array<double, 4> dilated = box;
+    for (int f = 0; f < 4; f++)
+    {
+      dilated[static_cast<std::size_t>(f)] += (f < 2 ? -1.0 : 1.0) * clearance;
+    }
+    const std::vector<Piece> shell = ClipPlanTo(dilated);
+    const std::size_t box_slivers = slivers_dropped;
+    check = CheckFaces(pieces, shell);
+    slivers_dropped = box_slivers;
     if (std::none_of(check.failing.begin(), check.failing.end(), [](bool b) { return b; }))
     {
       break;
@@ -10494,14 +10726,15 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       {
         continue;
       }
+      attempted[static_cast<std::size_t>(f)]++;
       if (steps[static_cast<std::size_t>(f)] >= kSupportFaceGrowthMaxSteps)
       {
         unboxable = "face " + std::to_string(f) + " failed the clearance rule after " +
                     std::to_string(kSupportFaceGrowthMaxSteps) +
                     " growth steps: " + check.first_failure;
+        unboxable_reason = "GrowthStepsExhausted";
         break;
       }
-      steps[static_cast<std::size_t>(f)]++;
       grown[static_cast<std::size_t>(f)] += (f < 2 ? -1.0 : 1.0) * step;
     }
     if (unboxable)
@@ -10514,8 +10747,17 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       unboxable = "the growth needed by the clearance rule takes the plan span to " +
                   std::to_string(span) + " R beyond the span cap " +
                   std::to_string(span_cap) + " R: " + check.first_failure;
+      unboxable_reason = "SpanCapRefusedGrowth";
       break;
     }
+    for (int f = 0; f < 4; f++)
+    {
+      if (check.failing[static_cast<std::size_t>(f)])
+      {
+        steps[static_cast<std::size_t>(f)]++;
+      }
+    }
+    step_reasons.push_back(check.first_failure);
     for (double &v : grown)
     {
       v = Q(v);
@@ -10527,15 +10769,27 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   out.exceeds_span_cap = span > span_cap * (1.0 + 1.0e-12);
 
   // The context pieces in the portion encoding (arc pieces of one arc merged as the
-  // claims are), classed chain (connected to the claims inside the box through run ends
-  // and device vertices) or foreign.
-  std::vector<std::pair<std::size_t, Interval>> context_intervals;
-  for (const Piece &piece : pieces)
+  // claims are, never across another cluster's claim cut), classed chain (connected to
+  // the claims inside the box through run ends and device vertices; a piece on another
+  // cluster's claims stops the chain and never joins it, decision 285 (1)) or foreign.
+  std::vector<SignaturePortion> context_portions;
+  std::vector<std::optional<std::size_t>> context_claimed_by;
   {
-    context_intervals.emplace_back(piece.run, piece.s);
+    std::map<std::optional<std::size_t>, std::vector<std::pair<std::size_t, Interval>>>
+        groups;
+    for (const Piece &piece : pieces)
+    {
+      groups[piece.claimed_by].emplace_back(piece.run, piece.s);
+    }
+    for (const auto &[owner, intervals] : groups)
+    {
+      for (auto &portion : ClusterSignaturePortions(intervals))
+      {
+        context_portions.push_back(std::move(portion));
+        context_claimed_by.push_back(owner);
+      }
+    }
   }
-  const std::vector<SignaturePortion> context_portions =
-      ClusterSignaturePortions(context_intervals);
   const double join = kSignatureParameterToleranceOverRadius * R;
   std::vector<Point3D> chain_ends;
   for (const auto &portion : portions)
@@ -10549,7 +10803,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     changed = false;
     for (std::size_t k = 0; k < context_portions.size(); k++)
     {
-      if (is_chain[k])
+      if (is_chain[k] || context_claimed_by[k])
       {
         continue;
       }
@@ -10573,7 +10827,9 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   {
     claim_conductors.insert(portion.conductor);
   }
-  std::size_t chain_pieces = 0, foreign_pieces = 0;
+  std::size_t chain_pieces = 0, foreign_pieces = 0, other_claimed_pieces = 0;
+  double other_claimed_length = 0.0;
+  nlohmann::json claimed_by_other = nlohmann::json::array();
   for (std::size_t k = 0; k < context_portions.size(); k++)
   {
     const auto &portion = context_portions[k];
@@ -10591,6 +10847,15 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       if (!claim_conductors.count(portion.conductor))
       {
         foreign_conductors.insert(portion.conductor);
+      }
+      if (context_claimed_by[k])
+      {
+        other_claimed_pieces++;
+        other_claimed_length += length;
+        const Point2 c0 = Local(portion.p0), c1 = Local(portion.p1);
+        claimed_by_other.push_back({{"P", {Q(c0[0]), Q(c0[1]), Q(c1[0]), Q(c1[1])}},
+                                    {"LengthOverR", Q(length / R)},
+                                    {"Cluster", *context_claimed_by[k]}});
       }
     }
     support.context.push_back({portion, is_chain[k]});
@@ -10635,7 +10900,13 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         face_distance = std::min(face_distance, std::abs(p[FaceAxis(f)] - FaceLine(f)));
       }
       (on_chain ? chain_vertices : foreign_vertices)
-          .push_back({Q(p[0]), Q(p[1]), site.type, Q(face_distance)});
+          .push_back({{"P", {Q(p[0]), Q(p[1])}},
+                      {"Type", site.type},
+                      {"FaceDistanceOverR", Q(face_distance)},
+                      {"Site", s},
+                      {"Cluster", site.cluster >= 0 ? nlohmann::json(site.cluster)
+                                                    : nlohmann::json(nullptr)},
+                      {"Feature", nullptr}});
     }
   }
 
@@ -10828,12 +11099,21 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     }
   }
 
-  // Truncation segments (window cuts) inside the box: the plan is cut there.
-  std::size_t truncation_segments = 0;
-  double truncation_length = 0.0;
-  for (const auto &segment : input.segments)
+  // Truncation segments (window cuts) inside the box: the plan is cut there. Omitted
+  // segments inside the box (review MINOR-5): segments excluded before the identification
+  // (untargeted interface, undetermined process side, ...) or belonging to an excluded run
+  // on the cluster's plane never become plan pieces — recorded so that rule B1 ("nothing
+  // inside the box is omitted") is auditable.
+  std::size_t truncation_segments = 0, omitted_segments = 0;
+  double truncation_length = 0.0, omitted_length = 0.0;
+  const Point3D plane_normal = Normalize(Cross(x, y));
+  for (std::size_t i = 0; i < input.segments.size(); i++)
   {
-    if (!segment.truncation)
+    const auto &segment = input.segments[i];
+    const bool omitted =
+        !segment.truncation &&
+        (segment.exclusion || (i < segment_exclusion.size() && segment_exclusion[i]));
+    if (!segment.truncation && !omitted)
     {
       continue;
     }
@@ -10844,8 +11124,8 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       continue;
     }
     // Plane test: the segment's distance along the cluster normal.
-    const Point3D n = Normalize(Cross(x, y));
-    if (std::abs(Dot(Sub(segment.p0, origin), n)) > 2.0 * Tol())
+    if (std::abs(Dot(Sub(segment.p0, origin), plane_normal)) > 2.0 * Tol() ||
+        std::abs(Dot(Sub(segment.p1, origin), plane_normal)) > 2.0 * Tol())
     {
       continue;
     }
@@ -10872,15 +11152,25 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     }
     if (!empty)
     {
-      truncation_segments++;
-      truncation_length += (t1 - t0) * Distance(segment.p0, segment.p1);
+      if (omitted)
+      {
+        omitted_segments++;
+        omitted_length += (t1 - t0) * Distance(segment.p0, segment.p1);
+      }
+      else
+      {
+        truncation_segments++;
+        truncation_length += (t1 - t0) * Distance(segment.p0, segment.p1);
+      }
     }
   }
 
-  out.band_hits = check.band_hits;
+  out.band_hits = check.band_hits + box_band_hits;
   nlohmann::json growth = {{"StepOverR", step},
                            {"MaxSteps", kSupportFaceGrowthMaxSteps},
                            {"Steps", steps},
+                           {"AttemptedSteps", attempted},
+                           {"StepReasons", step_reasons},
                            {"Grown", out.grown}};
   nlohmann::json face_rules = {
       {"SnapOverR", snap},
@@ -10896,8 +11186,11 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
                                    ? nlohmann::json(Q(*check.min_cross_section))
                                    : nlohmann::json(nullptr)},
       {"NarrowCrossSections", check.narrow_cross_sections},
+      {"ExteriorVertices", check.exterior_vertices},
+      {"ExteriorEdges", check.exterior_edges},
       {"ThresholdBandRelative", band},
-      {"ThresholdBandHits", check.band_hits}};
+      {"ThresholdBandHits", check.band_hits},
+      {"BoxRuleThresholdBandHits", box_band_hits}};
   out.record = {
       {"ClaimsBox", BoxJson(claims_box)},
       {"Box", BoxJson(box)},
@@ -10914,6 +11207,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         {"ChainLengthOverR", Q(out.chain_length / R)},
         {"ForeignLengthOverR", Q(out.foreign_length / R)},
         {"ForeignConductors", foreign_conductors.size()},
+        {"ClaimedByOtherFeature",
+         {{"Pieces", other_claimed_pieces},
+          {"LengthOverR", Q(other_claimed_length / R)},
+          {"Entries", claimed_by_other}}},
         {"ChainVertices", chain_vertices},
         {"ForeignVertices", foreign_vertices}}},
       {"LegacyContinuation",
@@ -10921,12 +11218,66 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         {"FictitiousContinuationLengthOverR", Q(out.fictitious_continuation_length / R)}}},
       {"Truncation",
        {{"Segments", truncation_segments}, {"LengthOverR", Q(truncation_length / R)}}},
-      {"Unboxable", unboxable ? nlohmann::json(*unboxable) : nlohmann::json(nullptr)}};
+      {"OmittedSegments",
+       {{"Segments", omitted_segments}, {"LengthOverR", Q(omitted_length / R)}}},
+      {"Unboxable", unboxable ? nlohmann::json(*unboxable) : nlohmann::json(nullptr)},
+      {"UnboxableReason",
+       unboxable_reason ? nlohmann::json(*unboxable_reason) : nlohmann::json(nullptr)}};
   if (!unboxable)
   {
     out.support = std::move(support);
   }
   return out;
+}
+
+// The non-hashed ownership ids of a cluster feature's context census (review MINOR-1):
+// every ChainVertices / ForeignVertices entry names its vertex feature (a free site) or the
+// cluster whose claims hold it; every ClaimedByOtherFeature entry names the other cluster's
+// feature. Called after EmitClusters (cluster ids) and after Assign (site ids).
+void Identifier::RecordContextFeatureIds(int feature)
+{
+  if (feature < 0 || static_cast<std::size_t>(feature) >= features.size())
+  {
+    return;
+  }
+  nlohmann::json &record = features[static_cast<std::size_t>(feature)].spatial_support;
+  if (!record.is_object() || !record.contains("Context"))
+  {
+    return;
+  }
+  auto ClusterFeature = [&](const nlohmann::json &cluster) -> nlohmann::json
+  {
+    if (!cluster.is_number_integer())
+    {
+      return nullptr;
+    }
+    const auto c = cluster.get<std::size_t>();
+    return c < cluster_feature.size() && cluster_feature[c] >= 0
+               ? nlohmann::json(cluster_feature[c])
+               : nlohmann::json(nullptr);
+  };
+  nlohmann::json &context = record["Context"];
+  for (const char *list : {"ChainVertices", "ForeignVertices"})
+  {
+    for (auto &entry : context[list])
+    {
+      if (entry["Cluster"].is_number_integer())
+      {
+        entry["Feature"] = ClusterFeature(entry["Cluster"]);
+      }
+      else if (entry.contains("Site") && entry["Site"].is_number_integer())
+      {
+        const auto s = entry["Site"].get<std::size_t>();
+        entry["Feature"] = s < site_feature.size() && site_feature[s] >= 0
+                               ? nlohmann::json(site_feature[s])
+                               : nlohmann::json(nullptr);
+      }
+    }
+  }
+  for (auto &entry : context["ClaimedByOtherFeature"]["Entries"])
+  {
+    entry["Feature"] = ClusterFeature(entry["Cluster"]);
+  }
 }
 
 void Identifier::EmitClusters()
@@ -10941,6 +11292,15 @@ void Identifier::EmitClusters()
       sites_by_run.emplace(r, s);
     }
   }
+  claims_by_run.clear();
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    for (const auto &[r, interval] : cluster_claimed[c])
+    {
+      claims_by_run[r].emplace_back(interval, c);
+    }
+  }
+  cluster_feature.assign(cluster_claimed.size(), -1);
   spatial_support_summary = {};
   for (std::size_t c = 0; c < cluster_claimed.size(); c++)
   {
@@ -11032,6 +11392,7 @@ void Identifier::EmitClusters()
             .count();
     signature["EdgeCount"] = portions.size();
     const int feature = NewFeature("SpatialEdgeCluster", signature, chirality);
+    cluster_feature[c] = feature;
     features[feature].origin = origin;
     features[feature].axes = axes;
     features[feature].claims_origin = canonical.origin;
@@ -11088,6 +11449,12 @@ void Identifier::EmitClusters()
         features[feature].vertices.push_back(*sites[s].vertex);
       }
     }
+  }
+  // The feature ids of the other clusters in the context census (known only now that
+  // every cluster has its feature; the free sites' ids follow in Assign).
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    RecordContextFeatureIds(cluster_feature[c]);
   }
   {
     std::ostringstream counts;
@@ -11374,6 +11741,7 @@ nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &re
 
 void Identifier::Assign(IdentificationResult &result)
 {
+  site_feature.assign(sites.size(), -1);
   // Vertex features outside clusters.
   for (auto &site : sites)
   {
@@ -11425,6 +11793,7 @@ void Identifier::Assign(IdentificationResult &result)
       }
     }
     const int feature = NewFeature(site.type, signature);
+    site_feature[static_cast<std::size_t>(&site - sites.data())] = feature;
     features[feature].origin = site.point;
     features[feature].axes = axes;
     for (const auto &[r, interval] : site.window)
@@ -11436,6 +11805,10 @@ void Identifier::Assign(IdentificationResult &result)
       vertex_feature[*site.vertex] = feature;
       features[feature].vertices.push_back(*site.vertex);
     }
+  }
+  for (const int feature : cluster_feature)
+  {
+    RecordContextFeatureIds(feature);
   }
 
   // Resolve the claims by priority and hand the remainder to the chain's isolated edge.

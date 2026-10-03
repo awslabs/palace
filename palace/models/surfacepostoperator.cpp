@@ -400,11 +400,13 @@ SurfacePostOperator::SurfacePostOperator(
               "Interface dielectric loss postprocessing is not available for "
               "magnetostatic problems!");
   using EdgeDistanceTreeKey =
-      std::tuple<std::vector<int>, std::vector<int>, std::optional<std::array<double, 3>>>;
+      std::tuple<std::vector<int>, std::vector<int>, std::optional<std::array<double, 3>>,
+                 std::vector<std::array<double, 6>>>;
   std::map<EdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
       edge_distance_trees;
   using AutomaticEdgeDistanceTreeKey =
-      std::pair<std::vector<std::size_t>, std::optional<std::array<double, 3>>>;
+      std::tuple<std::vector<std::size_t>, std::optional<std::array<double, 3>>,
+                 std::vector<std::array<double, 6>>>;
   std::map<AutomaticEdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
       automatic_edge_distance_trees;
   const SurfacePostGeometry *cached_automatic_geometry =
@@ -507,7 +509,11 @@ SurfacePostOperator::SurfacePostOperator(
           GetInterfaceMetalEdgeSegmentIndices(metal_edges, idx, data.type);
       ExcludeMetalEdgeSegmentIndices(mesh, metal_edges, data.edge_exclude_attributes,
                                      segment_indices);
-      const AutomaticEdgeDistanceTreeKey tree_key{segment_indices, data.edge_frame_normal};
+      ExcludeCoincidentMetalEdgeSegmentIndices(metal_edges, data.edge_exclude_segments,
+                                               data.edge_exclude_segment_tolerance,
+                                               mesh.SpaceDimension(), segment_indices);
+      const AutomaticEdgeDistanceTreeKey tree_key{segment_indices, data.edge_frame_normal,
+                                                  data.edge_exclude_segments};
       auto tree_it = automatic_edge_distance_trees.find(tree_key);
       if (tree_it == automatic_edge_distance_trees.end())
       {
@@ -533,15 +539,18 @@ SurfacePostOperator::SurfacePostOperator(
     else
     {
       const EdgeDistanceTreeKey tree_key{data.edge_attributes, data.edge_exclude_attributes,
-                                         data.edge_frame_normal};
+                                         data.edge_frame_normal,
+                                         data.edge_exclude_segments};
       auto tree_it = edge_distance_trees.find(tree_key);
       if (tree_it == edge_distance_trees.end())
       {
         tree_it =
             edge_distance_trees
-                .try_emplace(tree_key, BuildEdgeDistanceTree(mesh, data.edge_attributes,
-                                                             data.edge_exclude_attributes,
-                                                             data.edge_frame_normal))
+                .try_emplace(tree_key,
+                             BuildEdgeDistanceTree(
+                                 mesh, data.edge_attributes, data.edge_exclude_attributes,
+                                 data.edge_frame_normal, data.edge_exclude_segments,
+                                 data.edge_exclude_segment_tolerance))
                 .first;
       }
       it->second.edge_distance_tree = tree_it->second;

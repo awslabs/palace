@@ -1868,6 +1868,21 @@
           "$ref": "#/$defs/Attributes",
           "description": "Boundary attributes whose geometric edge segments should be excluded from the perimeter defined by `EdgeAttributes` or `AutomaticEdges`. This is useful for artificial boundaries such as the front and back faces of an extruded geometry."
         },
+        "EdgeExcludeSegments": {
+          "type": "array",
+          "description": "Explicit segments `[x0, y0, z0, x1, y1, z1]`, in mesh length units, whose coincident perimeter segments (both ends and the midpoint within `EdgeExcludeSegmentTolerance`) are excluded from the perimeter defined by `EdgeAttributes` or `AutomaticEdges`. A spatial coupon lists its FOREIGN device edges here so that its within-radius edge energy covers its own edges only.",
+          "items": {
+            "type": "array",
+            "items": {"type": "number"},
+            "minItems": 6,
+            "maxItems": 6
+          }
+        },
+        "EdgeExcludeSegmentTolerance": {
+          "type": "number",
+          "description": "Coincidence tolerance of `EdgeExcludeSegments` in mesh length units (default: 1e-3 of the smallest `EdgeDistances` radius).",
+          "exclusiveMinimum": 0
+        },
         "EdgeDistances": {
           "type": "array",
           "description": "Matching radii, in mesh length units, used for edge-distance diagnostics. For every radius R, Palace integrates the interface energy outside R and in the annulus R <= d < 2R. This is opt-in and requires exactly one of `EdgeAttributes` or `AutomaticEdges`.",
@@ -2015,6 +2030,12 @@
         },
         "EdgeExcludeAttributes": [
           "EdgeDistances"
+        ],
+        "EdgeExcludeSegments": [
+          "EdgeDistances"
+        ],
+        "EdgeExcludeSegmentTolerance": [
+          "EdgeExcludeSegments"
         ],
         "EdgeDistanceSmoothing": [
           "EdgeDistances"

@@ -1342,8 +1342,15 @@ Interfaces, Law}` plus `Chain`: true on the pieces connected to the claims insid
 through run ends and device vertices (the OWN continuation chains, rule B3: the within-R
 accounting and the continuation ownership follow them) and false on FOREIGN edges (present in
 both coupon twins so that the fields are consistent; excluded from the within-R accounting;
-their own patches untouched); conductor labels by first appearance over the sorted `Portions`
-THEN the sorted `Context` (a foreign conductor touching no claim takes the next label); (3)
+their own patches untouched). A piece lying on ANOTHER spatial cluster's claimed interval is
+foreign by definition (decision 285 (1), the R1a review's MAJOR-1: the other coupon owns it):
+the chain stops where such a claim begins and never enters it, the context pieces are split
+at the other clusters' claim cuts so that the boundary is representable, and the manifest
+census lists those pieces under `Context.ClaimedByOtherFeature` (count, length, the owning
+cluster and feature — not hashed). Chains along device edges claimed by TRANSLATIONAL
+features continue as before (continuation ownership, decisions 236 / 243-252). Conductor
+labels by first appearance over the sorted `Portions` THEN the sorted `Context` (a foreign
+conductor touching no claim takes the next label); (3)
 the FACE RULES, dimensionless: T1 a piece end within `SupportFaceSnapOverR` = 1e-3 R of a face
 is ON the face (a crossing) and a context piece shorter than that is dropped (the sliver
 quantum of decision 222); T2 every device edge inside the box keeps
@@ -1352,15 +1359,31 @@ does not cross, every piece end not on a face (device vertex, claim end) and eve
 keep that clearance from every other face (a crossing near a box corner), every crossing meets
 its face at sin(theta) >= 0.25 (theta >= 14.5 deg), and two crossings of one face closer than
 0.25 R may bound METAL (a narrow lead: allowed, `FaceRules.MinCrossSectionOverR` /
-`NarrowCrossSections` recorded) but not gap (a channel the trace basis cannot resolve); T3
-every face failing T2 moves outward by `SupportFaceGrowthStepOverR` = 0.25 R per step — all
-failing faces of a step together (review MINOR-2: one order) — and T1 / T2 are re-evaluated on
-the grown box (new edges enter), at most `SupportFaceGrowthMaxSteps` = 12 steps per face and
-never past the plan span cap `SupportSpanCapOverR` = 16 R; a claims-derived box already
-beyond the cap is keyed and recorded `ExceedsSpanCap` (the builder's cap and its per-case
-override, decision 244 (i), decide as before) but may not grow; a cluster no box satisfies is
-an `UnboxableFeature`: its signature carries `"Unboxable": true` (a Missing placeholder no
-builder makes — never a knife-edge coupon) and the record names the face and the reason. KEY
+`NarrowCrossSections` recorded) but not gap (a channel the trace basis cannot resolve). T2 is
+TWO-SIDED (decision 285 (2), the R1a review's MAJOR-2 — the face trace cannot represent a 1/r
+edge field within 0.25 R of the face on either side): the plan is also clipped to the box
+dilated by the clearance, and in that shell a run end lying on neither boundary (a device
+vertex or joint within 0.25 R OUTSIDE the face) or a piece entering and leaving the shell
+without crossing the face (an edge running within 0.25 R outside the face) fails that face
+(`FaceRules.ExteriorVertices` / `ExteriorEdges` of the final pass; their distances enter
+`MinClearanceOverR` and the threshold band); the exterior tail of a face crossing, from the
+face to the shell boundary, is the crossing itself. T3 every face failing T2 moves outward by
+`SupportFaceGrowthStepOverR` = 0.25 R per step — all failing faces of a step together (review
+MINOR-2: one order) — and T1 / T2 are re-evaluated on the grown box (new edges enter), at most
+`SupportFaceGrowthMaxSteps` = 12 steps per face and never past the plan span cap
+`SupportSpanCapOverR` = 16 R (`Growth.Steps` counts the applied steps, `AttemptedSteps` also
+the refused one, `StepReasons` the first failure behind every applied step); a claims-derived
+box already beyond the cap is keyed and recorded `ExceedsSpanCap` (the builder's cap and its
+per-case override, decision 244 (i), decide as before) but may not grow (decision 285 (3): the
+cap bites through growth only); a cluster no box satisfies is an `UnboxableFeature`: its
+signature carries `"Unboxable": true` (a Missing placeholder no builder makes — never a
+knife-edge coupon) and the record names the face and the reason (`Unboxable` text,
+`UnboxableReason` = `GrowthStepsExhausted` | `SpanCapRefusedGrowth`). The two thresholds of
+the box rule itself (the 1e-5 end coincidence, the 2R continuation of a connected row end at
+R) are read within the knife-edge band too (`FaceRules.BoxRuleThresholdBandHits`), and the
+perimeter segments inside the box that never become plan pieces (excluded before the
+identification: untargeted interface, undetermined process side, ...) are counted under
+`OmittedSegments` so that rule B1 ("nothing inside the box is omitted") is auditable. KEY
 RULE (ruling MAJOR-1, option (i)): `Box` + `Context` enter the hashed signature ONLY when the
 context is not what the decision-236 contract already draws, i.e. unless every context piece
 is a straight chain piece abutting a claim-cut end, collinear with that claim and reaching a
@@ -1382,10 +1405,14 @@ about the vertex and any other perimeter within 2R joins a cluster, so the devic
 clipped to a corner box is the two arms (56 / 56 production corners unchanged, R0 census); a
 vertex feature lying inside a cluster's box on a chain is listed under
 `Context.ChainVertices` with its distance from the nearest face for the placement's vertex
-ownership (rule B4, a follow-up of the operator: the S1p 19-edge boxes hold the 4 L2 90-deg
-corners; a corner closer than R to a face has an arm partly outside the box, review MINOR-1
-(a), and a vertex inside two boxes appears in both records, MINOR-1 (b)), the others under
-`ForeignVertices`. The manifest records the whole evaluation per feature
+ownership (rule B4: a corner closer than R to a face has an arm partly outside the box, review
+MINOR-1 (a), and a vertex inside two boxes appears in both records, MINOR-1 (b)), the others
+under `ForeignVertices`; every entry names its owner (`Feature` = the vertex feature's id for
+a free site, or the id of the cluster whose claims hold the site, with that `Cluster` index
+— a site of another cluster is never a chain vertex), so that the placement never owns
+another cluster's claimed vertex. The per-feature record plus the `Diagnostics.SpatialSupport`
+summary stand in for a `KnifeEdgeCensus` band on T2 (review MINOR-7: a vertex shared by two
+pieces is read once per piece end). The manifest records the whole evaluation per feature
 (`Features[].SpatialSupport`: the claims box and the grown box, the growth steps per face, the
 face-rule readings with their threshold-band hits at `KnifeEdgeBandRelative`, the context
 census, the legacy contract's straight continuation and its FICTITIOUS part lying on no device
@@ -2189,14 +2216,19 @@ matching pass). The new top-level `Identification` object carries the contract:
                  "SpatialSupport": {"Contract": 2 | 3 | 0, "ClaimsKey": "sha256", "ContextDigest": "sha256" | null,
                                     "ClaimsBox": [x0, y0, x1, y1], "Box": [...], "SpanOverR": s,
                                     "SpanCapOverR": 16, "ExceedsSpanCap": b, "LegacyEquivalent": b,
-                                    "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "Grown": b},
+                                    "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "AttemptedSteps": [...], "StepReasons": ["..."], "Grown": b},
                                     "FaceRules": {"SnapOverR": 1e-3, "ClearanceOverR": 0.25, "SliversDropped": n, "Crossings": [4 counts],
                                                   "MinClearanceOverR": d | null, "MinCrossingSine": s | null, "MinCrossSectionOverR": w | null,
-                                                  "NarrowCrossSections": n, "ThresholdBandRelative": 0.01, "ThresholdBandHits": n},
+                                                  "NarrowCrossSections": n, "ExteriorVertices": n, "ExteriorEdges": n,
+                                                  "ThresholdBandRelative": 0.01, "ThresholdBandHits": n, "BoxRuleThresholdBandHits": n},
                                     "Context": {"Pieces": n, "ChainPieces": n, "ForeignPieces": n, "ChainLengthOverR": L, "ForeignLengthOverR": L,
-                                                "ForeignConductors": n, "ChainVertices": [[x, y, "Type", face distance / R], ...], "ForeignVertices": [...]},
+                                                "ForeignConductors": n,
+                                                "ClaimedByOtherFeature": {"Pieces": n, "LengthOverR": L, "Entries": [{"P": [x0, y0, x1, y1], "LengthOverR": L, "Cluster": c, "Feature": k}, ...]},
+                                                "ChainVertices": [{"P": [x, y], "Type": "...", "FaceDistanceOverR": d, "Site": s, "Cluster": c | null, "Feature": k | null}, ...],
+                                                "ForeignVertices": [...]},
                                     "LegacyContinuation": {"StraightContinuationLengthOverR": L, "FictitiousContinuationLengthOverR": L},
-                                    "Truncation": {"Segments": n, "LengthOverR": L}, "Unboxable": null | "reason"}
+                                    "Truncation": {"Segments": n, "LengthOverR": L}, "OmittedSegments": {"Segments": n, "LengthOverR": L},
+                                    "Unboxable": null | "reason", "UnboxableReason": null | "GrowthStepsExhausted" | "SpanCapRefusedGrowth"}
                                    (SpatialEdgeCluster only; units of R in the feature's frame; the spatial-support contract v3 below),
                  "Match": {"Status": "Matched" | "Missing", "Model": "name", "Deviation": d,
                            "Note": "curvature family: <rule> at kappa k (<convexity>)" | "curvature family: <refusal reason>",

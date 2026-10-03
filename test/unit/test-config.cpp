@@ -914,6 +914,29 @@ TEST_CASE("Config automatic interface dielectric edges", "[config][Serial]")
   CHECK(excluded.edge_exclude_attributes == std::vector<int>{3});
   dielectric.erase("EdgeExcludeAttributes");
 
+  // EdgeExcludeSegments (decision 282 rule B5): explicit 3D segments with a default
+  // tolerance of 1e-3 of the smallest matching radius.
+  dielectric["EdgeExcludeSegments"] = {{0.0, 0.0, 0.0, 1.0, 0.0, 0.0},
+                                       {0.0, 1.0, 0.0, 0.0, 1.0, 2.0}};
+  const config::InterfaceDielectricData segments(dielectric);
+  REQUIRE(segments.edge_exclude_segments.size() == 2);
+  CHECK(segments.edge_exclude_segments[1] ==
+        std::array<double, 6>{0.0, 1.0, 0.0, 0.0, 1.0, 2.0});
+  CHECK_THAT(segments.edge_exclude_segment_tolerance,
+             Catch::Matchers::WithinRel(1.0e-3 * 0.2, 1.0e-12));
+  dielectric["EdgeExcludeSegmentTolerance"] = 0.01;
+  CHECK(config::InterfaceDielectricData(dielectric).edge_exclude_segment_tolerance == 0.01);
+  dielectric["EdgeExcludeSegmentTolerance"] = -0.01;
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric.erase("EdgeExcludeSegmentTolerance");
+  dielectric["EdgeExcludeSegments"] = {{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};  // zero length
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric.erase("EdgeExcludeSegments");
+  dielectric["EdgeExcludeSegmentTolerance"] = 0.01;  // without segments
+  CHECK_THROWS(config::InterfaceDielectricData(dielectric));
+  dielectric.erase("EdgeExcludeSegmentTolerance");
+  CHECK(config::InterfaceDielectricData(dielectric).edge_exclude_segments.empty());
+
   dielectric["Type"] = "Default";
   CHECK_THROWS(config::InterfaceDielectricData(dielectric));
   dielectric["Type"] = "SA";
@@ -1749,6 +1772,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                {"LossTan", 0.002},
                {"EdgeAttributes", {5}},
                {"EdgeExcludeAttributes", {6, 7}},
+               {"EdgeExcludeSegments", {{0.0, 0.0, 0.0, 1.0e-6, 0.0, 0.0}}},
+               {"EdgeExcludeSegmentTolerance", 1.0e-9},
                {"EdgeDistances", {1.0e-6, 2.0e-6}},
                {"EdgeDistanceSmoothing", 0.2},
                {"LocalizeEdgeEnergy", true},
@@ -1804,6 +1829,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     REQUIRE(iodata2.boundaries.postpro.dielectric.count(1) == 1);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_exclude_attributes ==
           iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_attributes);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_exclude_segments ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_segments);
+    CHECK(iodata2.boundaries.postpro.dielectric.at(1).edge_exclude_segment_tolerance ==
+          iodata1.boundaries.postpro.dielectric.at(1).edge_exclude_segment_tolerance);
     CHECK(iodata2.boundaries.postpro.dielectric.at(1).automatic_edges ==
           iodata1.boundaries.postpro.dielectric.at(1).automatic_edges);
     REQUIRE(iodata1.boundaries.conductivity.size() == 1);

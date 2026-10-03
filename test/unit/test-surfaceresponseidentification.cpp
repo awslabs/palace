@@ -4149,12 +4149,24 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
     CHECK(support["Context"]["ForeignPieces"] == 0);
     CHECK(support["Context"]["ChainPieces"] == 5);
     REQUIRE(support["Context"]["ChainVertices"].size() == 1);
-    CHECK(support["Context"]["ChainVertices"][0][2] == "ConvexCorner");
+    const auto &chain_vertex = support["Context"]["ChainVertices"][0];
+    CHECK(chain_vertex["Type"] == "ConvexCorner");
     // The corner's distance from the nearest face: 2.873 um = 1.436 R from the right face.
-    CHECK_THAT(support["Context"]["ChainVertices"][0][3].get<double>(),
+    CHECK_THAT(chain_vertex["FaceDistanceOverR"].get<double>(),
                WithinAbs((12.872984 - 10.0) / R, 1.0e-5));
-    const auto corner = DevicePoint(*cluster, support["Context"]["ChainVertices"][0][0],
-                                    support["Context"]["ChainVertices"][0][1], R);
+    // The corner is a vertex feature of its own (no cluster): its feature id is recorded
+    // (review MINOR-1) and names a ConvexCorner feature at the corner.
+    CHECK(chain_vertex["Cluster"].is_null());
+    REQUIRE(chain_vertex["Feature"].is_number_integer());
+    {
+      const auto &corner_feature =
+          result.features[chain_vertex["Feature"].get<std::size_t>()];
+      CHECK(corner_feature.type == "ConvexCorner");
+      CHECK_THAT(corner_feature.origin[0], WithinAbs(10.0, 1.0e-5));
+      CHECK_THAT(corner_feature.origin[1], WithinAbs(0.0, 1.0e-5));
+    }
+    const auto corner =
+        DevicePoint(*cluster, chain_vertex["P"][0], chain_vertex["P"][1], R);
     CHECK_THAT(corner[0], WithinAbs(10.0, 1.0e-5));
     CHECK_THAT(corner[1], WithinAbs(0.0, 1.0e-5));
     CHECK_THAT(
@@ -4408,6 +4420,137 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
     const auto copy =
         DeserializeIdentificationResult(SerializeIdentificationResult(result));
     CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // 9. Two clusters whose boxes overlap each other's claims (the S1p 19-edge pattern;
+  //    decision 285 (1) on the R1a review's MAJOR-1): pad A now ends at x = 11.5 (its
+  //    corner inside B's box), a second pad D (conductor 3) starts at x = 13.5 and a lead C
+  //    (conductor 2) ends above it at x = 16..18. C's cluster claims pad D's edge and,
+  //    within 2R of it, pad A's corner (11.5, 0) with the edge next to it: inside B's box
+  //    those claims are context of B hashed as foreign (Chain false; C's coupon owns them),
+  //    B's chain stops where C's claim begins, the pieces are split there, and A's corner
+  //    is listed as a foreign vertex of B naming C's feature, never as B's chain vertex.
+  {
+    const std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 11.5, 0.0), 0, 100.0},
+                                         {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0},
+                                         {Rectangle(13.5, -10.0, 60.0, 0.0), 3, 100.0},
+                                         {Rectangle(16.0, 1.0, 18.0, 40.0), 2, 100.0}};
+    const auto [input, result] = Identify(loops);
+    const auto *cluster_b = ClusterContaining(result, input, probe);
+    const auto *cluster_c = ClusterContaining(result, input, {17.0, 1.0});
+    REQUIRE(cluster_b != nullptr);
+    REQUIRE(cluster_c != nullptr);
+    REQUIRE(cluster_b != cluster_c);
+    const auto &support = cluster_b->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["LegacyEquivalent"] == false);
+    CHECK(cluster_b->signature_key != legacy_key);
+    CHECK(support["Context"]["ClaimedByOtherFeature"]["Pieces"].get<int>() >= 1);
+    CHECK(support["Context"]["ClaimedByOtherFeature"]["LengthOverR"].get<double>() > 0.0);
+    for (const auto &entry : support["Context"]["ClaimedByOtherFeature"]["Entries"])
+    {
+      CHECK(entry["Feature"] == cluster_c->id);
+    }
+    // Where C's claims begin on pad A's top edge (y = 0): the left-most such x of C.
+    double c_start = 1.0e300;
+    for (const auto &portion : cluster_c->signature["Portions"])
+    {
+      for (const auto &p : {DevicePoint(*cluster_c, portion["P"][0], portion["P"][1], R),
+                            DevicePoint(*cluster_c, portion["P"][2], portion["P"][3], R)})
+      {
+        if (std::abs(p[1]) <= 1.0e-5 && p[0] <= 11.5 + 1.0e-5)
+        {
+          c_start = std::min(c_start, p[0]);
+        }
+      }
+    }
+    REQUIRE(c_start < 11.5);
+    CHECK(c_start > 1.0);
+    std::size_t chain_on_pad_edge = 0;
+    for (const auto &entry : cluster_b->signature["Context"])
+    {
+      const auto a = DevicePoint(*cluster_b, entry["P"][0], entry["P"][1], R);
+      const auto b = DevicePoint(*cluster_b, entry["P"][2], entry["P"][3], R);
+      const bool on_pad_edge = std::abs(a[1]) <= 1.0e-5 && std::abs(b[1]) <= 1.0e-5;
+      if (entry["Chain"] == true)
+      {
+        // A chain piece never lies on C's claims: on pad A's edge it ends where C's claim
+        // begins; otherwise it is a side of lead B.
+        if (on_pad_edge)
+        {
+          chain_on_pad_edge++;
+          CHECK(std::max(a[0], b[0]) <= c_start + 1.0e-5);
+        }
+        else
+        {
+          CHECK(std::max(std::abs(a[0]), std::abs(b[0])) <= 1.0 + 1.0e-5);
+        }
+      }
+      else if (on_pad_edge && std::min(a[0], b[0]) > 1.0)
+      {
+        // A pad-edge context piece right of B's chain is C's claim, split at c_start.
+        CHECK(std::min(a[0], b[0]) >= c_start - 1.0e-5);
+      }
+    }
+    CHECK(chain_on_pad_edge == 2);  // the left continuation and the right one up to C
+    CHECK(support["Context"]["ChainVertices"].empty());
+    bool a_corner_listed = false;
+    for (const auto &vertex : support["Context"]["ForeignVertices"])
+    {
+      const auto p = DevicePoint(*cluster_b, vertex["P"][0], vertex["P"][1], R);
+      if (std::abs(p[0] - 11.5) <= 1.0e-5 && std::abs(p[1]) <= 1.0e-5)
+      {
+        a_corner_listed = true;
+        CHECK(vertex["Cluster"].is_number_integer());
+        CHECK(vertex["Feature"] == cluster_c->id);
+      }
+    }
+    CHECK(a_corner_listed);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // 10. Two-sided T2 (decision 285 (2) on the R1a review's MAJOR-2): the pad corner 0.16 R
+  //     OUTSIDE the right face of the claims box. Under the one-sided rule the corner was
+  //     invisible (the pad's top edge crosses the face straight: a legacy-equivalent key);
+  //     the corner field sits on the face trace all the same. The face fails on the
+  //     exterior vertex, grows one step (the corner is then 0.09 R inside: the interior
+  //     clearance rule) and one more: two steps, the corner a chain vertex, the key v3.
+  {
+    const auto [input, result] = Identify(Scene(12.872984 + 0.16 * R));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["LegacyEquivalent"] == false);
+    CHECK(support["Growth"]["Grown"] == true);
+    int grown_faces = 0, total_steps = 0;
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      grown_faces += steps.get<int>() > 0 ? 1 : 0;
+      total_steps += steps.get<int>();
+    }
+    CHECK(grown_faces == 1);
+    CHECK(total_steps == 2);
+    CHECK(support["Growth"]["AttemptedSteps"] == support["Growth"]["Steps"]);
+    REQUIRE(support["Growth"]["StepReasons"].size() == 2);
+    CHECK_THAT(support["Growth"]["StepReasons"][0].get<std::string>(),
+               ContainsSubstring("outside face"));
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(box[2] - claims_box[2], WithinAbs(2 * 0.25 * R, 1.0e-5));
+    CHECK(support["Context"]["ChainVertices"].size() == 1);
+    CHECK(support["FaceRules"]["ExteriorVertices"] == 0);
+    CHECK(support["FaceRules"]["ExteriorEdges"] == 0);
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    // The same corner 0.5 R outside the face is beyond the clearance shell: invisible by
+    // the rule, the legacy-equivalent key as before.
+    const auto [input_far, result_far] = Identify(Scene(12.872984 + 0.5 * R));
+    const auto *far = ClusterContaining(result_far, input_far, probe);
+    REQUIRE(far != nullptr);
+    CHECK(far->spatial_support["Contract"] == 2);
+    CHECK(far->signature_key == legacy_key);
   }
 }
 

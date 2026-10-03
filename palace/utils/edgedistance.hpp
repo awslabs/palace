@@ -113,7 +113,22 @@ std::array<double, 6> GetPolarizedEdgeEnergyDensity(
 std::shared_ptr<const EdgeDistanceTree> BuildEdgeDistanceTree(
     const mfem::ParMesh &mesh, const std::vector<int> &edge_attributes,
     const std::vector<int> &edge_exclude_attributes,
-    const std::optional<std::array<double, 3>> &process_normal = std::nullopt);
+    const std::optional<std::array<double, 3>> &process_normal = std::nullopt,
+    const std::vector<std::array<double, 6>> &edge_exclude_segments = {},
+    double edge_exclude_segment_tolerance = 0.0);
+
+// Explicit segment exclusion (EdgeExcludeSegments, decision 282 rule B5): a perimeter
+// segment whose two ends and midpoint lie within `tolerance` of one listed exclusion
+// segment [x0, y0, z0, x1, y1, z1] is dropped from the edge-distance perimeter. An empty
+// list leaves the perimeter unchanged; removing the whole perimeter is an error.
+void ExcludeCoincidentEdgeSegments(
+    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
+    int space_dimension, std::vector<mesh::BoundaryEdgeSegment> &edge_segments);
+
+void ExcludeCoincidentMetalEdgeSegmentIndices(
+    const MetalEdgeGeometry &geometry,
+    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
+    int space_dimension, std::vector<std::size_t> &segment_indices);
 
 std::vector<std::size_t>
 GetInterfaceMetalEdgeSegmentIndices(const MetalEdgeGeometry &geometry, int interface_index,
