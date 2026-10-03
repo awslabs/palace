@@ -488,13 +488,14 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
 }
 
 // Wave ports on a parallel plate guide along z (width w, gap h in um) with a London slab of
-// thickness d above the gap, compared to the exact quasi-TEM mode index
-// n_eff^2 = 1 + (lambda/h) coth(d/lambda) with a free back face (tanh for a PEC back face).
+// thickness d above the gap, compared to the exact TM0 mode index from the dispersion
+// relation p tanh(p h) = -(q/eps) coth(q d) with a free back face (tanh(q d) for a PEC back
+// face), where p^2 = k0^2 (n^2 - 1), q^2 = 1/lambda^2 + p^2, and eps = 1 - 1/(k0 lambda)^2.
 // The gap keeps n_eff below the spectral shift of the port mode solve.
 TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();
-  constexpr double lambda = 0.1, w = 1.0, h = 5.0, d = 0.1, l = 2.0, freq_ghz = 5.0;
+  constexpr double lambda = 0.1, w = 1.0, h = 5.0, d = 0.1, l = 2.0, freq_ghz = 500.0;
   for (bool pec_back : {false, true})
   {
     json setup = {
@@ -584,15 +585,29 @@ TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]"
         2.0 * std::numbers::pi *
         iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
     wp_op.InitializeModalReference(omega);
-    const double x = d / lambda;
-    const double n_exact =
-        std::sqrt(1.0 + lambda / h * (pec_back ? std::tanh(x) : 1.0 / std::tanh(x)));
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
+    const double eps = 1.0 - 1.0 / (k0 * k0 * lambda * lambda);
+    auto F = [&](double n)
+    {
+      const double p = k0 * std::sqrt(n * n - 1.0);
+      const double q = std::sqrt(1.0 / (lambda * lambda) + p * p);
+      const double g = pec_back ? std::tanh(q * d) : 1.0 / std::tanh(q * d);
+      return p * std::tanh(p * h) + q * g / eps;
+    };
+    double lo = 1.0 + 1.0e-12, hi = 10.0;
+    for (int it = 0; it < 200; it++)
+    {
+      const double mid = 0.5 * (lo + hi);
+      ((F(mid) < 0.0) ? lo : hi) = mid;
+    }
+    const double n_exact = 0.5 * (lo + hi);
     for (const auto &[idx, data] : wp_op)
     {
       const double n_eff = data.kn0.real() / omega;
       CAPTURE(pec_back, idx, n_exact, n_eff, data.kn0.imag() / omega);
       CHECK(std::abs(data.kn0.imag()) < 1.0e-6 * std::abs(data.kn0.real()));
-      CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-5));
+      CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-7));
     }
   }
 }

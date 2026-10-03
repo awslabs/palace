@@ -182,13 +182,41 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   return out;
 }
 
+// Exact mode index of the TM0 mode of a parallel plate guide with a PEC plate at y = 0, a
+// vacuum gap of height h, and a London slab of thickness d and penetration depth lambda,
+// whose back face is PEC or free (PMC), at free-space wavenumber k0 (all lengths in um).
+// With p^2 = k0^2 (n^2 - 1) and q^2 = 1/lambda^2 + p^2, H_x = cosh(p y) in the gap and cosh
+// or sinh of q (h + d - y) in the slab, and continuity of H_x and of (1/eps) dH_x/dy at y =
+// h, where eps = 1 - 1/(k0 lambda)^2 is the effective permittivity of the slab, give p
+// tanh(p h) = -(q/eps) coth(q d) (free back face) or -(q/eps) tanh(q d) (PEC back face). In
+// the quasi-static limit, n^2 = 1 + (lambda/h) coth(d/lambda) or tanh(d/lambda) (Swihart).
+double ExactLondonSlabIndex(double h, double d, double lambda, double k0, bool pec_back)
+{
+  const double eps = 1.0 - 1.0 / (k0 * k0 * lambda * lambda);
+  auto F = [&](double n)
+  {
+    const double p = k0 * std::sqrt(n * n - 1.0);
+    const double q = std::sqrt(1.0 / (lambda * lambda) + p * p);
+    const double g = pec_back ? std::tanh(q * d) : 1.0 / std::tanh(q * d);
+    return p * std::tanh(p * h) + q * g / eps;
+  };
+  double lo = 1.0 + 1.0e-12, hi = 10.0;
+  for (int it = 0; it < 200; it++)
+  {
+    const double mid = 0.5 * (lo + hi);
+    ((F(mid) < 0.0) ? lo : hi) = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
 // Propagation constant normalized by the free-space wavenumber (n_eff) of a mode of a 2D
 // cross-section of width w, in um: a PEC plate at y = 0 (attribute 1), a vacuum gap of
 // height h, and a London superconductor slab of thickness d with penetration depth lambda
 // above it, whose back face y = h + d (attribute 2) is PEC or left free (PMC). The sides x
 // = 0, w (attribute 3) are PEC or free.
 double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec_back,
-                           bool pec_sides, double freq_ghz, double n_target, int order)
+                           bool pec_sides, double freq_ghz, double n_target, int order,
+                           int ny_gap = 8)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0e-6, 1.0e-6);
@@ -215,10 +243,10 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   iodata.solver.linear.tol = 1.0e-12;
   iodata.solver.linear.max_it = 200;
 
-  // Structured quadrilaterals: 2 across the width, 8 across the gap, and enough across the
-  // slab to resolve the penetration depth.
-  constexpr int nx = 2, ny_gap = 8;
-  const int ny_slab = std::max(8, static_cast<int>(std::ceil(4.0 * d / lambda)));
+  // Structured quadrilaterals: 2 across the width, ny_gap across the gap, and enough across
+  // the slab to resolve the penetration depth.
+  constexpr int nx = 2;
+  const int ny_slab = std::max(8, static_cast<int>(std::ceil(8.0 * d / lambda)));
   std::vector<double> y;
   for (int j = 0; j <= ny_gap; j++)
   {
@@ -495,26 +523,25 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
 
 TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Parallel]")
 {
-  // London superconductor slabs of thickness d, compared to the exact solutions.
+  // London superconductor slabs of thickness d, compared to exact solutions.
   constexpr double lambda = 0.1;
   SECTION("Out-of-plane current")
   {
-    // Quasi-TEM mode of a parallel plate waveguide with gap h, with a slab carrying the
-    // current along the propagation direction. The kinetic sheet inductance of the slab
-    // is mu0 lambda coth(d/lambda) with a free back face, and mu0 lambda tanh(d/lambda)
-    // with a PEC back face, so that n_eff^2 = 1 + (lambda/h) coth(d/lambda) (or tanh).
-    constexpr double h = 0.5;
+    // TM0 mode of a parallel plate guide with gap h, with the slab carrying the current
+    // along the propagation direction, compared to the exact dispersion relation. The
+    // frequency is high enough for the propagation constant to be well conditioned.
+    constexpr double h = 0.5, freq_ghz = 500.0;
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
     for (double d : {0.01, 0.1, 1.0})
     {
       for (bool pec_back : {false, true})
       {
-        const double x = d / lambda;
-        const double n_exact =
-            std::sqrt(1.0 + lambda / h * (pec_back ? std::tanh(x) : 1.0 / std::tanh(x)));
+        const double n_exact = ExactLondonSlabIndex(h, d, lambda, k0, pec_back);
         const double n_eff =
-            SolveLondonSlabMode(1.0, h, d, lambda, pec_back, false, 5.0, n_exact, 3);
+            SolveLondonSlabMode(1.0, h, d, lambda, pec_back, false, freq_ghz, n_exact, 3);
         CAPTURE(d, pec_back, n_exact, n_eff);
-        CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-5));
+        CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-8));
       }
     }
   }
@@ -543,9 +570,9 @@ TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Paralle
     const double n_pec =
         std::sqrt(1.0 - (std::numbers::pi / h / k0) * (std::numbers::pi / h / k0));
     const double n_eff =
-        SolveLondonSlabMode(50.0, h, d, lambda, false, true, freq_ghz, n_exact, 3);
+        SolveLondonSlabMode(50.0, h, d, lambda, false, true, freq_ghz, n_exact, 3, 32);
     CAPTURE(n_exact, n_pec, n_eff);
-    CHECK_THAT(n_eff - n_pec, WithinRel(n_exact - n_pec, 1.0e-4));
+    CHECK_THAT(n_eff - n_pec, WithinRel(n_exact - n_pec, 1.0e-5));
   }
 }
 
