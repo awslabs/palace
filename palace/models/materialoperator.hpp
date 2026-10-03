@@ -20,6 +20,13 @@ class IoData;
 //
 class MaterialOperator
 {
+public:
+  // One nonzero pole-residue term r/(s - p) of a material susceptibility.
+  struct PermittivityPoleTerm
+  {
+    std::complex<double> pole, residue;
+  };
+
 private:
   // Reference to underlying mesh object (not owned).
   const Mesh &mesh;
@@ -54,10 +61,6 @@ private:
   // Domains.Materials, unlike attr_mat which is compacted independently on each rank.
   // Exact zero poles are folded into mat_sigma during setup; all remaining terms share a
   // cached spatial mass operator for each material.
-  struct PermittivityPoleTerm
-  {
-    std::complex<double> pole, residue;
-  };
   std::vector<std::vector<int>> frequency_dependent_permittivity_attributes;
   std::vector<std::vector<PermittivityPoleTerm>> permittivity_pole_terms;
   std::vector<std::vector<config::DjordjevicSarkarData>> djordjevic_sarkar_terms;
@@ -187,6 +190,20 @@ public:
   std::complex<double>
   EvaluateFrequencyDependentPermittivityA2(std::size_t material_idx,
                                            std::complex<double> s) const;
+  // The two parts of EvaluateFrequencyDependentPermittivityA2: the pole terms, with complex
+  // poles expanded into conjugate pairs and each contributing r·s²/(s − p), and the
+  // remaining non-rational Djordjevic-Sarkar contribution.
+  const std::vector<PermittivityPoleTerm> &
+  GetPermittivityPoleTerms(std::size_t material_idx) const
+  {
+    return permittivity_pole_terms.at(material_idx);
+  }
+  std::complex<double> EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
+                                                              std::complex<double> s) const;
+  bool HasDjordjevicSarkarPermittivity(std::size_t material_idx) const
+  {
+    return !djordjevic_sarkar_terms.at(material_idx).empty();
+  }
   // True when a globally supported material has a nonlinear permittivity term. This is
   // deliberately frequency independent: valid additive contributions can cancel at an
   // interpolation or ROM probe frequency without ceasing to be nonlinear.
