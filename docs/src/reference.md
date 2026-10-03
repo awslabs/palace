@@ -1394,8 +1394,10 @@ consumer of that bound must add `ClaimLength` to the `Missing` and `DomainBounda
 lengths. Only the plane row is gated (the metal-top rows of a thin device read a few
 percent of the amplitude and are recorded only), so a coupon frame whose process plane did
 not coincide with the device's metal sheet would be excluded wholesale and recorded. A
-spatial coupon whose trace mesh carries no conductor vertex, or a conductor without a
-vertex on the process plane, aborts at construction naming the model. The geometry
+conductor without a vertex on the process plane aborts at construction naming the model; a
+spatial coupon the gate cannot test (applied collocated, or a trace mesh without any
+conductor vertex such as a finite-impedance coupon) is recorded under `UnprobedModels` with
+a warning and stays applied. The geometry
 preflight has no device trace and cannot evaluate this gate; its manifest says so under
 `Summary.ConductorConsistency`.
 

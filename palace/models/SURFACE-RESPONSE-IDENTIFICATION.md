@@ -1584,20 +1584,29 @@ above the tolerance, so a coupon frame whose w = 0 did not coincide with the dev
 metal sheet (a thick-metal device keyed on its metal top) would be excluded wholesale —
 loudly and recorded, not silently. FAIL CLOSED: a conductor of the trace mesh without a
 vertex on the process plane aborts at construction naming the model and conductor (its
-cross-section cannot be probed), and so does a spatial surface-mortar trace mesh without
-any conductor vertex (no metal cross-section to probe; decision 279, MINOR-2). The
-PREFLIGHT cannot
+cross-section cannot be probed). RECORDED UNTESTABLE (`UnprobedModels` [{Model, ModelIndex,
+Reason}] in the record + a warning naming the model; decision 279, MINOR-2): a spatial
+model applied collocated, and a spatial surface-mortar trace mesh without any conductor
+vertex — legitimate cases exist (a finite-impedance coupon's metal knots are free by
+construction; the ring-path corner models without `ZeroTraceIndices` of the unit libraries),
+and such a model has no metal cross-section at a fixed potential for the gate to compare,
+so it is not gated; neither production library has one (every applied transmon / S1p
+spatial patch is probed). The PREFLIGHT cannot
 evaluate the gate (no device trace): the manifest states so under
 `Summary.ConductorConsistency` (`Evaluated` false, the tolerance, where the record lives);
 its digest, inventory and dry run are unchanged. Transmon (MEASURED, decision 279: the
 T-cont configuration on the same mesh and library at Order 1 / 2, MaxIts 0, 2 ranks;
 `conductor-consistency-20261003/gate/transmon/local-solve-*`): Count 0 of 33 patches / 250
-plane knots; 31 patches read MaxRatio <= 3e-13 (exact Dirichlet values), the two 4-edge
-clusters 7.7e-8 (their cross-section end knots lie 0.05-0.75 nm outside the device lead
-edges: the library's 1e-7-um coordinate rounding, read as the local gap gradient x the
-offset, 2.6e5 below the tolerance); the offline census of the 250 plane knots against the
-mesh's metal plan finds every knot on (or within 0.75 nm of) device metal of the same
-conductor as its reference — the preflight digest 9ada660bf6e4, record and CSV unchanged;
+plane knots; 31 patches read MaxRatio <= 3e-13 at both orders (exact Dirichlet values),
+the two 4-edge clusters 7.7e-8 at Order 2 / 1.9e-8 at Order 1 (their cross-section end
+knots lie 0.05-0.75 nm outside the device lead edges: the library's 1e-7-um coordinate
+rounding, read as the local gap gradient x the offset, >= 2.6e5 below the tolerance); 12 /
+13 far corner patches with amplitudes under 1e-3 V are FloorApplied; the offline census of
+the 250 plane knots against the mesh's metal plan finds 242 on device metal of the same
+conductor as their reference and the 8 four-edge end knots within 0.75 nm of it (on no
+other conductor); every output CSV of the Order-2 run is byte-identical to main's binary
+(e8bc64b3bf) and palace.json differs only in the new record — the preflight digest
+9ada660bf6e4, record and CSV unchanged;
 S1p thin smoke: exactly the two
 19-edge patches excluded (0.411 / 0.395 of the amplitude at the fictitious-block face
 knots), 122.2 um of claims left uncorrected, raw / C identical, every other model's
@@ -1606,8 +1615,8 @@ gate` (`test-conductorconsistency.cpp`): a hand-placed two-conductor coupon acro
 between two islands (consistent: applied, MaxRatio 0; a conductor vertex over the gap:
 excluded, recorded, sc operator 0, sticky; the same under a 1e-4-scaled excitation; the
 same coupon under an excitation it barely sees (amplitude 1e-6 of the 1-V potential):
-FloorApplied, not excluded; conductor off the plane: aborts; no conductor vertex: aborts),
-1 and 2 ranks.
+FloorApplied, not excluded; conductor off the plane: aborts; no conductor vertex: recorded
+untestable, applied), 1 and 2 ranks.
 
 **Vertex-feature frames** (`Frame` of the manifest, shared by the library builder): n = the
 site's OWN signed process normal (substrate -> vacuum, oriented by the length-weighted mean of

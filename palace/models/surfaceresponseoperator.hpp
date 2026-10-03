@@ -389,9 +389,13 @@ private:
   void ApplyTraceTranspose(const Vector &values, Vector &y) const;
   // The conductor-consistency probes of a spatial surface-mortar model (decision 277):
   // the conductor vertices on the process plane, off it, and the adjacent free knots; fails
-  // closed when the trace mesh has no conductor vertex at all (no metal cross-section to
-  // probe) or when a conductor of the trace mesh has no vertex on the plane.
+  // closed when a conductor of the trace mesh has no vertex on the plane. A trace mesh
+  // without any conductor vertex gets no probes (the constructor records the model under
+  // Diagnostics.ConductorConsistency.UnprobedModels and warns).
   static void ConfigureConductorConsistencyProbes(ResponseModel &model);
+  // The Diagnostics.ConductorConsistency object with its defaults (tolerance, floor, the
+  // counters, the empty lists and the rule), created on first use.
+  nlohmann::json &ConductorConsistencyDiagnostics();
   void ApplyUneliminated(const Vector &x, Vector &y) const;
   void ConfigureMaxwellResponse(
       const IoData &iodata, const MaterialOperator &mat_op,

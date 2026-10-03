@@ -15469,13 +15469,6 @@ void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel 
       model.off_plane_conductor_vertices.push_back(v);
     }
   }
-  MFEM_VERIFY(
-      !conductors.empty(),
-      "Conductor-consistency gate (decision 277): the trace mesh of spatial response "
-      "model \""
-          << model.name
-          << "\" has no conductor vertex, so it has no metal cross-section on the "
-             "box faces to probe!");
   for (const int conductor : conductors)
   {
     MFEM_VERIFY(plane_conductors.count(conductor),
@@ -15545,6 +15538,51 @@ bool SurfaceResponseOperator::HasConductorConsistencyProbes() const
   }
   Mpi::GlobalMax(1, &local, fespace.GetComm());
   return local > 0;
+}
+
+nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
+{
+  auto &diagnostics = ownership_diagnostics["ConductorConsistency"];
+  if (!diagnostics.contains("Rule"))
+  {
+    diagnostics["Tolerance"] = kConductorConsistencyTolerance;
+    diagnostics["AmplitudeFloor"] = kConductorConsistencyAmplitudeFloor;
+    diagnostics["Count"] = 0;
+    diagnostics["ClaimLength"] = 0.0;
+    diagnostics["CellLength"] = 0.0;
+    diagnostics["TestedPatches"] = 0;
+    diagnostics["ExcludedPatches"] = nlohmann::json::array();
+    diagnostics["Records"] = nlohmann::json::array();
+    diagnostics["UnprobedModels"] = nlohmann::json::array();
+    diagnostics["Rule"] =
+        "decision 277 (2026-10-03): solve-time gate on every applied spatial "
+        "surface-mortar patch, per excitation. MaxRatio = max over the trace mesh's "
+        "conductor vertices on the process plane (w = 0: the coupon's metal bottom on the "
+        "device's metal sheet) of |V_device(knot) - V_device(conductor reference)| / "
+        "Normalization, Normalization = max(Amplitude, AmplitudeFloor x "
+        "ExcitationPotential), Amplitude = max |trace coefficient| of the patch incl. its "
+        "conductor states (= the state for a two-conductor coupon without overshoots; "
+        "State alongside), ExcitationPotential = max |V| of the excitation (its largest "
+        "terminal potential); FloorApplied marks the patches whose amplitude lies under "
+        "the floor (noise over noise: never excluded, at most AmplitudeFloor^2 of a "
+        "unit-amplitude patch's energy). Real metal reads ~0 (the knot lies on a "
+        "Dirichlet surface of the device), coupon metal where the device has gap reads "
+        "the gap potential. MaxRatio > Tolerance excludes the patch (weight 0 from this "
+        "excitation on, like a DomainBoundary cell; the patches CSV is rewritten); "
+        "ClaimLength is the excluded spatial clusters' claimed portion length (left "
+        "uncorrected: the B1 consumer must add it to Missing and DomainBoundary), "
+        "CellLength the excluded longitudinal cells (0 for spatial patches). Information "
+        "only: OffPlaneMaxRatio (the metal top rows, in the device gap for a thin device) "
+        "and AdjacentMaxRatio (the free knots adjacent to a plane conductor vertex in its "
+        "column: their mortar coefficient vs the conductor; near-edge field x 50 nm, up "
+        "to 0.27 of the amplitude on real metal). UnprobedModels lists the spatial models "
+        "the gate cannot test (applied collocated, or a trace mesh without any conductor "
+        "vertex: a finite-impedance coupon or a ring-path model without ZeroTraceIndices), "
+        "recorded untestable, not excluded. Not evaluated by the preflight (no device "
+        "trace). Lengths and coordinates in mesh-file units (the device coordinates: the "
+        "mesh coordinates x the mesh coordinate scale), like the DomainBoundary record";
+  }
+  return diagnostics;
 }
 
 std::vector<SurfaceResponseOperator::ConductorConsistencyRecord>
@@ -15721,44 +15759,7 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   // The record (every rank holds the same): one entry per tested patch and excitation,
   // the excluded patches' claim / cell lengths totalled next to the DomainBoundary record.
   std::map<int, std::string> model_names = GetModelNames();
-  auto &diagnostics = ownership_diagnostics["ConductorConsistency"];
-  if (diagnostics.is_null())
-  {
-    diagnostics = {
-        {"Tolerance", kConductorConsistencyTolerance},
-        {"AmplitudeFloor", kConductorConsistencyAmplitudeFloor},
-        {"Count", 0},
-        {"ClaimLength", 0.0},
-        {"CellLength", 0.0},
-        {"TestedPatches", 0},
-        {"ExcludedPatches", nlohmann::json::array()},
-        {"Records", nlohmann::json::array()},
-        {"Rule",
-         "decision 277 (2026-10-03): solve-time gate on every applied spatial "
-         "surface-mortar patch, per excitation. MaxRatio = max over the trace mesh's "
-         "conductor vertices on the process plane (w = 0: the coupon's metal bottom on the "
-         "device's metal sheet) of |V_device(knot) - V_device(conductor reference)| / "
-         "Normalization, Normalization = max(Amplitude, AmplitudeFloor x "
-         "ExcitationPotential), Amplitude = max |trace coefficient| of the patch incl. its "
-         "conductor states (= the state for a two-conductor coupon without overshoots; "
-         "State alongside), ExcitationPotential = max |V| of the excitation (its largest "
-         "terminal potential); FloorApplied marks the patches whose amplitude lies under "
-         "the floor (noise over noise: never excluded, at most AmplitudeFloor^2 of a "
-         "unit-amplitude patch's energy). Real metal reads ~0 (the knot lies on a "
-         "Dirichlet surface of the device), coupon metal where the device has gap reads "
-         "the gap potential. MaxRatio > Tolerance excludes the patch (weight 0 from this "
-         "excitation on, like a DomainBoundary cell; the patches CSV is rewritten); "
-         "ClaimLength is the excluded spatial clusters' claimed portion length (left "
-         "uncorrected: the B1 consumer must add it to Missing and DomainBoundary), "
-         "CellLength the excluded longitudinal cells (0 for spatial patches). Information "
-         "only: OffPlaneMaxRatio (the metal top rows, in the device gap for a thin device) "
-         "and AdjacentMaxRatio (the free knots adjacent to a plane conductor vertex in its "
-         "column: their mortar coefficient vs the conductor; near-edge field x 50 nm, up "
-         "to 0.27 of the amplitude on real metal). Not evaluated by the preflight (no "
-         "device trace). Lengths and coordinates in mesh-file units (the device "
-         "coordinates: the mesh coordinates x the mesh coordinate scale), like the "
-         "DomainBoundary record"}};
-  }
+  auto &diagnostics = ConductorConsistencyDiagnostics();
   int excluded_count = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
   int max_patch = -1;
@@ -16323,6 +16324,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // The conductor-consistency gate (decision 277) probes the trace mesh's conductor
     // vertices through the surface mortar only: a spatial model applied collocated keeps
     // its metal cross-sections unprobed, which is said once here.
+    // Recorded untestable (Diagnostics.ConductorConsistency.UnprobedModels, decision 279
+    // MINOR-2): a collocated spatial model, and a spatial surface-mortar trace mesh without
+    // any conductor vertex (a finite-impedance coupon or a ring-path model without
+    // ZeroTraceIndices: no metal cross-section at a fixed potential to probe).
     if (model.spatial_basis && !model.spatial_mortar && dimension == 3 &&
         HasExplicitTraceMesh(model_config))
     {
@@ -16331,6 +16336,26 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    "model \"{}\": its metal cross-sections are probed through the surface "
                    "mortar only (TraceCoupling \"SurfaceMortar\"), not collocated\n",
                    model.name);
+      ConductorConsistencyDiagnostics()["UnprobedModels"].push_back(
+          {{"Model", model.name},
+           {"ModelIndex", model.idx},
+           {"Reason", "collocated: the probes live on the surface-mortar trace mesh"}});
+    }
+    else if (model.spatial_mortar && dimension == 3 &&
+             std::none_of(model.mortar_vertices.begin(), model.mortar_vertices.end(),
+                          [](const auto &vertex) { return vertex.conductor > 0; }))
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Conductor-consistency gate (decision 277) not evaluated for response "
+          "model \"{}\": its trace mesh has no conductor vertex, so it has no metal "
+          "cross-section at a fixed potential to probe\n",
+          model.name);
+      ConductorConsistencyDiagnostics()["UnprobedModels"].push_back(
+          {{"Model", model.name},
+           {"ModelIndex", model.idx},
+           {"Reason", "no conductor vertex on the trace mesh: no metal cross-section at a "
+                      "fixed potential to probe"}});
     }
     model_indices.emplace(model.idx, static_cast<int>(models.size()));
     models.push_back(std::move(model));

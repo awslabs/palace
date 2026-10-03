@@ -51,7 +51,9 @@ namespace
 // fictitious-block pattern (decisions 271-277). The OFF-PLANE variant moves every
 // conductor-2 vertex to w = 0.1 (no plane vertex: the gate cannot probe it and fails
 // closed). The NO-CONDUCTOR variant declares every plane ring point free (a coupon without
-// metal cross-sections: nothing to probe, fails closed; decision 279 MINOR-2).
+// metal cross-sections at a fixed potential, like a finite-impedance coupon or a ring-path
+// model without ZeroTraceIndices: nothing to probe, recorded untestable under
+// UnprobedModels and warned, not gated; decision 279 MINOR-2).
 enum class CouponVariant
 {
   CONSISTENT,
@@ -498,14 +500,29 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
 
-  SECTION("a spatial coupon without any conductor vertex fails closed")
+  SECTION("a spatial coupon without any conductor vertex is recorded untestable")
   {
     const auto files = WriteCoupon(temp.temp_dir, CouponVariant::NO_CONDUCTOR);
     test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
-    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
-                      ContainsSubstring("Conductor-consistency gate") &&
-                          ContainsSubstring("gap-junction-no-conductor") &&
-                          ContainsSubstring("no conductor vertex"));
+    SurfaceResponseOperator response(iodata, laplace);
+    REQUIRE(response.GetPatchCount() == 1);
+    CHECK_FALSE(response.HasConductorConsistencyProbes());
+    const auto records = response.ApplyConductorConsistencyGate(V[0], 1);
+    CHECK(records.empty());
+    const auto statistics = response.GetStatistics();
+    const auto &diagnostics = statistics["Diagnostics"]["ConductorConsistency"];
+    CHECK(diagnostics["Count"].get<int>() == 0);
+    CHECK(diagnostics["TestedPatches"].get<int>() == 0);
+    CHECK_THAT(diagnostics["Tolerance"].get<double>(), WithinAbs(tolerance, 0.0));
+    REQUIRE(diagnostics["UnprobedModels"].size() == 1);
+    const auto &unprobed = diagnostics["UnprobedModels"][0];
+    CHECK(unprobed["Model"] == "gap-junction-no-conductor");
+    CHECK(unprobed["ModelIndex"].get<int>() == 1);
+    CHECK_THAT(unprobed["Reason"].get<std::string>(),
+               ContainsSubstring("no conductor vertex"));
+    // Not gated: the coupon stays applied.
+    CHECK(response.GetElectrostaticResponse(V[0]).domain_correction != 0.0);
+    CHECK(statistics["ModelCatalog"][0]["PatchWeight"].get<double>() == 1.0);
   }
 
   SECTION("a conductor without a vertex on the process plane fails closed")
