@@ -9,6 +9,7 @@
 #include <ceed/backend.h>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_template_test_macros.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/benchmark/catch_benchmark_all.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
@@ -1600,18 +1601,23 @@ TEST_CASE("MFEM fixed arbitrary-rule bases", "[libCEED][Serial][Parallel][GPU]")
   }
 }
 
-TEST_CASE("2D libCEED Operators", "[libCEED][Serial][Parallel]")
+// One test case per mesh, so CTest can run the meshes in parallel.
+TEMPLATE_TEST_CASE_SIG("2D libCEED Operators", "[libCEED][Serial][Parallel]", ((int M), M),
+                       0, 1, 2)
 {
-  auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh");
+  const char *meshes[] = {"star-quad.mesh", "star-tri.mesh", "star-mixed-p2.mesh"};
+  const char *mesh = meshes[M];
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
                          0, amr, order);
 }
 
-TEST_CASE("3D libCEED Operators", "[libCEED][Serial][Parallel]")
+TEMPLATE_TEST_CASE_SIG("3D libCEED Operators", "[libCEED][Serial][Parallel]", ((int M), M),
+                       0, 1, 2)
 {
-  auto mesh = GENERATE("fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh");
+  const char *meshes[] = {"fichera-hex.mesh", "fichera-tet.mesh", "fichera-mixed-p2.mesh"};
+  const char *mesh = meshes[M];
   auto amr = GENERATE(false, true);
   auto order = GENERATE(1, 2, 3);
   RunCeedIntegratorTests(MPI_COMM_WORLD, std::string(PALACE_TEST_DATA_DIR "/mesh/") + mesh,
