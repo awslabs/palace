@@ -517,12 +517,15 @@ std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const Operator &
 std::complex<double> Dot(MPI_Comm comm, const ComplexVector &x, const ComplexOperator &A,
                          const ComplexVector &y);
 
-// Estimate operator 2-norm (spectral norm) using power iteration. Assumes the operator is
-// not symmetric or Hermitian unless specified.
-double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false, double tol = 1.0e-4,
-                    int max_it = 1000);
+// Estimate operator 2-norm (spectral norm) with SLEPc if available, otherwise with power
+// iteration. Assumes the operator is not symmetric or Hermitian unless specified. If x0 is
+// given, the estimate starts from it when it has the size of the operator, and x0 is set to
+// the dominant (right singular) vector of the estimate on return, so that the estimate for
+// a nearby operator can start from it.
+double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false,
+                    ComplexVector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
-                    double tol = 1.0e-4, int max_it = 1000);
+                    ComplexVector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 
 }  // namespace linalg
 

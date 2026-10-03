@@ -34,7 +34,7 @@ bool HasPositiveFiniteDiagonal(MPI_Comm comm, const Vector &real,
   return valid;
 }
 
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, ComplexVector &x0)
 {
   // D⁻¹A is generally not Hermitian, but is similar to the Hermitian operator
   // D⁻¹ᐟ²AD⁻¹ᐟ² when A has a finite, strictly positive diagonal.
@@ -46,10 +46,11 @@ double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv)
   DiagonalOperator DinvSqrt(dinv_sqrt);
   ProductOperator ADinvSqrt(A, DinvSqrt);
   ProductOperator S(DinvSqrt, ADinvSqrt);
-  return linalg::SpectralNorm(comm, S, true);
+  return linalg::SpectralNorm(comm, S, true, &x0);
 }
 
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv)
+double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
+                    ComplexVector &x0)
 {
   if (A.IsReal())
   {
@@ -61,11 +62,11 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
     ComplexDiagonalOperator DinvSqrt(dinv_sqrt);
     ComplexProductOperator ADinvSqrt(A, DinvSqrt);
     ComplexProductOperator S(DinvSqrt, ADinvSqrt);
-    return linalg::SpectralNorm(comm, S, true);
+    return linalg::SpectralNorm(comm, S, true, &x0);
   }
   ComplexDiagonalOperator Dinv(dinv);
   ComplexProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, false);
+  return linalg::SpectralNorm(comm, DinvA, false, &x0);
 }
 
 template <bool Transpose = false>
@@ -219,8 +220,10 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
-  // mfem::OperatorChebyshevSmoother or Adams et al. (2003).
-  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
+  // mfem::OperatorChebyshevSmoother or Adams et al. (2003). The estimate starts from the
+  // dominant vector of the previous operator, which is usually a nearby one (for example,
+  // the next frequency of a driven sweep).
+  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
@@ -282,12 +285,13 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   dinv.Reciprocal();
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
-  // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022).
+  // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022). See
+  // ChebyshevSmoother::SetOperator for the starting vector.
   if (sf_min <= 0.0)
   {
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
-  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv);
+  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
   const double lambda_min = sf_min * lambda_max;

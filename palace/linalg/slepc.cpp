@@ -245,7 +245,7 @@ void Finalize()
 }
 
 PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm,
-                              PetscReal tol, PetscInt max_it)
+                              PetscReal tol, PetscInt max_it, ComplexVector *x0)
 {
   // This method assumes the provided operator has the required operations for SLEPc's EPS
   // or SVD solvers, namely MATOP_MULT and MATOP_MULT_HERMITIAN_TRANSPOSE (if the matrix
@@ -261,6 +261,25 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
       MatCreateShell(comm, n, n, PETSC_DECIDE, PETSC_DECIDE, (void *)&ctx, &A0));
   PalacePetscCall(MatShellSetOperation(A0, MATOP_MULT, (void (*)(void))__mat_apply_shell));
   PalacePetscCall(MatShellSetVecType(A0, PetscVecType()));
+
+  // A start from the dominant vector of a nearby operator typically converges within the
+  // first restart, so it needs only a small subspace instead of the default one (16
+  // vectors, so 16 products with A or with Aᴴ A per restart). The choice must be the same
+  // on every process, including one which has no rows and so trivially matches any size.
+  constexpr PetscInt warm_ncv = 6;
+  int warm = (x0 && x0->Size() == n);
+  Mpi::GlobalMin(1, &warm, comm);
+  const PetscInt ncv = warm ? warm_ncv : PETSC_DEFAULT;
+  Vec v0 = nullptr;
+  if (x0)
+  {
+    PalacePetscCall(MatCreateVecs(A0, &v0, nullptr));
+    if (warm)
+    {
+      PalacePetscCall(ToPetscVec(*x0, v0));
+    }
+  }
+  PetscReal norm;
   if (herm)
   {
     EPS eps;
@@ -270,8 +289,12 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
     PalacePetscCall(EPSSetOperators(eps, A0, nullptr));
     PalacePetscCall(EPSSetProblemType(eps, EPS_HEP));
     PalacePetscCall(EPSSetWhichEigenpairs(eps, EPS_LARGEST_MAGNITUDE));
-    PalacePetscCall(EPSSetDimensions(eps, 1, PETSC_DEFAULT, PETSC_DEFAULT));
+    PalacePetscCall(EPSSetDimensions(eps, 1, ncv, PETSC_DEFAULT));
     PalacePetscCall(EPSSetTolerances(eps, tol, max_it));
+    if (warm)
+    {
+      PalacePetscCall(EPSSetInitialSpace(eps, 1, &v0));
+    }
     PalacePetscCall(EPSSolve(eps));
     PalacePetscCall(EPSGetConverged(eps, &num_conv));
     if (num_conv < 1)
@@ -285,10 +308,16 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
       MFEM_VERIFY(PetscImaginaryPart(eig) == 0.0,
                   "Unexpected complex eigenvalue for Hermitian matrix (λ = " << eig
                                                                              << ")!");
+      if (x0)
+      {
+        PalacePetscCall(EPSGetEigenvector(eps, 0, v0, nullptr));
+        x0->SetSize(n);
+        x0->UseDevice(true);
+        PalacePetscCall(FromPetscVec(v0, *x0));
+      }
     }
     PalacePetscCall(EPSDestroy(&eps));
-    PalacePetscCall(MatDestroy(&A0));
-    return PetscAbsScalar(eig);
+    norm = PetscAbsScalar(eig);
   }
   else
   {
@@ -304,8 +333,12 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
     PalacePetscCall(SVDSetOperators(svd, A0, nullptr));
     PalacePetscCall(SVDSetProblemType(svd, SVD_STANDARD));
     PalacePetscCall(SVDSetWhichSingularTriplets(svd, SVD_LARGEST));
-    PalacePetscCall(SVDSetDimensions(svd, 1, PETSC_DEFAULT, PETSC_DEFAULT));
+    PalacePetscCall(SVDSetDimensions(svd, 1, ncv, PETSC_DEFAULT));
     PalacePetscCall(SVDSetTolerances(svd, tol, max_it));
+    if (warm)
+    {
+      PalacePetscCall(SVDSetInitialSpaces(svd, 1, &v0, 0, nullptr));
+    }
     PalacePetscCall(SVDSolve(svd));
     PalacePetscCall(SVDGetConverged(svd, &num_conv));
     if (num_conv < 1)
@@ -315,12 +348,23 @@ PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm
     }
     else
     {
-      PalacePetscCall(SVDGetSingularTriplet(svd, 0, &sigma, nullptr, nullptr));
+      PalacePetscCall(SVDGetSingularTriplet(svd, 0, &sigma, nullptr, v0));
+      if (x0)
+      {
+        x0->SetSize(n);
+        x0->UseDevice(true);
+        PalacePetscCall(FromPetscVec(v0, *x0));
+      }
     }
     PalacePetscCall(SVDDestroy(&svd));
-    PalacePetscCall(MatDestroy(&A0));
-    return sigma;
+    norm = sigma;
   }
+  if (v0)
+  {
+    PalacePetscCall(VecDestroy(&v0));
+  }
+  PalacePetscCall(MatDestroy(&A0));
+  return norm;
 }
 
 // Eigensolver base class methods.
