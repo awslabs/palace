@@ -358,6 +358,10 @@ protected:
     std::vector<Eigen::VectorXd> u_dirs;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
+    // If true, poles and residues are p_k, r_k in s = iω of r_k s²/(s - p_k) M_proj,
+    // realized with frequency-linear couplings (see BuildAugmentedPencil); otherwise they
+    // are in ω, as for the fitted boundary terms.
+    bool frequency_coupled = false;
   };
 
   // Result of fitting k_n,p(omega) on the sweep band for a single port. Polynomial regime
@@ -462,6 +466,15 @@ protected:
   WavePortDispersionFit FitRationalImpedanceDispersion(const std::string &label,
                                                        const Eigen::MatrixXcd &Mp_r,
                                                        int idx) const;
+
+  // Synthesis of frequency-dependent permittivity material `material_idx`, with `Mp_r` its
+  // projected volume mass on the imaginary slot: adds polynomial corrections to the pencil
+  // and appends aux blocks. Pole terms are realized exactly, without sampling; a
+  // Djordjevic-Sarkar term is fit by poly+AAA (see the definition).
+  void AddFrequencyDependentPermittivitySynthesis(
+      const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t material_idx,
+      Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+      std::vector<WavePortAuxBlock> &aux) const;
 
   // Complex-coefficient variant of ApplyPolynomialFitCorrections for the other BCs: folds
   // α₀·Mp_r into Kr, -i·α₁·Mp_r into Cr, -α₂·Mp_r into Mr with COMPLEX α (the wave-port

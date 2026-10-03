@@ -505,6 +505,14 @@ MaterialOperator::EvaluateFrequencyDependentPermittivityA2(std::size_t material_
                 "Material permittivity pole-residue evaluation is singular at s = pole!");
     value += term.residue * s * s / (s - term.pole);
   }
+  return value + EvaluateDjordjevicSarkarPermittivityA2(material_idx, s);
+}
+
+std::complex<double>
+MaterialOperator::EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
+                                                         std::complex<double> s) const
+{
+  std::complex<double> value = 0.0;
   for (const auto &term : djordjevic_sarkar_terms.at(material_idx))
   {
     MFEM_VERIFY(s != -term.omega_lower && s != -term.omega_upper,
