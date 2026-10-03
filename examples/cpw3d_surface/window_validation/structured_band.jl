@@ -871,7 +871,8 @@ function mesh_region(
     loops_edges::Vector{Vector{RegionEdge}},
     class::Int,
     raw_triangles::Vector{Tuple{NTuple{3, Point2}, Int}},
-    plan_model::String
+    plan_model::String,
+    region_grading_size_um::Float64
 )
     gmsh.model.add("region_$(partition.surface)")
     geo = gmsh.model.geo
@@ -905,6 +906,29 @@ function mesh_region(
     for line in transfinite
         gmsh.model.mesh.set_transfinite_curve(line, 2)
     end
+    # Region size grading (the graded sweep's plan, supervisor decision 275): the region's mesh
+    # size is `region_grading_size_um` on the band tops and grows with the distance to them at
+    # the slope REGION_GRADING_SLOPE up to the region size, so the plan triangles next to the
+    # band are the band's own station size instead of the region size (a Gmsh Threshold field
+    # on the distance to the transfinite band-top lines). Off (0) in the tensor sweep: its plan
+    # is the recorded family's.
+    if region_grading_size_um > 0.0 && !isempty(transfinite)
+        field = gmsh.model.mesh.field
+        distance = field.add("Distance")
+        field.set_numbers(distance, "CurvesList", transfinite)
+        field.set_number(distance, "Sampling", REGION_GRADING_DISTANCE_SAMPLING)
+        threshold = field.add("Threshold")
+        field.set_number(threshold, "InField", distance)
+        field.set_number(threshold, "SizeMin", region_grading_size_um)
+        field.set_number(threshold, "SizeMax", REGION_MESH_SIZE_MAX_UM)
+        field.set_number(threshold, "DistMin", 0.0)
+        field.set_number(
+            threshold,
+            "DistMax",
+            (REGION_MESH_SIZE_MAX_UM - region_grading_size_um) / REGION_GRADING_SLOPE
+        )
+        field.set_as_background_mesh(threshold)
+    end
     gmsh.model.mesh.generate(2)
     node_tags, node_coordinates, _ = gmsh.model.mesh.get_nodes()
     coordinate_by_tag = Dict{UInt64, Point2}()
@@ -937,12 +961,14 @@ end
 
 """
     mesh_partition_band(partition, curves, nodes_by_curve, heights, radial_um, fan_turn,
-                        box, class, raw_triangles, statistics, plan_model, collision_cell_um)
-        -> (band area, region area, minimum rows, band triangles)
+                        box, class, raw_triangles, statistics, plan_model, collision_cell_um,
+                        chains_out, region_grading_size_um) -> (band area, region area, minimum rows, band triangles)
 
 Build the structured band of one partition (its own elements), refuse collisions, mesh the
-remaining region with Gmsh, append every triangle (band and region) to `raw_triangles` with
-the partition's class, and check band + region = the OCC area.
+remaining region with Gmsh (graded from `region_grading_size_um` at the band tops when > 0),
+append every triangle (band and region) to `raw_triangles` with
+the partition's class, record every chain's columns in `chains_out` (closed flag, class,
+columns; the graded sweep's input), and check band + region = the OCC area.
 """
 function mesh_partition_band(
     partition::PartitionGeometry,
@@ -956,7 +982,9 @@ function mesh_partition_band(
     raw_triangles::Vector{Tuple{NTuple{3, Point2}, Int}},
     statistics::BandStatistics,
     plan_model::String,
-    collision_cell_um::Float64
+    collision_cell_um::Float64,
+    chains_out::Vector{Tuple{Bool, Int, Vector{BandColumn}}},
+    region_grading_size_um::Float64
 )
     where = "partition $(partition.surface)"
     band = NTuple{3, Point2}[]
@@ -983,6 +1011,7 @@ function mesh_partition_band(
             chain.closed &&
                 push_band_elements!(band, columns[end], columns[1], statistics, where)
             push!(tops, [column.nodes[end] for column in columns])
+            push!(chains_out, (chain.closed, class, columns))
         end
         push!(loops_edges, region_loop_edges(loop, chains, tops, curves))
     end
@@ -997,8 +1026,14 @@ function mesh_partition_band(
     for triangle in band
         push!(raw_triangles, (triangle, class))
     end
-    region_mesh_area, region_polygon_area =
-        mesh_region(partition, loops_edges, class, raw_triangles, plan_model)
+    region_mesh_area, region_polygon_area = mesh_region(
+        partition,
+        loops_edges,
+        class,
+        raw_triangles,
+        plan_model,
+        region_grading_size_um
+    )
     total = band_area + region_mesh_area
     abs(total - partition.area) <= REGION_AREA_TOLERANCE * max(1.0, partition.area) ||
         error(

@@ -157,3 +157,25 @@ The resulting attribute table is written to the manifest (`OUT.json`, key `attri
 substrate / 2 vacuum; 2D 3 `exterior_boundary`, 4 / 5 `ground_air` / `ground_substrate`,
 6 `substrate_air`, 7 / 8 `trace_l1_air` / `_substrate`, 9 `substrate_backside`, 10 / 11
 `island_331_air` / `_substrate`.
+
+## Sweep mode (not part of the input)
+
+The same polygon set is meshed by either sweep of `mesh_polygon_window.jl`: the default tensor
+sweep (every plan triangle through every z level, the recorded reference family) or the graded
+cross-section sweep (`--sweep graded [--alpha A] [--beta B] [--region-grading on|off] [--region-ring on|off]`, USER decision 263; the M3 defaults of decision 275 both on), which
+keeps the plan band, the z levels, the attribute table and the surface areas / volumes of the
+tensor sweep and changes the volume discretisation and, with the region grading, the Gmsh
+region's plan size next to the band (see the README). The manifest records the mode (`sweep`),
+`band.region_grading` (`false`, or the size at the band = t, the region size, the slope and the
+distance over which the size grows) and, for the graded sweep, `graded_sweep` with the
+dimensionless `alpha` (default 1: row k's z spacing at least alpha x its width) and `beta`
+(default 3: row k ends beta h_k beyond the faces of the fabricated step), the stacks, the gap
+midpoint (two planes), `cross_sections` (one entry per set of planes a chain's edges belong to:
+the plane names, the step faces, the row ranges, the capped columns' top list sizes and node
+counts, chains / columns / capped columns / fan sectors, cross-section nodes / triangles per
+line pair), `region_ring` and `region_ring_plan_nodes`, `region_z_grading` (`false`, or the first-cell
+widths, the growth and the stack's levels; decision 276 option (ii), off by default), the cell
+counts by kind (swept cells,
+strip / collapse prisms, plain / hanging region prisms; `region_hanging_node_incidences` counts
+a hanging node once per region prism it hangs on) and the analytic volume per material the mesh
+is checked against. The sweep mode never changes what the writer has to emit.
