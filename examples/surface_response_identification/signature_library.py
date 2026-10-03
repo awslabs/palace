@@ -36,10 +36,13 @@ VERTEX_TYPES = ("ConvexCorner", "ConcaveCorner", "Endpoint", "Junction")
 
 
 def conductor_count(feature):
-    """Canonical conductor labels of a feature (1 for single-conductor features)."""
+    """Canonical conductor labels of a feature (1 for single-conductor features). A
+    SpatialEdgeCluster signature of contract v3 labels its conductors by first appearance over
+    the sorted Portions THEN the sorted Context (a foreign conductor touching no claim gets the
+    next label), so the count runs over both lists."""
     signature = feature["Signature"]
     if feature["Type"] == "SpatialEdgeCluster":
-        return max(int(p["Conductor"]) for p in signature["Portions"])
+        return max(int(p["Conductor"]) for p in signature["Portions"] + signature.get("Context", []))
     if feature["Type"] == "ParallelEdgeCluster" or feature["Type"] in PAIR_TYPES:
         return max(int(e["Conductor"]) for e in signature["Edges"])
     return 1
@@ -206,20 +209,28 @@ CLUSTER_ARC_CHORD_STEP_DEGREES = 5.0
 CLUSTER_ARC_CHORD_MAX_LENGTH_OVER_R = 0.25
 
 
-def cluster_plan_view_edges(signature, radius, step_degrees=CLUSTER_ARC_CHORD_STEP_DEGREES, max_chord_over_R=CLUSTER_ARC_CHORD_MAX_LENGTH_OVER_R):
+def cluster_plan_view_edges(signature, radius, step_degrees=CLUSTER_ARC_CHORD_STEP_DEGREES, max_chord_over_R=CLUSTER_ARC_CHORD_MAX_LENGTH_OVER_R, include_context=False):
     """Straight plan-view edges of a SpatialEdgeCluster signature in its canonical frame
     (mesh units = the signature's units of R times ``radius``): every straight portion as one
     edge ``{"P0", "P1", "Gap", "Conductor", "Interfaces", "Law", "Portion"}``; every arc
     portion (``Arc`` = centre + midpoint, ``GapRadial``) chorded into n equal chords, n =
     max(ceil(sweep / step), ceil(arc length / (max_chord_over_R R)), 1), each chord's gap
     direction the arc's radial direction at the chord's middle (times ``GapRadial``). A closed
-    circle (equal ends) is chorded over 2 pi."""
+    circle (equal ends) is chorded over 2 pi. With ``include_context`` the ``Context`` entries of
+    a contract-v3 signature (the device plan clipped to the ``Box``: the continuation chains,
+    ``Chain`` true, and the foreign edges) follow the claims in the same encoding, each carrying
+    ``"Context": True`` and its ``Chain`` flag (``Portion`` indexes the Context list)."""
     import math
     edges = []
-    for index, portion in enumerate(signature["Portions"]):
+    entries = [(index, portion, False) for index, portion in enumerate(signature["Portions"])]
+    if include_context:
+        entries += [(index, portion, True) for index, portion in enumerate(signature.get("Context", []))]
+    for index, portion, context in entries:
         p = [float(v) * radius for v in portion["P"]]
         a, b = (p[0], p[1]), (p[2], p[3])
         common = {"Conductor": int(portion["Conductor"]), "Interfaces": portion.get("Interfaces", []), "Law": portion.get("Law"), "Portion": index}
+        if context:
+            common.update({"Context": True, "Chain": bool(portion.get("Chain", False))})
         if "Arc" not in portion:
             edges.append(dict(common, P0=a, P1=b, Gap=(float(portion["Gap"][0]), float(portion["Gap"][1]))))
             continue
@@ -248,6 +259,72 @@ def cluster_plan_view_edges(signature, radius, step_degrees=CLUSTER_ARC_CHORD_ST
             tmid = 0.5 * (t0 + t1)
             edges.append(dict(common, P0=q0, P1=q1, Gap=(sign * math.cos(tmid), sign * math.sin(tmid)), Chord=k, Chords=n))
     return edges
+
+
+# Spatial-support contract v3 (USER decision 281, supervisor decision 282; surfaceresponse-
+# identification.hpp kSupport*): the claims-derived support box of a SpatialEdgeCluster in
+# its canonical frame, units of R — the coupon generator's coupon_bounds / edge_rows /
+# extended_interval rule (claim-cut ends lengthened to >= R, every row end at or beyond R
+# continued by 2R, rows widened by R on both sides, padding R) evaluated on the serialised
+# signature, arcs chorded as cluster_plan_view_edges chords them; the same numbers as the C++
+# SupportBoxFromSignature (its ClaimsBox record), quantised on the 1e-6 R grid.
+SUPPORT_CONTINUATION_OVER_R = 2.0
+SUPPORT_PADDING_OVER_R = 1.0
+SUPPORT_END_COINCIDENCE_OVER_R = 1.0e-5
+SUPPORT_FACE_SNAP_OVER_R = 1.0e-3
+SUPPORT_FACE_CLEARANCE_OVER_R = 0.25
+SUPPORT_FACE_GROWTH_STEP_OVER_R = 0.25
+SUPPORT_FACE_GROWTH_MAX_STEPS = 12
+SUPPORT_SPAN_CAP_OVER_R = 16.0
+
+
+def cluster_support_box(signature):
+    """[x0, y0, x1, y1] in units of R of the claims-derived support box (rule B2) of a
+    SpatialEdgeCluster signature in its own frame (the ``Box`` of a contract-2 signature, the
+    ``ClaimsBox`` of the manifest record before any T3 growth)."""
+    import math
+    edges = cluster_plan_view_edges(signature, 1.0)
+    vertices = [(float(v["P"][0]), float(v["P"][1])) for v in signature.get("Vertices", [])]
+
+    def near(a, b, tolerance):
+        return math.hypot(a[0] - b[0], a[1] - b[1]) <= tolerance
+
+    def connected(i, point):
+        if any(near(point, v, SUPPORT_END_COINCIDENCE_OVER_R) for v in vertices):
+            return True
+        return any(near(point, q, SUPPORT_END_COINCIDENCE_OVER_R) for j, e in enumerate(edges) if j != i for q in (e["P0"], e["P1"]))
+
+    x0 = y0 = math.inf
+    x1 = y1 = -math.inf
+    for i, edge in enumerate(edges):
+        gx, gy = edge["Gap"]
+        norm = math.hypot(gx, gy)
+        gap = (gx / norm, gy / norm)
+        tangent = (gap[1], -gap[0])
+        p0, p1 = edge["P0"], edge["P1"]
+        length = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+        midpoint = (0.5 * (p0[0] + p1[0]), 0.5 * (p0[1] + p1[1]))
+        begin_free, end_free = not connected(i, p0), not connected(i, p1)
+        forward_is_p1 = (p1[0] - midpoint[0]) * tangent[0] + (p1[1] - midpoint[1]) * tangent[1] > 0.0
+        end_is_free = end_free if forward_is_p1 else begin_free
+        begin_is_free = begin_free if forward_is_p1 else end_free
+        half = 0.5 * length
+        begin = -max(half, 1.0) if begin_is_free else -half
+        end = max(half, 1.0) if end_is_free else half
+        if begin <= -1.0 + 1.0e-10:
+            begin -= SUPPORT_CONTINUATION_OVER_R
+        if end >= 1.0 - 1.0e-10:
+            end += SUPPORT_CONTINUATION_OVER_R
+        for coordinate in (begin, end):
+            for side in (-1.0, 1.0):
+                px = midpoint[0] + coordinate * tangent[0] + side * gap[0]
+                py = midpoint[1] + coordinate * tangent[1] + side * gap[1]
+                x0, y0, x1, y1 = min(x0, px), min(y0, py), max(x1, px), max(y1, py)
+
+    def quantize(v):
+        q = round(v / LENGTH_QUANTUM_OVER_R) * LENGTH_QUANTUM_OVER_R
+        return 0.0 if q == 0.0 else q
+    return [quantize(x0 - SUPPORT_PADDING_OVER_R), quantize(y0 - SUPPORT_PADDING_OVER_R), quantize(x1 + SUPPORT_PADDING_OVER_R), quantize(y1 + SUPPORT_PADDING_OVER_R)]
 
 
 def signature_hash(signature):
