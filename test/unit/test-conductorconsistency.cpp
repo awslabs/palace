@@ -50,12 +50,14 @@ namespace
 // potential on a face where the device has gap at an intermediate potential, the S1p
 // fictitious-block pattern (decisions 271-277). The OFF-PLANE variant moves every
 // conductor-2 vertex to w = 0.1 (no plane vertex: the gate cannot probe it and fails
-// closed).
+// closed). The NO-CONDUCTOR variant declares every plane ring point free (a coupon without
+// metal cross-sections: nothing to probe, fails closed; decision 279 MINOR-2).
 enum class CouponVariant
 {
   CONSISTENT,
   INCONSISTENT,
-  CONDUCTOR_OFF_PLANE
+  CONDUCTOR_OFF_PLANE,
+  NO_CONDUCTOR
 };
 
 struct CouponFiles
@@ -69,9 +71,10 @@ constexpr double kHalfU = 0.2, kHalfV = 0.25, kHalfW = 0.2, kMetalEdgeV = 0.125;
 
 CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
 {
-  const std::string tag = variant == CouponVariant::CONSISTENT     ? "consistent"
-                          : variant == CouponVariant::INCONSISTENT ? "inconsistent"
-                                                                   : "off-plane";
+  const std::string tag = variant == CouponVariant::CONSISTENT            ? "consistent"
+                          : variant == CouponVariant::INCONSISTENT        ? "inconsistent"
+                          : variant == CouponVariant::CONDUCTOR_OFF_PLANE ? "off-plane"
+                                                                          : "no-conductor";
   CouponFiles files;
   files.basis_points = dir / ("conductor-consistency-" + tag + "-basis-points.csv");
   files.trace_vertices = dir / ("conductor-consistency-" + tag + "-trace-vertices.csv");
@@ -118,7 +121,11 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
   for (int i = 0; i < ring; i++)
   {
     const double u = files.perimeter[i][0], v = files.perimeter[i][1];
-    if (v <= -kMetalEdgeV + 1.0e-12)
+    if (variant == CouponVariant::NO_CONDUCTOR)
+    {
+      plane[i] = AddFree({u, v, 0.0});
+    }
+    else if (v <= -kMetalEdgeV + 1.0e-12)
     {
       plane[i] = AddConductor({u, v, 0.0}, 1);
     }
@@ -181,7 +188,8 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     }
     // Diagonal response matrices (the gate reads the trace, not the energies): the
     // fabricated domain energy 2x the thin one.
-    const int basis_size = files.contour_size + 1;
+    const int basis_size =
+        files.contour_size + (variant == CouponVariant::NO_CONDUCTOR ? 0 : 1);
     for (const auto &[path, scale] :
          {std::make_pair(files.fabricated, 2.0e-12), std::make_pair(files.thin, 1.0e-12)})
     {
@@ -209,7 +217,7 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     model.trace_triangles = files.trace_triangles.string();
     model.spatial_basis = true;
     model.interior_trace_count = 2;
-    model.conductor_state_count = 1;
+    model.conductor_state_count = variant == CouponVariant::NO_CONDUCTOR ? 0 : 1;
     auto &patch = data.patches.emplace_back();
     patch.model = 1;
     patch.origin = {1.0, 0.5, 1.0};
@@ -217,6 +225,10 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     patch.axis_v = {1.0, 0.0, 0.0};
     patch.axis_w = {0.0, 1.0, 0.0};
     patch.conductor_references = {{0.0, -0.2, 0.0}, {0.0, 0.2, 0.0}};
+    if (variant == CouponVariant::NO_CONDUCTOR)
+    {
+      patch.conductor_references.pop_back();
+    }
     patch.weight = 1.0;
     patch.provenance.feature = 7;
     // Two claimed portions of 0.4 along the islands' facing edges (z in [0.8, 1.2]).
@@ -275,6 +287,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   const auto tolerance = SurfaceResponseOperator::kConductorConsistencyTolerance;
   CHECK(tolerance == 0.02);
+  const auto floor = SurfaceResponseOperator::kConductorConsistencyAmplitudeFloor;
+  CHECK(floor == 1.0e-3);
 
   auto Replicated = [](double value)
   {
@@ -310,6 +324,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK(record.adjacent_knots == 16);
       CHECK_THAT(record.amplitude, WithinRel(1.0, 1.0e-6));  // the 1-V terminal
       CHECK_THAT(record.state, WithinRel(1.0, 1.0e-6));
+      CHECK_THAT(record.excitation_potential, WithinRel(1.0, 1.0e-12));
+      CHECK(record.normalization == record.amplitude);  // far above the floor
       // The plane knots lie on the islands' Dirichlet sheets: the device potential there
       // is the terminal value to roundoff.
       CHECK(record.max_deviation < 1.0e-10);
@@ -366,6 +382,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(record.max_ratio > 0.2);
     CHECK(record.max_ratio < 1.0);
     CHECK(record.max_ratio > tolerance);
+    CHECK(record.normalization == record.amplitude);
+    CHECK_THAT(record.excitation_potential, WithinRel(1.0, 1.0e-12));
     CHECK(record.excluded);
     CHECK_THAT(Replicated(record.max_ratio), WithinAbs(record.max_ratio, 0.0));
     CHECK_THAT(record.claim_length, WithinAbs(0.8, 1.0e-12));
@@ -385,6 +403,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THAT(entry["MaxRatio"].get<double>(), WithinAbs(record.max_ratio, 0.0));
     CHECK_THAT(entry["MaxRatioOverState"].get<double>(),
                WithinRel(record.max_deviation / record.state, 1.0e-12));
+    CHECK_THAT(entry["Normalization"].get<double>(), WithinAbs(record.amplitude, 0.0));
+    CHECK_FALSE(entry["FloorApplied"].get<bool>());
+    CHECK_THAT(diagnostics["AmplitudeFloor"].get<double>(), WithinAbs(floor, 0.0));
     CHECK_THAT(entry["ClaimLength"].get<double>(), WithinAbs(0.8, 1.0e-12));
     CHECK_THAT(diagnostics["ClaimLength"].get<double>(), WithinAbs(0.8, 1.0e-12));
     CHECK(diagnostics["CellLength"].get<double>() == 0.0);
@@ -402,6 +423,89 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto later = response.ApplyConductorConsistencyGate(V[1], 2);
     CHECK(later.empty());
     CHECK(statistics["Diagnostics"]["ConductorConsistency"]["Records"].size() == 1);
+  }
+
+  SECTION("the ratio is scale invariant and floored at a fraction of the excitation")
+  {
+    const auto files = WriteCoupon(temp.temp_dir, CouponVariant::INCONSISTENT);
+    test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
+    // The unit excitation's reading (a fresh operator: the exclusion is sticky).
+    double unit_ratio = 0.0, unit_deviation = 0.0;
+    {
+      SurfaceResponseOperator response(iodata, laplace);
+      const auto records = response.ApplyConductorConsistencyGate(V[0], 1);
+      REQUIRE(records.size() == 1);
+      unit_ratio = records.front().max_ratio;
+      unit_deviation = records.front().max_deviation;
+      REQUIRE(unit_ratio > tolerance);
+    }
+    // A 1e-4-V terminal: the same ratio (the floor 1e-3 x 1e-4 lies under the amplitude),
+    // the same decision.
+    {
+      Vector scaled(V[0]);
+      scaled *= 1.0e-4;
+      SurfaceResponseOperator response(iodata, laplace);
+      const auto records = response.ApplyConductorConsistencyGate(scaled, 1);
+      REQUIRE(records.size() == 1);
+      const auto &record = records.front();
+      CHECK_THAT(record.excitation_potential, WithinRel(1.0e-4, 1.0e-12));
+      CHECK_THAT(record.amplitude, WithinRel(1.0e-4 * 1.018, 0.05));
+      CHECK(record.normalization == record.amplitude);
+      CHECK_THAT(record.max_deviation, WithinRel(1.0e-4 * unit_deviation, 1.0e-9));
+      CHECK_THAT(record.max_ratio, WithinRel(unit_ratio, 1.0e-9));
+      CHECK(record.excluded);
+    }
+    // The coupon under an excitation it barely sees: both islands within 1e-6 V of each
+    // other at ~1 V (the device's largest potential). The trace amplitude is 1e-6 of the
+    // excitation and the fictitious knot's deviation 0.6e-6 V: without the floor the
+    // ratio would be the unit one (0.63) and the patch excluded on a 1e-6-V reading; with
+    // the floor the normalization is 1e-3 V, the ratio 6e-4, recorded FloorApplied, not
+    // excluded (energy ~ amplitude^2: at most 1e-12 of the unit patch), and the next
+    // excitation that fields the coupon excludes it.
+    {
+      Vector shifted(V[0]);
+      shifted *= 1.0e-6;
+      shifted += 1.0;
+      SurfaceResponseOperator response(iodata, laplace);
+      const auto records = response.ApplyConductorConsistencyGate(shifted, 1);
+      REQUIRE(records.size() == 1);
+      const auto &record = records.front();
+      CHECK_THAT(record.excitation_potential, WithinRel(1.0 + 1.0e-6, 1.0e-12));
+      CHECK_THAT(record.amplitude, WithinRel(1.0e-6 * 1.018, 0.05));
+      CHECK_THAT(record.normalization, WithinRel(floor * (1.0 + 1.0e-6), 1.0e-12));
+      CHECK(record.normalization > record.amplitude);
+      CHECK_THAT(record.max_deviation, WithinRel(1.0e-6 * unit_deviation, 1.0e-6));
+      CHECK_THAT(record.max_ratio,
+                 WithinRel(record.max_deviation / record.normalization, 1.0e-12));
+      CHECK(record.max_ratio < tolerance);
+      CHECK(record.max_ratio > 1.0e-4);
+      CHECK_FALSE(record.excluded);
+      CHECK_THAT(Replicated(record.max_ratio), WithinAbs(record.max_ratio, 0.0));
+      const auto statistics = response.GetStatistics();
+      const auto &entry = statistics["Diagnostics"]["ConductorConsistency"]["Records"][0];
+      CHECK(entry["FloorApplied"].get<bool>());
+      CHECK_THAT(entry["Normalization"].get<double>(),
+                 WithinAbs(record.normalization, 0.0));
+      CHECK_THAT(entry["ExcitationPotential"].get<double>(),
+                 WithinAbs(record.excitation_potential, 0.0));
+      CHECK(statistics["Diagnostics"]["ConductorConsistency"]["Count"].get<int>() == 0);
+      CHECK(response.GetElectrostaticResponse(V[0]).domain_correction != 0.0);
+      const auto later = response.ApplyConductorConsistencyGate(V[0], 2);
+      REQUIRE(later.size() == 1);
+      CHECK_THAT(later.front().max_ratio, WithinRel(unit_ratio, 1.0e-9));
+      CHECK(later.front().excluded);
+      CHECK(response.GetElectrostaticResponse(V[0]).domain_correction == 0.0);
+    }
+  }
+
+  SECTION("a spatial coupon without any conductor vertex fails closed")
+  {
+    const auto files = WriteCoupon(temp.temp_dir, CouponVariant::NO_CONDUCTOR);
+    test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
+                      ContainsSubstring("Conductor-consistency gate") &&
+                          ContainsSubstring("gap-junction-no-conductor") &&
+                          ContainsSubstring("no conductor vertex"));
   }
 
   SECTION("a conductor without a vertex on the process plane fails closed")

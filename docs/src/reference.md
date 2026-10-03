@@ -1380,14 +1380,22 @@ potentials while the device trace is imposed around them. At solve time, before 
 of an excitation is formed, the conductor-consistency gate samples the device potential at
 every conductor vertex of the coupon's trace mesh on the process plane (the coupon's metal
 bottom, which lies on the device's metal sheet) and compares it with the potential at that
-conductor's reference point, relative to the patch's trace amplitude. Real metal reads the
-conductor potential exactly; coupon metal where the device has gap (a straight continuation
-past a device corner, a mis-keyed or misplaced coupon) reads the gap potential. A patch
-whose worst knot exceeds 2 % of the amplitude is excluded like a domain-boundary cell
-(weight zero for that and every later excitation; `surface-response-patches.csv` is
-rewritten) and recorded under `Diagnostics.ConductorConsistency` of the solve's
-`palace.json` with the claimed edge length left uncorrected (to be added to `Missing` and
-`DomainBoundary` by a coverage bound), next to every tested patch's reading. The geometry
+conductor's reference point, relative to the patch's trace amplitude floored at 1e-3 of
+the excitation's largest potential (so a patch that barely sees the excitation cannot be
+excluded on noise; the record marks `FloorApplied`). Real metal reads the conductor
+potential exactly; coupon metal where the device has gap (a straight continuation past a
+device corner, a mis-keyed or misplaced coupon) reads the gap potential. A patch whose
+worst knot exceeds 2 % of the normalization is excluded like a domain-boundary cell (weight
+zero for that and every later excitation; `surface-response-patches.csv` is rewritten) and
+recorded under `Diagnostics.ConductorConsistency` of the solve's `palace.json` with the
+claimed edge length left uncorrected, next to every tested patch's reading (lengths and
+coordinates in the mesh file's units). The solver does not apply the coverage bound: the
+consumer of that bound must add `ClaimLength` to the `Missing` and `DomainBoundary`
+lengths. Only the plane row is gated (the metal-top rows of a thin device read a few
+percent of the amplitude and are recorded only), so a coupon frame whose process plane did
+not coincide with the device's metal sheet would be excluded wholesale and recorded. A
+spatial coupon whose trace mesh carries no conductor vertex, or a conductor without a
+vertex on the process plane, aborts at construction naming the model. The geometry
 preflight has no device trace and cannot evaluate this gate; its manifest says so under
 `Summary.ConductorConsistency`.
 

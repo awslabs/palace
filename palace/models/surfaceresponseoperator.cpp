@@ -14040,7 +14040,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
          "vertices on the process plane) against the conductor potential, relative "
          "to the patch's trace amplitude; above Tolerance the patch is excluded "
          "(weight 0) like a DomainBoundary cell and its claimed length is left "
-         "uncorrected (B1 adds it to Missing and DomainBoundary). The dry run has no "
+         "uncorrected (the B1 consumer must add it to Missing and DomainBoundary). The "
+         "dry run has no "
          "device trace: see the operator record SurfaceResponse.Diagnostics."
          "ConductorConsistency of the solve"}};
     Mpi::Print(
@@ -15468,6 +15469,13 @@ void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel 
       model.off_plane_conductor_vertices.push_back(v);
     }
   }
+  MFEM_VERIFY(
+      !conductors.empty(),
+      "Conductor-consistency gate (decision 277): the trace mesh of spatial response "
+      "model \""
+          << model.name
+          << "\" has no conductor vertex, so it has no metal cross-section on the "
+             "box faces to probe!");
   for (const int conductor : conductors)
   {
     MFEM_VERIFY(plane_conductors.count(conductor),
@@ -15547,7 +15555,12 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   // The trace walk also samples the probe points (the device potential at the conductor
   // vertices) into `correction`.
   ApplyTrace(x, trace);
-  constexpr int record_size = 20;
+  // The excitation's largest potential (the largest terminal potential: the maximum
+  // principle) sets the normalization floor of the ratio.
+  double excitation_potential = x.Size() > 0 ? x.Normlinf() : 0.0;
+  Mpi::GlobalMax(1, &excitation_potential, fespace.GetComm());
+  const double amplitude_floor = kConductorConsistencyAmplitudeFloor * excitation_potential;
+  constexpr int record_size = 22;
   std::vector<double> local_records;
   for (auto &patch : patches)
   {
@@ -15585,11 +15598,13 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
       record.state = std::max(
           record.state, std::abs(trace(patch.trace_offset + model.contour_size + state)));
     }
+    record.excitation_potential = excitation_potential;
+    record.normalization = std::max(record.amplitude, amplitude_floor);
     auto Ratio = [&](double deviation)
     {
-      if (record.amplitude > 0.0)
+      if (record.normalization > 0.0)
       {
-        return std::abs(deviation) / record.amplitude;
+        return std::abs(deviation) / record.normalization;
       }
       return deviation == 0.0 ? 0.0 : mfem::infinity();
     };
@@ -15641,6 +15656,8 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
                                                static_cast<double>(record.adjacent_knots),
                                                record.amplitude,
                                                record.state,
+                                               record.excitation_potential,
+                                               record.normalization,
                                                record.max_deviation,
                                                record.max_ratio,
                                                static_cast<double>(record.worst_vertex),
@@ -15684,16 +15701,18 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
     record.adjacent_knots = static_cast<int>(std::llround(r[5]));
     record.amplitude = r[6];
     record.state = r[7];
-    record.max_deviation = r[8];
-    record.max_ratio = r[9];
-    record.worst_vertex = static_cast<int>(std::llround(r[10]));
-    record.worst_conductor = static_cast<int>(std::llround(r[11]));
-    record.worst_point = {r[12], r[13], r[14]};
-    record.off_plane_max_ratio = r[15];
-    record.adjacent_max_ratio = r[16];
-    record.claim_length = r[17];
-    record.cell_length = r[18];
-    record.excluded = r[19] > 0.5;
+    record.excitation_potential = r[8];
+    record.normalization = r[9];
+    record.max_deviation = r[10];
+    record.max_ratio = r[11];
+    record.worst_vertex = static_cast<int>(std::llround(r[12]));
+    record.worst_conductor = static_cast<int>(std::llround(r[13]));
+    record.worst_point = {r[14], r[15], r[16]};
+    record.off_plane_max_ratio = r[17];
+    record.adjacent_max_ratio = r[18];
+    record.claim_length = r[19];
+    record.cell_length = r[20];
+    record.excluded = r[21] > 0.5;
     records.push_back(record);
   }
   std::sort(records.begin(), records.end(),
@@ -15707,6 +15726,7 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   {
     diagnostics = {
         {"Tolerance", kConductorConsistencyTolerance},
+        {"AmplitudeFloor", kConductorConsistencyAmplitudeFloor},
         {"Count", 0},
         {"ClaimLength", 0.0},
         {"CellLength", 0.0},
@@ -15715,24 +15735,29 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
         {"Records", nlohmann::json::array()},
         {"Rule",
          "decision 277 (2026-10-03): solve-time gate on every applied spatial "
-         "surface-mortar "
-         "patch, per excitation. MaxRatio = max over the trace mesh's conductor vertices "
-         "on "
-         "the process plane (w = 0: the coupon's metal bottom on the device's metal sheet) "
-         "of |V_device(knot) - V_device(conductor reference)| / Amplitude, Amplitude = max "
-         "|trace coefficient| of the patch incl. its conductor states (= the state for a "
-         "two-conductor coupon without overshoots; State alongside). Real metal reads ~0 "
-         "(the knot lies on a Dirichlet surface of the device), coupon metal where the "
-         "device has gap reads the gap potential. MaxRatio > Tolerance excludes the patch "
-         "(weight 0 from this excitation on, like a DomainBoundary cell; the patches CSV "
-         "is rewritten); ClaimLength is the excluded spatial clusters' claimed portion "
-         "length (left uncorrected; B1 adds it to Missing and DomainBoundary), CellLength "
-         "the excluded longitudinal cells (0 for spatial patches). Information only: "
-         "OffPlaneMaxRatio (the metal top rows, in the device gap for a thin device) and "
-         "AdjacentMaxRatio (the free knots adjacent to a plane conductor vertex in its "
+         "surface-mortar patch, per excitation. MaxRatio = max over the trace mesh's "
+         "conductor vertices on the process plane (w = 0: the coupon's metal bottom on the "
+         "device's metal sheet) of |V_device(knot) - V_device(conductor reference)| / "
+         "Normalization, Normalization = max(Amplitude, AmplitudeFloor x "
+         "ExcitationPotential), Amplitude = max |trace coefficient| of the patch incl. its "
+         "conductor states (= the state for a two-conductor coupon without overshoots; "
+         "State alongside), ExcitationPotential = max |V| of the excitation (its largest "
+         "terminal potential); FloorApplied marks the patches whose amplitude lies under "
+         "the floor (noise over noise: never excluded, at most AmplitudeFloor^2 of a "
+         "unit-amplitude patch's energy). Real metal reads ~0 (the knot lies on a "
+         "Dirichlet surface of the device), coupon metal where the device has gap reads "
+         "the gap potential. MaxRatio > Tolerance excludes the patch (weight 0 from this "
+         "excitation on, like a DomainBoundary cell; the patches CSV is rewritten); "
+         "ClaimLength is the excluded spatial clusters' claimed portion length (left "
+         "uncorrected: the B1 consumer must add it to Missing and DomainBoundary), "
+         "CellLength the excluded longitudinal cells (0 for spatial patches). Information "
+         "only: OffPlaneMaxRatio (the metal top rows, in the device gap for a thin device) "
+         "and AdjacentMaxRatio (the free knots adjacent to a plane conductor vertex in its "
          "column: their mortar coefficient vs the conductor; near-edge field x 50 nm, up "
          "to 0.27 of the amplitude on real metal). Not evaluated by the preflight (no "
-         "device trace). Lengths and coordinates in mesh units"}};
+         "device trace). Lengths and coordinates in mesh-file units (the device "
+         "coordinates: the mesh coordinates x the mesh coordinate scale), like the "
+         "DomainBoundary record"}};
   }
   int excluded_count = 0;
   double excluded_claims = 0.0, excluded_cells = 0.0, max_ratio = 0.0;
@@ -15748,6 +15773,9 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
                             {"AdjacentKnots", record.adjacent_knots},
                             {"Amplitude", record.amplitude},
                             {"State", record.state},
+                            {"ExcitationPotential", record.excitation_potential},
+                            {"Normalization", record.normalization},
+                            {"FloorApplied", record.normalization > record.amplitude},
                             {"MaxDeviation", record.max_deviation},
                             {"MaxRatio", record.max_ratio},
                             {"MaxRatioOverState", record.state > 0.0
@@ -15795,22 +15823,25 @@ SurfaceResponseOperator::ApplyConductorConsistencyGate(const Vector &x, int sour
   {
     Mpi::Print(" Conductor-consistency gate (decision 277), excitation {:d}: {:d} spatial "
                "patch(es) probed, max ratio {:.3e} (patch {:d}, 0-based), {:d} excluded "
-               "(tolerance {:.3e}; claims {:.6e}, cells {:.6e} mesh units left "
-               "uncorrected)\n",
+               "(tolerance {:.3e}; amplitude floor {:.3e} x the excitation potential "
+               "{:.6e}; claims {:.6e}, cells {:.6e} mesh-file units left uncorrected)\n",
                source, static_cast<int>(records.size()), max_ratio, max_patch,
-               excluded_count, kConductorConsistencyTolerance, excluded_claims,
+               excluded_count, kConductorConsistencyTolerance,
+               kConductorConsistencyAmplitudeFloor, excitation_potential, excluded_claims,
                excluded_cells);
     for (const auto &record : records)
     {
       if (record.excluded)
       {
         Mpi::Print(
-            "  patch {:d} (0-based; {}): |dV| {:.6e} = {:.3e} of the amplitude "
-            "{:.6e} (state {:.6e}) at trace vertex {:d} of conductor {:d}, point "
-            "({:.6e}, {:.6e}, {:.6e}) mesh units; claims {:.6e} mesh units EXCLUDED\n",
+            "  patch {:d} (0-based; {}): |dV| {:.6e} = {:.3e} of the normalization "
+            "{:.6e} (amplitude {:.6e}, state {:.6e}) at trace vertex {:d} of conductor "
+            "{:d}, point ({:.6e}, {:.6e}, {:.6e}) mesh-file units; claims {:.6e} mesh-file "
+            "units EXCLUDED\n",
             record.patch, model_names.at(record.model), record.max_deviation,
-            record.max_ratio, record.amplitude, record.state, record.worst_vertex,
-            record.worst_conductor, record.worst_point[0] * mesh_coordinate_scale,
+            record.max_ratio, record.normalization, record.amplitude, record.state,
+            record.worst_vertex, record.worst_conductor,
+            record.worst_point[0] * mesh_coordinate_scale,
             record.worst_point[1] * mesh_coordinate_scale,
             record.worst_point[2] * mesh_coordinate_scale,
             record.claim_length * mesh_coordinate_scale);

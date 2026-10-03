@@ -84,9 +84,11 @@ public:
   // probe: the device potential at every conductor vertex of the trace mesh ON THE PROCESS
   // PLANE (w = 0, the coupon's metal bottom = the device's metal sheet, a Dirichlet surface
   // for real metal) minus the potential at that conductor's reference point, relative to
-  // the patch's trace amplitude max(|c_i|, |V_state|). Real metal reads ~0 (the knot lies
-  // on the device conductor), fictitious metal reads the device gap potential (S1p: 0.20 to
-  // 0.43). Information only (recorded, not gated): the conductor vertices OFF the plane
+  // the patch's trace amplitude max(|c_i|, |V_state|) floored at
+  // kConductorConsistencyAmplitudeFloor x the excitation's largest potential. Real metal
+  // reads ~0 (the knot lies on the device conductor), fictitious metal reads the device gap
+  // potential (S1p: 0.20 to 0.43). Information only (recorded, not gated): the conductor
+  // vertices OFF the plane
   // (the coupon's metal top, 0.1 um into the device's gap vacuum for a thin device: reads
   // the normal field x the thickness, S1p 0.013-0.028) and the ADJACENT free knots (sharing
   // a trace-triangle edge with a plane conductor vertex in the same column, the 50-nm
@@ -101,17 +103,26 @@ public:
     int plane_knots = 0;
     int off_plane_knots = 0;
     int adjacent_knots = 0;
-    double amplitude = 0.0;      // max |trace coefficient| incl. the conductor states
-    double state = 0.0;          // max |conductor state| (0 for a single-conductor coupon)
+    double amplitude = 0.0;  // max |trace coefficient| incl. the conductor states
+    double state = 0.0;      // max |conductor state| (0 for a single-conductor coupon)
+    // The excitation's largest potential, max |x| over the device (the largest terminal
+    // potential: the maximum principle), and the ratio's denominator max(amplitude,
+    // kConductorConsistencyAmplitudeFloor x excitation_potential).
+    double excitation_potential = 0.0;
+    double normalization = 0.0;
     double max_deviation = 0.0;  // max |V_device(knot) - V_conductor| over the plane knots
-    double max_ratio = 0.0;      // max_deviation / amplitude
+    double max_ratio = 0.0;      // max_deviation / normalization
     int worst_vertex = -1;       // trace-mesh vertex (0-based) of max_deviation
     int worst_conductor = 0;     // its conductor (1-based)
-    std::array<double, 3> worst_point{};  // mesh units
+    // Nondimensional mesh coordinates; the record and the log multiply by the mesh
+    // coordinate scale (mesh-file units = the device coordinates).
+    std::array<double, 3> worst_point{};
     double off_plane_max_ratio = 0.0;
     double adjacent_max_ratio = 0.0;
-    double claim_length = 0.0;  // the cluster's claimed portions (mesh units; 0 otherwise)
-    double cell_length = 0.0;   // the longitudinal cell (mesh units; 0 for a spatial patch)
+    double claim_length =
+        0.0;  // the cluster's claimed portions (nondimensional; 0 otherwise)
+    double cell_length =
+        0.0;  // the longitudinal cell (nondimensional; 0 for a spatial patch)
     bool excluded = false;
   };
   // The dimensionless tolerance of the gate: max_ratio above it excludes the patch (weight
@@ -123,6 +134,15 @@ public:
   // (0.1 um) offset normal to the plane. A 5 % potential mismatch would already shift the
   // 15 %-residual MS closure by O(several points), so the tolerance is not larger.
   static constexpr double kConductorConsistencyTolerance = 0.02;
+  // The normalization floor of the ratio (decision 279, MINOR-3): the denominator is
+  // max(amplitude, kConductorConsistencyAmplitudeFloor x the excitation's largest
+  // potential), so a patch whose trace amplitude is a near-zero fraction of the excitation
+  // (noise over noise) cannot be excluded spuriously; the record notes FloorApplied. A
+  // patch below the floor carries at most floor^2 = 1e-6 of a unit-amplitude patch's
+  // energy (energy ~ amplitude^2), and a defective coupon is still excluded at the
+  // excitation that fields it (the exclusion is sticky). The S1p flagged coupons read
+  // amplitude ~1.1 x the 1-V state, far above the floor.
+  static constexpr double kConductorConsistencyAmplitudeFloor = 1.0e-3;
 
 private:
   struct MaxwellLine
@@ -369,7 +389,8 @@ private:
   void ApplyTraceTranspose(const Vector &values, Vector &y) const;
   // The conductor-consistency probes of a spatial surface-mortar model (decision 277):
   // the conductor vertices on the process plane, off it, and the adjacent free knots; fails
-  // closed when a conductor of the trace mesh has no vertex on the plane.
+  // closed when the trace mesh has no conductor vertex at all (no metal cross-section to
+  // probe) or when a conductor of the trace mesh has no vertex on the plane.
   static void ConfigureConductorConsistencyProbes(ResponseModel &model);
   void ApplyUneliminated(const Vector &x, Vector &y) const;
   void ConfigureMaxwellResponse(
