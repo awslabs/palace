@@ -986,6 +986,23 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CHECK(!ValidateConfig(driven, "Driven").empty());
   }
 
+  SECTION("AdaptiveCircuitSynthesis requires positive AdaptiveTol - Driven")
+  {
+    json base = {{"Samples", {{{"Freq", {1.0, 2.0}}}}}};
+    // Synthesis without AdaptiveTol, or with AdaptiveTol: 0, is invalid.
+    json missing_tol = base;
+    missing_tol["AdaptiveCircuitSynthesis"] = true;
+    CHECK(!ValidateConfig(missing_tol, "Driven").empty());
+    json zero_tol = missing_tol;
+    zero_tol["AdaptiveTol"] = 0.0;
+    CHECK(!ValidateConfig(zero_tol, "Driven").empty());
+    // Positive AdaptiveTol or no synthesis are valid.
+    json ok = missing_tol;
+    ok["AdaptiveTol"] = 1e-3;
+    CHECK(ValidateConfig(ok, "Driven").empty());
+    CHECK(ValidateConfig(base, "Driven").empty());
+  }
+
   SECTION("Required field - Model without Mesh")
   {
     CHECK(!ValidateConfig(json::object(), "Model").empty());
