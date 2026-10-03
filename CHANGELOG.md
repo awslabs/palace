@@ -41,7 +41,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`"InterfaceOffdiagTol"`). Magnetostatic substructuring supports `"FluxLoop"`
     excitations, with the films and `"Superconductor"` boundaries as London sheets (kinetic
     inductance included). Adds substructuring examples in `examples/transmon` and
-    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops). SchemaVer 2-2-0.
+    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops, on separate rings
+    and on one plate). SchemaVer 2-2-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes

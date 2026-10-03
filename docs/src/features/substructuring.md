@@ -243,3 +243,15 @@ palace flux_lattice_online.json    # reuse the model: only the region is solved
 Both runs write the ``25 \times 25`` inductance matrix to `terminal-M.csv`. The saved model
 includes the condensed flux-loop excitations of the environment, so the online run needs no
 environment solve.
+
+The script
+[`examples/substructuring/flux_sheet.jl`](https://github.com/awslabs/palace/blob/main/examples/substructuring/flux_sheet.jl)
+generates a variant with one film: a square plate with a ``5 \times 5`` lattice of flux holes,
+each hole a `"FluxLoop"` of the shared film. The film crosses the interface between the region
+and the environment, and its screening currents couple the holes:
+
+```bash
+julia --project -e 'include("flux_sheet.jl"); generate_flux_sheet()'
+palace flux_sheet_offline.json
+palace flux_sheet_online.json
+```
