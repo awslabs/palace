@@ -82,8 +82,9 @@ public:
     Ar_omega = std::numeric_limits<double>::quiet_NaN();
   }
   auto &GetAr() const { return Ar; }
-  bool HasVolumeA2() const { return has_volume_A2; }
   bool HasOtherA2() const { return has_other_A2; }
+  bool OtherA2SelfChecked() const { return other_A2_self_checked; }
+  bool OtherA2FactoredOk() const { return other_A2_factored_ok; }
   void ReserveBasis(std::size_t n) { V.reserve(n); }
 };
 
@@ -160,9 +161,14 @@ TEST_CASE("MinimalRationalInterpolation", "[romoperator][Serial][Parallel]")
   // TODO: Add more stringent tests of MRI, including estimating poles.
 }
 
-TEST_CASE("RomOperator retains a structurally nonlinear dispersive volume A2",
-          "[romoperator][Serial]")
+TEST_CASE("RomOperator factors the dispersive volume A2", "[romoperator][Serial]")
 {
+  // With the boundary, the first-frequency self-check sees only the boundary term (the
+  // volume scalar cancels there), so a missing factored volume term would go undetected
+  // and only the comparison at omega = 2 catches it. Without it, the volume term is the
+  // only factored contributor.
+  const bool with_boundary = GENERATE(true, false);
+  CAPTURE(with_boundary);
   json config;
   config["Problem"] = {{"Type", "Driven"}, {"Output", "test_output"}};
   config["Model"] = {{"Mesh", "test.msh"}};
@@ -172,9 +178,11 @@ TEST_CASE("RomOperator retains a structurally nonlinear dispersive volume A2",
                       {{"Type", "PoleResidue"}, {"Pole", -3.0}, {"Residue", 20.0}}};
   config["Domains"]["Materials"] = {
       {{"Attributes", {1}}, {"Permittivity", {{"HighFrequency", 1.0}, {"Terms", terms}}}}};
-  // A simultaneous factored boundary contributor ensures a numerical first-frequency
-  // self-check cannot stand in for structural volume-A2 detection.
-  config["Boundaries"]["Conductivity"] = {{{"Attributes", {1}}, {"Conductivity", 5.8e7}}};
+  config["Boundaries"] = json::object();
+  if (with_boundary)
+  {
+    config["Boundaries"]["Conductivity"] = {{{"Attributes", {1}}, {"Conductivity", 5.8e7}}};
+  }
   config["Solver"] = {
       {"Order", 1},
       {"Driven", {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}}};
@@ -192,13 +200,11 @@ TEST_CASE("RomOperator retains a structurally nonlinear dispersive volume A2",
   SpaceOperator space_op(iodata.solver, iodata.domains, iodata.boundaries,
                          iodata.problem.type, iodata.units, mesh);
 
-  // The constructor probes at omega = 1. The volume term vanishes there, while the
-  // conductivity boundary remains nonzero. The structural predicate must still force the
-  // slow full-A2 projection path rather than accepting the factored boundary-only path.
+  // The constructor probes at omega = 1, where the volume term vanishes. It must still be
+  // detected.
   RomOperatorTest prom_op(iodata, space_op, 1);
-  CHECK(prom_op.HasVolumeA2());
   CHECK(prom_op.HasOtherA2());
-  CHECK(space_op.GetSurfaceConductivityOp().Size() == 1);
+  CHECK(space_op.GetSurfaceConductivityOp().Size() == (with_boundary ? 1 : 0));
   auto A2_cancelled =
       space_op.GetExtraSystemMatrix<ComplexOperator>(1.0, Operator::DIAG_ZERO, false);
   REQUIRE(A2_cancelled);
@@ -237,6 +243,9 @@ TEST_CASE("RomOperator retains a structurally nonlinear dispersive volume A2",
   }
   CHECK_THAT(std::abs(recovered - a2_reduced),
              Catch::Matchers::WithinAbsMatcher(0.0, 1e-10));
+  // The factored path ran its self-check and did not fall back to per-frequency assembly.
+  CHECK(prom_op.OtherA2SelfChecked());
+  CHECK(prom_op.OtherA2FactoredOk());
 }
 
 // Basic checks of ROM construction in the of synthesis. Checks hybrid domain-boundary

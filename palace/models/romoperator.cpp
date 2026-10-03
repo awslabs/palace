@@ -562,11 +562,9 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     }
   }
   // Detect non-wave-port contributions from dispersive volumes or frequency-dependent
-  // boundaries. Volume A2 is structural: it can cancel at this probe frequency and must
-  // still force the exact slow per-frequency projection path. Adaptive circuit synthesis
-  // is rejected for volume dispersion.
+  // boundaries. Dispersive volumes always assemble both A2 slots, so they are detected even
+  // when their scalar cancels at this probe frequency.
   {
-    has_volume_A2 = space_op.GetMaterialOp().HasFrequencyDependentPermittivityA2();
     auto A2_other_probe = space_op.GetExtraSystemMatrix<ComplexOperator>(
         1.0, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
     has_other_A2 = (A2_other_probe != nullptr);
@@ -617,6 +615,20 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     {
       Arz_b_[b] = space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
           b, Operator::DIAG_ZERO, /*imag_slot=*/true);
+    }
+  }
+
+  // Per-material frequency-dependent permittivity volume mass (imaginary slot, matching the
+  // convention), borrowed from the SpaceOperator A2 cache. The online scalar is
+  // f_m(ω) = g_m(iω)/i, evaluated in closed form.
+  {
+    const auto &mat_op = space_op.GetMaterialOp();
+    Avol_m_.resize(mat_op.NumFrequencyDependentPermittivityMaterials());
+    Avol_m_r.resize(Avol_m_.size());
+    for (std::size_t m = 0; m < Avol_m_.size(); m++)
+    {
+      Avol_m_[m] =
+          space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO);
     }
   }
 
@@ -1200,6 +1212,14 @@ void RomOperator::UpdatePROM(const ComplexVector &u, std::string_view node_label
       ProjectMatInternal(comm, V, *Arz_b_[b], Arz_b_r[b], r, dim_V_old, true);
     }
   }
+  for (std::size_t m = 0; m < Avol_m_.size(); m++)
+  {
+    if (Avol_m_[m])
+    {
+      Avol_m_r[m].conservativeResize(dim_V_new, dim_V_new);
+      ProjectMatInternal(comm, V, *Avol_m_[m], Avol_m_r[m], r, dim_V_old, true);
+    }
+  }
   // Per-port Floquet Robin boundary mass projection (same pattern as wave-port masses).
   for (auto &[port_idx, Mp_r] : M_floquet_p_r)
   {
@@ -1306,10 +1326,9 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
     }
 
     // Other ω-nonlinear A2 contributors (second-order farfield ABC, surface conductivity,
-    // rational impedance, and Floquet Robin terms) are applied in factored form. Their
-    // ω-independent boundary masses were projected once in UpdatePROM, so online assembly
-    // is a scalar times an n×n matrix add. Nonzero material poles deliberately force the
-    // exact slow fallback below because their cached spatial masses are not PROM-factored.
+    // rational impedance, Floquet Robin, and frequency-dependent permittivity terms) are
+    // applied in factored form. Their ω-independent masses were projected once in
+    // UpdatePROM, so online assembly is a scalar times an n×n matrix add.
     //
     // Robustness: the structural check below requires every factored operator we hold to be
     // sized to the current basis, but it cannot know whether the factored set is COMPLETE
@@ -1372,13 +1391,27 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
           Ar += std::complex<double>(gamma0, 0.0) * Mp_r;
         }
       }
+      // Factored frequency-dependent permittivity, per material: A2_vol,m(ω) = g_m(iω)·B_m
+      // = i·(g_m(iω)/i)·B_m. Avol_m_r[m] carries B_m on the imaginary slot, so the scalar
+      // here is g_m(iω)/i. Closed form (a few pole or logarithm terms per material).
+      const auto &mat_op = space_op.GetMaterialOp();
+      for (std::size_t m = 0; m < Avol_m_.size(); m++)
+      {
+        if (Avol_m_[m] && Avol_m_r[m].rows() == static_cast<long>(V.size()))
+        {
+          const std::complex<double> s = mat_op.EvaluateFrequencyDependentPermittivityA2(
+                                             m, std::complex<double>(0.0, omega)) /
+                                         std::complex<double>(0.0, 1.0);
+          Ar += s * Avol_m_r[m];
+        }
+      }
     };
 
     // Structural precondition for the factored path: every factored operator we hold must
     // be sized to the current basis, and we must hold at least one (else has_other_A2 came
     // from a BC we don't factor).
     bool other_A2_factored = false;
-    if (has_other_A2 && !has_volume_A2 && other_A2_factored_ok)
+    if (has_other_A2 && other_A2_factored_ok)
     {
       const long n = static_cast<long>(V.size());
       bool any_factored = false, all_present = true;
@@ -1403,6 +1436,13 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
       for (const auto &[port_idx, Mp_r] : M_floquet_p_r)
       {
         (Mp_r.rows() == n) ? (any_factored = true) : (all_present = false);
+      }
+      for (std::size_t m = 0; m < Avol_m_.size(); m++)
+      {
+        if (Avol_m_[m])
+        {
+          (Avol_m_r[m].rows() == n) ? (any_factored = true) : (all_present = false);
+        }
       }
       other_A2_factored = any_factored && all_present;
     }
@@ -1442,11 +1482,10 @@ void RomOperator::SolvePROM(int excitation_idx, double omega, ComplexVector &u)
             Ar = Ar_hdm;  // Use the trusted HDM projection for this solve.
             Mpi::Warning(
                 "Factored online A2 (farfield ABC, surface conductivity, rational "
-                "impedance, Floquet Robin) disagrees with the full operator "
-                "(rel. err {:.3e})!\n"
+                "impedance, Floquet Robin, frequency-dependent permittivity) disagrees "
+                "with the full operator (rel. err {:.3e})!\n"
                 "Reverting to the per-frequency assembled A2 for the remaining sweep. "
-                "This indicates an ω-dependent boundary condition not covered by the "
-                "factored path.\n",
+                "This indicates an ω-dependent term not covered by the factored path.\n",
                 err / ref);
           }
         }

@@ -360,6 +360,18 @@ public:
   std::unique_ptr<OperType>
   GetFloquetRobinBoundaryMassMatrix(int port_idx, Operator::DiagonalPolicy diag_policy);
 
+  // Return the ω-independent unit-coefficient volume mass B_m of frequency-dependent
+  // permittivity material `material_idx`, placed on the IMAGINARY slot (matching the
+  // wave-port convention). The full A2 contribution at frequency ω is g_m(iω)·B_m =
+  // f_m(ω)·(i·B_m) with g_m(s) from
+  // GetMaterialOp().EvaluateFrequencyDependentPermittivityA2(material_idx, s) and
+  // f_m(ω) = g_m(iω)/i. The returned operator borrows the B_m cached by this SpaceOperator
+  // (no assembly), so it must not outlive it. Returns null if the material has no nonlinear
+  // term or no support on any rank (rank-uniform). Used by the PROM factored online phase.
+  std::unique_ptr<ComplexOperator>
+  GetFrequencyDependentPermittivityMassMatrix(std::size_t material_idx,
+                                              Operator::DiagonalPolicy diag_policy) const;
+
   // Construct the complete frequency or time domain system matrix using the provided
   // stiffness, damping, mass, and extra matrices:
   //                     A = a0 K + a1 C + a2 (Mr + i Mi) + A2.
