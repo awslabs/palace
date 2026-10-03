@@ -486,3 +486,113 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
   }
   REQUIRE(checked_any);  // the slab hybrid port mode must be active and tracked
 }
+
+// Wave ports on a parallel plate guide along z (width w, gap h in um) with a London slab of
+// thickness d above the gap, compared to the exact quasi-TEM mode index
+// n_eff^2 = 1 + (lambda/h) coth(d/lambda) with a free back face (tanh for a PEC back face).
+// The gap keeps n_eff below the spectral shift of the port mode solve.
+TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  constexpr double lambda = 0.1, w = 1.0, h = 5.0, d = 0.1, l = 2.0, freq_ghz = 5.0;
+  for (bool pec_back : {false, true})
+  {
+    json setup = {
+        {"Problem", {{"Type", "Driven"}, {"Output", ""}}},
+        {"Model", {{"Mesh", "london_slab.mesh"}, {"L0", 1.0e-6}}},
+        {"Domains",
+         {{"Materials", json::array({{{"Attributes", {1}}},
+                                     {{"Attributes", {2}}, {"LondonDepth", lambda}}})}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", pec_back ? json({1, 2}) : json({1})}}},
+          {"WavePort",
+           json::array({{{"Index", 1}, {"Attributes", {4}}, {"Excitation", true}},
+                        {{"Index", 2}, {"Attributes", {5}}}})}}},
+        {"Solver",
+         {{"Order", 2},
+          {"Driven",
+           {{"Samples", json::array({{{"Type", "Point"}, {"Freq", {freq_ghz}}}})}}}}}};
+    IoData iodata(setup, /*print=*/false);
+
+    // Hexahedra: attribute 1 for the gap and 2 for the slab; boundary attributes 1 (y = 0),
+    // 2 (y = h + d), 3 (x = 0, w), 4 (z = 0), and 5 (z = l).
+    constexpr int nx = 2, ny_gap = 8, ny_slab = 8, nz = 2, ny = ny_gap + ny_slab;
+    auto smesh = std::make_unique<mfem::Mesh>(
+        3, (nx + 1) * (ny + 1) * (nz + 1), nx * ny * nz, 2 * (nx * nz + ny * nz + nx * ny));
+    for (int k = 0; k <= nz; k++)
+    {
+      for (int j = 0; j <= ny; j++)
+      {
+        const double y = (j <= ny_gap) ? h * j / ny_gap : h + d * (j - ny_gap) / ny_slab;
+        for (int i = 0; i <= nx; i++)
+        {
+          smesh->AddVertex(w * i / nx, y, l * k / nz);
+        }
+      }
+    }
+    auto v = [&](int i, int j, int k) { return i + (nx + 1) * (j + (ny + 1) * k); };
+    for (int k = 0; k < nz; k++)
+    {
+      for (int j = 0; j < ny; j++)
+      {
+        for (int i = 0; i < nx; i++)
+        {
+          smesh->AddHex(v(i, j, k), v(i + 1, j, k), v(i + 1, j + 1, k), v(i, j + 1, k),
+                        v(i, j, k + 1), v(i + 1, j, k + 1), v(i + 1, j + 1, k + 1),
+                        v(i, j + 1, k + 1), (j < ny_gap) ? 1 : 2);
+        }
+      }
+    }
+    for (int k = 0; k < nz; k++)
+    {
+      for (int i = 0; i < nx; i++)
+      {
+        smesh->AddBdrQuad(v(i, 0, k), v(i, 0, k + 1), v(i + 1, 0, k + 1), v(i + 1, 0, k),
+                          1);
+        smesh->AddBdrQuad(v(i, ny, k), v(i + 1, ny, k), v(i + 1, ny, k + 1),
+                          v(i, ny, k + 1), 2);
+      }
+      for (int j = 0; j < ny; j++)
+      {
+        smesh->AddBdrQuad(v(0, j, k), v(0, j + 1, k), v(0, j + 1, k + 1), v(0, j, k + 1),
+                          3);
+        smesh->AddBdrQuad(v(nx, j, k), v(nx, j, k + 1), v(nx, j + 1, k + 1),
+                          v(nx, j + 1, k), 3);
+      }
+    }
+    for (int j = 0; j < ny; j++)
+    {
+      for (int i = 0; i < nx; i++)
+      {
+        smesh->AddBdrQuad(v(i, j, 0), v(i, j + 1, 0), v(i + 1, j + 1, 0), v(i + 1, j, 0),
+                          4);
+        smesh->AddBdrQuad(v(i, j, nz), v(i + 1, j, nz), v(i + 1, j + 1, nz),
+                          v(i, j + 1, nz), 5);
+      }
+    }
+    smesh->FinalizeHexMesh(1, 1, true);
+    iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+    iodata.NondimensionalizeInputs(smesh);
+    std::vector<std::unique_ptr<Mesh>> mesh_vec;
+    mesh_vec.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
+    SpaceOperator space_op(iodata, mesh_vec);
+
+    auto &wp_op = space_op.GetWavePortOp();
+    REQUIRE(wp_op.Size() == 2);
+    const double omega =
+        2.0 * std::numbers::pi *
+        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+    wp_op.InitializeModalReference(omega);
+    const double x = d / lambda;
+    const double n_exact =
+        std::sqrt(1.0 + lambda / h * (pec_back ? std::tanh(x) : 1.0 / std::tanh(x)));
+    for (const auto &[idx, data] : wp_op)
+    {
+      const double n_eff = data.kn0.real() / omega;
+      CAPTURE(pec_back, idx, n_exact, n_eff, data.kn0.imag() / omega);
+      CHECK(std::abs(data.kn0.imag()) < 1.0e-6 * std::abs(data.kn0.real()));
+      CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-5));
+    }
+  }
+}

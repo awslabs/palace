@@ -71,6 +71,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed the sign of the London penetration depth term for the out-of-plane field component
+    in `"BoundaryMode"` simulations and wave ports. For modes with current along the
+    propagation direction through `"LondonDepth"` domains, the field oscillated instead of
+    decaying into the superconductor, which gave wrong propagation constants (for example,
+    an effective index below one for a superconducting film in vacuum).
+    [PR XYZ](https://github.com/awslabs/palace/pull/XYZ).
 
 #### Performance Improvements
 
