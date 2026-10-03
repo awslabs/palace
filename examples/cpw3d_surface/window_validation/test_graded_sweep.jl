@@ -767,6 +767,63 @@ end
     )
 end
 
+@testset "region z-grading near the metal planes (decision 276 option (ii), off by default)" begin
+    directory = mktempdir()
+    tensor = mesh_polygon_window(
+        strip_window(),
+        0.01,
+        5.0,
+        joinpath(directory, "tensor.msh2");
+        verbose=false
+    )
+    ring = mesh_polygon_window(
+        strip_window(),
+        0.01,
+        5.0,
+        joinpath(directory, "ring.msh2");
+        verbose=false,
+        sweep=:graded,
+        region_grading=false
+    )
+    graded = mesh_polygon_window(
+        strip_window(),
+        0.01,
+        5.0,
+        joinpath(directory, "zg.msh2");
+        verbose=false,
+        sweep=:graded,
+        region_grading=false,
+        region_z_grading=true
+    )
+    @test ring["graded_sweep"]["region_z_grading"] == false
+    record = graded["graded_sweep"]["region_z_grading"]
+    @test record["first_cell_widths"] == PWM.REGION_Z_FIRST_CELL_WIDTHS &&
+          record["growth"] == PWM.REGION_Z_GROWTH
+    levels = record["levels_z_um"]
+    zk = graded["graded_sweep"]["stack_levels_z_um"][8]
+    # Contains Z_K; the first region cell beyond the step is at most w_K = 0.64 um tall (the
+    # farthest production level within it: 0.5 um above the metal top, 0.5 below the trench);
+    # no level inside the step is added; geometric growth beyond (1, 2, 5, 10, ...).
+    @test all(any(z -> abs(z - w) <= 1.0e-9, levels) for w in zk)
+    @test any(z -> abs(z - 0.5) <= 1.0e-9, levels) &&
+          any(z -> abs(z + 0.5) <= 1.0e-9, levels)
+    @test !any(z -> -0.05 + 1.0e-9 < z < 0.1 - 1.0e-9 && abs(z) > 1.0e-9, levels)
+    above = sort(filter(z -> z > 0.1 + 1.0e-9, levels))
+    @test above[1:5] ≈ [0.5, 1.0, 2.0, 5.0, 10.0]
+    # Every region node carries that stack; the plan, areas and volumes are the tensor's.
+    @test graded["plan_triangles"] == tensor["plan_triangles"]
+    @test graded["tetrahedra"] > ring["tetrahedra"]
+    for (attribute, volume) in tensor["volume_um3"]
+        @test graded["volume_um3"][attribute] ≈ volume rtol = 1.0e-9
+    end
+    checks = mesh_checks(
+        joinpath(directory, "zg.msh2"),
+        step_slabs(strip_window()),
+        metal_substrate_attributes(graded)
+    )
+    @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
+end
+
 @testset "two planes: stacks keep the gap midpoint, one plane's rows end there at the latest" begin
     spec = two_plane_window()
     stack = PWM.z_levels(spec, 2, 1)

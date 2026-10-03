@@ -173,7 +173,9 @@ dimensionless `alpha` (default 1: row k's z spacing at least alpha x its width) 
 midpoint (two planes), `cross_sections` (one entry per set of planes a chain's edges belong to:
 the plane names, the step faces, the row ranges, the capped columns' top list sizes and node
 counts, chains / columns / capped columns / fan sectors, cross-section nodes / triangles per
-line pair), `region_ring` and `region_ring_plan_nodes`, the cell counts by kind (swept cells,
+line pair), `region_ring` and `region_ring_plan_nodes`, `region_z_grading` (`false`, or the first-cell
+widths, the growth and the stack's levels; decision 276 option (ii), off by default), the cell
+counts by kind (swept cells,
 strip / collapse prisms, plain / hanging region prisms; `region_hanging_node_incidences` counts
 a hanging node once per region prism it hangs on) and the analytic volume per material the mesh
 is checked against. The sweep mode never changes what the writer has to emit.

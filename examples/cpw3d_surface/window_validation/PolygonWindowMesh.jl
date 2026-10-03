@@ -1412,7 +1412,8 @@ end
                         plan_only=false, band_mode=:own, fan_turn_angle_deg=90.0,
                         exact_band_thickness=false, cross_plane_snap_um=NaN,
                         band_cap=:none, sweep=:tensor, alpha=1.0, beta=3.0,
-                        region_grading=(sweep == :graded), region_ring=true) -> manifest
+                        region_grading=(sweep == :graded), region_ring=true,
+                        region_z_grading=false) -> manifest
 
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
 its JSON manifest next to it. `band_mode=:own` (default) builds the structured boundary-layer
@@ -1428,7 +1429,8 @@ default): `region_grading` grades the Gmsh region's plan size from the band's st
 the band tops with the slope `REGION_GRADING_SLOPE` up to `REGION_MESH_SIZE_MAX_UM` (the tensor
 sweep's plan is the recorded family's and cannot be graded); `region_ring` puts the region
 nodes adjacent to the band on the band's outermost stack Z_K instead of their plan-size ladder
-step. Gmsh mode only: `exact_band_thickness=true` passes
+step; `region_z_grading` (decision 276 option (ii)) puts every region node on the geometric
+stack grown from the fabricated steps' faces (`region_z_graded_levels`). Gmsh mode only: `exact_band_thickness=true` passes
 the exact geometric sum as the boundary-layer Thickness (the recorded transmon generator's
 formula; see the header); `band_cap` applies the local band cap rule (`:none`: the rule is only
 recorded; `:partition`: one band per partition, the minimum over its curves; `:curve`: one
@@ -1452,7 +1454,8 @@ function mesh_polygon_window(
     alpha::Float64=DEFAULT_GRADED_ALPHA,
     beta::Float64=DEFAULT_GRADED_BETA,
     region_grading::Bool=(sweep == :graded),
-    region_ring::Bool=true
+    region_ring::Bool=true,
+    region_z_grading::Bool=false
 )
     output = abspath(output)
     sweep in (:tensor, :graded) || error("sweep must be :tensor or :graded")
@@ -1600,6 +1603,7 @@ function mesh_polygon_window(
                 alpha,
                 beta;
                 region_ring=region_ring,
+                region_z_grading=region_z_grading,
                 verbose=verbose
             )
         manifest["graded_sweep"] = graded_record

@@ -92,6 +92,13 @@ const RANGE_COMPARE_UM = 1.0e-12
 # width takes the coarser ladder step.
 const LADDER_LOG2_TOLERANCE = 1.0e-9
 const VOLUME_CLOSURE_TOLERANCE = 1.0e-9
+# Region z-grading near the metal planes (decision 276 option (ii)): from every face of a
+# fabricated step the region stack keeps the farthest level within REGION_Z_FIRST_CELL_WIDTHS x
+# w_K (the first region cell above / below a metal interior is at most that tall), then levels
+# growing geometrically — the next kept level at least REGION_Z_GROWTH x the last kept level's
+# distance to the face beyond it. Both dimensionless.
+const REGION_Z_FIRST_CELL_WIDTHS = 1.0
+const REGION_Z_GROWTH = 1.0
 
 struct GradedStacks
     levels::Vector{Vector{Int}} # stack s = 0..K+J as sorted indices into the z levels
@@ -208,6 +215,61 @@ function graded_stacks(
         ranges[k] = (coarser[lo], coarser[hi])
     end
     return GradedStacks(levels, spacings, rows, ranges)
+end
+
+"""
+    region_z_graded_levels(zs, interfaces, step_faces, width_last, coarsest) -> Vector{Int}
+
+The region stack of decision 276 option (ii): every interface, and from every fabricated step
+outward (down from its lowest face, up from its highest, stopping at the next interface) the
+farthest level within
+REGION_Z_FIRST_CELL_WIDTHS x `width_last` of the face (else the first level beyond it), then
+every level at least REGION_Z_GROWTH x the last kept level's distance to the face beyond the
+last kept level. Must contain the coarsest band stack `coarsest` (Z_K), so the region nodes'
+lists stay nested with the band tops' (refused otherwise).
+"""
+function region_z_graded_levels(
+    zs::Vector{Float64},
+    interfaces::Vector{Float64},
+    step_faces::Vector{NTuple{2, Float64}},
+    width_last::Float64,
+    coarsest::Vector{Int}
+)
+    kept = Set{Int}(i for i in eachindex(zs) if is_interface(zs[i], interfaces))
+    # Outward from every step only (down from its lowest face, up from its highest): the
+    # levels inside a step are the band's business.
+    walks = vcat([[(lo, -1), (hi, 1)] for (lo, hi) in step_faces]...)
+    for (face, direction) in walks
+        start = findfirst(i -> abs(zs[i] - face) <= LEVEL_TOLERANCE_UM, eachindex(zs))
+        start === nothing && error("Step face $face is not a z level")
+        index = start + direction
+        (1 <= index <= length(zs)) || continue
+        is_interface(zs[index], interfaces) && continue
+        # The farthest non-interface level within the first-cell width, else the first level.
+        last = index
+        while 1 <= last + direction <= length(zs) &&
+                  !is_interface(zs[last + direction], interfaces) &&
+                  abs(zs[last + direction] - face) <=
+                  REGION_Z_FIRST_CELL_WIDTHS * width_last + LEVEL_TOLERANCE_UM
+            last += direction
+        end
+        push!(kept, last)
+        index = last + direction
+        while 1 <= index <= length(zs) && !is_interface(zs[index], interfaces)
+            if abs(zs[index] - zs[last]) >=
+               REGION_Z_GROWTH * abs(zs[last] - face) - LEVEL_TOLERANCE_UM
+                push!(kept, index)
+                last = index
+            end
+            index += direction
+        end
+    end
+    levels = sort!(collect(kept))
+    issubset(coarsest, levels) || error(
+        "Graded sweep: the region z-grading drops a level of the band's outermost stack " *
+        "(the region lists would not nest with the band tops'); lower REGION_Z_GROWTH"
+    )
+    return levels
 end
 
 # The innermost active row at level index i (row K beyond every other range).
@@ -652,13 +714,15 @@ end
 
 """
     graded_sweep_elements(spec, plan, topology, stack, radial_um, radial_growth, radial_layers,
-                          alpha, beta; region_ring, verbose) -> (tetrahedra, attributes, classes, record)
+                          alpha, beta; region_ring, region_z_grading, verbose)
+        -> (tetrahedra, attributes, classes, record)
 
 Build the graded cross-section sweep of a plan mesh (one or two planes, bumps) with its own
 structured band: the band cells along the chains' columns (swept (0, k) cells, strip prisms,
 collapse prisms) with the cross-section variant of the planes the chain's edges belong to,
 and the region prisms with hanging nodes (`region_ring`: the region nodes adjacent to the
-band carry Z_K). Node indices are (level - 1) x plan nodes + plan index (the tensor sweep's).
+band carry Z_K; `region_z_grading`: every region node carries the geometric stack of
+`region_z_graded_levels` instead of the plan-size ladder). Node indices are (level - 1) x plan nodes + plan index (the tensor sweep's).
 Every tetrahedron is checked positive and the volume per material against the plan's analytic
 volume (`record["expected_volume_um3"]` is checked again by the caller on the written mesh).
 """
@@ -673,6 +737,7 @@ function graded_sweep_elements(
     alpha::Float64,
     beta::Float64;
     region_ring::Bool=true,
+    region_z_grading::Bool=false,
     verbose::Bool=true
 )
     isempty(plan.chains) &&
@@ -824,10 +889,30 @@ function graded_sweep_elements(
             ring_node[node_row[a] == -1 ? a : b] = true
         end
     end
+    # Option (ii) of decision 276: one geometric region stack from the step faces for every
+    # region node (it contains Z_K, so it is finer than the ring's Z_K and replaces it).
+    z_graded_list = 0
+    if region_z_grading
+        push!(
+            lists,
+            region_z_graded_levels(
+                zs,
+                interfaces,
+                step_faces,
+                width_last,
+                shared.levels[rows + 1]
+            )
+        )
+        z_graded_list = length(lists)
+    end
     region_nodes, ring_nodes = 0, 0
     for p = 1:n_plan
         node_row[p] == -1 || continue
         region_nodes += 1
+        if region_z_grading
+            node_list[p] = z_graded_list
+            continue
+        end
         size = min(node_size[p], REGION_MESH_SIZE_MAX_UM)
         j =
             size > width_last ?
@@ -1178,6 +1263,13 @@ function graded_sweep_elements(
         "region_size_max_um" => REGION_MESH_SIZE_MAX_UM,
         "region_ring" => region_ring,
         "region_ring_plan_nodes" => ring_nodes,
+        "region_z_grading" =>
+            region_z_grading ?
+            Dict{String, Any}(
+                "first_cell_widths" => REGION_Z_FIRST_CELL_WIDTHS,
+                "growth" => REGION_Z_GROWTH,
+                "levels_z_um" => [zs[i] for i in lists[z_graded_list]]
+            ) : false,
         "plan_nodes_by_stack" => nodes_by_list[1:n_stacks],
         "region_plan_nodes" => region_nodes,
         "chains" => length(plan.chains),

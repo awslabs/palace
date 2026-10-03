@@ -8,7 +8,7 @@
 #       [--plan-only] [--band-mode own|gmsh] [--fan-turn-angle-deg A]
 #       [--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none|partition|curve]
 #       [--sweep tensor|graded] [--alpha A] [--beta B] [--region-grading on|off]
-#       [--region-ring on|off]
+#       [--region-ring on|off] [--region-z-grading on|off]
 #
 # Writes OUTPUT.msh2 and OUTPUT.json (the manifest). `--sweep tensor` (default) sweeps every
 # plan triangle through every z level (the recorded reference family); `--sweep graded` (own
@@ -17,7 +17,9 @@
 # ends row k at B h_k beyond the fabricated step; `--region-grading` (graded only, default on)
 # grades the Gmsh region's plan size from the station size t at the band tops up to the region
 # size; `--region-ring` (graded only, default on) puts the region nodes adjacent to the band on
-# the band's outermost z stack. `--plan-only` builds and checks the plan
+# the band's outermost z stack; `--region-z-grading` (graded only, default off) puts every region
+node on the geometric z stack grown from the fabricated steps' faces (decision 276 option
+(ii)). `--plan-only` builds and checks the plan
 # mesh only and prints the manifest (no volume mesh). `--band-mode own` (default) builds the
 # structured boundary-layer band itself with the per-segment, per-side band cap
 # (structured_band.jl); `gmsh` uses Gmsh's BoundaryLayer field as the recorded transmon
@@ -45,6 +47,7 @@ alpha = PolygonWindowMesh.DEFAULT_GRADED_ALPHA
 beta = PolygonWindowMesh.DEFAULT_GRADED_BETA
 region_grading = nothing # nothing: the sweep's default (graded on, tensor off)
 region_ring = true
+region_z_grading = false
 function parse_switch(option, value)
     value in ("on", "off") || error("$option takes on or off, not $value")
     return value == "on"
@@ -83,12 +86,15 @@ let i = 1
         elseif argument == "--region-ring"
             global region_ring = parse_switch(argument, ARGS[i + 1])
             i += 1
+        elseif argument == "--region-z-grading"
+            global region_z_grading = parse_switch(argument, ARGS[i + 1])
+            i += 1
         elseif startswith(argument, "--")
             error(
                 "Unknown option $argument; known: --plan-only --band-mode own|gmsh " *
                 "--fan-turn-angle-deg A --cross-plane-snap-um DELTA --exact-band-thickness " *
                 "--band-cap none|partition|curve --sweep tensor|graded --alpha A --beta B " *
-                "--region-grading on|off --region-ring on|off"
+                "--region-grading on|off --region-ring on|off --region-z-grading on|off"
             )
         else
             push!(positional, argument)
@@ -101,7 +107,7 @@ length(positional) == 4 || error(
     "[--plan-only] [--band-mode own|gmsh] [--fan-turn-angle-deg A] " *
     "[--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none|partition|curve] " *
     "[--sweep tensor|graded] [--alpha A] [--beta B] [--region-grading on|off] " *
-    "[--region-ring on|off]"
+    "[--region-ring on|off] [--region-z-grading on|off]"
 )
 spec = read_polygon_set(positional[1])
 manifest = mesh_polygon_window(
@@ -119,7 +125,8 @@ manifest = mesh_polygon_window(
     alpha=alpha,
     beta=beta,
     region_grading=region_grading === nothing ? sweep == :graded : region_grading,
-    region_ring=region_ring
+    region_ring=region_ring,
+    region_z_grading=region_z_grading
 )
 if plan_only
     JSON.print(stdout, manifest, 2)
