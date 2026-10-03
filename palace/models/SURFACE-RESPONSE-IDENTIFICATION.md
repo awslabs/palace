@@ -1381,8 +1381,10 @@ junctions, endpoints) are unchanged in signature and key: a corner coupon's box 
 about the vertex and any other perimeter within 2R joins a cluster, so the device plan
 clipped to a corner box is the two arms (56 / 56 production corners unchanged, R0 census); a
 vertex feature lying inside a cluster's box on a chain is listed under
-`Context.ChainVertices` for the placement's vertex ownership (rule B4, a follow-up of the
-operator: the S1p 19-edge boxes hold the 4 L2 90-deg corners), the others under
+`Context.ChainVertices` with its distance from the nearest face for the placement's vertex
+ownership (rule B4, a follow-up of the operator: the S1p 19-edge boxes hold the 4 L2 90-deg
+corners; a corner closer than R to a face has an arm partly outside the box, review MINOR-1
+(a), and a vertex inside two boxes appears in both records, MINOR-1 (b)), the others under
 `ForeignVertices`. The manifest records the whole evaluation per feature
 (`Features[].SpatialSupport`: the claims box and the grown box, the growth steps per face, the
 face-rule readings with their threshold-band hits at `KnifeEdgeBandRelative`, the context
@@ -2149,7 +2151,7 @@ matching pass). The new top-level `Identification` object carries the contract:
                                                   "MinClearanceOverR": d | null, "MinCrossingSine": s | null, "MinCrossSectionOverR": w | null,
                                                   "NarrowCrossSections": n, "ThresholdBandRelative": 0.01, "ThresholdBandHits": n},
                                     "Context": {"Pieces": n, "ChainPieces": n, "ForeignPieces": n, "ChainLengthOverR": L, "ForeignLengthOverR": L,
-                                                "ForeignConductors": n, "ChainVertices": [[x, y, "Type"], ...], "ForeignVertices": [...]},
+                                                "ForeignConductors": n, "ChainVertices": [[x, y, "Type", face distance / R], ...], "ForeignVertices": [...]},
                                     "LegacyContract": {"StraightContinuationLengthOverR": L, "FictitiousContinuationLengthOverR": L},
                                     "Truncation": {"Segments": n, "LengthOverR": L}, "Unboxable": null | "reason"}
                                    (SpatialEdgeCluster only; units of R in the feature's frame; the spatial-support contract v3 below),

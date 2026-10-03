@@ -4147,6 +4147,9 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
     CHECK(support["Context"]["ChainPieces"] == 5);
     REQUIRE(support["Context"]["ChainVertices"].size() == 1);
     CHECK(support["Context"]["ChainVertices"][0][2] == "ConvexCorner");
+    // The corner's distance from the nearest face: 2.873 um = 1.436 R from the right face.
+    CHECK_THAT(support["Context"]["ChainVertices"][0][3].get<double>(),
+               WithinAbs((12.872984 - 10.0) / R, 1.0e-5));
     const auto corner = DevicePoint(*cluster, support["Context"]["ChainVertices"][0][0],
                                     support["Context"]["ChainVertices"][0][1], R);
     CHECK_THAT(corner[0], WithinAbs(10.0, 1.0e-5));

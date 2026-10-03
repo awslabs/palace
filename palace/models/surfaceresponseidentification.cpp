@@ -10614,8 +10614,16 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       const bool on_chain =
           std::any_of(chain_ends.begin(), chain_ends.end(),
                       [&](const Point3D &e) { return Distance(e, site.point) <= join; });
+      // With the vertex's distance from the nearest face (units of R): a corner closer
+      // than R to a face has an arm partly outside the box (review MINOR-1 (a); the
+      // placement's vertex-ownership rule reads it).
+      double face_distance = std::numeric_limits<double>::infinity();
+      for (int f = 0; f < 4; f++)
+      {
+        face_distance = std::min(face_distance, std::abs(p[FaceAxis(f)] - FaceLine(f)));
+      }
       (on_chain ? chain_vertices : foreign_vertices)
-          .push_back({Q(p[0]), Q(p[1]), site.type});
+          .push_back({Q(p[0]), Q(p[1]), site.type, Q(face_distance)});
     }
   }
 
@@ -13720,8 +13728,9 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "per feature (LegacyContract: the fictitious island metal of D2 / D3-C) and "
          "summed "
          "under Diagnostics.SpatialSupport; vertex features (corners) inside a box on a "
-         "chain are listed (Context.ChainVertices) for the placement's vertex ownership "
-         "(rule B4); their signatures are unchanged"},
+         "chain are listed (Context.ChainVertices: [x, y, Type, distance from the nearest "
+         "face / R]) for the placement's vertex ownership (rule B4; a corner closer than R "
+         "to a face has an arm partly outside the box); their signatures are unchanged"},
         {"Comparison", "strict less on the quantized grid"}}},
       {"ReferenceProcessNormal", D(reference_process_normal)},
       {"Features", feature_list},
