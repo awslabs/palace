@@ -20,6 +20,9 @@ import numpy as np
 
 from audit_edge_metric_mesh import analyze
 from general_mesh_audit_producer import (KINDS, VARIANT_AUDITS_KIND,
+                                         CONTINUATION_BAND_FEATURE_CLEARANCE_OVER_RADIUS,
+                                         CONTINUATION_BAND_SIDE_OVER_RADIUS,
+                                         _census_coupon_box,
                                          _footprint_boundary_comparison,
                                          _footprint_boundary_distance,
                                          _global_diagonal_bands,
@@ -33,7 +36,8 @@ from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT
                                     LAYER_ADJACENT_BAND_RULE)
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, audit_manifest_evidence, case_gates,
-                                   layer_covered_band, run_manifest, sha256, validate_manifest,
+                                   element_cap_override, layer_covered_band, run_manifest, sha256,
+                                   validate_case_element_cap_override, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
 from mesh_stage_contract import (CANONICAL_STAGE_ORDER, canonical_stage_order,
@@ -1840,6 +1844,83 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             _global_diagonal_bands(mesh, [[[0., 0., 0.], [1., 0., 0.]]], .025,
                                    footprint_segments=[[[0., 0., 0.], [0., 0., 0.]]])
 
+    def test_continuation_boundary_band_is_reported_not_counted(self):
+        """Stage 1 lane L (S1p's 19-edge coupon bd43654a77c6): a 2.78-um line-like band on the SA
+        plane along the TOP continuation side of the coupon box, 1 deg off the x axis, 5.7 um
+        from the nearest metal edge. In open dielectric at the box boundary it cannot bias the
+        coupon: a ContinuationBoundaryBand (every point within 0.25 R of one lateral side, every
+        feature farther than 2R), reported with its geometry, not a GlobalDiagonalBands failure.
+        Moved to within 2R of a metal edge, or 1 R inside the box, it fails as before."""
+        R = 1.9
+        lower, upper = np.array([-12.7, -11.6, -1.95]), np.array([12.9, 12.6, 2.0])
+
+        def band_mesh(center_y, angle=math.radians(1.0), length=2.78, width=0.4):
+            # Three rows of 0.05-um edges (the short scale) 0.2 um apart on the plane z = 0,
+            # centred at (0, center_y): the middle row (interior edges) is one line-like band.
+            columns = int(round(length / .05)) + 1
+            rotation = np.array([[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]])
+            points = []
+            for transverse in (-width / 2, 0., width / 2):
+                for index in range(columns):
+                    xy = rotation @ np.array([index * .05 - length / 2, transverse])
+                    points.append([xy[0], xy[1] + center_y, 0.])
+            triangles = []
+            for row in range(2):
+                for index in range(columns - 1):
+                    first = row * columns + index
+                    last = (row + 1) * columns + index
+                    triangles.extend([[first, first + 1, last + 1], [first, last + 1, last]])
+            return meshio.Mesh(np.asarray(points), [("triangle", np.asarray(triangles))],
+                               cell_data={"gmsh:physical": [np.full(len(triangles), 3000, int)]})
+
+        identity = np.eye(4)
+        box = _census_coupon_box({"CouponBox": {"Lower": lower.tolist(), "Upper": upper.tolist(), "Radius": R}}, identity)
+        self.assertEqual(box[2], R)
+        # The metal edges: a lead at y <= 6.9 (the band at the top is 5.7 um = 3 R away).
+        metal = [[[-7.0, 3.1, 0.], [-7.0, 6.9, 0.]], [[-1.8, 1.3, 0.], [0.8, 1.3, 0.]]]
+        at_top = _global_diagonal_bands(band_mesh(upper[1] - 0.1), metal, .025, coupon_box=box)
+        self.assertEqual(at_top["GlobalDiagonalBands"], 0)
+        self.assertEqual(at_top["ContinuationBoundaryBands"]["Count"], 1)
+        band = at_top["ContinuationBoundaryBands"]["Bands"][0]
+        self.assertEqual(band["Side"], "y-max")
+        self.assertLessEqual(band["MaximumDistanceToSideOverRadius"], CONTINUATION_BAND_SIDE_OVER_RADIUS)
+        self.assertGreaterEqual(band["MinimumFeatureDistanceOverRadius"], CONTINUATION_BAND_FEATURE_CLEARANCE_OVER_RADIUS)
+        self.assertAlmostEqual(band["Span"], 2.78, places=1)
+        self.assertTrue(at_top["LongShortEdgeComponents"][0]["LineLike"])
+        self.assertFalse(at_top["LongShortEdgeComponents"][0]["AlignedWithFeature"])
+        self.assertTrue(at_top["LongShortEdgeComponents"][0]["ContinuationBoundaryBand"])
+        self.assertEqual(at_top["ContinuationBoundaryBands"]["SideOverRadius"], 0.25)
+        self.assertEqual(at_top["ContinuationBoundaryBands"]["FeatureClearanceOverRadius"], 2.0)
+        self.assertEqual(at_top["ContinuationBoundaryBands"]["CouponBox"]["Radius"], R)
+        # The same band with a metal edge within 2R of it: a diagonal over-refinement.
+        near_metal = metal + [[[-3.0, upper[1] - 2.0, 0.], [3.0, upper[1] - 2.0, 0.]]]
+        near = _global_diagonal_bands(band_mesh(upper[1] - 0.1), near_metal, .025, coupon_box=box)
+        self.assertEqual(near["GlobalDiagonalBands"], 1)
+        self.assertEqual(near["ContinuationBoundaryBands"]["Count"], 0)
+        # The same band 1 R inside the box: a diagonal over-refinement.
+        inside = _global_diagonal_bands(band_mesh(upper[1] - R), metal, .025, coupon_box=box)
+        self.assertEqual(inside["GlobalDiagonalBands"], 1)
+        self.assertEqual(inside["ContinuationBoundaryBands"]["Count"], 0)
+        # Without a coupon box (the legacy pipeline) nothing is reclassified.
+        legacy = _global_diagonal_bands(band_mesh(upper[1] - 0.1), metal, .025)
+        self.assertEqual(legacy["GlobalDiagonalBands"], 1)
+        self.assertIsNone(legacy["ContinuationBoundaryBands"]["CouponBox"])
+        # The box frame follows the audit placement: the rotate-z variant maps the rotated
+        # band back onto the same side.
+        angle = 0.63
+        rotation = np.eye(4)
+        rotation[:2, :2] = [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]]
+        rotated_mesh = band_mesh(upper[1] - 0.1)
+        rotated_mesh.points = (np.column_stack((rotated_mesh.points, np.ones(len(rotated_mesh.points)))) @ rotation.T)[:, :3]
+        rotated_metal = [[(rotation @ np.array(p + [1.0]))[:3].tolist() for p in segment] for segment in metal]
+        rotated = _global_diagonal_bands(rotated_mesh, rotated_metal, .025,
+                                         coupon_box=_census_coupon_box({"CouponBox": {"Lower": lower.tolist(), "Upper": upper.tolist(), "Radius": R}}, rotation))
+        self.assertEqual(rotated["GlobalDiagonalBands"], 0)
+        self.assertEqual(rotated["ContinuationBoundaryBands"]["Bands"][0]["Side"], "y-max")
+        with self.assertRaises(ValueError):
+            _census_coupon_box({"CouponBox": {"Lower": upper.tolist(), "Upper": lower.tolist(), "Radius": R}}, identity)
+        self.assertIsNone(_census_coupon_box(None, identity))
+
     def test_diagonal_detector_alignment_within_the_band_resolvability(self):
         # Supervisor decision 36: a band's direction is resolvable only to RMSWidth /
         # Span, so alignment with a feature segment is judged within that ratio (the
@@ -3358,6 +3439,84 @@ class MixedMeshTest(unittest.TestCase):
                    "Tetrahedra": 1659373, "Prisms": 172692, "Pyramids": 13284}
         self.assertEqual([h1_dofs_from_counts(gallery, p) for p in (3, 4, 5)],
                          [10593238, 24844050, 48216650])
+
+
+class ProductionElementCapOverrideTest(unittest.TestCase):
+    """A PRODUCTION case may carry a recorded, approved element cap above the manifest gate
+    (GateOverrides.MaximumElements; supervisor decision of 2026-10-02 for the S1p loop-end
+    coupon, one closed 38-edge feature of ~12-13 M elements against the 6 M gate): it judges
+    that case alone (case_gates, the estimate gate), the manifest gate and every other case
+    are unchanged, and an unlabeled / unapproved / too-small override is refused."""
+
+    def setUp(self):
+        self.path = HERE / "geometry-independence-suite.json"
+        self.production = json.loads(self.path.read_text())
+        self.gate = self.production["Gates"]["MaximumElements"]
+        self.assertEqual(self.gate, 6000000)
+
+    def overridden(self, **changes):
+        manifest = copy.deepcopy(self.production)
+        case = next(case for case in manifest["Cases"] if case["Id"] == "four-edge-9d2cb9bbb3fe")
+        case["GateOverrides"] = element_cap_override(16000000, self.gate, approval="supervisor 2026-10-02 (iv)/(ii)",
+                                                     reason="one closed 38-edge feature; the box cannot be split")
+        for key, value in changes.items():
+            if value is None:
+                case["GateOverrides"]["MaximumElements"].pop(key, None)
+            else:
+                case["GateOverrides"]["MaximumElements"][key] = value
+        return manifest, case
+
+    def test_override_judges_its_case_alone_and_is_recorded(self):
+        manifest, case = self.overridden()
+        validate_manifest(manifest, self.path, check_available_files=False)
+        self.assertEqual(validate_case_element_cap_override(manifest, case), 16000000)
+        self.assertEqual(case_gates(manifest, case)["MaximumElements"], 16000000)
+        self.assertEqual(manifest["Gates"]["MaximumElements"], self.gate)
+        for other in (item for item in manifest["Cases"] if item is not case):
+            self.assertIsNone(validate_case_element_cap_override(manifest, other))
+            self.assertEqual(case_gates(manifest, other)["MaximumElements"], self.gate)
+        block = case["GateOverrides"]["MaximumElements"]
+        self.assertEqual((block["Value"], block["Production"]), (16000000, self.gate))
+        self.assertIn("supervisor", block["Approval"])
+        self.assertIn("cannot be split", block["Reason"])
+        self.assertIn("case_gates", block["Rule"])
+        # The evidence audit of the overridden case accepts 12.8 M elements and refuses 16 M + 1.
+        case_judged = case_gates(manifest, case)
+        resources = {"Resources": {"ExitCode": 0, "Seconds": 1., "PeakRSSGiB": 1., "Elements": 12800000,
+                                   "CanonicalBuild": {"Seconds": 1., "PeakRSSGiB": 1.},
+                                   "PlacementPublication": {"Seconds": 1., "PeakRSSGiB": 1.}}}
+        contract = load_semantic_contract(
+            HERE / case["Source"]["Directory"].split("spatial_coupon/", 1)[1] / "semantic-contract.json")
+        binding = {"CaseId": case["Id"], "Variant": "identity", "Transform": case["Variants"][0]["Transform"],
+                   "TransformSHA256": "x", "InputSHA256": {"Process": "p", "SemanticContract": "s", "MeshRecipe": "r"},
+                   "ToolSHA256": {}, "StageToolSHA256": {}}
+        self.assertNotIn("bounded-resources", audit_manifest_evidence(resources, case_judged, contract, binding))
+        self.assertIn("bounded-resources", audit_manifest_evidence(resources, manifest["Gates"], contract, binding))
+        beyond = copy.deepcopy(resources)
+        beyond["Resources"]["Elements"] = 16000001
+        self.assertIn("bounded-resources", audit_manifest_evidence(beyond, case_judged, contract, binding))
+
+    def test_override_must_be_an_approved_recorded_integer_above_the_gate(self):
+        for changes, message in (
+                ({"Value": 6000000}, "not a recorded, approved integer above the manifest gate"),
+                ({"Value": 16000000.0}, "not a recorded, approved integer"),
+                ({"Production": 4000000}, "not a recorded, approved integer"),
+                ({"Approval": None}, "not a recorded, approved integer"),
+                ({"Approval": "  "}, "not a recorded, approved integer"),
+                ({"Reason": None}, "not a recorded, approved integer")):
+            manifest, case = self.overridden(**changes)
+            with self.assertRaisesRegex(ValueError, message):
+                validate_case_element_cap_override(manifest, case)
+            with self.assertRaisesRegex(ValueError, message):
+                validate_manifest(manifest, self.path, check_available_files=False)
+        manifest, case = self.overridden()
+        case["GateOverrides"]["MaximumSeconds"] = 7200
+        with self.assertRaisesRegex(ValueError, "gate overrides other than MaximumElements"):
+            case_gates(manifest, case)
+        with self.assertRaisesRegex(ValueError, "must be an integer above the manifest gate"):
+            element_cap_override(6000000, self.gate, approval="a", reason="b")
+        with self.assertRaisesRegex(ValueError, "non-empty approval and reason"):
+            element_cap_override(16000000, self.gate, approval="", reason="b")
 
 
 class AchievedAnisotropyDesignGateTest(unittest.TestCase):

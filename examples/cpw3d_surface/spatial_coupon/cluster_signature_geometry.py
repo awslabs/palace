@@ -20,6 +20,13 @@ coupon is therefore built as a pure function of the signature, in the canonical 
   to the coupon box; a portion end at a vertex or at another portion keeps its length (the
   box rule may still extend a long row there: the metal comes from the mask below, so the
   overshoot only pads the box);
+* two claim cuts of the same chain FACING each other (collinear free ends of the same gap
+  direction, conductor, interfaces and law, less than 2R apart - the piece between them is
+  claimed by another feature, e.g. a translational stack piece beyond the cluster's event
+  reach between two claims of the cluster; S1p's 41-edge loop end, stage 1) are an interior
+  cut: the metal edge continues straight across the piece, so the mask gets a bridging chain
+  segment between the two ends and neither end is lengthened; the rows and the model's Edges
+  stay the claimed portions (the piece is not claimed by this model);
 * the plan-view mask is the set of faces of the planar arrangement of the extended chains
   inside the coupon box (the generator's own box, `coupon_bounds`) that lie on the metal
   side of their bounding portions (the gap direction points away from the metal), one facet
@@ -28,14 +35,18 @@ coupon is therefore built as a pure function of the signature, in the canonical 
 
 Every geometric decision is checked and fails closed: chains crossing inside the box, a face
 whose bounding portions disagree on the metal side or the conductor, a face bounded by the
-box alone, a portion end whose interface types match no slot of the record.
+box alone, a portion end whose interface types match no slot of the record. Chain ends that
+coincide within COINCIDENCE_OVER_R (the connection tolerance of end_states: signature
+coordinates are rounded to the 1e-6 R grid, so an arc's chord end and the straight portion
+it meets can differ by one quantum) are snapped to one point before the arrangement is built.
 
 Spatial-support contract v3 (USER decision 281, decisions 282 / 285 / 286): a signature
 carrying ``Box`` + ``Context`` (the identification keyed it with the device plan clipped to the
 box: non-legacy context or a grown box) is built in its OWN frame (the canonical frame, M =
 identity) inside the signature's Box, and its metal is the arrangement of the claims plus the
 Context pieces (the continuation chains, ``Chain`` true, and the foreign edges): no straight
-extension, no fictitious metal (the D2 / D3-C defect). The coupon then carries
+extension, no fictitious metal (the D2 / D3-C defect), no interior-cut bridge (the piece
+between two facing claim cuts is a Context piece claimed by the other feature). The coupon then carries
 ``Geometry.SupportBox`` (the generator's box), ``Geometry.Edges`` = the claims rows plus the
 context rows (``Context`` true, ``Chain``: the mesher's owner lookup and attributes for every
 conductor of the plan) and ``Geometry.ForeignEdges`` (the foreign pieces as 3D segments: the
@@ -59,8 +70,15 @@ import signature_library  # noqa: E402
 
 PROCESS_NORMAL = (0.0, 0.0, 1.0)
 # Signature coordinates live on the 1e-6 R grid (SignatureLengthQuantumOverR); two portion
-# ends or a portion end and a vertex coincide when they agree well within that quantum.
+# ends or a portion end and a vertex coincide when they agree to within a few quanta (an arc
+# end computed from its centre and radius and the rounded straight end it meets differ by up
+# to one quantum). The one tolerance of "the same point" in this module: end_states, the
+# interior-cut bridges and the arrangement's node snapping all use it.
 COINCIDENCE_OVER_R = 1.0e-5
+# An interior cut (two facing claim cuts of one chain) spans less than the cluster's event
+# reach: the piece between two claims of the same cluster is a translational remainder shorter
+# than 2R (a longer piece would carry its own events and belong to the cluster).
+INTERIOR_CUT_REACH_OVER_R = 2.0
 MASK_REGULARIZATION = {"Version": 1, "PhysicalBoundary": "TaperAndRound", "ContinuationBoundary": "Vertical"}
 
 
@@ -169,6 +187,69 @@ def end_states(portions, vertices, radius):
             free.append(not connected)
         states.append(tuple(free))
     return states
+
+
+def interior_bridges(portions, states, radius):
+    """The interior cuts of the chains: pairs of free ends (portion index, end index: 0 = P0,
+    1 = P1) that face each other on one line - the second end lies on the ray leaving the
+    first portion at its free end, within COINCIDENCE_OVER_R x R of the line, less than
+    INTERIOR_CUT_REACH_OVER_R x R away, with the same gap direction, conductor, interfaces and
+    law, and its own ray leading back to the first. Returns (bridges, states): the bridges as
+    (i, end_i, j, end_j) with i < j and the states with the bridged ends connected. Fails
+    closed when a free end faces more than one candidate (no unambiguous continuation)."""
+    tolerance = COINCIDENCE_OVER_R * radius
+    reach = INTERIOR_CUT_REACH_OVER_R * radius
+    free_ends = [(i, end) for i, state in enumerate(states) for end, free in enumerate(state) if free]
+
+    def ray(i, end):
+        portion = portions[i]
+        point = portion["P1"] if end else portion["P0"]
+        direction = (portion["P1"] - portion["P0"]) / portion["Length"]
+        return point, (direction if end else -direction)
+
+    def same_chain(a, b):
+        return (a["Conductor"] == b["Conductor"] and sorted(a["Interfaces"]) == sorted(b["Interfaces"])
+                and a["Law"] == b["Law"] and float(np.linalg.norm(a["Gap"] - b["Gap"])) <= 1.0e-6)
+
+    def facing(i, end_i, j, end_j):
+        if i == j or not same_chain(portions[i], portions[j]):
+            return False
+        point_i, direction_i = ray(i, end_i)
+        point_j, direction_j = ray(j, end_j)
+        offset = point_j - point_i
+        along = float(np.dot(offset, direction_i))
+        if not tolerance < along < reach or float(np.linalg.norm(offset - along * direction_i)) > tolerance:
+            return False
+        return float(np.dot(direction_i, direction_j)) < -1.0 + 1.0e-9   # anti-parallel: j's ray leads back
+
+    partner = {}
+    for i, end_i in free_ends:
+        candidates = [(j, end_j) for j, end_j in free_ends if facing(i, end_i, j, end_j)]
+        if len(candidates) > 1:
+            raise SignatureGeometryError(f"portion {i} end {end_i} faces {len(candidates)} collinear free ends")
+        if candidates:
+            partner[(i, end_i)] = candidates[0]
+    bridges = []
+    states = [list(state) for state in states]
+    for (i, end_i), (j, end_j) in sorted(partner.items()):
+        if partner.get((j, end_j)) != (i, end_i):
+            raise SignatureGeometryError(f"portion {i} end {end_i} faces portion {j} end {end_j} but not the reverse")
+        if i < j:
+            bridges.append((i, end_i, j, end_j))
+            states[i][end_i] = False
+            states[j][end_j] = False
+    return bridges, [tuple(state) for state in states]
+
+
+def bridge_segments(portions, bridges):
+    """The mask's chain segments across the interior cuts (the metal edge continues straight
+    between the two facing ends; the gap direction and conductor of the chain)."""
+    segments = []
+    for i, end_i, j, end_j in bridges:
+        p0 = portions[i]["P1"] if end_i else portions[i]["P0"]
+        p1 = portions[j]["P1"] if end_j else portions[j]["P0"]
+        segments.append({"P0": p0.copy(), "P1": p1.copy(), "Gap": portions[i]["Gap"], "Conductor": portions[i]["Conductor"]})
+    return segments
 
 
 def edge_rows(portions, states, radius, record_interfaces, boundary_condition):
@@ -314,6 +395,24 @@ def extended_chain_segments(portions, states, box, radius):
     return segments
 
 
+def snap_chain_ends(segments, radius):
+    """The segments with every end that coincides with an earlier end within
+    COINCIDENCE_OVER_R x R moved onto it (the connection tolerance of end_states; the
+    arrangement below resolves nodes far more finely and would otherwise see a one-quantum
+    rounding difference as a gap in the chain)."""
+    tolerance = COINCIDENCE_OVER_R * radius
+    representatives = []
+
+    def snapped(point):
+        for representative in representatives:
+            if float(np.linalg.norm(point - representative)) <= tolerance:
+                return representative.copy()
+        representatives.append(np.asarray(point, dtype=float).copy())
+        return representatives[-1].copy()
+
+    return [{**s, "P0": snapped(s["P0"]), "P1": snapped(s["P1"])} for s in segments]
+
+
 def plan_view_faces(segments, box, radius):
     """Faces of the planar arrangement of the chain segments and the box boundary: a list of
     (polygon points ccw, metal flag, conductor). Fails closed on crossing chains, on a face
@@ -321,6 +420,7 @@ def plan_view_faces(segments, box, radius):
     quantum = 1.0e-9 * radius
     tolerance = 1.0e-7 * radius
     (x0, y0), (x1, y1) = box
+    segments = snap_chain_ends(segments, radius)
     # Proper crossings between chain segments are a geometry the signature cannot describe.
     for i in range(len(segments)):
         for j in range(i + 1, len(segments)):
@@ -486,13 +586,20 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
     portions = portions_from_signature(signature, radius)
     vertices = vertex_points(signature, radius)
     states = end_states(portions, vertices, radius)
+    box_from_signature = support_box(signature, radius)
+    bridges = []
+    if box_from_signature is None:
+        # Interior cuts (two facing claim cuts of one chain, stage 1's loop end) are bridged in
+        # the legacy mask only: under contract v3 the piece between the cuts is a Context piece
+        # of the device plan (claimed by the other feature, Chain false) and is drawn from the
+        # signature itself - a straight bridge would duplicate it.
+        bridges, states = interior_bridges(portions, states, radius)
     boundary_condition = record.get("BoundaryCondition", {"Type": "PEC"})
     rows = edge_rows(portions, states, radius, record["Interfaces"], boundary_condition)
     exact_rows = rows
     coupon = {"Topology": "SpatialEdgeCluster",
               "Geometry": {"EdgeCount": len(rows), "Edges": rows, "Signature": signature},
               "Interfaces": record["Interfaces"], "BoundaryCondition": boundary_condition}
-    box_from_signature = support_box(signature, radius)
     if box_from_signature is None:
         # The legacy contract (contract 2, decision 236; every context piece a straight
         # continuation of a claim, no growth): the generator's own frame and box (a rotation
@@ -508,7 +615,7 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
             return rotation @ np.asarray(point)
 
         local_portions = [{**p, "P0": to_local(p["P0"]), "P1": to_local(p["P1"]), "Gap": to_local(p["Gap"])} for p in portions]
-        segments = extended_chain_segments(local_portions, states, box, radius)
+        segments = extended_chain_segments(local_portions, states, box, radius) + bridge_segments(local_portions, bridges)
         conductors = {p["Conductor"] for p in portions}
     else:
         # Contract 3 (decision 282 rules B1-B3, the R1a ruling MAJOR-2): the box frame IS the
@@ -547,4 +654,12 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
     coupon["Geometry"]["PlanViewFacets"] = facets
     coupon["Geometry"]["PlanViewBoundary"] = planner.canonical_plan_view_boundary(facets, radius, 2)
     coupon["Geometry"]["MaskRegularization"] = dict(MASK_REGULARIZATION)
+    if bridges:
+        coupon["Geometry"]["InteriorCuts"] = [
+            {"Portions": [portions[i]["Portion"], portions[j]["Portion"]],
+             "Ends": [[float(v) for v in (portions[i]["P1"] if end_i else portions[i]["P0"])],
+                      [float(v) for v in (portions[j]["P1"] if end_j else portions[j]["P0"])]],
+             "LengthOverR": float(np.linalg.norm((portions[j]["P1"] if end_j else portions[j]["P0"])
+                                                 - (portions[i]["P1"] if end_i else portions[i]["P0"]))) / radius}
+            for i, end_i, j, end_j in bridges]
     return coupon, exact_portion_edges(portions, exact_rows)

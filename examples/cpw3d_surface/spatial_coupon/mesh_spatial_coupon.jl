@@ -2408,10 +2408,25 @@ function loop_orientation(points)
     return sign(area2)
 end
 
+# The plan-view loop offset by `distance` along the metal-side normal of every
+# Physical side (`distance` < 0: away from the metal; Continuation sides, on the
+# box, never move). A straight loop is the miter polygon of its shifted sides; a
+# loop with recognised circular arcs (circular_arc_runs) is offset exactly by
+# curved_offset_loop: concentric arcs, tangent joints, collapsed degenerate arcs. A
+# bridged curved offset (a collapsed arc whose neighbours' offsets do not meet) is
+# never a simple offset: it fails closed here; only collar_loop_points, which
+# routes it to the collar union, accepts it.
 function offset_loop_points(loop, distance, tolerance)
     abs(distance)<=tolerance && return loop.points
-    isempty(circular_arc_runs(loop.points,tolerance)) ||
-        error("Nonzero offsets of curved plan-view boundaries require exact curved-offset support")
+    runs = circular_arc_runs(loop.points, tolerance)
+    if !isempty(runs)
+        offset = curved_offset_loop(loop, distance, runs, tolerance)
+        offset.bridged &&
+            error("Offset $distance of the plan-view loop of conductor $(loop.conductor) on " *
+                  "plane $(loop.plane) bridges a collapsed circular arc whose neighbours' " *
+                  "offsets do not meet: not a simple offset (only the collar union takes it)")
+        return offset.points
+    end
     metal_side=loop_orientation(loop.points)*(loop.hole ? -1.0 : 1.0)
     shifted = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
     for index in eachindex(loop.points)
@@ -2448,6 +2463,257 @@ function offset_loop_points(loop, distance, tolerance)
         push!(points, point)
     end
     return points
+end
+
+# ---------------------------------------------------------------------------
+# Exact offsets of curved plan-view loops (supervisor decision 246).
+#
+# A loop with recognised circular arcs is a sequence of items in loop order: a
+# straight side (one edge) or an arc run (its consecutive chord edges). Under an
+# offset `distance` (< 0: away from the metal) a Physical straight side shifts
+# along its metal-side normal as in offset_loop_points; a Physical arc becomes the
+# concentric arc of radius r - s x distance, s = +1 for a convex-metal arc (the
+# metal inside its circle, the arc bulging away from the metal) and -1 for a
+# concave-metal arc, keeping the run's chord vertices as exact points of the new
+# circle (polygon_wire rebuilds the OCC arc from them, like the mask's own arcs).
+# A concave arc smaller than the offset (r - |distance| <= tolerance) is
+# degenerate: it collapses to the junction of its two neighbours, the exact
+# boundary of the dilated region there. Junctions: two lines meet at their miter;
+# a line and an arc meet where the shifted line meets the new circle (the foot of
+# the centre on the line when they are tangent, else the intersection nearest the
+# arc's shifted end); two arcs must stay tangent (their shifted ends agree). A
+# collapsed arc whose neighbours' offsets do not meet (antiparallel channel walls,
+# an unresolved miter) is bridged by the two shifted ends and the polygon is marked
+# `bridged`: it is never a simple offset and goes to the collar union.
+
+# Tolerance of the arc fit of circular_arc_runs (fitted_arc_run), at radius `r`.
+arc_fit_tolerance(r, tolerance) = max(64tolerance, 2.0e-7 * r)
+
+# A junction whose two items' directions of travel differ by at most this angle
+# (radians) is tangent: the identification's joint noise (CSV rounding of the arc
+# vertices, ~1e-6) never makes a corner of a rounded joint, and a genuine corner
+# turns by far more. Its two shifted ends (apart by |distance| x the angle) snap to
+# the junction point; a larger turn is a corner (convex: a miter kite in the union).
+const JUNCTION_TANGENT_ANGLE = 1.0e-4
+
+perp2d(v) = (-v[2], v[1])
+
+unit2d(v) = (v[1] / hypot(v...), v[2] / hypot(v...))
+
+# Items of the loop in loop order, rotated so that no arc run straddles the end of
+# the sequence: (kind, edges, run) with `edges` the 1-based edge indices (edge i
+# joins points[i] and points[i + 1]) and `run` the index into `runs` (0: a line).
+function loop_edge_items(points, runs)
+    n = length(points)
+    run_of_edge = zeros(Int, n)
+    for (k, run) in enumerate(runs), index in run.edge_indices
+        run_of_edge[index] == 0 ||
+            error("Plan-view boundary edge $index belongs to two circular arcs")
+        run_of_edge[index] = k
+    end
+    first_edge_of_run = Dict(k => first(run.edge_indices) for (k, run) in enumerate(runs))
+    start = findfirst(i -> run_of_edge[i] == 0 || first_edge_of_run[run_of_edge[i]] == i, 1:n)
+    start === nothing && error("Plan-view boundary has no arc start")
+    items = NamedTuple[]
+    index = start
+    for _ in 1:n
+        edge = mod1(index, n)
+        k = run_of_edge[edge]
+        if k == 0
+            push!(items, (kind=:line, edges=[edge], run=0))
+            index += 1
+        else
+            edges = copy(runs[k].edge_indices)
+            edges[1] == edge ||
+                error("Circular arc of the plan-view boundary starts inside another item")
+            push!(items, (kind=:arc, edges=edges, run=k))
+            index += length(edges)
+        end
+        mod1(index, n) == start && break
+    end
+    sum(length(item.edges) for item in items) == n ||
+        error("Plan-view boundary items do not cover the loop once")
+    return items
+end
+
+# The offset geometry of one item (see curved_offset_loop): `start` / `stop` are
+# the item's vertices, `shifted_start` / `shifted_stop` their offsets along the
+# item, `tangent_start` / `tangent_stop` the directions of travel there and, for
+# an arc, `interior` the offset chord vertices between them.
+function offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
+    points = loop.points
+    n = length(points)
+    start = points[item.edges[1]]
+    stop = points[mod1(item.edges[end] + 1, n)]
+    classes = unique(loop.classes[item.edges])
+    length(classes) == 1 || error("A circular arc of the plan-view boundary of conductor " *
+                                   "$(loop.conductor) mixes Physical and Continuation chords")
+    shift = classes[1] == "Physical" ? distance : 0.0
+    if item.kind == :line
+        direction = (stop[1] - start[1], stop[2] - start[2])
+        segment_length = hypot(direction...)
+        segment_length > tolerance ||
+            error("Plan-view boundary contains a zero-length segment")
+        normal = (-metal_side * direction[2] / segment_length,
+                  metal_side * direction[1] / segment_length)
+        offset = (shift * normal[1], shift * normal[2])
+        return (kind=:line, edges=item.edges, start=start, stop=stop,
+                shifted_start=(start[1] + offset[1], start[2] + offset[2]),
+                shifted_stop=(stop[1] + offset[1], stop[2] + offset[2]),
+                direction=direction, tangent_start=direction, tangent_stop=direction,
+                collapsed=false, interior=NTuple{2, Float64}[], shift=offset)
+    end
+    run = runs[item.run]
+    convex_sign = run.orientation * metal_side
+    radius = run.radius - convex_sign * shift
+    scaled(p) = (run.center[1] + radius * (p[1] - run.center[1]) /
+                                 hypot(p[1] - run.center[1], p[2] - run.center[2]),
+                 run.center[2] + radius * (p[2] - run.center[2]) /
+                                 hypot(p[1] - run.center[1], p[2] - run.center[2]))
+    tangent(p) = run.orientation .* perp2d((p[1] - run.center[1], p[2] - run.center[2]))
+    collapsed = radius <= tolerance
+    interior = collapsed ? NTuple{2, Float64}[] :
+               [scaled(points[edge]) for edge in item.edges[2:end]]
+    return (kind=:arc, edges=item.edges, start=start, stop=stop,
+            shifted_start=collapsed ? start : scaled(start),
+            shifted_stop=collapsed ? stop : scaled(stop),
+            center=run.center, original_radius=run.radius, radius=radius,
+            orientation=run.orientation, convex_sign=convex_sign,
+            tangent_start=tangent(start), tangent_stop=tangent(stop),
+            collapsed=collapsed, interior=interior, angle=run.angle)
+end
+
+# Where the shifted line (`point`, `direction`) meets the offset circle of `arc`:
+# the foot of the centre when they are tangent (the arc-fit tolerance), else the
+# intersection nearest `near`; nothing when the line misses the circle.
+function line_circle_junction(point, direction, arc, near, tolerance)
+    u = unit2d(direction)
+    w = (arc.center[1] - point[1], arc.center[2] - point[2])
+    h = cross2d(u, w)
+    along = w[1] * u[1] + w[2] * u[2]
+    foot = (point[1] + along * u[1], point[2] + along * u[2])
+    slack = arc_fit_tolerance(arc.radius, tolerance)
+    abs(h) > arc.radius + slack && return nothing
+    arc.radius - abs(h) <= slack && return foot
+    half = sqrt(arc.radius^2 - h^2)
+    candidates = ((foot[1] + half * u[1], foot[2] + half * u[2]),
+                  (foot[1] - half * u[1], foot[2] - half * u[2]))
+    return argmin(c -> hypot(c[1] - near[1], c[2] - near[2]), candidates)
+end
+
+# The junction point of two consecutive non-collapsed items (nothing when their
+# offsets do not meet).
+function offset_junction(before, after, distance, tolerance)
+    if before.kind == :line && after.kind == :line
+        denominator = cross2d(before.direction, after.direction)
+        abs(denominator) > tolerance * hypot(before.direction...) * hypot(after.direction...) ||
+            return nothing
+        offset = (after.shifted_start[1] - before.shifted_start[1],
+                  after.shifted_start[2] - before.shifted_start[2])
+        coordinate = cross2d(offset, after.direction) / denominator
+        return (before.shifted_start[1] + coordinate * before.direction[1],
+                before.shifted_start[2] + coordinate * before.direction[2])
+    elseif before.kind == :line
+        return line_circle_junction(before.shifted_start, before.direction, after,
+                                    after.shifted_start, tolerance)
+    elseif after.kind == :line
+        return line_circle_junction(after.shifted_start, after.direction, before,
+                                    before.shifted_stop, tolerance)
+    end
+    gap = hypot(before.shifted_stop[1] - after.shifted_start[1],
+                before.shifted_stop[2] - after.shifted_start[2])
+    gap <= arc_fit_tolerance(max(before.radius, after.radius), tolerance) ||
+        error("Two circular arcs of the plan-view boundary meet at a kink (their offsets " *
+              "by $distance differ by $gap): only tangent arc-arc joints are supported")
+    return (0.5 * (before.shifted_stop[1] + after.shifted_start[1]),
+            0.5 * (before.shifted_stop[2] + after.shifted_start[2]))
+end
+
+# The offset polygon of a curved loop: `points` (the miter polygon with exact arc
+# vertices), `bridged` (a collapsed arc's neighbours did not meet: not a simple
+# offset), `items` (offset_item_geometry per item) and `junctions`, one per pair of
+# consecutive non-collapsed items: (before, after) item indices, `vertex` (the
+# loop vertex, or the two vertices of the collapsed arcs between them), `point`
+# (nothing when bridged), `tangent` (the items join within JUNCTION_TANGENT_ANGLE)
+# and `convex` (the metal turns convexly there).
+function curved_offset_loop(loop, distance, runs, tolerance)
+    points = loop.points
+    n = length(points)
+    metal_side = loop_orientation(points) * (loop.hole ? -1.0 : 1.0)
+    if length(runs) == 1 && length(runs[1].edge_indices) == n
+        # A whole circle: concentric, or collapsed (no neighbour to collapse onto).
+        run = runs[1]
+        classes = unique(loop.classes)
+        length(classes) == 1 ||
+            error("A circular plan-view loop mixes Physical and Continuation chords")
+        radius = run.radius - run.orientation * metal_side *
+                              (classes[1] == "Physical" ? distance : 0.0)
+        radius > tolerance ||
+            error("Offset $distance collapses the circular plan-view loop of conductor " *
+                  "$(loop.conductor) on plane $(loop.plane) (radius $(run.radius))")
+        offset = [(run.center[1] + radius * (p[1] - run.center[1]) /
+                                   hypot(p[1] - run.center[1], p[2] - run.center[2]),
+                   run.center[2] + radius * (p[2] - run.center[2]) /
+                                   hypot(p[1] - run.center[1], p[2] - run.center[2]))
+                  for p in points]
+        return (points=offset, bridged=false, items=NamedTuple[], junctions=NamedTuple[],
+                metal_side=metal_side)
+    end
+    items = [offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
+             for item in loop_edge_items(points, runs)]
+    live = [k for k in eachindex(items) if !items[k].collapsed]
+    isempty(live) && error("Offset $distance collapses every arc of the plan-view loop of " *
+                           "conductor $(loop.conductor) on plane $(loop.plane)")
+    offset = NTuple{2, Float64}[]
+    junctions = NamedTuple[]
+    bridged = false
+    for (position, k) in enumerate(live)
+        before = items[k]
+        next = live[mod1(position + 1, length(live))]
+        after = items[next]
+        skipped = Int[]
+        j = mod1(k + 1, length(items))
+        while j != next
+            push!(skipped, j)
+            j = mod1(j + 1, length(items))
+        end
+        collapsed_between = !isempty(skipped)
+        vertices = collapsed_between ? [before.stop, after.start] : [before.stop]
+        point = offset_junction(before, after, distance, tolerance)
+        resolved = point !== nothing && any(
+            hypot(point[1] - v[1], point[2] - v[2]) <= 8.0 * max(abs(distance), tolerance)
+            for v in vertices)
+        if !resolved && !collapsed_between
+            if point === nothing && before.kind == :line && after.kind == :line
+                error("Plan-view taper has a singular boundary vertex at $(before.stop)")
+            elseif point === nothing
+                error("Plan-view taper offset by $distance: the shifted straight side misses " *
+                      "the offset circle of the circular arc it meets at $(before.stop) (a " *
+                      "line-arc kink whose offsets do not meet)")
+            end
+            error("Plan-view taper produces an unresolved miter at $(before.stop)")
+        end
+        turn = metal_side * atan(cross2d(before.tangent_stop, after.tangent_start),
+                                 before.tangent_stop[1] * after.tangent_start[1] +
+                                 before.tangent_stop[2] * after.tangent_start[2])
+        tangent = !collapsed_between && abs(turn) <= JUNCTION_TANGENT_ANGLE
+        convex = !collapsed_between && turn > JUNCTION_TANGENT_ANGLE
+        append!(offset, before.interior)
+        if resolved
+            push!(offset, point)
+        else
+            bridged = true
+            push!(offset, before.shifted_stop)
+            push!(offset, after.shifted_start)
+        end
+        push!(junctions, (before=k, after=next, vertices=vertices,
+                          point=resolved ? point : nothing, tangent=tangent, convex=convex,
+                          collapsed=skipped))
+    end
+    # The cycle [interior_1, J_12, interior_2, ..., interior_m, J_m1] is the offset
+    # polygon in loop order (J_m1 closes onto interior_1).
+    return (points=offset, bridged=bridged, items=items, junctions=junctions,
+            metal_side=metal_side)
 end
 
 # A closed plan-view polygon is simple when no side is degenerate (shorter than
@@ -2522,9 +2788,14 @@ polygon_area2(points) = sum(cross2d(points[i], points[mod1(i + 1, length(points)
 # corner, the kite between the two rectangle ends and the miter point (`miter`
 # is the miter polygon; a right-angle box junction gives a degenerate kite). Every
 # piece is clipped to the coupon box: the region outside the box is never lofted.
+# A loop with circular arcs takes curved_collar_pieces.
 function collar_pieces(loop, distance, miter, lower, upper, tolerance)
     points = loop.points
     n = length(points)
+    runs = circular_arc_runs(points, tolerance)
+    isempty(runs) || return curved_collar_pieces(
+        loop, distance, curved_offset_loop(loop, distance, runs, tolerance), lower, upper,
+        tolerance)
     metal_side = loop_orientation(points) * (loop.hole ? -1.0 : 1.0)
     directions = Vector{NTuple{2, Float64}}(undef, n)
     shifts = Vector{NTuple{2, Float64}}(undef, n)
@@ -2563,6 +2834,74 @@ function collar_pieces(loop, distance, miter, lower, upper, tolerance)
     return clipped
 end
 
+# The pieces whose union is the etch collar of a curved exterior loop (`offset` =
+# curved_offset_loop(loop, distance, ...), `distance` < 0): the loop, one rectangle
+# per shifted straight side, one annular sector per offset arc (between the arc's
+# chord vertices and their concentric offsets: the exact dilation of the arc), one
+# fan (the arc's chord vertices and its centre: the whole sector is within the
+# offset of a collapsed arc) per collapsed arc and the kite of every convex
+# junction whose two shifted ends differ. Neighbouring pieces share their junction
+# point exactly: a continuous (tangent) junction snaps both ends to it, a fan's
+# apex is where its two neighbours' end normals meet (the centre, to the arc fit's
+# noise), so that the union sees collinear shared sides, never a sliver.
+function curved_collar_pieces(loop, distance, offset, lower, upper, tolerance)
+    points = loop.points
+    n = length(points)
+    items = offset.items
+    isempty(items) && error("The collar union of a circular plan-view loop is its concentric offset")
+    start_corner = [item.shifted_start for item in items]
+    stop_corner = [item.shifted_stop for item in items]
+    kites = Vector{NTuple{2, Float64}}[]
+    apex = Dict{Int, NTuple{2, Float64}}()
+    for junction in offset.junctions
+        before = items[junction.before]
+        after = items[junction.after]
+        if junction.point !== nothing && junction.tangent
+            stop_corner[junction.before] = junction.point
+            start_corner[junction.after] = junction.point
+        elseif junction.point !== nothing && junction.convex
+            push!(kites, [junction.vertices[1], before.shifted_stop, junction.point,
+                          after.shifted_start])
+        end
+        if length(junction.collapsed) == 1
+            k = junction.collapsed[1]
+            arc = items[k]
+            u = (before.shifted_stop[1] - before.stop[1], before.shifted_stop[2] - before.stop[2])
+            v = (after.shifted_start[1] - after.start[1], after.shifted_start[2] - after.start[2])
+            denominator = cross2d(u, v)
+            if abs(denominator) > tolerance * hypot(u...) * hypot(v...)
+                w = (arc.stop[1] - arc.start[1], arc.stop[2] - arc.start[2])
+                t = cross2d(w, v) / denominator
+                candidate = (arc.start[1] + t * u[1], arc.start[2] + t * u[2])
+                hypot(candidate[1] - arc.center[1], candidate[2] - arc.center[2]) <=
+                1.0e-3 * arc.original_radius && (apex[k] = candidate)
+            end
+        end
+    end
+    pieces = [[(Float64(p[1]), Float64(p[2])) for p in points]]
+    for (k, item) in enumerate(items)
+        chords = [points[edge] for edge in item.edges[2:end]]
+        if item.kind == :line
+            hypot(item.shift...) > tolerance || continue
+            push!(pieces, [item.start, item.stop, stop_corner[k], start_corner[k]])
+        elseif item.collapsed
+            push!(pieces, vcat([item.start], chords, [item.stop, get(apex, k, item.center)]))
+        else
+            abs(item.radius - item.original_radius) > tolerance || continue
+            push!(pieces, vcat([item.start], chords, [item.stop, stop_corner[k]],
+                               reverse(item.interior), [start_corner[k]]))
+        end
+    end
+    append!(pieces, kites)
+    clipped = Vector{NTuple{2, Float64}}[]
+    for piece in pieces
+        piece = clip_polygon_to_box(dedupe_polygon_points(piece, tolerance), lower, upper, tolerance)
+        length(piece) >= 3 && abs(polygon_area2(piece)) > tolerance^2 || continue
+        push!(clipped, polygon_area2(piece) > 0.0 ? piece : reverse(piece))
+    end
+    return clipped
+end
+
 # Outer boundary of the union of simple polygons: every piece edge is split where
 # any other piece edge meets it (crossings, touching ends and collinear overlaps),
 # a sub-segment is on the union boundary when exactly one of its two sides is
@@ -2570,8 +2909,10 @@ end
 # boundary sub-segments are chained with the union on their left, starting at the
 # lexicographically smallest vertex. Fails closed (ScopeGuard FootprintTopology)
 # when the boundary is not one simple loop: a vertex with two outgoing boundary
-# sub-segments (the region touches itself) or sub-segments left over (holes).
-function polygon_union_boundary(pieces, tolerance)
+# sub-segments (the region touches itself) or sub-segments left over (holes) —
+# unless `island_rule` admits them (collar_island_rule / absorb_collar_islands:
+# the records of the absorbed islands are pushed to `absorbed`).
+function polygon_union_boundary(pieces, tolerance; island_rule=nothing, absorbed=nothing)
     edges = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
     for piece in pieces, k in eachindex(piece)
         push!(edges, (piece[k], piece[mod1(k + 1, length(piece))]))
@@ -2659,10 +3000,150 @@ function polygon_union_boundary(pieces, tolerance)
         current == start && break
         push!(loop, current)
     end
-    all(used) || scope_error("FootprintTopology",
-                             "the collar region encloses $(count(!, used)) boundary sub-segments " *
-                             "of an un-etched island inside a dielectric gap")
+    all(used) || absorb_collar_islands!(absorbed, island_rule, vertices, starts, stops,
+                                        outgoing, used, tolerance)
     return [vertices[i] for i in loop]
+end
+
+# Supervisor decision 246 (B): the 3R collar stands for the real overetch, which
+# removes ALL exposed substrate, so an un-etched region created only by the collar
+# geometry is an artefact. An un-etched region bounded entirely by collar
+# boundaries (not touching the box face) whose every point lies within
+# COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS x Radius beyond the collar is absorbed into
+# the etched collar and recorded (count, area, maximum excess); a larger island, or
+# one touching the box face, fails closed as before (ScopeGuard FootprintTopology).
+const COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS = 0.05
+
+# The island rule of a collar union: the coupon box, the metal boundary primitives
+# of the loop (physical_segments at zero offset: exact arcs and lines), the collar
+# width and the admitted excess.
+function collar_island_rule(loop, distance, box, radius, tolerance)
+    return (lower=box[1], upper=box[2], primitives=physical_segments([loop], 0.0, tolerance),
+            collar=abs(distance), cap=COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS * radius)
+end
+
+# Distance from `point` to the metal boundary described by `primitives`.
+metal_distance(point, primitives, tolerance) =
+    minimum(point_primitive_distance(point, primitive, tolerance) for primitive in primitives)
+
+# Half the smallest width of the island polygon over its edge normals: an upper
+# bound of its inradius, hence of the excess of any of its points beyond the
+# CONSTRUCTED collar boundary (every boundary point is on that boundary, at the
+# collar distance from the metal along the rectangles and arcs but farther along a
+# convex-corner miter kite, and the metal distance is 1-Lipschitz). The exact metal
+# distance is measured by island_maximum_excess; the gate needs both within the cap.
+function island_excess_bound(points)
+    n = length(points)
+    bound = Inf
+    for i in 1:n
+        a = points[i]
+        b = points[mod1(i + 1, n)]
+        normal = perp2d((b[1] - a[1], b[2] - a[2]))
+        hypot(normal...) > 0.0 || continue
+        normal = unit2d(normal)
+        projections = [p[1] * normal[1] + p[2] * normal[2] for p in points]
+        bound = min(bound, 0.5 * (maximum(projections) - minimum(projections)))
+    end
+    return bound
+end
+
+# The largest excess of an island point beyond the collar found deterministically:
+# the best of the island's vertices and of a 32 x 32 grid over its bounding box,
+# refined by a pattern search (8 directions, steps from a quarter of the island's
+# extent down to 1e-6 of the collar) inside the island. The rigorous bound is
+# island_excess_bound; this value is the recorded estimate.
+function island_maximum_excess(points, rule, tolerance)
+    excess(p) = metal_distance(p, rule.primitives, tolerance) - rule.collar
+    inside(p) = point_in_polygon(p, points, tolerance)
+    lower = (minimum(p[1] for p in points), minimum(p[2] for p in points))
+    upper = (maximum(p[1] for p in points), maximum(p[2] for p in points))
+    best, best_point = -Inf, points[1]
+    candidates = vcat(points, [(lower[1] + (i + 0.5) / 32 * (upper[1] - lower[1]),
+                                lower[2] + (j + 0.5) / 32 * (upper[2] - lower[2]))
+                               for i in 0:31 for j in 0:31])
+    for candidate in candidates
+        inside(candidate) || continue
+        value = excess(candidate)
+        if value > best
+            best, best_point = value, candidate
+        end
+    end
+    step = 0.25 * max(upper[1] - lower[1], upper[2] - lower[2])
+    directions = [(cos(k * pi / 4), sin(k * pi / 4)) for k in 0:7]
+    while step > 1.0e-6 * rule.collar
+        improved = true
+        while improved
+            improved = false
+            for direction in directions
+                candidate = (best_point[1] + step * direction[1], best_point[2] + step * direction[2])
+                inside(candidate) || continue
+                value = excess(candidate)
+                if value > best
+                    best, best_point, improved = value, candidate, true
+                end
+            end
+        end
+        step *= 0.5
+    end
+    return best, best_point
+end
+
+# The boundary sub-segments left over by the outer loop of polygon_union_boundary
+# are the boundaries of un-etched islands. Each is chained (every vertex has one
+# outgoing and one incoming sub-segment), judged by the island rule and recorded;
+# any island touching the box face or exceeding the admitted excess fails closed.
+function absorb_collar_islands!(absorbed, rule, vertices, starts, stops, outgoing, used,
+                                tolerance)
+    rule === nothing &&
+        scope_error("FootprintTopology",
+                    "the collar region encloses $(count(!, used)) boundary sub-segments " *
+                    "of an un-etched island inside a dielectric gap")
+    islands = Vector{NTuple{2, Float64}}[]
+    while !all(used)
+        start = starts[findfirst(!, used)]
+        island = [vertices[start]]
+        current = start
+        while true
+            k = outgoing[current][1]
+            used[k] && error("Collar island boundary revisits $(vertices[current])")
+            used[k] = true
+            current = stops[k]
+            current == start && break
+            push!(island, vertices[current])
+        end
+        push!(islands, island)
+    end
+    on_box(p) = any(abs(p[d] - rule.lower[d]) <= tolerance || abs(p[d] - rule.upper[d]) <= tolerance
+                    for d in 1:2)
+    for island in islands
+        any(on_box, island) &&
+            scope_error("FootprintTopology",
+                        "the collar region leaves an un-etched region of $(length(island)) " *
+                        "boundary sub-segments touching the box face (the island rule " *
+                        "applies inside the box only)")
+        bound = island_excess_bound(island)
+        excess, at = island_maximum_excess(island, rule, tolerance)
+        # The bound measures beyond the CONSTRUCTED collar boundary (which carries
+        # the convex-corner miter kites), the measurement the exact metal distance:
+        # an island bounded by a kite edge can exceed the cap by measurement while
+        # its bound passes. Both must pass; they fail closed when they disagree.
+        bound <= rule.cap && excess <= rule.cap ||
+            scope_error("FootprintTopology",
+                        "the collar region encloses an un-etched island of " *
+                        "$(length(island)) boundary sub-segments near $at whose excess beyond " *
+                        "the collar $(rule.collar) is bounded by $bound (half its smallest " *
+                        "width) and measured $excess (exact metal distance), above the " *
+                        "admitted $(rule.cap)" *
+                        (excess > bound ? " (the measurement exceeds the bound: the island " *
+                                          "is bounded by a convex-corner miter kite, beyond " *
+                                          "the round offset)" : ""))
+        absorbed === nothing || push!(absorbed, Dict{String, Any}(
+            "Vertices" => length(island), "Area" => 0.5 * abs(polygon_area2(island)),
+            "Points" => [collect(p) for p in island],
+            "MaximumExcess" => excess, "MaximumExcessPoint" => collect(at),
+            "MaximumExcessBound" => bound, "ExcessCap" => rule.cap, "Collar" => rule.collar))
+    end
+    return absorbed
 end
 
 # The plan-view polygon of an exterior loop offset by `distance` for a loft: the
@@ -2677,15 +3158,25 @@ end
 # boundary is traced (construction "CollarUnion"); the two constructions describe
 # the same region wherever the miter polygon is simple. Inward offsets
 # (`distance` > 0, sloped-sidewall pullbacks) have no union form and fail closed.
-function collar_loop_points(loop, distance, box, tolerance)
-    miter = offset_loop_points(loop, distance, tolerance)
-    polygon_is_simple(miter, tolerance) && return miter, "MiterOffset"
+# A curved loop (circular_arc_runs) is offset exactly (curved_offset_loop /
+# curved_collar_pieces); its bridged offset polygon is never a simple offset. The
+# union's un-etched islands fail closed unless `island_rule` (collar_island_rule)
+# admits them; `absorbed` collects their records.
+function collar_loop_points(loop, distance, box, tolerance; island_rule=nothing,
+                            absorbed=nothing)
+    runs = abs(distance) <= tolerance ? NamedTuple[] : circular_arc_runs(loop.points, tolerance)
+    offset = isempty(runs) ? nothing : curved_offset_loop(loop, distance, runs, tolerance)
+    miter = offset === nothing ? offset_loop_points(loop, distance, tolerance) : offset.points
+    (offset === nothing || !offset.bridged) && polygon_is_simple(miter, tolerance) &&
+        return miter, "MiterOffset"
     distance < 0.0 ||
         error("Inward offset $distance of the plan-view loop of conductor $(loop.conductor) " *
               "on plane $(loop.plane) self-intersects")
     box === nothing && error("The collar union of a self-intersecting offset needs the coupon box")
-    pieces = collar_pieces(loop, distance, miter, box[1], box[2], tolerance)
-    return polygon_union_boundary(pieces, tolerance), "CollarUnion"
+    pieces = offset === nothing ? collar_pieces(loop, distance, miter, box[1], box[2], tolerance) :
+             curved_collar_pieces(loop, distance, offset, box[1], box[2], tolerance)
+    return polygon_union_boundary(pieces, tolerance; island_rule=island_rule,
+                                  absorbed=absorbed), "CollarUnion"
 end
 
 # Two consecutive etch-footprint edges are one edge when every vertex between
@@ -2778,18 +3269,24 @@ end
 
 # `construction` names how the polygon was built before simplification:
 # "MiterOffset" / "CollarUnion" (collar_loop_points), "HoleOffset"
-# (offset_hole_points) or "EdgeStrip" (loft_strip).
-function footprint_record(conductor, plane, hole, points, record, construction)
-    return Dict{String, Any}(
+# (offset_hole_points) or "EdgeStrip" (loft_strip); a CollarUnion polygon records
+# the un-etched islands absorbed by the island rule (absorb_collar_islands!).
+function footprint_record(conductor, plane, hole, points, record, construction;
+                          absorbed_islands=nothing)
+    footprint = Dict{String, Any}(
         "Conductor" => conductor, "Plane" => plane, "Hole" => hole,
         "Points" => [collect(point) for point in points], "Simplification" => record,
         "Construction" => construction)
+    construction == "CollarUnion" &&
+        (footprint["AbsorbedIslands"] = absorbed_islands === nothing ? Dict{String, Any}[] :
+                                        absorbed_islands)
+    return footprint
 end
 
 # Simplify the bottom and top polygons of a footprint loft; when `footprint` is a
 # vector, the loft must be prismatic (one polygon) and the polygon is recorded.
 function simplified_loft_polygons(bottom_points, top_points, footprint, conductor, plane, hole,
-                                  construction)
+                                  construction; absorbed_islands=nothing)
     bottom_points, bottom_record =
         simplify_footprint_polygon(bottom_points, FOOTPRINT_COLLINEAR_TOLERANCE)
     top_points, _ = simplify_footprint_polygon(top_points, FOOTPRINT_COLLINEAR_TOLERANCE)
@@ -2797,7 +3294,7 @@ function simplified_loft_polygons(bottom_points, top_points, footprint, conducto
         bottom_points == top_points ||
             error("Footprint recording requires a prismatic (vertical-wall) loft")
         push!(footprint, footprint_record(conductor, plane, hole, bottom_points, bottom_record,
-                                          construction))
+                                          construction; absorbed_islands=absorbed_islands))
     end
     return bottom_points, top_points
 end
@@ -2811,10 +3308,16 @@ function loft_polygon(occ, bottom_points, top_points, z0, z1)
     return volumes
 end
 
+# A hole offset by `distance`: grown (`distance` >= 0, the metal side pulled back)
+# by offset_loop_points; shrunk (`distance` < 0: the collar of its metal sides)
+# by clipping the hole polygon to the inward offset of every Physical side. A
+# straight side clips by its shifted half-plane; a circular arc (convex, like the
+# hole) by the chords of its concentric offset arc of radius r - |distance| (its
+# chord vertices are exact points of that circle, which polygon_wire rebuilds), and
+# an arc smaller than the offset clips nothing: its neighbours' half-planes imply
+# every tangent half-plane of a collapsed arc. The result may be empty.
 function offset_hole_points(loop,distance,tolerance)
     distance>=-tolerance && return offset_loop_points(loop,distance,tolerance)
-    isempty(circular_arc_runs(loop.points,tolerance)) ||
-        error("Shrinking a curved fabrication hole requires exact curved-offset support")
     points=copy(loop.points)
     orientation=loop_orientation(points)
     # Convex hole erosion is an intersection of inward-offset half-planes. It
@@ -2825,13 +3328,38 @@ function offset_hole_points(loop,distance,tolerance)
         orientation*cross2d((b[1]-a[1],b[2]-a[2]),(c[1]-b[1],c[2]-b[2]))>=-tolerance ||
             error("Shrinking a nonconvex fabrication hole requires topology-aware offset support")
     end
-    clipped=copy(points)
+    runs=circular_arc_runs(points,tolerance)
+    sides=Tuple{NTuple{2,Float64},NTuple{2,Float64},Float64}[]
+    arc_edges=falses(length(points))
+    for run in runs
+        classes=unique(loop.classes[run.edge_indices])
+        length(classes)==1 ||
+            error("A circular arc of the fabrication hole of conductor $(loop.conductor) mixes " *
+                  "Physical and Continuation chords")
+        arc_edges[run.edge_indices].=true
+        classes[1]=="Physical" || continue
+        radius=run.radius+run.orientation*orientation*distance
+        if radius<=tolerance
+            # A collapsed whole-circle hole vanishes; a collapsed arc is implied by its
+            # neighbours' half-planes.
+            length(run.edge_indices)==length(points) && return NTuple{2,Float64}[]
+            continue
+        end
+        scaled(p)=(run.center[1]+radius*(p[1]-run.center[1])/hypot(p[1]-run.center[1],p[2]-run.center[2]),
+                   run.center[2]+radius*(p[2]-run.center[2])/hypot(p[1]-run.center[1],p[2]-run.center[2]))
+        for (first,second) in zip(run.point_indices[1:(end-1)],run.point_indices[2:end])
+            push!(sides,(scaled(points[first]),scaled(points[second]),0.0))
+        end
+    end
     for i in eachindex(points)
-        loop.classes[i]=="Physical" || continue
-        a,b=points[i],points[mod1(i+1,length(points))]
+        loop.classes[i]=="Physical" && !arc_edges[i] || continue
+        push!(sides,(points[i],points[mod1(i+1,length(points))],distance))
+    end
+    clipped=copy(points)
+    for (a,b,shift) in sides
         direction=(b[1]-a[1],b[2]-a[2]);edge_length=hypot(direction...)
         normal=(-orientation*direction[2]/edge_length,orientation*direction[1]/edge_length)
-        signed(p)=normal[1]*(p[1]-a[1])+normal[2]*(p[2]-a[2])+distance
+        signed(p)=normal[1]*(p[1]-a[1])+normal[2]*(p[2]-a[2])+shift
         result=NTuple{2,Float64}[]
         isempty(clipped) && return result
         for j in eachindex(clipped)
@@ -2860,9 +3388,10 @@ end
 # `simplify` merges collinear polygon edges (etch footprints: one CAD face per
 # genuine facet); `footprint` additionally records every simplified polygon; `box`
 # = (lower, upper) is the coupon box the collar union of a self-intersecting
-# exterior offset is clipped to (collar_loop_points).
+# exterior offset is clipped to (collar_loop_points); `island_radius` (the coupon
+# Radius) enables the collar island rule (collar_island_rule) of that union.
 function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolerance;
-                           simplify=false, footprint=nothing, box=nothing)
+                           simplify=false, footprint=nothing, box=nothing, island_radius=nothing)
     footprint === nothing || simplify || error("Footprint recording requires simplification")
     outers = [loop for loop in loops if !loop.hole]
     holes = [loop for loop in loops if loop.hole]
@@ -2870,16 +3399,23 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
     result = Tuple{Int32, Int32}[]
     hole_owners=zeros(Int,length(holes))
     for outer in outers
+        island_rule(offset) = island_radius === nothing || box === nothing ? nothing :
+                              collar_island_rule(outer, offset, box, island_radius, tolerance)
+        bottom_islands = Dict{String, Any}[]
+        top_islands = Dict{String, Any}[]
         bottom_points, bottom_construction =
-            collar_loop_points(outer, bottom_offset, box, tolerance)
-        top_points, top_construction = collar_loop_points(outer, top_offset, box, tolerance)
+            collar_loop_points(outer, bottom_offset, box, tolerance;
+                               island_rule=island_rule(bottom_offset), absorbed=bottom_islands)
+        top_points, top_construction =
+            collar_loop_points(outer, top_offset, box, tolerance;
+                               island_rule=island_rule(top_offset), absorbed=top_islands)
         if simplify
             bottom_construction == top_construction ||
                 error("Footprint loft mixes the $bottom_construction and $top_construction " *
                       "constructions")
             bottom_points, top_points = simplified_loft_polygons(
                 bottom_points, top_points, footprint, outer.conductor, z0, false,
-                bottom_construction)
+                bottom_construction; absorbed_islands=bottom_islands)
         end
         volume = loft_polygon(occ, bottom_points, top_points, z0, z1)
         cutters = Tuple{Int32, Int32}[]
@@ -2927,7 +3463,8 @@ function boundary_strips(occ, loops, radius, z0, z1, pullback, tolerance; footpr
         conductor_loops = [loop for loop in loops if loop.conductor == conductor]
         append!(expanded_volumes,
                 loft_mask_offsets(occ, conductor_loops, z0, z1, -width, -width, tolerance;
-                                  simplify=true, footprint=footprint, box=box))
+                                  simplify=true, footprint=footprint, box=box,
+                                  island_radius=radius))
         append!(retained_volumes,
                 loft_mask_offsets(occ, conductor_loops, z0, z1, 0.0, -pullback, tolerance))
     end
@@ -4005,7 +4542,9 @@ const RECIPE_SCOPE_GUARDS = [
     ("FootprintTopology", "build",
      "a producer-default etch collar whose region is not one simple polygon (Physical sides " *
      "facing each other across a dielectric gap narrower than twice the collar enclose an " *
-     "un-etched island, or the region touches itself): the collar loft takes one simple polygon")]
+     "un-etched island larger than the island rule admits (COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS " *
+     "x Radius beyond the collar) or touching the box face, or the region touches itself): " *
+     "the collar loft takes one simple polygon")]
 const RECIPE_SCOPE_RULE =
     "the prism-tube recipe builds every input whose classes are all in SupportedClasses; " *
     "an input exhibiting a class in GuardedClasses fails closed at the guard whose " *
@@ -6234,7 +6773,45 @@ function generate_spatial_coupon(;
                                           "is replaced by the outer boundary of the union of " *
                                           "the loop, the per-side collar rectangles and the " *
                                           "convex-corner miter kites, clipped to the coupon " *
-                                          "box (CollarUnion)",
+                                          "box (CollarUnion); circular arcs of the loop are " *
+                                          "offset exactly as concentric arcs (r + collar for a " *
+                                          "convex-metal arc, r - collar for a concave one, " *
+                                          "collapsed onto its neighbours' junction when " *
+                                          "r <= collar), tangent joints staying continuous " *
+                                          "(a junction turning by at most " *
+                                          "$JUNCTION_TANGENT_ANGLE rad snaps its two shifted " *
+                                          "ends, at most collar x that angle apart, to one " *
+                                          "point: the one sub-nanometre tolerance of the exact " *
+                                          "offsets), and the union " *
+                                          "takes an annular sector per arc; where an offset " *
+                                          "arc crosses another collar front on the union " *
+                                          "boundary the crossing vertex is the chord-polyline " *
+                                          "intersection (within the chord sagitta of the " *
+                                          "exact arc) and the arc run is interrupted there",
+                    "IslandRule" => "an un-etched region bounded entirely by collar " *
+                                    "boundaries (not touching the box face) whose every " *
+                                    "point lies within IslandExcessCap beyond the collar is " *
+                                    "absorbed into the etched collar and recorded " *
+                                    "(AbsorbedIslands of its polygon: area, maximum excess " *
+                                    "found and its bound); the bound (half the island's " *
+                                    "smallest width) measures beyond the constructed collar " *
+                                    "boundary, kites included, the maximum excess found " *
+                                    "measures the exact metal distance, and both must stay " *
+                                    "within the cap; a larger island fails closed " *
+                                    "(ScopeGuard FootprintTopology)",
+                    "IslandExcessCapOverRadius" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS,
+                    "IslandExcessCap" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS * radius,
+                    "AbsorbedIslands" => sum(Int[length(get(polygon, "AbsorbedIslands", []))
+                                                for polygon in footprint_polygons]),
+                    "AbsorbedIslandArea" => sum(Float64[island["Area"]
+                                                        for polygon in footprint_polygons
+                                                        for island in get(polygon, "AbsorbedIslands", [])]),
+                    "AbsorbedIslandMaximumExcess" => maximum(
+                        Float64[island["MaximumExcess"] for polygon in footprint_polygons
+                                for island in get(polygon, "AbsorbedIslands", [])]; init=0.0),
+                    "AbsorbedIslandMaximumExcessBound" => maximum(
+                        Float64[island["MaximumExcessBound"] for polygon in footprint_polygons
+                                for island in get(polygon, "AbsorbedIslands", [])]; init=0.0),
                     "CollarUnionPolygons" => count(polygon["Construction"] == "CollarUnion"
                                                    for polygon in footprint_polygons)),
                 "FootprintPolygons" => footprint_polygons,

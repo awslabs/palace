@@ -186,8 +186,70 @@ def _planar_diameter(points, normal):
     return float(np.sqrt(((hull[:, None, :] - hull[None, :, :]) ** 2).sum(axis=2)).max())
 
 
+# A line-like band whose every point lies within this distance (x Radius) of ONE lateral
+# (continuation) side of the coupon box ...
+CONTINUATION_BAND_SIDE_OVER_RADIUS = 0.25
+# ... and farther than this distance (x Radius) from every feature (signature / metal edge,
+# footprint, junction, trace-basis edge) is a ContinuationBoundaryBand: a Gmsh surface-mesh
+# artefact in open dielectric at the box boundary, reported, never a diagonal
+# over-refinement failure (stage 1 lane L: S1p's 19-edge coupon bd43654a77c6, a 2.78-um band
+# on the SA plane at the box top, 5.7 um from the nearest metal; the gate's purpose - spurious
+# refinement lines near the trace basis / the features - is kept).
+CONTINUATION_BAND_FEATURE_CLEARANCE_OVER_RADIUS = 2.0
+CONTINUATION_BAND_RULE = (
+    "a line-like band is a ContinuationBoundaryBand (reported, not a GlobalDiagonalBands "
+    "failure) iff every band point lies within CONTINUATION_BAND_SIDE_OVER_RADIUS x Radius of "
+    "one lateral (continuation) side of the coupon box (in the box's own frame) AND no signature "
+    "/ footprint / junction segment or trace-basis edge lies within "
+    "CONTINUATION_BAND_FEATURE_CLEARANCE_OVER_RADIUS x Radius of any band point; needs the "
+    "coupon box (Gmsh-only pipeline census CouponBox: Lower / Upper / Radius)")
+
+
+def _point_segment_distances(points, segments):
+    """Minimum distance from each point to the nearest of the segments (empty: inf)."""
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    segments = np.asarray(segments, dtype=float).reshape(-1, 2, 3)
+    if not len(segments):
+        return np.full(len(points), np.inf)
+    best = np.full(len(points), np.inf)
+    for segment in segments:
+        vector = segment[1] - segment[0]
+        length2 = float(vector @ vector)
+        delta = points - segment[0]
+        parameter = np.clip((delta @ vector) / length2, 0.0, 1.0) if length2 > 0 else np.zeros(len(points))
+        best = np.minimum(best, np.linalg.norm(delta - parameter[:, None] * vector, axis=1))
+    return best
+
+
+def _continuation_boundary_band(points, coupon_box, feature_segments):
+    """CONTINUATION_BAND_RULE for one line-like band given its vertices (mesh frame):
+    None when the band is not at a continuation side far from every feature, else the
+    record (side, largest distance to the side, smallest feature distance). `coupon_box` =
+    (lower, upper, radius, inverse) with the box bounds in its own frame and the 4 x 4
+    matrix mapping mesh-frame points back into that frame."""
+    if coupon_box is None:
+        return None
+    lower, upper, radius, inverse = coupon_box
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    canonical = (np.column_stack((points, np.ones(len(points)))) @ np.asarray(inverse).T)[:, :3]
+    side_reach = CONTINUATION_BAND_SIDE_OVER_RADIUS * radius
+    sides = (("x-min", canonical[:, 0] - lower[0]), ("x-max", upper[0] - canonical[:, 0]),
+             ("y-min", canonical[:, 1] - lower[1]), ("y-max", upper[1] - canonical[:, 1]))
+    candidates = [(float(np.max(np.abs(distance))), name) for name, distance in sides
+                  if np.all(np.abs(distance) <= side_reach)]
+    if not candidates:
+        return None
+    side_distance, side = min(candidates)
+    clearance = float(np.min(_point_segment_distances(points, feature_segments)))
+    if clearance < CONTINUATION_BAND_FEATURE_CLEARANCE_OVER_RADIUS * radius:
+        return None
+    return {"Side": side, "MaximumDistanceToSide": side_distance,
+            "MaximumDistanceToSideOverRadius": side_distance / radius,
+            "MinimumFeatureDistance": clearance, "MinimumFeatureDistanceOverRadius": clearance / radius}
+
+
 def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segments=(),
-                           junction_segments=(), trace_basis_edges=()):
+                           junction_segments=(), trace_basis_edges=(), coupon_box=None):
     """Find long, narrow short-edge bands on one planar labeled support.
 
     A connected set spanning several orthogonal supports is not a geometric
@@ -210,7 +272,10 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     the imposed Dirichlet data along the whole sliver (supervisor decision 21);
     such bands are reported separately so the arbitrary-diagonal guard stays
     visible.  A band aligned with any feature is a feature band; only a band
-    aligned with none counts as a diagonal over-refinement.
+    aligned with none counts as a diagonal over-refinement - unless it is a
+    ContinuationBoundaryBand (CONTINUATION_BAND_RULE: at one lateral side of the
+    coupon box `coupon_box` = (lower, upper, radius, inverse transform) and farther
+    than 2R from every feature; reported under ContinuationBoundaryBands).
     """
     triangles, labels = blocks(mesh, "triangle")
     xyz = mesh.points[triangles]
@@ -249,6 +314,9 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     basis_edges = np.asarray(trace_basis_edges, dtype=float).reshape(-1, 2, 3)
     bands, components = 0, []
     basis_bands = {"Count": 0, "TotalSpan": 0.0, "MaximumRMSWidth": 0.0}
+    continuation_bands = []
+    all_features = np.concatenate([array for array in (segments, footprint, junction, basis_edges)
+                                   if len(array)]) if any(len(array) for array in (segments, footprint, junction, basis_edges)) else np.zeros((0, 2, 3))
     aligned_counts = {"Signature": 0, "Footprint": 0, "Junction": 0, "TraceBasis": 0}
     for patch_id, short in short_by_patch.items():
         adjacency = {}
@@ -291,7 +359,10 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                 direction, (points[first], points[last]), basis_edges, 2.0 * threshold,
                 resolvability, width)
             feature_aligned = aligned or footprint_aligned or junction_aligned or basis_aligned
-            bands += int(line_like and not feature_aligned)
+            continuation = None
+            if line_like and not feature_aligned:
+                continuation = _continuation_boundary_band(points, coupon_box, all_features)
+            bands += int(line_like and not feature_aligned and continuation is None)
             if line_like:
                 for name, flag in (("Signature", aligned), ("Footprint", footprint_aligned),
                                    ("Junction", junction_aligned), ("TraceBasis", basis_aligned)):
@@ -315,7 +386,13 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                 "AlignedWithJunctionSegment": junction_aligned,
                 "OnTraceBasisEdge": basis_aligned,
                 "AlignedWithFeature": feature_aligned,
+                "ContinuationBoundaryBand": continuation is not None,
                 "Vertices": len(component)})
+            if continuation is not None:
+                continuation_bands.append({"Attribute": int(labels[owner]), "Plane": planes[patch_id].tolist(),
+                                           "Endpoints": [points[first].tolist(), points[last].tolist()],
+                                           "Span": span, "RMSWidth": width, "Vertices": len(component),
+                                           **continuation})
     return {"GlobalDiagonalBands": bands,
             "ShortInternalEdges": sum(map(len, short_by_patch.values())),
             "MedianSurfaceEdgeLength": median, "ShortEdgeThreshold": threshold,
@@ -336,6 +413,14 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                                 "Alignment": ALIGNMENT_RULE, "TraceBasisEdge": BASIS_EDGE_RULE},
             "LineLikeBandsAlignedWith": aligned_counts,
             "TraceBasisEdgeBands": basis_bands,
+            "ContinuationBoundaryBands": {
+                "Count": len(continuation_bands), "Bands": continuation_bands,
+                "SideOverRadius": CONTINUATION_BAND_SIDE_OVER_RADIUS,
+                "FeatureClearanceOverRadius": CONTINUATION_BAND_FEATURE_CLEARANCE_OVER_RADIUS,
+                "CouponBox": (None if coupon_box is None else
+                              {"Lower": [float(v) for v in coupon_box[0]], "Upper": [float(v) for v in coupon_box[1]],
+                               "Radius": float(coupon_box[2])}),
+                "Rule": CONTINUATION_BAND_RULE},
             "LongShortEdgeComponents": components}
 
 
@@ -1003,6 +1088,21 @@ def _census_feature_segments(census_path):
     return census, footprint, provenance, junction, basis, basis_provenance
 
 
+def _census_coupon_box(census, matrix):
+    """The Gmsh-only census's CouponBox (Lower / Upper / Radius in the build frame) with
+    the inverse of the audit placement `matrix` (mesh frame -> build frame), for
+    CONTINUATION_BAND_RULE; None without a census or a complete CouponBox record."""
+    box = (census or {}).get("CouponBox") if isinstance(census, dict) else None
+    if not isinstance(box, dict) or not all(key in box for key in ("Lower", "Upper", "Radius")):
+        return None
+    lower = np.asarray(box["Lower"], dtype=float)
+    upper = np.asarray(box["Upper"], dtype=float)
+    radius = float(box["Radius"])
+    if lower.shape != (3,) or upper.shape != (3,) or not radius > 0 or np.any(upper <= lower):
+        raise ValueError("The build census CouponBox needs Lower < Upper (3 coordinates) and a positive Radius")
+    return lower, upper, radius, np.linalg.inv(np.asarray(matrix, dtype=float).reshape(4, 4))
+
+
 def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                     signature_path, reference_mesh_path, ownership_report_path,
                     ownership_quadrature_path, restoration_recipe_path, corner_tolerance=1e-8,
@@ -1111,7 +1211,8 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "TraceDiagonal": {**_global_diagonal_bands(
                   simplicial, transformed_recipe["PhysicalSegments"],
                   transformed_recipe["NormalSize"], transformed_footprint,
-                  transformed_junction, transformed_basis),
+                  transformed_junction, transformed_basis,
+                  coupon_box=_census_coupon_box(census, matrix)),
                   "FootprintSegmentProvenance": footprint_provenance,
                   "TraceBasisEdgeProvenance": basis_provenance},
               "MeshQuality": {**_volume_quality(mesh, layer_spans, layer_reach),

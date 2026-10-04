@@ -333,17 +333,32 @@ def restore_source_status(manifest, source_library, placeholder_requirements):
     return result
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("config", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--palace", type=Path, required=True)
-    parser.add_argument("--max-passes", type=int, default=8)
-    args = parser.parse_args()
-    if args.max_passes <= 0:
-        parser.error("--max-passes must be positive")
+def omitted_prefix(requirement, omit_requirements):
+    """The `--omit-requirement` prefix a version-2 record's Hash starts with (None: the
+    requirement is not omitted; version-1 records carry no Hash and are never omitted)."""
+    digest = requirement.get("Hash", "")
+    for prefix in omit_requirements:
+        if digest.startswith(prefix):
+            return prefix
+    return None
 
-    config_path = args.config.expanduser().resolve()
+
+def discover(config_path, output, palace, max_passes=8, omit_requirements=()):
+    """The closure loop: geometry preflights with the source library plus one signature
+    placeholder per Missing requirement until nothing new is Missing; writes
+    output/surface-response-requirements.json (the final manifest with the placeholders
+    restored to Missing) and output/closure-history.json, returns the final manifest.
+
+    `omit_requirements`: Hash prefixes of Missing requirements that get NO placeholder (an
+    omitted requirement stays Missing in every pass and in the final manifest, is listed
+    under OmittedRequirements of the manifest and the history, and does not count as a
+    stalled closure); a prefix that matches no requirement fails closed."""
+    if max_passes <= 0:
+        raise ValueError("max_passes must be positive")
+    omit_requirements = [str(prefix) for prefix in omit_requirements]
+    if any(not prefix for prefix in omit_requirements):
+        raise ValueError("an omitted requirement needs a non-empty Hash prefix")
+    config_path = Path(config_path).expanduser().resolve()
     config = load_json(config_path)
     response = response_section(config)
     source_path = resolve_library(config_path, response)
@@ -357,14 +372,15 @@ def main():
     virtual_library["Name"] = f"{virtual_library.get('Name', source_path.stem)}-closure"
     virtual_library["ExhaustiveSpatialClosure"] = True
 
-    output = args.output.expanduser().resolve()
+    output = Path(output).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     known = set()
     placeholder_names = set()
     placeholder_requirements = {}
+    omitted = {}
     history = []
     final_manifest = None
-    for pass_index in range(1, args.max_passes + 1):
+    for pass_index in range(1, max_passes + 1):
         pass_root = output / f"pass-{pass_index:02d}"
         pass_root.mkdir(parents=True, exist_ok=True)
         library_path = pass_root / "process-library.json"
@@ -376,7 +392,7 @@ def main():
         pass_response["UnmatchedPolicy"] = "Warn"
         pass_config_path = pass_root / "config.json"
         write_json(pass_config_path, pass_config)
-        run_preflight(args.palace, pass_config_path, pass_root / "preflight.log")
+        run_preflight(palace, pass_config_path, pass_root / "preflight.log")
         manifest = load_json(pass_root / "postpro" / "surface-response-requirements.json")
 
         # Discovery deliberately uses wider geometry components to expose every support
@@ -390,7 +406,7 @@ def main():
         production_config_path = pass_root / "production-config.json"
         write_json(production_config_path, production_config)
         run_preflight(
-            args.palace,
+            palace,
             production_config_path,
             pass_root / "production-preflight.log",
         )
@@ -400,10 +416,26 @@ def main():
         final_manifest = production_manifest
 
         added = []
+        stalled = 0
         for current_manifest in (manifest, production_manifest):
             for requirement in current_manifest["Requirements"]:
                 if requirement["Status"] != "Missing":
                     continue
+                prefix = omitted_prefix(requirement, omit_requirements)
+                if prefix is not None:
+                    omitted.setdefault(
+                        requirement["Hash"],
+                        {
+                            "Hash": requirement["Hash"],
+                            "Prefix": prefix,
+                            "Topology": requirement["Topology"],
+                            "Count": requirement.get("Count"),
+                            "Instances": requirement.get("Instances"),
+                            "TotalEdgeLength": requirement.get("TotalEdgeLength"),
+                        },
+                    )
+                    continue
+                stalled += 1
                 digest, model = placeholder_model(
                     requirement,
                     float(current_manifest["Library"]["MatchingRadius"]),
@@ -428,9 +460,9 @@ def main():
             }
         )
         if not added:
-            discovery_missing = manifest["Summary"]["Counts"]["Missing"]
-            production_missing = production_manifest["Summary"]["Counts"]["Missing"]
-            if discovery_missing or production_missing:
+            # Missing requirements other than the omitted ones (which never get a
+            # placeholder) stall the closure.
+            if stalled:
                 raise RuntimeError(
                     "Geometry closure stalled with missing requirements; see "
                     f"{pass_root / 'postpro/surface-response-requirements.json'} and "
@@ -438,12 +470,22 @@ def main():
                 )
             break
     else:
-        raise RuntimeError(f"Geometry closure did not converge in {args.max_passes} passes")
+        raise RuntimeError(f"Geometry closure did not converge in {max_passes} passes")
+    unmatched = sorted(
+        set(omit_requirements) - {record["Prefix"] for record in omitted.values()}
+    )
+    if unmatched:
+        raise RuntimeError(
+            "omitted requirement prefixes matching no Missing requirement of the device: "
+            + ", ".join(unmatched)
+        )
 
     source_library["__SourcePath"] = source_path
     final_manifest = restore_source_status(
         final_manifest, source_library, placeholder_requirements
     )
+    omitted_records = [omitted[key] for key in sorted(omitted)]
+    final_manifest["OmittedRequirements"] = omitted_records
     manifest_path = output / "surface-response-requirements.json"
     write_json(manifest_path, final_manifest)
     write_json(
@@ -454,10 +496,39 @@ def main():
             "SourceLibrary": str(source_path),
             "Passes": history,
             "PlaceholderCount": len(placeholder_names),
+            "OmittedRequirements": omitted_records,
             "CompleteAgainstSourceLibrary": final_manifest["Complete"],
         },
     )
-    print(manifest_path)
+    return final_manifest
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("config", type=Path)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--palace", type=Path, required=True)
+    parser.add_argument("--max-passes", type=int, default=8)
+    parser.add_argument(
+        "--omit-requirement",
+        action="append",
+        default=[],
+        metavar="HASH_PREFIX",
+        help="give NO placeholder to the Missing requirement(s) whose Hash starts with this "
+        "prefix (repeatable): they stay Missing in the final manifest and are listed under "
+        "its OmittedRequirements; a prefix matching no requirement fails closed",
+    )
+    args = parser.parse_args()
+    if args.max_passes <= 0:
+        parser.error("--max-passes must be positive")
+    final_manifest = discover(
+        args.config,
+        args.output,
+        args.palace,
+        max_passes=args.max_passes,
+        omit_requirements=args.omit_requirement,
+    )
+    print(args.output.expanduser().resolve() / "surface-response-requirements.json")
     print(json.dumps(final_manifest["Summary"], indent=2))
 
 

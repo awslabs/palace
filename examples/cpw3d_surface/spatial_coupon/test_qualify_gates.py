@@ -342,6 +342,65 @@ class GateRuleTest(unittest.TestCase):
         self.assertEqual(digest, reference_campaign.sha256(gates.GATES_FILE))
 
 
+class BuildGateOverrideTest(unittest.TestCase):
+    """Supervisor decision 229: a per-case, recorded acceptance of ONE failed per-entry
+    verification gate admits the case to qualification (S1p's 19-edge coupon bd43654a77c6:
+    the trace-diagonal band on the un-etched collar notch at the box top); the override is
+    schema-checked, matches only a build that failed at the verification with every failure on
+    that gate, and never applies to another case or gate."""
+
+    def override_file(self, tmp, **changes):
+        record = {"Case": "spatial-19-edge-0f005fe0468c", "Gate": "trace-diagonal-overrefinement",
+                  "Approval": "supervisor decision 229 (2026-10-02)",
+                  "Cause": "the un-etched SA notch between two producer-default 3R etch collars at the box top",
+                  "Band": {"Attribute": 3000, "Endpoints": [[-1.3173916, 12.5943913, 0.0], [1.4576078, 12.295254363, 0.0]],
+                           "Span": 2.7797, "RMSWidth": 0.0469},
+                  "UTC": "2026-10-02T19:20:00Z"}
+        record.update(changes)
+        path = Path(tmp) / f"override-{record['Case']}.json"
+        path.write_text(json.dumps(record))
+        return path
+
+    def build_record(self, **changes):
+        record = {"Case": "spatial-19-edge-0f005fe0468c", "Status": "failed", "Passed": False,
+                  "StoppedBy": {"Kind": "Verification", "Id": "per-entry-verification"},
+                  "Verification": {"Passed": False, "Failures": ["identity: gate failure: trace-diagonal-overrefinement",
+                                                                  "rotate-z-0.63: gate failure: trace-diagonal-overrefinement"]}}
+        record.update(changes)
+        return record
+
+    def test_override_admits_exactly_the_recorded_gate_of_the_recorded_case(self):
+        import qualify_library
+        with tempfile.TemporaryDirectory() as tmp:
+            overrides = qualify_library.load_build_gate_overrides([self.override_file(tmp)])
+            self.assertEqual(list(overrides), ["spatial-19-edge-0f005fe0468c"])
+            self.assertEqual(overrides["spatial-19-edge-0f005fe0468c"]["Rule"], qualify_library.BUILD_GATE_OVERRIDE_RULE)
+            admitted = qualify_library.build_gate_override_for(self.build_record(), overrides)
+            self.assertEqual(admitted["Variants"], ["identity", "rotate-z-0.63"])
+            self.assertEqual(admitted["Approval"], "supervisor decision 229 (2026-10-02)")
+            self.assertEqual(len(admitted["VerificationFailures"]), 2)
+            # Another case: no override (the ordinary stop).
+            self.assertIsNone(qualify_library.build_gate_override_for(self.build_record(Case="spatial-19-edge-2daf2c3ccd4c"), overrides))
+            # A second gate among the failures, another stop kind, or a passed build: refused.
+            for changes in ({"Verification": {"Passed": False, "Failures": ["identity: gate failure: trace-diagonal-overrefinement",
+                                                                             "identity: gate failure: protected-surfaces"]}},
+                            {"StoppedBy": {"Kind": "Driver", "Id": "run_gmsh_only_case.py"}, "Verification": None},
+                            {"Status": "built"}):
+                with self.assertRaises(qualify_library.CaseStop):
+                    qualify_library.build_gate_override_for(self.build_record(**changes), overrides)
+            # The override's gate must be the failed one.
+            other = qualify_library.load_build_gate_overrides([self.override_file(tmp, Gate="protected-surfaces")])
+            with self.assertRaises(qualify_library.CaseStop):
+                qualify_library.build_gate_override_for(self.build_record(), other)
+            # Schema: every key, the band geometry, one override per case.
+            with self.assertRaisesRegex(ValueError, "missing"):
+                qualify_library.load_build_gate_overrides([self.override_file(tmp, Approval="")])
+            with self.assertRaisesRegex(ValueError, "Band"):
+                qualify_library.load_build_gate_overrides([self.override_file(tmp, Band={"Span": 1.0})])
+            with self.assertRaisesRegex(ValueError, "second override"):
+                qualify_library.load_build_gate_overrides([self.override_file(tmp), self.override_file(tmp)])
+
+
 class RemoteCommandTest(unittest.TestCase):
     def test_upload_commands_are_portable_rsync(self):
         """The macOS openrsync client has no --mkpath: directories are created by ssh, the

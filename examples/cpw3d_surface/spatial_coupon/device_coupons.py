@@ -54,6 +54,7 @@ for path in (str(HERE), str(CPW2D)):
     if path not in sys.path:
         sys.path.insert(0, path)
 import cluster_signature_geometry  # noqa: E402
+import general_mesh_manifest  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
 import register_case  # noqa: E402
 from refreeze_manifest_tools import PRODUCTION_MANIFEST  # noqa: E402
@@ -87,11 +88,14 @@ class DeviceAdapterError(ValueError):
     """A fail-closed stop of the device -> coupon mapping (the missing piece is named)."""
 
 
-def run_discovery(device_config, output, palace, python=sys.executable):
-    """The closure manifest of the device (discover_surface_response_requirements.py)."""
+def run_discovery(device_config, output, palace, python=sys.executable, omit_requirements=()):
+    """The closure manifest of the device (discover_surface_response_requirements.py);
+    `omit_requirements` = its --omit-requirement Hash prefixes (no placeholder, stays Missing)."""
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     command = [python, str(DISCOVERY), str(device_config), "--output", str(output), "--palace", str(palace)]
+    for prefix in omit_requirements:
+        command += ["--omit-requirement", str(prefix)]
     with open(output / "discovery.log", "w") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
     manifest_path = output / "surface-response-requirements.json"
@@ -175,9 +179,16 @@ def stamp_signature_model(library_path, coupon, radius, generated=None):
     return True
 
 
+def generate_spatial_response_default_span_cap():
+    import generate_spatial_response
+    return generate_spatial_response.DEFAULT_SUPPORT_SPAN_CAP_OVER_R
+
+
 def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangulation=DEFAULT_CAP_TRIANGULATION,
-                     cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable):
-    """generate_spatial_response.py --basis-only into `work`; returns the generator command."""
+                     cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, support_span_cap=None):
+    """generate_spatial_response.py --basis-only into `work`; returns the generator command.
+    `support_span_cap` (x R) raises the generator's matching-support span bound for this
+    coupon alone (--support-span-cap; None = the generator default)."""
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     coupon_path = work / "coupon.json"
@@ -189,6 +200,8 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangu
                "--trench-rounding", str(parameters["bottom_radius"]), "--ring-size", str(ring_size),
                "--cap-triangulation", cap_triangulation, "--cap-interior-spacing", str(cap_interior_spacing),
                "--order", "1", "--model-name", coupon["Id"], "--basis-only"]
+    if support_span_cap is not None:
+        command += ["--support-span-cap", str(support_span_cap)]
     command += [str(item) for item in planner.material_options(parameters)]
     with open(work / "generate.log", "w") as log:
         result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
@@ -216,19 +229,86 @@ def content_hash(directory):
     return hashlib.sha256(payload).hexdigest(), digests
 
 
+OMITTED_METHOD = "OmittedRequirement"
+
+
+# Per-requirement options of `build --device` (HASH_PREFIX=VALUE, repeatable): a raised
+# matching-support span cap for the generator (--support-span-cap, a single closed feature
+# wider than 16R that cannot be split) and a raised element cap for the registered case
+# (--element-cap, recorded as GateOverrides.MaximumElements of the fabricated and the thin
+# case).  Each option must name exactly one spatial coupon of the discovery (fail closed:
+# a prefix matching nothing, an omitted requirement or another family is an error) and
+# carries its approval / reason text into the provenance and the manifest.
+def parse_requirement_option(text, value_type, name):
+    """HASH_PREFIX=VALUE -> (prefix, value); the prefix a non-empty hex token."""
+    prefix, separator, value = str(text).partition("=")
+    if not separator or not prefix or any(character not in "0123456789abcdef" for character in prefix):
+        raise DeviceAdapterError(f"{name} expects HASH_PREFIX=VALUE with a hex prefix, not {text!r}")
+    try:
+        parsed = value_type(value)
+    except ValueError as error:
+        raise DeviceAdapterError(f"{name} {text!r}: {error}") from error
+    if parsed <= 0:
+        raise DeviceAdapterError(f"{name} {text!r}: the value must be positive")
+    return prefix, parsed
+
+
+def requirement_options(options, value_type, name):
+    """The parsed HASH_PREFIX=VALUE options as {prefix: value}; a repeated prefix is an error."""
+    parsed = {}
+    for text in options or ():
+        prefix, value = parse_requirement_option(text, value_type, name)
+        if prefix in parsed:
+            raise DeviceAdapterError(f"{name}: the prefix {prefix} is given twice")
+        parsed[prefix] = value
+    return parsed
+
+
+def requirement_option_for(options, coupon_hash):
+    """The (prefix, value) of the option naming this requirement Hash, or None."""
+    matches = [(prefix, value) for prefix, value in options.items() if str(coupon_hash).startswith(prefix)]
+    if len(matches) > 1:
+        raise DeviceAdapterError(f"requirement {coupon_hash[:12]} is named by several prefixes {sorted(p for p, _ in matches)}")
+    return matches[0] if matches else None
+
+
+def check_requirement_options_consumed(options, consumed, name):
+    unused = sorted(set(options) - set(consumed))
+    if unused:
+        raise DeviceAdapterError(f"{name}: no spatial coupon of the discovery has a requirement Hash starting with "
+                                 f"{unused} (an omitted requirement or another family cannot carry it)")
+
+
 def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODUCTION_MANIFEST, ring_size=DEFAULT_RING_SIZE,
                            cap_triangulation=DEFAULT_CAP_TRIANGULATION,
-                           cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print):
+                           cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print,
+                           omit_requirements=(), support_span_caps=(), support_span_cap_reason=None, element_caps=(),
+                           element_cap_approval=None, element_cap_reason=None):
     """Steps 1-3: the source directories of every spatial coupon of the device under
-    output/sources/<case id>; returns the device record (written to output/device-coupons.json)."""
+    output/sources/<case id>; returns the device record (written to output/device-coupons.json).
+    `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
+    placeholder (they stay Missing); an omitted requirement is never built here, whatever its
+    family: it is recorded out of scope with Method OmittedRequirement.
+    `support_span_caps` / `element_caps`: HASH_PREFIX=VALUE options (parse_requirement_option)
+    naming one spatial coupon each - the generator's --support-span-cap (x R) for it, and the
+    element cap its registered cases carry as GateOverrides.MaximumElements (register_device_sources)
+    - with their reason (and approval) texts, all recorded in the provenance and the record."""
+    span_caps = requirement_options(support_span_caps, float, "--support-span-cap")
+    caps = requirement_options(element_caps, int, "--element-cap")
+    if span_caps and not (isinstance(support_span_cap_reason, str) and support_span_cap_reason.strip()):
+        raise DeviceAdapterError("--support-span-cap needs --support-span-cap-reason (recorded with the coupon)")
+    if caps and not all(isinstance(text, str) and text.strip() for text in (element_cap_approval, element_cap_reason)):
+        raise DeviceAdapterError("--element-cap needs --element-cap-approval and --element-cap-reason (recorded in the manifest)")
+    consumed_span, consumed_caps = [], []
     device_config = Path(device_config).resolve()
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
     manifest_path = Path(manifest_path).resolve()
     commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=HERE, text=True).strip()
     log(f"device {device_config}: discovery with {palace}")
-    closure = run_discovery(device_config, output / "discovery", palace, python)
+    closure = run_discovery(device_config, output / "discovery", palace, python, omit_requirements=omit_requirements)
     closure_manifest = json.loads(closure.read_text())
+    omitted = {record["Hash"]: record for record in closure_manifest.get("OmittedRequirements", [])}
     library_path = Path(closure_manifest["Library"]["Path"])
     library = json.loads(library_path.read_text())
     parameters = planner.process_parameters(library)
@@ -245,7 +325,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
               "ProcessLibrary": {"Path": str(library_path), "SHA256": sha256(library_path), "MatchingRadius": radius,
                                  "Fabrication": library.get("Fabrication")},
               "Discovery": {"Manifest": str(closure), "SHA256": sha256(closure), "Summary": closure_manifest["Summary"],
-                            "Complete": closure_manifest.get("Complete")},
+                            "Complete": closure_manifest.get("Complete"),
+                            "OmittedRequirements": [omitted[key] for key in sorted(omitted)]},
               "Plan": {"Path": str(output / "coupon-plan.json"), "Summary": plan["Summary"]},
               "TraceBasis": {"RingSize": ring_size, "CapTriangulation": cap_triangulation,
                              "DefaultCapTriangulation": DEFAULT_CAP_TRIANGULATION,
@@ -263,6 +344,15 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
         method = coupon["Preparation"]["Method"]
+        if coupon.get("Hash") in omitted:
+            record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": OMITTED_METHOD,
+                                         "Reason": f"omitted by --omit-requirement {omitted[coupon['Hash']]['Prefix']}",
+                                         "FamilyMethod": method, "Hash": coupon["Hash"],
+                                         "DeviceOccurrences": coupon["DeviceOccurrences"],
+                                         "DeviceEdgeLength": coupon["DeviceEdgeLength"],
+                                         "Rule": "an omitted requirement got no discovery placeholder and is not built by "
+                                                 "this call: it stays Missing against the library (recorded, never silent)"})
+            continue
         if method != SPATIAL_METHOD:
             record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Method": method,
                                          "Reason": coupon["Preparation"].get("Reason"),
@@ -274,9 +364,15 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
         work = output / "work" / coupon["Id"]
         if work.exists():
             shutil.rmtree(work)
+        span_cap = requirement_option_for(span_caps, coupon["Hash"])
+        element_cap = requirement_option_for(caps, coupon["Hash"])
+        if span_cap is not None:
+            consumed_span.append(span_cap[0])
+        if element_cap is not None:
+            consumed_caps.append(element_cap[0])
         command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size,
                                    cap_triangulation=cap_triangulation, cap_interior_spacing=cap_interior_spacing,
-                                   python=python)
+                                   python=python, support_span_cap=None if span_cap is None else span_cap[1])
         write_process_toml(work / "process.toml", parameters, radius)
         digest, digests = content_hash(work)
         edge_count = int(coupon["Geometry"].get("EdgeCount", len(coupon["Geometry"].get("Edges", []))))
@@ -293,6 +389,14 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                             "DeviceOccurrences": coupon["DeviceOccurrences"], "DeviceEdgeLength": coupon["DeviceEdgeLength"]},
             "Generator": {"Command": command, "RingSize": ring_size, "CapTriangulation": cap_triangulation,
                           "CapInteriorSpacingOverR": cap_interior_spacing,
+                          "SupportSpanCapOverR": (None if span_cap is None else
+                                                  {"Value": span_cap[1], "Prefix": span_cap[0],
+                                                   "Default": generate_spatial_response_default_span_cap(),
+                                                   "Reason": support_span_cap_reason,
+                                                   "Rule": "generate_spatial_response --support-span-cap: this coupon's "
+                                                           "matching-support plan span may exceed the default bound "
+                                                           "(basis-contract.json MatchingSupport records the span); "
+                                                           "no other coupon's bound changes"}),
                           "PlanViewBoundary": ("cluster_signature_geometry.cluster_coupon: the coupon in the canonical "
                                                "frame of the version-2 Signature (edge rows from the portions, free ends "
                                                "extended to the box, mask = metal faces of the arrangement of the "
@@ -328,14 +432,21 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             (directory / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
             status = "written"
         built_model = json.loads((directory / "process-library.json").read_text())["Models"][0]
+        contract = json.loads((directory / "basis-contract.json").read_text())
         record["Coupons"].append({"Case": case_id, "Requirement": coupon["Id"], "EdgeCount": edge_count,
                                   "ContextEdgeCount": int(built_model.get("ContextEdgeCount", 0)),
                                   "SupportBox": built_model.get("SupportBox"),
                                   "Directory": str(directory), "ContentHash": digest, "Status": status,
-                                  "Sources": json.loads((directory / "basis-contract.json").read_text())["Sources"],
+                                  "Sources": contract["Sources"], "MatchingSupport": contract.get("MatchingSupport"),
+                                  "SupportSpanCapOverR": provenance["Generator"]["SupportSpanCapOverR"],
+                                  "ElementCapOverride": (None if element_cap is None else
+                                                         {"Value": element_cap[1], "Prefix": element_cap[0],
+                                                          "Approval": element_cap_approval, "Reason": element_cap_reason}),
                                   "Interfaces": coupon["Interfaces"], "DeviceOccurrences": coupon["DeviceOccurrences"],
                                   "DeviceEdgeLength": coupon["DeviceEdgeLength"], "Registration": None})
         log(f"{case_id}: source directory {status} ({edge_count} edges, requirement {coupon['Id']})")
+    check_requirement_options_consumed(span_caps, consumed_span, "--support-span-cap")
+    check_requirement_options_consumed(caps, consumed_caps, "--element-cap")
     record["Manifest"] = str(manifest_path)
     record["Output"] = str(output)
     (output / DEVICE_RECORD).write_text(json.dumps(record, indent=2) + "\n")
@@ -366,6 +477,19 @@ def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=Non
     if not isinstance(jobs, int) or isinstance(jobs, bool) or jobs < 1:
         raise DeviceAdapterError(f"the registration pool size must be an integer >= 1, not {jobs!r}")
 
+    def gate_overrides(coupon):
+        """The GateOverrides block of a coupon's cases (fabricated and thin alike) from its
+        recorded --element-cap, validated against the manifest gate; None without one."""
+        override = coupon.get("ElementCapOverride")
+        if override is None:
+            return None
+        try:
+            return general_mesh_manifest.element_cap_override(
+                override["Value"], manifest["Gates"][general_mesh_manifest.ELEMENT_CAP_GATE],
+                approval=override["Approval"], reason=override["Reason"])
+        except ValueError as error:
+            raise DeviceAdapterError(f"{coupon['Case']}: {error}") from error
+
     def prepare(coupon, kind="fabricated"):
         case_id = coupon["Case"] if kind == "fabricated" else register_case.thin_case_id(coupon["Case"])
         try:
@@ -376,6 +500,7 @@ def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=Non
                            f"{coupon['Requirement']}, content hash {coupon['ContentHash'][:12]}",
                 work=(Path(work) / case_id) if work is not None else None, python=python, julia=julia,
                 kind=kind, fabricated_case=coupon["Case"] if kind == "thin" else None,
+                gate_overrides=gate_overrides(coupon),
                 **({"probe": probe} if probe is not None else {}))
         except (register_case.RegistrationError, ValueError) as error:
             return error
@@ -428,6 +553,29 @@ def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=Non
     return record
 
 
+def add_requirement_option_arguments(parser):
+    """The per-requirement options of `build --device` (device_coupons.py and coupon_library.py build)."""
+    parser.add_argument("--support-span-cap", action="append", default=[], metavar="HASH_PREFIX=OVER_R",
+                        help="with --device: the spatial coupon whose requirement Hash starts with the prefix is generated "
+                             "with this matching-support span cap (x R; generate_spatial_response --support-span-cap, "
+                             "default 16) - a single closed feature wider than 16R that cannot be split; repeatable; "
+                             "needs --support-span-cap-reason; a prefix matching no spatial coupon fails closed")
+    parser.add_argument("--support-span-cap-reason", help="why the span cap is raised (recorded in the provenance)")
+    parser.add_argument("--element-cap", action="append", default=[], metavar="HASH_PREFIX=ELEMENTS",
+                        help="with --device: the registered cases (fabricated + thin) of the spatial coupon whose requirement "
+                             "Hash starts with the prefix carry this element cap as GateOverrides.MaximumElements (above the "
+                             "manifest gate, which is unchanged for every other case); repeatable; needs "
+                             "--element-cap-approval and --element-cap-reason")
+    parser.add_argument("--element-cap-approval", help="who approved the element cap override (recorded in the manifest)")
+    parser.add_argument("--element-cap-reason", help="why the element cap is raised (recorded in the manifest)")
+
+
+def requirement_option_kwargs(args):
+    return {"support_span_caps": args.support_span_cap, "support_span_cap_reason": args.support_span_cap_reason,
+            "element_caps": args.element_cap, "element_cap_approval": args.element_cap_approval,
+            "element_cap_reason": args.element_cap_reason}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("device_config", type=Path)
@@ -444,6 +592,10 @@ def main(argv=None):
                         help="spacing (x R) of the interior cap hats within R of the claimed portions "
                              f"(generate_spatial_response.py --cap-interior-spacing; default {DEFAULT_CAP_INTERIOR_SPACING}; "
                              "0 = the ring-only basis)")
+    parser.add_argument("--omit-requirement", action="append", default=[], metavar="HASH_PREFIX",
+                        help="Missing requirement(s) whose Hash starts with this prefix get no discovery placeholder and "
+                             "are not built (repeatable; recorded out of scope with Method OmittedRequirement)")
+    add_requirement_option_arguments(parser)
     parser.add_argument("--register", action="store_true", help="register the produced directories into --manifest")
     parser.add_argument("--work", type=Path, help="parent of the registration work directories")
     parser.add_argument("--julia", default=shutil.which("julia"))
@@ -455,7 +607,8 @@ def main(argv=None):
     try:
         record = prepare_device_sources(args.device_config, palace=args.palace, output=args.output, manifest_path=args.manifest,
                                         ring_size=args.ring_size, cap_triangulation=args.cap_triangulation,
-                                        cap_interior_spacing=args.cap_interior_spacing, python=args.python)
+                                        cap_interior_spacing=args.cap_interior_spacing, python=args.python,
+                                        omit_requirements=args.omit_requirement, **requirement_option_kwargs(args))
         if args.register:
             register_device_sources(record, manifest_path=args.manifest, mesh_recipe=args.mesh_recipe, work=args.work,
                                     python=args.python, julia=args.julia, jobs=args.register_jobs)
