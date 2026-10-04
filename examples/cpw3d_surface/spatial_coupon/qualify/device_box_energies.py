@@ -41,7 +41,6 @@ import sys
 import numpy as np
 
 STATUS_INSIDE, STATUS_STRADDLE = "Inside", "Straddle"
-ATTRIBUTE_BASE = 9000
 ENERGY_INDEX_BASE = 1000
 ENERGY_INDEX_STATUS = {STATUS_INSIDE: 1, STATUS_STRADDLE: 2}
 
@@ -99,12 +98,14 @@ def box_membership(points, box, tolerance=1.0e-9):
 
 def relabel_tetrahedra(points, tetrahedra, materials, boxes):
     """New attributes of the tetrahedra inside / straddling any box; the others keep their
-    material. One attribute (ATTRIBUTE_BASE + a running index) per distinct combination of
-    the per-box status (none / inside / straddle) and the original material, so that boxes
-    overlapping in the volume (the S1p 19-edge pair's margins) are each read exactly from the
-    attributes carrying their status. Returns (attributes, records, combinations) with
-    records per box: the counts, volumes and the attribute map {status: {material:
-    [attributes]}}."""
+    material. One attribute per distinct combination of the per-box status (none / inside /
+    straddle) and the original material, so that boxes overlapping in the volume (the S1p
+    19-edge pair's margins) are each read exactly from the attributes carrying their status;
+    the attributes continue the volume attribute range (max material + 1, +2, ...): Palace's
+    setup and postprocessing scale with the LARGEST attribute number (attributes 9001-9006 on
+    the S1p c0 mesh took the 14-s solve to 245 s and 75 GB of mesh preprocessing). Returns
+    (attributes, records, combinations) with records per box: the counts, volumes and the
+    attribute map {status: {material: [attributes]}}."""
     points = np.asarray(points, dtype=float)
     tetrahedra = np.asarray(tetrahedra, dtype=int)
     materials = np.asarray(materials, dtype=int)
@@ -121,9 +122,10 @@ def relabel_tetrahedra(points, tetrahedra, materials, boxes):
     combinations = []
     tagged = np.flatnonzero(status.any(axis=1))
     keys = sorted({(tuple(int(s) for s in status[t]), int(materials[t])) for t in tagged})
+    base = int(materials.max()) if len(materials) else 0
     for key in keys:
         statuses, material = key
-        attribute = ATTRIBUTE_BASE + len(combinations) + 1
+        attribute = base + len(combinations) + 1
         selection = np.all(status == np.asarray(statuses), axis=1) & (materials == material)
         attributes[selection] = attribute
         combinations.append({"Attribute": attribute, "Material": material, "BoxStatus": list(statuses),
@@ -170,9 +172,9 @@ def command_relabel(args):
               "Patches": str(args.patches), "Catalog": str(args.catalog), "Boxes": records, "Combinations": combinations,
               "VolumeNames": materials,
               "Rule": "tetrahedra with every vertex inside a placed SupportPoints box -> Inside, with some -> Straddle; one "
-                      "attribute (9000 + a running index) per distinct (per-box status, original material) combination so "
-                      "that overlapping boxes are each read exactly; the nodes and every other element are unchanged "
-                      "(decision 299 (1a): the device box domain energy bracket [E_in, E_in + E_straddle])"}
+                      "attribute (continuing the volume attribute range) per distinct (per-box status, original material) "
+                      "combination so that overlapping boxes are each read exactly; the nodes and every other element are "
+                      "unchanged (decision 299 (1a): the device box domain energy bracket [E_in, E_in + E_straddle])"}
     (out / "device-boxes.json").write_text(json.dumps(record, indent=2) + "\n")
     for item in records:
         print(f"box {item['Index']} {item['Model']}: inside {item['Tetrahedra'][STATUS_INSIDE]} tets "
@@ -237,8 +239,8 @@ def domain_energies(postpro, source=1):
         if int(float(row["i"])) == source:
             result = {0: float(row["E_elec (J)"])}
             for key, value in row.items():
-                if key.startswith("E_elec[") and key.endswith("]"):
-                    result[int(key[len("E_elec["):-1])] = float(value)
+                if key.startswith("E_elec[") and "]" in key:  # "E_elec[1001] (J)"
+                    result[int(key[len("E_elec["):key.index("]")])] = float(value)
             return result
     raise DeviceBoxError(f"{postpro}/domain-E.csv has no source {source}")
 

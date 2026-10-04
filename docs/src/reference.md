@@ -1608,7 +1608,14 @@ replaces the complete thin coupon patch:
 where Palace uses the largest configured `EdgeDistances` value as ``R``. Each target
 interface therefore requires an edge source and `EdgeDistances` containing the coupon
 matching radius. The corrected total electric energy adds the matched
-fabricated-minus-thin domain-response defect.
+fabricated-minus-thin domain-response defect. Which coupon matrices act: the fixed-trace
+interface energies use the FABRICATED surface matrices only (the device's own within-``R``
+thin energy is dropped, not cancelled); the thin coupon enters through its DOMAIN matrix
+alone — the fixed-trace domain correction ``1/2 a^T (Q^{dom}_{fabricated} - Q^{dom}_{thin})
+a``, the self-consistent operator ``K + P^T (Q^{dom}_{fabricated} - Q^{dom}_{thin}) P`` and
+the fixed-flux transform, which is built from the two domain matrices (the fixed-flux
+interface energy is the fabricated surface matrix evaluated on the fixed-flux trace). The
+thin surface matrices do not enter any reported energy.
 
 Electrostatic correction also writes `surface-response-model-energy.csv`. Numeric
 `evaluation` codes 0, 1, and 2 denote raw-field fixed-trace, raw-field fixed-flux, and

@@ -50,6 +50,33 @@ the case is judged by the 6,000,000 gate like every other case; the per-case
 calibration cases record what those builds executed and are unchanged). Evidence
 recorded before 2026-09-21 quotes the bounds of its time (4M / 1800 s / 8 GiB).
 
+### Cut endpoints in a narrow cross-section at a box face (supervisor decision 299 (4), 2026-10-04)
+
+`semantic-corner-and-endpoint-anisotropy` judges every cut endpoint (an edge truncated by a
+box face, `FeatureTopology.CutEndpoints`) by `MinimumNoncornerAspect` 1.5 on its incident
+tetrahedra, except a cut endpoint in a NARROW CROSS-SECTION: another contract vertex (a
+semantic corner, a CAD subdivision endpoint or another cut endpoint) on the SAME box face
+within `NARROW_CROSS_SECTION_OVER_RADIUS` = 0.25 R (the identification's face-clearance rule,
+the recorded `NarrowCrossSections`; compared at the half quantum like that rule; the box and R
+from the audit's `TraceDiagonal.ContinuationBoundaryBands.CouponBox`, i.e. the Gmsh-only
+pipeline — legacy evidence without a coupon box keeps the minimum everywhere). There the
+trace basis places knots at both crossings and the size field follows the channel (the narrow
+basis triangles' rule) rather than the edge tube's design anisotropy: S1p's
+`spatial-19-edge-39ab2ffd68ec` fabricated twin read one near-regular tetrahedron
+(MaximumAspect 1.313) at its cut end (13.1277631, 1.2716111, 0) on face x1, 0.169 R below the
+semantic corner (13.1277631, 1.5926104, 0), its thin twin 4.82 at the same point — both
+legitimate, neither under-resolved, so the minimum cannot separate over-refinement from
+under-resolution there. Such a cut end is EXEMPT from the minimum (its aspect must still be a
+measured, finite, positive number; the (F) dense-trace closure covers the mesh adequacy); every
+other cut end, every CAD subdivision endpoint and every corner keep their gates. The rule
+replaces the decision-292 per-case build-gate override of that coupon: re-judged on the stored
+R2b evidence (PBS 55791), the four S1p v3 cases pass on both variants without the override
+(box 1 fabricated 3.523 / 1.313 exempt / 3.111; box 3 fabricated 4.009 / 3.349 exempt (its
+0.109 R channel on face x0) / 3.386; the thin twins 3.628 / 4.824 exempt / 5.02 and 5.268 /
+5.358 exempt / 1.959). `general_mesh_manifest.narrow_cross_section_cut_endpoints` records
+each exempt end with its face, the nearest vertex and the channel width;
+`test_general_mesh_manifest.NarrowCrossSectionCutEndpointTest`.
+
 ### Production recipe (supervisor decision 42, 2026-09-19): Gmsh-only, TraceBasisSizeRatio 0.5
 
 The production recipe is the Gmsh-only build of decisions 38-42
