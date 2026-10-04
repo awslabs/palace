@@ -94,7 +94,7 @@
     {
       "Name": "estimate_build_cost.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
-      "SHA256": "c0dcc6677e184b65c332b4fbe73788d44848a4a7baf9ada952853ee26aa321f8"
+      "SHA256": "7bf3edae5b27bd59f386b0ae354753ba20cd82a0e124e284677f3e68fd688778"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
