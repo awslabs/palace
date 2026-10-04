@@ -136,10 +136,11 @@ private:
   };
 
   // Bilinear energy G of magnetostatic sources (see SheetEnergyMatrix,
-  // CurrentEnergyMatrix).
+  // CurrentEnergyMatrix). If work is non-null, it receives the source work b_k^T u_k.
   mfem::DenseMatrix SourceEnergyMatrix(const std::vector<int> &ids,
                                        const std::vector<Source> &src,
-                                       std::vector<Vector> *fields, int n_fields);
+                                       std::vector<Vector> *fields, int n_fields,
+                                       std::vector<double> *work = nullptr);
 
   struct Impl;
   std::unique_ptr<Impl> impl;

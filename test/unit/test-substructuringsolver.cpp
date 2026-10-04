@@ -1745,8 +1745,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Magnetostatics in a box with PEC walls, driven by surface currents on an interior plane
   // crossing the interface (from the x = 0 wall to the x = 1 wall, returning through the
   // walls): region and environment parts of the excitation. The energies must match a
-  // monolith, offline and after reloading the model, with and without a London sheet on the
-  // plane.
+  // monolith, offline and after reloading the model (also with an added port in the
+  // region), with and without a London sheet on the plane; a current that does not close is
+  // rejected.
   const int order = GENERATE(1, 2);
   const bool london = GENERATE(false, true);
   CAPTURE(order, london);
@@ -1785,8 +1786,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
   auto &pmesh = mesh.back()->Get();
 
-  // Excitations (the configured port is only validated): sheet currents J_s = x and
-  // J_s = x z^2 on the plane, zero on the walls.
+  // Excitations (the configured port is only validated), zero on the walls: sheet currents
+  // J_s = x and J_s = x z^2 on the plane (both sides), J_s = z on its strip x < 3/8 (region
+  // only, from the z = 0 to the z = 1 wall), and J_s = x on that strip, which ends on the
+  // free sheet and closes only through a London sheet.
   mfem::ND_FECollection fec(order, 3);
   mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
   const int maxb = pmesh.bdr_attributes.Max();
@@ -1796,15 +1799,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   pfes.GetEssentialTrueDofs(pec_marker, pec_tdofs);
   sheet_marker = 0;
   sheet_marker[3] = 1;
-  std::vector<Vector> J(2, Vector(pfes.GetTrueVSize()));
-  for (int k = 0; k < 2; k++)
+  std::vector<Vector> J(4, Vector(pfes.GetTrueVSize()));
+  for (int k = 0; k < 4; k++)
   {
     mfem::VectorFunctionCoefficient c(3,
                                       [k](const mfem::Vector &x, mfem::Vector &v)
                                       {
                                         v.SetSize(3);
                                         v = 0.0;
-                                        v(0) = (k == 0) ? 1.0 : x(2) * x(2);
+                                        const bool strip = x(0) < 0.375;
+                                        if (k < 2)
+                                        {
+                                          v(0) = (k == 0) ? 1.0 : x(2) * x(2);
+                                        }
+                                        else if (strip)
+                                        {
+                                          v((k == 2) ? 2 : 0) = 1.0;
+                                        }
                                       });
     mfem::ParLinearForm f(&pfes);
     f.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(c), sheet_marker);
@@ -1815,13 +1826,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       J[k](i) = 0.0;
     }
   }
+  const std::vector<Vector> J12 = {J[0], J[1]}, J123 = {J[0], J[1], J[2]};
 
   SubstructuringSolver ss(iodata, mesh);
   ss.CondenseEnvironment();
   CHECK(ss.HasSheets() == london);
-  const mfem::DenseMatrix E = ss.CurrentEnergyMatrix({1, 2}, J);
+  const mfem::DenseMatrix E = ss.CurrentEnergyMatrix({1, 2}, J12);
   std::vector<Vector> fields;
-  const mfem::DenseMatrix E_full = ss.CurrentEnergyMatrix({1, 2}, J, &fields, 2);
+  const mfem::DenseMatrix E_full = ss.CurrentEnergyMatrix({1, 2}, J12, &fields, 2);
 
   // Monolith: L = K + M_sheet, u = L^+ J from A = L + eps M with two refinement steps
   // (PEC pinned), and E_ij = u_i^T L u_j.
@@ -1860,8 +1872,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   pcg.SetPrintLevel(0);
   pcg.SetPreconditioner(ams);
   std::unique_ptr<mfem::HypreParMatrix> Le(L->EliminateRowsCols(pec_tdofs));
-  std::vector<Vector> u(2);
-  for (int k = 0; k < 2; k++)
+  std::vector<Vector> u(3);
+  for (int k = 0; k < 3; k++)
   {
     u[k].SetSize(J[k].Size());
     u[k] = 0.0;
@@ -1876,12 +1888,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       r -= Lu;
     }
   }
-  mfem::DenseMatrix E_mono(2);
+  mfem::DenseMatrix E_mono(3);
   Vector t(pfes.GetTrueVSize());
-  for (int j = 0; j < 2; j++)
+  for (int j = 0; j < 3; j++)
   {
     L->Mult(u[j], t);
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 3; i++)
     {
       E_mono(i, j) = mfem::InnerProduct(pmesh.GetComm(), u[i], t);
     }
@@ -1898,37 +1910,36 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     }
     return d;
   };
+  mfem::DenseMatrix E_mono12(2);
+  E_mono12.CopyMN(E_mono, 2, 2, 0, 0);
   // The regularization eps M of the substructured solve gives an energy error of order
   // (eps / lambda_1)^2, with lambda_1 the smallest nonzero eigenvalue of L relative to M:
   // about 1e-8 for eps = 1e-3 in this unit box, and below 1e-9 for eps = 1e-7 with sheets.
   const double m = E_mono.MaxMaxNorm(), tol = london ? 1.0e-9 : 1.0e-7;
   CAPTURE(E(0, 0), E_mono(0, 0), E(0, 1), E_mono(0, 1), E(1, 1), E_mono(1, 1));
-  CHECK(std::min(E_mono(0, 0), E_mono(1, 1)) >= 1.0e-3 * m);
+  CHECK(std::min({E_mono(0, 0), E_mono(1, 1), E_mono(2, 2)}) >= 1.0e-3 * m);
   CHECK(std::abs(E_mono(0, 1)) >= 1.0e-3 * m);
-  CHECK(max_diff(E, E_mono) <= tol * m);
-  CHECK(max_diff(E_full, E_mono) <= tol * m);
+  CHECK(max_diff(E, E_mono12) <= tol * m);
+  CHECK(max_diff(E_full, E_mono12) <= tol * m);
 
-  // Online reuse of the saved model, without the environment.
+  // Online reuse of the saved model, without the environment, also with an added port in
+  // the region (no environment part, so no modes).
   IoData iodata_on = make_config("Online");
   std::vector<std::unique_ptr<Mesh>> mesh_on;
   mesh_on.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
   SubstructuringSolver on(iodata_on, mesh_on);
   on.CondenseEnvironment();
-  const mfem::DenseMatrix E_on = on.CurrentEnergyMatrix({1, 2}, J);
+  const mfem::DenseMatrix E_on = on.CurrentEnergyMatrix({1, 2}, J12);
+  const mfem::DenseMatrix E_on3 = on.CurrentEnergyMatrix({1, 2, 3}, J123);
   CHECK_FALSE(on.EnvironmentFactored());
   CHECK(max_diff(E_on, E) <= 1.0e-9 * m);
-
-  // A reversed excitation does not match the saved source modes.
-  std::vector<Vector> J_rev = {J[0]};
-  J_rev[0].Neg();
-  const mfem::DenseMatrix E_rev = on.CurrentEnergyMatrix({1}, J_rev);
-  CHECK(on.EnvironmentFactored());
-  CHECK(std::abs(E_rev(0, 0) - E(0, 0)) <= 1.0e-9 * m);
+  CAPTURE(E_on3(2, 2), E_mono(2, 2), E_on3(0, 2), E_mono(0, 2));
+  CHECK(max_diff(E_on3, E_mono) <= tol * m);
 
   // Online fields agree with the full-field path in the energy norm (they differ only in
   // the zero-energy gauge).
   std::vector<Vector> fields_on;
-  on.CurrentEnergyMatrix({1, 2}, J, &fields_on, 2);
+  on.CurrentEnergyMatrix({1, 2}, J12, &fields_on, 2);
   REQUIRE(fields_on.size() == 2);
   for (int k = 0; k < 2; k++)
   {
@@ -1941,6 +1952,25 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CAPTURE(k, nd, nf);
     CHECK(nd <= 1.0e-10 * nf);
   }
+
+  // A reversed excitation does not match the saved source modes.
+  std::vector<Vector> J_rev = {J[0]};
+  J_rev[0].Neg();
+  const mfem::DenseMatrix E_rev = on.CurrentEnergyMatrix({1}, J_rev);
+  CHECK(std::abs(E_rev(0, 0) - E(0, 0)) <= 1.0e-9 * m);
+
+  // A current ending on the free sheet does not close (with PEC only).
+  if (london)
+  {
+    CHECK_NOTHROW(on.CurrentEnergyMatrix({4}, {J[3]}));
+  }
+#if defined(MFEM_USE_EXCEPTIONS)
+  else
+  {
+    CHECK_THROWS_WITH(on.CurrentEnergyMatrix({4}, {J[3]}),
+                      Catch::Matchers::ContainsSubstring("does not close"));
+  }
+#endif
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

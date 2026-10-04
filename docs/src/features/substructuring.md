@@ -133,9 +133,13 @@ has the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film
 sheet term of each film face is condensed with the part of the domain the face bounds, so films
 may lie in the region, in the environment, or cross the interface; so may the surface-current
 ports. A saved model includes the condensed excitations of the environment, so an online run
-needs no environment solve as long as the excitations in the environment are unchanged. A small
-mass regularization keeps the curl-curl operator definite; the extracted energies use the
-unregularized operator, in a form whose error is quadratic in the regularization.
+needs no environment solve as long as the excitations in the environment are unchanged;
+excitations inside the region, such as a port added or moved in a redesign, need none at all. A
+small mass regularization keeps the curl-curl operator definite; the extracted energies use the
+unregularized operator, in a form whose error is quadratic in the regularization. Each
+surface current must close: it has to start and end on `"PEC"` boundaries or superconducting
+films, as in a physical circuit. A current that does not close has no magnetostatic solution and
+is rejected.
 
 !!! note
 
