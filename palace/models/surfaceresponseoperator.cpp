@@ -14312,8 +14312,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         patches.patches, boxes, 3, continuation_tolerance);
     // The placement's continuation ownership (decision 236 (2)) on the dry run: the
     // written patches are the placed ones (clipped cells, weight 0 inside the boxes).
-    const auto ownership =
-        ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance);
+    const auto ownership = ApplyContinuationOwnership(
+        patches.patches, boxes, 3, continuation_tolerance, patches.matching_radius);
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
     diagnostics["TranslationalStretchesInsideSpatialSupport"] =
         DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
@@ -14405,6 +14405,40 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         Mpi::Warning("{:d} feature(s) matched through legacy-contract aliases (USER "
                      "decision 283); see Summary.LegacyContract!\n",
                      legacy_features);
+      }
+    }
+    // Knife-edge keys (decision 287 (a)): a cluster whose face-rule or box-rule readings
+    // sat within the band on ANY T2 pass has a key decided at a threshold; the band census
+    // of Diagnostics.SpatialSupport sums them, the features name the readings.
+    {
+      std::vector<std::string> knife_edge_features;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        const auto support = feature.find("SpatialSupport");
+        if (support == feature.end() || !support->is_object() ||
+            !support->contains("FaceRules"))
+        {
+          continue;
+        }
+        const auto &rules = (*support)["FaceRules"];
+        const int hits = rules.value("ThresholdBandHits", 0) +
+                         rules.value("BoxRuleThresholdBandHits", 0);
+        if (hits > 0)
+        {
+          knife_edge_features.push_back(
+              fmt::format("feature {} ({} hit(s) over {} pass(es), growth steps {})",
+                          feature["Id"].get<int>(), hits, rules.value("Passes", 1),
+                          (*support)["Growth"]["Steps"].dump()));
+        }
+      }
+      if (!knife_edge_features.empty())
+      {
+        Mpi::Warning("{:d} spatial cluster key(s) rest on face-rule / box-rule readings "
+                     "within the knife-edge band (decision 287; see Features[]."
+                     "SpatialSupport.FaceRules.ThresholdBandHits and Growth.Passes):\n  "
+                     "{}\n",
+                     static_cast<int>(knife_edge_features.size()),
+                     fmt::join(knife_edge_features, "\n  "));
       }
     }
     // The conductor-consistency gate (decision 277) needs the device trace: it is evaluated
@@ -14916,7 +14950,7 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
 ContinuationOwnership
 ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
                            const std::vector<SpatialSupportBounds> &supports, int dimension,
-                           double continuation_tolerance)
+                           double continuation_tolerance, double matching_radius)
 {
   ContinuationOwnership ownership;
   const auto stretches = CollectTranslationalStretches(patches, dimension);
@@ -15082,7 +15116,7 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
 
   // Vertex ownership (rule B4): the vertex patches against the chain piece ends of every
   // contract-3 support, in the support's local frame (units of R).
-  const double R = continuation_tolerance / kSignatureParameterToleranceOverRadius;
+  const double R = matching_radius;
   const double snap = kSupportFaceSnapOverRadius;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -15138,6 +15172,7 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
         record.face_distance_over_r = std::min(
             {local[0] - box[0], box[2] - local[0], local[1] - box[1], box[3] - local[1]});
         record.arm_outside_box = record.face_distance_over_r < 1.0;
+        record.lost_arm_length_over_r = std::max(0.0, 1.0 - record.face_distance_over_r);
         record.chain_end_distance_over_r = end_distance;
       }
       record.owners.push_back(support.patch);
@@ -15487,6 +15522,7 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
          {"FaceDistanceOverR", vertex.face_distance_over_r},
          {"ChainEndDistanceOverR", vertex.chain_end_distance_over_r},
          {"ArmOutsideBox", vertex.arm_outside_box},
+         {"LostArmLengthOverR", vertex.lost_arm_length_over_r},
          {"Owners", std::move(owners)}});
   }
   return {
@@ -15509,9 +15545,11 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
          "contract-3 coupon's continuation chain (the Signature's Chain context, placed by "
          "the patch frame) inside that coupon's support box is owned by the coupon (weight "
          "0, once; every owner listed); a vertex closer than R to a face has an arm partly "
-         "outside the box (ArmOutsideBox); a vertex on another cluster's claims is never "
-         "on "
-         "a chain. The vertex feature's claimed length is in the identification manifest "
+         "outside the box (ArmOutsideBox; LostArmLengthOverR = R minus the face distance, "
+         "in units of R: the part of the corner's R window beyond the first owner's box "
+         "that no coupon corrects once the vertex patch has weight 0, R1 final review "
+         "MINOR-2); a vertex on another cluster's claims is never on a chain. The vertex "
+         "feature's claimed length is in the identification manifest "
          "(Features[].Length), not in the patch"}}},
       {"Rule",
        "decision 236 (2) / 244 (2026-10-02): a translational cell of a stretch that "
@@ -17034,7 +17072,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           kSignatureParameterToleranceOverRadius * config->matching_radius);
       const auto ownership = ApplyContinuationOwnership(
           placed_patches, boxes, dimension,
-          kSignatureParameterToleranceOverRadius * config->matching_radius);
+          kSignatureParameterToleranceOverRadius * config->matching_radius,
+          config->matching_radius);
       for (const auto &cell : ownership.cells)
       {
         if (placed_patches[cell.patch].weight <= 0.0)

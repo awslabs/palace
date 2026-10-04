@@ -4541,8 +4541,23 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
     const auto box = DeviceBox(*cluster, "Box", R);
     CHECK_THAT(box[2] - claims_box[2], WithinAbs(2 * 0.25 * R, 1.0e-5));
     CHECK(support["Context"]["ChainVertices"].size() == 1);
-    CHECK(support["FaceRules"]["ExteriorVertices"] == 0);
+    // The exterior vertex is read on the FIRST pass (accumulated over every pass, decision
+    // 287 (a)); the final pass has no exterior reading left.
+    // (the corner is the end of two shell pieces, the pad's top and right edges: 2
+    // readings; the canonical frame maps the device's right face to face 3)
+    CHECK(support["FaceRules"]["ExteriorVertices"] == 2);
     CHECK(support["FaceRules"]["ExteriorEdges"] == 0);
+    REQUIRE(support["Growth"]["Passes"].size() == 3);
+    CHECK(support["Growth"]["Passes"][0]["ExteriorVertices"] == 2);
+    CHECK(support["Growth"]["Passes"][0]["Failing"][3] == true);
+    CHECK(support["Growth"]["Passes"][0]["Failures"].size() >= 1);
+    CHECK(support["Growth"]["Passes"][2]["ExteriorVertices"] == 0);
+    for (const auto &failing : support["Growth"]["Passes"][2]["Failing"])
+    {
+      CHECK(failing == false);
+    }
+    CHECK(support["Growth"]["Passes"][2]["Failures"].empty());
+    CHECK(support["FaceRules"]["Passes"] == 3);
     CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
     // The same corner 0.5 R outside the face is beyond the clearance shell: invisible by
     // the rule, the legacy-equivalent key as before.
@@ -4551,6 +4566,176 @@ TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
     REQUIRE(far != nullptr);
     CHECK(far->spatial_support["Contract"] == 2);
     CHECK(far->signature_key == legacy_key);
+  }
+
+  // 11. The knife edge (R1 final review MAJOR-1; decisions 287 (b) / 288): the pad corner
+  //     ON the claims-box face is the S1p / C2p pattern — step 1 moves the face by exactly
+  //     0.25 R and the pad's right edge then reads EXACTLY the clearance from the moved
+  //     face, up to the box quantisation residual (half a 1e-6 R quantum) and noise.
+  //     Sub-quantum perturbations (+-4e-7 R, the largest grid-preserving shift) of the
+  //     layout (the corner) and of the frame origin (lead B with the pad-edge claims it
+  //     cuts) give the SAME growth sequence and the SAME key: the quantised comparison
+  //     reads the edge AT the clearance, which passes (the rule's own ">="). Before the
+  //     fix `distance + 1e-9 < clearance` gave 2 steps on the minus side, 1 on the plus
+  //     side, and two keys. A FULL-quantum move (+-1e-6 R) is a real geometric change: the
+  //     hashed context coordinate moves by one quantum (the key changes) and the corner
+  //     moved OUTWARD legitimately grows twice (the edge is then one quantum closer than
+  //     the clearance to the moved face) — keys are geometry-precise to the quantum,
+  //     sub-quantum noise cannot move them. (The canonical frame maps the device's right
+  //     face to face 3.)
+  {
+    const auto [input_far, result_far] = Identify(Scene(40.0));
+    const auto *far = ClusterContaining(result_far, input_far, probe);
+    REQUIRE(far != nullptr);
+    const double face_x = DeviceBox(*far, "ClaimsBox", R)[2];  // the right face
+    CHECK_THAT(face_x, WithinAbs(12.872984, 1.0e-5));
+    struct Reading
+    {
+      std::string key;
+      std::array<int, 4> steps;
+      int band_hits;
+      nlohmann::json box;
+    };
+    auto Read = [&](double corner_x, double lead_shift)
+    {
+      const std::vector<LoopSpec> loops = {
+          {Rectangle(-40.0, -10.0, corner_x, 0.0), 0, 100.0},
+          {Rectangle(-1.0 + lead_shift, 1.0, 1.0 + lead_shift, 40.0), 1, 100.0}};
+      const auto [input, result] = Identify(loops);
+      const auto *cluster = ClusterContaining(result, input, {lead_shift, 1.0});
+      REQUIRE(cluster != nullptr);
+      REQUIRE(cluster->spatial_support["Contract"] == 3);
+      return Reading{cluster->signature_key,
+                     cluster->spatial_support["Growth"]["Steps"].get<std::array<int, 4>>(),
+                     cluster->spatial_support["FaceRules"]["ThresholdBandHits"].get<int>(),
+                     cluster->spatial_support["Box"]};
+    };
+    const Reading base = Read(face_x, 0.0);
+    CHECK(base.steps == std::array<int, 4>{0, 0, 0, 1});
+    const double sub_quantum = 4.0e-7 * R;
+    for (const double sign : {-1.0, 1.0})
+    {
+      // The layout: the corner moved relative to the cluster.
+      const Reading layout = Read(face_x + sign * sub_quantum, 0.0);
+      CHECK(layout.steps == base.steps);
+      CHECK(layout.key == base.key);
+      CHECK(layout.box == base.box);
+      // The frame origin: the lead (its claims cut the pad edge, the canonical frame and
+      // the claims box follow it) moved, the corner fixed.
+      const Reading frame = Read(face_x, sign * sub_quantum);
+      CHECK(frame.steps == base.steps);
+      CHECK(frame.key == base.key);
+      CHECK(frame.box == base.box);
+    }
+    // The threshold reading is reported on every pass (decision 287 (a)): the base case
+    // reads the edge at the clearance on its second pass.
+    CHECK(base.band_hits >= 1);
+    // The complement: one full quantum is a real move.
+    const double quantum = 1.0e-6 * R;
+    const Reading inside = Read(face_x - quantum, 0.0);
+    const Reading outside = Read(face_x + quantum, 0.0);
+    CHECK(inside.steps == std::array<int, 4>{0, 0, 0, 1});
+    CHECK(outside.steps == std::array<int, 4>{0, 0, 0, 2});
+    CHECK(inside.key != base.key);
+    CHECK(outside.key != base.key);
+    CHECK(inside.key != outside.key);
+  }
+
+  // 12. Two faces failing on one pass (R1 final review MINOR-8): the pad corner 0.1 R
+  // inside
+  //     the right face (scene 5) and a foreign strip (conductor 2, 2.5 R above the pad)
+  //     whose end sits 0.1 R inside the LEFT face: both faces grow on the first step and
+  //     the pass record lists BOTH failures (StepReasons keeps the first only).
+  {
+    const double left_x = -12.872984;
+    const std::vector<LoopSpec> strip = {
+        {Rectangle(left_x - 3.0, 5.0, left_x + 0.1 * R, 6.0), 2, 100.0}};
+    const auto [input, result] = Identify(Scene(12.872984 - 0.1 * R, strip));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Growth"]["Steps"] == std::array<int, 4>{0, 1, 0, 1});  // frame faces
+    REQUIRE(support["Growth"]["StepReasons"].size() == 1);
+    REQUIRE(support["Growth"]["Passes"].size() == 2);
+    const auto &first = support["Growth"]["Passes"][0];
+    CHECK(first["Failing"] == std::array<bool, 4>{false, true, false, true});
+    for (const int face : {1, 3})
+    {
+      bool listed = false;
+      for (const auto &failure : first["Failures"])
+      {
+        listed = listed || failure.get<std::string>().find(
+                               "face " + std::to_string(face)) != std::string::npos;
+      }
+      CHECK(listed);
+    }
+    CHECK(support["Growth"]["Passes"][1]["Failures"].empty());
+  }
+
+  // 13. Another cluster's claim CUT is no device vertex (R1 final review MINOR-1): pad A
+  //     continues far past B's box (its corner outside the clearance shell), a lead C ends
+  //     above it to the right so that C's claim on the pad edge begins INSIDE B's box
+  //     within 0.25 R of B's right face. The cut splits the context (C's piece is
+  //     ClaimedByOtherFeature, B's chain ends there) but the end it makes is exempt from
+  //     the clearance rule: no growth. Before the fix the cut read as "a device vertex or
+  //     face crossing" within the clearance and the face grew.
+  {
+    auto WithLeadC = [&](double lead_x)
+    {
+      std::vector<LoopSpec> loops = Scene(60.0);
+      loops.push_back({Rectangle(lead_x - 1.0, 1.0, lead_x + 1.0, 40.0), 2, 100.0});
+      return loops;
+    };
+    // C's claim window on the pad edge from a first placement: the left-most claimed x.
+    auto ClaimStart = [&](double lead_x)
+    {
+      const auto [input, result] = Identify(WithLeadC(lead_x));
+      const auto *cluster_c = ClusterContaining(result, input, {lead_x, 1.0});
+      REQUIRE(cluster_c != nullptr);
+      double start = 1.0e300;
+      for (const auto &portion : cluster_c->signature["Portions"])
+      {
+        for (const auto &p : {DevicePoint(*cluster_c, portion["P"][0], portion["P"][1], R),
+                              DevicePoint(*cluster_c, portion["P"][2], portion["P"][3], R)})
+        {
+          if (std::abs(p[1]) <= 1.0e-5)
+          {
+            start = std::min(start, p[0]);
+          }
+        }
+      }
+      REQUIRE(start < 1.0e299);
+      return start;
+    };
+    const double probe_x = 30.0;
+    const double window = probe_x - ClaimStart(probe_x);  // C's reach along the pad edge
+    const double face_x = 12.872984;
+    const double lead_x = face_x - 0.2 * R + window;  // the cut 0.2 R inside B's face
+    const auto [input, result] = Identify(WithLeadC(lead_x));
+    const auto *cluster_b = ClusterContaining(result, input, probe);
+    const auto *cluster_c = ClusterContaining(result, input, {lead_x, 1.0});
+    REQUIRE(cluster_b != nullptr);
+    REQUIRE(cluster_c != nullptr);
+    REQUIRE(cluster_b != cluster_c);
+    const auto &support = cluster_b->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["LegacyEquivalent"] == false);
+    CHECK(support["Growth"]["Grown"] == false);
+    CHECK(support["Growth"]["Steps"] == std::array<int, 4>{0, 0, 0, 0});
+    CHECK(support["Context"]["ClaimedByOtherFeature"]["Pieces"].get<int>() >= 1);
+    // The cut lies where C's claim begins: inside the box, within the clearance of face 2.
+    double cut_x = 1.0e300;
+    for (const auto &entry : support["Context"]["ClaimedByOtherFeature"]["Entries"])
+    {
+      CHECK(entry["Feature"] == cluster_c->id);
+      for (const auto &p : {DevicePoint(*cluster_b, entry["P"][0], entry["P"][1], R),
+                            DevicePoint(*cluster_b, entry["P"][2], entry["P"][3], R)})
+      {
+        cut_x = std::min(cut_x, p[0]);
+      }
+    }
+    CHECK_THAT(cut_x, WithinAbs(face_x - 0.2 * R, 1.0e-3));
+    CHECK(support["Box"] == support["ClaimsBox"]);
   }
 }
 

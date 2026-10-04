@@ -276,6 +276,10 @@ SUPPORT_FACE_CLEARANCE_OVER_R = 0.25
 SUPPORT_FACE_GROWTH_STEP_OVER_R = 0.25
 SUPPORT_FACE_GROWTH_MAX_STEPS = 12
 SUPPORT_SPAN_CAP_OVER_R = 16.0
+# Decision 287 (b): the C++ face rules (T1 snap, T2 clearance and crossing separation) compare
+# on this grid — a value within half a quantum of a threshold is AT it and takes the rule's
+# inclusive side. The face rules themselves are not mirrored here (the C++ record is read).
+SUPPORT_COMPARISON_QUANTUM_OVER_R = 1.0e-6
 
 
 def cluster_support_box(signature):

@@ -735,14 +735,20 @@ struct ContinuationOwnership
     double face_distance_over_r = 0.0;  // from the nearest face of the first owner's box
     double chain_end_distance_over_r = 0.0;
     bool arm_outside_box = false;
+    // max(0, 1 - face_distance_over_r): the part of the corner's R window beyond the first
+    // owner's box (R1 final review MINOR-2; 0 unless arm_outside_box).
+    double lost_arm_length_over_r = 0.0;
   };
   std::vector<Vertex> vertices;  // in patch order
   int shared_vertices = 0;
 };
+// `continuation_tolerance` (patch units) is the cell / claim-end tolerance of the
+// translational ownership; `matching_radius` (R, patch units) scales the vertex ownership's
+// local frames (passed explicitly: R1 final review MINOR-7).
 ContinuationOwnership ApplyContinuationOwnership(
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
     const std::vector<SpatialSupportBounds> &supports, int dimension,
-    double continuation_tolerance);
+    double continuation_tolerance, double matching_radius);
 
 // Coupon-vs-coupon margin overlap (decision 244): two spatial cluster supports whose boxes
 // overlap in their interiors are recorded, not aborted, when the overlap is MARGINS ONLY —

@@ -7006,7 +7006,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
   SECTION("a continuation cell wholly inside the box keeps weight 0")
   {
     std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 1.4)};
-    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance, R);
     REQUIRE(ownership.cells.size() == 2);
     CHECK(ownership.wholly_owned_cells == 2);
     CHECK(ownership.clipped_cells == 0);
@@ -7031,7 +7031,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.5),
                                   Cell(4, 0, 2.5, 4.0)};
     const auto before = patches;
-    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance, R);
     REQUIRE(ownership.cells.size() == 2);
     CHECK(ownership.wholly_owned_cells == 1);
     CHECK(ownership.clipped_cells == 1);
@@ -7052,7 +7052,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     Same(patches[2], before[2]);
     // Idempotent: the placed cells are owned no further.
     auto again = patches;
-    const auto repeat = ApplyContinuationOwnership(again, {box}, 3, tolerance);
+    const auto repeat = ApplyContinuationOwnership(again, {box}, 3, tolerance, R);
     CHECK(repeat.owned_length == 0.0);
     Same(again[1], patches[1]);
     // (v) Energy consistency: the correction is additive in the weights, so the removed
@@ -7081,7 +7081,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::vector<Patch> patches = {Cell(4, 1, -2.0, -1.5, 2.0), Cell(4, 1, -1.5, -0.8, 2.0),
                                   beside};
     const auto before = patches;
-    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance, R);
     CHECK(ownership.cells.empty());
     CHECK(ownership.owned_length == 0.0);
     for (std::size_t i = 0; i < patches.size(); i++)
@@ -7105,7 +7105,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
         Cell(4, 0, 0.0, 1.0, 0.5, -0.5), Cell(4, 0, 1.0, 2.5, 0.5, -0.5),
         Cell(4, 0, 2.5, 4.0, 0.5, -0.5), Cell(4, 0, 4.0, 5.0, 0.5, -0.5), perpendicular};
     const auto before = patches;
-    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance, R);
     REQUIRE(ownership.cells.size() == 2);
     CHECK_THAT(ownership.owned_length, WithinAbs(1.5, 1.0e-12));
     CHECK(patches[0].weight == 0.0);
@@ -7128,7 +7128,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
         Cell(4, 1, 0.0, 1.0, 0.5, 0.5), Cell(4, 1, 1.0, 2.5, 0.5, 0.5)};
     patches[2].provenance.segment = patches[3].provenance.segment = 8;
     const auto before = patches;
-    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance);
+    const auto ownership = ApplyContinuationOwnership(patches, {box}, 3, tolerance, R);
     REQUIRE(ownership.cells.size() == 2);
     CHECK(ownership.cells[0].patch == 0);
     CHECK(ownership.cells[1].patch == 1);
@@ -7164,7 +7164,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::vector<Patch> on_claimed_segment = {Cell(4, 1, 0.0, 1.0, 0.5, 0.5)};
     on_claimed_segment[0].provenance.segment = 3;
     CHECK_THAT(
-        ApplyContinuationOwnership(on_claimed_segment, {box}, 3, tolerance).owned_length,
+        ApplyContinuationOwnership(on_claimed_segment, {box}, 3, tolerance, R).owned_length,
         WithinAbs(1.0, 1.0e-12));
   }
   SECTION("fresh and cache-round-tripped patches classify identically")
@@ -7245,8 +7245,9 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     REQUIRE(cached_records.size() == fresh_records.size());
     CHECK(cached_records.front().continuation == fresh_records.front().continuation);
     auto fresh = data.patches, reloaded = cached.patches;
-    const auto fresh_ownership = ApplyContinuationOwnership(fresh, {box}, 3, tolerance);
-    const auto cached_ownership = ApplyContinuationOwnership(reloaded, {box}, 3, tolerance);
+    const auto fresh_ownership = ApplyContinuationOwnership(fresh, {box}, 3, tolerance, R);
+    const auto cached_ownership =
+        ApplyContinuationOwnership(reloaded, {box}, 3, tolerance, R);
     CHECK_THAT(fresh_ownership.owned_length, WithinAbs(1.5 + 0.5, 1.0e-12));
     CHECK_THAT(cached_ownership.owned_length,
                WithinAbs(fresh_ownership.owned_length, 1.0e-12));
@@ -7331,7 +7332,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       support.chain = patches[i].provenance.chain;
       supports.push_back(support);
     }
-    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance);
+    const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
     REQUIRE(ownership.vertices.size() == 1);
     CHECK(ownership.shared_vertices == 1);
     const auto &shared = ownership.vertices[0];
@@ -7340,21 +7341,22 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     CHECK(shared.owners == std::vector<std::size_t>{0, 1});
     CHECK_THAT(shared.face_distance_over_r, WithinAbs(0.4, 1.0e-12));  // to x = 1
     CHECK(shared.arm_outside_box);
+    CHECK_THAT(shared.lost_arm_length_over_r, WithinAbs(0.6, 1.0e-12));  // R - 0.4 R
     CHECK_THAT(patches[2].weight, WithinAbs(0.0, 1.0e-15));
     for (const std::size_t untouched : {3, 4, 5, 6})
     {
       CHECK_THAT(patches[untouched].weight, WithinAbs(1.0, 1.0e-15));
     }
     // Idempotent: a second pass owns nothing more (weight-0 patches are skipped).
-    const auto repeat = ApplyContinuationOwnership(patches, supports, 3, tolerance);
+    const auto repeat = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
     CHECK(repeat.vertices.empty());
     // A legacy (claims-only) support owns no vertex.
     std::vector<Patch> legacy = {Spatial(0.0, chain_a), Corner(20, 0.6, 0.0)};
     legacy[0].provenance.has_support_box = false;
     legacy[0].provenance.chain.clear();
     std::vector<SpatialSupportBounds> legacy_supports = {box};
-    CHECK(
-        ApplyContinuationOwnership(legacy, legacy_supports, 3, tolerance).vertices.empty());
+    CHECK(ApplyContinuationOwnership(legacy, legacy_supports, 3, tolerance, R)
+              .vertices.empty());
     CHECK_THAT(legacy[1].weight, WithinAbs(1.0, 1.0e-15));
     // The Diagnostics entry lists the records with Kind Vertex.
     config::ElectrostaticSolverData::ResponseCorrectionData data;
@@ -7375,6 +7377,8 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     CHECK(record["Vertices"]["Records"][0]["Kind"] == "Vertex");
     CHECK(record["Vertices"]["Records"][0]["Owners"].size() == 2);
     CHECK(record["Vertices"]["Records"][0]["ArmOutsideBox"] == true);
+    CHECK_THAT(record["Vertices"]["Records"][0]["LostArmLengthOverR"].get<double>(),
+               WithinAbs(0.6, 1.0e-12));
   }
   SECTION("a cell on the continuations of two coupons is removed once, attributed by the "
           "midpoint between the claim ends")
@@ -7395,7 +7399,8 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::vector<Patch> patches = {Cell(4, 0, 0.0, 1.0), Cell(4, 0, 1.0, 2.0),
                                   Cell(6, 0, 4.0, 5.0), Cell(6, 0, 5.0, 7.0)};
     const auto before = patches;
-    const auto ownership = ApplyContinuationOwnership(patches, {box, other}, 3, tolerance);
+    const auto ownership =
+        ApplyContinuationOwnership(patches, {box, other}, 3, tolerance, R);
     REQUIRE(ownership.cells.size() == 4);
     CHECK(ownership.shared_cells == 2);
     CHECK_THAT(ownership.shared_length, WithinAbs(2.0, 1.0e-12));
@@ -7451,7 +7456,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     REQUIRE(records.size() == 1);
     CHECK(records.front().continuation);
     const auto ownership =
-        ApplyContinuationOwnership(data.patches, {spatial}, 3, tolerance);
+        ApplyContinuationOwnership(data.patches, {spatial}, 3, tolerance, R);
     const auto description = DescribeTranslationalOwnershipRecords(records, {spatial}, data,
                                                                    2.0, {}, &ownership);
     CHECK_THAT(description["OwnedLength"].get<double>(), WithinAbs(2.0 * 0.9, 1.0e-12));
@@ -7552,7 +7557,7 @@ TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
     };
     std::vector<Patch> bridge = {Cell(587.05, 587.8556), Cell(587.8556, 589.1444),
                                  Cell(589.1444, 589.95)};
-    const auto ownership = ApplyContinuationOwnership(bridge, {a, b}, 3, tolerance);
+    const auto ownership = ApplyContinuationOwnership(bridge, {a, b}, 3, tolerance, R);
     CHECK(ownership.shared_cells == 3);
     CHECK_THAT(ownership.owned_length, WithinAbs(2.90, 1.0e-9));
     CHECK_THAT(ownership.owned_by_support.at(204), WithinAbs(1.45, 1.0e-9));

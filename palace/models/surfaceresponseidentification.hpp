@@ -384,7 +384,13 @@ CanonicalSignature CanonicalClusterSignature(
 // kSupportFaceClearanceOverRadius x R from every face it does not cross, every interior
 // device vertex the same from every face, every crossing is that far from the box corners
 // and crosses at sin(theta) >= kSupportFaceClearanceOverRadius, two crossings of one face
-// closer than that may bound metal (recorded, MinCrossSectionOverR) but not gap; T3 every
+// closer than that may bound metal (recorded, MinCrossSectionOverR) but not gap; every
+// length threshold is read on the kSignatureLengthQuantumOverRadius grid (decision 287
+// (b): a value within half a quantum of the threshold is at it and takes the rule's
+// inclusive side, so an edge on a claims-box face reads exactly the clearance from the
+// moved face and passes deterministically; the crossing sine is dimensionless and the span
+// cap compares quantised box coordinates: left as they are) and an end made only by
+// another cluster's claim cut is no vertex (exempt from the end tests); T3 every
 // failing face moves outward by kSupportFaceGrowthStepOverRadius x R per step (all failing
 // faces per step), at most kSupportFaceGrowthMaxSteps steps per face and never past the
 // plan span cap kSupportSpanCapOverRadius x R; a cluster no box satisfies is an

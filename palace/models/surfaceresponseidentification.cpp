@@ -10119,6 +10119,18 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   const double span_cap = kSupportSpanCapOverRadius;
   const double band = kKnifeEdgeBandRelative;
   const double pi = std::acos(-1.0);
+  // Quantised face-rule comparisons (decision 287 (b)): the box faces sit on the
+  // kSignatureLengthQuantumOverRadius grid and a step moves them by a grid multiple, so a
+  // device edge lying ON a claims-box face reads exactly the clearance from the moved face
+  // up to the quantisation residual (|r| <= half a quantum) and mesh / float noise. Every
+  // length threshold is therefore read on the grid: a value within half a quantum of the
+  // threshold is AT the threshold and decided by the rule's own inclusive side (>= passes
+  // the clearance, <= the snap is on the face), never by sub-quantum noise.
+  const double half_quantum = 0.5 * kSignatureLengthQuantumOverRadius;
+  auto AtMostSnap = [&](double distance) { return distance < snap + half_quantum; };
+  auto BelowClearance = [&](double distance)
+  { return distance < clearance - half_quantum; };
+  auto IsSliverLength = [&](double length) { return length / R < snap - half_quantum; };
   auto Local = [&](const Point3D &p) -> Point2
   {
     const Point3D r = Sub(p, origin);
@@ -10173,6 +10185,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     // that coupon, never part of this cluster's chain.
     std::optional<std::size_t> claimed_by;
     std::size_t segment = kExcludedRun;  // the excluded segment of a kExcludedRun piece
+    // The end at s.first / s.second exists only because another cluster's claim cut split
+    // the run there (nothing geometric: the device edge continues): exempt from the T2
+    // end tests (R1 final review MINOR-1), still a crossing when it lies on a face.
+    bool cut_a = false, cut_b = false;
     bool Excluded() const { return run == kExcludedRun; }
     std::pair<std::size_t, std::size_t> Key() const { return {run, segment}; }
   };
@@ -10298,10 +10314,12 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
 
   // The device plan clipped to a box (the current box, or the box dilated by the clearance
   // for the two-sided face rule): run-parameter intervals inside it minus the cluster's
-  // claims, split at the other clusters' claim cuts, pieces shorter than the snap quantum
-  // dropped (T1).
+  // claims, split at the other clusters' claim cuts when `split_at_claim_cuts` (the box
+  // pieces: the Chain / ClaimedByOtherFeature classification; the shell pieces of the
+  // two-sided rule are never classed and stay whole so that a cut inside the shell is no
+  // piece end), pieces shorter than the snap quantum dropped (T1).
   std::size_t slivers_dropped = 0;
-  auto ClipPlanTo = [&](const std::array<double, 4> &clip)
+  auto ClipPlanTo = [&](const std::array<double, 4> &clip, bool split_at_claim_cuts)
   {
     std::vector<Piece> pieces;
     slivers_dropped = 0;
@@ -10454,9 +10472,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
           }
         }
       }
-      if (!other_claims.empty())
+      // (interval, end a is a cut, end b is a cut)
+      std::vector<std::tuple<Interval, bool, bool>> split;
+      if (!other_claims.empty() && split_at_claim_cuts)
       {
-        std::vector<Interval> split;
         for (const auto &interval : inside)
         {
           std::vector<double> cuts = {interval.first, interval.second};
@@ -10476,25 +10495,37 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
           {
             if (cuts[k + 1] > cuts[k] + Tol())
             {
-              split.emplace_back(cuts[k], cuts[k + 1]);
+              split.emplace_back(Interval{cuts[k], cuts[k + 1]}, k > 0,
+                                 k + 2 < cuts.size());
             }
           }
         }
-        inside = std::move(split);
       }
-      for (const auto &interval : inside)
+      else
+      {
+        for (const auto &interval : inside)
+        {
+          split.emplace_back(interval, false, false);
+        }
+      }
+      for (const auto &[interval, cut_a, cut_b] : split)
       {
         Piece piece{r, interval, std::nullopt};
+        piece.cut_a = cut_a;
+        piece.cut_b = cut_b;
         const double mid = 0.5 * (interval.first + interval.second);
-        for (const auto &[claim, owner] : other_claims)
+        if (split_at_claim_cuts)
         {
-          if (mid >= claim.first - Tol() && mid <= claim.second + Tol())
+          for (const auto &[claim, owner] : other_claims)
           {
-            piece.claimed_by = owner;
-            break;
+            if (mid >= claim.first - Tol() && mid <= claim.second + Tol())
+            {
+              piece.claimed_by = owner;
+              break;
+            }
           }
         }
-        if (PieceLength(piece) < snap * R)
+        if (IsSliverLength(PieceLength(piece)))
         {
           slivers_dropped++;
           continue;
@@ -10552,7 +10583,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         continue;
       }
       Piece piece{kExcludedRun, Interval{t0 * length, t1 * length}, std::nullopt, i};
-      if (PieceLength(piece) < snap * R)
+      if (IsSliverLength(PieceLength(piece)))
       {
         slivers_dropped++;
         continue;
@@ -10563,7 +10594,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
               { return a.Key() != b.Key() ? a.Key() < b.Key() : a.s < b.s; });
     return pieces;
   };
-  auto ClipPlan = [&]() { return ClipPlanTo(box); };
+  auto ClipPlan = [&]() { return ClipPlanTo(box, true); };
 
   // T2 on the current box and pieces: the failing faces and the record of the pass.
   struct FaceCheck
@@ -10577,6 +10608,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     // OUTSIDE a face that do not cross it.
     std::size_t exterior_vertices = 0, exterior_edges = 0;
     std::string first_failure;
+    std::vector<std::string> failures;  // every failure of the pass, in reading order
   };
   auto CheckFaces = [&](const std::vector<Piece> &pieces, const std::vector<Piece> &shell)
   {
@@ -10588,6 +10620,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       {
         check.first_failure = why;
       }
+      check.failures.push_back(why);
     };
     auto Band = [&](double value, double threshold)
     {
@@ -10646,11 +10679,12 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       for (const bool at_a : {true, false})
       {
         const Point2 &e = at_a ? a : b;
+        const bool cut_end = at_a ? piece.cut_a : piece.cut_b;
         std::array<bool, 4> on_face{};
         for (int f = 0; f < 4; f++)
         {
           const double distance = std::abs(e[FaceAxis(f)] - FaceLine(f));
-          on_face[static_cast<std::size_t>(f)] = distance <= snap;
+          on_face[static_cast<std::size_t>(f)] = AtMostSnap(distance);
           Band(distance, snap);
         }
         for (int f = 0; f < 4; f++)
@@ -10675,29 +10709,42 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
             check.crossings[static_cast<std::size_t>(f)]++;
             continue;
           }
+          if (cut_end)
+          {
+            continue;  // another cluster's claim cut: no device vertex here
+          }
           // An interior device vertex, a claim end or a crossing of another face: its
           // clearance from this face (a crossing within the clearance of an adjacent face
           // is a crossing near a box corner).
           Clearance(distance);
-          if (distance + 1.0e-9 < clearance)
+          if (BelowClearance(distance))
           {
             Fail(f, "a device vertex or face crossing lies " + std::to_string(distance) +
                         " R from face " + std::to_string(f));
           }
         }
       }
-      // The piece's clearance from the faces neither end touches.
+      // The piece's clearance from the faces neither end touches. A straight piece is
+      // closest to a face at an end; an end made only by another cluster's claim cut reads
+      // nothing (the edge continues into the neighbouring piece, which reads its own ends).
       for (int f = 0; f < 4; f++)
       {
         const int axis = FaceAxis(f);
-        const bool touches = std::abs(a[axis] - FaceLine(f)) <= snap ||
-                             std::abs(b[axis] - FaceLine(f)) <= snap;
+        const bool touches = AtMostSnap(std::abs(a[axis] - FaceLine(f))) ||
+                             AtMostSnap(std::abs(b[axis] - FaceLine(f)));
         if (touches)
         {
           continue;
         }
-        double distance =
-            std::min(std::abs(a[axis] - FaceLine(f)), std::abs(b[axis] - FaceLine(f)));
+        double distance = std::numeric_limits<double>::infinity();
+        if (!piece.cut_a)
+        {
+          distance = std::min(distance, std::abs(a[axis] - FaceLine(f)));
+        }
+        if (!piece.cut_b)
+        {
+          distance = std::min(distance, std::abs(b[axis] - FaceLine(f)));
+        }
         if (arc)
         {
           // The coordinate's extrema inside the angular range.
@@ -10720,8 +10767,12 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
             }
           }
         }
+        if (!std::isfinite(distance))
+        {
+          continue;  // a straight piece between two claim cuts: nothing to read
+        }
         Clearance(distance);
-        if (distance + 1.0e-9 < clearance)
+        if (BelowClearance(distance))
         {
           Fail(f, "a device edge runs " + std::to_string(distance) + " R from face " +
                       std::to_string(f) + " without crossing it");
@@ -10750,9 +10801,9 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
         for (int f = 0; f < 4; f++)
         {
           const int axis = FaceAxis(f), other = 1 - axis;
-          if (std::abs(e[axis] - b[static_cast<std::size_t>(f)]) <= snap &&
-              e[other] >= b[static_cast<std::size_t>(other)] - snap &&
-              e[other] <= b[static_cast<std::size_t>(other + 2)] + snap)
+          if (AtMostSnap(std::abs(e[axis] - b[static_cast<std::size_t>(f)])) &&
+              AtMostSnap(b[static_cast<std::size_t>(other)] - e[other]) &&
+              AtMostSnap(e[other] - b[static_cast<std::size_t>(other + 2)]))
           {
             return true;
           }
@@ -10771,14 +10822,14 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
           Piece part = piece;
           part.s = interval;
           part.claimed_by.reset();
-          if (PieceLength(part) < snap * R)
+          if (IsSliverLength(PieceLength(part)))
           {
             continue;
           }
           const CurvePiece geometry = PieceCurve(part, interval.first, interval.second);
           const Point2 a = Local(geometry.a), b = Local(geometry.b),
                        m = Local(geometry.At(0.5));
-          if (Inside(m, snap))
+          if (Inside(m, snap + half_quantum))
           {
             continue;  // an arc's exterior part read inside: nothing outside this face
           }
@@ -10786,7 +10837,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
           for (int f = 0; f < 4; f++)
           {
             const double side = (f < 2 ? -1.0 : 1.0) * (m[FaceAxis(f)] - FaceLine(f));
-            if (side > snap)
+            if (!AtMostSnap(side))
             {
               beyond.push_back(f);
             }
@@ -10856,7 +10907,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
       {
         const double separation = list[k + 1].along - list[k].along;
         Band(separation, clearance);
-        if (separation + 1.0e-9 >= clearance)
+        if (!BelowClearance(separation))
         {
           continue;
         }
@@ -10880,6 +10931,10 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   // for (a refused step is attempted, not applied; review MINOR-2).
   std::array<int, 4> steps{}, attempted{};
   std::vector<std::string> step_reasons;  // the first failure behind every applied step
+  // Every T2 pass (decision 287 (a)): its failing faces, every failure, and its band /
+  // exterior readings — the final pass is the last entry; the counters below sum them.
+  nlohmann::json passes = nlohmann::json::array();
+  std::size_t total_band_hits = 0, total_exterior_vertices = 0, total_exterior_edges = 0;
   std::vector<Piece> pieces;
   FaceCheck check;
   std::optional<std::string> unboxable, unboxable_reason;
@@ -10891,10 +10946,19 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     {
       dilated[static_cast<std::size_t>(f)] += (f < 2 ? -1.0 : 1.0) * clearance;
     }
-    const std::vector<Piece> shell = ClipPlanTo(dilated);
+    const std::vector<Piece> shell = ClipPlanTo(dilated, false);
     const std::size_t box_slivers = slivers_dropped;
     check = CheckFaces(pieces, shell);
     slivers_dropped = box_slivers;
+    passes.push_back({{"Box", BoxJson(box)},
+                      {"Failing", check.failing},
+                      {"Failures", check.failures},
+                      {"ThresholdBandHits", check.band_hits},
+                      {"ExteriorVertices", check.exterior_vertices},
+                      {"ExteriorEdges", check.exterior_edges}});
+    total_band_hits += check.band_hits;
+    total_exterior_vertices += check.exterior_vertices;
+    total_exterior_edges += check.exterior_edges;
     if (std::none_of(check.failing.begin(), check.failing.end(), [](bool b) { return b; }))
     {
       break;
@@ -11365,16 +11429,18 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     }
   }
 
-  out.band_hits = check.band_hits + box_band_hits;
+  out.band_hits = total_band_hits + box_band_hits;
   nlohmann::json growth = {{"StepOverR", step},
                            {"MaxSteps", kSupportFaceGrowthMaxSteps},
                            {"Steps", steps},
                            {"AttemptedSteps", attempted},
                            {"StepReasons", step_reasons},
+                           {"Passes", passes},
                            {"Grown", out.grown}};
   nlohmann::json face_rules = {
       {"SnapOverR", snap},
       {"ClearanceOverR", clearance},
+      {"ComparisonQuantumOverR", kSignatureLengthQuantumOverRadius},
       {"SliversDropped", slivers_dropped},
       {"Crossings", check.crossings},
       {"MinClearanceOverR", check.min_clearance ? nlohmann::json(Q(*check.min_clearance))
@@ -11386,10 +11452,12 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
                                    ? nlohmann::json(Q(*check.min_cross_section))
                                    : nlohmann::json(nullptr)},
       {"NarrowCrossSections", check.narrow_cross_sections},
-      {"ExteriorVertices", check.exterior_vertices},
-      {"ExteriorEdges", check.exterior_edges},
+      {"ExteriorVertices", total_exterior_vertices},
+      {"ExteriorEdges", total_exterior_edges},
       {"ThresholdBandRelative", band},
-      {"ThresholdBandHits", check.band_hits},
+      {"ThresholdBandHits", total_band_hits},
+      {"FinalPassThresholdBandHits", check.band_hits},
+      {"Passes", passes.size()},
       {"BoxRuleThresholdBandHits", box_band_hits}};
   out.record = {
       {"ClaimsBox", BoxJson(claims_box)},
@@ -11636,7 +11704,16 @@ void Identifier::EmitClusters()
            << ", chain " << support.chain_length / R << " R, foreign "
            << support.foreign_length / R << " R, grown " << support.grown
            << ", fictitious straight continuation "
-           << support.fictitious_continuation_length / R << " R\n";
+           << support.fictitious_continuation_length / R << " R, threshold-band readings "
+           << support.band_hits << " (every T2 pass + the box rule)\n";
+      if (support.band_hits > 0)
+      {
+        text << "  WARNING: cluster " << c << "'s key rests on " << support.band_hits
+             << " face-rule reading(s) within " << kKnifeEdgeBandRelative
+             << " of a threshold (decision 287); see "
+                "Features[].SpatialSupport.FaceRules.ThresholdBandHits and "
+                "Growth.Passes\n";
+      }
       input.log(text.str());
     }
     for (const auto &[r, interval] : cluster_claimed[c])
@@ -14306,6 +14383,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"SupportFaceGrowthStepOverR", kSupportFaceGrowthStepOverRadius},
         {"SupportFaceGrowthMaxSteps", kSupportFaceGrowthMaxSteps},
         {"SupportSpanCapOverR", kSupportSpanCapOverRadius},
+        {"SupportComparisonQuantumOverR", kSignatureLengthQuantumOverRadius},
         {"SpatialSupportContract",
          "contract v3 (USER decision 281, supervisor decision 282, 2026-10-03; replaces "
          "the "
@@ -14334,11 +14412,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "is ON the face and a context piece shorter than that is dropped (the sliver "
          "quantum); T2 every device edge inside the box keeps SupportFaceClearanceOverR R "
          "from every face it does not cross, every piece end not on a face (device vertex, "
-         "claim end) and every face crossing keep that clearance from every other face "
+         "claim end; an end made only by another cluster's claim cut is no vertex and is "
+         "exempt) and every face crossing keep that clearance from every other face "
          "(a crossing near a box corner), every crossing meets its face at sin(theta) >= "
          "SupportFaceClearanceOverR, and two crossings of one face closer than that may "
          "bound metal (a narrow lead: allowed, FaceRules.MinCrossSectionOverR) but not "
-         "gap; "
+         "gap; every length threshold (snap, clearance, separation) is read on the "
+         "SupportComparisonQuantumOverR grid (decision 287 (b): a value within half a "
+         "quantum of the threshold is AT it and takes the rule's inclusive side, so an "
+         "edge on a claims-box face reads exactly the clearance from the moved face and "
+         "passes deterministically; keys are geometry-precise to the quantum and "
+         "sub-quantum noise cannot move them); "
          "T3 every face failing T2 moves outward by SupportFaceGrowthStepOverR R per step "
          "(all failing faces of a step together), T1 / T2 re-evaluated on the grown box "
          "(new edges enter), at most SupportFaceGrowthMaxSteps steps per face and never "
@@ -14484,7 +14568,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                    "contract's fictitious straight continuation, in the manifest's length "
                    "unit; ThresholdBandHits counts the face-rule readings within "
                    "KnifeEdgeBandRelative of a threshold (snap, clearance, crossing "
-                   "sine, crossing separation)"}}},
+                   "sine, crossing separation) over EVERY T2 pass of every cluster plus "
+                   "the box-rule readings (decision 287 (a): a key whose growth sequence "
+                   "was decided at a threshold is flagged; the per-pass readings are in "
+                   "Features[].SpatialSupport.Growth.Passes)"}}},
         {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)},
         {"StackEndThirdBodyRule",
          "pair / stack claimed length within 2R (3D, strict) of a cluster's claimed "
