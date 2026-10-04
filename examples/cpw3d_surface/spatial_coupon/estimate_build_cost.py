@@ -12,7 +12,9 @@ dV / h(x)^3 over the coupon, with h the composed production size field, evaluate
 component by component from the frozen inputs only (signature, boundary, process, mesh
 recipe, trace basis, build options):
 
-- far field: the coupon box volume at FarSize;
+- far field: the coupon box volume at FarSize; the box is the mesher's (coupon_bounds):
+  a device-plan coupon (contract 3, decision 282) takes the plane box from its process
+  library's SupportBox, a legacy coupon the rows' extension rule;
 - prism tubes: every straight metal edge not on the box carries a top and a bottom tube,
   Layers = length / TangentialSize (bounded by FarSize), prisms per layer = Sectors +
   2 x Sectors x (Rings - 1), pyramids per layer = Sectors (the recipe's ring rule and
@@ -84,8 +86,30 @@ def read_edges(signature):
                       "tangent": np.array([float(row[k]) for k in ("Tx", "Ty", "Tz")]),
                       "interval": (float(row["S0"]), float(row["S1"])),
                       "normal_sign": int(float(row["Nz"])),
-                      "vertex_arm": bool(int(float(row.get("VertexArm", 0) or 0)))})
+                      "vertex_arm": bool(int(float(row.get("VertexArm", 0) or 0))),
+                      # A device-plan coupon's context row (a chain piece or a foreign edge of
+                      # the plan, decision 282 rule B3) is an edge like any other; its box is
+                      # the process library's SupportBox.
+                      "context": bool(int(float(row.get("Context", 0) or 0)))})
     return edges
+
+
+def read_support_box(process_library):
+    """The SupportBox [x0, y0, x1, y1] of the single model of a process library (a
+    device-plan coupon, decision 282: the signature's grown box in the canonical frame =
+    the mesh frame), or None for a legacy model or no library
+    (mesh_spatial_coupon.jl read_support_box)."""
+    if process_library is None:
+        return None
+    models = json.loads(Path(process_library).read_text()).get("Models", [])
+    if len(models) != 1:
+        raise ValueError("The process library must bind exactly one model")
+    if "SupportBox" not in models[0]:
+        return None
+    box = [float(value) for value in models[0]["SupportBox"]]
+    if len(box) != 4 or not all(math.isfinite(value) for value in box) or not (box[2] > box[0] and box[3] > box[1]):
+        raise ValueError("The process library's SupportBox is not a box")
+    return box
 
 
 def edge_chains(edges):
@@ -129,10 +153,24 @@ def edge_chains(edges):
     return unions
 
 
-def coupon_box(edges, radius, metal_thickness, overetch):
-    """The mesher's coupon box (mesh_spatial_coupon.jl coupon_bounds / extended_interval,
-    with the decision-47 chain rule for CAD-subdivided edges and the per-layer-sign
-    vertical padding of decision 48)."""
+def coupon_box(edges, radius, metal_thickness, overetch, support_box=None):
+    """The mesher's coupon box (mesh_spatial_coupon.jl coupon_bounds): with a process
+    library SupportBox (a device-plan coupon, contract 3) the plane box is the SupportBox
+    and the z extent the rows'; without one the rows' rule (row_coupon_box), which a
+    device-plan signature (Context rows) may not use."""
+    if support_box is not None:
+        lower, upper = row_coupon_box(edges, radius, metal_thickness, overetch)
+        lower[:2], upper[:2] = support_box[:2], support_box[2:]
+        return lower, upper
+    if any(edge["context"] for edge in edges):
+        raise ValueError("Device-plan coupon rows (Context) need the process library's SupportBox")
+    return row_coupon_box(edges, radius, metal_thickness, overetch)
+
+
+def row_coupon_box(edges, radius, metal_thickness, overetch):
+    """The legacy coupon box of the rows (mesh_spatial_coupon.jl row_coupon_bounds /
+    extended_interval, with the decision-47 chain rule for CAD-subdivided edges and the
+    per-layer-sign vertical padding of decision 48)."""
     points = []
     unions = edge_chains(edges)
     for index, edge in enumerate(edges):
@@ -189,7 +227,9 @@ def on_box(point, lower, upper, tolerance):
 
 def metal_sides(loops, lower, upper, tolerance):
     """Straight metal loop sides that are not box faces (each carries two tubes) and the
-    number of tube caps: two per side end at a semantic (Physical) corner."""
+    number of tube caps: two per side end at a semantic (Physical) corner.  A side with
+    both ends on the same face of the coupon box (the plan's box-face closing segment;
+    the mesher's side_on_box_face) is not a tubed metal side."""
     sides, caps = [], 0
     for loop in loops:
         n = len(loop)
@@ -296,7 +336,8 @@ def estimate(paths, options, tetrahedra_per_cubic_size, kind="fabricated"):
     edge_size, growth_ratio = float(options["--edge-size"]), float(options["--edge-growth-ratio"])
     corner_size, far_growth = float(options["--corner-size"]), float(options["--far-growth"])
     edges = read_edges(paths["Signature"])
-    lower, upper = coupon_box(edges, radius, thickness, overetch)
+    lower, upper = coupon_box(edges, radius, thickness, overetch,
+                              support_box=read_support_box(paths.get("ProcessLibrary")))
     tolerance = 1e-8 * radius
     extent = upper - lower
     volume = float(np.prod(extent))
