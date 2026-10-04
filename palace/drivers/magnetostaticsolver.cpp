@@ -112,25 +112,27 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.solver.substructuring)
   {
     BlockTimer bt(Timer::CONSTRUCT);
-    CurlCurlOperator curlcurl_op(iodata, mesh);
-    PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
-    SubstructuringSolver sub(iodata, mesh);
-    sub.CondenseEnvironment();
-    const int n = static_cast<int>(curlcurl_op.GetSurfaceFluxOp().Size());
-    MFEM_VERIFY(n > 0, "Magnetostatic substructuring requires flux-loop excitations!");
-
-    // Fluxoid generators of the flux loops, solved as one batch.
+    // Fluxoid generators of the flux loops (from the native operator, freed before the
+    // condensation).
     std::vector<Vector> generators;
     std::vector<double> Phi;
     std::vector<int> idxs;
-    Vector RHS, boundary_values;
-    for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
     {
-      curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
-      generators.push_back(boundary_values);
-      Phi.push_back(data.GetExcitationFlux());
-      idxs.push_back(idx);
+      CurlCurlOperator curlcurl_op(iodata, mesh);
+      PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+      Vector RHS, boundary_values;
+      for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+      {
+        curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
+        generators.push_back(boundary_values);
+        Phi.push_back(data.GetExcitationFlux());
+        idxs.push_back(idx);
+      }
     }
+    const int n = static_cast<int>(generators.size());
+    MFEM_VERIFY(n > 0, "Magnetostatic substructuring requires flux-loop excitations!");
+    SubstructuringSolver sub(iodata, mesh);
+    sub.CondenseEnvironment();
     Mpi::Print("\nSubstructuring flux-loop sweep: {:d} excitation{}\n", n,
                (n > 1) ? "s" : "");
     // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
