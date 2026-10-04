@@ -1,0 +1,300 @@
+{
+ "Topology": "SpatialEdgeCluster",
+ "Geometry": {
+  "EdgeCount": 2,
+  "Edges": [
+   {
+    "Point": [
+     -1.9,
+     0.0,
+     0.0
+    ],
+    "GapDirection": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "ProcessNormal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "Interval": [
+     -1.9,
+     1.9
+    ],
+    "Conductor": 1,
+    "InterfaceSlot": 0,
+    "BoundaryCondition": {
+     "Type": "PEC"
+    }
+   },
+   {
+    "Point": [
+     0.0,
+     1.9,
+     0.0
+    ],
+    "GapDirection": [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    "ProcessNormal": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "Interval": [
+     -1.9,
+     1.9
+    ],
+    "Conductor": 1,
+    "InterfaceSlot": 0,
+    "BoundaryCondition": {
+     "Type": "PEC"
+    }
+   }
+  ],
+  "Signature": {
+   "Type": "SpatialEdgeCluster",
+   "EdgeCount": 2,
+   "Portions": [
+    {
+     "Conductor": 1,
+     "Gap": [
+      0.0,
+      1.0
+     ],
+     "Interfaces": [
+      "MA",
+      "MS",
+      "SA"
+     ],
+     "Law": "{\"Type\":\"PEC\"}",
+     "P": [
+      -2.0,
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    {
+     "Conductor": 1,
+     "Gap": [
+      -1.0,
+      0.0
+     ],
+     "Interfaces": [
+      "MA",
+      "MS",
+      "SA"
+     ],
+     "Law": "{\"Type\":\"PEC\"}",
+     "P": [
+      0.0,
+      0.0,
+      0.0,
+      2.0
+     ]
+    }
+   ],
+   "Vertices": [
+    {
+     "P": [
+      0.0,
+      0.0
+     ],
+     "TurnDegrees": 90.0,
+     "Type": "ConcaveCorner"
+    }
+   ]
+  },
+  "PlanViewFacets": [
+   {
+    "Conductor": 1,
+    "Points": [
+     [
+      5.7,
+      -5.7,
+      0.0
+     ],
+     [
+      5.7,
+      9.5,
+      0.0
+     ],
+     [
+      0.0,
+      9.5,
+      0.0
+     ]
+    ]
+   },
+   {
+    "Conductor": 1,
+    "Points": [
+     [
+      5.7,
+      -5.7,
+      0.0
+     ],
+     [
+      0.0,
+      9.5,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ]
+   },
+   {
+    "Conductor": 1,
+    "Points": [
+     [
+      -9.5,
+      -5.7,
+      0.0
+     ],
+     [
+      5.7,
+      -5.7,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ]
+   },
+   {
+    "Conductor": 1,
+    "Points": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -9.5,
+      0.0,
+      0.0
+     ],
+     [
+      -9.5,
+      -5.7,
+      0.0
+     ]
+    ]
+   }
+  ],
+  "PlanViewBoundary": [
+   {
+    "Conductor": 1,
+    "Segments": [
+     [
+      [
+       -5000000000,
+       -3000000000,
+       0
+      ],
+      [
+       -5000000000,
+       0,
+       0
+      ]
+     ],
+     [
+      [
+       -5000000000,
+       -3000000000,
+       0
+      ],
+      [
+       3000000000,
+       -3000000000,
+       0
+      ]
+     ],
+     [
+      [
+       -5000000000,
+       0,
+       0
+      ],
+      [
+       0,
+       0,
+       0
+      ]
+     ],
+     [
+      [
+       0,
+       0,
+       0
+      ],
+      [
+       0,
+       5000000000,
+       0
+      ]
+     ],
+     [
+      [
+       0,
+       5000000000,
+       0
+      ],
+      [
+       3000000000,
+       5000000000,
+       0
+      ]
+     ],
+     [
+      [
+       3000000000,
+       -3000000000,
+       0
+      ],
+      [
+       3000000000,
+       5000000000,
+       0
+      ]
+     ]
+    ]
+   }
+  ],
+  "MaskRegularization": {
+   "Version": 1,
+   "PhysicalBoundary": "TaperAndRound",
+   "ContinuationBoundary": "Vertical"
+  }
+ },
+ "Interfaces": [
+  {
+   "Slot": 0,
+   "Type": "MA",
+   "Target": 3
+  },
+  {
+   "Slot": 0,
+   "Type": "MS",
+   "Target": 2
+  },
+  {
+   "Slot": 0,
+   "Type": "SA",
+   "Target": 1
+  }
+ ],
+ "BoundaryCondition": {
+  "Type": "PEC"
+ }
+}

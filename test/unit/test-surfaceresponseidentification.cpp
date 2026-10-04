@@ -19,6 +19,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "models/surfaceresponseidentification.hpp"
+#include "models/surfaceresponseoperator.hpp"
 #include "utils/metaledge.hpp"
 
 using namespace palace;
@@ -3910,4 +3911,962 @@ TEST_CASE("SurfaceResponseIdentificationFlippedPlaneFrames",
                       ContainsSubstring("disagree on the sign") &&
                           ContainsSubstring("spatial cluster"));
   }
+}
+
+namespace
+{
+
+const IdentifiedFeature *ClusterContaining(const IdentificationResult &result,
+                                           const IdentificationInput &input,
+                                           const std::array<double, 2> &point)
+{
+  // The spatial cluster one of whose claimed portions passes within 1e-6 of the point.
+  for (const auto &feature : result.features)
+  {
+    if (feature.type != "SpatialEdgeCluster")
+    {
+      continue;
+    }
+    for (const auto &portion : feature.portions)
+    {
+      // Portions run from the segment's canonical key[0] (the lexicographically smaller
+      // end), not from the input's p0.
+      const auto &key = result.segments[portion.segment].key;
+      const double length = std::hypot(key[1][0] - key[0][0], key[1][1] - key[0][1]);
+      const double dx = (key[1][0] - key[0][0]) / length,
+                   dy = (key[1][1] - key[0][1]) / length;
+      const double s = std::clamp((point[0] - key[0][0]) * dx + (point[1] - key[0][1]) * dy,
+                                  portion.s0, portion.s1);
+      if (std::hypot(key[0][0] + s * dx - point[0], key[0][1] + s * dy - point[1]) <=
+          1.0e-6)
+      {
+        return &feature;
+      }
+    }
+  }
+  return nullptr;
+}
+
+// A signature-frame point (units of R) in device coordinates.
+std::array<double, 3> DevicePoint(const IdentifiedFeature &feature, double x, double y,
+                                  double radius)
+{
+  std::array<double, 3> p = feature.origin;
+  for (int d = 0; d < 3; d++)
+  {
+    p[d] += radius * (x * feature.axes[0][d] + y * feature.axes[1][d]);
+  }
+  return p;
+}
+
+// Device-coordinate bounding box of the feature's recorded support box.
+std::array<double, 4> DeviceBox(const IdentifiedFeature &feature, const char *key,
+                                double radius)
+{
+  const auto &box = feature.spatial_support.at(key);
+  std::array<double, 4> device = {1.0e300, 1.0e300, -1.0e300, -1.0e300};
+  for (const double bx : {box[0].get<double>(), box[2].get<double>()})
+  {
+    for (const double by : {box[1].get<double>(), box[3].get<double>()})
+    {
+      const auto p = DevicePoint(feature, bx, by, radius);
+      device[0] = std::min(device[0], p[0]);
+      device[1] = std::min(device[1], p[1]);
+      device[2] = std::max(device[2], p[0]);
+      device[3] = std::max(device[3], p[1]);
+    }
+  }
+  return device;
+}
+
+// Distance of a device point from the metal perimeter of the input (its segments).
+double PerimeterDistance(const IdentificationInput &input, const std::array<double, 3> &p)
+{
+  double best = 1.0e300;
+  for (const auto &segment : input.segments)
+  {
+    const double dx = segment.p1[0] - segment.p0[0], dy = segment.p1[1] - segment.p0[1];
+    const double length2 = dx * dx + dy * dy;
+    double t = ((p[0] - segment.p0[0]) * dx + (p[1] - segment.p0[1]) * dy) / length2;
+    t = std::clamp(t, 0.0, 1.0);
+    best = std::min(
+        best, std::hypot(p[0] - (segment.p0[0] + t * dx), p[1] - (segment.p0[1] + t * dy)));
+  }
+  return best;
+}
+
+}  // namespace
+
+TEST_CASE("SurfaceResponseIdentificationSpatialSupportContract",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Spatial-support contract v3 (USER decision 281, supervisor decision 282): the coupon
+  // metal of a cluster is the device plan clipped to the claims-derived box. Pad A
+  // (conductor 0, top edge y = 0, right corner at corner_x) and a 2-um lead B (conductor 1)
+  // ending 1 um above it form one cluster whose pad-edge claim is cut at x = +-6.873 and
+  // whose box (claims + 3R past the cuts, 2R laterally) spans x in [-12.873, 12.873],
+  // y in [-5, 12] in device coordinates.
+  const double R = 2.0;
+  auto Scene =
+      [&](double corner_x, std::vector<LoopSpec> extra = {}, double subdivision = 100.0)
+  {
+    std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, corner_x, 0.0), 0, subdivision},
+                                   {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, subdivision}};
+    loops.insert(loops.end(), extra.begin(), extra.end());
+    return loops;
+  };
+  auto Identify =
+      [&](const std::vector<LoopSpec> &loops, double mirror = 1.0, double rotate = 0.0)
+  {
+    std::vector<LoopSpec> transformed = loops;
+    for (auto &loop : transformed)
+    {
+      for (auto &p : loop.points)
+      {
+        p = {mirror * p[0], p[1]};
+      }
+      if (mirror < 0.0)
+      {
+        std::reverse(loop.points.begin(), loop.points.end());
+      }
+      loop.points = RotatedAndShifted(
+          loop.points, rotate, {rotate != 0.0 ? 100.0 : 0.0, rotate != 0.0 ? -50.0 : 0.0});
+    }
+    const auto input = MakeInput(transformed, R);
+    auto result = IdentifyMetalPerimeter(input);
+    CheckPartition(input, result);
+    return std::make_pair(input, std::move(result));
+  };
+  const std::array<double, 2> probe = {0.0, 1.0};  // the lead's end edge: in the cluster
+
+  // 1. Empty context (the device IS the straight continuation): the claims-only key byte
+  //    for byte, no Box / Context in the signature, the record says Contract 2.
+  std::string legacy_key, legacy_hash;
+  {
+    const auto [input, result] = Identify(Scene(40.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->signature["EdgeCount"] == 4);
+    CHECK(!cluster->signature.contains("Box"));
+    CHECK(!cluster->signature.contains("Context"));
+    CHECK(!cluster->signature.contains("Unboxable"));
+    const auto &support = cluster->spatial_support;
+    REQUIRE(!support.is_null());
+    CHECK(support["Contract"] == 2);
+    CHECK(support["LegacyEquivalent"] == true);
+    CHECK(support["Growth"]["Grown"] == false);
+    CHECK(support["Context"]["ForeignPieces"] == 0);
+    CHECK(support["Context"]["ChainPieces"] == 4);  // the four straight continuations
+    CHECK_THAT(
+        support["LegacyContinuation"]["FictitiousContinuationLengthOverR"].get<double>(),
+        WithinAbs(0.0, 1.0e-9));
+    CHECK_THAT(
+        support["LegacyContinuation"]["StraightContinuationLengthOverR"].get<double>(),
+        WithinAbs(12.0, 1.0e-5));
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(box[0], WithinAbs(-12.872984, 1.0e-5));
+    CHECK_THAT(box[2], WithinAbs(12.872984, 1.0e-5));
+    CHECK_THAT(box[1], WithinAbs(-5.0, 1.0e-5));
+    CHECK_THAT(box[3], WithinAbs(12.0, 1.0e-5));
+    CHECK(support["Box"] == support["ClaimsBox"]);
+    // The key is the claims-only canonicalisation (the unchanged v2 function) of the
+    // feature's own portions and vertices: byte-identical to today's.
+    std::vector<SignaturePortion> portions;
+    for (const auto &portion : cluster->portions)
+    {
+      const auto &segment = input.segments[portion.segment];
+      const auto &key = result.segments[portion.segment].key;
+      const double length = std::hypot(key[1][0] - key[0][0], key[1][1] - key[0][1]);
+      auto At = [&](double s)
+      {
+        std::array<double, 3> p;
+        for (int d = 0; d < 3; d++)
+        {
+          p[d] = key[0][d] + s / length * (key[1][d] - key[0][d]);
+        }
+        return p;
+      };
+      portions.push_back({At(portion.s0),
+                          At(portion.s1),
+                          segment.gap_direction,
+                          segment.conductor,
+                          {"MS"},
+                          segment.boundary_law});
+    }
+    std::vector<SignatureVertex> vertices;
+    for (const auto &vertex : result.vertices)
+    {
+      if (vertex.feature == cluster->id && vertex.type != "BendVertex")
+      {
+        vertices.push_back(
+            {input.vertices[vertex.vertex].coordinate, vertex.type, vertex.turn_degrees});
+      }
+    }
+    REQUIRE(vertices.size() == 2);
+    const auto canonical =
+        CanonicalClusterSignature(portions, vertices, {0.0, 0.0, 1.0}, R);
+    nlohmann::json expected = canonical.signature;
+    expected["EdgeCount"] = portions.size();
+    CHECK(SignatureKeyAndHash(expected, "SpatialEdgeCluster").first ==
+          cluster->signature_key);
+    CHECK(canonical.chirality == cluster->chirality);
+    legacy_key = cluster->signature_key;
+    legacy_hash = cluster->hash;
+    // The box rule on the serialised signature is the one the record used.
+    const auto from_signature = SupportBoxFromSignature(cluster->signature);
+    for (int k = 0; k < 4; k++)
+    {
+      CHECK_THAT(from_signature[k], WithinAbs(support["Box"][k].get<double>(), 1.0e-12));
+    }
+    // Broadcast form carries the record.
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+    CHECK(copy.spatial_support.claims_keyed == result.spatial_support.claims_keyed);
+    CHECK(result.spatial_support.claims_keyed == 2);  // this cluster + the lead's far end
+    CHECK(result.spatial_support.context_keyed == 0);
+  }
+
+  // 2. The S1p pattern: the pad corner 1.56 R past the claim cut, inside the box. The
+  //    straight continuation would run 1.436 R past the corner over the device's gap
+  //    (fictitious metal, the D2 / D3-C mechanism); the v3 geometry follows the device
+  //    chain through the corner, every context piece lies on the device perimeter and the
+  //    key changes.
+  std::string corner_hash;
+  int corner_chirality = 0;
+  {
+    const auto [input, result] = Identify(Scene(10.0));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    REQUIRE(cluster->signature.contains("Box"));
+    REQUIRE(cluster->signature.contains("Context"));
+    CHECK(cluster->signature["EdgeCount"] == 4);  // the claims only
+    CHECK(cluster->signature_key != legacy_key);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["LegacyEquivalent"] == false);
+    CHECK(support["Growth"]["Grown"] == false);
+    CHECK(support["Context"]["ForeignPieces"] == 0);
+    CHECK(support["Context"]["ChainPieces"] == 5);
+    REQUIRE(support["Context"]["ChainVertices"].size() == 1);
+    const auto &chain_vertex = support["Context"]["ChainVertices"][0];
+    CHECK(chain_vertex["Type"] == "ConvexCorner");
+    // The corner's distance from the nearest face: 2.873 um = 1.436 R from the right face.
+    CHECK_THAT(chain_vertex["FaceDistanceOverR"].get<double>(),
+               WithinAbs((12.872984 - 10.0) / R, 1.0e-5));
+    // The corner is a vertex feature of its own (no cluster): its feature id is recorded
+    // (review MINOR-1) and names a ConvexCorner feature at the corner.
+    CHECK(chain_vertex["Cluster"].is_null());
+    REQUIRE(chain_vertex["Feature"].is_number_integer());
+    {
+      const auto &corner_feature =
+          result.features[chain_vertex["Feature"].get<std::size_t>()];
+      CHECK(corner_feature.type == "ConvexCorner");
+      CHECK_THAT(corner_feature.origin[0], WithinAbs(10.0, 1.0e-5));
+      CHECK_THAT(corner_feature.origin[1], WithinAbs(0.0, 1.0e-5));
+    }
+    const auto corner =
+        DevicePoint(*cluster, chain_vertex["P"][0], chain_vertex["P"][1], R);
+    CHECK_THAT(corner[0], WithinAbs(10.0, 1.0e-5));
+    CHECK_THAT(corner[1], WithinAbs(0.0, 1.0e-5));
+    CHECK_THAT(
+        support["LegacyContinuation"]["FictitiousContinuationLengthOverR"].get<double>(),
+        WithinAbs((12.872984 - 10.0) / R, 1.0e-5));
+    // Every context piece lies on the device perimeter (no fictitious metal boundary) and
+    // the pad's right edge below the corner is among them, flagged Chain.
+    bool right_edge = false;
+    double context_length = 0.0;
+    for (const auto &entry : cluster->signature["Context"])
+    {
+      REQUIRE(entry.contains("Chain"));
+      CHECK(entry["Chain"] == true);
+      const auto a = DevicePoint(*cluster, entry["P"][0], entry["P"][1], R);
+      const auto b = DevicePoint(*cluster, entry["P"][2], entry["P"][3], R);
+      for (const auto &p : {a, b})
+      {
+        CHECK(PerimeterDistance(input, p) <= 1.0e-5);
+      }
+      context_length += std::hypot(b[0] - a[0], b[1] - a[1]);
+      if (std::abs(a[0] - 10.0) < 1.0e-5 && std::abs(b[0] - 10.0) < 1.0e-5)
+      {
+        right_edge = true;
+        CHECK_THAT(std::min(a[1], b[1]), WithinAbs(-5.0, 1.0e-5));
+        CHECK_THAT(std::max(a[1], b[1]), WithinAbs(0.0, 1.0e-5));
+        CHECK(entry["Conductor"] == cluster->signature["Portions"][3]["Conductor"]);
+      }
+    }
+    CHECK(right_edge);
+    CHECK_THAT(context_length / R,
+               WithinAbs(support["Context"]["ChainLengthOverR"].get<double>(), 1.0e-5));
+    // The legacy straight continuation (12 R) minus the fictitious part plus the right edge
+    // (2.5 R): the chain length.
+    CHECK_THAT(support["Context"]["ChainLengthOverR"].get<double>(),
+               WithinAbs(12.0 - (12.872984 - 10.0) / R + 2.5, 1.0e-4));
+    corner_hash = cluster->hash;
+    corner_chirality = cluster->chirality;
+    CHECK(corner_chirality != 0);  // the context breaks the mirror symmetry of the claims
+    CHECK(result.spatial_support.context_keyed == 1);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // 3. Invariance: a mirror image has the same key with the opposite chirality; a rotated
+  //    and shifted copy and a finer mesh the same key and chirality (the context comes
+  //    from the runs, not from the mesh segments).
+  {
+    const auto [mirror_input, mirror] = Identify(Scene(10.0), -1.0);
+    const auto *m = ClusterContaining(mirror, mirror_input, {0.0, 1.0});
+    REQUIRE(m != nullptr);
+    CHECK(m->hash == corner_hash);
+    CHECK(m->chirality == -corner_chirality);
+    const auto [rotated_input, rotated] = Identify(Scene(10.0), 1.0, 37.0);
+    const auto rotated_probe = RotatedAndShifted({probe}, 37.0, {100.0, -50.0})[0];
+    const auto *r = ClusterContaining(rotated, rotated_input, rotated_probe);
+    REQUIRE(r != nullptr);
+    CHECK(r->hash == corner_hash);
+    CHECK(r->chirality == corner_chirality);
+    const auto [fine_input, fine] = Identify(Scene(10.0, {}, 0.7));
+    const auto *f = ClusterContaining(fine, fine_input, probe);
+    REQUIRE(f != nullptr);
+    CHECK(f->hash == corner_hash);
+    CHECK(f->chirality == corner_chirality);
+    CHECK(f->signature == ClusterContaining(Identify(Scene(10.0)).second,
+                                            Identify(Scene(10.0)).first, probe)
+                              ->signature);
+  }
+
+  // 4. Foreign metal in the box: a third conductor's narrow lead (0.1 R wide; below the
+  //    joint noise resolution, so its end has no corner features and it reads as one
+  //    chain) entering through the right face carries two crossings 0.1 R apart around
+  //    METAL (allowed, recorded) and its three edges inside are foreign context: the key
+  //    differs from the empty-context key, the context lists the foreign pieces with the
+  //    next conductor label, the mirror image keeps the key.
+  {
+    const LoopSpec thin = {Rectangle(6.0, 8.0, 30.0, 8.2), 2, 100.0};
+    const auto [input, result] = Identify(Scene(40.0, {thin}));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->hash != legacy_hash);
+    CHECK(cluster->hash != corner_hash);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Growth"]["Grown"] == false);
+    CHECK(support["Context"]["ForeignPieces"] == 3);
+    CHECK(support["Context"]["ForeignConductors"] == 1);
+    CHECK(support["Context"]["ChainPieces"] == 4);
+    CHECK(support["Context"]["ForeignVertices"].empty());
+    CHECK(support["FaceRules"]["NarrowCrossSections"] == 1);
+    CHECK_THAT(support["FaceRules"]["MinCrossSectionOverR"].get<double>(),
+               WithinAbs(0.1, 1.0e-6));
+    CHECK_THAT(support["Context"]["ForeignLengthOverR"].get<double>(),
+               WithinAbs((2.0 * (12.872984 - 6.0) + 0.2) / R, 1.0e-4));
+    std::set<int> labels;
+    for (const auto &entry : cluster->signature["Context"])
+    {
+      if (entry["Chain"] == false)
+      {
+        labels.insert(entry["Conductor"].get<int>());
+      }
+    }
+    CHECK(labels == std::set<int>{3});
+    const auto [mirror_input, mirror] = Identify(Scene(40.0, {thin}), -1.0);
+    const auto *m = ClusterContaining(mirror, mirror_input, probe);
+    REQUIRE(m != nullptr);
+    CHECK(m->hash == cluster->hash);
+    CHECK(m->chirality == -cluster->chirality);
+  }
+
+  // 5. T2 / T3: the pad corner 0.1 R inside the right face fails the vertex clearance; the
+  //    face grows by one 0.25 R step and the context then holds the corner and the right
+  //    edge; the box differs from the claims box on that face only.
+  {
+    const auto [input, result] = Identify(Scene(12.872984 - 0.2));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Growth"]["Grown"] == true);
+    int grown_faces = 0, total_steps = 0;
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      grown_faces += steps.get<int>() > 0 ? 1 : 0;
+      total_steps += steps.get<int>();
+    }
+    CHECK(grown_faces == 1);
+    CHECK(total_steps == 1);
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(box[2] - claims_box[2], WithinAbs(0.25 * R, 1.0e-5));
+    CHECK_THAT(box[0], WithinAbs(claims_box[0], 1.0e-9));
+    CHECK_THAT(box[1], WithinAbs(claims_box[1], 1.0e-9));
+    CHECK_THAT(box[3], WithinAbs(claims_box[3], 1.0e-9));
+    CHECK(support["Context"]["ChainVertices"].size() == 1);
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25);
+    CHECK(result.spatial_support.grown == 1);
+  }
+
+  // 6. T1: the pad corner ON the claims-box face (within the snap) — the pad's right edge
+  //    runs along the face (sin theta = 0): the face grows one step and the edge then sits
+  //    exactly at the clearance (a threshold-band reading, reported).
+  {
+    const auto [input, result] = Identify(Scene(12.872984));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Growth"]["Grown"] == true);
+    int total_steps = 0;
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      total_steps += steps.get<int>();
+    }
+    CHECK(total_steps == 1);
+    CHECK(support["FaceRules"]["ThresholdBandHits"].get<int>() >= 1);
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    CHECK(support["FaceRules"]["MinCrossingSine"].get<double>() >= 0.25);
+    CHECK(support["Context"]["ChainVertices"].size() == 1);
+  }
+
+  // 7. A grazing face crossing: a foreign rectangle (conductor 2; its own 4-corner
+  //    cluster, > 2R from everything else) tilted 10.4 deg whose long edge crosses the left
+  //    face at sin(theta) = 0.18 < 0.25; the face grows until the whole rectangle is inside
+  //    (4 steps: the grazing crossing, then one corner after another within the clearance
+  //    of the moved face), then every crossing is gone and the rectangle is foreign context
+  //    with its four corners.
+  {
+    const std::vector<Point2> slanted = {
+        {-12.6, 5.2}, {-13.3, 9.0}, {-14.2838, 8.8188}, {-13.5838, 5.0188}};
+    const auto [input, result] = Identify(Scene(40.0, {{slanted, 2, 100.0}}));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["Growth"]["Grown"] == true);
+    int grown_faces = 0, total_steps = 0;
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      grown_faces += steps.get<int>() > 0 ? 1 : 0;
+      total_steps += steps.get<int>();
+    }
+    CHECK(grown_faces == 1);
+    CHECK(total_steps == 4);
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(claims_box[0] - box[0], WithinAbs(4 * 0.25 * R, 1.0e-5));
+    CHECK(support["Context"]["ForeignPieces"] == 4);
+    CHECK(support["Context"]["ForeignVertices"].size() == 4);
+    double perimeter = 0.0;
+    for (std::size_t k = 0; k < slanted.size(); k++)
+    {
+      const Point2 &a = slanted[k], &b = slanted[(k + 1) % slanted.size()];
+      perimeter += std::hypot(b[0] - a[0], b[1] - a[1]);
+    }
+    CHECK_THAT(support["Context"]["ForeignLengthOverR"].get<double>(),
+               WithinAbs(perimeter / R, 1.0e-5));
+    for (const auto &entry : cluster->signature["Context"])
+    {
+      if (entry["Chain"] == false)
+      {
+        for (const auto &p : {DevicePoint(*cluster, entry["P"][0], entry["P"][1], R),
+                              DevicePoint(*cluster, entry["P"][2], entry["P"][3], R)})
+        {
+          CHECK(PerimeterDistance(input, p) <= 1.0e-5);
+        }
+      }
+    }
+    CHECK(support["FaceRules"]["MinCrossingSine"].get<double>() >= 0.25);
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    CHECK(support["Unboxable"].is_null());
+  }
+
+  // 8. Two foreign leads of different conductors entering through the right face around a
+  //    0.1 R GAP: no growth resolves it (the channel moves with the face) — after the step
+  //    cap the cluster is UNBOXABLE: a Missing placeholder key (the claims-only signature +
+  //    Unboxable), the record names the face and the reason.
+  {
+    const std::vector<LoopSpec> channel = {{Rectangle(6.0, 8.0, 30.0, 8.6), 2, 100.0},
+                                           {Rectangle(6.0, 8.8, 30.0, 9.4), 3, 100.0}};
+    const auto [input, result] = Identify(Scene(40.0, channel));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->signature["Unboxable"] == true);
+    CHECK(!cluster->signature.contains("Box"));
+    CHECK(cluster->signature_key != legacy_key);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 0);
+    REQUIRE(support["Unboxable"].is_string());
+    CHECK_THAT(support["Unboxable"].get<std::string>(), ContainsSubstring("bound a gap"));
+    int max_steps = 0;
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      max_steps = std::max(max_steps, steps.get<int>());
+    }
+    CHECK(max_steps == kSupportFaceGrowthMaxSteps);
+    // The two leads' ends form clusters of their own whose boxes hold the same channel.
+    std::size_t unboxable = 0;
+    for (const auto &feature : result.features)
+    {
+      if (feature.type == "SpatialEdgeCluster" &&
+          feature.signature.value("Unboxable", false))
+      {
+        unboxable++;
+        CHECK(feature.spatial_support["Contract"] == 0);
+        CHECK(!feature.matched_model);
+      }
+    }
+    CHECK(unboxable >= 1);
+    CHECK(result.spatial_support.unboxable == unboxable);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // 9. Two clusters whose boxes overlap each other's claims (the S1p 19-edge pattern;
+  //    decision 285 (1) on the R1a review's MAJOR-1): pad A now ends at x = 11.5 (its
+  //    corner inside B's box), a second pad D (conductor 3) starts at x = 13.5 and a lead C
+  //    (conductor 2) ends above it at x = 16..18. C's cluster claims pad D's edge and,
+  //    within 2R of it, pad A's corner (11.5, 0) with the edge next to it: inside B's box
+  //    those claims are context of B hashed as foreign (Chain false; C's coupon owns them),
+  //    B's chain stops where C's claim begins, the pieces are split there, and A's corner
+  //    is listed as a foreign vertex of B naming C's feature, never as B's chain vertex.
+  {
+    const std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 11.5, 0.0), 0, 100.0},
+                                         {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0},
+                                         {Rectangle(13.5, -10.0, 60.0, 0.0), 3, 100.0},
+                                         {Rectangle(16.0, 1.0, 18.0, 40.0), 2, 100.0}};
+    const auto [input, result] = Identify(loops);
+    const auto *cluster_b = ClusterContaining(result, input, probe);
+    const auto *cluster_c = ClusterContaining(result, input, {17.0, 1.0});
+    REQUIRE(cluster_b != nullptr);
+    REQUIRE(cluster_c != nullptr);
+    REQUIRE(cluster_b != cluster_c);
+    const auto &support = cluster_b->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["LegacyEquivalent"] == false);
+    CHECK(cluster_b->signature_key != legacy_key);
+    CHECK(support["Context"]["ClaimedByOtherFeature"]["Pieces"].get<int>() >= 1);
+    CHECK(support["Context"]["ClaimedByOtherFeature"]["LengthOverR"].get<double>() > 0.0);
+    for (const auto &entry : support["Context"]["ClaimedByOtherFeature"]["Entries"])
+    {
+      CHECK(entry["Feature"] == cluster_c->id);
+    }
+    // Where C's claims begin on pad A's top edge (y = 0): the left-most such x of C.
+    double c_start = 1.0e300;
+    for (const auto &portion : cluster_c->signature["Portions"])
+    {
+      for (const auto &p : {DevicePoint(*cluster_c, portion["P"][0], portion["P"][1], R),
+                            DevicePoint(*cluster_c, portion["P"][2], portion["P"][3], R)})
+      {
+        if (std::abs(p[1]) <= 1.0e-5 && p[0] <= 11.5 + 1.0e-5)
+        {
+          c_start = std::min(c_start, p[0]);
+        }
+      }
+    }
+    REQUIRE(c_start < 11.5);
+    CHECK(c_start > 1.0);
+    std::size_t chain_on_pad_edge = 0;
+    for (const auto &entry : cluster_b->signature["Context"])
+    {
+      const auto a = DevicePoint(*cluster_b, entry["P"][0], entry["P"][1], R);
+      const auto b = DevicePoint(*cluster_b, entry["P"][2], entry["P"][3], R);
+      const bool on_pad_edge = std::abs(a[1]) <= 1.0e-5 && std::abs(b[1]) <= 1.0e-5;
+      if (entry["Chain"] == true)
+      {
+        // A chain piece never lies on C's claims: on pad A's edge it ends where C's claim
+        // begins; otherwise it is a side of lead B.
+        if (on_pad_edge)
+        {
+          chain_on_pad_edge++;
+          CHECK(std::max(a[0], b[0]) <= c_start + 1.0e-5);
+        }
+        else
+        {
+          CHECK(std::max(std::abs(a[0]), std::abs(b[0])) <= 1.0 + 1.0e-5);
+        }
+      }
+      else if (on_pad_edge && std::min(a[0], b[0]) > 1.0)
+      {
+        // A pad-edge context piece right of B's chain is C's claim, split at c_start.
+        CHECK(std::min(a[0], b[0]) >= c_start - 1.0e-5);
+      }
+    }
+    CHECK(chain_on_pad_edge == 2);  // the left continuation and the right one up to C
+    CHECK(support["Context"]["ChainVertices"].empty());
+    bool a_corner_listed = false;
+    for (const auto &vertex : support["Context"]["ForeignVertices"])
+    {
+      const auto p = DevicePoint(*cluster_b, vertex["P"][0], vertex["P"][1], R);
+      if (std::abs(p[0] - 11.5) <= 1.0e-5 && std::abs(p[1]) <= 1.0e-5)
+      {
+        a_corner_listed = true;
+        CHECK(vertex["Cluster"].is_number_integer());
+        CHECK(vertex["Feature"] == cluster_c->id);
+      }
+    }
+    CHECK(a_corner_listed);
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // 10. Two-sided T2 (decision 285 (2) on the R1a review's MAJOR-2): the pad corner 0.16 R
+  //     OUTSIDE the right face of the claims box. Under the one-sided rule the corner was
+  //     invisible (the pad's top edge crosses the face straight: a legacy-equivalent key);
+  //     the corner field sits on the face trace all the same. The face fails on the
+  //     exterior vertex, grows one step (the corner is then 0.09 R inside: the interior
+  //     clearance rule) and one more: two steps, the corner a chain vertex, the key v3.
+  {
+    const auto [input, result] = Identify(Scene(12.872984 + 0.16 * R));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["LegacyEquivalent"] == false);
+    CHECK(support["Growth"]["Grown"] == true);
+    int grown_faces = 0, total_steps = 0;
+    for (const auto &steps : support["Growth"]["Steps"])
+    {
+      grown_faces += steps.get<int>() > 0 ? 1 : 0;
+      total_steps += steps.get<int>();
+    }
+    CHECK(grown_faces == 1);
+    CHECK(total_steps == 2);
+    CHECK(support["Growth"]["AttemptedSteps"] == support["Growth"]["Steps"]);
+    REQUIRE(support["Growth"]["StepReasons"].size() == 2);
+    CHECK_THAT(support["Growth"]["StepReasons"][0].get<std::string>(),
+               ContainsSubstring("outside face"));
+    const auto claims_box = DeviceBox(*cluster, "ClaimsBox", R);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK_THAT(box[2] - claims_box[2], WithinAbs(2 * 0.25 * R, 1.0e-5));
+    CHECK(support["Context"]["ChainVertices"].size() == 1);
+    // The exterior vertex is read on the FIRST pass (accumulated over every pass, decision
+    // 287 (a)); the final pass has no exterior reading left.
+    // (the corner is the end of two shell pieces, the pad's top and right edges: 2
+    // readings; the canonical frame maps the device's right face to face 3)
+    CHECK(support["FaceRules"]["ExteriorVertices"] == 2);
+    CHECK(support["FaceRules"]["ExteriorEdges"] == 0);
+    REQUIRE(support["Growth"]["Passes"].size() == 3);
+    CHECK(support["Growth"]["Passes"][0]["ExteriorVertices"] == 2);
+    CHECK(support["Growth"]["Passes"][0]["Failing"][3] == true);
+    CHECK(support["Growth"]["Passes"][0]["Failures"].size() >= 1);
+    CHECK(support["Growth"]["Passes"][2]["ExteriorVertices"] == 0);
+    for (const auto &failing : support["Growth"]["Passes"][2]["Failing"])
+    {
+      CHECK(failing == false);
+    }
+    CHECK(support["Growth"]["Passes"][2]["Failures"].empty());
+    CHECK(support["FaceRules"]["Passes"] == 3);
+    CHECK(support["FaceRules"]["MinClearanceOverR"].get<double>() >= 0.25 - 1.0e-9);
+    // The same corner 0.5 R outside the face is beyond the clearance shell: invisible by
+    // the rule, the legacy-equivalent key as before.
+    const auto [input_far, result_far] = Identify(Scene(12.872984 + 0.5 * R));
+    const auto *far = ClusterContaining(result_far, input_far, probe);
+    REQUIRE(far != nullptr);
+    CHECK(far->spatial_support["Contract"] == 2);
+    CHECK(far->signature_key == legacy_key);
+  }
+
+  // 11. The knife edge (R1 final review MAJOR-1; decisions 287 (b) / 288): the pad corner
+  //     ON the claims-box face is the S1p / C2p pattern — step 1 moves the face by exactly
+  //     0.25 R and the pad's right edge then reads EXACTLY the clearance from the moved
+  //     face, up to the box quantisation residual (half a 1e-6 R quantum) and noise.
+  //     Sub-quantum perturbations (+-4e-7 R, the largest grid-preserving shift) of the
+  //     layout (the corner) and of the frame origin (lead B with the pad-edge claims it
+  //     cuts) give the SAME growth sequence and the SAME key: the quantised comparison
+  //     reads the edge AT the clearance, which passes (the rule's own ">="). Before the
+  //     fix `distance + 1e-9 < clearance` gave 2 steps on the minus side, 1 on the plus
+  //     side, and two keys. A FULL-quantum move (+-1e-6 R) is a real geometric change: the
+  //     hashed context coordinate moves by one quantum (the key changes) and the corner
+  //     moved OUTWARD legitimately grows twice (the edge is then one quantum closer than
+  //     the clearance to the moved face) — keys are geometry-precise to the quantum,
+  //     sub-quantum noise cannot move them. (The canonical frame maps the device's right
+  //     face to face 3.)
+  {
+    const auto [input_far, result_far] = Identify(Scene(40.0));
+    const auto *far = ClusterContaining(result_far, input_far, probe);
+    REQUIRE(far != nullptr);
+    const double face_x = DeviceBox(*far, "ClaimsBox", R)[2];  // the right face
+    CHECK_THAT(face_x, WithinAbs(12.872984, 1.0e-5));
+    struct Reading
+    {
+      std::string key;
+      std::array<int, 4> steps;
+      int band_hits;
+      nlohmann::json box;
+    };
+    auto Read = [&](double corner_x, double lead_shift)
+    {
+      const std::vector<LoopSpec> loops = {
+          {Rectangle(-40.0, -10.0, corner_x, 0.0), 0, 100.0},
+          {Rectangle(-1.0 + lead_shift, 1.0, 1.0 + lead_shift, 40.0), 1, 100.0}};
+      const auto [input, result] = Identify(loops);
+      const auto *cluster = ClusterContaining(result, input, {lead_shift, 1.0});
+      REQUIRE(cluster != nullptr);
+      REQUIRE(cluster->spatial_support["Contract"] == 3);
+      return Reading{cluster->signature_key,
+                     cluster->spatial_support["Growth"]["Steps"].get<std::array<int, 4>>(),
+                     cluster->spatial_support["FaceRules"]["ThresholdBandHits"].get<int>(),
+                     cluster->spatial_support["Box"]};
+    };
+    const Reading base = Read(face_x, 0.0);
+    CHECK(base.steps == std::array<int, 4>{0, 0, 0, 1});
+    const double sub_quantum = 4.0e-7 * R;
+    for (const double sign : {-1.0, 1.0})
+    {
+      // The layout: the corner moved relative to the cluster.
+      const Reading layout = Read(face_x + sign * sub_quantum, 0.0);
+      CHECK(layout.steps == base.steps);
+      CHECK(layout.key == base.key);
+      CHECK(layout.box == base.box);
+      // The frame origin: the lead (its claims cut the pad edge, the canonical frame and
+      // the claims box follow it) moved, the corner fixed.
+      const Reading frame = Read(face_x, sign * sub_quantum);
+      CHECK(frame.steps == base.steps);
+      CHECK(frame.key == base.key);
+      CHECK(frame.box == base.box);
+    }
+    // The threshold reading is reported on every pass (decision 287 (a)): the base case
+    // reads the edge at the clearance on its second pass.
+    CHECK(base.band_hits >= 1);
+    // The complement: one full quantum is a real move.
+    const double quantum = 1.0e-6 * R;
+    const Reading inside = Read(face_x - quantum, 0.0);
+    const Reading outside = Read(face_x + quantum, 0.0);
+    CHECK(inside.steps == std::array<int, 4>{0, 0, 0, 1});
+    CHECK(outside.steps == std::array<int, 4>{0, 0, 0, 2});
+    CHECK(inside.key != base.key);
+    CHECK(outside.key != base.key);
+    CHECK(inside.key != outside.key);
+  }
+
+  // 12. Two faces failing on one pass (R1 final review MINOR-8): the pad corner 0.1 R
+  // inside
+  //     the right face (scene 5) and a foreign strip (conductor 2, 2.5 R above the pad)
+  //     whose end sits 0.1 R inside the LEFT face: both faces grow on the first step and
+  //     the pass record lists BOTH failures (StepReasons keeps the first only).
+  {
+    const double left_x = -12.872984;
+    const std::vector<LoopSpec> strip = {
+        {Rectangle(left_x - 3.0, 5.0, left_x + 0.1 * R, 6.0), 2, 100.0}};
+    const auto [input, result] = Identify(Scene(12.872984 - 0.1 * R, strip));
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Growth"]["Steps"] == std::array<int, 4>{0, 1, 0, 1});  // frame faces
+    REQUIRE(support["Growth"]["StepReasons"].size() == 1);
+    REQUIRE(support["Growth"]["Passes"].size() == 2);
+    const auto &first = support["Growth"]["Passes"][0];
+    CHECK(first["Failing"] == std::array<bool, 4>{false, true, false, true});
+    for (const int face : {1, 3})
+    {
+      bool listed = false;
+      for (const auto &failure : first["Failures"])
+      {
+        listed = listed || failure.get<std::string>().find(
+                               "face " + std::to_string(face)) != std::string::npos;
+      }
+      CHECK(listed);
+    }
+    CHECK(support["Growth"]["Passes"][1]["Failures"].empty());
+  }
+
+  // 13. Another cluster's claim CUT is no device vertex (R1 final review MINOR-1): pad A
+  //     continues far past B's box (its corner outside the clearance shell), a lead C ends
+  //     above it to the right so that C's claim on the pad edge begins INSIDE B's box
+  //     within 0.25 R of B's right face. The cut splits the context (C's piece is
+  //     ClaimedByOtherFeature, B's chain ends there) but the end it makes is exempt from
+  //     the clearance rule: no growth. Before the fix the cut read as "a device vertex or
+  //     face crossing" within the clearance and the face grew.
+  {
+    auto WithLeadC = [&](double lead_x)
+    {
+      std::vector<LoopSpec> loops = Scene(60.0);
+      loops.push_back({Rectangle(lead_x - 1.0, 1.0, lead_x + 1.0, 40.0), 2, 100.0});
+      return loops;
+    };
+    // C's claim window on the pad edge from a first placement: the left-most claimed x.
+    auto ClaimStart = [&](double lead_x)
+    {
+      const auto [input, result] = Identify(WithLeadC(lead_x));
+      const auto *cluster_c = ClusterContaining(result, input, {lead_x, 1.0});
+      REQUIRE(cluster_c != nullptr);
+      double start = 1.0e300;
+      for (const auto &portion : cluster_c->signature["Portions"])
+      {
+        for (const auto &p : {DevicePoint(*cluster_c, portion["P"][0], portion["P"][1], R),
+                              DevicePoint(*cluster_c, portion["P"][2], portion["P"][3], R)})
+        {
+          if (std::abs(p[1]) <= 1.0e-5)
+          {
+            start = std::min(start, p[0]);
+          }
+        }
+      }
+      REQUIRE(start < 1.0e299);
+      return start;
+    };
+    const double probe_x = 30.0;
+    const double window = probe_x - ClaimStart(probe_x);  // C's reach along the pad edge
+    const double face_x = 12.872984;
+    const double lead_x = face_x - 0.2 * R + window;  // the cut 0.2 R inside B's face
+    const auto [input, result] = Identify(WithLeadC(lead_x));
+    const auto *cluster_b = ClusterContaining(result, input, probe);
+    const auto *cluster_c = ClusterContaining(result, input, {lead_x, 1.0});
+    REQUIRE(cluster_b != nullptr);
+    REQUIRE(cluster_c != nullptr);
+    REQUIRE(cluster_b != cluster_c);
+    const auto &support = cluster_b->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(support["LegacyEquivalent"] == false);
+    CHECK(support["Growth"]["Grown"] == false);
+    CHECK(support["Growth"]["Steps"] == std::array<int, 4>{0, 0, 0, 0});
+    CHECK(support["Context"]["ClaimedByOtherFeature"]["Pieces"].get<int>() >= 1);
+    // The cut lies where C's claim begins: inside the box, within the clearance of face 2.
+    double cut_x = 1.0e300;
+    for (const auto &entry : support["Context"]["ClaimedByOtherFeature"]["Entries"])
+    {
+      CHECK(entry["Feature"] == cluster_c->id);
+      for (const auto &p : {DevicePoint(*cluster_b, entry["P"][0], entry["P"][1], R),
+                            DevicePoint(*cluster_b, entry["P"][2], entry["P"][3], R)})
+      {
+        cut_x = std::min(cut_x, p[0]);
+      }
+    }
+    CHECK_THAT(cut_x, WithinAbs(face_x - 0.2 * R, 1.0e-3));
+    CHECK(support["Box"] == support["ClaimsBox"]);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationLegacyContractAlias",
+          "[surfaceresponseidentification][surfaceresponseoperator][Serial]")
+{
+  // USER decision 283: a legacy model (built under the decision-236 straight-continuation
+  // contract) serves a contract-3 key ONLY through an explicit library alias naming that
+  // key and its context digest; the alias resolves to a recorded LegacyContract match and
+  // fails closed on a digest or claims mismatch. The scene of
+  // SurfaceResponseIdentificationSpatialSupportContract: the legacy model's Signature is
+  // the claims-only signature of the corner-far cluster (Contract 2), the aliased key the
+  // corner-at-10 cluster's (Contract 3, the same claims, a foreign-free chain context).
+  const double R = 2.0;
+  auto Scene = [&](double corner_x)
+  {
+    return std::vector<LoopSpec>{{Rectangle(-40.0, -10.0, corner_x, 0.0), 0, 100.0},
+                                 {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0}};
+  };
+  const auto legacy_input = MakeInput(Scene(40.0), R);
+  const auto legacy = IdentifyMetalPerimeter(legacy_input);
+  const auto v3_input = MakeInput(Scene(10.0), R);
+  const auto v3 = IdentifyMetalPerimeter(v3_input);
+  const auto *legacy_cluster = ClusterContaining(legacy, legacy_input, {0.0, 1.0});
+  const auto *v3_cluster = ClusterContaining(v3, v3_input, {0.0, 1.0});
+  REQUIRE(legacy_cluster != nullptr);
+  REQUIRE(v3_cluster != nullptr);
+  REQUIRE(legacy_cluster->spatial_support["Contract"] == 2);
+  REQUIRE(v3_cluster->spatial_support["Contract"] == 3);
+  const auto *other_cluster = ClusterContaining(v3, v3_input, {0.0, 40.0});  // the lead end
+  REQUIRE(other_cluster != nullptr);
+  REQUIRE(other_cluster->hash != legacy_cluster->hash);
+
+  // The context digest: of the Box + Context only (the claims-only signature has none), and
+  // recorded by the identification for every contract-3 feature.
+  const std::string digest = SpatialSupportContextDigest(v3_cluster->signature);
+  CHECK(digest.size() == 64);
+  CHECK(SpatialSupportContextDigest(legacy_cluster->signature).empty());
+  CHECK(v3_cluster->spatial_support["ContextDigest"] == digest);
+  CHECK(legacy_cluster->spatial_support["ContextDigest"].is_null());
+  // The recorded claims-only key of the v3 cluster IS the legacy key (the v3 Portions are
+  // serialised in the Box + Context frame, so the key is recorded, not re-derived).
+  CHECK(v3_cluster->spatial_support["ClaimsKey"] == legacy_cluster->hash);
+  CHECK(legacy_cluster->spatial_support["ClaimsKey"] == legacy_cluster->hash);
+  // Neither feature carries an alias record out of the identification itself.
+  CHECK(v3_cluster->legacy_contract.is_null());
+  CHECK(legacy_cluster->legacy_contract.is_null());
+  // The claims-only frame of the v3 cluster is the legacy cluster's frame (the same claims
+  // canonicalised alone): the frame a legacy model is placed in. The v3 frame differs here
+  // (the context breaks the mirror symmetry: chirality -+1 vs 0).
+  CHECK(v3_cluster->claims_chirality == legacy_cluster->chirality);
+  CHECK(v3_cluster->claims_chirality != v3_cluster->chirality);
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK_THAT(v3_cluster->claims_origin[d], WithinAbs(legacy_cluster->origin[d], 1.0e-9));
+    for (int k = 0; k < 3; k++)
+    {
+      CHECK_THAT(v3_cluster->claims_axes[k][d],
+                 WithinAbs(legacy_cluster->axes[k][d], 1.0e-12));
+    }
+  }
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK_THAT(legacy_cluster->claims_origin[d], WithinAbs(legacy_cluster->origin[d], 0.0));
+  }
+
+  LegacyContractAlias alias;
+  alias.key = v3_cluster->hash;
+  alias.context_digest = digest;
+  alias.reason = "unit test: USER decision 283";
+  const nlohmann::json record = ResolveLegacyContractAlias(
+      "legacy-model", legacy_cluster->signature, alias, *v3_cluster);
+  CHECK(record["Model"] == "legacy-model");
+  CHECK(record["Key"] == v3_cluster->hash);
+  CHECK(record["ContextDigest"] == digest);
+  CHECK(record["ClaimsKey"] == legacy_cluster->hash);
+  CHECK(record["Reason"] == alias.reason);
+  CHECK(record["Context"]["Box"] == v3_cluster->signature["Box"]);
+  CHECK(record["Context"]["Context"] == v3_cluster->signature["Context"]);
+
+  // Fail closed: a context digest that is not the feature's.
+  LegacyContractAlias wrong_digest = alias;
+  wrong_digest.context_digest = std::string(64, '0');
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                               wrong_digest, *v3_cluster),
+                    ContainsSubstring("does not match the alias's ContextDigest"));
+  // Fail closed: the alias on a model whose claims are not the feature's.
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("other-model", other_cluster->signature,
+                                               alias, *v3_cluster),
+                    ContainsSubstring("is not the legacy model's key"));
+  // Fail closed: an alias resolved for a feature other than its key (never a fallback).
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                               alias, *legacy_cluster),
+                    ContainsSubstring("is not the alias key"));
+  // A contract-2 feature carries no context: an alias naming it cannot verify a digest.
+  LegacyContractAlias claims_alias = alias;
+  claims_alias.key = legacy_cluster->hash;
+  CHECK_THROWS_WITH(ResolveLegacyContractAlias("legacy-model", legacy_cluster->signature,
+                                               claims_alias, *legacy_cluster),
+                    ContainsSubstring("(no Box)"));
+
+  // The record survives the broadcast form and reaches the manifest's Match entry.
+  IdentificationResult copy_source = v3;
+  for (auto &feature : copy_source.features)
+  {
+    if (feature.id == v3_cluster->id)
+    {
+      feature.legacy_contract = record;
+      feature.matched_model = "legacy-model";
+      feature.match_deviation = 0.0;
+    }
+  }
+  const auto copy =
+      DeserializeIdentificationResult(SerializeIdentificationResult(copy_source));
+  CHECK(copy.ToJson(1.0) == copy_source.ToJson(1.0));
+  bool found = false;
+  const nlohmann::json manifest = copy.ToJson(1.0);
+  for (const auto &entry : manifest["Features"])
+  {
+    if (entry["Id"].get<int>() == v3_cluster->id)
+    {
+      found = true;
+      CHECK(entry["Match"]["Status"] == "Matched");
+      CHECK(entry["Match"]["Model"] == "legacy-model");
+      CHECK(entry["Match"]["LegacyContract"]["Key"] == v3_cluster->hash);
+      CHECK(entry["ClaimsFrame"]["Chirality"] == legacy_cluster->chirality);
+    }
+    else
+    {
+      CHECK(!entry["Match"].contains("LegacyContract"));
+    }
+  }
+  CHECK(found);
 }

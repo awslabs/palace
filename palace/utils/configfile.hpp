@@ -710,6 +710,17 @@ public:
   // perimeter used for edge-distance postprocessing.
   std::vector<int> edge_exclude_attributes = {};
 
+  // Explicit 3D segments [x0, y0, z0, x1, y1, z1] (mesh length units) whose coincident
+  // perimeter segments are excluded from the metal perimeter used for edge-distance
+  // postprocessing (a spatial coupon's FOREIGN edges: present in the geometry, owned by
+  // another coupon; decision 282 rule B5). A perimeter segment is dropped when both its
+  // ends lie within EdgeExcludeSegmentTolerance of one listed segment.
+  std::vector<std::array<double, 6>> edge_exclude_segments = {};
+
+  // Coincidence tolerance of EdgeExcludeSegments [mesh length units]; by default 1e-3 of
+  // the smallest matching radius.
+  double edge_exclude_segment_tolerance = 0.0;
+
   // Matching radii for edge-distance postprocessing [m].
   std::vector<double> edge_distances = {};
 
@@ -1077,6 +1088,16 @@ public:
         std::array<double, 3> p0{}, p1{};
       };
       std::vector<Claim> claims;
+      // A spatial cluster patch of a contract-3 (device-plan) model: the model's support
+      // box [x0, y0, x1, y1] and its continuation CHAIN pieces (the Signature's Context
+      // entries flagged Chain, arcs chorded), both in the patch's local frame in units of
+      // the matching radius (M = identity for a Signature-keyed model). The placement's
+      // vertex ownership (decision 282 rule B4): a vertex feature whose vertex lies on a
+      // chain piece end inside the box is owned by this coupon. Empty for a legacy
+      // (claims-only) model.
+      std::array<double, 4> support_box{};
+      bool has_support_box = false;
+      std::vector<std::array<double, 4>> chain;
     };
     Provenance provenance;
   };
@@ -1257,6 +1278,21 @@ public:
 
     // Integer quadrature refinement factor for experimental surface-mortar traces.
     int mortar_oversampling = 2;
+
+    // Legacy-contract aliases resolved by the matching pass (USER decision 283): a
+    // library model used for a contract-3 key the library lists explicitly as its alias
+    // (the feature ids, the aliased key, the verified context digest, the recorded
+    // reason); carried into the operator record (SurfaceResponse.Diagnostics) and the
+    // geometry cache.
+    struct LegacyContractAliasData
+    {
+      std::string model;
+      std::string key;
+      std::string context_digest;
+      std::string reason;
+      std::vector<int> features;
+    };
+    std::vector<LegacyContractAliasData> legacy_contract;
 
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.

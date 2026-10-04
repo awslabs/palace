@@ -66,7 +66,15 @@ function read_edges(path)
                     Float64(data[row, columns["S0"]]),
                     Float64(data[row, columns["S1"]])
                 ),
-                vertex_arm=Bool(signature_integer(data[row, columns["VertexArm"]], "VertexArm"))
+                vertex_arm=Bool(signature_integer(data[row, columns["VertexArm"]], "VertexArm")),
+                # Device-plan coupons (decision 282 rule B3): a context row is a device edge
+                # of the plan that is not a claim (a continuation chain piece, chain = true,
+                # or a foreign edge); its attributes and owner lookup are those of any edge,
+                # the coupon box comes from the process library's SupportBox.
+                context=haskey(columns, "Context") ?
+                        Bool(signature_integer(data[row, columns["Context"]], "Context")) : false,
+                chain=haskey(columns, "Chain") ?
+                      Bool(signature_integer(data[row, columns["Chain"]], "Chain")) : false
             )
         )
     end
@@ -3143,7 +3151,35 @@ function fillet_physical_edges(occ, volumes, radius, z, primitives, tolerance)
     return result
 end
 
-function coupon_bounds(edges, radius, metal_thickness, overetch)
+# The SupportBox [x0, y0, x1, y1] of the single model of a process library (a device-plan
+# coupon, decision 282: the signature's grown box in the canonical frame = the mesh frame),
+# or nothing for a legacy model.
+function read_support_box(process_library_path)
+    process_library_path === nothing && return nothing
+    library = parse_json(read(process_library_path, String))
+    models = get(library, "Models", Any[])
+    length(models) == 1 || error("The process library must bind exactly one model")
+    haskey(models[1], "SupportBox") || return nothing
+    box = ntuple(d -> Float64(models[1]["SupportBox"][d]), 4)
+    all(isfinite, box) && box[3] > box[1] && box[4] > box[2] ||
+        error("The process library's SupportBox is not a box")
+    return box
+end
+
+function coupon_bounds(edges, radius, metal_thickness, overetch; support_box=nothing)
+    if support_box !== nothing
+        # The z extent from the rows (the plane, the metal and the trench), the plane box
+        # the signature's.
+        lower, upper = row_coupon_bounds(edges, radius, metal_thickness, overetch)
+        return (support_box[1], support_box[2], lower[3]),
+               (support_box[3], support_box[4], upper[3])
+    end
+    any(get(edge, :context, false) for edge in edges) &&
+        error("Device-plan coupon rows (Context) need the process library's SupportBox")
+    return row_coupon_bounds(edges, radius, metal_thickness, overetch)
+end
+
+function row_coupon_bounds(edges, radius, metal_thickness, overetch)
     points = NTuple{3, Float64}[]
     for edge in edges
         first, second = extended_interval(edge, radius)
@@ -3522,6 +3558,9 @@ function process_frame(library, model_name)
               get(model, "Arms", nothing)
     entries isa AbstractVector && !isempty(entries) ||
         error("Process library model has no complete edge geometry")
+    # A device-plan coupon (spatial-support contract v3, decision 282) is built in its
+    # signature's canonical frame: the mesh frame is the identity.
+    haskey(model, "SupportBox") && return Matrix{Float64}(I, 3, 3)
     normal = collect(Float64, entries[1]["ProcessNormal"])
     gap = collect(Float64, entries[1]["GapDirection"])
     length(normal) == 3 && length(gap) == 3 && all(isfinite, normal) && all(isfinite, gap) &&
@@ -5046,7 +5085,8 @@ function generate_spatial_coupon(;
     isempty(boundary_loops) ||
         !isempty(facets) ||
         error("A classified plan-view boundary requires the corresponding mask facets")
-    lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
+    lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch;
+                                 support_box=read_support_box(process_library))
     tolerance = 1.0e-7 * radius
     if trace_basis !== nothing
         all(abs(trace_basis.lower[d] - lower[d]) <= tolerance &&

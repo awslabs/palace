@@ -108,7 +108,9 @@ def process_library_pairs(process_library):
     if model.get("Topology") != SUPPORTED_TOPOLOGY:
         raise ValueError(f"{process_library}: model topology {model.get('Topology')!r} is not "
                          f"{SUPPORTED_TOPOLOGY}; the label families are derived for edge clusters only")
-    edges = model.get("Edges")
+    # A device-plan coupon (decision 282) carries its context rows (continuation chains,
+    # foreign edges) under ContextEdges: they are rows of the signature CSV too.
+    edges = list(model.get("Edges") or []) + list(model.get("ContextEdges") or [])
     if (not isinstance(edges, list) or not edges or
             any(not isinstance(edge, dict) or "InterfaceSlot" not in edge or "Conductor" not in edge
                 for edge in edges)):

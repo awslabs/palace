@@ -83,5 +83,70 @@ class ClusterChordingTest(unittest.TestCase):
         self.assertEqual(L.cluster_plan_view_edges({"Portions": [a]}, self.R), L.cluster_plan_view_edges({"Portions": [b]}, self.R))
 
 
+
+
+class SpatialSupportContractTest(unittest.TestCase):
+    """Contract v3 (decision 282): the claims-derived box and the Context entries."""
+
+    # The 4-edge lead-end cluster of the C++ unit case SurfaceResponseIdentificationSpatialSupportContract
+    # (pad edge claimed over 6.873 R, a 2-um lead ending 1 um above it; R = 2): the C++ record's ClaimsBox.
+    SIGNATURE = {"Type": "SpatialEdgeCluster", "EdgeCount": 4, "Portions": [
+        {"Conductor": 1, "Gap": [-1.0, 0.0], "Interfaces": ["MS"], "Law": "{}", "P": [-0.218559, -0.5, -0.218559, 0.5]},
+        {"Conductor": 1, "Gap": [0.0, -1.0], "Interfaces": ["MS"], "Law": "{}", "P": [-0.218559, -0.5, 2.281441, -0.5]},
+        {"Conductor": 1, "Gap": [0.0, 1.0], "Interfaces": ["MS"], "Law": "{}", "P": [-0.218559, 0.5, 2.281441, 0.5]},
+        {"Conductor": 2, "Gap": [1.0, 0.0], "Interfaces": ["MS"], "Law": "{}", "P": [-0.718559, -3.436492, -0.718559, 3.436492]}],
+        "Vertices": [{"P": [-0.218559, -0.5], "TurnDegrees": 90.0, "Type": "ConvexCorner"}, {"P": [-0.218559, 0.5], "TurnDegrees": 90.0, "Type": "ConvexCorner"}]}
+    CPP_BOX = [-3.218559, -6.436492, 5.281441, 6.436492]
+
+    def test_box_matches_the_cpp_record(self):
+        box = L.cluster_support_box(self.SIGNATURE)
+        for value, expected in zip(box, self.CPP_BOX):
+            self.assertAlmostEqual(value, expected, places=9)
+
+    def test_box_rule_on_one_free_portion(self):
+        # A lone 2 R portion: both ends free (|half| = 1 >= R) -> continued by 2R, widened by R, padded by R.
+        signature = {"Portions": [{"P": [-1.0, 0.0, 1.0, 0.0], "Gap": [0.0, 1.0], "Conductor": 1}]}
+        self.assertEqual(L.cluster_support_box(signature), [-4.0, -2.0, 4.0, 2.0])
+        # A connected short end (a vertex there) keeps its length: no continuation on that side.
+        signature["Vertices"] = [{"P": [-0.5, 0.0], "Type": "ConvexCorner", "TurnDegrees": 90.0}]
+        signature["Portions"][0]["P"] = [-0.5, 0.0, 0.5, 0.0]
+        self.assertEqual(L.cluster_support_box(signature), [-1.5, -2.0, 4.0, 2.0])
+
+    def test_legacy_contract_alias(self):
+        signature = dict(self.SIGNATURE)
+        signature["Box"] = list(self.CPP_BOX)
+        signature["Context"] = [{"Chain": True, "Conductor": 1, "Gap": [0.0, -1.0], "Interfaces": ["MS"], "Law": "{}", "P": [2.281441, -0.5, 5.281441, -0.5]}]
+        digest = L.context_digest(signature)
+        self.assertEqual(len(digest), 64)
+        self.assertEqual(L.context_digest(self.SIGNATURE), "")
+        feature = {"Id": 7, "Hash": L.signature_hash(signature), "Signature": signature, "SpatialSupport": {"ContextDigest": digest, "ClaimsKey": L.signature_hash(self.SIGNATURE)}}
+        alias = L.legacy_contract_alias(feature, "unit test")
+        self.assertEqual(alias["Key"], feature["Hash"])
+        self.assertEqual(alias["ContextDigest"], digest)
+        self.assertEqual(alias["ClaimsKey"], L.signature_hash(self.SIGNATURE))
+        self.assertEqual(alias["Context"]["Box"], self.CPP_BOX)
+        with self.assertRaises(ValueError):
+            L.legacy_contract_alias({"Id": 8, "Hash": "x", "Signature": self.SIGNATURE}, "claims only")
+        with self.assertRaises(ValueError):
+            L.legacy_contract_alias(dict(feature, SpatialSupport={"ContextDigest": "0" * 64}), "digest mismatch")
+
+    def test_context_entries_follow_the_claims(self):
+        signature = dict(self.SIGNATURE)
+        signature["Box"] = list(self.CPP_BOX)
+        signature["Context"] = [{"Chain": True, "Conductor": 1, "Gap": [0.0, -1.0], "Interfaces": ["MS"], "Law": "{}", "P": [2.281441, -0.5, 5.281441, -0.5]},
+                                {"Chain": False, "Conductor": 3, "Gap": [0.0, 1.0], "Interfaces": ["MS"], "Law": "{}", "P": [-3.0, 5.0, -2.0, 5.0]}]
+        claims = L.cluster_plan_view_edges(signature, 2.0)
+        self.assertEqual(len(claims), 4)
+        self.assertTrue(all("Context" not in e for e in claims))
+        edges = L.cluster_plan_view_edges(signature, 2.0, include_context=True)
+        self.assertEqual(len(edges), 6)
+        self.assertEqual([e.get("Context", False) for e in edges], [False] * 4 + [True] * 2)
+        self.assertEqual([e["Chain"] for e in edges[4:]], [True, False])
+        self.assertEqual([e["Portion"] for e in edges[4:]], [0, 1])
+        self.assertEqual(edges[4]["P0"], (2.0 * 2.281441, -1.0))
+        self.assertEqual(L.conductor_count({"Type": "SpatialEdgeCluster", "Signature": signature}), 3)
+        self.assertEqual(L.conductor_count({"Type": "SpatialEdgeCluster", "Signature": self.SIGNATURE}), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

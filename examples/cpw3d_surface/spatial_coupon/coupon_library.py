@@ -14,6 +14,10 @@
                             --remote HOST:ROOT [--orders p5] --controls p3,p5 --max-jobs N
                             [--job-policy speed|frugal|fixed [--fixed-jobs N]]
                             [--frozen-binary-sha256 HEX] [--reducer-block-size N] [--case ID ...] [--root DIR] [--dry-run]
+  coupon_library.py spatial-qualify traces --source DIR --run-config CFG [--thin-run-config CFG]
+                            [--fabricated-mesh MSH] [--thin-mesh MSH] [--orders 4 5] [--device-traces CSV] --output DIR
+  coupon_library.py spatial-qualify evaluate --dense-traces JSON --fabricated-matrices DIR --thin-matrices DIR
+                            --gate palace.json [--reference-box JSON] --library process-library.json --output JSON
 
 `build --device` maps a device layout to coupon source directories first
 (device_coupons.py: discovery closure by Palace geometry preflights -> the planner's
@@ -43,6 +47,15 @@ decision 61b) -, read-only monitoring, fetch / digest verification / matrix
 validation / recorded archive deletion, the frozen machine-readable class gates) and
 writes library-qualification.json, qualification-gates.json and process-library.json;
 --dry-run writes the plans / configs / estimates / gates without contacting anything.
+
+`spatial-qualify` is the (F) qualification upgrade of the spatial coupons (decisions 281 /
+282 / 285 (5); qualify/spatial_qualification.py): `traces` writes the dense held-out traces
+(T2 = the conductor states + four exterior line charges, T1 = the device trace of a
+registration run) and the fabricated / thin solve configs at the library and control orders;
+`evaluate` reads the four runs and the p4 matrices, checks the closure and p-stability
+criteria (<= 0.02 per interface class within R), the matrix identity (<= 1e-6) and the
+conductor-consistency gate (Count 0, MaxRatio <= 1e-6) [+ the reference box integral of a
+window], and stamps PendingQualification -> Qualified / WindowValidated / Failed.
 """
 import argparse
 from pathlib import Path
@@ -56,6 +69,7 @@ import run_gmsh_only_matrix  # noqa: E402
 sys.path.insert(0, str(HERE / "qualify"))
 import qualify_library  # noqa: E402
 import library_continuity  # noqa: E402
+import spatial_qualification  # noqa: E402
 
 
 def parse_registration(value):
@@ -110,6 +124,9 @@ def build_parser():
     continuity.add_argument("library", help="process-library.json")
     continuity.add_argument("--gates", default=library_continuity.GATES_FILE)
     continuity.add_argument("--output", help="write the gate record here (default: stdout)")
+    spatial = commands.add_parser("spatial-qualify", help="(F) dense held-out traces, closure / p-stability, matrix "
+                                                          "identity, conductor-consistency gate, library statuses")
+    spatial_qualification.add_arguments(spatial)
     return parser
 
 
@@ -120,6 +137,8 @@ def main(argv=None):
         return qualify_library.run_from_args(args)
     if args.command == "continuity":
         return library_continuity.main([args.library, "--gates", args.gates] + (["--output", args.output] if args.output else []))
+    if args.command == "spatial-qualify":
+        return args.func(args)
     if args.command != "build":
         parser.error(f"unknown command {args.command}")
     if args.register and (args.footprint is None or args.inventory_status is None):

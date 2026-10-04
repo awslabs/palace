@@ -126,6 +126,15 @@ def frame_from_geometry(topology, geometry):
     gap = unit(entries[0]["GapDirection"], "GapDirection")
     if abs(np.dot(normal, gap)) > 1.0e-9:
         raise ValueError("ProcessNormal and GapDirection must be orthogonal")
+    if geometry.get("SupportBox") is not None:
+        # A device-plan coupon (spatial-support contract v3, decision 282): built in its
+        # signature's canonical frame, whose box the geometry carries; the frame is the
+        # identity (the process normal must be +z there).
+        if topology != "SpatialEdgeCluster":
+            raise ValueError("SupportBox applies to SpatialEdgeCluster coupons only")
+        if abs(normal[2] - 1.0) > 1.0e-9:
+            raise ValueError("a SupportBox coupon requires the +z process normal")
+        return np.identity(3)
     # Local z is the fabrication normal. Local x/y form a right-handed process plane.
     axis_x = gap
     axis_y = np.cross(normal, gap)
@@ -186,19 +195,25 @@ def normalize_geometry(coupon, radius):
             "BoundaryCondition", coupon.get("BoundaryCondition", {"Type": "PEC"})
         )
         boundary = verified_boundary_condition(boundary)
-        edges.append(
-            {
-                "Point": local_point.tolist(),
-                "GapDirection": local_gap.tolist(),
-                "ProcessNormal": local_normal.tolist(),
-                "Tangent": local_tangent.tolist(),
-                "Interval": interval,
-                "Conductor": conductor,
-                "InterfaceSlot": slot,
-                "BoundaryCondition": boundary,
-                "VertexArm": topology != "SpatialEdgeCluster",
-            }
-        )
+        edge = {
+            "Point": local_point.tolist(),
+            "GapDirection": local_gap.tolist(),
+            "ProcessNormal": local_normal.tolist(),
+            "Tangent": local_tangent.tolist(),
+            "Interval": interval,
+            "Conductor": conductor,
+            "InterfaceSlot": slot,
+            "BoundaryCondition": boundary,
+            "VertexArm": topology != "SpatialEdgeCluster",
+        }
+        if entry.get("Context"):
+            # A context row of a device-plan coupon (decision 282 rule B3): a device edge
+            # of the plan that is not a claim (a continuation chain piece or a foreign
+            # edge); the mesher's owner lookup and the plan's conductor count read it,
+            # the trace basis (knot columns, interior cap hats) does not.
+            edge["Context"] = True
+            edge["Chain"] = bool(entry.get("Chain", False))
+        edges.append(edge)
 
     labels = []
     for edge in edges:
@@ -209,7 +224,9 @@ def normalize_geometry(coupon, radius):
             raise ValueError("Conductor labels are not canonical")
     if topology != "SpatialEdgeCluster" and labels != [1]:
         raise ValueError("Endpoint and junction coupons require one conductor")
-    if any(np.linalg.norm(edge["Point"]) > 8.0 * radius for edge in edges):
+    # The claims within 8R of the origin (half the 16R plan span cap); the context rows of a
+    # device-plan coupon lie inside its box, which matching_support_points caps.
+    if any(np.linalg.norm(edge["Point"]) > 8.0 * radius for edge in edges if not edge.get("Context")):
         raise ValueError("Spatial coupon geometry is too large for its matching radius")
 
     facets = []
@@ -326,7 +343,18 @@ def validate_plan_view_geometry(edges, radius, facets):
                 )
 
 
-def coupon_bounds(edges, radius, metal_thickness, overetch):
+def coupon_bounds(edges, radius, metal_thickness, overetch, support_box=None):
+    """The coupon box (lower, upper): the generator's rule on the edge rows, or, for a
+    device-plan coupon, the signature's SupportBox in the plane (x, y; the z extent from the
+    rows as before)."""
+    if support_box is not None:
+        lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch)
+        box = [float(value) for value in support_box]
+        if len(box) != 4 or box[2] <= box[0] or box[3] <= box[1]:
+            raise ValueError("SupportBox must be [x0, y0, x1, y1] with positive extents")
+        lower[0], lower[1] = box[0], box[1]
+        upper[0], upper[1] = box[2], box[3]
+        return lower, upper
     points = []
     for edge in edges:
         point = np.asarray(edge["Point"])
@@ -457,6 +485,8 @@ def matching_perimeter_coordinates(
                 )
     for level in levels:
         for edge in edges:
+            if edge.get("Context"):
+                continue  # the mask vertices on the faces carry the plan's knot columns
             sign = 1.0 if edge["ProcessNormal"][2] > 0.0 else -1.0
             height_from_plane = sign * (level - edge["Point"][2])
             if (
@@ -663,7 +693,10 @@ def cap_interior_points(bounds, level, edges, radius, spacing, ring_xy):
     grid = grid[inside]
     if not len(grid):
         return np.zeros((0, 3))
-    claimed = claimed_plan_view_distance(grid, edges) <= radius + 1.0e-10 * radius
+    claimed = (
+        claimed_plan_view_distance(grid, [edge for edge in edges if not edge.get("Context")])
+        <= radius + 1.0e-10 * radius
+    )
     grid = grid[claimed]
     if not len(grid):
         return np.zeros((0, 3))
@@ -1044,6 +1077,7 @@ def dielectric(
     edge_frame_normal,
     edge_attributes,
     edge_exclude_attributes=(1,),
+    edge_exclude_segments=None,
 ):
     result = {
         "Index": index,
@@ -1060,6 +1094,13 @@ def dielectric(
     }
     if edge_exclude_attributes:
         result["EdgeExcludeAttributes"] = list(edge_exclude_attributes)
+    if edge_exclude_segments:
+        # A device-plan coupon's FOREIGN edges (decision 282 rule B5): out of the
+        # within-R edge-distance perimeter, so that the model's energy covers its own
+        # edges only; the tolerance is Palace's default (1e-3 R).
+        result["EdgeExcludeSegments"] = [
+            [float(value) for value in segment] for segment in edge_exclude_segments
+        ]
     return result
 
 
@@ -1233,6 +1274,7 @@ def make_config(
     available_attributes=None,
     slot_partitioned=False,
     terminal_traces=None,
+    edge_exclude_segments=None,
 ):
     validate_metal_slot_partitioning(
         edges, fabricated, available_attributes, slot_partitioned
@@ -1325,6 +1367,7 @@ def make_config(
                     available_attributes,
                 ),
                 edge_exclude_attributes,
+                edge_exclude_segments,
             )
         )
     conductor_count = max(edge["Conductor"] for edge in edges)
@@ -1600,6 +1643,11 @@ def write_mesh_signature(path, edges):
     header = (
         "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm"
     )
+    # Device-plan coupons (decision 282) append the context class of every row; a coupon
+    # without context rows keeps the legacy columns byte for byte.
+    with_context = any(edge.get("Context") for edge in edges)
+    if with_context:
+        header += ",Context,Chain"
     lines = [header]
     for index, edge in enumerate(edges, start=1):
         values = [
@@ -1613,6 +1661,8 @@ def write_mesh_signature(path, edges):
             *edge["Interval"],
             int(edge["VertexArm"]),
         ]
+        if with_context:
+            values += [int(bool(edge.get("Context"))), int(bool(edge.get("Chain")))]
         lines.append(",".join(f"{value:.17g}" for value in values))
     path.write_text("\n".join(lines) + "\n")
 
@@ -2099,7 +2149,11 @@ def main():
     failure_path.unlink(missing_ok=True)
     write_mesh_signature(output / "mesh-signature.csv", edges)
     lower, upper = coupon_bounds(
-        edges, args.radius, args.metal_thickness, args.overetch_depth
+        edges,
+        args.radius,
+        args.metal_thickness,
+        args.overetch_depth,
+        coupon.get("Geometry", {}).get("SupportBox"),
     )
     support_points = matching_support_points(lower, upper, frame, args.radius)
     mask_path = output / "plan-view-mask.csv"

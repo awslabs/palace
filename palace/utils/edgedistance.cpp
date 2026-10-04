@@ -360,10 +360,86 @@ ElementBounds GetElementBounds(const mfem::ParMesh &mesh, int element)
 
 }  // namespace
 
+namespace
+{
+
+std::vector<mesh::BoundaryEdgeSegment>
+ExclusionSegments(const std::vector<std::array<double, 6>> &exclude_segments)
+{
+  std::vector<mesh::BoundaryEdgeSegment> segments;
+  segments.reserve(exclude_segments.size());
+  for (const auto &s : exclude_segments)
+  {
+    segments.push_back({{s[0], s[1], s[2]}, {s[3], s[4], s[5]}});
+  }
+  return segments;
+}
+
+}  // namespace
+
+void ExcludeCoincidentEdgeSegments(
+    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
+    int space_dimension, std::vector<mesh::BoundaryEdgeSegment> &edge_segments)
+{
+  if (exclude_segments.empty())
+  {
+    return;
+  }
+  MFEM_VERIFY(tolerance > 0.0,
+              "Interface dielectric \"EdgeExcludeSegments\" need a positive tolerance!");
+  const EdgeDistanceTree excluded_tree(ExclusionSegments(exclude_segments));
+  const double tolerance_squared = tolerance * tolerance;
+  edge_segments.erase(std::remove_if(edge_segments.begin(), edge_segments.end(),
+                                     [&](const auto &segment)
+                                     {
+                                       return IsCoincidentWithExcludedBoundary(
+                                           segment, excluded_tree, space_dimension,
+                                           tolerance_squared);
+                                     }),
+                      edge_segments.end());
+  MFEM_VERIFY(!edge_segments.empty(),
+              "Interface dielectric \"EdgeExcludeSegments\" removed the entire perimeter!");
+}
+
+void ExcludeCoincidentMetalEdgeSegmentIndices(
+    const MetalEdgeGeometry &geometry,
+    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
+    int space_dimension, std::vector<std::size_t> &segment_indices)
+{
+  if (exclude_segments.empty())
+  {
+    return;
+  }
+  MFEM_VERIFY(tolerance > 0.0,
+              "Interface dielectric \"EdgeExcludeSegments\" need a positive tolerance!");
+  const EdgeDistanceTree excluded_tree(ExclusionSegments(exclude_segments));
+  const double tolerance_squared = tolerance * tolerance;
+  segment_indices.erase(
+      std::remove_if(segment_indices.begin(), segment_indices.end(),
+                     [&](std::size_t index)
+                     {
+                       MFEM_VERIFY(index < geometry.segments.size(),
+                                   "Invalid automatically extracted metal edge segment "
+                                   "index!");
+                       const auto &source = geometry.segments[index];
+                       const mesh::BoundaryEdgeSegment segment{
+                           geometry.vertices[source.vertices[0]].coordinate,
+                           geometry.vertices[source.vertices[1]].coordinate};
+                       return IsCoincidentWithExcludedBoundary(
+                           segment, excluded_tree, space_dimension, tolerance_squared);
+                     }),
+      segment_indices.end());
+  MFEM_VERIFY(!segment_indices.empty(),
+              "Interface dielectric \"EdgeExcludeSegments\" removed the entire "
+              "automatically extracted perimeter!");
+}
+
 std::shared_ptr<const EdgeDistanceTree>
 BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_attributes,
                       const std::vector<int> &edge_exclude_attributes,
-                      const std::optional<std::array<double, 3>> &process_normal)
+                      const std::optional<std::array<double, 3>> &process_normal,
+                      const std::vector<std::array<double, 6>> &edge_exclude_segments,
+                      double edge_exclude_segment_tolerance)
 {
   auto edge_marker = mesh::BdrAttrToMarker(mesh, edge_attributes, true);
   auto edge_segments = mesh::GetBoundaryEdgeSegments(mesh, edge_marker);
@@ -398,6 +474,8 @@ BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_at
     MFEM_VERIFY(!edge_segments.empty(),
                 "Interface dielectric edge exclusion removed the entire perimeter!");
   }
+  ExcludeCoincidentEdgeSegments(edge_exclude_segments, edge_exclude_segment_tolerance,
+                                mesh.SpaceDimension(), edge_segments);
   if (process_normal && mesh.SpaceDimension() == 3)
   {
     const double normal_squared = std::inner_product(
@@ -596,8 +674,8 @@ std::vector<EdgeRefinementContext>
 BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
                             const config::BoundaryData &boundaries)
 {
-  using TreeKey =
-      std::tuple<bool, std::vector<int>, std::vector<int>, std::vector<std::size_t>>;
+  using TreeKey = std::tuple<bool, std::vector<int>, std::vector<int>,
+                             std::vector<std::size_t>, std::vector<std::array<double, 6>>>;
   using ContextKey = std::tuple<TreeKey, double, int, double, double>;
   std::map<TreeKey, std::shared_ptr<const EdgeDistanceTree>> trees;
   std::map<ContextKey, EdgeRefinementContext> contexts;
@@ -625,16 +703,24 @@ BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
           GetInterfaceMetalEdgeSegmentIndices(metal_edges, index, dielectric.type);
       ExcludeMetalEdgeSegmentIndices(mesh, metal_edges, dielectric.edge_exclude_attributes,
                                      segment_indices);
+      ExcludeCoincidentMetalEdgeSegmentIndices(metal_edges,
+                                               dielectric.edge_exclude_segments,
+                                               dielectric.edge_exclude_segment_tolerance,
+                                               mesh.SpaceDimension(), segment_indices);
     }
     const TreeKey tree_key{dielectric.automatic_edges, dielectric.edge_attributes,
-                           dielectric.edge_exclude_attributes, segment_indices};
+                           dielectric.edge_exclude_attributes, segment_indices,
+                           dielectric.edge_exclude_segments};
     auto tree = trees.find(tree_key);
     if (tree == trees.end())
     {
-      auto distance_tree = dielectric.automatic_edges
-                               ? BuildEdgeDistanceTree(metal_edges, segment_indices)
-                               : BuildEdgeDistanceTree(mesh, dielectric.edge_attributes,
-                                                       dielectric.edge_exclude_attributes);
+      auto distance_tree =
+          dielectric.automatic_edges
+              ? BuildEdgeDistanceTree(metal_edges, segment_indices)
+              : BuildEdgeDistanceTree(mesh, dielectric.edge_attributes,
+                                      dielectric.edge_exclude_attributes, std::nullopt,
+                                      dielectric.edge_exclude_segments,
+                                      dielectric.edge_exclude_segment_tolerance);
       tree = trees.try_emplace(tree_key, std::move(distance_tree)).first;
     }
     const ContextKey context_key{

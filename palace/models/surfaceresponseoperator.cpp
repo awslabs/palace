@@ -702,6 +702,8 @@ struct LibraryModel
   // Version-2 identification signature (the feature's canonical Signature object,
   // dimensionless parameters) which the key-based matching pass looks up directly.
   std::optional<nlohmann::json> identification_signature;
+  // Legacy-contract aliases (USER decision 283): contract-3 keys this legacy model serves.
+  std::vector<LegacyContractAlias> legacy_contract_aliases;
 
   // Curvature family node (curved coupons built on axisymmetric (r, z) meshes): the
   // coupon's kappa = R / rho and whether the metal lies inside the circle (convex, a disk
@@ -1559,6 +1561,7 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   MFEM_VERIFY(allow_empty_models || !models.empty(),
               "Fabrication-process response library must contain at least one model!");
   std::set<std::string> names;
+  std::set<std::string> legacy_alias_keys;
   std::set<InterfaceDielectric> mapped_interface_types;
   for (const auto &entry : models)
   {
@@ -1587,7 +1590,57 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       TopologyIdentifier(model.topology),
                   "Fabrication-process response model \""
                       << model.name << "\" Signature.Type does not match its Topology!");
+      // An UnboxableFeature key (decision 282: no box satisfies the face rules) is a
+      // Missing placeholder no builder makes: a library may not serve it.
+      MFEM_VERIFY(!signature->value("Unboxable", false),
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" is keyed by an UnboxableFeature signature (\"Unboxable\": "
+                         "true): no coupon exists for such a key!");
       model.identification_signature = *signature;
+    }
+    if (auto aliases = entry.find("LegacyContractAliases"); aliases != entry.end())
+    {
+      MFEM_VERIFY(aliases->is_array(), "Fabrication-process response model \""
+                                           << model.name
+                                           << "\" LegacyContractAliases must be an array!");
+      MFEM_VERIFY(model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER &&
+                      model.identification_signature,
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" lists LegacyContractAliases but is not a SpatialEdgeCluster "
+                         "model with a Signature (USER decision 283)!");
+      const std::string own_hash =
+          SignatureKeyAndHash(*model.identification_signature, "SpatialEdgeCluster").second;
+      auto Hex64 = [](const std::string &text)
+      {
+        return text.size() == 64 &&
+               std::all_of(text.begin(), text.end(), [](char c)
+                           { return std::isxdigit(static_cast<unsigned char>(c)); });
+      };
+      for (const auto &alias_entry : *aliases)
+      {
+        LegacyContractAlias alias;
+        alias.key = alias_entry.value("Key", std::string{});
+        alias.context_digest = alias_entry.value("ContextDigest", std::string{});
+        alias.reason = alias_entry.value("Reason", std::string{});
+        alias.context = alias_entry.value("Context", nlohmann::json(nullptr));
+        MFEM_VERIFY(Hex64(alias.key) && Hex64(alias.context_digest) &&
+                        !alias.reason.empty(),
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" LegacyContractAliases entries need a 64-hex Key, a 64-hex "
+                           "ContextDigest and a Reason!");
+        MFEM_VERIFY(alias.key != own_hash,
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" lists its own key as a legacy-contract alias!");
+        MFEM_VERIFY(legacy_alias_keys.insert(alias.key).second,
+                    "Fabrication-process response library lists the legacy-contract alias "
+                    "key "
+                        << alias.key << " twice (model \"" << model.name << "\")!");
+        model.legacy_contract_aliases.push_back(std::move(alias));
+      }
     }
     model.arm_angles = entry.value("ArmAngles", std::vector<double>{});
     model.arm_angle_tolerance =
@@ -6513,6 +6566,25 @@ public:
 
   std::size_t Size() const { return entries.size(); }
 
+  // Legacy-contract aliases (USER decision 283), keyed by the aliased v3 hash: the legacy
+  // model's name and Signature with the alias. Looked up by the exact hash only.
+  struct AliasEntry
+  {
+    std::string model;
+    nlohmann::json model_signature;
+    LegacyContractAlias alias;
+  };
+  void AddAlias(const std::string &model, const nlohmann::json &model_signature,
+                const LegacyContractAlias &alias)
+  {
+    aliases.emplace(alias.key, AliasEntry{model, model_signature, alias});
+  }
+  const AliasEntry *FindAlias(const std::string &hash) const
+  {
+    const auto it = aliases.find(hash);
+    return it == aliases.end() ? nullptr : &it->second;
+  }
+
 private:
   struct Entry
   {
@@ -6522,7 +6594,61 @@ private:
   };
   std::vector<Entry> entries;
   std::map<std::string, std::vector<std::size_t>> by_topology;
+  std::map<std::string, AliasEntry> aliases;
 };
+
+}  // namespace
+
+nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
+                                          const nlohmann::json &model_signature,
+                                          const LegacyContractAlias &alias,
+                                          const IdentifiedFeature &feature)
+{
+  MFEM_VERIFY(feature.hash == alias.key,
+              "Legacy-contract alias of model \""
+                  << model_name << "\" resolved for a feature whose key " << feature.hash
+                  << " is not the alias key " << alias.key << "!");
+  const std::string digest = SpatialSupportContextDigest(feature.signature);
+  MFEM_VERIFY(!digest.empty() && digest == alias.context_digest,
+              "Legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the feature's context digest "
+                  << (digest.empty() ? std::string("(no Box)") : digest)
+                  << " does not match the alias's ContextDigest " << alias.context_digest
+                  << " (USER decision 283: fail closed)!");
+  // The feature's claims-only key (the claims canonicalised alone, recorded by the
+  // identification: the Portions of a contract-3 signature are serialised in the frame
+  // that minimises Box + Context, so they cannot be re-keyed by removing those members).
+  const std::string claims_hash =
+      feature.spatial_support.is_object()
+          ? feature.spatial_support.value("ClaimsKey", std::string{})
+          : std::string{};
+  const auto [model_key, model_hash] = SignatureKeyAndHash(model_signature, feature.type);
+  (void)model_key;
+  MFEM_VERIFY(!claims_hash.empty() && claims_hash == model_hash,
+              "Legacy-contract alias "
+                  << alias.key << " of model \"" << model_name
+                  << "\": the feature's claims-only key " << claims_hash
+                  << " is not the legacy model's key " << model_hash
+                  << " (the alias names another geometry; fail closed)!");
+  return nlohmann::json{
+      {"Model", model_name},
+      {"Key", alias.key},
+      {"ContextDigest", alias.context_digest},
+      {"ClaimsKey", claims_hash},
+      {"Reason", alias.reason},
+      {"Context",
+       {{"Box", feature.signature.value("Box", nlohmann::json(nullptr))},
+        {"Context", feature.signature.value("Context", nlohmann::json::array())}}},
+      {"Rule", "USER decision 283: an explicit library-side alias from a contract-3 "
+               "key to a legacy model (decision-236 straight-continuation coupon); "
+               "usable ONLY for the listed key, never a fallback; the feature's "
+               "context digest and claims-only key are verified against the alias "
+               "and the model (mismatch aborts)"}};
+}
+
+namespace
+{
 
 LibrarySignatureIndex
 LibrarySignatureKeys(const ProcessLibrary &library,
@@ -6558,6 +6684,10 @@ LibrarySignatureKeys(const ProcessLibrary &library,
       index.Add(*model.identification_signature,
                 model.identification_signature->at("Type").get<std::string>(), model.name,
                 rank);
+      for (const auto &alias : model.legacy_contract_aliases)
+      {
+        index.AddAlias(model.name, *model.identification_signature, alias);
+      }
       continue;
     }
     switch (model.topology)
@@ -6845,6 +6975,28 @@ IdentificationResult RunGeometryIdentification(
       feature.matched_model = match->first;
       feature.match_deviation = match->second;
     }
+    else if (const auto *alias = library_keys.FindAlias(feature.hash))
+    {
+      // Legacy-contract alias (USER decision 283): the library lists this contract-3 key
+      // explicitly for a legacy model; verified (digest, claims) or aborted, recorded.
+      feature.legacy_contract = ResolveLegacyContractAlias(
+          alias->model, alias->model_signature, alias->alias, feature);
+      // The legacy model's Edges and basis points live in the claims-only canonical frame:
+      // the feature is placed in that frame (the contract-3 frame minimises Box + Context
+      // and may differ by a rotation / reflection), so that the patches are the legacy
+      // library's patches exactly.
+      feature.origin = feature.claims_origin;
+      feature.axes = feature.claims_axes;
+      feature.chirality = feature.claims_chirality;
+      feature.legacy_contract["PlacementFrame"] =
+          "the claims-only canonical frame (Features[].ClaimsFrame), the legacy model's";
+      feature.matched_model = alias->model;
+      feature.match_deviation = 0.0;
+      feature.match_note =
+          "legacy contract (USER decision 283): key " + feature.hash.substr(0, 12) +
+          " resolved through the alias of \"" + alias->model + "\" (context digest " +
+          alias->alias.context_digest.substr(0, 12) + " verified)";
+    }
     else if (StraightTopologyOfCurvedFeature(feature.type) && !feature.portions.empty())
     {
       // Curvature family (never silently straight): matched at its kappa or reported with
@@ -7041,6 +7193,7 @@ IdentificationResult RunGeometryIdentification(
     nlohmann::json curvature_family;  // the family selection of a curved feature
     nlohmann::json corner_family;     // the family selection of an interpolated corner
     std::set<std::string> notes;      // matching notes (family refusals)
+    nlohmann::json legacy_contract;   // the alias record (USER decision 283) + Features
   };
   struct GroupBase
   {
@@ -7113,6 +7266,15 @@ IdentificationResult RunGeometryIdentification(
     {
       instance->second.models.insert(*feature.matched_model);
     }
+    if (!feature.legacy_contract.is_null())
+    {
+      if (instance->second.legacy_contract.is_null())
+      {
+        instance->second.legacy_contract = feature.legacy_contract;
+        instance->second.legacy_contract["Features"] = nlohmann::json::array();
+      }
+      instance->second.legacy_contract["Features"].push_back(feature.id);
+    }
     if (const auto record = curvature_records.find(feature.id);
         record != curvature_records.end())
     {
@@ -7171,6 +7333,7 @@ IdentificationResult RunGeometryIdentification(
       double length = 0.0;
       std::set<std::string> models, notes;
       nlohmann::json curvature_family, corner_family;
+      nlohmann::json legacy_contract = nlohmann::json::array();
       bool exact = true;
       for (const std::size_t i : members)
       {
@@ -7181,6 +7344,10 @@ IdentificationResult RunGeometryIdentification(
         length += instance.length;
         models.insert(instance.models.begin(), instance.models.end());
         notes.insert(instance.notes.begin(), instance.notes.end());
+        if (!instance.legacy_contract.is_null())
+        {
+          legacy_contract.push_back(instance.legacy_contract);
+        }
         if (curvature_family.is_null() && !instance.curvature_family.is_null())
         {
           curvature_family = instance.curvature_family;
@@ -7246,6 +7413,12 @@ IdentificationResult RunGeometryIdentification(
       {
         record["Notes"] = notes;
       }
+      if (!legacy_contract.empty())
+      {
+        // Matched through the library's explicit legacy-contract alias (USER decision
+        // 283): Status Exact (the legacy coupon is applied), flagged with the record.
+        record["LegacyContract"] = legacy_contract;
+      }
       requirements->AddFeatureRecord(record, count, length);
     }
   }
@@ -7282,7 +7455,37 @@ struct FeaturePatchSummary
   int first_order_missing_features = 0;
   double first_order_missing_turn = 0.0;  // |turn| (radians) left uncorrected
   std::set<std::string> first_order_missing_nodes;
+  // A10 extended to the context (decision 282 section 3): context piece ends of the placed
+  // contract-3 models verified to lie on device edges.
+  std::size_t context_points_checked = 0;
 };
+
+// Distance from a point to the device perimeter of the identification (its segments' keys
+// as straight chords): the A10 check extended to the context reads it for the placed
+// context piece ends.
+double DevicePerimeterDistance(const IdentificationResult &identification, const Point3D &q)
+{
+  double best = std::numeric_limits<double>::infinity();
+  for (const auto &segment : identification.segments)
+  {
+    const auto &a = segment.key[0], &b = segment.key[1];
+    // Bounding-box rejection against the best distance so far.
+    bool outside = false;
+    for (int d = 0; d < 3 && !outside; d++)
+    {
+      outside = q[d] < std::min(a[d], b[d]) - best || q[d] > std::max(a[d], b[d]) + best;
+    }
+    if (outside)
+    {
+      continue;
+    }
+    const Point3D ab = Subtract(b, a), aq = Subtract(q, a);
+    const double length2 = Dot(ab, ab);
+    const double t = length2 > 0.0 ? std::clamp(Dot(aq, ab) / length2, 0.0, 1.0) : 0.0;
+    best = std::min(best, Norm(Subtract(q, Add(a, Scale(t, ab)))));
+  }
+  return best;
+}
 
 // A pair's sample-to-partner distances must agree with its separation within twice the
 // pair tolerance (the mean separation of a 5 % taper is within 5 % of every sample; the
@@ -8123,6 +8326,57 @@ FeaturePatchSummary BuildFeaturePatches(
                                            Interpolate(*fp.segment, fp.a),
                                            Interpolate(*fp.segment, fp.b)});
       }
+      // A contract-3 (device-plan) model: its support box and continuation chain in the
+      // patch frame (rule B4, the placement's vertex ownership), and the A10 check extended
+      // to the context (decision 282 section 3): every context piece of the model's
+      // Signature, placed by the patch frame, lies on a device run within the signature
+      // tolerance — a mis-keyed library or a frame defect fails closed here.
+      if (model.identification_signature &&
+          model.identification_signature->contains("Box") &&
+          feature.legacy_contract.is_null())
+      {
+        const auto &signature = *model.identification_signature;
+        patch.provenance.support_box = signature.at("Box").get<std::array<double, 4>>();
+        patch.provenance.has_support_box = true;
+        MFEM_VERIFY(feature.signature.contains("Context") &&
+                        signature.value("Context", nlohmann::json::array()) ==
+                            feature.signature["Context"],
+                    "The Context of model \"" << model.name
+                                              << "\" differs from the matched feature's!");
+        const double tolerance = kSignatureParameterToleranceOverRadius * R;
+        auto Global = [&](double x, double y)
+        {
+          return Add(patch.origin,
+                     Add(Scale(x * R, patch.axis_u), Scale(y * R, patch.axis_v)));
+        };
+        std::size_t checked = 0;
+        for (const auto &piece : ContextPieceChords(signature))
+        {
+          if (piece.chain)
+          {
+            patch.provenance.chain.push_back(piece.P);
+          }
+        }
+        // The ENDS of every context entry are device vertices or face crossings of device
+        // edges (an arc entry's chords lie on the fitted circle, the device polyline up to
+        // its chord sagitta away: its ends are the test).
+        for (const auto &entry : signature.at("Context"))
+        {
+          const auto P = entry.at("P").get<std::array<double, 4>>();
+          for (const auto &q : {Global(P[0], P[1]), Global(P[2], P[3])})
+          {
+            const double distance = DevicePerimeterDistance(identification, q);
+            MFEM_VERIFY(distance <= tolerance,
+                        "Context piece of model \""
+                            << model.name << "\" placed for feature " << feature.id
+                            << " lies " << distance / R
+                            << " R from every device edge (A10 extended to the context: a "
+                               "mis-keyed library or a placement frame defect)!");
+            checked++;
+          }
+        }
+        summary.context_points_checked += checked;
+      }
       Emit(std::move(patch), model_index, runtime, feature);
     }
     else
@@ -8242,6 +8496,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         GetInterfaceMetalEdgeSegmentIndices(geometry, index, dielectric.type);
     ExcludeMetalEdgeSegmentIndices(mesh, geometry, dielectric.edge_exclude_attributes,
                                    segment_indices);
+    ExcludeCoincidentMetalEdgeSegmentIndices(geometry, dielectric.edge_exclude_segments,
+                                             dielectric.edge_exclude_segment_tolerance,
+                                             mesh.SpaceDimension(), segment_indices);
     selections.push_back({dielectric.type, index, std::move(segment_indices),
                           dielectric.edge_frame_normal ? std::optional<Point3D>(Normalize(
                                                              *dielectric.edge_frame_normal))
@@ -9188,6 +9445,43 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             requirements ? *requirements : law_describer, diagnostics,
                             result, curved_matches, corner_matches);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
+    // Legacy-contract aliases resolved by the matching pass (USER decision 283): one record
+    // per alias with the features it served, carried into the operator record and the
+    // geometry cache.
+    result.legacy_contract.clear();
+    for (const auto &feature : identification.features)
+    {
+      if (feature.legacy_contract.is_null())
+      {
+        continue;
+      }
+      const std::string key = feature.legacy_contract.at("Key").get<std::string>();
+      auto it = std::find_if(result.legacy_contract.begin(), result.legacy_contract.end(),
+                             [&](const auto &entry) { return entry.key == key; });
+      if (it == result.legacy_contract.end())
+      {
+        result.legacy_contract.push_back(
+            {feature.legacy_contract.at("Model").get<std::string>(),
+             key,
+             feature.legacy_contract.at("ContextDigest").get<std::string>(),
+             feature.legacy_contract.at("Reason").get<std::string>(),
+             {}});
+        it = std::prev(result.legacy_contract.end());
+      }
+      it->features.push_back(feature.id);
+    }
+    if (!result.legacy_contract.empty())
+    {
+      std::string text;
+      for (const auto &entry : result.legacy_contract)
+      {
+        text += fmt::format("{}{} <- key {} ({:d} feature{})", text.empty() ? "" : ", ",
+                            entry.model, entry.key.substr(0, 12), entry.features.size(),
+                            entry.features.size() == 1 ? "" : "s");
+      }
+      Mpi::Print(mesh.GetComm(), " Legacy-contract aliases (USER decision 283): {}\n",
+                 text);
+    }
     std::string unmatched;
     for (const auto &[type, entry] : summary.unmatched_by_type)
     {
@@ -9207,13 +9501,16 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                " Runtime models: {:d}\n"
                " Curvature: {:d} feature(s) on a curvature family, {:d} straight-like "
                "feature(s) with a first-order term\n"
-               " Corners: {:d} feature(s) on an angle-interpolated corner family\n",
+               " Corners: {:d} feature(s) on an angle-interpolated corner family\n"
+               " Context (A10 extended): {:d} placed context piece end(s) verified on "
+               "device edges\n",
                library.name, summary.matched_features,
                summary.matched_length * coordinate_scale, summary.unmatched_features,
                summary.unmatched_length * coordinate_scale, unmatched,
                static_cast<int>(result.patches.size()), patches,
                static_cast<int>(result.models.size()), summary.curved_family_features,
-               summary.first_order_features, summary.corner_family_features);
+               summary.first_order_features, summary.corner_family_features,
+               static_cast<int>(summary.context_points_checked));
     if (summary.first_order_missing_features > 0)
     {
       std::string nodes;
@@ -13685,7 +13982,14 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
     {
       claims.push_back({{"Segment", claim.segment}, {"P0", claim.p0}, {"P1", claim.p1}});
     }
+    nlohmann::json support_box = nullptr;
+    if (patch.provenance.has_support_box)
+    {
+      support_box = patch.provenance.support_box;
+    }
     patches.push_back({{"Model", patch.model},
+                       {"SupportBox", support_box},
+                       {"Chain", patch.provenance.chain},
                        {"Origin", patch.origin},
                        {"AxisU", patch.axis_u},
                        {"AxisV", patch.axis_v},
@@ -13709,12 +14013,25 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  output << nlohmann::json{{"Version", 6},
-                           {"MatchingRadius", config.matching_radius},
-                           {"Models", std::move(models)},
-                           {"Patches", std::move(patches)}}
-                .dump(2)
-         << '\n';
+  nlohmann::json cache = {{"Version", 7},
+                          {"MatchingRadius", config.matching_radius},
+                          {"Models", std::move(models)},
+                          {"Patches", std::move(patches)}};
+  if (!config.legacy_contract.empty())
+  {
+    // Legacy-contract aliases resolved for this geometry (USER decision 283).
+    nlohmann::json aliases = nlohmann::json::array();
+    for (const auto &entry : config.legacy_contract)
+    {
+      aliases.push_back({{"Model", entry.model},
+                         {"Key", entry.key},
+                         {"ContextDigest", entry.context_digest},
+                         {"Reason", entry.reason},
+                         {"Features", entry.features}});
+    }
+    cache["LegacyContract"] = std::move(aliases);
+  }
+  output << cache.dump(2) << '\n';
 }
 
 ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &path,
@@ -13725,16 +14042,18 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 6,
+      data.value("Version", 0) == 7,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 6 carries the feature, mesh segment, chain stretch and own-edge "
-             "offset of every patch, the claims of every spatial cluster patch and the "
-             "matching radius for the continuation ownership; delete a stale cache)!");
+          << " (version 7 carries the feature, mesh segment, chain stretch and own-edge "
+             "offset of every patch, the claims, support box and chain of every spatial "
+             "cluster patch and the matching radius for the continuation and vertex "
+             "ownership; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
   result.patches.clear();
+  result.legacy_contract.clear();
   result.matching_radius = data.at("MatchingRadius");
   for (const auto &entry : data.at("Models"))
   {
@@ -13816,6 +14135,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
       patch.provenance.claims.push_back(
           {claim.at("Segment"), claim.at("P0"), claim.at("P1")});
     }
+    if (const auto box = entry.find("SupportBox"); box != entry.end() && !box->is_null())
+    {
+      patch.provenance.support_box = box->get<std::array<double, 4>>();
+      patch.provenance.has_support_box = true;
+    }
+    patch.provenance.chain = entry.value("Chain", std::vector<std::array<double, 4>>{});
     patch.maxwell_conductor_anchors =
         entry.value("MaxwellConductorAnchors", std::vector<std::array<double, 3>>{});
     patch.maxwell_reference_is_pec = entry.value("MaxwellReferenceIsPEC", true);
@@ -13823,6 +14148,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   }
   MFEM_VERIFY(!result.models.empty() && !result.patches.empty(),
               "Response-geometry cache contains no models or patches!");
+  for (const auto &entry : data.value("LegacyContract", nlohmann::json::array()))
+  {
+    result.legacy_contract.push_back(
+        {entry.at("Model").get<std::string>(), entry.at("Key").get<std::string>(),
+         entry.at("ContextDigest").get<std::string>(), entry.value("Reason", std::string{}),
+         entry.value("Features", std::vector<int>{})});
+  }
   return result;
 }
 
@@ -13980,8 +14312,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         patches.patches, boxes, 3, continuation_tolerance);
     // The placement's continuation ownership (decision 236 (2)) on the dry run: the
     // written patches are the placed ones (clipped cells, weight 0 inside the boxes).
-    const auto ownership =
-        ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance);
+    const auto ownership = ApplyContinuationOwnership(
+        patches.patches, boxes, 3, continuation_tolerance, patches.matching_radius);
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
     diagnostics["TranslationalStretchesInsideSpatialSupport"] =
         DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
@@ -14028,6 +14360,87 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         {"Features", exclusion_diagnostics["Features"]},
         {"CellLength", exclusion_diagnostics["CellLength"]},
         {"PortionLength", exclusion_diagnostics["PortionLength"]}};
+    // Legacy-contract aliases (USER decision 283) in the inventory: the features matched
+    // through an explicit alias (Status Exact, the legacy coupon applied), their claimed
+    // length and the aliases.
+    {
+      nlohmann::json aliases = nlohmann::json::array();
+      int legacy_features = 0;
+      double legacy_length = 0.0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (!feature["Match"].contains("LegacyContract"))
+        {
+          continue;
+        }
+        legacy_features++;
+        legacy_length += feature["Length"].get<double>();
+        const auto &record = feature["Match"]["LegacyContract"];
+        auto it = std::find_if(aliases.begin(), aliases.end(), [&](const nlohmann::json &a)
+                               { return a["Key"] == record["Key"]; });
+        if (it == aliases.end())
+        {
+          aliases.push_back({{"Model", record["Model"]},
+                             {"Key", record["Key"]},
+                             {"ContextDigest", record["ContextDigest"]},
+                             {"Reason", record["Reason"]},
+                             {"Features", nlohmann::json::array()}});
+          it = std::prev(aliases.end());
+        }
+        (*it)["Features"].push_back(feature["Id"]);
+      }
+      manifest["Summary"]["Counts"]["LegacyContract"] = legacy_features;
+      manifest["Summary"]["TotalEdgeLengths"]["LegacyContract"] = legacy_length;
+      manifest["Summary"]["LegacyContract"] = {
+          {"Features", legacy_features},
+          {"Length", legacy_length},
+          {"Aliases", aliases},
+          {"Rule", "USER decision 283: features whose contract-3 key the library maps "
+                   "explicitly (LegacyContractAliases: key + context digest, verified) to "
+                   "a legacy model built under the decision-236 straight-continuation "
+                   "contract; counted in Exact as well (the legacy coupon is applied); "
+                   "never a fallback for any other key"}};
+      if (legacy_features > 0)
+      {
+        Mpi::Warning("{:d} feature(s) matched through legacy-contract aliases (USER "
+                     "decision 283); see Summary.LegacyContract!\n",
+                     legacy_features);
+      }
+    }
+    // Knife-edge keys (decision 287 (a)): a cluster whose face-rule or box-rule readings
+    // sat within the band on ANY T2 pass has a key decided at a threshold; the band census
+    // of Diagnostics.SpatialSupport sums them, the features name the readings.
+    {
+      std::vector<std::string> knife_edge_features;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        const auto support = feature.find("SpatialSupport");
+        if (support == feature.end() || !support->is_object() ||
+            !support->contains("FaceRules"))
+        {
+          continue;
+        }
+        const auto &rules = (*support)["FaceRules"];
+        const int hits = rules.value("ThresholdBandHits", 0) +
+                         rules.value("BoxRuleThresholdBandHits", 0);
+        if (hits > 0)
+        {
+          knife_edge_features.push_back(
+              fmt::format("feature {} ({} hit(s) over {} pass(es), growth steps {})",
+                          feature["Id"].get<int>(), hits, rules.value("Passes", 1),
+                          (*support)["Growth"]["Steps"].dump()));
+        }
+      }
+      if (!knife_edge_features.empty())
+      {
+        Mpi::Warning("{:d} spatial cluster key(s) rest on face-rule / box-rule readings "
+                     "within the knife-edge band (decision 287; see Features[]."
+                     "SpatialSupport.FaceRules.ThresholdBandHits and Growth.Passes):\n  "
+                     "{}\n",
+                     static_cast<int>(knife_edge_features.size()),
+                     fmt::join(knife_edge_features, "\n  "));
+      }
+    }
     // The conductor-consistency gate (decision 277) needs the device trace: it is evaluated
     // by the operator at solve time (every excitation, before any energy) and reported in
     // the operator's Diagnostics.ConductorConsistency (palace.json), never by the dry run.
@@ -14364,6 +14777,34 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
       continue;
     }
     const auto *points = basis_points(patch.model);
+    SpatialSupportBounds support;
+    support.patch = patch_idx;
+    support.claims = patch.provenance.claims;
+    support.has_support_box = patch.provenance.has_support_box;
+    support.support_box = patch.provenance.support_box;
+    support.chain = patch.provenance.chain;
+    // A contract-3 placeholder without basis points (a signature-only library, the
+    // preflight of a Missing key): the box is the Signature's support box placed by the
+    // patch frame, R above and below the plane (the coupon's cap and substrate reach at
+    // least R), so that the ownership records of the dry run are complete.
+    std::vector<std::array<double, 3>> box_corners;
+    if (!points && support.has_support_box)
+    {
+      const auto &b = support.support_box;
+      for (const double x : {b[0], b[2]})
+      {
+        for (const double y : {b[1], b[3]})
+        {
+          for (const double z : {-1.0, 1.0})
+          {
+            box_corners.push_back({x * config.matching_radius, y * config.matching_radius,
+                                   z * config.matching_radius});
+          }
+        }
+      }
+      points = &box_corners;
+      support.from_signature_box = true;
+    }
     if (!points)
     {
       if (skipped)
@@ -14372,9 +14813,6 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
       }
       continue;
     }
-    SpatialSupportBounds support;
-    support.patch = patch_idx;
-    support.claims = patch.provenance.claims;
     bool first = true;
     for (const auto &local : *points)
     {
@@ -14512,7 +14950,7 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
 ContinuationOwnership
 ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
                            const std::vector<SpatialSupportBounds> &supports, int dimension,
-                           double continuation_tolerance)
+                           double continuation_tolerance, double matching_radius)
 {
   ContinuationOwnership ownership;
   const auto stretches = CollectTranslationalStretches(patches, dimension);
@@ -14675,6 +15113,82 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
   }
   std::sort(ownership.cells.begin(), ownership.cells.end(),
             [](const auto &a, const auto &b) { return a.patch < b.patch; });
+
+  // Vertex ownership (rule B4): the vertex patches against the chain piece ends of every
+  // contract-3 support, in the support's local frame (units of R).
+  const double R = matching_radius;
+  const double snap = kSupportFaceSnapOverRadius;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    auto &patch = patches[patch_idx];
+    const auto &provenance = patch.provenance;
+    const bool vertex_patch = provenance.coupon_depth == 0.0 && provenance.claims.empty() &&
+                              provenance.stretch < 0 && !provenance.has_support_box;
+    if (!vertex_patch || patch.weight <= 0.0)
+    {
+      continue;
+    }
+    ContinuationOwnership::Vertex record;
+    record.patch = patch_idx;
+    record.feature = provenance.feature;
+    for (const auto &support : supports)
+    {
+      if (!support.has_support_box || support.chain.empty())
+      {
+        continue;
+      }
+      const auto &owner = patches[support.patch];
+      std::array<double, 3> local{};
+      for (int d = 0; d < dimension; d++)
+      {
+        const double r = patch.origin[d] - owner.origin[d];
+        local[0] += r * owner.axis_u[d] / R;
+        local[1] += r * owner.axis_v[d] / R;
+        local[2] += r * owner.axis_w[d] / R;
+      }
+      if (std::abs(local[2]) > kSignatureParameterToleranceOverRadius)
+      {
+        continue;  // another plane
+      }
+      const auto &box = support.support_box;
+      if (local[0] < box[0] - snap || local[0] > box[2] + snap ||
+          local[1] < box[1] - snap || local[1] > box[3] + snap)
+      {
+        continue;
+      }
+      double end_distance = std::numeric_limits<double>::infinity();
+      for (const auto &piece : support.chain)
+      {
+        end_distance =
+            std::min({end_distance, std::hypot(local[0] - piece[0], local[1] - piece[1]),
+                      std::hypot(local[0] - piece[2], local[1] - piece[3])});
+      }
+      if (end_distance > kSignatureParameterToleranceOverRadius)
+      {
+        continue;
+      }
+      if (record.owners.empty())
+      {
+        record.face_distance_over_r = std::min(
+            {local[0] - box[0], box[2] - local[0], local[1] - box[1], box[3] - local[1]});
+        record.arm_outside_box = record.face_distance_over_r < 1.0;
+        record.lost_arm_length_over_r = std::max(0.0, 1.0 - record.face_distance_over_r);
+        record.chain_end_distance_over_r = end_distance;
+      }
+      record.owners.push_back(support.patch);
+    }
+    if (record.owners.empty())
+    {
+      continue;
+    }
+    std::sort(record.owners.begin(), record.owners.end());
+    if (record.owners.size() > 1)
+    {
+      ownership.shared_vertices++;
+    }
+    patch.weight = 0.0;
+    ownership.vertices.push_back(std::move(record));
+  }
   return ownership;
 }
 
@@ -14981,8 +15495,35 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
         {{"SpatialPatch", support.patch},
          {"SpatialFeature", spatial.provenance.feature},
          {"SpatialModel", models.at(spatial.model)->name},
+         {"FromSignatureBox", support.from_signature_box},
          {"OwnedLength",
           (it == ownership.owned_by_support.end() ? 0.0 : it->second) * coordinate_scale}});
+  }
+  nlohmann::json vertices = nlohmann::json::array();
+  for (const auto &vertex : ownership.vertices)
+  {
+    const auto &patch = config.patches[vertex.patch];
+    nlohmann::json owners = nlohmann::json::array();
+    for (const std::size_t owner : vertex.owners)
+    {
+      const auto &spatial = config.patches[owner];
+      owners.push_back({{"SpatialPatch", owner},
+                        {"SpatialFeature", spatial.provenance.feature},
+                        {"SpatialModel", models.at(spatial.model)->name}});
+    }
+    vertices.push_back(
+        {{"Kind", "Vertex"},
+         {"Patch", vertex.patch},
+         {"Feature", vertex.feature},
+         {"Model", models.at(patch.model)->name},
+         {"Origin", std::array<double, 3>{patch.origin[0] * coordinate_scale,
+                                          patch.origin[1] * coordinate_scale,
+                                          patch.origin[2] * coordinate_scale}},
+         {"FaceDistanceOverR", vertex.face_distance_over_r},
+         {"ChainEndDistanceOverR", vertex.chain_end_distance_over_r},
+         {"ArmOutsideBox", vertex.arm_outside_box},
+         {"LostArmLengthOverR", vertex.lost_arm_length_over_r},
+         {"Owners", std::move(owners)}});
   }
   return {
       {"Cells", static_cast<int>(ownership.cells.size())},
@@ -14994,6 +15535,22 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
         {"Length", ownership.shared_length * coordinate_scale}}},
       {"BySupport", std::move(by_support)},
       {"OwnedCells", std::move(cells)},
+      {"Vertices",
+       {{"Count", static_cast<int>(ownership.vertices.size())},
+        {"Shared", ownership.shared_vertices},
+        {"Records", std::move(vertices)},
+        {"Rule",
+         "decision 282 rule B4 / decision 285 (4): a vertex feature's patch (corner / "
+         "junction / endpoint coupon) whose vertex lies on a chain piece END of a "
+         "contract-3 coupon's continuation chain (the Signature's Chain context, placed by "
+         "the patch frame) inside that coupon's support box is owned by the coupon (weight "
+         "0, once; every owner listed); a vertex closer than R to a face has an arm partly "
+         "outside the box (ArmOutsideBox; LostArmLengthOverR = R minus the face distance, "
+         "in units of R: the part of the corner's R window beyond the first owner's box "
+         "that no coupon corrects once the vertex patch has weight 0, R1 final review "
+         "MINOR-2); a vertex on another cluster's claims is never on a chain. The vertex "
+         "feature's claimed length is in the identification manifest "
+         "(Features[].Length), not in the patch"}}},
       {"Rule",
        "decision 236 (2) / 244 (2026-10-02): a translational cell of a stretch that "
        "continues "
@@ -16469,6 +17026,30 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                       "nonoverlapping partition!");
       }
     }
+    if (!config->legacy_contract.empty())
+    {
+      // Legacy-contract aliases (USER decision 283) in the operator record: the legacy
+      // models applied for contract-3 keys the library lists explicitly.
+      nlohmann::json aliases = nlohmann::json::array();
+      for (const auto &entry : config->legacy_contract)
+      {
+        aliases.push_back({{"Model", entry.model},
+                           {"Key", entry.key},
+                           {"ContextDigest", entry.context_digest},
+                           {"Reason", entry.reason},
+                           {"Features", entry.features}});
+      }
+      ownership_diagnostics["LegacyContract"] = {
+          {"Count", aliases.size()},
+          {"Aliases", std::move(aliases)},
+          {"Rule", "USER decision 283: a legacy model (decision-236 straight-continuation "
+                   "coupon) applied for a contract-3 key through the library's explicit "
+                   "LegacyContractAliases entry (key + verified context digest); never a "
+                   "fallback for any other key"}};
+      Mpi::Warning("Legacy-contract aliases applied (USER decision 283): {:d} model(s) "
+                   "serve contract-3 keys through explicit library aliases!\n",
+                   static_cast<int>(config->legacy_contract.size()));
+    }
     if (!margin_overlaps.empty())
     {
       ownership_diagnostics["SpatialSupportMarginOverlaps"] =
@@ -16491,13 +17072,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           kSignatureParameterToleranceOverRadius * config->matching_radius);
       const auto ownership = ApplyContinuationOwnership(
           placed_patches, boxes, dimension,
-          kSignatureParameterToleranceOverRadius * config->matching_radius);
+          kSignatureParameterToleranceOverRadius * config->matching_radius,
+          config->matching_radius);
       for (const auto &cell : ownership.cells)
       {
         if (placed_patches[cell.patch].weight <= 0.0)
         {
           spatially_owned_patches.insert(cell.patch);
         }
+      }
+      for (const auto &vertex : ownership.vertices)
+      {
+        spatially_owned_patches.insert(vertex.patch);
       }
       ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
           DescribeTranslationalOwnershipRecords(records, boxes, *config, coordinate_scale,

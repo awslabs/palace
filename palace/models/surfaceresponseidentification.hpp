@@ -131,6 +131,30 @@ struct IdentifiedFeature
   // interpolation rule and kappa, for an unmatched curved feature the reason (never
   // silently straight); for a straight-like feature the first-order term's node status.
   std::optional<std::string> match_note;
+
+  // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
+  // supervisor decision 282; null for every other feature): the claims-derived support box
+  // in the canonical frame (units of R), the device-plan context clipped to it (own
+  // continuation chains and foreign edges), the face-rule outcome (T1 snap, T2 clearance,
+  // T3 growth) and the legacy-contract census of the same feature. Manifest
+  // Features[].SpatialSupport. The hashed signature carries Box + Context only when the
+  // context is non-empty or the box grew (Contract 3); otherwise the key is the claims-only
+  // key (Contract 2) and the record is informative.
+  nlohmann::json spatial_support;
+  // The claims-only canonical frame of a SpatialEdgeCluster (origin, axes, chirality of
+  // CanonicalClusterSignature over the claims alone): equal to origin / axes / chirality
+  // for contract 2 and 0; for contract 3 the signature's frame minimises Box + Context and
+  // may differ. A legacy model resolved through a legacy-contract alias (USER decision 283)
+  // is PLACED in this frame (its Edges and basis points live in the claims-only frame), so
+  // the matching pass swaps the feature's frame to it. Manifest Features[].ClaimsFrame.
+  std::array<double, 3> claims_origin{};
+  std::array<std::array<double, 3>, 3> claims_axes{};
+  int claims_chirality = 1;
+  // Legacy-contract alias record (USER decision 283; null unless the matching pass
+  // resolved this feature's contract-3 key through an alias the library lists explicitly
+  // for a legacy model): {Model, Key, ContextDigest, Reason, Context}. Manifest
+  // Features[].Match.LegacyContract; never a fallback for any other key.
+  nlohmann::json legacy_contract;
 };
 
 struct IdentifiedSegment
@@ -254,6 +278,24 @@ struct IdentificationResult
   // lies within a recorded band of every threshold of the rules (R, 2R, the 10R bend
   // radius, the 30 deg corner turn), in mesh units; serialised as JSON text.
   std::string knife_edge_census;
+  // Spatial-support contract summary (decision 282): clusters keyed by the claims alone
+  // (empty context, no growth), clusters keyed with Box + Context, clusters whose box grew
+  // (T3), clusters no box satisfies the face rules (UnboxableFeature: a Missing
+  // placeholder key), and the context lengths in mesh units.
+  struct SpatialSupportSummary
+  {
+    std::size_t clusters = 0;
+    std::size_t claims_keyed = 0;
+    std::size_t context_keyed = 0;
+    std::size_t grown = 0;
+    std::size_t unboxable = 0;
+    std::size_t exceeding_span_cap = 0;
+    double chain_length = 0.0;
+    double foreign_length = 0.0;
+    double fictitious_continuation_length = 0.0;
+    std::size_t threshold_band_hits = 0;
+  };
+  SpatialSupportSummary spatial_support;
 
   // Manifest "Identification" object; the length scale converts mesh units for output.
   nlohmann::json ToJson(double length_scale) const;
@@ -323,6 +365,115 @@ CanonicalSignature CanonicalClusterSignature(
     const std::vector<SignaturePortion> &portions,
     const std::vector<SignatureVertex> &vertices,
     const std::array<double, 3> &process_normal, double radius,
+    const std::function<void(std::size_t, std::size_t)> &progress = {});
+
+// Spatial-support contract v3 (USER decision 281, supervisor decision 282; design
+// device-plan-coupons-20261003/DESIGN.md B1-B3, T1-T3): the coupon metal of a
+// SpatialEdgeCluster is the DEVICE PLAN clipped to the claims-derived support box in the
+// cluster's canonical frame. The box (rule B2, the coupon generator's `coupon_bounds` in
+// the canonical frame): every claimed portion is a row along its own tangent, a claim-cut
+// end (touching no vertex and no other portion end within kSupportEndCoincidenceOverRadius)
+// is lengthened to at least R from the row's midpoint and every row end at or beyond R is
+// continued by kSupportContinuationOverRadius x R, the rows are widened by R on both sides
+// and the bounding box padded by kSupportPaddingOverRadius x R (so a claim cut is
+// 3R from its face and the claims 2R from the lateral faces); an arc portion is chorded at
+// the canonical step (ClusterArcChordStepDegrees / ClusterArcChordMaxLengthOverR) like the
+// builder chords it. Face rules, dimensionless: T1 a device vertex or a piece end within
+// kSupportFaceSnapOverRadius x R of a face is ON the face and a context piece shorter than
+// that is dropped (the sliver quantum); T2 every device edge inside the box keeps
+// kSupportFaceClearanceOverRadius x R from every face it does not cross, every interior
+// device vertex the same from every face, every crossing is that far from the box corners
+// and crosses at sin(theta) >= kSupportFaceClearanceOverRadius, two crossings of one face
+// closer than that may bound metal (recorded, MinCrossSectionOverR) but not gap; every
+// length threshold is read on the kSignatureLengthQuantumOverRadius grid (decision 287
+// (b): a value within half a quantum of the threshold is at it and takes the rule's
+// inclusive side, so an edge on a claims-box face reads exactly the clearance from the
+// moved face and passes deterministically; the crossing sine is dimensionless and the span
+// cap compares quantised box coordinates: left as they are) and an end made only by
+// another cluster's claim cut is no vertex (exempt from the end tests); T3 every
+// failing face moves outward by kSupportFaceGrowthStepOverRadius x R per step (all failing
+// faces per step), at most kSupportFaceGrowthMaxSteps steps per face and never past the
+// plan span cap kSupportSpanCapOverRadius x R; a cluster no box satisfies is an
+// UnboxableFeature (the signature carries "Unboxable": true, a Missing placeholder no
+// builder makes). The context = every run piece of the cluster's plane inside the box that
+// is not a claim, in the portion encoding with "Chain": true on the pieces connected to the
+// claims inside the box (own edges, rule B3) and false on foreign edges.
+constexpr double kSupportContinuationOverRadius = 2.0;
+constexpr double kSupportPaddingOverRadius = 1.0;
+constexpr double kSupportEndCoincidenceOverRadius = 1.0e-5;
+constexpr double kSupportFaceSnapOverRadius = 1.0e-3;
+constexpr double kSupportFaceClearanceOverRadius = 0.25;
+constexpr double kSupportFaceGrowthStepOverRadius = 0.25;
+constexpr int kSupportFaceGrowthMaxSteps = 12;
+constexpr double kSupportSpanCapOverRadius = 16.0;
+
+// The claims-derived support box [x0, y0, x1, y1] in units of R of a serialised cluster
+// signature {"Portions", "Vertices"} in its frame (rule B2 above; the same numbers the
+// Python builder reads), quantised on the signature grid. Shared by the identification and
+// the two-language identity test. With `band_hits`, the number of box-rule threshold
+// readings inside the knife-edge band (end coincidence, the 2R continuation at R).
+std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
+                                              std::size_t *band_hits = nullptr);
+
+// The chords of one serialised portion / context entry of a cluster signature (units of R
+// in the signature frame): P = [x0, y0, x1, y1] and the chord's gap direction; an arc is
+// chorded at the builder's step (ClusterArcChordStepDegrees /
+// ClusterArcChordMaxLengthOverR).
+struct SerializedPortionChord
+{
+  std::array<double, 4> P{};
+  std::array<double, 2> gap{};
+};
+std::vector<SerializedPortionChord> ChordSerializedPortion(const nlohmann::json &portion);
+
+// The chorded Context pieces of a contract-3 signature with their class (Chain = the
+// coupon's own continuation chain, rule B3) and canonical conductor label; empty without a
+// Context. The placement reads them for the vertex ownership (rule B4) and the A10 check
+// extended to the context.
+struct ContextPieceChord
+{
+  std::array<double, 4> P{};
+  bool chain = false;
+  int conductor = 0;
+};
+std::vector<ContextPieceChord> ContextPieceChords(const nlohmann::json &signature);
+
+// The context digest of a contract-3 signature: sha256 of the serialised {"Box", "Context"}
+// of the signature (empty when the signature carries no Box). A legacy-contract alias (USER
+// decision 283) names a v3 key AND this digest, and the matching pass fails closed when the
+// feature's digest differs from the alias's.
+std::string SpatialSupportContextDigest(const nlohmann::json &signature);
+
+// A context piece of the v3 signature: a portion (p0, p1, gap, conductor, interfaces, law,
+// arc) with its ownership class.
+struct SupportContextPiece
+{
+  SignaturePortion portion;
+  bool chain = false;
+};
+
+// The support of one candidate frame (origin, x, y): the (possibly grown) box in units of
+// R and the context pieces; nullopt when the frame's box is unboxable.
+struct FrameSupport
+{
+  std::array<double, 4> box{};
+  std::vector<SupportContextPiece> context;
+};
+
+// The v3 canonical signature: the lexicographically smallest serialisation of
+// {Box, Context, Portions, Vertices} over the candidate frames of the claims (the frame
+// candidates are the PORTION tangents and perpendiculars, both signs and handedness, as in
+// CanonicalClusterSignature; the context cannot rotate the frame away from the claims),
+// `support(origin, x, y)` giving the frame's box and context (nullopt = unboxable in that
+// frame; frames reaching a box are preferred). Conductor labels: by first appearance over
+// the sorted Portions THEN the sorted Context. nullopt when every frame is unboxable.
+std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
+    const std::vector<SignaturePortion> &portions,
+    const std::vector<SignatureVertex> &vertices,
+    const std::array<double, 3> &process_normal, double radius,
+    const std::function<std::optional<FrameSupport>(
+        const std::array<double, 3> &, const std::array<double, 3> &,
+        const std::array<double, 3> &)> &support,
     const std::function<void(std::size_t, std::size_t)> &progress = {});
 
 // Canonical signature of parallel edges over a common longitudinal interval: offsets / R

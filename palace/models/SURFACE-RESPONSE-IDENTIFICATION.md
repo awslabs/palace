@@ -1015,8 +1015,13 @@ smaller endpoint.
    continued STRAIGHT by 2R, then R of padding; transversely R + R of padding = 2R; a coupon
    exists only when the plan span of its box is <= 16 R — not "about R"), so the first cells
    of every stack portion adjacent to a cluster lie inside its box legitimately.
-   The coupon is calibrated on its claims AND their straight continuations to the box face,
-   so a recorded stretch is classed Continuation when it continues a claimed portion of that
+   The coupon WAS calibrated on its claims AND their straight continuations to the box face
+   (the decision-236 geometry; SUPERSEDED for the coupon metal by the spatial-support
+   contract v3 below, under which the coupon metal is the device plan clipped to the box and
+   a continuation follows the device chain through its vertices — the ownership record's
+   Continuation class is unchanged: on the device the straight continuation and the chain
+   coincide wherever a stretch continues a claim straight), so a recorded stretch is classed
+   Continuation when it continues a claimed portion of that
    cluster through its claim cut BY THE SIDE'S OWN EDGE (decision 252): one of its cells lies
    on the claim's mesh segment (the claim boundary cut that segment), or it runs parallel to
    the claim (within the signature angle tolerance), one of its cell ends ON ITS OWN EDGE —
@@ -1304,6 +1309,327 @@ substrate, (hash, chirality) and the rigid image of the upright frame are reprod
 reading (the same geometry framed with +z) is the mirror (same hash, opposite chirality, w = +z),
 the upright plane reads as alone, and a mixed-sign cluster aborts naming the cluster.
 
+**Spatial-support contract v3: the coupon metal is the DEVICE PLAN clipped to the support box
+(USER decision 281, supervisor decision 282, 2026-10-03; design note
+`device-plan-coupons-20261003/DESIGN.md` B1-B3 / T1-T3 with the review rulings MAJOR-1 (i) and
+MAJOR-2).** Rationale (blocks D2 / D3-C, decisions 277-278): under the decision-236 contract a
+spatial coupon's metal was the claims + every claim-cut end continued STRAIGHT 3R to the box
+face, whatever the device does there. On the S1p 19-edge junction-lead coupons the island
+protrusion's edge was continued straight past the device's 90-deg corner 1.16 R beyond the cut:
+26.7 / 19.9 um^2 of FICTITIOUS island metal at the island potential where the device has gap
+at 10-19 V; the window trace imposed the device potential on the face knot rows 50 nm under
+that metal, an MS-selective corner field that the decisive replay (D3-C, PBS 55513 / 55514)
+measured as 99.8 % of the +5.79e-16 J MS surplus (x1.92 of the reference band, 39 points of the
+window MS); the neighbour's leads (foreign metal) were absent from both twins; C2p shows the
+opposite form (continuations running INSIDE device metal: a fictitious EDGE the conductor
+consistency gate cannot see). The contract therefore changes at the identification, where the
+key is formed: for every `SpatialEdgeCluster` the identification computes, in the cluster's
+canonical frame and in units of R, (1) the claims-derived SUPPORT BOX (rule B2 = the coupon
+generator's `coupon_bounds` / `edge_rows` / `extended_interval`, ported as
+`SupportBoxFromSignature` on the serialised `{Portions, Vertices}` of the frame — the same
+numbers the Python builder reads; `signature_library.cluster_support_box` is its Python
+mirror, bit-identical on the transmon / S1p / C2p clusters): every claimed portion is a row
+along its own tangent, a claim-cut end (no vertex and no other portion end within
+`SupportEndCoincidenceOverR` = 1e-5) is lengthened to at least R from the row midpoint, every
+row end at or beyond R continues by `SupportContinuationOverR` = 2R, the rows are widened by R
+on both sides and the bounding box padded by `SupportPaddingOverR` = R (a claim cut is 3R from
+its face, the claims 2R from the lateral faces); an arc portion is chorded at
+`ClusterArcChordStepDegrees` / `ClusterArcChordMaxLengthOverR` as the builder chords it; (2)
+the CONTEXT: every perimeter run of the cluster's plane (straight, or on its fitted arc —
+the identification's `Runs` / `Arcs`, never the raw mesh polyline) clipped to the box, the
+cluster's own claims removed, in the portion encoding `{P | Arc, Gap | GapRadial, Conductor,
+Interfaces, Law}` plus `Chain`: true on the pieces connected to the claims inside the box
+through run ends and device vertices (the OWN continuation chains, rule B3: the within-R
+accounting and the continuation ownership follow them) and false on FOREIGN edges (present in
+both coupon twins so that the fields are consistent; excluded from the within-R accounting;
+their own patches untouched). A piece lying on ANOTHER spatial cluster's claimed interval is
+foreign by definition (decision 285 (1), the R1a review's MAJOR-1: the other coupon owns it):
+the chain stops where such a claim begins and never enters it, the context pieces are split
+at the other clusters' claim cuts so that the boundary is representable, and the manifest
+census lists those pieces under `Context.ClaimedByOtherFeature` (count, length, the owning
+cluster and feature — not hashed). Chains along device edges claimed by TRANSLATIONAL
+features continue as before (continuation ownership, decisions 236 / 243-252). Conductor
+labels by first appearance over the sorted `Portions` THEN the sorted `Context` (a foreign
+conductor touching no claim takes the next label); (3)
+the FACE RULES, dimensionless: T1 a piece end within `SupportFaceSnapOverR` = 1e-3 R of a face
+is ON the face (a crossing) and a context piece shorter than that is dropped (the sliver
+quantum of decision 222); T2 every device edge inside the box keeps
+`SupportFaceClearanceOverR` = 0.25 R (the trace basis' finest knot scale) from every face it
+does not cross, every piece end not on a face (device vertex, claim end) and every crossing
+keep that clearance from every other face (a crossing near a box corner), every crossing meets
+its face at sin(theta) >= 0.25 (theta >= 14.5 deg), and two crossings of one face closer than
+0.25 R may bound METAL (a narrow lead: allowed, `FaceRules.MinCrossSectionOverR` /
+`NarrowCrossSections` recorded) but not gap (a channel the trace basis cannot resolve). T2 is
+TWO-SIDED (decision 285 (2), the R1a review's MAJOR-2 — the face trace cannot represent a 1/r
+edge field within 0.25 R of the face on either side): the plan is also clipped to the box
+dilated by the clearance, and in that shell a run end lying on neither boundary (a device
+vertex or joint within 0.25 R OUTSIDE the face) or a piece entering and leaving the shell
+without crossing the face (an edge running within 0.25 R outside the face) fails that face
+(`FaceRules.ExteriorVertices` / `ExteriorEdges`, summed over every T2 pass; their distances
+enter `MinClearanceOverR` and the threshold band); the exterior tail of a face crossing, from
+the face to the shell boundary, is the crossing itself. An end that exists only because
+ANOTHER cluster's claim cut split the run there is no device vertex (R1 final review MINOR-1,
+decision 288 (3)): it is exempt from the end tests (still a crossing when it lies on a face),
+and the shell clip is not split at cuts, so a key never depends on a neighbour's claim EXTENT
+beyond the Chain / ClaimedByOtherFeature classification. QUANTISED COMPARISONS (decision 287
+(b), the R1 final review's MAJOR-1 — the knife edge): the box faces sit on the 1e-6 R
+signature grid (`SupportComparisonQuantumOverR`) and a growth step moves them by a grid
+multiple, so a device edge lying ON a claims-box face (the S1p / C2p 19-edge pattern: the
+neighbour lead's claimed edge on the face) reads EXACTLY 0.25 R from the moved face up to the
+quantisation residual (half a quantum) and mesh / float noise; the former
+`distance + 1e-9 < clearance` decided both production keys on that noise. Every length
+threshold of the face rules is now read on the grid: a value within half a quantum of the
+threshold is AT the threshold and takes the rule's own inclusive side — the vertex /
+crossing clearance and the piece clearance pass when `distance >= 0.25 - 0.5e-6` R, the
+crossing separation bounds a gap only below that, a piece end is on a face when
+`distance < 1e-3 + 0.5e-6` R (on-face, touches, the shell boundary, the beyond-side test) and a
+piece is a sliver only below `1e-3 - 0.5e-6` R. Left as they were, with the reason: the
+crossing sine (dimensionless, on no length grid), the span cap (compares box coordinates that
+are already quantised, 1e-12 relative) and the shell membership (the clip reads with the snap).
+Consequence: keys are geometry-precise to the 1e-6 R quantum — a one-quantum move of a device
+edge is a real geometric change that re-keys (and may legitimately change the growth: an edge
+one quantum inside the clearance fails it) — and sub-quantum noise (a regenerated mesh of the
+same device, float round-off, the quantisation residual) cannot move a key or a growth
+sequence (unit scene 11: +-4e-7 R perturbations of the corner and of the frame-defining lead
+give the same growth and the same key; +-1e-6 R re-keys). T3 every face failing T2 moves
+outward by `SupportFaceGrowthStepOverR` = 0.25 R per step — all failing faces of a step
+together (review MINOR-2: one order) — and T1 / T2 are re-evaluated on the grown box (new
+edges enter), at most `SupportFaceGrowthMaxSteps` = 12 steps per face and never past the plan
+span cap `SupportSpanCapOverR` = 16 R (`Growth.Steps` counts the applied steps,
+`AttemptedSteps` also the refused one, `StepReasons` the first failure behind every applied
+step, `Growth.Passes` EVERY T2 pass with its box, failing faces, every failure — R1 final
+review MINOR-8: a step growing two faces lists both reasons — and its band / exterior
+readings; `FaceRules.ThresholdBandHits` sums the band readings of every pass (decision 287
+(a): a key whose growth was decided at a threshold is flagged whatever pass read it;
+`FinalPassThresholdBandHits` the last pass alone), the identification log and the preflight
+warn on every cluster with a non-zero count, `Diagnostics.SpatialSupport.ThresholdBandHits`
+sums the clusters); a claims-derived
+box already beyond the cap is keyed and recorded `ExceedsSpanCap` (the builder's cap and its
+per-case override, decision 244 (i), decide as before) but may not grow (decision 285 (3): the
+cap bites through growth only); a cluster no box satisfies is an `UnboxableFeature`: its
+signature carries `"Unboxable": true` (a Missing placeholder no builder makes — never a
+knife-edge coupon) and the record names the face and the reason (`Unboxable` text,
+`UnboxableReason` = `GrowthStepsExhausted` | `SpanCapRefusedGrowth`). The two thresholds of
+the box rule itself (the 1e-5 end coincidence, the 2R continuation of a connected row end at
+R) are read within the knife-edge band too (`FaceRules.BoxRuleThresholdBandHits`). The
+perimeter segments inside the box excluded before the identification (a port cut, an
+undetermined process side, a non-manifold or non-planar edge — never a window truncation
+cut) ARE plan pieces (rule B1, "nothing inside the box is omitted": a lead ending on a lumped
+port keeps its end edge in the coupon's metal boundary): straight, foreign (`Chain: false`,
+never entered by the chain, excluded from the within-R accounting as the device's own
+perimeter excludes them), hashed with the context and listed under
+`Context.ExcludedSegments` with their exclusion class. KEY
+RULE (ruling MAJOR-1, option (i)): `Box` + `Context` enter the hashed signature ONLY when the
+context is not what the decision-236 contract already draws, i.e. unless every context piece
+is a straight chain piece abutting a claim-cut end, collinear with that claim and reaching a
+face of the box (`LegacyEquivalent`) with no growth — then the device plan clipped to the box
+IS the legacy coupon geometry and the claims-only key stands byte for byte (contract 2:
+unchanged coupons keep their keys, no library migration; the transmon's 10-edge JJ and 4-edge
+models and every corner). Otherwise (contract 3) the signature is the lexicographically
+smallest `{Box, Context, Portions, Vertices}` over the candidate frames of the CLAIMS (the
+portion tangents and perpendiculars, both signs and handedness values, as before) with the box
+and the context recomputed in every frame (`CanonicalClusterSignatureWithSupport`; the box
+frame IS the canonical frame, ruling MAJOR-2 — for axis-aligned clusters every candidate frame
+gives the same geometric box, for an arc cluster the never-built loop ends change), so that
+mirror images keep ONE key with opposite `Chirality` and rotated / translated / re-meshed
+copies the same key (unit test `SurfaceResponseIdentificationSpatialSupportContract`);
+`EdgeCount` stays the claimed count and the model `Edges` / the claims / the A10 placement
+check / the continuation ownership at placement are unchanged. Vertex features (corners,
+junctions, endpoints) are unchanged in signature and key: a corner coupon's box is [-R, R]^2
+about the vertex and any other perimeter within 2R joins a cluster, so the device plan
+clipped to a corner box is the two arms (56 / 56 production corners unchanged, R0 census); a
+vertex feature lying inside a cluster's box on a chain is listed under
+`Context.ChainVertices` with its distance from the nearest face for the placement's vertex
+ownership (rule B4: a corner closer than R to a face has an arm partly outside the box, review
+MINOR-1 (a), and a vertex inside two boxes appears in both records, MINOR-1 (b)), the others
+under `ForeignVertices`; every entry names its owner (`Feature` = the vertex feature's id for
+a free site, or the id of the cluster whose claims hold the site, with that `Cluster` index
+— a site of another cluster is never a chain vertex), so that the placement never owns
+another cluster's claimed vertex. The per-feature record plus the `Diagnostics.SpatialSupport`
+summary stand in for a `KnifeEdgeCensus` band on T2 (review MINOR-7: a vertex shared by two
+pieces is read once per piece end). The manifest records the whole evaluation per feature
+(`Features[].SpatialSupport`: the claims box and the grown box, the growth steps per face, the
+face-rule readings with their threshold-band hits at `KnifeEdgeBandRelative`, the context
+census, the legacy contract's straight continuation and its FICTITIOUS part lying on no device
+edge — 7.58 R / 4.95 R = 14.4 / 9.4 um on the S1p 19-edge coupons, the D2 census figures —
+and the window truncation inside the box) and a summary under `Diagnostics.SpatialSupport`.
+Census on the production devices with the first binary (R1a, 2026-10-03): transmon 1 of 3
+cluster keys changes (the 3-edge `da0179c64591` -> contract 3: one foreign ground piece
+4.38 R of edge with a foreign convex corner, no growth; 10-edge / 4-edge contract 2 and the
+34 corners byte-identical, so the accepted library's models keep their keys except the
+3-edge pair); S1p 3 / 3 change (the two 19-edge coupons: fictitious continuation gone, the
+neighbour's leads foreign context, the boxes grown by 0.5 R / 0.25 R on the face the
+neighbour lead's corner sits on; the loop end: contract 3 at 17.96 R > the cap, as unbuildable
+as before), 10 / 10 corners unchanged; C2p 3 / 3 change (the 45-edge loop end UNBOXABLE: its
+19 R box may not grow), 12 / 12 corners unchanged. Re-census with the decision-285 rules
+(R1b): S1p 48e28baa8abb (grown 4 steps on x1) / 9f11f35e955e (1 step), the loop end
+UNBOXABLE (SpanCapRefusedGrowth: a device vertex 0.105 R outside face x1); C2p 3d077d2793f3 /
+0b6c2bd06426 (grown [0, 2, 0, 4]), the loop end unboxable; transmon 3-edge 35b2900ae07f and
+10-edge unchanged, the 4-edge re-keyed 22c658057893 (decision 286 alias); every corner
+unchanged (34 / 10 / 12).
+
+The coupon BUILDER (R1b, `cluster_signature_geometry.cluster_coupon`) consumes `Box` +
+`Context` (`signature_library.cluster_plan_view_edges(..., include_context=True)`): a
+signature with a `Box` is built in its OWN frame (the canonical frame, M = identity:
+`generate_spatial_response.frame_from_geometry` / `trace_basis.process_frame` / the mesher's
+`process_frame` read the model's `SupportBox`), inside the signature's Box (the generator's and
+the mesher's `coupon_bounds` take it: `Geometry.SupportBox`, the library model's `SupportBox`),
+and its metal is the arrangement of the claims plus the context pieces cut at the faces (the
+metal side = -Gap; `plan_view_faces` fails closed on crossings, disagreeing metal sides and
+box-only faces): no straight extension, no `interior_bridges`, no fictitious metal. The
+DESIGN's assertion `coupon_bounds == Box` is not a run-time check: the signature's `Box`
+REPLACES the generator's box (`coupon_bounds(..., support_box)`), the C++ record being the
+authority, and the two-language identity is the evidence (`tools/box_identity.log`: Python
+`cluster_support_box` vs the C++ `ClaimsBox` 0.0 R on 11 / 11 production instances; R1 final
+review MINOR-6). Open for CONTRACT-2 keys (R1a MINOR-6): a legacy-equivalent cluster with
+mutually oblique portions is judged on the canonical-frame box and built on
+`frame_from_geometry`'s (first gap direction) box; every production legacy cluster is
+axis-aligned. The
+generator's rows are the exact claims plus the context rows (`Context`, `Chain` columns of
+mesh-signature.csv; the trace basis ignores them — the face knots of every conductor
+cross-section follow from the mask vertices on the faces, B6, and the interior cap hats stay
+within R of the claims; the mesher's owner lookup and attributes read them, so every
+conductor of the plan, foreign ones included, gets its metal / SA / MS / MA surfaces); the
+model carries `ContextEdges` (the run config's further conductors: terminal attributes,
+conductor states) and `ForeignEdges` (the `Chain: false` pieces as 3D segments) which
+`case_inputs.derive` writes into every Dielectric entry as `EdgeExcludeSegments` (rule B5: the
+within-R accounting covers the coupon's own edges only; `EdgeExcludeSegmentTolerance` defaults
+to 1e-3 R). A claims-only signature takes the legacy path unchanged — byte-identical generator
+inputs (`test_cluster_signature_geometry.LegacyByteIdentityTest` against the a79b6af748 fixture).
+Device-plan coupons are LARGER than their legacy twins (the plan inside the grown box): the
+pre-build element estimate may exceed a suite's cap (the fixture transmon's JJ coupon at 6.4 M
+> 6 M), a legitimate fail-closed outcome of the headroom gate; `test_device_coupons` therefore
+asserts `PreflightPassed` only for the cases that pass the gate (R1 final review MINOR-5: the
+former "every fixture case passes" is gone by design), and R2's S1p rebuild must re-estimate
+its device-plan coupons against the 6 M cap.
+
+**(F) qualification upgrade (decision 282 with the MAJOR-3 ruling, 285 (5);
+`qualify/spatial_qualification.py`, `coupon_library.py spatial-qualify`).** `traces` writes
+the dense held-out traces of a coupon source directory — T2: the C - 1 conductor states and
+the potential of a unit line charge 5 R outside each in-plane face at the process plane with
+every conductor GROUNDED (the DESIGN's "superposed with the states read at the references"
+needs conductor potentials other than 0 / 1 V in one excitation, which PrescribedPotential's
+one-volt `TerminalAttributes` cannot impose for two states at once: a trace with one nonzero
+state is scaled to the 1 V terminal and its energies by s^2, a trace with two distinct nonzero
+states is recorded `Unsupported`, never approximated — a `TerminalPotential` field of Palace
+would lift it; this deviation from DESIGN section 6 is the (F) contract for R2 unless the
+supervisor rules otherwise, R1 final review MINOR-4; the S1p 19-edge coupons have one
+conductor state and are supported); T1: the device trace of a registration run's surface-response-traces.csv
+(coefficients relative to the reference conductor, the states after the contour) — and the
+fabricated / thin solve configs at the library order p4 and the control order p5 (the run
+config's sources replaced, the response matrix off). `evaluate` reads the four runs' within-R
+energies per class (SA, MS, MA raw — "MA sharp" when the run carries radial shells — and the
+domain: `p_surf E_elec - E_out` at the largest R; domain-E.csv, surface-Q.csv,
+surface-Q-edge.csv) and the p4 basis runs' matrices (domain-response-matrix.csv,
+surface-response-matrix.csv, the whole-interface group), and judges, per class and trace, the
+closure `|E_thin,p4 + t^T (Q_fab - Q_thin) t - E_fab,p5| / E_fab,p5 <= 0.02`, the p-stability
+`|dE_p5 - dE_p4| / E_fab,p5 <= 0.02` and the matrix identity `|E_fab,p4 - t^T Q_fab t| /
+E_fab,p4 <= 1e-6`; the conductor-consistency gate of decision 277 is the rebuild acceptance
+(the model's records on the registration device all probed with MaxRatio <= 1e-6, Count 0; a
+model without a record is untestable and never qualified); the reference box integral of a
+sub-tagged window reference ((b), D2a) is read as `ft_model / REF_A` with REF_A = E_in +
+E_straddle / 2, the bracket [ft / (E_in + E_straddle), ft / E_in] and the decision-218 marker
+(0.05 validated class / 0.10 new). Statuses stamped into process-library.json
+(`QualificationStatus`, `SpatialQualification`, `LibraryQualified`): PendingQualification ->
+Qualified ((a) on every dense trace, the identity, the gate) -> WindowValidated ((b) inside the
+marker on >= 1 window); a failing criterion -> Failed. Smoke (R1b, local, 2 ranks, no
+qualification): the synthetic device-plan coupon of `test_cluster_signature_geometry`
+(3 conductors, 72 sources, coarse fabricated / thin meshes) through the whole pipeline at
+p1 / p2 — the identity holds on every trace and class (<= 3e-8; the readers' conventions),
+closure / p-stability fail by 1-40 % at these orders (expected: a 10 % p1 -> p2 energy change)
+and the status is Failed; with the transmon's gate record the model is untestable -> Failed.
+
+**Legacy-contract aliases (USER decision 283, 2026-10-03).** The transmon's 3-edge cluster
+`spatialedgecluster_edgecount-3_da0179c64591` (claims-only key 7c4b31a894f9, two mirror
+instances) is kept as a LEGACY-CONTRACT key: its accepted coupon (the decision-236
+straight-continuation geometry) stays in the accepted library `transmon-r1p9-folded-refined-
+corners` until the next transmon rebuild, its v3 context (16.9 um^2 of foreign ground beyond R,
+0 fictitious; closure shift expected <= 0.1 point) recorded, not rebuilt. Under v3 its key is
+35b2900ae07f (contract 3: one foreign ground piece), so the accepted library would read it
+Missing; instead the library lists an EXPLICIT alias on the legacy model
+(`LegacyContractAliases: [{Key, ContextDigest, Reason, Context}]`, `Key` = the v3 hash,
+`ContextDigest` = `SpatialSupportContextDigest` = sha256 of the serialised `{Box, Context}`,
+recorded per contract-3 feature as `SpatialSupport.ContextDigest`;
+`signature_library.legacy_contract_alias(feature, reason)` writes the entry from a manifest).
+The library load refuses an alias on a model that is not a Signature-keyed
+`SpatialEdgeCluster`, a key / digest that is not 64 hex, an alias of the model's own key or one
+key listed twice. The matching pass (`RunGeometryIdentification`) looks an alias up by the
+feature's EXACT hash only after the normal key match fails, then `ResolveLegacyContractAlias`
+fails closed unless the feature's context digest equals the alias's AND the feature's
+claims-only key (`SpatialSupport.ClaimsKey`: the claims canonicalised alone, recorded by the
+identification — the Portions of a contract-3 signature are serialised in the frame minimising
+Box + Context and cannot be re-keyed by removing those members) equals the legacy model's
+Signature key; the feature is then PLACED in its claims-only canonical frame
+(`Features[].ClaimsFrame`: the legacy model's Edges and basis points live there; the v3 frame
+may differ by a rotation / reflection — on the transmon it did, and the continuation-ownership
+clipping with it) and the match is recorded: `Match.LegacyContract` (model, key, digest,
+claims key, reason, the recorded Box + Context, the placement frame) and `Match.Note` on the
+feature, `LegacyContract` on the version-1 requirement record (Status Exact: the legacy coupon
+is applied), `Summary.LegacyContract` + `Summary.Counts.LegacyContract` /
+`TotalEdgeLengths.LegacyContract` in the preflight inventory (the features are counted in Exact
+as well), `SurfaceResponse.Diagnostics.LegacyContract` in the operator record (through
+`ResponseCorrectionData.legacy_contract`, carried by the geometry cache under
+`LegacyContract`, optional) with a warning. Never a fallback: a feature whose hash is not a
+listed key is Missing as before. Verified on the transmon with the accepted library + the alias
+(`device-plan-coupons-20261003/r1/transmon/library-alias`): the 3-edge features 8 / 12 resolve
+to `spatialedgecluster_edgecount-3_da0179c64591` with `LegacyContract`, every feature matched
+to the same model in the same placement frame as the accepted preflight, Counts Exact 3,099 /
+35,296.81 um unchanged, the patches CSV BYTE-IDENTICAL (b362840fcc34) and the
+ContinuationOwnership record identical; a wrong digest aborts the preflight. Unit tests
+`SurfaceResponseIdentificationLegacyContractAlias` (resolution, the three abort paths, the
+claims frame, the broadcast / manifest record) and the cache round trip in
+`SurfaceResponseOperatorContinuationOwnership`. Decision 286 extended the alias into a POLICY:
+an accepted-library model that v3 re-keys is kept through an explicit, recorded alias until
+that library's next rebuild — the transmon's 4-edge `spatialedgecluster_edgecount-4_78e4c00ca560`
+(its claims box has a ground concave corner 0.158 R outside the x0 / y0 faces; the two-sided
+T2 of decision 285 (2) grows the box 0.5 R on both faces and keys 19.8 R of foreign ground
+edge) is the second alias; the transmon stop condition then reads Counts Exact 3,099 /
+LegacyContract 4 / Missing 0 with the patches CSV byte-identical.
+
+**Placement of a contract-3 (device-plan) model (decision 285 (4), R1b).** The cluster patch of
+a model whose Signature carries `Box` + `Context` records in its provenance the model's
+`SupportBox` and its chain pieces (the `Chain: true` context entries, arcs chorded) in the
+patch's local frame in units of R (geometry cache version 7), and the placement verifies A10
+EXTENDED TO THE CONTEXT: the model's `Context` must equal the matched feature's and the two
+ends of every context entry, placed by the patch frame, must lie within 1e-3 R of a device
+edge (`DevicePerimeterDistance` on the identification's segments; an arc entry's ends are
+device vertices, its chords lie on the fitted circle); a mis-keyed library or a placement
+frame defect aborts, and the count of verified ends is printed with the matching summary.
+LIMITATION (R1 final review MINOR-3): the ends are tested against the RAW mesh polyline, so an
+arc context piece cut at a box FACE ends on the fitted circle, up to the chord sagitta off the
+polyline (the S1p loop end: 0.054 R), and a legitimately keyed arc-crossing coupon would be
+refused at placement — fail closed and loud; today every arc cluster is unboxable, so nothing
+in production reaches it; lifting it means testing such ends against the fitted arc. The
+VERTEX OWNERSHIP of rule B4 (`ApplyContinuationOwnership`, after the translational cells): a
+vertex feature's patch (corner / junction / endpoint coupon: coupon depth 0, no claims) whose
+vertex lies within 1e-3 R of a chain piece END of a contract-3 support, inside that support's
+box (the signature box placed by the patch frame; the same plane) is owned by the coupon —
+the device-plan coupon contains the real corner, so the corner coupon's band on the chain
+arms would be counted twice: the patch keeps weight 0 (once; a vertex inside two boxes lists
+both owners, review MINOR-1 (b)), its face distance is recorded and a vertex closer than R to
+a face is flagged `ArmOutsideBox` (an arm partly outside the box, MINOR-1 (a)) with the lost
+length recorded, `LostArmLengthOverR` = max(0, 1 - FaceDistanceOverR) of the first owner's box
+(R1 final review MINOR-2: the part of the corner's R window beyond the box that no coupon
+corrects once the vertex patch has weight 0 — C2p feature 10: 0.66 R of one arm); a vertex on
+another cluster's claims is never on a chain (the chain stops there, decision 285 (1)) and a
+legacy (claims-only) model owns no vertex. `ApplyContinuationOwnership` takes R explicitly
+(`matching_radius`, MINOR-7) next to the continuation tolerance. Recorded under
+`Diagnostics.ContinuationOwnership.Vertices` {Count, Shared, Records [{Kind: Vertex, Patch,
+Feature, Model, Origin, FaceDistanceOverR, ChainEndDistanceOverR, ArmOutsideBox,
+LostArmLengthOverR, Owners}]}
+in the preflight and the operator (the owned patches are skipped like wholly owned cells). A
+contract-3 placeholder without basis points (a signature-only library: the preflight of a
+Missing key) takes its support bounds from the Signature's box, R above and below the plane
+(`BySupport[].FromSignatureBox`), so the dry run's ownership records are complete; a library
+model keyed by an `Unboxable` signature is refused at load (no coupon exists for it). Census
+(R1b, signature-only placeholders of the v3 keys): S1p — the 4 L2 90-deg corners (features 7,
+8, 10, 12) owned by the two 19-edge boxes, corner 10 by both (as rule B4 predicted), 56
+context ends verified; C2p — 3 corners owned (one shared, one at 0.342 R from a face with an
+arm outside), 54 ends verified; transmon — no v3 model, nothing owned, the accepted patches
+byte-identical. Unit test `SurfaceResponseOperatorContinuationOwnership` (vertex ownership:
+the chain corner owned once by two supports, interior chain points / other planes / other
+boxes / legacy models untouched, idempotent, the Diagnostics entry; the v7 cache round trip).
+
 ## (c) Behaviour at exactly R and 2R
 
 All length decisions use the decision-69 quantizer: lengths are rounded to the grid
@@ -1418,7 +1744,9 @@ decision 224, version 5 the spatial cluster patch's `Claims` and the library's
 `MatchingRadius` for the ownership record's continuation class of decision 236, version 6
 the patch's mesh `Segment` and own-edge `EdgeOffset` for the per-side continuation
 ownership of decision 252 — a version-5 cache dropped the segment, so cached patches were
-classified by the abutment branch alone; older caches refused). The cells of one portion tile it exactly — cell q = [cumulative
+classified by the abutment branch alone; older caches refused; version 7 (decision 285 (4))
+the contract-3 cluster patch's `SupportBox` and chain pieces `Chain` for the vertex
+ownership of rule B4). The cells of one portion tile it exactly — cell q = [cumulative
 Gauss weight before q, + w_q] in order of increasing position, so every cell contains its
 point (`LongitudinalQuadratureCells`; Gauss cells centred on their points would not tile) —
 and every patch built from a quadrature point carries the full cell whatever its weight
@@ -2042,8 +2370,29 @@ matching pass). The new top-level `Identification` object carries the contract:
                  "PortionTurns": [t, ...] (features with a bend: signed turn toward the metal per portion, radians),
                  "TurnTowardMetal": t (one-sided features with a bend),
                  "Frame": {"Origin": [...], "Axes": [[...],[...],[...]]},
+                 "ClaimsFrame": {"Origin": [...], "Axes": [[...],[...],[...]], "Chirality": c} (SpatialEdgeCluster: the claims-only canonical frame),
+                 "SpatialSupport": {"Contract": 2 | 3 | 0, "ClaimsKey": "sha256", "ContextDigest": "sha256" | null,
+                                    "ClaimsBox": [x0, y0, x1, y1], "Box": [...], "SpanOverR": s,
+                                    "SpanCapOverR": 16, "ExceedsSpanCap": b, "LegacyEquivalent": b,
+                                    "Growth": {"StepOverR": 0.25, "MaxSteps": 12, "Steps": [n_x0, n_y0, n_x1, n_y1], "AttemptedSteps": [...], "StepReasons": ["..."], "Grown": b},
+                                    "FaceRules": {"SnapOverR": 1e-3, "ClearanceOverR": 0.25, "SliversDropped": n, "Crossings": [4 counts],
+                                                  "MinClearanceOverR": d | null, "MinCrossingSine": s | null, "MinCrossSectionOverR": w | null,
+                                                  "NarrowCrossSections": n, "ExteriorVertices": n, "ExteriorEdges": n,
+                                                  "ThresholdBandRelative": 0.01, "ThresholdBandHits": n, "BoxRuleThresholdBandHits": n},
+                                    "Context": {"Pieces": n, "ChainPieces": n, "ForeignPieces": n, "ChainLengthOverR": L, "ForeignLengthOverR": L,
+                                                "ForeignConductors": n,
+                                                "ClaimedByOtherFeature": {"Pieces": n, "LengthOverR": L, "Entries": [{"P": [x0, y0, x1, y1], "LengthOverR": L, "Cluster": c, "Feature": k}, ...]},
+                                                "ExcludedSegments": {"Pieces": n, "LengthOverR": L, "Entries": [{"P": [...], "LengthOverR": L, "Class": "Port" | ..., "Reason": "..."}, ...]},
+                                                "ChainVertices": [{"P": [x, y], "Type": "...", "FaceDistanceOverR": d, "Site": s, "Cluster": c | null, "Feature": k | null}, ...],
+                                                "ForeignVertices": [...]},
+                                    "LegacyContinuation": {"StraightContinuationLengthOverR": L, "FictitiousContinuationLengthOverR": L},
+                                    "Truncation": {"Segments": n, "LengthOverR": L},
+                                    "Unboxable": null | "reason", "UnboxableReason": null | "GrowthStepsExhausted" | "SpanCapRefusedGrowth"}
+                                   (SpatialEdgeCluster only; units of R in the feature's frame; the spatial-support contract v3 below),
                  "Match": {"Status": "Matched" | "Missing", "Model": "name", "Deviation": d,
-                           "Note": "curvature family: <rule> at kappa k (<convexity>)" | "curvature family: <refusal reason>"} } ],
+                           "Note": "curvature family: <rule> at kappa k (<convexity>)" | "curvature family: <refusal reason>",
+                           "LegacyContract": {"Model", "Key", "ContextDigest", "ClaimsKey", "Reason", "Context": {"Box", "Context"},
+                                              "PlacementFrame", "Rule"} (matched through a library alias, USER decision 283)} } ],
   "Segments":  [ {"Key": [[x0,y0,z0],[x1,y1,z1]], "Length": L, "Chain": c, "Arc": a (chord of Arcs[a]; absent otherwise),
                   "Portions": [[s0, s1, feature], ...] } | {"Key": ..., "Length": L,
                   "Exclusion": {"Class": "...", "Reason": "..."}} ],
@@ -2059,6 +2408,9 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "StackGeometricOffsetIntervals": 0, "StackCompositionCapHits": 0, "StackCompositionCap": 64,
                   "ClusterExtension": {"Passes": n, "AbsorbedPortions": n, "AbsorbedLength": L,
                                        "VertexFeaturesJoined": n, "Rule": "..."},
+                  "SpatialSupport": {"Clusters": n, "ClaimsKeyed": n, "ContextKeyed": n, "Grown": n, "Unboxable": n,
+                                     "ExceedingSpanCap": n, "ChainLength": L, "ForeignLength": L,
+                                     "FictitiousContinuationLength": L, "ThresholdBandHits": n, "Rule": "..."},
                   "StackEndThirdBodyLength": L, "StackEndThirdBodyRule": "..."},
   "KnifeEdgeCensus": {"BandRelative": 0.01, "SampleSpacingOverR": 0.5, "SampledLength": L,
                       "Distance": {"R": {"Below": L, "Above": L, "Total": L}, "2R": {...}},

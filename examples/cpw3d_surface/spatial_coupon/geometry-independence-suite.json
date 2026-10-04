@@ -190,7 +190,7 @@
     {
       "Name": "trace_basis.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/trace_basis.py",
-      "SHA256": "c7fe28703a2247f65229f65964422bd5d2c0efb29850189f054cea1c0c7339ea"
+      "SHA256": "f95532a1071f23c5d25b7b911b8986e9a7261438dae6d5feef3f35caf71d167a"
     },
     {
       "Name": "estimate_build_cost.py",
@@ -2367,7 +2367,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "289d125f2c6665a0f5302dffd0759150c7c4a955d29b6af592fe5897366d7974"
+      "mesher": "c86e482236cb6b890191e4d12d666811cc04ade2f9db33696254feced51682a6"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

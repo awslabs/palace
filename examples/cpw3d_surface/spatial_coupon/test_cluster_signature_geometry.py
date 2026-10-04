@@ -226,3 +226,164 @@ class ArcPortionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def context_piece(p, gap, conductor, chain):
+    return {**portion(p, gap, conductor), "Chain": chain}
+
+
+class DevicePlanCouponTest(unittest.TestCase):
+    """Spatial-support contract v3 (decisions 282 / 285): a signature carrying Box + Context
+    (the S1p pattern: a lead B on a pad A whose corner lies inside the box, a foreign lead C)
+    is built in its own frame inside its Box from the claims plus the context pieces: no
+    straight continuation past the pad corner (no fictitious metal), the foreign lead present
+    in the mask and listed as ForeignEdges (rule B5), the context rows flagged for the mesher."""
+    R = 2.0
+
+    def setUp(self):
+        claims = [portion((-3.4, 0.0, 3.4, 0.0), (0.0, 1.0), 1),                 # pad A top edge
+                  portion((-0.5, 0.5, 0.5, 0.5), (0.0, -1.0), 2),                # lead B end edge
+                  portion((-0.5, 0.5, -0.5, 2.5), (-1.0, 0.0), 2),               # lead B left side
+                  portion((0.5, 0.5, 0.5, 2.5), (1.0, 0.0), 2)]                  # lead B right side
+        context = [context_piece((3.4, 0.0, 5.0, 0.0), (0.0, 1.0), 1, True),     # pad edge to the corner
+                   context_piece((5.0, -2.5, 5.0, 0.0), (1.0, 0.0), 1, True),    # pad right edge (the chain turns)
+                   context_piece((-6.4, 0.0, -3.4, 0.0), (0.0, 1.0), 1, True),   # pad edge left continuation
+                   context_piece((-0.5, 2.5, -0.5, 6.0), (-1.0, 0.0), 2, True),  # lead B sides to the face
+                   context_piece((0.5, 2.5, 0.5, 6.0), (1.0, 0.0), 2, True),
+                   context_piece((5.5, 1.0, 6.1, 1.0), (0.0, -1.0), 3, False),   # foreign lead C end edge
+                   context_piece((5.5, 1.0, 5.5, 6.0), (-1.0, 0.0), 3, False),   # its sides to the face
+                   context_piece((6.1, 1.0, 6.1, 6.0), (1.0, 0.0), 3, False)]
+        vertices = [{"P": [-0.5, 0.5], "TurnDegrees": 90.0, "Type": "ConvexCorner"},
+                    {"P": [0.5, 0.5], "TurnDegrees": 90.0, "Type": "ConvexCorner"}]
+        self.signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 4, "Portions": claims, "Vertices": vertices,
+                          "Box": [-6.4, -2.5, 6.4, 6.0], "Context": context}
+        self.record = {"Topology": "SpatialEdgeCluster", "Geometry": {"EdgeCount": 4, "Signature": self.signature},
+                       "Signature": self.signature, "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"}}
+        self.coupon, self.edges = csg.cluster_coupon(self.record, self.R, 0.1, 0.05)
+
+    def device_edges(self):
+        edges = []
+        for entry in self.signature["Portions"] + self.signature["Context"]:
+            p = [v * self.R for v in entry["P"]]
+            edges.append((np.asarray(p[:2]), np.asarray(p[2:])))
+        return edges
+
+    def on_device_edge_or_box(self, a, b):
+        """Every sample of the segment lies on some device edge (the boundary merges collinear
+        device edges into one segment) or on a box face."""
+        x0, y0, x1, y1 = self.coupon["Geometry"]["SupportBox"]
+        tol = 1e-7 * self.R
+        edges = self.device_edges()
+        for t in np.linspace(0.0, 1.0, 11):
+            point = a + t * (b - a)
+            on_box = any(abs(point[c] - v) <= tol for c, v in ((0, x0), (0, x1), (1, y0), (1, y1)))
+            on_edge = False
+            for (p, q) in edges:
+                d = q - p
+                L = np.linalg.norm(d)
+                s = np.clip(np.dot(point - p, d) / L**2, 0.0, 1.0)
+                if np.linalg.norm(point - (p + s * d)) <= tol:
+                    on_edge = True
+                    break
+            if not (on_box or on_edge):
+                return False
+        return True
+
+    def test_box_frame_and_rows(self):
+        geometry = self.coupon["Geometry"]
+        self.assertEqual(geometry["SupportBox"], [v * self.R for v in self.signature["Box"]])
+        self.assertEqual(geometry["EdgeCount"], 4)
+        rows = geometry["Edges"]
+        self.assertEqual(len(rows), 4 + 8)
+        self.assertEqual(geometry["ContextEdgeCount"], 8)
+        # The claims rows are exact (no lengthening: the continuation is in the context).
+        for row, claim in zip(rows[:4], self.signature["Portions"]):
+            self.assertNotIn("Context", row)
+            length = math.dist(claim["P"][:2], claim["P"][2:]) * self.R
+            self.assertAlmostEqual(row["Interval"][1] - row["Interval"][0], length, places=9)
+        for row, piece in zip(rows[4:], self.signature["Context"]):
+            self.assertTrue(row["Context"])
+            self.assertEqual(row["Chain"], piece["Chain"])
+            self.assertEqual(row["Conductor"], piece["Conductor"])
+        # The model's Edges stay the exact claims (A10).
+        self.assertEqual(len(self.edges), 4)
+
+    def test_mask_is_the_device_plan_without_fictitious_metal(self):
+        facets = self.coupon["Geometry"]["PlanViewFacets"]
+        self.assertEqual({f["Conductor"] for f in facets}, {1, 2, 3})
+        # Pad A: the box below y = 0 left of the corner x = 5 R (no metal past the corner).
+        self.assertAlmostEqual(mask_area(self.coupon, 1), (5.0 + 6.4) * 2.5 * self.R**2, places=6)
+        self.assertAlmostEqual(mask_area(self.coupon, 2), 1.0 * (6.0 - 0.5) * self.R**2, places=6)
+        self.assertAlmostEqual(mask_area(self.coupon, 3), 0.6 * (6.0 - 1.0) * self.R**2, places=6)
+        # Every boundary segment of the mask lies on a device edge or on a box face.
+        for component in self.coupon["Geometry"]["PlanViewBoundary"]:
+            for first, second in component["Segments"]:
+                a = np.asarray(first[:2], dtype=float) * 1e-9 * self.R
+                b = np.asarray(second[:2], dtype=float) * 1e-9 * self.R
+                self.assertTrue(self.on_device_edge_or_box(a, b), (first, second))
+
+    def test_foreign_edges_are_the_chain_false_pieces(self):
+        foreign = self.coupon["Geometry"]["ForeignEdges"]
+        self.assertEqual(len(foreign), 3)
+        expected = [[v * self.R for v in piece["P"]] for piece in self.signature["Context"] if not piece["Chain"]]
+        for segment, piece in zip(foreign, expected):
+            self.assertEqual(segment[2], 0.0)
+            self.assertEqual(segment[5], 0.0)
+            np.testing.assert_allclose([segment[0], segment[1], segment[3], segment[4]], piece, atol=1e-12)
+        self.assertEqual(csg.foreign_edge_segments(csg.context_from_signature(self.signature, self.R)), foreign)
+
+    def test_generator_consumes_the_device_plan(self):
+        """generate_spatial_response.py --signature-only on the coupon: the identity frame, the
+        signature's box, the context rows in mesh-signature.csv, the mask and the classified
+        boundary (every face-crossing segment a Continuation)."""
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "coupon.json").write_text(json.dumps(self.coupon, indent=1) + "\n")
+            command = [sys.executable, str(HERE / "generate_spatial_response.py"), str(tmp / "coupon.json"), "--output", str(tmp),
+                       "--radius", str(self.R), "--metal-thickness", "0.1", "--overetch-depth", "0.05", "--sidewall-angle", "90",
+                       "--top-rounding", "0", "--trench-rounding", "0", "--ring-size", "16", "--cap-triangulation", "delaunay",
+                       "--cap-interior-spacing", "0.5", "--order", "1", "--model-name", "device-plan", "--signature-only"]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            rows = (tmp / "mesh-signature.csv").read_text().splitlines()
+            self.assertTrue(rows[0].endswith(",Context,Chain"))
+            self.assertEqual(len(rows), 1 + 12)
+            self.assertEqual([row.split(",")[-2:] for row in rows[1:5]], [["0", "0"]] * 4)
+            self.assertEqual([row.split(",")[-2:] for row in rows[5:]], [["1", "1"]] * 5 + [["1", "0"]] * 3)
+            boundary = (tmp / "plan-view-boundary.csv").read_text().splitlines()
+            self.assertGreater(len(boundary), 1)
+            import generate_spatial_response as generator
+            frame, edges, facets = generator.normalize_geometry(self.coupon, self.R)
+            np.testing.assert_allclose(frame, np.identity(3))
+            lower, upper = generator.coupon_bounds(edges, self.R, 0.1, 0.05, self.coupon["Geometry"]["SupportBox"])
+            np.testing.assert_allclose(lower[:2], [-6.4 * self.R, -2.5 * self.R])
+            np.testing.assert_allclose(upper[:2], [6.4 * self.R, 6.0 * self.R])
+            self.assertEqual(sum(1 for e in edges if e.get("Context")), 8)
+
+
+class LegacyByteIdentityTest(unittest.TestCase):
+    """A claims-only (contract-2) signature regenerates the pre-v3 builder's generator inputs
+    byte for byte (testdata/legacy-byte-identity: coupon.json, mesh-signature.csv,
+    plan-view-mask.csv and plan-view-boundary.csv written by the builder at a79b6af748)."""
+
+    def test_legacy_inputs_are_byte_identical(self):
+        import subprocess
+        import tempfile
+        fixture = HERE / "testdata" / "legacy-byte-identity"
+        record = json.loads((fixture / "signature.json").read_text())
+        coupon, _ = csg.cluster_coupon(record, 1.9, 0.1, 0.05)
+        self.assertEqual(json.dumps(coupon, indent=1) + "\n", (fixture / "coupon.json").read_text())
+        self.assertNotIn("SupportBox", coupon["Geometry"])
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "coupon.json").write_text(json.dumps(coupon, indent=1) + "\n")
+            command = [sys.executable, str(HERE / "generate_spatial_response.py"), str(tmp / "coupon.json"), "--output", str(tmp),
+                       "--radius", "1.9", "--metal-thickness", "0.1", "--overetch-depth", "0.05", "--sidewall-angle", "90",
+                       "--top-rounding", "0", "--trench-rounding", "0", "--ring-size", "16", "--cap-triangulation", "delaunay",
+                       "--cap-interior-spacing", "0.5", "--order", "1", "--model-name", "legacy-fixture", "--signature-only"]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in ("mesh-signature.csv", "plan-view-mask.csv", "plan-view-boundary.csv"):
+                self.assertEqual((tmp / name).read_bytes(), (fixture / name).read_bytes(), name)

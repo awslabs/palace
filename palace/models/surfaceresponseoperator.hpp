@@ -33,6 +33,7 @@ class BoundaryModeOperator;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
+struct IdentifiedFeature;
 
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
 // finite-element point interpolation is still rebuilt for every refined mesh.
@@ -564,6 +565,27 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
 // needs (feature, mesh segment, chain stretch, own-edge offset, the cluster patches'
 // claims) and the matching radius; version 6, older caches refused. The reader returns the
 // request with its library, models and patches replaced by the cached ones.
+// Legacy-contract alias of a library model (USER decision 283): an explicit mapping from a
+// contract-3 key (a SpatialEdgeCluster signature carrying Box + Context) to a legacy model
+// built under the decision-236 straight-continuation contract, listed by the library under
+// the model's "LegacyContractAliases" with the key's context digest. Resolved by the
+// matching pass ONLY for the listed key, never as a fallback for any other key.
+struct LegacyContractAlias
+{
+  std::string key;             // the v3 feature hash (64 hex)
+  std::string context_digest;  // SpatialSupportContextDigest of the v3 signature (64 hex)
+  std::string reason;
+  nlohmann::json context;  // the recorded Box + Context (informative)
+};
+
+// The alias record of a feature whose hash is the alias key: fails closed (MFEM_ABORT) when
+// the feature's context digest differs from the alias's or when the feature's claims-only
+// signature is not the legacy model's Signature (the alias names another geometry).
+nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
+                                          const nlohmann::json &model_signature,
+                                          const LegacyContractAlias &alias,
+                                          const IdentifiedFeature &feature);
+
 void WriteResponseGeometryCache(
     const std::filesystem::path &path,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config);
@@ -616,6 +638,14 @@ struct SpatialSupportBounds
   std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionPatchData::Provenance::Claim>
       claims;
+  // A contract-3 model's support box and chain pieces in the patch's local frame (units of
+  // the matching radius; rule B4), copied from the patch provenance; empty for a legacy
+  // model.
+  bool has_support_box = false;
+  std::array<double, 4> support_box{};
+  std::vector<std::array<double, 4>> chain;
+  // The bounds come from the Signature's box (a placeholder without basis points).
+  bool from_signature_box = false;
 };
 std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialSupport(
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
@@ -688,11 +718,37 @@ struct ContinuationOwnership
   int shared_cells = 0;
   int wholly_owned_cells = 0;
   int clipped_cells = 0;
+  // Vertex ownership (decision 282 rule B4, decision 285 (4)): a vertex feature's patch
+  // (corner / junction / endpoint coupon: coupon_depth 0, no claims) whose vertex lies on a
+  // chain piece END of a contract-3 coupon's continuation chain, inside that coupon's box,
+  // is owned by the coupon — the device-plan coupon contains the real corner, so the corner
+  // coupon's band on the chain arms would be counted twice. The patch keeps weight 0 (once,
+  // whatever the owner count; a vertex inside two boxes lists both owners, review MINOR-1
+  // (b)); its face distance is recorded and a vertex closer than R to a face (an arm partly
+  // outside the box, MINOR-1 (a)) is flagged. A vertex on another cluster's CLAIMS is never
+  // a chain vertex (the chain stops at those claims) and is never owned here.
+  struct Vertex
+  {
+    std::size_t patch = 0;
+    int feature = -1;
+    std::vector<std::size_t> owners;    // spatial patches, ascending
+    double face_distance_over_r = 0.0;  // from the nearest face of the first owner's box
+    double chain_end_distance_over_r = 0.0;
+    bool arm_outside_box = false;
+    // max(0, 1 - face_distance_over_r): the part of the corner's R window beyond the first
+    // owner's box (R1 final review MINOR-2; 0 unless arm_outside_box).
+    double lost_arm_length_over_r = 0.0;
+  };
+  std::vector<Vertex> vertices;  // in patch order
+  int shared_vertices = 0;
 };
+// `continuation_tolerance` (patch units) is the cell / claim-end tolerance of the
+// translational ownership; `matching_radius` (R, patch units) scales the vertex ownership's
+// local frames (passed explicitly: R1 final review MINOR-7).
 ContinuationOwnership ApplyContinuationOwnership(
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
     const std::vector<SpatialSupportBounds> &supports, int dimension,
-    double continuation_tolerance);
+    double continuation_tolerance, double matching_radius);
 
 // Coupon-vs-coupon margin overlap (decision 244): two spatial cluster supports whose boxes
 // overlap in their interiors are recorded, not aborted, when the overlap is MARGINS ONLY —

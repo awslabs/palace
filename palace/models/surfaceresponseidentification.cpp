@@ -1834,17 +1834,27 @@ TranslationalSignature CanonicalTranslationalSignature(std::vector<Translational
   return best;
 }
 
-CanonicalSignature
-CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
-                          const std::vector<SignatureVertex> &vertices,
-                          const Point3D &process_normal, double radius,
-                          const std::function<void(std::size_t, std::size_t)> &progress)
+namespace
+{
+
+// Origin (the length-weighted centroid of the portions, arcs by their analytic centroids)
+// and the candidate in-plane x axes of a cluster frame: portion tangents and their
+// perpendiculars, both signs; an arc portion contributes its end tangents and end radial
+// directions (a closed circle none: its ends are a property of the mesh); closed circles
+// only: the directions from the centroid to the circle centres, else any fixed in-plane
+// axis. Shared by the claims-only (v2) and the Box + Context (v3) canonicalisations.
+struct ClusterFrameCandidates
+{
+  Point3D origin{};
+  std::vector<Point3D> axes;
+};
+
+ClusterFrameCandidates
+ClusterFrameCandidatesOf(const std::vector<SignaturePortion> &portions, const Point3D &n)
 {
   MFEM_VERIFY(!portions.empty(), "A cluster signature needs at least one edge portion!");
-  const Point3D n = Normalize(process_normal);
-  // Origin: length-weighted centroid of the portions (an arc portion: its arc length and
-  // the analytic centroid of the arc).
-  Point3D origin{};
+  ClusterFrameCandidates result;
+  Point3D &origin = result.origin;
   double total = 0.0;
   for (const auto &portion : portions)
   {
@@ -1861,10 +1871,7 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
   }
   MFEM_VERIFY(total > 0.0, "A cluster signature needs portions of positive length!");
   origin = Scale(1.0 / total, origin);
-  // Candidate in-plane axes: portion tangents and their perpendiculars, both signs; an arc
-  // portion contributes its end tangents and end radial directions (a closed circle none:
-  // its ends are a property of the mesh).
-  std::vector<Point3D> candidates;
+  std::vector<Point3D> &candidates = result.axes;
   std::set<std::array<long long int, 3>> seen;
   auto AddCandidate = [&](Point3D v)
   {
@@ -1909,9 +1916,6 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
   }
   if (candidates.empty())
   {
-    // Closed circles only: the directions from the centroid to the circle centres (none
-    // when concentric), else any fixed in-plane axis — the serialisation of concentric
-    // circles is the same in every frame.
     for (const auto &portion : portions)
     {
       if (portion.arc)
@@ -1931,6 +1935,87 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
       AddCandidate(e);
     }
   }
+  return result;
+}
+
+// The context entries of a v3 serialisation in the frame: the portion encoding of every
+// piece plus its ownership class, sorted by the geometry dump, conductor labels continuing
+// the claims' label map (first appearance over Portions THEN Context).
+nlohmann::json SerializeContextInFrame(const std::vector<SupportContextPiece> &context,
+                                       const Point3D &origin, const Point3D &x,
+                                       const Point3D &y, double radius,
+                                       std::map<int, int> &labels)
+{
+  struct Entry
+  {
+    nlohmann::json geometry;
+    std::string key;
+    int conductor;
+  };
+  std::vector<Entry> entries;
+  for (const auto &piece : context)
+  {
+    nlohmann::json geometry = PortionGeometryInFrame(piece.portion, origin, x, y, radius);
+    geometry["Chain"] = piece.chain;
+    std::string key = geometry.dump();
+    entries.push_back({std::move(geometry), std::move(key), piece.portion.conductor});
+  }
+  std::sort(entries.begin(), entries.end(),
+            [](const Entry &a, const Entry &b) { return a.key < b.key; });
+  nlohmann::json list = nlohmann::json::array();
+  for (auto &entry : entries)
+  {
+    const auto [it, inserted] =
+        labels.emplace(entry.conductor, static_cast<int>(labels.size()) + 1);
+    (void)inserted;
+    entry.geometry["Conductor"] = it->second;
+    list.push_back(std::move(entry.geometry));
+  }
+  return list;
+}
+
+// The conductor label map of SerializeInFrame (first appearance over the sorted portion
+// entries), rebuilt from the serialised portions so that the context labels continue it.
+std::map<int, int> PortionLabelMap(const std::vector<SignaturePortion> &portions,
+                                   const Point3D &origin, const Point3D &x,
+                                   const Point3D &y, double radius)
+{
+  std::vector<std::pair<std::string, int>> entries;
+  for (const auto &portion : portions)
+  {
+    entries.emplace_back(PortionGeometryInFrame(portion, origin, x, y, radius).dump(),
+                         portion.conductor);
+  }
+  std::sort(entries.begin(), entries.end());
+  std::map<int, int> labels;
+  for (const auto &[key, conductor] : entries)
+  {
+    (void)key;
+    labels.emplace(conductor, static_cast<int>(labels.size()) + 1);
+  }
+  return labels;
+}
+
+nlohmann::json BoxJson(const std::array<double, 4> &box)
+{
+  return nlohmann::json{RoundTo(box[0], kSignatureLengthQuantumOverRadius),
+                        RoundTo(box[1], kSignatureLengthQuantumOverRadius),
+                        RoundTo(box[2], kSignatureLengthQuantumOverRadius),
+                        RoundTo(box[3], kSignatureLengthQuantumOverRadius)};
+}
+
+}  // namespace
+
+CanonicalSignature
+CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
+                          const std::vector<SignatureVertex> &vertices,
+                          const Point3D &process_normal, double radius,
+                          const std::function<void(std::size_t, std::size_t)> &progress)
+{
+  const Point3D n = Normalize(process_normal);
+  const auto frame = ClusterFrameCandidatesOf(portions, n);
+  const Point3D &origin = frame.origin;
+  const std::vector<Point3D> &candidates = frame.axes;
   CanonicalSignature best;
   std::string best_key, best_smallest_portion;
   bool have = false;
@@ -1981,6 +2066,301 @@ CanonicalClusterSignature(const std::vector<SignaturePortion> &portions,
   best.key = best_key;
   best.hash = Sha256HexImpl(best_key);
   return best;
+}
+
+std::optional<CanonicalSignature> CanonicalClusterSignatureWithSupport(
+    const std::vector<SignaturePortion> &portions,
+    const std::vector<SignatureVertex> &vertices, const Point3D &process_normal,
+    double radius,
+    const std::function<std::optional<FrameSupport>(const Point3D &, const Point3D &,
+                                                    const Point3D &)> &support,
+    const std::function<void(std::size_t, std::size_t)> &progress)
+{
+  const Point3D n = Normalize(process_normal);
+  const auto frame = ClusterFrameCandidatesOf(portions, n);
+  const Point3D &origin = frame.origin;
+  const std::vector<Point3D> &candidates = frame.axes;
+  CanonicalSignature best;
+  std::string best_key;
+  bool have = false;
+  std::set<int> minimal_handedness;
+  for (std::size_t c = 0; c < candidates.size(); c++)
+  {
+    const Point3D &x = candidates[c];
+    if (progress)
+    {
+      progress(c, candidates.size());
+    }
+    for (const int handedness : {1, -1})
+    {
+      const Point3D y = Scale(static_cast<double>(handedness), Cross(n, x));
+      const auto frame_support = support(origin, x, y);
+      if (!frame_support)
+      {
+        continue;  // unboxable in this frame
+      }
+      // The dump of a complete JSON object starts with its "Box" entry (keys sorted), so a
+      // frame whose box dump exceeds the best frame's cannot serialise below it.
+      nlohmann::json serialized =
+          SerializeInFrame(portions, vertices, origin, x, y, radius);
+      serialized["Box"] = BoxJson(frame_support->box);
+      std::map<int, int> labels = PortionLabelMap(portions, origin, x, y, radius);
+      serialized["Context"] =
+          SerializeContextInFrame(frame_support->context, origin, x, y, radius, labels);
+      const std::string key = serialized.dump();
+      if (!have || key < best_key)
+      {
+        have = true;
+        best_key = key;
+        best.signature = std::move(serialized);
+        best.chirality = handedness;
+        best.origin = origin;
+        best.axes = {x, y, n};
+        minimal_handedness = {handedness};
+      }
+      else if (key == best_key)
+      {
+        minimal_handedness.insert(handedness);
+      }
+    }
+  }
+  if (!have)
+  {
+    return std::nullopt;
+  }
+  if (minimal_handedness.size() == 2)
+  {
+    best.chirality = 0;
+  }
+  best.key = best_key;
+  best.hash = Sha256HexImpl(best_key);
+  return best;
+}
+
+std::string SpatialSupportContextDigest(const nlohmann::json &signature)
+{
+  if (!signature.is_object() || !signature.contains("Box"))
+  {
+    return {};
+  }
+  const nlohmann::json context = {
+      {"Box", signature.at("Box")},
+      {"Context", signature.value("Context", nlohmann::json::array())}};
+  return Sha256HexImpl(context.dump());
+}
+
+// The chords of one serialised portion (the builder's chording,
+// signature_library.cluster_plan_view_edges): a straight portion is its own chord; an arc
+// portion is cut into n equal chords from a to b through the midpoint m, n = max(ceil(sweep
+// / step), ceil(arc length / max chord), 1), a closed circle (equal ends) over 2 pi, each
+// chord's gap direction the arc's radial direction at the chord's middle.
+std::vector<SerializedPortionChord> ChordSerializedPortion(const nlohmann::json &portion)
+{
+  using Point2 = std::array<double, 2>;
+  std::vector<SerializedPortionChord> chords;
+  const double pi = std::acos(-1.0);
+  const auto &P = portion.at("P");
+  const Point2 a = {P[0].get<double>(), P[1].get<double>()},
+               b = {P[2].get<double>(), P[3].get<double>()};
+  if (!portion.contains("Arc"))
+  {
+    const auto &G = portion.at("Gap");
+    chords.push_back({{a[0], a[1], b[0], b[1]}, {G[0].get<double>(), G[1].get<double>()}});
+    return chords;
+  }
+  const auto &A = portion.at("Arc");
+  const Point2 c = {A[0].get<double>(), A[1].get<double>()},
+               m = {A[2].get<double>(), A[3].get<double>()};
+  const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
+  auto Angle = [&](const Point2 &q) { return std::atan2(q[1] - c[1], q[0] - c[0]); };
+  const double ta = Angle(a), tb = Angle(b), tm = Angle(m);
+  const bool closed = std::hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * std::max(r, 1.0);
+  double sweep;
+  if (closed)
+  {
+    sweep = 2.0 * pi;
+  }
+  else
+  {
+    auto Mod = [&](double v)
+    {
+      double w = std::fmod(v, 2.0 * pi);
+      return w < 0.0 ? w + 2.0 * pi : w;
+    };
+    const double ccw = Mod(tb - ta);
+    sweep = Mod(tm - ta) <= ccw + 1.0e-12 ? ccw : ccw - 2.0 * pi;
+  }
+  const int n =
+      std::max({static_cast<int>(std::ceil(
+                    std::abs(sweep) / (kClusterArcChordStepDegrees * pi / 180.0) - 1.0e-9)),
+                static_cast<int>(std::ceil(
+                    r * std::abs(sweep) / kClusterArcChordMaxLengthOverRadius - 1.0e-9)),
+                1});
+  const double sign = portion.at("GapRadial").get<int>();
+  for (int k = 0; k < n; k++)
+  {
+    const double t0 = ta + sweep * k / n, t1 = ta + sweep * (k + 1) / n,
+                 tmid = 0.5 * (t0 + t1);
+    chords.push_back({{c[0] + r * std::cos(t0), c[1] + r * std::sin(t0),
+                       c[0] + r * std::cos(t1), c[1] + r * std::sin(t1)},
+                      {sign * std::cos(tmid), sign * std::sin(tmid)}});
+  }
+  return chords;
+}
+
+std::vector<ContextPieceChord> ContextPieceChords(const nlohmann::json &signature)
+{
+  std::vector<ContextPieceChord> pieces;
+  if (!signature.contains("Context"))
+  {
+    return pieces;
+  }
+  for (const auto &entry : signature.at("Context"))
+  {
+    const bool chain = entry.value("Chain", false);
+    const int conductor = entry.value("Conductor", 0);
+    for (const auto &chord : ChordSerializedPortion(entry))
+    {
+      pieces.push_back({chord.P, chain, conductor});
+    }
+  }
+  return pieces;
+}
+
+// Rule B2 (the coupon generator's `coupon_bounds` / `edge_rows` / `extended_interval` in
+// the canonical frame, units of R): see SupportBoxFromSignature in the header.
+std::array<double, 4> SupportBoxFromSignature(const nlohmann::json &signature,
+                                              std::size_t *band_hits)
+{
+  using Point2 = std::array<double, 2>;
+  struct Edge
+  {
+    Point2 p0, p1, gap;
+  };
+  std::vector<Edge> edges;
+  std::size_t hits = 0;
+  // The box rule's two thresholds read within the knife-edge band (review MINOR-4): the
+  // end coincidence and the "row end at or beyond R continues by 2R" rule.
+  auto Band = [&](double value, double threshold)
+  {
+    if (std::abs(value / threshold - 1.0) <= kKnifeEdgeBandRelative)
+    {
+      hits++;
+    }
+  };
+  const auto &portion_list = signature.at("Portions");
+  MFEM_VERIFY(portion_list.is_array() && !portion_list.empty(),
+              "A support box needs the claimed portions!");
+  for (const auto &portion : portion_list)
+  {
+    for (const auto &chord : ChordSerializedPortion(portion))
+    {
+      edges.push_back({{chord.P[0], chord.P[1]}, {chord.P[2], chord.P[3]}, chord.gap});
+    }
+  }
+  std::vector<Point2> vertex_points;
+  if (signature.contains("Vertices"))
+  {
+    for (const auto &vertex : signature["Vertices"])
+    {
+      vertex_points.push_back({vertex["P"][0].get<double>(), vertex["P"][1].get<double>()});
+    }
+  }
+  // End states (cluster_signature_geometry.end_states): an end touching a vertex or another
+  // edge's end within the coincidence tolerance is connected; every other end is a claim
+  // cut (free).
+  auto Near = [](const Point2 &a, const Point2 &b, double tolerance)
+  { return std::hypot(a[0] - b[0], a[1] - b[1]) <= tolerance; };
+  const double coincidence = kSupportEndCoincidenceOverRadius;
+  auto Connected = [&](std::size_t i, const Point2 &point)
+  {
+    for (const auto &v : vertex_points)
+    {
+      Band(std::hypot(point[0] - v[0], point[1] - v[1]), coincidence);
+      if (Near(point, v, coincidence))
+      {
+        return true;
+      }
+    }
+    for (std::size_t j = 0; j < edges.size(); j++)
+    {
+      if (j == i)
+      {
+        continue;
+      }
+      for (const Point2 &other : {edges[j].p0, edges[j].p1})
+      {
+        Band(std::hypot(point[0] - other[0], point[1] - other[1]), coincidence);
+      }
+      if (Near(point, edges[j].p0, coincidence) || Near(point, edges[j].p1, coincidence))
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+  double x0 = std::numeric_limits<double>::infinity(), y0 = x0, x1 = -x0, y1 = -x0;
+  for (std::size_t i = 0; i < edges.size(); i++)
+  {
+    const Edge &edge = edges[i];
+    const double gap_norm = std::hypot(edge.gap[0], edge.gap[1]);
+    MFEM_VERIFY(gap_norm > 0.0, "A support box portion has no gap direction!");
+    const Point2 gap = {edge.gap[0] / gap_norm, edge.gap[1] / gap_norm};
+    const Point2 tangent = {gap[1], -gap[0]};  // gap x normal for the frame's +z normal
+    const double length = std::hypot(edge.p1[0] - edge.p0[0], edge.p1[1] - edge.p0[1]);
+    MFEM_VERIFY(length > 0.0, "A support box portion has zero length!");
+    const Point2 midpoint = {0.5 * (edge.p0[0] + edge.p1[0]),
+                             0.5 * (edge.p0[1] + edge.p1[1])};
+    const bool begin_free = !Connected(i, edge.p0), end_free = !Connected(i, edge.p1);
+    const bool forward_is_p1 =
+        (edge.p1[0] - midpoint[0]) * tangent[0] + (edge.p1[1] - midpoint[1]) * tangent[1] >
+        0.0;
+    const bool end_is_free = forward_is_p1 ? end_free : begin_free;
+    const bool begin_is_free = forward_is_p1 ? begin_free : end_free;
+    const double half = 0.5 * length;
+    double begin = begin_is_free ? -std::max(half, 1.0) : -half;
+    double end = end_is_free ? std::max(half, 1.0) : half;
+    // extended_interval: a row end at or beyond R from the row point continues by 2R.
+    const double tolerance = 1.0e-10;
+    // (A free end is lengthened to >= R and always continues: no threshold there.)
+    if (!begin_is_free)
+    {
+      Band(half, 1.0);
+    }
+    if (!end_is_free)
+    {
+      Band(half, 1.0);
+    }
+    if (begin <= -1.0 + tolerance)
+    {
+      begin -= kSupportContinuationOverRadius;
+    }
+    if (end >= 1.0 - tolerance)
+    {
+      end += kSupportContinuationOverRadius;
+    }
+    for (const double coordinate : {begin, end})
+    {
+      for (const double side : {-1.0, 1.0})
+      {
+        const double px = midpoint[0] + coordinate * tangent[0] + side * gap[0];
+        const double py = midpoint[1] + coordinate * tangent[1] + side * gap[1];
+        x0 = std::min(x0, px);
+        y0 = std::min(y0, py);
+        x1 = std::max(x1, px);
+        y1 = std::max(y1, py);
+      }
+    }
+  }
+  const double padding = kSupportPaddingOverRadius;
+  if (band_hits)
+  {
+    *band_hits = hits;
+  }
+  return {RoundTo(x0 - padding, kSignatureLengthQuantumOverRadius),
+          RoundTo(y0 - padding, kSignatureLengthQuantumOverRadius),
+          RoundTo(x1 + padding, kSignatureLengthQuantumOverRadius),
+          RoundTo(y1 + padding, kSignatureLengthQuantumOverRadius)};
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2925,8 +3305,43 @@ private:
   void BuildClusters();
   double ExtendClusters(bool measure_joint_claims = false);
   void EmitClusters();
+  void RecordContextFeatureIds(int feature);
   std::vector<SignaturePortion> ClusterSignaturePortions(
       const std::vector<std::pair<std::size_t, Interval>> &claimed) const;
+  // Spatial-support contract v3 (decision 282): the support of cluster c in the candidate
+  // frame (origin, x, y) — the claims-derived box, the face rules T1-T3 with growth, the
+  // device-plan context — with its manifest record (units of R).
+  struct ClusterSupportResult
+  {
+    std::optional<FrameSupport> support;  // nullopt: unboxable in this frame
+    nlohmann::json record;
+    // Every context piece is implied by the decision-236 contract (a straight chain piece
+    // collinear with the claim it continues from a claim-cut end to a box face): the
+    // device plan clipped to the box IS the legacy coupon geometry.
+    bool legacy_equivalent = false;
+    bool grown = false;
+    bool exceeds_span_cap = false;
+    double chain_length = 0.0;  // mesh units
+    double foreign_length = 0.0;
+    double fictitious_continuation_length = 0.0;
+    std::size_t band_hits = 0;
+  };
+  ClusterSupportResult ClusterSupport(std::size_t c,
+                                      const std::vector<SignaturePortion> &portions,
+                                      const std::vector<SignatureVertex> &vertices,
+                                      const Point3D &origin, const Point3D &x,
+                                      const Point3D &y) const;
+  // Sites (vertex features) incident to every run, for the context's vertex census.
+  std::multimap<std::size_t, std::size_t> sites_by_run;
+  // Every cluster's claimed intervals per run (interval, cluster): the context pieces of a
+  // cluster's box lying on ANOTHER cluster's claims are split at the claim cuts and never
+  // chain (decision 285 (1): owned by the other coupon).
+  std::map<std::size_t, std::vector<std::pair<Interval, std::size_t>>> claims_by_run;
+  // Feature index of every cluster (EmitClusters) and of every free site (Assign), for the
+  // non-hashed ownership records of the context census.
+  std::vector<int> cluster_feature, site_feature;
+  // Spatial-support summary over the clusters (IdentificationResult::spatial_support).
+  IdentificationResult::SpatialSupportSummary spatial_support_summary;
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
   nlohmann::json KnifeEdgeCensus() const;
@@ -9684,10 +10099,1479 @@ std::vector<SignaturePortion> Identifier::ClusterSignaturePortions(
   return portions;
 }
 
+// The support of cluster c in the frame (origin, x, y); every length below is in units of
+// R in the frame unless stated. Rule B2 gives the box from the claims serialised in the
+// frame; the device plan of the cluster's plane (every non-excluded run, straight or on its
+// fitted arc) is clipped to the box, the cluster's own claims removed, pieces shorter than
+// the snap quantum dropped (T1); T2 is evaluated per face and every failing face grows by
+// one step (T3), all failing faces per step, until every face passes or the step cap / the
+// span cap refuses the growth (unboxable).
+Identifier::ClusterSupportResult
+Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &portions,
+                           const std::vector<SignatureVertex> &vertices,
+                           const Point3D &origin, const Point3D &x, const Point3D &y) const
+{
+  using Point2 = std::array<double, 2>;
+  ClusterSupportResult out;
+  const double snap = kSupportFaceSnapOverRadius;
+  const double clearance = kSupportFaceClearanceOverRadius;
+  const double step = kSupportFaceGrowthStepOverRadius;
+  const double span_cap = kSupportSpanCapOverRadius;
+  const double band = kKnifeEdgeBandRelative;
+  const double pi = std::acos(-1.0);
+  // Quantised face-rule comparisons (decision 287 (b)): the box faces sit on the
+  // kSignatureLengthQuantumOverRadius grid and a step moves them by a grid multiple, so a
+  // device edge lying ON a claims-box face reads exactly the clearance from the moved face
+  // up to the quantisation residual (|r| <= half a quantum) and mesh / float noise. Every
+  // length threshold is therefore read on the grid: a value within half a quantum of the
+  // threshold is AT the threshold and decided by the rule's own inclusive side (>= passes
+  // the clearance, <= the snap is on the face), never by sub-quantum noise.
+  const double half_quantum = 0.5 * kSignatureLengthQuantumOverRadius;
+  auto AtMostSnap = [&](double distance) { return distance < snap + half_quantum; };
+  auto BelowClearance = [&](double distance)
+  { return distance < clearance - half_quantum; };
+  auto IsSliverLength = [&](double length) { return length / R < snap - half_quantum; };
+  auto Local = [&](const Point3D &p) -> Point2
+  {
+    const Point3D r = Sub(p, origin);
+    return {Dot(r, x) / R, Dot(r, y) / R};
+  };
+  auto LocalDirection = [&](const Point3D &d) -> Point2
+  {
+    const Point2 v = {Dot(d, x), Dot(d, y)};
+    const double norm = std::hypot(v[0], v[1]);
+    return norm > 0.0 ? Point2{v[0] / norm, v[1] / norm} : Point2{0.0, 0.0};
+  };
+  auto Q = [](double v) { return RoundTo(v, kSignatureLengthQuantumOverRadius); };
+
+  // Rule B2: the claims-derived box from the claims serialised in this frame.
+  const nlohmann::json claims = SerializeInFrame(portions, vertices, origin, x, y, R);
+  std::size_t box_band_hits = 0;
+  const std::array<double, 4> claims_box = SupportBoxFromSignature(claims, &box_band_hits);
+  std::array<double, 4> box = claims_box;
+  const int plane = run_plane[cluster_claimed[c].front().first];
+  std::map<std::size_t, std::vector<Interval>> claimed_by_run;
+  for (const auto &[r, interval] : cluster_claimed[c])
+  {
+    claimed_by_run[r].push_back(interval);
+  }
+  for (auto &[r, intervals] : claimed_by_run)
+  {
+    intervals = MergeIntervals(std::move(intervals), Tol());
+  }
+
+  // Face f: 0 = x0, 1 = y0, 2 = x1, 3 = y1; its line coordinate, axis (0 = x, 1 = y) and
+  // the extent of the face along the other axis.
+  auto FaceLine = [&](int f) { return box[static_cast<std::size_t>(f)]; };
+  auto FaceAxis = [](int f) { return f % 2; };
+  auto Inside = [&](const Point2 &p, double tolerance)
+  {
+    return p[0] >= box[0] - tolerance && p[0] <= box[2] + tolerance &&
+           p[1] >= box[1] - tolerance && p[1] <= box[3] + tolerance;
+  };
+
+  // A plan piece: a run-parameter interval of a run, or (run == kExcludedRun) a parameter
+  // interval of a perimeter SEGMENT excluded before the identification (a port cut, an
+  // undetermined process side, a non-manifold or non-planar edge: rule B1, nothing inside
+  // the box is omitted — such a segment is device geometry the coupon must carry, but it
+  // is no feature edge: foreign context, never a chain piece, excluded from the within-R
+  // accounting like the device's own perimeter excludes it).
+  constexpr std::size_t kExcludedRun = std::numeric_limits<std::size_t>::max();
+  struct Piece
+  {
+    std::size_t run;
+    Interval s;
+    // The piece lies on another cluster's claimed interval (decision 285 (1)): owned by
+    // that coupon, never part of this cluster's chain.
+    std::optional<std::size_t> claimed_by;
+    std::size_t segment = kExcludedRun;  // the excluded segment of a kExcludedRun piece
+    // The end at s.first / s.second exists only because another cluster's claim cut split
+    // the run there (nothing geometric: the device edge continues): exempt from the T2
+    // end tests (R1 final review MINOR-1), still a crossing when it lies on a face.
+    bool cut_a = false, cut_b = false;
+    bool Excluded() const { return run == kExcludedRun; }
+    std::pair<std::size_t, std::size_t> Key() const { return {run, segment}; }
+  };
+  auto SegmentLength = [&](std::size_t i)
+  { return Distance(input.segments[i].p0, input.segments[i].p1); };
+  auto SegmentAt = [&](std::size_t i, double s)
+  {
+    const auto &segment = input.segments[i];
+    const double length = SegmentLength(i);
+    return length > 0.0 ? Add(segment.p0, Scale(s / length, Sub(segment.p1, segment.p0)))
+                        : segment.p0;
+  };
+  // The geometry of a piece between the parameters s0 and s1 (a run piece on its fitted
+  // arc, an excluded segment straight).
+  auto PieceCurve = [&](const Piece &piece, double s0, double s1)
+  {
+    if (!piece.Excluded())
+    {
+      return RunPiece(piece.run, s0, s1);
+    }
+    CurvePiece curve;
+    curve.a = SegmentAt(piece.segment, s0);
+    curve.b = SegmentAt(piece.segment, s1);
+    return curve;
+  };
+  // The in-plane gap direction of an excluded segment (unset on the segment: a port cut has
+  // no target interface): the normal pointing away from the metal, read at an end vertex
+  // from an adjacent feature run — a point just inside the run's metal (one step along the
+  // run away from the vertex and one step away from its gap) lies on the metal side of the
+  // segment. Zero when no adjacent run exists (the piece is then recorded, not oriented).
+  auto ExcludedGapDirection = [&](std::size_t i) -> Point3D
+  {
+    const auto &segment = input.segments[i];
+    if (Norm(segment.gap_direction) > 0.0)
+    {
+      return Normalize(segment.gap_direction);
+    }
+    const Point3D normal = Normalize(Cross(x, y));
+    const Point3D t = Normalize(Sub(segment.p1, segment.p0));
+    const Point3D n0 = Normalize(Cross(t, normal));
+    for (const std::size_t v : segment.vertices)
+    {
+      if (v >= input.vertices.size())
+      {
+        continue;
+      }
+      const Point3D &vertex = input.vertices[v].coordinate;
+      for (const std::size_t s : input.vertices[v].segments)
+      {
+        if (s == i || s >= run_of_segment.size() || run_of_segment[s] < 0)
+        {
+          continue;
+        }
+        const Run &run = runs[static_cast<std::size_t>(run_of_segment[s])];
+        if (run.excluded || Norm(run.gap_direction) <= 0.0)
+        {
+          continue;
+        }
+        const auto &adjacent = input.segments[s];
+        const Point3D far = Distance(adjacent.p0, vertex) > Distance(adjacent.p1, vertex)
+                                ? adjacent.p0
+                                : adjacent.p1;
+        const Point3D along = Normalize(Sub(far, vertex));
+        const Point3D inside = Sub(along, Normalize(run.gap_direction));
+        const double side = Dot(inside, n0);
+        if (std::abs(side) > 1.0e-9)
+        {
+          return side < 0.0 ? n0 : Scale(-1.0, n0);
+        }
+      }
+    }
+    return Point3D{};
+  };
+  auto PieceGapDirection = [&](const Piece &piece) -> Point3D
+  {
+    return piece.Excluded() ? ExcludedGapDirection(piece.segment)
+                            : runs[piece.run].gap_direction;
+  };
+  struct ArcLocal
+  {
+    Point2 center;
+    double radius;
+    double phi_x, amplitude_x;  // x(theta) = cx + r A_x cos(theta - phi_x)
+    double phi_y, amplitude_y;
+    Point2 u, v;
+  };
+  auto ArcInFrame = [&](const ArcPiece &arc)
+  {
+    ArcLocal a;
+    a.center = Local(arc.center);
+    a.radius = arc.radius / R;
+    a.u = {Dot(arc.u, x), Dot(arc.u, y)};
+    a.v = {Dot(arc.v, x), Dot(arc.v, y)};
+    a.amplitude_x = std::hypot(a.u[0], a.v[0]);
+    a.phi_x = std::atan2(a.v[0], a.u[0]);
+    a.amplitude_y = std::hypot(a.u[1], a.v[1]);
+    a.phi_y = std::atan2(a.v[1], a.u[1]);
+    return a;
+  };
+  auto ArcPointLocal = [&](const ArcLocal &a, double theta) -> Point2
+  {
+    return {a.center[0] + a.radius * (std::cos(theta) * a.u[0] + std::sin(theta) * a.v[0]),
+            a.center[1] + a.radius * (std::cos(theta) * a.u[1] + std::sin(theta) * a.v[1])};
+  };
+  // Length of a run piece (mesh units): the chord, or the arc length on the fitted arc.
+  auto PieceLength = [&](const Piece &piece)
+  {
+    if (piece.Excluded())
+    {
+      return piece.s.second - piece.s.first;
+    }
+    const auto &geometry = run_arcs[piece.run];
+    if (geometry)
+    {
+      const double length = runs[piece.run].length;
+      const double sweep = std::abs(geometry->piece.theta1 - geometry->piece.theta0);
+      return length > 0.0 ? geometry->piece.radius * sweep *
+                                (piece.s.second - piece.s.first) / length
+                          : 0.0;
+    }
+    return piece.s.second - piece.s.first;
+  };
+
+  // The device plan clipped to a box (the current box, or the box dilated by the clearance
+  // for the two-sided face rule): run-parameter intervals inside it minus the cluster's
+  // claims, split at the other clusters' claim cuts when `split_at_claim_cuts` (the box
+  // pieces: the Chain / ClaimedByOtherFeature classification; the shell pieces of the
+  // two-sided rule are never classed and stay whole so that a cut inside the shell is no
+  // piece end), pieces shorter than the snap quantum dropped (T1).
+  std::size_t slivers_dropped = 0;
+  auto ClipPlanTo = [&](const std::array<double, 4> &clip, bool split_at_claim_cuts)
+  {
+    std::vector<Piece> pieces;
+    slivers_dropped = 0;
+    auto InsideClip = [&](const Point2 &p, double tolerance)
+    {
+      return p[0] >= clip[0] - tolerance && p[0] <= clip[2] + tolerance &&
+             p[1] >= clip[1] - tolerance && p[1] <= clip[3] + tolerance;
+    };
+    Point3D lo{}, hi{};
+    bool first = true;
+    for (const double bx : {clip[0], clip[2]})
+    {
+      for (const double by : {clip[1], clip[3]})
+      {
+        const Point3D corner = Add(origin, Add(Scale(bx * R, x), Scale(by * R, y)));
+        if (first)
+        {
+          lo = hi = corner;
+          first = false;
+          continue;
+        }
+        for (int d = 0; d < 3; d++)
+        {
+          lo[d] = std::min(lo[d], corner[d]);
+          hi[d] = std::max(hi[d], corner[d]);
+        }
+      }
+    }
+    const double margin = max_run_sagitta + 2.0 * Tol() + snap * R;
+    for (const std::size_t r : RunsNear(lo, hi, margin))
+    {
+      if (runs[r].excluded || run_plane[r] != plane || runs[r].length <= 0.0)
+      {
+        continue;
+      }
+      std::vector<Interval> inside;
+      const double length = runs[r].length;
+      if (!run_arcs[r])
+      {
+        // Liang-Barsky on the chord in the frame.
+        const Point2 p = Local(runs[r].start), q = Local(runs[r].end);
+        double t0 = 0.0, t1 = 1.0;
+        bool empty = false;
+        for (int axis = 0; axis < 2 && !empty; axis++)
+        {
+          const double lo_a = clip[static_cast<std::size_t>(axis)],
+                       hi_a = clip[static_cast<std::size_t>(axis + 2)];
+          const double d = q[axis] - p[axis];
+          if (std::abs(d) <= 1.0e-15)
+          {
+            if (p[axis] < lo_a - snap || p[axis] > hi_a + snap)
+            {
+              empty = true;
+            }
+            continue;
+          }
+          double ta = (lo_a - p[axis]) / d, tb = (hi_a - p[axis]) / d;
+          if (ta > tb)
+          {
+            std::swap(ta, tb);
+          }
+          t0 = std::max(t0, ta);
+          t1 = std::min(t1, tb);
+          empty = t0 >= t1;
+        }
+        if (!empty)
+        {
+          inside.emplace_back(t0 * length, t1 * length);
+        }
+      }
+      else
+      {
+        const ArcPiece &arc = run_arcs[r]->piece;
+        const ArcLocal a = ArcInFrame(arc);
+        const double ta = std::min(arc.theta0, arc.theta1),
+                     tb = std::max(arc.theta0, arc.theta1);
+        std::vector<double> breaks = {ta, tb};
+        for (int f = 0; f < 4; f++)
+        {
+          const int axis = FaceAxis(f);
+          const double amplitude = axis == 0 ? a.amplitude_x : a.amplitude_y;
+          const double phi = axis == 0 ? a.phi_x : a.phi_y;
+          if (a.radius * amplitude <= 0.0)
+          {
+            continue;
+          }
+          const double cosine =
+              (clip[static_cast<std::size_t>(f)] - a.center[axis]) / (a.radius * amplitude);
+          if (std::abs(cosine) > 1.0)
+          {
+            continue;
+          }
+          const double delta = std::acos(std::clamp(cosine, -1.0, 1.0));
+          for (const double root : {phi + delta, phi - delta})
+          {
+            // Every representative of the root inside [ta, tb].
+            const double base = root - 2.0 * pi * std::floor((root - ta) / (2.0 * pi));
+            for (double theta = base; theta <= tb + 1.0e-12; theta += 2.0 * pi)
+            {
+              if (theta >= ta - 1.0e-12)
+              {
+                breaks.push_back(std::clamp(theta, ta, tb));
+              }
+            }
+          }
+        }
+        std::sort(breaks.begin(), breaks.end());
+        auto ToS = [&](double theta)
+        {
+          const double t = (theta - arc.theta0) / (arc.theta1 - arc.theta0);
+          return std::clamp(t, 0.0, 1.0) * length;
+        };
+        for (std::size_t k = 0; k + 1 < breaks.size(); k++)
+        {
+          if (breaks[k + 1] - breaks[k] <= 1.0e-12)
+          {
+            continue;
+          }
+          const double mid = 0.5 * (breaks[k] + breaks[k + 1]);
+          if (InsideClip(ArcPointLocal(a, mid), 0.0))
+          {
+            double s0 = ToS(breaks[k]), s1 = ToS(breaks[k + 1]);
+            if (s0 > s1)
+            {
+              std::swap(s0, s1);
+            }
+            inside.emplace_back(s0, s1);
+          }
+        }
+        inside = MergeIntervals(std::move(inside), Tol());
+      }
+      if (inside.empty())
+      {
+        continue;
+      }
+      if (auto it = claimed_by_run.find(r); it != claimed_by_run.end())
+      {
+        inside = SubtractIntervals(inside, it->second, Tol());
+      }
+      // Split at the other clusters' claim cuts on this run and class every piece lying on
+      // such a claim by its owner (decision 285 (1)).
+      std::vector<std::pair<Interval, std::size_t>> other_claims;
+      if (auto it = claims_by_run.find(r); it != claims_by_run.end())
+      {
+        for (const auto &[interval, owner] : it->second)
+        {
+          if (owner != c)
+          {
+            other_claims.emplace_back(interval, owner);
+          }
+        }
+      }
+      // (interval, end a is a cut, end b is a cut)
+      std::vector<std::tuple<Interval, bool, bool>> split;
+      if (!other_claims.empty() && split_at_claim_cuts)
+      {
+        for (const auto &interval : inside)
+        {
+          std::vector<double> cuts = {interval.first, interval.second};
+          for (const auto &[claim, owner] : other_claims)
+          {
+            (void)owner;
+            for (const double cut : {claim.first, claim.second})
+            {
+              if (cut > interval.first + Tol() && cut < interval.second - Tol())
+              {
+                cuts.push_back(cut);
+              }
+            }
+          }
+          std::sort(cuts.begin(), cuts.end());
+          for (std::size_t k = 0; k + 1 < cuts.size(); k++)
+          {
+            if (cuts[k + 1] > cuts[k] + Tol())
+            {
+              split.emplace_back(Interval{cuts[k], cuts[k + 1]}, k > 0,
+                                 k + 2 < cuts.size());
+            }
+          }
+        }
+      }
+      else
+      {
+        for (const auto &interval : inside)
+        {
+          split.emplace_back(interval, false, false);
+        }
+      }
+      for (const auto &[interval, cut_a, cut_b] : split)
+      {
+        Piece piece{r, interval, std::nullopt};
+        piece.cut_a = cut_a;
+        piece.cut_b = cut_b;
+        const double mid = 0.5 * (interval.first + interval.second);
+        if (split_at_claim_cuts)
+        {
+          for (const auto &[claim, owner] : other_claims)
+          {
+            if (mid >= claim.first - Tol() && mid <= claim.second + Tol())
+            {
+              piece.claimed_by = owner;
+              break;
+            }
+          }
+        }
+        if (IsSliverLength(PieceLength(piece)))
+        {
+          slivers_dropped++;
+          continue;
+        }
+        pieces.push_back(piece);
+      }
+    }
+    // The excluded perimeter segments on the plane inside the clip (rule B1): straight,
+    // clipped by Liang-Barsky, never on the cluster's claims (claims are feature runs).
+    const Point3D plane_normal = Normalize(Cross(x, y));
+    for (std::size_t i = 0; i < input.segments.size(); i++)
+    {
+      const auto &segment = input.segments[i];
+      const bool excluded =
+          !segment.truncation &&
+          (segment.exclusion || (i < segment_exclusion.size() && segment_exclusion[i]));
+      if (!excluded)
+      {
+        continue;
+      }
+      if (std::abs(Dot(Sub(segment.p0, origin), plane_normal)) > 2.0 * Tol() ||
+          std::abs(Dot(Sub(segment.p1, origin), plane_normal)) > 2.0 * Tol())
+      {
+        continue;
+      }
+      const double length = SegmentLength(i);
+      if (length <= 0.0)
+      {
+        continue;
+      }
+      const Point2 p = Local(segment.p0), q = Local(segment.p1);
+      double t0 = 0.0, t1 = 1.0;
+      bool empty = false;
+      for (int axis = 0; axis < 2 && !empty; axis++)
+      {
+        const double lo_a = clip[static_cast<std::size_t>(axis)],
+                     hi_a = clip[static_cast<std::size_t>(axis + 2)];
+        const double d = q[axis] - p[axis];
+        if (std::abs(d) <= 1.0e-15)
+        {
+          empty = p[axis] < lo_a - snap || p[axis] > hi_a + snap;
+          continue;
+        }
+        double ta = (lo_a - p[axis]) / d, tb = (hi_a - p[axis]) / d;
+        if (ta > tb)
+        {
+          std::swap(ta, tb);
+        }
+        t0 = std::max(t0, ta);
+        t1 = std::min(t1, tb);
+        empty = t0 >= t1;
+      }
+      if (empty)
+      {
+        continue;
+      }
+      Piece piece{kExcludedRun, Interval{t0 * length, t1 * length}, std::nullopt, i};
+      if (IsSliverLength(PieceLength(piece)))
+      {
+        slivers_dropped++;
+        continue;
+      }
+      pieces.push_back(piece);
+    }
+    std::sort(pieces.begin(), pieces.end(), [](const Piece &a, const Piece &b)
+              { return a.Key() != b.Key() ? a.Key() < b.Key() : a.s < b.s; });
+    return pieces;
+  };
+  auto ClipPlan = [&]() { return ClipPlanTo(box, true); };
+
+  // T2 on the current box and pieces: the failing faces and the record of the pass.
+  struct FaceCheck
+  {
+    std::array<bool, 4> failing{};
+    std::array<std::size_t, 4> crossings{};
+    std::optional<double> min_clearance, min_crossing_sine, min_cross_section;
+    std::size_t narrow_cross_sections = 0;
+    std::size_t band_hits = 0;
+    // Two-sided T2 (decision 285 (2)): device vertices / edges inside the clearance shell
+    // OUTSIDE a face that do not cross it.
+    std::size_t exterior_vertices = 0, exterior_edges = 0;
+    std::string first_failure;
+    std::vector<std::string> failures;  // every failure of the pass, in reading order
+  };
+  auto CheckFaces = [&](const std::vector<Piece> &pieces, const std::vector<Piece> &shell)
+  {
+    FaceCheck check;
+    auto Fail = [&](int f, const std::string &why)
+    {
+      check.failing[static_cast<std::size_t>(f)] = true;
+      if (check.first_failure.empty())
+      {
+        check.first_failure = why;
+      }
+      check.failures.push_back(why);
+    };
+    auto Band = [&](double value, double threshold)
+    {
+      if (std::abs(value / threshold - 1.0) <= band)
+      {
+        check.band_hits++;
+      }
+    };
+    auto Clearance = [&](double value)
+    {
+      check.min_clearance = std::min(check.min_clearance.value_or(value), value);
+      Band(value, clearance);
+    };
+    struct Crossing
+    {
+      double along;
+      double gap_along;  // the gap direction's component along the face
+    };
+    std::array<std::vector<Crossing>, 4> crossings;
+    for (const Piece &piece : pieces)
+    {
+      const CurvePiece geometry = PieceCurve(piece, piece.s.first, piece.s.second);
+      const Point2 a = Local(geometry.a), b = Local(geometry.b);
+      std::optional<ArcLocal> arc;
+      if (geometry.arc)
+      {
+        arc = ArcInFrame(*geometry.arc);
+      }
+      // Tangent (direction of travel a -> b) and gap direction at an end.
+      auto EndTangent = [&](bool at_a) -> Point2
+      {
+        if (geometry.arc)
+        {
+          const double theta = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
+          return LocalDirection(geometry.arc->Tangent(theta));
+        }
+        const Point2 d = {b[0] - a[0], b[1] - a[1]};
+        const double norm = std::hypot(d[0], d[1]);
+        return norm > 0.0 ? Point2{d[0] / norm, d[1] / norm} : Point2{0.0, 0.0};
+      };
+      auto EndGap = [&](bool at_a) -> Point2
+      {
+        if (geometry.arc)
+        {
+          const double theta = at_a ? geometry.arc->theta0 : geometry.arc->theta1;
+          const Point3D radial = geometry.arc->Radial(theta);
+          const double sign = Dot(PieceGapDirection(piece),
+                                  geometry.arc->Radial(0.5 * (geometry.arc->theta0 +
+                                                              geometry.arc->theta1))) >= 0.0
+                                  ? 1.0
+                                  : -1.0;
+          return LocalDirection(Scale(sign, radial));
+        }
+        return LocalDirection(PieceGapDirection(piece));
+      };
+      for (const bool at_a : {true, false})
+      {
+        const Point2 &e = at_a ? a : b;
+        const bool cut_end = at_a ? piece.cut_a : piece.cut_b;
+        std::array<bool, 4> on_face{};
+        for (int f = 0; f < 4; f++)
+        {
+          const double distance = std::abs(e[FaceAxis(f)] - FaceLine(f));
+          on_face[static_cast<std::size_t>(f)] = AtMostSnap(distance);
+          Band(distance, snap);
+        }
+        for (int f = 0; f < 4; f++)
+        {
+          const double distance = std::abs(e[FaceAxis(f)] - FaceLine(f));
+          if (on_face[static_cast<std::size_t>(f)])
+          {
+            // A crossing: its angle to the face and its position along the face.
+            const Point2 tangent = EndTangent(at_a);
+            const double sine = std::abs(tangent[FaceAxis(f)]);
+            check.min_crossing_sine =
+                std::min(check.min_crossing_sine.value_or(sine), sine);
+            Band(sine, clearance);
+            if (sine + 1.0e-12 < clearance)
+            {
+              Fail(f, "a device edge crosses face " + std::to_string(f) +
+                          " at sin(theta) = " + std::to_string(sine));
+            }
+            const int other = 1 - FaceAxis(f);
+            const Point2 gap = EndGap(at_a);
+            crossings[static_cast<std::size_t>(f)].push_back({e[other], gap[other]});
+            check.crossings[static_cast<std::size_t>(f)]++;
+            continue;
+          }
+          if (cut_end)
+          {
+            continue;  // another cluster's claim cut: no device vertex here
+          }
+          // An interior device vertex, a claim end or a crossing of another face: its
+          // clearance from this face (a crossing within the clearance of an adjacent face
+          // is a crossing near a box corner).
+          Clearance(distance);
+          if (BelowClearance(distance))
+          {
+            Fail(f, "a device vertex or face crossing lies " + std::to_string(distance) +
+                        " R from face " + std::to_string(f));
+          }
+        }
+      }
+      // The piece's clearance from the faces neither end touches. A straight piece is
+      // closest to a face at an end; an end made only by another cluster's claim cut reads
+      // nothing (the edge continues into the neighbouring piece, which reads its own ends).
+      for (int f = 0; f < 4; f++)
+      {
+        const int axis = FaceAxis(f);
+        const bool touches = AtMostSnap(std::abs(a[axis] - FaceLine(f))) ||
+                             AtMostSnap(std::abs(b[axis] - FaceLine(f)));
+        if (touches)
+        {
+          continue;
+        }
+        double distance = std::numeric_limits<double>::infinity();
+        if (!piece.cut_a)
+        {
+          distance = std::min(distance, std::abs(a[axis] - FaceLine(f)));
+        }
+        if (!piece.cut_b)
+        {
+          distance = std::min(distance, std::abs(b[axis] - FaceLine(f)));
+        }
+        if (arc)
+        {
+          // The coordinate's extrema inside the angular range.
+          const double amplitude = axis == 0 ? arc->amplitude_x : arc->amplitude_y;
+          const double phi = axis == 0 ? arc->phi_x : arc->phi_y;
+          const double ta = std::min(geometry.arc->theta0, geometry.arc->theta1),
+                       tb = std::max(geometry.arc->theta0, geometry.arc->theta1);
+          for (const double extremum : {phi, phi + pi})
+          {
+            const double base =
+                extremum - 2.0 * pi * std::floor((extremum - ta) / (2.0 * pi));
+            for (double theta = base; theta <= tb; theta += 2.0 * pi)
+            {
+              if (theta >= ta)
+              {
+                const double value =
+                    arc->center[axis] + arc->radius * amplitude * std::cos(theta - phi);
+                distance = std::min(distance, std::abs(value - FaceLine(f)));
+              }
+            }
+          }
+        }
+        if (!std::isfinite(distance))
+        {
+          continue;  // a straight piece between two claim cuts: nothing to read
+        }
+        Clearance(distance);
+        if (BelowClearance(distance))
+        {
+          Fail(f, "a device edge runs " + std::to_string(distance) + " R from face " +
+                      std::to_string(f) + " without crossing it");
+        }
+      }
+    }
+    // Two-sided T2 (decision 285 (2)): the plan inside the shell between a face and the
+    // face moved outward by the clearance. A run end there (a device vertex or joint) that
+    // lies on neither boundary, or a piece that enters and leaves the shell without
+    // crossing the face, sits within the clearance of the face trace without being
+    // representable on it: the face fails and grows over it (T3). The exterior tail of a
+    // face crossing (from the face to the shell boundary) is the crossing itself.
+    {
+      std::map<std::pair<std::size_t, std::size_t>, std::vector<Interval>> inside_by_run;
+      for (const Piece &piece : pieces)
+      {
+        inside_by_run[piece.Key()].push_back(piece.s);
+      }
+      std::array<double, 4> dilated = box;
+      for (int f = 0; f < 4; f++)
+      {
+        dilated[static_cast<std::size_t>(f)] += (f < 2 ? -1.0 : 1.0) * clearance;
+      }
+      auto OnBoundary = [&](const Point2 &e, const std::array<double, 4> &b)
+      {
+        for (int f = 0; f < 4; f++)
+        {
+          const int axis = FaceAxis(f), other = 1 - axis;
+          if (AtMostSnap(std::abs(e[axis] - b[static_cast<std::size_t>(f)])) &&
+              AtMostSnap(b[static_cast<std::size_t>(other)] - e[other]) &&
+              AtMostSnap(e[other] - b[static_cast<std::size_t>(other + 2)]))
+          {
+            return true;
+          }
+        }
+        return false;
+      };
+      for (const Piece &piece : shell)
+      {
+        std::vector<Interval> exterior = {piece.s};
+        if (auto it = inside_by_run.find(piece.Key()); it != inside_by_run.end())
+        {
+          exterior = SubtractIntervals(exterior, it->second, Tol());
+        }
+        for (const auto &interval : exterior)
+        {
+          Piece part = piece;
+          part.s = interval;
+          part.claimed_by.reset();
+          if (IsSliverLength(PieceLength(part)))
+          {
+            continue;
+          }
+          const CurvePiece geometry = PieceCurve(part, interval.first, interval.second);
+          const Point2 a = Local(geometry.a), b = Local(geometry.b),
+                       m = Local(geometry.At(0.5));
+          if (Inside(m, snap + half_quantum))
+          {
+            continue;  // an arc's exterior part read inside: nothing outside this face
+          }
+          std::vector<int> beyond;
+          for (int f = 0; f < 4; f++)
+          {
+            const double side = (f < 2 ? -1.0 : 1.0) * (m[FaceAxis(f)] - FaceLine(f));
+            if (!AtMostSnap(side))
+            {
+              beyond.push_back(f);
+            }
+          }
+          if (beyond.empty())
+          {
+            continue;
+          }
+          bool interior_end = false, box_end = false;
+          double vertex_distance = std::numeric_limits<double>::infinity();
+          for (const Point2 &e : {a, b})
+          {
+            if (OnBoundary(e, box))
+            {
+              box_end = true;
+            }
+            else if (!OnBoundary(e, dilated))
+            {
+              interior_end = true;
+              for (const int f : beyond)
+              {
+                vertex_distance =
+                    std::min(vertex_distance, std::abs(e[FaceAxis(f)] - FaceLine(f)));
+              }
+            }
+          }
+          if (interior_end)
+          {
+            Clearance(vertex_distance);
+            check.exterior_vertices++;
+            for (const int f : beyond)
+            {
+              Fail(f, "a device vertex lies " + std::to_string(vertex_distance) +
+                          " R outside face " + std::to_string(f));
+            }
+          }
+          else if (!box_end)
+          {
+            double edge_distance = std::numeric_limits<double>::infinity();
+            for (const int f : beyond)
+            {
+              for (const Point2 &e : {a, b, m})
+              {
+                edge_distance =
+                    std::min(edge_distance, std::abs(e[FaceAxis(f)] - FaceLine(f)));
+              }
+            }
+            Clearance(edge_distance);
+            check.exterior_edges++;
+            for (const int f : beyond)
+            {
+              Fail(f, "a device edge runs " + std::to_string(edge_distance) +
+                          " R outside face " + std::to_string(f) + " without crossing it");
+            }
+          }
+        }
+      }
+    }
+    // Two crossings of one face closer than the clearance bound metal (a narrow lead:
+    // allowed, recorded) or gap (a channel the trace basis cannot resolve: the face fails).
+    for (int f = 0; f < 4; f++)
+    {
+      auto &list = crossings[static_cast<std::size_t>(f)];
+      std::sort(list.begin(), list.end(),
+                [](const Crossing &p, const Crossing &q) { return p.along < q.along; });
+      for (std::size_t k = 0; k + 1 < list.size(); k++)
+      {
+        const double separation = list[k + 1].along - list[k].along;
+        Band(separation, clearance);
+        if (!BelowClearance(separation))
+        {
+          continue;
+        }
+        const bool metal_between = list[k].gap_along < 0.0 && list[k + 1].gap_along > 0.0;
+        if (metal_between)
+        {
+          check.min_cross_section =
+              std::min(check.min_cross_section.value_or(separation), separation);
+          check.narrow_cross_sections++;
+          continue;
+        }
+        Fail(f, "two crossings of face " + std::to_string(f) + " bound a gap of " +
+                    std::to_string(separation) + " R");
+      }
+    }
+    return check;
+  };
+
+  // T3: grow every failing face by one step until every face passes or a cap refuses.
+  // `steps` counts the applied steps per face, `attempted` every step a failing face asked
+  // for (a refused step is attempted, not applied; review MINOR-2).
+  std::array<int, 4> steps{}, attempted{};
+  std::vector<std::string> step_reasons;  // the first failure behind every applied step
+  // Every T2 pass (decision 287 (a)): its failing faces, every failure, and its band /
+  // exterior readings — the final pass is the last entry; the counters below sum them.
+  nlohmann::json passes = nlohmann::json::array();
+  std::size_t total_band_hits = 0, total_exterior_vertices = 0, total_exterior_edges = 0;
+  std::vector<Piece> pieces;
+  FaceCheck check;
+  std::optional<std::string> unboxable, unboxable_reason;
+  for (;;)
+  {
+    pieces = ClipPlan();
+    std::array<double, 4> dilated = box;
+    for (int f = 0; f < 4; f++)
+    {
+      dilated[static_cast<std::size_t>(f)] += (f < 2 ? -1.0 : 1.0) * clearance;
+    }
+    const std::vector<Piece> shell = ClipPlanTo(dilated, false);
+    const std::size_t box_slivers = slivers_dropped;
+    check = CheckFaces(pieces, shell);
+    slivers_dropped = box_slivers;
+    passes.push_back({{"Box", BoxJson(box)},
+                      {"Failing", check.failing},
+                      {"Failures", check.failures},
+                      {"ThresholdBandHits", check.band_hits},
+                      {"ExteriorVertices", check.exterior_vertices},
+                      {"ExteriorEdges", check.exterior_edges}});
+    total_band_hits += check.band_hits;
+    total_exterior_vertices += check.exterior_vertices;
+    total_exterior_edges += check.exterior_edges;
+    if (std::none_of(check.failing.begin(), check.failing.end(), [](bool b) { return b; }))
+    {
+      break;
+    }
+    std::array<double, 4> grown = box;
+    for (int f = 0; f < 4; f++)
+    {
+      if (!check.failing[static_cast<std::size_t>(f)])
+      {
+        continue;
+      }
+      attempted[static_cast<std::size_t>(f)]++;
+      if (steps[static_cast<std::size_t>(f)] >= kSupportFaceGrowthMaxSteps)
+      {
+        unboxable = "face " + std::to_string(f) + " failed the clearance rule after " +
+                    std::to_string(kSupportFaceGrowthMaxSteps) +
+                    " growth steps: " + check.first_failure;
+        unboxable_reason = "GrowthStepsExhausted";
+        break;
+      }
+      grown[static_cast<std::size_t>(f)] += (f < 2 ? -1.0 : 1.0) * step;
+    }
+    if (unboxable)
+    {
+      break;
+    }
+    const double span = std::max(grown[2] - grown[0], grown[3] - grown[1]);
+    if (span > span_cap * (1.0 + 1.0e-12))
+    {
+      unboxable = "the growth needed by the clearance rule takes the plan span to " +
+                  std::to_string(span) + " R beyond the span cap " +
+                  std::to_string(span_cap) + " R: " + check.first_failure;
+      unboxable_reason = "SpanCapRefusedGrowth";
+      break;
+    }
+    for (int f = 0; f < 4; f++)
+    {
+      if (check.failing[static_cast<std::size_t>(f)])
+      {
+        steps[static_cast<std::size_t>(f)]++;
+      }
+    }
+    step_reasons.push_back(check.first_failure);
+    for (double &v : grown)
+    {
+      v = Q(v);
+    }
+    box = grown;
+    out.grown = true;
+  }
+  const double span = std::max(box[2] - box[0], box[3] - box[1]);
+  out.exceeds_span_cap = span > span_cap * (1.0 + 1.0e-12);
+
+  // The context pieces in the portion encoding (arc pieces of one arc merged as the
+  // claims are, never across another cluster's claim cut), classed chain (connected to
+  // the claims inside the box through run ends and device vertices; a piece on another
+  // cluster's claims stops the chain and never joins it, decision 285 (1)) or foreign.
+  std::vector<SignaturePortion> context_portions;
+  std::vector<std::optional<std::size_t>> context_claimed_by;
+  std::vector<bool> context_excluded;
+  std::size_t excluded_pieces = 0;
+  double excluded_length = 0.0;
+  nlohmann::json excluded_entries = nlohmann::json::array();
+  {
+    std::map<std::optional<std::size_t>, std::vector<std::pair<std::size_t, Interval>>>
+        groups;
+    for (const Piece &piece : pieces)
+    {
+      if (piece.Excluded())
+      {
+        const auto &segment = input.segments[piece.segment];
+        SignaturePortion portion;
+        portion.p0 = SegmentAt(piece.segment, piece.s.first);
+        portion.p1 = SegmentAt(piece.segment, piece.s.second);
+        portion.gap_direction = ExcludedGapDirection(piece.segment);
+        portion.conductor = segment.conductor;
+        portion.interfaces = InterfaceNames(segment.targets);
+        portion.boundary_law = segment.boundary_law;
+        const Point2 c0 = Local(portion.p0), c1 = Local(portion.p1);
+        const auto &exclusion =
+            segment.exclusion ? *segment.exclusion : *segment_exclusion[piece.segment];
+        excluded_entries.push_back({{"P", {Q(c0[0]), Q(c0[1]), Q(c1[0]), Q(c1[1])}},
+                                    {"LengthOverR", Q(PieceLength(piece) / R)},
+                                    {"Class", exclusion.first},
+                                    {"Reason", exclusion.second}});
+        excluded_pieces++;
+        excluded_length += PieceLength(piece);
+        context_portions.push_back(std::move(portion));
+        context_claimed_by.push_back(std::nullopt);
+        context_excluded.push_back(true);
+        continue;
+      }
+      groups[piece.claimed_by].emplace_back(piece.run, piece.s);
+    }
+    for (const auto &[owner, intervals] : groups)
+    {
+      for (auto &portion : ClusterSignaturePortions(intervals))
+      {
+        context_portions.push_back(std::move(portion));
+        context_claimed_by.push_back(owner);
+        context_excluded.push_back(false);
+      }
+    }
+  }
+  const double join = kSignatureParameterToleranceOverRadius * R;
+  std::vector<Point3D> chain_ends;
+  for (const auto &portion : portions)
+  {
+    chain_ends.push_back(portion.p0);
+    chain_ends.push_back(portion.p1);
+  }
+  std::vector<bool> is_chain(context_portions.size(), false);
+  for (bool changed = true; changed;)
+  {
+    changed = false;
+    for (std::size_t k = 0; k < context_portions.size(); k++)
+    {
+      if (is_chain[k] || context_claimed_by[k] || context_excluded[k])
+      {
+        continue;
+      }
+      const auto &portion = context_portions[k];
+      const bool touches = std::any_of(
+          chain_ends.begin(), chain_ends.end(), [&](const Point3D &e)
+          { return Distance(e, portion.p0) <= join || Distance(e, portion.p1) <= join; });
+      if (touches)
+      {
+        is_chain[k] = true;
+        chain_ends.push_back(portion.p0);
+        chain_ends.push_back(portion.p1);
+        changed = true;
+      }
+    }
+  }
+  FrameSupport support;
+  support.box = box;
+  std::set<int> claim_conductors, foreign_conductors;
+  for (const auto &portion : portions)
+  {
+    claim_conductors.insert(portion.conductor);
+  }
+  std::size_t chain_pieces = 0, foreign_pieces = 0, other_claimed_pieces = 0;
+  double other_claimed_length = 0.0;
+  nlohmann::json claimed_by_other = nlohmann::json::array();
+  for (std::size_t k = 0; k < context_portions.size(); k++)
+  {
+    const auto &portion = context_portions[k];
+    const double length =
+        portion.arc ? SignatureArcLength(*portion.arc) : Distance(portion.p0, portion.p1);
+    if (is_chain[k])
+    {
+      chain_pieces++;
+      out.chain_length += length;
+    }
+    else
+    {
+      foreign_pieces++;
+      out.foreign_length += length;
+      if (!claim_conductors.count(portion.conductor))
+      {
+        foreign_conductors.insert(portion.conductor);
+      }
+      if (context_claimed_by[k])
+      {
+        other_claimed_pieces++;
+        other_claimed_length += length;
+        const Point2 c0 = Local(portion.p0), c1 = Local(portion.p1);
+        claimed_by_other.push_back({{"P", {Q(c0[0]), Q(c0[1]), Q(c1[0]), Q(c1[1])}},
+                                    {"LengthOverR", Q(length / R)},
+                                    {"Cluster", *context_claimed_by[k]}});
+      }
+    }
+    support.context.push_back({portion, is_chain[k]});
+  }
+
+  // Vertex features inside the box that are not members of the cluster: on a chain piece
+  // end (the device corner the chain turns at: owned by the coupon at placement, rule B4)
+  // or foreign.
+  nlohmann::json chain_vertices = nlohmann::json::array(),
+                 foreign_vertices = nlohmann::json::array();
+  {
+    std::set<std::size_t> candidate_sites;
+    for (const Piece &piece : pieces)
+    {
+      if (piece.Excluded())
+      {
+        continue;
+      }
+      for (auto it = sites_by_run.lower_bound(piece.run);
+           it != sites_by_run.end() && it->first == piece.run; ++it)
+      {
+        candidate_sites.insert(it->second);
+      }
+    }
+    for (const std::size_t s : candidate_sites)
+    {
+      const auto &site = sites[s];
+      if (site.cluster == static_cast<int>(c))
+      {
+        continue;
+      }
+      const Point2 p = Local(site.point);
+      if (!Inside(p, snap))
+      {
+        continue;
+      }
+      const bool on_chain =
+          std::any_of(chain_ends.begin(), chain_ends.end(),
+                      [&](const Point3D &e) { return Distance(e, site.point) <= join; });
+      // With the vertex's distance from the nearest face (units of R): a corner closer
+      // than R to a face has an arm partly outside the box (review MINOR-1 (a); the
+      // placement's vertex-ownership rule reads it).
+      double face_distance = std::numeric_limits<double>::infinity();
+      for (int f = 0; f < 4; f++)
+      {
+        face_distance = std::min(face_distance, std::abs(p[FaceAxis(f)] - FaceLine(f)));
+      }
+      (on_chain ? chain_vertices : foreign_vertices)
+          .push_back({{"P", {Q(p[0]), Q(p[1])}},
+                      {"Type", site.type},
+                      {"FaceDistanceOverR", Q(face_distance)},
+                      {"Site", s},
+                      {"Cluster", site.cluster >= 0 ? nlohmann::json(site.cluster)
+                                                    : nlohmann::json(nullptr)},
+                      {"Feature", nullptr}});
+    }
+  }
+
+  // The legacy contract's census of the same feature (decision 236: every claim-cut end
+  // continued straight to the claims-derived box face): the straight continuation length
+  // and the part of it lying on no device edge (fictitious metal boundary).
+  double continuation_length = 0.0;
+  {
+    std::vector<Point3D> ends;
+    for (const auto &portion : portions)
+    {
+      ends.push_back(portion.p0);
+      ends.push_back(portion.p1);
+    }
+    for (const auto &vertex : vertices)
+    {
+      ends.push_back(vertex.point);
+    }
+    const double coincidence = kSupportEndCoincidenceOverRadius * R;
+    for (std::size_t k = 0; k < portions.size(); k++)
+    {
+      const auto &portion = portions[k];
+      if (portion.arc)
+      {
+        continue;
+      }
+      for (const bool at_p0 : {true, false})
+      {
+        const Point3D &end = at_p0 ? portion.p0 : portion.p1;
+        bool connected = false;
+        for (std::size_t j = 0; j < ends.size() && !connected; j++)
+        {
+          const bool own = j / 2 == k && j < 2 * portions.size();
+          connected = !own && Distance(ends[j], end) <= coincidence;
+        }
+        if (connected)
+        {
+          continue;
+        }
+        const Point2 e = Local(end);
+        const Point2 d = LocalDirection(at_p0 ? Sub(portion.p0, portion.p1)
+                                              : Sub(portion.p1, portion.p0));
+        // Exit of the ray e + t d from the claims-derived box.
+        double exit = std::numeric_limits<double>::infinity();
+        for (int axis = 0; axis < 2; axis++)
+        {
+          if (std::abs(d[axis]) > 1.0e-15)
+          {
+            exit = std::min(
+                exit,
+                std::max((claims_box[static_cast<std::size_t>(axis)] - e[axis]) / d[axis],
+                         (claims_box[static_cast<std::size_t>(axis + 2)] - e[axis]) /
+                             d[axis]));
+          }
+        }
+        if (!std::isfinite(exit) || exit <= 0.0)
+        {
+          continue;
+        }
+        continuation_length += exit * R;
+        // Covered by straight device pieces collinear with the ray.
+        std::vector<Interval> covered;
+        for (const auto &context : context_portions)
+        {
+          if (context.arc)
+          {
+            continue;
+          }
+          const Point2 c0 = Local(context.p0), c1 = Local(context.p1);
+          const Point2 dir = {c1[0] - c0[0], c1[1] - c0[1]};
+          const double norm = std::hypot(dir[0], dir[1]);
+          if (norm <= 0.0 || std::abs(dir[0] * d[1] - dir[1] * d[0]) / norm > 1.0e-6)
+          {
+            continue;
+          }
+          const double off = (c0[0] - e[0]) * d[1] - (c0[1] - e[1]) * d[0];
+          if (std::abs(off) > snap)
+          {
+            continue;
+          }
+          double t0 = (c0[0] - e[0]) * d[0] + (c0[1] - e[1]) * d[1];
+          double t1 = (c1[0] - e[0]) * d[0] + (c1[1] - e[1]) * d[1];
+          if (t0 > t1)
+          {
+            std::swap(t0, t1);
+          }
+          t0 = std::max(t0, 0.0);
+          t1 = std::min(t1, exit);
+          if (t1 > t0)
+          {
+            covered.emplace_back(t0, t1);
+          }
+        }
+        double covered_length = 0.0;
+        for (const auto &interval : MergeIntervals(std::move(covered), 0.0))
+        {
+          covered_length += interval.second - interval.first;
+        }
+        out.fictitious_continuation_length += std::max(exit - covered_length, 0.0) * R;
+      }
+    }
+  }
+
+  // Legacy equivalence (ruling on R0 review MAJOR-1, option (i)): the context is "empty"
+  // in the sense of the key rule when every context piece is what the decision-236
+  // contract already draws — a straight chain piece abutting a claim-cut end, collinear
+  // with that claim and reaching a face of the box — so that the device plan clipped to
+  // the box is the legacy coupon geometry and the claims-only key stands.
+  out.legacy_equivalent = !out.grown;
+  {
+    std::vector<Point3D> ends;
+    for (const auto &portion : portions)
+    {
+      ends.push_back(portion.p0);
+      ends.push_back(portion.p1);
+    }
+    for (const auto &vertex : vertices)
+    {
+      ends.push_back(vertex.point);
+    }
+    const double coincidence = kSupportEndCoincidenceOverRadius * R;
+    auto FreeEnd = [&](std::size_t k, const Point3D &end)
+    {
+      for (std::size_t j = 0; j < ends.size(); j++)
+      {
+        const bool own = j < 2 * portions.size() && j / 2 == k;
+        if (!own && Distance(ends[j], end) <= coincidence)
+        {
+          return false;
+        }
+      }
+      return true;
+    };
+    auto OnFace = [&](const Point2 &p)
+    {
+      for (int f = 0; f < 4; f++)
+      {
+        if (std::abs(p[FaceAxis(f)] - FaceLine(f)) <= snap)
+        {
+          return true;
+        }
+      }
+      return false;
+    };
+    for (std::size_t k = 0; k < context_portions.size() && out.legacy_equivalent; k++)
+    {
+      const auto &context = context_portions[k];
+      bool implied = false;
+      if (!context.arc && is_chain[k])
+      {
+        const Point2 c0 = Local(context.p0), c1 = Local(context.p1);
+        const Point2 dir = LocalDirection(Sub(context.p1, context.p0));
+        for (std::size_t j = 0; j < portions.size() && !implied; j++)
+        {
+          const auto &claim = portions[j];
+          if (claim.arc)
+          {
+            continue;
+          }
+          const Point2 t = LocalDirection(Sub(claim.p1, claim.p0));
+          if (std::abs(dir[0] * t[1] - dir[1] * t[0]) > 1.0e-6)
+          {
+            continue;  // not parallel to this claim
+          }
+          for (const bool at_p0 : {true, false})
+          {
+            const Point3D &end = at_p0 ? claim.p0 : claim.p1;
+            if (!FreeEnd(j, end))
+            {
+              continue;
+            }
+            const Point2 e = Local(end);
+            const bool abuts_0 = Distance(context.p0, end) <= join,
+                       abuts_1 = Distance(context.p1, end) <= join;
+            if (!abuts_0 && !abuts_1)
+            {
+              continue;
+            }
+            const Point2 &far = abuts_0 ? c1 : c0;
+            const double off = (far[0] - e[0]) * t[1] - (far[1] - e[1]) * t[0];
+            if (std::abs(off) <= snap && OnFace(far))
+            {
+              implied = true;
+              break;
+            }
+          }
+        }
+      }
+      out.legacy_equivalent = implied;
+    }
+  }
+
+  // Truncation segments (window cuts) inside the box: the plan is cut there (the excluded
+  // perimeter segments inside the box are context pieces, Context.ExcludedSegments: review
+  // MINOR-5, rule B1).
+  std::size_t truncation_segments = 0;
+  double truncation_length = 0.0;
+  const Point3D plane_normal = Normalize(Cross(x, y));
+  for (std::size_t i = 0; i < input.segments.size(); i++)
+  {
+    const auto &segment = input.segments[i];
+    if (!segment.truncation)
+    {
+      continue;
+    }
+    const Point2 p = Local(segment.p0), q = Local(segment.p1);
+    if (std::max(p[0], q[0]) < box[0] || std::min(p[0], q[0]) > box[2] ||
+        std::max(p[1], q[1]) < box[1] || std::min(p[1], q[1]) > box[3])
+    {
+      continue;
+    }
+    // Plane test: the segment's distance along the cluster normal.
+    if (std::abs(Dot(Sub(segment.p0, origin), plane_normal)) > 2.0 * Tol() ||
+        std::abs(Dot(Sub(segment.p1, origin), plane_normal)) > 2.0 * Tol())
+    {
+      continue;
+    }
+    double t0 = 0.0, t1 = 1.0;
+    bool empty = false;
+    for (int axis = 0; axis < 2 && !empty; axis++)
+    {
+      const double d = q[axis] - p[axis];
+      const double lo_a = box[static_cast<std::size_t>(axis)],
+                   hi_a = box[static_cast<std::size_t>(axis + 2)];
+      if (std::abs(d) <= 1.0e-15)
+      {
+        empty = p[axis] < lo_a || p[axis] > hi_a;
+        continue;
+      }
+      double ta = (lo_a - p[axis]) / d, tb = (hi_a - p[axis]) / d;
+      if (ta > tb)
+      {
+        std::swap(ta, tb);
+      }
+      t0 = std::max(t0, ta);
+      t1 = std::min(t1, tb);
+      empty = t0 >= t1;
+    }
+    if (!empty)
+    {
+      truncation_segments++;
+      truncation_length += (t1 - t0) * Distance(segment.p0, segment.p1);
+    }
+  }
+
+  out.band_hits = total_band_hits + box_band_hits;
+  nlohmann::json growth = {{"StepOverR", step},
+                           {"MaxSteps", kSupportFaceGrowthMaxSteps},
+                           {"Steps", steps},
+                           {"AttemptedSteps", attempted},
+                           {"StepReasons", step_reasons},
+                           {"Passes", passes},
+                           {"Grown", out.grown}};
+  nlohmann::json face_rules = {
+      {"SnapOverR", snap},
+      {"ClearanceOverR", clearance},
+      {"ComparisonQuantumOverR", kSignatureLengthQuantumOverRadius},
+      {"SliversDropped", slivers_dropped},
+      {"Crossings", check.crossings},
+      {"MinClearanceOverR", check.min_clearance ? nlohmann::json(Q(*check.min_clearance))
+                                                : nlohmann::json(nullptr)},
+      {"MinCrossingSine", check.min_crossing_sine
+                              ? nlohmann::json(Q(*check.min_crossing_sine))
+                              : nlohmann::json(nullptr)},
+      {"MinCrossSectionOverR", check.min_cross_section
+                                   ? nlohmann::json(Q(*check.min_cross_section))
+                                   : nlohmann::json(nullptr)},
+      {"NarrowCrossSections", check.narrow_cross_sections},
+      {"ExteriorVertices", total_exterior_vertices},
+      {"ExteriorEdges", total_exterior_edges},
+      {"ThresholdBandRelative", band},
+      {"ThresholdBandHits", total_band_hits},
+      {"FinalPassThresholdBandHits", check.band_hits},
+      {"Passes", passes.size()},
+      {"BoxRuleThresholdBandHits", box_band_hits}};
+  out.record = {
+      {"ClaimsBox", BoxJson(claims_box)},
+      {"Box", BoxJson(box)},
+      {"SpanOverR", Q(span)},
+      {"SpanCapOverR", span_cap},
+      {"ExceedsSpanCap", out.exceeds_span_cap},
+      {"LegacyEquivalent", out.legacy_equivalent},
+      {"Growth", growth},
+      {"FaceRules", face_rules},
+      {"Context",
+       {{"Pieces", context_portions.size()},
+        {"ChainPieces", chain_pieces},
+        {"ForeignPieces", foreign_pieces},
+        {"ChainLengthOverR", Q(out.chain_length / R)},
+        {"ForeignLengthOverR", Q(out.foreign_length / R)},
+        {"ForeignConductors", foreign_conductors.size()},
+        {"ClaimedByOtherFeature",
+         {{"Pieces", other_claimed_pieces},
+          {"LengthOverR", Q(other_claimed_length / R)},
+          {"Entries", claimed_by_other}}},
+        {"ExcludedSegments",
+         {{"Pieces", excluded_pieces},
+          {"LengthOverR", Q(excluded_length / R)},
+          {"Entries", excluded_entries}}},
+        {"ChainVertices", chain_vertices},
+        {"ForeignVertices", foreign_vertices}}},
+      {"LegacyContinuation",
+       {{"StraightContinuationLengthOverR", Q(continuation_length / R)},
+        {"FictitiousContinuationLengthOverR", Q(out.fictitious_continuation_length / R)}}},
+      {"Truncation",
+       {{"Segments", truncation_segments}, {"LengthOverR", Q(truncation_length / R)}}},
+      {"Unboxable", unboxable ? nlohmann::json(*unboxable) : nlohmann::json(nullptr)},
+      {"UnboxableReason",
+       unboxable_reason ? nlohmann::json(*unboxable_reason) : nlohmann::json(nullptr)}};
+  if (!unboxable)
+  {
+    out.support = std::move(support);
+  }
+  return out;
+}
+
+// The non-hashed ownership ids of a cluster feature's context census (review MINOR-1):
+// every ChainVertices / ForeignVertices entry names its vertex feature (a free site) or the
+// cluster whose claims hold it; every ClaimedByOtherFeature entry names the other cluster's
+// feature. Called after EmitClusters (cluster ids) and after Assign (site ids).
+void Identifier::RecordContextFeatureIds(int feature)
+{
+  if (feature < 0 || static_cast<std::size_t>(feature) >= features.size())
+  {
+    return;
+  }
+  nlohmann::json &record = features[static_cast<std::size_t>(feature)].spatial_support;
+  if (!record.is_object() || !record.contains("Context"))
+  {
+    return;
+  }
+  auto ClusterFeature = [&](const nlohmann::json &cluster) -> nlohmann::json
+  {
+    if (!cluster.is_number_integer())
+    {
+      return nullptr;
+    }
+    const auto c = cluster.get<std::size_t>();
+    return c < cluster_feature.size() && cluster_feature[c] >= 0
+               ? nlohmann::json(cluster_feature[c])
+               : nlohmann::json(nullptr);
+  };
+  nlohmann::json &context = record["Context"];
+  for (const char *list : {"ChainVertices", "ForeignVertices"})
+  {
+    for (auto &entry : context[list])
+    {
+      if (entry["Cluster"].is_number_integer())
+      {
+        entry["Feature"] = ClusterFeature(entry["Cluster"]);
+      }
+      else if (entry.contains("Site") && entry["Site"].is_number_integer())
+      {
+        const auto s = entry["Site"].get<std::size_t>();
+        entry["Feature"] = s < site_feature.size() && site_feature[s] >= 0
+                               ? nlohmann::json(site_feature[s])
+                               : nlohmann::json(nullptr);
+      }
+    }
+  }
+  for (auto &entry : context["ClaimedByOtherFeature"]["Entries"])
+  {
+    entry["Feature"] = ClusterFeature(entry["Cluster"]);
+  }
+}
+
 void Identifier::EmitClusters()
 {
   double signature_seconds = 0.0;
   std::size_t largest_cluster_edges = 0;
+  sites_by_run.clear();
+  for (std::size_t s = 0; s < sites.size(); s++)
+  {
+    for (const std::size_t r : sites[s].runs_at_site)
+    {
+      sites_by_run.emplace(r, s);
+    }
+  }
+  claims_by_run.clear();
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    for (const auto &[r, interval] : cluster_claimed[c])
+    {
+      claims_by_run[r].emplace_back(interval, c);
+    }
+  }
+  cluster_feature.assign(cluster_claimed.size(), -1);
+  spatial_support_summary = {};
   for (std::size_t c = 0; c < cluster_claimed.size(); c++)
   {
     stage.Progress(c, cluster_claimed.size());
@@ -9723,14 +11607,115 @@ void Identifier::EmitClusters()
                              std::to_string(cluster_claimed.size()) + ", " +
                              std::to_string(portions.size()) + " edges");
         });
+    // Spatial-support contract v3 (decision 282): the support in the claims-only canonical
+    // frame decides the contract — an empty context without growth keeps the claims-only
+    // key (today's coupons keep their keys); otherwise Box + Context enter the hashed
+    // signature, minimised over the candidate frames with the support of each frame; a
+    // cluster no frame can box is an UnboxableFeature (a Missing placeholder key).
+    ClusterSupportResult support = ClusterSupport(c, portions, vertices, canonical.origin,
+                                                  canonical.axes[0], canonical.axes[1]);
+    nlohmann::json signature;
+    int chirality = canonical.chirality;
+    Point3D origin = canonical.origin;
+    std::array<Point3D, 3> axes = canonical.axes;
+    int contract = 2;
+    if (support.support && support.legacy_equivalent)
+    {
+      signature = canonical.signature;
+    }
+    else
+    {
+      const auto v3 = CanonicalClusterSignatureWithSupport(
+          portions, vertices, n_cluster, R,
+          [&](const Point3D &o, const Point3D &x,
+              const Point3D &y) -> std::optional<FrameSupport>
+          {
+            ClusterSupportResult frame_support =
+                ClusterSupport(c, portions, vertices, o, x, y);
+            return frame_support.support;
+          },
+          [&](std::size_t done, std::size_t total)
+          {
+            stage.Progress(done, total,
+                           "support frames of cluster " + std::to_string(c) + " / " +
+                               std::to_string(cluster_claimed.size()));
+          });
+      if (v3)
+      {
+        contract = 3;
+        signature = v3->signature;
+        chirality = v3->chirality;
+        origin = v3->origin;
+        axes = v3->axes;
+        // The record of the frame the key was formed in.
+        support = ClusterSupport(c, portions, vertices, origin, axes[0], axes[1]);
+      }
+      else
+      {
+        contract = 0;
+        signature = canonical.signature;
+        signature["Unboxable"] = true;
+      }
+    }
     signature_seconds +=
         std::chrono::duration<double>(std::chrono::steady_clock::now() - signature_started)
             .count();
-    nlohmann::json signature = canonical.signature;
     signature["EdgeCount"] = portions.size();
-    const int feature = NewFeature("SpatialEdgeCluster", signature, canonical.chirality);
-    features[feature].origin = canonical.origin;
-    features[feature].axes = canonical.axes;
+    const int feature = NewFeature("SpatialEdgeCluster", signature, chirality);
+    cluster_feature[c] = feature;
+    features[feature].origin = origin;
+    features[feature].axes = axes;
+    features[feature].claims_origin = canonical.origin;
+    features[feature].claims_axes = canonical.axes;
+    features[feature].claims_chirality = canonical.chirality;
+    support.record["Contract"] = contract;
+    // The claims-only (contract-2) key of the cluster: the key a legacy model built under
+    // the decision-236 contract carries; equal to Hash for contract 2. A legacy-contract
+    // alias (USER decision 283) is verified against it.
+    {
+      nlohmann::json claims_signature = canonical.signature;
+      claims_signature["EdgeCount"] = portions.size();
+      support.record["ClaimsKey"] =
+          SignatureKeyAndHash(claims_signature, "SpatialEdgeCluster").second;
+    }
+    support.record["ContextDigest"] =
+        contract == 3
+            ? nlohmann::json(SpatialSupportContextDigest(features[feature].signature))
+            : nlohmann::json(nullptr);
+    features[feature].spatial_support = support.record;
+    spatial_support_summary.clusters++;
+    spatial_support_summary.claims_keyed += contract == 2 ? 1 : 0;
+    spatial_support_summary.context_keyed += contract == 3 ? 1 : 0;
+    spatial_support_summary.unboxable += contract == 0 ? 1 : 0;
+    spatial_support_summary.grown += support.grown ? 1 : 0;
+    spatial_support_summary.exceeding_span_cap += support.exceeds_span_cap ? 1 : 0;
+    spatial_support_summary.chain_length += support.chain_length;
+    spatial_support_summary.foreign_length += support.foreign_length;
+    spatial_support_summary.fictitious_continuation_length +=
+        support.fictitious_continuation_length;
+    spatial_support_summary.threshold_band_hits += support.band_hits;
+    if (input.log && contract != 2)
+    {
+      std::ostringstream text;
+      text << "  Identification spatial support: cluster " << c << " (" << portions.size()
+           << " edges) " << (contract == 3 ? "keyed with Box + Context" : "UNBOXABLE")
+           << ": context pieces "
+           << (support.support ? support.support->context.size() : std::size_t(0))
+           << ", chain " << support.chain_length / R << " R, foreign "
+           << support.foreign_length / R << " R, grown " << support.grown
+           << ", fictitious straight continuation "
+           << support.fictitious_continuation_length / R << " R, threshold-band readings "
+           << support.band_hits << " (every T2 pass + the box rule)\n";
+      if (support.band_hits > 0)
+      {
+        text << "  WARNING: cluster " << c << "'s key rests on " << support.band_hits
+             << " face-rule reading(s) within " << kKnifeEdgeBandRelative
+             << " of a threshold (decision 287); see "
+                "Features[].SpatialSupport.FaceRules.ThresholdBandHits and "
+                "Growth.Passes\n";
+      }
+      input.log(text.str());
+    }
     for (const auto &[r, interval] : cluster_claimed[c])
     {
       claims[r].push_back({feature, 0, interval});
@@ -9743,6 +11728,12 @@ void Identifier::EmitClusters()
         features[feature].vertices.push_back(*sites[s].vertex);
       }
     }
+  }
+  // The feature ids of the other clusters in the context census (known only now that
+  // every cluster has its feature; the free sites' ids follow in Assign).
+  for (std::size_t c = 0; c < cluster_claimed.size(); c++)
+  {
+    RecordContextFeatureIds(cluster_feature[c]);
   }
   {
     std::ostringstream counts;
@@ -10029,6 +12020,7 @@ nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &re
 
 void Identifier::Assign(IdentificationResult &result)
 {
+  site_feature.assign(sites.size(), -1);
   // Vertex features outside clusters.
   for (auto &site : sites)
   {
@@ -10080,6 +12072,7 @@ void Identifier::Assign(IdentificationResult &result)
       }
     }
     const int feature = NewFeature(site.type, signature);
+    site_feature[static_cast<std::size_t>(&site - sites.data())] = feature;
     features[feature].origin = site.point;
     features[feature].axes = axes;
     for (const auto &[r, interval] : site.window)
@@ -10091,6 +12084,10 @@ void Identifier::Assign(IdentificationResult &result)
       vertex_feature[*site.vertex] = feature;
       features[feature].vertices.push_back(*site.vertex);
     }
+  }
+  for (const int feature : cluster_feature)
+  {
+    RecordContextFeatureIds(feature);
   }
 
   // Resolve the claims by priority and hand the remainder to the chain's isolated edge.
@@ -11108,6 +13105,7 @@ void Identifier::Assign(IdentificationResult &result)
   result.stack_geometric_offsets = stack_geometric_offsets;
   result.stack_composition_cap_hits = stack_composition_cap_hits;
   result.stack_images_merged = stack_images_merged;
+  result.spatial_support = spatial_support_summary;
   result.extension = {extension_passes,
                       extension_portions,
                       extension_sites,
@@ -11522,7 +13520,25 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Pod(f.match_deviation.value_or(-1.0));
     w.Pod(f.match_note.has_value());
     w.String(f.match_note.value_or(""));
+    w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
+    w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
+    w.Point(f.claims_origin);
+    for (const auto &axis : f.claims_axes)
+    {
+      w.Point(axis);
+    }
+    w.Pod(f.claims_chirality);
   }
+  w.Size(result.spatial_support.clusters);
+  w.Size(result.spatial_support.claims_keyed);
+  w.Size(result.spatial_support.context_keyed);
+  w.Size(result.spatial_support.grown);
+  w.Size(result.spatial_support.unboxable);
+  w.Size(result.spatial_support.exceeding_span_cap);
+  w.Pod(result.spatial_support.chain_length);
+  w.Pod(result.spatial_support.foreign_length);
+  w.Pod(result.spatial_support.fictitious_continuation_length);
+  w.Size(result.spatial_support.threshold_band_hits);
   w.Size(result.segments.size());
   for (const auto &s : result.segments)
   {
@@ -11661,7 +13677,29 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     {
       f.match_note = note;
     }
+    const std::string support = r.String();
+    f.spatial_support =
+        support.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(support);
+    const std::string legacy = r.String();
+    f.legacy_contract =
+        legacy.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(legacy);
+    f.claims_origin = r.Point();
+    for (auto &axis : f.claims_axes)
+    {
+      axis = r.Point();
+    }
+    f.claims_chirality = r.Pod<int>();
   }
+  result.spatial_support.clusters = r.Size();
+  result.spatial_support.claims_keyed = r.Size();
+  result.spatial_support.context_keyed = r.Size();
+  result.spatial_support.grown = r.Size();
+  result.spatial_support.unboxable = r.Size();
+  result.spatial_support.exceeding_span_cap = r.Size();
+  result.spatial_support.chain_length = r.Pod<double>();
+  result.spatial_support.foreign_length = r.Pod<double>();
+  result.spatial_support.fictitious_continuation_length = r.Pod<double>();
+  result.spatial_support.threshold_band_hits = r.Size();
   result.segments.resize(r.Size());
   for (auto &s : result.segments)
   {
@@ -11830,6 +13868,28 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     if (feature.match_note)
     {
       entry["Match"]["Note"] = *feature.match_note;
+    }
+    if (!feature.legacy_contract.is_null())
+    {
+      // Matched through an explicit legacy-contract alias of the library (USER decision
+      // 283): the legacy model, the aliased v3 key, the verified context digest and the
+      // recorded context.
+      entry["Match"]["LegacyContract"] = feature.legacy_contract;
+    }
+    if (!feature.spatial_support.is_null())
+    {
+      // Spatial-support record (contract v3, decision 282; units of R in the feature's
+      // frame): the claims-derived and the grown box, the face-rule outcome, the context
+      // census (chain / foreign pieces and vertices), the legacy contract's fictitious
+      // straight continuation, the window truncation inside the box.
+      entry["SpatialSupport"] = feature.spatial_support;
+      // The claims-only canonical frame (the placement frame of a legacy-contract alias,
+      // USER decision 283); equal to Frame unless the key is contract 3.
+      entry["ClaimsFrame"] = {{"Origin", P(feature.claims_origin)},
+                              {"Axes",
+                               {D(feature.claims_axes[0]), D(feature.claims_axes[1]),
+                                D(feature.claims_axes[2])}},
+                              {"Chirality", feature.claims_chirality}};
     }
     if (multi_sided)
     {
@@ -12315,6 +14375,79 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                       "interaction distance is the CrossLayer exclusion"},
         {"PortRule", "metal perimeter bordering a LumpedPort / WavePort boundary face is "
                      "the Port exclusion; its vertices are PortCut, never features"},
+        {"SupportContinuationOverR", kSupportContinuationOverRadius},
+        {"SupportPaddingOverR", kSupportPaddingOverRadius},
+        {"SupportEndCoincidenceOverR", kSupportEndCoincidenceOverRadius},
+        {"SupportFaceSnapOverR", kSupportFaceSnapOverRadius},
+        {"SupportFaceClearanceOverR", kSupportFaceClearanceOverRadius},
+        {"SupportFaceGrowthStepOverR", kSupportFaceGrowthStepOverRadius},
+        {"SupportFaceGrowthMaxSteps", kSupportFaceGrowthMaxSteps},
+        {"SupportSpanCapOverR", kSupportSpanCapOverRadius},
+        {"SupportComparisonQuantumOverR", kSignatureLengthQuantumOverRadius},
+        {"SpatialSupportContract",
+         "contract v3 (USER decision 281, supervisor decision 282, 2026-10-03; replaces "
+         "the "
+         "decision-236 straight-continuation geometry): the coupon metal of a "
+         "SpatialEdgeCluster is the DEVICE PLAN of the cluster's plane (every perimeter "
+         "run, straight or on its fitted arc, with its conductor) clipped to the claims-"
+         "derived support box in the cluster's canonical frame "
+         "(Features[].SpatialSupport). "
+         "Box (rule B2 = the coupon generator's coupon_bounds in the canonical frame, "
+         "units "
+         "of R): every claimed portion is a row along its own tangent; a claim-cut end "
+         "(touching no vertex and no other portion end within SupportEndCoincidenceOverR) "
+         "is lengthened to at least R from the row midpoint, every row end at or beyond R "
+         "continues by SupportContinuationOverR R, the rows are widened by R on both "
+         "sides and the bounding box padded by SupportPaddingOverR R; arc portions are "
+         "chorded at ClusterArcChordStepDegrees / ClusterArcChordMaxLengthOverR as the "
+         "builder chords them. Context: every run piece of the plane inside the box that "
+         "is not a claim, in the portion encoding with Chain true on the pieces connected "
+         "to the claims inside the box through run ends and device vertices (the own "
+         "continuation chains, rule B3: the within-R accounting and the continuation "
+         "ownership follow them) and false on foreign edges (present in both coupon twins, "
+         "excluded from the within-R accounting; their patches untouched); conductor "
+         "labels by first appearance over the sorted Portions THEN the sorted Context. "
+         "Face rules, dimensionless: T1 a piece end within SupportFaceSnapOverR R of a "
+         "face "
+         "is ON the face and a context piece shorter than that is dropped (the sliver "
+         "quantum); T2 every device edge inside the box keeps SupportFaceClearanceOverR R "
+         "from every face it does not cross, every piece end not on a face (device vertex, "
+         "claim end; an end made only by another cluster's claim cut is no vertex and is "
+         "exempt) and every face crossing keep that clearance from every other face "
+         "(a crossing near a box corner), every crossing meets its face at sin(theta) >= "
+         "SupportFaceClearanceOverR, and two crossings of one face closer than that may "
+         "bound metal (a narrow lead: allowed, FaceRules.MinCrossSectionOverR) but not "
+         "gap; every length threshold (snap, clearance, separation) is read on the "
+         "SupportComparisonQuantumOverR grid (decision 287 (b): a value within half a "
+         "quantum of the threshold is AT it and takes the rule's inclusive side, so an "
+         "edge on a claims-box face reads exactly the clearance from the moved face and "
+         "passes deterministically; keys are geometry-precise to the quantum and "
+         "sub-quantum noise cannot move them); "
+         "T3 every face failing T2 moves outward by SupportFaceGrowthStepOverR R per step "
+         "(all failing faces of a step together), T1 / T2 re-evaluated on the grown box "
+         "(new edges enter), at most SupportFaceGrowthMaxSteps steps per face and never "
+         "past the plan span cap SupportSpanCapOverR R (a claims-derived box already "
+         "beyond the cap is keyed and recorded ExceedsSpanCap — the builder's cap and its "
+         "per-case override decide as before — but may not grow); a cluster no box "
+         "satisfies is an UnboxableFeature: its signature carries Unboxable true (a "
+         "Missing placeholder no builder makes, never a knife-edge coupon) and the record "
+         "names the face and the reason. Key (ruling on R0 review MAJOR-1, option (i)): "
+         "Box + Context enter the hashed signature ONLY when the context is non-empty or "
+         "the box grew (Contract 3; the serialisation {Box, Context, Portions, Vertices} "
+         "minimised over the candidate frames of the CLAIMS, both handedness values, with "
+         "the box and context of each frame — the box frame IS the canonical frame, ruling "
+         "MAJOR-2 — so mirror images keep one key with opposite Chirality and rotated / "
+         "translated copies the same key); otherwise the key is the claims-only key of "
+         "contract 2 byte for byte (unchanged coupons keep their keys; no library "
+         "migration); the record is written in every case. The straight continuation of "
+         "the "
+         "decision-236 contract and the part of it lying on no device edge are recorded "
+         "per feature (LegacyContinuation: the fictitious island metal of D2 / D3-C) and "
+         "summed "
+         "under Diagnostics.SpatialSupport; vertex features (corners) inside a box on a "
+         "chain are listed (Context.ChainVertices: [x, y, Type, distance from the nearest "
+         "face / R]) for the placement's vertex ownership (rule B4; a corner closer than R "
+         "to a face has an arm partly outside the box); their signatures are unchanged"},
         {"Comparison", "strict less on the quantized grid"}}},
       {"ReferenceProcessNormal", D(reference_process_normal)},
       {"Features", feature_list},
@@ -12415,6 +14548,30 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
            "(decision 224): the claim-boundary artefacts of TranslationalPiecesAbsorbed "
            "(TwoSided / StackEndRecomposition within ClusterBallOverR x R of the "
            "cluster's claims)"}}},
+        {"SpatialSupport",
+         {{"Clusters", spatial_support.clusters},
+          {"ClaimsKeyed", spatial_support.claims_keyed},
+          {"ContextKeyed", spatial_support.context_keyed},
+          {"Grown", spatial_support.grown},
+          {"Unboxable", spatial_support.unboxable},
+          {"ExceedingSpanCap", spatial_support.exceeding_span_cap},
+          {"ChainLength", L(spatial_support.chain_length)},
+          {"ForeignLength", L(spatial_support.foreign_length)},
+          {"FictitiousContinuationLength",
+           L(spatial_support.fictitious_continuation_length)},
+          {"ThresholdBandHits", spatial_support.threshold_band_hits},
+          {"Rule", "Conventions.SpatialSupportContract: clusters keyed by their claims "
+                   "alone (contract 2: empty context, no growth), with Box + Context "
+                   "(contract 3), grown by T3, unboxable (Missing placeholder keys) and "
+                   "with a claims-derived box beyond the span cap; the context lengths "
+                   "(own chains / foreign edges inside the boxes) and the legacy "
+                   "contract's fictitious straight continuation, in the manifest's length "
+                   "unit; ThresholdBandHits counts the face-rule readings within "
+                   "KnifeEdgeBandRelative of a threshold (snap, clearance, crossing "
+                   "sine, crossing separation) over EVERY T2 pass of every cluster plus "
+                   "the box-rule readings (decision 287 (a): a key whose growth sequence "
+                   "was decided at a threshold is flagged; the per-pass readings are in "
+                   "Features[].SpatialSupport.Growth.Passes)"}}},
         {"StackEndThirdBodyLength", L(extension.stack_end_third_body_length)},
         {"StackEndThirdBodyRule",
          "pair / stack claimed length within 2R (3D, strict) of a cluster's claimed "

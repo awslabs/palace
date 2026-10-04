@@ -51,6 +51,10 @@ def process_frame(library, model_name):
     entries = model.get("Edges") if model.get("Topology") == "SpatialEdgeCluster" else model.get("Arms")
     if not isinstance(entries, list) or not entries:
         raise ValueError("Process library model has no complete edge geometry")
+    if model.get("SupportBox") is not None:
+        # A device-plan coupon (spatial-support contract v3, decision 282) is built in its
+        # signature's canonical frame: the mesh frame is the identity.
+        return np.identity(3)
     normal = np.asarray(entries[0].get("ProcessNormal"), dtype=float).reshape(-1)
     gap = np.asarray(entries[0].get("GapDirection"), dtype=float).reshape(-1)
     if (normal.shape != (3,) or gap.shape != (3,) or not np.all(np.isfinite(normal)) or

@@ -769,6 +769,72 @@ TEST_CASE("Manual polarized edge extraction ignores process-normal seams",
   }
 }
 
+TEST_CASE("Explicit edge segment exclusion (EdgeExcludeSegments)", "[geodata][Serial]")
+{
+  // Decision 282 rule B5: a spatial coupon's FOREIGN edges are removed from the
+  // edge-distance perimeter by explicit segments. On the unit cube's bottom face (z = 0)
+  // the perimeter is the four unit edges; excluding the edge x = 0 by its exact segment
+  // drops exactly the mesh segments on it (any subdivision), an empty list reproduces the
+  // tree, a tolerance miss keeps it, and excluding every edge fails closed.
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(2, 2, 1, mfem::Element::TETRAHEDRON);
+  mfem::ParMesh mesh(Mpi::World(), serial_mesh);
+  int bottom = 0;
+  for (const int candidate : serial_mesh.bdr_attributes)
+  {
+    auto marker = mesh::BdrAttrToMarker(mesh, std::vector<int>{candidate}, true);
+    auto segments = mesh::GetBoundaryEdgeSegments(mesh, marker);
+    if (!segments.empty() &&
+        std::all_of(segments.begin(), segments.end(), [](const auto &segment)
+                    { return segment.p0[2] == 0.0 && segment.p1[2] == 0.0; }))
+    {
+      bottom = candidate;
+      break;
+    }
+  }
+  REQUIRE(bottom > 0);
+  const auto full = BuildEdgeDistanceTree(mesh, {bottom}, {});
+  const auto identity = BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, {}, 0.0);
+  REQUIRE(identity->Size() == full->Size());
+  auto OnLeftEdge = [](const mesh::BoundaryEdgeSegment &segment)
+  { return segment.p0[0] == 0.0 && segment.p1[0] == 0.0; };
+  auto CountLeft = [&](const EdgeDistanceTree &tree)
+  {
+    std::size_t count = 0;
+    for (std::size_t i = 0; i < tree.Size(); i++)
+    {
+      count += OnLeftEdge(tree.GetSegment(i)) ? 1 : 0;
+    }
+    return count;
+  };
+  const std::size_t left = CountLeft(*full);
+  REQUIRE(left >= 2);  // the 2 x 2 subdivision splits the unit edge
+  const std::vector<std::array<double, 6>> exclude = {{0.0, 0.0, 0.0, 0.0, 1.0, 0.0}};
+  const auto excluded =
+      BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, exclude, 1.0e-3);
+  CHECK(excluded->Size() == full->Size() - left);
+  CHECK(CountLeft(*excluded) == 0);
+  mfem::Vector probe(3);
+  probe[0] = 0.05;
+  probe[1] = 0.5;
+  probe[2] = 0.0;
+  CHECK_THAT(std::sqrt(full->DistanceSquared(probe)), WithinAbs(0.05, 1.0e-12));
+  CHECK_THAT(std::sqrt(excluded->DistanceSquared(probe)), WithinAbs(0.5, 1.0e-12));
+  // A listed segment 1e-2 away from the edge (beyond the tolerance) excludes nothing.
+  const std::vector<std::array<double, 6>> miss = {{0.01, 0.0, 0.0, 0.01, 1.0, 0.0}};
+  CHECK(BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, miss, 1.0e-3)->Size() ==
+        full->Size());
+  // Half of the edge excludes only the mesh segments inside that half.
+  const std::vector<std::array<double, 6>> half = {{0.0, 0.0, 0.0, 0.0, 0.5, 0.0}};
+  CHECK(BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, half, 1.0e-3)->Size() ==
+        full->Size() - left / 2);
+  const std::vector<std::array<double, 6>> all = {{0.0, 0.0, 0.0, 0.0, 1.0, 0.0},
+                                                  {1.0, 0.0, 0.0, 1.0, 1.0, 0.0},
+                                                  {0.0, 0.0, 0.0, 1.0, 0.0, 0.0},
+                                                  {0.0, 1.0, 0.0, 1.0, 1.0, 0.0}};
+  CHECK_THROWS(BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, all, 1.0e-3));
+  CHECK_THROWS(BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, exclude, 0.0));
+}
+
 TEST_CASE("Boundary edge exclusion", "[geodata][Serial]")
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(

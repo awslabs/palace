@@ -146,7 +146,7 @@ def coupon_geometry(coupon, radius, parameters=None):
             "BoundaryCondition": coupon["BoundaryCondition"]}
 
 
-def stamp_signature_model(library_path, coupon, radius):
+def stamp_signature_model(library_path, coupon, radius, generated=None):
     """A version-2 coupon's model carries the record's canonical Signature (the matcher's
     exact key for a SpatialEdgeCluster) and, as Edges, the claimed portions exactly (what
     ModelClusterSignature canonicalises to the feature's frame; the generator wrote the
@@ -161,6 +161,16 @@ def stamp_signature_model(library_path, coupon, radius):
     model = library["Models"][0]
     model["Signature"] = geometry["Signature"]
     model["Edges"] = cluster_signature_geometry.model_edges(coupon, radius)
+    built = (generated or {}).get("Geometry", {})
+    if built.get("SupportBox") is not None:
+        # A device-plan coupon (decision 282): the generator's box (the signature's Box,
+        # mesh units, canonical frame), the context rows (the mesher's / config's further
+        # conductors) and the foreign edges the run config excludes from the within-R
+        # accounting (EdgeExcludeSegments, rule B5; case_inputs.derive).
+        model["SupportBox"] = list(built["SupportBox"])
+        model["ForeignEdges"] = [list(segment) for segment in built.get("ForeignEdges", [])]
+        model["ContextEdges"] = [dict(row) for row in built["Edges"] if row.get("Context")]
+        model["ContextEdgeCount"] = len(model["ContextEdges"])
     library_path.write_text(json.dumps(library, indent=2) + "\n")
     return True
 
@@ -171,7 +181,8 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangu
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     coupon_path = work / "coupon.json"
-    coupon_path.write_text(json.dumps(coupon_geometry(coupon, radius, parameters), indent=2) + "\n")
+    generated = coupon_geometry(coupon, radius, parameters)
+    coupon_path.write_text(json.dumps(generated, indent=2) + "\n")
     command = [python, str(GENERATOR), str(coupon_path), "--output", str(work), "--radius", str(radius),
                "--metal-thickness", str(parameters["metal_thickness"]), "--overetch-depth", str(parameters["overetch"]),
                "--sidewall-angle", str(parameters["sidewall_angle"]), "--top-rounding", str(parameters["top_radius"]),
@@ -185,7 +196,7 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangu
         failure = work / "generation-failure.json"
         reason = json.loads(failure.read_text()).get("Reason") if failure.is_file() else f"rc {result.returncode}"
         raise DeviceAdapterError(f"coupon {coupon['Id']}: the spatial generator stopped: {reason} (see {work / 'generate.log'})")
-    stamp_signature_model(work / "process-library.json", coupon, radius)
+    stamp_signature_model(work / "process-library.json", coupon, radius, generated)
     return command
 
 
@@ -316,7 +327,10 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                 shutil.copyfile(path, directory / path.name)
             (directory / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
             status = "written"
+        built_model = json.loads((directory / "process-library.json").read_text())["Models"][0]
         record["Coupons"].append({"Case": case_id, "Requirement": coupon["Id"], "EdgeCount": edge_count,
+                                  "ContextEdgeCount": int(built_model.get("ContextEdgeCount", 0)),
+                                  "SupportBox": built_model.get("SupportBox"),
                                   "Directory": str(directory), "ContentHash": digest, "Status": status,
                                   "Sources": json.loads((directory / "basis-contract.json").read_text())["Sources"],
                                   "Interfaces": coupon["Interfaces"], "DeviceOccurrences": coupon["DeviceOccurrences"],
