@@ -17,7 +17,8 @@
   coupon_library.py spatial-qualify traces --source DIR --run-config CFG [--thin-run-config CFG]
                             [--fabricated-mesh MSH] [--thin-mesh MSH] [--orders 4 5] [--device-traces CSV] --output DIR
   coupon_library.py spatial-qualify evaluate --dense-traces JSON --fabricated-matrices DIR --thin-matrices DIR
-                            --gate palace.json [--reference-box JSON] --library process-library.json --output JSON
+                            --gate palace.json [--gate palace.json ...] [--reference-box JSON] [--device-boxes JSON]
+                            --library process-library.json --output JSON
 
 `build --device` maps a device layout to coupon source directories first
 (device_coupons.py: discovery closure by Palace geometry preflights -> the planner's
@@ -52,10 +53,16 @@ writes library-qualification.json, qualification-gates.json and process-library.
 282 / 285 (5); qualify/spatial_qualification.py): `traces` writes the dense held-out traces
 (T2 = the conductor states + four exterior line charges, T1 = the device trace of a
 registration run) and the fabricated / thin solve configs at the library and control orders;
-`evaluate` reads the four runs and the p4 matrices, checks the closure and p-stability
-criteria (<= 0.02 per interface class within R), the matrix identity (<= 1e-6) and the
-conductor-consistency gate (Count 0, MaxRatio <= 1e-6) [+ the reference box integral of a
-window], and stamps PendingQualification -> Qualified / WindowValidated / Failed.
+`evaluate` reads the four runs (the interface classes from the UNION of the twin configs:
+fabricated and thin carry different Dielectric indices) and the p4 matrices, checks the
+closure (<= 0.02 per interface class within R), the DOMAIN twin-consistency (decision 299:
+|dE_dom,p5 - dE_dom,p4| / E_fab,dom,p5 <= 0.02; the thin twin acts through its domain matrix
+only, its surface p-steps are recorded as information), the matrix identity (<= 1e-6) and the
+resolution-aware conductor-consistency gate (Count 0, MaxRatio <= 1e-4 on every supplied
+device solve, to be supplied at the production orders p4 / p5 on the registration mesh) [+ the
+reference box integral of a window, + the device-side box domain reading of
+qualify/device_box_energies.py as information], and stamps PendingQualification -> Qualified
+/ WindowValidated / Failed.
 """
 import argparse
 from pathlib import Path
@@ -129,8 +136,8 @@ def build_parser():
     continuity.add_argument("library", help="process-library.json")
     continuity.add_argument("--gates", default=library_continuity.GATES_FILE)
     continuity.add_argument("--output", help="write the gate record here (default: stdout)")
-    spatial = commands.add_parser("spatial-qualify", help="(F) dense held-out traces, closure / p-stability, matrix "
-                                                          "identity, conductor-consistency gate, library statuses")
+    spatial = commands.add_parser("spatial-qualify", help="(F) dense held-out traces, closure / Domain twin-consistency, "
+                                                          "matrix identity, conductor-consistency gate, library statuses")
     spatial_qualification.add_arguments(spatial)
     return parser
 

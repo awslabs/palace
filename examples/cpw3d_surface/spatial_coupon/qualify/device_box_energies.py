@@ -274,17 +274,23 @@ def box_energy_record(boxes_record, runs, twin=None):
                                        "Inside": b["Inside"] - a["Inside"]}
         entry["DeviceStep"] = steps
         if twin and box["Model"] in twin:
-            values = twin[box["Model"]]
-            entry["Twin"] = {"Energy": values,
-                             "Step": {f"{low}->{high}": values[high] - values[low] for low, high in zip(orders, orders[1:])
-                                      if low in values and high in values},
-                             "TwinOverDevice": {name: {"Central": values[name] / entry["Device"][name]["Central"]
-                                                       if entry["Device"][name]["Central"] else None,
-                                                       "Bracket": sorted([values[name] / b if b else float("inf")
-                                                                          for b in entry["Device"][name]["Bracket"]])}
-                                                for name in orders if name in values}}
+            entry["Twin"] = twin_comparison(entry, twin[box["Model"]])
         record["Boxes"].append(entry)
     return record
+
+
+def twin_comparison(box_entry, values):
+    """The thin twin's domain energy under the device trace per order ({"p4": E, "p5": E})
+    against the box entry's device readings: the twin's step and twin / device (central and
+    bracket) per order."""
+    orders = [name for name in sorted(box_entry["Device"], key=lambda name: int(name[1:])) if name in values]
+    return {"Energy": {name: values[name] for name in orders},
+            "Step": {f"{low}->{high}": values[high] - values[low] for low, high in zip(orders, orders[1:])},
+            "TwinOverDevice": {name: {"Central": values[name] / box_entry["Device"][name]["Central"]
+                                      if box_entry["Device"][name]["Central"] else None,
+                                      "Bracket": sorted([values[name] / b if b else float("inf")
+                                                         for b in box_entry["Device"][name]["Bracket"]])}
+                               for name in orders}}
 
 
 def command_read(args):

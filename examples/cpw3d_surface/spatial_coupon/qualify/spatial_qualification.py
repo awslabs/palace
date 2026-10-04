@@ -723,14 +723,17 @@ def command_evaluate(args):
                            for e in json.loads(Path(args.reference_box).read_text())["Entries"]]
     device_boxes = None
     if args.device_boxes:
+        import device_box_energies
         device_boxes = json.loads(Path(args.device_boxes).read_text())
         device_boxes["Boxes"] = [box for box in device_boxes["Boxes"] if box["Model"] == manifest["Model"]]
-        twin = {}
-        for trace in traces:
-            if trace["Family"] == "T1":
-                twin[trace["Name"]] = {f"p{args.library_order}": trace["Energies"]["ThinP4"][DOMAIN_CLASS],
-                                       f"p{args.control_order}": trace["Energies"]["ThinP5"][DOMAIN_CLASS]}
-        device_boxes["TwinDomainEnergyUnderDeviceTrace"] = twin
+        device_traces = [trace for trace in traces if trace["Family"] == "T1"]
+        if len(device_traces) != 1 or len(device_boxes["Boxes"]) != 1:
+            raise SpatialQualificationError(f"the device-side domain reading needs exactly one T1 trace and one box of "
+                                            f"{manifest['Model']}; found {len(device_traces)} / {len(device_boxes['Boxes'])}")
+        twin = {f"p{args.library_order}": device_traces[0]["Energies"]["ThinP4"][DOMAIN_CLASS],
+                f"p{args.control_order}": device_traces[0]["Energies"]["ThinP5"][DOMAIN_CLASS]}
+        device_boxes["Boxes"][0]["Twin"] = device_box_energies.twin_comparison(device_boxes["Boxes"][0], twin)
+        device_boxes["Boxes"][0]["TwinTrace"] = device_traces[0]["Name"]
     library = json.loads(Path(args.library).read_text())
     model = [m for m in library["Models"] if m["Name"] == manifest["Model"]][0]
     record = evaluate(traces, gate=gate, current_status=model.get("QualificationStatus", STATUS_PENDING),
