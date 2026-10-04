@@ -122,6 +122,25 @@ class FabricatedConfigTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             fabricated_config(polygon_set, FABRICATED_MANIFEST, "m", "p")
 
+    def test_single_up_plane_vacuum_above_has_no_backside(self):
+        # One `up` plane with Vacuum.Above > 0 and Below 0 (the OSC windows): the vacuum lies over
+        # the metal, the backside is the box wall -> no substrate_backside faces, accepted
+        # (graded-sweep-mesher M1.5 item 5); Below > 0 on the same plane needs faces on 9.
+        polygon_set = copy.deepcopy(POLYGON_SET)
+        polygon_set["Planes"] = [polygon_set["Planes"][0]]
+        polygon_set["Terminals"] = ["trace_7"]
+        polygon_set["Vacuum"] = {"Below": 0.0, "Above": 1000.0}
+        manifest = copy.deepcopy(FABRICATED_MANIFEST)
+        del manifest["attributes"]["island_3_air"], manifest["attributes"]["island_3_substrate"]
+        config = fabricated_config(polygon_set, manifest, "m", "p")
+        self.assertEqual([(d["Index"], d["Attributes"]) for d in by_type(config, "SA")], [(1, [6])])
+        polygon_set["Vacuum"] = {"Below": 475.0, "Above": 1000.0}
+        with self.assertRaises(ValueError):
+            fabricated_config(polygon_set, manifest, "m", "p")
+        manifest["surface_attribute_counts"]["9"] = 30
+        config = fabricated_config(polygon_set, manifest, "m", "p")
+        self.assertEqual([(d["Index"], d["Attributes"]) for d in by_type(config, "SA")], [(1, [6]), (4, [9])])
+
     def test_missing_or_empty_terminal_attribute_refused(self):
         manifest = copy.deepcopy(FABRICATED_MANIFEST)
         del manifest["attributes"]["trace_7_air"]

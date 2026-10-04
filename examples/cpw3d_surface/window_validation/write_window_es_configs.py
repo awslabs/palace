@@ -110,6 +110,21 @@ def dielectric_entry(index, attributes, kind, automatic_edges=None, frame_normal
     return entry
 
 
+def backside_against_vacuum(polygon_set):
+    """Whether the mesher puts a substrate backside against vacuum (`substrate_backside` faces):
+    with two planes when `Vacuum.Below` or `Vacuum.Above` > 0; with ONE plane only on the side
+    opposite its facing (an `up` plane's `Vacuum.Above` is the vacuum over the metal, not a
+    backside; the OSC windows: `Above` 1000, `Below` 0 -> no backside), as `z_stack` in
+    PolygonWindowMesh.jl decides."""
+    vacuum = polygon_set.get("Vacuum", {"Below": 0.0, "Above": 0.0})
+    below = vacuum.get("Below", 0.0) > 0.0
+    above = vacuum.get("Above", 0.0) > 0.0
+    planes = polygon_set["Planes"]
+    if len(planes) == 1:
+        return below if planes[0]["Facing"] == "up" else above
+    return below or above
+
+
 def fabricated_config(polygon_set, manifest, mesh, postpro, order=4, linear_max_its=5000, estimator_cheap=False, verbose=2):
     """The fabricated reference configuration (transmon conventions) from the mesher's
     manifest: `attributes` (name -> attribute / dimension) and `surface_attribute_counts`
@@ -136,14 +151,13 @@ def fabricated_config(polygon_set, manifest, mesh, postpro, order=4, linear_max_
         dielectric_entry(3, metal_air, "MA"),
     ]
     backside = table.get("substrate_backside")
-    vacuum = polygon_set.get("Vacuum", {"Below": 0.0, "Above": 0.0})
     if backside is not None and counts.get(backside, 0) > 0:
         # The transmon box carries vacuum beyond the backside: its SA is reported separately
         # (index 4) so the fabrication-response comparison does not include it.
-        if not (vacuum.get("Below", 0.0) > 0.0 or vacuum.get("Above", 0.0) > 0.0):
+        if not backside_against_vacuum(polygon_set):
             raise ValueError("the mesh carries substrate_backside faces but the polygon set has Vacuum 0")
         dielectrics.append(dielectric_entry(4, [backside], "SA"))
-    elif vacuum.get("Below", 0.0) > 0.0 or vacuum.get("Above", 0.0) > 0.0:
+    elif backside_against_vacuum(polygon_set):
         raise ValueError("the polygon set has Vacuum > 0 but the mesh carries no substrate_backside faces")
     linear = {"Type": "BoomerAMG", "KSPType": "CG", "Tol": 1.0e-10, "MaxIts": linear_max_its}
     if estimator_cheap:
