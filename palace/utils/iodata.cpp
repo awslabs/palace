@@ -737,12 +737,22 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // Surface-current sources need a gauge-free treatment of the singular curl-curl
-      // operator, which magnetostatic substructuring does not provide yet.
-      MFEM_VERIFY(boundaries.current.empty(),
-                  "Magnetostatic substructuring does not support \"SurfaceCurrent\" "
-                  "excitations yet; use \"FluxLoop\" excitations or remove "
-                  "\"Solver.Substructuring\"!");
+      // One condensed environment serves every excitation: no mixed current and flux-loop
+      // extraction (its linked-flux coupling needs the aperture fluxes), and no inactive
+      // ports shorted (they change the essential boundary per excitation).
+      MFEM_VERIFY(boundaries.current.empty() || boundaries.fluxloop.empty(),
+                  "Magnetostatic substructuring does not support mixed \"SurfaceCurrent\" "
+                  "and \"FluxLoop\" excitations!");
+      for (const auto &[idx, data] : boundaries.current)
+      {
+        MFEM_VERIFY(
+            boundaries.current.size() == 1 ||
+                data.inactive_port_mode.value_or(solver.magnetostatic.inactive_port_mode) !=
+                    InactivePortMode::SHORT,
+            "Magnetostatic substructuring requires \"Open\" inactive surface "
+            "current ports (SurfaceCurrent index "
+                << idx << ")!");
+      }
     }
     std::set<int> region_set(sub.region_attributes.begin(), sub.region_attributes.end());
     for (int a : sub.environment_attributes)

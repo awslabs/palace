@@ -831,9 +831,9 @@ struct SubstructuringSolver::Impl
 
   // Mass regularization eps M making the singular magnetostatic curl-curl definite; the
   // energies use the unregularized operator and are stationary, so their error is O(eps^2).
-  // With London sheets, the flux-loop sources are orthogonal to the null space of the
-  // curl-curl + sheet operator (gradients of potentials constant on the sheets), so a much
-  // smaller eps is safe.
+  // With London sheets, flux-loop and surface-current sources are orthogonal to the null
+  // space of the curl-curl + sheet operator (gradients of potentials constant on the PEC
+  // and the sheets), so a much smaller eps is safe.
   static constexpr double kMagRegularization = 1.0e-3;
   static constexpr double kMagRegularizationSheets = 1.0e-7;
   double mag_eps = kMagRegularization;
@@ -894,37 +894,100 @@ struct SubstructuringSolver::Impl
   // Sheet masses (both sides, and per side), for the flux-loop sources and energies.
   std::unique_ptr<mfem::HypreParMatrix> M_sheet_region;
 
-  // Source modes of London flux states (see ComputeSourceModes): ids, fingerprints of the
-  // environment sources, the interface load g, the energy coupling h (Gamma rows) and the
-  // constants c.
-  static constexpr int kSourceModesMagic = 0x31435253;  // "SRC1"
+  // Source modes of magnetostatic sources (see ComputeSourceModes): ids, fingerprints of
+  // the environment sources, the interface load g, the energy coupling h (Gamma rows) and
+  // the constants c.
+  static constexpr int kSourceModesMagic = 0x32435253;  // "SRC2"
   std::vector<int> src_ids;
   std::vector<double> src_fp, SG_rows, SH_rows, SC;
   bool src_ready = false, src_saved = false;
 
-  // Environment source b^E = M_sheet^E a (zero on the Dirichlet DOFs) and its fingerprint.
-  mfem::Vector EnvSource(const mfem::Vector &a, std::array<double, 2> &fp) const
+  mutable mfem::Vector src_fp_field;  // fixed field of the source fingerprints
+  static bool Has(const mfem::Vector *v) { return v && v->Size() > 0; }
+
+  // Environment source b^E = M_sheet^E a + J|_E (zero on the Dirichlet DOFs; the interface
+  // entries of J belong to the region side) and its fingerprint (b^E^T b^E, r^T b^E), with
+  // r a fixed projected field: independent of the partition and of the H(curl)
+  // orientations, and sensitive to the sign of the source.
+  mfem::Vector EnvSource(const Source &src, std::array<double, 2> &fp) const
   {
-    mfem::Vector b = std::move(EnvApply({&a}, false, true)[0]);
+    mfem::Vector b(nt);
+    if (Has(src.a))
+    {
+      b = std::move(EnvApply({src.a}, false, true)[0]);
+    }
+    else
+    {
+      b = 0.0;
+    }
+    if (Has(src.J))
+    {
+      for (int i = 0; i < nt; i++)
+      {
+        if (is_env_int[i])
+        {
+          b(i) += (*src.J)(i);
+        }
+      }
+    }
     for (int d = 0; d < dbc_tdofs.Size(); d++)
     {
       b(dbc_tdofs[d]) = 0.0;
     }
-    double loc[2] = {b * b, a * b}, glob[2];
+    if (src_fp_field.Size() != nt)
+    {
+      mfem::ParGridFunction gf(const_cast<mfem::ParFiniteElementSpace *>(&parent_fes));
+      mfem::VectorFunctionCoefficient c(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v.SetSize(3);
+                                          v(0) = x(2);
+                                          v(1) = x(0);
+                                          v(2) = x(1);
+                                        });
+      gf.ProjectCoefficient(c);
+      src_fp_field.SetSize(nt);
+      gf.GetTrueDofs(src_fp_field);
+    }
+    double loc[2] = {b * b, src_fp_field * b}, glob[2];
     MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
     fp = {glob[0], glob[1]};
     return b;
   }
 
-  // Source modes of the London flux states with generators a_k. With the environment field
+  // Region source of a magnetostatic source: M_sheet^R a + J on the region-free DOFs.
+  mfem::Vector RegionSource(const Source &src) const
+  {
+    mfem::Vector b(nt);
+    b = 0.0;
+    if (Has(src.a) && M_sheet_region)
+    {
+      M_sheet_region->Mult(*src.a, b);
+    }
+    if (Has(src.J))
+    {
+      for (int i = 0; i < nt; i++)
+      {
+        if (is_region_free[i])
+        {
+          b(i) += (*src.J)(i);
+        }
+      }
+    }
+    return b;
+  }
+
+  // Source modes of magnetostatic sources (a_k, J_k). With the environment field
   // u^E = Z u_Gamma + W_k (Z the A-harmonic extension, W_k = A_EE^-1 b^E_k), the
   // environment contributes
   //   g_k = (b^E_k - A_env W_k)|_Gamma                   to the region-condensed load, and
   //   u_i,G^T S^K u_j,G + u_i,G^T h_j + h_i^T u_j,G + c_ij   to the energies, with
   //   h_k = Z^T [(A_env - D_env) W_k - b^E_k],
-  //   c_ij = W_i^T K_env W_j + (W_i - a_i)^T M_sheet^E (W_j - a_j).
-  // Two batched environment solves per state.
-  void ComputeSourceModes(const std::vector<int> &ids, const std::vector<mfem::Vector> &a)
+  //   c_ij = W_i^T K_env W_j + (W_i - a_i)^T M_sheet^E (W_j - a_j) - J_i^E^T W_j
+  //          - J_j^E^T W_i
+  // (the environment part of the bilinear energy of SourceEnergyMatrix). Two batched
+  // environment solves per source.
+  void ComputeSourceModes(const std::vector<int> &ids, const std::vector<Source> &a)
   {
     EnsureEnv();
     MPI_Comm comm = parent_fes.GetComm();
@@ -991,18 +1054,39 @@ struct SubstructuringSolver::Impl
     SC.assign(static_cast<std::size_t>(K) * K, 0.0);
     std::vector<mfem::Vector> KW(K, mfem::Vector(nt)), MD(K, mfem::Vector(nt)),
         D(K, mfem::Vector(nt));
+    std::vector<mfem::Vector> JE(K);
     for (int k = 0; k < K; k++)
     {
       Kenv().Mult(W[k], KW[k]);
       D[k] = W[k];
-      D[k] -= a[k];
-      MsheetEnv().Mult(D[k], MD[k]);
+      if (Has(a[k].a))
+      {
+        D[k] -= *a[k].a;
+      }
+      if (has_sheets)
+      {
+        MsheetEnv().Mult(D[k], MD[k]);
+      }
+      else
+      {
+        MD[k] = 0.0;
+      }
+      if (Has(a[k].J))
+      {
+        JE[k].SetSize(nt);
+        for (int i = 0; i < nt; i++)
+        {
+          JE[k](i) = is_env_int[i] ? (*a[k].J)(i) : 0.0;
+        }
+      }
     }
     for (int i = 0; i < K; i++)
     {
       for (int j = 0; j < K; j++)
       {
-        SC[static_cast<std::size_t>(i) * K + j] = (W[i] * KW[j]) + (D[i] * MD[j]);
+        double c = (W[i] * KW[j]) + (D[i] * MD[j]);
+        c -= (JE[i].Size() ? JE[i] * W[j] : 0.0) + (JE[j].Size() ? JE[j] * W[i] : 0.0);
+        SC[static_cast<std::size_t>(i) * K + j] = c;
       }
     }
     if (K > 0)
@@ -1015,7 +1099,7 @@ struct SubstructuringSolver::Impl
 
   // Whether the source modes cover the given generators (same ids and environment source
   // fingerprints); col[j] receives the mode column of request j. Collective.
-  bool SourceModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &a,
+  bool SourceModesMatch(const std::vector<int> &ids, const std::vector<Source> &a,
                         std::vector<int> &col) const
   {
     col.assign(ids.size(), -1);
@@ -2173,6 +2257,8 @@ struct SubstructuringSolver::Impl
       b.SetSubVector(rf_idx, x[k]);
       u = 0.0;
       region_ksp->Mult(b, u);
+      MFEM_VERIFY(region_ksp->GetConverged(),
+                  "Substructuring region solve did not converge!");
       u.GetSubVector(rf_idx, x[k]);
     }
   }
@@ -3251,28 +3337,74 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
                                                           std::vector<Vector> *fields,
                                                           int n_fields)
 {
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   MFEM_VERIFY(impl->magnetostatic && impl->has_sheets,
               "SheetEnergyMatrix needs London superconductor sheets!");
   MFEM_VERIFY(ids.size() == a.size(), "SheetEnergyMatrix: one id per generator!");
+  std::vector<Source> src(a.size());
+  for (std::size_t k = 0; k < a.size(); k++)
+  {
+    src[k] = {&a[k], nullptr};
+  }
+  return SourceEnergyMatrix(ids, src, fields, n_fields);
+}
+
+mfem::DenseMatrix SubstructuringSolver::CurrentEnergyMatrix(const std::vector<int> &ids,
+                                                            const std::vector<Vector> &J,
+                                                            std::vector<Vector> *fields,
+                                                            int n_fields)
+{
+  MFEM_VERIFY(impl->magnetostatic, "CurrentEnergyMatrix needs a magnetostatic model!");
+  MFEM_VERIFY(ids.size() == J.size(), "CurrentEnergyMatrix: one id per excitation!");
+  // Source-mode ids of surface currents are negative, distinct from the flux loops'.
+  std::vector<int> src_ids(ids.size());
+  std::vector<Source> src(J.size());
+  for (std::size_t k = 0; k < J.size(); k++)
+  {
+    src_ids[k] = -ids[k];
+    src[k] = {nullptr, &J[k]};
+  }
+  // G = u_i^T L u_j - J_i^T u_j - J_j^T u_i = -E at the solution, with first-order errors
+  // in the regularization of the solve cancelling in E.
+  mfem::DenseMatrix E = SourceEnergyMatrix(src_ids, src, fields, n_fields);
+  E.Neg();
+  return E;
+}
+
+mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(const std::vector<int> &ids,
+                                                           const std::vector<Source> &src,
+                                                           std::vector<Vector> *fields,
+                                                           int n_fields)
+{
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   const int nt = impl->nt;
-  const int n = static_cast<int>(a.size());
+  const int n = static_cast<int>(src.size());
   const int nf = fields ? std::max(0, std::min(n_fields, n)) : 0;
   MPI_Comm comm = impl->parent_fes.GetComm();
+  auto has = [](const Vector *v) { return Impl::Has(v); };
 
-  // Energies of the London flux states, as the native solver:
-  //   E_ij = u_i^T K_cc u_j + (u_i - a_i)^T M_sheet (u_j - a_j),
-  // with the kinetic term formed from the differences (u - a is small for a stiff sheet,
-  // and the expanded form would cancel).
-  auto kinetic = [&](const Vector &ui, const Vector &uj, const Vector &ai, const Vector &aj,
+  // Bilinear energy of the sources b_k = M_sheet a_k + J_k, with L = K + M_sheet:
+  //   G_ij = u_i^T L u_j - b_i^T u_j - b_j^T u_i + a_i^T M_sheet a_j
+  //        = u_i^T K u_j + (u_i - a_i)^T M_sheet (u_j - a_j) - J_i^T u_j - J_j^T u_i.
+  // For London flux states (J = 0) this is the native energy; the kinetic term is formed
+  // from the differences (u - a is small for a stiff sheet, and the expanded form would
+  // cancel).
+  auto kinetic = [&](const Vector &ui, const Vector &uj, const Source &si, const Source &sj,
                      const mfem::HypreParMatrix &Ms)
   {
     Vector di(ui), dj(uj), Mdj(nt);
-    di -= ai;
-    dj -= aj;
+    if (has(si.a))
+    {
+      di -= *si.a;
+    }
+    if (has(sj.a))
+    {
+      dj -= *sj.a;
+    }
     Ms.Mult(dj, Mdj);
     return di * Mdj;
   };
+  auto current = [&](const Vector &ui, const Vector &uj, const Source &si, const Source &sj)
+  { return (has(si.J) ? *si.J * uj : 0.0) + (has(sj.J) ? *sj.J * ui : 0.0); };
 
   // Without the energy interface operator S^K (no model saved or loaded): full solves with
   // the environment.
@@ -3282,7 +3414,15 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
     Vector b(nt);
     for (int k = 0; k < n; k++)
     {
-      impl->Msheet().Mult(a[k], b);
+      b = 0.0;
+      if (has(src[k].a))
+      {
+        impl->Msheet().Mult(*src[k].a, b);
+      }
+      if (has(src[k].J))
+      {
+        b += *src[k].J;
+      }
       for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
       {
         b(impl->dbc_tdofs[d]) = 0.0;
@@ -3294,7 +3434,11 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
     {
       for (int j = 0; j < n; j++)
       {
-        double loc = kinetic(u[i], u[j], a[i], a[j], impl->Msheet()), glob = 0.0;
+        double loc = -current(u[i], u[j], src[i], src[j]), glob = 0.0;
+        if (impl->has_sheets)
+        {
+          loc += kinetic(u[i], u[j], src[i], src[j], impl->Msheet());
+        }
         MPI_Allreduce(&loc, &glob, 1, MPI_DOUBLE, MPI_SUM, comm);
         E(i, j) = MutualEnergy(u[i], u[j]) + glob;
       }
@@ -3306,13 +3450,13 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
     return E;
   }
 
-  // Source modes of these generators: reuse the saved / current ones if they match (id +
+  // Source modes of these sources: reuse the saved / current ones if they match (id +
   // environment source fingerprint), else compute them (needs the environment once;
   // appended to the model in an offline run that saves one).
   std::vector<int> col;
-  if (!impl->SourceModesMatch(ids, a, col))
+  if (!impl->SourceModesMatch(ids, src, col))
   {
-    impl->ComputeSourceModes(ids, a);
+    impl->ComputeSourceModes(ids, src);
     col.resize(n);
     std::iota(col.begin(), col.end(), 0);
     const auto &subcfg = *impl->iodata.solver.substructuring;
@@ -3325,34 +3469,32 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
   auto row = [&](int i)
   { return static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K; };
 
-  // Region-condensed solve per state (environment interior left at zero): the region source
-  // M_sheet^R a_k plus the environment's interface load g_k.
+  // Region-condensed solve per source (environment interior left at zero): the region
+  // source plus the environment's interface load g_k.
   impl->EnsureRegionFactor(n);
   const auto &rc = impl->rc_idx, &gm = impl->gamma_idx;
   std::vector<Vector> x(n, Vector(impl->rf_idx.Size()));
+  for (int j = 0; j < n; j++)
   {
-    Vector bR(nt);
-    for (int j = 0; j < n; j++)
+    Vector bR = impl->RegionSource(src[j]);
+    for (int i : gm)
     {
-      impl->M_sheet_region->Mult(a[j], bR);
-      for (int i : gm)
-      {
-        bR(i) += impl->SG_rows[row(i) + col[j]];
-      }
-      bR.GetSubVector(impl->rf_idx, x[j]);
+      bR(i) += impl->SG_rows[row(i) + col[j]];
     }
+    bR.GetSubVector(impl->rf_idx, x[j]);
   }
   impl->SolveRegion(x);
 
-  // Per state, on the region elements' DOFs: u_j, K_R u_j, d_j = u_j - a_j and
-  // M_sheet^R d_j; on Gamma: u_j and S^K u_j. Full fields only for the saved ones.
-  std::vector<Vector> uc(n), Kuc(n), dc(n), Mdc(n), ug(n), Sug(n);
+  // Per source, on the region elements' DOFs: u_j, K_R u_j, d_j = u_j - a_j, M_sheet^R d_j
+  // and the region part of J_j (J_j on the region-free DOFs); on Gamma: u_j and S^K u_j.
+  // Full fields only for the saved ones.
+  std::vector<Vector> uc(n), Kuc(n), dc(n), Mdc(n), Jc(n), ug(n), Sug(n);
   if (fields)
   {
     fields->clear();
   }
   {
-    Vector Ku(nt), Su(nt), d(nt), Md(nt);
+    Vector Ku(nt), Su(nt), d(nt), Md(nt), JR(nt);
     for (int j = 0; j < n; j++)
     {
       Vector u = impl->RegionField(x[j]);
@@ -3360,12 +3502,34 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
       impl->K_region_e->Mult(u, Ku);
       impl->mat_dtn_K->Mult(u, Su);
       d = u;
-      d -= a[j];
-      impl->M_sheet_region->Mult(d, Md);
+      if (has(src[j].a))
+      {
+        d -= *src[j].a;
+      }
+      if (impl->M_sheet_region)
+      {
+        impl->M_sheet_region->Mult(d, Md);
+      }
+      else
+      {
+        Md = 0.0;
+      }
+      JR = 0.0;
+      if (has(src[j].J))
+      {
+        for (int i = 0; i < nt; i++)
+        {
+          if (impl->is_region_free[i])
+          {
+            JR(i) = (*src[j].J)(i);
+          }
+        }
+      }
       u.GetSubVector(rc, uc[j]);
       Ku.GetSubVector(rc, Kuc[j]);
       d.GetSubVector(rc, dc[j]);
       Md.GetSubVector(rc, Mdc[j]);
+      JR.GetSubVector(rc, Jc[j]);
       u.GetSubVector(gm, ug[j]);
       Su.GetSubVector(gm, Sug[j]);
       if (j < nf)
@@ -3375,14 +3539,16 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
     }
   }
 
-  // E_ij = [u_i^T K_R u_j + (u_i - a_i)^T M_sheet^R (u_j - a_j)]  (region)
-  //      + u_i,G^T S^K u_j,G + u_i,G^T h_j + h_i^T u_j,G + c_ij  (environment).
+  // G_ij = [u_i^T K_R u_j + (u_i - a_i)^T M_sheet^R (u_j - a_j) - J_i^R^T u_j
+  //         - J_j^R^T u_i]                                          (region)
+  //      + u_i,G^T S^K u_j,G + u_i,G^T h_j + h_i^T u_j,G + c_ij     (environment).
   mfem::DenseMatrix E(n);
   for (int i = 0; i < n; i++)
   {
     for (int j = 0; j < n; j++)
     {
-      double e = (uc[i] * Kuc[j]) + (dc[i] * Mdc[j]) + (ug[i] * Sug[j]);
+      double e = (uc[i] * Kuc[j]) + (dc[i] * Mdc[j]) + (ug[i] * Sug[j]) - (Jc[i] * uc[j]) -
+                 (Jc[j] * uc[i]);
       for (int q = 0; q < gm.Size(); q++)
       {
         e += ug[i](q) * impl->SH_rows[row(gm[q]) + col[j]] +
@@ -3410,7 +3576,7 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
     std::array<double, 2> fp;
     for (int k = 0; k < nf; k++)
     {
-      bE[k] = impl->EnvSource(a[k], fp);
+      bE[k] = impl->EnvSource(src[k], fp);
     }
     impl->RecoverEnvInterior(*fields, &bE);
   }

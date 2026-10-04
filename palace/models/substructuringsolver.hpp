@@ -66,6 +66,16 @@ public:
                                       std::vector<Vector> *fields = nullptr,
                                       int n_fields = 0);
 
+  // Magnetostatic energy matrix of surface-current excitations: port k drives the assembled
+  // excitation J_k (zero on the Dirichlet DOFs), and E_ij = u_i^T K u_j (+ the sheet
+  // kinetic energy u_i^T M_sheet u_j), evaluated in a form stationary in the regularization
+  // of the solve. If fields is non-null, it receives the full fields of the first n_fields
+  // states.
+  mfem::DenseMatrix CurrentEnergyMatrix(const std::vector<int> &ids,
+                                        const std::vector<Vector> &J,
+                                        std::vector<Vector> *fields = nullptr,
+                                        int n_fields = 0);
+
   // Whether the model has London superconductor sheets (magnetostatics).
   bool HasSheets() const;
 
@@ -117,6 +127,19 @@ private:
                                     const std::vector<Vector> &xd,
                                     std::vector<Vector> *fields, int n_fields,
                                     std::vector<Vector> *region_fields);
+
+  // A magnetostatic source: a London flux state drives M_sheet a (a the fluxoid generator),
+  // a surface current the assembled excitation J. Either may be null or empty.
+  struct Source
+  {
+    const Vector *a, *J;
+  };
+
+  // Bilinear energy G of magnetostatic sources (see SheetEnergyMatrix,
+  // CurrentEnergyMatrix).
+  mfem::DenseMatrix SourceEnergyMatrix(const std::vector<int> &ids,
+                                       const std::vector<Source> &src,
+                                       std::vector<Vector> *fields, int n_fields);
 
   struct Impl;
   std::unique_ptr<Impl> impl;

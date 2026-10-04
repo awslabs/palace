@@ -106,50 +106,69 @@ void ComputeMinvAndMm(const mfem::DenseMatrix &M, mfem::DenseMatrix &Minv,
 std::pair<ErrorIndicator, long long int>
 MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
-  // Substructuring for flux-loop excitations: condense the environment, solve each London
-  // flux state in the region against it, and form the inductance matrix M = R^-1 from the
-  // reluctance R_ij = E_ij / (Phi_i Phi_j).
+  // Substructuring: condense the environment and solve each excitation in the region
+  // against it. Flux loops give the reluctance R_ij = E_ij / (Phi_i Phi_j) and M = R^-1;
+  // surface currents give M_ij = E_ij / (I_i I_j).
   if (iodata.solver.substructuring)
   {
     BlockTimer bt(Timer::CONSTRUCT);
-    // Fluxoid generators of the flux loops (from the native operator, freed before the
-    // condensation).
-    std::vector<Vector> generators;
-    std::vector<double> Phi;
+    // Fluxoid generators of the flux loops, or the excitations of the surface currents
+    // (from the native operator, freed before the condensation).
+    std::vector<Vector> sources;
+    std::vector<double> amount;
     std::vector<int> idxs;
+    const bool current = !iodata.boundaries.current.empty();
     {
       CurlCurlOperator curlcurl_op(iodata, mesh);
-      PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
       Vector RHS, boundary_values;
-      for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+      if (current)
       {
-        curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
-        generators.push_back(boundary_values);
-        Phi.push_back(data.GetExcitationFlux());
-        idxs.push_back(idx);
+        for (const auto &[idx, data] : curlcurl_op.GetSurfaceCurrentOp())
+        {
+          curlcurl_op.GetCurrentExcitationVector(idx, RHS);
+          sources.push_back(RHS);
+          amount.push_back(data.GetExcitationCurrent());
+          idxs.push_back(idx);
+        }
+      }
+      else
+      {
+        PostOperator<ProblemType::MAGNETOSTATIC> post_op(iodata, curlcurl_op);
+        for (const auto &[idx, data] : curlcurl_op.GetSurfaceFluxOp())
+        {
+          curlcurl_op.GetFluxExcitationVector(idx, RHS, post_op, &boundary_values);
+          sources.push_back(boundary_values);
+          amount.push_back(data.GetExcitationFlux());
+          idxs.push_back(idx);
+        }
       }
     }
-    const int n = static_cast<int>(generators.size());
-    MFEM_VERIFY(n > 0, "Magnetostatic substructuring requires flux-loop excitations!");
+    const int n = static_cast<int>(sources.size());
+    MFEM_VERIFY(n > 0, "Magnetostatic substructuring requires flux-loop or surface-current "
+                       "excitations!");
     SubstructuringSolver sub(iodata, mesh);
     sub.CondenseEnvironment();
-    Mpi::Print("\nSubstructuring flux-loop sweep: {:d} excitation{}\n", n,
-               (n > 1) ? "s" : "");
+    Mpi::Print("\nSubstructuring {} sweep: {:d} excitation{}\n",
+               current ? "surface-current" : "flux-loop", n, (n > 1) ? "s" : "");
     // Every flux-loop film is a London sheet (PecPenetrationDepth when not declared a
-    // Superconductor). Only the fields to be saved need the environment interior.
+    // Superconductor), as is every "Superconductor" boundary. Only the fields to be saved
+    // need the environment interior.
     const int n_save = std::min(iodata.solver.magnetostatic.n_post, n);
     std::vector<Vector> A;
-    const mfem::DenseMatrix E = sub.SheetEnergyMatrix(idxs, generators, &A, n_save);
-    mfem::DenseMatrix Minv(n);
+    const mfem::DenseMatrix E = current ? sub.CurrentEnergyMatrix(idxs, sources, &A, n_save)
+                                        : sub.SheetEnergyMatrix(idxs, sources, &A, n_save);
+    mfem::DenseMatrix M(n);
     for (int i = 0; i < n; i++)
     {
       for (int k = 0; k < n; k++)
       {
-        Minv(i, k) = E(i, k) / (Phi[i] * Phi[k]);
+        M(i, k) = E(i, k) / (amount[i] * amount[k]);
       }
     }
-    mfem::DenseMatrix M(Minv);
-    M.Invert();  // inductance = reluctance^-1
+    if (!current)
+    {
+      M.Invert();  // inductance = reluctance^-1
+    }
     if (root)
     {
       const double H = iodata.units.Dimensionalize<Units::ValueType::INDUCTANCE>(1.0);
@@ -179,8 +198,8 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       sub.WriteParaView(post_dir.string(),
                         std::vector<int>(idxs.begin(), idxs.begin() + n_save), A);
     }
-    Mpi::Print("\nSubstructuring inductance sweep complete ({:d} flux loop{})\n", n,
-               (n > 1) ? "s" : "");
+    Mpi::Print("\nSubstructuring inductance sweep complete ({:d} {}{})\n", n,
+               current ? "surface current" : "flux loop", (n > 1) ? "s" : "");
     return {ErrorIndicator(), sub.GlobalTrueVSize()};
   }
 

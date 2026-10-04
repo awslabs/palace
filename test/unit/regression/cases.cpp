@@ -1080,6 +1080,34 @@ TEST_CASE("substructuring_magnetostatic_london", "[Serial][Parallel][Regression]
                                   "magnetostatic_london.json", "london", opts);
 }
 
+// Magnetostatic substructuring with surface currents across two square holes of a film
+// that crosses the interface, one hole in the region and one in the environment. The
+// references are regular simulations of the same configuration.
+TEST_CASE("substructuring_magnetostatic_current", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current.json", "current", opts);
+}
+
+// As above with a finite-penetration-depth London film (λ = 0.4 μm, d = 0.1 μm), whose
+// supercurrent closes the port currents.
+TEST_CASE("substructuring_magnetostatic_current_london", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current_london.json", "current_london",
+                                  opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and

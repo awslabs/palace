@@ -240,7 +240,7 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("Magnetostatic substructuring rejects surface currents")
+  SECTION("Magnetostatic substructuring excitations")
   {
     const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};
     const json flux_loop = {{{"Index", 2},
@@ -265,16 +265,27 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
         {{"Attributes", {6}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.05}}};
     CHECK_NOTHROW(IoData(
         make_config({{"FluxLoop", flux_loop}, {"Superconductor", superconductor}}), false));
-    CHECK_THROWS_WITH(
-        IoData(make_config({{"SurfaceCurrent", surface_current}}), false),
-        Catch::Matchers::ContainsSubstring("does not support \"SurfaceCurrent\""));
-    // A (valid) mixed configuration is rejected, not silently reduced to its flux loops.
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", surface_current}}), false));
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", surface_current},
+                                      {"Superconductor", superconductor}}),
+                         false));
+    // A (valid) mixed configuration is rejected, not silently reduced to one kind.
     json mixed_current = surface_current;
     mixed_current[0]["Aperture"] = {{"Attributes", {5}}, {"Direction", "+Z"}};
     CHECK_THROWS_WITH(
         IoData(make_config({{"SurfaceCurrent", mixed_current}, {"FluxLoop", flux_loop}}),
                false),
-        Catch::Matchers::ContainsSubstring("does not support \"SurfaceCurrent\""));
+        Catch::Matchers::ContainsSubstring("does not support mixed \"SurfaceCurrent\""));
+    // Inactive ports must be open: a short changes the essential boundary per excitation.
+    json two_ports = surface_current;
+    two_ports.push_back({{"Attributes", {5}}, {"Index", 2}, {"Direction", "+X"}});
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", two_ports}}), false));
+    two_ports[1]["InactiveMode"] = "Short";
+    CHECK_THROWS_WITH(IoData(make_config({{"SurfaceCurrent", two_ports}}), false),
+                      Catch::Matchers::ContainsSubstring("\"Open\" inactive surface"));
+    json one_short = surface_current;
+    one_short[0]["InactiveMode"] = "Short";
+    CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", one_short}}), false));
   }
 }
 

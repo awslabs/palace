@@ -123,22 +123,26 @@ single partial factorization. When running MUMPS with MPI, setting `OPENBLAS_NUM
 ## Magnetostatics
 
 Magnetostatic substructuring extracts the inductance matrix from
-[`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop)
+[`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop) or
+[`config["Boundaries"]["SurfaceCurrent"]`](../config/reference.md#config-boundaries-surfacecurrent)
 excitations, including the kinetic inductance of superconducting films. The `"PEC"` boundaries
 are the Dirichlet boundaries of the condensation. The flux-loop films and the
 [`config["Boundaries"]["Superconductor"]`](../config/reference.md#config-boundaries-superconductor)
 films are London sheets, as in a regular simulation: a film without a `"Superconductor"` entry
 has the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film its own. The
 sheet term of each film face is condensed with the part of the domain the face bounds, so films
-may lie in the region, in the environment, or cross the interface. A saved model includes the
-condensed flux-loop excitations of the environment, so an online run needs no environment
-solve as long as the excitations in the environment are unchanged. A small mass regularization
-keeps the curl-curl operator definite; the extracted energies use the unregularized operator.
+may lie in the region, in the environment, or cross the interface; so may the surface-current
+ports. A saved model includes the condensed excitations of the environment, so an online run
+needs no environment solve as long as the excitations in the environment are unchanged. A small
+mass regularization keeps the curl-curl operator definite; the extracted energies use the
+unregularized operator, in a form whose error is quadratic in the regularization.
 
 !!! note
 
-    `"SurfaceCurrent"` excitations are not supported with substructuring yet: a configuration
-    that uses them is rejected.
+    A configuration may not mix `"SurfaceCurrent"` and `"FluxLoop"` excitations with
+    substructuring, and inactive surface-current ports must be `"Open"` (see
+    [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic-inactiveports)):
+    every excitation is solved against the same condensed environment.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 
