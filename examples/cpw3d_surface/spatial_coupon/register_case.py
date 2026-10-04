@@ -62,9 +62,10 @@ import time
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from derive_semantic_contract import derive as derive_contract  # noqa: E402
-from general_mesh_manifest import (CASE_KIND_KEY, CASE_KINDS, FABRICATED_CASE_KEY,  # noqa: E402
+from general_mesh_manifest import (CASE_KIND_KEY, CASE_KINDS, ELEMENT_CAP_OVERRIDE_KEY, FABRICATED_CASE_KEY,  # noqa: E402
                                    PRODUCER_DEFAULT_ETCH_FOOTPRINT, TRACE_BASIS_ROLES, case_kind,
-                                   preflight_recipe_scope, validate_manifest, validate_thin_recipe)
+                                   preflight_recipe_scope, validate_case_element_cap_override, validate_manifest,
+                                   validate_thin_recipe)
 from refreeze_manifest_tools import CALIBRATION_MANIFESTS, PRODUCTION_MANIFEST, refreeze  # noqa: E402
 from run_gmsh_only_case import BUILD_SUMMARY  # noqa: E402
 
@@ -324,14 +325,16 @@ def load_production_manifest(manifest_path):
 
 def prepare_registration(case_id, directory, *, footprint, inventory_status, manifest_path, mesh_recipe=None,
                          features=None, provenance=None, work=None, python=sys.executable, julia=None, probe=None,
-                         kind="fabricated", fabricated_case=None):
+                         kind="fabricated", fabricated_case=None, gate_overrides=None):
     """Steps 1-2 of a registration (the manifest is read, never written): the source
     digests, the scope classes, the reuse-by-content check against the recorded case,
     then the two-pass contract derivation with the labels-only probe.  Independent per
     case, so device_coupons runs it for several coupons at once; commit_registration
     appends the outcome to the manifest serially.  Returns a PreparedRegistration; a
     final outcome (reused / unsupported / failed) carries `error` (the RegistrationError
-    of a stop) instead of a case to commit."""
+    of a stop) instead of a case to commit.  `gate_overrides` = the case's recorded
+    GateOverrides block (general_mesh_manifest.element_cap_override), bound to the case
+    entry before the probe so the probe's headroom gate judges the case by it."""
     manifest_path, manifest, repository = load_production_manifest(manifest_path)
     if inventory_status not in INVENTORY_STATUSES:
         raise RegistrationError(f"--inventory-status must be one of {list(INVENTORY_STATUSES)}")
@@ -412,6 +415,12 @@ def prepare_registration(case_id, directory, *, footprint, inventory_status, man
     if kind == "thin":
         case[CASE_KIND_KEY] = kind
         case[FABRICATED_CASE_KEY] = fabricated_case
+    if gate_overrides is not None:
+        case[ELEMENT_CAP_OVERRIDE_KEY] = gate_overrides
+        try:
+            validate_case_element_cap_override(manifest, case)
+        except ValueError as error:
+            raise RegistrationError(str(error)) from error
     if footprint != FOOTPRINT_BOUND:
         case["Source"]["EtchFootprint"] = PRODUCER_DEFAULT_ETCH_FOOTPRINT
     probe = probe if probe is not None else (
@@ -503,7 +512,7 @@ def commit_registration(prepared, *, manifest_path, refreeze_calibration=None):
 
 def register(case_id, directory, *, footprint, inventory_status, manifest_path, mesh_recipe=None,
              features=None, provenance=None, work=None, python=sys.executable, julia=None,
-             probe=None, refreeze_calibration=None, kind="fabricated", fabricated_case=None):
+             probe=None, refreeze_calibration=None, kind="fabricated", fabricated_case=None, gate_overrides=None):
     """Register (or reuse / supersede) the case; returns the registration record
     (prepare_registration then commit_registration).  `kind` thin with
     `fabricated_case` registers the thin counterpart of a registered fabricated case
@@ -511,7 +520,7 @@ def register(case_id, directory, *, footprint, inventory_status, manifest_path, 
     prepared = prepare_registration(case_id, directory, footprint=footprint, inventory_status=inventory_status,
                                     manifest_path=manifest_path, mesh_recipe=mesh_recipe, features=features,
                                     provenance=provenance, work=work, python=python, julia=julia, probe=probe,
-                                    kind=kind, fabricated_case=fabricated_case)
+                                    kind=kind, fabricated_case=fabricated_case, gate_overrides=gate_overrides)
     return commit_registration(prepared, manifest_path=manifest_path, refreeze_calibration=refreeze_calibration)
 
 

@@ -43,7 +43,7 @@ import time
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from estimate_build_cost import actual_counts, case_paths  # noqa: E402
-from general_mesh_manifest import preflight_recipe_scope  # noqa: E402
+from general_mesh_manifest import case_gates, preflight_recipe_scope  # noqa: E402
 from run_gmsh_only_case import BUILD_SUMMARY  # noqa: E402
 
 LIBRARY_BUILD_RECORD = "library-build.json"
@@ -212,7 +212,7 @@ def case_record(manifest, manifest_path, case, root, *, h1_order, driver_return_
                              {"Passed": verification["Passed"], "Failures": verification["Failures"],
                               "Path": str(root / f"{VERIFICATION_STAGE}.json")}),
             "HeadroomFlags": headroom_flags(elements["Total"] if elements else None, estimate_record, stages,
-                                            manifest["Gates"]),
+                                            case_gates(manifest, case)),
             "Root": str(root), "DriverReturnCode": driver_return_code, "WallSeconds": wall_seconds}
 
 

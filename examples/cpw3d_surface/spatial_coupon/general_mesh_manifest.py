@@ -531,8 +531,9 @@ def case_gates(manifest, case):
     layer case, judged by MinimumScaledJacobian on its whole mesh as recorded) - is
     judged by the manifest gates without the rule.  A case declaring
     Calibration.MaximumElements (a labeled calibration-only element cap,
-    validate_case_element_cap) is judged by that cap.  The manifest's Gates stay
-    the canonical cache key of the build."""
+    validate_case_element_cap) or GateOverrides.MaximumElements (a recorded production
+    override, validate_case_element_cap_override) is judged by that cap.  The
+    manifest's Gates stay the canonical cache key of the build."""
     gates = dict(manifest["Gates"])
     calibration = case.get("Calibration")
     calibration = calibration if isinstance(calibration, dict) else {}
@@ -540,6 +541,9 @@ def case_gates(manifest, case):
         del gates[EDGE_LAYER_QUALITY_RULE_GATE]
     if calibration.get(ELEMENT_CAP_GATE) is not None:
         gates[ELEMENT_CAP_GATE] = validate_case_element_cap(manifest, case)
+    override = validate_case_element_cap_override(manifest, case)
+    if override is not None:
+        gates[ELEMENT_CAP_GATE] = override
     if calibration.get(JACOBIAN_CONDITION_GATE) is not None:
         gates[JACOBIAN_CONDITION_GATE] = validate_case_jacobian_condition(manifest, case)
     return gates
@@ -635,6 +639,54 @@ def validate_case_element_cap(manifest, case):
     return cap
 
 
+# A PRODUCTION case may carry its own, recorded element cap above the manifest gate
+# (GateOverrides.MaximumElements: Value, the manifest gate as Production, the approval
+# and the reason; supervisor decision of 2026-10-02 for the S1p loop-end coupon, one closed
+# 38-edge feature whose box cannot be split: ~12-13 M elements against the 6 M gate).  The
+# override judges that case alone - the pre-build estimate gate, the mesher's
+# --max-elements / --max-nodes, the headroom flags and the evidence audit - and never
+# changes the manifest gate (the canonical cache key).  A case declares at most one of
+# the calibration-only cap and the production override.
+ELEMENT_CAP_OVERRIDE_KEY = "GateOverrides"
+
+
+def validate_case_element_cap_override(manifest, case):
+    """GateOverrides.MaximumElements of a case (if present): an integer above the manifest
+    gate, Production equal to the manifest gate, non-empty Approval and Reason strings, no
+    calibration-only cap on the same case.  Returns the cap or None."""
+    overrides = case.get(ELEMENT_CAP_OVERRIDE_KEY)
+    if overrides is None:
+        return None
+    if not isinstance(overrides, dict) or set(overrides) != {ELEMENT_CAP_GATE}:
+        raise ValueError(f"{case.get('Id')} declares gate overrides other than {ELEMENT_CAP_GATE}")
+    override = overrides[ELEMENT_CAP_GATE]
+    manifest_cap = manifest.get("Gates", {}).get(ELEMENT_CAP_GATE)
+    calibration = case.get("Calibration")
+    cap = override.get("Value") if isinstance(override, dict) else None
+    if (isinstance(cap, bool) or not isinstance(cap, int) or not isinstance(manifest_cap, int) or
+            cap <= manifest_cap or override.get("Production") != manifest_cap or
+            not isinstance(override.get("Approval"), str) or not override["Approval"].strip() or
+            not isinstance(override.get("Reason"), str) or not override["Reason"].strip() or
+            (isinstance(calibration, dict) and calibration.get(ELEMENT_CAP_GATE) is not None)):
+        raise ValueError(f"{case.get('Id')} declares an element cap override that is not a recorded, approved "
+                         f"integer above the manifest gate (Value, Production = the gate, Approval, Reason)")
+    return cap
+
+
+def element_cap_override(cap, manifest_cap, *, approval, reason):
+    """The GateOverrides block of a case entry for `cap` elements (validate_case_element_cap_override)."""
+    if isinstance(cap, bool) or not isinstance(cap, int) or not isinstance(manifest_cap, int) or cap <= manifest_cap:
+        raise ValueError(f"an element cap override must be an integer above the manifest gate {manifest_cap}, not {cap!r}")
+    if not isinstance(approval, str) or not approval.strip() or not isinstance(reason, str) or not reason.strip():
+        raise ValueError("an element cap override needs a non-empty approval and reason")
+    return {ELEMENT_CAP_GATE: {"Value": cap, "Production": manifest_cap, "Approval": approval, "Reason": reason,
+                               "Rule": "a recorded per-case production override of the manifest gate "
+                                       "MaximumElements (general_mesh_manifest.case_gates): this case's pre-build "
+                                       "estimate gate, mesher --max-elements / --max-nodes, headroom flags and "
+                                       "evidence audit are judged by Value; the manifest gate (Production) is "
+                                       "unchanged for every other case"}}
+
+
 def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     if manifest.get("Version") != 2 or not isinstance(manifest.get("Cases"), list):
         raise ValueError("Unsupported generality-suite manifest")
@@ -689,6 +741,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         if EDGE_LAYER_CASE_KEY in case:
             raise ValueError(f"{case['Id']} must declare its edge layer under Calibration")
         validate_case_element_cap(manifest, case)
+        validate_case_element_cap_override(manifest, case)
         validate_case_jacobian_condition(manifest, case)
         validate_case_linear_tol(manifest, case)
         validate_calibration_case_options(manifest, case)

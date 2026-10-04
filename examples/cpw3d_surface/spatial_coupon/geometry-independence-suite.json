@@ -170,7 +170,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "3659e8a8ff7410d75fc3b3f57b56aa781d93358fd97f7c17fa988123378cf315"
+      "SHA256": "6dfb82a1e45ee3325c10e510db75c25eea25a5c818b75b6b00c3c4640196c5f7"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -195,7 +195,7 @@
     {
       "Name": "estimate_build_cost.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/estimate_build_cost.py",
-      "SHA256": "5bfd4c38a47b8da6d066b39a9b5661a9fdfd4dd144b2b3328a1d55b98f8cd23e"
+      "SHA256": "c0dcc6677e184b65c332b4fbe73788d44848a4a7baf9ada952853ee26aa321f8"
     },
     {
       "Name": "audit_edge_metric_mesh.py",
@@ -225,7 +225,7 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "93d4e57c5a0b9f67ae47b1d48c788cfb05917dbda1235dbd4e81aba3677e4a1f"
+      "SHA256": "1eff89d90cb3b2a7d94c368f6f22f69e981073d1b30320543b7bb500942bcced"
     },
     {
       "Name": "mesh_stage_contract.py",
@@ -2367,7 +2367,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "c86e482236cb6b890191e4d12d666811cc04ade2f9db33696254feced51682a6"
+      "mesher": "43f9478249c4737f6ef3f2f0d7e24610beea452d6233ca109f59c7655e30ebe4"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

@@ -60,7 +60,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 import sys  # noqa: E402
 sys.path.insert(0, str(HERE))
-from general_mesh_manifest import case_kind, thin_build_options  # noqa: E402
+from general_mesh_manifest import case_kind, thin_build_options, validate_case_element_cap_override  # noqa: E402
 TUBE_SECTOR_SPAN_DEGREES = 270.0   # the dielectric side of a metal edge (3 / 4 turn)
 DIELECTRIC_FRACTION = 0.75         # of a ball / cylinder around a metal edge or corner
 # Thin sheet (decision 66): the whole turn around the sheet edge is dielectric.
@@ -405,17 +405,21 @@ def build_options_and_model(manifest, manifest_path, case):
 
 
 def gate(manifest, manifest_path, case):
-    """The estimate of a manifest case against the manifest's element cap; a case whose
-    estimate exceeds the cap is reported Passed false (the caller fails closed).  A
-    calibration case is estimated with its own build options (labeled deviations
-    included) and the production manifest's model."""
+    """The estimate of a manifest case against the manifest's element cap - or the case's
+    recorded production override of it (GateOverrides.MaximumElements,
+    general_mesh_manifest.validate_case_element_cap_override), never a calibration-only
+    cap; a case whose estimate exceeds the cap is reported Passed false (the caller fails
+    closed).  A calibration case is estimated with its own build options (labeled
+    deviations included) and the production manifest's model."""
     options, model, origin = build_options_and_model(manifest, manifest_path, case)
     result = estimate(case_paths(manifest, manifest_path, case), options, model["TetrahedraPerCubicSize"],
                       kind=case_kind(case) if "Calibration" not in manifest else "fabricated")
     result["Options"] = options
     result["Origin"] = origin
-    cap = manifest["Gates"]["MaximumElements"]
+    override = validate_case_element_cap_override(manifest, case)
+    cap = manifest["Gates"]["MaximumElements"] if override is None else override
     result.update({"MaximumElements": cap, "EstimateOverCap": result["EstimatedElements"] / cap,
+                   **({"MaximumElementsOverride": case["GateOverrides"]["MaximumElements"]} if override is not None else {}),
                    "Passed": bool(result["EstimatedElements"] <= cap)})
     return result
 

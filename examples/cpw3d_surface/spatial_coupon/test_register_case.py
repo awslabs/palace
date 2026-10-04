@@ -250,6 +250,35 @@ class RegisterCaseTest(unittest.TestCase):
         self.assertEqual(contract["Derivation"]["BuildCensusInterfaceLabels"], sorted(self.labels))
         self.assertIn("labels-only", self.manifest()["Cases"][-1]["Provenance"])
 
+    def test_gate_overrides_bind_to_the_case_before_the_probe_and_are_validated(self):
+        """A recorded element cap override (general_mesh_manifest.element_cap_override) is part
+        of the case entry the labels-only probe sees (its headroom gate judges by it) and of
+        the committed manifest entry; the manifest gate is unchanged; an invalid override
+        (at or below the gate) is a RegistrationError before any probe."""
+        import general_mesh_manifest
+        gate = self.manifest()["Gates"]["MaximumElements"]
+        overrides = general_mesh_manifest.element_cap_override(16000000, gate, approval="supervisor 2026-10-02",
+                                                               reason="one closed feature; the box cannot be split")
+        probe = census_probe(self.labels)
+        record = self.register(probe=probe, gate_overrides=overrides)
+        self.assertEqual(record["Status"], STATUS_REGISTERED)
+        probe_case = next(case for case in probe.manifests[0]["Cases"] if case["Id"] == "registered-copy")
+        self.assertEqual(probe_case["GateOverrides"], overrides)
+        manifest = self.manifest()
+        case = manifest["Cases"][-1]
+        self.assertEqual(case["GateOverrides"], overrides)
+        self.assertEqual(general_mesh_manifest.case_gates(manifest, case)["MaximumElements"], 16000000)
+        self.assertEqual(manifest["Gates"]["MaximumElements"], gate)
+        self.assertEqual(general_mesh_manifest.case_gates(manifest, manifest["Cases"][0])["MaximumElements"], gate)
+        general_mesh_manifest.validate_manifest(manifest, self.manifest_path, check_available_files=False)
+        # Reuse by content keeps the recorded entry; a thin pair carries its own copy.
+        self.assertEqual(self.register(probe=census_probe([]), gate_overrides=overrides)["Status"], STATUS_REUSED)
+        bad = {"MaximumElements": {"Value": gate, "Production": gate, "Approval": "x", "Reason": "y"}}
+        untouched = census_probe(self.labels)
+        with self.assertRaisesRegex(RegistrationError, "not a recorded, approved integer above the manifest gate"):
+            self.register("too-small", probe=untouched, gate_overrides=bad)
+        self.assertEqual(untouched.manifests, [])
+
     def test_prepare_then_commit_equals_register_and_commits_serially(self):
         """Decision 62(2): prepare_registration (probe + derivation, manifest read only)
         for several cases, then commit_registration in order - the same manifest entries

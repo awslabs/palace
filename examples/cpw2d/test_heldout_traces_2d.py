@@ -102,6 +102,55 @@ class ClusterHeldoutTraceTest(unittest.TestCase):
         interpolant = hat_interpolant(root, coefficients, list(traces) + list(conductor_traces))
         return np.abs(values - interpolant).max()
 
+    def test_single_conductor_stack_has_no_open_paths_and_a_reference(self):
+        # k4 2 / 2 / 2 um of ONE conductor (a grounded CPW: S1p's 4-edge stack 2ce195e129c9,
+        # stage 1): one portal, no conductor state, both cuts at the ground potential; the
+        # free knots are one closed contour and the model carries Reference alone. Before
+        # the single-conductor case the one portal paired with itself (span 0) and the
+        # generator stopped with "Trace basis is too coarse to connect conductor portals".
+        root = Path(self.directory.name) / "single"
+        root.mkdir()
+        traces, conductor_traces, references, open_paths, points, cuts = CLUSTER.write_bases(
+            root, np.asarray([0.0, 2.0, 4.0, 6.0]), np.asarray([1, -1, 1, -1]), np.asarray([1, 1, 1, 1]),
+            RADIUS, METAL_THICKNESS, 172, 13 * 172)
+        self.assertEqual(open_paths, [])
+        self.assertEqual(conductor_traces, [])
+        self.assertEqual(len(references), 1)
+        self.assertEqual([cut[2] for cut in cuts], [1, 1])
+        self.assertEqual(len(traces), len(np.loadtxt(root / "basis_points.csv", delimiter=",", skiprows=1)))
+        CLUSTER.write_heldout(root, traces, conductor_traces, points, cuts, RADIUS, METAL_THICKNESS)
+        coefficients = np.atleast_1d(np.loadtxt(root / "heldout_coefficients.csv", delimiter=",", skiprows=1))
+        self.assertEqual(len(coefficients), len(traces))
+        heldout = np.loadtxt(root / "heldout_trace.csv", delimiter=",", skiprows=1)
+        # Both cuts are grounded: the trace vanishes at every cut and is continuous.
+        for _, _, _, boundary_x in cuts:
+            at_cut = cut_distance(points, boundary_x) < 1.0e-9
+            self.assertTrue(np.any(at_cut))
+            self.assertLess(np.abs(heldout[at_cut, 3]).max(), 1.0e-12)
+        # Continuous: the largest step is the grounded blend's slope at the right cut, where
+        # the polynomial is ~1.2 V, over one sample spacing (1.5 x 1.2 V / (R / 3) x 0.012 um
+        # = 0.034 V; no 1.2 V step at the cut).
+        self.assertLess(np.abs(np.diff(heldout[:, 3])).max(), 0.05)
+        library = CLUSTER.write_library(
+            root, "single-conductor-test", [{"Offset": o, "GapDirection": d, "Conductor": 1}
+                                            for o, d in zip([0.0, 2.0, 4.0, 6.0], [1, -1, 1, -1])],
+            references, open_paths, RADIUS, 1055.0, METAL_THICKNESS, 0.05, 90.0, 0.0, 0.0, 11.45,
+            {"SA": (0.002, 4.0), "MS": (0.002, 11.45), "MA": (0.002, 10.0)}, "single-conductor-k4", 1.0e-3)
+        import json
+        model = json.loads(Path(library).read_text())["Models"][0]
+        self.assertEqual(model["Reference"], references[0])
+        self.assertNotIn("ConductorReferences", model)
+        self.assertNotIn("OpenContourPaths", model)
+        # Three conductors keep the open paths and the conductor references.
+        root3 = Path(self.directory.name) / "three"
+        root3.mkdir()
+        _, _, references3, open_paths3, _, _ = CLUSTER.write_bases(
+            root3, np.asarray([0.0, 2.0, 4.0, 6.0]), np.asarray([1, -1, 1, -1]), np.asarray([1, 2, 2, 3]),
+            RADIUS, METAL_THICKNESS, 172, 13 * 172)
+        self.assertEqual(len(references3), 3)
+        self.assertEqual(len(open_paths3), 3)     # one portal per conductor, paths between consecutive portals (unchanged)
+        self.assertTrue(all(p["StartConductor"] != p["EndConductor"] for p in open_paths3))
+
     def test_live_cut_trace_is_continuous_and_carries_the_conductor_potential(self):
         # k4 2 / 2 / 2 um, three conductors: the right metal (conductor 3) is a terminal at
         # 1 V meeting the box at the right side (the recorded -12 % MS "reconstruction

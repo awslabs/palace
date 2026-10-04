@@ -104,6 +104,65 @@ class DeviceBasisDefaultTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parser.parse_args(common + ["--cap-triangulation", "fan"])
 
+    def test_omit_requirement_is_a_repeatable_device_option(self):
+        """`build --device --omit-requirement HASH_PREFIX` (repeatable) reaches the discovery; it
+        is refused without --device (it only names discovery placeholders)."""
+        parser = coupon_library.build_parser()
+        common = ["build", "--device", "device.json", "--palace", "palace", "--root", "root"]
+        self.assertEqual(parser.parse_args(common).omit_requirement, [])
+        self.assertEqual(parser.parse_args(common + ["--omit-requirement", "69ca648cc16f", "--omit-requirement", "abcd"])
+                         .omit_requirement, ["69ca648cc16f", "abcd"])
+        with self.assertRaises(SystemExit):
+            coupon_library.main(["build", "--manifest", "m.json", "--omit-requirement", "69ca648cc16f"])
+
+    def test_per_requirement_span_and_element_caps_are_device_options_with_recorded_reasons(self):
+        """`build --device --support-span-cap HASH_PREFIX=OVER_R --support-span-cap-reason TEXT` and
+        `--element-cap HASH_PREFIX=ELEMENTS --element-cap-approval TEXT --element-cap-reason TEXT`
+        (supervisor decision of 2026-10-02 for the S1p loop end: one closed 38-edge feature of plan
+        span 18.24 R > the generator's 16R bound, ~12-13 M elements > the 6 M gate) name one spatial
+        coupon each; they are refused without --device, without their texts, with a non-hex prefix,
+        a non-positive value, a repeated prefix, or a prefix no spatial coupon carries."""
+        parser = coupon_library.build_parser()
+        common = ["build", "--device", "device.json", "--palace", "palace", "--root", "root"]
+        args = parser.parse_args(common + ["--support-span-cap", "5ed91f8890c0=20", "--support-span-cap-reason", "closed loop",
+                                           "--element-cap", "5ed91f8890c0=16000000", "--element-cap-approval", "supervisor",
+                                           "--element-cap-reason", "12-13 M elements"])
+        self.assertEqual((args.support_span_cap, args.element_cap), (["5ed91f8890c0=20"], ["5ed91f8890c0=16000000"]))
+        self.assertEqual(device_coupons.requirement_option_kwargs(args),
+                         {"support_span_caps": ["5ed91f8890c0=20"], "support_span_cap_reason": "closed loop",
+                          "element_caps": ["5ed91f8890c0=16000000"], "element_cap_approval": "supervisor",
+                          "element_cap_reason": "12-13 M elements"})
+        self.assertEqual(parser.parse_args(common).support_span_cap, [])
+        with self.assertRaises(SystemExit):
+            coupon_library.main(["build", "--manifest", "m.json", "--element-cap", "5ed91f8890c0=16000000"])
+        self.assertEqual(device_coupons.requirement_options(["5ed91f8890c0=20", "abcd=18.5"], float, "--support-span-cap"),
+                         {"5ed91f8890c0": 20.0, "abcd": 18.5})
+        self.assertEqual(device_coupons.requirement_options(["5ed91f8890c0=16000000"], int, "--element-cap"),
+                         {"5ed91f8890c0": 16000000})
+        for bad in ("5ed91f8890c0", "=20", "XYZ=20", "5ed9=0", "5ed9=-3", "5ed9=sixteen"):
+            with self.assertRaises(device_coupons.DeviceAdapterError):
+                device_coupons.requirement_options([bad], float, "--support-span-cap")
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "given twice"):
+            device_coupons.requirement_options(["5ed9=20", "5ed9=21"], float, "--support-span-cap")
+        options = {"5ed91f8890c0": 20.0}
+        full = "5ed91f8890c014ae48ce6958221a2ecc7f0b796a59cc40470fb95a1d1a3690ed"
+        self.assertEqual(device_coupons.requirement_option_for(options, full), ("5ed91f8890c0", 20.0))
+        self.assertIsNone(device_coupons.requirement_option_for(options, "bd43654a77c6" + "0" * 52))
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "several prefixes"):
+            device_coupons.requirement_option_for({"5ed9": 1.0, "5ed91f": 2.0}, full)
+        device_coupons.check_requirement_options_consumed(options, ["5ed91f8890c0"], "--support-span-cap")
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "no spatial coupon of the discovery"):
+            device_coupons.check_requirement_options_consumed(options, [], "--support-span-cap")
+        # The texts are mandatory with the options (fail closed before any discovery).
+        for kwargs in ({"support_span_caps": ["5ed9=20"]},
+                       {"element_caps": ["5ed9=16000000"], "element_cap_reason": "r"},
+                       {"element_caps": ["5ed9=16000000"], "element_cap_approval": "a"}):
+            with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "needs --"):
+                device_coupons.prepare_device_sources("device.json", palace="palace", output=Path("/nonexistent/out"),
+                                                      manifest_path="m.json", **kwargs)
+        # The generator receives the cap for the named coupon only.
+        self.assertIn("--support-span-cap", device_coupons.generate_sources.__doc__)
+
 
 @unittest.skipUnless(available(), "the Palace executable and the transmon fixture are needed")
 class DeviceCouponsTest(unittest.TestCase):
@@ -211,6 +270,38 @@ class DeviceCouponsTest(unittest.TestCase):
                 x, y = float(row["X"]), float(row["Y"])
                 self.assertTrue(any(abs((x - px) * ty - (y - py) * tx) <= 1e-6 for (px, py), (tx, ty) in lines),
                                 f"{coupon['Case']}: physical boundary vertex ({x}, {y}) off every edge line")
+
+    def test_omitted_requirement_is_recorded_out_of_scope_and_not_built(self):
+        """prepare_device_sources(omit_requirements=[prefix]): the discovery gives the matching
+        Missing requirement no placeholder, the adapter builds no source directory for it (whatever
+        its family) and records it out of scope with Method OmittedRequirement, its family method
+        and the prefix; the device record's Discovery lists it; every other coupon is unchanged."""
+        omitted = min(self.record["Coupons"], key=lambda coupon: coupon["Sources"])
+        closure = json.loads(Path(self.record["Discovery"]["Manifest"]).read_text())
+        by_id = {planner.coupon_id(requirement): requirement for requirement in closure["Requirements"]}
+        prefix = by_id[omitted["Requirement"]]["Hash"][:12]
+        record = device_coupons.prepare_device_sources(self.device, palace=PALACE, output=self.tmp / "device-omit",
+                                                       manifest_path=self.manifest_path, log=lambda message: None,
+                                                       omit_requirements=[prefix])
+        self.assertEqual([coupon["Case"] for coupon in record["Coupons"]],
+                         [coupon["Case"] for coupon in self.record["Coupons"] if coupon["Case"] != omitted["Case"]])
+        self.assertFalse((self.tmp / "device-omit" / "sources" / omitted["Case"]).exists())
+        out_of_scope = [item for item in record["OutOfScope"] if item["Method"] == device_coupons.OMITTED_METHOD]
+        self.assertEqual(len(out_of_scope), 1)
+        self.assertEqual(out_of_scope[0]["Id"], omitted["Requirement"])
+        self.assertEqual(out_of_scope[0]["FamilyMethod"], device_coupons.SPATIAL_METHOD)
+        self.assertEqual(out_of_scope[0]["Hash"][:12], prefix)
+        self.assertIn(prefix, out_of_scope[0]["Reason"])
+        self.assertEqual([item["Hash"][:12] for item in record["Discovery"]["OmittedRequirements"]], [prefix])
+        self.assertEqual(record["Discovery"]["OmittedRequirements"][0]["Topology"], "SpatialEdgeCluster")
+        closure_omit = json.loads(Path(record["Discovery"]["Manifest"]).read_text())
+        self.assertEqual([item["Hash"] for item in closure_omit["OmittedRequirements"]],
+                         [record["Discovery"]["OmittedRequirements"][0]["Hash"]])
+        self.assertEqual({requirement["Status"] for requirement in closure_omit["Requirements"]
+                          if requirement.get("Hash", "").startswith(prefix)}, {"Missing"})
+        history = json.loads((self.tmp / "device-omit" / "discovery" / "closure-history.json").read_text())
+        self.assertNotIn(by_id[omitted["Requirement"]]["Hash"][:16],
+                         {placeholder["Id"] for entry in history["Passes"] for placeholder in entry["AddedPlaceholders"]})
 
     def test_rerun_is_idempotent_by_content(self):
         again = device_coupons.prepare_device_sources(self.device, palace=PALACE, output=self.tmp / "device",

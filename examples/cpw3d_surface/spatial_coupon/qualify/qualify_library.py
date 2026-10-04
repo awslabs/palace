@@ -232,6 +232,51 @@ def stage_layout(prefix, main_orders, control_orders, source_count, control_coun
     return layout
 
 
+BUILD_GATE_OVERRIDE_KEYS = ("Case", "Gate", "Approval", "Cause", "Band", "UTC")
+BUILD_GATE_OVERRIDE_RULE = (
+    "--build-gate-override FILE (repeatable): a per-case, recorded acceptance of ONE failed per-entry verification gate of "
+    "the build record - the file names the Case, the Gate, the Approval (the supervisor decision), the Cause and the Band "
+    "geometry (the audit's component record) and the UTC of the approval; the driver qualifies the case only when its build "
+    "failed at the per-entry verification with every failure on exactly that gate, records the override in the case record "
+    "and in the library model (BuildGateOverride), and never relaxes the gate for any other case (supervisor decision 229: "
+    "the un-etched collar notch band of S1p's 19-edge coupon bd43654a77c6)")
+
+
+def load_build_gate_overrides(paths):
+    """{case id: override record} of the --build-gate-override files (schema checked, fail closed)."""
+    overrides = {}
+    for path in paths or []:
+        path = Path(path).expanduser().resolve()
+        record = json.loads(path.read_text())
+        missing = [key for key in BUILD_GATE_OVERRIDE_KEYS if not record.get(key)]
+        if missing:
+            raise ValueError(f"{path}: a build-gate override needs {BUILD_GATE_OVERRIDE_KEYS}; missing {missing}")
+        if not isinstance(record["Band"], dict) or not all(key in record["Band"] for key in ("Endpoints", "Span", "RMSWidth")):
+            raise ValueError(f"{path}: Band must carry the audit component's Endpoints, Span and RMSWidth")
+        if record["Case"] in overrides:
+            raise ValueError(f"{path}: a second override for {record['Case']}")
+        overrides[record["Case"]] = {**record, "Path": str(path), "SHA256": sha256(path), "Rule": BUILD_GATE_OVERRIDE_RULE}
+    return overrides
+
+
+def build_gate_override_for(case_record, overrides):
+    """The override that admits a failed build record: every per-entry verification failure
+    of the case is a gate failure of the override's Gate (and nothing else failed)."""
+    override = overrides.get(case_record["Case"])
+    if override is None:
+        return None
+    stopped = case_record.get("StoppedBy") or {}
+    failures = (case_record.get("Verification") or {}).get("Failures") or []
+    pattern = re.compile(r"^(?P<variant>[^:]+): gate failure: " + re.escape(override["Gate"]) + r"$")
+    if (case_record["Status"] != "failed" or stopped.get("Kind") != "Verification" or not failures
+            or not all(pattern.match(failure) for failure in failures)):
+        raise CaseStop("Build", f"the build-gate override of {case_record['Case']} ({override['Gate']}) does not match the "
+                                f"build record: status {case_record['Status']}, stopped by {stopped.get('Kind')}, "
+                                f"failures {failures}")
+    return {**override, "VerificationFailures": failures,
+            "Variants": sorted(pattern.match(failure).group("variant") for failure in failures)}
+
+
 def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, profile, cost_model, gates, gates_digest):
     """Steps 1-4 of one coupon: the per-case record with the plan written locally."""
     case_id = case_record["Case"]
@@ -240,9 +285,12 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     record = {"Case": case_id, "Status": None, "StoppedBy": None, "BuildStatus": case_record["Status"],
               "BuildPassed": case_record["Passed"], "Mesh": None, "Reference": None, "Sources": None, "Controls": None,
               "StagePrefix": None, "Stages": None, "Estimate": None, "Plan": None, "Configs": None,
-              "Root": str(case_root), "Remote": None}
+              "Root": str(case_root), "Remote": None, "BuildGateOverride": None}
     if not case_record["Passed"]:
-        raise CaseStop("Build", f"the build record marks {case_id} {case_record['Status']} (Passed false): not qualified")
+        override = build_gate_override_for(case_record, load_build_gate_overrides(getattr(args, "build_gate_override", None)))
+        if override is None:
+            raise CaseStop("Build", f"the build record marks {case_id} {case_record['Status']} (Passed false): not qualified")
+        record["BuildGateOverride"] = override
     case = manifest_case(manifest, case_id)
     files = case["Source"]["Files"]
     if "BasisContract" not in files:
@@ -1361,6 +1409,8 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
             paired.add(record["Case"])
         model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
                                   "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"]}
+        if record.get("BuildGateOverride"):
+            model["BuildGateOverride"] = record["BuildGateOverride"]
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
         model["SourceProcessLibrary"] = {"Path": str(library_path), "SHA256": sha256(library_path)}
         tail = context.get("ma_tail")
@@ -1722,6 +1772,8 @@ def add_arguments(parser):
     parser.add_argument("--reducer-block-size", type=int, default=None,
                         help="PALACE_RESPONSE_BLOCK_SIZE of every reducer stage (decision 62(1)); default: the manifest's "
                              f"ProductionRecipe.PhysicsRun.ReducerBlockSize, else {build_plan.DEFAULT_REDUCER_BLOCK_SIZE}")
+    parser.add_argument("--build-gate-override", type=Path, action="append", default=[], metavar="FILE",
+                        help=BUILD_GATE_OVERRIDE_RULE)
     parser.add_argument("--frozen-binary-sha256", default=None,
                         help="SHA-256 of the frozen Palace executable under ROOT (decision 63); default: the manifest's "
                              f"ProductionRecipe.PhysicsRun.FrozenExecutable, else {build_plan.DEFAULT_FROZEN_BINARY_SHA256[:12]}...")
