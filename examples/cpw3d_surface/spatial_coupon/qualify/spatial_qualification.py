@@ -3,29 +3,53 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """(F) The spatial-coupon qualification upgrade (USER decision 281, decision 282 with the
-ruling on the R0 review's MAJOR-3, decision 285 (5)): the dense held-out traces, their
-closure and p-stability criteria, the matrix identity, the conductor-consistency gate as the
-rebuild acceptance, the reference box integral hook for windows, and the library statuses
+ruling on the R0 review's MAJOR-3, decision 285 (5), decisions 293 / 299 for the thin side and
+the gate): the dense held-out traces, their closure and DOMAIN twin-consistency criteria, the
+matrix identity, the resolution-aware conductor-consistency gate as the rebuild acceptance,
+the reference box integral hook for windows, and the library statuses
 PendingQualification -> Qualified -> WindowValidated (or Failed).
+
+Which coupon matrices act in the device correction (surfaceresponseoperator.cpp
+GetElectrostaticResponse, electrostaticsolver.cpp ApplyResponse): the fixed-trace (ft)
+interface energy is E_out(R) + sum_patches w t^T Q_fab,surf t - the device's own within-R raw
+surface energy is DROPPED and replaced by the fabricated coupon's; the thin twin enters only
+through its DOMAIN matrix (the domain defect Q_fab,dom - Q_thin,dom of the ft correction and
+of the self-consistent (sc) operator, the fixed-flux (ff) transform built from the two domain
+matrices). The thin twin's SURFACE matrices never enter ft / ff / sc (the surface defects are
+built; their only consumer GetEnergyCorrection has no caller). Hence (decision 299):
 
 (a) Dense held-out traces. A spatial coupon is solved, fabricated and thin twins, at the
 library order p4 and the control order p5 under >= 1 DENSE trace t and must satisfy, per
 interface class k in {SA, MS, MA (raw; sharp when the run carries radial shells), Domain}
 WITHIN R:
 
-    closure      | E_thin,p4(t) + dE_model(t) - E_fab,p5(t) | / E_fab,p5(t) <= 0.02
-    p-stability  | dE_p5(t) - dE_p4(t) | / E_fab,p5(t) <= 0.02   (dE_p = E_fab,p - E_thin,p)
-    identity     | E_fab,p4(t) - t^T Q_fab t | / E_fab,p4(t) <= 1e-6
+    closure           | E_thin,p4(t) + dE_model(t) - E_fab,p5(t) | / E_fab,p5(t) <= 0.02
+    twin-consistency  | dE_dom,p5(t) - dE_dom,p4(t) | / E_fab,dom,p5(t) <= 0.02   (Domain only)
+    identity          | E_fab,p4(t) - t^T Q_fab t | / E_fab,p4(t) <= 1e-6
 
 with dE_model(t) = t^T (Q_fab - Q_thin) t from the p4 library matrices (`matrices.py`
-format: domain-response-matrix.csv / surface-response-matrix.csv). The dense traces: T1 (a
-device-derived coupon) = the thin DEVICE trace at the coupon's knots from one coarse thin
-solve of the registration device / window (surface-response-traces.csv, per placed patch);
-T2 (every coupon) = the conductor states and the trace of a unit line charge 5 R outside each
-of the four in-plane faces at the process plane, superposed with the conductor states so that
-every conductor cross-section carries its potential exactly (a dense trace consistent by
-construction). The decision-66 caveat holds for MA raw: the thin twin's MA is read at its
-cutoff; the sharp reading (radial shells) is reported alongside when present.
+format: domain-response-matrix.csv / surface-response-matrix.csv) and dE_p = E_fab,p -
+E_thin,p. The twin-consistency criterion is the thin twin's domain p-stability: the device's
+box domain energy is finite and p-convergent, so the domain defect must be too (its
+tolerance = the closure's: the residual is the thin-side error of a p5 device run corrected
+with the p4 library, in the same unit E_fab,p5). The thin twin's SURFACE p-steps
+(E_thin,p5 - E_thin,p4 per class, relative to E_thin,p5 and to E_fab,p5) are RECORDED AS
+INFORMATION (the decision-66 log-divergence at the recorded 2-nm sheet cutoff), not judged:
+they have no path into ft / ff / sc. The dense traces: T1 (a device-derived coupon) = the thin
+DEVICE trace at the coupon's knots from one coarse thin solve of the registration device /
+window (surface-response-traces.csv, per placed patch); T2 (every coupon) = the conductor
+states and the trace of a unit line charge 5 R outside each of the four in-plane faces at the
+process plane, superposed with the conductor states so that every conductor cross-section
+carries its potential exactly (a dense trace consistent by construction). The decision-66
+caveat holds for MA raw: the thin twin's MA is read at its cutoff; the sharp reading (radial
+shells) is reported alongside when present.
+
+(a') The device-side domain reading (information, decision 299 (1a)): device_box_energies.py
+sub-tags the registration device's thin mesh in the volume by the placed boxes and reads one
+device solve at p4 and p5 on that one mesh -> the box domain energy bracket [E_in, E_in +
+E_straddle] and its p-step next to the twin's domain energy under the device trace
+(--device-boxes). Not a criterion: the device mesh resolves the sheet edges at micrometres,
+the twin at 2 nm, and a sheet-edge field's domain energy converges like h^1.
 
 (b) The reference box integral (D2a) as the per-class closure of window validation: for a
 window reference solve sub-tagged with the placed boxes, `ft_model / REF_A` within the
@@ -34,14 +58,25 @@ decision-218 markers (|.| - 1 <= 0.05 validated class / 0.10 new class) with the
 
 (3) The conductor-consistency gate (decision 277) is the acceptance check of every rebuilt
 coupon: on the registration device the model's plane conductor vertices lie on real device
-metal of the same conductor, so Count must be 0 and MaxRatio <= 1e-6.
+metal of the same conductor, so Count must be 0 on every supplied device solve. Its MaxRatio
+is RESOLUTION-DEPENDENT on real metal (decision 299, the A6 erratum): the probe point sits a
+roundoff distance delta (~1e-7 um, the placement's frame arithmetic) off the device sheet
+edge, where the FE gradient grows with the resolved singularity as ~(h / p^2)^(-1/2), so the
+ratio delta |grad V_h| / A grows ~x1.4 per uniform halving and ~x2.9 from Order 3 to 5 (A6
+box 3: 2.2e-7 at c0 / Order 3 -> 6.3e-7 at c0 / Order 5 -> 5.4e-6 at c7) while fictitious
+metal reads the gap potential fraction, 0.2-0.4 (D3-A). Acceptance: MaxRatio <= 1e-4 on
+every supplied device solve, to be supplied at the PRODUCTION orders (p4 and p5) on the
+registration (c0) mesh; margin: 1e-4 x 2^(k/2) stays below the solve-time exclusion 0.02 for
+k < 15 halvings (every production AMR sequence to date <= 8 cycles: >= 12x margin), and lies
+>= 2e3 below fictitious metal.
 
-Statuses: PendingQualification (today's p-sequence controls) -> Qualified (a) for T1 or T2
-AND the identity AND gate Count 0) -> WindowValidated ((b) places the class inside its marker
-on >= 1 window reference); (a) failing -> Failed (never placed).
+Statuses: PendingQualification (today's p-sequence controls) -> Qualified ((a) for T1 or T2
+AND the identity AND the gate) -> WindowValidated ((b) places the class inside its marker on
+>= 1 window reference); (a) failing -> Failed (never placed).
 """
 import argparse
 import csv
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -58,9 +93,13 @@ import generate_spatial_response as producer  # noqa: E402
 import trace_basis  # noqa: E402
 
 CLOSURE_TOLERANCE = 0.02
-P_STABILITY_TOLERANCE = 0.02
+TWIN_CONSISTENCY_TOLERANCE = 0.02
 MATRIX_IDENTITY_TOLERANCE = 1.0e-6
-GATE_MAX_RATIO = 1.0e-6
+GATE_MAX_RATIO = 1.0e-4
+GATE_RULE = ("decision 299: Count 0 and MaxRatio <= 1e-4 on every supplied device solve of the registration mesh (to be "
+             "supplied at the production orders p4 and p5 on c0); real metal reads a roundoff offset x the FE edge gradient, "
+             "~x1.4 per uniform halving and ~x2.9 from Order 3 to 5 (A6 box 3: 2.2e-7 -> 6.3e-7 at c0, 5.4e-6 at c7), so "
+             "1e-4 x 2^(k/2) < the solve-time exclusion 0.02 for k < 15 halvings; fictitious metal reads 0.2-0.4 (D3-A)")
 REFERENCE_MARKER_VALIDATED = 0.05
 REFERENCE_MARKER_NEW_CLASS = 0.10
 LINE_CHARGE_DISTANCE_OVER_R = 5.0
@@ -99,13 +138,30 @@ def dense_closure(e_thin_p4, de_model, e_fab_p5, tolerance=CLOSURE_TOLERANCE):
     return result
 
 
-def p_stability(de_p5, de_p4, e_fab_p5, tolerance=P_STABILITY_TOLERANCE):
-    """Per class: |dE_p5 - dE_p4| / E_fab,p5 (the correction's p-stability on the dense
-    trace; the ruling on the R0 review's MAJOR-3) and its verdict."""
+def domain_twin_consistency(de_p5, de_p4, e_fab_p5, tolerance=TWIN_CONSISTENCY_TOLERANCE):
+    """The (1a) criterion (decision 299): |dE_dom,p5 - dE_dom,p4| / E_fab,dom,p5 on the Domain
+    class only - the thin twin's domain matrix is the only thin term acting in ft / ff / sc, and
+    the residual is the thin-side error of a p5 device run corrected with the p4 library."""
+    if DOMAIN_CLASS not in e_fab_p5:
+        raise SpatialQualificationError("the twin-consistency criterion needs the Domain class energies")
+    residual = _relative(de_p5[DOMAIN_CLASS] - de_p4[DOMAIN_CLASS], e_fab_p5[DOMAIN_CLASS])
+    return {DOMAIN_CLASS: {"Residual": residual, "Tolerance": tolerance, "Passed": residual <= tolerance}}
+
+
+def thin_surface_p_steps(thin_p4, thin_p5, e_fab_p5):
+    """Information, never judged (decision 299 (1b)): the thin twin's p4 -> p5 step per
+    surface class, relative to its own p5 energy and to E_fab,p5 - the decision-66
+    log-divergence at the recorded sheet cutoff; the thin surface matrices have no path into
+    ft / ff / sc (surfaceresponseoperator.cpp: the surface defects' only consumer
+    GetEnergyCorrection has no caller)."""
     result = {}
-    for cls in e_fab_p5:
-        residual = _relative(de_p5[cls] - de_p4[cls], e_fab_p5[cls])
-        result[cls] = {"Residual": residual, "Tolerance": tolerance, "Passed": residual <= tolerance}
+    for cls in thin_p5:
+        if cls == DOMAIN_CLASS:
+            continue
+        step = thin_p5[cls] - thin_p4[cls]
+        result[cls] = {"Step": step,
+                       "RelativeToThin": _relative(step, thin_p5[cls]) * (1.0 if step >= 0.0 else -1.0),
+                       "RelativeToFabricated": _relative(step, e_fab_p5[cls]) * (1.0 if step >= 0.0 else -1.0)}
     return result
 
 
@@ -141,9 +197,9 @@ def matrix_identity(e_fab_p4, q_fab, coefficients, tolerance=MATRIX_IDENTITY_TOL
 
 
 def conductor_consistency_gate(diagnostics, model_name, tolerance=GATE_MAX_RATIO):
-    """The decision-277 gate as the rebuild acceptance: from a solve's
-    SurfaceResponse.Diagnostics.ConductorConsistency, the model's records must all be probed
-    (not Excluded) with MaxRatio <= tolerance and the model must contribute no count."""
+    """The decision-277 gate on ONE device solve's SurfaceResponse.Diagnostics.ConductorConsistency:
+    the model's records must all be probed (not Excluded) with MaxRatio <= tolerance and the
+    model must contribute no count."""
     records = [r for r in diagnostics.get("Records", []) if r.get("Model") == model_name]
     if not records:
         return {"Passed": False, "Probed": 0, "Reason": f"no conductor-consistency record for model {model_name} "
@@ -154,7 +210,28 @@ def conductor_consistency_gate(diagnostics, model_name, tolerance=GATE_MAX_RATIO
     count = sum(1 for r in records if float(r.get("MaxRatio", math.inf)) > float(diagnostics.get("Tolerance", tolerance)))
     passed = excluded == 0 and max_ratio <= tolerance and count == 0 and int(diagnostics.get("Count", count)) >= count
     return {"Passed": passed, "Probed": len(records), "Excluded": excluded, "Count": count, "MaxRatio": max_ratio,
-            "Tolerance": tolerance}
+            "Tolerance": tolerance, "SolveTolerance": diagnostics.get("Tolerance")}
+
+
+def resolution_aware_gate(solves, model_name, tolerance=GATE_MAX_RATIO):
+    """The (F) acceptance (decision 299 (2)) over the supplied device solves [{Diagnostics,
+    Order, Source}]: every solve passes conductor_consistency_gate; the record lists each
+    solve's Order and MaxRatio, the orders covered and the worst ratio, and names the
+    production orders (4, 5) not supplied (recorded, not a failure: the tolerance carries
+    the growth margin)."""
+    if not solves:
+        raise SpatialQualificationError("the gate needs at least one device solve record")
+    entries = []
+    for solve in solves:
+        gate = conductor_consistency_gate(solve["Diagnostics"], model_name, tolerance)
+        entries.append({**gate, "Order": solve.get("Order"), "Source": solve.get("Source")})
+    orders = sorted({int(e["Order"]) for e in entries if e.get("Order") is not None})
+    probed = [e for e in entries if e.get("Probed")]
+    return {"Passed": all(e["Passed"] for e in entries), "Tolerance": tolerance, "Rule": GATE_RULE,
+            "Solves": entries, "Orders": orders, "ProductionOrdersMissing": [p for p in (4, 5) if p not in orders],
+            "MaxRatio": max(e["MaxRatio"] for e in probed) if probed else math.inf,
+            "Probed": sum(e.get("Probed", 0) for e in entries), "Count": sum(e.get("Count", 0) for e in probed),
+            "Excluded": sum(e.get("Excluded", 0) for e in probed)}
 
 
 def reference_box_closure(ft_model, e_in, e_straddle, validated_class):
@@ -203,6 +280,22 @@ def interface_classes(config):
         if entry.get("RadialShell") is not None or entry.get("Shell") is not None:
             cls = "MA sharp"
         classes[index] = cls
+    return classes
+
+
+def twin_interface_classes(configs):
+    """{interface index: class} over the twin run configs {name: config}: the UNION of their
+    class maps (decision 293 (2)): the production twins carry different Dielectric indices
+    (fabricated: 2 MS, 3 SA, 4.. the radial MA shells typed MA; thin: 1 MA, 2 MS, 3 SA), so
+    every index is typed by the config that defines it; one index typed differently by two
+    configs fails closed."""
+    classes, owner = {}, {}
+    for name in sorted(configs):
+        for index, cls in interface_classes(configs[name]).items():
+            if index in classes and classes[index] != cls:
+                raise SpatialQualificationError(f"interface {index} is {classes[index]} in {owner[index]} and {cls} in {name}")
+            classes.setdefault(index, cls)
+            owner.setdefault(index, name)
     return classes
 
 
@@ -429,59 +522,82 @@ def dense_trace_config(reference_config, mesh, output, traces, order):
 
 
 def evaluate_trace(name, family, coefficients, *, fab_p4, thin_p4, fab_p5, thin_p5, q_fab, q_thin):
-    """The three criteria of one dense trace from its per-class energies at p4 / p5 and the
-    p4 matrices."""
+    """The criteria of one dense trace from its per-class energies at p4 / p5 and the p4
+    matrices: the closure, the Domain twin-consistency, the matrix identity; the thin surface
+    p-steps recorded as information."""
     de_p4 = {cls: fab_p4[cls] - thin_p4[cls] for cls in fab_p4}
     de_p5 = {cls: fab_p5[cls] - thin_p5[cls] for cls in fab_p5}
     difference = matrix_difference(q_fab, q_thin)
     de_model = {cls: quadratic_form(difference[cls], coefficients) for cls in fab_p4}
     closure = dense_closure(thin_p4, de_model, fab_p5)
-    stability = p_stability(de_p5, de_p4, fab_p5)
+    twin = domain_twin_consistency(de_p5, de_p4, fab_p5)
     identity = matrix_identity(fab_p4, q_fab, coefficients)
     return {"Name": name, "Family": family,
             "Energies": {"FabricatedP4": fab_p4, "ThinP4": thin_p4, "FabricatedP5": fab_p5, "ThinP5": thin_p5,
                          "ModelCorrection": de_model},
-            "Closure": closure, "PStability": stability, "MatrixIdentity": identity,
-            "Passed": all(v["Passed"] for v in closure.values()) and all(v["Passed"] for v in stability.values())
+            "Closure": closure, "TwinConsistency": twin, "MatrixIdentity": identity,
+            "ThinSurfacePSteps": thin_surface_p_steps(thin_p4, thin_p5, fab_p5),
+            "Passed": all(v["Passed"] for v in closure.values()) and all(v["Passed"] for v in twin.values())
             and all(v["Passed"] for v in identity.values())}
 
 
-def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=None, tolerances=None):
+RULE = ("decision 282 (F) as restated by decision 299: closure |E_thin,p4 + dE_model - E_fab,p5| / E_fab,p5 <= 0.02 per "
+        "interface class within R on every dense trace; DOMAIN twin-consistency |dE_dom,p5 - dE_dom,p4| / E_fab,dom,p5 <= "
+        "0.02 (the thin twin acts through its domain matrix only: ft = E_out(R) + t^T Q_fab,surf t, the domain defect in "
+        "the ft correction and the sc operator, the ff transform; the thin surface p-steps are information); the matrix "
+        "identity <= 1e-6; the resolution-aware conductor-consistency gate (decision 277 / 299: Count 0, MaxRatio <= 1e-4 "
+        "on every supplied device solve, at the production orders on the registration mesh); (b) the reference box "
+        "integral within the decision-218 marker lifts Qualified to WindowValidated")
+
+
+def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=None, device_boxes=None, tolerances=None):
     """The qualification record of a coupon: every dense trace's criteria (evaluate_trace
-    results), the gate, the optional window references ((b) per class) and the status."""
+    results), the gate, the optional window references ((b) per class), the optional
+    device-side domain reading (information) and the status."""
     if not traces:
         raise SpatialQualificationError("(a) needs at least one dense trace")
     families = {trace["Family"] for trace in traces}
     dense_passed = all(trace["Passed"] for trace in traces)
     identity_passed = all(v["Passed"] for trace in traces for v in trace["MatrixIdentity"].values())
+    twin_passed = all(v["Passed"] for trace in traces for v in trace["TwinConsistency"].values())
+    closure_passed = all(v["Passed"] for trace in traces for v in trace["Closure"].values())
     window = None
     if reference_boxes:
         window = {"Passed": all(entry["Passed"] for entry in reference_boxes), "Entries": reference_boxes}
     status = qualification_status(current_status, dense_passed=dense_passed, identity_passed=identity_passed,
                                   gate_passed=bool(gate["Passed"]), window_validated=bool(window and window["Passed"]))
-    return {"Version": 1, "Rule": "decision 282 (F): closure |E_thin,p4 + dE_model - E_fab,p5| / E_fab,p5 <= 0.02 and "
-                                  "p-stability |dE_p5 - dE_p4| / E_fab,p5 <= 0.02 per interface class within R on every "
-                                  "dense trace, the matrix identity <= 1e-6, the conductor-consistency gate Count 0 "
-                                  "(decision 277); (b) the reference box integral within the decision-218 marker lifts "
-                                  "Qualified to WindowValidated",
-            "Tolerances": {"Closure": CLOSURE_TOLERANCE, "PStability": P_STABILITY_TOLERANCE,
+    return {"Version": 2, "Rule": RULE,
+            "Tolerances": {"Closure": CLOSURE_TOLERANCE, "TwinConsistency": TWIN_CONSISTENCY_TOLERANCE,
                            "MatrixIdentity": MATRIX_IDENTITY_TOLERANCE, "GateMaxRatio": GATE_MAX_RATIO,
                            **(tolerances or {})},
             "Families": sorted(families), "Traces": traces, "Gate": gate, "WindowReference": window,
-            "DensePassed": dense_passed, "IdentityPassed": identity_passed, "GatePassed": bool(gate["Passed"]),
+            "DeviceBoxes": device_boxes,
+            "DensePassed": dense_passed, "ClosurePassed": closure_passed, "TwinConsistencyPassed": twin_passed,
+            "IdentityPassed": identity_passed, "GatePassed": bool(gate["Passed"]),
             "PreviousStatus": current_status, "Status": status}
 
 
-def stamp_library_status(library_path, model_name, record):
-    """Write the model's QualificationStatus and the (F) record into process-library.json."""
+def stamp_library_status(library_path, model_name, record, record_path=None):
+    """Write the model's QualificationStatus and the (F) record summary into process-library.json."""
     library_path = Path(library_path)
     library = json.loads(library_path.read_text())
     models = [m for m in library.get("Models", []) if m.get("Name") == model_name]
     if len(models) != 1:
         raise SpatialQualificationError(f"{library_path}: model {model_name} not found exactly once")
+    gate = record["Gate"]
     models[0]["QualificationStatus"] = record["Status"]
-    models[0]["SpatialQualification"] = {key: record[key] for key in
-                                         ("Version", "Families", "DensePassed", "IdentityPassed", "GatePassed", "Status")}
+    models[0]["SpatialQualification"] = {
+        **{key: record[key] for key in ("Version", "Rule", "Families", "Tolerances", "DensePassed", "ClosurePassed",
+                                        "TwinConsistencyPassed", "IdentityPassed", "GatePassed", "PreviousStatus", "Status")},
+        "Gate": {key: gate.get(key) for key in ("Passed", "MaxRatio", "Orders", "ProductionOrdersMissing", "Count", "Probed")},
+        "Traces": [{"Name": t["Name"], "Family": t["Family"], "Passed": t["Passed"],
+                    "Closure": {k: v["Residual"] for k, v in t["Closure"].items()},
+                    "TwinConsistency": {k: v["Residual"] for k, v in t["TwinConsistency"].items()},
+                    "MatrixIdentity": {k: v["Residual"] for k, v in t["MatrixIdentity"].items()},
+                    "ThinSurfacePSteps": {k: v["RelativeToFabricated"] for k, v in t["ThinSurfacePSteps"].items()}}
+                   for t in record["Traces"]],
+        "Record": None if record_path is None else str(record_path),
+        "RecordSHA256": None if record_path is None else hashlib.sha256(Path(record_path).read_bytes()).hexdigest()}
     models[0]["LibraryQualified"] = record["Status"] in (STATUS_QUALIFIED, STATUS_WINDOW_VALIDATED)
     library_path.write_text(json.dumps(library, indent=2) + "\n")
     return library
@@ -556,11 +672,30 @@ def command_traces(args):
     return 0
 
 
+def gate_solve_record(path):
+    """{Diagnostics, Order, Source} of one device solve: palace.json (or the preflight
+    manifest) with its ConductorConsistency record; the Order from the sibling
+    config_resolved.json when present."""
+    path = Path(path)
+    source = json.loads(path.read_text())
+    diagnostics = source.get("SurfaceResponse", {}).get("Diagnostics", {}).get("ConductorConsistency")
+    if diagnostics is None:
+        diagnostics = source.get("Summary", {}).get("ConductorConsistency")
+    if diagnostics is None:
+        raise SpatialQualificationError(f"{path} carries no ConductorConsistency record")
+    order = None
+    resolved = path.parent / "config_resolved.json"
+    if resolved.is_file():
+        order = json.loads(resolved.read_text()).get("Solver", {}).get("Order")
+    return {"Diagnostics": diagnostics, "Order": order, "Source": str(path)}
+
+
 def command_evaluate(args):
-    """Evaluate (a) + identity + gate [+ (b)] from the run outputs and stamp the status."""
+    """Evaluate (a) + identity + gate [+ (b), + the device-side domain reading] from the run
+    outputs and stamp the status."""
     manifest = json.loads(Path(args.dense_traces).read_text())
     configs = {name: json.loads(Path(path).read_text()) for name, path in manifest["Configs"].items()}
-    classes = interface_classes(configs[f"fabricated-p{args.library_order}"])
+    classes = twin_interface_classes(configs)
     runs = {}
     for kind in ("fabricated", "thin"):
         for order in (args.library_order, args.control_order):
@@ -580,27 +715,32 @@ def command_evaluate(args):
                                      fab_p5=scaled(f"fabricated-p{args.control_order}"),
                                      thin_p5=scaled(f"thin-p{args.control_order}"),
                                      q_fab=q_fab, q_thin=q_thin))
-    gate_source = json.loads(Path(args.gate).read_text())
-    diagnostics = gate_source.get("SurfaceResponse", {}).get("Diagnostics", {}).get("ConductorConsistency")
-    if diagnostics is None:
-        diagnostics = gate_source.get("Summary", {}).get("ConductorConsistency")
-    if diagnostics is None:
-        raise SpatialQualificationError(f"{args.gate} carries no ConductorConsistency record")
-    gate = conductor_consistency_gate(diagnostics, manifest["Model"])
+    gate = resolution_aware_gate([gate_solve_record(path) for path in args.gate], manifest["Model"])
     reference_boxes = None
     if args.reference_box:
         reference_boxes = [reference_box_closure(e["FtModel"], e["EIn"], e["EStraddle"], e.get("ValidatedClass", False))
                            | {"Class": e.get("Class"), "Interface": e.get("Interface"), "Window": e.get("Window")}
                            for e in json.loads(Path(args.reference_box).read_text())["Entries"]]
+    device_boxes = None
+    if args.device_boxes:
+        device_boxes = json.loads(Path(args.device_boxes).read_text())
+        device_boxes["Boxes"] = [box for box in device_boxes["Boxes"] if box["Model"] == manifest["Model"]]
+        twin = {}
+        for trace in traces:
+            if trace["Family"] == "T1":
+                twin[trace["Name"]] = {f"p{args.library_order}": trace["Energies"]["ThinP4"][DOMAIN_CLASS],
+                                       f"p{args.control_order}": trace["Energies"]["ThinP5"][DOMAIN_CLASS]}
+        device_boxes["TwinDomainEnergyUnderDeviceTrace"] = twin
     library = json.loads(Path(args.library).read_text())
     model = [m for m in library["Models"] if m["Name"] == manifest["Model"]][0]
     record = evaluate(traces, gate=gate, current_status=model.get("QualificationStatus", STATUS_PENDING),
-                      reference_boxes=reference_boxes)
+                      reference_boxes=reference_boxes, device_boxes=device_boxes)
     Path(args.output).write_text(json.dumps(record, indent=2) + "\n")
     if not args.dry_run:
-        stamp_library_status(args.library, manifest["Model"], record)
-    print(f"{manifest['Model']}: dense {record['DensePassed']} identity {record['IdentityPassed']} gate "
-          f"{record['GatePassed']} -> {record['Status']}")
+        stamp_library_status(args.library, manifest["Model"], record, args.output)
+    print(f"{manifest['Model']}: closure {record['ClosurePassed']} twin-consistency {record['TwinConsistencyPassed']} "
+          f"identity {record['IdentityPassed']} gate {record['GatePassed']} (orders {gate['Orders']}, max ratio "
+          f"{gate['MaxRatio']:.2e}) -> {record['Status']}")
     return 0 if record["Status"] in (STATUS_QUALIFIED, STATUS_WINDOW_VALIDATED) else 1
 
 
@@ -623,10 +763,14 @@ def add_arguments(parser):
     evaluate_parser.add_argument("--control-order", type=int, default=5)
     evaluate_parser.add_argument("--fabricated-matrices", required=True, help="postpro of the fabricated basis run (p4)")
     evaluate_parser.add_argument("--thin-matrices", required=True, help="postpro of the thin basis run (p4)")
-    evaluate_parser.add_argument("--gate", required=True, help="palace.json (or the preflight manifest) with the "
-                                                               "ConductorConsistency record of the registration device")
+    evaluate_parser.add_argument("--gate", required=True, action="append", help="palace.json (or the preflight manifest) "
+                                 "with the ConductorConsistency record of a registration-device solve; repeatable: supply "
+                                 "the production orders p4 and p5 on the c0 mesh (the Order is read from the sibling "
+                                 "config_resolved.json)")
     evaluate_parser.add_argument("--reference-box", help="JSON {Entries: [{Class, Interface, Window, FtModel, EIn, "
                                                          "EStraddle, ValidatedClass}]} from the sub-tagged window reference")
+    evaluate_parser.add_argument("--device-boxes", help="device-box-energies.json of device_box_energies.py read (the "
+                                                        "device-side domain reading, information)")
     evaluate_parser.add_argument("--library", required=True, help="process-library.json to stamp")
     evaluate_parser.add_argument("--output", required=True, help="spatial-qualification.json")
     evaluate_parser.add_argument("--dry-run", action="store_true")

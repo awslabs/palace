@@ -1,8 +1,10 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""spatial_qualification: the (F) qualification upgrade (decisions 282 / 285 (5)) on synthetic
-energies, matrices, traces and records - the criteria, the Palace-output readers, the dense
-trace family, the gate, the reference box hook and the status transitions."""
+"""spatial_qualification: the (F) qualification upgrade (decisions 282 / 285 (5), restated by
+decision 299) on synthetic energies, matrices, traces and records - the criteria (closure, the
+Domain twin-consistency, the identity), the thin surface p-steps as information, the
+Palace-output readers and the twin class map, the dense trace family, the resolution-aware
+gate, the reference box hook and the status transitions."""
 import json
 import math
 from pathlib import Path
@@ -19,7 +21,7 @@ import spatial_qualification as sq  # noqa: E402
 
 
 class CriteriaTest(unittest.TestCase):
-    def test_closure_and_p_stability_residuals(self):
+    def test_closure_and_twin_consistency_residuals(self):
         thin = {"SA": 1.0, "MS": 2.0, "Domain": 10.0}
         de = {"SA": 0.10, "MS": -0.20, "Domain": 0.50}
         fab = {"SA": 1.10, "MS": 1.80, "Domain": 10.6}
@@ -28,12 +30,28 @@ class CriteriaTest(unittest.TestCase):
         self.assertTrue(closure["MS"]["Passed"])
         self.assertAlmostEqual(closure["Domain"]["Residual"], 0.1 / 10.6)
         self.assertTrue(closure["Domain"]["Passed"])
-        stability = sq.p_stability({"SA": 0.10, "MS": -0.2, "Domain": 0.9}, de, fab)
-        self.assertTrue(stability["SA"]["Passed"])
-        self.assertFalse(stability["Domain"]["Passed"])  # |0.9 - 0.5| / 10.6 = 3.8 %
-        self.assertAlmostEqual(stability["Domain"]["Residual"], 0.4 / 10.6)
+        # Twin-consistency judges the Domain class only (decision 299 (1a)): a 3.8 % domain
+        # defect step fails, a 30 % MS step of the thin twin is not judged.
+        twin = sq.domain_twin_consistency({"SA": 0.10, "MS": -0.8, "Domain": 0.9}, de, fab)
+        self.assertEqual(sorted(twin), ["Domain"])
+        self.assertFalse(twin["Domain"]["Passed"])  # |0.9 - 0.5| / 10.6 = 3.8 %
+        self.assertAlmostEqual(twin["Domain"]["Residual"], 0.4 / 10.6)
+        self.assertTrue(sq.domain_twin_consistency({"Domain": 0.6}, de, fab)["Domain"]["Passed"])
+        with self.assertRaises(sq.SpatialQualificationError):
+            sq.domain_twin_consistency({"SA": 0.1}, {"SA": 0.1}, {"SA": 1.0})
         # A zero reference energy with a nonzero residual is infinite, never silently passed.
         self.assertFalse(sq.dense_closure({"SA": 1.0}, {"SA": 0.0}, {"SA": 0.0})["SA"]["Passed"])
+
+    def test_thin_surface_p_steps_are_information(self):
+        steps = sq.thin_surface_p_steps({"MS": 2.0, "SA": 1.0, "Domain": 10.0}, {"MS": 2.3, "SA": 0.98, "Domain": 10.1},
+                                        {"MS": 1.0, "SA": 1.1, "Domain": 10.6})
+        self.assertEqual(sorted(steps), ["MS", "SA"])  # the Domain is a criterion, not a step record
+        self.assertAlmostEqual(steps["MS"]["Step"], 0.3)
+        self.assertAlmostEqual(steps["MS"]["RelativeToThin"], 0.3 / 2.3)
+        self.assertAlmostEqual(steps["MS"]["RelativeToFabricated"], 0.3)
+        self.assertAlmostEqual(steps["SA"]["RelativeToFabricated"], -0.02 / 1.1)
+        for value in steps.values():
+            self.assertNotIn("Passed", value)
 
     def test_quadratic_form_dense_and_sparse_agree(self):
         q = np.array([[2.0, 0.5, 0.0], [0.5, 1.0, -0.25], [0.0, -0.25, 3.0]])
@@ -58,18 +76,42 @@ class CriteriaTest(unittest.TestCase):
             sq.matrix_identity({"MS": 1.0}, q, t)
 
     def test_gate(self):
-        diagnostics = {"Count": 0, "Tolerance": 1e-6,
+        diagnostics = {"Count": 0, "Tolerance": 0.02,
                        "Records": [{"Model": "a", "MaxRatio": 7.7e-8, "Excluded": False},
                                    {"Model": "a", "MaxRatio": 2.0e-7, "Excluded": False},
-                                   {"Model": "b", "MaxRatio": 5.0e-3, "Excluded": True}]}
+                                   {"Model": "b", "MaxRatio": 5.0e-2, "Excluded": True}]}
         self.assertTrue(sq.conductor_consistency_gate(diagnostics, "a")["Passed"])
         self.assertAlmostEqual(sq.conductor_consistency_gate(diagnostics, "a")["MaxRatio"], 2.0e-7)
         self.assertFalse(sq.conductor_consistency_gate(diagnostics, "b")["Passed"])
         missing = sq.conductor_consistency_gate(diagnostics, "c")
         self.assertFalse(missing["Passed"])
         self.assertIn("untestable", missing["Reason"])
-        failing = {"Count": 1, "Tolerance": 1e-6, "Records": [{"Model": "a", "MaxRatio": 3e-6, "Excluded": False}]}
+        failing = {"Count": 1, "Tolerance": 0.02, "Records": [{"Model": "a", "MaxRatio": 3e-2, "Excluded": True}]}
         self.assertFalse(sq.conductor_consistency_gate(failing, "a")["Passed"])
+
+    def test_resolution_aware_gate(self):
+        """Decision 299 (2): the A6 box-3 readings (2.2e-7 at c0 / Order 3, 6.3e-7 at Order 5, 5.4e-6 at c7
+        / Order 5) all pass the 1e-4 acceptance (the c0-only 1e-6 of decision 282 failed from c2 on);
+        fictitious metal (D3-A 0.20-0.43) fails; every supplied solve must pass; the production
+        orders not supplied are named."""
+        def solve(ratio, order, excluded=False):
+            return {"Diagnostics": {"Count": 1 if excluded else 0, "Tolerance": 0.02,
+                                    "Records": [{"Model": "m", "MaxRatio": ratio, "Excluded": excluded}]},
+                    "Order": order, "Source": f"p{order}"}
+        gate = sq.resolution_aware_gate([solve(2.2e-7, 3), solve(4.8e-7, 4), solve(6.3e-7, 5)], "m")
+        self.assertTrue(gate["Passed"])
+        self.assertEqual(gate["Orders"], [3, 4, 5])
+        self.assertEqual(gate["ProductionOrdersMissing"], [])
+        self.assertAlmostEqual(gate["MaxRatio"], 6.3e-7)
+        self.assertEqual(gate["Tolerance"], 1e-4)
+        refined = sq.resolution_aware_gate([solve(5.4e-6, 5)], "m")
+        self.assertTrue(refined["Passed"])
+        self.assertEqual(refined["ProductionOrdersMissing"], [4])
+        self.assertFalse(sq.resolution_aware_gate([solve(2.2e-7, 4), solve(0.2, 5, excluded=True)], "m")["Passed"])
+        self.assertFalse(sq.resolution_aware_gate([solve(2.0e-4, 4)], "m")["Passed"])
+        self.assertFalse(sq.resolution_aware_gate([solve(1e-7, 4)], "other")["Passed"])
+        with self.assertRaises(sq.SpatialQualificationError):
+            sq.resolution_aware_gate([], "m")
 
     def test_reference_box_closure_marker_and_bracket(self):
         result = sq.reference_box_closure(1.03, 0.98, 0.04, validated_class=True)
@@ -148,6 +190,24 @@ class PalaceOutputReadersTest(unittest.TestCase):
         with self.assertRaises(sq.SpatialQualificationError):
             sq.matrix_difference(matrices, {"Domain": {}})
 
+
+    def test_twin_interface_classes_union(self):
+        """Decision 293 (2): the fabricated twin (2 MS, 3 SA, 4.. the MA shells) and the thin twin (1 MA,
+        2 MS, 3 SA) carry different indices; the fabricated map alone cannot read the thin runs
+        (interface 1 has no class), the union reads both; a conflicting index fails closed."""
+        def config(entries):
+            return {"Boundaries": {"Postprocessing": {"Dielectric": [{"Index": i, "Type": t} for i, t in entries]}}}
+        fabricated = config([(2, "MS"), (3, "SA"), (4, "MA"), (5, "MA")])
+        thin = config([(1, "MA"), (2, "MS"), (3, "SA")])
+        with self.assertRaises(sq.SpatialQualificationError):
+            sq.within_r_energies(self.postpro, sq.interface_classes(fabricated))  # interface 1 of the thin run: no class
+        classes = sq.twin_interface_classes({"fabricated-p4": fabricated, "fabricated-p5": fabricated,
+                                             "thin-p4": thin, "thin-p5": thin})
+        self.assertEqual(classes, {1: "MA", 2: "MS", 3: "SA", 4: "MA", 5: "MA"})
+        energies = sq.within_r_energies(self.postpro, classes)
+        self.assertAlmostEqual(energies[1]["MA"], 0.1 * 10.0 - 0.25)
+        with self.assertRaises(sq.SpatialQualificationError):
+            sq.twin_interface_classes({"fabricated-p4": fabricated, "thin-p4": config([(2, "SA")])})
 
 class DenseTracesTest(unittest.TestCase):
     """The T2 family on a tiny synthetic basis, the T1 reader on the production trace format,
@@ -244,10 +304,12 @@ class EvaluationTest(unittest.TestCase):
         self.t = [1.0, 2.0]
         self.fab_p4 = {cls: sq.quadratic_form(self.q_fab[cls], self.t) for cls in self.q_fab}
         self.thin_p4 = {cls: sq.quadratic_form(self.q_thin[cls], self.t) for cls in self.q_thin}
-        # p5 within 0.5 % of p4 on both twins: closure and p-stability hold.
+        # p5 within 0.5 % of p4 on the fabricated twin and on the thin domain: closure and the Domain
+        # twin-consistency hold; the thin SA steps 6 % (the decision-66 log-divergence): information.
         self.fab_p5 = {cls: v * 1.005 for cls, v in self.fab_p4.items()}
-        self.thin_p5 = {cls: v * 1.004 for cls, v in self.thin_p4.items()}
-        self.gate = {"Passed": True, "Probed": 2, "Count": 0, "MaxRatio": 7.7e-8}
+        self.thin_p5 = {"SA": self.thin_p4["SA"] * 1.06, "Domain": self.thin_p4["Domain"] * 1.004}
+        self.gate = {"Passed": True, "Probed": 2, "Count": 0, "MaxRatio": 7.7e-8, "Orders": [4, 5],
+                     "ProductionOrdersMissing": []}
 
     def test_consistent_trace_qualifies(self):
         trace = sq.evaluate_trace("state-2", "T2", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
@@ -255,8 +317,12 @@ class EvaluationTest(unittest.TestCase):
         self.assertTrue(trace["Passed"])
         self.assertAlmostEqual(trace["Energies"]["ModelCorrection"]["SA"], self.fab_p4["SA"] - self.thin_p4["SA"])
         self.assertEqual(trace["MatrixIdentity"]["SA"]["Residual"], 0.0)
+        self.assertEqual(sorted(trace["TwinConsistency"]), ["Domain"])
+        self.assertAlmostEqual(trace["ThinSurfacePSteps"]["SA"]["RelativeToThin"], 0.06 / 1.06)
         record = sq.evaluate([trace], gate=self.gate)
         self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        self.assertTrue(record["TwinConsistencyPassed"] and record["ClosurePassed"])
+        self.assertEqual(record["Tolerances"]["GateMaxRatio"], 1e-4)
         self.assertEqual(record["Families"], ["T2"])
         window = [sq.reference_box_closure(1.02, 1.0, 0.0, True) | {"Class": "SA", "Window": "S1p"}]
         self.assertEqual(sq.evaluate([trace], gate=self.gate, reference_boxes=window)["Status"], sq.STATUS_WINDOW_VALIDATED)
@@ -282,6 +348,15 @@ class EvaluationTest(unittest.TestCase):
                                             q_fab=self.q_fab, q_thin=self.q_thin)
         self.assertFalse(identity_defect["MatrixIdentity"]["SA"]["Passed"])
         self.assertEqual(sq.evaluate([identity_defect], gate=self.gate)["Status"], sq.STATUS_FAILED)
+        # The thin twin's domain step of 3 % (a p-unstable domain defect) fails the twin-consistency.
+        unstable_thin_p5 = {"SA": self.thin_p5["SA"], "Domain": self.thin_p4["Domain"] * 0.97}
+        unstable = sq.evaluate_trace("state-2", "T2", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
+                                     thin_p5=unstable_thin_p5, q_fab=self.q_fab, q_thin=self.q_thin)
+        self.assertFalse(unstable["TwinConsistency"]["Domain"]["Passed"])
+        self.assertTrue(all(v["Passed"] for v in unstable["Closure"].values()))
+        record = sq.evaluate([unstable], gate=self.gate)
+        self.assertFalse(record["TwinConsistencyPassed"])
+        self.assertEqual(record["Status"], sq.STATUS_FAILED)
         with self.assertRaises(sq.SpatialQualificationError):
             sq.evaluate([], gate=self.gate)
 
@@ -297,6 +372,9 @@ class EvaluationTest(unittest.TestCase):
             self.assertEqual(model["QualificationStatus"], sq.STATUS_QUALIFIED)
             self.assertTrue(model["LibraryQualified"])
             self.assertEqual(model["SpatialQualification"]["Families"], ["T2"])
+            self.assertTrue(model["SpatialQualification"]["TwinConsistencyPassed"])
+            self.assertEqual(model["SpatialQualification"]["Gate"]["Orders"], [4, 5])
+            self.assertEqual(model["SpatialQualification"]["Traces"][0]["Name"], "state-2")
             with self.assertRaises(sq.SpatialQualificationError):
                 sq.stamp_library_status(path, "other", record)
 
