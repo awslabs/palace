@@ -269,13 +269,11 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(make_config({{"SurfaceCurrent", surface_current},
                                       {"Superconductor", superconductor}}),
                          false));
-    // A (valid) mixed configuration is rejected, not silently reduced to one kind.
+    // Mixed extraction (with the apertures the regular solve requires).
     json mixed_current = surface_current;
     mixed_current[0]["Aperture"] = {{"Attributes", {5}}, {"Direction", "+Z"}};
-    CHECK_THROWS_WITH(
-        IoData(make_config({{"SurfaceCurrent", mixed_current}, {"FluxLoop", flux_loop}}),
-               false),
-        Catch::Matchers::ContainsSubstring("does not support mixed \"SurfaceCurrent\""));
+    CHECK_NOTHROW(IoData(
+        make_config({{"SurfaceCurrent", mixed_current}, {"FluxLoop", flux_loop}}), false));
     // Inactive ports must be open: a short changes the essential boundary per excitation.
     json two_ports = surface_current;
     two_ports.push_back({{"Attributes", {5}}, {"Index", 2}, {"Direction", "+X"}});

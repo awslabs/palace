@@ -68,13 +68,22 @@ public:
 
   // Magnetostatic energy matrix of surface-current excitations: port k drives the assembled
   // excitation J_k (zero on the Dirichlet DOFs), and E_ij = u_i^T K u_j (+ the sheet
-  // kinetic energy u_i^T M_sheet u_j), evaluated in a form stationary in the regularization
-  // of the solve. If fields is non-null, it receives the full fields of the first n_fields
-  // states.
+  // kinetic energy u_i^T M_sheet u_j), in a form stationary in the regularization of the
+  // solve. A current that does not close is rejected.
   mfem::DenseMatrix CurrentEnergyMatrix(const std::vector<int> &ids,
                                         const std::vector<Vector> &J,
                                         std::vector<Vector> *fields = nullptr,
                                         int n_fields = 0);
+
+  // Magnetostatic energy matrix of surface currents and London flux states (currents
+  // first), with the blocks of CurrentEnergyMatrix and SheetEnergyMatrix and a zero cross
+  // block (the two kinds of states are energy-orthogonal). With the aperture flux
+  // functionals l_c of the ports, linked_flux(c, f) = l_c^T u_f for the flux states f.
+  mfem::DenseMatrix MagnetostaticEnergyMatrix(
+      const std::vector<int> &current_ids, const std::vector<Vector> &J,
+      const std::vector<int> &flux_ids, const std::vector<Vector> &a,
+      const std::vector<Vector> &apertures, mfem::DenseMatrix *linked_flux,
+      std::vector<Vector> *fields = nullptr, int n_fields = 0);
 
   // Whether the model has London superconductor sheets (magnetostatics).
   bool HasSheets() const;
@@ -129,18 +138,29 @@ private:
                                     std::vector<Vector> *region_fields);
 
   // A magnetostatic source: a London flux state drives M_sheet a (a the fluxoid generator),
-  // a surface current the assembled excitation J. Either may be null or empty.
+  // a surface current the assembled excitation J. Either may be null.
   struct Source
   {
     const Vector *a, *J;
+    bool HasA() const { return a && a->Size() > 0; }
+    bool HasJ() const { return J && J->Size() > 0; }
   };
 
-  // Bilinear energy G of magnetostatic sources (see SheetEnergyMatrix,
-  // CurrentEnergyMatrix). If work is non-null, it receives the source work b_k^T u_k.
+  // Linear functionals l_k (with mode ids) of the solutions: values(k, j) = l_k^T u_j.
+  struct Functionals
+  {
+    std::vector<int> ids;
+    std::vector<const Vector *> l;
+    mfem::DenseMatrix values;
+  };
+
+  // Energy G of magnetostatic sources (see MagnetostaticEnergyMatrix). If work is non-null,
+  // it receives the source works b_k^T u_k; fun receives its values.
   mfem::DenseMatrix SourceEnergyMatrix(const std::vector<int> &ids,
                                        const std::vector<Source> &src,
                                        std::vector<Vector> *fields, int n_fields,
-                                       std::vector<double> *work = nullptr);
+                                       std::vector<double> *work = nullptr,
+                                       Functionals *fun = nullptr);
 
   struct Impl;
   std::unique_ptr<Impl> impl;

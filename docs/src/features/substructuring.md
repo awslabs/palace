@@ -123,28 +123,28 @@ single partial factorization. When running MUMPS with MPI, setting `OPENBLAS_NUM
 ## Magnetostatics
 
 Magnetostatic substructuring extracts the inductance matrix from
-[`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop) or
+[`config["Boundaries"]["FluxLoop"]`](../config/reference.md#config-boundaries-fluxloop) and
 [`config["Boundaries"]["SurfaceCurrent"]`](../config/reference.md#config-boundaries-surfacecurrent)
-excitations, including the kinetic inductance of superconducting films. The `"PEC"` boundaries
-are the Dirichlet boundaries of the condensation. The flux-loop films and the
+excitations, alone or together, including the kinetic inductance of superconducting films, and
+writes the same output files as a regular simulation. The `"PEC"` boundaries are the Dirichlet
+boundaries of the condensation. The flux-loop films and the
 [`config["Boundaries"]["Superconductor"]`](../config/reference.md#config-boundaries-superconductor)
 films are London sheets, as in a regular simulation: a film without a `"Superconductor"` entry
 has the penetration depth `"PecPenetrationDepth"`, and a `"Superconductor"` film its own. The
 sheet term of each film face is condensed with the part of the domain the face bounds, so films
 may lie in the region, in the environment, or cross the interface; so may the surface-current
-ports. A saved model includes the condensed excitations of the environment, so an online run
-needs no environment solve as long as the excitations in the environment are unchanged;
-excitations inside the region, such as a port added or moved in a redesign, need none at all. A
-small mass regularization keeps the curl-curl operator definite; the extracted energies use the
-unregularized operator, in a form whose error is quadratic in the regularization. Each
-surface current must close: it has to start and end on `"PEC"` boundaries or superconducting
-films, as in a physical circuit. A current that does not close has no magnetostatic solution and
-is rejected.
+ports and their apertures. A saved model includes the condensed excitations of the environment,
+so an online run needs no environment solve as long as the excitations in the environment are
+unchanged; excitations inside the region, such as a port added or moved in a redesign, need
+none at all. A small mass regularization keeps the curl-curl operator definite; the extracted
+energies use the unregularized operator, in a form whose error is quadratic in the
+regularization. Each surface current must close: it has to start and end on `"PEC"` boundaries
+or superconducting films, as in a physical circuit. A current that does not close has no
+magnetostatic solution and is rejected.
 
 !!! note
 
-    A configuration may not mix `"SurfaceCurrent"` and `"FluxLoop"` excitations with
-    substructuring, and inactive surface-current ports must be `"Open"` (see
+    With substructuring, inactive surface-current ports must be `"Open"` (see
     [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic-inactiveports)):
     every excitation is solved against the same condensed environment.
 

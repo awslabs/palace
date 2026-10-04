@@ -737,12 +737,8 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // One condensed environment serves every excitation: no mixed current and flux-loop
-      // extraction (its linked-flux coupling needs the aperture fluxes), and no inactive
-      // ports shorted (they change the essential boundary per excitation).
-      MFEM_VERIFY(boundaries.current.empty() || boundaries.fluxloop.empty(),
-                  "Magnetostatic substructuring does not support mixed \"SurfaceCurrent\" "
-                  "and \"FluxLoop\" excitations!");
+      // One condensed environment serves every excitation, so inactive surface-current
+      // ports may not be shorted (each would change the essential boundary).
       for (const auto &[idx, data] : boundaries.current)
       {
         MFEM_VERIFY(

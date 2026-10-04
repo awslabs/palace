@@ -19,8 +19,10 @@
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "fixtures.hpp"
+#include "models/curlcurloperator.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/superconductorsheetoperator.hpp"
+#include "models/surfacecurlsolver.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
@@ -1774,6 +1776,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
             {"SaveModel", model_path}}}}}};
     if (london)
     {
+      config["Boundaries"].erase("SurfaceCurrent");  // a port may not be a Superconductor
       config["Boundaries"]["Superconductor"] = {
           {{"Attributes", {4}}, {"PenetrationDepth", lambda}, {"Thickness", thickness}}};
     }
@@ -1971,6 +1974,111 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                       Catch::Matchers::ContainsSubstring("does not close"));
   }
 #endif
+
+  // The surface flux functional matches ComputeFluxThroughSurface (the sheet crosses the
+  // interface, so it has shared faces in parallel).
+  if (!london)
+  {
+    CurlCurlOperator curlcurl_op(iodata, mesh);
+    const auto &rt = curlcurl_op.GetRTSpace();
+    mfem::Vector dir(3);
+    dir = 0.0;
+    dir(1) = 1.0;
+    const Vector f = FluxThroughSurfaceFunctional(rt, {4}, dir);
+    Vector B(rt.GetTrueVSize());
+    B.Randomize(1 + Mpi::Rank(pmesh.GetComm()));
+    mfem::ParGridFunction B_gf(&const_cast<mfem::ParFiniteElementSpace &>(rt.Get()));
+    B_gf.SetFromTrueDofs(B);
+    const double flux =
+        ComputeFluxThroughSurface(B_gf, {4}, curlcurl_op.GetMesh(),
+                                  curlcurl_op.GetMaterialOp(), dir, pmesh.GetComm());
+    CHECK(std::abs(mfem::InnerProduct(pmesh.GetComm(), f, B) - flux) <=
+          1.0e-12 * std::abs(flux));
+  }
+
+  // Mixed currents and London flux states, with functionals l_c (here the excitations J2,
+  // with an environment part, and J3, without): the current block as above, the London
+  // energy and l_c^T u_f against the monolith, offline and online without the environment.
+  if (london)
+  {
+    mfem::Array<int> sheet_tdofs;
+    pfes.GetEssentialTrueDofs(sheet_marker, sheet_tdofs);
+    Vector a(pfes.GetTrueVSize()), full;
+    {
+      mfem::VectorFunctionCoefficient c(3,
+                                        [](const mfem::Vector &x, mfem::Vector &v)
+                                        {
+                                          v.SetSize(3);
+                                          v = 0.0;
+                                          v(0) = -(x(2) - 0.5);
+                                          v(2) = x(0) - 0.5;
+                                        });
+      mfem::ParGridFunction g(&pfes);
+      g.ProjectCoefficient(c);
+      g.GetTrueDofs(full);
+      a = 0.0;
+      for (int i : sheet_tdofs)
+      {
+        a(i) = full(i);
+      }
+    }
+    auto Ms = [&]()
+    {
+      mfem::ParBilinearForm m(&pfes);
+      m.AddBoundaryIntegrator(new mfem::VectorFEMassIntegrator(sheetc));
+      m.Assemble();
+      m.Finalize();
+      return std::unique_ptr<mfem::HypreParMatrix>(m.ParallelAssemble());
+    }();
+    Vector b(a.Size()), ua(a.Size()), r(a.Size()), du(a.Size()), Lu(a.Size());
+    Ms->Mult(a, b);
+    for (int i : pec_tdofs)
+    {
+      b(i) = 0.0;
+    }
+    ua = 0.0;
+    r = b;
+    for (int it = 0; it < 3; it++)
+    {
+      du = 0.0;
+      pcg.Mult(r, du);
+      ua += du;
+      L->Mult(ua, Lu);
+      r = b;
+      r -= Lu;
+    }
+    // u^T K u + (u - a)^T M_sheet (u - a) = u^T L u - 2 a^T M_sheet u + a^T M_sheet a.
+    Vector Ma(a.Size());
+    Ms->Mult(a, Ma);
+    L->Mult(ua, Lu);
+    const double E_ff = mfem::InnerProduct(pmesh.GetComm(), ua, Lu) -
+                        2.0 * mfem::InnerProduct(pmesh.GetComm(), Ma, ua) +
+                        mfem::InnerProduct(pmesh.GetComm(), Ma, a);
+    const std::vector<Vector> Jm = {J[1], J[2]};
+    for (const bool online : {false, true})
+    {
+      IoData io = make_config(online ? "Online" : "Offline");
+      std::vector<std::unique_ptr<Mesh>> m_mix;
+      m_mix.push_back(std::make_unique<Mesh>(MakeGradedSplit(4, 5, 6, design)));
+      SubstructuringSolver mix(io, m_mix);
+      mix.CondenseEnvironment();
+      mfem::DenseMatrix linked;
+      const mfem::DenseMatrix E_mix =
+          mix.MagnetostaticEnergyMatrix({2, 3}, Jm, {5}, {a}, Jm, &linked);
+      CAPTURE(online, E_mix(2, 2), E_ff, linked(0, 0), linked(1, 0));
+      CHECK(mix.EnvironmentFactored() == !online);
+      CHECK(std::abs(E_mix(0, 0) - E_mono(1, 1)) <= tol * m);
+      CHECK(std::abs(E_mix(1, 1) - E_mono(2, 2)) <= tol * m);
+      CHECK(std::abs(E_mix(0, 1) - E_mono(1, 2)) <= tol * m);
+      CHECK(E_mix(0, 2) == 0.0);
+      CHECK(std::abs(E_mix(2, 2) - E_ff) <= 1.0e-9 * std::abs(E_ff));
+      for (int c = 0; c < 2; c++)
+      {
+        const double ref = mfem::InnerProduct(pmesh.GetComm(), Jm[c], ua);
+        CHECK(std::abs(linked(c, 0) - ref) <= 1.0e-9 * std::sqrt(m * std::abs(E_ff)));
+      }
+    }
+  }
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

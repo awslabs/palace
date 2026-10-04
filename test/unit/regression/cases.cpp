@@ -1108,6 +1108,32 @@ TEST_CASE("substructuring_magnetostatic_current_london", "[Serial][Parallel][Reg
                                   opts);
 }
 
+// Mixed surface-current and flux-loop extraction with substructuring on a small ring-disk
+// mesh: the region holds the ring terminal, and the ring's aperture crosses the interface.
+// The references are regular simulations of the same configurations.
+TEST_CASE("substructuring_magnetostatic_mixed", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed.json", "mixed", opts);
+}
+
+// As above with a finite-penetration-depth London disk (λ = 0.4 μm, d = 0.1 μm).
+TEST_CASE("substructuring_magnetostatic_mixed_london", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_mixed_london.json", "mixed_london", opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and
