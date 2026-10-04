@@ -26,9 +26,11 @@ public:
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
   // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
-  // relative accuracy (0: exact).
+  // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
+  // avoids MUMPS's per-rank workspace).
   MumpsSchurSolver(const mfem::HypreParMatrix &A,
-                   const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0);
+                   const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
+                   bool serial = false);
 
   ~MumpsSchurSolver();
 
@@ -45,6 +47,7 @@ private:
 
   MPI_Comm comm;
   int rank = 0;
+  bool serial = false, active = true;  // active: this rank takes part in the factorization
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
   std::vector<int> row_cnt, row_disp;

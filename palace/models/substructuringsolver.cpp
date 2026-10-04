@@ -114,16 +114,19 @@ constexpr bool kHasDirectSolver =
 
 #if defined(MFEM_USE_MUMPS)
 // MUMPS factorization of a symmetric operator (MumpsSchurSolver without Schur variables:
-// silent, and retried with a larger workspace when the estimate is too small).
+// silent, and retried with a larger workspace when the estimate is too small), optionally
+// on rank 0 alone.
 class MumpsDirectSolver : public mfem::Solver
 {
 public:
+  explicit MumpsDirectSolver(bool serial = false) : serial(serial) {}
   void SetOperator(const mfem::Operator &op) override
   {
     const auto *A = dynamic_cast<const mfem::HypreParMatrix *>(&op);
     MFEM_VERIFY(A, "MumpsDirectSolver requires a HypreParMatrix operator!");
     height = width = A->Height();
-    mumps = std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{});
+    mumps =
+        std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0, serial);
   }
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
@@ -137,15 +140,18 @@ public:
   }
 
 private:
+  bool serial;
   std::unique_ptr<MumpsSchurSolver> mumps;
 };
 #endif
 
+// With serial, a small system is factored on rank 0 alone (MUMPS only).
 std::unique_ptr<mfem::Solver> MakeDirectSolver([[maybe_unused]] const IoData &iodata,
-                                               [[maybe_unused]] MPI_Comm comm)
+                                               [[maybe_unused]] MPI_Comm comm,
+                                               [[maybe_unused]] bool serial = false)
 {
 #if defined(MFEM_USE_MUMPS)
-  return std::make_unique<MumpsDirectSolver>();
+  return std::make_unique<MumpsDirectSolver>(serial);
 #elif defined(MFEM_USE_SUPERLU)
   return std::make_unique<SuperLUSolver>(iodata, comm, 0);
 #elif defined(MFEM_USE_STRUMPACK)
@@ -390,6 +396,9 @@ struct SubstructuringSolver::Impl
   // A_region_free (~|Gamma|^2 per iteration, per excitation) from about |Gamma| /
   // kDenseInterfacePerExcitation excitations in a batch.
   static constexpr int kDenseInterfacePerExcitation = 1000;
+  // Region-free size up to which the region is factored on one rank (MUMPS's per-rank
+  // workspace dominates a small factorization spread over many ranks).
+  static constexpr long long kSerialRegionFactorDofs = 100000;
   bool region_direct = false;          // region pc is a direct factor (created lazily)
   bool region_dense_eligible = false;  // ... and a dense S_E is available for the exact one
   mfem::Array<int> non_env_int;        // parent true DOFs that are not environment-interior
@@ -2104,8 +2113,11 @@ struct SubstructuringSolver::Impl
     region_exact =
         region_dense_eligible &&
         static_cast<long long>(std::max(n, 1)) * kDenseInterfacePerExcitation >= nG_global;
+    long long nrf = rf_idx.Size();
+    MPI_Allreduce(MPI_IN_PLACE, &nrf, 1, MPI_LONG_LONG, MPI_SUM, parent_fes.GetComm());
+    const bool serial = (nrf <= kSerialRegionFactorDofs);
     reg_lu = std::make_unique<BlockedDirectSolver>(
-        MakeDirectSolver(iodata, parent_fes.GetComm()),
+        MakeDirectSolver(iodata, parent_fes.GetComm(), serial),
         region_exact ? std::min(BlockedDirectSolver::kMaxBlock, std::max(n, 1)) : 1);
     std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_region_free);
     std::unique_ptr<mfem::HypreParMatrix> P;
