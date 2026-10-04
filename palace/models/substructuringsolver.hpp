@@ -112,6 +112,12 @@ private:
   // Region-condensed solves for a batch of prescribed Dirichlet fields.
   std::vector<Vector> SolveDirichletBatch(const std::vector<Vector> &dbcs);
 
+  // EnergyMatrix for Dirichlet data given on the Dirichlet true DOFs only.
+  mfem::DenseMatrix EnergyMatrixDbc(const std::vector<int> &ids,
+                                    const std::vector<Vector> &xd,
+                                    std::vector<Vector> *fields, int n_fields,
+                                    std::vector<Vector> *region_fields);
+
   struct Impl;
   std::unique_ptr<Impl> impl;
 };

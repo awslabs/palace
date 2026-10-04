@@ -370,7 +370,9 @@ struct SubstructuringSolver::Impl
   // when region_exact) and its (local) region-free true DOFs.
   std::unique_ptr<BlockedDirectSolver> reg_lu;
   bool region_exact = false;
-  mfem::Array<int> reg_idx;
+  // Local true DOFs: region-free (the region solve), of region elements (where the region
+  // operators act), and interface.
+  mfem::Array<int> rf_idx, rc_idx, gamma_idx;
   mutable mfem::Vector reg_r, reg_z;
   std::unique_ptr<mfem::HypreParMatrix> env_A_ee_parent;  // parent-space A_EE (eliminated)
   std::unique_ptr<BlockedDirectSolver> env_lu_parent;     // its direct factor
@@ -559,6 +561,21 @@ struct SubstructuringSolver::Impl
       if (r)
       {
         is_region_free[i] = 1;  // region-free includes the interface
+      }
+    }
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_region_free[i])
+      {
+        rf_idx.Append(i);
+      }
+      if (rm[i])
+      {
+        rc_idx.Append(i);
+      }
+      if (is_gamma[i])
+      {
+        gamma_idx.Append(i);
       }
     }
 
@@ -1353,17 +1370,31 @@ struct SubstructuringSolver::Impl
 
   // Whether the current modes cover the given lifts (same ids + environment fingerprints);
   // col[j] receives the mode column of request j. Collective.
-  bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &x,
+  bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &xd,
                   std::vector<int> &col) const
   {
     col.assign(ids.size(), -1);
     bool ok = modes_ready;
-    std::vector<const mfem::Vector *> X(x.size());
-    for (std::size_t j = 0; j < x.size(); j++)
+    constexpr std::size_t kBlock = 4;  // bounds the memory of the full vectors
+    std::vector<std::array<double, 2>> fps(xd.size());
+    for (std::size_t j0 = 0; j0 < xd.size(); j0 += kBlock)
     {
-      X[j] = &x[j];
+      std::vector<mfem::Vector> x;
+      std::vector<const mfem::Vector *> X;
+      for (std::size_t j = j0; j < std::min(xd.size(), j0 + kBlock); j++)
+      {
+        x.push_back(DirichletField(xd[j]));
+      }
+      for (const auto &v : x)
+      {
+        X.push_back(&v);
+      }
+      const std::vector<mfem::Vector> t = EnvApply(X);
+      for (std::size_t j = j0; j < j0 + x.size(); j++)
+      {
+        fps[j] = LiftFingerprint(x[j - j0], t[j - j0]);
+      }
     }
-    const std::vector<mfem::Vector> t = EnvApply(X);
     for (std::size_t j = 0; j < ids.size(); j++)
     {
       for (std::size_t k = 0; k < mode_ids.size(); k++)
@@ -1373,7 +1404,7 @@ struct SubstructuringSolver::Impl
           col[j] = static_cast<int>(k);
         }
       }
-      const auto fp = LiftFingerprint(x[j], t[j]);
+      const auto &fp = fps[j];
       if (col[j] < 0)
       {
         ok = false;
@@ -2091,16 +2122,8 @@ struct SubstructuringSolver::Impl
       P.reset(mfem::RAP(A_region_free.get(), E.get()));
     }
     reg_lu->SetOperator(*P);  // the factor keeps its own copy of P
-    reg_idx.SetSize(0);
-    for (int i = 0; i < nt; i++)
-    {
-      if (is_region_free[i])
-      {
-        reg_idx.Append(i);
-      }
-    }
-    reg_r.SetSize(reg_idx.Size());
-    reg_z.SetSize(reg_idx.Size());
+    reg_r.SetSize(rf_idx.Size());
+    reg_z.SetSize(rf_idx.Size());
   }
 
   // Region preconditioner apply with the direct factor: identity off the region-free DOFs
@@ -2108,42 +2131,59 @@ struct SubstructuringSolver::Impl
   void ApplyRegionFactor(const mfem::Vector &r, mfem::Vector &z) const
   {
     z = r;
-    r.GetSubVector(reg_idx, reg_r);
+    r.GetSubVector(rf_idx, reg_r);
     reg_lu->Mult({&reg_r}, {&reg_z});
-    z.SetSubVector(reg_idx, reg_z);
+    z.SetSubVector(rf_idx, reg_z);
   }
 
-  // Region-condensed solves u_k (parent true DOFs) for right-hand sides b_k that vanish off
-  // the region-free DOFs: one multi-RHS solve with the exact factor, else CG per
-  // excitation. Collective.
-  void SolveRegion(const std::vector<mfem::Vector> &b, std::vector<mfem::Vector> &u) const
+  // Region-condensed solves on the region-free DOFs (rf_idx), in place: right-hand sides
+  // in, solutions out. One multi-RHS solve with the exact factor, else CG per excitation.
+  // Collective.
+  void SolveRegion(std::vector<mfem::Vector> &x) const
   {
-    const int n = static_cast<int>(b.size());
-    u.assign(n, mfem::Vector(nt));
-    if (!region_exact)
+    const int n = static_cast<int>(x.size());
+    if (region_exact)
     {
+      std::vector<const mfem::Vector *> X(n);
+      std::vector<mfem::Vector *> Y(n);
       for (int k = 0; k < n; k++)
       {
-        u[k] = 0.0;
-        region_ksp->Mult(b[k], u[k]);
+        X[k] = &x[k];
+        Y[k] = &x[k];
       }
+      reg_lu->Mult(X, Y);
       return;
     }
-    std::vector<mfem::Vector> r(n, mfem::Vector(reg_idx.Size()));
-    std::vector<const mfem::Vector *> X(n);
-    std::vector<mfem::Vector *> Y(n);
+    mfem::Vector b(nt), u(nt);
     for (int k = 0; k < n; k++)
     {
-      b[k].GetSubVector(reg_idx, r[k]);
-      X[k] = &r[k];
-      Y[k] = &r[k];
+      b = 0.0;
+      b.SetSubVector(rf_idx, x[k]);
+      u = 0.0;
+      region_ksp->Mult(b, u);
+      u.GetSubVector(rf_idx, x[k]);
     }
-    reg_lu->Mult(X, Y);
-    for (int k = 0; k < n; k++)
+  }
+
+  // Full parent vectors from Dirichlet values xd (on dbc_tdofs) and from region-free values
+  // x_rf (and optional Dirichlet values), zero elsewhere.
+  mfem::Vector DirichletField(const mfem::Vector &xd) const
+  {
+    mfem::Vector u(nt);
+    u = 0.0;
+    u.SetSubVector(dbc_tdofs, xd);
+    return u;
+  }
+  mfem::Vector RegionField(const mfem::Vector &x_rf, const mfem::Vector *xd = nullptr) const
+  {
+    mfem::Vector u(nt);
+    u = 0.0;
+    u.SetSubVector(rf_idx, x_rf);
+    if (xd)
     {
-      u[k] = 0.0;
-      u[k].SetSubVector(reg_idx, r[k]);
+      u.SetSubVector(dbc_tdofs, *xd);
     }
+    return u;
   }
 
   // S_E as a parent-space HypreParMatrix (dense Gamma x Gamma block), for factoring the
@@ -3101,33 +3141,26 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
   // in the loop). RHS: region Dirichlet elimination + environment load g_E on the
   // interface. Both are complete (assembled) true-DOF vectors, so each rank reads its own
   // entries.
-  std::vector<Vector> b(n, Vector(nt)), u;
+  std::vector<Vector> x(n, Vector(impl->rf_idx.Size())), u(n);
   {
     Vector tr(nt);
     for (int k = 0; k < n; k++)
     {
       impl->A_region->Mult(dbcs[k], tr);
-      b[k] = 0.0;
-      for (int i = 0; i < nt; i++)
+      for (int i : impl->gamma_idx)
       {
-        if (impl->is_region_free[i])
-        {
-          b[k](i) -= tr(i);
-        }
-        if (impl->is_gamma[i])
-        {
-          b[k](i) -= gE[k](i);
-        }
+        tr(i) += gE[k](i);
       }
+      tr.Neg();
+      tr.GetSubVector(impl->rf_idx, x[k]);
     }
   }
-  impl->SolveRegion(b, u);
+  impl->SolveRegion(x);
   for (int k = 0; k < n; k++)
   {
-    for (int i = 0; i < impl->dbc_tdofs.Size(); i++)
-    {
-      u[k](impl->dbc_tdofs[i]) = dbcs[k](impl->dbc_tdofs[i]);
-    }
+    Vector xd(impl->dbc_tdofs.Size());
+    dbcs[k].GetSubVector(impl->dbc_tdofs, xd);
+    u[k] = impl->RegionField(x[k], &xd);
   }
 
   impl->RecoverEnvInterior(u);  // batched: u_E = -A_EE^-1 (A_env u)|_E
@@ -3173,9 +3206,10 @@ Vector SubstructuringSolver::SolveSource(const Vector &f)
     }
   }
 
-  std::vector<Vector> us;
-  impl->SolveRegion({b}, us);
-  Vector &u = us[0];
+  std::vector<Vector> xs(1, Vector(impl->rf_idx.Size()));
+  b.GetSubVector(impl->rf_idx, xs[0]);
+  impl->SolveRegion(xs);
+  Vector u = impl->RegionField(xs[0]);
 
   // Recover environment interior: u_E = A_EE^-1 (f_E - (A_env u)|_E).
   Vector Au(nt), rhs(nt), uE(nt);
@@ -3282,35 +3316,51 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
   // Region-condensed solve per state (environment interior left at zero): the region source
   // M_sheet^R a_k plus the environment's interface load g_k.
   impl->EnsureRegionFactor(n);
-  std::vector<Vector> b(n, Vector(nt)), u, Ku(n, Vector(nt)), Su(n, Vector(nt));
+  const auto &rc = impl->rc_idx, &gm = impl->gamma_idx;
+  std::vector<Vector> x(n, Vector(impl->rf_idx.Size()));
   {
     Vector bR(nt);
     for (int j = 0; j < n; j++)
     {
       impl->M_sheet_region->Mult(a[j], bR);
-      b[j] = 0.0;
-      for (int i = 0; i < nt; i++)
+      for (int i : gm)
       {
-        if (impl->is_region_free[i])
-        {
-          b[j](i) = bR(i);
-        }
-        if (impl->is_gamma[i])
-        {
-          b[j](i) += impl->SG_rows[row(i) + col[j]];
-        }
+        bR(i) += impl->SG_rows[row(i) + col[j]];
       }
+      bR.GetSubVector(impl->rf_idx, x[j]);
     }
   }
-  impl->SolveRegion(b, u);
-  for (int j = 0; j < n; j++)
+  impl->SolveRegion(x);
+
+  // Per state, on the region elements' DOFs: u_j, K_R u_j, d_j = u_j - a_j and
+  // M_sheet^R d_j; on Gamma: u_j and S^K u_j. Full fields only for the saved ones.
+  std::vector<Vector> uc(n), Kuc(n), dc(n), Mdc(n), ug(n), Sug(n);
+  if (fields)
   {
-    for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
+    fields->clear();
+  }
+  {
+    Vector Ku(nt), Su(nt), d(nt), Md(nt);
+    for (int j = 0; j < n; j++)
     {
-      u[j](impl->dbc_tdofs[d]) = 0.0;
+      Vector u = impl->RegionField(x[j]);
+      x[j].Destroy();
+      impl->K_region_e->Mult(u, Ku);
+      impl->mat_dtn_K->Mult(u, Su);
+      d = u;
+      d -= a[j];
+      impl->M_sheet_region->Mult(d, Md);
+      u.GetSubVector(rc, uc[j]);
+      Ku.GetSubVector(rc, Kuc[j]);
+      d.GetSubVector(rc, dc[j]);
+      Md.GetSubVector(rc, Mdc[j]);
+      u.GetSubVector(gm, ug[j]);
+      Su.GetSubVector(gm, Sug[j]);
+      if (j < nf)
+      {
+        fields->push_back(std::move(u));
+      }
     }
-    impl->K_region_e->Mult(u[j], Ku[j]);
-    impl->mat_dtn_K->Mult(u[j], Su[j]);
   }
 
   // E_ij = [u_i^T K_R u_j + (u_i - a_i)^T M_sheet^R (u_j - a_j)]  (region)
@@ -3320,14 +3370,11 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
   {
     for (int j = 0; j < n; j++)
     {
-      double e = (u[i] * Ku[j]) + kinetic(u[i], u[j], a[i], a[j], *impl->M_sheet_region);
-      for (int r = 0; r < nt; r++)
+      double e = (uc[i] * Kuc[j]) + (dc[i] * Mdc[j]) + (ug[i] * Sug[j]);
+      for (int q = 0; q < gm.Size(); q++)
       {
-        if (impl->is_gamma[r])
-        {
-          e += u[i](r) * Su[j](r) + u[i](r) * impl->SH_rows[row(r) + col[j]] +
-               impl->SH_rows[row(r) + col[i]] * u[j](r);
-        }
+        e += ug[i](q) * impl->SH_rows[row(gm[q]) + col[j]] +
+             impl->SH_rows[row(gm[q]) + col[i]] * ug[j](q);
       }
       E(i, j) = e;
     }
@@ -3347,7 +3394,6 @@ mfem::DenseMatrix SubstructuringSolver::SheetEnergyMatrix(const std::vector<int>
   // Optional full fields: the environment interior recovered from its sources.
   if (nf > 0)
   {
-    fields->assign(u.begin(), u.begin() + nf);
     std::vector<mfem::Vector> bE(nf);
     std::array<double, 2> fp;
     for (int k = 0; k < nf; k++)
@@ -3365,29 +3411,42 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
                                                      int n_fields,
                                                      std::vector<Vector> *region_fields)
 {
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   MFEM_VERIFY(ids.size() == lifts.size(), "EnergyMatrix: one id per lift!");
+  // Dirichlet data restricted to the Dirichlet DOF set (as SolveDirichlets does).
+  std::vector<Vector> xd(lifts.size(), Vector(impl->dbc_tdofs.Size()));
+  for (std::size_t k = 0; k < lifts.size(); k++)
+  {
+    lifts[k].GetSubVector(impl->dbc_tdofs, xd[k]);
+  }
+  return EnergyMatrixDbc(ids, xd, fields, n_fields, region_fields);
+}
+
+mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &ids,
+                                                        const std::vector<Vector> &xd,
+                                                        std::vector<Vector> *fields,
+                                                        int n_fields,
+                                                        std::vector<Vector> *region_fields)
+{
+  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before solving!");
   const int nt = impl->nt;
-  const int n = static_cast<int>(lifts.size());
+  const int n = static_cast<int>(xd.size());
   const int nf = fields ? std::max(0, std::min(n_fields, n)) : 0;
   MPI_Comm comm = impl->parent_fes.GetComm();
-  // Dirichlet data restricted to the Dirichlet DOF set (as SolveDirichlets does).
-  std::vector<Vector> x(n, Vector(nt));
-  for (int k = 0; k < n; k++)
+  auto full = [&]()
   {
-    x[k] = 0.0;
-    for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
+    std::vector<Vector> x;
+    for (const auto &v : xd)
     {
-      const int i = impl->dbc_tdofs[d];
-      x[k](i) = lifts[k](i);
+      x.push_back(impl->DirichletField(v));
     }
-  }
+    return x;
+  };
 
   // Magnetostatics without the energy interface operator S^K: environment path (full
   // fields, then the energy u_i^T K u_j).
   if (impl->EnergyDiffers() && !impl->mat_dtn_K)
   {
-    std::vector<Vector> u = SolveDirichletBatch(x);
+    std::vector<Vector> u = SolveDirichletBatch(full());
     mfem::DenseMatrix E(n);
     for (int i = 0; i < n; i++)
     {
@@ -3411,9 +3470,9 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
   // fingerprint), else compute them (needs the environment once; appended to the model in
   // an offline run that saves one).
   std::vector<int> col;
-  if (!impl->ModesMatch(ids, x, col))
+  if (!impl->ModesMatch(ids, xd, col))
   {
-    impl->ComputeModes(ids, x);
+    impl->ComputeModes(ids, full());
     col.resize(n);
     std::iota(col.begin(), col.end(), 0);
     const auto &subcfg = *impl->iodata.solver.substructuring;
@@ -3431,36 +3490,55 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
   // Region-condensed solve per lift (environment interior left at zero): the interface load
   // is the precomputed g_k, so no environment solve is needed.
   impl->EnsureRegionFactor(n);
-  std::vector<Vector> b(n, Vector(nt)), u, Ku(n, Vector(nt)), Su(n, Vector(nt));
+  const auto &rc = impl->rc_idx, &gm = impl->gamma_idx;
+  std::vector<Vector> xr(n, Vector(impl->rf_idx.Size()));
   {
     Vector tr(nt);
     for (int j = 0; j < n; j++)
     {
-      impl->A_region->Mult(x[j], tr);
-      b[j] = 0.0;
-      for (int i = 0; i < nt; i++)
+      impl->A_region->Mult(impl->DirichletField(xd[j]), tr);
+      for (int i : gm)
       {
-        if (impl->is_region_free[i])
-        {
-          b[j](i) -= tr(i);
-        }
-        if (impl->is_gamma[i])
-        {
-          b[j](i) -= impl->G_rows[row(i) + col[j]];
-        }
+        tr(i) += impl->G_rows[row(i) + col[j]];
       }
+      tr.Neg();
+      tr.GetSubVector(impl->rf_idx, xr[j]);
     }
   }
-  impl->SolveRegion(b, u);
-  for (int j = 0; j < n; j++)
+  impl->SolveRegion(xr);
+
+  // Per lift, on the region elements' DOFs: u_j and K_R u_j; on Gamma: u_j and S^K u_j.
+  // Full fields only for the saved ones (and all of them for region_fields).
+  std::vector<Vector> uc(n), Kuc(n), ug(n), Sug(n);
+  if (fields)
   {
-    for (int d = 0; d < impl->dbc_tdofs.Size(); d++)
+    fields->clear();
+  }
+  if (region_fields)
+  {
+    region_fields->clear();
+  }
+  {
+    Vector Ku(nt), Su(nt);
+    for (int j = 0; j < n; j++)
     {
-      const int i = impl->dbc_tdofs[d];
-      u[j](i) = x[j](i);
+      Vector u = impl->RegionField(xr[j], &xd[j]);
+      xr[j].Destroy();
+      impl->K_region_e->Mult(u, Ku);
+      SK.Mult(u, Su);
+      u.GetSubVector(rc, uc[j]);
+      Ku.GetSubVector(rc, Kuc[j]);
+      u.GetSubVector(gm, ug[j]);
+      Su.GetSubVector(gm, Sug[j]);
+      if (j < nf)
+      {
+        fields->push_back(u);
+      }
+      if (region_fields)
+      {
+        region_fields->push_back(std::move(u));
+      }
     }
-    impl->K_region_e->Mult(u[j], Ku[j]);
-    SK.Mult(u[j], Su[j]);
   }
 
   // E_ij = u_i^T K_R u_j + [u_G,i; e_i]^T [S^K, G^K; G^K^T, Cmode] [u_G,j; e_j]: the region
@@ -3470,14 +3548,10 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
   {
     for (int j = 0; j < n; j++)
     {
-      double a = u[i] * Ku[j];
-      for (int r = 0; r < nt; r++)
+      double a = (uc[i] * Kuc[j]) + (ug[i] * Sug[j]);
+      for (int q = 0; q < gm.Size(); q++)
       {
-        if (impl->is_gamma[r])
-        {
-          a += u[i](r) * Su[j](r) + u[i](r) * GE[row(r) + col[j]] +
-               GE[row(r) + col[i]] * u[j](r);
-        }
+        a += ug[i](q) * GE[row(gm[q]) + col[j]] + GE[row(gm[q]) + col[i]] * ug[j](q);
       }
       E(i, j) = a;
     }
@@ -3494,18 +3568,10 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrix(const std::vector<int> &ids
     }
   }
 
-  if (region_fields)
-  {
-    *region_fields = u;
-  }
   // Optional full fields (environment interior recovered on demand).
-  if (fields)
+  if (nf > 0)
   {
-    fields->assign(u.begin(), u.begin() + nf);
-    if (nf > 0)
-    {
-      impl->RecoverEnvInterior(*fields);
-    }
+    impl->RecoverEnvInterior(*fields);
   }
   return E;
 }
@@ -3517,12 +3583,13 @@ SubstructuringSolver::CapacitanceMatrix(const std::vector<int> &terminal_indices
 {
   MFEM_VERIFY(!impl->magnetostatic,
               "CapacitanceMatrix is for electrostatic substructuring problems!");
-  std::vector<Vector> lifts;
+  std::vector<Vector> xd;
   for (int idx : terminal_indices)
   {
-    lifts.push_back(TerminalLift(idx));
+    xd.emplace_back(impl->dbc_tdofs.Size());
+    TerminalLift(idx).GetSubVector(impl->dbc_tdofs, xd.back());
   }
-  return EnergyMatrix(terminal_indices, lifts, fields, n_fields, region_fields);
+  return EnergyMatrixDbc(terminal_indices, xd, fields, n_fields, region_fields);
 }
 
 ErrorIndicator
