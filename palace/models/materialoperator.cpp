@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <unordered_set>
 #include <fmt/format.h>
 #include "linalg/densematrix.hpp"
@@ -34,7 +35,7 @@ bool IsOrthonormal(const config::SymmetricMatrixData<N> &data)
     }
     return std::abs(s) < tol;
   };
-  bool valid = std::all_of(data.v.begin(), data.v.end(), UnitNorm);
+  bool valid = std::ranges::all_of(data.v, UnitNorm);
 
   // All the vectors are orthogonal.
   for (std::size_t i1 = 0; i1 < N; i1++)
@@ -57,22 +58,22 @@ bool IsOrthonormal(const config::SymmetricMatrixData<N> &data)
 template <std::size_t N>
 bool IsValid(const config::SymmetricMatrixData<N> &data)
 {
-  return IsOrthonormal(data) && std::all_of(data.s.begin(), data.s.end(),
-                                            [](auto d) { return std::abs(d) > 0.0; });
+  return IsOrthonormal(data) &&
+         std::ranges::all_of(data.s, [](auto d) { return std::abs(d) > 0.0; });
 }
 
 template <std::size_t N>
 bool IsIsotropic(const config::SymmetricMatrixData<N> &data)
 {
   return IsOrthonormal(data) &&
-         std::all_of(data.s.begin(), data.s.end(), [&](auto d) { return d == data.s[0]; });
+         std::ranges::all_of(data.s, [&](auto d) { return d == data.s[0]; });
 }
 
 template <std::size_t N>
 bool IsIdentity(const config::SymmetricMatrixData<N> &data)
 {
   return IsOrthonormal(data) &&
-         std::all_of(data.s.begin(), data.s.end(), [](auto d) { return d == 1.0; });
+         std::ranges::all_of(data.s, [](auto d) { return d == 1.0; });
 }
 
 template <std::size_t N>
@@ -157,7 +158,7 @@ void MaterialOperator::SetUpMaterialProperties(
     const auto &data = materials[i];
     for (auto attr : data.attributes)
     {
-      if (loc_attr.find(attr) != loc_attr.end())
+      if (loc_attr.contains(attr))
       {
         mat_marker[i] = 1;
         nmats++;
@@ -391,7 +392,7 @@ void MaterialOperator::SetUpMaterialProperties(
   for (int i = 0; i < mesh.GetNE() && !unmatched_attrs.empty(); i++)
   {
     const int attr = mesh.GetAttribute(i);
-    if (unmatched_attrs.find(attr) != unmatched_attrs.end())
+    if (unmatched_attrs.contains(attr))
     {
       missing_attr = std::min(missing_attr, attr);
     }
@@ -463,7 +464,7 @@ void MaterialOperator::SetUpFloquetWaveVector(const config::PeriodicBoundaryData
   {
     for (int i = 0; i < sdim; i++)
     {
-      double half_bz = M_PI / bbmax[i];
+      double half_bz = std::numbers::pi / bbmax[i];
       if (wave_vector[i] > half_bz || wave_vector[i] < -half_bz)
       {
         wave_vector[i] = std::remainder(wave_vector[i], 2.0 * half_bz);

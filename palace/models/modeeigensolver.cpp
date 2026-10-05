@@ -327,13 +327,14 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   const double kn_target = std::sqrt(-sigma);
   mode_perm.resize(num_conv);
   std::iota(mode_perm.begin(), mode_perm.end(), 0);
-  std::sort(mode_perm.begin(), mode_perm.end(),
-            [this, sigma, kn_target](int a, int b)
-            {
-              auto kn_a = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(a));
-              auto kn_b = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(b));
-              return std::abs(kn_a.real() - kn_target) < std::abs(kn_b.real() - kn_target);
-            });
+  std::ranges::sort(mode_perm,
+                    [this, sigma, kn_target](int a, int b)
+                    {
+                      auto kn_a = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(a));
+                      auto kn_b = std::sqrt(-sigma - 1.0 / eigen->GetEigenvalue(b));
+                      return std::abs(kn_a.real() - kn_target) <
+                             std::abs(kn_b.real() - kn_target);
+                    });
 
   if (real_frequency && num_conv > 0)
   {

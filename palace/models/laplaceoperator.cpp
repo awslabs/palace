@@ -133,10 +133,7 @@ LaplaceOperator::ConstructSources(const std::map<int, config::TerminalData> &ter
   {
     mfem::Array<int> &attr_list = attr_lists[idx];
     attr_list.Reserve(static_cast<int>(data.attributes.size()));
-    for (auto attr : data.attributes)
-    {
-      attr_list.Append(attr);
-    }
+    attr_list.Append(data.attributes.data(), static_cast<int>(data.attributes.size()));
   }
   return attr_lists;
 }

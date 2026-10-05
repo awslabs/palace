@@ -24,7 +24,7 @@ namespace palace
 namespace
 {
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<IterativeSolver<OperType>>
 ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_Comm comm)
 {
@@ -59,6 +59,7 @@ ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_C
   }
   ksp->SetInitialGuess(linear.initial_guess);
   ksp->SetRelTol(linear.tol);
+  ksp->SetAbsTol(linear.abs_tol);
   ksp->SetMaxIter(linear.max_it);
 
   // Configure preconditioning side (only for GMRES).
@@ -126,7 +127,7 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
       linear.complex_coarse_solve, linear.drop_small_entries, linear.reorder_reuse);
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                               MatrixSymmetry pc_mat_sym, int verbose, MPI_Comm comm,
@@ -257,7 +258,7 @@ MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
   return MatrixSymmetry::UNSYMMETRIC;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                        MatrixSymmetry pc_mat_sym, int verbose,
                                        FiniteElementSpaceHierarchy &fespaces,
@@ -271,7 +272,7 @@ BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
   use_timer = true;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
                                        FiniteElementSpaceHierarchy &fespaces,
                                        FiniteElementSpaceHierarchy *aux_fespaces)
@@ -280,7 +281,7 @@ BaseKspSolver<OperType>::BaseKspSolver(const IoData &iodata,
 {
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), use_timer(false)
@@ -291,7 +292,7 @@ BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &pc_op)
 {
   BlockTimer bt(Timer::KSP_SETUP, use_timer);
@@ -311,7 +312,7 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);

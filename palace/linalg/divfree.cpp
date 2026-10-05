@@ -21,7 +21,7 @@ namespace palace
 namespace
 {
 
-template <typename OperType>
+template <OperatorType OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&a,
                            const FiniteElementSpace &fespace);
 

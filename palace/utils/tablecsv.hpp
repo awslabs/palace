@@ -127,7 +127,7 @@ public:
   // Check if a column with the given name exists.
   [[nodiscard]] bool has(std::string_view name) const
   {
-    return name_to_index.find(name) != name_to_index.end();
+    return name_to_index.contains(name);
   }
 
   // Rebuild the name index from the columns, for callers that reassign Column::name

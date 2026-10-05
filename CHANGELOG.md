@@ -28,6 +28,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
     London magnetostatic solve SPD-solvable by AMS.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
+    an absolute tolerance when defining convergence. SchemaVer 2-1-0
+    [PR 734](https://github.com/awslabs/palace/pull/734).
 
 #### Interface Changes
 
@@ -89,6 +92,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
+  - *Palace* now requires a C++20 compiler, including for CUDA and HIP device code, so
+    CUDA builds need CUDA 12.0 and CMake 3.25.2 or later. The Spack recipe keeps
+    `cxxstd=17` available for 0.16 to 0.18.
+    [PR 654](https://github.com/awslabs/palace/pull/654).
+  - GPU Spack builds from 0.19 no longer cap Umpire at 2025.12; MFEM is built as C++20 to
+    match. 0.16 to 0.18 keep Umpire 2025.12 as C++17.
+    [PR 654](https://github.com/awslabs/palace/pull/654).
   - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
