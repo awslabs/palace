@@ -33,16 +33,19 @@ from pathlib import Path
 
 import numpy as np
 
-# The required number of active boundary nodes per free hat (decision 328 (1)). The
-# criterion, in the generator's own terms: the hat is resolved when its ring edges carry a
-# full order-p node lattice on both sides of the knot, 2p - 1 nodes along the ring alone (the
-# knot and the p - 1 interior nodes of each of its two trace edges) — the count a mesh
-# conforming to the trace edges provides by construction (mesh_corner_coupon.jl embeds the
-# free knots and sizes the mesh at the knot gaps). The published nodes measured (domain
-# diagonal of the five inner cap-ring hats, fabricated): resolved at >= 90 degrees (the
-# cap-ring hat spans ~1.9 p4 node spacings, max / min <= 1.3), marginal at 75 (1.1 spacings,
-# ratio 1.6-1.9), unresolved at <= 60 (<= 0.25 spacings, ratio 2.6-59, zeros at 48.75).
-MINIMUM_ACTIVE_NODES_PER_ORDER = 2  # k = 2p - 1 = MINIMUM_ACTIVE_NODES_PER_ORDER * p - 1
+# The required number of active boundary nodes per free hat (decision 328 (1)), scaled by p^2
+# (the node count of a fixed region of an order-p surface mesh). CALIBRATION (the read-only
+# audit of the published and built corner caches, family4/round2/audit, 2026-10-05, all at
+# p3 unless stated; the five inner free hats of the two cap rings, |x|, |y| <= R / 3 at
+# z = +-R, are the sparsest): the fabricated domain diagonal of those hats scatters by a factor
+# max / min 2.6-59 across the five hats at concave 60 degrees (1-3 active nodes; the 48.75-degree
+# p4 coupon had 0 on two hats: zero rows), 1.6-1.9 at 75 (17-24 nodes at 75-82.5), 1.2-1.6 at
+# 90-105 (28-44 nodes) and settles at <= 1.3 (the genuine angular variation) from 120 degrees
+# on (52-56 nodes), as it does on every convex node (>= 88). The threshold is that settled
+# count, 6 p^2 (54 at p3, 96 at p4); a corner coupon mesh sized at the knot gaps
+# (mesh_corner_coupon.jl --trace-mesh, gradation 0.5) gives the cap hats 270-290 nodes at p4
+# (a 3x margin) and every other free hat more.
+MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED = 6
 # A hat value below this at a node is not an active degree of freedom (the solver's zero
 # test is the right-hand side norm against 100 eps; the barycentric evaluation here is exact
 # to rounding, so this only excludes nodes on the support's boundary).
@@ -53,7 +56,7 @@ NODE_COINCIDENCE_OVER_R = 1.0e-9
 
 
 def required_active_nodes(order):
-    return MINIMUM_ACTIVE_NODES_PER_ORDER * int(order) - 1
+    return MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED * int(order) ** 2
 
 
 def gauss_lobatto_closed_points(order):
@@ -309,7 +312,7 @@ def main():
     report = {
         "Version": 1,
         "Gate": "TraceResolvability",
-        "MinimumActiveNodesPerOrder": MINIMUM_ACTIVE_NODES_PER_ORDER,
+        "MinimumActiveNodesPerOrderSquared": MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED,
         "ZeroTraceIndices": zero,
         "Meshes": audits,
         "Passed": passed,

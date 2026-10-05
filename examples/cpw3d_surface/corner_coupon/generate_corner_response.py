@@ -1629,11 +1629,11 @@ def main():
 
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    # The meshes are named in the configs, never read: the planner runs the generator BEFORE
+    # the mesher, which sizes the coupon mesh at this trace basis's knots (mesh_corner_coupon.jl
+    # --trace-mesh; block (b) family 4 round 2, decision 328).
     thin_mesh = args.thin_mesh.expanduser().resolve()
     fabricated_mesh = args.fabricated_mesh.expanduser().resolve()
-    for mesh in (thin_mesh, fabricated_mesh):
-        if not mesh.is_file():
-            raise FileNotFoundError(mesh)
 
     surface = build_surface(
         args.radius,

@@ -707,14 +707,26 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 **overrides,
             )
 
+        resolvability = {
+            "MeshSizing": "KnotGap",
+            "MinimumActiveNodesPerOrderSquared": 6,
+        }
         sharp = generator_command(corner("sharp-90", 0.0), arguments())
         self.assertEqual(sharp[:2], ("all-rings-follow-metal", "16"))
         self.assertEqual(
-            sharp[2], {"RingSize": 16, "TraceBasis": "all-rings-follow-metal"}
+            sharp[2],
+            {
+                "RingSize": 16,
+                "TraceBasis": "all-rings-follow-metal",
+                "TraceResolvability": resolvability,
+            },
         )
         rounded = generator_command(corner("rounded-90", 0.5), arguments())
         self.assertEqual(rounded[:2], ("legacy", "8"))
-        self.assertEqual(rounded[2], {"RingSize": 8, "TraceBasis": "legacy"})
+        self.assertEqual(
+            rounded[2],
+            {"RingSize": 8, "TraceBasis": "legacy", "TraceResolvability": resolvability},
+        )
         # The CLI default (None) resolves the same way; an explicit legacy request is honoured
         # on a sharp corner; an explicit refined request on a rounded corner is refused.
         self.assertEqual(
@@ -743,20 +755,20 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             julia="julia",
             julia_project=None,
             matching_radius=2.0,
+            orders=[3, 4],
             corner_lc_fine=0.02,
             corner_lc_far=0.3,
         )
         spec = {"Mesh": {"Order": 2}}
         commands = []
+
+        def record(command, check=True):
+            commands.append([str(value) for value in command])
+            return 0
+
         with (
             tempfile.TemporaryDirectory() as directory,
-            mock.patch.object(
-                PREPARE,
-                "run",
-                side_effect=lambda command: commands.append(
-                    [str(value) for value in command]
-                ),
-            ),
+            mock.patch.object(PREPARE, "run", side_effect=record),
         ):
             mesh_root, meshes = PREPARE.generate_corner_meshes(
                 Path(directory),
@@ -771,12 +783,24 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
 
         self.assertEqual(mesh_root.name, "h-2")
         self.assertEqual(set(meshes), {"thin", "fabricated"})
-        self.assertEqual(len(commands), 2)
-        for command in commands:
+        # Two mesher runs sized at the generator's trace mesh (decision 328), then the trace
+        # resolvability gate on both meshes at the final solve order.
+        self.assertEqual(len(commands), 3)
+        for command in commands[:2]:
             self.assertEqual(command[command.index("--angle") + 1], "45.0")
             self.assertEqual(command[command.index("--lc-fine") + 1], "0.04")
             self.assertEqual(command[command.index("--lc-far") + 1], "0.3")
             self.assertEqual(command[command.index("--mesh-order") + 1], "2")
+            self.assertEqual(command[command.index("--trace-mesh") + 1], directory)
+        gate = commands[2]
+        self.assertTrue(gate[1].endswith("trace_resolvability.py"))
+        self.assertEqual(gate[2], directory)
+        self.assertEqual(gate[gate.index("--order") + 1], "4")
+        self.assertEqual(gate[gate.index("--radius") + 1], "2.0")
+        self.assertEqual(gate.count("--mesh"), 2)
+        self.assertEqual(
+            gate[gate.index("--report") + 1], str(mesh_root / "trace-resolvability.json")
+        )
 
     def test_plan_accepts_verified_finite_impedance(self):
         requirements = [
@@ -2250,6 +2274,75 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     }
                     for config in palace_configs
                 )
+            )
+
+    def test_corner_trace_resolvability_gate_fails_closed_before_any_solve(self):
+        # Decision 328: the generator runs BEFORE the mesher (the mesher sizes the mesh at the
+        # trace knots, --trace-mesh = the cache root), the resolvability gate runs on both
+        # meshes before any solve, and a failing gate stops the coupon with a recorded
+        # qualification (Passed False, the report path, the reason) — no palace call.
+        coupon = {
+            "Id": "concave-48.75",
+            "Topology": "ConcaveCorner",
+            "Geometry": {"AngleDegrees": 48.75, "CornerRadius": 0.0},
+            "BoundaryCondition": pec(),
+        }
+        args = SimpleNamespace(
+            matching_radius=1.9,
+            orders=[3, 4],
+            corner_lc_fine=0.02,
+            corner_lc_far=0.3,
+            mesh_order=2,
+            min_process_feature_elements=2.0,
+            force=True,
+            palace=Path("palace"),
+            julia="julia",
+            julia_project=None,
+            ranks=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            calls = []
+
+            def record(command, check=True):
+                command = [str(value) for value in command]
+                calls.append(command)
+                return 1 if command[1].endswith("trace_resolvability.py") else 0
+
+            with (
+                mock.patch.object(PREPARE, "run", side_effect=record),
+                self.assertRaisesRegex(RuntimeError, "do not resolve the trace basis"),
+            ):
+                PREPARE.build_corner(coupon, args, process_parameters(), cache)
+            root = next(cache.glob("corner-*"))
+            scripts = [Path(command[1]).name for command in calls]
+            self.assertEqual(
+                scripts,
+                [
+                    "generate_corner_response.py",
+                    "mesh_corner_coupon.jl",
+                    "mesh_corner_coupon.jl",
+                    "trace_resolvability.py",
+                ],
+            )
+            for command in calls[1:3]:
+                self.assertEqual(command[command.index("--trace-mesh") + 1], str(root))
+            generator = calls[0]
+            self.assertEqual(
+                generator[generator.index("--thin-mesh") + 1], str(root / "corner_thin.msh")
+            )
+            self.assertFalse(any(command[0] == "palace" for command in calls))
+            qualification = PREPARE.load_json(root / "qualification.json")
+            self.assertFalse(qualification["Passed"])
+            self.assertEqual(
+                qualification["TraceResolvabilityReport"],
+                str(root / "trace-resolvability.json"),
+            )
+            self.assertIn("do not resolve the trace basis", qualification["Reason"])
+            spec = PREPARE.load_json(root / "coupon-spec.json")
+            self.assertEqual(
+                spec["Response"]["TraceResolvability"],
+                {"MeshSizing": "KnotGap", "MinimumActiveNodesPerOrderSquared": 6},
             )
 
     def test_corner_mesh_failure_prevents_full_response_solves(self):
