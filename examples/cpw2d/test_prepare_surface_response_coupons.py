@@ -709,7 +709,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
 
         resolvability = {
             "MeshSizing": "KnotGap",
-            "MinimumActiveNodesPerOrderSquared": 6,
+            "MinimumActiveNodesPerOrderSquared": 5,
         }
         sharp = generator_command(corner("sharp-90", 0.0), arguments())
         self.assertEqual(sharp[:2], ("all-rings-follow-metal", "16"))
@@ -2342,7 +2342,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             spec = PREPARE.load_json(root / "coupon-spec.json")
             self.assertEqual(
                 spec["Response"]["TraceResolvability"],
-                {"MeshSizing": "KnotGap", "MinimumActiveNodesPerOrderSquared": 6},
+                {"MeshSizing": "KnotGap", "MinimumActiveNodesPerOrderSquared": 5},
             )
 
     def test_corner_mesh_failure_prevents_full_response_solves(self):

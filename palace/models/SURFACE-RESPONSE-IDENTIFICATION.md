@@ -2386,10 +2386,20 @@ by FreeArc / Reference — the sharper node keeps the 60-degree node's layout pr
 the same slots, like-to-like indices and zero set; the generator writes the key only on
 records where the scaling is active and an absent key reads as that default, so every record
 written before (free arcs at or above the reference) is unchanged and the family stays on one
-rule; `FreeKnotGradingScale`, `kFreeKnotGradingReferenceFreeArcOverR`; STATUS, decision 325,
-2026-10-05: this round-1 scaling is SUPERSEDED by family-4 round 2 after the 48.75-degree
-held-out coupon failed to finalize — two scaled free hats of the z = -R cap ring had no active
-boundary DOF in the fabricated p4 solve — and is NOT for merge until round 2 is reviewed); PEC = crossings +
+rule; `FreeKnotGradingScale`, `kFreeKnotGradingReferenceFreeArcOverR`; STATUS, decisions 325 /
+328, 2026-10-05: the scaling rule stands; the 48.75-degree held-out coupon's failure to
+finalize — two scaled free hats of the z = -R cap ring had no active boundary DOF in the
+fabricated p4 solve — is a COUPON MESH defect: the coupon prescribes hats by nodal
+interpolation, and the cap rings' inner knots (9.4 nm apart at 60 degrees, 7.4 at 48.75) were
+unresolved by the 300-nm far mesh at every concave node <= 60 degrees, the published 60 node
+included; round 2 adds the generator-side trace resolvability gate (`trace_resolvability.py`,
+5 p^2 active boundary nodes per free hat) and the knot-gap mesh sizing of
+`mesh_corner_coupon.jl --trace-mesh`, a corner-coupon RECIPE change (new cache keys; the
+published caches are not rebuilt); the DEVICE runtime is unaffected: the SurfaceMortar lift is
+an L2 projection on the coupon's trace triangles with the device field sampled by
+FindPointsGSLIB, independent of the device mesh's DOF layout
+(test-cornerbasisrefinement.cpp CornerRefinedRuleAcuteConcaveDeviceMortar); the branch is NOT
+for merge until round 2 is reviewed); PEC = crossings +
 metal-interior knots on the two metal rings only (14 of 176 knots); the box corners are slaves
 on every ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing
 knots

@@ -136,8 +136,8 @@ class LatticeTest(unittest.TestCase):
                 self.assertTrue(np.any(np.all(np.isclose(lattice, point, atol=1e-12), axis=1)))
 
     def test_required_count_scales_with_order_squared(self):
-        self.assertEqual(GATE.required_active_nodes(3), 54)
-        self.assertEqual(GATE.required_active_nodes(4), 96)
+        self.assertEqual(GATE.required_active_nodes(3), 45)
+        self.assertEqual(GATE.required_active_nodes(4), 80)
 
 
 class GateTest(unittest.TestCase):
@@ -145,7 +145,7 @@ class GateTest(unittest.TestCase):
         # The concave 48.75-degree node (decision 325): on a uniform 300-nm surface mesh at
         # p4 the cap rings' inner free hats (7.4 nm apart) hold a few nodes or none (FAIL,
         # the wide hats hold hundreds); on a surface mesh graded like the mesher's every free
-        # hat holds >= 6 p^2 nodes (PASS); the zero set is never counted against.
+        # hat holds >= 5 p^2 nodes (PASS); the zero set is never counted against.
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
             surface = write_trace(directory, 48.75)
@@ -162,7 +162,7 @@ class GateTest(unittest.TestCase):
             self.assertTrue(set(range(148, 153)) <= set(audit["FailingFreeHats"]))
             self.assertTrue(set(range(164, 169)) <= set(audit["FailingFreeHats"]))
             # A wide hat (the graded R/3 knot of the z = -R ring, 1-based 2) is resolved.
-            self.assertGreater(counts[1], 96)
+            self.assertGreater(counts[1], 80)
             # The zero set is not gated.
             for index in zero:
                 self.assertNotIn(index, audit["FailingFreeHats"])
@@ -181,7 +181,7 @@ class GateTest(unittest.TestCase):
             face_grid_msh(fine, graded)
             audit = GATE.audit_mesh(fine, directory, 4, RADIUS, zero)
             self.assertTrue(audit["Passed"], audit["FailingFreeHats"])
-            self.assertGreaterEqual(audit["MinimumActiveNodesFreeHat"], 96)
+            self.assertGreaterEqual(audit["MinimumActiveNodesFreeHat"], 80)
             counts = np.asarray(audit["ActiveNodes"])
             self.assertGreater(min(counts[147:152].min(), counts[163:168].min()), 150)
 
@@ -206,7 +206,7 @@ class MesherTest(unittest.TestCase):
         # End to end at a cheap resolution (lc_fine 0.1 / lc_far 0.6, ~5 s, < 1 GB): the
         # concave 48.75-degree THIN coupon meshed WITHOUT the trace mesh fails the gate at p4
         # (cap hats with a node or none), meshed WITH `--trace-mesh` (the knot-gap size
-        # fields) every free hat holds >= 6 p^2 nodes.
+        # fields) every free hat holds >= 5 p^2 nodes.
         julia = julia_with_gmsh()
         if julia is None:
             self.skipTest("julia with Gmsh.jl is not available")
@@ -231,7 +231,7 @@ class MesherTest(unittest.TestCase):
             self.assertFalse(results["base"]["Passed"])
             self.assertLess(results["base"]["MinimumActiveNodesFreeHat"], 10)
             self.assertTrue(results["knots"]["Passed"], results["knots"]["FailingFreeHats"])
-            self.assertGreaterEqual(results["knots"]["MinimumActiveNodesFreeHat"], 96)
+            self.assertGreaterEqual(results["knots"]["MinimumActiveNodesFreeHat"], 80)
 
 
 if __name__ == "__main__":

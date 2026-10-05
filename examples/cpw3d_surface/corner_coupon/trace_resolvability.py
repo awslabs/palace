@@ -37,15 +37,15 @@ import numpy as np
 # (the node count of a fixed region of an order-p surface mesh). CALIBRATION (the read-only
 # audit of the published and built corner caches, family4/round2/audit, 2026-10-05, all at
 # p3 unless stated; the five inner free hats of the two cap rings, |x|, |y| <= R / 3 at
-# z = +-R, are the sparsest): the fabricated domain diagonal of those hats scatters by a factor
-# max / min 2.6-59 across the five hats at concave 60 degrees (1-3 active nodes; the 48.75-degree
-# p4 coupon had 0 on two hats: zero rows), 1.6-1.9 at 75 (17-24 nodes at 75-82.5), 1.2-1.6 at
-# 90-105 (28-44 nodes) and settles at <= 1.3 (the genuine angular variation) from 120 degrees
-# on (52-56 nodes), as it does on every convex node (>= 88). The threshold is that settled
-# count, 6 p^2 (54 at p3, 96 at p4); a corner coupon mesh sized at the knot gaps
-# (mesh_corner_coupon.jl --trace-mesh, gradation 0.5) gives the cap hats 270-290 nodes at p4
-# (a 3x margin) and every other free hat more.
-MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED = 6
+# z = +-R, are the sparsest of the concave nodes): the fabricated domain diagonal of those hats
+# scatters by a factor max / min 2.6-59 across the five hats at concave 60 degrees (1-3 active
+# nodes; the 48.75-degree p4 coupon had 0 on two hats: zero rows), 1.6-1.9 at 75 (17-24 nodes
+# at 75-82.5), 1.2-1.6 at 90-105 (28-44 nodes) and settles at <= 1.4 (the genuine angular
+# variation) from 120 degrees on (52-56 nodes), as on every convex node whose cap hats hold
+# >= 88. The threshold sits between the two regimes: 5 p^2 (45 at p3, 80 at p4). A corner
+# coupon mesh sized at the knot gaps (mesh_corner_coupon.jl --trace-mesh, gradation 0.5)
+# gives the cap hats 270-290 nodes at p4 (3.4x the gate) and every other free hat more.
+MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED = 5
 # A hat value below this at a node is not an active degree of freedom (the solver's zero
 # test is the right-hand side norm against 100 eps; the barycentric evaluation here is exact
 # to rounding, so this only excludes nodes on the support's boundary).
