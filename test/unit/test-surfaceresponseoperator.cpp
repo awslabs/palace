@@ -530,7 +530,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator explicit p
     const double yDx = linalg::Dot<Vector>(Mpi::World(), y, Dx);
     const auto response_y = response.GetElectrostaticResponse(y);
     CHECK(xDx != 0.0);
-    CHECK_THAT(0.5 * xDx, WithinRel(local_electrostatic_response.domain_correction, 1.0e-12));
+    CHECK_THAT(0.5 * xDx,
+               WithinRel(local_electrostatic_response.domain_correction, 1.0e-12));
     CHECK_THAT(0.5 * yDy, WithinRel(response_y.domain_correction, 1.0e-12));
     CHECK(xDy != 0.0);
     CHECK_THAT(xDy, WithinRel(yDx, 1.0e-12));
@@ -1489,8 +1490,9 @@ TEST_CASE_METHOD(
         parallel_cluster_potential_true_2d, fixed_trace_action);
     const double quadratic_form = linalg::Dot<Vector>(
         Mpi::World(), parallel_cluster_potential_true_2d, fixed_trace_action);
-    CHECK_THAT(0.5 * quadratic_form,
-               WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction, 1.0e-12));
+    CHECK_THAT(
+        0.5 * quadratic_form,
+        WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction, 1.0e-12));
     CHECK_THAT(0.5 * quadratic_form,
                !WithinRel(fixed_flux_translational_result_2d.domain_correction, 1.0e-6));
   }

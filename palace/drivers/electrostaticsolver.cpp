@@ -2218,8 +2218,8 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
   // of the thin-metal operator (PostprocessTerminals); the fixed-trace domain correction
   // adds the bilinear domain defect of the applied coupon patches,
   //         C(i, j) = Vⱼᵀ M Vᵢ + Vⱼᵀ Pᵀ W (Q_fab,dom - Q_thin,dom) P Vᵢ  (∀i, Vᵢ = 1),
-  // so that C(i, i) = 2 (E_raw + ΔE_dom,ft) / Vᵢ² (the surface-Q-corrected.csv energies). The
-  // self-consistent matrix is the same form on the corrected fields, the capacitance of
+  // so that C(i, i) = 2 (E_raw + ΔE_dom,ft) / Vᵢ² (the surface-Q-corrected.csv energies).
+  // The self-consistent matrix is the same form on the corrected fields, the capacitance of
   // the corrected operator K + Pᵀ W D P at the terminal potentials. Fixed flux is not a
   // capacitance (its energy is not that of a fixed-potential ensemble) and is not written.
   const int n = static_cast<int>(V.size());
@@ -2286,7 +2286,8 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     return Cinv;
   };
   const mfem::DenseMatrix C_ft = fixed_trace ? CorrectedMatrix(V) : Unavailable();
-  const mfem::DenseMatrix C_sc = self_consistent ? CorrectedMatrix(V_corrected) : Unavailable();
+  const mfem::DenseMatrix C_sc =
+      self_consistent ? CorrectedMatrix(V_corrected) : Unavailable();
   const mfem::DenseMatrix Cm_ft = MutualMatrix(C_ft), Cm_sc = MutualMatrix(C_sc);
   const mfem::DenseMatrix Cinv_ft = InverseMatrix(C_ft, fixed_trace),
                           Cinv_sc = InverseMatrix(C_sc, self_consistent);
@@ -2297,10 +2298,11 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     return;
   }
   using VT = Units::ValueType;
-  auto PrintMatrices = [&terminal_sources, this](
-                           const std::string &file, const std::string &name,
-                           const std::string &unit, const mfem::DenseMatrix &fixed_trace_mat,
-                           const mfem::DenseMatrix &self_consistent_mat, double scale)
+  auto PrintMatrices =
+      [&terminal_sources, this](const std::string &file, const std::string &name,
+                                const std::string &unit,
+                                const mfem::DenseMatrix &fixed_trace_mat,
+                                const mfem::DenseMatrix &self_consistent_mat, double scale)
   {
     TableWithCSVFile output(post_dir / file);
     output.table.insert(Column("i", "i", 0, 0, 2, ""));
