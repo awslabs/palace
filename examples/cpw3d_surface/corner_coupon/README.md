@@ -89,7 +89,10 @@ same slots, like-to-like indices and zero set; the record key
 `FreeKnotGradingReferenceFreeArcOverR` is written only where the scaling is active
 (an absent key reads as that default in the generator and in Palace), so every node
 whose free arc reaches the reference — concave >= 60 deg, every convex node — is
-bit-identical, record included. `--trace-basis legacy` (the
+bit-identical, record included. STATUS (decision 325, 2026-10-05): this round-1 scaling
+rule is SUPERSEDED by family-4 round 2 — the 48.75-degree held-out coupon failed to
+finalize (two scaled free hats of the z = -R cap ring had no active boundary DOF in the
+fabricated p4 solve) — and is NOT for merge until round 2 is reviewed. `--trace-basis legacy` (the
 default of the script) is the recorded `MetalRingsOnly` rule (8 knots per ring,
 events, segment connectivity), byte-identical to the recorded coupons in its basis,
 trace mesh, zero set and record; its held-out REFERENCE, however, is now the decoupled
