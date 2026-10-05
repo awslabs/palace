@@ -1167,6 +1167,267 @@ TEST_CASE("CornerRefinedRuleAcuteConcaveLibraryLoad",
   }
 }
 
+TEST_CASE("CornerRefinedRuleAcuteConcaveDeviceMortar",
+          "[cornerbasisrefinement][Serial][Parallel]")
+{
+  // Family 4 round 2 (ii), decision 325: what the DEVICE runtime does with a constructed
+  // (interpolated, device-angle) basis whose hats are far below the device mesh resolution.
+  // At 48.75 degrees the scaled layout's five inner free knots on the cap rings (|x|, |y|
+  // <= R/3 at z = +-R) are 0.0039 R apart (7.4 nm at R = 1.9 um), so a hat's support is a
+  // sliver of width 0.0078 R; on this device mesh (hexahedra of h = 0.05 = 2.5 R = 640
+  // sliver gaps: the WHOLE matching box is smaller than one element) no sliver hat
+  // contains a device DOF. The runtime does not interpolate the
+  // device potential at DOF nodes: the SurfaceMortar lift is the L2 projection onto the
+  // P1 hats of the coupon's trace triangulation, with the device field (defined everywhere
+  // as an FE function) sampled by FindPointsGSLIB at a 2 x 2 Gauss rule on every trace
+  // triangle (subdivided by the local mesh size / MortarOversampling), relative to the
+  // patch's conductor reference. The rule is exact for a field linear on the box, so every
+  // free hat — sliver or not — must read the field's value at its knot (relative to the
+  // metal) to rounding, no coefficient is zero or non-finite, and the energies are finite:
+  // the device side neither aborts nor zeroes nor silently misreads a sliver hat. (The
+  // coupon side is the opposite: the coupon's electrostatic solve prescribes the hat by
+  // NODAL interpolation onto its boundary DOFs, so a sliver hat with no DOF in its support
+  // is a zero response row, refused by finalize_corner_response.py's positive-definiteness
+  // check — the 48.75-degree held-out coupon of decision 325.)
+  constexpr double R = 0.02, t = 0.001, oe = 0.0005;
+  constexpr double angle_device = 48.75;
+  test::SharedTempDir temp;
+  const fs::path isolated_points = temp.temp_dir / "isolated-points.csv";
+  const fs::path isolated_domain = temp.temp_dir / "isolated-domain.csv";
+  const fs::path isolated_surface = temp.temp_dir / "isolated-surface.csv";
+  const fs::path corner_domain = temp.temp_dir / "corner-domain.csv";
+  const fs::path corner_surface = temp.temp_dir / "corner-surface.csv";
+  const fs::path library = temp.temp_dir / "library-acute-device-mortar.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(isolated_points);
+      output << "x,y,z\n-0.16,-0.12,0.0\n0.16,-0.12,0.0\n0.16,0.12,0.0\n-0.16,0.12,0.0\n";
+      std::ofstream domain(isolated_domain);
+      domain << "basis_i,basis_j,Q_ij (J)\n";
+      std::ofstream surface(isolated_surface);
+      surface << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      for (int i = 1; i <= 4; i++)
+      {
+        for (int j = i; j <= 4; j++)
+        {
+          const double value = (i == j ? 2.0 : 0.2) * 1.0e-12;
+          domain << i << "," << j << "," << value << "\n";
+          surface << "1,1," << i << "," << j << "," << value << "\n";
+        }
+      }
+      WriteSyntheticMatrices(corner_domain, corner_surface, 176, 3.0, 0.05, R);
+    }
+    json active = RefinedTraceBasisRecord();
+    active["FreeKnotGradingReferenceFreeArcOverR"] = kFreeKnotGradingReferenceFreeArcOverR;
+    json models = json::array();
+    models.push_back({{"Name", "isolated"},
+                      {"Topology", "IsolatedEdge"},
+                      {"CouponDepth", R},
+                      {"FabricatedMatrix", isolated_domain.string()},
+                      {"ThinMatrix", isolated_domain.string()},
+                      {"FabricatedSurfaceMatrix", isolated_surface.string()},
+                      {"ThinSurfaceMatrix", isolated_surface.string()},
+                      {"BasisPoints", isolated_points.string()},
+                      {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}});
+    auto Model = [&](bool convex, double angle)
+    {
+      std::ostringstream tag;
+      tag << (convex ? "convex" : "concave") << "-" << angle;
+      const auto files = WriteRefinedCoupon(temp.temp_dir, "device-mortar-" + tag.str(),
+                                            angle, convex, R, t, oe);
+      // The generator writes the reference key only where the scaling is active.
+      const bool scaled = !convex && angle < 60.0;
+      return json{{"Name", tag.str() + "-corner"},
+                  {"Topology", convex ? "ConvexCorner" : "ConcaveCorner"},
+                  {"Angle", angle},
+                  {"AngleDegrees", angle},
+                  {"Convexity", convex ? "Convex" : "Concave"},
+                  {"AngleTolerance", 1.0e-6},
+                  {"CornerRadius", 0.0},
+                  {"CornerRadiusTolerance", 0.0},
+                  {"FabricatedMatrix", corner_domain.string()},
+                  {"ThinMatrix", corner_domain.string()},
+                  {"FabricatedSurfaceMatrix", corner_surface.string()},
+                  {"ThinSurfaceMatrix", corner_surface.string()},
+                  {"BasisPoints", files.points.string()},
+                  {"TraceMesh",
+                   {{"Vertices", files.vertices.string()},
+                    {"Triangles", files.triangles.string()}}},
+                  {"ContourGroups", files.contour_groups},
+                  {"ZeroTraceIndices", files.zero_trace_indices},
+                  {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}},
+                  {"TraceBasis", scaled ? active : RefinedTraceBasisRecord()}};
+    };
+    // The notch mouth's two convex corners (114.4 degrees) interpolate on the convex nodes;
+    // the 48.75-degree apex interpolates on the family-4 segment 45 / 52.5 / 60 / 75.
+    for (const double angle : {90.0, 105.0, 120.0, 135.0})
+    {
+      models.push_back(Model(true, angle));
+    }
+    for (const double angle : {45.0, 52.5, 60.0, 75.0, 90.0})
+    {
+      models.push_back(Model(false, angle));
+    }
+    const json record = {
+        {"Version", 3},
+        {"TraceLiftVersion", 2},
+        {"Name", "unit-test-corner-acute-concave-device-mortar"},
+        {"MatchingRadius", R},
+        {"Fabrication",
+         {{"MetalThickness", t},
+          {"OveretchDepth", oe},
+          {"InterfaceLayers", {{"SA", {{"Thickness", 0.002}, {"Permittivity", 4.0}}}}}}},
+        {"Models", models}};
+    std::ofstream output(library);
+    output << record.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  const json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
+      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Ground", {{"Attributes", {1, 2, 3, 4, 5, 6}}}},
+        {"Terminal", {{{"Index", 1}, {"Attributes", {9}}}}},
+        {"Postprocessing",
+         {{"Dielectric",
+           {{{"Index", 4},
+             {"Attributes", {9}},
+             {"Type", "SA"},
+             {"Thickness", 0.002},
+             {"Permittivity", 4.0},
+             {"AutomaticEdges", true},
+             {"EdgeDistances", {R}},
+             {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Electrostatic",
+         {{"ResponseCorrection",
+           {{"Library", library.string()},
+            {"TargetInterfaces", {4}},
+            // The notch arms at this opening are three SpatialEdgeCluster features the
+            // library has no model for (omitted with a warning); the corners are the test.
+            {"UnmatchedPolicy", "Warn"},
+            {"TraceCoupling", "SurfaceMortar"},
+            {"MortarOversampling", 2}}}}}}}};
+  auto notch = MakeStarIslandMesh(NotchedIsland(angle_device), 8.0, 0.05);
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  {
+    const auto manifest_path = temp.temp_dir / "requirements-acute-device-mortar.json";
+    WriteSurfaceResponseRequirements(iodata, *notch, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    const json manifest = json::parse(input);
+    int concave = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConcaveCorner")
+      {
+        concave++;
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        CHECK(feature["Match"]["Model"].get<std::string>().find(
+                  "@corner-angle48.75-cubic") != std::string::npos);
+      }
+    }
+    CHECK(concave == 1);
+  }
+
+  // The constructed basis the runtime builds at the device angle: the sliver hats are the
+  // five inner free knots of every ring (the 48.75-degree layout, scaled 0.789).
+  const auto constructed = BuildRefined(angle_device, false, R, t, oe);
+  REQUIRE(constructed.knots.size() == 176);
+  std::vector<int> cap_sliver_knots;
+  double sliver_gap = mfem::infinity();
+  for (int ring = 0; ring < 11; ring++)
+  {
+    // Concave ring order: crossing1, free1 .. free9, crossing2, metal1 .. metal5; the
+    // inner free knots are free3 .. free7 = slots 3 .. 7; rings 9 and 10 are the caps.
+    for (int slot = 3; slot <= 7; slot++)
+    {
+      if (ring >= 9)
+      {
+        cap_sliver_knots.push_back(16 * ring + slot);
+      }
+      double gap = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        const double delta = constructed.knots[16 * ring + slot][d] -
+                             constructed.knots[16 * ring + slot + 1][d];
+        gap += delta * delta;
+      }
+      sliver_gap = std::min(sliver_gap, std::sqrt(gap));
+    }
+  }
+  // The cap rings' inner gap: 0.00392 R; the device element is 0.05 = 2.5 R.
+  CHECK_THAT(sliver_gap / R, WithinRel(0.0039178, 1.0e-3));
+  CHECK(sliver_gap < 0.05 / 500.0);
+
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(*notch)));
+  LaplaceOperator laplace(iodata, meshes);
+  SurfaceResponseOperator response(iodata, laplace);
+  // A potential linear in the height above the metal plane (the island's plane y = 0.5 is
+  // the SA interface; the box's local z axis is its normal): zero on the metal, so the
+  // conductor reference is zero and every free hat must read +-z_k exactly.
+  mfem::ParGridFunction potential(&laplace.GetH1Space().Get());
+  mfem::FunctionCoefficient potential_coefficient([](const mfem::Vector &x)
+                                                  { return x[1] - 0.5; });
+  potential.ProjectCoefficient(potential_coefficient);
+  Vector potential_true;
+  potential.GetTrueDofs(potential_true);
+  const auto &names = response.GetModelNames();
+  const auto traces = response.GetSpatialPatchTraces(potential_true);
+  int constructed_patches = 0;
+  for (const auto &trace : traces)
+  {
+    const auto &name = names.at(trace.model);
+    if (name.find("@corner-angle48.75-cubic") == std::string::npos)
+    {
+      continue;
+    }
+    constructed_patches++;
+    REQUIRE(trace.contour_size == 176);
+    REQUIRE(trace.coefficients.size() >= 176);
+    // The sign of the local z axis from the top cap ring (every knot at z = +R).
+    const double top = trace.coefficients[16 * 9];
+    REQUIRE(std::abs(top) > 0.5 * R);
+    const double sign = top > 0.0 ? 1.0 : -1.0;
+    for (int k = 0; k < 176; k++)
+    {
+      REQUIRE(std::isfinite(trace.coefficients[k]));
+      if (constructed.zero[k])
+      {
+        continue;
+      }
+      // The PEC knots are pinned to the conductor reference (0) while the device field at
+      // the metal-top ring z = t reads t: that inconsistency (the thin device vs the
+      // coupon's metal thickness, the thin matrices' business) leaks into the free
+      // neighbours on the metal rings by a fraction of t (0.22 t measured) and decays away
+      // from them; every free hat reads its knot value within t, the hats of the five far
+      // rings (|z| >= R / 3, the cap rings included) within 1e-4 R.
+      const int ring = k / 16;
+      const bool far = ring <= 1 || ring >= 8;
+      CHECK_THAT(trace.coefficients[k],
+                 WithinAbs(sign * constructed.knots[k][2], far ? 1.0e-4 * R : t));
+    }
+    for (const int k : cap_sliver_knots)
+    {
+      REQUIRE(!constructed.zero[k]);
+      CHECK_THAT(trace.coefficients[k],
+                 WithinAbs(sign * constructed.knots[k][2], 1.0e-4 * R));
+    }
+  }
+  CHECK(constructed_patches == 1);
+  const auto result = response.GetElectrostaticResponse(potential_true);
+  CHECK(std::isfinite(result.domain_correction));
+  CHECK(std::isfinite(result.fabricated_surface_energy.at(4)));
+  CHECK(result.fabricated_surface_energy.at(4) > 0.0);
+}
+
 TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Parallel]")
 {
   // The load-time check of every coupon against the rule at its angle (ReadProcessLibrary,
