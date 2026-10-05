@@ -38,13 +38,13 @@ private:
   std::vector<ImpedanceData> boundaries;
 
   void SetUpBoundaryProperties(const std::vector<config::ImpedanceData> &impedance,
-                               const std::unordered_set<int> &cracked_attributes,
+                               const std::unordered_set<int> &split_attributes,
                                const mfem::ParMesh &mesh);
   void PrintBoundaryInfo(const Units &units, const mfem::ParMesh &mesh);
 
 public:
   SurfaceImpedanceOperator(const std::vector<config::ImpedanceData> &impedance,
-                           const std::unordered_set<int> &cracked_attributes,
+                           const std::unordered_set<int> &split_attributes,
                            const Units &units, const MaterialOperator &mat_op,
                            const mfem::ParMesh &mesh);
   SurfaceImpedanceOperator(const IoData &iodata, const MaterialOperator &mat_op,

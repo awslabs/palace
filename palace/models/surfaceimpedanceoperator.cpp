@@ -15,11 +15,11 @@ namespace palace
 
 SurfaceImpedanceOperator::SurfaceImpedanceOperator(
     const std::vector<config::ImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, const Units &units,
+    const std::unordered_set<int> &split_attributes, const Units &units,
     const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op)
 {
-  SetUpBoundaryProperties(impedance, cracked_attributes, mesh);
+  SetUpBoundaryProperties(impedance, split_attributes, mesh);
   PrintBoundaryInfo(units, mesh);
 }
 
@@ -27,14 +27,14 @@ SurfaceImpedanceOperator::SurfaceImpedanceOperator(const IoData &iodata,
                                                    const MaterialOperator &mat_op,
                                                    const mfem::ParMesh &mesh)
   : SurfaceImpedanceOperator(iodata.boundaries.impedance,
-                             iodata.boundaries.cracked_attributes, iodata.units, mat_op,
-                             mesh)
+                             iodata.boundaries.split_impedance_attributes, iodata.units,
+                             mat_op, mesh)
 {
 }
 
 void SurfaceImpedanceOperator::SetUpBoundaryProperties(
     const std::vector<config::ImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, const mfem::ParMesh &mesh)
+    const std::unordered_set<int> &split_attributes, const mfem::ParMesh &mesh)
 {
   // Check that impedance boundary attributes have been specified correctly.
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -92,8 +92,9 @@ void SurfaceImpedanceOperator::SetUpBoundaryProperties(
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
-      // Per-attribute scaling to account for increased area when using mesh cracking.
-      bdr.attr_scaling[attr] = cracked_attributes.contains(attr) ? 2.0 : 1.0;
+      // Twice the impedance on each face where it is split between the two faces of a
+      // crack (legacy mesh cracking).
+      bdr.attr_scaling[attr] = split_attributes.contains(attr) ? 2.0 : 1.0;
     }
   }
 }

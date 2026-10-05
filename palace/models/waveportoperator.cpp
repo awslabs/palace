@@ -742,14 +742,15 @@ WavePortData::WavePortData(const config::WavePortData &data,
   port_mat_op = std::make_unique<MaterialOperator>(domains.materials, boundaries.periodic,
                                                    problem_type, *port_mesh);
   port_surf_z_op = std::make_unique<SurfaceImpedanceOperator>(
-      boundaries.impedance, boundaries.cracked_attributes, units, *port_mat_op, mesh);
+      boundaries.impedance, boundaries.split_impedance_attributes, units, *port_mat_op,
+      mesh);
   port_farfield_op = std::make_unique<FarfieldBoundaryOperator>(
       boundaries.farfield, problem_type, *port_mat_op, mesh);
   port_surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(
       boundaries.conductivity, problem_type, units, *port_mat_op, mesh);
   port_surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(
-      boundaries.rational_impedance, boundaries.cracked_attributes, problem_type, units,
-      *port_mat_op, mesh);
+      boundaries.rational_impedance, boundaries.split_impedance_attributes, problem_type,
+      units, *port_mat_op, mesh);
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.

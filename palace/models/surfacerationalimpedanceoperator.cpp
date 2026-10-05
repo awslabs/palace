@@ -82,25 +82,25 @@ void PolyDivMod(std::vector<double> a, std::vector<double> b, std::vector<double
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
     const std::vector<config::RationalImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+    const std::unordered_set<int> &split_attributes, ProblemType problem_type,
     const Units &units, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), freq_scale(units.GetScaleFactor<Units::ValueType::FREQUENCY>())
 {
-  SetUpBoundaryProperties(impedance, cracked_attributes, problem_type, mesh);
+  SetUpBoundaryProperties(impedance, split_attributes, problem_type, mesh);
   PrintBoundaryInfo(units, mesh);
 }
 
 SurfaceRationalImpedanceOperator::SurfaceRationalImpedanceOperator(
     const IoData &iodata, const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : SurfaceRationalImpedanceOperator(iodata.boundaries.rational_impedance,
-                                     iodata.boundaries.cracked_attributes,
+                                     iodata.boundaries.split_impedance_attributes,
                                      iodata.problem.type, iodata.units, mat_op, mesh)
 {
 }
 
 void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
     const std::vector<config::RationalImpedanceData> &impedance,
-    const std::unordered_set<int> &cracked_attributes, ProblemType problem_type,
+    const std::unordered_set<int> &split_attributes, ProblemType problem_type,
     const mfem::ParMesh &mesh)
 {
   // Check that rational impedance boundary attributes have been specified correctly.
@@ -188,8 +188,9 @@ void SurfaceRationalImpedanceOperator::SetUpBoundaryProperties(
         continue;  // Can just ignore if wrong
       }
       bdr.attr_list.Append(attr);
-      // Per-attribute scaling to account for increased area when using mesh cracking.
-      bdr.attr_scaling[attr] = cracked_attributes.contains(attr) ? 2.0 : 1.0;
+      // Twice the impedance on each face where it is split between the two faces of a
+      // crack (legacy mesh cracking).
+      bdr.attr_scaling[attr] = split_attributes.contains(attr) ? 2.0 : 1.0;
     }
   }
 }

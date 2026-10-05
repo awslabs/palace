@@ -347,6 +347,10 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
       iodata.boundaries.cracked_attributes.insert(data.begin(), data.end());
     }
   }
+  if (iodata.model.crack_bdr_elements.value_or(false))
+  {
+    iodata.boundaries.split_impedance_attributes = iodata.boundaries.cracked_attributes;
+  }
 
   // Generate partitioning from the serial mesh on loading ranks.
   std::unique_ptr<int[]> partitioning;

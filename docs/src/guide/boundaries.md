@@ -136,20 +136,22 @@ charge:
         penetration depth of a superconductor, or the skin depth of a normal metal). The
         mesh is not modified, and the sheet carries a single tangential electric field,
         with the surface current given by the jump in the tangential magnetic field across
-        the sheet. The film couples the fields on its two sides.
+        the sheet. The film couples the fields on its two sides. The surface impedance of
+        an impedance boundary is that of the film, for example the kinetic inductance
+        ``\mu_0\lambda^2/d`` of a superconducting film of thickness ``d``.
       + `"Crack": true` models a conductor much thicker than its penetration depth. The
         mesh is cracked along the boundary, such that the two faces are independent
         surfaces, each carrying its own current, with no coupling through the conductor.
-        For impedance boundaries, each face uses twice the given resistance and
-        inductance and half the given capacitance per square, such that equal currents on
-        both faces give the same result as the uncut sheet; for conductivity boundaries,
-        each face uses the surface impedance of the conductor.
+        Each face of an impedance boundary has the given surface impedance, as on an
+        exterior boundary, for example the surface inductance ``\mu_0\lambda`` of a
+        superconductor. Each face of a conductivity boundary has the surface impedance of
+        the conductor.
 
-    The default is `false`. The two models give the same result when the currents on the
-    two faces of the sheet are equal, and differ when they are not: for a conductor much
-    thicker than its penetration depth with fields on one side only, for example, the
-    uncracked sheet spreads the current over the conductance of both faces, which halves
-    the conductor loss. Use `"Crack": true` for such conductors.
+    The default is `false`. For conductivity boundaries, the two models give the same result
+    when the currents on the two faces of the sheet are equal, and differ when they are not:
+    for a conductor much thicker than its skin depth with fields on one side only, for
+    example, the uncracked sheet spreads the current over the conductance of both faces,
+    which halves the conductor loss. Use `"Crack": true` for such conductors.
 
 The fields on the two sides of an uncracked sheet are generally discontinuous: the normal
 component of the electric flux density jumps by the surface charge and the tangential
@@ -179,9 +181,10 @@ For postprocessing on uncracked sheets:
 The mesh cracking behavior of previous versions of *Palace*, where all interior boundaries
 with boundary conditions except for lumped ports are cracked, can be restored with the
 deprecated option
-[`config["Model"]["CrackInternalBoundaryElements"]`](../config/reference.md#config-model-crackinternalboundaryelements).
-Setting this option to `false` disables mesh cracking entirely, which is an error for
-boundaries with `"Crack": true`.
+[`config["Model"]["CrackInternalBoundaryElements"]`](../config/reference.md#config-model-crackinternalboundaryelements),
+which also splits the surface impedance of cracked impedance boundaries between their two
+faces (twice the given impedance on each face). Setting this option to `false` disables
+mesh cracking entirely, which is an error for boundaries with `"Crack": true`.
 
 ## Periodic boundary
 

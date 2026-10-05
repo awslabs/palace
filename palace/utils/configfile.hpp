@@ -846,6 +846,13 @@ public:
   // List of all boundary attributes affected by mesh cracking.
   std::unordered_set<int> cracked_attributes = {};
 
+  // Cracked boundary attributes whose surface impedance is split between the two faces of
+  // the crack (twice the impedance on each face). This is only the case with the deprecated
+  // config["Model"]["CrackInternalBoundaryElements"] = true, to keep the results of
+  // previous versions: otherwise, each face of a cracked boundary has the given surface
+  // impedance.
+  std::unordered_set<int> split_impedance_attributes = {};
+
   // Boundary objects.
   PecBoundaryData pec = {};
   PmcBoundaryData pmc = {};
