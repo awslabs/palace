@@ -106,12 +106,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
     [PR 918](https://github.com/awslabs/palace/pull/918).
-  - Bumped the MUMPS dependency to 5.9.1. The superbuild now uses the ParMETIS and METIS
-    it builds instead of letting MUMPS download its own.
+  - Bumped the MUMPS dependency to 5.9.1, in both the superbuild and the Spack recipe. The
+    superbuild now uses the ParMETIS and METIS it builds instead of letting MUMPS download
+    its own. [PR 1026](https://github.com/awslabs/palace/pull/1026).
   - A `BLA_VENDOR` passed to CMake now takes precedence over the BLAS/LAPACK vendor
     detected from the environment, and AOCL is located through CMake's `FindBLAS` and
     `FindLAPACK`. *Palace* now requires CMake 3.27 or later.
-    [Issue 299](https://github.com/awslabs/palace/issues/299).
+    [PR 1026](https://github.com/awslabs/palace/pull/1026).
 
 ## [0.18.1] - 2026-09-21
 
