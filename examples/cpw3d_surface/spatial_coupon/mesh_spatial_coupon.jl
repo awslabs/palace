@@ -6203,6 +6203,19 @@ function generate_spatial_coupon(;
                 "SemanticCorners" => [collect(corner) for corner in semantic_corners],
                 "CouponBox" => Dict{String, Any}("Radius" => radius, "Lower" => collect(lower),
                                                  "Upper" => collect(upper)),
+                # The face ends of the tubes (design A2; decision 320), known at the CAD
+                # stage: the registration probe records them before any mesh exists.
+                "PrismTubeFaceEnds" => prism_tubes ?
+                    Dict{String, Any}(
+                        "Count" => sum(length(tube.face_ends) for (tube, _) in tubes; init=0),
+                        "Tubes" => [Dict{String, Any}(
+                                        "Tube" => k, "Origin" => tube.origin, "Extrusion" => tube.e,
+                                        "FaceEnds" => [face_end_record(f) for f in tube.face_ends])
+                                    for (k, (tube, _)) in enumerate(tubes) if !isempty(tube.face_ends)],
+                        "LegacyBoxVertexCorners" => [point for segment in tube_segments
+                                                     for (point, legacy) in ((segment.start, segment.legacy_box_corners[1]),
+                                                                             (segment.stop, segment.legacy_box_corners[2]))
+                                                     if legacy]) : nothing,
                 "InterfaceAreas" => label_rows))
             println(stream)
         end

@@ -1980,6 +1980,55 @@ def plan_view_boundary_loops(
     return loops
 
 
+def reconcile_mask_with_boundary(facets, loops, radius):
+    """Move every mask facet vertex that the near-collinear merge dropped from the boundary
+    loops (plan_view_boundary_loops; JUNCTION_TANGENT_ANGLE) onto the merged side it lay on,
+    so that the mask region and the boundary loops bound the SAME metal (the mesher tests
+    its metal surfaces against the mask facets at 1e-7 R, below the <= L tau_s / 2 kink
+    offset of a merged vertex).  A facet vertex that is a loop vertex, or exactly collinear
+    with its side in the quantised integer arithmetic of the loops, is untouched (every
+    rectilinear coupon: byte-identical).  Returns the moved vertices [(from, to)]."""
+    tolerance = 1.0e-9 * radius
+
+    def quantize(value):
+        scaled = value / tolerance
+        return math.floor(scaled + 0.5) if scaled >= 0.0 else math.ceil(scaled - 0.5)
+
+    moved = []
+    for loop in loops:
+        vertices = {(quantize(p[0]), quantize(p[1])) for p in loop["Points"]}
+        points = np.asarray(loop["Points"], dtype=float)
+        n = len(points)
+        for facet in facets:
+            if facet["Conductor"] != loop["Conductor"] or abs(facet["Plane"] - loop["Plane"]) > tolerance:
+                continue
+            for index, point in enumerate(facet["Points"]):
+                q = (quantize(point[0]), quantize(point[1]))
+                if q in vertices:
+                    continue
+                for i in range(n):
+                    a, b = points[i], points[(i + 1) % n]
+                    qa = (quantize(a[0]), quantize(a[1]))
+                    qb = (quantize(b[0]), quantize(b[1]))
+                    direction = (qb[0] - qa[0], qb[1] - qa[1])
+                    offset = (q[0] - qa[0], q[1] - qa[1])
+                    if direction[0] * offset[1] - direction[1] * offset[0] == 0:
+                        continue          # exactly collinear: nothing to move
+                    length2 = direction[0] ** 2 + direction[1] ** 2
+                    along = direction[0] * offset[0] + direction[1] * offset[1]
+                    if not 0 < along < length2:
+                        continue
+                    distance = abs(direction[0] * offset[1] - direction[1] * offset[0]) / math.sqrt(length2)
+                    if distance > JUNCTION_TANGENT_ANGLE * math.sqrt(length2):
+                        continue
+                    t = (np.dot(np.asarray(point[:2]) - a, b - a)) / np.dot(b - a, b - a)
+                    target = a + t * (b - a)
+                    moved.append(([float(point[0]), float(point[1])], target.tolist()))
+                    facet["Points"][index] = [float(target[0]), float(target[1])]
+                    break
+    return moved
+
+
 def write_plan_view_boundary(path, loops):
     lines = ["Loop,Vertex,Conductor,Plane,Hole,Class,X,Y"]
     for loop_index, loop in enumerate(loops, start=1):
@@ -2015,6 +2064,7 @@ def write_basis_contract(
     cap_interior_spacing=0.0,
     interior_trace_count=0,
     matching_support=None,
+    mask_vertices_reconciled=None,
 ):
     """basis-contract.json of a freshly built trace basis (the layout of
     rebuild_box_coupon_inputs: Version 1, the model, the source counts, the box-trace
@@ -2085,6 +2135,16 @@ def write_basis_contract(
     }
     if matching_support is not None:
         report["MatchingSupport"] = dict(matching_support)
+    if mask_vertices_reconciled:
+        # Recorded only where the near-collinear merge moved a mask vertex (design A3 (1)).
+        report["MaskVerticesReconciled"] = {
+            "Rule": (
+                "reconcile_mask_with_boundary: a mask facet vertex dropped from the boundary "
+                "loops by the near-collinear merge (JUNCTION_TANGENT_ANGLE) is moved onto the "
+                "merged side it lay on, so the mask and the boundary bound the same metal"
+            ),
+            "Moved": [{"From": before, "To": after} for before, after in mask_vertices_reconciled],
+        }
     (output / "basis-contract.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -2228,20 +2288,22 @@ def main():
     }
     mask_path = output / "plan-view-mask.csv"
     boundary_path = output / "plan-view-boundary.csv"
+    moved_mask_vertices = []
     if facets:
-        write_plan_view_mask(mask_path, facets)
-        write_plan_view_boundary(
-            boundary_path,
-            plan_view_boundary_loops(
-                facets,
-                args.radius,
-                lower,
-                upper,
-                classified_continuation_segments(
-                    coupon.get("Geometry", {}), frame, args.radius
-                ),
+        loops = plan_view_boundary_loops(
+            facets,
+            args.radius,
+            lower,
+            upper,
+            classified_continuation_segments(
+                coupon.get("Geometry", {}), frame, args.radius
             ),
         )
+        # The near-collinear merge of the loops (design A3 (1)) is carried into the mask so
+        # that both bound the same metal; a rectilinear coupon moves nothing.
+        moved_mask_vertices = reconcile_mask_with_boundary(facets, loops, args.radius)
+        write_plan_view_mask(mask_path, facets)
+        write_plan_view_boundary(boundary_path, loops)
     else:
         mask_path.unlink(missing_ok=True)
         boundary_path.unlink(missing_ok=True)
@@ -2374,6 +2436,7 @@ def main():
             cap_interior_spacing=args.cap_interior_spacing,
             interior_trace_count=interior_trace_count,
             matching_support=matching_support,
+            mask_vertices_reconciled=moved_mask_vertices,
         )
         print(output / "mesh-signature.csv")
         print(output / "basis-contract.json")
