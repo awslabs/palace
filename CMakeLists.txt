@@ -5,8 +5,6 @@
 # CMake superbuild for Palace and its dependencies
 #
 
-# CMake 3.21 was released in Jul. 2021 (required for HIP support)
-# Cmake 3.24 was released in Aug. 2022 (required for portable WHOLE_ARCHIVE linking of tests)
 # CMake 3.27 was released in Jul. 2023 (required for AOCL in FindBLAS/FindLAPACK)
 cmake_minimum_required(VERSION 3.27)
 
