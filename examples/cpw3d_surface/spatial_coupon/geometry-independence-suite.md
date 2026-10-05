@@ -587,8 +587,38 @@ build census (`build-census`, the bound build report):
     decision 40, below; every layer <= TangentialSize; the largest layer is the
     recorded per-tube Spacing), lateral quadrangles closed by explicit pyramids of
     height 0.5 x the outermost ring size; tubes end at the outer box and
-    R / tan(phi / 2) + h_K before a semantic corner (phi the in-plane angle of the
-    metal edges meeting there; recorded);
+    R / tan(phi / 2) + max(h_K, 1.25 h_pyr / sin(phi / 2)) before a semantic corner
+    (phi the in-plane angle of the metal edges meeting there; recorded; block (b)
+    design A3 (3), supervisor decision 303: the pyramid-envelope margin, which is h_K
+    exactly for phi >= 77.4 degrees - every rectilinear corner bitwise - and larger
+    at the acute tips of the oblique family);
+  - FACE ENDS (block (b) design A2 / A6, supervisor decisions 302 / 320): a tube end
+    on a box face where a single metal side meets the face at a tilt theta > 0 (the
+    side is not exactly perpendicular to the face: its face-parallel coordinate
+    differs between its two ends, exact arithmetic, no tolerance) ends ON the face -
+    the CAD solid is extruded over-long by (R + h_pyr) |tan theta| + TangentialSize
+    and intersected with the coupon box before the fragment (the single-descendant
+    check unchanged), and the mesh ends with m = ceil(2 (R + h_pyr) |tan theta| /
+    lc_end) sheared layers of axial spacing lc_end = max(TangentialSize, 4 h_pyr |tan
+    theta|) whose last station is the face plane (every end node on the face; layer
+    thickness in [lc_end / 2, 3 lc_end / 2]; planar trapezoid quadrangles; apexes
+    inside the box; recorded `Tubes[].FaceEnds` and `PrismTubes.FaceEnds`, the
+    labels-only census `PrismTubeFaceEnds`). The box-face VERTEX class is decided by
+    the vertex, angle-gated: with theta > 0 such an end is a box-face cut end
+    (clearance 0, no corner ball; `derive_semantic_contract` excludes it from the
+    SemanticCorners and records `Derivation.BoxFaceCutEnds`; the estimator counts the
+    end-block layers; the mesher fails closed on a contract that still lists it as a
+    corner: "regenerate the contract"); with theta == 0 exactly (every rectilinear
+    coupon) the legacy convention holds bitwise - a Physical-class box vertex (the
+    plan-view class of the vertex is its OUTGOING side's) is a semantic corner with
+    h_K + its ball (recorded `Tubes[].LegacyBoxVertexCorner`), a Continuation-class
+    one has clearance 0 - and two metal sides meeting at a box vertex are a corner at
+    any theta. The theta -> 0 class boundary is a designed discontinuity between two
+    valid treatments 3 R past the claims (decision 320; dropping the theta-0 box balls
+    is a recorded follow-up for a future library rebuild). The generator carries the
+    near-collinear merge of the boundary loops (JUNCTION_TANGENT_ANGLE) into the mask
+    facets (`reconcile_mask_with_boundary`, recorded `MaskVerticesReconciled`) so the
+    mask and the boundary bound the same metal;
   - isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
     required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
     0.1 um ball), and every tube cap centre before a corner is a graded point of the
