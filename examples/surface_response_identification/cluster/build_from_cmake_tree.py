@@ -112,7 +112,9 @@ def run_mfem_unit_tests(build, mpirun, ranks, test_filter, cmake, jobs, timing):
     with log_path.open("w") as log:
         completed = subprocess.run(command, cwd=mfem_build / "tests/unit", stdout=log, stderr=subprocess.STDOUT)
     timing["MFEMUnitTestSeconds"] = time.time() - started
-    summary = [line for line in log_path.read_text().splitlines()
+    # Catch2 colours its summary lines with ANSI escapes even when piped.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", log_path.read_text())
+    summary = [line for line in plain.splitlines()
                if line.startswith(("test cases:", "assertions:", "All tests passed"))]
     result = {"Command": command, "Ranks": ranks, "Filter": test_filter, "ReturnCode": completed.returncode,
               "Summary": summary, "Log": str(log_path)}
