@@ -30,7 +30,7 @@ from general_mesh_manifest import (EDGE_LAYER_QUALITY_RULE_GATE, EDGE_LAYER_QUAL
                                    PIPELINE_CALIBRATION_PRODUCTION_VALUES_KEY, _check_artifact,
                                    _finite_number, _physical_comparison_failures,
                                    _validate_bound_records, _validate_mesh,
-                                   audit_manifest_evidence, canonical_sha256, case_gates,
+                                   audit_manifest_evidence, box_face_cut_end_readings, canonical_sha256, case_gates,
                                    manifest_pipeline, option_values as _option_values, parent_labeled_mesh_sha256,
                                    sha256,
                                    validate_manifest, validate_production_recipe_commands)
@@ -172,6 +172,9 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
     # The manifest Gates are the build's cache key (binding); the case is judged by
     # its own gates (the layer rule only where declared).
     failures = audit_manifest_evidence(evidence, case_gates(manifest, case), contract, binding)
+    # Report-only (supervisor decision 313): the box-face cut ends' aspects, flagged below the
+    # minimum non-corner aspect, recorded with the entry.
+    cut_end_readings = box_face_cut_end_readings(evidence, contract, binding, case_gates(manifest, case))
     mesh_path = _check_artifact(evidence_path.parent, evidence.get("Mesh"), "audited mesh")
     # The audited mesh is read once per variant (its hash verified just above) and every
     # check below recomputes on that one object (decision 62 step 3, proposal 2).
@@ -215,6 +218,7 @@ def verify_variant(case, variant, evidence_path, evidence, contract, hashes, pat
                                    "MaximumSupportVertexDistance", "PatchCount",
                                    "CoplanarSlotUnions")},
             "CornerNeighborhoods": evidence["CornerNeighborhoods"],
+            "BoxFaceCutEnds": cut_end_readings,
             "OwnershipClosure": evidence["OwnershipClosure"]["ResponseOwnership"],
             "TraceDiagonal": {key: value for key, value in evidence["TraceDiagonal"].items()
                               if key != "LongShortEdgeComponents"}}

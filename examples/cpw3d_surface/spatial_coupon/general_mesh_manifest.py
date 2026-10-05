@@ -80,24 +80,28 @@ def _transform_points(points, transform):
     return result
 
 
-# A cut endpoint (an edge truncated by a box face) exits the box through a NARROW CROSS-SECTION
-# when another contract vertex (a semantic corner, a CAD subdivision endpoint or another cut
-# endpoint) lies on the same box face within this fraction of the matching radius: the
-# identification's face-clearance rule (T2, SURFACE-RESPONSE-IDENTIFICATION.md, the recorded
-# NarrowCrossSections). The trace basis places knots at both crossings, so the size field at
-# such a cut end follows the channel (the narrow basis triangles' size rule) rather than the
-# edge tube's design anisotropy: the fabricated twin of S1p's spatial-19-edge-39ab2ffd68ec read
-# a near-regular incident tetrahedron (MaximumAspect 1.313; its cut end (13.1277631, 1.2716111,
-# 0) on face x1 lies 0.169 R below the semantic corner (13.1277631, 1.5926104, 0)), its thin twin
-# 4.82 at the same point - both legitimate, neither under-resolved. The minimum non-corner
-# aspect cannot separate over-refinement from under-resolution there, so such a cut end is
-# EXEMPT from MinimumNoncornerAspect (its aspect must still be finite and positive; the (F)
-# dense-trace closure covers the mesh adequacy); every other cut end keeps the minimum
-# (supervisor decision 299 (4), replacing the decision-292 per-case override).
-NARROW_CROSS_SECTION_OVER_RADIUS = 0.25
+# MinimumNoncornerAspect is REPORT-ONLY at a BOX-FACE CUT END (an edge truncated by a box face,
+# FeatureTopology.CutEndpoints, lying on a face of the audit's CouponBox): the incident tetra-
+# hedra's MaximumAspect is recorded and flagged below the minimum (box_face_cut_end_readings)
+# but does not fail the gate; it must still be a measured, finite, positive number, and the cut
+# end must be present exactly once at its contract position. A near-regular tetrahedron at a
+# box-face cut end is OVER-refinement 3 R past the claims (the within-R accounting never reaches
+# it), not under-resolution: the fabricated mesher reads it systematically (the stage-2 census
+# of supervisor decision 313: 5 of 9 fabricated box-face cut ends 1.31-1.41 < 1.5, the rest
+# 2.96-3.52, the thin twins 1.93-6.04 at the same points, all legitimate; the trace basis places
+# knots at the crossings so the size field there follows the trace rather than the edge tube's
+# design anisotropy), so the minimum cannot separate over-refinement from under-resolution there;
+# the (F) dense-trace closure covers the mesh adequacy. Semantic corners, CAD-subdivision
+# endpoints and every cut end AWAY from the box faces keep their gates unchanged (supervisor
+# decision 313, superseding the per-case overrides of decisions 292 / 311 / 313 and the
+# decision-299 (4) narrow-cross-section exemption, a subset of this rule). Legacy evidence
+# without a coupon box keeps the minimum at every cut end.
 # A contract vertex lies on a box face within this fraction of the radius (the signature's
 # length quantum, kSignatureLengthQuantumOverRadius).
 BOX_FACE_TOLERANCE_OVER_RADIUS = 1.0e-6
+BOX_FACE_CUT_END_RULE = ("report-only: MinimumNoncornerAspect is recorded, not judged, at a box-face cut end "
+                         "(a near-regular tetrahedron there is over-refinement 3 R past the claims; supervisor "
+                         "decision 313); the aspect must still be finite and positive")
 
 
 def evidence_coupon_box(evidence):
@@ -126,68 +130,81 @@ def _box_faces(point, lower, upper, tolerance):
     return faces
 
 
-def narrow_cross_section_cut_endpoints(contract, coupon_box):
-    """{index into the contract's CutEndpoints: record} of the cut endpoints in a narrow
-    cross-section at a box face (NARROW_CROSS_SECTION_OVER_RADIUS, compared at the half quantum
-    like the identification's face rule): the nearest other contract vertex on the same face
-    and the channel width; empty without a coupon box (every cut end then keeps the minimum
-    non-corner aspect)."""
+def box_face_cut_endpoints(contract, coupon_box):
+    """{index into the contract's CutEndpoints: sorted face labels ("x0" .. "z1")} of the cut
+    endpoints on a face of the coupon box (BOX_FACE_TOLERANCE_OVER_RADIUS, the build frame);
+    empty without a coupon box (every cut end then keeps the minimum non-corner aspect)."""
     if coupon_box is None:
         return {}
     lower, upper, radius = coupon_box
-    face_tolerance = BOX_FACE_TOLERANCE_OVER_RADIUS * radius
-    clearance = NARROW_CROSS_SECTION_OVER_RADIUS * radius
-    topology = contract["FeatureTopology"]
-    cuts = [[float(v) for v in point] for point in topology["CutEndpoints"]]
-    others = ([("SemanticCorner", [float(v) for v in p]) for p in contract["SemanticCorners"]] +
-              [("CADSubdivisionEndpoint", [float(v) for v in p]) for p in topology["CADSubdivisionEndpoints"]] +
-              [("CutEndpoint", p) for p in cuts])
-    narrow = {}
-    for index, point in enumerate(cuts):
-        faces = _box_faces(point, lower, upper, face_tolerance)
-        if not faces:
-            continue
-        nearest = None
-        for kind, other in others:
-            if other == point or not faces & _box_faces(other, lower, upper, face_tolerance):
-                continue
-            distance = math.dist(point, other)
-            if nearest is None or distance < nearest["ChannelWidth"]:
-                nearest = {"Kind": kind, "Point": other, "ChannelWidth": distance}
-        if nearest is not None and nearest["ChannelWidth"] < clearance - 0.5 * BOX_FACE_TOLERANCE_OVER_RADIUS * radius:
-            face = next(iter(faces & _box_faces(nearest["Point"], lower, upper, face_tolerance)))
-            narrow[index] = {"Point": point, "Face": f"{'xyz'[face[0]]}{face[1]}", "Nearest": nearest,
-                             "ChannelWidthOverRadius": nearest["ChannelWidth"] / radius,
-                             "ClearanceOverRadius": NARROW_CROSS_SECTION_OVER_RADIUS}
-    return narrow
+    tolerance = BOX_FACE_TOLERANCE_OVER_RADIUS * radius
+    on_faces = {}
+    for index, point in enumerate(contract["FeatureTopology"]["CutEndpoints"]):
+        faces = _box_faces([float(v) for v in point], lower, upper, tolerance)
+        if faces:
+            on_faces[index] = sorted(f"{'xyz'[axis]}{side}" for axis, side in faces)
+    return on_faces
 
 
-def cut_neighborhood_failure(evidence, contract, binding, gates):
-    """The CutNeighborhoods gate: every expected cut endpoint present once with a finite
-    positive MaximumAspect; a cut end in a narrow cross-section at a box face is exempt from
-    MinimumNoncornerAspect, every other must reach it."""
+def _matched_cut_neighborhoods(evidence, contract, binding, gates):
+    """[(contract index, CutNeighborhoods record)] in contract order, every expected cut
+    endpoint (the contract's CutEndpoints under the variant's transform) matched once within
+    CornerTolerance; None when the recorded neighbourhoods do not match the contract."""
     values = evidence.get("CutNeighborhoods")
-    canonical = contract["FeatureTopology"]["CutEndpoints"]
-    expected = _transform_points(canonical, binding["Transform"])
+    expected = _transform_points(contract["FeatureTopology"]["CutEndpoints"], binding["Transform"])
     if not isinstance(values, list) or len(values) != len(expected):
-        return True
-    if not expected:
-        return False
+        return None
     tolerance = float(gates["CornerTolerance"])
-    narrow = narrow_cross_section_cut_endpoints(contract, evidence_coupon_box(evidence))
-    unused = list(range(len(values)))
+    matched, unused = [], list(range(len(values)))
     for index, point in enumerate(expected):
         match = next((k for k in unused if isinstance(values[k].get("Point"), list) and len(values[k]["Point"]) == 3 and
                       math.dist([float(x) for x in point], [float(x) for x in values[k]["Point"]]) <= tolerance), None)
         if match is None:
-            return True
+            return None
         unused.remove(match)
-        aspect = values[match].get("MaximumAspect")
+        matched.append((index, values[match]))
+    return matched
+
+
+def cut_neighborhood_failure(evidence, contract, binding, gates):
+    """The CutNeighborhoods gate: every expected cut endpoint present once with a finite
+    positive MaximumAspect; a cut end on a box face is report-only for MinimumNoncornerAspect
+    (box_face_cut_end_readings), every other must reach it (supervisor decision 313)."""
+    matched = _matched_cut_neighborhoods(evidence, contract, binding, gates)
+    if matched is None:
+        return True
+    on_faces = box_face_cut_endpoints(contract, evidence_coupon_box(evidence))
+    for index, record in matched:
+        aspect = record.get("MaximumAspect")
         if not _finite_number(aspect, positive=True):
             return True
-        if index not in narrow and aspect < gates["MinimumNoncornerAspect"]:
+        if index not in on_faces and aspect < gates["MinimumNoncornerAspect"]:
             return True
     return False
+
+
+def box_face_cut_end_readings(evidence, contract, binding, gates):
+    """The report-only readings of the box-face cut ends (supervisor decision 313): per cut end
+    on a box face, in contract order, its faces, the recorded point and MaximumAspect, the
+    minimum it is judged against and BelowMinimumNoncornerAspect (the flag; recorded, never a
+    gate failure). Empty when the neighbourhoods do not match the contract (the gate fails) or
+    without a coupon box."""
+    matched = _matched_cut_neighborhoods(evidence, contract, binding, gates)
+    if matched is None:
+        return []
+    on_faces = box_face_cut_endpoints(contract, evidence_coupon_box(evidence))
+    minimum = gates["MinimumNoncornerAspect"]
+    readings = []
+    for index, record in matched:
+        if index not in on_faces:
+            continue
+        aspect = record.get("MaximumAspect")
+        readings.append({"CutEndpointIndex": index, "Faces": on_faces[index], "Point": record.get("Point"),
+                         "MaximumAspect": aspect, "MinimumNoncornerAspect": minimum,
+                         "BelowMinimumNoncornerAspect": _finite_number(aspect, positive=True) and aspect < minimum,
+                         "Rule": BOX_FACE_CUT_END_RULE})
+    return readings
+
 
 
 def _same_points(expected, actual, tolerance):
