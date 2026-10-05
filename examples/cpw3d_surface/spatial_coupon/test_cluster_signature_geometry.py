@@ -547,7 +547,8 @@ class GapPerpendicularityTest(unittest.TestCase):
         # with the serialised Gap [1.0, 1e-6], |tangent . gap| = 9.999999999995e-07 - the row
         # the legacy exact test kept with a 1e-6-rad tilt (decision 317 MAJOR-1). Under option
         # (a) it and the 17 other oblique-by-rounding straight rows (5e-8..1e-6) are re-derived;
-        # the 20 axis-aligned rows and the 291 arc chords are kept as computed.
+        # the 4 axis-aligned straight rows (24-27; the key has 22 straight portions + 16 arcs)
+        # and the 291 arc chords are kept as computed.
         signature = census_record("284d6c2b5b66")["Signature"]
         self.assertEqual(signature["Portions"][30]["Gap"], [1.0, 1.0e-6])
         p0 = np.asarray(signature["Portions"][30]["P"][:2]) * 1.9
