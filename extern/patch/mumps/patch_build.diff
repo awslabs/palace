@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index b67c9d1..fae7d7e 100644
+index b67c9d1..7f4c108 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -272,12 +272,7 @@ if(MUMPS_metis OR MUMPS_parmetis)
+@@ -272,14 +272,10 @@ if(MUMPS_metis OR MUMPS_parmetis)
      endif()
    endif()
  
@@ -14,7 +14,11 @@ index b67c9d1..fae7d7e 100644
 -  FetchContent_MakeAvailable(mumps_metis)
 +  find_package(METIS REQUIRED ${_metis_components})
  
-   list(APPEND ORDERING_DEFS REALTYPEWIDTH=32 IDXTYPEWIDTH=${IDXTYPEWIDTH} metis)
+-  list(APPEND ORDERING_DEFS REALTYPEWIDTH=32 IDXTYPEWIDTH=${IDXTYPEWIDTH} metis)
++  # Widths come from the installed metis.h
++  list(APPEND ORDERING_DEFS metis)
+ 
+ endif()
  
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
 index 4201b0e..c4c5dc9 100644

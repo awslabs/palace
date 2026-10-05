@@ -68,6 +68,10 @@ if(NOT "${BLAS_LAPACK_LIBRARIES}" STREQUAL "")
   list(APPEND PETSC_OPTIONS
     "--with-blaslapack-lib=[${PETSC_BLAS_LAPACK_LIBRARIES}]"
   )
+  # PETSc detects the optional MKL extensions from the headers
+  if(BLA_VENDOR MATCHES "^Intel" AND NOT MKL_DIR STREQUAL "")
+    list(APPEND PETSC_OPTIONS "--with-blaslapack-include=[${MKL_DIR}/include]")
+  endif()
 endif()
 
 # Configure GPU support
