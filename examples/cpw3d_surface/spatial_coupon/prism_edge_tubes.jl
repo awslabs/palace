@@ -1523,7 +1523,8 @@ function match_tube_entities(
         best = argmin(distances)
         distances[best] <= tolerance || error(
             "tube $(entity.kind) $(entity.id) not found among the CAD entities of " *
-            "volume $volume (nearest $(distances[best]))"
+            "volume $volume (nearest $(distances[best]); $(tube_description(tube)), group $group, " *
+            "expected centroid $(entity.centroid))"
         )
         matched[(entity.kind, entity.id)] = candidates[best]
         push!(used, (entity.dim, candidates[best]))
@@ -1537,6 +1538,17 @@ function match_tube_entities(
     length(used) == length(entities) || error("tube entity matching is not one-to-one")
     return matched
 end
+
+# One line naming a tube in an error message.
+tube_description(tube::EdgeTube) =
+    "straight tube at $(tube.origin) along $(tube.e), s $(tube.s_start)..$(tube.s_end)" *
+    (isempty(tube.joints) ? "" : ", joints $([j.end_index for j in tube.joints])") *
+    (isempty(tube.face_ends) ? "" : ", face ends $([f.end_index for f in tube.face_ends])")
+tube_description(tube::ArcTube) =
+    "arc tube about $(tube.centre) rho $(tube.rho) sigma $(tube.sigma) theta0 $(rad2deg(tube.theta0)) deg " *
+    "orientation $(tube.orientation), s $(tube.s_start)..$(tube.s_end)" *
+    (isempty(tube.joints) ? "" : ", joints $([j.end_index for j in tube.joints])") *
+    (isempty(tube.face_ends) ? "" : ", face ends $([f.end_index for f in tube.face_ends])")
 
 # Explicit tube mesh state. Gmsh's GenerateMesh deletes every face mesh before
 # its 1D pass and every volume mesh before its 2D and 3D passes, and

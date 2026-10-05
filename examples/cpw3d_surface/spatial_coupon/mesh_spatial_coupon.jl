@@ -3520,14 +3520,26 @@ end
 # (design 1.2 (3)); a ThruSections loft turns the arcs into BSpline walls that OCC does not
 # merge with a cylinder (a dangling coincident face Gmsh cannot mesh). A straight polygon
 # (and a non-prismatic loft) keeps the ThruSections construction bitwise.
-function loft_polygon(occ, bottom_points, top_points, z0, z1)
+# The TAGGED runs of a loop for the wire of `points` when `points` are the loop's own vertices
+# (an offset-0 loft, a sheet face: the same vertices, so the run indices hold) and the loop
+# carries arc tags; nothing otherwise (polygon_wire then fits the points itself). One source of
+# truth for the split angles of every surface coincident with an arc tube: the tagged runs of
+# the metal loop are read by the tubes, the metal loft, the trench wall under the metal edge
+# and the thin sheet face alike (the untagged fit of the 1e-9 R quantised chord vertices
+# carries ~1e-7-degree noise, which flips the part count of an exactly 90-degree arc).
+function loop_wire_runs(loop, points, tolerance)
+    loop_has_arcs(loop) && points == loop.points || return nothing
+    return tagged_arc_runs(loop, tolerance)
+end
+
+function loft_polygon(occ, bottom_points, top_points, z0, z1; runs=nothing)
     if bottom_points == top_points
         tolerance = 1.0e-9 * max(
             maximum(point[1] for point in bottom_points) - minimum(point[1] for point in bottom_points),
             maximum(point[2] for point in bottom_points) - minimum(point[2] for point in bottom_points),
             1.0)
-        if !isempty(circular_arc_runs(bottom_points, tolerance))
-            face = occ.addPlaneSurface([polygon_wire(occ, bottom_points, z0)])
+        if runs !== nothing || !isempty(circular_arc_runs(bottom_points, tolerance))
+            face = occ.addPlaneSurface([polygon_wire(occ, bottom_points, z0; runs=runs)])
             entities = occ.extrude([(2, face)], 0.0, 0.0, z1 - z0)
             volumes = [(dim, tag) for (dim, tag) in entities if dim == 3]
             length(volumes) == 1 || error("Plan-view mask extrusion produced $(length(volumes)) volumes")
@@ -3651,7 +3663,8 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
                 bottom_points, top_points, footprint, outer.conductor, z0, false,
                 bottom_construction; absorbed_islands=bottom_islands)
         end
-        volume = loft_polygon(occ, bottom_points, top_points, z0, z1)
+        volume = loft_polygon(occ, bottom_points, top_points, z0, z1;
+                              runs=loop_wire_runs(outer, bottom_points, tolerance))
         cutters = Tuple{Int32, Int32}[]
         for (index,hole) in enumerate(holes)
             hole.conductor==outer.conductor && abs(hole.plane-outer.plane)<=tolerance || continue
@@ -3668,7 +3681,7 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
             end
             append!(
                 cutters,
-                loft_polygon(occ,bottom_hole,top_hole,z0,z1)
+                loft_polygon(occ,bottom_hole,top_hole,z0,z1; runs=loop_wire_runs(hole, bottom_hole, tolerance))
             )
         end
         if !isempty(cutters)
@@ -3741,13 +3754,13 @@ function planar_mask_surfaces(occ, loops, tolerance)
     owners=zeros(Int,length(holes))
     for outer in loops
         outer.hole && continue
-        wires = [polygon_wire(occ, outer.points, outer.plane)]
+        wires = [polygon_wire(occ, outer.points, outer.plane; runs=loop_wire_runs(outer, outer.points, tolerance))]
         for (i,hole) in enumerate(holes)
             hole.conductor == outer.conductor &&
                 abs(hole.plane - outer.plane) <= tolerance || continue
             point_in_polygon(hole.points[1], outer.points, tolerance) || continue
             owners[i]+=1
-            push!(wires, polygon_wire(occ, hole.points, hole.plane))
+            push!(wires, polygon_wire(occ, hole.points, hole.plane; runs=loop_wire_runs(hole, hole.points, tolerance)))
         end
         push!(surfaces, (2, occ.addPlaneSurface(wires)))
     end
@@ -6238,16 +6251,18 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
 end
 
 # Straight segments (start, stop) of a curve list from the CAD endpoints.
-# A curve that is not a line (a circle arc of an arc side, its concentric trench / collar
-# arcs) is sampled into chords whose sagitta stays below `sagitta` (CURVE_SEGMENT_SAGITTA x
-# the arc radius by default), so the exact segment-distance laws see the arc, not a chord.
+# With `subdivide`, a CIRCLE curve (an arc side's ridge, its concentric trench / collar
+# arcs) is sampled into chords whose sagitta stays below `sagitta`
+# (CURVE_SEGMENT_SAGITTA_OVER_RADIUS x the arc radius by default), so the exact
+# segment-distance size laws see the arc, not a chord; every other curve, and every curve
+# without `subdivide` (the census records: one segment per curve), is its chord as before.
 const CURVE_SEGMENT_SAGITTA_OVER_RADIUS = 1.0e-3
 
-function curve_segments(curves; sagitta=nothing)
+function curve_segments(curves; subdivide=false, sagitta=nothing)
     segments = Tuple{Vector{Float64}, Vector{Float64}}[]
     for curve in curves
         lower, upper = gmsh.model.getParametrizationBounds(1, curve)
-        if gmsh.model.getType(1, curve) in ("Line", "Unknown")
+        if !subdivide || gmsh.model.getType(1, curve) != "Circle"
             xyz = gmsh.model.getValue(1, curve, [lower[1], upper[1]])
             push!(segments, (collect(xyz[1:3]), collect(xyz[4:6])))
             continue
@@ -6907,6 +6922,15 @@ function generate_spatial_coupon(;
         # consume: InterfaceAreas[].Attribute / Name (no areas: nothing is meshed), the
         # recipe scope record and the semantic contract identity.
         ispath(labels_only) && error("Labels-only output already exists")
+        # Step 4.3: the probe also matches every tube's structural entities against the
+        # fragmented CAD (match_tube_entities, fail closed), so a fragment that splits a tube
+        # entity - the first thing a production build would stop on - is caught at the
+        # registration probe (the single-descendant check alone let the arc tubes through).
+        matched_tube_entities = 0
+        for (index, record) in enumerate(tube_records)
+            matched_tube_entities += length(match_tube_entities(
+                tube_volumes[index], record.tube, record.section, record.group, 1.0e-6 * radius))
+        end
         label_rows = [Dict{String, Any}("Attribute" => 1, "Name" => "matching_surface",
                                         "CADSurfaces" => length(unique(matching)))]
         for (attribute, surfaces) in sort(collect(boundary_groups))
@@ -6931,11 +6955,14 @@ function generate_spatial_coupon(;
                                                  "Upper" => collect(upper)),
                 # The face ends of the tubes (design A2; decision 320), known at the CAD
                 # stage: the registration probe records them before any mesh exists.
+                "PrismTubeEntitiesMatched" => matched_tube_entities,
                 "PrismTubeFaceEnds" => prism_tubes ?
                     Dict{String, Any}(
                         "Count" => sum(length(tube.face_ends) for (tube, _) in tubes; init=0),
                         "Tubes" => [Dict{String, Any}(
-                                        "Tube" => k, "Origin" => tube.origin, "Extrusion" => tube.e,
+                                        "Tube" => k,
+                                        "Origin" => tube isa ArcTube ? arc_frame(tube, tube.s_start).origin : tube.origin,
+                                        "Extrusion" => tube isa ArcTube ? arc_frame(tube, tube.s_start).e : tube.e,
                                         "FaceEnds" => [face_end_record(f) for f in tube.face_ends])
                                     for (k, (tube, _)) in enumerate(tubes) if !isempty(tube.face_ends)],
                         "LegacyBoxVertexCorners" => [point for segment in tube_segments
@@ -7068,9 +7095,9 @@ function generate_spatial_coupon(;
     # curves (junction lines, footprint edges, the un-tubed edge parts) are exact
     # segment-distance laws evaluated in the size callback with the trace rule.
     tube_band_record = prism_tubes ?
-        prepare_tube_band_sizing!(curve_segments(tube_axis_curves),
+        prepare_tube_band_sizing!(curve_segments(tube_axis_curves; subdivide=true),
                                   curve_segments([curve for curve in feature_curves
-                                                  if !(curve in tube_curves)]),
+                                                  if !(curve in tube_curves)]; subdivide=true),
                                   tube_sections["Radius"] + tube_sections["PyramidHeight"],
                                   lc_fine, lc_far, far_growth, graded_points,
                                   corner_isotropy_radius) :
