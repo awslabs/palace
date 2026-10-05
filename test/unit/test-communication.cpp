@@ -64,8 +64,9 @@ TEST_CASE("BroadcastLarge", "[communication][Parallel]")
 // Decision 346 (b): an exit() from a library in the middle of a run (gslib's die() on one
 // rank) must abort every rank at once instead of blocking in MPI_Finalize from Mpi's
 // destructor. The case only runs under PALACE_TEST_ABNORMAL_EXIT=1 (the ctest entry
-// mpi-AbnormalExitAbortsAllRanks sets it and passes on the abort line within its timeout):
-// in a sweep it is skipped, since passing means the launcher reports a failed job.
+// failfast-AbnormalExitAbortsAllRanks sets it and passes on the abort line within its
+// timeout): in a sweep it is skipped, since passing means the launcher reports a failed
+// job.
 TEST_CASE("AbnormalExitAbortsAllRanks", "[communication][Parallel]")
 {
   const char *enabled = std::getenv("PALACE_TEST_ABNORMAL_EXIT");
