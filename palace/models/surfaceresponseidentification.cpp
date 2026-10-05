@@ -1478,18 +1478,149 @@ void SplitParameters(nlohmann::json &node, SignatureParameters &out)
 
 }  // namespace
 
+namespace
+{
+
+// The cluster branch of SplitSignatureParameters: every number of P / Arc / Gap / Box is a
+// length on the 1e-6 R grid, every TurnDegrees an angle on the 1e-6 deg grid; everything
+// else (Type, EdgeCount, Conductor, Interfaces, Law, GapRadial, Chain, Unboxable) is
+// topology. The entry ORDER of the Portions / Context / Vertices arrays is part of the
+// topology key (the canonical serialisation sorts them; a permutation is another key).
+bool IsClusterLengthKey(const std::string &key)
+{
+  return key == "P" || key == "Arc" || key == "Gap" || key == "Box";
+}
+
+bool IsClusterAngleKey(const std::string &key)
+{
+  return key == "TurnDegrees";
+}
+
+void SplitClusterParameters(nlohmann::json &node, const std::string &path,
+                            SignatureParameters &out)
+{
+  if (node.is_object())
+  {
+    for (auto it = node.begin(); it != node.end(); ++it)
+    {
+      const bool length = IsClusterLengthKey(it.key());
+      const bool angle = IsClusterAngleKey(it.key());
+      const std::string entry = path.empty() ? it.key() : path + "." + it.key();
+      if (length || angle)
+      {
+        auto &list = length ? out.lengths_over_R : out.angles_degrees;
+        auto &paths = length ? out.length_paths : out.angle_paths;
+        if (it.value().is_array())
+        {
+          std::size_t k = 0;
+          for (const auto &v : it.value())
+          {
+            MFEM_VERIFY(v.is_number(), "Cluster signature entry " << entry
+                                                                   << " is not numeric!");
+            list.push_back(v.get<double>());
+            paths.push_back(entry + "[" + std::to_string(k++) + "]");
+          }
+        }
+        else
+        {
+          MFEM_VERIFY(it.value().is_number(),
+                      "Cluster signature entry " << entry << " is not numeric!");
+          list.push_back(it.value().get<double>());
+          paths.push_back(entry);
+        }
+        it.value() = nullptr;
+      }
+      else
+      {
+        SplitClusterParameters(it.value(), entry, out);
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    std::size_t k = 0;
+    for (auto &v : node)
+    {
+      SplitClusterParameters(v, path + "[" + std::to_string(k++) + "]", out);
+    }
+  }
+}
+
+bool IsClusterSignature(const nlohmann::json &signature)
+{
+  return signature.is_object() && signature.contains("Type") &&
+         signature["Type"] == "SpatialEdgeCluster";
+}
+
+}  // namespace
+
 SignatureParameters SplitSignatureParameters(const nlohmann::json &signature)
 {
   SignatureParameters out;
-  if (signature.contains("Type") && signature["Type"] == "SpatialEdgeCluster")
+  if (IsClusterSignature(signature))
   {
-    out.topology_key = signature.dump();
+    nlohmann::json topology = signature;
+    SplitClusterParameters(topology, "", out);
+    out.topology_key = topology.dump();
     return out;
   }
   nlohmann::json topology = signature;
   SplitParameters(topology, out);
   out.topology_key = topology.dump();
   return out;
+}
+
+std::optional<ClusterSignatureDifference>
+ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json &b)
+{
+  const SignatureParameters pa = SplitSignatureParameters(a), pb = SplitSignatureParameters(b);
+  if (pa.topology_key != pb.topology_key ||
+      pa.lengths_over_R.size() != pb.lengths_over_R.size() ||
+      pa.angles_degrees.size() != pb.angles_degrees.size())
+  {
+    return std::nullopt;
+  }
+  ClusterSignatureDifference out;
+  for (std::size_t i = 0; i < pa.lengths_over_R.size(); i++)
+  {
+    const double quanta = std::abs(pa.lengths_over_R[i] - pb.lengths_over_R[i]) /
+                          kSignatureLengthQuantumOverRadius;
+    if (quanta > 0.5)  // a difference below half a quantum is the same grid value
+    {
+      out.differing_paths.push_back(pa.length_paths[i]);
+    }
+    out.max_delta_quanta = std::max(out.max_delta_quanta, quanta);
+  }
+  for (std::size_t i = 0; i < pa.angles_degrees.size(); i++)
+  {
+    const double quanta =
+        std::abs(pa.angles_degrees[i] - pb.angles_degrees[i]) / kSignatureAngleQuantumDegrees;
+    if (quanta > 0.5)
+    {
+      out.differing_paths.push_back(pa.angle_paths[i]);
+    }
+    out.max_delta_quanta = std::max(out.max_delta_quanta, quanta);
+  }
+  return out;
+}
+
+nlohmann::json QuantumNearMatchRecord(const std::string &model_key,
+                                      const std::string &feature_key,
+                                      const ClusterSignatureDifference &difference)
+{
+  return nlohmann::json{
+      {"ModelKey", model_key},
+      {"FeatureKey", feature_key},
+      {"MaxDeltaQuanta", difference.max_delta_quanta},
+      {"DifferingNumbers",
+       {{"Count", difference.differing_paths.size()}, {"Paths", difference.differing_paths}}},
+      {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
+      {"Rule", "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster key whose "
+               "topology (every entry with its numbers nulled, order preserved) equals the "
+               "model's and whose numbers lie within MaxQuanta signature quanta (1e-6 R / "
+               "1e-6 deg) of the model's is the same geometry at the grid: matched Exact "
+               "to the model (placed in its own canonical frame with M = identity, the A10 "
+               "checks unchanged); the FeatureKey is recorded beside the ModelKey"}};
 }
 
 nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature)
@@ -1576,7 +1707,7 @@ nlohmann::json SubstituteSignatureParameters(const nlohmann::json &signature,
                                              const std::vector<double> &angles_degrees)
 {
   nlohmann::json out = signature;
-  if (signature.contains("Type") && signature["Type"] == "SpatialEdgeCluster")
+  if (IsClusterSignature(signature))
   {
     return out;
   }
@@ -1667,6 +1798,17 @@ nlohmann::json RepresentativeSignature(const std::vector<nlohmann::json> &signat
 
 std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann::json &b)
 {
+  if (IsClusterSignature(a) || IsClusterSignature(b))
+  {
+    // The quantum near-match (DESIGN section 4): no mirror orientation (the chirality is
+    // folded into the canonical key), the tolerance k quanta.
+    const auto difference = ClusterSignatureQuantumDifference(a, b);
+    if (!difference)
+    {
+      return std::nullopt;
+    }
+    return difference->max_delta_quanta / kClusterQuantumNearMatchMaxQuanta;
+  }
   const SignatureParameters pa = SplitSignatureParameters(a);
   std::optional<double> best;
   for (const nlohmann::json &candidate : {b, MirrorTranslationalSignature(b)})
@@ -13520,6 +13662,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.Pod(f.match_deviation.value_or(-1.0));
     w.Pod(f.match_note.has_value());
     w.String(f.match_note.value_or(""));
+    w.String(f.quantum_near_match.is_null() ? std::string() : f.quantum_near_match.dump());
     w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
     w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
     w.Point(f.claims_origin);
@@ -13677,6 +13820,9 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     {
       f.match_note = note;
     }
+    const std::string near_match = r.String();
+    f.quantum_near_match =
+        near_match.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(near_match);
     const std::string support = r.String();
     f.spatial_support =
         support.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(support);
@@ -13868,6 +14014,12 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     if (feature.match_note)
     {
       entry["Match"]["Note"] = *feature.match_note;
+    }
+    if (!feature.quantum_near_match.is_null())
+    {
+      // Matched within the quantum near-match (block (b) DESIGN section 4): the model's key
+      // and the feature's own key differ by <= kClusterQuantumNearMatchMaxQuanta quanta.
+      entry["Match"]["QuantumNearMatch"] = feature.quantum_near_match;
     }
     if (!feature.legacy_contract.is_null())
     {
@@ -14212,6 +14364,16 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"DirectionQuantum", kDirectionQuantum},
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
         {"SignatureAngleQuantumDegrees", kSignatureAngleQuantumDegrees},
+        {"ClusterQuantumNearMatchMaxQuanta", kClusterQuantumNearMatchMaxQuanta},
+        {"ClusterQuantumNearMatch",
+         "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster feature matches "
+         "a library model whose topology key (the signature with every number of "
+         "Portions / Context [].P / Arc / Gap, Box and Vertices[].P / TurnDegrees nulled, "
+         "entry order preserved) equals its own and whose numbers lie within "
+         "ClusterQuantumNearMatchMaxQuanta signature quanta of its own (the nearest such "
+         "model; ties by name); recorded Features[].Match.QuantumNearMatch and in Summary; "
+         "a permuted entry order is another key (Missing); two library models within "
+         "twice that many quanta are refused at load"},
         {"StraightBendRadiusOverR", kStraightBendRadiusOverRadius},
         {"CurvatureWindowOverR", kCurvatureWindowOverRadius},
         {"PairSeparationToleranceRelative", kPairSeparationTolerance},

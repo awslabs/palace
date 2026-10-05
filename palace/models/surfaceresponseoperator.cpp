@@ -6526,9 +6526,14 @@ public:
     entries.push_back({std::move(signature), name, rank});
   }
 
-  // The matched model and its normalised deviation (<= 1), or nullopt.
-  std::optional<std::pair<std::string, double>>
-  Match(const nlohmann::json &feature_signature) const
+  // The matched model, its normalised deviation (<= 1) and its signature, or nullopt.
+  struct Matched
+  {
+    std::string name;
+    double deviation = 0.0;
+    const nlohmann::json *signature = nullptr;
+  };
+  std::optional<Matched> Match(const nlohmann::json &feature_signature) const
   {
     const auto it =
         by_topology.find(SplitSignatureParameters(feature_signature).topology_key);
@@ -6536,7 +6541,7 @@ public:
     {
       return std::nullopt;
     }
-    std::optional<std::tuple<double, int, std::string>> best;
+    std::optional<std::tuple<double, int, std::string, std::size_t>> best;
     std::set<std::size_t> seen;
     for (const std::size_t index : it->second)
     {
@@ -6550,8 +6555,8 @@ public:
       {
         continue;
       }
-      const std::tuple<double, int, std::string> candidate{*deviation, entries[index].rank,
-                                                           entries[index].name};
+      const std::tuple<double, int, std::string, std::size_t> candidate{
+          *deviation, entries[index].rank, entries[index].name, index};
       if (!best || candidate < *best)
       {
         best = candidate;
@@ -6561,7 +6566,47 @@ public:
     {
       return std::nullopt;
     }
-    return std::make_pair(std::get<2>(*best), std::get<0>(*best));
+    return Matched{std::get<2>(*best), std::get<0>(*best),
+                   &entries[std::get<3>(*best)].signature};
+  }
+
+  // Two SpatialEdgeCluster models within 2 x kClusterQuantumNearMatchMaxQuanta quanta of
+  // each other are one geometry at the grid (block (b) DESIGN section 4, MINOR-5): refused
+  // at load, so that no feature can lie within the near-match of two models.
+  void RefuseNearDuplicateClusters() const
+  {
+    for (const auto &[topology, indices] : by_topology)
+    {
+      (void)topology;
+      for (std::size_t i = 0; i < indices.size(); i++)
+      {
+        const auto &a = entries[indices[i]];
+        if (a.signature.value("Type", std::string{}) != "SpatialEdgeCluster")
+        {
+          continue;
+        }
+        for (std::size_t j = i + 1; j < indices.size(); j++)
+        {
+          const auto &b = entries[indices[j]];
+          if (indices[i] == indices[j])
+          {
+            continue;
+          }
+          const auto difference = ClusterSignatureQuantumDifference(a.signature, b.signature);
+          MFEM_VERIFY(!difference || difference->max_delta_quanta >
+                                         2.0 * kClusterQuantumNearMatchMaxQuanta,
+                      "Library models \""
+                          << a.name << "\" and \"" << b.name
+                          << "\" are SpatialEdgeCluster keys of one topology within "
+                          << (difference ? difference->max_delta_quanta : 0.0)
+                          << " signature quanta of each other (<= "
+                          << 2 * kClusterQuantumNearMatchMaxQuanta
+                          << "): two models, one geometry at the 1e-6 R grid (block (b) "
+                             "DESIGN section 4: keep the lexicographically smallest key's "
+                             "model, list the other key under its NearKeys)!");
+        }
+      }
+    }
   }
 
   std::size_t Size() const { return entries.size(); }
@@ -6968,12 +7013,35 @@ IdentificationResult RunGeometryIdentification(
   const auto library_keys = LibrarySignatureKeys(library, describer);
   std::map<int, nlohmann::json> curvature_records;  // per feature, for the manifest
   std::map<int, nlohmann::json> corner_records;     // per feature, for the manifest
+  library_keys.RefuseNearDuplicateClusters();
   for (auto &feature : result.features)
   {
     if (const auto match = library_keys.Match(feature.signature))
     {
-      feature.matched_model = match->first;
-      feature.match_deviation = match->second;
+      feature.matched_model = match->name;
+      feature.match_deviation = match->deviation;
+      if (feature.type == "SpatialEdgeCluster" && match->deviation > 0.0)
+      {
+        // The quantum near-match (block (b) DESIGN section 4, decision 303): the model's
+        // key differs from the feature's by <= kClusterQuantumNearMatchMaxQuanta quanta;
+        // the feature is placed in its own canonical frame exactly as an exact match.
+        const auto difference =
+            ClusterSignatureQuantumDifference(feature.signature, *match->signature);
+        MFEM_VERIFY(difference.has_value(),
+                    "A near-matched cluster without a quantum difference record!");
+        const auto [model_key, model_hash] =
+            SignatureKeyAndHash(*match->signature, feature.type);
+        (void)model_key;
+        feature.quantum_near_match =
+            QuantumNearMatchRecord(model_hash, feature.hash, *difference);
+        feature.match_note = "quantum near-match (block (b) DESIGN section 4): key " +
+                             feature.hash.substr(0, 12) + " resolved to model \"" +
+                             match->name + "\" (key " + model_hash.substr(0, 12) + ", " +
+                             std::to_string(difference->differing_paths.size()) +
+                             " numbers differ by <= " +
+                             fmt::format("{:g}", difference->max_delta_quanta) +
+                             " quanta)";
+      }
     }
     else if (const auto *alias = library_keys.FindAlias(feature.hash))
     {
@@ -7367,6 +7435,22 @@ IdentificationResult RunGeometryIdentification(
       }
       const auto [key, hash] = SignatureKeyAndHash(representative, base.type);
       (void)key;
+      // The keys of a near-matching cluster group's other members (block (b) DESIGN
+      // section 4): the record's Hash is the lexicographically smallest member's.
+      nlohmann::json near_keys = nlohmann::json::array();
+      if (base.type == "SpatialEdgeCluster")
+      {
+        std::set<std::string> others;
+        for (const auto &signature : signatures)
+        {
+          const std::string member = SignatureKeyAndHash(signature, base.type).second;
+          if (member != hash)
+          {
+            others.insert(member);
+          }
+        }
+        near_keys = others;
+      }
       nlohmann::json record = {{"Dimension", 3},
                                {"Topology", base.type},
                                {"Status", models.empty() ? "Missing" : "Exact"},
@@ -7379,6 +7463,10 @@ IdentificationResult RunGeometryIdentification(
                                {"DistinctSignatures", signatures.size()},
                                {"ParameterSpread", spread},
                                {"ExactParameters", exact}};
+      if (!near_keys.empty())
+      {
+        record["NearKeys"] = near_keys;
+      }
       if (!models.empty())
       {
         nlohmann::json selected = nlohmann::json::array();
@@ -9469,6 +9557,46 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         it = std::prev(result.legacy_contract.end());
       }
       it->features.push_back(feature.id);
+    }
+    // Quantum near-matches resolved by the matching pass (block (b) DESIGN section 4): one
+    // record per feature key with the features it covered, carried into the operator
+    // record and the geometry cache.
+    result.quantum_near_match.clear();
+    for (const auto &feature : identification.features)
+    {
+      if (feature.quantum_near_match.is_null())
+      {
+        continue;
+      }
+      const std::string feature_key =
+          feature.quantum_near_match.at("FeatureKey").get<std::string>();
+      auto it =
+          std::find_if(result.quantum_near_match.begin(), result.quantum_near_match.end(),
+                       [&](const auto &entry) { return entry.feature_key == feature_key; });
+      if (it == result.quantum_near_match.end())
+      {
+        result.quantum_near_match.push_back(
+            {feature.matched_model.value_or(std::string{}),
+             feature.quantum_near_match.at("ModelKey").get<std::string>(), feature_key,
+             feature.quantum_near_match.at("MaxDeltaQuanta").get<double>(),
+             feature.quantum_near_match.at("DifferingNumbers").at("Count").get<int>(),
+             {}});
+        it = std::prev(result.quantum_near_match.end());
+      }
+      it->features.push_back(feature.id);
+    }
+    if (!result.quantum_near_match.empty())
+    {
+      std::string text;
+      for (const auto &entry : result.quantum_near_match)
+      {
+        text += fmt::format("{}{} <- key {} ({:g} quanta, {:d} feature{})",
+                            text.empty() ? "" : ", ", entry.model,
+                            entry.feature_key.substr(0, 12), entry.max_delta_quanta,
+                            entry.features.size(), entry.features.size() == 1 ? "" : "s");
+      }
+      Mpi::Print(mesh.GetComm(), " Quantum near-matches (block (b) DESIGN section 4): {}\n",
+                 text);
     }
     if (!result.legacy_contract.empty())
     {
@@ -14013,10 +14141,25 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 7},
+  nlohmann::json cache = {{"Version", 8},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
+  if (!config.quantum_near_match.empty())
+  {
+    // Quantum near-matches resolved for this geometry (block (b) DESIGN section 4).
+    nlohmann::json near_matches = nlohmann::json::array();
+    for (const auto &entry : config.quantum_near_match)
+    {
+      near_matches.push_back({{"Model", entry.model},
+                              {"ModelKey", entry.model_key},
+                              {"FeatureKey", entry.feature_key},
+                              {"MaxDeltaQuanta", entry.max_delta_quanta},
+                              {"DifferingNumbers", entry.differing_numbers},
+                              {"Features", entry.features}});
+    }
+    cache["QuantumNearMatch"] = std::move(near_matches);
+  }
   if (!config.legacy_contract.empty())
   {
     // Legacy-contract aliases resolved for this geometry (USER decision 283).
@@ -14042,18 +14185,20 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 7,
+      data.value("Version", 0) == 8,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 7 carries the feature, mesh segment, chain stretch and own-edge "
+          << " (version 8 carries the feature, mesh segment, chain stretch and own-edge "
              "offset of every patch, the claims, support box and chain of every spatial "
-             "cluster patch and the matching radius for the continuation and vertex "
-             "ownership; delete a stale cache)!");
+             "cluster patch, the matching radius for the continuation and vertex "
+             "ownership and the quantum near-match records of the matching pass; delete a "
+             "stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
   result.patches.clear();
   result.legacy_contract.clear();
+  result.quantum_near_match.clear();
   result.matching_radius = data.at("MatchingRadius");
   for (const auto &entry : data.at("Models"))
   {
@@ -14154,6 +14299,13 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
         {entry.at("Model").get<std::string>(), entry.at("Key").get<std::string>(),
          entry.at("ContextDigest").get<std::string>(), entry.value("Reason", std::string{}),
          entry.value("Features", std::vector<int>{})});
+  }
+  for (const auto &entry : data.value("QuantumNearMatch", nlohmann::json::array()))
+  {
+    result.quantum_near_match.push_back(
+        {entry.at("Model").get<std::string>(), entry.at("ModelKey").get<std::string>(),
+         entry.at("FeatureKey").get<std::string>(), entry.value("MaxDeltaQuanta", 0.0),
+         entry.value("DifferingNumbers", 0), entry.value("Features", std::vector<int>{})});
   }
   return result;
 }
@@ -14406,6 +14558,52 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                      "decision 283); see Summary.LegacyContract!\n",
                      legacy_features);
       }
+    }
+    // Quantum near-matches (block (b) DESIGN section 4, decision 303) in the inventory:
+    // the cluster features matched to a model within kClusterQuantumNearMatchMaxQuanta
+    // quanta (Status Exact: the same geometry at the grid), their claimed length and the
+    // (ModelKey, FeatureKey) pairs — the thin-run guard and the library tooling read the
+    // FeatureKey -> ModelKey map from here.
+    {
+      nlohmann::json pairs = nlohmann::json::array();
+      int near_features = 0;
+      double near_length = 0.0;
+      for (const auto &feature : manifest["Identification"]["Features"])
+      {
+        if (!feature["Match"].contains("QuantumNearMatch"))
+        {
+          continue;
+        }
+        near_features++;
+        near_length += feature["Length"].get<double>();
+        const auto &record = feature["Match"]["QuantumNearMatch"];
+        auto it = std::find_if(pairs.begin(), pairs.end(), [&](const nlohmann::json &a)
+                               { return a["FeatureKey"] == record["FeatureKey"]; });
+        if (it == pairs.end())
+        {
+          pairs.push_back({{"Model", feature["Match"]["Model"]},
+                           {"ModelKey", record["ModelKey"]},
+                           {"FeatureKey", record["FeatureKey"]},
+                           {"MaxDeltaQuanta", record["MaxDeltaQuanta"]},
+                           {"DifferingNumbers", record["DifferingNumbers"]["Count"]},
+                           {"Features", nlohmann::json::array()}});
+          it = std::prev(pairs.end());
+        }
+        (*it)["Features"].push_back(feature["Id"]);
+      }
+      manifest["Summary"]["Counts"]["QuantumNearMatched"] = near_features;
+      manifest["Summary"]["TotalEdgeLengths"]["QuantumNearMatched"] = near_length;
+      manifest["Summary"]["QuantumNearMatch"] = {
+          {"Features", near_features},
+          {"Length", near_length},
+          {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
+          {"Keys", pairs},
+          {"Rule", "block (b) DESIGN section 4 (decision 303): SpatialEdgeCluster features "
+                   "matched to a library model of the same topology key whose numbers lie "
+                   "within MaxQuanta signature quanta (1e-6 R / 1e-6 deg) of their own — "
+                   "the same geometry at the grid, counted in Exact (the model's coupon is "
+                   "applied in the feature's own canonical frame); the FeatureKey -> "
+                   "ModelKey map is the thin-run guard's and the library tooling's record"}};
     }
     // Knife-edge keys (decision 287 (a)): a cluster whose face-rule or box-rule readings
     // sat within the band on ANY T2 pass has a key decided at a threshold; the band census
@@ -17025,6 +17223,29 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    << ". Replace them with one coupled spatial model or an explicit "
                       "nonoverlapping partition!");
       }
+    }
+    if (!config->quantum_near_match.empty())
+    {
+      // Quantum near-matches (block (b) DESIGN section 4) in the operator record: the
+      // cluster models applied for feature keys within the near-match of their own.
+      nlohmann::json keys = nlohmann::json::array();
+      for (const auto &entry : config->quantum_near_match)
+      {
+        keys.push_back({{"Model", entry.model},
+                        {"ModelKey", entry.model_key},
+                        {"FeatureKey", entry.feature_key},
+                        {"MaxDeltaQuanta", entry.max_delta_quanta},
+                        {"DifferingNumbers", entry.differing_numbers},
+                        {"Features", entry.features}});
+      }
+      ownership_diagnostics["QuantumNearMatch"] = {
+          {"Count", keys.size()},
+          {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
+          {"Keys", std::move(keys)},
+          {"Rule", "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster model "
+                   "applied for a feature key of the same topology within MaxQuanta "
+                   "signature quanta of the model's key (the same geometry at the 1e-6 R "
+                   "grid; the feature placed in its own canonical frame)"}};
     }
     if (!config->legacy_contract.empty())
     {

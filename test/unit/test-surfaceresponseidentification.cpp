@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -4869,4 +4871,155 @@ TEST_CASE("SurfaceResponseIdentificationLegacyContractAlias",
     }
   }
   CHECK(found);
+}
+
+TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Block (b) DESIGN section 4 (decision 303, max quanta 4): the three stage-2 loop-end keys
+  // (S1p 284d6c2b5b66, S2p 9e103a0f291c, S4 20ac3e14a128: the same design cell at three chip
+  // positions) have one topology key and differ by EXACTLY one signature quantum in 17 /
+  // 8 of their 290 numbers (analysis/knife_edge_diff.log). They resolve to ONE model; a
+  // 5-quantum perturbation and a permuted entry order stay Missing; non-cluster signatures
+  // keep the parameter-tolerance comparator.
+  const auto fixture = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+                       "examples/cpw3d_surface/spatial_coupon/testdata/census-b-signatures/"
+                       "signatures.json";
+  std::ifstream input(fixture);
+  REQUIRE(input);
+  const nlohmann::json census = nlohmann::json::parse(input);
+  auto Signature = [&](const std::string &prefix)
+  {
+    nlohmann::json signature = census.at(prefix).at("Signature");
+    REQUIRE(signature["Type"] == "SpatialEdgeCluster");
+    return signature;
+  };
+  const nlohmann::json s1p = Signature("284d6c2b5b66"), s2p = Signature("9e103a0f291c"),
+                       s4 = Signature("20ac3e14a128");
+  auto Hash = [](const nlohmann::json &signature)
+  { return SignatureKeyAndHash(signature, "SpatialEdgeCluster").second; };
+  REQUIRE(Hash(s1p).substr(0, 12) == "284d6c2b5b66");
+  REQUIRE(Hash(s2p).substr(0, 12) == "9e103a0f291c");
+  REQUIRE(Hash(s4).substr(0, 12) == "20ac3e14a128");
+
+  // 1. One topology key, 290 numbers each (lengths + angles), all quanta.
+  const auto p1 = SplitSignatureParameters(s1p), p2 = SplitSignatureParameters(s2p),
+             p4 = SplitSignatureParameters(s4);
+  CHECK(p1.topology_key == p2.topology_key);
+  CHECK(p1.topology_key == p4.topology_key);
+  CHECK(p1.topology_key != s1p.dump());
+  CHECK(p1.lengths_over_R.size() + p1.angles_degrees.size() == 290);
+  CHECK(p1.length_paths.size() == p1.lengths_over_R.size());
+  CHECK(p1.angle_paths.size() == p1.angles_degrees.size());
+  CHECK(p1.angles_degrees.size() == s1p["Vertices"].size());
+  CHECK(nlohmann::json::parse(p1.topology_key)["Portions"][0]["P"].is_null());
+  CHECK(nlohmann::json::parse(p1.topology_key)["Vertices"][0]["TurnDegrees"].is_null());
+  CHECK(nlohmann::json::parse(p1.topology_key)["Vertices"][0]["Type"] ==
+        s1p["Vertices"][0]["Type"]);
+  CHECK(nlohmann::json::parse(p1.topology_key)["Portions"][0]["Conductor"] ==
+        s1p["Portions"][0]["Conductor"]);
+
+  // 2. The quantum differences: 17 / 8 numbers, one quantum each; the deviation 1 / 4.
+  const auto d12 = ClusterSignatureQuantumDifference(s1p, s2p);
+  const auto d14 = ClusterSignatureQuantumDifference(s1p, s4);
+  REQUIRE(d12.has_value());
+  REQUIRE(d14.has_value());
+  CHECK(d12->differing_paths.size() == 17);
+  CHECK(d14->differing_paths.size() == 8);
+  CHECK_THAT(d12->max_delta_quanta, WithinAbs(1.0, 1.0e-6));
+  CHECK_THAT(d14->max_delta_quanta, WithinAbs(1.0, 1.0e-6));
+  CHECK(std::find(d12->differing_paths.begin(), d12->differing_paths.end(),
+                  "Vertices[5].TurnDegrees") != d12->differing_paths.end());
+  CHECK(std::find(d12->differing_paths.begin(), d12->differing_paths.end(),
+                  "Portions[0].Arc[1]") != d12->differing_paths.end());
+  CHECK_THAT(SignatureDeviation(s1p, s2p).value_or(-1.0), WithinAbs(0.25, 1.0e-6));
+  CHECK_THAT(SignatureDeviation(s2p, s4).value_or(-1.0), WithinAbs(0.25, 1.0e-6));
+  CHECK_THAT(SignatureDeviation(s1p, s1p).value_or(-1.0), WithinAbs(0.0, 1.0e-12));
+
+  // 3. The representative of the group is its lexicographically smallest member (never a
+  //    midpoint: the group is one geometry at the grid).
+  const auto representative = RepresentativeSignature({s1p, s2p, s4});
+  const std::string smallest = std::min({s1p.dump(), s2p.dump(), s4.dump()});
+  CHECK(representative.dump() == smallest);
+  CHECK(SubstituteSignatureParameters(s1p, p1.lengths_over_R, p1.angles_degrees) == s1p);
+
+  // 4. Four quanta match, five do not (on the number farthest from any other change).
+  auto Perturbed = [&](int quanta)
+  {
+    nlohmann::json perturbed = s1p;
+    perturbed["Portions"][20]["P"][0] =
+        perturbed["Portions"][20]["P"][0].get<double>() + quanta * 1.0e-6;
+    return perturbed;
+  };
+  CHECK(SignatureDeviation(s1p, Perturbed(4)).value_or(2.0) <= 1.0 + 1.0e-9);
+  CHECK(SignatureDeviation(s1p, Perturbed(5)).value_or(2.0) > 1.0);
+  CHECK(ClusterSignatureQuantumDifference(s1p, Perturbed(5))->differing_paths ==
+        std::vector<std::string>{"Portions[20].P[0]"});
+
+  // 5. A permuted entry order is another topology key (the residual knife-edge).
+  {
+    nlohmann::json permuted = s1p;
+    std::swap(permuted["Portions"][0], permuted["Portions"][1]);
+    CHECK(!ClusterSignatureQuantumDifference(s1p, permuted).has_value());
+    CHECK(!SignatureDeviation(s1p, permuted).has_value());
+    nlohmann::json other_conductor = s1p;
+    other_conductor["Portions"][0]["Conductor"] = 7;
+    CHECK(!SignatureDeviation(s1p, other_conductor).has_value());
+  }
+
+  // 6. Non-cluster signatures: the parameter-tolerance comparator unchanged (a pair 1e-4 R
+  //    apart deviates by 0.1; a Gap key of a cluster is not a parameter elsewhere).
+  {
+    const nlohmann::json a = {{"Type", "SameConductorGap"}, {"SeparationOverR", 1.5}},
+                         b = {{"Type", "SameConductorGap"}, {"SeparationOverR", 1.5001}};
+    CHECK_THAT(SignatureDeviation(a, b).value_or(-1.0), WithinAbs(0.1, 1.0e-9));
+    CHECK(SplitSignatureParameters(a).lengths_over_R == std::vector<double>{1.5});
+    CHECK(SplitSignatureParameters(a).length_paths.empty());
+  }
+
+  // 7. The record and its broadcast form.
+  {
+    const nlohmann::json record = QuantumNearMatchRecord(Hash(s1p), Hash(s2p), *d12);
+    CHECK(record["ModelKey"] == Hash(s1p));
+    CHECK(record["FeatureKey"] == Hash(s2p));
+    CHECK(record["DifferingNumbers"]["Count"] == 17);
+    CHECK(record["DifferingNumbers"]["Paths"].size() == 17);
+    CHECK(record["MaxQuanta"] == kClusterQuantumNearMatchMaxQuanta);
+    CHECK_THAT(record["MaxDeltaQuanta"].get<double>(), WithinAbs(1.0, 1.0e-6));
+    const double R = 2.0;
+    const std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                                         {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0}};
+    const auto input = MakeInput(loops, R);
+    IdentificationResult result = IdentifyMetalPerimeter(input);
+    const auto *cluster = ClusterContaining(result, input, {0.0, 1.0});
+    REQUIRE(cluster != nullptr);
+    for (auto &feature : result.features)
+    {
+      if (feature.id == cluster->id)
+      {
+        feature.quantum_near_match = record;
+        feature.matched_model = "loop-end-model";
+        feature.match_deviation = 0.25;
+      }
+    }
+    const auto copy = DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    const nlohmann::json manifest = copy.ToJson(1.0);
+    CHECK(manifest == result.ToJson(1.0));
+    bool found = false;
+    for (const auto &entry : manifest["Features"])
+    {
+      if (entry["Id"].get<int>() == cluster->id)
+      {
+        found = true;
+        CHECK(entry["Match"]["Status"] == "Matched");
+        CHECK(entry["Match"]["QuantumNearMatch"] == record);
+      }
+      else
+      {
+        CHECK(!entry["Match"].contains("QuantumNearMatch"));
+      }
+    }
+    CHECK(found);
+    CHECK(manifest["Conventions"]["ClusterQuantumNearMatchMaxQuanta"] == 4);
+  }
 }

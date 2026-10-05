@@ -150,3 +150,89 @@ class SpatialSupportContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClusterQuantumNearMatchTest(unittest.TestCase):
+    """Block (b) DESIGN section 4 (decision 303): the Python mirror of the C++ cluster quantum
+    near-match on the three stage-2 loop-end keys (S1p 284d6c2b5b66, S2p 9e103a0f291c, S4
+    20ac3e14a128: one topology key, 17 / 8 of 290 numbers one quantum apart)."""
+
+    FIXTURE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cpw3d_surface",
+                           "spatial_coupon", "testdata", "census-b-signatures", "signatures.json")
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        cls.census = json.load(open(cls.FIXTURE))
+        cls.s1p = cls.census["284d6c2b5b66"]["Signature"]
+        cls.s2p = cls.census["9e103a0f291c"]["Signature"]
+        cls.s4 = cls.census["20ac3e14a128"]["Signature"]
+
+    def test_hashes_match_the_cpp_keys(self):
+        for prefix in ("284d6c2b5b66", "9e103a0f291c", "20ac3e14a128"):
+            self.assertTrue(L.signature_hash(self.census[prefix]["Signature"]).startswith(prefix))
+
+    def test_one_topology_key_and_the_quantum_differences(self):
+        t1, l1, a1 = L.split_parameters(self.s1p)
+        t2, _, _ = L.split_parameters(self.s2p)
+        t4, _, _ = L.split_parameters(self.s4)
+        self.assertEqual(t1, t2)
+        self.assertEqual(t1, t4)
+        self.assertEqual(len(l1) + len(a1), 290)
+        worst, paths = L.cluster_quantum_difference(self.s1p, self.s2p)
+        self.assertAlmostEqual(worst, 1.0, places=6)
+        self.assertEqual(len(paths), 17)
+        self.assertIn("Vertices[5].TurnDegrees", paths)
+        self.assertIn("Portions[0].Arc[1]", paths)
+        worst, paths = L.cluster_quantum_difference(self.s1p, self.s4)
+        self.assertAlmostEqual(worst, 1.0, places=6)
+        self.assertEqual(len(paths), 8)
+        self.assertAlmostEqual(L.signature_deviation(self.s1p, self.s2p), 0.25, places=6)
+        self.assertAlmostEqual(L.signature_deviation(self.s2p, self.s4), 0.25, places=6)
+
+    def test_grouping_and_the_representative(self):
+        import json
+        features = [{"Id": k, "Type": "SpatialEdgeCluster", "Signature": s} for k, s in enumerate((self.s1p, self.s2p, self.s4))]
+        groups = L.group_features(features)
+        self.assertEqual(len(groups), 1)
+        representative, members, spread = groups[0]
+        self.assertEqual(json.dumps(representative, sort_keys=True), min(json.dumps(s, sort_keys=True) for s in (self.s1p, self.s2p, self.s4)))
+        self.assertEqual(len(members), 3)
+        self.assertLessEqual(spread, 1.0)
+        # The census keys are Unboxable placeholders (the span cap; step 2 boxes them under an
+        # allowance): the library build is exercised on boxable copies.
+        boxable = [{**f, "Signature": {k: v for k, v in f["Signature"].items() if k != "Unboxable"}} for f in features]
+        for f in boxable:
+            self.assertNotIn("Unboxable", f["Signature"])
+        manifest = {"Identification": {"MatchingRadius": 1.9, "Features": boxable}}
+        library = L.build_signature_library(manifest)
+        representative = L.group_features(boxable)[0][0]
+        self.assertEqual(len(library["Models"]), 1)
+        model = library["Models"][0]
+        representative_hash = L.signature_hash(representative)
+        self.assertEqual(model["Name"], f"SpatialEdgeCluster-{representative_hash[:12]}")
+        self.assertEqual(model["NearKeys"], sorted({L.signature_hash(f["Signature"]) for f in boxable} - {representative_hash}))
+        self.assertEqual(len(model["NearKeys"]), 2)
+
+    def test_five_quanta_and_a_permutation_stay_apart(self):
+        import copy
+        five = copy.deepcopy(self.s1p)
+        five["Portions"][20]["P"][0] += 5.0e-6
+        four = copy.deepcopy(self.s1p)
+        four["Portions"][20]["P"][0] += 4.0e-6
+        self.assertGreater(L.signature_deviation(self.s1p, five), 1.0)
+        self.assertLessEqual(L.signature_deviation(self.s1p, four), 1.0 + 1.0e-9)
+        self.assertEqual(L.cluster_quantum_difference(self.s1p, five)[1], ["Portions[20].P[0]"])
+        permuted = copy.deepcopy(self.s1p)
+        permuted["Portions"][0], permuted["Portions"][1] = permuted["Portions"][1], permuted["Portions"][0]
+        self.assertIsNone(L.signature_deviation(self.s1p, permuted))
+        features = [{"Id": 0, "Type": "SpatialEdgeCluster", "Signature": self.s1p}, {"Id": 1, "Type": "SpatialEdgeCluster", "Signature": five}]
+        self.assertEqual(len(L.group_features(features)), 2)
+        # Non-cluster signatures keep the parameter-tolerance comparator.
+        a = {"Type": "SameConductorGap", "SeparationOverR": 1.5}
+        b = {"Type": "SameConductorGap", "SeparationOverR": 1.5001}
+        self.assertAlmostEqual(L.signature_deviation(a, b), 0.1, places=9)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1730,7 +1730,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 7);
+      CHECK(cache["Version"] == 8);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3020,7 +3020,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 7);
+      CHECK(cache["Version"] == 8);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -3902,6 +3902,101 @@ TEST_CASE_METHOD(
                         return requirement["Topology"] == "SpatialEdgeCluster" &&
                                requirement["Status"] == "Exact";
                       }));
+    CHECK(signature_requirements["Summary"]["Counts"]["QuantumNearMatched"] == 0);
+
+    // Quantum near-match (block (b) DESIGN section 4, decision 303): a model whose Signature
+    // differs from the feature's by ONE signature quantum in one number (a 1e-6 R shift of a
+    // portion end: the same geometry at the grid) matches the feature, Status Matched /
+    // Exact, with Match.QuantumNearMatch naming both keys and the differing number, counted
+    // in Summary.QuantumNearMatched; a 5-quantum shift stays Missing; two library models
+    // within 8 quanta of each other are refused.
+    {
+      auto Perturbed = [&](int quanta, const std::string &name)
+      {
+        auto library = signature_library;
+        auto &model = library["Models"].back();
+        model["Name"] = name;
+        model["Signature"]["Portions"][0]["P"][0] =
+            model["Signature"]["Portions"][0]["P"][0].get<double>() + quanta * 1.0e-6;
+        return library;
+      };
+      auto Preflight = [&](const json &library, const std::string &tag)
+      {
+        const auto library_path =
+            temp.temp_dir / ("fabrication-process-near-match-" + tag + "-3d.json");
+        std::ofstream output(library_path);
+        output << library.dump(2) << "\n";
+        output.close();
+        auto config = linear_spatial_config;
+        config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+            library_path.string();
+        IoData iodata(config, false);
+        iodata.boundaries.cracked_attributes.insert(9);
+        iodata.boundaries.cracked_attributes.insert(10);
+        const auto requirements_path =
+            temp.temp_dir / ("surface-response-requirements-near-match-" + tag + ".json");
+        WriteSurfaceResponseRequirements(iodata, *linear_spatial_mesh,
+                                         requirements_path.string());
+        std::ifstream requirements_input(requirements_path);
+        REQUIRE(requirements_input);
+        return json::parse(requirements_input);
+      };
+      const json near = Preflight(Perturbed(1, "near-one-quantum"), "one");
+      const auto [model_key, model_hash] = SignatureKeyAndHash(
+          Perturbed(1, "near-one-quantum")["Models"].back()["Signature"],
+          "SpatialEdgeCluster");
+      (void)model_key;
+      int near_matched = 0;
+      for (const auto &feature : near["Identification"]["Features"])
+      {
+        if (feature["Type"] != "SpatialEdgeCluster" ||
+            feature["Hash"] != (*cluster_feature)["Hash"])
+        {
+          continue;
+        }
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        CHECK(feature["Match"]["Model"] == "near-one-quantum");
+        CHECK_THAT(feature["Match"]["Deviation"].get<double>(), WithinAbs(0.25, 1.0e-6));
+        REQUIRE(feature["Match"].contains("QuantumNearMatch"));
+        const auto &record = feature["Match"]["QuantumNearMatch"];
+        CHECK(record["ModelKey"] == model_hash);
+        CHECK(record["FeatureKey"] == feature["Hash"]);
+        CHECK_THAT(record["MaxDeltaQuanta"].get<double>(), WithinAbs(1.0, 1.0e-6));
+        CHECK(record["DifferingNumbers"]["Count"] == 1);
+        CHECK(record["DifferingNumbers"]["Paths"] == json({"Portions[0].P[0]"}));
+        near_matched++;
+      }
+      CHECK(near_matched >= 1);
+      CHECK(near["Summary"]["Counts"]["QuantumNearMatched"] == near_matched);
+      CHECK(near["Summary"]["QuantumNearMatch"]["Keys"].size() == 1);
+      CHECK(near["Summary"]["QuantumNearMatch"]["Keys"][0]["ModelKey"] == model_hash);
+      CHECK(near["Summary"]["QuantumNearMatch"]["Keys"][0]["FeatureKey"] ==
+            (*cluster_feature)["Hash"]);
+      CHECK(std::any_of(near["Requirements"].begin(), near["Requirements"].end(),
+                        [](const auto &requirement)
+                        {
+                          return requirement["Topology"] == "SpatialEdgeCluster" &&
+                                 requirement["Status"] == "Exact" &&
+                                 requirement["SelectedModels"][0]["Name"] ==
+                                     "near-one-quantum";
+                        }));
+      const json far = Preflight(Perturbed(5, "far-five-quanta"), "five");
+      for (const auto &feature : far["Identification"]["Features"])
+      {
+        if (feature["Type"] == "SpatialEdgeCluster" &&
+            feature["Hash"] == (*cluster_feature)["Hash"])
+        {
+          CHECK(feature["Match"]["Status"] == "Missing");
+          CHECK(!feature["Match"].contains("QuantumNearMatch"));
+        }
+      }
+      CHECK(far["Summary"]["Counts"]["QuantumNearMatched"] == 0);
+      // Two models one geometry: the exact model and the one-quantum model together.
+      auto duplicate = signature_library;
+      duplicate["Models"].push_back(Perturbed(1, "near-one-quantum")["Models"].back());
+      CHECK_THROWS_WITH(Preflight(duplicate, "duplicate"),
+                        Catch::Matchers::ContainsSubstring("two models, one geometry"));
+    }
 
     // A version-2 model that also stores its Edges in the canonical frame (the library
     // builder's contract: Point = P x R, Interval along gap x normal, the Signature's own
@@ -7169,7 +7264,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
   }
   SECTION("fresh and cache-round-tripped patches classify identically")
   {
-    // The geometry cache (version 7) carries the mesh segment and the own-edge offset of
+    // The geometry cache (version 8) carries the mesh segment and the own-edge offset of
     // every patch with the cluster patch's claims, support box and chain: the ownership on
     // the cached patches is
     // the ownership on the fresh ones (a cache without the segment would send every
@@ -7266,7 +7361,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 7);
+    CHECK(stale["Version"] == 8);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {

@@ -131,6 +131,11 @@ struct IdentifiedFeature
   // interpolation rule and kappa, for an unmatched curved feature the reason (never
   // silently straight); for a straight-like feature the first-order term's node status.
   std::optional<std::string> match_note;
+  // Quantum near-match record (block (b) DESIGN section 4, decision 303; null unless a
+  // SpatialEdgeCluster matched a library model within kClusterQuantumNearMatchMaxQuanta
+  // quanta without an exact hash): {ModelKey, FeatureKey, MaxDeltaQuanta, DifferingNumbers,
+  // Rule}. Manifest Features[].Match.QuantumNearMatch; the status stays Matched / Exact.
+  nlohmann::json quantum_near_match;
 
   // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
   // supervisor decision 282; null for every other feature): the claims-derived support box
@@ -585,12 +590,50 @@ struct SignatureParameters
   std::string topology_key;
   std::vector<double> lengths_over_R;  // in the traversal order of the signature
   std::vector<double> angles_degrees;
+  // SpatialEdgeCluster only (the quantum near-match below): the JSON path of every
+  // parameter, parallel to lengths_over_R then angles_degrees.
+  std::vector<std::string> length_paths;
+  std::vector<std::string> angle_paths;
 };
 
 // Splits a canonical signature into its topology key and its continuous parameters. A
-// SpatialEdgeCluster signature (a whole plan-view geometry in a canonical frame) has no
-// tolerance: its topology key is the full signature and its parameter lists are empty.
+// SpatialEdgeCluster signature (a whole plan-view geometry in a canonical frame; block (b)
+// DESIGN section 4, decision 303) has its topology key = the signature with every number of
+// Portions[].P / Arc / Gap, Context[].P / Arc / Gap, Box and Vertices[].P / TurnDegrees
+// replaced by null (entry ORDER preserved) and those numbers as its parameters in traversal
+// order: lengths (units of R; the Gap components and the Box included: all quantised on the
+// 1e-6 R grid) and angles (TurnDegrees, 1e-6 deg).
 SignatureParameters SplitSignatureParameters(const nlohmann::json &signature);
+
+// Quantum near-match of SpatialEdgeCluster keys (DESIGN section 4; decision 303 ruling: max
+// quanta 4). Two cluster signatures of one topology key whose numbers agree within
+// kClusterQuantumNearMatchMaxQuanta signature quanta (1e-6 R / 1e-6 deg) describe ONE
+// geometry at the resolution of the grid: the same design cell at different chip positions
+// rounds a few coordinates differently by sub-quantum float noise (the three stage-2 loop-end
+// keys differ by exactly one quantum in 8-17 of 290 numbers; the nearest real near-key is
+// >= 2,000 quanta away). SignatureDeviation of two clusters = max |delta| / (k q) (<= 1
+// matches); a permuted entry order is a different topology key (Missing: the residual
+// knife-edge, recorded). Library models within 2 k quanta of each other are refused at load
+// ("two models one geometry"), so no feature can be within k quanta of two models.
+constexpr int kClusterQuantumNearMatchMaxQuanta = 4;
+
+// The quantum difference of two cluster signatures of one topology key: the largest
+// |delta| in quanta over the parameters and the paths of every differing number; nullopt
+// when the topology keys differ.
+struct ClusterSignatureDifference
+{
+  double max_delta_quanta = 0.0;
+  std::vector<std::string> differing_paths;
+};
+std::optional<ClusterSignatureDifference>
+ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json &b);
+
+// The Match.QuantumNearMatch record of a feature matched to a model within the quantum
+// near-match (null for an exact-hash match): {ModelKey, FeatureKey, MaxDeltaQuanta,
+// DifferingNumbers {Count, Paths}, Rule}.
+nlohmann::json QuantumNearMatchRecord(const std::string &model_key,
+                                      const std::string &feature_key,
+                                      const ClusterSignatureDifference &difference);
 
 // Mirror image of a translational signature (an `Edges` list): the edge order reversed,
 // gap sides negated, offsets taken from the top edge, conductors relabelled by first
@@ -600,12 +643,15 @@ SignatureParameters SplitSignatureParameters(const nlohmann::json &signature);
 nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature);
 
 // Normalised deviation of two signatures of one type: the maximum over the parameters of
-// |difference| / tolerance (both orientations of a translational signature; the smaller),
-// or nullopt when the topology keys differ. Within tolerance iff the value is <= 1.
+// |difference| / tolerance (both orientations of a translational signature; the smaller;
+// a SpatialEdgeCluster: |difference| / (kClusterQuantumNearMatchMaxQuanta x quantum)), or
+// nullopt when the topology keys differ. Within tolerance iff the value is <= 1.
 std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann::json &b);
 
 // The signature with its continuous parameters replaced, in the traversal order of
-// SplitSignatureParameters (rounded to the signature grids).
+// SplitSignatureParameters (rounded to the signature grids). A SpatialEdgeCluster is
+// returned unchanged (the representative of a near-matching group is its lexicographically
+// smallest member, never a midpoint: the group is one geometry at the grid).
 nlohmann::json SubstituteSignatureParameters(const nlohmann::json &signature,
                                              const std::vector<double> &lengths_over_R,
                                              const std::vector<double> &angles_degrees);

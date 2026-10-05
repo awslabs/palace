@@ -1294,6 +1294,22 @@ public:
     };
     std::vector<LegacyContractAliasData> legacy_contract;
 
+    // Quantum near-matches resolved by the matching pass (block (b) DESIGN section 4,
+    // decision 303): a SpatialEdgeCluster model applied for a feature key within
+    // kClusterQuantumNearMatchMaxQuanta signature quanta of the model's key (the feature
+    // ids, both keys, the number of differing numbers); carried into the operator record
+    // (SurfaceResponse.Diagnostics) and the geometry cache.
+    struct QuantumNearMatchData
+    {
+      std::string model;
+      std::string model_key;
+      std::string feature_key;
+      double max_delta_quanta = 0.0;
+      int differing_numbers = 0;
+      std::vector<int> features;
+    };
+    std::vector<QuantumNearMatchData> quantum_near_match;
+
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.
     std::vector<ResponseCorrectionModelData> models;
