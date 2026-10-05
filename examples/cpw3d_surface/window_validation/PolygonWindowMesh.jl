@@ -213,9 +213,37 @@ read_polygon_set(path::AbstractString) = read_polygon_set(JSON.parsefile(path))
 # the writer resolves them. The reference therefore differs from the thin (chip-mesh) geometry
 # by at most delta on the reconciled runs; the manifest records the moved vertices, the maximum
 # displacement, the inserted vertices and the coincident run length.
+#
+# Window-cut sliver rules (supervisor decision 306; the stage-2 C1 / C3 windows): the d210
+# extraction cuts the chip polygons at the box walls, so chip-mesh nodes sit within delta of
+# the walls and of each other's chains, and the reconciliation above produced two degenerate
+# loops that no mesher can take:
+#   * a vertex within delta of TWO consecutive upper segments (near their shared vertex) was
+#     inserted into both, giving the zero-area spike P, B, P (C3: an L1 ground vertex 0.073 um
+#     from a snapped L2 finger corner; Gmsh "Curve loop is not closed"). Rule: a vertex is
+#     inserted into at most ONE segment per loop, the nearest (ties by the foot's
+#     coordinates), and never into a loop it already belongs to;
+#   * a lower vertex 0.015 um below the top wall was inserted into the upper plane's WALL
+#     segment, bending the window-cut line into a 0.022 x 0.015-um notch partition (C1: a 2 r x
+#     1.5 r sliver whose wall-end columns collide). Rule: a segment on a box wall (a window-cut
+#     line, not a metal edge) is never bent — it takes only vertices lying on the wall — and a
+#     vertex on a wall snaps only along that wall (to lower vertices on it or lower segments
+#     along it), so the planes' outlines stay on the cut lines;
+#   * after the snaps and insertions every loop is cleaned deterministically: consecutive
+#     vertices within the plan-node identity quantum PLAN_NODE_MERGE_TOLERANCE_UM (the
+#     coordinate welding tolerance of `mesh_plan`: such vertices would be ONE plan node and a
+#     zero-length OCC edge) are merged onto the first, a spike (a vertex whose two neighbours
+#     coincide) collapses onto its neighbours, repeated until stable; a loop that still visits
+#     a point twice (self-touching) is refused naming the point.
+# None of the rules carries a case constant (delta and the identity quantum are the existing
+# ones); every count is recorded in the manifest's `cross_plane_reconciliation`, and where no
+# such configuration occurs the result is identical to the rules above (S1p / C2p regression).
 
 const CROSS_PLANE_SNAP_FRACTION = 0.05
 const ON_SEGMENT_TOLERANCE_UM = 1.0e-9
+# Plan nodes closer than this are welded into one node by `mesh_plan` (coordinate keys), so two
+# polygon vertices this close are one vertex.
+const PLAN_NODE_MERGE_TOLERANCE_UM = 1.0e-6
 
 point_distance(p::Point2, q::Point2) = hypot(p[1] - q[1], p[2] - q[2])
 
@@ -254,6 +282,20 @@ function check_same_plane_separation(plane::Plane, delta::Float64)
     end
 end
 
+# The box walls a point lies on exactly (the window-cut lines): 1 / 2 x = xmin / xmax, 3 / 4
+# y = ymin / ymax; a box corner lies on two.
+function point_walls(p::Point2, box)
+    walls = Int[]
+    p[1] == box[1] && push!(walls, 1)
+    p[1] == box[2] && push!(walls, 2)
+    p[2] == box[3] && push!(walls, 3)
+    p[2] == box[4] && push!(walls, 4)
+    return walls
+end
+
+# The walls a segment lies along (both ends on the same wall).
+segment_walls(a::Point2, b::Point2, box) = intersect(point_walls(a, box), point_walls(b, box))
+
 # Move v onto the nearest target vertex within delta, else onto the nearest target segment
 # within delta (equal distances: the lexicographically smallest target point); else keep v.
 function snap_point(v::Point2, vertices::Vector{Point2}, segments, delta::Float64)
@@ -278,45 +320,129 @@ function snap_point(v::Point2, vertices::Vector{Point2}, segments, delta::Float6
     return best
 end
 
-function drop_repeated_vertices(loop::Vector{Point2})
-    cleaned = Point2[]
-    for p in loop
-        isempty(cleaned) || p != cleaned[end] || continue
-        push!(cleaned, p)
-    end
-    while length(cleaned) > 1 && cleaned[end] == cleaned[1]
-        pop!(cleaned)
-    end
-    return cleaned
+# Vertices on a box wall move only along that wall: the candidates are the lower vertices on
+# the wall and the lower segments along it (their feet lie on the wall). Returns the snapped
+# point and whether the wall constraint changed the unconstrained result.
+function snap_wall_point(
+    v::Point2,
+    vertices::Vector{Point2},
+    segments,
+    delta::Float64,
+    box,
+    walls::Vector{Int}
+)
+    on_same_wall(q) = any(in(walls), point_walls(q, box))
+    wall_vertices = filter(on_same_wall, vertices)
+    wall_segments = [(a, b) for (a, b) in segments if any(in(walls), segment_walls(a, b, box))]
+    w = snap_point(v, wall_vertices, wall_segments, delta)
+    return w, w != snap_point(v, vertices, segments, delta)
 end
 
-# Insert every point within `tolerance` of the interior of a segment of `loop` into the loop
-# (by parameter); returns the loop, the number of inserted points and the largest distance by
-# which an inserted point bends its segment.
+# Consecutive vertices within `tolerance` are one vertex (the first kept); returns the loop and
+# the number of dropped vertices.
+function drop_repeated_vertices(loop::Vector{Point2}, tolerance::Float64=0.0)
+    cleaned = Point2[]
+    dropped = 0
+    for p in loop
+        if !isempty(cleaned) && point_distance(p, cleaned[end]) <= tolerance
+            dropped += 1
+            continue
+        end
+        push!(cleaned, p)
+    end
+    while length(cleaned) > 1 && point_distance(cleaned[end], cleaned[1]) <= tolerance
+        pop!(cleaned)
+        dropped += 1
+    end
+    return cleaned, dropped
+end
+
+# Insert every point of `points` that is not yet a vertex of `loop` into the NEAREST segment of
+# the loop within `tolerance` (foot strictly inside the segment; equal distances: the
+# lexicographically smallest foot) — one segment per point, so a point near a shared vertex of
+# two segments never appears twice in the loop. A segment lying on a box wall (a window-cut
+# line) takes only points on the wall (within ON_SEGMENT_TOLERANCE_UM): the wall is never bent.
+# Returns the loop, the number of inserted points, the largest distance by which an inserted
+# point bends its segment, the number of points that had more than one admissible segment and
+# the number of points kept off a wall segment they were within `tolerance` of.
 function insert_points_on_segments(
     loop::Vector{Point2},
     points::Vector{Point2},
-    tolerance::Float64
+    tolerance::Float64,
+    box
 )
+    segments = loop_segments(loop)
+    wall_segment = [!isempty(segment_walls(a, b, box)) for (a, b) in segments]
+    hits = [Tuple{Float64, Float64, Point2}[] for _ in segments]
+    vertex_set = Set(loop)
+    multiple, wall_refused = 0, 0
+    for p in points
+        p in vertex_set && continue
+        best, best_distance, best_t, best_foot = 0, Inf, 0.0, p
+        admissible, refused = 0, false
+        for (s, (a, b)) in enumerate(segments)
+            d, t, foot = segment_projection(p, a, b)
+            d <= tolerance && 0.0 < t < 1.0 || continue
+            if wall_segment[s] && d > ON_SEGMENT_TOLERANCE_UM
+                refused = true
+                continue
+            end
+            admissible += 1
+            if d < best_distance - ON_SEGMENT_TOLERANCE_UM ||
+               (abs(d - best_distance) <= ON_SEGMENT_TOLERANCE_UM && foot < best_foot)
+                best, best_distance, best_t, best_foot = s, d, t, foot
+            end
+        end
+        refused && (wall_refused += 1)
+        best == 0 && continue
+        admissible > 1 && (multiple += 1)
+        push!(hits[best], (best_t, best_distance, p))
+    end
     result = Point2[]
     inserted, max_bend = 0, 0.0
-    for (a, b) in loop_segments(loop)
+    for (s, (a, _)) in enumerate(segments)
         push!(result, a)
-        hits = Tuple{Float64, Float64, Point2}[]
-        for p in points
-            d, t, _ = segment_projection(p, a, b)
-            d <= tolerance && 0.0 < t < 1.0 && p != a && p != b || continue
-            push!(hits, (t, d, p))
-        end
-        sort!(hits)
-        for (_, d, p) in hits
+        for (_, d, p) in sort!(hits[s])
             p == result[end] && continue
             push!(result, p)
             inserted += 1
             max_bend = max(max_bend, d)
         end
     end
-    return drop_repeated_vertices(result), inserted, max_bend
+    cleaned, _ = drop_repeated_vertices(result)
+    return cleaned, inserted, max_bend, multiple, wall_refused
+end
+
+# Deterministic clean-up of a reconciled loop: consecutive vertices within `tolerance` merged
+# onto the first, a spike (a vertex whose two neighbours coincide within `tolerance`: a
+# zero-area excursion) collapsed onto its neighbours, repeated until stable. Returns the loop,
+# the merged count and the collapsed-spike count; a loop that still visits a point twice is
+# refused with the point (`where` names the plane and loop).
+function clean_loop(loop::Vector{Point2}, tolerance::Float64, where::String)
+    merged, spikes = 0, 0
+    while true
+        loop, dropped = drop_repeated_vertices(loop, tolerance)
+        merged += dropped
+        n = length(loop)
+        spike = n >= 3 ?
+            findfirst(
+                i -> point_distance(loop[mod1(i - 1, n)], loop[mod1(i + 1, n)]) <= tolerance,
+                1:n
+            ) : nothing
+        spike === nothing && break
+        deleteat!(loop, sort!(unique([spike, mod1(spike + 1, n)])))
+        spikes += 1
+    end
+    seen = Dict{NTuple{2, Int64}, Point2}()
+    for p in loop
+        key = (round(Int64, p[1] / tolerance), round(Int64, p[2] / tolerance))
+        haskey(seen, key) && error(
+            "$where visits $p twice after the cross-plane reconciliation (a self-touching " *
+            "loop; the writer must resolve it)"
+        )
+        seen[key] = p
+    end
+    return loop, merged, spikes
 end
 
 function rebuild_plane(plane::Plane, loops::Vector{Vector{Point2}})
@@ -343,15 +469,18 @@ end
     reconcile_planes(spec, delta) -> (reconciled spec, report)
 
 Snap the upper plane's vertices within `delta` onto the lower plane (vertices first, then
-segments), insert the cross vertices on both planes (exactly into the lower chains, within
-`delta` into the upper chains), refuse same-plane polygons closer than `delta`. A single-plane
-set is returned unchanged.
+segments; a vertex on a box wall only along that wall), insert the cross vertices on both planes
+(exactly into the lower chains, within `delta` into the upper chains; one segment per vertex,
+wall segments never bent), clean every loop (merged vertices, collapsed spikes; a self-touching
+loop refused), refuse same-plane polygons closer than `delta`. A single-plane set is returned
+unchanged.
 """
 function reconcile_planes(spec::PolygonSet, delta::Float64)
     report = Dict{String, Any}("applied" => false)
     length(spec.planes) == 2 || return spec, report
     delta > 0.0 || error("Cross-plane snap distance must be positive")
     lower, upper = spec.planes
+    box = spec.box
     for plane in spec.planes
         check_same_plane_separation(plane, delta)
     end
@@ -359,37 +488,58 @@ function reconcile_planes(spec::PolygonSet, delta::Float64)
     upper_loops = [copy(loop) for loop in plane_loops(upper)]
     lower_vertices = reduce(vcat, lower_loops)
     lower_segments = reduce(vcat, loop_segments.(lower_loops))
-    moved, max_displacement = 0, 0.0
+    moved, max_displacement, wall_constrained = 0, 0.0, 0
     for (k, loop) in enumerate(upper_loops)
         snapped = Point2[]
         for v in loop
-            w = snap_point(v, lower_vertices, lower_segments, delta)
+            walls = point_walls(v, box)
+            w = if isempty(walls)
+                snap_point(v, lower_vertices, lower_segments, delta)
+            else
+                w, constrained =
+                    snap_wall_point(v, lower_vertices, lower_segments, delta, box, walls)
+                constrained && (wall_constrained += 1)
+                w
+            end
             if w != v
                 moved += 1
                 max_displacement = max(max_displacement, point_distance(v, w))
             end
             push!(snapped, w)
         end
-        upper_loops[k] = drop_repeated_vertices(snapped)
+        upper_loops[k], _ = drop_repeated_vertices(snapped)
     end
     upper_vertices = reduce(vcat, upper_loops)
     inserted_lower, inserted_upper = 0, 0
+    single_segment, wall_refused = 0, 0
     for (k, loop) in enumerate(lower_loops)
-        lower_loops[k], n, _ =
-            insert_points_on_segments(loop, upper_vertices, ON_SEGMENT_TOLERANCE_UM)
+        lower_loops[k], n, _, multiple, refused =
+            insert_points_on_segments(loop, upper_vertices, ON_SEGMENT_TOLERANCE_UM, box)
         inserted_lower += n
+        single_segment += multiple
+        wall_refused += refused
     end
     lower_vertices = reduce(vcat, lower_loops)
     for (k, loop) in enumerate(upper_loops)
-        upper_loops[k], n, bend = insert_points_on_segments(loop, lower_vertices, delta)
+        upper_loops[k], n, bend, multiple, refused =
+            insert_points_on_segments(loop, lower_vertices, delta, box)
         inserted_upper += n
         max_displacement = max(max_displacement, bend)
+        single_segment += multiple
+        wall_refused += refused
+    end
+    merged, spikes = 0, 0
+    for (plane, loops) in ((lower, lower_loops), (upper, upper_loops)), k in eachindex(loops)
+        loops[k], m, s = clean_loop(
+            loops[k],
+            PLAN_NODE_MERGE_TOLERANCE_UM,
+            "Plane $(plane.name) loop $k"
+        )
+        merged += m
+        spikes += s
     end
     # Coincident metal runs (segments on the box wall are not metal edges and not counted).
-    box = spec.box
-    on_wall((a, b)) =
-        (a[1] == b[1] && a[1] in (box[1], box[2])) ||
-        (a[2] == b[2] && a[2] in (box[3], box[4]))
+    on_wall((a, b)) = !isempty(segment_walls(a, b, box))
     lower_set = Set(minmax(a, b) for (a, b) in reduce(vcat, loop_segments.(lower_loops)))
     coincident = [
         (a, b) for (a, b) in reduce(vcat, loop_segments.(upper_loops)) if
@@ -404,7 +554,20 @@ function reconcile_planes(spec::PolygonSet, delta::Float64)
             Dict(lower.name => inserted_lower, upper.name => inserted_upper),
         "coincident_segments" => length(coincident),
         "coincident_run_length_um" =>
-            sum(point_distance(a, b) for (a, b) in coincident; init=0.0)
+            sum(point_distance(a, b) for (a, b) in coincident; init=0.0),
+        "window_cut_sliver_rules" => Dict{String, Any}(
+            "rules" =>
+                "a vertex on a box wall snaps only along that wall; a wall segment " *
+                "(window-cut line) takes only vertices on the wall; a vertex is inserted " *
+                "into at most one segment per loop (the nearest); consecutive vertices " *
+                "within the plan-node identity quantum merged, spikes collapsed",
+            "wall_constrained_snaps" => wall_constrained,
+            "wall_insertions_refused" => wall_refused,
+            "single_segment_insertions" => single_segment,
+            "merge_tolerance_um" => PLAN_NODE_MERGE_TOLERANCE_UM,
+            "merged_consecutive_vertices" => merged,
+            "collapsed_spikes" => spikes
+        )
     )
     reconciled = PolygonSet(
         spec.name,
@@ -1192,7 +1355,7 @@ function mesh_plan(
     band_record["applied_rows_by_partition"] = partition_rows
     band_record["applied_minimum_rows"] = minimum(partition_rows)
 
-    merge_tolerance = 1.0e-6
+    merge_tolerance = PLAN_NODE_MERGE_TOLERANCE_UM
     coordinate_index = Dict{NTuple{2, Int64}, Int}()
     xy = Point2[]
     function node_index(p::Point2)
