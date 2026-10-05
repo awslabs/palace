@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <functional>
@@ -8,11 +10,14 @@
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "drivers/boundarymodesolver.hpp"
 
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -21,6 +26,7 @@
 #include "models/surfacerationalimpedanceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -714,6 +720,201 @@ TEST_CASE("BoundaryModeOperator interior PEC on a nonconforming mesh",
   };
   CheckDbcTDofs(mode_op.GetNDSpace(), mode_op.GetNDDbcTDofLists().back(), true);
   CheckDbcTDofs(mode_op.GetH1Space(), mode_op.GetH1DbcTDofLists().back(), order > 1);
+}
+
+// BoundaryMode cross-section extracted from a nonconforming 3D mesh: the wave port of
+// cpw_wave_2dmode on the uncracked mesh, with the elements next to the port refined on one
+// side of the traces (as an adapted mesh can be). The 2D mesh must keep its boundary
+// elements through partitioning and uniform refinement, and the DoFs on the PEC edges
+// (master edges included) must be essential, and no others.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "BoundaryMode cross-section of a nonconforming 3D mesh",
+                 "[boundarymodeoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
+  auto buffer = PreprocessFile((cpw_dir / "cpw_wave_2dmode.json").string().c_str());
+  auto setup = nlohmann::json::parse(buffer);
+  setup["Model"]["Mesh"] = (cpw_dir / setup["Model"]["Mesh"].get<std::string>()).string();
+  setup["Model"]["CrackInternalBoundaryElements"] = false;
+  setup["Model"]["Refinement"] = {{"UniformLevels", 1}};
+  setup["Problem"]["Output"] = temp_dir.string();
+  IoData iodata(setup, /*print=*/false);
+  const std::vector<int> pec = iodata.boundaries.pec.attributes;
+
+  auto smesh = mesh::Load(iodata, comm);
+  if (smesh)
+  {
+    // Refine the elements next to the cross-section on one side of the traces, the
+    // interior PEC boundary elements.
+    double z_trace = mfem::infinity();
+    for (int be = 0; be < smesh->GetNBE(); be++)
+    {
+      int e1, e2;
+      smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+      if (e2 >= 0 &&
+          std::find(pec.begin(), pec.end(), smesh->GetBdrAttribute(be)) != pec.end())
+      {
+        mfem::Array<int> v;
+        smesh->GetBdrElementVertices(be, v);
+        z_trace = std::min(z_trace, smesh->GetVertex(v[0])[2]);
+      }
+    }
+    REQUIRE(z_trace < mfem::infinity());
+    const auto &attrs = iodata.solver.boundary_mode.attributes;
+    smesh->EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int be = 0; be < smesh->GetNBE(); be++)
+    {
+      if (std::find(attrs.begin(), attrs.end(), smesh->GetBdrAttribute(be)) == attrs.end())
+      {
+        continue;
+      }
+      int e1, e2;
+      smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+      smesh->GetElementCenter(e1, c);
+      if (c(2) > z_trace)
+      {
+        marked.Append(e1);
+      }
+    }
+    marked.Sort();
+    marked.Unique();
+    REQUIRE(marked.Size() > 0);
+    smesh->GeneralRefinement(marked, 1, 0);
+  }
+  BoundaryModeSolver solver(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
+  solver.Preprocess(iodata, smesh, comm);
+  std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
+  mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
+
+  // Segments of the PEC boundary elements of the 2D mesh before its uniform refinement,
+  // gathered from all ranks (the other wave ports are relabelled as PEC), and the numbers
+  // of PEC boundary elements and of those in the interior.
+  auto CountPEC = [&](const mfem::ParMesh &pmesh, std::vector<double> *segs)
+  {
+    std::array<int, 2> n = {0, 0};
+    for (int be = 0; be < pmesh.GetNBE(); be++)
+    {
+      if (std::find(pec.begin(), pec.end(), pmesh.GetBdrAttribute(be)) == pec.end())
+      {
+        continue;
+      }
+      n[0]++;
+      n[1] += pmesh.FaceIsInterior(pmesh.GetBdrElementFaceIndex(be));
+      mfem::Array<int> v;
+      pmesh.GetBdrElementVertices(be, v);
+      for (int i : v)
+      {
+        double x[2];
+        pmesh.GetNode(i, x);
+        if (segs)
+        {
+          segs->insert(segs->end(), x, x + 2);
+        }
+      }
+    }
+    Mpi::GlobalSum(2, n.data(), comm);
+    return n;
+  };
+  std::vector<double> segs;
+  const auto ne = mfem_mesh.back()->GetGlobalNE();
+  const auto nbe_pec = CountPEC(*mfem_mesh.back(), &segs);
+  CHECK(nbe_pec[0] > 0);
+  CHECK(nbe_pec[1] > 0);
+  mesh::RefineMesh(iodata, mfem_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  for (auto &m : mfem_mesh)
+  {
+    mesh.push_back(std::make_unique<Mesh>(std::move(m)));
+  }
+  const auto &pmesh = mesh.back()->Get();
+  REQUIRE(pmesh.Nonconforming());
+  REQUIRE(pmesh.GetGlobalNE() == 4 * ne);
+  CHECK(CountPEC(pmesh, nullptr) == std::array<int, 2>{2 * nbe_pec[0], 2 * nbe_pec[1]});
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+
+  int nloc = static_cast<int>(segs.size()), nproc = Mpi::Size(comm);
+  std::vector<int> sizes(nproc), displs(nproc, 0);
+  MPI_Allgather(&nloc, 1, MPI_INT, sizes.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nproc; r++)
+  {
+    displs[r] = displs[r - 1] + sizes[r - 1];
+  }
+  std::vector<double> all_segs(displs.back() + sizes.back());
+  MPI_Allgatherv(segs.data(), nloc, MPI_DOUBLE, all_segs.data(), sizes.data(),
+                 displs.data(), MPI_DOUBLE, comm);
+  auto OnPEC = [&](const double *x)
+  {
+    for (std::size_t k = 0; k < all_segs.size(); k += 4)
+    {
+      const double *a = &all_segs[k], *b = &all_segs[k + 2];
+      const double ab2 = (b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]);
+      const double ax_ab = (x[0] - a[0]) * (b[0] - a[0]) + (x[1] - a[1]) * (b[1] - a[1]);
+      const double ax2 = (x[0] - a[0]) * (x[0] - a[0]) + (x[1] - a[1]) * (x[1] - a[1]);
+      const double t = ax_ab / ab2;
+      if (t > -1.0e-9 && t < 1.0 + 1.0e-9 && ax2 - t * t * ab2 < 1.0e-12 * ab2)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Numbers of checked true DoFs on the PEC edges and off them, and on master edges.
+  int counts[3] = {0, 0, 0};
+  auto CheckDbcTDofs =
+      [&](const FiniteElementSpace &fespace, const mfem::Array<int> &dbc_tdof_list)
+  {
+    const auto &fes = fespace.Get();
+    std::vector<bool> is_dbc(fes.GetTrueVSize(), false);
+    for (auto t : dbc_tdof_list)
+    {
+      is_dbc[t] = true;
+    }
+    auto Check = [&](const mfem::Array<int> &dofs, bool on_pec, bool master)
+    {
+      for (auto d : dofs)
+      {
+        const int t = fes.GetLocalTDofNumber((d >= 0) ? d : -1 - d);
+        if (t < 0)
+        {
+          continue;
+        }
+        CHECK(is_dbc[t] == on_pec);
+        counts[on_pec ? 0 : 1]++;
+        counts[2] += (on_pec && master);
+      }
+    };
+    const auto &edge_list = pmesh.ncmesh->GetEdgeList();
+    mfem::Array<int> v, dofs;
+    for (int e = 0; e < pmesh.GetNEdges(); e++)
+    {
+      double x0[2], x1[2];
+      pmesh.GetEdgeVertices(e, v);
+      pmesh.GetNode(v[0], x0);
+      pmesh.GetNode(v[1], x1);
+      const double mid[2] = {0.5 * (x0[0] + x1[0]), 0.5 * (x0[1] + x1[1])};
+      fes.GetEdgeInteriorDofs(e, dofs);
+      Check(dofs, OnPEC(mid),
+            edge_list.GetMeshIdAndType(e).type == mfem::NCMesh::NCList::MeshIdType::MASTER);
+    }
+    for (int i = 0; i < pmesh.GetNV(); i++)
+    {
+      double x[2];
+      pmesh.GetNode(i, x);
+      fes.GetVertexDofs(i, dofs);
+      Check(dofs, OnPEC(x), false);
+    }
+  };
+  CheckDbcTDofs(mode_op.GetNDSpace(), mode_op.GetNDDbcTDofLists().back());
+  CheckDbcTDofs(mode_op.GetH1Space(), mode_op.GetH1DbcTDofLists().back());
+  Mpi::GlobalSum(3, counts, comm);
+  CHECK(counts[0] > 0);
+  CHECK(counts[1] > 0);
+  CHECK(counts[2] > 0);
 }
 
 }  // namespace palace

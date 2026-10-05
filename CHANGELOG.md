@@ -78,6 +78,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     non-cracked 3D nonconformal meshes, where the edges on the unrefined side were not
     constrained.
     [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed boundary mode simulations extracting their cross-section from a nonconformal 3D
+    mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
+    conditions of the cross-section.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
 
 #### Performance Improvements
 
