@@ -225,4 +225,10 @@ At the start of an adaptive mesh refinement (AMR) iteration, if
 is enabled, the postprocessing results from the solve on the previous mesh will be saved off
 within a subdirectory denoted `iterationX`, where `X` is the (1-based) iteration number.
 The results in the top level directory will always be those from the most recent successful
-solve.
+solve. When AMR stops because the predicted size of a refined mesh exceeds
+[`config["Model"]["Refinement"]["MaxSize"]`](../config/reference.md#config-model-refinement),
+no `iterationX` subdirectory is created for the skipped solve: the top level directory
+holds the results of the last solve and `palace.json` records the stop under
+`"AdaptiveMeshRefinement"`/`"MaxSizeStop"` (the AMR iteration, the last solved and the
+predicted numbers of degrees of freedom, the element counts before and after the refinement
+step, and `"MaxSize"`).

@@ -885,6 +885,20 @@ TEST_CASE("Config interface dielectric edge refinement", "[config][Serial]")
   CHECK_THROWS(config::InterfaceDielectricData(dielectric));
 }
 
+TEST_CASE("Config refinement MaxSizePredicted", "[config][Serial]")
+{
+  // Default: MaxSize is checked against the predicted size of the refined mesh.
+  config::RefinementData predicted({{"MaxIts", 4}, {"MaxSize", 100000000}});
+  CHECK(predicted.max_size == 100000000);
+  CHECK(predicted.max_size_predicted);
+
+  // Legacy rule (MaxSize checked only against the last solved size) stays selectable to
+  // reproduce runs whose final AMR solve exceeded MaxSize.
+  config::RefinementData legacy(
+      {{"MaxIts", 4}, {"MaxSize", 100000000}, {"MaxSizePredicted", false}});
+  CHECK_FALSE(legacy.max_size_predicted);
+}
+
 TEST_CASE("Config automatic interface dielectric edges", "[config][Serial]")
 {
   json dielectric = {{"Attributes", {1}},
@@ -1733,7 +1747,11 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
           {"L0", 1.0e-3},
           {"MakeSimplex", true},
           {"Partitioning", "parts.txt"},
-          {"Refinement", {{"MaxIts", 4}, {"MaxSize", 1000}, {"UpdateFraction", 0.5}}}}},
+          {"Refinement",
+           {{"MaxIts", 4},
+            {"MaxSize", 1000},
+            {"MaxSizePredicted", false},
+            {"UpdateFraction", 0.5}}}}},
         {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
         {"Boundaries",
          {{"Absorbing", {{"Attributes", {2}}, {"Order", 2}}},
@@ -1816,6 +1834,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(r2.tol == r1.tol);
     CHECK(r2.max_it == r1.max_it);
     CHECK(r2.max_size == r1.max_size);
+    CHECK(r2.max_size_predicted == r1.max_size_predicted);
+    CHECK_FALSE(r2.max_size_predicted);
     CHECK(r2.nonconformal == r1.nonconformal);
     CHECK(r2.max_nc_levels == r1.max_nc_levels);
     CHECK(r2.update_fraction == r1.update_fraction);

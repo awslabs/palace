@@ -55,6 +55,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - AMR now checks `config["Model"]["Refinement"]["MaxSize"]` against the predicted size
+    of each refined mesh (the last solved number of degrees of freedom scaled by the
+    element-count growth of the refinement step) and stops before the solve when the
+    prediction exceeds it; the last solved mesh is the final result and `palace.json`
+    records the stop under `"AdaptiveMeshRefinement"`/`"MaxSizeStop"`. Previously the
+    check used only the last solved size, so the final solve could exceed `"MaxSize"` by
+    the growth of one Dörfler step (observed 2-3x). The new optional
+    `"MaxSizePredicted": false` restores the previous rule for reproducibility.
   - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
     second-order absorbing, surface conductivity) now evaluate the boundary conditions at
     the true complex frequency/eigenmode. Previously, the boundary conditions were
