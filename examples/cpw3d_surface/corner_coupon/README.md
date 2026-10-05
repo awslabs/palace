@@ -93,7 +93,8 @@ bit-identical, record included. STATUS (decisions 325 / 328, 2026-10-05): the ro
 scaling rule stands unchanged; the 48.75-degree held-out coupon's failure to finalize (two
 scaled free hats of the z = -R cap ring had no active boundary DOF in the fabricated p4
 solve) is a COUPON MESH defect fixed by round 2's trace resolvability gate and knot-gap mesh
-sizing (below); the branch is NOT for merge until round 2 is reviewed. `--trace-basis legacy` (the
+sizing (below); round 2 was reviewed (fresh-context review, 0 blockers / 0 majors) and
+merged (decisions 318 / 325 / 328, merge step decision 348). `--trace-basis legacy` (the
 default of the script) is the recorded `MetalRingsOnly` rule (8 knots per ring,
 events, segment connectivity), byte-identical to the recorded coupons in its basis,
 trace mesh, zero set and record; its held-out REFERENCE, however, is now the decoupled
@@ -124,7 +125,17 @@ The planner therefore runs the generator BEFORE the mesher, passes `--trace-mesh
 gates every corner mesh (h1 and the h-refinement meshes) before any solve; the coupon spec
 records `Response.TraceResolvability` and the tool fingerprint (hence the cache key) covers
 the mesher and the gate: every corner coupon built from now on is on the new recipe, the
-published caches are not rebuilt (they were audited read-only, family4/round2).
+published caches are not rebuilt (they were audited read-only, family4/round2). Recorded
+limits (round-2 review, 2026-10-06): the gate runs at the LARGEST order of `--orders` only
+(the lower orders of the p -> p + 1 comparison share the meshes with ~(p / (p + 1))^2 of the
+nodes; with the knot-gap sizing the p4 minima 127-186 leave p3 at ~70-105 >= 45, so the
+gate is not binding there); the knot-gap sizes do not scale with the h factor and `lc_far`
+is unchanged, so the h-2 and h-1 meshes are identical on the cap faces and the h2 -> h1
+gate cannot see the far-hat rows: the cap-hat domain diagonals of congruent hats still
+scatter 1.3-1.96x (a domain-only quantity, <= 0.005 % of SA / MS / MA), the residual far-hat
+uncertainty of the recipe; and k = 5 p^2 sits one node-count step above the scattering
+regime (44 at p3) and below the settled one (52) — the practical margin is the mesher's
+(~3.4x the gate on the cap hats).
 
 `finalize_corner_response.py` checks the domain and surface matrices, aggregates
 the per-edge response localized to the union of the physical-edge radius-`R`

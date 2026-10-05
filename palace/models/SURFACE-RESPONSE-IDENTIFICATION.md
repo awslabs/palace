@@ -2398,8 +2398,9 @@ included; round 2 adds the generator-side trace resolvability gate (`trace_resol
 published caches are not rebuilt); the DEVICE runtime is unaffected: the SurfaceMortar lift is
 an L2 projection on the coupon's trace triangles with the device field sampled by
 FindPointsGSLIB, independent of the device mesh's DOF layout
-(test-cornerbasisrefinement.cpp CornerRefinedRuleAcuteConcaveDeviceMortar); the branch is NOT
-for merge until round 2 is reviewed); PEC = crossings +
+(test-cornerbasisrefinement.cpp CornerRefinedRuleAcuteConcaveDeviceMortar); round 2 was
+reviewed (fresh-context review, 0 blockers / 0 majors) and merged, merge step decision 348);
+PEC = crossings +
 metal-interior knots on the two metal rings only (14 of 176 knots); the box corners are slaves
 on every ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing
 knots
