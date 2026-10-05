@@ -1625,6 +1625,9 @@ void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances)
                                                  "SpatialEdgeCluster, not "
                                               << type << "!");
     allowance.claims_signature["Type"] = "SpatialEdgeCluster";
+    // The Missing placeholder key of a refused cluster is its claims-only signature plus
+    // "Unboxable": true (a manifest written before the ClaimsSignature export): accepted.
+    allowance.claims_signature.erase("Unboxable");
     MFEM_VERIFY(!allowance.claims_signature.contains("Box") &&
                     !allowance.claims_signature.contains("Context"),
                 "SpanCapAllowances entry \""

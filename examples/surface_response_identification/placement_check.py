@@ -159,6 +159,85 @@ def _segment_distance(point, a, b):
     return float(np.linalg.norm(point - (a + s * d)))
 
 
+def _arc_chord_distance(point, a, b, center, radius):
+    """Distance from a point to the arc of the fitted circle (centre, radius) that the chord
+    a-b subtends (surfaceresponseoperator ArcChordDistance; block (b) DESIGN section 2 (a)):
+    the point's in-plane projection inside the chord's angular interval reads the distance to
+    the circle (radial residual + out-of-plane offset), outside it the distance to the nearer
+    chord end; a chord collinear with the centre falls back to the straight distance."""
+    ra, rb = a - center, b - center
+    n = np.cross(ra, rb)
+    n_norm = float(np.linalg.norm(n))
+    if n_norm <= 1.0e-12 * max(float(np.linalg.norm(ra)) * float(np.linalg.norm(rb)), 1.0e-300):
+        return _segment_distance(point, a, b)
+    n = n / n_norm
+    rq = point - center
+    out_of_plane = float(np.dot(rq, n))
+    in_plane = rq - out_of_plane * n
+    within = float(np.dot(np.cross(ra, in_plane), n)) >= 0.0 and float(np.dot(np.cross(in_plane, rb), n)) >= 0.0
+    if not within:
+        return min(float(np.linalg.norm(point - a)), float(np.linalg.norm(point - b)))
+    return math.hypot(abs(float(np.linalg.norm(in_plane)) - radius), out_of_plane)
+
+
+def device_perimeter_distance(identification, point):
+    """Distance from a point (mesh units) to the device perimeter of a manifest Identification
+    (surfaceresponseoperator DevicePerimeterDistance): the Segments' Keys as straight chords, a
+    segment on a fitted arc (Segments[].Arc) read on its circle's arc."""
+    point = np.asarray(point, dtype=float)
+    arcs = identification.get("Arcs", [])
+    best = math.inf
+    for segment in identification["Segments"]:
+        key = np.asarray(segment["Key"], dtype=float)
+        if "Arc" in segment and 0 <= int(segment["Arc"]) < len(arcs):
+            arc = arcs[int(segment["Arc"])]
+            best = min(best, _arc_chord_distance(point, key[0], key[1], np.asarray(arc["Center"], dtype=float), float(arc["Radius"])))
+        else:
+            best = min(best, _segment_distance(point, key[0], key[1]))
+    return best
+
+
+def context_gate(identification, patches, library, radius):
+    """Gate A10-context (decision 282 section 3, arc-aware per block (b) DESIGN section 2
+    (a)): every Context entry END of every placed contract-3 cluster model (the model's
+    Signature placed by the dry-run patch frame) lies on the device perimeter within the
+    signature tolerance; returns (gate, entries)."""
+    tol = SIGNATURE_TOLERANCE_OVER_R * radius
+    radius_library = float(library["MatchingRadius"])
+    scale = radius / radius_library
+    models = {m["Name"]: m for m in library["Models"]}
+    features = {f["Id"]: f for f in identification["Features"]}
+    entries = []
+    for row in patches:
+        feature = features.get(row["Feature"])
+        if feature is None or feature["Type"] not in CLUSTER_TYPES or feature["Match"]["Status"] != "Matched":
+            continue
+        model, _ = resolve_model(models, row["Model"])
+        signature = (model or {}).get("Signature") or {}
+        if "Box" not in signature or (feature.get("Match") or {}).get("LegacyContract"):
+            continue
+        origin, axes = row["Origin"], row["Axes"]
+        entry = {"Feature": row["Feature"], "Model": row["Model"], "Checks": 0, "WorstOverR": 0.0, "Defects": [], "ArcEnds": 0}
+        for index, piece in enumerate(signature.get("Context", [])):
+            P = [float(v) for v in piece["P"]]
+            for label, (x, y) in (("begin", (P[0], P[1])), ("end", (P[2], P[3]))):
+                q = origin + (scale * np.asarray([x * radius_library, y * radius_library, 0.0])) @ axes
+                distance = device_perimeter_distance(identification, q)
+                entry["Checks"] += 1
+                entry["WorstOverR"] = max(entry["WorstOverR"], distance / radius)
+                if "Arc" in piece:
+                    entry["ArcEnds"] += 1
+                if distance > tol and len(entry["Defects"]) < 8:
+                    entry["Defects"].append({"Point": f"context {index} {label}", "DeviationOverR": distance / radius, "Mapped": [float(v) for v in q]})
+        entries.append(entry)
+    defects = [e for e in entries if e["Defects"]]
+    detail = {"Features": len(entries), "Checks": sum(e["Checks"] for e in entries), "ArcEnds": sum(e["ArcEnds"] for e in entries),
+              "WorstDeviationOverR": max((e["WorstOverR"] for e in entries), default=None), "ToleranceOverR": SIGNATURE_TOLERANCE_OVER_R,
+              "FeaturesWithDefects": len(defects), "Examples": [{k: v for k, v in e.items() if k != "Checks"} for e in defects[:6]],
+              "Basis": "every Context entry end of a placed contract-3 cluster model lies on the device perimeter (segments as chords, fitted-arc segments on their circle's arc) within the signature parameter tolerance: the C++ A10-extended check, mirrored"}
+    return gate("A10-context", not defects, detail, evaluable=bool(entries)), entries
+
+
 class ClaimedGeometry:
     """The claimed perimeter portions of one feature in mesh coordinates: straight
     sub-segments (per mesh segment) and, per fitted arc, the circle with the angular range
@@ -493,6 +572,10 @@ def placement_gates(identification, patches, library, radius):
         summary[key] = {"Features": len(entries), "WorstDeviationOverR": worst, "FeaturesWithDefects": len(defects)}
     if not_evaluable:
         gates.append(gate("A10-placement-evaluable", False, {"NotEvaluable": not_evaluable[:20], "Count": len(not_evaluable)}))
+    context, context_entries = context_gate(identification, patches, library, radius)
+    gates.append(context)
+    summary["Context"] = {"Features": len(context_entries), "WorstDeviationOverR": context["Detail"]["WorstDeviationOverR"],
+                          "FeaturesWithDefects": sum(1 for e in context_entries if e["Defects"])}
     return gates, summary
 
 

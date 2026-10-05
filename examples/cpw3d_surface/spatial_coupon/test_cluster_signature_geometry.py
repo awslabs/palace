@@ -559,6 +559,122 @@ class GapPerpendicularityTest(unittest.TestCase):
         self.assertAlmostEqual(csg.gap_perpendicularity_bound(0.5), 2.0 * (math.sqrt(2.0) * 0.5e-6 + 4.0e-6))
 
 
+class ArcContextJointSnapTest(unittest.TestCase):
+    """Block (b) step 3 (DESIGN section 2 (b) + A1, decision 303): an arc entry's ends are the
+    serialised ends exactly, snapped onto the straight neighbour's device vertex within the
+    arc-fit tolerance (1e-3 R + 2 q) or onto a box face within one quantum, and the circle is
+    rebuilt through them. The eight census keys the v3 builder refused with "the chain segments
+    bounding a face disagree on its metal side" (F0-b; analysis/generator_stops.log) build."""
+
+    REFUSED = {"448693d60a6f": 1, "0c94ec951e10": 0, "32dc558f4810": 0, "2bc3d927fda6": 1, "baf9dacceb51": 2,
+               "efe678516aa0": 4, "a596f5a4c303": 7, "adb6d8a5d5a5": 0}
+
+    def test_the_census_arc_context_keys_build_with_recorded_snaps(self):
+        census = json.loads(CENSUS_B.read_text())
+        for prefix, rec in census.items():
+            coupon, edges = csg.cluster_coupon(rec, 1.9, 0.1, 0.05)
+            snaps = coupon["Geometry"].get("JointSnaps", [])
+            arcs = [r for r in snaps if r["Class"] == "Arc"]
+            joints = [r for r in snaps if r["Class"] != "Arc"]
+            self.assertEqual(len(arcs), sum("Arc" in e for e in rec["Signature"]["Portions"] + rec["Signature"].get("Context", [])), prefix)
+            for record in arcs:
+                self.assertLessEqual(record["ArcDeviationOverR"], csg.ARC_REBUILD_TOLERANCE_OVER_R + 1.0e-9, prefix)
+            for record in joints:
+                self.assertEqual(record["Class"], "ArcJoint")
+                self.assertLessEqual(record["DistanceOverR"], csg.ARC_JOINT_SNAP_OVER_R + 1.0e-9)
+                self.assertGreater(record["DistanceOverR"], csg.COINCIDENCE_OVER_R)
+            if prefix in self.REFUSED:
+                self.assertEqual(len(joints), self.REFUSED[prefix], prefix)
+            # Every chord vertex of a rebuilt arc lies on its rebuilt circle to double precision
+            # and the arc's first / last chord ends are the fixed ends.
+            chords, _ = csg.chorded_entries(rec["Signature"], 1.9, include_context=True)
+            for record in arcs:
+                kind, index = record["Piece"]
+                own = [e for e in chords if e["Portion"] == index and bool(e.get("Context")) == (kind == "Context") and "Chord" in e]
+                self.assertEqual(len(own), record["Chords"])
+                centre = np.asarray(record["Centre"]) * 1.9
+                for e in own:
+                    for q in (e["P0"], e["P1"]):
+                        self.assertAlmostEqual(np.linalg.norm(np.asarray(q) - centre) / 1.9, record["RadiusOverR"],
+                                               delta=1.0e-13 * max(1.0, record["RadiusOverR"]))
+        # The loop-end family: 16 arcs each, exact ends (no joint), rebuilt within one quantum.
+        for prefix in ("284d6c2b5b66", "9e103a0f291c", "20ac3e14a128"):
+            coupon, _ = csg.cluster_coupon(census[prefix], 1.9, 0.1, 0.05)
+            snaps = coupon["Geometry"]["JointSnaps"]
+            self.assertEqual([r["Class"] for r in snaps].count("Arc"), 16)
+            self.assertFalse([r for r in snaps if r["Class"] != "Arc"])
+            self.assertLessEqual(max(r["ArcDeviationOverR"] for r in snaps), 1.0e-6 + 1.0e-12)
+
+    def finger(self, shift_over_R, radius=1.0):
+        """The rounded finger end of ArcPortionTest with the top arc's side end displaced
+        along the side by shift_over_R (an unsnapped arc-fit residual)."""
+        c45 = 0.5 * math.cos(math.pi / 4)
+        top = {"Conductor": 1, "Interfaces": ["MA", "MS", "SA"], "Law": LAW, "P": [-0.5 - shift_over_R, 0.75, 0.0, 0.25],
+               "Arc": [-0.5, 0.25, -0.5 + c45, 0.25 + c45], "GapRadial": 1}
+        bottom = {"Conductor": 1, "Interfaces": ["MA", "MS", "SA"], "Law": LAW, "P": [-0.5, -0.75, 0.0, -0.25],
+                  "Arc": [-0.5, -0.25, -0.5 + c45, -0.25 - c45], "GapRadial": 1}
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 5,
+                     "Portions": [portion((0.0, -0.25, 0.0, 0.25), (1.0, 0.0)), top, bottom,
+                                  portion((-1.5, 0.75, -0.5, 0.75), (0.0, 1.0)), portion((-1.5, -0.75, -0.5, -0.75), (0.0, -1.0))],
+                     "Vertices": []}
+        return {"Topology": "SpatialEdgeCluster", "Geometry": {"EdgeCount": 5, "Signature": signature}, "Signature": signature,
+                "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"}}
+
+    def test_arc_end_snaps_onto_the_straight_neighbour_within_the_fit_tolerance(self):
+        R = 1.0
+        coupon, edges = csg.cluster_coupon(self.finger(5.0e-4), R, 0.1, 0.05)
+        joints = [r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "ArcJoint"]
+        self.assertEqual(len(joints), 1)
+        self.assertEqual(joints[0]["Piece"], ["Claim", 1])
+        self.assertEqual(joints[0]["To"][:2], ["Claim", 3])
+        self.assertAlmostEqual(joints[0]["DistanceOverR"], 5.0e-4, places=12)
+        arc = [r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "Arc" and r["Piece"] == ["Claim", 1]][0]
+        self.assertLessEqual(arc["ArcDeviationOverR"], 5.0e-4 + 1.0e-12)
+        self.assertGreater(arc["CentreShiftOverR"], 0.0)
+        # The snapped chord end IS the straight neighbour's end (the straight row unchanged).
+        chords, _ = csg.chorded_entries(coupon["Geometry"]["Signature"], R)
+        side_end = np.asarray([-0.5, 0.75])
+        self.assertTrue(any(np.array_equal(np.asarray(e["P0"]), side_end) or np.array_equal(np.asarray(e["P1"]), side_end)
+                            for e in chords if e["Portion"] == 1))
+        self.assertEqual([e for e in chords if e["Portion"] == 3][0]["P1"], (-0.5, 0.75))
+        # The same geometry at the exact end: no joint record, chord ends exact.
+        coupon, _ = csg.cluster_coupon(self.finger(0.0), R, 0.1, 0.05)
+        self.assertFalse([r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] != "Arc"])
+        # 1.5e-3 R: beyond the fit tolerance, the end stays and the arrangement fails closed.
+        with self.assertRaises(csg.SignatureGeometryError):
+            csg.cluster_coupon(self.finger(1.5e-3), R, 0.1, 0.05)
+
+    def test_rebuilt_arc_and_the_rebuild_tolerance(self):
+        a, b, c = (1.0, 0.0), (0.0, 1.0), (0.0, 0.0)
+        m = (math.cos(math.pi / 4), math.sin(math.pi / 4))
+        vertices, centre, r, sweep = csg.rebuilt_arc(a, b, c, m, 1.0)
+        self.assertEqual(len(vertices), 19)
+        np.testing.assert_array_equal(vertices[0], a)
+        np.testing.assert_array_equal(vertices[-1], b)
+        self.assertAlmostEqual(sweep, 0.5 * math.pi, places=12)
+        for q in vertices:
+            self.assertAlmostEqual(np.linalg.norm(q - centre), r, places=13)
+        # A displaced end: the centre moves onto the bisector, the ends stay exact.
+        vertices, centre, r, _ = csg.rebuilt_arc((1.0 + 1.0e-3, 0.0), b, c, m, 1.0)
+        np.testing.assert_array_equal(vertices[0], (1.0 + 1.0e-3, 0.0))
+        self.assertAlmostEqual(np.linalg.norm(vertices[0] - centre), np.linalg.norm(vertices[-1] - centre), places=14)
+        self.assertGreater(np.linalg.norm(centre), 0.0)
+        # The other way round (clockwise) and a closed circle.
+        vertices, centre, r, sweep = csg.rebuilt_arc(a, b, c, (-m[0], -m[1]), 1.0)
+        self.assertAlmostEqual(sweep, -1.5 * math.pi, places=12)
+        vertices, centre, r, sweep = csg.rebuilt_arc(a, a, c, (-1.0, 0.0), 1.0)
+        self.assertAlmostEqual(sweep, 2.0 * math.pi, places=12)
+        self.assertEqual(len(vertices), 73)
+        # A corrupt signature (an arc end 2e-3 R off its own circle): the rebuild deviates
+        # beyond the fit tolerance and fails closed.
+        c45 = 0.5 * math.cos(math.pi / 4)
+        bad = {"Type": "SpatialEdgeCluster", "EdgeCount": 1, "Vertices": [],
+               "Portions": [{"Conductor": 1, "Interfaces": ["MA"], "Law": LAW, "P": [-0.5, 0.75 + 2.0e-3, 0.0, 0.25],
+                             "Arc": [-0.5, 0.25, -0.5 + c45, 0.25 + c45], "GapRadial": 1}]}
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "arc rebuild outside the fit tolerance"):
+            csg.chorded_entries(bad, 1.0)
+
+
 class ClaimRadiusSpanCapTest(unittest.TestCase):
     """Block (b) DESIGN section 3 (b): the generator's claim radius is half the case's span cap
     (the default 16 R -> 8 R, byte-identical); a claim 9 R from the origin generates only under

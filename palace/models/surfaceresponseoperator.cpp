@@ -6343,7 +6343,14 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
                   !signature["Portions"].empty(),
               "SpatialEdgeCluster model \"" << model.name
                                             << "\" Signature carries no Portions!");
-  const double tolerance = kSignatureParameterToleranceOverRadius;  // in units of R
+  // In units of R: the arc-fit tolerance widened by two signature quanta and read inclusive
+  // (block (b) DESIGN A1 (5), decision 288 (2) half-quantum rule): the builder's chord rows
+  // are the REBUILT circle's chords through the serialised / snapped ends, which deviate
+  // from the model signature's arc by at most the fit tolerance plus the rounding of the
+  // ends; nothing is compared at a picometre bound that noise can cross.
+  const double tolerance = kSignatureParameterToleranceOverRadius +
+                           2.0 * kSignatureLengthQuantumOverRadius +
+                           0.5 * kSignatureLengthQuantumOverRadius;
   // The interface set of every InterfaceSlot (the types mapped to it; empty without a
   // mapping), serialised as the Signature serialises a portion's Interfaces (sorted).
   std::map<int, std::set<std::string>> slot_types;
@@ -7573,32 +7580,92 @@ struct FeaturePatchSummary
   std::size_t context_points_checked = 0;
 };
 
-// Distance from a point to the device perimeter of the identification (its segments' keys
-// as straight chords): the A10 check extended to the context reads it for the placed
-// context piece ends.
-double DevicePerimeterDistance(const IdentificationResult &identification, const Point3D &q)
+}  // namespace
+
+// Distance from a point to a straight segment a-b.
+double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
+                       const std::array<double, 3> &b)
+{
+  const Point3D ab = Subtract(b, a), aq = Subtract(q, a);
+  const double length2 = Dot(ab, ab);
+  const double t = length2 > 0.0 ? std::clamp(Dot(aq, ab) / length2, 0.0, 1.0) : 0.0;
+  return Norm(Subtract(q, Add(a, Scale(t, ab))));
+}
+
+// Distance from a point to the ARC of the fitted circle (centre C, radius rho) that the
+// chord a-b subtends (block (b) DESIGN section 2 (a), A10-extended arc-aware): the point's
+// projection into the circle's plane is tested against the chord's angular interval (the
+// short way from a to b about C); inside it the distance is to the circle (radial residual
+// and out-of-plane offset), outside it the distance to the nearer chord end. Exact and
+// chord-independent: an arc context entry's end cut at a box face lies on the circle, up to
+// the chord sagitta (1.6e-3..5.4e-2 R on the stage-2 census) from the device polyline. A
+// degenerate chord (collinear with the centre) falls back to the straight distance.
+double ArcChordDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
+                        const std::array<double, 3> &b,
+                        const std::array<double, 3> &center, double rho)
+{
+  const Point3D ra = Subtract(a, center), rb = Subtract(b, center);
+  Point3D n = Cross(ra, rb);
+  const double n_norm = Norm(n);
+  if (n_norm <= 1.0e-12 * std::max(Norm(ra) * Norm(rb), 1.0e-300))
+  {
+    return SegmentDistance(q, a, b);
+  }
+  n = Scale(1.0 / n_norm, n);
+  const Point3D rq = Subtract(q, center);
+  const double out_of_plane = Dot(rq, n);
+  const Point3D in_plane = Subtract(rq, Scale(out_of_plane, n));
+  const bool within = Dot(Cross(ra, in_plane), n) >= 0.0 && Dot(Cross(in_plane, rb), n) >= 0.0;
+  if (!within)
+  {
+    return std::min(Norm(Subtract(q, a)), Norm(Subtract(q, b)));
+  }
+  return std::hypot(std::abs(Norm(in_plane) - rho), out_of_plane);
+}
+
+// Distance from a point to the device perimeter of the identification: its segments' keys
+// as straight chords, except that a segment lying on a fitted arc (Segments[].Arc) is read
+// on the arc of its circle (ArcChordDistance). The A10 check extended to the context reads
+// it for the placed context piece ends.
+double DevicePerimeterDistance(const IdentificationResult &identification,
+                               const std::array<double, 3> &q)
 {
   double best = std::numeric_limits<double>::infinity();
   for (const auto &segment : identification.segments)
   {
     const auto &a = segment.key[0], &b = segment.key[1];
-    // Bounding-box rejection against the best distance so far.
+    const bool on_arc = segment.arc >= 0 &&
+                        static_cast<std::size_t>(segment.arc) < identification.arcs.size();
+    // Bounding-box rejection against the best distance so far (an arc bulges past its
+    // chord's box by at most the recorded sagitta).
+    const double bulge =
+        on_arc ? identification.arcs[segment.arc].max_sagitta_over_R * identification.radius
+               : 0.0;
     bool outside = false;
     for (int d = 0; d < 3 && !outside; d++)
     {
-      outside = q[d] < std::min(a[d], b[d]) - best || q[d] > std::max(a[d], b[d]) + best;
+      outside = q[d] < std::min(a[d], b[d]) - best - bulge ||
+                q[d] > std::max(a[d], b[d]) + best + bulge;
     }
     if (outside)
     {
       continue;
     }
-    const Point3D ab = Subtract(b, a), aq = Subtract(q, a);
-    const double length2 = Dot(ab, ab);
-    const double t = length2 > 0.0 ? std::clamp(Dot(aq, ab) / length2, 0.0, 1.0) : 0.0;
-    best = std::min(best, Norm(Subtract(q, Add(a, Scale(t, ab)))));
+    if (on_arc)
+    {
+      const auto &arc = identification.arcs[segment.arc];
+      best = std::min(best, ArcChordDistance(q, a, b, arc.center, arc.radius));
+    }
+    else
+    {
+      best = std::min(best, SegmentDistance(q, a, b));
+    }
   }
   return best;
 }
+
+namespace
+{
 
 // A pair's sample-to-partner distances must agree with its separation within twice the
 // pair tolerance (the mean separation of a 5 % taper is within 5 % of every sample; the

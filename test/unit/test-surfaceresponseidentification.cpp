@@ -5164,6 +5164,17 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
     std::vector<SpanCapAllowance> both = {allowance, Shifted(9)};
     ValidateSpanCapAllowances(both);
     CHECK(both.size() == 2);
+    // The Missing placeholder signature (claims + "Unboxable": true, as every manifest
+    // written before the ClaimsSignature export carries it) is accepted as the allowance.
+    SpanCapAllowance placeholder = allowance;
+    placeholder.claims_signature["Unboxable"] = true;
+    {
+      const auto [input, result] = Identify({placeholder});
+      const auto *cluster = ClusterContaining(result, input, probe);
+      REQUIRE(cluster != nullptr);
+      CHECK(cluster->spatial_support["Contract"] == 3);
+      CHECK(cluster->spatial_support["SpanCapAllowance"]["MatchedQuanta"] == 0.0);
+    }
     SpanCapAllowance boxed = allowance;
     boxed.claims_signature["Box"] = {-1.0, -1.0, 1.0, 1.0};
     CHECK_THROWS_WITH(Identify({boxed}), ContainsSubstring("CLAIMS-ONLY"));
@@ -5179,3 +5190,77 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
   }
 }
 
+
+TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
+          "[surfaceresponseidentification][surfaceresponseoperator][Serial]")
+{
+  // Block (b) DESIGN section 2 (a) (decision 303): the A10-extended distance reads a segment
+  // on a fitted arc on its circle's arc, exact and chord-independent — an arc context entry's
+  // end cut at a box face lies on the FITTED circle, up to the chord sagitta from the device
+  // polyline (1.6e-3..5.4e-2 R on the stage-2 census keys, above the 1e-3 R tolerance).
+  // Scene: a 10 x 6 island with 1-um fillets (R = 2: radius 0.5 R, 4 chords of 22.5 deg per
+  // fillet, sagitta 0.5 R (1 - cos 11.25 deg) = 9.6e-3 R).
+  const double R = 2.0;
+  const auto input = MakeInput({{RoundedRectangle(5.0, 3.0, 1.0, 4), 0, 1.0}}, R);
+  const auto result = IdentifyMetalPerimeter(input);
+  REQUIRE(result.arcs.size() == 4);
+  std::size_t arc_segments = 0;
+  for (const auto &segment : result.segments)
+  {
+    arc_segments += segment.arc >= 0 ? 1 : 0;
+  }
+  CHECK(arc_segments == 16);
+  // The fillet centred at (4, 2): the point of the circle at the middle of the first chord.
+  const std::array<double, 3> center = {4.0, 2.0, 0.0};
+  const double rho = 1.0;
+  const double sagitta = rho * (1.0 - std::cos(0.5 * 22.5 * std::acos(-1.0) / 180.0));
+  auto Circle = [&](double degrees, double radius)
+  {
+    const double t = degrees * std::acos(-1.0) / 180.0;
+    return std::array<double, 3>{center[0] + radius * std::cos(t),
+                                 center[1] + radius * std::sin(t), 0.0};
+  };
+  const auto on_circle = Circle(11.25, rho);
+  CHECK(DevicePerimeterDistance(result, on_circle) <= 1.0e-9 * R);
+  // The chords-only reading (every segment stripped of its arc) is the sagitta.
+  IdentificationResult chords_only = result;
+  for (auto &segment : chords_only.segments)
+  {
+    segment.arc = -1;
+  }
+  CHECK_THAT(DevicePerimeterDistance(chords_only, on_circle), WithinAbs(sagitta, 1.0e-9));
+  CHECK(sagitta / R > kSignatureParameterToleranceOverRadius);
+  CHECK(DevicePerimeterDistance(result, on_circle) <= kSignatureParameterToleranceOverRadius * R);
+  // Radially 0.01 R off the circle inside the chord's range: 0.01 R; out of plane the same.
+  CHECK_THAT(DevicePerimeterDistance(result, Circle(11.25, rho + 0.01 * R)),
+             WithinAbs(0.01 * R, 1.0e-9));
+  auto lifted = on_circle;
+  lifted[2] = 0.03;
+  CHECK_THAT(DevicePerimeterDistance(result, lifted), WithinAbs(0.03, 1.0e-9));
+  // A straight side is read as before (the island's top edge y = 3).
+  CHECK_THAT(DevicePerimeterDistance(result, {0.0, 3.2, 0.0}), WithinAbs(0.2, 1.0e-9));
+  CHECK_THAT(DevicePerimeterDistance(result, {0.0, 3.0, 0.0}), WithinAbs(0.0, 1.0e-12));
+  // ArcChordDistance alone: within the chord's angular interval -> the circle; outside it
+  // -> the nearer chord end; a chord collinear with the centre -> the straight distance.
+  const std::array<double, 3> a = {0.0, 0.0, 0.0}, b = {1.0, 0.0, 0.0}, c = {0.5, -0.5, 0.0};
+  const double r = std::hypot(0.5, 0.5);  // a at 135 deg, b at 45 deg
+  auto At = [&](double degrees, double radius)
+  {
+    const double t = degrees * std::acos(-1.0) / 180.0;
+    return std::array<double, 3>{c[0] + radius * std::cos(t), c[1] + radius * std::sin(t),
+                                 0.0};
+  };
+  CHECK_THAT(ArcChordDistance(At(90.0, r), a, b, c, r), WithinAbs(0.0, 1.0e-12));
+  CHECK_THAT(ArcChordDistance(At(90.0, r + 0.2), a, b, c, r), WithinAbs(0.2, 1.0e-12));
+  const auto beyond = At(170.0, r);
+  CHECK_THAT(ArcChordDistance(beyond, a, b, c, r),
+             WithinAbs(std::min(std::hypot(beyond[0] - a[0], beyond[1] - a[1]),
+                                std::hypot(beyond[0] - b[0], beyond[1] - b[1])),
+                       1.0e-12));
+  CHECK_THAT(ArcChordDistance({0.5, 0.2, 0.3}, a, b, c, r),
+             WithinAbs(std::hypot(0.7 - r, 0.3), 1.0e-12));
+  CHECK_THAT(ArcChordDistance({0.5, 0.2, 0.0}, a, b, {2.0, 0.0, 0.0}, 1.0),
+             WithinAbs(0.2, 1.0e-12));
+  CHECK_THAT(SegmentDistance({0.5, 0.2, 0.0}, a, b), WithinAbs(0.2, 1.0e-12));
+  CHECK_THAT(SegmentDistance({1.5, 0.0, 0.0}, a, b), WithinAbs(0.5, 1.0e-12));
+}

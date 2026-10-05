@@ -34,6 +34,7 @@ class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
 struct IdentifiedFeature;
+struct IdentificationResult;
 
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
 // finite-element point interpolation is still rebuilt for every refined mesh.
@@ -585,6 +586,26 @@ nlohmann::json ResolveLegacyContractAlias(const std::string &model_name,
                                           const nlohmann::json &model_signature,
                                           const LegacyContractAlias &alias,
                                           const IdentifiedFeature &feature);
+
+// Distance from a point to a straight segment a-b.
+double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
+                       const std::array<double, 3> &b);
+
+// Distance from a point to the arc of the fitted circle (centre, radius rho) that the chord
+// a-b subtends (block (b) DESIGN section 2 (a)): the point's in-plane projection inside the
+// chord's angular interval reads the distance to the circle (radial residual + out-of-plane
+// offset), outside it the distance to the nearer chord end; a chord collinear with the
+// centre falls back to the straight distance.
+double ArcChordDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
+                        const std::array<double, 3> &b,
+                        const std::array<double, 3> &center, double rho);
+
+// Distance from a point to the device perimeter of an identification result: the segment
+// keys as straight chords, a segment on a fitted arc (Segments[].Arc) read on its circle's
+// arc. The A10 check extended to the context (decision 282 section 3) reads it for every
+// placed context piece end (tolerance kSignatureParameterToleranceOverRadius x R).
+double DevicePerimeterDistance(const IdentificationResult &identification,
+                               const std::array<double, 3> &q);
 
 void WriteResponseGeometryCache(
     const std::filesystem::path &path,
