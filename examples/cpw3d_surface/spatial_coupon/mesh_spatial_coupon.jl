@@ -241,13 +241,150 @@ function read_boundary(path)
         all(all(isfinite, point) for point in points) &&
         all(value in ("Physical", "Continuation") for value in classes) ||
             error("Invalid plan-view boundary loop $loop_index")
+        arcs, joints = read_boundary_arc_tags(data, columns, rows, loop_index)
         push!(
             loops,
-            (conductor=conductor, plane=plane, hole=hole, points=points, classes=classes)
+            (conductor=conductor, plane=plane, hole=hole, points=points, classes=classes,
+             arcs=arcs, joints=joints)
         )
     end
     isempty(loops) && error("Plan-view boundary contains no loops")
     return loops
+end
+
+# The arc columns of the plan-view boundary (block (b) design A1 (4); generate_spatial_response
+# ARC_BOUNDARY_COLUMNS): per vertex row the tag of its OUTGOING side - (id, centre, radius,
+# sign) of the rebuilt circle the side is a chord of, or nothing on a straight side - and the
+# joint record of the vertex - (turn, smooth) at an arc end, nothing elsewhere. A boundary
+# without the columns (every legacy coupon) carries nothing: the untagged path is taken bitwise.
+const ARC_BOUNDARY_COLUMNS = ("ArcId", "ArcCx", "ArcCy", "ArcR", "ArcSign", "JointTurn", "JointSmooth")
+
+blank_cell(value) = value === "" || (value isa AbstractString && isempty(strip(value)))
+
+function read_boundary_arc_tags(data, columns, rows, loop_index)
+    arcs = Vector{Union{Nothing, NamedTuple}}(nothing, length(rows))
+    joints = Vector{Union{Nothing, NamedTuple}}(nothing, length(rows))
+    any(haskey(columns, name) for name in ARC_BOUNDARY_COLUMNS) || return arcs, joints
+    all(haskey(columns, name) for name in ARC_BOUNDARY_COLUMNS) ||
+        error("Plan-view boundary carries a partial arc column set")
+    cell(row, name) = data[row, columns[name]]
+    for (k, row) in enumerate(rows)
+        if !blank_cell(cell(row, "ArcId"))
+            id = Int(round(Float64(cell(row, "ArcId"))))
+            centre = (Float64(cell(row, "ArcCx")), Float64(cell(row, "ArcCy")))
+            radius = Float64(cell(row, "ArcR"))
+            sign = Int(round(Float64(cell(row, "ArcSign"))))
+            id > 0 && all(isfinite, centre) && isfinite(radius) && radius > 0.0 && sign in (-1, 1) ||
+                error("Invalid arc tag on plan-view boundary loop $loop_index row $k")
+            arcs[k] = (id=id, centre=centre, radius=radius, sign=sign)
+        end
+        if !blank_cell(cell(row, "JointSmooth"))
+            smooth = Int(round(Float64(cell(row, "JointSmooth"))))
+            smooth in (0, 1) || error("Invalid joint tag on plan-view boundary loop $loop_index row $k")
+            turn = blank_cell(cell(row, "JointTurn")) ? nothing : Float64(cell(row, "JointTurn"))
+            joints[k] = (turn=turn, smooth=smooth == 1)
+        end
+    end
+    return arcs, joints
+end
+
+# Whether a loop (read_boundary) carries arc tags.
+loop_has_arcs(loop) = haskey(loop, :arcs) && any(arc !== nothing for arc in loop.arcs)
+
+# The arc runs of a TAGGED loop (design A1 (4)): one run per ArcId over its consecutive
+# chord sides (the loop rotated so that no run straddles its end), in the format of
+# circular_arc_runs (centre, radius, point_indices, edge_indices, orientation, angle) plus
+# `id`, `sign` and `sweep` (the signed angular travel of the run). The fit is SEEDED by the
+# tags: the circle through the run's first, middle and last vertex must agree with the tagged
+# centre / radius and every tagged vertex must lie on it within the fit tolerance of
+# fitted_arc_run (max(64 tol, 2e-7 rho)); any disagreement fails closed - one source of truth
+# (the signature), one circle (the tagged one) for the CAD. A one-chord run is admitted (no
+# four-chord minimum).
+function tagged_arc_runs(loop, tolerance)
+    points = loop.points
+    n = length(points)
+    runs = NamedTuple[]
+    loop_has_arcs(loop) || return runs
+    ids = [arc === nothing ? 0 : arc.id for arc in loop.arcs]
+    # Start at a straight side (or at a run start) so that no run straddles the end.
+    start = findfirst(i -> ids[i] != 0 && ids[mod1(i - 1, n)] != ids[i], 1:n)
+    start === nothing && error("a plan-view loop made of one closed arc is not supported by the tube recipe")
+    seen = Set{Int}()
+    for step in 1:n
+        index = mod1(start + step - 1, n)
+        id = ids[index]
+        id == 0 && continue
+        ids[mod1(index - 1, n)] == id && continue    # not the first chord of its run
+        id in seen && error("arc $id of the plan-view boundary is not one consecutive run of chords")
+        push!(seen, id)
+        edge_indices = Int[]
+        k = index
+        while ids[k] == id && length(edge_indices) < n
+            push!(edge_indices, k)
+            k = mod1(k + 1, n)
+        end
+        point_indices = vcat(edge_indices, [mod1(edge_indices[end] + 1, n)])
+        tag = loop.arcs[index]
+        all(loop.arcs[e] !== nothing && loop.arcs[e].centre == tag.centre && loop.arcs[e].radius == tag.radius &&
+            loop.arcs[e].sign == tag.sign for e in edge_indices) ||
+            error("arc $id of the plan-view boundary carries two circles")
+        circle = (center=tag.centre, radius=tag.radius)
+        fit_tolerance = arc_fit_tolerance(tag.radius, tolerance)
+        fit = circle_through(points[point_indices[1]], points[point_indices[cld(length(point_indices), 2)]],
+                             points[point_indices[end]], tolerance)
+        if fit === nothing
+            # Two vertices (one chord): the tagged circle must pass through both.
+            length(point_indices) == 2 ||
+                error("arc $id of the plan-view boundary: its vertices are not concyclic")
+        else
+            hypot(fit.center[1] - tag.centre[1], fit.center[2] - tag.centre[2]) <= fit_tolerance &&
+            abs(fit.radius - tag.radius) <= fit_tolerance ||
+                error("arc $id of the plan-view boundary: the fitted circle (centre $(fit.center), radius " *
+                      "$(fit.radius)) disagrees with the tagged circle (centre $(tag.centre), radius " *
+                      "$(tag.radius)) beyond $fit_tolerance")
+        end
+        run = fitted_arc_run(points, point_indices, edge_indices, circle, tolerance)
+        run === nothing &&
+            error("arc $id of the plan-view boundary: its vertices do not lie on the tagged circle within " *
+                  "$fit_tolerance, or do not travel monotonically around it")
+        push!(runs, (run..., id=id, sign=tag.sign,
+                     sweep=run_sweep(points, run.point_indices, run.center, run.orientation)))
+    end
+    return runs
+end
+
+# The signed angular travel of a run from its first to its last vertex about its centre
+# (unwrapped along the orientation; a closed run reads a full turn): a function of the two
+# END vertices alone, so the equal-fraction split points of polygon_wire and the arc tubes
+# do not depend on the chord count (design A7 MINOR-7).
+function run_sweep(points, point_indices, center, orientation)
+    first = points[point_indices[1]]
+    last = points[point_indices[end]]
+    theta_first = atan(first[2] - center[2], first[1] - center[1])
+    theta_last = atan(last[2] - center[2], last[1] - center[1])
+    first == last && return orientation * 2.0 * pi
+    travel = mod(orientation * (theta_last - theta_first), 2.0 * pi)
+    return orientation * travel
+end
+
+# The number of <= 90-degree parts an arc of signed sweep `sweep` is split into (OCC circle
+# arcs and revolves stay below a half turn); the parts are equal angular fractions, so no
+# part is ever a sliver (a 90.000001-degree arc has two parts of 45.0000005 degrees).
+arc_part_count(sweep) = max(1, ceil(Int, abs(sweep) / (0.5 * pi) - 1.0e-9))
+
+# The split angles theta_0 = the first vertex's angle, ..., theta_parts = the last vertex's.
+function arc_split_angles(points, point_indices, center, sweep)
+    first = points[point_indices[1]]
+    theta_first = atan(first[2] - center[2], first[1] - center[1])
+    parts = arc_part_count(sweep)
+    return [theta_first + sweep * k / parts for k in 0:parts]
+end
+
+# The arc runs of a loop: the tagged runs when the boundary carries arc tags, else the
+# untagged fit (circular_arc_runs: bitwise for every legacy coupon).
+function loop_arc_runs(loop, tolerance)
+    loop_has_arcs(loop) && return tagged_arc_runs(loop, tolerance)
+    return circular_arc_runs(loop.points, tolerance)
 end
 
 add(a, b) = ntuple(i -> a[i] + b[i], 3)
@@ -2225,12 +2362,69 @@ function point_in_polygon(point, polygon, tolerance)
     return inside
 end
 
+# The circular segments between the chords of the tagged arcs and their circles, registered
+# from the plan-view boundary (register_mask_arc_segments!): the mask facets are the chorded
+# polygons, the metal is bounded by the exact arcs, so a point inside a circular segment of
+# conductor / plane flips the facet verdict (design 1.2 (1): one source of truth for the
+# metal; a point of the exact metal wall of a convex arc lies outside every chord facet by
+# up to the sagitta). Rows: (conductor, plane, chord start, chord end, outward normal of the
+# chord away from the centre, centre, radius).
+const MASK_ARC_SEGMENTS = NamedTuple[]
+
+function register_mask_arc_segments!(loops, tolerance)
+    empty!(MASK_ARC_SEGMENTS)
+    for loop in loops
+        loop_has_arcs(loop) || continue
+        for run in tagged_arc_runs(loop, tolerance)
+            for k in 1:(length(run.point_indices) - 1)
+                a = loop.points[run.point_indices[k]]
+                b = loop.points[run.point_indices[k + 1]]
+                mid = (0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]))
+                outward = (mid[1] - run.center[1], mid[2] - run.center[2])
+                scale = hypot(outward...)
+                scale > tolerance || continue
+                push!(MASK_ARC_SEGMENTS, (conductor=loop.conductor, plane=loop.plane, a=a, b=b,
+                                          normal=(outward[1] / scale, outward[2] / scale),
+                                          centre=run.center, radius=run.radius, sign=run.sign))
+            end
+        end
+    end
+    return length(MASK_ARC_SEGMENTS)
+end
+
+# The exact-arc verdict for a plan-view point near a registered arc of conductor / plane:
+# `true` on the arc itself (within the tolerance of the circle, over the chord's extent: the
+# metal boundary belongs to the metal), `true` / `false` in a circular segment (strictly
+# inside the circle, beyond the chord away from the centre) when the dielectric lies
+# outside (sign +1: the segment is metal) / inside the circle (sign -1: dielectric); nothing
+# away from every registered arc (the facet verdict stands).
+function point_in_mask_arc_segment(point, conductor, plane, tolerance)
+    for row in MASK_ARC_SEGMENTS
+        row.conductor == conductor && abs(row.plane - plane) <= tolerance || continue
+        distance = hypot(point[1] - row.centre[1], point[2] - row.centre[2])
+        distance <= row.radius + tolerance || continue
+        beyond = (point[1] - row.a[1]) * row.normal[1] + (point[2] - row.a[2]) * row.normal[2]
+        beyond > -tolerance || continue
+        # Within the chord's extent along the chord direction.
+        d = (row.b[1] - row.a[1], row.b[2] - row.a[2])
+        t = ((point[1] - row.a[1]) * d[1] + (point[2] - row.a[2]) * d[2]) / (d[1]^2 + d[2]^2)
+        -1.0e-9 <= t <= 1.0 + 1.0e-9 || continue
+        abs(distance - row.radius) <= tolerance && return true
+        beyond > tolerance || continue
+        return row.sign == 1
+    end
+    return nothing
+end
+
 function point_in_mask(facets, point, conductor, plane, tolerance)
-    return any(
+    inside = any(
         facet.conductor == conductor &&
         abs(facet.plane - plane) <= tolerance &&
         point_in_polygon((point[1], point[2]), facet.points, tolerance) for facet in facets
     )
+    isempty(MASK_ARC_SEGMENTS) && return inside
+    verdict = point_in_mask_arc_segment(point, conductor, plane, tolerance)
+    return verdict === nothing ? inside : verdict
 end
 
 function circle_through(first, second, third, tolerance)
@@ -2356,14 +2550,23 @@ function circular_arc_runs(points, tolerance)
     return runs
 end
 
-function polygon_wire(occ, points, z)
+# The OCC wire of a plan-view polygon: straight sides as lines, every recognised circular
+# arc run as exact OCC circle arcs. `runs` = the loop's runs (loop_arc_runs: the TAGGED runs
+# of a tagged metal loop, else the untagged fit; an offset loop has none to pass and is
+# fitted here). A run is split into arc_part_count(sweep) parts of EQUAL angular fraction
+# at new points on the circle (not at chord vertices): the split angles depend on the run's
+# two end vertices alone, so the metal loft, the trench wall under it (the same end
+# vertices, the concentric circle) and the arc tubes (ArcTube parts: the same rule) are
+# split at the same radial planes and the fragment keeps every tube entity whole, whatever
+# the chord count (design 1.2 (3), A7 MINOR-7). A straight loop has no run: bitwise.
+function polygon_wire(occ, points, z; runs=nothing)
     tolerance =
         1.0e-9 * max(
             maximum(point[1] for point in points) - minimum(point[1] for point in points),
             maximum(point[2] for point in points) - minimum(point[2] for point in points),
             1.0
         )
-    runs = circular_arc_runs(points, tolerance)
+    runs = runs === nothing ? circular_arc_runs(points, tolerance) : runs
     projected = collect(points)
     for run in runs, index in run.point_indices[2:(end - 1)]
         radial = (points[index][1] - run.center[1], points[index][2] - run.center[2])
@@ -2376,15 +2579,21 @@ function polygon_wire(occ, points, z)
     covered = falses(length(points))
     for run in runs
         any(covered[run.edge_indices]) && continue
-        parts = max(1, ceil(Int, run.angle / (0.5 * pi)))
-        split = unique(round.(Int, range(1, length(run.point_indices), length=parts + 1)))
+        sweep = run_sweep(points, run.point_indices, run.center, run.orientation)
+        angles = arc_split_angles(points, run.point_indices, run.center, sweep)
+        parts = length(angles) - 1
+        parts <= length(run.edge_indices) ||
+            error("a circular arc run of $(length(run.edge_indices)) chords cannot carry $parts parts")
         center = occ.addPoint(run.center[1], run.center[2], z)
-        for (first, second) in zip(split, split[2:end])
-            curve_for_edge[run.edge_indices[first]] = occ.addCircleArc(
-                tags[run.point_indices[first]],
-                center,
-                tags[run.point_indices[second]]
-            )
+        split_tags = vcat(
+            [tags[run.point_indices[1]]],
+            [occ.addPoint(run.center[1] + run.radius * cos(angles[k]),
+                          run.center[2] + run.radius * sin(angles[k]), z) for k in 2:parts],
+            [tags[run.point_indices[end]]]
+        )
+        for k in 1:parts
+            curve_for_edge[run.edge_indices[k]] =
+                occ.addCircleArc(split_tags[k], center, split_tags[k + 1])
         end
         covered[run.edge_indices] .= true
     end
@@ -2418,7 +2627,7 @@ end
 # routes it to the collar union, accepts it.
 function offset_loop_points(loop, distance, tolerance)
     abs(distance)<=tolerance && return loop.points
-    runs = circular_arc_runs(loop.points, tolerance)
+    runs = loop_arc_runs(loop, tolerance)
     if !isempty(runs)
         offset = curved_offset_loop(loop, distance, runs, tolerance)
         offset.bridged &&
@@ -2792,7 +3001,7 @@ polygon_area2(points) = sum(cross2d(points[i], points[mod1(i + 1, length(points)
 function collar_pieces(loop, distance, miter, lower, upper, tolerance)
     points = loop.points
     n = length(points)
-    runs = circular_arc_runs(points, tolerance)
+    runs = loop_arc_runs(loop, tolerance)
     isempty(runs) || return curved_collar_pieces(
         loop, distance, curved_offset_loop(loop, distance, runs, tolerance), lower, upper,
         tolerance)
@@ -3164,7 +3373,7 @@ end
 # admits them; `absorbed` collects their records.
 function collar_loop_points(loop, distance, box, tolerance; island_rule=nothing,
                             absorbed=nothing)
-    runs = abs(distance) <= tolerance ? NamedTuple[] : circular_arc_runs(loop.points, tolerance)
+    runs = abs(distance) <= tolerance ? NamedTuple[] : loop_arc_runs(loop, tolerance)
     offset = isempty(runs) ? nothing : curved_offset_loop(loop, distance, runs, tolerance)
     miter = offset === nothing ? offset_loop_points(loop, distance, tolerance) : offset.points
     (offset === nothing || !offset.bridged) && polygon_is_simple(miter, tolerance) &&
@@ -3328,7 +3537,7 @@ function offset_hole_points(loop,distance,tolerance)
         orientation*cross2d((b[1]-a[1],b[2]-a[2]),(c[1]-b[1],c[2]-b[2]))>=-tolerance ||
             error("Shrinking a nonconvex fabrication hole requires topology-aware offset support")
     end
-    runs=circular_arc_runs(points,tolerance)
+    runs=loop_arc_runs(loop,tolerance)
     sides=Tuple{NTuple{2,Float64},NTuple{2,Float64},Float64}[]
     arc_edges=falses(length(points))
     for run in runs
@@ -3810,7 +4019,15 @@ end
 function point_on_surface(tag)
     center = gmsh.model.occ.getCenterOfMass(2, tag)
     coordinate = collect(center)
-    gmsh.model.isInside(2, tag, coordinate) > 0 && return center
+    # The centre of mass of a CURVED face (the cylindrical wall of an arc side: a ThruSections
+    # BSpline) lies off the surface by rho (1 - sinc(dtheta / 2)) although isInside projects
+    # it onto the face and says yes; the centre is taken only when it lies ON the surface
+    # (a planar face: bitwise as before), else the probes below find a true surface point.
+    if gmsh.model.isInside(2, tag, coordinate) > 0
+        projected = gmsh.model.getValue(2, tag, gmsh.model.getParametrization(2, tag, coordinate))
+        scale = max(1.0, maximum(abs, coordinate))
+        norm(collect(projected) .- coordinate) <= 1.0e-9 * scale && return center
+    end
 
     # A trimmed annulus or a thin ribbon can miss every point of a uniform UV
     # grid. Probe inward from real boundary curves at a scale derived from the
@@ -3893,7 +4110,7 @@ function metal_surface_attribute(base, slot, conductor)
     return base + METAL_SLOT_STRIDE * slot + conductor
 end
 
-function nearest_metal_edge(edges, facets, point, radius, tolerance)
+function nearest_metal_edge(edges, facets, point, radius, tolerance; surface=nothing)
     candidates = if isempty(facets)
         edges
     else
@@ -3902,7 +4119,11 @@ function nearest_metal_edge(edges, facets, point, radius, tolerance)
             point_in_mask(facets, point, edge.conductor, edge.point[3], tolerance)
         ]
     end
-    isempty(candidates) && error("Unable to assign a metal surface to a conductor mask")
+    isempty(candidates) && error(
+        "Unable to assign a metal surface to a conductor mask (surface point $point" *
+        (surface === nothing ? "" :
+         "; surface $(surface[1]) of type $(gmsh.model.getType(2, surface[1])), bounding box " *
+         "$(surface[2]), adjacent volumes $(surface[3])") * ")")
     return nearest_edge(candidates, point, radius)
 end
 
@@ -4513,10 +4734,13 @@ end
 # mesh_stage_contract.py binds the same lists.
 const RECIPE_SCOPE_RECIPE = "prism-tubes"
 const RECIPE_SCOPE_SUPPORTED_CLASSES = [
-    "ContinuationVertices", "DeviceFootprint", "DownwardLayers", "ExteriorLoops", "HoleLoops",
-    "MultipleConductors", "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis",
+    "ArcSides", "ContinuationVertices", "DeviceFootprint", "DownwardLayers", "ExteriorLoops",
+    "HoleLoops", "MultipleConductors", "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis",
     "UntubedShortEdges"]
 const RECIPE_SCOPE_GUARDS = [
+    ("ArcTubeRadiusVsCurvature", "build",
+     "an arc metal side whose radius is below four times the tube envelope (Radius + " *
+     "PyramidHeight): the revolved sections would fold (block (b) design 1.2 (3))"),
     ("TopRounding", "inputs",
      "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
     ("TrenchRounding", "inputs",
@@ -4559,9 +4783,10 @@ const RECIPE_SCOPE_RULE =
     "of this input among both lists, from the frozen inputs (loops, layers, process), " *
     "UntubedShortEdges excepted (exhibited by a non-empty UntubedEdges: " *
     "UntubedShortEdgeRule); MetalLoops counts per plan-view loop the straight sides not on " *
-    "the outer box, and TubeCount = TubesPerSide x their sum minus the untubed short sides " *
-    "(a top and a bottom tube per side of every loop of a fabricated coupon, one sheet tube " *
-    "per side of a thin coupon; decision 66)"
+    "the outer box plus the parts of its tagged arcs (ArcSides: one run of chords = one arc " *
+    "side split into ceil(sweep / 90 degrees) parts), and TubeCount = TubesPerSide x their " *
+    "sum minus the untubed short sides (a top and a bottom tube per side of every loop of a " *
+    "fabricated coupon, one sheet tube per side of a thin coupon; decision 66)"
 # Family 3 (design A9; decision 304): the threshold at interval == EdgeSize separates an
 # untubed side from a one-layer tube of at least one inner ring in length (both
 # valid); an interval <= 0 was the ShortEdges refusal before.
@@ -4602,6 +4827,7 @@ function exhibited_scope_classes(edges, loops, layers, fabricated, sidewall_angl
     sidewall_angle != 90.0 && push!(classes, "SlopedSidewalls")
     fabricated || push!(classes, "ThinMetal")
     overetch == 0.0 && push!(classes, "NoTrench")
+    any(loop_has_arcs(loop) for loop in loops) && push!(classes, "ArcSides")
     return sort!(classes)
 end
 
@@ -4613,16 +4839,32 @@ function side_on_box_face(p, q, lower, upper, tolerance)
 end
 
 # Per plan-view loop: the straight sides not on the outer box (each carries a top
-# and a bottom tube).
+# and a bottom tube) plus the parts of its tagged arcs (ArcSides, design 1.2 (2)); an arc
+# loop records its arcs {ArcId, Centre, Radius, SweepDegrees, Parts, Chords, Sign}.
 function metal_loop_records(loops, lower, upper, tolerance)
     records = Dict{String, Any}[]
     for (index, loop) in enumerate(loops)
         n = length(loop.points)
-        sides = count(!side_on_box_face(loop.points[i], loop.points[i % n + 1], lower, upper,
-                                        tolerance) for i in 1:n)
-        push!(records, Dict{String, Any}(
+        runs = loop_has_arcs(loop) ? tagged_arc_runs(loop, tolerance) : NamedTuple[]
+        arc_edges = falses(n)
+        for run in runs
+            arc_edges[run.edge_indices] .= true
+        end
+        sides = count(!arc_edges[i] && !side_on_box_face(loop.points[i], loop.points[i % n + 1], lower, upper,
+                                                         tolerance) for i in 1:n)
+        parts = sum(arc_part_count(run.sweep) for run in runs; init=0)
+        record = Dict{String, Any}(
             "Loop" => index, "Conductor" => loop.conductor, "Plane" => loop.plane,
-            "Hole" => loop.hole, "Vertices" => n, "Sides" => sides))
+            "Hole" => loop.hole, "Vertices" => n, "Sides" => sides + parts)
+        if !isempty(runs)
+            record["StraightSides"] = sides
+            record["ArcParts"] = parts
+            record["Arcs"] = [Dict{String, Any}(
+                "ArcId" => run.id, "Centre" => [run.center[1], run.center[2]], "Radius" => run.radius,
+                "SweepDegrees" => rad2deg(run.sweep), "Parts" => arc_part_count(run.sweep),
+                "Chords" => length(run.edge_indices), "Sign" => run.sign) for run in runs]
+        end
+        push!(records, record)
     end
     return records
 end
@@ -4702,16 +4944,35 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                     for d in 1:2)
     is_corner(p, plane) = any(norm(collect(corner) .- [p[1], p[2], plane]) <= tolerance
                               for corner in corners)
-    # Every straight side first, so that the angle between the sides meeting at a
-    # corner is known before the clearance is applied.
+    # Every side first - the straight sides and the ARC parts (design 1.2 (2) / A3: an arc
+    # run of the tagged boundary is one ArcSide, split into arc_part_count equal angular
+    # parts, every part a side) - so that the angle between the sides meeting at a corner is
+    # known before the clearance is applied. Each side carries its two END descriptors
+    # (point, the unit direction pointing AWAY from the side at that end) for the corner
+    # angles; a smooth joint (a vertex whose JointSmooth tag is 1, or the split between two
+    # parts of one arc) is never a corner: the two tubes share one cross-section there.
     sides = NamedTuple[]
+    smooth_vertices = Set{Tuple{Float64, Float64, Float64}}()
     for loop in loops
         # The metal lies inside an exterior loop and outside a hole (loop.hole: the
         # polygon interior is dielectric), so the tube normal, which points away from
         # the metal, points out of an exterior loop and into a hole.
         metal_inside = !loop.hole
         n = length(loop.points)
+        # Arc sides come from the TAGGED runs alone (design A1 (4)): an untagged loop (every
+        # legacy coupon) is read as straight sides, bitwise.
+        runs = loop_has_arcs(loop) ? tagged_arc_runs(loop, tolerance) : NamedTuple[]
+        arc_edges = falses(n)
+        for run in runs
+            arc_edges[run.edge_indices] .= true
+        end
+        if haskey(loop, :joints)
+            for (i, joint) in enumerate(loop.joints)
+                joint === nothing || !joint.smooth || push!(smooth_vertices, (loop.points[i][1], loop.points[i][2], loop.plane))
+            end
+        end
         for i in 1:n
+            arc_edges[i] && continue
             p = loop.points[i]
             q = loop.points[i % n + 1]
             side_on_box_face(p, q, lower, upper, tolerance) && continue
@@ -4730,23 +4991,84 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                 error("Unable to orient the metal edge $p -> $q")
             for (point, other) in ((p, q), (q, p))
                 is_corner(point, loop.plane) || on_box(point) ||
+                    (point[1], point[2], loop.plane) in smooth_vertices ||
                     scope_error("FreeEdgeEnds", "metal edge end $point of $p -> $q")
             end
-            push!(sides, (start=[p[1], p[2]], stop=[q[1], q[2]], direction=direction,
+            push!(sides, (kind=:straight, start=[p[1], p[2]], stop=[q[1], q[2]], direction=direction,
                           normal=normal, span=span, plane=loop.plane, conductor=loop.conductor,
                           hole=loop.hole,
-                          start_corner=is_corner(p, loop.plane), stop_corner=is_corner(q, loop.plane)))
+                          start_corner=is_corner(p, loop.plane), stop_corner=is_corner(q, loop.plane),
+                          away=(-direction, direction), tangents=(direction, direction),
+                          arc=nothing))
+        end
+        for run in runs
+            # The run's travel: from its first vertex to its last, sweep signed about the
+            # centre; sigma = +1 when the dielectric lies outside the circle (convex metal).
+            centre = [run.center[1], run.center[2]]
+            rho = run.radius
+            sweep = run.sweep
+            abs(sweep) > 0.0 || error("arc $(run.id) has no sweep")
+            p_first = loop.points[run.point_indices[1]]
+            p_last = loop.points[run.point_indices[end]]
+            theta_first = atan(p_first[2] - centre[2], p_first[1] - centre[1])
+            travel = sign(sweep)
+            # The metal side of the circle, probed on the radial line through the run's middle
+            # chord VERTEX (a point of both the circle and the chord polygon: 1 nm inside the
+            # circle lies inside the chord polygon of a convex arc, 1 nm outside lies in the
+            # metal of a concave one; a probe at a chord midpoint would sit in the sagitta).
+            vertex = loop.points[run.point_indices[cld(length(run.point_indices), 2)]]
+            theta_mid = atan(vertex[2] - centre[2], vertex[1] - centre[1])
+            probe_out = centre .+ (rho + 1.0e-3) .* [cos(theta_mid), sin(theta_mid)]
+            probe_in = centre .+ (rho - 1.0e-3) .* [cos(theta_mid), sin(theta_mid)]
+            outside_metal = point_in_polygon((probe_out[1], probe_out[2]), loop.points, tolerance) == metal_inside
+            inside_metal = point_in_polygon((probe_in[1], probe_in[2]), loop.points, tolerance) == metal_inside
+            outside_metal != inside_metal || error("Unable to orient the arc $(run.id) of conductor $(loop.conductor)")
+            sigma = inside_metal ? 1.0 : -1.0
+            Int(sigma) == run.sign ||
+                error("arc $(run.id): the plan-view metal side (sigma $(Int(sigma))) disagrees with the tagged " *
+                      "ArcSign $(run.sign)")
+            chords = [([loop.points[run.point_indices[k]]...], [loop.points[run.point_indices[k + 1]]...])
+                      for k in 1:(length(run.point_indices) - 1)]
+            length(chords) >= 4 ||
+                error("arc $(run.id) of conductor $(loop.conductor) has $(length(chords)) chords: the untagged " *
+                      "arc fit of the trench footprint needs at least four (a short arc is not supported yet)")
+            angles = arc_split_angles(loop.points, run.point_indices, run.center, sweep)
+            parts = length(angles) - 1
+            for k in 1:parts
+                theta_a, theta_b = angles[k], angles[k + 1]
+                a = k == 1 ? [p_first[1], p_first[2]] : centre .+ rho .* [cos(theta_a), sin(theta_a)]
+                b = k == parts ? [p_last[1], p_last[2]] : centre .+ rho .* [cos(theta_b), sin(theta_b)]
+                tangent(theta) = travel .* [-sin(theta), cos(theta)]
+                part_sweep = theta_b - theta_a
+                span = rho * abs(part_sweep)
+                normal_a = sigma .* [cos(theta_a), sin(theta_a)]
+                for (point, first_part, last_part) in ((a, k == 1, false), (b, false, k == parts))
+                    (first_part || last_part) || continue
+                    is_corner(point, loop.plane) || on_box(point) ||
+                        (point[1], point[2], loop.plane) in smooth_vertices ||
+                        scope_error("FreeEdgeEnds", "arc $(run.id) end $point")
+                end
+                push!(sides, (kind=:arc, start=a, stop=b, direction=tangent(theta_a), normal=normal_a,
+                              span=span, plane=loop.plane, conductor=loop.conductor, hole=loop.hole,
+                              start_corner=k == 1 && is_corner(a, loop.plane),
+                              stop_corner=k == parts && is_corner(b, loop.plane),
+                              away=(-tangent(theta_a), tangent(theta_b)),
+                              tangents=(tangent(theta_a), tangent(theta_b)),
+                              arc=(id=run.id, centre=centre, rho=rho, sigma=sigma, theta_start=theta_a,
+                                   theta_end=theta_b, sweep=part_sweep, part=k, parts=parts,
+                                   run_sweep=sweep, chords=chords)))
+            end
         end
     end
     isempty(sides) && error("No straight metal edges found")
     # In-plane angle between two tube edges meeting at a corner: the smallest
     # angle between the directions pointing away from the corner (pi when the
-    # corner has a single tube edge).
+    # corner has a single tube edge). An arc's away direction is its end tangent.
     function corner_angle(point, plane, own_direction_away)
         angle = Float64(pi)
         for side in sides
             abs(side.plane - plane) <= tolerance || continue
-            for (end_point, away) in ((side.start, side.direction), (side.stop, -side.direction))
+            for (end_point, away) in ((side.start, side.away[1]), (side.stop, side.away[2]))
                 norm(end_point .- point) <= tolerance || continue
                 dot(away, own_direction_away) >= 1.0 - 1.0e-12 && continue
                 angle = min(angle, acos(clamp(dot(away, own_direction_away), -1.0, 1.0)))
@@ -4761,23 +5083,53 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                      for side in sides)
     end
     # The face end of a side end on the box, or nothing: (face name, outward normal,
-    # theta) when the end has a single metal side and theta > 0.
-    function face_end(point, side)
+    # theta, axis, value) when the end has a single metal side and theta > 0 (the tangent
+    # at the end for an arc).
+    function face_end(point, side, tangent, segment_end)
         on_box(point) || return nothing
         sides_at(point, side.plane) == 1 || return nothing
-        face = crossed_box_face(point, side.direction, lower, upper, tolerance)
+        face = crossed_box_face(point, tangent, lower, upper, tolerance)
         face === nothing && return nothing
         d, box_side = face
-        # theta == 0 exactly: the face-parallel coordinate is the same at both ends.
-        side.start[3 - d] == side.stop[3 - d] && return nothing
+        if side.kind == :straight
+            # theta == 0 exactly: the face-parallel coordinate is the same at both ends.
+            side.start[3 - d] == side.stop[3 - d] && return nothing
+        else
+            abs(tangent[d]) == 1.0 && return nothing
+        end
         normal = [0.0, 0.0]
         normal[d] = box_side == 0 ? -1.0 : 1.0
-        theta = acos(clamp(abs(side.direction[d]), 0.0, 1.0))
-        return (face=box_face_name(d, box_side), normal=normal, theta=theta)
+        theta = acos(clamp(abs(tangent[d]), 0.0, 1.0))
+        return (face=box_face_name(d, box_side), normal=normal, theta=theta, axis=d,
+                value=box_side == 0 ? lower[d] : upper[d])
     end
-    for side in sides
-        start_face = face_end(side.start, side)
-        stop_face = face_end(side.stop, side)
+    # A smooth joint at a side end: the OTHER side of the plane meeting the end there
+    # (its index in `sides` and which of its ends), when the vertex is a smooth joint vertex
+    # or the end is the split between two parts of one arc; nothing otherwise.
+    function smooth_joint(side_index, point, plane)
+        side = sides[side_index]
+        split = side.kind == :arc && (
+            (norm(side.start .- point) <= tolerance && side.arc.part > 1) ||
+            (norm(side.stop .- point) <= tolerance && side.arc.part < side.arc.parts))
+        split || (point[1], point[2], plane) in smooth_vertices || return nothing
+        partners = Tuple{Int, Int}[]
+        for (j, other) in enumerate(sides)
+            j == side_index && continue
+            abs(other.plane - plane) <= tolerance || continue
+            norm(other.start .- point) <= tolerance && push!(partners, (j, 1))
+            norm(other.stop .- point) <= tolerance && push!(partners, (j, 2))
+        end
+        length(partners) == 1 ||
+            error("the smooth joint at $point of plane $plane meets $(length(partners)) other sides (one expected)")
+        side.kind == :arc || sides[partners[1][1]].kind == :arc ||
+            error("the smooth joint at $point joins two straight sides: the builder merges those (design A3 (1))")
+        return partners[1]
+    end
+    for (index, side) in enumerate(sides)
+        start_joint = smooth_joint(index, side.start, side.plane)
+        stop_joint = smooth_joint(index, side.stop, side.plane)
+        start_face = start_joint === nothing ? face_end(side.start, side, side.tangents[1], 1) : nothing
+        stop_face = stop_joint === nothing ? face_end(side.stop, side, side.tangents[2], 2) : nothing
         for (point, face, corner) in ((side.start, start_face, side.start_corner),
                                       (side.stop, stop_face, side.stop_corner))
             face === nothing || !corner ||
@@ -4786,16 +5138,26 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                       "regenerate the contract (decision 320: a box-face end with a single " *
                       "metal side that is not exactly perpendicular to the face is a cut end)")
         end
+        for (point, joint, corner) in ((side.start, start_joint, side.start_corner),
+                                       (side.stop, stop_joint, side.stop_corner))
+            joint === nothing || !corner ||
+                error("the semantic contract lists the smooth joint $point as a semantic corner: " *
+                      "regenerate the contract (design A3 (1): a joint turning by at most 1e-4 rad shares " *
+                      "one tube section, no ball)")
+        end
         start_corner = side.start_corner && start_face === nothing
         stop_corner = side.stop_corner && stop_face === nothing
-        start_angle = start_corner ? corner_angle(side.start, side.plane, side.direction) : Float64(pi)
-        stop_angle = stop_corner ? corner_angle(side.stop, side.plane, -side.direction) : Float64(pi)
+        start_angle = start_corner ? corner_angle(side.start, side.plane, side.away[1]) : Float64(pi)
+        stop_angle = stop_corner ? corner_angle(side.stop, side.plane, side.away[2]) : Float64(pi)
         s_start = start_corner ? clearance_of_angle(start_angle) : 0.0
         s_end = side.span - (stop_corner ? clearance_of_angle(stop_angle) : 0.0)
         untubed = s_end - s_start < edge_size
         untubed || s_end > s_start ||
             error("metal edge $(side.start) -> $(side.stop) of span $(side.span) leaves no tube " *
                   "interval against clearances $(s_start) and $(side.span - s_end)")
+        untubed && side.kind == :arc &&
+            error("arc $(side.arc.id) part $(side.arc.part) of span $(side.span) leaves a tube interval below " *
+                  "the inner ring size against its clearances: an untubed arc is not supported")
         covered_by_balls = corner_radius * (start_corner + stop_corner) >= side.span
         # A theta-0 box vertex kept as a corner by the legacy convention.
         legacy_box_corners = (start_corner && on_box(side.start) && start_angle >= pi - 1.0e-9,
@@ -4803,6 +5165,7 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
         push!(segments, (side..., s_start=s_start, s_end=s_end,
                          corner_angles=(start_angle, stop_angle),
                          face_ends=(start_face, stop_face),
+                         joints=(start_joint, stop_joint),
                          legacy_box_corners=legacy_box_corners,
                          corners=(start_corner, stop_corner),
                          untubed=untubed, covered_by_balls=covered_by_balls))
@@ -4853,6 +5216,9 @@ function metal_facing_width(segments, envelope_radius, tolerance)
         first, second = segments[i], segments[j]
         abs(first.plane - second.plane) <= tolerance || continue
         (first.untubed || second.untubed) && continue
+        # Arc sides are not in the facing test (their interval is not a plan-view segment;
+        # a narrow curved strip fails closed at the fragment, as every tube overlap does).
+        (first.kind == :arc || second.kind == :arc) && continue
         shared = any(norm(p .- q) <= tolerance for p in (first.start, first.stop)
                      for q in (second.start, second.stop))
         shared && continue
@@ -4900,17 +5266,31 @@ end
 # wall; the fragment then keeps every tube entity whole (match_tube_entities is the
 # fail-closed check for producer-default footprints).
 function assert_etch_carries_edge(etch_loops, segment, tolerance)
-    for loop in etch_loops
-        n = length(loop.points)
-        for i in 1:n
-            p = loop.points[i]
-            q = loop.points[i % n + 1]
-            for (a, b) in ((p, q), (q, p))
-                norm([a[1], a[2]] .- segment.start) <= tolerance &&
-                    norm([b[1], b[2]] .- segment.stop) <= tolerance && return true
+    function carried(start, stop)
+        for loop in etch_loops
+            n = length(loop.points)
+            for i in 1:n
+                p = loop.points[i]
+                q = loop.points[i % n + 1]
+                for (a, b) in ((p, q), (q, p))
+                    norm([a[1], a[2]] .- start) <= tolerance &&
+                        norm([b[1], b[2]] .- stop) <= tolerance && return true
+                end
             end
         end
+        return false
     end
+    if haskey(segment, :arc) && segment.arc !== nothing
+        # An arc side (design A7 MINOR-2): the footprint carries the whole metal ARC - every
+        # chord of the tagged run (the trench wall under the arc is the same cylinder).
+        for (a, b) in segment.arc.chords
+            carried(a, b) || scope_error("FootprintWithoutEdge",
+                                         "etch footprint has no side coincident with the chord $a -> $b of " *
+                                         "the metal arc $(segment.arc.id)")
+        end
+        return true
+    end
+    carried(segment.start, segment.stop) && return true
     scope_error("FootprintWithoutEdge",
                 "etch footprint has no side coincident with the metal edge $(segment.start) -> " *
                 "$(segment.stop)")
@@ -5000,8 +5380,14 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     end
     tools = Tuple{Int32, Int32}[]
     records = TubeRecord[]
-    tubes = Tuple{EdgeTube, TubeSection}[]
+    tubes = Tuple{AbstractTube, TubeSection}[]
     segments = NamedTuple[]
+    # The smooth joints (design A3 (2)) as (adopting tube index, its end, owning tube index,
+    # its end) into `tubes`, resolved after every tube exists: an arc part owns the section
+    # shared with a straight neighbour; the earlier part of one arc owns the split section.
+    joints = Tuple{Int, Int, Int, Int}[]
+    arc_tubes = 0
+    shared_sections = 0
     # The untubed short sides (design A9 family 3): recorded, no tube, not in `segments`
     # (which stays in lock-step with `tubes`: TubesPerSide tubes per segment).
     untubed_edges = Dict{String, Any}[]
@@ -5032,54 +5418,153 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
             end
         end
         metal_facing = min(metal_facing, metal_facing_width(layer_segments, envelope_radius, tolerance))
-        for segment in layer_segments
+        # The tubes of this layer's segments in segment order (TubesPerSide per segment); the
+        # joints are resolved on the indices into `tubes` once every segment has its tubes.
+        layer_tube_index = Dict{Int, Int}()
+        tubed_segments = Tuple{Int, NamedTuple}[]
+        for (segment_index, segment) in enumerate(layer_segments)
             if segment.untubed
                 push!(untubed_edges, untubed_edge_record(segment))
                 continue
             end
-            # The tube frame follows the layer: b is the process normal (Nz), so the
-            # sections' "up" (towards the metal top face) and the extrusion sense
-            # e = n x b mirror for a downward layer; the top tube sits on the metal top
-            # face at plane + Nz x thickness, the bottom tube on the plane.
-            n = [segment.normal[1], segment.normal[2], 0.0]
             b = [0.0, 0.0, Float64(layer.sign)]
-            e = cross(n, b)
-            along = dot(e[1:2], segment.direction)
-            abs(abs(along) - 1.0) <= 1.0e-12 || error("Tube frame is not aligned with the edge")
             placements = fabricated ?
                 ((layer.plane + layer.sign * metal_thickness, top_section),
                  (layer.plane, bottom_section)) :
                 ((layer.plane, sheet_section),)
-            # Face ends (design A2): the segment's start / stop face ends map onto the
-            # tube's start (end index 0) / end (1) through the extrusion sense; the face
-            # plane's slope in tube coordinates is kappa = (N . n, N . b) / (N . e).
-            face_ends = FaceEnd[]
-            for (segment_end, face) in enumerate(segment.face_ends)
-                face === nothing && continue
-                end_index = (along > 0.0) == (segment_end == 1) ? 0 : 1
-                normal = [face.normal[1], face.normal[2], 0.0]
-                along_normal = dot(normal, e)
-                abs(along_normal) > 0.0 || error("Tube axis lies in the box face $(face.face)")
-                push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta,
-                                         dot(normal, n) / along_normal, dot(normal, b) / along_normal,
-                                         envelope_radius, pyramid_height, lc_tangent))
-            end
-            for (z, section) in placements
-                tube = if along > 0.0
-                    EdgeTube([segment.start[1], segment.start[2], z], n, b, segment.s_start,
-                             segment.s_end, lc_tangent; face_ends=face_ends)
-                else
-                    EdgeTube([segment.stop[1], segment.stop[2], z], n, b,
-                             segment.span - segment.s_end, segment.span - segment.s_start, lc_tangent;
-                             face_ends=face_ends)
+            layer_tube_index[segment_index] = length(tubes)
+            if segment.kind == :arc
+                # An ARC part (design 1.2 (3)): the tube revolves about the arc centre; its
+                # travel e = n x b runs with the loop (orientation -sigma b_z = travel) or
+                # against it, as the straight tube's `along` does.
+                arc = segment.arc
+                envelope_radius <= 0.25 * arc.rho ||
+                    scope_error("ArcTubeRadiusVsCurvature",
+                                "arc $(arc.id) of radius $(arc.rho) against the tube envelope " *
+                                "$(envelope_radius) (Radius + PyramidHeight)")
+                orientation = -arc.sigma * layer.sign
+                travel = sign(arc.sweep)
+                along = orientation * travel
+                theta0 = along > 0.0 ? arc.theta_start : arc.theta_end
+                face_ends = FaceEnd[]
+                for (segment_end, face) in enumerate(segment.face_ends)
+                    face === nothing && continue
+                    end_index = (along > 0.0) == (segment_end == 1) ? 0 : 1
+                    normal = [face.normal[1], face.normal[2], 0.0]
+                    push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta, 0.0, 0.0,
+                                             envelope_radius, pyramid_height, lc_tangent;
+                                             face_axis=face.axis, face_value=face.value))
                 end
-                push!(tubes, (tube, section))
-                for (tool, group) in add_tube_volumes!(occ, tube, section; box=(lower, upper))
-                    push!(records, TubeRecord(tube, section, group, tool))
-                    push!(tools, tool)
+                for (z, section) in placements
+                    s_start, s_end = along > 0.0 ? (segment.s_start, segment.s_end) :
+                                     (segment.span - segment.s_end, segment.span - segment.s_start)
+                    tube = ArcTube([arc.centre[1], arc.centre[2], z], arc.rho, arc.sigma, b, theta0,
+                                   s_start, s_end, lc_tangent; face_ends=face_ends)
+                    push!(tubes, (tube, section))
+                    arc_tubes += 1
+                    for (tool, group) in add_tube_volumes!(occ, tube, section; box=(lower, upper))
+                        push!(records, TubeRecord(tube, section, group, tool))
+                        push!(tools, tool)
+                    end
+                end
+            else
+                # The tube frame follows the layer: b is the process normal (Nz), so the
+                # sections' "up" (towards the metal top face) and the extrusion sense
+                # e = n x b mirror for a downward layer; the top tube sits on the metal top
+                # face at plane + Nz x thickness, the bottom tube on the plane.
+                n = [segment.normal[1], segment.normal[2], 0.0]
+                e = cross(n, b)
+                along = dot(e[1:2], segment.direction)
+                abs(abs(along) - 1.0) <= 1.0e-12 || error("Tube frame is not aligned with the edge")
+                # Face ends (design A2): the segment's start / stop face ends map onto the
+                # tube's start (end index 0) / end (1) through the extrusion sense; the face
+                # plane's slope in tube coordinates is kappa = (N . n, N . b) / (N . e).
+                face_ends = FaceEnd[]
+                for (segment_end, face) in enumerate(segment.face_ends)
+                    face === nothing && continue
+                    end_index = (along > 0.0) == (segment_end == 1) ? 0 : 1
+                    normal = [face.normal[1], face.normal[2], 0.0]
+                    along_normal = dot(normal, e)
+                    abs(along_normal) > 0.0 || error("Tube axis lies in the box face $(face.face)")
+                    push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta,
+                                             dot(normal, n) / along_normal, dot(normal, b) / along_normal,
+                                             envelope_radius, pyramid_height, lc_tangent;
+                                             face_axis=face.axis, face_value=face.value))
+                end
+                for (z, section) in placements
+                    # Smooth joints (design A3 (2)): the straight tube's end section at a joint
+                    # with an arc part is the arc's radial section there (the arc's frame at the
+                    # joint vertex; the tilt = the post-snap kink between the two tangents).
+                    joint_ends = JointEnd[]
+                    for (segment_end, joint) in enumerate(segment.joints)
+                        joint === nothing && continue
+                        other = layer_segments[joint[1]]
+                        other.kind == :arc || continue
+                        end_index = (along > 0.0) == (segment_end == 1) ? 0 : 1
+                        theta = joint[2] == 1 ? other.arc.theta_start : other.arc.theta_end
+                        radial = [cos(theta), sin(theta), 0.0]
+                        n_arc = other.arc.sigma .* radial
+                        origin = [other.arc.centre[1] + other.arc.rho * radial[1],
+                                  other.arc.centre[2] + other.arc.rho * radial[2], z]
+                        # The arc's travel tangent at the joint, pointed OUT of the straight tube.
+                        tangent = [-radial[2], radial[1], 0.0]
+                        outward = end_index == 1 ? e : -e
+                        dot(tangent, outward) < 0.0 && (tangent = -tangent)
+                        tilt = acos(clamp(dot(tangent, outward), -1.0, 1.0))
+                        push!(joint_ends, JointEnd(end_index, origin, n_arc, b, tangent, tilt,
+                                                   envelope_radius, lc_tangent))
+                    end
+                    tube = if along > 0.0
+                        EdgeTube([segment.start[1], segment.start[2], z], n, b, segment.s_start,
+                                 segment.s_end, lc_tangent; face_ends=face_ends, joints=joint_ends)
+                    else
+                        EdgeTube([segment.stop[1], segment.stop[2], z], n, b,
+                                 segment.span - segment.s_end, segment.span - segment.s_start, lc_tangent;
+                                 face_ends=face_ends, joints=joint_ends)
+                    end
+                    push!(tubes, (tube, section))
+                    for (tool, group) in add_tube_volumes!(occ, tube, section; box=(lower, upper))
+                        push!(records, TubeRecord(tube, section, group, tool))
+                        push!(tools, tool)
+                    end
                 end
             end
             push!(segments, segment)
+            push!(tubed_segments, (segment_index, segment))
+        end
+        # The joint table of this layer: for every smooth joint the ADOPTING tube (a straight
+        # tube, or the later part of one arc) and the OWNING tube (the arc part), per
+        # placement (top / bottom / sheet), with the tube ends through each tube's travel.
+        tube_end(tube::AbstractTube, point, z) = begin
+            start = tube_point(tube, 0.0, 0.0, tube.s_start)
+            stop = tube_point(tube, 0.0, 0.0, tube.s_end)
+            # The joint vertex is the CAD end of the tube interval (clearance 0 there).
+            d_start = norm(start .- [point[1], point[2], z])
+            d_stop = norm(stop .- [point[1], point[2], z])
+            d_start <= tolerance && d_stop <= tolerance && error("a tube of zero length at a joint")
+            d_start <= tolerance ? 0 : d_stop <= tolerance ? 1 :
+                error("the tube does not end at the joint vertex $point (ends at $start / $stop)")
+        end
+        placements_count = fabricated ? 2 : 1
+        for (segment_index, segment) in tubed_segments
+            for (segment_end, joint) in enumerate(segment.joints)
+                joint === nothing && continue
+                other_index, _ = joint
+                other = layer_segments[other_index]
+                other.untubed && error("a smooth joint with an untubed side")
+                point = segment_end == 1 ? segment.start : segment.stop
+                # Owner: the arc part; between two parts of one arc, the earlier part.
+                owner_is_other = other.kind == :arc && (segment.kind != :arc || other.arc.part < segment.arc.part)
+                owner_is_other || continue      # recorded from the adopting side only
+                for placement in 1:placements_count
+                    adopting = layer_tube_index[segment_index] + placement
+                    owning = layer_tube_index[other_index] + placement
+                    z = tubes[adopting][1] isa ArcTube ? tubes[adopting][1].centre[3] : tubes[adopting][1].origin[3]
+                    push!(joints, (adopting, tube_end(tubes[adopting][1], point, z),
+                                   owning, tube_end(tubes[owning][1], point, z)))
+                    shared_sections += 1
+                end
+            end
         end
     end
     description = Dict{String, Any}(
@@ -5147,8 +5632,36 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "Sheet" => fabricated ? nothing :
                    Dict("Angles" => sheet_section.angles, "Materials" => sheet_section.materials,
                         "Closed" => sheet_section.closed))
-    return tools, records, tubes, segments, description, untubed_edges
+    if arc_tubes > 0
+        # Recorded only where arcs exist (block (b) design 1.2 (3) / A3 (2)), so every straight
+        # census is unchanged.
+        description["ArcTubes"] = arc_tubes
+        description["SharedSections"] = shared_sections
+        description["ArcTubeRule"] = ARC_TUBE_RULE
+        description["SmoothJointRule"] = SMOOTH_JOINT_RULE
+        description["ArcCurvatureBound"] = 0.25
+    end
+    return tools, records, tubes, segments, description, untubed_edges, joints
 end
+
+const ARC_TUBE_RULE =
+    "block (b) design 1.2 (3) (decision 303): the tube of an arc metal side is the revolve of " *
+    "the section (the same rings, sectors and pyramids as a straight tube) about the vertical " *
+    "axis through the tagged arc centre; the axis coordinate is the arc length on the edge " *
+    "circle, the layers follow the composed size field along it (LayerRule); the sidewall " *
+    "rays are the cylinder of radius rho about the centre - the exact metal / trench wall - " *
+    "so the fragment splits the sectors at the wall; an arc is split into ceil(sweep / 90 " *
+    "degrees) parts of equal angular fraction (the same radial planes as the metal loft and " *
+    "the trench wall of polygon_wire), consecutive parts sharing one section; the guard " *
+    "ScopeGuard[ArcTubeRadiusVsCurvature] requires Radius + PyramidHeight <= ArcCurvatureBound x rho"
+const SMOOTH_JOINT_RULE =
+    "block (b) design A3 (1)-(2) (decision 303): a joint whose signature turn is at most " *
+    "1e-4 rad (JointSmooth) is no corner - no ball, no caps, clearance 0 - and the two tubes " *
+    "share ONE cross-section owned by the arc (its radial plane through the joint vertex, " *
+    "its frame): the straight tube's end nodes are the arc tube's nodes, its CAD solid is " *
+    "extruded over-long and cut by that radial plane when the post-snap tilt is positive " *
+    "(Tubes[].Joints: TiltRadians, PlaneCut); a kinked joint is a corner under " *
+    "CornerClearanceRule (the arc tube retracts by the clearance along its arc)"
 
 # The census record of an untubed short side (design A9 family 3): the side, its
 # span, the two corner clearances (0 at a box vertex or face end), the tube interval
@@ -5498,8 +6011,10 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         segment = segments[(k + tubes_per_side - 1) ÷ tubes_per_side]
         start_point = tube_point(tube, 0.0, 0.0, tube.s_start)
         end_point = tube_point(tube, 0.0, 0.0, tube.s_end)
+        # An arc tube's Origin / Normal / Extrusion are its start frame (design 1.2 (5)).
+        frame = tube isa ArcTube ? arc_frame(tube, tube.s_start) : (origin=tube.origin, n=tube.n, e=tube.e)
         push!(tube_rows, Dict{String, Any}(
-            "Origin" => tube.origin, "Normal" => tube.n, "Extrusion" => tube.e,
+            "Origin" => frame.origin, "Normal" => frame.n, "Extrusion" => frame.e,
             "Start" => tube.s_start, "End" => tube.s_end, "Length" => tube.s_end - tube.s_start,
             "StartPoint" => start_point, "EndPoint" => end_point,
             "EndsOnBox" => [on_box(start_point), on_box(end_point)],
@@ -5518,7 +6033,20 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                 point for (point, legacy) in ((segment.start, segment.legacy_box_corners[1]),
                                               (segment.stop, segment.legacy_box_corners[2])) if legacy]
         end
+        if tube isa ArcTube
+            arc = segment.arc
+            tube_rows[end]["Arc"] = Dict{String, Any}(
+                "ArcId" => arc.id, "Centre" => [arc.centre[1], arc.centre[2]], "Radius" => arc.rho,
+                "Sign" => Int(arc.sigma), "Part" => arc.part, "Parts" => arc.parts,
+                "SweepDegrees" => rad2deg(abs(arc.sweep)), "RunSweepDegrees" => rad2deg(abs(arc.run_sweep)),
+                "ThetaStartDegrees" => rad2deg(tube.theta0),
+                "Orientation" => tube.orientation)
+        end
+        isempty(tube.joints) ||
+            (tube_rows[end]["Joints"] = [joint_end_record(joint) for joint in tube.joints])
     end
+    arc_rows = count(haskey(row, "Arc") for row in tube_rows)
+    joint_rows = sum(length(row["Joints"]) for row in tube_rows if haskey(row, "Joints"); init=0)
     face_end_rows = [row["FaceEnds"] for row in tube_rows if haskey(row, "FaceEnds")]
     face_end_count = sum(length, face_end_rows; init=0)
     legacy_box_corners = sum(length(row["LegacyBoxVertexCorner"]) for row in tube_rows
@@ -5601,6 +6129,12 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         # tube design statement and the census validator add to TangentialSize (design A2).
         "FaceEndSpacingMaximum" => maximum([record["EndSpacing"] for records in face_end_rows
                                             for record in records]; init=0.0),
+        # Arc tubes and smooth joints (design 1.2 (3) / A3 (2)), recorded only where they occur.
+        "ArcTubes" => arc_rows == 0 ? nothing : Dict{String, Any}(
+            "Rule" => description["ArcTubeRule"], "SmoothJointRule" => description["SmoothJointRule"],
+            "Count" => arc_rows, "JointEnds" => joint_rows,
+            "SharedSections" => description["SharedSections"],
+            "TotalArcLength" => sum(row["Length"] for row in tube_rows if haskey(row, "Arc"))),
         "LayerRule" => TUBE_LAYER_RULE, "TubeAxisSizeLaw" => TUBE_AXIS_SIZE_LAW,
         "LayerGrowthCap" => description["RingSizes"][2] / description["RingSizes"][1],
         "LayerThickness" => Dict{String, Any}(
@@ -5679,12 +6213,33 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
 end
 
 # Straight segments (start, stop) of a curve list from the CAD endpoints.
-function curve_segments(curves)
+# A curve that is not a line (a circle arc of an arc side, its concentric trench / collar
+# arcs) is sampled into chords whose sagitta stays below `sagitta` (CURVE_SEGMENT_SAGITTA x
+# the arc radius by default), so the exact segment-distance laws see the arc, not a chord.
+const CURVE_SEGMENT_SAGITTA_OVER_RADIUS = 1.0e-3
+
+function curve_segments(curves; sagitta=nothing)
     segments = Tuple{Vector{Float64}, Vector{Float64}}[]
     for curve in curves
         lower, upper = gmsh.model.getParametrizationBounds(1, curve)
-        xyz = gmsh.model.getValue(1, curve, [lower[1], upper[1]])
-        push!(segments, (collect(xyz[1:3]), collect(xyz[4:6])))
+        if gmsh.model.getType(1, curve) in ("Line", "Unknown")
+            xyz = gmsh.model.getValue(1, curve, [lower[1], upper[1]])
+            push!(segments, (collect(xyz[1:3]), collect(xyz[4:6])))
+            continue
+        end
+        curve_length = gmsh.model.occ.getMass(1, curve)
+        # OCC parametrises circles by the angle: the radius follows from the length.
+        angle = max(upper[1] - lower[1], 1.0e-12)
+        radius = curve_length / angle
+        bound = sagitta === nothing ? CURVE_SEGMENT_SAGITTA_OVER_RADIUS * radius : sagitta
+        step = 2.0 * acos(clamp(1.0 - bound / radius, -1.0, 1.0))
+        count = max(1, ceil(Int, angle / max(step, 1.0e-9)))
+        count = min(count, 4096)
+        parameters = collect(range(lower[1], upper[1]; length=count + 1))
+        xyz = reshape(gmsh.model.getValue(1, curve, parameters), 3, :)
+        for i in 1:count
+            push!(segments, (collect(xyz[:, i]), collect(xyz[:, i + 1])))
+        end
     end
     return segments
 end
@@ -5902,6 +6457,9 @@ function generate_spatial_coupon(;
     lower, upper = coupon_bounds(edges, radius, metal_thickness, overetch;
                                  support_box=read_support_box(process_library))
     tolerance = 1.0e-7 * radius
+    # The tagged arcs of the boundary (design A1 (4)): the mask tests see the exact arcs.
+    arc_boundary = any(loop_has_arcs(loop) for loop in boundary_loops)
+    register_mask_arc_segments!(boundary_loops, tolerance)
     if trace_basis !== nothing
         all(abs(trace_basis.lower[d] - lower[d]) <= tolerance &&
             abs(trace_basis.upper[d] - upper[d]) <= tolerance for d in 1:3) ||
@@ -6048,9 +6606,10 @@ function generate_spatial_coupon(;
     domains = Tuple{Int32, Int32}[]
     tube_tools = Tuple{Int32, Int32}[]
     tube_records = TubeRecord[]
-    tubes = Tuple{EdgeTube, TubeSection}[]
+    tubes = Tuple{AbstractTube, TubeSection}[]
     tube_segments = NamedTuple[]
     tube_untubed_edges = Dict{String, Any}[]
+    tube_joints = Tuple{Int, Int, Int, Int}[]
     tube_sections = Dict{String, Any}()
     tube_volumes = Int32[]
     if fabricated
@@ -6125,7 +6684,8 @@ function generate_spatial_coupon(;
         vacuum, _ = occ.cut(field, substrates, -1, true, false)
         objects = vcat(substrates, vacuum)
         if prism_tubes
-            tube_tools, tube_records, tubes, tube_segments, tube_sections, tube_untubed_edges =
+            tube_tools, tube_records, tubes, tube_segments, tube_sections, tube_untubed_edges,
+            tube_joints =
                 build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
@@ -6176,7 +6736,8 @@ function generate_spatial_coupon(;
         end
         sheet_tools = length(tools)
         if prism_tubes
-            tube_tools, tube_records, tubes, tube_segments, tube_sections, tube_untubed_edges =
+            tube_tools, tube_records, tubes, tube_segments, tube_sections, tube_untubed_edges,
+            tube_joints =
                 build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
@@ -6277,10 +6838,12 @@ function generate_spatial_coupon(;
                     3100 + edge.slot
                 push!(interface_surfaces, tag)
             elseif !isempty(adjacent_substrate)
-                owner = nearest_metal_edge(layer_edges, facets, point, radius, tolerance)
+                owner = nearest_metal_edge(layer_edges, facets, point, radius, tolerance;
+                                           surface=(tag, bounds, up))
                 attribute = metal_surface_attribute(5000, owner.slot, owner.conductor)
             elseif !isempty(adjacent_vacuum)
-                owner = nearest_metal_edge(layer_edges, facets, point, radius, tolerance)
+                owner = nearest_metal_edge(layer_edges, facets, point, radius, tolerance;
+                                           surface=(tag, bounds, up))
                 attribute = metal_surface_attribute(6000, owner.slot, owner.conductor)
             end
         else
@@ -6428,18 +6991,26 @@ function generate_spatial_coupon(;
     tube_axis_curves = Int32[]
     tube_cap_points = Int32[]
     tube_volume_groups = Vector{Tuple{Int32, Tuple{Int, Int, Int}, Dict}}[]
+    # The ends of every tube that are smooth joints (design A3 (2)): no cap there, no graded
+    # cap centre; the shared section is installed once (the owner's), adopted by the other.
+    tube_joint_ends = [Set{Int}() for _ in tubes]
     if prism_tubes
-        for (tube, section) in tubes
+        for (adopting, own_end, owning, owner_end) in tube_joints
+            push!(tube_joint_ends[adopting], own_end)
+            push!(tube_joint_ends[owning], owner_end)
+        end
+        for (k, (tube, section)) in enumerate(tubes)
             volumes = Tuple{Int32, Tuple{Int, Int, Int}, Dict}[]
             for (index, record) in enumerate(tube_records)
                 record.tube === tube || continue
                 matched = match_tube_entities(tube_volumes[index], tube, section, record.group,
                                               1.0e-6 * radius)
                 push!(volumes, (tube_volumes[index], record.group, matched))
-                for ((kind, _), tag) in matched
+                for ((kind, id), tag) in matched
                     kind in (:edge_line, :outer_line, :cap_polygon, :cap_ray) && push!(tube_curves, tag)
                     kind == :edge_line && push!(tube_axis_curves, tag)
                     if kind == :edge_point
+                        id[2] in tube_joint_ends[k] && continue
                         point = gmsh.model.getValue(0, tag, Float64[])
                         on_outer_box(vcat(point, point), lower, upper, outer_tolerance) ||
                             push!(tube_cap_points, tag)
@@ -6495,7 +7066,12 @@ function generate_spatial_coupon(;
                 stations, axis_positions, axis_sizes = graded_tube_stations(
                     tube.s_start, tube.s_end, axis_size, lc_tangent, edge_growth_ratio;
                     surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-                EdgeTube(tube, stations)
+                tube isa ArcTube ? ArcTube(tube, stations) : EdgeTube(tube, stations)
+            elseif tube isa ArcTube
+                stations, fraction, block_end, axis_positions, axis_sizes = face_ended_tube_stations(
+                    tube, axis_size, lc_tangent, edge_growth_ratio;
+                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                ArcTube(tube, stations; block_fraction=fraction, block_end=block_end)
             else
                 # A face end replaces the surface layer of its end by the sheared end
                 # block (design A2); the other end keeps the surface rule.
@@ -6509,10 +7085,27 @@ function generate_spatial_coupon(;
             push!(tube_states, TubeMesh(graded, section, tube_volume_groups[k];
                                         pyramid_height=tube_sections["PyramidHeight"]))
         end
+        for (adopting, own_end, owning, owner_end) in tube_joints
+            register_joint!(tube_states[adopting], own_end, tube_states[owning], owner_end)
+        end
     end
+    # Installation order (design A3 (2)): the owner of every shared section before the tube
+    # adopting it - the arc tubes (parts in arc order) before the straight tubes.
+    tube_install_order = vcat([i for (i, state) in enumerate(tube_states) if state.tube isa ArcTube],
+                              [i for (i, state) in enumerate(tube_states) if !(state.tube isa ArcTube)])
+    for (adopting, _, owning, _) in tube_joints
+        findfirst(==(owning), tube_install_order) < findfirst(==(adopting), tube_install_order) ||
+            error("a tube adopts a shared section from a tube installed after it")
+    end
+    tube_meshed_curves = Set{Int32}()
+    tube_meshed_faces = Set{Int32}()
     next_node = Ref(0)
     point_nodes = Dict{Int32, Int}()
-    tube_curve_meshes = [install_tube_curves!(state, next_node, point_nodes) for state in tube_states]
+    tube_curve_meshes = Vector{Dict{String, Any}}(undef, length(tube_states))
+    for i in tube_install_order
+        tube_curve_meshes[i] = install_tube_curves!(tube_states[i], next_node, point_nodes;
+                                                    meshed=tube_meshed_curves)
+    end
     # Interior ridge node parameters and coordinates (curve order) of every
     # longitudinal curve; the mesh is assigned after the edge layer curves are
     # known, because a layer ridge is subdivided inside its span.
@@ -6552,7 +7145,11 @@ function generate_spatial_coupon(;
             derivative = gmsh.model.getDerivative(1, curve, [parameter])
             tangent = derivative[1:3]
             tangent ./= norm(tangent)
-            if any(abs(dot(tangent, edge.tangent)) >= 1.0 - 1.0e-6 for edge in edges)
+            # A circle feature curve of an arc coupon (a metal arc ridge or a concentric
+            # trench / collar arc) is longitudinal like the straight ridge of a straight
+            # side (design 1.2 (5)); its tangent at the midpoint matches no chord row.
+            arc_curve = arc_boundary && gmsh.model.getType(1, curve) != "Line"
+            if arc_curve || any(abs(dot(tangent, edge.tangent)) >= 1.0 - 1.0e-6 for edge in edges)
                 push!(longitudinal_curves, curve)
                 band_curve = prism_tubes && (curve in junction_set ||
                     !any(surface_family(first(record)) in METAL_SURFACE_FAMILIES
@@ -6847,7 +7444,11 @@ function generate_spatial_coupon(;
         # discrete volumes receive the prisms and pyramids.
         tube_timings["Generate2D"] = @elapsed gmsh.model.mesh.generate(2)
         tube_timings["TubeFaces"] = @elapsed begin
-            tube_face_meshes = [install_tube_faces!(state, next_node) for state in tube_states]
+            tube_face_meshes = Vector{Dict{String, Any}}(undef, length(tube_states))
+            for i in tube_install_order
+                tube_face_meshes[i] = install_tube_faces!(tube_states[i], next_node;
+                                                          meshed=tube_meshed_faces)
+            end
         end
         remove_tube_volumes!(tube_states)
         tube_timings["Generate3D"] = @elapsed gmsh.model.mesh.generate(3)
@@ -6856,7 +7457,7 @@ function generate_spatial_coupon(;
         after_duplicates = sum(length(tags) for tags in gmsh.model.mesh.getElements(3)[2]; init=0)
         before_duplicates == after_duplicates ||
             error("Gmsh produced $(before_duplicates - after_duplicates) duplicate volume elements")
-        tube_discrete, tube_volume_census = finalize_tube_volumes!(tube_states)
+        tube_discrete, tube_volume_census = finalize_tube_volumes!(tube_states[tube_install_order])
         gmsh.model.addPhysicalGroup(3, vcat(setdiff(substrate_tags, tube_volumes),
                                             get(tube_discrete, 1, Int32[])), 1, "substrate")
         gmsh.model.addPhysicalGroup(3, vcat(setdiff(vacuum_tags, tube_volumes),

@@ -158,30 +158,94 @@ BOX_FACE_CUT_END_RULE = ("supervisor decision 320: a Physical vertex whose incom
                          "the legacy rectilinear convention keeps it a corner bitwise")
 
 
+def boundary_arc_tags(rows):
+    """Per plan-view boundary row (file order) the arc tag of its OUTGOING side ({ArcId, ArcCx,
+    ArcCy, ArcR, ArcSign} or None) and the joint record of its vertex ((turn or None, smooth)
+    or None), from the ARC columns of block (b) design A1 (4) (generate_spatial_response.
+    ARC_BOUNDARY_COLUMNS); every row None on a boundary without the columns (a legacy coupon)."""
+    if not rows or "ArcId" not in rows[0]:
+        return [None] * len(rows), [None] * len(rows)
+    arcs, joints = [], []
+    for row in rows:
+        if row.get("ArcId") in (None, ""):
+            arcs.append(None)
+        else:
+            arcs.append({"ArcId": int(row["ArcId"]), "ArcCx": float(row["ArcCx"]), "ArcCy": float(row["ArcCy"]),
+                         "ArcR": float(row["ArcR"]), "ArcSign": int(row["ArcSign"])})
+        if row.get("JointSmooth") in (None, ""):
+            joints.append(None)
+        else:
+            turn = row.get("JointTurn")
+            joints.append((None if turn in (None, "") else float(turn), int(row["JointSmooth"]) == 1))
+    return arcs, joints
+
+
+ARC_VERTEX_MATCH_TOLERANCE = 1.0e-6
+ARC_VERTEX_RULE = ("block (b) design 1.2 (1) / A3 (1) (decision 303): a plan-view vertex strictly inside one arc "
+                   "(both adjacent sides chords of the same ArcId: ArcInterior) is never a semantic corner; a vertex "
+                   "ending an arc (ArcJoint) is a semantic corner only when its signature turn exceeds "
+                   "JUNCTION_TANGENT_ANGLE = 1e-4 rad (JointSmooth 0); a smooth joint shares one tube section")
+
+
+def arc_vertex_class(arcs, index):
+    """'Interior' (both adjacent sides of one ArcId), 'Joint' (one adjacent arc side, or two of
+    different arcs) or None (no adjacent arc side) for vertex `index` of a loop whose outgoing
+    side tags are `arcs` (loop order)."""
+    outgoing = arcs[index]
+    incoming = arcs[index - 1]
+    if outgoing is None and incoming is None:
+        return None
+    if outgoing is not None and incoming is not None and outgoing["ArcId"] == incoming["ArcId"]:
+        return "Interior"
+    return "Joint"
+
+
 def boundary_semantic_corners(rows):
     """Semantic corners and box-face cut ends of plan-view boundary rows (Loop / Vertex /
     Class / X / Y / Plane, file order): the Physical vertices that are not box-face cut
     ends (box_face_cut_end), each at its Plane height, in file order, and the excluded
-    cut ends likewise."""
+    cut ends likewise.  Arc vertices (the ARC columns, design A1 (4)): an ArcInterior vertex
+    and a smooth ArcJoint are never corners (ARC_VERTEX_RULE); a kinked ArcJoint is a corner
+    like a Physical vertex (boundary_arc_vertices lists the excluded arc vertices)."""
+    corners, cut_ends, _ = _boundary_vertex_classes(rows)
+    return corners, cut_ends
+
+
+def boundary_arc_vertices(rows):
+    """The arc vertices boundary_semantic_corners excludes: {"Interior": [...], "SmoothJoints":
+    [...]} at their Plane heights (file order); both empty on a boundary without arcs."""
+    return _boundary_vertex_classes(rows)[2]
+
+
+def _boundary_vertex_classes(rows):
     loops = {}
-    for row in rows:
-        loops.setdefault(row["Loop"], []).append(row)
+    for row, arc, joint in zip(rows, *boundary_arc_tags(rows)):
+        loops.setdefault(row["Loop"], []).append((row, arc, joint))
     corners = []
     cut_ends = []
+    arc_vertices = {"Interior": [], "SmoothJoints": []}
     for loop in loops.values():
-        points = [(float(row["X"]), float(row["Y"])) for row in loop]
-        classes = [row["Class"] for row in loop]
+        points = [(float(row["X"]), float(row["Y"])) for row, _, _ in loop]
+        classes = [row["Class"] for row, _, _ in loop]
+        arcs = [arc for _, arc, _ in loop]
         n = len(loop)
-        for index, row in enumerate(loop):
+        for index, (row, _, joint) in enumerate(loop):
+            point = [points[index][0], points[index][1], float(row["Plane"])]
+            vertex_class = arc_vertex_class(arcs, index)
+            if vertex_class == "Interior":
+                arc_vertices["Interior"].append(point)
+                continue
+            if vertex_class == "Joint" and joint is not None and joint[1]:
+                arc_vertices["SmoothJoints"].append(point)
+                continue
             if classes[index] != "Physical":
                 continue
-            point = [points[index][0], points[index][1], float(row["Plane"])]
             if box_face_cut_end(points[index - 1], classes[index - 1], points[index],
                                 classes[index], points[(index + 1) % n]):
                 cut_ends.append(point)
             else:
                 corners.append(point)
-    return corners, cut_ends
+    return corners, cut_ends, arc_vertices
 
 
 def derive_feature_topology(signature_path, boundary_path, semantic_corners, tolerance=1e-9):
@@ -190,14 +254,60 @@ def derive_feature_topology(signature_path, boundary_path, semantic_corners, tol
     required = {"Slot", "Conductor", "Px", "Py", "Pz", "Tx", "Ty", "Tz", "S0", "S1"}
     if not rows or not required <= set(rows[0]):
         raise ValueError("Signature lacks finite oriented segment columns")
+    with Path(boundary_path).open(newline="") as stream:
+        boundary = list(csv.DictReader(stream))
+    if not boundary or "Class" not in boundary[0]:
+        raise ValueError("Boundary contract lacks Physical/Continuation classes")
+    classes = [row["Class"] for row in boundary]
+    if any(value not in ("Physical", "Continuation") for value in classes):
+        raise ValueError("Boundary contract has an unknown vertex class")
+    # Arc chords (block (b) design 1.2 (1) / (5): "FeatureTopology counts arcs"): a signature
+    # row whose ends are the two ends of a tagged chord of the plan-view boundary belongs to
+    # that arc; one arc is ONE physical feature, its further chord rows are CAD subdivisions
+    # of it, and the chord vertices strictly inside the arc are ArcInteriorEndpoints (the
+    # tube is smooth there: neither a cut nor a subdivision end).  A smooth arc joint is a
+    # CAD-subdivision end (one continuous metal edge, two CAD pieces); a kinked joint is a
+    # semantic corner (semantic_corners) and a box-face arc end a cut end, as for lines.
+    arc_tags, _ = boundary_arc_tags(boundary)
+    chord_arc = {}
+    if any(tag is not None for tag in arc_tags):
+        loops = {}
+        for row, tag in zip(boundary, arc_tags):
+            loops.setdefault(row["Loop"], []).append((row, tag))
+        for loop in loops.values():
+            points = [np.asarray([float(row["X"]), float(row["Y"]), float(row["Plane"])]) for row, _ in loop]
+            for index, (_, tag) in enumerate(loop):
+                if tag is not None:
+                    chord_arc[len(chord_arc)] = (tag["ArcId"], points[index], points[(index + 1) % len(loop)])
+    arc_vertices = boundary_arc_vertices(boundary)
+    interior = [np.asarray(point, dtype=float) for point in arc_vertices["Interior"]]
+    smooth = [np.asarray(point, dtype=float) for point in arc_vertices["SmoothJoints"]]
+    # The chord vertices are computed points quantised to the boundary's 1e-9 R grid (the
+    # straight ends lie on the 1e-6 R signature grid and reproduce exactly): an arc vertex is
+    # matched within ARC_VERTEX_MATCH_TOLERANCE (a nanometre; no two plan-view feature points
+    # lie that close).
+    arc_tolerance = max(tolerance, ARC_VERTEX_MATCH_TOLERANCE)
+
+    def chord_of(first, last):
+        for arc_id, a, b in chord_arc.values():
+            if ((np.linalg.norm(a - first) <= arc_tolerance and np.linalg.norm(b - last) <= arc_tolerance) or
+                    (np.linalg.norm(a - last) <= arc_tolerance and np.linalg.norm(b - first) <= arc_tolerance)):
+                return arc_id
+        return None
+
     grouped = {}
     endpoints = []
+    arc_features = set()
     for row in rows:
         key, tangent, offset, lo, hi, first, last = _canonical_segment(row)
-        grouped.setdefault(key, []).append((lo, hi, tangent, offset))
+        arc_id = chord_of(first, last) if chord_arc else None
+        if arc_id is not None:
+            arc_features.add(arc_id)
+        else:
+            grouped.setdefault(key, []).append((lo, hi, tangent, offset))
         endpoints.extend((first, last))
-    features = 0
-    subdivisions = []
+    features = len(arc_features)
+    subdivisions = [point.tolist() for point in smooth]
     for segments in grouped.values():
         segments.sort(key=lambda item: (item[0], item[1]))
         components = []
@@ -211,27 +321,33 @@ def derive_feature_topology(signature_path, boundary_path, semantic_corners, tol
         features += len(components)
     corner_array = np.asarray(semantic_corners, dtype=float).reshape(-1, 3)
     cuts = []
+    arc_interior = []
     for point in endpoints:
         if len(corner_array) and np.linalg.norm(corner_array - point, axis=1).min() <= tolerance:
             continue
         if any(np.linalg.norm(np.asarray(other) - point) <= tolerance for other in subdivisions):
             continue
+        if any(np.linalg.norm(other - point) <= arc_tolerance for other in smooth):
+            continue
+        if any(np.linalg.norm(other - point) <= arc_tolerance for other in interior):
+            if not any(np.linalg.norm(np.asarray(other) - point) <= tolerance for other in arc_interior):
+                arc_interior.append(point.tolist())
+            continue
         if not any(np.linalg.norm(np.asarray(other) - point) <= tolerance for other in cuts):
             cuts.append(point.tolist())
-    with Path(boundary_path).open(newline="") as stream:
-        boundary = list(csv.DictReader(stream))
-    if not boundary or "Class" not in boundary[0]:
-        raise ValueError("Boundary contract lacks Physical/Continuation classes")
-    classes = [row["Class"] for row in boundary]
-    if any(value not in ("Physical", "Continuation") for value in classes):
-        raise ValueError("Boundary contract has an unknown vertex class")
     canonical = lambda points: sorted([[float(value) for value in point] for point in points])
-    return {"PhysicalFeatureCount": features,
-            "CADSubdivisionCount": len(rows) - features,
-            "BoundaryPhysicalVertexCount": classes.count("Physical"),
-            "BoundaryContinuationVertexCount": classes.count("Continuation"),
-            "CADSubdivisionEndpoints": canonical(subdivisions),
-            "CutEndpoints": canonical(cuts)}
+    topology = {"PhysicalFeatureCount": features,
+                "CADSubdivisionCount": len(rows) - features,
+                "BoundaryPhysicalVertexCount": classes.count("Physical"),
+                "BoundaryContinuationVertexCount": classes.count("Continuation"),
+                "CADSubdivisionEndpoints": canonical(subdivisions),
+                "CutEndpoints": canonical(cuts)}
+    if arc_features:
+        # Recorded only where arcs exist, so every straight contract is unchanged.
+        topology["ArcFeatureCount"] = len(arc_features)
+        topology["ArcInteriorEndpoints"] = canonical(arc_interior)
+        topology["ArcVertexRule"] = ARC_VERTEX_RULE
+    return topology
 
 
 def validate_feature_topology(contract, signature_path, boundary_path):

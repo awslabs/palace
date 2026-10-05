@@ -64,8 +64,9 @@ import hashlib
 import json
 from pathlib import Path
 
-from semantic_mesh_contract import (BOX_FACE_CUT_END_RULE, boundary_semantic_corners,
-                                    derive_feature_topology, validate_semantic_contract)
+from semantic_mesh_contract import (ARC_VERTEX_RULE, BOX_FACE_CUT_END_RULE, boundary_arc_vertices,
+                                    boundary_semantic_corners, derive_feature_topology,
+                                    validate_semantic_contract)
 
 SIGNATURE = "mesh-signature.csv"
 BOUNDARY = "plan-view-boundary.csv"
@@ -158,6 +159,14 @@ def semantic_corners(boundary):
     return corners, cut_ends
 
 
+def arc_vertices(boundary):
+    """The arc vertices excluded from the corners (semantic_mesh_contract.boundary_arc_vertices):
+    {"Interior": [...], "SmoothJoints": [...]}; both empty without arc tags."""
+    with Path(boundary).open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    return boundary_arc_vertices(rows)
+
+
 def label_families(pairs, kind="fabricated"):
     """Attribute -> (role, adjacent materials, optional) of every derivable label of a
     coupon kind (fabricated: un-etched / etched planes, MS, MA; thin: the plane and the
@@ -233,6 +242,10 @@ def derive(source, build_census=None, *, signature=None, boundary=None, process_
     # Recorded only where the rule acts, so every rectilinear contract is unchanged.
     if box_face_cut_ends:
         derivation["BoxFaceCutEnds"] = {"Rule": BOX_FACE_CUT_END_RULE, "Points": box_face_cut_ends}
+    excluded_arc_vertices = arc_vertices(boundary)
+    if any(excluded_arc_vertices.values()):
+        # Block (b) design 1.2 (1) / A3 (1): the arc vertices that are not corners.
+        derivation["ArcVertices"] = {"Rule": ARC_VERTEX_RULE, **excluded_arc_vertices}
     if build_census is not None:
         derivation["BuildCensusSHA256"] = sha256(build_census)
         derivation["BuildCensusInterfaceLabels"] = labels
