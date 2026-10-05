@@ -17,10 +17,10 @@ index b67c9d1..fae7d7e 100644
    list(APPEND ORDERING_DEFS REALTYPEWIDTH=32 IDXTYPEWIDTH=${IDXTYPEWIDTH} metis)
  
 diff --git a/cmake/lapack.cmake b/cmake/lapack.cmake
-index 4201b0e..9ab216a 100644
+index 4201b0e..c4c5dc9 100644
 --- a/cmake/lapack.cmake
 +++ b/cmake/lapack.cmake
-@@ -1,11 +1,4 @@
+@@ -1,11 +1,3 @@
 -# Handle options for finding LAPACK
 -
 -if(NOT DEFINED LAPACK_VENDOR AND MUMPS_USE_MKL)
@@ -35,7 +35,6 @@ index 4201b0e..9ab216a 100644
 +# Use the LAPACK libraries provided by the parent build
 +add_library(LAPACK::LAPACK INTERFACE IMPORTED)
 +set_property(TARGET LAPACK::LAPACK PROPERTY INTERFACE_LINK_LIBRARIES "${LAPACK_LIBRARIES}")
-+set_property(TARGET LAPACK::LAPACK PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${LAPACK_INCLUDE_DIRS}")
 diff --git a/cmake/scalapack.cmake b/cmake/scalapack.cmake
 index 47518f6..7ccc573 100644
 --- a/cmake/scalapack.cmake
