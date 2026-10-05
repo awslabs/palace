@@ -9,7 +9,13 @@
 #   ssh soca-green-job "cd $ROOT && qsub -v FREEZE=source-freeze-<label>,BUILD=linux-build-<label> \
 #       source-freeze-<label>/examples/surface_response_identification/cluster/job-linux-build.pbs"
 #
-# Outputs under $ROOT: $BUILD/ (configure.log, build.log, provenance-before/after.json, binary.json),
+# A build whose freeze carries a new vendored MFEM patch (extern/patch/mfem/) must rebuild MFEM
+# with it: pass MFEM_PATCHES (space-separated frozen-tree paths) and optionally MFEM_TEST (a
+# Catch2 filter for MFEM's punit_tests, run with MFEM_TEST_RANKS ranks, default 4):
+#   qsub -v FREEZE=...,BUILD=...,MFEM_PATCHES=extern/patch/mfem/mfem_pr5494.diff,MFEM_TEST=[NCMesh] ...
+#
+# Outputs under $ROOT: $BUILD/ (configure.log, build.log, provenance-before/after.json, binary.json;
+# with MFEM_PATCHES also mfem-src/, mfem-build/, mfem-*.log, lib/libmfem.a, include/mfem*),
 # palace-<HEAD7>-<sha12>.bin, $BUILD.pbs.log, $BUILD-status.json.
 #PBS -N palace-cmake-build
 #PBS -q normal-g
@@ -35,8 +41,11 @@ module list
 date -u; hostname; nproc; grep MemTotal /proc/meminfo
 sha256sum "$FREEZE.tar.gz"
 if [ ! -d "$FREEZE" ]; then tar xzf "$FREEZE.tar.gz"; fi
+MFEM_ARGS=()
+for patch in ${MFEM_PATCHES:-}; do MFEM_ARGS+=(--mfem-patch "$patch"); done
+if [ -n "${MFEM_TEST:-}" ]; then MFEM_ARGS+=(--mfem-test "$MFEM_TEST" --mfem-test-ranks "${MFEM_TEST_RANKS:-4}"); fi
 python3 "$FREEZE/examples/surface_response_identification/cluster/build_from_cmake_tree.py" \
-    --source "$ROOT/$FREEZE" --build "$ROOT/$BUILD" --jobs "${JOBS:-96}"
+    --source "$ROOT/$FREEZE" --build "$ROOT/$BUILD" --jobs "${JOBS:-96}" ${MFEM_ARGS[@]+"${MFEM_ARGS[@]}"}
 BIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Path"])' "$ROOT/$BUILD/binary.json")
 "$BIN" --help | head -5 || true
 echo "=== done $(date -u +%FT%TZ)"

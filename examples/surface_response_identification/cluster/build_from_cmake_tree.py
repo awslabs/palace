@@ -16,6 +16,15 @@ compilers, cmake and mpirun; the configure command; the compiler / MPI versions;
 binary's SHA-256 and `ldd`.
 
     python3 build_from_cmake_tree.py --source SRC --build BUILD --deps PREFIX [--jobs 96]
+        [--mfem-patch extern/patch/mfem/<diff> ...] [--mfem-test TAG --mfem-test-ranks 4]
+
+`--mfem-patch` rebuilds MFEM with the frozen tree's vendored patch(es) on top of the dependency
+prefix's already patched MFEM checkout (`PREFIX/extern/mfem`, copied to `BUILD/mfem-src`, the
+patches applied with `git apply`), configured with the prefix's recorded MFEM options
+(`PREFIX/extern/mfem-cmake/tmp/mfem-cfgcmd.txt`) re-pointed to install into BUILD; the palace
+configure then uses `MFEM_DIR=BUILD`. `--mfem-test` builds MFEM's `punit_tests` and runs the
+given Catch2 filter under `mpirun -n RANKS` (the build fails if the tests fail); the output is
+`BUILD/mfem-punit-tests.log` and the summary is recorded in `binary.json`.
 
 Runs inside a PBS job (job-linux-build.pbs): the login node has too few cores for the build.
 """
@@ -45,14 +54,71 @@ def save(directory, name, data):
         stream.write("\n")
 
 
-def recorded_configure_arguments(deps):
-    """The superbuild's recorded ExternalProject configure command for palace (a cmake list)."""
-    text = (deps / "palace-cmake/tmp/palace-cfgcmd.txt").read_text()
+def recorded_configure_arguments(deps, step="palace-cmake/tmp/palace-cfgcmd.txt"):
+    """The superbuild's recorded ExternalProject configure command for a step (a cmake list)."""
+    text = (deps / step).read_text()
     match = re.search(r"cmd='(.*)'", text, re.S)
     if not match:
-        raise SystemExit(f"no configure command in {deps}/palace-cmake/tmp/palace-cfgcmd.txt")
+        raise SystemExit(f"no configure command in {deps}/{step}")
     arguments = match.group(1).replace("$<SEMICOLON>", "\x00").split(";")
     return [a.replace("\x00", ";") for a in arguments]
+
+
+def run_logged(command, log_path, cwd=None):
+    print(shlex.join(command), flush=True)
+    with log_path.open("w") as log:
+        subprocess.run(command, cwd=cwd, check=True, stdout=log, stderr=subprocess.STDOUT)
+
+
+def rebuild_mfem(source, build, deps, patches, cmake, jobs, timing):
+    """Copy the prefix's MFEM checkout, apply the frozen vendored patches, build + install into BUILD."""
+    mfem_source = build / "mfem-src"
+    mfem_build = build / "mfem-build"
+    started = time.time()
+    shutil.copytree(deps / "extern/mfem", mfem_source, symlinks=True)
+    applied = []
+    for relative in patches:
+        patch = source / relative
+        subprocess.run(["git", "apply", "--check", str(patch)], cwd=mfem_source, check=True)
+        subprocess.run(["git", "apply", str(patch)], cwd=mfem_source, check=True)
+        applied.append({"Patch": relative, "SHA256": sha256(patch)})
+    diffstat = subprocess.check_output(["git", "diff", "--stat"], cwd=mfem_source, text=True)
+    recorded = recorded_configure_arguments(deps, "extern/mfem-cmake/tmp/mfem-cfgcmd.txt")
+    configure = [cmake, str(mfem_source)]
+    for argument in recorded[2:]:
+        if argument.startswith("-DCMAKE_INSTALL_PREFIX="):
+            argument = f"-DCMAKE_INSTALL_PREFIX={build}"
+        configure.append(argument)
+    mfem_build.mkdir()
+    run_logged(configure, build / "mfem-configure.log", cwd=mfem_build)
+    run_logged([cmake, "--build", str(mfem_build), "--target", "mfem", "-j", str(jobs)], build / "mfem-build.log")
+    run_logged([cmake, "--install", str(mfem_build)], build / "mfem-install.log")
+    timing["MFEMBuildSeconds"] = time.time() - started
+    return {"Source": str(mfem_source), "CopiedFrom": str(deps / "extern/mfem"), "Patches": applied,
+            "DiffStat": diffstat, "ConfigureCommand": configure, "Library": str(build / "lib/libmfem.a"),
+            "LibrarySHA256": sha256(build / "lib/libmfem.a")}
+
+
+def run_mfem_unit_tests(build, mpirun, ranks, test_filter, cmake, jobs, timing):
+    """Build MFEM's punit_tests and run one Catch2 filter from its data-relative working directory."""
+    mfem_build = build / "mfem-build"
+    started = time.time()
+    # punit_tests reads meshes from ../../data of its working directory (copy_data fills BUILD/mfem-build/data).
+    run_logged([cmake, "--build", str(mfem_build), "--target", "punit_tests", "copy_data", "-j", str(jobs)],
+               build / "mfem-build-punit-tests.log")
+    command = [str(mpirun), "-n", str(ranks), str(mfem_build / "tests/unit/punit_tests"), test_filter]
+    print(shlex.join(command), flush=True)
+    log_path = build / "mfem-punit-tests.log"
+    with log_path.open("w") as log:
+        completed = subprocess.run(command, cwd=mfem_build / "tests/unit", stdout=log, stderr=subprocess.STDOUT)
+    timing["MFEMUnitTestSeconds"] = time.time() - started
+    summary = [line for line in log_path.read_text().splitlines()
+               if line.startswith(("test cases:", "assertions:", "All tests passed"))]
+    result = {"Command": command, "Ranks": ranks, "Filter": test_filter, "ReturnCode": completed.returncode,
+              "Summary": summary, "Log": str(log_path)}
+    if completed.returncode != 0:
+        raise SystemExit(f"MFEM unit tests failed (rc {completed.returncode}): {summary} see {log_path}")
+    return result
 
 
 def dependency_inputs(deps, tools):
@@ -74,7 +140,13 @@ def main():
     parser.add_argument("--mpirun", type=Path, default=Path("/opt/openmpi/bin/mpirun"))
     parser.add_argument("--jobs", type=int, default=96)
     parser.add_argument("--binary-root", type=Path, help="where palace-<HEAD7>-<sha12>.bin is placed (default: parent of --build)")
+    parser.add_argument("--mfem-patch", action="append", default=[], metavar="RELATIVE_DIFF",
+                        help="frozen-tree path of a vendored MFEM patch to apply on top of the prefix's MFEM; rebuilds MFEM into BUILD")
+    parser.add_argument("--mfem-test", metavar="CATCH2_FILTER", help="run MFEM punit_tests with this filter (requires --mfem-patch)")
+    parser.add_argument("--mfem-test-ranks", type=int, default=4)
     args = parser.parse_args()
+    if args.mfem_test and not args.mfem_patch:
+        parser.error("--mfem-test requires --mfem-patch (the tests are built from the rebuilt MFEM)")
     source = args.source.resolve()
     build = args.build.resolve()
     deps = args.deps.resolve()
@@ -100,6 +172,8 @@ def main():
             argument = f"-DCMAKE_CXX_FLAGS={git_flags}"
         elif argument.startswith("-DPALACE_BUILD_EXTERNAL_DEPS="):
             argument = "-DPALACE_BUILD_EXTERNAL_DEPS=OFF"
+        elif argument.startswith("-DMFEM_DIR=") and args.mfem_patch:
+            argument = f"-DMFEM_DIR={build}"
         configure.append(argument)
     build.mkdir(parents=True)
     palace_build = build / "palace-build"
@@ -118,10 +192,17 @@ def main():
         "Environment": {k: os.environ.get(k) for k in ["PATH", "LD_LIBRARY_PATH", "LOADEDMODULES", "PBS_JOBID", "HOSTNAME"]},
         "Hostname": subprocess.check_output(["hostname"], text=True).strip(),
         "ConfigureCommand": configure, "RecordedConfigureCommand": recorded, "Jobs": args.jobs,
+        "MFEMPatches": args.mfem_patch,
     })
     status = "incomplete"
     timing = {}
+    mfem = None
     try:
+        if args.mfem_patch:
+            mfem = rebuild_mfem(source, build, deps, args.mfem_patch, cmake, args.jobs, timing)
+            if args.mfem_test:
+                mfem["UnitTests"] = run_mfem_unit_tests(build, args.mpirun, args.mfem_test_ranks, args.mfem_test,
+                                                        cmake, args.jobs, timing)
         started = time.time()
         print(shlex.join(configure), flush=True)
         with (build / "configure.log").open("w") as log:
@@ -147,7 +228,7 @@ def main():
         save(build, "binary.json", {
             "Path": str(binary), "SHA256": digest, "BuiltFrom": str(executable), "HEAD": manifest["HEAD"],
             "Describe": describe, "Ldd": ldd, "DynamicDependenciesSHA256": dynamic,
-            "TranslationUnits": len(compile_commands), "Timing": timing,
+            "TranslationUnits": len(compile_commands), "Timing": timing, "MFEM": mfem,
         })
         status = "complete"
     finally:
