@@ -133,7 +133,6 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     with when("+mumps"):
         depends_on("fortran", type="build")
         depends_on("mumps+metis+parmetis")
-        depends_on("mumps@5.9.1:", when="@0.19:")
         depends_on("mumps+shared", when="+shared")
         depends_on("mumps~shared", when="~shared")
         depends_on("mumps+openmp", when="+openmp")
