@@ -204,16 +204,16 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     REQUIRE(flags[1]);
   };
 
-  SECTION("Per-attribute scaling, all uncracked")
+  SECTION("Per-attribute scaling, no split impedance")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
     imp.Ls = Ls;
     imp.Cs = Cs;
     imp.attributes = {1, 2};
-    std::unordered_set<int> cracked = {};
+    std::unordered_set<int> split = {};
 
-    SurfaceImpedanceOperator op({imp}, cracked, units, mat_op, palace_mesh);
+    SurfaceImpedanceOperator op({imp}, split, units, mat_op, palace_mesh);
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddStiffnessBdrCoefficients(coeff, fb);
@@ -231,16 +231,16 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("Per-attribute scaling, all cracked")
+  SECTION("Per-attribute scaling, all split (legacy cracking)")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
     imp.Ls = Ls;
     imp.Cs = Cs;
     imp.attributes = {1, 2};
-    std::unordered_set<int> cracked = {1, 2};
+    std::unordered_set<int> split = {1, 2};
 
-    SurfaceImpedanceOperator op({imp}, cracked, units, mat_op, palace_mesh);
+    SurfaceImpedanceOperator op({imp}, split, units, mat_op, palace_mesh);
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddStiffnessBdrCoefficients(coeff, fb);
@@ -258,16 +258,16 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("Per-attribute scaling, mixed cracked/uncracked - stiffness")
+  SECTION("Per-attribute scaling, mixed split - stiffness")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
     imp.Ls = Ls;
     imp.Cs = Cs;
     imp.attributes = {1, 2};
-    std::unordered_set<int> cracked = {2};
+    std::unordered_set<int> split = {2};
 
-    SurfaceImpedanceOperator op({imp}, cracked, units, mat_op, palace_mesh);
+    SurfaceImpedanceOperator op({imp}, split, units, mat_op, palace_mesh);
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddStiffnessBdrCoefficients(coeff, fb);
@@ -285,16 +285,16 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("Per-attribute scaling, mixed cracked/uncracked - damping")
+  SECTION("Per-attribute scaling, mixed split - damping")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
     imp.Ls = Ls;
     imp.Cs = Cs;
     imp.attributes = {1, 2};
-    std::unordered_set<int> cracked = {2};
+    std::unordered_set<int> split = {2};
 
-    SurfaceImpedanceOperator op({imp}, cracked, units, mat_op, palace_mesh);
+    SurfaceImpedanceOperator op({imp}, split, units, mat_op, palace_mesh);
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddDampingBdrCoefficients(coeff, fb);
@@ -312,16 +312,16 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     require_global_coverage(v1.has_value(), v2.has_value());
   }
 
-  SECTION("Per-attribute scaling, mixed cracked/uncracked - mass")
+  SECTION("Per-attribute scaling, mixed split - mass")
   {
     config::ImpedanceData imp;
     imp.Rs = Rs;
     imp.Ls = Ls;
     imp.Cs = Cs;
     imp.attributes = {1, 2};
-    std::unordered_set<int> cracked = {2};
+    std::unordered_set<int> split = {2};
 
-    SurfaceImpedanceOperator op({imp}, cracked, units, mat_op, palace_mesh);
+    SurfaceImpedanceOperator op({imp}, split, units, mat_op, palace_mesh);
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddMassBdrCoefficients(coeff, fb);
@@ -351,9 +351,9 @@ TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parall
     imp.Ls = Ls_c;
     imp.Cs = Cs_c;
     imp.attributes = {1, 2};
-    std::unordered_set<int> cracked = {};
+    std::unordered_set<int> split = {};
 
-    SurfaceImpedanceOperator op({imp}, cracked, units, mat_op, palace_mesh);
+    SurfaceImpedanceOperator op({imp}, split, units, mat_op, palace_mesh);
 
     MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
     op.AddStiffnessBdrCoefficients(coeff, fb);
