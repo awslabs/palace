@@ -155,7 +155,7 @@ private:
   };
 
   // Energy G of magnetostatic sources (see MagnetostaticEnergyMatrix). If work is non-null,
-  // it receives the source works b_k^T u_k; fun receives its values.
+  // it receives the source works b_k^T u_k; fun->values receives l_k^T u_j.
   mfem::DenseMatrix SourceEnergyMatrix(const std::vector<int> &ids,
                                        const std::vector<Source> &src,
                                        std::vector<Vector> *fields, int n_fields,

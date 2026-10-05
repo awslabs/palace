@@ -3416,6 +3416,7 @@ mfem::DenseMatrix SubstructuringSolver::MagnetostaticEnergyMatrix(
   if (linked_flux)
   {
     linked_flux->SetSize(nc, nf);
+    *linked_flux = 0.0;
     for (int c = 0; c < static_cast<int>(fun.l.size()); c++)
     {
       for (int f = 0; f < nf; f++)
