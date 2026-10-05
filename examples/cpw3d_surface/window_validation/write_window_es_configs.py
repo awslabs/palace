@@ -29,10 +29,14 @@ order of the set fix the Ground / Terminal boundaries and their order on both si
               a `bump_<label>` naming no terminal is refused), SA = the gap sheets, one MS + one MA target per
               metal plane with the plane's facing normal as EdgeFrameNormal (the flip-chip L2
               faces down; lane W's window preflight convention). A plane without a gap sheet
-              (one metal sheet over the whole window, S5 / S6's L2) has no SA on that plane but
-              keeps the MS / MA targets of its metal sheets (decision 329: the reference's MS / MA
-              integrate every metal shell). The library path is a parameter (--library; the
-              geometry-only seed by default for the preflight).
+              (one metal sheet over the whole window, S5 / S6's L2) has no SA on that plane; its
+              metal sheets keep MS / MA as PLAIN interfaces (no AutomaticEdges, as the
+              fabricated writer's) outside TargetInterfaces: an edgeless sheet owns no metal
+              perimeter, which a response target requires, and has nothing to correct (raw =
+              ft = sc; decisions 329 / 341: the reference's MS / MA integrate every metal shell,
+              so a window MS / MA total = the corrected targets + the raw non-target sheets).
+              The library path is a parameter (--library; the geometry-only seed by default for
+              the preflight).
 
     python3 write_window_es_configs.py fabricated --polygon-set S1p.json --manifest S1p_r10nm_t5um.json \\
         --mesh /path/on/the/cluster/S1p_r10nm_t5um.msh2 --postpro /path/postpro --output ref-r10-p4.json [--order 4]
@@ -230,17 +234,26 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
     if not gaps:
         raise ValueError("no gap sheet on any plane (no metal edges)")
     # SA = the gap sheets of the planes that have one; a plane that is one metal sheet over the
-    # whole window (S5 / S6's L2) contributes no SA. Its metal sheets still carry MS / MA below:
-    # the reference integrates every metal shell (decision 329; the earlier rule dropped all
-    # three interfaces of a gapless plane).
+    # whole window (S5 / S6's L2) contributes no SA. Its metal sheets still carry MS / MA, as
+    # PLAIN interfaces outside TargetInterfaces: a response target needs AutomaticEdges and at
+    # least one physical metal-perimeter segment (GetInterfaceMetalEdgeSegmentIndices refuses an
+    # edgeless sheet), and an edgeless sheet has nothing to correct, its raw energy is the
+    # quantity (decisions 329 / 341; the earlier rule dropped all three interfaces).
     dielectrics = [dielectric_entry(1, gaps, "SA", automatic_edges=radius)]
+    target_interfaces = [1]
     for name in plane_names:
         sheets = [table[key] for key in [f"ground_{name}"] + [f"{label}_{name}" for label in terminals] if key in table]
         if not sheets:
             raise ValueError(f"plane {name!r} has no metal sheet in the thin mesh")
+        edged = f"gap_{name}" in table
         normal = [0.0, 0.0, 1.0] if facing[name] == "up" else [0.0, 0.0, -1.0]
         for kind in ("MS", "MA"):
-            dielectrics.append(dielectric_entry(len(dielectrics) + 1, sheets, kind, automatic_edges=radius, frame_normal=normal))
+            index = len(dielectrics) + 1
+            if edged:
+                dielectrics.append(dielectric_entry(index, sheets, kind, automatic_edges=radius, frame_normal=normal))
+                target_interfaces.append(index)
+            else:
+                dielectrics.append(dielectric_entry(index, sheets, kind))
     refinement = {"MaxIts": settings["MaxIts"], "UniformLevels": 0, "SerialUniformLevels": 0}
     if settings["MaxIts"] > 0:
         refinement.update({
@@ -268,7 +281,7 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
                 "Save": 0 if path == "preflight" else 1,
                 "ResponseCorrection": {
                     "Library": library,
-                    "TargetInterfaces": [entry["Index"] for entry in dielectrics],
+                    "TargetInterfaces": target_interfaces,
                     "UnmatchedPolicy": "Warn",
                     "CorrectionMode": "Both",
                     "TranslationalDomainCorrection": "FixedTrace",
