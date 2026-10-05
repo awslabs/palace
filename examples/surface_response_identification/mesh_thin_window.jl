@@ -13,8 +13,14 @@
 # WINDOW.json: the polygon set (Box, Planes with Polygons / Conductor labels, Bumps, Vacuum, Terminals).
 # CHIP.json: the chip description of window_polygons.py (per plane `Attributes[1]` = the ground metal
 # sheet attribute, `Gap[1]` = the substrate-air attribute; `Bump[1]`, `Exterior[1]`; `Volumes` =
-# {"Substrate": [per plane], "Vacuum": n}; `TerminalAttributeBase` b: the terminal of plane k gets b + k).
-# Output: OUTPUT.msh2 (MSH 2.2 binary, order 1) and OUTPUT.json (attribute table, counts, sizes).
+# {"Substrate": [per plane], "Vacuum": n}; `TerminalAttributeBase` b: terminal i (1-based in `Terminals`)
+# gets b + 10 (i - 1) + k on plane k and b + 10 (i - 1) + (number of planes + 1) for its bump shells).
+# Output: OUTPUT.msh2 (MSH 2.2 binary, order 1) and OUTPUT.json (attribute table, counts, sizes); the
+# attribute table lists exactly the physical groups the mesh carries (a plane that is one metal sheet
+# over the whole window has no `gap_<plane>`).
+# Bump shells are grouped per conductor (decision 321): the ground bumps keep the chip's bump attribute
+# as `bump_surface`; the bumps of terminal `<label>` form `bump_<label>` (a bump whose conductor is
+# neither `ground` nor a terminal is refused), so a terminal's bump disc is never grounded.
 #
 # Geometry: plane k facing up has its substrate box in [SurfaceZ - T, SurfaceZ], facing down in
 # [SurfaceZ, SurfaceZ + T]; the vacuum fills the box between the substrates (two planes) or above the
@@ -176,6 +182,7 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
         end
     end
     bump_faces = Int32[]
+    bump_conductor = Dict{Int32, String}()  # bump face -> the conductor of its bump
     if !isempty(bumps)
         z_low, z_high = minimum(z_levels), maximum(z_levels)
         footprints = [
@@ -186,11 +193,20 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
                 maximum(Float64(p[2]) for p in b["Footprint"])
             ) for b in bumps
         ]
+        bump_labels = [String(get(b, "Conductor", "ground")) for b in bumps]
+        for label in bump_labels
+            label == "ground" ||
+                label in terminals ||
+                error(
+                    "bump conductor $(label) is neither ground nor one of Terminals $(terminals)"
+                )
+        end
         for (dim, tag) in gmsh.model.getEntities(2)
             bounds = gmsh.model.getBoundingBox(dim, tag)
-            for (bx0, bx1, by0, by1) in footprints
+            for (i, (bx0, bx1, by0, by1)) in enumerate(footprints)
                 if bbox_within(bounds, bx0, bx1, by0, by1, z_low, z_high, tol)
                     push!(bump_faces, tag)
+                    bump_conductor[tag] = bump_labels[i]
                     break
                 end
             end
@@ -236,13 +252,15 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
     metal_curves = Int32[]
     for (k, plane) in enumerate(planes)
         name = plane["Name"]
-        isempty(gap[k]) || gmsh.model.addPhysicalGroup(
-            2,
-            gap[k],
-            Int(chip_planes[k]["Gap"][1]),
-            "gap_$(name)"
-        )
-        attributes["gap_$(name)"] = Int(chip_planes[k]["Gap"][1])
+        if !isempty(gap[k])
+            gmsh.model.addPhysicalGroup(
+                2,
+                gap[k],
+                Int(chip_planes[k]["Gap"][1]),
+                "gap_$(name)"
+            )
+            attributes["gap_$(name)"] = Int(chip_planes[k]["Gap"][1])
+        end
         for ((kk, label), tags) in sort!(collect(metal); by=first)
             kk == k || continue
             isempty(tags) && continue
@@ -261,8 +279,25 @@ function mesh_thin_window(window_path, chip_path, output, lc_fine, lc_far)
         end
     end
     if !isempty(bump_faces)
-        gmsh.model.addPhysicalGroup(2, bump_faces, Int(chip["Bump"][1]), "bump_surface")
-        attributes["bump_surface"] = Int(chip["Bump"][1])
+        # Ground bump shells keep the chip's bump attribute (the legacy single group); a terminal's
+        # bump shells get their own group so the config writer puts them into that Terminal.
+        ground_bump_faces = [t for t in bump_faces if bump_conductor[t] == "ground"]
+        if !isempty(ground_bump_faces)
+            gmsh.model.addPhysicalGroup(
+                2,
+                ground_bump_faces,
+                Int(chip["Bump"][1]),
+                "bump_surface"
+            )
+            attributes["bump_surface"] = Int(chip["Bump"][1])
+        end
+        for (i, label) in enumerate(terminals)
+            faces = [t for t in bump_faces if bump_conductor[t] == label]
+            isempty(faces) && continue
+            attribute = base + 10 * (i - 1) + length(planes) + 1
+            gmsh.model.addPhysicalGroup(2, faces, attribute, "bump_$(label)")
+            attributes["bump_$(label)"] = attribute
+        end
         for (dim, curve) in
             gmsh.model.getBoundary([(2, t) for t in bump_faces], false, false, false)
             dim == 1 && push!(metal_curves, abs(curve))
