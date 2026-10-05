@@ -1522,11 +1522,14 @@ energies per class (SA, MS, MA raw — "MA sharp" when the run carries radial sh
 domain: `p_surf E_elec - E_out` at the largest R; domain-E.csv, surface-Q.csv,
 surface-Q-edge.csv) and the p4 basis runs' matrices (domain-response-matrix.csv,
 surface-response-matrix.csv, the whole-interface group), and judges, per class and trace, the
-closure `|E_thin,p4 + t^T (Q_fab - Q_thin) t - E_fab,p5| / E_fab,p5 <= 0.02`, the p-stability
-`|dE_p5 - dE_p4| / E_fab,p5 <= 0.02` and the matrix identity `|E_fab,p4 - t^T Q_fab t| /
-E_fab,p4 <= 1e-6`; the conductor-consistency gate of decision 277 is the rebuild acceptance
-(the model's records on the registration device all probed with MaxRatio <= 1e-6, Count 0; a
-model without a record is untestable and never qualified); the reference box integral of a
+closure `|E_thin,p4 + t^T (Q_fab - Q_thin) t - E_fab,p5| / E_fab,p5 <= 0.02`, the DOMAIN
+twin-consistency `|dE_dom,p5 - dE_dom,p4| / E_fab,dom,p5 <= 0.02` (decision 299, below) and the
+matrix identity `|E_fab,p4 - t^T Q_fab t| / E_fab,p4 <= 1e-6`; the thin twin's SURFACE p-steps
+are recorded as information; the conductor-consistency gate of decision 277 is the rebuild
+acceptance, resolution-aware (decision 299 (2), below: the model's records on every supplied
+registration-device solve all probed with MaxRatio <= 1e-4, Count 0, the solves at the
+production orders p4 and p5 on the c0 mesh; a model without a record is untestable and never
+qualified); the reference box integral of a
 sub-tagged window reference ((b), D2a) is read as `ft_model / REF_A` with REF_A = E_in +
 E_straddle / 2, the bracket [ft / (E_in + E_straddle), ft / E_in] and the decision-218 marker
 (0.05 validated class / 0.10 new). Statuses stamped into process-library.json
@@ -1538,6 +1541,38 @@ qualification): the synthetic device-plan coupon of `test_cluster_signature_geom
 p1 / p2 — the identity holds on every trace and class (<= 3e-8; the readers' conventions),
 closure / p-stability fail by 1-40 % at these orders (expected: a 10 % p1 -> p2 energy change)
 and the status is Failed; with the transmon's gate record the model is untestable -> Failed.
+
+**Which coupon matrices act in the device correction (decision 299, 2026-10-04; from
+`SurfaceResponseOperator::GetElectrostaticResponse` and `ElectrostaticSolver` ApplyResponse).**
+The fixed-trace (ft) interface energy of a target interface is `E_out(R) + sum_patches w_p
+t_p^T Q_fab,surf t_p`: the device's own raw thin energy within R of its edges is DROPPED and
+replaced by the FABRICATED coupon's within-R energy under the device trace — the thin twin's
+surface matrix does not enter. The thin twin acts through its DOMAIN matrix alone: the
+fixed-trace domain correction `1/2 w t^T (Q_fab,dom - Q_thin,dom) t`, the self-consistent (sc)
+operator `K + P^T (Q_fab,dom - Q_thin,dom) P` (ApplyUneliminated), and the fixed-flux (ff)
+transform `F_thin^+ ...` built from the two DOMAIN matrices (the ff surface energy is
+`t^T Q_fab,surf t` evaluated on the fixed-flux trace). The surface defects `Q_fab,surf -
+Q_thin,surf` are assembled (`surface_defects`) but their only consumer
+`SurfaceResponseOperator::GetEnergyCorrection` has NO caller in any driver — recorded cleanup
+follow-up: remove it or give it a test; not changed in the decision-299 branch. Consequences:
+(i) the decision-282 thin-side (F) criterion (the correction's surface p-stability, which
+failed on both S1p v3 coupons by 3-13 % of E_fab, decision 293) judged a quantity with no
+path into ft / ff / sc — the decision-293 rationale "the thin p-dependence is meant to cancel
+the device's" is corrected to "unused": the thin SURFACE p-dependence is the decision-66
+log-divergence at the recorded 2-nm sheet cutoff and is recorded as information
+(`ThinSurfacePSteps`); (ii) the (F) thin-side criterion of record is the DOMAIN
+twin-consistency `|dE_dom,p5 - dE_dom,p4| / E_fab,dom,p5 <= 0.02` per dense trace (the
+device's box domain energy is finite and p-convergent, so the domain defect must be; the
+residual is the thin-side error of a p5 device run corrected with the p4 library, in the
+closure's unit; both S1p v3 coupons read <= 1e-4); (iii) a device-side domain reading is
+recorded as information (`qualify/device_box_energies.py`: the registration device's thin
+mesh with the placed boxes sub-tagged in the volume — one attribute per (per-box inside /
+straddle status, material) combination so overlapping boxes are read exactly —, one solve at
+p4 and p5 on that one mesh, the box domain energy bracket `[E_in, E_in + E_straddle]` and its
+p-step next to the twin's domain energy under the device trace; not a criterion: the device
+mesh resolves the sheet edges at micrometres against the twin's 2 nm, and a sheet-edge
+field's domain energy converges like h^1; on the S1p c0 mesh no tetrahedron lies inside the
+3.95-um-thick box, one uniform split gives 5 % of the box volume inside).
 
 **Legacy-contract aliases (USER decision 283, 2026-10-03).** The transmon's 3-edge cluster
 `spatialedgecluster_edgecount-3_da0179c64591` (claims-only key 7c4b31a894f9, two mirror
@@ -1899,7 +1934,22 @@ reads exactly the Dirichlet value — S1p c0 field at the 31 real-metal plane kn
 0 on the transmon-like unit case — while the fictitious blocks read 0.20-0.43 of the
 amplitude (0.22-0.48 of the state; 3 + 4 knots); 0.02 is x10 below the weakest flagged knot
 and >= 3e4 above the real-metal maximum, and a 5 % potential mismatch would already move
-the 15 %-residual MS closure by several points (so the tolerance is not larger). RECORDED
+the 15 %-residual MS closure by several points (so the tolerance is not larger). THE
+REAL-METAL RESIDUAL IS RESOLUTION-DEPENDENT (decision 299 (2), from the A6 record and its
+erratum): the probe point sits a roundoff distance delta off the device sheet edge (the
+placement's frame arithmetic: S1p box 3's worst point reads (582.5750002, -116.4999995) for
+the nominal (582.575, -116.5), 0.2-0.5 nm; the transmon's 4-edge end knots 0.05-0.75 nm) and
+the FE potential there differs from the Dirichlet value by delta x the FE gradient at the
+sheet-edge singularity, which grows with the resolved singularity: ~p^2 in the order (the
+transmon 1.9e-8 -> 7.7e-8 from Order 1 to 2; S1p box 3 2.2e-7 -> 6.3e-7 from Order 3 to 5 on
+c0) and x1.3-1.4 per AMR cycle (box 3 6.3e-7 at c0 -> 1.09e-6 at c2 -> 5.4e-6 at c7 on T, 4.8e-7
+-> 4.3e-6 on P4; box 1 1.3e-7 -> 7.8e-7; the corners <= 9e-9). The solve-time exclusion 0.02
+is unchanged (4e3 above the most refined real-metal reading); the (F) qualification's
+acceptance (`spatial_qualification.GATE_MAX_RATIO`) is 1e-4 on EVERY supplied device solve,
+to be supplied at the production orders p4 and p5 on the registration (c0) mesh (the
+decision-282 value 1e-6 was a c0 / Order-3 statement, exceeded by box 3 from c2 on): 1e-4 x
+2^(k/2) stays below 0.02 for k < 15 halvings (every production sequence to date <= 8 cycles,
+>= 12x margin) and lies >= 2e3 below fictitious metal. RECORDED
 ONLY, never gated: the conductor vertices OFF the plane (the metal top rows, 0.1 um into
 the device gap for a thin device: the normal field x the thickness, 1.3-2.8 % on S1p real
 metal) and the ADJACENT free knots (sharing a trace-triangle edge with a plane conductor
