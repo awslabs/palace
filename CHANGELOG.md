@@ -112,8 +112,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - A `BLA_VENDOR` passed to CMake now takes precedence over the BLAS/LAPACK vendor
     detected from the environment, and AOCL is located through CMake's `FindBLAS` and
     `FindLAPACK`. *Palace* now requires CMake 3.27 or later.
-  - Fixed OpenBLAS builds on macOS picking up the Accelerate CBLAS headers.
-    [PR 1026](https://github.com/awslabs/palace/pull/1026).
     [PR 1026](https://github.com/awslabs/palace/pull/1026).
 
 ## [0.18.1] - 2026-09-21
