@@ -69,9 +69,9 @@ struct IdentificationFace
 // plan span cap of ONE approved closed feature that cannot be split (decision 244 (i)),
 // keyed by the EMBEDDED claims-only signature of the feature (verbatim as the inventory
 // exports it under SpatialSupport.ClaimsSignature), resolved by the quantum near-match
-// (kClusterQuantumNearMatchMaxQuanta) on the cluster's claims-only signature BEFORE any box,
-// so one entry serves every window instance of the feature. The Label is the recorded hash
-// prefix the allowance was approved under, never compared.
+// (kClusterQuantumNearMatchMaxQuanta) on the cluster's claims-only signature BEFORE any
+// box, so one entry serves every window instance of the feature. The Label is the recorded
+// hash prefix the allowance was approved under, never compared.
 struct ClusterSignatureDifference
 {
   double max_delta_quanta = 0.0;
@@ -442,9 +442,10 @@ constexpr double kSupportFaceGrowthStepOverRadius = 0.25;
 constexpr int kSupportFaceGrowthMaxSteps = 12;
 constexpr double kSupportSpanCapOverRadius = 16.0;
 
-// Validates a list of span-cap allowances (fail closed: a cap below kSupportSpanCapOverRadius
-// never lowers the cap; two allowances within 2 x kClusterQuantumNearMatchMaxQuanta quanta
-// are "two allowances one geometry") and normalises every ClaimsSignature's Type.
+// Validates a list of span-cap allowances (fail closed: a cap below
+// kSupportSpanCapOverRadius never lowers the cap; two allowances within 2 x
+// kClusterQuantumNearMatchMaxQuanta quanta are "two allowances one geometry") and
+// normalises every ClaimsSignature's Type.
 void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances);
 
 // The allowance a claims-only signature resolves (the nearest within
@@ -656,8 +657,9 @@ SignatureParameters SplitSignatureParameters(const nlohmann::json &signature);
 // quanta 4). Two cluster signatures of one topology key whose numbers agree within
 // kClusterQuantumNearMatchMaxQuanta signature quanta (1e-6 R / 1e-6 deg) describe ONE
 // geometry at the resolution of the grid: the same design cell at different chip positions
-// rounds a few coordinates differently by sub-quantum float noise (the three stage-2 loop-end
-// keys differ by exactly one quantum in 8-17 of 290 numbers; the nearest real near-key is
+// rounds a few coordinates differently by sub-quantum float noise (the three stage-2
+// loop-end keys differ by exactly one quantum in 8-17 of 290 numbers; the nearest real
+// near-key is
 // >= 2,000 quanta away). SignatureDeviation of two clusters = max |delta| / (k q) (<= 1
 // matches); a permuted entry order is a different topology key (Missing: the residual
 // knife-edge, recorded). Library models within 2 k quanta of each other are refused at load

@@ -6599,7 +6599,8 @@ public:
           {
             continue;
           }
-          const auto difference = ClusterSignatureQuantumDifference(a.signature, b.signature);
+          const auto difference =
+              ClusterSignatureQuantumDifference(a.signature, b.signature);
           MFEM_VERIFY(!difference || difference->max_delta_quanta >
                                          2.0 * kClusterQuantumNearMatchMaxQuanta,
                       "Library models \""
@@ -7049,13 +7050,13 @@ IdentificationResult RunGeometryIdentification(
         (void)model_key;
         feature.quantum_near_match =
             QuantumNearMatchRecord(model_hash, feature.hash, *difference);
-        feature.match_note = "quantum near-match (block (b) DESIGN section 4): key " +
-                             feature.hash.substr(0, 12) + " resolved to model \"" +
-                             match->name + "\" (key " + model_hash.substr(0, 12) + ", " +
-                             std::to_string(difference->differing_paths.size()) +
-                             " numbers differ by <= " +
-                             fmt::format("{:g}", difference->max_delta_quanta) +
-                             " quanta)";
+        feature.match_note =
+            "quantum near-match (block (b) DESIGN section 4): key " +
+            feature.hash.substr(0, 12) + " resolved to model \"" + match->name +
+            "\" (key " + model_hash.substr(0, 12) + ", " +
+            std::to_string(difference->differing_paths.size()) +
+            " numbers differ by <= " + fmt::format("{:g}", difference->max_delta_quanta) +
+            " quanta)";
       }
     }
     else if (const auto *alias = library_keys.FindAlias(feature.hash))
@@ -7273,10 +7274,10 @@ IdentificationResult RunGeometryIdentification(
     double length = 0.0;
     std::set<std::string> models;
     bool exact = true;
-    nlohmann::json curvature_family;  // the family selection of a curved feature
-    nlohmann::json corner_family;     // the family selection of an interpolated corner
-    std::set<std::string> notes;      // matching notes (family refusals)
-    nlohmann::json legacy_contract;   // the alias record (USER decision 283) + Features
+    nlohmann::json curvature_family;    // the family selection of a curved feature
+    nlohmann::json corner_family;       // the family selection of an interpolated corner
+    std::set<std::string> notes;        // matching notes (family refusals)
+    nlohmann::json legacy_contract;     // the alias record (USER decision 283) + Features
     nlohmann::json span_cap_allowance;  // SpatialSupport.SpanCapAllowance (block (b) A4)
   };
   struct GroupBase
@@ -7601,8 +7602,8 @@ double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 
 // the chord sagitta (1.6e-3..5.4e-2 R on the stage-2 census) from the device polyline. A
 // degenerate chord (collinear with the centre) falls back to the straight distance.
 double ArcChordDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
-                        const std::array<double, 3> &b,
-                        const std::array<double, 3> &center, double rho)
+                        const std::array<double, 3> &b, const std::array<double, 3> &center,
+                        double rho)
 {
   const Point3D ra = Subtract(a, center), rb = Subtract(b, center);
   Point3D n = Cross(ra, rb);
@@ -7615,7 +7616,8 @@ double ArcChordDistance(const std::array<double, 3> &q, const std::array<double,
   const Point3D rq = Subtract(q, center);
   const double out_of_plane = Dot(rq, n);
   const Point3D in_plane = Subtract(rq, Scale(out_of_plane, n));
-  const bool within = Dot(Cross(ra, in_plane), n) >= 0.0 && Dot(Cross(in_plane, rb), n) >= 0.0;
+  const bool within =
+      Dot(Cross(ra, in_plane), n) >= 0.0 && Dot(Cross(in_plane, rb), n) >= 0.0;
   if (!within)
   {
     return std::min(Norm(Subtract(q, a)), Norm(Subtract(q, b)));
@@ -9596,11 +9598,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   { return entry.second.edge_frame_normal.has_value(); });
   std::map<int, FeatureCurvatureMatch> curved_matches;
   std::map<int, FeatureCornerMatch> corner_matches;
-  const auto identification =
-      RunGeometryIdentification(mesh.GetComm(), geometry, global_segments, library,
-                                requirements ? *requirements : law_describer, requirements,
-                                frame_normal_configured, request.span_cap_allowances,
-                                &curved_matches, &corner_matches);
+  const auto identification = RunGeometryIdentification(
+      mesh.GetComm(), geometry, global_segments, library,
+      requirements ? *requirements : law_describer, requirements, frame_normal_configured,
+      request.span_cap_allowances, &curved_matches, &corner_matches);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
@@ -9670,7 +9671,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         result.quantum_near_match.push_back(
             {feature.matched_model.value_or(std::string{}),
-             feature.quantum_near_match.at("ModelKey").get<std::string>(), feature_key,
+             feature.quantum_near_match.at("ModelKey").get<std::string>(),
+             feature_key,
              feature.quantum_near_match.at("MaxDeltaQuanta").get<double>(),
              feature.quantum_near_match.at("DifferingNumbers").at("Count").get<int>(),
              {}});
@@ -14691,12 +14693,13 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
           {"Length", near_length},
           {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
           {"Keys", pairs},
-          {"Rule", "block (b) DESIGN section 4 (decision 303): SpatialEdgeCluster features "
-                   "matched to a library model of the same topology key whose numbers lie "
-                   "within MaxQuanta signature quanta (1e-6 R / 1e-6 deg) of their own — "
-                   "the same geometry at the grid, counted in Exact (the model's coupon is "
-                   "applied in the feature's own canonical frame); the FeatureKey -> "
-                   "ModelKey map is the thin-run guard's and the library tooling's record"}};
+          {"Rule",
+           "block (b) DESIGN section 4 (decision 303): SpatialEdgeCluster features "
+           "matched to a library model of the same topology key whose numbers lie "
+           "within MaxQuanta signature quanta (1e-6 R / 1e-6 deg) of their own — "
+           "the same geometry at the grid, counted in Exact (the model's coupon is "
+           "applied in the feature's own canonical frame); the FeatureKey -> "
+           "ModelKey map is the thin-run guard's and the library tooling's record"}};
     }
     // Knife-edge keys (decision 287 (a)): a cluster whose face-rule or box-rule readings
     // sat within the band on ANY T2 pass has a key decided at a threshold; the band census

@@ -1612,8 +1612,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         // Per-case span-cap allowances (block (b) DESIGN section 3 (a) / A4).
         MFEM_VERIFY(spatial->is_object(),
                     "Response-correction \"SpatialSupport\" must be an object!");
-        for (const auto &entry :
-             spatial->value("SpanCapAllowances", json::array()))
+        for (const auto &entry : spatial->value("SpanCapAllowances", json::array()))
         {
           MFEM_VERIFY(entry.is_object() && entry.contains("ClaimsSignature") &&
                           entry["ClaimsSignature"].is_object() &&

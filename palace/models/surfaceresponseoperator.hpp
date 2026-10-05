@@ -597,8 +597,8 @@ double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 
 // offset), outside it the distance to the nearer chord end; a chord collinear with the
 // centre falls back to the straight distance.
 double ArcChordDistance(const std::array<double, 3> &q, const std::array<double, 3> &a,
-                        const std::array<double, 3> &b,
-                        const std::array<double, 3> &center, double rho);
+                        const std::array<double, 3> &b, const std::array<double, 3> &center,
+                        double rho);
 
 // Distance from a point to the device perimeter of an identification result: the segment
 // keys as straight chords, a segment on a fitted arc (Segments[].Arc) read on its circle's

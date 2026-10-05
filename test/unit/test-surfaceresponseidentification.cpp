@@ -4876,15 +4876,16 @@ TEST_CASE("SurfaceResponseIdentificationLegacyContractAlias",
 TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
           "[surfaceresponseidentification][Serial]")
 {
-  // Block (b) DESIGN section 4 (decision 303, max quanta 4): the three stage-2 loop-end keys
-  // (S1p 284d6c2b5b66, S2p 9e103a0f291c, S4 20ac3e14a128: the same design cell at three chip
-  // positions) have one topology key and differ by EXACTLY one signature quantum in 17 /
-  // 8 of their 290 numbers (analysis/knife_edge_diff.log). They resolve to ONE model; a
-  // 5-quantum perturbation and a permuted entry order stay Missing; non-cluster signatures
-  // keep the parameter-tolerance comparator.
-  const auto fixture = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
-                       "examples/cpw3d_surface/spatial_coupon/testdata/census-b-signatures/"
-                       "signatures.json";
+  // Block (b) DESIGN section 4 (decision 303, max quanta 4): the three stage-2 loop-end
+  // keys (S1p 284d6c2b5b66, S2p 9e103a0f291c, S4 20ac3e14a128: the same design cell at
+  // three chip positions) have one topology key and differ by EXACTLY one signature quantum
+  // in 17 / 8 of their 290 numbers (analysis/knife_edge_diff.log). They resolve to ONE
+  // model; a 5-quantum perturbation and a permuted entry order stay Missing; non-cluster
+  // signatures keep the parameter-tolerance comparator.
+  const auto fixture =
+      std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+      "examples/cpw3d_surface/spatial_coupon/testdata/census-b-signatures/"
+      "signatures.json";
   std::ifstream input(fixture);
   REQUIRE(input);
   const nlohmann::json census = nlohmann::json::parse(input);
@@ -5002,7 +5003,8 @@ TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
         feature.match_deviation = 0.25;
       }
     }
-    const auto copy = DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
     const nlohmann::json manifest = copy.ToJson(1.0);
     CHECK(manifest == result.ToJson(1.0));
     bool found = false;
@@ -5028,9 +5030,9 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
           "[surfaceresponseidentification][Serial]")
 {
   // Block (b) DESIGN section 3 (a) + A4 (decision 303): a per-case span-cap allowance keyed
-  // by the EMBEDDED claims-only signature, resolved by the quantum near-match BEFORE any box.
-  // Scene: a comb of ten 1 R pads at pitch 2 R (one 40-edge cluster, claims box 5 x 23 R:
-  // ExceedsSpanCap under the default 16 R cap, contract 2) and a foreign strip whose end
+  // by the EMBEDDED claims-only signature, resolved by the quantum near-match BEFORE any
+  // box. Scene: a comb of ten 1 R pads at pitch 2 R (one 40-edge cluster, claims box 5 x 23
+  // R: ExceedsSpanCap under the default 16 R cap, contract 2) and a foreign strip whose end
   // stands 0.05 R OUTSIDE the comb's end face: the face must grow, the growth would pass
   // the cap -> SpanCapRefusedGrowth (Unboxable) without an allowance; with an allowance of
   // 24 R the box grows twice and the cluster is a contract-3 key.
@@ -5086,7 +5088,8 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
   allowance.claims_signature = exported;
   allowance.span_cap_over_R = 24.0;
   allowance.label = claims_key.substr(0, 12);
-  allowance.reason = "unit test: one closed feature that cannot be split (decision 244 (i))";
+  allowance.reason =
+      "unit test: one closed feature that cannot be split (decision 244 (i))";
   allowance.approval = "decision 303";
   {
     const auto [input, result] = Identify({allowance});
@@ -5190,16 +5193,15 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
   }
 }
 
-
 TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
           "[surfaceresponseidentification][surfaceresponseoperator][Serial]")
 {
-  // Block (b) DESIGN section 2 (a) (decision 303): the A10-extended distance reads a segment
-  // on a fitted arc on its circle's arc, exact and chord-independent — an arc context entry's
-  // end cut at a box face lies on the FITTED circle, up to the chord sagitta from the device
-  // polyline (1.6e-3..5.4e-2 R on the stage-2 census keys, above the 1e-3 R tolerance).
-  // Scene: a 10 x 6 island with 1-um fillets (R = 2: radius 0.5 R, 4 chords of 22.5 deg per
-  // fillet, sagitta 0.5 R (1 - cos 11.25 deg) = 9.6e-3 R).
+  // Block (b) DESIGN section 2 (a) (decision 303): the A10-extended distance reads a
+  // segment on a fitted arc on its circle's arc, exact and chord-independent — an arc
+  // context entry's end cut at a box face lies on the FITTED circle, up to the chord
+  // sagitta from the device polyline (1.6e-3..5.4e-2 R on the stage-2 census keys, above
+  // the 1e-3 R tolerance). Scene: a 10 x 6 island with 1-um fillets (R = 2: radius 0.5 R, 4
+  // chords of 22.5 deg per fillet, sagitta 0.5 R (1 - cos 11.25 deg) = 9.6e-3 R).
   const double R = 2.0;
   const auto input = MakeInput({{RoundedRectangle(5.0, 3.0, 1.0, 4), 0, 1.0}}, R);
   const auto result = IdentifyMetalPerimeter(input);
@@ -5230,7 +5232,8 @@ TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
   }
   CHECK_THAT(DevicePerimeterDistance(chords_only, on_circle), WithinAbs(sagitta, 1.0e-9));
   CHECK(sagitta / R > kSignatureParameterToleranceOverRadius);
-  CHECK(DevicePerimeterDistance(result, on_circle) <= kSignatureParameterToleranceOverRadius * R);
+  CHECK(DevicePerimeterDistance(result, on_circle) <=
+        kSignatureParameterToleranceOverRadius * R);
   // Radially 0.01 R off the circle inside the chord's range: 0.01 R; out of plane the same.
   CHECK_THAT(DevicePerimeterDistance(result, Circle(11.25, rho + 0.01 * R)),
              WithinAbs(0.01 * R, 1.0e-9));
@@ -5242,7 +5245,8 @@ TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
   CHECK_THAT(DevicePerimeterDistance(result, {0.0, 3.0, 0.0}), WithinAbs(0.0, 1.0e-12));
   // ArcChordDistance alone: within the chord's angular interval -> the circle; outside it
   // -> the nearer chord end; a chord collinear with the centre -> the straight distance.
-  const std::array<double, 3> a = {0.0, 0.0, 0.0}, b = {1.0, 0.0, 0.0}, c = {0.5, -0.5, 0.0};
+  const std::array<double, 3> a = {0.0, 0.0, 0.0}, b = {1.0, 0.0, 0.0},
+                              c = {0.5, -0.5, 0.0};
   const double r = std::hypot(0.5, 0.5);  // a at 135 deg, b at 45 deg
   auto At = [&](double degrees, double radius)
   {

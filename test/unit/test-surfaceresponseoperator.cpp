@@ -3904,12 +3904,12 @@ TEST_CASE_METHOD(
                       }));
     CHECK(signature_requirements["Summary"]["Counts"]["QuantumNearMatched"] == 0);
 
-    // Quantum near-match (block (b) DESIGN section 4, decision 303): a model whose Signature
-    // differs from the feature's by ONE signature quantum in one number (a 1e-6 R shift of a
-    // portion end: the same geometry at the grid) matches the feature, Status Matched /
-    // Exact, with Match.QuantumNearMatch naming both keys and the differing number, counted
-    // in Summary.QuantumNearMatched; a 5-quantum shift stays Missing; two library models
-    // within 8 quanta of each other are refused.
+    // Quantum near-match (block (b) DESIGN section 4, decision 303): a model whose
+    // Signature differs from the feature's by ONE signature quantum in one number (a 1e-6 R
+    // shift of a portion end: the same geometry at the grid) matches the feature, Status
+    // Matched / Exact, with Match.QuantumNearMatch naming both keys and the differing
+    // number, counted in Summary.QuantumNearMatched; a 5-quantum shift stays Missing; two
+    // library models within 8 quanta of each other are refused.
     {
       auto Perturbed = [&](int quanta, const std::string &name)
       {

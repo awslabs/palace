@@ -1515,8 +1515,8 @@ void SplitClusterParameters(nlohmann::json &node, const std::string &path,
           std::size_t k = 0;
           for (const auto &v : it.value())
           {
-            MFEM_VERIFY(v.is_number(), "Cluster signature entry " << entry
-                                                                   << " is not numeric!");
+            MFEM_VERIFY(v.is_number(),
+                        "Cluster signature entry " << entry << " is not numeric!");
             list.push_back(v.get<double>());
             paths.push_back(entry + "[" + std::to_string(k++) + "]");
           }
@@ -1573,7 +1573,8 @@ SignatureParameters SplitSignatureParameters(const nlohmann::json &signature)
 std::optional<ClusterSignatureDifference>
 ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json &b)
 {
-  const SignatureParameters pa = SplitSignatureParameters(a), pb = SplitSignatureParameters(b);
+  const SignatureParameters pa = SplitSignatureParameters(a),
+                            pb = SplitSignatureParameters(b);
   if (pa.topology_key != pb.topology_key ||
       pa.lengths_over_R.size() != pb.lengths_over_R.size() ||
       pa.angles_degrees.size() != pb.angles_degrees.size())
@@ -1593,8 +1594,8 @@ ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json 
   }
   for (std::size_t i = 0; i < pa.angles_degrees.size(); i++)
   {
-    const double quanta =
-        std::abs(pa.angles_degrees[i] - pb.angles_degrees[i]) / kSignatureAngleQuantumDegrees;
+    const double quanta = std::abs(pa.angles_degrees[i] - pb.angles_degrees[i]) /
+                          kSignatureAngleQuantumDegrees;
     if (quanta > 0.5)
     {
       out.differing_paths.push_back(pa.angle_paths[i]);
@@ -1608,22 +1609,23 @@ void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances)
 {
   for (auto &allowance : allowances)
   {
-    MFEM_VERIFY(allowance.claims_signature.is_object() &&
-                    allowance.claims_signature.contains("Portions") &&
-                    allowance.claims_signature["Portions"].is_array() &&
-                    !allowance.claims_signature["Portions"].empty(),
-                "SpanCapAllowances entry \""
-                    << allowance.label
-                    << "\": ClaimsSignature must be a SpatialEdgeCluster claims-only "
-                       "signature object with Portions (copy SpatialSupport.ClaimsSignature "
-                       "of the refused cluster from the preflight inventory)!");
+    MFEM_VERIFY(
+        allowance.claims_signature.is_object() &&
+            allowance.claims_signature.contains("Portions") &&
+            allowance.claims_signature["Portions"].is_array() &&
+            !allowance.claims_signature["Portions"].empty(),
+        "SpanCapAllowances entry \""
+            << allowance.label
+            << "\": ClaimsSignature must be a SpatialEdgeCluster claims-only "
+               "signature object with Portions (copy SpatialSupport.ClaimsSignature "
+               "of the refused cluster from the preflight inventory)!");
     const std::string type =
         allowance.claims_signature.value("Type", std::string("SpatialEdgeCluster"));
-    MFEM_VERIFY(type == "SpatialEdgeCluster",
-                "SpanCapAllowances entry \"" << allowance.label
-                                              << "\": ClaimsSignature Type must be "
-                                                 "SpatialEdgeCluster, not "
-                                              << type << "!");
+    MFEM_VERIFY(type == "SpatialEdgeCluster", "SpanCapAllowances entry \""
+                                                  << allowance.label
+                                                  << "\": ClaimsSignature Type must be "
+                                                     "SpatialEdgeCluster, not "
+                                                  << type << "!");
     allowance.claims_signature["Type"] = "SpatialEdgeCluster";
     // The Missing placeholder key of a refused cluster is its claims-only signature plus
     // "Unboxable": true (a manifest written before the ClaimsSignature export): accepted.
@@ -1646,15 +1648,15 @@ void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances)
     {
       const auto difference = ClusterSignatureQuantumDifference(
           allowances[i].claims_signature, allowances[j].claims_signature);
-      MFEM_VERIFY(
-          !difference ||
-              difference->max_delta_quanta > 2.0 * kClusterQuantumNearMatchMaxQuanta,
-          "SpanCapAllowances entries \""
-              << allowances[i].label << "\" and \"" << allowances[j].label
-              << "\" embed claims-only signatures of one topology within "
-              << (difference ? difference->max_delta_quanta : 0.0)
-              << " signature quanta of each other (<= " << 2 * kClusterQuantumNearMatchMaxQuanta
-              << "): two allowances, one geometry (block (b) DESIGN A4 (4))!");
+      MFEM_VERIFY(!difference || difference->max_delta_quanta >
+                                     2.0 * kClusterQuantumNearMatchMaxQuanta,
+                  "SpanCapAllowances entries \""
+                      << allowances[i].label << "\" and \"" << allowances[j].label
+                      << "\" embed claims-only signatures of one topology within "
+                      << (difference ? difference->max_delta_quanta : 0.0)
+                      << " signature quanta of each other (<= "
+                      << 2 * kClusterQuantumNearMatchMaxQuanta
+                      << "): two allowances, one geometry (block (b) DESIGN A4 (4))!");
     }
   }
 }
@@ -1691,7 +1693,8 @@ nlohmann::json QuantumNearMatchRecord(const std::string &model_key,
       {"FeatureKey", feature_key},
       {"MaxDeltaQuanta", difference.max_delta_quanta},
       {"DifferingNumbers",
-       {{"Count", difference.differing_paths.size()}, {"Paths", difference.differing_paths}}},
+       {{"Count", difference.differing_paths.size()},
+        {"Paths", difference.differing_paths}}},
       {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
       {"Rule", "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster key whose "
                "topology (every entry with its numbers nulled, order preserved) equals the "
