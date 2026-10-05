@@ -411,6 +411,15 @@ if(NOT GIT_COMMIT_ID MATCHES "NOTFOUND")
   )
 endif()
 
+# Identifier of the producing build (e.g. the Spack DAG hash), printed by --version
+set(PALACE_BUILD_ID "" CACHE STRING "Build identifier to embed (e.g. Spack DAG hash)")
+if(PALACE_BUILD_ID)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/main.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS "PALACE_BUILD_ID=\"${PALACE_BUILD_ID}\""
+  )
+endif()
+
 # Check C++ compiler support for constexpr std::sqrt and std::filesystem
 include(CheckCompilerFeatureSupport)
 if(NOT DEFINED STD_FS_LIBRARIES_CACHE)
@@ -617,7 +626,11 @@ if(PALACE_WITH_STRUMPACK)
     find_package(${pkg} QUIET)
     if(${pkg}_FOUND)
       message(STATUS "Found ${pkg}")
-      target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${pkg})
+      if(TARGET ${pkg}::${pkg})
+        target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${pkg}::${pkg})
+      else()
+        target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${pkg})
+      endif()
     endif()
   endforeach()
 endif()
@@ -699,6 +712,93 @@ if(PALACE_WITH_GPU_AWARE_MPI)
     PUBLIC PALACE_WITH_GPU_AWARE_MPI
   )
 endif()
+
+# Tell utils/versions.cpp which optional dependencies are linked. Versions of dependencies
+# without a header or runtime query that Palace can reach are taken from CMake.
+set(VERSION_DEFINITIONS)
+if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
+  list(APPEND VERSION_DEFINITIONS PALACE_WITH_UMPIRE)
+endif()
+if(PALACE_WITH_CUDSS)
+  list(APPEND VERSION_DEFINITIONS PALACE_WITH_CUDSS)
+endif()
+if(ZLIB_FOUND)
+  list(APPEND VERSION_DEFINITIONS PALACE_WITH_ZLIB)
+endif()
+foreach(pkg zfp slate lapackpp blaspp)
+  if(PALACE_WITH_STRUMPACK AND ${pkg}_FOUND)
+    string(TOUPPER ${pkg} _pkg)
+    list(APPEND VERSION_DEFINITIONS PALACE_WITH_${_pkg})
+  endif()
+endforeach()
+# The BLAS/LAPACK vendor selects which vendor-specific version query to compile in. Match
+# BLA_VENDOR and library file names only, since directory names (e.g. hashes) are arbitrary.
+set(_blas_lapack "${BLA_VENDOR}")
+foreach(_lib IN LISTS LAPACK_LIBRARIES BLAS_LIBRARIES)
+  get_filename_component(_lib "${_lib}" NAME)
+  list(APPEND _blas_lapack "${_lib}")
+endforeach()
+string(TOLOWER "${_blas_lapack}" _blas_lapack)
+if(_blas_lapack MATCHES "(^|;)(lib)?openblas")
+  list(APPEND VERSION_DEFINITIONS PALACE_BLAS_OPENBLAS)
+elseif(_blas_lapack MATCHES "(^|;)((lib)?mkl_|intel10)")
+  list(APPEND VERSION_DEFINITIONS PALACE_BLAS_MKL)
+elseif(_blas_lapack MATCHES "(^|;)((lib)?armpl|arm)")
+  list(APPEND VERSION_DEFINITIONS PALACE_BLAS_ARMPL)
+elseif(_blas_lapack MATCHES "(^|;)((lib)?blis|aocl)")
+  list(APPEND VERSION_DEFINITIONS PALACE_BLAS_AOCL)
+endif()
+# Reading gslib.h in C++ would leak its C99 compatibility macros (e.g. an empty "inline")
+if(PALACE_WITH_GSLIB)
+  get_filename_component(_gslib_prefix "${GSLIB_LIBRARY}" DIRECTORY)
+  find_file(GSLIB_VERSION_HEADER gslib.h
+    HINTS ${GSLIB_ROOT}/include ${_gslib_prefix}/../include PATH_SUFFIXES gslib)
+  if(GSLIB_VERSION_HEADER)
+    file(STRINGS ${GSLIB_VERSION_HEADER} _gslib_version
+      REGEX "^#define GSLIB_RELEASE_VERSION [0-9]+")
+    if(_gslib_version MATCHES "([0-9]+)$")
+      math(EXPR _major "${CMAKE_MATCH_1} / 10000")
+      math(EXPR _minor "(${CMAKE_MATCH_1} / 100) % 100")
+      math(EXPR _patch "${CMAKE_MATCH_1} % 100")
+      list(APPEND VERSION_DEFINITIONS "PALACE_GSLIB_VERSION=\"${_major}.${_minor}.${_patch}\"")
+    endif()
+  endif()
+endif()
+if(nlohmann_json_schema_validator_VERSION)
+  list(APPEND VERSION_DEFINITIONS
+    "PALACE_JSON_SCHEMA_VALIDATOR_VERSION=\"${nlohmann_json_schema_validator_VERSION}\"")
+endif()
+if(PALACE_WITH_ARPACK AND arpackng_VERSION)
+  list(APPEND VERSION_DEFINITIONS "PALACE_ARPACK_VERSION=\"${arpackng_VERSION}\"")
+endif()
+if(PALACE_WITH_STRUMPACK AND ButterflyPACK_FOUND AND ButterflyPACK_VERSION)
+  list(APPEND VERSION_DEFINITIONS
+    "PALACE_BUTTERFLYPACK_VERSION=\"${ButterflyPACK_VERSION}\"")
+endif()
+# libxsmm and MAGMA are only linked by libCEED, so check its pkg-config dependencies
+pkg_check_modules(_ceed_deps QUIET ceed)
+if(_ceed_deps_STATIC_LIBRARIES MATCHES "(^|;)(:lib)?xsmm(\\.a)?(;|$)")
+  pkg_check_modules(_libxsmm QUIET libxsmm)
+  if(_libxsmm_VERSION)
+    list(APPEND VERSION_DEFINITIONS "PALACE_LIBXSMM_VERSION=\"${_libxsmm_VERSION}\"")
+  endif()
+endif()
+if(_ceed_deps_STATIC_LIBRARIES MATCHES "(^|;)(:lib)?magma(\\.a)?(;|$)")
+  # magma.pc carries no version, so read it from the headers
+  pkg_check_modules(_magma QUIET magma)
+  find_file(MAGMA_TYPES_HEADER magma_types.h HINTS ${_magma_INCLUDE_DIRS})
+  if(MAGMA_TYPES_HEADER)
+    file(STRINGS ${MAGMA_TYPES_HEADER} _magma_version
+      REGEX "^#define MAGMA_VERSION_(MAJOR|MINOR|MICRO) ")
+    string(REGEX REPLACE "[^;]* ([0-9]+)" "\\1" _magma_version "${_magma_version}")
+    list(JOIN _magma_version "." _magma_version)
+    list(APPEND VERSION_DEFINITIONS "PALACE_MAGMA_VERSION=\"${_magma_version}\"")
+  endif()
+endif()
+set_property(
+  SOURCE ${CMAKE_SOURCE_DIR}/utils/versions.cpp
+  APPEND PROPERTY COMPILE_DEFINITIONS "${VERSION_DEFINITIONS}"
+)
 
 
 # Install target and helper scripts
