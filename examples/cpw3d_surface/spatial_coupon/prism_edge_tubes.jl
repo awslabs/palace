@@ -124,9 +124,63 @@ function cad_rays(section::TubeSection)
     return sort!(unique!(rays))
 end
 
+# A tube end on a face of the coupon box that the edge does not cross
+# perpendicularly (block (b) design AMENDMENT 1 A2, supervisor decisions 302 / 320):
+# the tube ENDS ON THE FACE. The face plane through the axis point at the end
+# station reads, in tube coordinates, s_face(u, w) = s_end - u kappa_u - w kappa_w
+# with kappa_u = (N . n) / (N . e), kappa_w = (N . b) / (N . e) for the outward face
+# normal N (|kappa| = tan theta for a vertical face and a horizontal tube); theta is
+# the angle between the tube axis and N. The CAD solid is extruded over-long by
+# over_length = (radius + pyramid height) |tan theta| + the tangential spacing (its
+# perpendicular end wholly outside the box) and intersected with the coupon box
+# before the fragment; the mesh ends with a block of `layers` = m =
+# ceil(2 r_env |tan theta| / spacing) sheared layers of axial spacing `spacing` =
+# lc_end = max(lc_tangent, 4 h_pyr |tan theta|) whose last station is the face
+# plane (every end node on the face), so every end-block layer keeps an axial
+# thickness in [lc_end / 2, 3 lc_end / 2], every lateral quadrangle stays a planar
+# trapezoid and every pyramid apex of the block stays inside the box. A tube end
+# with theta == 0 exactly (every rectilinear coupon) has no FaceEnd and takes the
+# unchanged path.
+struct FaceEnd
+    end_index::Int            # 0: the tube start (s_start) lies on the face, 1: the end
+    face::String              # "x0" / "x1" / "y0" / "y1"
+    normal::Vector{Float64}   # outward face normal
+    theta::Float64            # angle between the tube axis and the face normal (rad), > 0
+    kappa_u::Float64
+    kappa_w::Float64
+    layers::Int               # m, the sheared end-block layers
+    spacing::Float64          # lc_end, the axial spacing of the end block
+    envelope_shear::Float64   # r_env |tan theta|: the axial shear across the tube envelope
+    over_length::Float64      # the CAD over-length beyond the face before the box intersection
+end
+
+function FaceEnd(end_index, face, normal, theta, kappa_u, kappa_w, envelope_radius, pyramid_height,
+                 lc_tangent)
+    theta > 0.0 || error("a face end needs a positive tilt")
+    slope = abs(tan(theta))
+    spacing = max(lc_tangent, 4.0 * pyramid_height * slope)
+    layers = max(1, ceil(Int, 2.0 * envelope_radius * slope / spacing * (1.0 - 1.0e-9)))
+    return FaceEnd(end_index, face, collect(Float64, normal), theta, kappa_u, kappa_w, layers,
+                   spacing, envelope_radius * slope, envelope_radius * slope + lc_tangent)
+end
+
+# The census record of a face end: the block's axial layer thickness over the tube
+# envelope lies in EndSpacing -+ EnvelopeShear / Layers (within [lc_end / 2, 3 lc_end / 2]).
+face_end_record(face_end::FaceEnd) = Dict{String, Any}(
+    "End" => face_end.end_index == 0 ? "start" : "end", "Face" => face_end.face,
+    "ThetaDegrees" => rad2deg(face_end.theta), "Layers" => face_end.layers,
+    "EndSpacing" => face_end.spacing, "EnvelopeShear" => face_end.envelope_shear,
+    "LayerThicknessRange" => [face_end.spacing - face_end.envelope_shear / face_end.layers,
+                              face_end.spacing + face_end.envelope_shear / face_end.layers],
+    "OverLength" => face_end.over_length, "Kappa" => [face_end.kappa_u, face_end.kappa_w])
+
 # A tube: the edge line origin (a point on the edge), the frame (n, b, e), the
-# extrusion interval [s_start, s_end] along e from the origin, and the layer
-# boundaries (stations) s_start = stations[1] < ... < stations[layers + 1] = s_end.
+# extrusion interval [s_start, s_end] along e from the origin, the layer
+# boundaries (stations) s_start = stations[1] < ... < stations[layers + 1] = s_end
+# on the axis, the face ends (at most one per end) and, per station, the shear of
+# the face-ended blocks: the station of the cross-section node (u, w) at index i is
+# stations[i + 1] - u shear_u[i + 1] - w shear_w[i + 1] (every shear 0 on a tube
+# without face ends: the shear vectors are then empty and the station is the axis one).
 struct EdgeTube
     origin::Vector{Float64}
     n::Vector{Float64}
@@ -136,12 +190,16 @@ struct EdgeTube
     s_end::Float64
     layers::Int
     stations::Vector{Float64}
+    face_ends::Vector{FaceEnd}
+    shear_u::Vector{Float64}
+    shear_w::Vector{Float64}
 end
 
 # Uniform layers: the smallest number of equal layers whose spacing does not
 # exceed `spacing` (a tube whose length is a multiple of the spacing keeps it
-# exactly; tube_spacing records the largest layer actually used).
-function EdgeTube(origin, n, b, s_start, s_end, spacing)
+# exactly; tube_spacing records the largest layer actually used). The face ends
+# are recorded; their sheared blocks are installed by face_ended_tube_stations.
+function EdgeTube(origin, n, b, s_start, s_end, spacing; face_ends=FaceEnd[])
     n = collect(Float64, n) ./ norm(n)
     b = collect(Float64, b) ./ norm(b)
     abs(dot(n, b)) < 1.0e-12 || error("tube frame must be orthogonal")
@@ -151,15 +209,27 @@ function EdgeTube(origin, n, b, s_start, s_end, spacing)
     extent = s_end - s_start
     layers = max(1, ceil(Int, extent / spacing * (1.0 - 1.0e-9)))
     stations = [s_start + extent * i / layers for i = 0:layers]
-    return EdgeTube(collect(Float64, origin), n, b, e, s_start, s_end, layers, stations)
+    face_ends = collect(FaceEnd, face_ends)
+    length(unique(face_end.end_index for face_end in face_ends)) == length(face_ends) ||
+        error("a tube end has two face ends")
+    return EdgeTube(collect(Float64, origin), n, b, e, s_start, s_end, layers, stations,
+                    face_ends, Float64[], Float64[])
 end
 
-# The same tube with the given layer boundaries.
-function EdgeTube(tube::EdgeTube, stations::AbstractVector)
+# The same tube with the given layer boundaries (and the end-block shears of a
+# face-ended tube, one pair per station).
+function EdgeTube(tube::EdgeTube, stations::AbstractVector; shear_u=Float64[], shear_w=Float64[])
     stations = collect(Float64, stations)
     length(stations) >= 2 && stations[1] == tube.s_start && stations[end] == tube.s_end ||
         error("tube stations must run from s_start to s_end")
     all(diff(stations) .> 0.0) || error("tube stations must increase")
+    shear_u = collect(Float64, shear_u)
+    shear_w = collect(Float64, shear_w)
+    isempty(shear_u) == isempty(shear_w) || error("tube shears come in pairs")
+    isempty(shear_u) || length(shear_u) == length(stations) ||
+        error("tube shears need one value per station")
+    isempty(shear_u) == isempty(tube.face_ends) ||
+        error("a face-ended tube needs its end-block shears and a plain tube none")
     return EdgeTube(
         tube.origin,
         tube.n,
@@ -168,7 +238,10 @@ function EdgeTube(tube::EdgeTube, stations::AbstractVector)
         tube.s_start,
         tube.s_end,
         length(stations) - 1,
-        stations
+        stations,
+        tube.face_ends,
+        shear_u,
+        shear_w
     )
 end
 
@@ -186,6 +259,42 @@ end
 function tube_station(tube::EdgeTube, i)
     k = clamp(floor(Int, i), 0, tube.layers - 1)
     return tube.stations[k + 1] + (i - k) * (tube.stations[k + 2] - tube.stations[k + 1])
+end
+
+# Station of the cross-section point (u, w) at index i: the axis station minus the
+# (linearly interpolated) end-block shear; the axis station itself on a tube
+# without face ends.
+function tube_station(tube::EdgeTube, i, u, w)
+    s = tube_station(tube, i)
+    isempty(tube.shear_u) && return s
+    k = clamp(floor(Int, i), 0, tube.layers - 1)
+    f = i - k
+    su = tube.shear_u[k + 1] + f * (tube.shear_u[k + 2] - tube.shear_u[k + 1])
+    sw = tube.shear_w[k + 1] + f * (tube.shear_w[k + 2] - tube.shear_w[k + 1])
+    return s - u * su - w * sw
+end
+
+face_end_at(tube::EdgeTube, end_index) =
+    (i = findfirst(face_end -> face_end.end_index == end_index, tube.face_ends);
+     i === nothing ? nothing : tube.face_ends[i])
+
+# Axis coordinate at which the cross-section point (u, w) meets the tube's end
+# (end_index 0 the start, 1 the end): the face plane at a face end, the
+# perpendicular end otherwise.
+function tube_end_station(tube::EdgeTube, end_index, u, w)
+    s = end_index == 0 ? tube.s_start : tube.s_end
+    face_end = face_end_at(tube, end_index)
+    face_end === nothing && return s
+    return s - u * face_end.kappa_u - w * face_end.kappa_w
+end
+
+# The CAD extrusion interval of the tube before the box intersection: over-long at
+# every face end.
+function tube_cad_interval(tube::EdgeTube)
+    start_face = face_end_at(tube, 0)
+    end_face = face_end_at(tube, 1)
+    return tube.s_start - (start_face === nothing ? 0.0 : start_face.over_length),
+           tube.s_end + (end_face === nothing ? 0.0 : end_face.over_length)
 end
 
 # Samples per prescribed size of the arclength quadrature that places the layer
@@ -342,6 +451,64 @@ function graded_tube_stations(
     return stations, positions, sizes
 end
 
+# Stations and end-block shears of a tube with face ends (design A2): the interior
+# interval - the tube minus its end blocks of m x lc_end - takes graded_tube_stations
+# (a face end replaces the surface layer of its end); each block then adds m layers
+# of axial spacing lc_end whose shear grows linearly from 0 at the block's inner
+# station to kappa at the face, so station m of the end block (station 0 of a start
+# block) IS the face plane. A tube shorter than its end blocks fails closed.
+function face_ended_tube_stations(
+    tube::EdgeTube,
+    size_at,
+    spacing,
+    growth;
+    surface_start::Bool=false,
+    surface_end::Bool=false
+)
+    start_face = face_end_at(tube, 0)
+    end_face = face_end_at(tube, 1)
+    start_block = start_face === nothing ? 0.0 : start_face.layers * start_face.spacing
+    end_block = end_face === nothing ? 0.0 : end_face.layers * end_face.spacing
+    a = tube.s_start + start_block
+    b = tube.s_end - end_block
+    b > a || error(
+        "tube of length $(tube.s_end - tube.s_start) is shorter than its face-end blocks " *
+        "($start_block at the start, $end_block at the end)"
+    )
+    interior, positions, sizes = graded_tube_stations(
+        a,
+        b,
+        size_at,
+        spacing,
+        growth;
+        surface_start=start_face === nothing && surface_start,
+        surface_end=end_face === nothing && surface_end
+    )
+    stations = Float64[]
+    shear_u = Float64[]
+    shear_w = Float64[]
+    if start_face !== nothing
+        m = start_face.layers
+        for k = 0:(m - 1)
+            push!(stations, k == 0 ? tube.s_start : tube.s_start + k * start_face.spacing)
+            push!(shear_u, (m - k) / m * start_face.kappa_u)
+            push!(shear_w, (m - k) / m * start_face.kappa_w)
+        end
+    end
+    append!(stations, interior)
+    append!(shear_u, zeros(length(interior)))
+    append!(shear_w, zeros(length(interior)))
+    if end_face !== nothing
+        m = end_face.layers
+        for k = 1:m
+            push!(stations, k == m ? tube.s_end : b + k * end_face.spacing)
+            push!(shear_u, k / m * end_face.kappa_u)
+            push!(shear_w, k / m * end_face.kappa_w)
+        end
+    end
+    return stations, shear_u, shear_w, positions, sizes
+end
+
 # Per-tube layer statistics against the prescribed (gradient-limited) sizes
 # sampled by graded_tube_stations: thickness minimum / P50 / maximum, the
 # thickness and the prescribed size at both ends, the achieved-over-prescribed
@@ -354,7 +521,10 @@ function tube_layer_statistics(tube::EdgeTube, positions, sizes)
         return sizes[i] + fraction * (sizes[i + 1] - sizes[i])
     end
     midpoints = 0.5 .* (tube.stations[1:(end - 1)] .+ tube.stations[2:end])
-    achieved = [thicknesses[i] / size_at(midpoints[i]) for i in eachindex(thicknesses)]
+    # The end blocks of a face-ended tube lie outside the sampled interior interval:
+    # their layers are judged against the size at the nearest sampled position.
+    achieved = [thicknesses[i] / size_at(clamp(midpoints[i], positions[1], positions[end]))
+                for i in eachindex(thicknesses)]
     ratios = thicknesses[2:end] ./ thicknesses[1:(end - 1)]
     median(values) = sort(values)[cld(length(values), 2)]
     return Dict{String, Any}(
@@ -376,18 +546,25 @@ function tube_layer_statistics(tube::EdgeTube, positions, sizes)
 end
 
 # OCC tube volumes (one polygon-sector prism per material group), returned as
-# (dim, tag) pairs with their material group, before synchronization.
-function add_tube_volumes!(occ, tube::EdgeTube, section::TubeSection)
+# (dim, tag) pairs with their material group, before synchronization. A tube with
+# face ends is extruded over its CAD interval (over-long beyond every face end) and
+# each volume is intersected with the coupon box `box` = (lower, upper), so that the
+# tube ends exactly on the face (design A2; the single-descendant check of the
+# fragment is unchanged).
+function add_tube_volumes!(occ, tube::EdgeTube, section::TubeSection; box=nothing)
     uw = section_coordinates(section)
     K = ring_count(section)
     volumes = Tuple{Tuple{Int32, Int32}, Tuple{Int, Int, Int}}[]
-    span = tube.s_end - tube.s_start
+    cad_start, cad_end = tube_cad_interval(tube)
+    span = cad_end - cad_start
+    isempty(tube.face_ends) || box !== nothing ||
+        error("a face-ended tube needs the coupon box for its intersection")
     for group in material_groups(section)
         first, last, _ = group
-        corners = [tube_point(tube, 0.0, 0.0, tube.s_start)]
+        corners = [tube_point(tube, 0.0, 0.0, cad_start)]
         for j = first:(last + 1)
             uwj = uw[:, section_node(section, K, j)]
-            push!(corners, tube_point(tube, uwj[1], uwj[2], tube.s_start))
+            push!(corners, tube_point(tube, uwj[1], uwj[2], cad_start))
         end
         points = [occ.addPoint(c[1], c[2], c[3]) for c in corners]
         lines = [
@@ -400,6 +577,16 @@ function add_tube_volumes!(occ, tube::EdgeTube, section::TubeSection)
             occ.extrude([(2, face)], span * tube.e[1], span * tube.e[2], span * tube.e[3])
         volume = [(dim, tag) for (dim, tag) in extruded if dim == 3]
         length(volume) == 1 || error("tube extrusion produced $(length(volume)) volumes")
+        if !isempty(tube.face_ends)
+            lower, upper = box
+            coupon_box = occ.addBox(lower[1], lower[2], lower[3], upper[1] - lower[1],
+                                    upper[2] - lower[2], upper[3] - lower[3])
+            trimmed, _ = occ.intersect(volume, [(3, coupon_box)], -1, true, true)
+            trimmed = [(dim, tag) for (dim, tag) in trimmed if dim == 3]
+            length(trimmed) == 1 ||
+                error("the box intersection of a face-ended tube left $(length(trimmed)) volumes")
+            volume = trimmed
+        end
         push!(volumes, (volume[1], group))
     end
     return volumes
@@ -431,7 +618,76 @@ function polygon_centroid(points)
     return (cx / (6area), cy / (6area))
 end
 
+# Area centroid of a planar polygon given by its 3D vertices (fan triangulation).
+function polygon_centroid_3d(points)
+    area = 0.0
+    centroid = zeros(3)
+    for i = 2:(length(points) - 1)
+        a = cross(points[i] .- points[1], points[i + 1] .- points[1])
+        weight = 0.5 * norm(a)
+        area += weight
+        centroid .+= weight .* (points[1] .+ points[i] .+ points[i + 1]) ./ 3.0
+    end
+    area > 0.0 || error("degenerate tube polygon")
+    return centroid ./ area
+end
+
+# Structural entities of a FACE-ENDED tube volume (design A2 (5)): the end cap at a
+# face end is the planar polygon on the face plane, the trimmed lateral and radial
+# faces are planar trapezoids and the longitudinal curves end on the face, so every
+# centroid is computed from the actual vertex positions (tube_end_station) instead
+# of the perpendicular-end formulas of tube_entities; the fail-closed matching is the
+# same.
+function face_ended_tube_entities(tube::EdgeTube, section::TubeSection, group)
+    first, last, _ = group
+    uw = section_coordinates(section)
+    K = ring_count(section)
+    rays = collect(first:(last + 1))
+    entities = TubeEntity[]
+    outer(j) = uw[:, section_node(section, K, j)]
+    at(end_index, u, w) = tube_point(tube, u, w, tube_end_station(tube, end_index, u, w))
+    for end_index in (0, 1)
+        push!(entities, TubeEntity(0, :edge_point, (0, end_index), at(end_index, 0.0, 0.0)))
+        for j in rays
+            push!(entities, TubeEntity(0, :outer_point, (j, end_index),
+                                       at(end_index, outer(j)[1], outer(j)[2])))
+        end
+        for j = first:last
+            a = at(end_index, outer(j)[1], outer(j)[2])
+            b = at(end_index, outer(j + 1)[1], outer(j + 1)[2])
+            push!(entities, TubeEntity(1, :cap_polygon, (j, end_index), 0.5 .* (a .+ b)))
+        end
+        for j in (first, last + 1)
+            a = at(end_index, 0.0, 0.0)
+            b = at(end_index, outer(j)[1], outer(j)[2])
+            push!(entities, TubeEntity(1, :cap_ray, (j, end_index), 0.5 .* (a .+ b)))
+        end
+        polygon = vcat([at(end_index, 0.0, 0.0)],
+                       [at(end_index, outer(j)[1], outer(j)[2]) for j in rays])
+        push!(entities, TubeEntity(2, :cap, (0, end_index), polygon_centroid_3d(polygon)))
+    end
+    push!(entities, TubeEntity(1, :edge_line, (0, 0), 0.5 .* (at(0, 0.0, 0.0) .+ at(1, 0.0, 0.0))))
+    for j in rays
+        push!(entities, TubeEntity(1, :outer_line, (j, 0),
+                                   0.5 .* (at(0, outer(j)[1], outer(j)[2]) .+
+                                           at(1, outer(j)[1], outer(j)[2]))))
+    end
+    for j = first:last
+        a = outer(j)
+        b = outer(j + 1)
+        push!(entities, TubeEntity(2, :lateral, (j, 0), polygon_centroid_3d(
+            [at(0, a[1], a[2]), at(0, b[1], b[2]), at(1, b[1], b[2]), at(1, a[1], a[2])])))
+    end
+    for j in (first, last + 1)
+        a = outer(j)
+        push!(entities, TubeEntity(2, :radial, (j, 0), polygon_centroid_3d(
+            [at(0, 0.0, 0.0), at(0, a[1], a[2]), at(1, a[1], a[2]), at(1, 0.0, 0.0)])))
+    end
+    return entities
+end
+
 function tube_entities(tube::EdgeTube, section::TubeSection, group)
+    isempty(tube.face_ends) || return face_ended_tube_entities(tube, section, group)
     first, last, _ = group
     uw = section_coordinates(section)
     K = ring_count(section)
@@ -641,12 +897,10 @@ function apex_node!(state::TubeMesh, next_node, j, i)
             cos(0.5 * deg2rad(state.section.angles[j + 2] - state.section.angles[j + 1])) +
             state.pyramid_height
         next_node[] += 1
-        state.coordinates[next_node[]] = tube_point(
-            state.tube,
-            radius * cos(theta),
-            radius * sin(theta),
-            tube_station(state.tube, i + 0.5)
-        )
+        u = radius * cos(theta)
+        w = radius * sin(theta)
+        state.coordinates[next_node[]] =
+            tube_point(state.tube, u, w, tube_station(state.tube, i + 0.5, u, w))
         return next_node[]
     end
 end
@@ -659,7 +913,7 @@ function tube_node!(state::TubeMesh, next_node, local_index, i)
             state.tube,
             uw[1, local_index],
             uw[2, local_index],
-            tube_station(state.tube, i)
+            tube_station(state.tube, i, uw[1, local_index], uw[2, local_index])
         )
         return next_node[]
     end

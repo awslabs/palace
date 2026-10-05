@@ -129,6 +129,61 @@ def _canonical_segment(row):
     return key, tangent, offset, lo, hi, first, last
 
 
+def box_face_cut_end(previous_point, previous_class, point, point_class, following_point):
+    """Whether a plan-view boundary vertex is a BOX-FACE CUT END rather than a semantic
+    corner (block (b) design A2 / A6, supervisor decision 320).
+
+    A vertex carries the class of its OUTGOING side, so a Physical vertex whose incoming
+    side is a Continuation (box) side has a single metal side there.  Such a vertex is a
+    cut end - no corner ball, the tube ends on the face - when its metal side is not
+    exactly perpendicular to the face: the exact-arithmetic test on the quantised
+    canonical coordinates is that the side's face-parallel coordinate differs between its
+    two ends (theta > 0).  An exactly perpendicular side (theta == 0: every rectilinear
+    coupon) keeps the legacy convention bitwise and the vertex stays a semantic corner.
+    Two Physical sides meeting at a vertex are a corner at any angle."""
+    if point_class != "Physical" or previous_class != "Continuation":
+        return False
+    constant = [c for c in range(2) if previous_point[c] == point[c]]
+    if len(constant) != 1:
+        raise ValueError("a Continuation side must run along one box face "
+                         f"({previous_point} -> {point})")
+    face_parallel = 1 - constant[0]
+    return point[face_parallel] != following_point[face_parallel]
+
+
+BOX_FACE_CUT_END_RULE = ("supervisor decision 320: a Physical vertex whose incoming side is a Continuation "
+                         "(box) side has a single metal side there; it is a box-face cut end, not a "
+                         "semantic corner, unless that side is exactly perpendicular to the face (its "
+                         "face-parallel coordinate equal at both ends, exact arithmetic), in which case "
+                         "the legacy rectilinear convention keeps it a corner bitwise")
+
+
+def boundary_semantic_corners(rows):
+    """Semantic corners and box-face cut ends of plan-view boundary rows (Loop / Vertex /
+    Class / X / Y / Plane, file order): the Physical vertices that are not box-face cut
+    ends (box_face_cut_end), each at its Plane height, in file order, and the excluded
+    cut ends likewise."""
+    loops = {}
+    for row in rows:
+        loops.setdefault(row["Loop"], []).append(row)
+    corners = []
+    cut_ends = []
+    for loop in loops.values():
+        points = [(float(row["X"]), float(row["Y"])) for row in loop]
+        classes = [row["Class"] for row in loop]
+        n = len(loop)
+        for index, row in enumerate(loop):
+            if classes[index] != "Physical":
+                continue
+            point = [points[index][0], points[index][1], float(row["Plane"])]
+            if box_face_cut_end(points[index - 1], classes[index - 1], points[index],
+                                classes[index], points[(index + 1) % n]):
+                cut_ends.append(point)
+            else:
+                corners.append(point)
+    return corners, cut_ends
+
+
 def derive_feature_topology(signature_path, boundary_path, semantic_corners, tolerance=1e-9):
     with Path(signature_path).open(newline="") as stream:
         rows = list(csv.DictReader(stream))

@@ -4618,11 +4618,51 @@ function recipe_scope_record(exhibited, loops, lower, upper, tolerance)
         "MetalLoops" => metal_loop_records(loops, lower, upper, tolerance))
 end
 
+# The box face (d, side) a side end on the outer box is cut by: the face among those
+# the end lies on that the side crosses most steeply (|direction[d]| largest). An end
+# at a box corner whose side crosses both faces obliquely has no single face plane
+# for its end block and fails closed.
+function crossed_box_face(point, direction, lower, upper, tolerance)
+    faces = Tuple{Int, Int}[]
+    for d in 1:2
+        abs(point[d] - lower[d]) <= tolerance && push!(faces, (d, 0))
+        abs(point[d] - upper[d]) <= tolerance && push!(faces, (d, 1))
+    end
+    isempty(faces) && return nothing
+    best = argmax([abs(direction[d]) for (d, _) in faces])
+    for (k, (d, _)) in enumerate(faces)
+        k == best && continue
+        # At a box corner the side must lie IN the other face (direction[d] == 0).
+        direction[d] == 0.0 ||
+            error("metal edge end $point crosses the box at a box corner obliquely " *
+                  "(direction $direction): no single face plane for its end block")
+    end
+    return faces[best]
+end
+
+box_face_name(d, side) = string(("x", "y")[d], side)
+
 # Straight metal edges of the plan-view boundary loops: the Physical sides (the
 # sides not lying on the outer box), with the horizontal normal pointing away
 # from the metal and the tube interval shrunk by the corner clearance at semantic
 # corners (0 at box continuation vertices). Returns rows with start, stop,
-# direction, normal, span, s_start, s_end, plane, conductor, corner angles.
+# direction, normal, span, s_start, s_end, plane, conductor, corner angles, the
+# face ends and the legacy box-vertex corners.
+#
+# Box-face ends (design A2 / A6, supervisor decision 320): an end on the outer box
+# where no other metal side of the plane meets the edge is a FACE END when the
+# edge is not exactly perpendicular to the face - the exact-arithmetic test on the
+# quantised canonical coordinates is that the edge's face-parallel coordinate
+# differs between its two ends (theta > 0) - whatever the contract's vertex class:
+# clearance 0, no ball, the sheared end block, contract class box-face cut end
+# (derive_semantic_contract mirrors the rule; a contract still listing such an
+# end as a corner fails closed here). An exactly perpendicular end (theta == 0,
+# every rectilinear coupon) keeps the legacy convention bitwise: a Physical-class
+# box vertex is a semantic corner with h_K + its ball (recorded
+# LegacyBoxVertexCorner), a Continuation-class one has clearance 0. Two metal
+# sides meeting at a box vertex are a corner at any theta. The theta -> 0 class
+# boundary is a designed discontinuity between two valid treatments 3 R past the
+# claims (decision 320; dropping the theta-0 box balls is a recorded follow-up).
 function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, tolerance)
     segments = NamedTuple[]
     on_box(p) = any(abs(p[d] - lower[d]) <= tolerance || abs(p[d] - upper[d]) <= tolerance
@@ -4681,17 +4721,55 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
         end
         return angle
     end
+    # Metal sides of the plane meeting at a point (the side itself included).
+    function sides_at(point, plane)
+        return count(abs(side.plane - plane) <= tolerance &&
+                     (norm(side.start .- point) <= tolerance || norm(side.stop .- point) <= tolerance)
+                     for side in sides)
+    end
+    # The face end of a side end on the box, or nothing: (face name, outward normal,
+    # theta) when the end has a single metal side and theta > 0.
+    function face_end(point, side)
+        on_box(point) || return nothing
+        sides_at(point, side.plane) == 1 || return nothing
+        face = crossed_box_face(point, side.direction, lower, upper, tolerance)
+        face === nothing && return nothing
+        d, box_side = face
+        # theta == 0 exactly: the face-parallel coordinate is the same at both ends.
+        side.start[3 - d] == side.stop[3 - d] && return nothing
+        normal = [0.0, 0.0]
+        normal[d] = box_side == 0 ? -1.0 : 1.0
+        theta = acos(clamp(abs(side.direction[d]), 0.0, 1.0))
+        return (face=box_face_name(d, box_side), normal=normal, theta=theta)
+    end
     for side in sides
-        start_angle = side.start_corner ? corner_angle(side.start, side.plane, side.direction) : Float64(pi)
-        stop_angle = side.stop_corner ? corner_angle(side.stop, side.plane, -side.direction) : Float64(pi)
-        s_start = side.start_corner ? clearance_of_angle(start_angle) : 0.0
-        s_end = side.span - (side.stop_corner ? clearance_of_angle(stop_angle) : 0.0)
+        start_face = face_end(side.start, side)
+        stop_face = face_end(side.stop, side)
+        for (point, face, corner) in ((side.start, start_face, side.start_corner),
+                                      (side.stop, stop_face, side.stop_corner))
+            face === nothing || !corner ||
+                error("the semantic contract lists the box-face cut end $point (face " *
+                      "$(face.face), tilt $(rad2deg(face.theta)) degrees) as a semantic corner: " *
+                      "regenerate the contract (decision 320: a box-face end with a single " *
+                      "metal side that is not exactly perpendicular to the face is a cut end)")
+        end
+        start_corner = side.start_corner && start_face === nothing
+        stop_corner = side.stop_corner && stop_face === nothing
+        start_angle = start_corner ? corner_angle(side.start, side.plane, side.direction) : Float64(pi)
+        stop_angle = stop_corner ? corner_angle(side.stop, side.plane, -side.direction) : Float64(pi)
+        s_start = start_corner ? clearance_of_angle(start_angle) : 0.0
+        s_end = side.span - (stop_corner ? clearance_of_angle(stop_angle) : 0.0)
         s_end > s_start ||
             scope_error("ShortEdges", "metal edge $(side.start) -> $(side.stop) of span " *
                                       "$(side.span) against clearances $(s_start) and " *
                                       "$(side.span - s_end)")
+        # A theta-0 box vertex kept as a corner by the legacy convention.
+        legacy_box_corners = (start_corner && on_box(side.start) && start_angle >= pi - 1.0e-9,
+                              stop_corner && on_box(side.stop) && stop_angle >= pi - 1.0e-9)
         push!(segments, (side..., s_start=s_start, s_end=s_end,
-                         corner_angles=(start_angle, stop_angle)))
+                         corner_angles=(start_angle, stop_angle),
+                         face_ends=(start_face, stop_face),
+                         legacy_box_corners=legacy_box_corners))
     end
     return segments
 end
@@ -4802,7 +4880,16 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     fabricated && (radius + pyramid_height < overetch ||
         scope_error("ShallowTrench", "tube radius $radius + pyramid height $pyramid_height " *
                                      "against Overetch $overetch"))
-    clearance(angle) = (angle < pi - 1.0e-9 ? radius / tan(0.5 * angle) : 0.0) + outer_ring
+    # The corner clearance (design A3 (3), decision 303): the tube solids retract by
+    # R / tan(phi / 2) so that their sidewalls meet at the corner bisector, plus the
+    # larger of the outer ring h_K and the pyramid-envelope margin 1.25 h_pyr /
+    # sin(phi / 2) (the apexes h_pyr outside the two tube surfaces need 2 h_pyr + a
+    # h_pyr / 2 margin of plan-view separation 2 (c - R / tan(phi / 2)) sin(phi / 2)).
+    # The max() is h_K exactly wherever sin(phi / 2) >= 0.625 (phi >= 77.4 degrees:
+    # every rectilinear corner, a single tube edge at phi = pi), so those stay bitwise.
+    clearance(angle) = (angle < pi - 1.0e-9 ? radius / tan(0.5 * angle) : 0.0) +
+                       max(outer_ring, 1.25 * pyramid_height / sin(0.5 * angle))
+    envelope_radius = radius + pyramid_height
     # Facing tubes (the sides of a hole carry tubes pointing into it): the hole must be
     # wider than two tube reaches, a reach being the tube radius, the pyramid height and
     # the band's protected distance, so that no two tube bands overlap across it.
@@ -4856,16 +4943,31 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                 ((layer.plane + layer.sign * metal_thickness, top_section),
                  (layer.plane, bottom_section)) :
                 ((layer.plane, sheet_section),)
+            # Face ends (design A2): the segment's start / stop face ends map onto the
+            # tube's start (end index 0) / end (1) through the extrusion sense; the face
+            # plane's slope in tube coordinates is kappa = (N . n, N . b) / (N . e).
+            face_ends = FaceEnd[]
+            for (segment_end, face) in enumerate(segment.face_ends)
+                face === nothing && continue
+                end_index = (along > 0.0) == (segment_end == 1) ? 0 : 1
+                normal = [face.normal[1], face.normal[2], 0.0]
+                along_normal = dot(normal, e)
+                abs(along_normal) > 0.0 || error("Tube axis lies in the box face $(face.face)")
+                push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta,
+                                         dot(normal, n) / along_normal, dot(normal, b) / along_normal,
+                                         envelope_radius, pyramid_height, lc_tangent))
+            end
             for (z, section) in placements
                 tube = if along > 0.0
                     EdgeTube([segment.start[1], segment.start[2], z], n, b, segment.s_start,
-                             segment.s_end, lc_tangent)
+                             segment.s_end, lc_tangent; face_ends=face_ends)
                 else
                     EdgeTube([segment.stop[1], segment.stop[2], z], n, b,
-                             segment.span - segment.s_end, segment.span - segment.s_start, lc_tangent)
+                             segment.span - segment.s_end, segment.span - segment.s_start, lc_tangent;
+                             face_ends=face_ends)
                 end
                 push!(tubes, (tube, section))
-                for (tool, group) in add_tube_volumes!(occ, tube, section)
+                for (tool, group) in add_tube_volumes!(occ, tube, section; box=(lower, upper))
                     push!(records, TubeRecord(tube, section, group, tool))
                     push!(tools, tool)
                 end
@@ -4895,9 +4997,27 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "SectorDegrees" => sector_degrees, "Sectors" => sectors,
         "PyramidHeight" => pyramid_height,
         "PyramidHeightOverOuterRing" => TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING,
-        "CornerClearanceRule" => "R / tan(phi / 2) + h_K before a semantic corner, phi the " *
-                                 "smallest in-plane angle between the tube edges meeting there " *
-                                 "(h_K alone for a single tube edge); 0 at box continuation vertices",
+        "CornerClearanceRule" => "R / tan(phi / 2) + max(h_K, 1.25 h_pyr / sin(phi / 2)) before " *
+                                 "a semantic corner, phi the smallest in-plane angle between the " *
+                                 "tube edges meeting there (h_K alone for a single tube edge; the " *
+                                 "max() is h_K for phi >= 77.4 degrees, the pyramid-envelope margin " *
+                                 "below); 0 at box continuation vertices and at face ends",
+        "FaceEndRule" => "a tube end on a box face with a single metal side at the vertex and a " *
+                         "tilt theta > 0 (the edge's face-parallel coordinate differs between its " *
+                         "two ends: exact arithmetic, no tolerance) ends ON the face: the CAD " *
+                         "solid is extruded over-long by (R + h_pyr) |tan theta| + TangentialSize " *
+                         "and intersected with the coupon box before the fragment; the mesh ends " *
+                         "with m = ceil(2 (R + h_pyr) |tan theta| / lc_end) sheared layers of " *
+                         "axial spacing lc_end = max(TangentialSize, 4 h_pyr |tan theta|) whose " *
+                         "last station is the face plane (Tubes[].FaceEnds); theta == 0 keeps " *
+                         "the unchanged perpendicular end (decisions 302 / 320)",
+        "BoxVertexRule" => "a box-face vertex with a single metal side is a cut end (FaceEnd, no " *
+                           "ball, clearance 0) when theta > 0; at theta == 0 exactly the legacy " *
+                           "convention holds bitwise: a Physical-class box vertex is a semantic " *
+                           "corner with h_K + its ball (Tubes[].LegacyBoxVertexCorner), a " *
+                           "Continuation-class one has clearance 0; two metal sides meeting at a " *
+                           "box vertex are a corner at any theta (decision 320)",
+        "EnvelopeRadius" => envelope_radius,
         "FacingReach" => facing_reach,
         "FacingRule" => "every hole is wider than 2 x (Radius + PyramidHeight + " *
                         "ProtectedDistance) between any two of its non-adjacent sides, and the " *
@@ -5259,7 +5379,20 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "Plane" => segment.plane, "Hole" => segment.hole, "Layer" => segment.layer_sign,
             "CornerAngles" => collect(segment.corner_angles),
             "Edge" => tubes_per_side == 1 ? "sheet" : isodd(k) ? "top" : "bottom"))
+        # Face ends (design A2) and theta-0 legacy box-vertex corners (decision 320) are
+        # recorded only where they occur, so a rectilinear census is unchanged.
+        isempty(tube.face_ends) ||
+            (tube_rows[end]["FaceEnds"] = [face_end_record(face_end) for face_end in tube.face_ends])
+        if any(segment.legacy_box_corners)
+            tube_rows[end]["LegacyBoxVertexCorner"] = [
+                point for (point, legacy) in ((segment.start, segment.legacy_box_corners[1]),
+                                              (segment.stop, segment.legacy_box_corners[2])) if legacy]
+        end
     end
+    face_end_rows = [row["FaceEnds"] for row in tube_rows if haskey(row, "FaceEnds")]
+    face_end_count = sum(length, face_end_rows; init=0)
+    legacy_box_corners = sum(length(row["LegacyBoxVertexCorner"]) for row in tube_rows
+                             if haskey(row, "LegacyBoxVertexCorner"); init=0)
     thicknesses = reduce(vcat, tube_layer_thicknesses(tube) for (tube, _) in tubes)
     spacings = [row["Spacing"] for row in tube_rows]
     neighbour_ratios = [row["LayerThickness"]["MaximumNeighbourRatio"] for row in tube_rows]
@@ -5325,6 +5458,12 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         "Tubes" => tube_rows, "TubeCount" => length(tubes),
         "TotalTubeLength" => sum(row["Length"] for row in tube_rows),
         "Layers" => sum(row["Layers"] for row in tube_rows),
+        "FaceEnds" => Dict{String, Any}(
+            "Rule" => description["FaceEndRule"], "BoxVertexRule" => description["BoxVertexRule"],
+            "Count" => face_end_count,
+            "EndBlockLayers" => sum(record["Layers"] for records in face_end_rows for record in records;
+                                    init=0),
+            "LegacyBoxVertexCorners" => legacy_box_corners),
         "SpacingMinimum" => minimum(thicknesses), "SpacingMaximum" => maximum(thicknesses),
         "LayerRule" => TUBE_LAYER_RULE, "TubeAxisSizeLaw" => TUBE_AXIS_SIZE_LAW,
         "LayerGrowthCap" => description["RingSizes"][2] / description["RingSizes"][1],
@@ -6199,13 +6338,21 @@ function generate_spatial_coupon(;
         for (k, (tube, section)) in enumerate(tubes)
             on_box(s) = on_outer_box(vcat(tube_point(tube, 0.0, 0.0, s), tube_point(tube, 0.0, 0.0, s)),
                                      lower, upper, outer_tolerance)
-            stations, axis_positions, axis_sizes = graded_tube_stations(
-                tube.s_start, tube.s_end,
-                s -> tube_axis_size(tube_point(tube, 0.0, 0.0, s), lc_tangent, semantic_corners,
-                                    corner_grading, corner_grading_slope),
-                lc_tangent, edge_growth_ratio;
-                surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-            graded = EdgeTube(tube, stations)
+            axis_size(s) = tube_axis_size(tube_point(tube, 0.0, 0.0, s), lc_tangent, semantic_corners,
+                                          corner_grading, corner_grading_slope)
+            graded = if isempty(tube.face_ends)
+                stations, axis_positions, axis_sizes = graded_tube_stations(
+                    tube.s_start, tube.s_end, axis_size, lc_tangent, edge_growth_ratio;
+                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                EdgeTube(tube, stations)
+            else
+                # A face end replaces the surface layer of its end by the sheared end
+                # block (design A2); the other end keeps the surface rule.
+                stations, shear_u, shear_w, axis_positions, axis_sizes = face_ended_tube_stations(
+                    tube, axis_size, lc_tangent, edge_growth_ratio;
+                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                EdgeTube(tube, stations; shear_u=shear_u, shear_w=shear_w)
+            end
             tubes[k] = (graded, section)
             push!(tube_layer_records, tube_layer_statistics(graded, axis_positions, axis_sizes))
             push!(tube_states, TubeMesh(graded, section, tube_volume_groups[k];
