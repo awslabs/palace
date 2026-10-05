@@ -817,7 +817,7 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   if (mat_op.HasLondonDepth())
   {
     poseps_h1_func.AddCoefficient(mat_op.GetAttributeToMaterial(),
-                                  mat_op.GetInvLondonDepthScalar());
+                                  mat_op.GetInvLondonDepthScalar(), -1.0);
   }
 
   // Boundary coefficients (real part only).

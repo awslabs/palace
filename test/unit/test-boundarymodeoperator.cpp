@@ -182,6 +182,160 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   return out;
 }
 
+// Exact mode index of the TM0 mode of a parallel plate guide with a PEC plate at y = 0, a
+// vacuum gap of height h, and a London slab of thickness d and penetration depth lambda,
+// whose back face is PEC or free (PMC), at free-space wavenumber k0 (all lengths in um).
+// With p^2 = k0^2 (n^2 - 1) and q^2 = 1/lambda^2 + p^2, H_x = cosh(p y) in the gap and cosh
+// or sinh of q (h + d - y) in the slab, and continuity of H_x and of (1/eps) dH_x/dy at y =
+// h, where eps = 1 - 1/(k0 lambda)^2 is the effective permittivity of the slab, give p
+// tanh(p h) = -(q/eps) coth(q d) (free back face) or -(q/eps) tanh(q d) (PEC back face). In
+// the quasi-static limit, n^2 = 1 + (lambda/h) coth(d/lambda) or tanh(d/lambda) (Swihart).
+double ExactLondonSlabIndex(double h, double d, double lambda, double k0, bool pec_back)
+{
+  const double eps = 1.0 - 1.0 / (k0 * k0 * lambda * lambda);
+  auto F = [&](double n)
+  {
+    const double p = k0 * std::sqrt(n * n - 1.0);
+    const double q = std::sqrt(1.0 / (lambda * lambda) + p * p);
+    const double g = pec_back ? std::tanh(q * d) : 1.0 / std::tanh(q * d);
+    return p * std::tanh(p * h) + q * g / eps;
+  };
+  double lo = 1.0 + 1.0e-12, hi = 10.0;
+  for (int it = 0; it < 200; it++)
+  {
+    const double mid = 0.5 * (lo + hi);
+    ((F(mid) < 0.0) ? lo : hi) = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+// Propagation constant normalized by the free-space wavenumber (n_eff) of a mode of a 2D
+// cross-section of width w, in um: a PEC plate at y = 0 (attribute 1), a vacuum gap of
+// height h, and a London superconductor slab of thickness d with penetration depth lambda
+// above it, whose back face y = h + d (attribute 2) is PEC or left free (PMC). The sides x
+// = 0, w (attribute 3) are PEC or free.
+double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec_back,
+                           bool pec_sides, double freq_ghz, double n_target, int order,
+                           int ny_gap = 8)
+{
+  MPI_Comm comm = Mpi::World();
+  Units units(1.0e-6, 1.0e-6);
+  IoData iodata(units);
+  iodata.model.Lc = 1.0;
+  auto &vacuum = iodata.domains.materials.emplace_back();
+  vacuum.attributes = {1};
+  auto &london = iodata.domains.materials.emplace_back();
+  london.attributes = {2};
+  london.lambda_L = lambda;
+  iodata.boundaries.pec.attributes = {1};
+  if (pec_back)
+  {
+    iodata.boundaries.pec.attributes.push_back(2);
+  }
+  if (pec_sides)
+  {
+    iodata.boundaries.pec.attributes.push_back(3);
+  }
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = freq_ghz;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.boundary_mode.tol = 1.0e-12;
+  iodata.solver.linear.tol = 1.0e-12;
+  iodata.solver.linear.max_it = 200;
+
+  // Structured quadrilaterals: 2 across the width, ny_gap across the gap, and enough across
+  // the slab to resolve the penetration depth.
+  constexpr int nx = 2;
+  const int ny_slab = std::max(8, static_cast<int>(std::ceil(8.0 * d / lambda)));
+  std::vector<double> y;
+  for (int j = 0; j <= ny_gap; j++)
+  {
+    y.push_back(h * j / ny_gap);
+  }
+  for (int j = 1; j <= ny_slab; j++)
+  {
+    y.push_back(h + d * j / ny_slab);
+  }
+  const int ny = static_cast<int>(y.size()) - 1;
+  auto serial_mesh =
+      std::make_unique<mfem::Mesh>(2, (nx + 1) * (ny + 1), nx * ny, 2 * (nx + ny));
+  for (int j = 0; j <= ny; j++)
+  {
+    for (int i = 0; i <= nx; i++)
+    {
+      serial_mesh->AddVertex(w * i / nx, y[j]);
+    }
+  }
+  auto v = [&](int i, int j) { return i + (nx + 1) * j; };
+  for (int j = 0; j < ny; j++)
+  {
+    for (int i = 0; i < nx; i++)
+    {
+      serial_mesh->AddQuad(v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j + 1),
+                           (j < ny_gap) ? 1 : 2);
+    }
+  }
+  for (int i = 0; i < nx; i++)
+  {
+    serial_mesh->AddBdrSegment(v(i, 0), v(i + 1, 0), 1);
+    serial_mesh->AddBdrSegment(v(i + 1, ny), v(i, ny), 2);
+  }
+  for (int j = 0; j < ny; j++)
+  {
+    serial_mesh->AddBdrSegment(v(0, j + 1), v(0, j), 3);
+    serial_mesh->AddBdrSegment(v(nx, j), v(nx, j + 1), 3);
+  }
+  serial_mesh->FinalizeQuadMesh(1, 1, true);
+
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  auto nd_fec = std::make_unique<mfem::ND_FECollection>(order, palace_mesh.Dimension());
+  auto h1_fec = std::make_unique<mfem::H1_FECollection>(order, palace_mesh.Dimension());
+  FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
+  FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
+  MaterialOperator mat_op(iodata, palace_mesh);
+  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
+  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+
+  mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
+  {
+    const auto &pmesh = palace_mesh.Get();
+    int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.pec.attributes);
+    nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
+    h1_fespace.Get().GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  }
+  const int nd_size = nd_fespace.GetTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(nd_dbc_tdof_list);
+  for (int i = 0; i < h1_dbc_tdof_list.Size(); i++)
+  {
+    dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
+  }
+
+  const double omega =
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  // Shift-and-invert about the target, as in BoundaryModeSolver with a target n_eff.
+  const int num_vec = 16;
+  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
+                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec,
+                              1.0e-12, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
+                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
+                              nd_fespace.GetComm());
+  const double kn_target = omega * n_target;
+  auto result = mode_solver.Solve(omega, -kn_target * kn_target);
+  REQUIRE(result.num_converged >= 1);
+  const auto kn = mode_solver.GetPropagationConstant(0);
+  CHECK(std::abs(kn.imag()) < 1.0e-6 * std::abs(kn.real()));
+  return kn.real() / omega;
+}
+
 }  // namespace
 
 TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
@@ -365,6 +519,61 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
   CHECK(cond_reduced.reduced_stats.worst_residual <= cond_reduced.reduced_tol);
   CHECK_THAT(cond_reduced.kn[0].real(), WithinRel(cond_result.kn[0].real(), 1.0e-6));
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
+}
+
+TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Parallel]")
+{
+  // London superconductor slabs of thickness d, compared to exact solutions.
+  constexpr double lambda = 0.1;
+  SECTION("Out-of-plane current")
+  {
+    // TM0 mode of a parallel plate guide with gap h, with the slab carrying the current
+    // along the propagation direction, compared to the exact dispersion relation. The
+    // frequency is high enough for the propagation constant to be well conditioned.
+    constexpr double h = 0.5, freq_ghz = 500.0;
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
+    for (double d : {0.01, 0.1, 1.0})
+    {
+      for (bool pec_back : {false, true})
+      {
+        const double n_exact = ExactLondonSlabIndex(h, d, lambda, k0, pec_back);
+        const double n_eff =
+            SolveLondonSlabMode(1.0, h, d, lambda, pec_back, false, freq_ghz, n_exact, 3);
+        CAPTURE(d, pec_back, n_exact, n_eff);
+        CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-8));
+      }
+    }
+  }
+  SECTION("In-plane current")
+  {
+    // TE1 mode between the PEC plate and the slab (PEC sides), with E_x = sin(k_y y) in the
+    // gap and the current along the slab, perpendicular to the propagation direction. In
+    // the slab, q^2 = 1/lambda^2 - k_y^2 and k_y cot(k_y h) = -q tanh(q d) (free back
+    // face).
+    constexpr double h = 500.0, d = 0.5, freq_ghz = 500.0;
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
+    auto F = [&](double ky)
+    {
+      const double q = std::sqrt(1.0 / (lambda * lambda) - ky * ky);
+      return ky / std::tan(ky * h) + q * std::tanh(q * d);
+    };
+    double lo = 0.9 * std::numbers::pi / h, hi = (1.0 - 1.0e-12) * std::numbers::pi / h;
+    for (int it = 0; it < 200; it++)
+    {
+      const double mid = 0.5 * (lo + hi);
+      ((F(lo) * F(mid) <= 0.0) ? hi : lo) = mid;
+    }
+    const double ky = 0.5 * (lo + hi);
+    const double n_exact = std::sqrt(1.0 - (ky / k0) * (ky / k0));
+    const double n_pec =
+        std::sqrt(1.0 - (std::numbers::pi / h / k0) * (std::numbers::pi / h / k0));
+    const double n_eff =
+        SolveLondonSlabMode(50.0, h, d, lambda, false, true, freq_ghz, n_exact, 3, 32);
+    CAPTURE(n_exact, n_pec, n_eff);
+    CHECK_THAT(n_eff - n_pec, WithinRel(n_exact - n_pec, 1.0e-5));
+  }
 }
 
 }  // namespace palace
