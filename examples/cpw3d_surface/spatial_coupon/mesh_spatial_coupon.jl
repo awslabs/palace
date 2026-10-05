@@ -6806,18 +6806,6 @@ function generate_spatial_coupon(;
         end
     end
     occ.synchronize()
-    if haskey(ENV, "P2ARCS_DEBUG")   # TEMPORARY
-        tube_face_set = Set{Int32}()
-        for v in tube_volumes, (d, f) in gmsh.model.getBoundary([(3, v)], false, false, false)
-            push!(tube_face_set, abs(f))
-        end
-        for (d, t) in gmsh.model.getEntities(2)
-            ty = gmsh.model.getType(2, t)
-            ty in ("Cylinder", "Cone", "Unknown") || continue
-            bb = gmsh.model.getBoundingBox(2, t)
-            println("DEBUG face $t $ty z[$(round(bb[3], digits=4)), $(round(bb[6], digits=4))] x[$(round(bb[1], digits=3)), $(round(bb[4], digits=3))] up=$(gmsh.model.getAdjacencies(2, t)[1]) tubeface=$(t in tube_face_set)")
-        end
-    end
     corner_point_tags = corner_isotropy ? semantic_corner_points(semantic_corners, tolerance) :
                         Int32[]
 

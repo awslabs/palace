@@ -282,7 +282,16 @@ end
 # exceed `spacing` (a tube whose length is a multiple of the spacing keeps it
 # exactly; tube_spacing records the largest layer actually used). The face ends
 # are recorded; their sheared blocks are installed by face_ended_tube_stations.
-function EdgeTube(origin, n, b, s_start, s_end, spacing; face_ends=FaceEnd[], joints=JointEnd[])
+function EdgeTube(
+    origin,
+    n,
+    b,
+    s_start,
+    s_end,
+    spacing;
+    face_ends=FaceEnd[],
+    joints=JointEnd[]
+)
     n = collect(Float64, n) ./ norm(n)
     b = collect(Float64, b) ./ norm(b)
     abs(dot(n, b)) < 1.0e-12 || error("tube frame must be orthogonal")
@@ -298,8 +307,7 @@ function EdgeTube(origin, n, b, s_start, s_end, spacing; face_ends=FaceEnd[], jo
         error("a tube end has two face ends")
     length(unique(joint.end_index for joint in joints)) == length(joints) ||
         error("a tube end has two joints")
-    isempty(intersect([f.end_index for f in face_ends], [j.end_index for j in joints])) ||
-        error("a tube end is both a face end and a joint")
+    isempty(intersect([f.end_index for f in face_ends], [j.end_index for j in joints])) || error("a tube end is both a face end and a joint")
     return EdgeTube(
         collect(Float64, origin),
         n,
@@ -401,8 +409,18 @@ struct ArcTube <: AbstractTube
     joints::Vector{JointEnd}
 end
 
-function ArcTube(centre, rho, sigma, b, theta0, s_start, s_end, spacing;
-                 face_ends=FaceEnd[], joints=JointEnd[])
+function ArcTube(
+    centre,
+    rho,
+    sigma,
+    b,
+    theta0,
+    s_start,
+    s_end,
+    spacing;
+    face_ends=FaceEnd[],
+    joints=JointEnd[]
+)
     rho > 0.0 || error("arc tube radius must be positive")
     abs(abs(sigma) - 1.0) <= 0.0 || error("arc tube sign must be +1 or -1")
     b = collect(Float64, b) ./ norm(b)
@@ -419,8 +437,7 @@ function ArcTube(centre, rho, sigma, b, theta0, s_start, s_end, spacing;
         error("a tube end has two face ends")
     length(unique(joint.end_index for joint in joints)) == length(joints) ||
         error("a tube end has two joints")
-    isempty(intersect([f.end_index for f in face_ends], [j.end_index for j in joints])) ||
-        error("a tube end is both a face end and a joint")
+    isempty(intersect([f.end_index for f in face_ends], [j.end_index for j in joints])) || error("a tube end is both a face end and a joint")
     all(f.face_axis in (1, 2) && isfinite(f.face_value) for f in face_ends) ||
         error("an arc tube face end needs its face plane (axis, value)")
     return ArcTube(
@@ -443,23 +460,40 @@ end
 
 # The same arc tube with the given layer boundaries (and the end-block fractions of a
 # face-ended tube, one pair per station).
-function ArcTube(tube::ArcTube, stations::AbstractVector; block_fraction=Float64[], block_end=Int[])
+function ArcTube(
+    tube::ArcTube,
+    stations::AbstractVector;
+    block_fraction=Float64[],
+    block_end=Int[]
+)
     stations = collect(Float64, stations)
     length(stations) >= 2 && stations[1] == tube.s_start && stations[end] == tube.s_end ||
         error("tube stations must run from s_start to s_end")
     all(diff(stations) .> 0.0) || error("tube stations must increase")
     block_fraction = collect(Float64, block_fraction)
     block_end = collect(Int, block_end)
-    length(block_fraction) == length(block_end) || error("tube block fractions come with their ends")
+    length(block_fraction) == length(block_end) ||
+        error("tube block fractions come with their ends")
     isempty(block_fraction) ||
         length(block_fraction) == length(stations) ||
         error("tube block fractions need one value per station")
     isempty(block_fraction) == isempty(tube.face_ends) ||
         error("a face-ended tube needs its end-block fractions and a plain tube none")
     return ArcTube(
-        tube.centre, tube.rho, tube.sigma, tube.b, tube.theta0, tube.orientation,
-        tube.s_start, tube.s_end, length(stations) - 1, stations, tube.face_ends,
-        block_fraction, block_end, tube.joints
+        tube.centre,
+        tube.rho,
+        tube.sigma,
+        tube.b,
+        tube.theta0,
+        tube.orientation,
+        tube.s_start,
+        tube.s_end,
+        length(stations) - 1,
+        stations,
+        tube.face_ends,
+        block_fraction,
+        block_end,
+        tube.joints
     )
 end
 
@@ -488,9 +522,11 @@ function arc_face_station(tube::ArcTube, face_end::FaceEnd, u, w)
     s_axis = face_end.end_index == 0 ? tube.s_start : tube.s_end
     theta_axis = arc_angle(tube, s_axis)
     offset = (face_end.face_value - tube.centre[face_end.face_axis]) / radius
-    abs(offset) <= 1.0 || error("the node circle of an arc tube does not reach its box face")
-    candidates = face_end.face_axis == 1 ? (acos(offset), -acos(offset)) :
-                 (asin(offset), pi - asin(offset))
+    abs(offset) <= 1.0 ||
+        error("the node circle of an arc tube does not reach its box face")
+    candidates =
+        face_end.face_axis == 1 ? (acos(offset), -acos(offset)) :
+        (asin(offset), pi - asin(offset))
     theta = argmin(c -> abs(rem2pi(c - theta_axis, RoundNearest)), candidates)
     theta = theta_axis + rem2pi(theta - theta_axis, RoundNearest)
     return tube.orientation * (theta - tube.theta0) * tube.rho
@@ -504,7 +540,9 @@ function tube_station(tube::ArcTube, i, u, w)
     isempty(tube.block_fraction) && return s
     k = clamp(floor(Int, i), 0, tube.layers - 1)
     f = i - k
-    fraction = tube.block_fraction[k + 1] + f * (tube.block_fraction[k + 2] - tube.block_fraction[k + 1])
+    fraction =
+        tube.block_fraction[k + 1] +
+        f * (tube.block_fraction[k + 2] - tube.block_fraction[k + 1])
     fraction > 0.0 || return s
     end_index = tube.block_end[k + 1] >= 0 ? tube.block_end[k + 1] : tube.block_end[k + 2]
     face_end = face_end_at(tube, end_index)
@@ -583,7 +621,8 @@ function tube_cad_interval(tube::AbstractTube)
     end_joint = joint_at(tube, 1)
     return tube.s_start - (start_face === nothing ? 0.0 : start_face.over_length) -
            (start_joint === nothing ? 0.0 : start_joint.over_length),
-    tube.s_end + (end_face === nothing ? 0.0 : end_face.over_length) +
+    tube.s_end +
+    (end_face === nothing ? 0.0 : end_face.over_length) +
     (end_joint === nothing ? 0.0 : end_joint.over_length)
 end
 
@@ -969,9 +1008,8 @@ function trim_tube_volume!(occ, tube::AbstractTube, volume, box)
         half_space = add_half_space!(occ, joint.origin, joint.normal, reach)
         trimmed, _ = occ.intersect(volume, [(3, half_space)], -1, true, true)
         trimmed = [(dim, tag) for (dim, tag) in trimmed if dim == 3]
-        length(trimmed) == 1 || error(
-            "the radial-plane cut of a jointed tube left $(length(trimmed)) volumes"
-        )
+        length(trimmed) == 1 ||
+            error("the radial-plane cut of a jointed tube left $(length(trimmed)) volumes")
         volume = trimmed
     end
     return volume
@@ -1195,10 +1233,26 @@ end
 
 # Gauss-Legendre nodes and weights on [0, 1] (8 points) for the revolved-face centroids.
 const GAUSS_LEGENDRE_8 = let
-    x = [-0.9602898564975363, -0.7966664774136267, -0.5255324099163290, -0.1834346424956498,
-         0.1834346424956498, 0.5255324099163290, 0.7966664774136267, 0.9602898564975363]
-    w = [0.1012285362903763, 0.2223810344533745, 0.3137066458778873, 0.3626837833783620,
-         0.3626837833783620, 0.3137066458778873, 0.2223810344533745, 0.1012285362903763]
+    x = [
+        -0.9602898564975363,
+        -0.7966664774136267,
+        -0.5255324099163290,
+        -0.1834346424956498,
+        0.1834346424956498,
+        0.5255324099163290,
+        0.7966664774136267,
+        0.9602898564975363
+    ]
+    w = [
+        0.1012285362903763,
+        0.2223810344533745,
+        0.3137066458778873,
+        0.3626837833783620,
+        0.3626837833783620,
+        0.3137066458778873,
+        0.2223810344533745,
+        0.1012285362903763
+    ]
     (0.5 .* (x .+ 1.0), 0.5 .* w)
 end
 
@@ -1210,7 +1264,8 @@ function revolved_curve_centroid(tube::ArcTube, u, w, s_a, s_b)
     theta_b = arc_angle(tube, s_b)
     half = 0.5 * (theta_b - theta_a)
     sinc = abs(half) > 0.0 ? sin(half) / half : 1.0
-    return tube.centre .+ radius * sinc .* arc_radial(0.5 * (theta_a + theta_b)) .+ w .* tube.b
+    return tube.centre .+ radius * sinc .* arc_radial(0.5 * (theta_a + theta_b)) .+
+           w .* tube.b
 end
 
 # Area centroid of the surface swept by the section segment (u_1, w_1) -> (u_2, w_2) of the
@@ -1229,12 +1284,13 @@ function revolved_face_centroid(tube::ArcTube, uw_1, uw_2)
         theta_a = arc_angle(tube, tube_end_station(tube, 0, u, w))
         theta_b = arc_angle(tube, tube_end_station(tube, 1, u, w))
         sweep = abs(theta_b - theta_a)
-        radial_integral = sign(theta_b - theta_a) .*
-                          [sin(theta_b) - sin(theta_a), -(cos(theta_b) - cos(theta_a)), 0.0]
+        radial_integral =
+            sign(theta_b - theta_a) .*
+            [sin(theta_b) - sin(theta_a), -(cos(theta_b) - cos(theta_a)), 0.0]
         area += weight * radius * sweep
-        moment .+= weight .* radius .* (
-            tube.centre .* sweep .+ radius .* radial_integral .+ (w * sweep) .* tube.b
-        )
+        moment .+=
+            weight .* radius .*
+            (tube.centre .* sweep .+ radius .* radial_integral .+ (w * sweep) .* tube.b)
     end
     area > 0.0 || error("degenerate revolved tube face")
     return moment ./ area
@@ -1256,7 +1312,10 @@ function tube_entities(tube::ArcTube, section::TubeSection, group)
     for end_index in (0, 1)
         push!(entities, TubeEntity(0, :edge_point, (0, end_index), at(end_index, 0.0, 0.0)))
         for j in rays
-            push!(entities, TubeEntity(0, :outer_point, (j, end_index), at(end_index, outer(j)...)))
+            push!(
+                entities,
+                TubeEntity(0, :outer_point, (j, end_index), at(end_index, outer(j)...))
+            )
         end
         for j = first:last
             a = at(end_index, outer(j)...)
@@ -1268,25 +1327,54 @@ function tube_entities(tube::ArcTube, section::TubeSection, group)
             b = at(end_index, outer(j)...)
             push!(entities, TubeEntity(1, :cap_ray, (j, end_index), 0.5 .* (a .+ b)))
         end
-        polygon = vcat([at(end_index, 0.0, 0.0)], [at(end_index, outer(j)...) for j in rays])
+        polygon =
+            vcat([at(end_index, 0.0, 0.0)], [at(end_index, outer(j)...) for j in rays])
         push!(entities, TubeEntity(2, :cap, (0, end_index), polygon_centroid_3d(polygon)))
     end
     s_a(u, w) = tube_end_station(tube, 0, u, w)
     s_b(u, w) = tube_end_station(tube, 1, u, w)
-    push!(entities, TubeEntity(1, :edge_line, (0, 0),
-                               revolved_curve_centroid(tube, 0.0, 0.0, s_a(0.0, 0.0), s_b(0.0, 0.0))))
+    push!(
+        entities,
+        TubeEntity(
+            1,
+            :edge_line,
+            (0, 0),
+            revolved_curve_centroid(tube, 0.0, 0.0, s_a(0.0, 0.0), s_b(0.0, 0.0))
+        )
+    )
     for j in rays
         u, w = outer(j)
-        push!(entities, TubeEntity(1, :outer_line, (j, 0),
-                                   revolved_curve_centroid(tube, u, w, s_a(u, w), s_b(u, w))))
+        push!(
+            entities,
+            TubeEntity(
+                1,
+                :outer_line,
+                (j, 0),
+                revolved_curve_centroid(tube, u, w, s_a(u, w), s_b(u, w))
+            )
+        )
     end
     for j = first:last
-        push!(entities, TubeEntity(2, :lateral, (j, 0),
-                                   revolved_face_centroid(tube, outer(j), outer(j + 1))))
+        push!(
+            entities,
+            TubeEntity(
+                2,
+                :lateral,
+                (j, 0),
+                revolved_face_centroid(tube, outer(j), outer(j + 1))
+            )
+        )
     end
     for j in (first, last + 1)
-        push!(entities, TubeEntity(2, :radial, (j, 0),
-                                   revolved_face_centroid(tube, [0.0, 0.0], outer(j))))
+        push!(
+            entities,
+            TubeEntity(
+                2,
+                :radial,
+                (j, 0),
+                revolved_face_centroid(tube, [0.0, 0.0], outer(j))
+            )
+        )
     end
     return entities
 end
@@ -1395,7 +1483,13 @@ end
 # Match the fragmented OCC entities bounding a tube volume to the structural ones
 # by centroid. Every CAD entity of the volume must be matched (otherwise the
 # fragment split a tube entity) and every structural entity must be found.
-function match_tube_entities(volume, tube::AbstractTube, section::TubeSection, group, tolerance)
+function match_tube_entities(
+    volume,
+    tube::AbstractTube,
+    section::TubeSection,
+    group,
+    tolerance
+)
     entities = tube_entities(tube, section, group)
     cad = Dict{Int, Vector{Int32}}(0 => Int32[], 1 => Int32[], 2 => Int32[])
     faces =
@@ -1728,7 +1822,8 @@ function install_tube_faces!(state::TubeMesh, next_node; meshed=Set{Int32}())
             end
         end
     end
-    all(face in meshed for face in all_faces) || error("tube faces and matched faces differ")
+    all(face in meshed for face in all_faces) ||
+        error("tube faces and matched faces differ")
     for (face, nodes) in face_nodes
         gmsh.model.mesh.addNodes(
             2,
