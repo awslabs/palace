@@ -105,7 +105,7 @@ for GIT_URL in $GIT_REMOTE_URLS; do
         echo "$GIT_LOG" && printf "\n"
 
         if $UPDATE_TAGS; then
-            sed -i .b  "s|$GIT_TAG|$GIT_TAG_NEW|g" $SOURCE_DIR/cmake/ExternalGitTags.cmake
+            sed -i .b  "s|\"$GIT_TAG\" CACHE|\"$GIT_TAG_NEW\" CACHE|" $SOURCE_DIR/cmake/ExternalGitTags.cmake
             rm $SOURCE_DIR/cmake/ExternalGitTags.cmake.b
         fi
     else
