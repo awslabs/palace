@@ -24,8 +24,9 @@ order of the set fix the Ground / Terminal boundaries and their order on both si
               (`combined-verification-20260930/configs/T-comb.json` = protocol path T: p5,
               12 AMR solves, SurfaceMortar 2, FixedTrace, SolveTol 1e-6; `P4-comb.json` = the
               p4 path; the `*-preflight.json` variant = geometry only: p2, MaxIts 0,
-              Collocated). Ground = the ground sheets of every plane + the bump shells,
-              Terminal i = the label's sheets, SA = the gap sheets, one MS + one MA target per
+              Collocated). Ground = the ground sheets of every plane + the ground bump shells
+              (`bump_surface`), Terminal i = the label's sheets + its bump shells (`bump_<label>`;
+              a `bump_<label>` naming no terminal is refused), SA = the gap sheets, one MS + one MA target per
               metal plane with the plane's facing normal as EdgeFrameNormal (the flip-chip L2
               faces down; lane W's window preflight convention). The library path is a
               parameter (--library; the geometry-only seed by default for the preflight).
@@ -192,8 +193,9 @@ def fabricated_config(polygon_set, manifest, mesh, postpro, order=4, linear_max_
 
 def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFAULT_RADIUS_UM, verbose=1):
     """The thin + library configuration from the thin window manifest (`Attributes`: name ->
-    attribute; sheets `ground_<plane>`, `<label>_<plane>`, `gap_<plane>`, `bump_surface`,
-    volumes `substrate_<plane lower-case>`, `vacuum`)."""
+    attribute; sheets `ground_<plane>`, `<label>_<plane>`, `gap_<plane>`, bump shells
+    `bump_surface` (ground) / `bump_<label>` (terminal), volumes `substrate_<plane lower-case>`,
+    `vacuum`; the table lists exactly the groups the mesh carries)."""
     if path not in THIN_PATHS:
         raise ValueError(f"path {path!r} must be one of {sorted(THIN_PATHS)}")
     settings = THIN_PATHS[path]
@@ -206,12 +208,20 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
     if not ground:
         raise ValueError("no ground sheet on any plane")
     if "bump_surface" in table:
+        if "surface" in terminals:
+            raise ValueError("terminal label 'surface' is ambiguous with the ground bump group bump_surface")
         ground.append(table["bump_surface"])
+    bump_groups = {name[len("bump_"):]: value for name, value in table.items() if name.startswith("bump_") and name != "bump_surface"}
+    unknown_bumps = sorted(set(bump_groups) - set(terminals))
+    if unknown_bumps:
+        raise ValueError(f"bump groups {['bump_' + label for label in unknown_bumps]} name no terminal of {terminals}")
     terminal_groups = []
     for label in terminals:
         group = sorted(table[f"{label}_{name}"] for name in plane_names if f"{label}_{name}" in table)
         if not group:
             raise ValueError(f"terminal {label!r} has no sheet on any plane of the thin mesh")
+        if label in bump_groups:
+            group = sorted(group + [bump_groups[label]])
         terminal_groups.append(group)
     gaps = sorted(table[f"gap_{name}"] for name in plane_names if f"gap_{name}" in table)
     if not gaps:

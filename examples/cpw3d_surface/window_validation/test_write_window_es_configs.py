@@ -206,6 +206,39 @@ class ThinConfigTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             thin_config(POLYGON_SET, manifest, "m", "lib", "T", "p")
 
+    def test_terminal_bump_shells_in_its_terminal(self):
+        # Decision 321: the thin mesher groups bump shells per conductor; `bump_<label>` joins the
+        # label's Terminal (C4's bump 6 carries the terminal), `bump_surface` (ground) stays in Ground.
+        polygon_set = copy.deepcopy(POLYGON_SET)
+        polygon_set["Bumps"].append({"Conductor": "island_3", "Footprint": [[4.0, 4.0], [6.0, 4.0], [6.0, 6.0], [4.0, 6.0]]})
+        manifest = copy.deepcopy(THIN_MANIFEST)
+        manifest["Attributes"]["bump_island_3"] = 1003
+        config = thin_config(polygon_set, manifest, "m", "lib", "T", "p")
+        self.assertEqual(config["Boundaries"]["Ground"]["Attributes"], [114, 126, 153])
+        self.assertEqual(config["Boundaries"]["Terminal"], [{"Index": 1, "Attributes": [1002, 1003]}, {"Index": 2, "Attributes": [1001]}])
+        # The bump shells are no interface target: the dielectric sheets are unchanged.
+        self.assertEqual([d["Attributes"] for d in config["Boundaries"]["Postprocessing"]["Dielectric"]], [[28, 145], [114, 1001], [114, 1001], [126, 1002], [126, 1002]])
+        # Only terminal bumps: no bump_surface -> Ground is the ground sheets alone.
+        del manifest["Attributes"]["bump_surface"]
+        polygon_set["Bumps"] = polygon_set["Bumps"][1:]
+        config = thin_config(polygon_set, manifest, "m", "lib", "T", "p")
+        self.assertEqual(config["Boundaries"]["Ground"]["Attributes"], [114, 126])
+        self.assertEqual(config["Boundaries"]["Terminal"][0]["Attributes"], [1002, 1003])
+
+    def test_bump_group_without_terminal_refused(self):
+        # Fail closed: a bump_<label> the Terminals do not name would otherwise be silently dropped.
+        manifest = copy.deepcopy(THIN_MANIFEST)
+        manifest["Attributes"]["bump_pad_9"] = 1013
+        with self.assertRaises(ValueError):
+            thin_config(POLYGON_SET, manifest, "m", "lib", "T", "p")
+        manifest = copy.deepcopy(THIN_MANIFEST)
+        manifest["Attributes"]["surface_L1"] = 1011
+        polygon_set = copy.deepcopy(POLYGON_SET)
+        polygon_set["Planes"][0]["Polygons"].append({"Conductor": "surface", "Outer": [[8.5, 8.5], [9.0, 8.5], [9.0, 9.0], [8.5, 9.0]]})
+        polygon_set["Terminals"] = ["island_3", "trace_7", "surface"]
+        with self.assertRaises(ValueError):
+            thin_config(polygon_set, manifest, "m", "lib", "T", "p")
+
 
 class MainTest(unittest.TestCase):
     def test_writes_both_kinds(self):
