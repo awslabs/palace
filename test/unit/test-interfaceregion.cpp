@@ -37,8 +37,10 @@ bool Inside(const InterfaceRegion &region, double x, double y, double z)
 
 // Decision 352 follow-up (2): the region's membership rule — the axis-aligned box, the
 // translational cell of a segment (along-range between the perpendicular end cuts,
-// in-plane transverse distance with the normal projected out, closed intervals), the
-// union over segments intersected with the box, the plane normal, and the refused inputs.
+// in-plane transverse distance with the normal projected out), the half-open along-range
+// and box in the canonical orientation (a point exactly on a shared cut or box face belongs
+// to exactly one of two adjacent regions, whichever way the segments are listed), the union
+// over segments intersected with the box, the plane normal, and the refused inputs.
 TEST_CASE("InterfaceRegion membership", "[interfaceregion][Serial][Parallel]")
 {
   const std::optional<std::array<double, 3>> none;
@@ -49,10 +51,17 @@ TEST_CASE("InterfaceRegion membership", "[interfaceregion][Serial][Parallel]")
     CHECK(box.HasBox());
     CHECK(box.SegmentCount() == 0);
     CHECK(Inside(box, 2.0, 0.0, 2.5));
-    CHECK(Inside(box, 0.0, -1.0, 2.0));  // closed
-    CHECK(Inside(box, 4.0, 1.0, 3.0));
+    CHECK(Inside(box, 0.0, -1.0, 2.0));       // the lower bounds are inclusive
+    CHECK_FALSE(Inside(box, 4.0, 1.0, 3.0));  // the upper bounds are exclusive
+    CHECK_FALSE(Inside(box, 2.0, 0.0, 3.0));
+    CHECK(Inside(box, 3.999, 0.999, 2.999));
     CHECK_FALSE(Inside(box, 4.1, 0.0, 2.5));
     CHECK_FALSE(Inside(box, 2.0, 0.0, 1.9));
+    // Complementary boxes partition their shared face.
+    InterfaceRegion other(std::array<double, 3>{4.0, -1.0, 2.0},
+                          std::array<double, 3>{8.0, 1.0, 3.0}, {}, 0.0, kZ);
+    CHECK(Inside(other, 4.0, 0.0, 2.5));
+    CHECK_FALSE(Inside(box, 4.0, 0.0, 2.5));
   }
   // One segment along x from (0, 0, 0) to (10, 0, 0), transverse distance 2: the strip
   // |y| <= 2 for 0 <= x <= 10 at ANY z (in-plane geometry, the z normal projected out).
@@ -61,13 +70,32 @@ TEST_CASE("InterfaceRegion membership", "[interfaceregion][Serial][Parallel]")
     CHECK_FALSE(cell.HasBox());
     CHECK(cell.SegmentCount() == 1);
     CHECK(Inside(cell, 5.0, 1.5, 0.0));
-    CHECK(Inside(cell, 5.0, -2.0, 7.0));  // transverse closed, z free
-    CHECK(Inside(cell, 0.0, 0.0, 0.0));   // along closed at the start cut
-    CHECK(Inside(cell, 10.0, 2.0, 0.0));  // ... and at the end cut
+    CHECK(Inside(cell, 5.0, -2.0, 7.0));        // transverse closed, z free
+    CHECK(Inside(cell, 0.0, 0.0, 0.0));         // along inclusive at the start cut
+    CHECK_FALSE(Inside(cell, 10.0, 2.0, 0.0));  // ... exclusive at the end cut
+    CHECK(Inside(cell, 9.999, 2.0, 0.0));
     CHECK_FALSE(Inside(cell, 5.0, 2.01, 0.0));
     CHECK_FALSE(Inside(cell, -0.01, 0.0, 0.0));  // beyond the start cut, however close
     CHECK_FALSE(Inside(cell, 10.01, 0.0, 0.0));
     CHECK_FALSE(Inside(cell, 11.0, 0.5, 0.0));  // the end cut is flat, not a ball
+    // Adjacent collinear cells share the cut point exactly once, whichever way each is
+    // listed (the canonical orientation is the lexicographically positive direction).
+    InterfaceRegion next(none, none, {{10.0, 0.0, 0.0, 20.0, 0.0, 0.0}}, 2.0, kZ);
+    InterfaceRegion next_reversed(none, none, {{20.0, 0.0, 0.0, 10.0, 0.0, 0.0}}, 2.0, kZ);
+    InterfaceRegion cell_reversed(none, none, {{10.0, 0.0, 0.0, 0.0, 0.0, 0.0}}, 2.0, kZ);
+    for (const auto *first : {&cell, &cell_reversed})
+    {
+      for (const auto *second : {&next, &next_reversed})
+      {
+        CHECK(Inside(*first, 10.0, 1.0, 0.0) + Inside(*second, 10.0, 1.0, 0.0) == 1);
+        CHECK(Inside(*first, 0.0, 1.0, 0.0) + Inside(*second, 0.0, 1.0, 0.0) == 1);
+        CHECK(Inside(*first, 20.0, 1.0, 0.0) + Inside(*second, 20.0, 1.0, 0.0) == 0);
+      }
+    }
+    // A segment along -y: canonical direction +y, so the cut at the smaller y is inclusive.
+    InterfaceRegion down(none, none, {{0.0, 10.0, 0.0, 0.0, 0.0, 0.0}}, 1.0, kZ);
+    CHECK(Inside(down, 0.0, 0.0, 0.0));
+    CHECK_FALSE(Inside(down, 0.0, 10.0, 0.0));
   }
   // A diagonal segment: the along-range and the transverse distance follow its direction;
   // the orientation of the segment does not matter.
@@ -80,7 +108,8 @@ TEST_CASE("InterfaceRegion membership", "[interfaceregion][Serial][Parallel]")
       CHECK(Inside(*region, 5.0, 5.0, 0.0));
       CHECK(Inside(*region, 5.0 - 0.99 * s, 5.0 + 0.99 * s, 0.0));
       CHECK_FALSE(Inside(*region, 5.0 - 1.01 * s, 5.0 + 1.01 * s, 0.0));
-      CHECK(Inside(*region, 10.0, 10.0, 0.0));        // the far end cut, closed
+      CHECK(Inside(*region, 0.0, 0.0, 0.0));          // the canonical start cut, inclusive
+      CHECK_FALSE(Inside(*region, 10.0, 10.0, 0.0));  // the canonical end cut, exclusive
       CHECK_FALSE(Inside(*region, 10.5, 10.5, 0.0));  // beyond the end cut
     }
   }
@@ -104,6 +133,8 @@ TEST_CASE("InterfaceRegion membership", "[interfaceregion][Serial][Parallel]")
     CHECK(Inside(vertical, 3.0, 0.5, 5.0));
     CHECK_FALSE(Inside(vertical, 3.0, 1.5, 5.0));
     CHECK_FALSE(Inside(vertical, 3.0, 0.0, 10.5));
+    CHECK(Inside(vertical, 3.0, 0.0, 0.0));
+    CHECK_FALSE(Inside(vertical, 3.0, 0.0, 10.0));
     CHECK_THROWS(InterfaceRegion(none, none, {{0.0, 0.0, 0.0, 0.0, 0.0, 10.0}}, 1.0, kZ));
   }
   // Refused inputs.
@@ -132,9 +163,10 @@ TEST_CASE("InterfaceRegion membership", "[interfaceregion][Serial][Parallel]")
 // represented field E = (1 + x) z-hat, whose MA energy density is 0.05 (1 + x)^2 per unit
 // area, (a) regions cut along mesh lines reproduce the analytic energies, (b) regions cut
 // anywhere partition the total, the EdgeDistances outside / annulus energies, and the
-// response matrices to roundoff (every quadrature point in exactly one cell), (c) an
-// unfiltered entry is unchanged, (d) a segment at another z selects the plane (in-plane
-// geometry) while the box's z range excludes it.
+// response matrices to roundoff (every quadrature point in exactly one cell), including a
+// partition whose cuts and box face lie on quadrature points (x = 0.5: the mesh line
+// through the face centroids), (c) an unfiltered entry is unchanged, (d) a segment at
+// another z selects the plane (in-plane geometry) while the box's z range excludes it.
 TEST_CASE("InterfaceRegion exhaustive surface quadrature",
           "[interfaceregion][Serial][Parallel]")
 {
@@ -271,6 +303,69 @@ TEST_CASE("InterfaceRegion exhaustive surface quadrature",
   CHECK_THAT(total, WithinRel(reference, 1e-12));
   CHECK_THAT(outside, WithinRel(reference_edges[0].energy_outside, 1e-12));
   CHECK_THAT(annulus, WithinRel(reference_edges[0].energy_annulus, 1e-12));
+
+  // The same with cuts and a box face exactly ON quadrature points (the x of the first
+  // quadrature point of a top face, replicated by the mesh symmetry on other faces): the
+  // half-open bounds give every such point to exactly one side, so the complementary boxes
+  // and the two cells cut there still partition the plane (closed bounds would count it
+  // twice: the S6 extruded reference mesh, +5-7 % per cell type).
+  double cut_x = -1.0;
+  {
+    const auto &par_mesh = h1_space.GetParMesh();
+    mfem::Vector physical(3);
+    for (int be = 0; be < par_mesh.GetNBE(); be++)
+    {
+      if (par_mesh.GetBdrAttribute(be) != top)
+      {
+        continue;
+      }
+      auto *T = const_cast<mfem::ParMesh &>(par_mesh).GetBdrElementTransformation(be);
+      const auto &ir =
+          mfem::IntRules.Get(T->GetGeometryType(), fem::DefaultIntegrationOrder::Get(*T));
+      T->Transform(ir.IntPoint(0), physical);
+      cut_x = physical(0);
+      break;
+    }
+    Mpi::GlobalMax(1, &cut_x, Mpi::World());
+    REQUIRE((cut_x > 0.0 && cut_x < 1.0));
+  }
+  config::BoundaryPostData on_points;
+  {
+    auto entry = data;
+    entry.region.emplace();
+    entry.region->box_min = std::array<double, 3>{-1.0, -1.0, 0.5};
+    entry.region->box_max = std::array<double, 3>{cut_x, 2.0, 1.5};
+    on_points.dielectric.emplace(1, entry);
+    entry.region->box_min = std::array<double, 3>{cut_x, -1.0, 0.5};
+    entry.region->box_max = std::array<double, 3>{2.0, 2.0, 1.5};
+    on_points.dielectric.emplace(2, entry);
+    entry.region.reset();
+    entry.region.emplace();
+    entry.region->segments = {{0.0, 0.5, 1.0, cut_x, 0.5, 1.0}};
+    entry.region->distance = 0.5;
+    on_points.dielectric.emplace(3, entry);
+    entry.region->segments = {{1.0, 0.5, 1.0, cut_x, 0.5, 1.0}};  // listed backwards
+    on_points.dielectric.emplace(4, entry);
+  }
+  SurfacePostOperator on_points_post(on_points, ProblemType::ELECTROSTATIC, materials,
+                                     h1_space, nd_space);
+  const double left_box = on_points_post.GetInterfaceElectricFieldEnergy(1, field);
+  const double right_box = on_points_post.GetInterfaceElectricFieldEnergy(2, field);
+  CHECK_THAT(left_box + right_box, WithinRel(reference, 1e-12));
+  CHECK_THAT(on_points_post.GetInterfaceElectricFieldEnergy(3, field) +
+                 on_points_post.GetInterfaceElectricFieldEnergy(4, field),
+             WithinRel(reference, 1e-12));
+  CHECK_THAT(on_points_post.GetInterfaceElectricFieldEnergy(3, field),
+             WithinRel(left_box, 1e-12));
+  // The points on the cut carry energy (the closed-interval double count would be visible).
+  {
+    auto shifted = on_points;
+    (*shifted.dielectric.at(1).region->box_max)[0] = cut_x + 1.0e-9;
+    SurfacePostOperator shifted_post(shifted, ProblemType::ELECTROSTATIC, materials,
+                                     h1_space, nd_space);
+    CHECK(shifted_post.GetInterfaceElectricFieldEnergy(1, field) >
+          left_box * (1.0 + 1.0e-6));
+  }
 
   // The response matrices (localized edge energies) of the partition sum to the unfiltered
   // ones; a region filters surfaces only (no localized volume diagnostics).

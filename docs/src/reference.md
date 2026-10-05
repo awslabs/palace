@@ -770,7 +770,13 @@ are given, the union of their translational cells: with the plane `Normal` (defa
 along-coordinate lies between the perpendicular cuts at the segment's ends and its
 in-plane transverse distance to the segment's line is at most `Distance` — the
 construction of the thin device's longitudinal response cells and of the reference
-controls. Coordinates are mesh length units; all intervals are closed.
+controls. Coordinates are mesh length units. The along-range and the box are half-open
+(start / lower bound inclusive, end / upper bound exclusive) in a canonical segment
+orientation (the direction made lexicographically positive, whichever end is listed
+first), so that a quadrature point lying exactly on a cut or box face shared by two
+adjacent regions is counted once: on extruded reference meshes the cuts of a
+device-derived partition do coincide with quadrature points, and closed bounds would
+double count them. The transverse bound is closed.
 
 ```json
 "Dielectric": [
