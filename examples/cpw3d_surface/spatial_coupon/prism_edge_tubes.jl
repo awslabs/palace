@@ -610,7 +610,8 @@ function tube_layer_statistics(tube::EdgeTube, positions, sizes)
         blocks["End"] = Dict{String, Any}(
             "Layers" => end_block,
             "Thicknesses" => thicknesses[(end - end_block + 1):end],
-            "NeighbourRatio" => thicknesses[end - end_block + 1] / thicknesses[end - end_block]
+            "NeighbourRatio" =>
+                thicknesses[end - end_block + 1] / thicknesses[end - end_block]
         )
     end
     isempty(blocks) || (statistics["FaceEndBlocks"] = blocks)
