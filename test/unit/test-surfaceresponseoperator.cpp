@@ -3908,8 +3908,10 @@ TEST_CASE_METHOD(
     // Signature differs from the feature's by ONE signature quantum in one number (a 1e-6 R
     // shift of a portion end: the same geometry at the grid) matches the feature, Status
     // Matched / Exact, with Match.QuantumNearMatch naming both keys and the differing
-    // number, counted in Summary.QuantumNearMatched; a 5-quantum shift stays Missing; two
-    // library models within 8 quanta of each other are refused.
+    // number, counted in Summary.QuantumNearMatched; exactly 4 on-grid quanta still match
+    // (the half-quantum inclusive rule, decision 317 MINOR-1); a 5-quantum shift stays
+    // Missing; two library models within 8 quanta of each other (8 on-grid included) are
+    // refused, 9 apart are admitted.
     {
       auto Perturbed = [&](int quanta, const std::string &name)
       {
@@ -3956,7 +3958,8 @@ TEST_CASE_METHOD(
         }
         REQUIRE(feature["Match"]["Status"] == "Matched");
         CHECK(feature["Match"]["Model"] == "near-one-quantum");
-        CHECK_THAT(feature["Match"]["Deviation"].get<double>(), WithinAbs(0.25, 1.0e-6));
+        CHECK_THAT(feature["Match"]["Deviation"].get<double>(),
+                   WithinAbs(1.0 / 4.5, 1.0e-6));
         REQUIRE(feature["Match"].contains("QuantumNearMatch"));
         const auto &record = feature["Match"]["QuantumNearMatch"];
         CHECK(record["ModelKey"] == model_hash);
@@ -3980,6 +3983,23 @@ TEST_CASE_METHOD(
                                  requirement["SelectedModels"][0]["Name"] ==
                                      "near-one-quantum";
                         }));
+      const json four = Preflight(Perturbed(4, "near-four-quanta"), "four");
+      int four_matched = 0;
+      for (const auto &feature : four["Identification"]["Features"])
+      {
+        if (feature["Type"] == "SpatialEdgeCluster" &&
+            feature["Hash"] == (*cluster_feature)["Hash"])
+        {
+          REQUIRE(feature["Match"]["Status"] == "Matched");
+          CHECK(feature["Match"]["Model"] == "near-four-quanta");
+          CHECK(feature["Match"]["Deviation"].get<double>() <= 1.0);
+          CHECK_THAT(feature["Match"]["QuantumNearMatch"]["MaxDeltaQuanta"].get<double>(),
+                     WithinAbs(4.0, 1.0e-6));
+          four_matched++;
+        }
+      }
+      CHECK(four_matched >= 1);
+      CHECK(four["Summary"]["Counts"]["QuantumNearMatched"] == four_matched);
       const json far = Preflight(Perturbed(5, "far-five-quanta"), "five");
       for (const auto &feature : far["Identification"]["Features"])
       {
@@ -3996,6 +4016,15 @@ TEST_CASE_METHOD(
       duplicate["Models"].push_back(Perturbed(1, "near-one-quantum")["Models"].back());
       CHECK_THROWS_WITH(Preflight(duplicate, "duplicate"),
                         Catch::Matchers::ContainsSubstring("two models, one geometry"));
+      auto duplicate_eight = signature_library;
+      duplicate_eight["Models"].push_back(
+          Perturbed(8, "near-eight-quanta")["Models"].back());
+      CHECK_THROWS_WITH(Preflight(duplicate_eight, "duplicate-eight"),
+                        Catch::Matchers::ContainsSubstring("two models, one geometry"));
+      auto distinct_nine = signature_library;
+      distinct_nine["Models"].push_back(Perturbed(9, "far-nine-quanta")["Models"].back());
+      const json nine = Preflight(distinct_nine, "distinct-nine");
+      CHECK(nine["Summary"]["Counts"]["QuantumNearMatched"] == 0);  // the exact model wins
     }
 
     // A version-2 model that also stores its Edges in the canonical frame (the library

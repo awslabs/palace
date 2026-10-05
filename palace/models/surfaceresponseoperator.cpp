@@ -6578,8 +6578,9 @@ public:
   }
 
   // Two SpatialEdgeCluster models within 2 x kClusterQuantumNearMatchMaxQuanta quanta of
-  // each other are one geometry at the grid (block (b) DESIGN section 4, MINOR-5): refused
-  // at load, so that no feature can lie within the near-match of two models.
+  // each other (half-quantum inclusive) are one geometry at the grid (block (b) DESIGN
+  // section 4, MINOR-5): refused at load, so that no feature can lie within the near-match
+  // of two models.
   void RefuseNearDuplicateClusters() const
   {
     for (const auto &[topology, indices] : by_topology)
@@ -6601,14 +6602,14 @@ public:
           }
           const auto difference =
               ClusterSignatureQuantumDifference(a.signature, b.signature);
-          MFEM_VERIFY(!difference || difference->max_delta_quanta >
-                                         2.0 * kClusterQuantumNearMatchMaxQuanta,
+          MFEM_VERIFY(!difference || !ClusterQuantumDuplicate(difference->max_delta_quanta),
                       "Library models \""
                           << a.name << "\" and \"" << b.name
                           << "\" are SpatialEdgeCluster keys of one topology within "
                           << (difference ? difference->max_delta_quanta : 0.0)
                           << " signature quanta of each other (<= "
-                          << 2 * kClusterQuantumNearMatchMaxQuanta
+                          << 2 * kClusterQuantumNearMatchMaxQuanta << " + "
+                          << kClusterQuantumInclusiveMargin
                           << "): two models, one geometry at the 1e-6 R grid (block (b) "
                              "DESIGN section 4: keep the lexicographically smallest key's "
                              "model, list the other key under its NearKeys)!");

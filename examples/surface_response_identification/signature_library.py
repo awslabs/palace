@@ -64,6 +64,11 @@ ANGLE_QUANTUM_DEGREES = 1.0e-6
 # (Match.QuantumNearMatch recorded), the library groups them into one coupon keyed by the
 # lexicographically smallest member (the others listed under NearKeys).
 CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA = 4
+# Decisions 287 (b) / 288 (2) / 317 MINOR-1 (kClusterQuantumInclusiveMargin): every quantum
+# threshold is read HALF-QUANTUM INCLUSIVE - an on-grid difference of k quanta computes to
+# k +- 1e-9 in floating point, so a feature matches iff max |delta| <= k + 1/2 quanta and two
+# models (or two span-cap allowances) are one geometry iff max |delta| <= 2 k + 1/2.
+CLUSTER_QUANTUM_INCLUSIVE_MARGIN = 0.5
 CLUSTER_LENGTH_KEYS = ("P", "Arc", "Gap", "Box")
 CLUSTER_ANGLE_KEYS = ("TurnDegrees",)
 
@@ -202,13 +207,27 @@ def mirror_translational(signature):
     return mirror
 
 
+def within_cluster_quantum_near_match(max_delta_quanta):
+    """The half-quantum inclusive near-match rule: max |delta| <= k + 1/2 quanta."""
+    return max_delta_quanta <= CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + CLUSTER_QUANTUM_INCLUSIVE_MARGIN
+
+
+def cluster_quantum_duplicate(max_delta_quanta):
+    """Two cluster signatures are one geometry (refused as two models / two allowances) iff
+    max |delta| <= 2 k + 1/2 quanta (half-quantum inclusive)."""
+    return max_delta_quanta <= 2 * CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + CLUSTER_QUANTUM_INCLUSIVE_MARGIN
+
+
 def signature_deviation(a, b):
     """max |difference| / tolerance over the parameters (both orientations of b; the smaller;
-    a SpatialEdgeCluster: max |delta| / (CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA quanta)), or
-    None when the topologies differ. Within tolerance iff <= 1."""
+    a SpatialEdgeCluster: max |delta| / ((CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + 1/2) quanta),
+    the half-quantum inclusive rule), or None when the topologies differ. Within tolerance
+    iff <= 1."""
     if is_cluster_signature(a) or is_cluster_signature(b):
         difference = cluster_quantum_difference(a, b)
-        return None if difference is None else difference[0] / CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA
+        if difference is None:
+            return None
+        return difference[0] / (CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + CLUSTER_QUANTUM_INCLUSIVE_MARGIN)
     ta, la, aa = split_parameters(a)
     best = None
     for candidate in (b, mirror_translational(b)):

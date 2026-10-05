@@ -4933,8 +4933,10 @@ TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
                   "Vertices[5].TurnDegrees") != d12->differing_paths.end());
   CHECK(std::find(d12->differing_paths.begin(), d12->differing_paths.end(),
                   "Portions[0].Arc[1]") != d12->differing_paths.end());
-  CHECK_THAT(SignatureDeviation(s1p, s2p).value_or(-1.0), WithinAbs(0.25, 1.0e-6));
-  CHECK_THAT(SignatureDeviation(s2p, s4).value_or(-1.0), WithinAbs(0.25, 1.0e-6));
+  // The deviation is normalised by the half-quantum INCLUSIVE threshold k + 1/2 = 4.5
+  // quanta (decisions 287 / 288 / 317 MINOR-1): one quantum reads 1 / 4.5.
+  CHECK_THAT(SignatureDeviation(s1p, s2p).value_or(-1.0), WithinAbs(1.0 / 4.5, 1.0e-6));
+  CHECK_THAT(SignatureDeviation(s2p, s4).value_or(-1.0), WithinAbs(1.0 / 4.5, 1.0e-6));
   CHECK_THAT(SignatureDeviation(s1p, s1p).value_or(-1.0), WithinAbs(0.0, 1.0e-12));
 
   // 3. The representative of the group is its lexicographically smallest member (never a
@@ -4944,7 +4946,10 @@ TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
   CHECK(representative.dump() == smallest);
   CHECK(SubstituteSignatureParameters(s1p, p1.lengths_over_R, p1.angles_degrees) == s1p);
 
-  // 4. Four quanta match, five do not (on the number farthest from any other change).
+  // 4. Exactly four ON-GRID quanta match, five do not (on the number farthest from any
+  //    other change), through the matcher's own comparisons (the half-quantum inclusive
+  //    rule, decision 317 MINOR-1): the on-grid 4-quantum difference computes to
+  //    4 +- 1e-9 in floating point and must not be refused by a threshold at exactly 4.
   auto Perturbed = [&](int quanta)
   {
     nlohmann::json perturbed = s1p;
@@ -4952,10 +4957,32 @@ TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
         perturbed["Portions"][20]["P"][0].get<double>() + quanta * 1.0e-6;
     return perturbed;
   };
-  CHECK(SignatureDeviation(s1p, Perturbed(4)).value_or(2.0) <= 1.0 + 1.0e-9);
-  CHECK(SignatureDeviation(s1p, Perturbed(5)).value_or(2.0) > 1.0);
-  CHECK(ClusterSignatureQuantumDifference(s1p, Perturbed(5))->differing_paths ==
-        std::vector<std::string>{"Portions[20].P[0]"});
+  {
+    const auto four = ClusterSignatureQuantumDifference(s1p, Perturbed(4));
+    const auto five = ClusterSignatureQuantumDifference(s1p, Perturbed(5));
+    REQUIRE(four.has_value());
+    REQUIRE(five.has_value());
+    CHECK_THAT(four->max_delta_quanta, WithinAbs(4.0, 1.0e-6));
+    CHECK(four->max_delta_quanta != 4.0);  // the float-noise case the rule is for
+    CHECK(WithinClusterQuantumNearMatch(four->max_delta_quanta));
+    CHECK(!WithinClusterQuantumNearMatch(five->max_delta_quanta));
+    CHECK(SignatureDeviation(s1p, Perturbed(4)).value_or(2.0) <= 1.0);
+    CHECK(SignatureDeviation(s1p, Perturbed(5)).value_or(2.0) > 1.0);
+    CHECK(five->differing_paths == std::vector<std::string>{"Portions[20].P[0]"});
+    // The duplicate rule: exactly eight on-grid quanta are one geometry, nine are two.
+    const auto eight = ClusterSignatureQuantumDifference(s1p, Perturbed(8));
+    const auto nine = ClusterSignatureQuantumDifference(s1p, Perturbed(9));
+    REQUIRE(eight.has_value());
+    REQUIRE(nine.has_value());
+    CHECK_THAT(eight->max_delta_quanta, WithinAbs(8.0, 1.0e-6));
+    CHECK(ClusterQuantumDuplicate(eight->max_delta_quanta));
+    CHECK(!ClusterQuantumDuplicate(nine->max_delta_quanta));
+    // The rule's boundaries themselves: k + 1/2 and 2 k + 1/2 are inclusive.
+    CHECK(WithinClusterQuantumNearMatch(4.5));
+    CHECK(!WithinClusterQuantumNearMatch(4.5000001));
+    CHECK(ClusterQuantumDuplicate(8.5));
+    CHECK(!ClusterQuantumDuplicate(8.5000001));
+  }
 
   // 5. A permuted entry order is another topology key (the residual knife-edge).
   {
@@ -5120,8 +5147,9 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
   }
 
   // 3. The allowance's signature one quantum off in one number (another window's rounding)
-  //    still resolves (MatchedQuanta 1); five quanta off does not (Unboxable again, the
-  //    allowance listed under UnusedSpanCapAllowances).
+  //    still resolves (MatchedQuanta 1), as does exactly four on-grid quanta (MatchedQuanta
+  //    4 +- 1e-9: the half-quantum inclusive rule, decision 317 MINOR-1); five quanta off
+  //    does not (Unboxable again, the allowance listed under UnusedSpanCapAllowances).
   auto Shifted = [&](int quanta)
   {
     SpanCapAllowance shifted = allowance;
@@ -5143,6 +5171,16 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
     CHECK(result.unused_span_cap_allowances.empty());
   }
   {
+    const auto [input, result] = Identify({Shifted(4)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->spatial_support["Contract"] == 3);
+    const auto &record = cluster->spatial_support["SpanCapAllowance"];
+    CHECK(record["Label"] == "shifted-4");
+    CHECK_THAT(record["MatchedQuanta"].get<double>(), WithinAbs(4.0, 1.0e-6));
+    CHECK(result.unused_span_cap_allowances.empty());
+  }
+  {
     const auto [input, result] = Identify({Shifted(5)});
     const auto *cluster = ClusterContaining(result, input, probe);
     REQUIRE(cluster != nullptr);
@@ -5156,12 +5194,15 @@ TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
   }
 
   // 4. Fail closed at load: a cap below 16 R; two allowances within 8 quanta ("two
-  //    allowances one geometry"); a signature with a Box (not claims-only); no Portions.
+  //    allowances one geometry"; exactly eight on-grid quanta included, half-quantum
+  //    inclusive); a signature with a Box (not claims-only); no Portions.
   {
     SpanCapAllowance low = allowance;
     low.span_cap_over_R = 15.0;
     CHECK_THROWS_WITH(Identify({low}), ContainsSubstring("below the plan span cap"));
     CHECK_THROWS_WITH(Identify({allowance, Shifted(1)}),
+                      ContainsSubstring("two allowances, one geometry"));
+    CHECK_THROWS_WITH(Identify({allowance, Shifted(8)}),
                       ContainsSubstring("two allowances, one geometry"));
     // Nine quanta apart: two distinct geometries, both admitted.
     std::vector<SpanCapAllowance> both = {allowance, Shifted(9)};

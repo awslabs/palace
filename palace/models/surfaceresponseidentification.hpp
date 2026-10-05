@@ -660,11 +660,31 @@ SignatureParameters SplitSignatureParameters(const nlohmann::json &signature);
 // rounds a few coordinates differently by sub-quantum float noise (the three stage-2
 // loop-end keys differ by exactly one quantum in 8-17 of 290 numbers; the nearest real
 // near-key is
-// >= 2,000 quanta away). SignatureDeviation of two clusters = max |delta| / (k q) (<= 1
-// matches); a permuted entry order is a different topology key (Missing: the residual
-// knife-edge, recorded). Library models within 2 k quanta of each other are refused at load
-// ("two models one geometry"), so no feature can be within k quanta of two models.
+// >= 2,000 quanta away). SignatureDeviation of two clusters = max |delta| / ((k + 1/2) q)
+// (<= 1 matches: the half-quantum inclusive rule below); a permuted entry order is a
+// different topology key (Missing: the residual knife-edge, recorded). Library models
+// within 2 k (+ 1/2) quanta of each other are refused at load ("two models one geometry"),
+// so no feature can be within k quanta of two models.
 constexpr int kClusterQuantumNearMatchMaxQuanta = 4;
+
+// Decision 287 (b) / 288 (2) half-quantum INCLUSIVE reading of every quantum threshold
+// (decision 317 MINOR-1): an on-grid difference of k quanta computes to k +- 1e-9 in
+// floating point, so a threshold at exactly k would refuse a 4-quantum difference read as
+// 4.0000000006. A feature matches a model iff max |delta| <= k + 1/2 quanta; two models (or
+// two span-cap allowances) are one geometry iff max |delta| <= 2 k + 1/2.
+constexpr double kClusterQuantumInclusiveMargin = 0.5;
+
+inline bool WithinClusterQuantumNearMatch(double max_delta_quanta)
+{
+  return max_delta_quanta <=
+         kClusterQuantumNearMatchMaxQuanta + kClusterQuantumInclusiveMargin;
+}
+
+inline bool ClusterQuantumDuplicate(double max_delta_quanta)
+{
+  return max_delta_quanta <=
+         2 * kClusterQuantumNearMatchMaxQuanta + kClusterQuantumInclusiveMargin;
+}
 
 // The quantum difference of two cluster signatures of one topology key: the largest
 // |delta| in quanta over the parameters and the paths of every differing number; nullopt
@@ -689,7 +709,8 @@ nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature);
 
 // Normalised deviation of two signatures of one type: the maximum over the parameters of
 // |difference| / tolerance (both orientations of a translational signature; the smaller;
-// a SpatialEdgeCluster: |difference| / (kClusterQuantumNearMatchMaxQuanta x quantum)), or
+// a SpatialEdgeCluster: |difference| / ((kClusterQuantumNearMatchMaxQuanta + 1/2) x
+// quantum), the half-quantum inclusive rule), or
 // nullopt when the topology keys differ. Within tolerance iff the value is <= 1.
 std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann::json &b);
 

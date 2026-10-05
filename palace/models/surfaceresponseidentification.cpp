@@ -1648,14 +1648,14 @@ void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances)
     {
       const auto difference = ClusterSignatureQuantumDifference(
           allowances[i].claims_signature, allowances[j].claims_signature);
-      MFEM_VERIFY(!difference || difference->max_delta_quanta >
-                                     2.0 * kClusterQuantumNearMatchMaxQuanta,
+      MFEM_VERIFY(!difference || !ClusterQuantumDuplicate(difference->max_delta_quanta),
                   "SpanCapAllowances entries \""
                       << allowances[i].label << "\" and \"" << allowances[j].label
                       << "\" embed claims-only signatures of one topology within "
                       << (difference ? difference->max_delta_quanta : 0.0)
                       << " signature quanta of each other (<= "
-                      << 2 * kClusterQuantumNearMatchMaxQuanta
+                      << 2 * kClusterQuantumNearMatchMaxQuanta << " + "
+                      << kClusterQuantumInclusiveMargin
                       << "): two allowances, one geometry (block (b) DESIGN A4 (4))!");
     }
   }
@@ -1670,7 +1670,7 @@ ResolveSpanCapAllowance(const nlohmann::json &claims_signature,
   {
     const auto difference =
         ClusterSignatureQuantumDifference(claims_signature, allowances[a].claims_signature);
-    if (!difference || difference->max_delta_quanta > kClusterQuantumNearMatchMaxQuanta)
+    if (!difference || !WithinClusterQuantumNearMatch(difference->max_delta_quanta))
     {
       continue;
     }
@@ -1696,10 +1696,13 @@ nlohmann::json QuantumNearMatchRecord(const std::string &model_key,
        {{"Count", difference.differing_paths.size()},
         {"Paths", difference.differing_paths}}},
       {"MaxQuanta", kClusterQuantumNearMatchMaxQuanta},
+      {"InclusiveMargin", kClusterQuantumInclusiveMargin},
       {"Rule", "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster key whose "
                "topology (every entry with its numbers nulled, order preserved) equals the "
                "model's and whose numbers lie within MaxQuanta signature quanta (1e-6 R / "
-               "1e-6 deg) of the model's is the same geometry at the grid: matched Exact "
+               "1e-6 deg; read half-quantum inclusive: <= MaxQuanta + InclusiveMargin, "
+               "decisions 287 / 288 / 317) of the model's is the same geometry at the "
+               "grid: matched Exact "
                "to the model (placed in its own canonical frame with M = identity, the A10 "
                "checks unchanged); the FeatureKey is recorded beside the ModelKey"}};
 }
@@ -1882,13 +1885,15 @@ std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann
   if (IsClusterSignature(a) || IsClusterSignature(b))
   {
     // The quantum near-match (DESIGN section 4): no mirror orientation (the chirality is
-    // folded into the canonical key), the tolerance k quanta.
+    // folded into the canonical key), the tolerance k quanta read half-quantum inclusive
+    // (decision 317 MINOR-1): <= 1 iff max |delta| <= k + 1/2 quanta.
     const auto difference = ClusterSignatureQuantumDifference(a, b);
     if (!difference)
     {
       return std::nullopt;
     }
-    return difference->max_delta_quanta / kClusterQuantumNearMatchMaxQuanta;
+    return difference->max_delta_quanta /
+           (kClusterQuantumNearMatchMaxQuanta + kClusterQuantumInclusiveMargin);
   }
   const SignatureParameters pa = SplitSignatureParameters(a);
   std::optional<double> best;
@@ -11866,7 +11871,8 @@ void Identifier::EmitClusters()
             {"Paths", resolved->difference.differing_paths}}},
           {"Rule", "block (b) DESIGN section 3 (a) / A4 (decision 303): the allowance's "
                    "embedded claims-only signature near-matches this cluster's claims-only "
-                   "signature within ClusterQuantumNearMatchMaxQuanta quanta; its "
+                   "signature within ClusterQuantumNearMatchMaxQuanta quanta (half-quantum "
+                   "inclusive); its "
                    "SpanCapOverR replaces the plan span cap for this cluster's box growth "
                    "and ExceedsSpanCap reading (never below the default cap)"}};
     }
@@ -14520,15 +14526,18 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"SignatureLengthQuantumOverR", kSignatureLengthQuantumOverRadius},
         {"SignatureAngleQuantumDegrees", kSignatureAngleQuantumDegrees},
         {"ClusterQuantumNearMatchMaxQuanta", kClusterQuantumNearMatchMaxQuanta},
+        {"ClusterQuantumInclusiveMargin", kClusterQuantumInclusiveMargin},
         {"ClusterQuantumNearMatch",
          "block (b) DESIGN section 4 (decision 303): a SpatialEdgeCluster feature matches "
          "a library model whose topology key (the signature with every number of "
          "Portions / Context [].P / Arc / Gap, Box and Vertices[].P / TurnDegrees nulled, "
          "entry order preserved) equals its own and whose numbers lie within "
-         "ClusterQuantumNearMatchMaxQuanta signature quanta of its own (the nearest such "
+         "ClusterQuantumNearMatchMaxQuanta signature quanta of its own (read half-quantum "
+         "inclusive, <= MaxQuanta + ClusterQuantumInclusiveMargin, decisions 287 / 288 / "
+         "317; the nearest such "
          "model; ties by name); recorded Features[].Match.QuantumNearMatch and in Summary; "
          "a permuted entry order is another key (Missing); two library models within "
-         "twice that many quanta are refused at load"},
+         "twice that many quanta (+ the margin) are refused at load"},
         {"StraightBendRadiusOverR", kStraightBendRadiusOverRadius},
         {"CurvatureWindowOverR", kCurvatureWindowOverRadius},
         {"PairSeparationToleranceRelative", kPairSeparationTolerance},
@@ -14705,7 +14714,8 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "response correction config (SpatialSupport.SpanCapAllowances[] {ClaimsSignature, "
          "SpanCapOverR, Label, Reason, Approval}) replaces SupportSpanCapOverR for the "
          "cluster whose CLAIMS-ONLY signature near-matches the embedded ClaimsSignature "
-         "within ClusterQuantumNearMatchMaxQuanta quanta (resolved before any box, so one "
+         "within ClusterQuantumNearMatchMaxQuanta quanta (half-quantum inclusive; resolved "
+         "before any box, so one "
          "entry serves every window instance); recorded Features[].SpatialSupport."
          "SpanCapAllowance {Label, SpanCapOverR, Reason, Approval, MatchedQuanta, "
          "DifferingNumbers}; a refused cluster exports SpatialSupport.ClaimsSignature; an "

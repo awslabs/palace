@@ -187,8 +187,9 @@ class ClusterQuantumNearMatchTest(unittest.TestCase):
         worst, paths = L.cluster_quantum_difference(self.s1p, self.s4)
         self.assertAlmostEqual(worst, 1.0, places=6)
         self.assertEqual(len(paths), 8)
-        self.assertAlmostEqual(L.signature_deviation(self.s1p, self.s2p), 0.25, places=6)
-        self.assertAlmostEqual(L.signature_deviation(self.s2p, self.s4), 0.25, places=6)
+        # Normalised by the half-quantum inclusive threshold 4.5 quanta (decision 317 MINOR-1).
+        self.assertAlmostEqual(L.signature_deviation(self.s1p, self.s2p), 1.0 / 4.5, places=6)
+        self.assertAlmostEqual(L.signature_deviation(self.s2p, self.s4), 1.0 / 4.5, places=6)
 
     def test_grouping_and_the_representative(self):
         import json
@@ -216,13 +217,26 @@ class ClusterQuantumNearMatchTest(unittest.TestCase):
 
     def test_five_quanta_and_a_permutation_stay_apart(self):
         import copy
-        five = copy.deepcopy(self.s1p)
-        five["Portions"][20]["P"][0] += 5.0e-6
-        four = copy.deepcopy(self.s1p)
-        four["Portions"][20]["P"][0] += 4.0e-6
+
+        def shifted(quanta):
+            out = copy.deepcopy(self.s1p)
+            out["Portions"][20]["P"][0] += quanta * 1.0e-6
+            return out
+        five, four, eight, nine = shifted(5), shifted(4), shifted(8), shifted(9)
+        # Exactly 4 / 8 ON-GRID quanta compute to 4 / 8 +- 1e-9: the half-quantum inclusive
+        # rule (decision 317 MINOR-1) matches at 4 and refuses the duplicate at 8; 5 / 9 are apart.
+        self.assertAlmostEqual(L.cluster_quantum_difference(self.s1p, four)[0], 4.0, places=6)
+        self.assertNotEqual(L.cluster_quantum_difference(self.s1p, four)[0], 4.0)
+        self.assertTrue(L.within_cluster_quantum_near_match(L.cluster_quantum_difference(self.s1p, four)[0]))
+        self.assertFalse(L.within_cluster_quantum_near_match(L.cluster_quantum_difference(self.s1p, five)[0]))
+        self.assertTrue(L.cluster_quantum_duplicate(L.cluster_quantum_difference(self.s1p, eight)[0]))
+        self.assertFalse(L.cluster_quantum_duplicate(L.cluster_quantum_difference(self.s1p, nine)[0]))
         self.assertGreater(L.signature_deviation(self.s1p, five), 1.0)
-        self.assertLessEqual(L.signature_deviation(self.s1p, four), 1.0 + 1.0e-9)
+        self.assertLessEqual(L.signature_deviation(self.s1p, four), 1.0)
         self.assertEqual(L.cluster_quantum_difference(self.s1p, five)[1], ["Portions[20].P[0]"])
+        # The matcher (grouping): 4 quanta group into one case, 5 stay two.
+        self.assertEqual(len(L.group_features([{"Id": 0, "Type": "SpatialEdgeCluster", "Signature": self.s1p},
+                                               {"Id": 1, "Type": "SpatialEdgeCluster", "Signature": four}])), 1)
         permuted = copy.deepcopy(self.s1p)
         permuted["Portions"][0], permuted["Portions"][1] = permuted["Portions"][1], permuted["Portions"][0]
         self.assertIsNone(L.signature_deviation(self.s1p, permuted))
