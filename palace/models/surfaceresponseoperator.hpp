@@ -434,6 +434,23 @@ public:
     std::map<int, double> fabricated_surface_energy_fixed_flux;
   };
 
+  // The energies of one applied patch (decision 352 follow-up (1)): the increments the
+  // patch adds to its model's ModelContribution (the gate-updated weight included), with
+  // its provenance (the placed patch index, feature, longitudinal cell in mesh units).
+  // Ordered by patch index and replicated on all ranks when requested.
+  struct PatchContribution
+  {
+    int patch = 0;
+    int model = 0;
+    int feature = -1;
+    double weight = 0.0;
+    std::array<double, 2> cell = {0.0, 0.0};
+    double domain_correction = 0.0;
+    double domain_correction_fixed_flux = 0.0;
+    std::map<int, double> fabricated_surface_energy;
+    std::map<int, double> fabricated_surface_energy_fixed_flux;
+  };
+
   struct ElectrostaticResponse
   {
     double domain_correction = 0.0;
@@ -442,6 +459,7 @@ public:
     std::map<int, double> fabricated_surface_energy_fixed_flux;
     std::map<int, double> trace_closure_spread;
     std::vector<ModelContribution> model_contributions;
+    std::vector<PatchContribution> patch_contributions;
     double maximum_trace_closure_spread = 0.0;
     double response_weighted_trace_closure_spread = 0.0;
     double trace_closure_response_failure_fraction = 0.0;
@@ -509,9 +527,12 @@ public:
   // Evaluate coupon responses on an electrostatic potential. With fixed flux enabled,
   // return both complete postprocessing-only closure ensembles. Otherwise use the active
   // per-model domain-coupling policy for corrected-domain accounting while retaining the
-  // fabricated fixed-trace surface evaluation.
+  // fabricated fixed-trace surface evaluation. With include_patches, also return every
+  // applied patch's own increments (PatchContribution; their sums per model are the
+  // ModelContribution values to roundoff), gathered on all ranks.
   ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
-                                                 bool include_fixed_flux = true) const;
+                                                 bool include_fixed_flux = true,
+                                                 bool include_patches = false) const;
 
   // Collect the actual local contour and conductor-state coefficients for every
   // three-dimensional spatial response patch. The result is ordered by global patch
@@ -566,6 +587,12 @@ public:
   // Collect deterministic setup/work-distribution counters and runtime application
   // counts. This method is collective over the response operator communicator.
   nlohmann::json GetStatistics() const;
+
+private:
+  // Gather the local per-patch response records of GetElectrostaticResponse on every rank
+  // and decode them, ordered by patch index.
+  std::vector<PatchContribution>
+  GatherPatchContributions(const std::vector<double> &local_records) const;
 };
 
 // Classify the configured automatic surface-response neighborhoods without assembling a

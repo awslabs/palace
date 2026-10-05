@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <set>
 #include <string>
@@ -606,6 +607,102 @@ TEST_CASE("Config electrostatic response matrix", "[config][Serial]")
   CHECK_THROWS(IoData(config, false));
 }
 
+// Decision 352 follow-up (2): the optional quadrature-level Region of an interface
+// dielectric entry (a box and / or translational cells of segments), its defaults and its
+// refused inputs; the resolved configuration records the default normal.
+TEST_CASE("Config interface dielectric region", "[config][Serial]")
+{
+  json dielectric = {{"Attributes", {1}},
+                     {"Type", "MS"},
+                     {"Thickness", 2.0e-3},
+                     {"Permittivity", 11.45},
+                     {"Region",
+                      {{"Segments", {{0.0, 0.0, 0.0, 10.0, 0.0, 0.0}}},
+                       {"Distance", 5.0},
+                       {"BoxMin", {-1.0, -1.0, -0.5}},
+                       {"BoxMax", {11.0, 1.0, 0.5}}}}};
+  CHECK_FALSE(config::InterfaceDielectricData(
+                  json{{"Attributes", {1}}, {"Thickness", 2.0e-3}, {"Permittivity", 4.0}})
+                  .region);
+  const config::InterfaceDielectricData data(dielectric);
+  REQUIRE(data.region);
+  REQUIRE(data.region->box_min);
+  CHECK(*data.region->box_min == std::array<double, 3>{-1.0, -1.0, -0.5});
+  CHECK(*data.region->box_max == std::array<double, 3>{11.0, 1.0, 0.5});
+  REQUIRE(data.region->segments.size() == 1);
+  CHECK(data.region->segments[0] == std::array<double, 6>{0.0, 0.0, 0.0, 10.0, 0.0, 0.0});
+  CHECK(data.region->distance == 5.0);
+  CHECK(data.region->normal == std::array<double, 3>{0.0, 0.0, 1.0});
+
+  // A box alone, segments alone, a custom normal.
+  {
+    auto box_only = dielectric;
+    box_only["Region"].erase("Segments");
+    box_only["Region"].erase("Distance");
+    const config::InterfaceDielectricData parsed(box_only);
+    REQUIRE(parsed.region);
+    CHECK(parsed.region->segments.empty());
+    CHECK(parsed.region->box_min);
+    auto segments_only = dielectric;
+    segments_only["Region"].erase("BoxMin");
+    segments_only["Region"].erase("BoxMax");
+    segments_only["Region"]["Normal"] = {1.0, 0.0, 0.0};
+    const config::InterfaceDielectricData cells(segments_only);
+    REQUIRE(cells.region);
+    CHECK_FALSE(cells.region->box_min);
+    CHECK(cells.region->normal == std::array<double, 3>{1.0, 0.0, 0.0});
+  }
+  // Refused: an empty region, one box bound, segments without a distance (and the
+  // converse), a non-positive distance, unordered box bounds, a zero-length segment, a
+  // zero normal.
+  for (const auto &[reason, mutate] :
+       std::vector<std::pair<const char *, std::function<void(json &)>>>{
+           {"empty", [](json &r) { r = json::object(); }},
+           {"one bound", [](json &r) { r.erase("BoxMax"); }},
+           {"no distance", [](json &r) { r.erase("Distance"); }},
+           {"distance alone",
+            [](json &r)
+            {
+              r.erase("Segments");
+              r.erase("BoxMin");
+              r.erase("BoxMax");
+            }},
+           {"zero distance", [](json &r) { r["Distance"] = 0.0; }},
+           {"unordered box", [](json &r) { r["BoxMin"] = {12.0, -1.0, -0.5}; }},
+           {"zero segment",
+            [](json &r) { r["Segments"] = {{1.0, 1.0, 0.0, 1.0, 1.0, 0.0}}; }},
+           {"zero normal", [](json &r) { r["Normal"] = {0.0, 0.0, 0.0}; }}})
+  {
+    INFO(reason);
+    auto refused = dielectric;
+    mutate(refused["Region"]);
+    CHECK_THROWS(config::InterfaceDielectricData(refused));
+  }
+
+  // The parsed region keeps the configured (mesh-unit) values (the scaling with the mesh
+  // is config::Nondimensionalize's); the resolved configuration records the default normal.
+  dielectric["Index"] = 1;
+  json input = {{"Problem", {{"Type", "Electrostatic"}}},
+                {"Model", {{"Mesh", "unused.msh"}}},
+                {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                {"Boundaries",
+                 {{"Ground", {{"Attributes", {2}}}},
+                  {"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+                  {"Postprocessing", {{"Dielectric", {dielectric}}}}}},
+                {"Solver", {{"Electrostatic", {{"Save", 0}}}}}};
+  IoData parsed(input, false);
+  const auto &region = parsed.boundaries.postpro.dielectric.at(1).region;
+  REQUIRE(region);
+  CHECK(region->distance == 5.0);
+  CHECK(region->segments[0][3] == 10.0);
+  CHECK((*region->box_max)[0] == 11.0);
+  CHECK(region->normal == std::array<double, 3>{0.0, 0.0, 1.0});
+  const auto concrete = IoData::ConcretizeDefaults(parsed, input);
+  const auto &entry = concrete["Boundaries"]["Postprocessing"]["Dielectric"][0];
+  CHECK(entry.at("Region").at("Normal") == json({0.0, 0.0, 1.0}));
+  CHECK(entry.at("Region").at("Distance") == 5.0);
+}
+
 TEST_CASE("Config electrostatic response correction", "[config][Serial]")
 {
   const json correction = {{"FabricatedMatrix", "fabricated.csv"},
@@ -656,6 +753,7 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   concretized_correction["TranslationalDomainCorrection"] = "FixedTrace";
   concretized_correction["TraceCoupling"] = "Collocated";
   concretized_correction["MortarOversampling"] = 2;
+  concretized_correction["PatchEnergy"] = false;
   CHECK(sparse["Solver"]["Electrostatic"]["ResponseCorrection"] == concretized_correction);
 
   config["Problem"]["Type"] = "Magnetostatic";
@@ -795,6 +893,19 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   oversampled_mortar["MortarOversampling"] = 0;
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", oversampled_mortar}}));
+  // Decision 352 follow-up (1): the per-patch energy export, off by default; electrostatic
+  // only (the Maxwell SurfaceResponseCorrection refuses it).
+  CHECK_FALSE(oversampled_data.response_correction->patch_energy);
+  auto patch_energy = automatic_correction;
+  patch_energy["PatchEnergy"] = true;
+  const config::ElectrostaticSolverData patch_energy_data(
+      json{{"ResponseCorrection", patch_energy}});
+  REQUIRE(patch_energy_data.response_correction);
+  CHECK(patch_energy_data.response_correction->patch_energy);
+  CHECK_NOTHROW(
+      config::SolverData(json{{"SurfaceResponseCorrection", automatic_correction}}));
+  CHECK_THROWS_WITH(config::SolverData(json{{"SurfaceResponseCorrection", patch_energy}}),
+                    Catch::Matchers::ContainsSubstring("PatchEnergy"));
 
   auto invalid_solve_tol = automatic_correction;
   invalid_solve_tol["SolveTol"] = 0.0;

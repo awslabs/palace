@@ -29,6 +29,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Multi-slot spatial coupons now partition MA/MS surfaces by interface slot and
     conductor before summing repeated target-interface contributions. Electrostatic runs
     also report additive per-model response energies and model metadata.
+  - Added `"PatchEnergy"` to the electrostatic `"ResponseCorrection"` (default `false`):
+    `surface-response-patch-energy.csv` with the domain correction and fabricated
+    interface energies of every applied patch (model, feature, longitudinal cell, weight,
+    origin) per source and evaluation, the per-patch rows of
+    `surface-response-model-energy.csv`. Added an optional `"Region"` to interface
+    dielectric postprocessing entries: a quadrature-level spatial filter (axis-aligned box
+    and / or the translational cells of given segments: along-range between the end cuts,
+    in-plane transverse distance), so that one interface can be partitioned into entries
+    on the same attributes without re-tagging mesh faces. Without either option every
+    output is unchanged.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
