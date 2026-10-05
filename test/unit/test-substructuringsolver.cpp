@@ -19,7 +19,9 @@
 #include "fem/mesh.hpp"
 #include "fem/substructure.hpp"
 #include "fixtures.hpp"
+#include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/superconductorsheetoperator.hpp"
 #include "models/surfacecurlsolver.hpp"
@@ -2078,6 +2080,134 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         CHECK(std::abs(linked(c, 0) - ref) <= 1.0e-9 * std::sqrt(m * std::abs(E_ff)));
       }
     }
+  }
+}
+
+TEST_CASE("SpaceOperator assembly restricted to region and environment",
+          "[substructure][Serial][Parallel]")
+{
+  // The driven operators assembled on the region and on the environment add up to the
+  // full operators, and neither side couples to the other side's interior DOFs: lumped
+  // ports on both sides, a lossy dielectric region, a conducting environment, a
+  // second-order absorbing boundary on both sides and an impedance sheet crossing Gamma.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 2.0}, {"LossTan", 0.01}},
+          {{"Attributes", {2}}, {"Permittivity", 4.0}, {"Conductivity", 1.0}}}}}},
+      {"Boundaries",
+       {{"LumpedPort",
+         {{{"Index", 1},
+           {"R", 1.0},
+           {"Attributes", {1}},
+           {"Direction", "+Y"},
+           {"Excitation", true}},
+          {{"Index", 2}, {"R", 1.0}, {"Attributes", {2}}, {"Direction", "+Y"}}}},
+        {"Absorbing", {{"Attributes", {3}}, {"Order", 2}}},
+        {"Impedance", {{{"Attributes", {4}}, {"Rs", 1.0}, {"Ls", 2.0}, {"Cs", 0.5}}}}}},
+      {"Solver",
+       {{"Order", order},
+        {"Device", "CPU"},
+        {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  IoData iodata(config, false);
+  RegionDesign design;
+  design.sheet = true;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 3, 4, design)));
+  SpaceOperator space_op(iodata, mesh);
+  auto &pmesh = mesh.back()->Get();
+  const auto &fes = space_op.GetNDSpace().Get();
+
+  // True DOFs of region (attribute 1) and environment (attribute 2) elements.
+  mfem::Array<int> marks[2];
+  for (int side = 0; side < 2; side++)
+  {
+    mfem::Vector m(fes.GetVSize()), mt(fes.GetTrueVSize());
+    m = 0.0;
+    mfem::Array<int> vdofs;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      if (pmesh.GetAttribute(e) == side + 1)
+      {
+        fes.GetElementVDofs(e, vdofs);
+        for (int d : vdofs)
+        {
+          m(d >= 0 ? d : -1 - d) = 1.0;
+        }
+      }
+    }
+    fes.GetProlongationMatrix()->MultTranspose(m, mt);
+    marks[side].SetSize(mt.Size());
+    for (int i = 0; i < mt.Size(); i++)
+    {
+      marks[side][i] = (mt(i) > 0.0);
+    }
+  }
+
+  const std::vector<int> region = {1}, environment = {2};
+  const double omega = 1.3;  // nondimensional (the configuration is not nondimensionalized)
+  auto assemble = [&](const std::vector<int> *domains)
+  {
+    space_op.SetAssemblyDomains(domains);
+    std::vector<std::unique_ptr<ComplexOperator>> ops;
+    ops.push_back(space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO));
+    ops.push_back(space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO));
+    ops.push_back(space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO));
+    ops.push_back(
+        space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO));
+    return ops;
+  };
+  auto full = assemble(nullptr), reg = assemble(&region), env = assemble(&environment);
+  space_op.SetAssemblyDomains(nullptr);
+
+  // y = A x, for one part (real or imaginary) of an operator (zero if absent).
+  auto apply = [](const ComplexOperator *A, bool imag, const Vector &x, Vector &y)
+  {
+    y = 0.0;
+    const Operator *part = A ? (imag ? A->Imag() : A->Real()) : nullptr;
+    if (part)
+    {
+      part->Mult(x, y);
+    }
+  };
+  const int nt = fes.GetTrueVSize();
+  Vector x(nt), y_full(nt), y_reg(nt), y_env(nt), x_eint(nt), x_rint(nt);
+  x.Randomize(1 + Mpi::Rank(pmesh.GetComm()));
+  for (int i = 0; i < nt; i++)
+  {
+    x_eint(i) = (marks[1][i] && !marks[0][i]) ? x(i) : 0.0;  // environment interior
+    x_rint(i) = (marks[0][i] && !marks[1][i]) ? x(i) : 0.0;  // region interior
+  }
+  const char *names[4] = {"K", "C", "M", "A2"};
+  for (int k = 0; k < 4; k++)
+  {
+    for (const bool imag : {false, true})
+    {
+      CAPTURE(names[k], imag);
+      apply(full[k].get(), imag, x, y_full);
+      apply(reg[k].get(), imag, x, y_reg);
+      apply(env[k].get(), imag, x, y_env);
+      const double n_full = linalg::Norml2(pmesh.GetComm(), y_full);
+      y_reg += y_env;
+      y_reg -= y_full;
+      CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) <= 1.0e-12 * (n_full + 1.0e-300));
+      apply(reg[k].get(), imag, x_eint, y_reg);
+      apply(env[k].get(), imag, x_rint, y_env);
+      CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) <= 1.0e-12 * (n_full + 1.0e-300));
+      CHECK(linalg::Norml2(pmesh.GetComm(), y_env) <= 1.0e-12 * (n_full + 1.0e-300));
+    }
+  }
+  // Each side carries its own part: nonzero region and environment stiffness and damping.
+  for (int k : {0, 1})
+  {
+    apply(reg[k].get(), false, x, y_reg);
+    apply(env[k].get(), false, x, y_env);
+    CHECK(linalg::Norml2(pmesh.GetComm(), y_reg) > 0.0);
+    CHECK(linalg::Norml2(pmesh.GetComm(), y_env) > 0.0);
   }
 }
 
