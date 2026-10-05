@@ -111,6 +111,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed intermittent MPI deadlocks in output-directory unit tests when ranks observed
     filesystem changes at different times. [PR
     839](https://github.com/awslabs/palace/pull/839).
+  - Fixed a hang in `ParFiniteElementSpace` construction and partition-dependent spurious
+    H1 true DOFs on parallel nonconforming tetrahedral meshes (seen after AMR rebalancing at
+    several hundred ranks) by applying MFEM [PR 5494](https://github.com/mfem/mfem/pull/5494)
+    as a vendored patch (`extern/patch/mfem/mfem_pr5494.diff`).
 
 ## [0.17.0] - 2026-06-28
 
