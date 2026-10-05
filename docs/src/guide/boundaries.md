@@ -180,6 +180,8 @@ The mesh cracking behavior of previous versions of *Palace*, where all interior 
 with boundary conditions except for lumped ports are cracked, can be restored with the
 deprecated option
 [`config["Model"]["CrackInternalBoundaryElements"]`](../config/reference.md#config-model-crackinternalboundaryelements).
+Setting this option to `false` disables mesh cracking entirely, which is an error for
+boundaries with `"Crack": true`.
 
 ## Periodic boundary
 
