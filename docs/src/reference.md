@@ -776,7 +776,10 @@ orientation (the direction made lexicographically positive, whichever end is lis
 first), so that a quadrature point lying exactly on a cut or box face shared by two
 adjacent regions is counted once: on extruded reference meshes the cuts of a
 device-derived partition do coincide with quadrature points, and closed bounds would
-double count them. The transverse bound is closed.
+double count them. For the same reason adjacent regions must share one cut coordinate
+exactly: cells whose ends are rounded independently overlap or gap by the rounding
+(1e-10 of a mesh unit sufficed on the S6 reference to double count 5-7 % of the energy).
+The transverse bound is closed.
 
 ```json
 "Dielectric": [
