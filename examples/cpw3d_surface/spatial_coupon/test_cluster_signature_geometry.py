@@ -559,6 +559,38 @@ class GapPerpendicularityTest(unittest.TestCase):
         self.assertAlmostEqual(csg.gap_perpendicularity_bound(0.5), 2.0 * (math.sqrt(2.0) * 0.5e-6 + 4.0e-6))
 
 
+class ClaimRadiusSpanCapTest(unittest.TestCase):
+    """Block (b) DESIGN section 3 (b): the generator's claim radius is half the case's span cap
+    (the default 16 R -> 8 R, byte-identical); a claim 9 R from the origin generates only under
+    --support-span-cap >= 18."""
+
+    def test_claim_radius_follows_the_span_cap(self):
+        R = 1.9
+        far = 10.0  # units of R: the second claim's row point (its P0 end) lies 9 R out
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 2,
+                     "Portions": [portion((-1.0, 0.0, 1.0, 0.0), (0.0, 1.0)), portion((far - 1.0, 0.0, far + 1.0, 0.0), (0.0, 1.0))],
+                     "Vertices": []}
+        rec = record(signature["Portions"])
+        rec["Signature"] = rec["Geometry"]["Signature"] = signature
+        # The generator's frame is a rotation about the signature's origin: the second claim's
+        # row point (the exact-portion row's P0) lies 9 R from it.
+        import generate_spatial_response as spatial_generator
+        coupon = {"Topology": "SpatialEdgeCluster", "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"},
+                  "Geometry": {"EdgeCount": 2, "Signature": signature,
+                               "Edges": csg.model_edges(rec, R), "PlanViewFacets": []}}
+        with self.assertRaisesRegex(ValueError, "too large for its matching radius"):
+            spatial_generator.normalize_geometry(coupon, R)
+        with self.assertRaisesRegex(ValueError, "too large for its matching radius"):
+            spatial_generator.normalize_geometry(coupon, R, 16.0)
+        frame, edges, _ = spatial_generator.normalize_geometry(coupon, R, 30.0)
+        self.assertEqual(len(edges), 2)
+        self.assertAlmostEqual(max(np.linalg.norm(e["Point"]) for e in edges), 9.0 * R, places=9)
+        frame, edges, _ = spatial_generator.normalize_geometry(coupon, R, 18.0)
+        self.assertEqual(len(edges), 2)
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            spatial_generator.normalize_geometry(coupon, R, 0.0)
+
+
 class LegacyByteIdentityTest(unittest.TestCase):
     """A claims-only (contract-2) signature regenerates the pre-v3 builder's generator inputs
     byte for byte (testdata/legacy-byte-identity: coupon.json, mesh-signature.csv,

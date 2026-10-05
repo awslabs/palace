@@ -5023,3 +5023,159 @@ TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
     CHECK(manifest["Conventions"]["ClusterQuantumNearMatchMaxQuanta"] == 4);
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Block (b) DESIGN section 3 (a) + A4 (decision 303): a per-case span-cap allowance keyed
+  // by the EMBEDDED claims-only signature, resolved by the quantum near-match BEFORE any box.
+  // Scene: a comb of ten 1 R pads at pitch 2 R (one 40-edge cluster, claims box 5 x 23 R:
+  // ExceedsSpanCap under the default 16 R cap, contract 2) and a foreign strip whose end
+  // stands 0.05 R OUTSIDE the comb's end face: the face must grow, the growth would pass
+  // the cap -> SpanCapRefusedGrowth (Unboxable) without an allowance; with an allowance of
+  // 24 R the box grows twice and the cluster is a contract-3 key.
+  const double R = 2.0;
+  std::vector<LoopSpec> loops;
+  for (int k = 0; k < 10; k++)
+  {
+    loops.push_back({Rectangle(4.0 * k, 0.0, 4.0 * k + 2.0, 2.0), k, 100.0});
+  }
+  loops.push_back({Rectangle(42.1, 0.5, 70.0, 1.5), 10, 100.0});
+  auto Identify = [&](std::vector<SpanCapAllowance> allowances)
+  {
+    IdentificationInput input = MakeInput(loops, R);
+    input.span_cap_allowances = std::move(allowances);
+    auto result = IdentifyMetalPerimeter(input);
+    return std::make_pair(input, std::move(result));
+  };
+  const std::array<double, 2> probe = {1.0, 0.0};  // the first pad's bottom edge
+
+  // 1. No allowance: the growth is refused at the cap; the record exports the claims-only
+  //    signature verbatim (the object an operator copies into the allowance).
+  nlohmann::json exported;
+  std::string claims_key;
+  {
+    const auto [input, result] = Identify({});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 0);
+    CHECK(cluster->signature["Unboxable"] == true);
+    REQUIRE(support["Unboxable"].is_string());
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("beyond the span cap 16"));
+    CHECK(support["UnboxableReason"] == "SpanCapRefusedGrowth");
+    CHECK_THAT(support["SpanCapOverR"].get<double>(), WithinAbs(16.0, 0.0));
+    CHECK(!support.contains("SpanCapAllowance"));
+    REQUIRE(support.contains("ClaimsSignature"));
+    exported = support["ClaimsSignature"];
+    CHECK(exported["Type"] == "SpatialEdgeCluster");
+    CHECK(exported["EdgeCount"] == 40);
+    CHECK(!exported.contains("Unboxable"));
+    CHECK(!exported.contains("Box"));
+    claims_key = SignatureKeyAndHash(exported, "SpatialEdgeCluster").second;
+    CHECK(support["ClaimsKey"] == claims_key);
+    CHECK(result.unused_span_cap_allowances.empty());
+    CHECK(result.ToJson(1.0)["UnusedSpanCapAllowances"] == nlohmann::json::array());
+    CHECK(!cluster->matched_model);
+  }
+
+  // 2. The allowance (verbatim export, 24 R): the cluster boxes (contract 3), the record
+  //    names the allowance with MatchedQuanta 0, ExceedsSpanCap reads against 24 R.
+  SpanCapAllowance allowance;
+  allowance.claims_signature = exported;
+  allowance.span_cap_over_R = 24.0;
+  allowance.label = claims_key.substr(0, 12);
+  allowance.reason = "unit test: one closed feature that cannot be split (decision 244 (i))";
+  allowance.approval = "decision 303";
+  {
+    const auto [input, result] = Identify({allowance});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(!cluster->signature.contains("Unboxable"));
+    CHECK(cluster->signature.contains("Box"));
+    CHECK(support["Growth"]["Grown"] == true);
+    CHECK_THAT(support["SpanCapOverR"].get<double>(), WithinAbs(24.0, 0.0));
+    CHECK(support["ExceedsSpanCap"] == false);
+    CHECK(!support.contains("ClaimsSignature"));
+    REQUIRE(support.contains("SpanCapAllowance"));
+    const auto &record = support["SpanCapAllowance"];
+    CHECK(record["Label"] == allowance.label);
+    CHECK_THAT(record["SpanCapOverR"].get<double>(), WithinAbs(24.0, 0.0));
+    CHECK(record["Approval"] == "decision 303");
+    CHECK_THAT(record["MatchedQuanta"].get<double>(), WithinAbs(0.0, 1.0e-12));
+    CHECK(record["DifferingNumbers"]["Count"] == 0);
+    CHECK(support["ClaimsKey"] == claims_key);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK((box[2] - box[0]) / R > 23.0);
+    CHECK(result.unused_span_cap_allowances.empty());
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // 3. The allowance's signature one quantum off in one number (another window's rounding)
+  //    still resolves (MatchedQuanta 1); five quanta off does not (Unboxable again, the
+  //    allowance listed under UnusedSpanCapAllowances).
+  auto Shifted = [&](int quanta)
+  {
+    SpanCapAllowance shifted = allowance;
+    shifted.claims_signature["Portions"][3]["P"][2] =
+        shifted.claims_signature["Portions"][3]["P"][2].get<double>() + quanta * 1.0e-6;
+    shifted.label = "shifted-" + std::to_string(quanta);
+    return shifted;
+  };
+  {
+    const auto [input, result] = Identify({Shifted(1)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->spatial_support["Contract"] == 3);
+    const auto &record = cluster->spatial_support["SpanCapAllowance"];
+    CHECK(record["Label"] == "shifted-1");
+    CHECK_THAT(record["MatchedQuanta"].get<double>(), WithinAbs(1.0, 1.0e-6));
+    CHECK(record["DifferingNumbers"]["Count"] == 1);
+    CHECK(record["DifferingNumbers"]["Paths"] == nlohmann::json({"Portions[3].P[2]"}));
+    CHECK(result.unused_span_cap_allowances.empty());
+  }
+  {
+    const auto [input, result] = Identify({Shifted(5)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->spatial_support["Contract"] == 0);
+    CHECK(cluster->spatial_support["UnboxableReason"] == "SpanCapRefusedGrowth");
+    CHECK(result.unused_span_cap_allowances == std::vector<std::string>{"shifted-5"});
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.unused_span_cap_allowances == result.unused_span_cap_allowances);
+    CHECK(copy.ToJson(1.0)["UnusedSpanCapAllowances"] == nlohmann::json({"shifted-5"}));
+  }
+
+  // 4. Fail closed at load: a cap below 16 R; two allowances within 8 quanta ("two
+  //    allowances one geometry"); a signature with a Box (not claims-only); no Portions.
+  {
+    SpanCapAllowance low = allowance;
+    low.span_cap_over_R = 15.0;
+    CHECK_THROWS_WITH(Identify({low}), ContainsSubstring("below the plan span cap"));
+    CHECK_THROWS_WITH(Identify({allowance, Shifted(1)}),
+                      ContainsSubstring("two allowances, one geometry"));
+    // Nine quanta apart: two distinct geometries, both admitted.
+    std::vector<SpanCapAllowance> both = {allowance, Shifted(9)};
+    ValidateSpanCapAllowances(both);
+    CHECK(both.size() == 2);
+    SpanCapAllowance boxed = allowance;
+    boxed.claims_signature["Box"] = {-1.0, -1.0, 1.0, 1.0};
+    CHECK_THROWS_WITH(Identify({boxed}), ContainsSubstring("CLAIMS-ONLY"));
+    SpanCapAllowance empty = allowance;
+    empty.claims_signature = nlohmann::json{{"Type", "SpatialEdgeCluster"}};
+    CHECK_THROWS_WITH(Identify({empty}), ContainsSubstring("with Portions"));
+    // The resolver alone: the nearest allowance wins, ties by Label.
+    std::vector<SpanCapAllowance> ranked = {Shifted(3), allowance, Shifted(2)};
+    const auto resolved = ResolveSpanCapAllowance(exported, ranked);
+    REQUIRE(resolved.has_value());
+    CHECK(resolved->index == 1);
+    CHECK(!ResolveSpanCapAllowance(exported, {Shifted(5)}).has_value());
+  }
+}
+

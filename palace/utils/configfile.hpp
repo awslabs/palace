@@ -1294,6 +1294,22 @@ public:
     };
     std::vector<LegacyContractAliasData> legacy_contract;
 
+    // Per-case span-cap allowances (block (b) DESIGN section 3 (a) / A4, decision 303):
+    // SpatialSupport.SpanCapAllowances[] of the response correction — the plan span cap of
+    // one approved closed feature keyed by its embedded claims-only signature (verbatim
+    // from the preflight inventory's SpatialSupport.ClaimsSignature), resolved by the
+    // identification's quantum near-match before any box. Validated by the identification
+    // (SpanCapOverR >= the default cap; no two allowances within 8 quanta).
+    struct SpanCapAllowanceData
+    {
+      std::string claims_signature;  // the serialised signature object (parsed downstream)
+      double span_cap_over_R = 0.0;
+      std::string label;
+      std::string reason;
+      std::string approval;
+    };
+    std::vector<SpanCapAllowanceData> span_cap_allowances;
+
     // Quantum near-matches resolved by the matching pass (block (b) DESIGN section 4,
     // decision 303): a SpatialEdgeCluster model applied for a feature key within
     // kClusterQuantumNearMatchMaxQuanta signature quanta of the model's key (the feature

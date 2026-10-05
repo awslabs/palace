@@ -1604,6 +1604,81 @@ ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json 
   return out;
 }
 
+void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances)
+{
+  for (auto &allowance : allowances)
+  {
+    MFEM_VERIFY(allowance.claims_signature.is_object() &&
+                    allowance.claims_signature.contains("Portions") &&
+                    allowance.claims_signature["Portions"].is_array() &&
+                    !allowance.claims_signature["Portions"].empty(),
+                "SpanCapAllowances entry \""
+                    << allowance.label
+                    << "\": ClaimsSignature must be a SpatialEdgeCluster claims-only "
+                       "signature object with Portions (copy SpatialSupport.ClaimsSignature "
+                       "of the refused cluster from the preflight inventory)!");
+    const std::string type =
+        allowance.claims_signature.value("Type", std::string("SpatialEdgeCluster"));
+    MFEM_VERIFY(type == "SpatialEdgeCluster",
+                "SpanCapAllowances entry \"" << allowance.label
+                                              << "\": ClaimsSignature Type must be "
+                                                 "SpatialEdgeCluster, not "
+                                              << type << "!");
+    allowance.claims_signature["Type"] = "SpatialEdgeCluster";
+    MFEM_VERIFY(!allowance.claims_signature.contains("Box") &&
+                    !allowance.claims_signature.contains("Context"),
+                "SpanCapAllowances entry \""
+                    << allowance.label
+                    << "\": ClaimsSignature must be the CLAIMS-ONLY signature (no Box / "
+                       "Context: the allowance is resolved before any box)!");
+    MFEM_VERIFY(allowance.span_cap_over_R >= kSupportSpanCapOverRadius,
+                "SpanCapAllowances entry \""
+                    << allowance.label << "\": SpanCapOverR " << allowance.span_cap_over_R
+                    << " is below the plan span cap " << kSupportSpanCapOverRadius
+                    << " (an allowance never lowers the cap)!");
+  }
+  for (std::size_t i = 0; i < allowances.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < allowances.size(); j++)
+    {
+      const auto difference = ClusterSignatureQuantumDifference(
+          allowances[i].claims_signature, allowances[j].claims_signature);
+      MFEM_VERIFY(
+          !difference ||
+              difference->max_delta_quanta > 2.0 * kClusterQuantumNearMatchMaxQuanta,
+          "SpanCapAllowances entries \""
+              << allowances[i].label << "\" and \"" << allowances[j].label
+              << "\" embed claims-only signatures of one topology within "
+              << (difference ? difference->max_delta_quanta : 0.0)
+              << " signature quanta of each other (<= " << 2 * kClusterQuantumNearMatchMaxQuanta
+              << "): two allowances, one geometry (block (b) DESIGN A4 (4))!");
+    }
+  }
+}
+
+std::optional<ResolvedSpanCapAllowance>
+ResolveSpanCapAllowance(const nlohmann::json &claims_signature,
+                        const std::vector<SpanCapAllowance> &allowances)
+{
+  std::optional<ResolvedSpanCapAllowance> best;
+  for (std::size_t a = 0; a < allowances.size(); a++)
+  {
+    const auto difference =
+        ClusterSignatureQuantumDifference(claims_signature, allowances[a].claims_signature);
+    if (!difference || difference->max_delta_quanta > kClusterQuantumNearMatchMaxQuanta)
+    {
+      continue;
+    }
+    if (!best || difference->max_delta_quanta < best->difference.max_delta_quanta ||
+        (difference->max_delta_quanta == best->difference.max_delta_quanta &&
+         allowances[a].label < allowances[best->index].label))
+    {
+      best = ResolvedSpanCapAllowance{a, *difference};
+    }
+  }
+  return best;
+}
+
 nlohmann::json QuantumNearMatchRecord(const std::string &model_key,
                                       const std::string &feature_key,
                                       const ClusterSignatureDifference &difference)
@@ -2804,6 +2879,8 @@ public:
     input.segments = input_.segments;
     input.vertices = input_.vertices;
     input.log = input_.log;
+    input.span_cap_allowances = input_.span_cap_allowances;
+    ValidateSpanCapAllowances(input.span_cap_allowances);
   }
   // The same perimeter identified at another matching radius, silently and without a
   // census of its own (the knife-edge census's cluster-composition band).
@@ -3468,11 +3545,13 @@ private:
     double fictitious_continuation_length = 0.0;
     std::size_t band_hits = 0;
   };
+  // `span_cap_over_R`: the plan span cap of this cluster (kSupportSpanCapOverRadius, or the
+  // resolved per-case allowance of block (b) DESIGN section 3 (a) / A4).
   ClusterSupportResult ClusterSupport(std::size_t c,
                                       const std::vector<SignaturePortion> &portions,
                                       const std::vector<SignatureVertex> &vertices,
                                       const Point3D &origin, const Point3D &x,
-                                      const Point3D &y) const;
+                                      const Point3D &y, double span_cap_over_R) const;
   // Sites (vertex features) incident to every run, for the context's vertex census.
   std::multimap<std::size_t, std::size_t> sites_by_run;
   // Every cluster's claimed intervals per run (interval, cluster): the context pieces of a
@@ -3484,6 +3563,8 @@ private:
   std::vector<int> cluster_feature, site_feature;
   // Spatial-support summary over the clusters (IdentificationResult::spatial_support).
   IdentificationResult::SpatialSupportSummary spatial_support_summary;
+  // The span-cap allowances (indices into input.span_cap_allowances) some cluster resolved.
+  std::set<std::size_t> used_span_cap_allowances;
   void BuildVertexWindows();
   void Assign(IdentificationResult &result);
   nlohmann::json KnifeEdgeCensus() const;
@@ -10251,14 +10332,15 @@ std::vector<SignaturePortion> Identifier::ClusterSignaturePortions(
 Identifier::ClusterSupportResult
 Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &portions,
                            const std::vector<SignatureVertex> &vertices,
-                           const Point3D &origin, const Point3D &x, const Point3D &y) const
+                           const Point3D &origin, const Point3D &x, const Point3D &y,
+                           double span_cap_over_R) const
 {
   using Point2 = std::array<double, 2>;
   ClusterSupportResult out;
   const double snap = kSupportFaceSnapOverRadius;
   const double clearance = kSupportFaceClearanceOverRadius;
   const double step = kSupportFaceGrowthStepOverRadius;
-  const double span_cap = kSupportSpanCapOverRadius;
+  const double span_cap = span_cap_over_R;
   const double band = kKnifeEdgeBandRelative;
   const double pi = std::acos(-1.0);
   // Quantised face-rule comparisons (decision 287 (b)): the box faces sit on the
@@ -11754,8 +11836,37 @@ void Identifier::EmitClusters()
     // key (today's coupons keep their keys); otherwise Box + Context enter the hashed
     // signature, minimised over the candidate frames with the support of each frame; a
     // cluster no frame can box is an UnboxableFeature (a Missing placeholder key).
-    ClusterSupportResult support = ClusterSupport(c, portions, vertices, canonical.origin,
-                                                  canonical.axes[0], canonical.axes[1]);
+    // The claims-only signature (contract 2 key; the key a legacy model carries; the key
+    // the span-cap allowances are resolved by, BEFORE any box: block (b) DESIGN A4).
+    nlohmann::json claims_signature = canonical.signature;
+    claims_signature["EdgeCount"] = portions.size();
+    claims_signature["Type"] = "SpatialEdgeCluster";
+    double span_cap_over_R = kSupportSpanCapOverRadius;
+    nlohmann::json span_cap_allowance;
+    if (const auto resolved =
+            ResolveSpanCapAllowance(claims_signature, input.span_cap_allowances))
+    {
+      const SpanCapAllowance &allowance = input.span_cap_allowances[resolved->index];
+      span_cap_over_R = allowance.span_cap_over_R;
+      used_span_cap_allowances.insert(resolved->index);
+      span_cap_allowance = {
+          {"Label", allowance.label},
+          {"SpanCapOverR", allowance.span_cap_over_R},
+          {"Reason", allowance.reason},
+          {"Approval", allowance.approval},
+          {"MatchedQuanta", resolved->difference.max_delta_quanta},
+          {"DifferingNumbers",
+           {{"Count", resolved->difference.differing_paths.size()},
+            {"Paths", resolved->difference.differing_paths}}},
+          {"Rule", "block (b) DESIGN section 3 (a) / A4 (decision 303): the allowance's "
+                   "embedded claims-only signature near-matches this cluster's claims-only "
+                   "signature within ClusterQuantumNearMatchMaxQuanta quanta; its "
+                   "SpanCapOverR replaces the plan span cap for this cluster's box growth "
+                   "and ExceedsSpanCap reading (never below the default cap)"}};
+    }
+    ClusterSupportResult support =
+        ClusterSupport(c, portions, vertices, canonical.origin, canonical.axes[0],
+                       canonical.axes[1], span_cap_over_R);
     nlohmann::json signature;
     int chirality = canonical.chirality;
     Point3D origin = canonical.origin;
@@ -11773,7 +11884,7 @@ void Identifier::EmitClusters()
               const Point3D &y) -> std::optional<FrameSupport>
           {
             ClusterSupportResult frame_support =
-                ClusterSupport(c, portions, vertices, o, x, y);
+                ClusterSupport(c, portions, vertices, o, x, y, span_cap_over_R);
             return frame_support.support;
           },
           [&](std::size_t done, std::size_t total)
@@ -11790,7 +11901,8 @@ void Identifier::EmitClusters()
         origin = v3->origin;
         axes = v3->axes;
         // The record of the frame the key was formed in.
-        support = ClusterSupport(c, portions, vertices, origin, axes[0], axes[1]);
+        support = ClusterSupport(c, portions, vertices, origin, axes[0], axes[1],
+                                 span_cap_over_R);
       }
       else
       {
@@ -11814,11 +11926,18 @@ void Identifier::EmitClusters()
     // The claims-only (contract-2) key of the cluster: the key a legacy model built under
     // the decision-236 contract carries; equal to Hash for contract 2. A legacy-contract
     // alias (USER decision 283) is verified against it.
+    support.record["ClaimsKey"] =
+        SignatureKeyAndHash(claims_signature, "SpatialEdgeCluster").second;
+    if (!span_cap_allowance.is_null())
     {
-      nlohmann::json claims_signature = canonical.signature;
-      claims_signature["EdgeCount"] = portions.size();
-      support.record["ClaimsKey"] =
-          SignatureKeyAndHash(claims_signature, "SpatialEdgeCluster").second;
+      support.record["SpanCapAllowance"] = span_cap_allowance;
+    }
+    if (contract == 0)
+    {
+      // A refused cluster (SpanCapRefusedGrowth / UnboxableFeature) exports its claims-only
+      // signature verbatim: the object an operator copies into a SpanCapAllowances entry
+      // (block (b) DESIGN A4 (2)).
+      support.record["ClaimsSignature"] = claims_signature;
     }
     support.record["ContextDigest"] =
         contract == 3
@@ -13248,6 +13367,26 @@ void Identifier::Assign(IdentificationResult &result)
   result.stack_composition_cap_hits = stack_composition_cap_hits;
   result.stack_images_merged = stack_images_merged;
   result.spatial_support = spatial_support_summary;
+  for (std::size_t a = 0; a < input.span_cap_allowances.size(); a++)
+  {
+    if (!used_span_cap_allowances.count(a))
+    {
+      result.unused_span_cap_allowances.push_back(input.span_cap_allowances[a].label);
+    }
+  }
+  if (input.log && !result.unused_span_cap_allowances.empty())
+  {
+    std::ostringstream text;
+    text << "  Identification spatial support: " << result.unused_span_cap_allowances.size()
+         << " span-cap allowance(s) matched no cluster of this geometry (recorded "
+            "UnusedSpanCapAllowances):";
+    for (const auto &label : result.unused_span_cap_allowances)
+    {
+      text << " " << label;
+    }
+    text << "\n";
+    input.log(text.str());
+  }
   result.extension = {extension_passes,
                       extension_portions,
                       extension_sites,
@@ -13624,6 +13763,11 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.sub_tolerance_portions.max_length);
   w.Size(result.sub_tolerance_portions.isolated);
   w.String(result.knife_edge_census);
+  w.Size(result.unused_span_cap_allowances.size());
+  for (const auto &label : result.unused_span_cap_allowances)
+  {
+    w.String(label);
+  }
   w.Size(result.features.size());
   for (const auto &f : result.features)
   {
@@ -13766,6 +13910,11 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.sub_tolerance_portions.max_length = r.Pod<double>();
   result.sub_tolerance_portions.isolated = r.Size();
   result.knife_edge_census = r.String();
+  result.unused_span_cap_allowances.resize(r.Size());
+  for (auto &label : result.unused_span_cap_allowances)
+  {
+    label = r.String();
+  }
   result.features.resize(r.Size());
   for (auto &f : result.features)
   {
@@ -14545,6 +14694,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"SupportFaceGrowthStepOverR", kSupportFaceGrowthStepOverRadius},
         {"SupportFaceGrowthMaxSteps", kSupportFaceGrowthMaxSteps},
         {"SupportSpanCapOverR", kSupportSpanCapOverRadius},
+        {"SpanCapAllowances",
+         "block (b) DESIGN section 3 (a) / A4 (decision 303): a per-case allowance of the "
+         "response correction config (SpatialSupport.SpanCapAllowances[] {ClaimsSignature, "
+         "SpanCapOverR, Label, Reason, Approval}) replaces SupportSpanCapOverR for the "
+         "cluster whose CLAIMS-ONLY signature near-matches the embedded ClaimsSignature "
+         "within ClusterQuantumNearMatchMaxQuanta quanta (resolved before any box, so one "
+         "entry serves every window instance); recorded Features[].SpatialSupport."
+         "SpanCapAllowance {Label, SpanCapOverR, Reason, Approval, MatchedQuanta, "
+         "DifferingNumbers}; a refused cluster exports SpatialSupport.ClaimsSignature; an "
+         "allowance below the cap or two allowances within twice the quanta are refused at "
+         "load; an allowance matching no cluster is listed under UnusedSpanCapAllowances"},
         {"SupportComparisonQuantumOverR", kSignatureLengthQuantumOverRadius},
         {"SpatialSupportContract",
          "contract v3 (USER decision 281, supervisor decision 282, 2026-10-03; replaces "
@@ -14744,6 +14904,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "reading of the same definition (0.5 R samples, across = the facing direction "
          "within 60 deg of the sample's normal, through-vertex zones excluded first)"}}},
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
+      {"UnusedSpanCapAllowances", unused_span_cap_allowances},
       {"GeometryDigest", geometry_digest}};
 }
 

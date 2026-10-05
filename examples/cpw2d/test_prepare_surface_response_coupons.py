@@ -966,7 +966,10 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                                                         {"Offset": [2.0, 0.0], "GapDirection": [-1.0, 0.0], "Conductor": 2},
                                                         {"Offset": [4.0, 0.0], "GapDirection": [1.0, 0.0], "Conductor": 2}]},
                  "Interfaces": [], "BoundaryCondition": {"Type": "PEC"}, "Signature": stack_signature, "Hash": "cd" * 32,
-                 "Instances": 2, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True},
+                 "Instances": 2, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True,
+                 "NearKeys": ["12" * 32], "SpanCapAllowance": {"Label": "cdcdcdcdcdcd", "SpanCapOverR": 22.0,
+                                                               "Reason": "unit", "Approval": "decision 303",
+                                                               "MatchedQuanta": 1.0}},
                 {"Topology": "ConvexCorner", "Status": "Missing", "Count": 12, "TotalEdgeLength": 45.6,
                  "Geometry": {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
                  "Signature": {"Type": "ConvexCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.0}, "Hash": "ef" * 32,
@@ -978,6 +981,12 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(by_topology["SameConductorStrip"]["Signature"], signature)
         self.assertEqual(by_topology["SameConductorStrip"]["Instances"], 8)
         self.assertEqual(by_topology["ParallelEdgeCluster"]["Preparation"]["Method"], "ParallelClusterCoupon")
+        # Block (b) steps 1-2: the near-match group keys and the resolved span-cap allowance
+        # travel with the plan coupon (device_coupons reads the allowance as the generator's
+        # --support-span-cap).
+        self.assertEqual(by_topology["ParallelEdgeCluster"]["NearKeys"], ["12" * 32])
+        self.assertEqual(by_topology["ParallelEdgeCluster"]["SpanCapAllowance"]["SpanCapOverR"], 22.0)
+        self.assertNotIn("SpanCapAllowance", by_topology["SameConductorStrip"])
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "process-library.json"
             models = [

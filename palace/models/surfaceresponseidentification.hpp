@@ -65,12 +65,39 @@ struct IdentificationFace
   std::array<double, 3> normal{};
 };
 
+// A per-case span-cap allowance (block (b) DESIGN section 3 (a) + A4, decision 303): the
+// plan span cap of ONE approved closed feature that cannot be split (decision 244 (i)),
+// keyed by the EMBEDDED claims-only signature of the feature (verbatim as the inventory
+// exports it under SpatialSupport.ClaimsSignature), resolved by the quantum near-match
+// (kClusterQuantumNearMatchMaxQuanta) on the cluster's claims-only signature BEFORE any box,
+// so one entry serves every window instance of the feature. The Label is the recorded hash
+// prefix the allowance was approved under, never compared.
+struct ClusterSignatureDifference
+{
+  double max_delta_quanta = 0.0;
+  std::vector<std::string> differing_paths;
+};
+
+struct SpanCapAllowance
+{
+  nlohmann::json claims_signature;
+  double span_cap_over_R = 0.0;
+  std::string label;
+  std::string reason;
+  std::string approval;
+};
+
 struct IdentificationInput
 {
   double radius = 0.0;
   std::vector<IdentificationSegment> segments;
   std::vector<IdentificationVertex> vertices;
   std::vector<IdentificationFace> faces;
+  // Per-case span-cap allowances (SpatialSupport.SpanCapAllowances of the response
+  // correction config); validated at the start of the identification: SpanCapOverR >=
+  // kSupportSpanCapOverRadius and no two allowances within 2 x
+  // kClusterQuantumNearMatchMaxQuanta quanta of each other (fail closed).
+  std::vector<SpanCapAllowance> span_cap_allowances;
   // Progress and per-stage timing lines (counts, wall time, fraction done of a long loop
   // every ~10 s) so that a chip-scale identification can be monitored; unset = silent. Pure
   // diagnostics: nothing in the result depends on it.
@@ -301,6 +328,9 @@ struct IdentificationResult
     std::size_t threshold_band_hits = 0;
   };
   SpatialSupportSummary spatial_support;
+  // The Labels of the span-cap allowances no cluster of this geometry resolved (a warning,
+  // never an abort; manifest UnusedSpanCapAllowances).
+  std::vector<std::string> unused_span_cap_allowances;
 
   // Manifest "Identification" object; the length scale converts mesh units for output.
   nlohmann::json ToJson(double length_scale) const;
@@ -411,6 +441,23 @@ constexpr double kSupportFaceClearanceOverRadius = 0.25;
 constexpr double kSupportFaceGrowthStepOverRadius = 0.25;
 constexpr int kSupportFaceGrowthMaxSteps = 12;
 constexpr double kSupportSpanCapOverRadius = 16.0;
+
+// Validates a list of span-cap allowances (fail closed: a cap below kSupportSpanCapOverRadius
+// never lowers the cap; two allowances within 2 x kClusterQuantumNearMatchMaxQuanta quanta
+// are "two allowances one geometry") and normalises every ClaimsSignature's Type.
+void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances);
+
+// The allowance a claims-only signature resolves (the nearest within
+// kClusterQuantumNearMatchMaxQuanta quanta; ties by Label) with its quantum difference, or
+// nullopt.
+struct ResolvedSpanCapAllowance
+{
+  std::size_t index = 0;
+  ClusterSignatureDifference difference;
+};
+std::optional<ResolvedSpanCapAllowance>
+ResolveSpanCapAllowance(const nlohmann::json &claims_signature,
+                        const std::vector<SpanCapAllowance> &allowances);
 
 // The claims-derived support box [x0, y0, x1, y1] in units of R of a serialised cluster
 // signature {"Portions", "Vertices"} in its frame (rule B2 above; the same numbers the
@@ -619,12 +666,8 @@ constexpr int kClusterQuantumNearMatchMaxQuanta = 4;
 
 // The quantum difference of two cluster signatures of one topology key: the largest
 // |delta| in quanta over the parameters and the paths of every differing number; nullopt
-// when the topology keys differ.
-struct ClusterSignatureDifference
-{
-  double max_delta_quanta = 0.0;
-  std::vector<std::string> differing_paths;
-};
+// when the topology keys differ. (ClusterSignatureDifference is declared with the
+// span-cap allowances above.)
 std::optional<ClusterSignatureDifference>
 ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json &b);
 

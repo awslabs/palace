@@ -142,7 +142,7 @@ def frame_from_geometry(topology, geometry):
     return np.vstack((axis_x, axis_y, normal))
 
 
-def normalize_geometry(coupon, radius):
+def normalize_geometry(coupon, radius, span_cap_over_r=None):
     topology = coupon["Topology"]
     geometry = coupon.get("Geometry", {})
     frame = frame_from_geometry(topology, geometry)
@@ -224,9 +224,16 @@ def normalize_geometry(coupon, radius):
             raise ValueError("Conductor labels are not canonical")
     if topology != "SpatialEdgeCluster" and labels != [1]:
         raise ValueError("Endpoint and junction coupons require one conductor")
-    # The claims within 8R of the origin (half the 16R plan span cap); the context rows of a
-    # device-plan coupon lie inside its box, which matching_support_points caps.
-    if any(np.linalg.norm(edge["Point"]) > 8.0 * radius for edge in edges if not edge.get("Context")):
+    # The claims within half the plan span cap of the origin (the default 16 R cap: 8 R; a
+    # per-case --support-span-cap raises it for that coupon alone, block (b) DESIGN section
+    # 3 (b) - the same recorded number as matching_support_points' cap); the context rows of
+    # a device-plan coupon lie inside its box, which matching_support_points caps.
+    if span_cap_over_r is None:
+        span_cap_over_r = DEFAULT_SUPPORT_SPAN_CAP_OVER_R
+    if span_cap_over_r <= 0.0:
+        raise ValueError("the matching-support span cap must be positive")
+    claim_radius = 0.5 * span_cap_over_r * radius
+    if any(np.linalg.norm(edge["Point"]) > claim_radius for edge in edges if not edge.get("Context")):
         raise ValueError("Spatial coupon geometry is too large for its matching radius")
 
     facets = []
@@ -2180,7 +2187,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     failure_path = output / "generation-failure.json"
     try:
-        frame, edges, facets = normalize_geometry(coupon, args.radius)
+        frame, edges, facets = normalize_geometry(coupon, args.radius, args.support_span_cap)
         validate_plan_view_geometry(edges, args.radius, facets)
         interfaces = model_interfaces(coupon)
     except ValueError as error:

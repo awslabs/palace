@@ -6835,6 +6835,7 @@ IdentificationResult RunGeometryIdentification(
     const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
     const AutomaticResponseRequirements &describer,
     AutomaticResponseRequirements *requirements, bool frame_normal_configured,
+    const std::vector<ResponseCorrectionData::SpanCapAllowanceData> &span_cap_allowances,
     std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr,
     std::map<int, FeatureCornerMatch> *corner_matches = nullptr)
 {
@@ -6860,6 +6861,13 @@ IdentificationResult RunGeometryIdentification(
   };
   IdentificationInput input;
   input.radius = library.matching_radius;
+  for (const auto &allowance : span_cap_allowances)
+  {
+    // Per-case span-cap allowances (block (b) DESIGN A4): validated by the identification.
+    input.span_cap_allowances.push_back({nlohmann::json::parse(allowance.claims_signature),
+                                         allowance.span_cap_over_R, allowance.label,
+                                         allowance.reason, allowance.approval});
+  }
   std::map<std::size_t, const EdgeSegment3D *> framed;
   for (const auto &segment : framed_segments)
   {
@@ -7262,6 +7270,7 @@ IdentificationResult RunGeometryIdentification(
     nlohmann::json corner_family;     // the family selection of an interpolated corner
     std::set<std::string> notes;      // matching notes (family refusals)
     nlohmann::json legacy_contract;   // the alias record (USER decision 283) + Features
+    nlohmann::json span_cap_allowance;  // SpatialSupport.SpanCapAllowance (block (b) A4)
   };
   struct GroupBase
   {
@@ -7343,6 +7352,12 @@ IdentificationResult RunGeometryIdentification(
       }
       instance->second.legacy_contract["Features"].push_back(feature.id);
     }
+    if (feature.spatial_support.is_object() &&
+        feature.spatial_support.contains("SpanCapAllowance") &&
+        instance->second.span_cap_allowance.is_null())
+    {
+      instance->second.span_cap_allowance = feature.spatial_support["SpanCapAllowance"];
+    }
     if (const auto record = curvature_records.find(feature.id);
         record != curvature_records.end())
     {
@@ -7400,13 +7415,17 @@ IdentificationResult RunGeometryIdentification(
       int count = 0, feature_instances = 0;
       double length = 0.0;
       std::set<std::string> models, notes;
-      nlohmann::json curvature_family, corner_family;
+      nlohmann::json curvature_family, corner_family, span_cap_allowance;
       nlohmann::json legacy_contract = nlohmann::json::array();
       bool exact = true;
       for (const std::size_t i : members)
       {
         const Instance &instance = base.instances.at(base.order[i]);
         signatures.push_back(instance.signature);
+        if (span_cap_allowance.is_null() && !instance.span_cap_allowance.is_null())
+        {
+          span_cap_allowance = instance.span_cap_allowance;
+        }
         count += instance.count;
         feature_instances += instance.features;
         length += instance.length;
@@ -7466,6 +7485,12 @@ IdentificationResult RunGeometryIdentification(
       if (!near_keys.empty())
       {
         record["NearKeys"] = near_keys;
+      }
+      if (!span_cap_allowance.is_null())
+      {
+        // The per-case span-cap allowance the cluster resolved (block (b) DESIGN section 3
+        // (a) / A4): the planner passes its SpanCapOverR to the coupon generator.
+        record["SpanCapAllowance"] = span_cap_allowance;
       }
       if (!models.empty())
       {
@@ -9507,7 +9532,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const auto identification =
       RunGeometryIdentification(mesh.GetComm(), geometry, global_segments, library,
                                 requirements ? *requirements : law_describer, requirements,
-                                frame_normal_configured, &curved_matches, &corner_matches);
+                                frame_normal_configured, request.span_cap_allowances,
+                                &curved_matches, &corner_matches);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)

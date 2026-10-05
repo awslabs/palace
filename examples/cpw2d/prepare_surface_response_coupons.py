@@ -314,7 +314,8 @@ def plan_from_manifest(
         }
         # Version-2 records (SURFACE-RESPONSE-IDENTIFICATION.md (d)): the canonical
         # Signature is the library model's key; the group statistics are recorded.
-        for key in ("Signature", "Hash", "Instances", "DistinctSignatures", "ParameterSpread", "ExactParameters"):
+        for key in ("Signature", "Hash", "Instances", "DistinctSignatures", "ParameterSpread", "ExactParameters",
+                    "NearKeys", "SpanCapAllowance"):
             if key in requirement:
                 coupon[key] = copy.deepcopy(requirement[key])
         if uses_finite_impedance(coupon):
