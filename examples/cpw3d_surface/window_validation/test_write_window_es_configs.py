@@ -189,7 +189,24 @@ class ThinConfigTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             thin_config(POLYGON_SET, THIN_MANIFEST, "m", "lib", "p3", "p")
 
-    def test_plane_without_gap_has_no_interface(self):
+    def test_plane_without_gap_keeps_metal_interfaces(self):
+        # Decision 329: a plane that is one ground sheet over the whole window (S5 / S6's L2) has
+        # no gap sheet -> no SA on that plane, but its metal sheet keeps its MS / MA targets (the
+        # reference integrates every metal shell); the earlier rule dropped all three.
+        manifest = copy.deepcopy(THIN_MANIFEST)
+        del manifest["Attributes"]["gap_L2"]
+        del manifest["Attributes"]["island_3_L2"]
+        polygon_set = copy.deepcopy(POLYGON_SET)
+        polygon_set["Planes"][1]["Polygons"] = [{"Conductor": "ground", "Outer": SQUARE}]
+        polygon_set["Terminals"] = ["trace_7"]
+        config = thin_config(polygon_set, manifest, "m", "lib", "T", "p")
+        dielectrics = config["Boundaries"]["Postprocessing"]["Dielectric"]
+        self.assertEqual([(d["Index"], d["Type"], d["Attributes"]) for d in dielectrics],
+                         [(1, "SA", [145]), (2, "MS", [114, 1001]), (3, "MA", [114, 1001]), (4, "MS", [126]), (5, "MA", [126])])
+        self.assertEqual([d.get("EdgeFrameNormal") for d in dielectrics], [None, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0]])
+        self.assertEqual(config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"], [1, 2, 3, 4, 5])
+        self.assertEqual(config["Boundaries"]["Ground"]["Attributes"], [114, 126, 153])
+        # The same on the other plane (an `up` gapless L1 under an L2 with edges).
         manifest = copy.deepcopy(THIN_MANIFEST)
         del manifest["Attributes"]["gap_L1"]
         del manifest["Attributes"]["trace_7_L1"]
@@ -197,8 +214,22 @@ class ThinConfigTest(unittest.TestCase):
         polygon_set["Planes"][0]["Polygons"] = [{"Conductor": "ground", "Outer": SQUARE}]
         polygon_set["Terminals"] = ["island_3"]
         config = thin_config(polygon_set, manifest, "m", "lib", "T", "p")
-        self.assertEqual([(d["Type"], d["Attributes"]) for d in config["Boundaries"]["Postprocessing"]["Dielectric"]], [("SA", [28]), ("MS", [126, 1002]), ("MA", [126, 1002])])
-        self.assertEqual(config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"], [1, 2, 3])
+        self.assertEqual([(d["Type"], d["Attributes"], d.get("EdgeFrameNormal")) for d in config["Boundaries"]["Postprocessing"]["Dielectric"]],
+                         [("SA", [28], None), ("MS", [114], [0.0, 0.0, 1.0]), ("MA", [114], [0.0, 0.0, 1.0]), ("MS", [126, 1002], [0.0, 0.0, -1.0]), ("MA", [126, 1002], [0.0, 0.0, -1.0])])
+        # No gap sheet on any plane: no metal edge anywhere, refused.
+        del manifest["Attributes"]["gap_L2"]
+        with self.assertRaises(ValueError):
+            thin_config(polygon_set, manifest, "m", "lib", "T", "p")
+
+    def test_plane_without_sheet_refused(self):
+        # A plane of the polygon set with no metal sheet in the mesh is inconsistent input.
+        manifest = copy.deepcopy(THIN_MANIFEST)
+        del manifest["Attributes"]["gap_L2"], manifest["Attributes"]["ground_L2"], manifest["Attributes"]["island_3_L2"]
+        polygon_set = copy.deepcopy(POLYGON_SET)
+        polygon_set["Planes"][1]["Polygons"] = [{"Conductor": "ground", "Outer": SQUARE}]
+        polygon_set["Terminals"] = ["trace_7"]
+        with self.assertRaises(ValueError):
+            thin_config(polygon_set, manifest, "m", "lib", "T", "p")
 
     def test_terminal_without_sheet_refused(self):
         manifest = copy.deepcopy(THIN_MANIFEST)

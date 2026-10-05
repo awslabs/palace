@@ -28,8 +28,11 @@ order of the set fix the Ground / Terminal boundaries and their order on both si
               (`bump_surface`), Terminal i = the label's sheets + its bump shells (`bump_<label>`;
               a `bump_<label>` naming no terminal is refused), SA = the gap sheets, one MS + one MA target per
               metal plane with the plane's facing normal as EdgeFrameNormal (the flip-chip L2
-              faces down; lane W's window preflight convention). The library path is a
-              parameter (--library; the geometry-only seed by default for the preflight).
+              faces down; lane W's window preflight convention). A plane without a gap sheet
+              (one metal sheet over the whole window, S5 / S6's L2) has no SA on that plane but
+              keeps the MS / MA targets of its metal sheets (decision 329: the reference's MS / MA
+              integrate every metal shell). The library path is a parameter (--library; the
+              geometry-only seed by default for the preflight).
 
     python3 write_window_es_configs.py fabricated --polygon-set S1p.json --manifest S1p_r10nm_t5um.json \\
         --mesh /path/on/the/cluster/S1p_r10nm_t5um.msh2 --postpro /path/postpro --output ref-r10-p4.json [--order 4]
@@ -226,13 +229,15 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
     gaps = sorted(table[f"gap_{name}"] for name in plane_names if f"gap_{name}" in table)
     if not gaps:
         raise ValueError("no gap sheet on any plane (no metal edges)")
+    # SA = the gap sheets of the planes that have one; a plane that is one metal sheet over the
+    # whole window (S5 / S6's L2) contributes no SA. Its metal sheets still carry MS / MA below:
+    # the reference integrates every metal shell (decision 329; the earlier rule dropped all
+    # three interfaces of a gapless plane).
     dielectrics = [dielectric_entry(1, gaps, "SA", automatic_edges=radius)]
     for name in plane_names:
-        if f"gap_{name}" not in table:
-            # A plane that is one metal sheet over the whole window has no metal edge: no
-            # interface (lane W's convention, S6's L2).
-            continue
         sheets = [table[key] for key in [f"ground_{name}"] + [f"{label}_{name}" for label in terminals] if key in table]
+        if not sheets:
+            raise ValueError(f"plane {name!r} has no metal sheet in the thin mesh")
         normal = [0.0, 0.0, 1.0] if facing[name] == "up" else [0.0, 0.0, -1.0]
         for kind in ("MS", "MA"):
             dielectrics.append(dielectric_entry(len(dielectrics) + 1, sheets, kind, automatic_edges=radius, frame_normal=normal))
