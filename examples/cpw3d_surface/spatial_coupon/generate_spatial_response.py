@@ -971,7 +971,13 @@ def near_outline_free_knots(points, labels, edges, radius, metal_thickness, face
     within the labelling tolerance is a violation (such a knot is a PEC-boundary point whose
     hat would prescribe a potential on the grounded metal); every free knot within
     NEAR_OUTLINE_INSPECT_OVER_R x R is returned for inspection. Returns (violations,
-    inspect), each a list of {Vertex (1-based), Conductor, Distance}."""
+    inspect), each a list of {Vertex (1-based), Conductor, Distance}.
+
+    Run right after conductor_at_points on the same facets, height window and tolerance it
+    cannot fire unless the two predicates drift apart: it is the design's binding of the
+    generator's own labels (decision 369 review MINOR-1), not an independent check of this
+    run. The independent binding (the stored sources' labels re-judged by a fresh tree) is
+    the BC lane's evidence tool relabel_census.py, outside the repository."""
     tolerance = 1.0e-10 * radius
     outline_tolerance = CONDUCTOR_LABEL_TOLERANCE_OVER_R * radius
     inspect_distance = NEAR_OUTLINE_INSPECT_OVER_R * radius
