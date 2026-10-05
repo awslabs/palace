@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <complex>
+#include <type_traits>
 
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
@@ -154,6 +155,16 @@ TEST_CASE("StaticVectorElementAccess", "[Vector][Serial]")
 
 TEST_CASE("StaticVectorCopy", "[Vector][Serial]")
 {
+  // Copies and moves between StaticVectors stay available and copy the values, while
+  // assignment from a Vector would detach the target from its buffer.
+  static_assert(std::is_copy_constructible_v<StaticVector<3>>);
+  static_assert(std::is_copy_assignable_v<StaticVector<3>>);
+  static_assert(std::is_move_assignable_v<StaticVector<3>>);
+  static_assert(std::is_assignable_v<StaticVector<3>, double>);
+  static_assert(std::is_assignable_v<StaticVector<3>, const double *>);
+  static_assert(!std::is_assignable_v<StaticVector<3>, Vector>);
+  static_assert(!std::is_assignable_v<StaticVector<3>, Vector &&>);
+
   auto InOwnBuffer = [](const auto &v)
   {
     const auto *begin = reinterpret_cast<const char *>(&v);
