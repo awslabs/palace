@@ -2377,9 +2377,33 @@ metal arc, without which the concave family's fabricated MA read +7 %), R/3, R, 
 inner cap rings — carries the SAME angle-dependent knot fractions: the two crossings,
 `MetalInteriorKnots` = 5 at equal fractions of the metal arc, `FreeKnots` = 9 with
 `FreeKnotGrading` [1/3, 2/3] (a knot at R/3 and one at 2R/3 along the perimeter from each
-crossing on the free side, 5 at equal fractions between); PEC = crossings + metal-interior
-knots on the two metal rings only (14 of 176 knots); the box corners are slaves on every
-ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing knots
+crossing on the free side, 5 at equal fractions between; ACUTE CONCAVE nodes — block (b)
+DESIGN A9 family 4, decision 318: a concave wedge's free arc is (2 - cot theta) R and the
+unscaled grading exhausts it below 56.3 deg, so on a free arc shorter than
+`FreeKnotGradingReferenceFreeArcOverR` = 2 - cot 60 deg = 1.4226497308103743 (the concave
+60-degree node's, the family's sharpest qualified node) the two graded distances are scaled
+by FreeArc / Reference — the sharper node keeps the 60-degree node's layout proportions with
+the same slots, like-to-like indices and zero set; the generator writes the key only on
+records where the scaling is active and an absent key reads as that default, so every record
+written before (free arcs at or above the reference) is unchanged and the family stays on one
+rule; `FreeKnotGradingScale`, `kFreeKnotGradingReferenceFreeArcOverR`; STATUS, decisions 325 /
+328, 2026-10-05: the scaling rule stands; the 48.75-degree held-out coupon's failure to
+finalize — two scaled free hats of the z = -R cap ring had no active boundary DOF in the
+fabricated p4 solve — is a COUPON MESH defect: the coupon prescribes hats by nodal
+interpolation, and the cap rings' inner knots (9.4 nm apart at 60 degrees, 7.4 at 48.75) were
+unresolved by the 300-nm far mesh at every concave node <= 60 degrees, the published 60 node
+included; round 2 adds the generator-side trace resolvability gate (`trace_resolvability.py`,
+5 p^2 active boundary nodes per free hat) and the knot-gap mesh sizing of
+`mesh_corner_coupon.jl --trace-mesh`, a corner-coupon RECIPE change (new cache keys; the
+published caches are not rebuilt); the DEVICE runtime is unaffected: the SurfaceMortar lift is
+an L2 projection on the coupon's trace triangles with the device field sampled by
+FindPointsGSLIB, independent of the device mesh's DOF layout
+(test-cornerbasisrefinement.cpp CornerRefinedRuleAcuteConcaveDeviceMortar); round 2 was
+reviewed (fresh-context review, 0 blockers / 0 majors) and merged, merge step decision 348);
+PEC = crossings +
+metal-interior knots on the two metal rings only (14 of 176 knots); the box corners are slaves
+on every ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing
+knots
 (the recorded fixed cap's fan diagonal gave the centre that value too; a fan from a ring
 vertex is degenerate as soon as two consecutive dense knots share the apex's side); every
 band is a regular column grid with one diagonal orientation. Consequences: NO events (no

@@ -2071,6 +2071,21 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                                 "array of distances over R!");
         rule.free_knot_grading = grading->get<std::vector<double>>();
       }
+      if (auto reference = trace_basis->find("FreeKnotGradingReferenceFreeArcOverR");
+          reference != trace_basis->end())
+      {
+        // Written by the generator only where the scaling of the graded free knots is
+        // active (an acute concave node, decision 318); an absent key is the default
+        // reference kFreeKnotGradingReferenceFreeArcOverR, so the records of the family's
+        // other nodes are unchanged and the family stays on one rule.
+        MFEM_VERIFY(reference->is_number() && reference->get<double>() > 0.0 &&
+                        !rule.free_knot_grading.empty(),
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" TraceBasis FreeKnotGradingReferenceFreeArcOverR must be a "
+                           "positive free arc over R of a FreeKnotGrading layout!");
+        rule.free_knot_grading_reference_free_arc_over_r = reference->get<double>();
+      }
       if (auto extra = trace_basis->find("ExtraLevelsAboveOverOveretch");
           extra != trace_basis->end())
       {

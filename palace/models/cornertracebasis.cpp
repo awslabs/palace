@@ -171,7 +171,8 @@ bool OnMetalFootprint(const std::array<double, 3> &point, double angle_radians, 
 }
 
 // The generator's free_knot_fractions: the graded knots at free_knot_grading x R from both
-// ends of the free arc (start, end), the remaining at equal fractions between the innermost
+// ends of the free arc (start, end) — scaled by FreeKnotGradingScale on a free arc shorter
+// than the rule's reference — the remaining at equal fractions between the innermost
 // graded ones (equal fractions of the whole arc without a grading).
 std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
                                       const CornerTraceBasisRule &rule)
@@ -186,15 +187,19 @@ std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
     }
     return fractions;
   }
-  // A perimeter distance of g R is the fraction g / 8 (the perimeter is 8 R).
-  const double outermost = rule.free_knot_grading.back() / 8.0;
+  // A perimeter distance of g R is the fraction g / 8 (the perimeter is 8 R). The scale is
+  // applied only below the reference so that every unscaled layout keeps its exact
+  // floating-point expressions.
+  const double scale = FreeKnotGradingScale(8.0 * (end - start), rule);
+  auto Offset = [&](double g) { return scale < 1.0 ? (g / 8.0) * scale : g / 8.0; };
+  const double outermost = Offset(rule.free_knot_grading.back());
   const double inner_start = start + outermost, inner_end = end - outermost;
   MFEM_VERIFY(inner_end - inner_start > kKnotCoincidenceFraction,
               "The corner trace basis free arc is too short for the free knot grading!");
   for (const double g : rule.free_knot_grading)
   {
-    fractions.push_back(start + g / 8.0);
-    fractions.push_back(end - g / 8.0);
+    fractions.push_back(start + Offset(g));
+    fractions.push_back(end - Offset(g));
   }
   const int remaining =
       rule.free_knots - 2 * static_cast<int>(rule.free_knot_grading.size());
@@ -208,6 +213,17 @@ std::vector<double> FreeKnotFractions(const std::pair<double, double> &free,
 
 }  // namespace
 
+double FreeKnotGradingScale(double free_arc_over_r, const CornerTraceBasisRule &rule)
+{
+  const double reference = rule.free_knot_grading_reference_free_arc_over_r;
+  if (rule.free_knot_grading.empty() ||
+      free_arc_over_r >= reference - kFreeKnotGradingReferenceToleranceOverR)
+  {
+    return 1.0;
+  }
+  return free_arc_over_r / reference;
+}
+
 CornerTraceBasisRule RefinedCornerTraceBasisRule()
 {
   CornerTraceBasisRule rule;
@@ -217,6 +233,7 @@ CornerTraceBasisRule RefinedCornerTraceBasisRule()
   rule.ring_size = 16;
   rule.free_knot_grading = {1.0 / 3.0, 2.0 / 3.0};
   rule.extra_levels_above_over_overetch = {1.0, 4.0};
+  rule.free_knot_grading_reference_free_arc_over_r = kFreeKnotGradingReferenceFreeArcOverR;
   return rule;
 }
 
@@ -277,6 +294,14 @@ std::string CheckCornerTraceBasisRule(const CornerTraceBasisRule &rule)
       {
         return "FreeKnotGrading must be increasing positive distances over R";
       }
+    }
+    // The unscaled grading needs a free arc longer than twice its outermost distance; the
+    // reference (the arc at and above which the grading is unscaled) must lie above that.
+    if (!(rule.free_knot_grading_reference_free_arc_over_r >
+          2.0 * rule.free_knot_grading.back()))
+    {
+      return "FreeKnotGradingReferenceFreeArcOverR must exceed twice the outermost "
+             "FreeKnotGrading distance";
     }
   }
   return "";
