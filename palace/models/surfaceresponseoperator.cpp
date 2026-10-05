@@ -829,9 +829,6 @@ public:
     Mpi::GlobalMax(1, &fallback_margin, comm);
   }
 
-  ElementPointLocator &Local() { return local; }
-  double BoxTolerance() const { return box_tolerance; }
-
   // Locates the local list of points (byNODES: every x, then every y, then every z). With
   // `element_value`, the owner evaluates it on the owning element.
   Result Locate(const mfem::Vector &xyz,
