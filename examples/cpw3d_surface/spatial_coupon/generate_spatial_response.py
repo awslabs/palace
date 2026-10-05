@@ -390,6 +390,27 @@ def coupon_bounds(edges, radius, metal_thickness, overetch, support_box=None):
 # basis-contract.json MatchingSupport); the default stays 16R.
 DEFAULT_SUPPORT_SPAN_CAP_OVER_R = 16.0
 
+# Block (b) DESIGN A3 (1) (decision 303): a joint of two plan-view boundary sides of one
+# class is SMOOTH iff |turn| <= JUNCTION_TANGENT_ANGLE (the mesher's constant: one constant,
+# one concept) and is MERGED into one side - the 1e-6 R signature grid leaves 4e-8..7e-7-rad
+# "corners" at the claim / context junctions of oblique sides that the exact integer
+# collinearity test kept as Physical vertices (2 corner balls + 4 tube caps per coupon).
+# Exactly collinear joints merge as before (every rectilinear coupon: bitwise); the
+# smallest real kink of the census is 3.9e-4 rad.
+JUNCTION_TANGENT_ANGLE = 1.0e-4
+
+
+def near_collinear(first, second, tangent_angle=JUNCTION_TANGENT_ANGLE):
+    """True when the two consecutive side directions (integer or float 2-vectors) turn by at
+    most ``tangent_angle`` radians: |first x second| <= tangent_angle |first| |second|."""
+    cross = first[0] * second[1] - first[1] * second[0]
+    if cross == 0:
+        return True
+    # Both directions follow the travel: a smooth joint has them parallel (a spike is not).
+    return first[0] * second[0] + first[1] * second[1] > 0 and abs(cross) <= tangent_angle * math.hypot(
+        first[0], first[1]
+    ) * math.hypot(second[0], second[1])
+
 
 def matching_support_points(
     lower, upper, frame, radius, span_cap_over_r=DEFAULT_SUPPORT_SPAN_CAP_OVER_R
@@ -1927,7 +1948,7 @@ def plan_view_boundary_loops(
                     )
                     if (
                         classes[index - 1] == classes[index]
-                        and first[0] * second[1] - first[1] * second[0] == 0
+                        and near_collinear(first, second)
                     ):
                         ring.pop(index)
                         classes.pop(index)

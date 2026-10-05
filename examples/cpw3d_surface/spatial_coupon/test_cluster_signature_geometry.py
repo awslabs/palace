@@ -492,6 +492,73 @@ class DevicePlanCouponTest(unittest.TestCase):
             self.assertEqual(sum(1 for e in edges if e.get("Context")), 8)
 
 
+CENSUS_B = HERE / "testdata" / "census-b-signatures" / "signatures.json"
+
+
+def census_record(prefix):
+    """A stage-2 census requirement record (S2.0, stage2-20261004/census/discovery) by its
+    12-hex key prefix: {Type, Hash, Geometry, Interfaces, BoundaryCondition, Signature, Window}."""
+    return json.loads(CENSUS_B.read_text())[prefix]
+
+
+class GapPerpendicularityTest(unittest.TestCase):
+    """Block (b) step 0, F0-a: the three census keys the v3 builder stopped with "Gap is not
+    perpendicular to the portion" carry short OBLIQUE straight portions whose serialised Gap /
+    ends are rounded to the 1e-6 R grid (|tangent . gap| 1.1e-6..1.8e-6 against the old exact
+    1e-6 test; the quantisation bound for their 0.4-1.05 R lengths is 2.6e-6..5.7e-6). The test
+    admits the bound (x2), re-derives the gap as the exact perpendicular with the serialised
+    sign and keeps every row that passed the legacy test bitwise."""
+
+    def test_the_three_census_keys_pass_the_portion_test(self):
+        expected = {"005bec161f6d": [23], "a596f5a4c303": [12, 26], "adb6d8a5d5a5": [26, 30, 41, 42]}
+        for prefix, rows in expected.items():
+            signature = census_record(prefix)["Signature"]
+            portions = csg.portions_from_signature(signature, 1.9)
+            self.assertEqual([p["Portion"] for p in portions if p["GapRederived"]], rows, prefix)
+            for p in portions:
+                tangent = (p["P1"] - p["P0"]) / p["Length"]
+                self.assertLessEqual(abs(float(np.dot(tangent, p["Gap"]))), 1.0e-6)
+                if p["GapRederived"]:
+                    self.assertLessEqual(abs(float(np.dot(tangent, p["Gap"]))), 1.0e-15)
+                    serialised = np.asarray(signature["Portions"][p["Portion"]]["Gap"], dtype=float)
+                    self.assertGreater(float(np.dot(serialised, p["Gap"])), 0.999999)
+            # The context rows of the same keys are built by the same rule.
+            csg.context_from_signature(signature, 1.9)
+        # The loop end (axis-aligned gaps) re-derives nothing.
+        loop_end = csg.portions_from_signature(census_record("284d6c2b5b66")["Signature"], 1.9)
+        self.assertFalse(any(p["GapRederived"] for p in loop_end))
+        # 005bec161f6d's claims-only placeholder builds all the way through the legacy mask
+        # (its only stop was F0-a); the other two reach the face rule of the arc context
+        # (F0-b, step 3).
+        coupon, _ = csg.cluster_coupon(census_record("005bec161f6d"), 1.9, 0.1, 0.05)
+        signature = coupon["Geometry"]["Signature"]
+        self.assertEqual(coupon["Geometry"]["EdgeCount"],
+                         len(csg.portions_from_signature(signature, 1.9)) + len(csg.context_from_signature(signature, 1.9)))
+        self.assertTrue(signature.get("Unboxable"))  # a span-cap key (step 2): claims only, no Box
+
+    def test_bound_and_legacy_rows(self):
+        R = 1.9
+        q = 1.0e-6
+        # A 0.5 R oblique row whose serialised gap is tilted by 3 q / L (inside the bound 2 x
+        # (0.707 q + 4 q)): re-derived, exactly perpendicular, same side.
+        p0, p1 = np.asarray([0.0, 0.0]), np.asarray([0.3 * R, 0.4 * R])
+        tilt = 3.0 * q / 0.5
+        gap = np.asarray([0.8, -0.6]) + tilt * np.asarray([0.6, 0.8])
+        unit, rederived, deviation = csg.perpendicular_gap(p0, p1, gap, R, "row")
+        self.assertTrue(rederived)
+        self.assertAlmostEqual(deviation, tilt, delta=1.0e-9)
+        np.testing.assert_allclose(unit, [0.8, -0.6], atol=1.0e-15)
+        # Beyond the bound: fail closed with the bound in the message.
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "quantisation bound"):
+            csg.perpendicular_gap(p0, p1, np.asarray([0.8, -0.6]) + 1.0e-4 * np.asarray([0.6, 0.8]), R, "row")
+        # A row passing the legacy exact test keeps its serialised gap bitwise (tilt 5e-7).
+        legacy = np.asarray([0.8, -0.6]) + 5.0e-7 * np.asarray([0.6, 0.8])
+        unit, rederived, _ = csg.perpendicular_gap(p0, p1, legacy, R, "row")
+        self.assertFalse(rederived)
+        np.testing.assert_array_equal(unit, legacy / np.linalg.norm(legacy))
+        self.assertAlmostEqual(csg.gap_perpendicularity_bound(0.5), 2.0 * (math.sqrt(2.0) * 0.5e-6 + 4.0e-6))
+
+
 class LegacyByteIdentityTest(unittest.TestCase):
     """A claims-only (contract-2) signature regenerates the pre-v3 builder's generator inputs
     byte for byte (testdata/legacy-byte-identity: coupon.json, mesh-signature.csv,

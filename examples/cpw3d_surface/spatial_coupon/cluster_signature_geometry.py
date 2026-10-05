@@ -75,6 +75,17 @@ PROCESS_NORMAL = (0.0, 0.0, 1.0)
 # to one quantum). The one tolerance of "the same point" in this module: end_states, the
 # interior-cut bridges and the arrangement's node snapping all use it.
 COINCIDENCE_OVER_R = 1.0e-5
+# Block (b) step 0, F0-a (curved-clusters-20261005/DESIGN.md section 0): the serialised Gap
+# components and portion ends are rounded to the signature quantum (1e-6 R), so a short
+# OBLIQUE straight portion of length L (units of R) reads |tangent . gap| up to
+# sqrt(2) / 2 q + 2 q / L from the rounding alone (the axis-aligned gaps of rectilinear
+# clusters read exactly 0). The perpendicularity test admits twice that bound; a row that
+# exceeds the legacy exact test (1e-6, every row built so far passes it and is kept bitwise)
+# but lies within the bound has its gap RE-DERIVED as the exact perpendicular of its chord
+# with the serialised sign, so the generator's and Palace's frames stay exactly orthogonal.
+SIGNATURE_QUANTUM_OVER_R = 1.0e-6
+GAP_PERPENDICULARITY_LEGACY = 1.0e-6
+GAP_PERPENDICULARITY_MARGIN = 2.0
 # An interior cut (two facing claim cuts of one chain) spans less than the cluster's event
 # reach: the piece between two claims of the same cluster is a translational remainder shorter
 # than 2R (a longer piece would carry its own events and belong to the cluster).
@@ -100,14 +111,12 @@ def context_from_signature(signature, radius):
         if not edge.get("Context"):
             continue
         p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
-        gap = np.asarray(edge["Gap"], dtype=float)
+        label = f"context piece {edge['Portion']}"
+        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, label)
         length = float(np.linalg.norm(p1 - p0))
-        norm = np.linalg.norm(gap)
-        if length <= 0.0 or norm <= 0.0:
-            raise SignatureGeometryError(f"context piece {edge['Portion']} has zero length or an invalid Gap")
-        pieces.append({"P0": p0, "P1": p1, "Gap": gap / norm, "Length": length, "Conductor": int(edge["Conductor"]),
+        pieces.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                        "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
-                       "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False))})
+                       "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False)), "GapRederived": rederived})
     return pieces
 
 
@@ -124,13 +133,49 @@ def support_box(signature, radius):
     return box
 
 
+def gap_perpendicularity_bound(length_over_R):
+    """The quantisation bound on |tangent . gap| of a serialised straight row of length
+    ``length_over_R`` (units of R) with the F0-a margin: GAP_PERPENDICULARITY_MARGIN x
+    (sqrt(2) / 2 q + 2 q / L), q = SIGNATURE_QUANTUM_OVER_R."""
+    q = SIGNATURE_QUANTUM_OVER_R
+    return GAP_PERPENDICULARITY_MARGIN * (math.sqrt(2.0) * 0.5 * q + 2.0 * q / length_over_R)
+
+
+def perpendicular_gap(p0, p1, gap, radius, label):
+    """The unit gap of a straight row: the serialised gap when it passes the legacy exact
+    test (|tangent . gap| <= GAP_PERPENDICULARITY_LEGACY: bitwise for every row built so
+    far), else the exact perpendicular of the chord with the serialised sign when the
+    deviation lies within the quantisation bound (F0-a), else a fail-closed refusal.
+    Returns (unit gap, re-derived flag, deviation)."""
+    norm = float(np.linalg.norm(gap))
+    if norm <= 0.0:
+        raise SignatureGeometryError(f"{label} has an invalid P or Gap")
+    length = float(np.linalg.norm(p1 - p0))
+    if length <= 0.0:
+        raise SignatureGeometryError(f"{label} has zero length")
+    tangent = (p1 - p0) / length
+    gap = gap / norm
+    deviation = abs(float(np.dot(tangent, gap)))
+    if deviation <= GAP_PERPENDICULARITY_LEGACY:
+        return gap, False, deviation
+    bound = gap_perpendicularity_bound(length / radius)
+    if deviation > bound:
+        raise SignatureGeometryError(f"{label}: Gap is not perpendicular to the portion (|tangent . gap| = "
+                                     f"{deviation:.3e} > the quantisation bound {bound:.3e} for a {length / radius:.6f} R row)")
+    perpendicular = np.asarray([tangent[1], -tangent[0]])
+    sign = 1.0 if float(np.dot(perpendicular, gap)) >= 0.0 else -1.0
+    return sign * perpendicular, True, deviation
+
+
 def portions_from_signature(signature, radius):
     """The portions of a SpatialEdgeCluster signature in mesh units (canonical frame). An arc
     portion (option A: ``Arc`` = centre + midpoint, ``GapRadial``) is chorded at the canonical
     step (signature_library.cluster_plan_view_edges: 5 deg / 0.25 R), each chord a straight
     portion whose gap direction is the arc's radial direction at the chord's middle; the
     chords are what the coupon's plan view and the model's Edges carry (Palace places a model
-    carrying its Signature with the identity map and verifies the chords against the arc)."""
+    carrying its Signature with the identity map and verifies the chords against the arc).
+    A straight portion's gap is tested against the quantisation bound and re-derived when
+    the serialised rounding tilts it (perpendicular_gap, F0-a); ``GapRederived`` marks it."""
     if signature.get("Type") != "SpatialEdgeCluster":
         raise SignatureGeometryError(f"not a SpatialEdgeCluster signature: {signature.get('Type')!r}")
     portions = []
@@ -140,20 +185,11 @@ def portions_from_signature(signature, radius):
     for edge in signature_library.cluster_plan_view_edges(signature, radius):
         index = edge["Portion"]
         p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
-        gap = np.asarray(edge["Gap"], dtype=float)
-        norm = np.linalg.norm(gap)
-        if norm <= 0.0:
-            raise SignatureGeometryError(f"portion {index} has an invalid P or Gap")
+        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, f"portion {index}")
         length = float(np.linalg.norm(p1 - p0))
-        if length <= 0.0:
-            raise SignatureGeometryError(f"portion {index} has zero length")
-        tangent = (p1 - p0) / length
-        gap = gap / norm
-        if abs(float(np.dot(tangent, gap))) > 1.0e-6:
-            raise SignatureGeometryError(f"portion {index}: Gap is not perpendicular to the portion")
         portions.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                          "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
-                         "Portion": index})
+                         "Portion": index, "GapRederived": rederived})
     return portions
 
 
