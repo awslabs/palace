@@ -174,7 +174,13 @@ def main():
             argument = "-DPALACE_BUILD_EXTERNAL_DEPS=OFF"
         elif argument.startswith("-DMFEM_DIR=") and args.mfem_patch:
             argument = f"-DMFEM_DIR={build}"
+        elif argument.startswith("-DCMAKE_PREFIX_PATH=") and args.mfem_patch:
+            # find_library(MFEM_LIBRARY ... HINTS ${MFEM_DIR}/lib) searches CMAKE_PREFIX_PATH before HINTS,
+            # so the dependency prefix's unpatched libmfem.a would win: this prefix goes first.
+            argument = f"-DCMAKE_PREFIX_PATH={build};" + argument.split("=", 1)[1]
         configure.append(argument)
+    if args.mfem_patch:
+        configure.append(f"-DMFEM_LIBRARY={build}/lib/libmfem.a")
     build.mkdir(parents=True)
     palace_build = build / "palace-build"
     palace_build.mkdir()
@@ -208,6 +214,13 @@ def main():
         with (build / "configure.log").open("w") as log:
             subprocess.run(configure, cwd=palace_build, check=True, stdout=log, stderr=subprocess.STDOUT)
         timing["ConfigureSeconds"] = time.time() - started
+        if args.mfem_patch:
+            cache = (palace_build / "CMakeCache.txt").read_text()
+            found = re.search(r"^MFEM_LIBRARY:\w+=(.*)$", cache, re.M)
+            expected = str(build / "lib/libmfem.a")
+            if not found or found.group(1) != expected:
+                raise SystemExit(f"palace configured against {found and found.group(1)}, not the rebuilt {expected}")
+            mfem["PalaceMFEMLibrary"] = found.group(1)
         started = time.time()
         build_command = [cmake, "--build", str(palace_build), "--target", "palace", "-j", str(args.jobs)]
         print(shlex.join(build_command), flush=True)
