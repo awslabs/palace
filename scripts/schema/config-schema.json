@@ -503,8 +503,14 @@
         "MaxSize": {
           "type": "number",
           "minimum": 0,
-          "description": "The maximum allowable number of degrees of freedom for AMR. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
+          "description": "The maximum allowable number of degrees of freedom for AMR. It is checked against the predicted size of each refined mesh before its solve unless `MaxSizePredicted` is `false`, in which case it is checked only against the last solved size. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
           "default": 0
+        },
+        "MaxSizePredicted": {
+          "type": "boolean",
+          "description": "Check `MaxSize` against the predicted size of each refined mesh (the last solved number of degrees of freedom scaled by the element-count growth of the refinement step) and stop AMR before the solve when the prediction exceeds `MaxSize`; the last solved mesh is then the final result. When `false`, `MaxSize` is checked only against the last solved size, so the final AMR solve may exceed `MaxSize` by the growth of one refinement step (the behavior before this option; keep it to reproduce such runs).",
+          "default": true,
+          "x-palace-advanced": true
         },
         "UpdateFraction": {
           "type": "number",

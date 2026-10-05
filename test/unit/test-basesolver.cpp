@@ -6,6 +6,7 @@
 #include "drivers/basesolver.hpp"
 #include "fixtures.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
 #include "utils/filesystem.hpp"
 
 using namespace palace;
@@ -266,4 +267,53 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SaveIteration is MPI collective",
   CHECK(fs::is_symlink(temp_dir / "gridfunction"));
   CHECK(fs::is_regular_file(temp_dir / "iteration1" / "gridfunction" / "electrostatic" /
                             "V.gf.000000"));
+}
+
+TEST_CASE("PredictRefinedSize scales the last solved size by the element growth",
+          "[basesolver][Serial]")
+{
+  // Stage-2 S5 thin P4 (order 4) AMR cycles: the c9 -> c10 refinement grew the mesh
+  // 9,034,822 -> 25,852,252 elements after a c9 solve of 67,992,598 unknowns; c10 assembled
+  // 196,931,656 unknowns (the prediction reads 1.2% low on this graded nonconforming mesh).
+  CHECK(PredictRefinedSize(67992598, 9034822, 25852252) == 194554113);
+  // c8 -> c9 of the same run: 25,343,372 unknowns, 3,435,515 -> 9,034,822 elements
+  // (actual c9: 67,992,598).
+  CHECK(PredictRefinedSize(25343372, 3435515, 9034822) == 66648772);
+  // The ratio is rounded up and an empty refinement step leaves the size unchanged.
+  CHECK(PredictRefinedSize(10, 3, 4) == 14);
+  CHECK(PredictRefinedSize(10, 3, 3) == 10);
+  CHECK(PredictRefinedSize(0, 3, 4) == 0);
+}
+
+TEST_CASE("ExceedsPredictedMaxSize stops before an oversized solve", "[basesolver][Serial]")
+{
+  config::RefinementData refinement;
+  refinement.max_size = 100000000;
+
+  SECTION("Predicted rule (default): the S5 P4 c9 -> c10 step stops, c8 -> c9 does not")
+  {
+    CHECK(refinement.max_size_predicted);
+    // The last solved size (67,992,598) is below MaxSize, so the legacy loop-head check
+    // would have let the 196,931,656-unknown c10 solve run (x2.9 MaxSize).
+    CHECK(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
+    CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 25343372, 3435515, 9034822));
+    // A prediction exactly at MaxSize is allowed; one above is not.
+    CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 50000000, 1000, 2000));
+    CHECK(ExceedsPredictedMaxSize(refinement, 50000000, 1000, 2001));
+  }
+
+  SECTION("Legacy rule (MaxSizePredicted = false) never stops before the solve")
+  {
+    refinement.max_size_predicted = false;
+    CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
+    CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 99999999, 1, 1000));
+  }
+
+  SECTION("No MaxSize (<= 0) means no size constraint")
+  {
+    refinement.max_size = 0;
+    CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
+    refinement.max_size = -1;
+    CHECK_FALSE(ExceedsPredictedMaxSize(refinement, 67992598, 9034822, 25852252));
+  }
 }

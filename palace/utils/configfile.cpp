@@ -216,6 +216,7 @@ RefinementData::RefinementData(const json &refinement)
   tol = refinement.value("Tol", tol);
   max_it = refinement.value("MaxIts", max_it);
   max_size = refinement.value("MaxSize", max_size);
+  max_size_predicted = refinement.value("MaxSizePredicted", max_size_predicted);
   nonconformal = refinement.value("Nonconformal", nonconformal);
   max_nc_levels = refinement.value("MaxNCLevels", max_nc_levels);
   update_fraction = refinement.value("UpdateFraction", update_fraction);

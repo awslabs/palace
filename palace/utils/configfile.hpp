@@ -123,6 +123,12 @@ public:
   // refinement will be allowed.
   int max_size = 0;
 
+  // Check max_size against the predicted size of the refined mesh (the last solved size
+  // scaled by the element growth of the refinement step) and stop before the solve, instead
+  // of only against the last solved size (which lets the final solve exceed max_size by the
+  // growth of one refinement step).
+  bool max_size_predicted = true;
+
   // Whether or not to perform nonconformal adaptation.
   bool nonconformal = true;
 

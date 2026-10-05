@@ -385,6 +385,7 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                {{"Tol", ref.tol},
                 {"MaxIts", ref.max_it},
                 {"MaxSize", ref.max_size},
+                {"MaxSizePredicted", ref.max_size_predicted},
                 {"Nonconformal", ref.nonconformal},
                 {"MaxNCLevels", ref.max_nc_levels},
                 {"UpdateFraction", ref.update_fraction},
