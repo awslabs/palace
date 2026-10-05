@@ -2574,7 +2574,13 @@ function polygon_wire(occ, points, z; runs=nothing)
         projected[index] =
             (run.center[1] + scale * radial[1], run.center[2] + scale * radial[2])
     end
-    tags = [occ.addPoint(point[1], point[2], z) for point in projected]
+    # OCC points are created where a curve needs them: every vertex of a straight side and
+    # the two ends of a run (a chord vertex strictly inside a run would be a dangling CAD
+    # point that Gmsh would still carry as a node). A straight loop creates every vertex.
+    tags = Dict{Int, Int32}()
+    point_tag(index) = get!(tags, index) do
+        occ.addPoint(projected[index][1], projected[index][2], z)
+    end
     curve_for_edge = Dict{Int, Int32}()
     covered = falses(length(points))
     for run in runs
@@ -2586,10 +2592,10 @@ function polygon_wire(occ, points, z; runs=nothing)
             error("a circular arc run of $(length(run.edge_indices)) chords cannot carry $parts parts")
         center = occ.addPoint(run.center[1], run.center[2], z)
         split_tags = vcat(
-            [tags[run.point_indices[1]]],
+            [point_tag(run.point_indices[1])],
             [occ.addPoint(run.center[1] + run.radius * cos(angles[k]),
                           run.center[2] + run.radius * sin(angles[k]), z) for k in 2:parts],
-            [tags[run.point_indices[end]]]
+            [point_tag(run.point_indices[end])]
         )
         for k in 1:parts
             curve_for_edge[run.edge_indices[k]] =
@@ -2598,11 +2604,11 @@ function polygon_wire(occ, points, z; runs=nothing)
         covered[run.edge_indices] .= true
     end
     curves = Int32[]
-    for index in eachindex(tags)
+    for index in eachindex(points)
         if haskey(curve_for_edge, index)
             push!(curves, curve_for_edge[index])
         elseif !covered[index]
-            push!(curves, occ.addLine(tags[index], tags[mod1(index + 1, length(tags))]))
+            push!(curves, occ.addLine(point_tag(index), point_tag(mod1(index + 1, length(points)))))
         end
     end
     return occ.addWire(curves)
@@ -3508,7 +3514,26 @@ function simplified_loft_polygons(bottom_points, top_points, footprint, conducto
     return bottom_points, top_points
 end
 
+# A prismatic loft (equal bottom and top polygons) whose wire carries circular arcs is
+# EXTRUDED, so its walls are analytic OCC cylinders: the fragment then recognises the arc
+# tubes' revolved sidewall rays (the same cylinders) as the same faces and merges them
+# (design 1.2 (3)); a ThruSections loft turns the arcs into BSpline walls that OCC does not
+# merge with a cylinder (a dangling coincident face Gmsh cannot mesh). A straight polygon
+# (and a non-prismatic loft) keeps the ThruSections construction bitwise.
 function loft_polygon(occ, bottom_points, top_points, z0, z1)
+    if bottom_points == top_points
+        tolerance = 1.0e-9 * max(
+            maximum(point[1] for point in bottom_points) - minimum(point[1] for point in bottom_points),
+            maximum(point[2] for point in bottom_points) - minimum(point[2] for point in bottom_points),
+            1.0)
+        if !isempty(circular_arc_runs(bottom_points, tolerance))
+            face = occ.addPlaneSurface([polygon_wire(occ, bottom_points, z0)])
+            entities = occ.extrude([(2, face)], 0.0, 0.0, z1 - z0)
+            volumes = [(dim, tag) for (dim, tag) in entities if dim == 3]
+            length(volumes) == 1 || error("Plan-view mask extrusion produced $(length(volumes)) volumes")
+            return volumes
+        end
+    end
     bottom = polygon_wire(occ, bottom_points, z0)
     top = polygon_wire(occ, top_points, z1)
     entities = occ.addThruSections([bottom, top], -1, true, false, -1, "C0")
@@ -6781,6 +6806,18 @@ function generate_spatial_coupon(;
         end
     end
     occ.synchronize()
+    if haskey(ENV, "P2ARCS_DEBUG")   # TEMPORARY
+        tube_face_set = Set{Int32}()
+        for v in tube_volumes, (d, f) in gmsh.model.getBoundary([(3, v)], false, false, false)
+            push!(tube_face_set, abs(f))
+        end
+        for (d, t) in gmsh.model.getEntities(2)
+            ty = gmsh.model.getType(2, t)
+            ty in ("Cylinder", "Cone", "Unknown") || continue
+            bb = gmsh.model.getBoundingBox(2, t)
+            println("DEBUG face $t $ty z[$(round(bb[3], digits=4)), $(round(bb[6], digits=4))] x[$(round(bb[1], digits=3)), $(round(bb[4], digits=3))] up=$(gmsh.model.getAdjacencies(2, t)[1]) tubeface=$(t in tube_face_set)")
+        end
+    end
     corner_point_tags = corner_isotropy ? semantic_corner_points(semantic_corners, tolerance) :
                         Int32[]
 
@@ -7442,6 +7479,19 @@ function generate_spatial_coupon(;
         # explicit cap triangles / radial and pyramid faces, the OCC tube volumes
         # are removed and Gmsh meshes the remaining volumes with tetrahedra, then
         # discrete volumes receive the prisms and pyramids.
+        # The revolved faces of the arc tubes (design 1.2 (3)) are periodic OCC surfaces that
+        # Gmsh's surface mesher refuses with the explicit boundary nodes ("Impossible to mesh
+        # periodic surface"); their meshes are replaced by the explicit prism faces anyway, so
+        # on an arc coupon every tube face is hidden from the 2D pass (Mesh.MeshOnlyVisible)
+        # and shown again before the tube faces are installed. A straight coupon keeps the
+        # unchanged pass (its planar tube faces are meshed and replaced as before: bitwise).
+        hidden_tube_faces = Int32[]
+        if any(state.tube isa ArcTube for state in tube_states)
+            hidden_tube_faces = unique(reduce(vcat, [reduce(vcat, values(state.faces); init=Int32[])
+                                                      for state in tube_states]; init=Int32[]))
+            gmsh.model.setVisibility([(2, face) for face in hidden_tube_faces], 0)
+            gmsh.option.setNumber("Mesh.MeshOnlyVisible", 1)
+        end
         tube_timings["Generate2D"] = @elapsed gmsh.model.mesh.generate(2)
         tube_timings["TubeFaces"] = @elapsed begin
             tube_face_meshes = Vector{Dict{String, Any}}(undef, length(tube_states))
@@ -7451,7 +7501,14 @@ function generate_spatial_coupon(;
             end
         end
         remove_tube_volumes!(tube_states)
+        # The 3D pass repeats the surface pass for the faces it finds pending (the explicitly
+        # meshed periodic faces among them), so the arc coupon's tube faces stay hidden
+        # through it; their explicit meshes bound the tetrahedra as on a straight coupon.
         tube_timings["Generate3D"] = @elapsed gmsh.model.mesh.generate(3)
+        if !isempty(hidden_tube_faces)
+            gmsh.model.setVisibility([(2, face) for face in hidden_tube_faces], 1)
+            gmsh.option.setNumber("Mesh.MeshOnlyVisible", 0)
+        end
         before_duplicates = sum(length(tags) for tags in gmsh.model.mesh.getElements(3)[2]; init=0)
         gmsh.model.mesh.removeDuplicateElements([(3, tag) for (dim, tag) in gmsh.model.getEntities(3)])
         after_duplicates = sum(length(tags) for tags in gmsh.model.mesh.getElements(3)[2]; init=0)

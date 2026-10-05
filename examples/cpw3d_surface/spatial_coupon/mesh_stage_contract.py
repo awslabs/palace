@@ -1277,11 +1277,12 @@ GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 # the build (a side's tube interval against the derived corner clearances): it is
 # exhibited by the census Scope.UntubedEdges records, not by the input classification.
 RECIPE_SCOPE_RECIPE = "prism-tubes"
-RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "DownwardLayers",
+RECIPE_SCOPE_SUPPORTED_CLASSES = ("ArcSides", "ContinuationVertices", "DeviceFootprint", "DownwardLayers",
                                   "ExteriorLoops", "HoleLoops", "MultipleConductors",
                                   "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis",
                                   "UntubedShortEdges")
 RECIPE_SCOPE_GUARDS = {
+    "ArcTubeRadiusVsCurvature": "build",
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
@@ -1364,7 +1365,69 @@ def scope_classes(signature_rows, boundary_rows, *, fabricated=True, sidewall_an
         classes.append("ThinMetal")
     if overetch == 0.0:
         classes.append("NoTrench")
+    # Block (b) design A1 (4): a boundary carrying arc tags (one tagged chord side at least).
+    if boundary_rows and "ArcId" in boundary_rows[0] and any(row.get("ArcId") not in (None, "") for row in boundary_rows):
+        classes.append("ArcSides")
     return sorted(classes)
+
+
+# The parts an arc side of signed sweep `sweep` (radians) is split into (mesh_spatial_coupon.jl
+# arc_part_count): <= 90-degree parts of equal angular fraction.
+def arc_part_count(sweep):
+    return max(1, math.ceil(abs(sweep) / (0.5 * math.pi) - 1.0e-9))
+
+
+def boundary_arc_runs(rows):
+    """Per loop (Loop order) the tagged arc runs of plan-view boundary rows (block (b) design
+    A1 (4)): [{ArcId, Centre, Radius, Sign, Chords, Sweep (signed, radians: the angular travel
+    from the run's first to its last vertex about the centre), Parts, EdgeIndices}]; empty
+    without the arc columns.  The sweep is a function of the two end vertices alone
+    (mesh_spatial_coupon.jl run_sweep), so the part count does not depend on the chord count."""
+    loops = {}
+    for row in rows:
+        loops.setdefault(int(row["Loop"]), []).append(row)
+    result = []
+    for _, loop_rows in sorted(loops.items()):
+        loop_rows.sort(key=lambda row: int(row["Vertex"]))
+        points = [(float(row["X"]), float(row["Y"])) for row in loop_rows]
+        n = len(points)
+        ids = [int(row["ArcId"]) if row.get("ArcId") not in (None, "") else 0 for row in loop_rows]
+        runs = []
+        if any(ids):
+            start = next((i for i in range(n) if ids[i] and ids[i - 1] != ids[i]), None)
+            if start is None:
+                raise ValueError("a plan-view loop made of one closed arc is not supported by the tube recipe")
+            seen = set()
+            for step in range(n):
+                index = (start + step) % n
+                if not ids[index] or ids[index - 1] == ids[index]:
+                    continue
+                if ids[index] in seen:
+                    raise ValueError(f"arc {ids[index]} of the plan-view boundary is not one consecutive run of chords")
+                seen.add(ids[index])
+                edges = []
+                k = index
+                while ids[k] == ids[index] and len(edges) < n:
+                    edges.append(k)
+                    k = (k + 1) % n
+                row = loop_rows[index]
+                centre = (float(row["ArcCx"]), float(row["ArcCy"]))
+                first, last = points[edges[0]], points[(edges[-1] + 1) % n]
+                steps = []
+                for e in edges:
+                    a, b = points[e], points[(e + 1) % n]
+                    ra, rb = (a[0] - centre[0], a[1] - centre[1]), (b[0] - centre[0], b[1] - centre[1])
+                    steps.append(math.atan2(ra[0] * rb[1] - ra[1] * rb[0], ra[0] * rb[0] + ra[1] * rb[1]))
+                orientation = 1.0 if sum(steps) >= 0.0 else -1.0
+                theta_first = math.atan2(first[1] - centre[1], first[0] - centre[0])
+                theta_last = math.atan2(last[1] - centre[1], last[0] - centre[0])
+                travel = (orientation * (theta_last - theta_first)) % (2.0 * math.pi)
+                sweep = orientation * (2.0 * math.pi if first == last else travel)
+                runs.append({"ArcId": ids[index], "Centre": centre, "Radius": float(row["ArcR"]),
+                             "Sign": int(row["ArcSign"]), "Chords": len(edges), "Sweep": sweep,
+                             "Parts": arc_part_count(sweep), "EdgeIndices": edges})
+        result.append(runs)
+    return result
 
 
 def unsupported_scope_classes(classes):
@@ -1415,15 +1478,20 @@ def metal_loop_sides(boundary_rows, lower, upper, tolerance):
 
 def metal_loop_side_points(boundary_rows, lower, upper, tolerance):
     """Per plan-view loop (in Loop order) the (start, stop) points of the straight sides
-    not lying on an outer box face, in vertex order."""
+    not lying on an outer box face, in vertex order; the chords of a tagged arc are not
+    straight sides (metal_loop_arc_parts counts the arc's parts)."""
     loops = {}
     for row in boundary_rows:
         loops.setdefault(int(row["Loop"]), []).append((int(row["Vertex"]), float(row["X"]), float(row["Y"])))
+    arc_runs = boundary_arc_runs(boundary_rows)
     sides = []
-    for _, vertices in sorted(loops.items()):
+    for loop_index, (_, vertices) in enumerate(sorted(loops.items())):
         points = [(x, y) for _, x, y in sorted(vertices)]
+        arc_edges = {e for run in arc_runs[loop_index] for e in run["EdgeIndices"]}
         loop_sides = []
         for i, p in enumerate(points):
+            if i in arc_edges:
+                continue
             q = points[(i + 1) % len(points)]
             on_face = any((abs(p[d] - lower[d]) <= tolerance and abs(q[d] - lower[d]) <= tolerance) or
                           (abs(p[d] - upper[d]) <= tolerance and abs(q[d] - upper[d]) <= tolerance)
@@ -1432,6 +1500,12 @@ def metal_loop_side_points(boundary_rows, lower, upper, tolerance):
                 loop_sides.append((p, q))
         sides.append(loop_sides)
     return sides
+
+
+def metal_loop_arc_parts(boundary_rows):
+    """Per plan-view loop (Loop order) the number of arc PARTS its tagged arcs carry (block (b)
+    design 1.2 (2): every part is a side with TubesPerSide tubes); 0 without arcs."""
+    return [sum(run["Parts"] for run in runs) for runs in boundary_arc_runs(boundary_rows)]
 
 
 def validate_untubed_edges(scope, census, side_points, tolerance):
@@ -1515,9 +1589,10 @@ def validate_recipe_scope(build_report, census):
     loops = scope.get("MetalLoops")
     box = census.get("CouponBox") if isinstance(census.get("CouponBox"), dict) else {}
     radius = _census_number(box, "Radius", "Coupon box")
-    side_points = metal_loop_side_points(read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]),
-                                         box.get("Lower"), box.get("Upper"), 1e-7 * radius)
-    expected = [len(sides) for sides in side_points]
+    boundary_rows = read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"])
+    side_points = metal_loop_side_points(boundary_rows, box.get("Lower"), box.get("Upper"), 1e-7 * radius)
+    arc_parts = metal_loop_arc_parts(boundary_rows)
+    expected = [len(sides) + parts for sides, parts in zip(side_points, arc_parts)]
     if (not isinstance(loops, list) or len(loops) != len(expected) or
             any(not isinstance(loop, dict) or not isinstance(loop.get("Hole"), bool) or
                 _count(loop.get("Sides"), "Metal loop sides") != sides or
@@ -1525,6 +1600,25 @@ def validate_recipe_scope(build_report, census):
                 _count(loop.get("Loop"), "Metal loop index") != index + 1
                 for index, (loop, sides) in enumerate(zip(loops, expected)))):
         raise ValueError("Build census Scope metal loops differ from the bound plan-view boundary")
+    # Arc loops (design 1.2 (2)): the straight sides, the arc parts and the arcs themselves.
+    for loop, sides, parts, runs in zip(loops, side_points, arc_parts, boundary_arc_runs(boundary_rows)):
+        if not runs:
+            if any(key in loop for key in ("StraightSides", "ArcParts", "Arcs")):
+                raise ValueError("Build census Scope metal loop records arcs the bound boundary does not carry")
+            continue
+        arcs = loop.get("Arcs")
+        if (_count(loop.get("StraightSides"), "Metal loop straight sides") != len(sides) or
+                _count(loop.get("ArcParts"), "Metal loop arc parts") != parts or
+                not isinstance(arcs, list) or len(arcs) != len(runs) or
+                any(not isinstance(arc, dict) or arc.get("ArcId") != run["ArcId"] or
+                    _count(arc.get("Parts"), "Metal loop arc parts") != run["Parts"] or
+                    _count(arc.get("Chords"), "Metal loop arc chords") != run["Chords"] or
+                    abs(_census_number(arc, "Radius", "Metal loop arc") - run["Radius"]) > 1e-9 * run["Radius"] or
+                    abs(_census_number(arc, "SweepDegrees", "Metal loop arc") - math.degrees(run["Sweep"])) > 1e-9
+                    for arc, run in zip(arcs, runs))):
+            raise ValueError("Build census Scope metal loop arcs differ from the bound plan-view boundary")
+    if ("ArcSides" in exhibited) != any(arc_parts):
+        raise ValueError("Build census Scope arc sides differ from the exhibited classes")
     if ("HoleLoops" in exhibited) != any(loop["Hole"] for loop in loops):
         raise ValueError("Build census Scope hole loops differ from the exhibited classes")
     tubes = census.get("PrismTubes")
@@ -1708,6 +1802,65 @@ def validate_tube_face_end_summary(tubes, rows):
         raise ValueError("Prism tube face-end summary does not match the tube rows")
 
 
+ARC_CURVATURE_BOUND = 0.25
+
+
+def validate_arc_tubes(tubes, rows, boundary_rows):
+    """The arc tubes of a census (block (b) design 1.2 (3) / A3 (2)): PrismTubes.ArcTubes
+    {Count, JointEnds, SharedSections, TotalArcLength, Rule, SmoothJointRule} against the rows
+    carrying an Arc record (ArcId / Centre / Radius / Sign of a tagged run of the bound boundary,
+    Part in 1..Parts = the run's parts, SweepDegrees = the run's sweep over its parts, Length =
+    Radius x sweep of the tube's interval <= the part's), the section's envelope within
+    ARC_CURVATURE_BOUND x Radius, and the rows' Joints records (TiltRadians >= 0, PlaneCut iff
+    tilt > 0); a census without arc rows carries no ArcTubes record (None).  Returns the arc row count."""
+    arc_rows = [row for row in rows if isinstance(row, dict) and "Arc" in row]
+    summary = tubes.get("ArcTubes")
+    if not arc_rows:
+        if summary is not None:
+            raise ValueError("Prism tube record names arc tubes without arc rows")
+        if any("Joints" in row for row in rows if isinstance(row, dict)):
+            raise ValueError("Prism tube rows record joints without arc tubes")
+        return 0
+    runs = {run["ArcId"]: run for loop_runs in boundary_arc_runs(boundary_rows) for run in loop_runs}
+    section = tubes.get("Section") if isinstance(tubes, dict) else None
+    envelope = (_census_number(section, "Radius", "Tube section") +
+                _census_number(section, "PyramidHeight", "Tube section"))
+    joint_ends = 0
+    for row in rows:
+        for joint in row.get("Joints", []):
+            tilt = _census_number(joint, "TiltRadians", "Tube joint")
+            if (tilt < 0.0 or joint.get("End") not in ("start", "end") or
+                    joint.get("PlaneCut") is not (tilt > 0.0)):
+                raise ValueError("Prism tube joint record lacks its end, tilt or plane-cut flag")
+            joint_ends += 1
+    for row in arc_rows:
+        arc = row["Arc"]
+        run = runs.get(arc.get("ArcId")) if isinstance(arc, dict) else None
+        if run is None:
+            raise ValueError("Prism tube arc row names an arc the bound boundary does not carry")
+        radius = _census_number(arc, "Radius", "Tube arc")
+        parts = _count(arc.get("Parts"), "Tube arc parts")
+        part = _count(arc.get("Part"), "Tube arc part")
+        centre = arc.get("Centre")
+        if (not isinstance(centre, list) or len(centre) != 2 or
+                any(abs(float(c) - r) > 1e-9 * max(1.0, radius) for c, r in zip(centre, run["Centre"])) or
+                abs(radius - run["Radius"]) > 1e-9 * run["Radius"] or arc.get("Sign") != run["Sign"] or
+                parts != run["Parts"] or not 1 <= part <= parts or
+                abs(_census_number(arc, "SweepDegrees", "Tube arc") - math.degrees(abs(run["Sweep"])) / parts) > 1e-9 or
+                envelope > ARC_CURVATURE_BOUND * radius * (1.0 + 1e-12) or
+                _census_number(row, "Length", "Tube row") > radius * abs(run["Sweep"]) / parts * (1.0 + 1e-9)):
+            raise ValueError("Prism tube arc row does not follow its tagged arc (centre, radius, sign, parts, sweep)")
+    if (not isinstance(summary, dict) or
+            _count(summary.get("Count"), "Arc tube count") != len(arc_rows) or
+            _count(summary.get("JointEnds"), "Arc tube joint ends") != joint_ends or
+            _count(summary.get("SharedSections"), "Arc tube shared sections") * 2 != joint_ends or
+            abs(_census_number(summary, "TotalArcLength", "Arc tubes") -
+                sum(float(row["Length"]) for row in arc_rows)) > 1e-9 * max(1.0, sum(float(row["Length"]) for row in arc_rows)) or
+            not all(isinstance(summary.get(name), str) and summary[name] for name in ("Rule", "SmoothJointRule"))):
+        raise ValueError("Prism tube arc summary does not match the arc rows")
+    return len(arc_rows)
+
+
 def validate_gmsh_build_census(build_report, census, semantic):
     """The Gmsh-only build census (the build report of decision 38) is bound to the
     build command and the canonical semantic contract: the corner ball and its
@@ -1816,6 +1969,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
         raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
     spacing_bound = max([tubes["TangentialSize"]] + [bound * (1.0 + 1e-9) for bound in face_end_bound.values()])
     validate_tube_face_end_summary(tubes, rows)
+    validate_arc_tubes(tubes, rows, read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]))
     # Decision 40: the layers follow the composed size field on the tube axis. Every
     # tube records its layer thickness statistics (the largest layer is its Spacing,
     # the neighbour ratio within the growth ratio), the record names the layer rule

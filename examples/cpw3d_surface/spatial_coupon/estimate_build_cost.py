@@ -63,7 +63,7 @@ HERE = Path(__file__).resolve().parent
 import sys  # noqa: E402
 sys.path.insert(0, str(HERE))
 from general_mesh_manifest import case_kind, thin_build_options, validate_case_element_cap_override  # noqa: E402
-from semantic_mesh_contract import box_face_cut_end  # noqa: E402
+from semantic_mesh_contract import arc_vertex_class, boundary_arc_tags, box_face_cut_end  # noqa: E402
 TUBE_SECTOR_SPAN_DEGREES = 270.0   # the dielectric side of a metal edge (3 / 4 turn)
 DIELECTRIC_FRACTION = 0.75         # of a ball / cylinder around a metal edge or corner
 # Thin sheet (decision 66): the whole turn around the sheet edge is dielectric.
@@ -212,13 +212,31 @@ def row_coupon_box(edges, radius, metal_thickness, overetch):
 
 
 def read_loops(boundary):
+    """Per loop the vertices ((x, y), Class, Plane, arc class) in vertex order; the arc class is
+    "Interior" (a chord vertex strictly inside one tagged arc), "Smooth" (a smooth arc joint),
+    "Joint" (a kinked arc end) or None (block (b) design A1 (4), semantic_mesh_contract).
+    read_loops_with_arcs also returns per loop the outgoing-side arc tags."""
+    return [loop for loop, _ in read_loops_with_arcs(boundary)]
+
+
+def read_loops_with_arcs(boundary):
     with Path(boundary).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
-    loops = {}
-    for row in rows:
-        loops.setdefault(int(row["Loop"]), []).append(
-            ((float(row["X"]), float(row["Y"])), row["Class"], float(row["Plane"])))
-    return list(loops.values())
+    arcs, joints = boundary_arc_tags(rows)
+    grouped = {}
+    for row, arc, joint in zip(rows, arcs, joints):
+        grouped.setdefault(int(row["Loop"]), []).append((row, arc, joint))
+    loops = []
+    for loop_rows in grouped.values():
+        loop_arcs = [arc for _, arc, _ in loop_rows]
+        vertices = []
+        for index, (row, _, joint) in enumerate(loop_rows):
+            vertex_class = arc_vertex_class(loop_arcs, index)
+            if vertex_class == "Joint" and joint is not None and joint[1]:
+                vertex_class = "Smooth"
+            vertices.append(((float(row["X"]), float(row["Y"])), row["Class"], float(row["Plane"]), vertex_class))
+        loops.append((vertices, loop_arcs))
+    return loops
 
 
 def on_box(point, lower, upper, tolerance):
@@ -257,16 +275,30 @@ def metal_sides(loops, lower, upper, tolerance):
                         (abs(loop[i][0][d] - upper[d]) <= tolerance and
                          abs(loop[(i + 1) % n][0][d] - upper[d]) <= tolerance)
                         for d in range(2)) for i in range(n)]
+        # Arc sides (block (b) design 1.2 (5)): the chords of one tagged arc are ONE side of
+        # the arc's length (the tube layers follow it); a chord vertex inside the arc and a
+        # smooth joint carry no cap (no corner, a shared section); a kinked arc end carries
+        # its caps like a Physical vertex. The arc's box ends (an arc cut by a face) are face
+        # ends with the chord's tilt at the face.
+        arc_class = [vertex[3] if len(vertex) > 3 else None for vertex in loop]
         for i in range(n):
             if box_side[i]:
                 continue
-            (p, class_p, _), (q, class_q, _) = loop[i], loop[(i + 1) % n]
-            sides.append(math.dist(p, q))
-            caps += 2 * sum(1 for point, cls in ((p, class_p), (q, class_q))
-                            if cls == "Physical" and not on_box(point, lower, upper, tolerance))
-            direction = ((q[0] - p[0]) / sides[-1], (q[1] - p[1]) / sides[-1])
-            # A face end has a single metal side at the vertex: the adjacent side is a box side.
-            for point, single in ((p, box_side[i - 1]), (q, box_side[(i + 1) % n])):
+            (p, class_p, _, *_), (q, class_q, _, *_) = loop[i], loop[(i + 1) % n]
+            chord = math.dist(p, q)
+            inside_arc = arc_class[(i + 1) % n] == "Interior"
+            if arc_class[i] == "Interior" and i > 0 and sides:
+                sides[-1] += chord          # the next chord of the same arc
+            else:
+                sides.append(chord)
+            direction = ((q[0] - p[0]) / chord, (q[1] - p[1]) / chord)
+            for point, cls, vertex_class, single in ((p, class_p, arc_class[i], box_side[i - 1]),
+                                                     (q, class_q, arc_class[(i + 1) % n], box_side[(i + 1) % n])):
+                if vertex_class in ("Interior", "Smooth"):
+                    continue
+                if cls == "Physical" and not on_box(point, lower, upper, tolerance):
+                    caps += 2
+                # A face end has a single metal side at the vertex: the adjacent side is a box side.
                 tilt = face_end_tilt(point, direction, lower, upper, tolerance) if single else 0.0
                 if tilt > 0.0:
                     tilts.append(tilt)
@@ -281,7 +313,9 @@ def semantic_corner_count(loops):
     for loop in loops:
         n = len(loop)
         for i in range(n):
-            (p, class_p, _), (q, class_q, _) = loop[i - 1], loop[i]
+            (p, class_p, *_), (q, class_q, *rest) = loop[i - 1], loop[i]
+            if len(rest) > 1 and rest[1] in ("Interior", "Smooth"):
+                continue            # an arc vertex that is no corner (design 1.2 (1) / A3 (1))
             if class_q == "Physical" and not box_face_cut_end(p, class_p, q, class_q,
                                                               loop[(i + 1) % n][0]):
                 corners += 1
