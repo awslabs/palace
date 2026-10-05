@@ -462,6 +462,14 @@ download_mfem_patch(
   "https://github.com/mfem/mfem/commit/9d1438d8a2502cc927c63e093cf8c855ff17918e.diff"
   482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f
 )
+# https://github.com/mfem/mfem/pull/5494 (open): parallel nonconforming tetrahedral meshes
+# could hang in ParFiniteElementSpace construction (an interior edge of an unsplit slave face
+# owned by an edge-only neighbor rank was left out of the master-row communication group) or
+# produce partition-dependent spurious H1 true DOFs (a hanging vertex owned by a rank with no
+# constraining slave). Vendored because the PR is re-based onto this MFEM version: the
+# FlipIndexSign(i) helper of the PR's base does not exist here and is spelled -1 - i. Remove
+# once merged upstream and MFEM is bumped.
+list(APPEND MFEM_PATCH_FILES "${CMAKE_SOURCE_DIR}/extern/patch/mfem/mfem_pr5494.diff")
 
 include(ExternalProject)
 ExternalProject_Add(mfem

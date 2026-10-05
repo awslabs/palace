@@ -9,7 +9,20 @@
 #   ssh soca-green-job "cd $ROOT && qsub -v FREEZE=source-freeze-<label>,BUILD=linux-build-<label> \
 #       source-freeze-<label>/examples/surface_response_identification/cluster/job-linux-build.pbs"
 #
-# Outputs under $ROOT: $BUILD/ (configure.log, build.log, provenance-before/after.json, binary.json),
+# A build whose freeze carries vendored MFEM patches (extern/patch/mfem/*.diff) rebuilds MFEM
+# with ALL of them by default (build_from_cmake_tree.py; binary.json records the applied set and
+# the library palace linked) -- the plain qsub line above is enough. MFEM_PATCHES (space-separated
+# frozen-tree paths) names the set explicitly; a list that omits a frozen patch is refused.
+# MFEM_TEST (a Catch2 filter for MFEM's punit_tests, run with MFEM_TEST_RANKS ranks, default 4)
+# fails the build if the tests fail:
+#   qsub -v FREEZE=...,BUILD=...,MFEM_TEST=[NCMesh] ...
+# Keep MFEM_TEST_RANKS <= 4 for "[NCMesh]": at >= 5 ranks MFEM's pre-existing "Parallel Variable
+# Order FiniteElementSpace" case (a 2 x 2 quad mesh over more ranks than elements) segfaults on
+# patched and unpatched MFEM alike (control job PBS 56496, decision 346 (a)) and would fail the
+# build for a reason unrelated to the patches.
+#
+# Outputs under $ROOT: $BUILD/ (configure.log, build.log, provenance-before/after.json, binary.json;
+# with MFEM patches also mfem-src/, mfem-build/, mfem-*.log, lib/libmfem.a, include/mfem*),
 # palace-<HEAD7>-<sha12>.bin, $BUILD.pbs.log, $BUILD-status.json.
 #PBS -N palace-cmake-build
 #PBS -q normal-g
@@ -35,8 +48,11 @@ module list
 date -u; hostname; nproc; grep MemTotal /proc/meminfo
 sha256sum "$FREEZE.tar.gz"
 if [ ! -d "$FREEZE" ]; then tar xzf "$FREEZE.tar.gz"; fi
+MFEM_ARGS=()
+for patch in ${MFEM_PATCHES:-}; do MFEM_ARGS+=(--mfem-patch "$patch"); done
+if [ -n "${MFEM_TEST:-}" ]; then MFEM_ARGS+=(--mfem-test "$MFEM_TEST" --mfem-test-ranks "${MFEM_TEST_RANKS:-4}"); fi
 python3 "$FREEZE/examples/surface_response_identification/cluster/build_from_cmake_tree.py" \
-    --source "$ROOT/$FREEZE" --build "$ROOT/$BUILD" --jobs "${JOBS:-96}"
+    --source "$ROOT/$FREEZE" --build "$ROOT/$BUILD" --jobs "${JOBS:-96}" ${MFEM_ARGS[@]+"${MFEM_ARGS[@]}"}
 BIN=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["Path"])' "$ROOT/$BUILD/binary.json")
 "$BIN" --help | head -5 || true
 echo "=== done $(date -u +%FT%TZ)"
