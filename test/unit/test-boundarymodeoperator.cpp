@@ -28,6 +28,7 @@
 #include "models/surfacerationalimpedanceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -928,15 +929,31 @@ TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
 {
   using mode_assembly::TargetDistance;
 
-  // Port mode candidates of examples/cpw/cpw_wave_uniform.json at 0.1 GHz after a sweep to
-  // 50 GHz (nondimensional): the CPW mode and a strongly evanescent mode of the lossy
-  // cross-section (absorbing boundary) whose real part lies closer to the target. Ranking
-  // by |Re{kn} - kn_target| selected the evanescent mode (awslabs/palace#996).
-  const double kn_target = 2.981703e-2;
-  const std::complex<double> kn_cpw(1.988221e-2, -5.136255e-7);
-  const std::complex<double> kn_evanescent(3.341085e-2, 1.574046e1);
-  REQUIRE(std::abs(kn_evanescent.real() - kn_target) < std::abs(kn_cpw.real() - kn_target));
-  CHECK(TargetDistance(kn_cpw, kn_target) < TargetDistance(kn_evanescent, kn_target));
+  // Reported wave-port selections of a strongly evanescent mode of a lossy cross-section
+  // whose real part lies closer to the target than that of the guided mode, so ranking by
+  // |Re{kn} - kn_target| picked it: a CPW with absorbing and conductivity boundaries at
+  // 1 GHz (awslabs/palace#920, in 1/m) and examples/cpw/cpw_wave_uniform.json at 0.1 GHz
+  // after a sweep to 50 GHz (awslabs/palace#996, nondimensional).
+  struct ReportedSelection
+  {
+    int issue;
+    double kn_target;
+    std::complex<double> kn_guided, kn_evanescent;
+  };
+  const ReportedSelection reported[] = {
+      {920, 60.2, {38.07, -4.445}, {51.03, 5677.0}},
+      {996, 2.981703e-2, {1.988221e-2, -5.136255e-7}, {3.341085e-2, 1.574046e1}}};
+  for (const auto &r : reported)
+  {
+    CAPTURE(r.issue);
+    REQUIRE(std::abs(r.kn_evanescent.real() - r.kn_target) <
+            std::abs(r.kn_guided.real() - r.kn_target));
+    CHECK(TargetDistance(r.kn_guided, r.kn_target) <
+          TargetDistance(r.kn_evanescent, r.kn_target));
+  }
+  const double kn_target = reported[1].kn_target;
+  const std::complex<double> kn_cpw = reported[1].kn_guided;
+  const std::complex<double> kn_evanescent = reported[1].kn_evanescent;
 
   // Lossless propagating modes below the target rank by descending kn, ahead of all
   // lossless evanescent modes, which rank by ascending attenuation.
@@ -963,6 +980,51 @@ TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
   CHECK(TargetDistance(std::complex<double>(nan, inf), kt) == inf);
   CHECK(TargetDistance(std::complex<double>(inf, 0.0), kt) == inf);
   CHECK(TargetDistance(kn_evanescent, kt) < inf);
+}
+
+TEST_CASE("ModeEigenSolver ranks evanescent modes below cutoff by attenuation",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Below the TE10 cutoff (75 GHz for this 1000 x 500 um guide with eps = 4) every mode of
+  // a lossless guide is evanescent: the real parts of the computed kn are round-off and
+  // carry no ranking information, and ranking on them returned an arbitrary evanescent mode
+  // as mode 1 (e.g. |S11| > 0 dB for a lossless shorted guide driven below cutoff). Both
+  // the exact and the reduced solve must rank the modes least-attenuated first, so mode 1
+  // is the continuation of TE10 through cutoff.
+  constexpr int num_modes = 3;
+  constexpr double freq_ghz = 60.0, epsilon_r = 4.0;
+  auto exact = SolveRectangularModes(1000.0, 500.0, freq_ghz, epsilon_r, 2, num_modes,
+                                     [](IoData &) {});
+  REQUIRE(exact.num_converged >= num_modes);
+  for (int i = 0; i < exact.num_converged; i++)
+  {
+    CAPTURE(i, exact.kn[i]);
+    REQUIRE(std::abs(exact.kn[i].real()) <= 1.0e-6 * std::abs(exact.kn[i].imag()));
+    if (i > 0)
+    {
+      CHECK(std::abs(exact.kn[i - 1].imag()) <=
+            (1.0 + 1.0e-6) * std::abs(exact.kn[i].imag()));
+    }
+  }
+
+  // TE10 attenuation constant sqrt((pi/a)^2 - eps k0^2), nondimensionalized by 1 um.
+  const double kc = std::numbers::pi / 1000.0;
+  const double k = std::sqrt(epsilon_r) * 2.0 * std::numbers::pi * freq_ghz * 1.0e9 /
+                   electromagnetics::c0_ * 1.0e-6;
+  CHECK_THAT(std::abs(exact.kn[0].imag()), WithinRel(std::sqrt(kc * kc - k * k), 1.0e-3));
+
+  // Train the reduced model below cutoff as well (0.9 and 1.1 times the frequency). Compare
+  // kn^2, which does not depend on the sign of i|kn| returned for an evanescent mode.
+  auto reduced = SolveRectangularModes(
+      1000.0, 500.0, freq_ghz, epsilon_r, 2, num_modes, [](IoData &) {}, true);
+  REQUIRE(reduced.reduced_stats.reduced_solves == 1);
+  REQUIRE(reduced.kn.size() == num_modes);
+  for (int i = 0; i < num_modes; i++)
+  {
+    CAPTURE(i, reduced.kn[i], exact.kn[i]);
+    CHECK(std::abs(reduced.kn[i] * reduced.kn[i] - exact.kn[i] * exact.kn[i]) <=
+          1.0e-6 * std::norm(exact.kn[i]));
+  }
 }
 
 TEST_CASE("ModeEigenSolver ranks lossy modes by complex target distance",
