@@ -10,7 +10,9 @@ import math
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -238,6 +240,106 @@ class DenseTracesTest(unittest.TestCase):
         x0 = traces[1]["Coefficients"]
         self.assertGreater(x0[0], x0[1])
         self.assertGreater(x0[3], x0[2])
+
+    def single_conductor_basis(self):
+        """A single-conductor basis whose in-metal vertex IS a basis knot (the ZeroTrace
+        construction of generate_spatial_response for conductor_count == 1): the 4 rim knots
+        plus knot 5 at (-2, 0, 0) inside conductor 1."""
+        basis = dict(self.basis)
+        basis["Basis"] = np.array([1, 2, 3, 4, 0, 0, 5])
+        return basis, np.array([0, 0, 0, 0, 1, 1, 1])
+
+    def test_synthetic_family_vanishes_at_pec_knots(self):
+        """Decision 360 (b*): the line-charge value is 0 at every knot inside a conductor; the
+        free knots keep the values of the unit-range normalisation over ALL knots (so a
+        two-conductor coupon, whose PEC knots have no column, is unchanged byte for byte)."""
+        basis, labels = self.single_conductor_basis()
+        traces = sq.synthetic_traces(basis, labels, 1.0, {1: np.zeros(3)})
+        self.assertEqual([t["Name"] for t in traces], ["line-charge-x0", "line-charge-x1", "line-charge-y0",
+                                                       "line-charge-y1"])
+        knots = np.array([[-2.0, -1.0], [2.0, -1.0], [2.0, 1.0], [-2.0, 1.0], [-2.0, 0.0]])
+        for trace, source in zip(traces, ([-7.0, 0.0], [7.0, 0.0], [0.0, -6.0], [0.0, 6.0])):
+            self.assertEqual(len(trace["Coefficients"]), 5)
+            self.assertEqual(trace["Coefficients"][4], 0.0)  # the PEC knot: exactly zero
+            phi = -np.log(np.linalg.norm(knots - np.asarray(source), axis=1))
+            expected = (phi - phi.min()) / np.ptp(phi)  # normalised over all 5 knots, PEC knot included
+            np.testing.assert_allclose(trace["Coefficients"][:4], expected[:4], rtol=0, atol=1e-15)
+        # The x0 line charge is nearest to the PEC knot (-2, 0): without the fix that knot would
+        # carry the maximum 1.0; with it the free rim knots are unchanged.
+        self.assertLess(max(traces[0]["Coefficients"][:4]), 1.0)
+
+    def test_write_dense_trace_fails_closed_at_pec_knots(self):
+        """Decision 360 (b*): a hat prescribing a non-zero potential at a conductor vertex is a
+        Dirichlet jump along the PEC cross-section boundary and is refused; zero there (the
+        synthetic family, the runtime-zeroed device trace) is written."""
+        basis, labels = self.single_conductor_basis()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(sq.SpatialQualificationError) as caught:
+                sq.write_dense_trace(Path(tmp) / "jump.csv", basis, labels, [0.1, 0.2, 0.3, 0.4, 0.5])
+            self.assertIn("PEC", str(caught.exception))
+            self.assertIsInstance(caught.exception, sq.DenseTraceJumpError)
+            self.assertFalse((Path(tmp) / "jump.csv").exists())
+            path, terminal, scale = sq.write_dense_trace(Path(tmp) / "ok.csv", basis, labels, [0.1, 0.2, 0.3, 0.4, 0.0])
+            self.assertEqual((terminal, scale), (None, 1.0))
+            rows = [line.split(",") for line in Path(path).read_text().splitlines() if line and not line.startswith("x")]
+            values = {tuple(round(float(v), 9) for v in row[:3]): float(row[3]) for row in rows}
+            self.assertEqual(values[(-2.0, 0.0, 0.0)], 0.0)
+            self.assertAlmostEqual(values[(-2.0, -1.0, 0.5)], 0.1)
+            for trace in sq.synthetic_traces(basis, labels, 1.0, {1: np.zeros(3)}):
+                sq.write_dense_trace(Path(tmp) / f"{trace['Name']}.csv", basis, labels, trace["Coefficients"])
+
+    @staticmethod
+    def device_traces_csv(path, patch, coefficients, states):
+        """A surface-response-traces.csv of one placed patch (model 1, first excitation): the
+        basis coefficients 1..N then the conductor states {conductor: value}."""
+        rows = [[1, patch, 1, k, 0, value] for k, value in enumerate(coefficients, start=1)]
+        rows += [[1, patch, 1, 0, conductor, value] for conductor, value in sorted(states.items())]
+        path.write_text("i,patch,model,coefficient,conductor state,value (V)\n" +
+                        "\n".join(",".join(f"{v:.6e}" for v in row) for row in rows) + "\n")
+
+    def traces_arguments(self, tmp, device_traces):
+        return types.SimpleNamespace(source=str(Path(tmp) / "source"), output=str(Path(tmp) / "out"),
+                                     device_traces=str(device_traces), model_index=1, fabricated_mesh=None,
+                                     thin_mesh=None, run_config=None, thin_run_config=None, orders=[4, 5])
+
+    def test_command_traces_aborts_on_pec_jump(self):
+        """Review MAJOR-1 of decision 369: a T1 device trace with a non-zero potential at a
+        conductor knot ABORTS the traces command (DenseTraceJumpError is not the recorded
+        Unsupported limitation): no dense-traces.json, so the (F) cannot stamp from T2 alone."""
+        basis, labels = self.single_conductor_basis()
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(sq, "load_basis", return_value=(basis, labels, {"Name": "m"}, 1.0, {1: np.zeros(3)})):
+            device = Path(tmp) / "surface-response-traces.csv"
+            self.device_traces_csv(device, 401, [0.1, -0.1, 0.2, -0.7, -0.7025], {})
+            with self.assertRaises(sq.DenseTraceJumpError) as caught:
+                sq.command_traces(self.traces_arguments(tmp, device))
+            self.assertIn("PEC", str(caught.exception))
+            self.assertFalse((Path(tmp) / "out" / "dense-traces.json").exists())
+            # The runtime-zeroed T1 (0 at the PEC knot) is written with the T2 family.
+            self.device_traces_csv(device, 401, [0.1, -0.1, 0.2, -0.7, 0.0], {})
+            self.assertEqual(sq.command_traces(self.traces_arguments(tmp, device)), 0)
+            record = json.loads((Path(tmp) / "out" / "dense-traces.json").read_text())
+            self.assertEqual([t["Name"] for t in record["Traces"]],
+                             ["line-charge-x0", "line-charge-x1", "line-charge-y0", "line-charge-y1", "device-patch-401"])
+            self.assertEqual(record["Unsupported"], [])
+
+    def test_command_traces_records_unrepresentable_trace(self):
+        """The pre-existing limitation stays a record, not an abort: a T1 trace with two non-zero
+        conductor states is written to Unsupported and the command completes."""
+        labels = np.array([0, 0, 0, 0, 1, 2, 3])  # conductors 2 and 3: two state lifts
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(sq, "load_basis", return_value=(self.basis, labels, {"Name": "m"}, 1.0,
+                                                                  {1: np.zeros(3), 2: np.array([0.0, 1.0, -1.0]),
+                                                                   3: np.array([-2.0, 0.0, 0.0])})):
+            device = Path(tmp) / "surface-response-traces.csv"
+            self.device_traces_csv(device, 401, [0.1, 0.2, 0.3, 0.4], {2: 1.0, 3: 2.0})
+            self.assertEqual(sq.command_traces(self.traces_arguments(tmp, device)), 0)
+            record = json.loads((Path(tmp) / "out" / "dense-traces.json").read_text())
+            self.assertEqual([t["Name"] for t in record["Traces"]],
+                             ["state-2", "state-3", "line-charge-x0", "line-charge-x1", "line-charge-y0", "line-charge-y1"])
+            self.assertEqual([t["Name"] for t in record["Unsupported"]], ["device-patch-401"])
+            self.assertIn("TerminalAttributes hold one volt", record["Unsupported"][0]["Unsupported"])
+            self.assertFalse((Path(tmp) / "out" / "traces" / "device-patch-401.csv").exists())
 
     def test_representable_excitation(self):
         self.assertEqual(sq.representable_trace([0.5, 0.25, 0.0, 0.0], [2, 3]), ([0.5, 0.25, 0.0, 0.0], None, 1.0))

@@ -915,6 +915,117 @@ def points_in_plan_view_mask(points, facets, conductor, plane, tolerance):
     return inside
 
 
+# Decision 360 (c*): the conductor labelling tolerance of the trace knots against the
+# plan-view mask, 4 x the 1e-9 R plan-view quantum of cluster_signature_geometry (7.6 pm at
+# R = 1.9 um; 5.7 x the worst rounding of a quantised mask vertex rotated into the mesh
+# frame, ~1.3 pm), inclusive, fail-closed to PEC; a FREE knot within
+# NEAR_OUTLINE_INSPECT_OVER_R x R of an outline is recorded in the basis contract for inspection.
+CONDUCTOR_LABEL_TOLERANCE_OVER_R = 4.0e-9
+NEAR_OUTLINE_INSPECT_OVER_R = 1.0e-3
+
+
+def outline_distance(points, facets, conductor, plane, tolerance):
+    """The distance of every plan-view point to the nearest edge of the conductor's mask
+    facets on `plane` (the facet edges include the triangulation's interior diagonals,
+    which lie inside the metal: a point near one is in the mask already)."""
+    distance = np.full(len(points), np.inf)
+    for facet in facets:
+        if (
+            facet["Conductor"] != conductor
+            or abs(facet["Plane"] - plane) > tolerance
+        ):
+            continue
+        polygon = np.asarray(facet["Points"], dtype=float)
+        previous = polygon[-1]
+        for current in polygon:
+            edge = current - previous
+            length_squared = float(edge @ edge)
+            relative = points - previous
+            if length_squared > 0.0:
+                along = np.clip((relative @ edge) / length_squared, 0.0, 1.0)
+                closest = previous + along[:, np.newaxis] * edge
+            else:
+                closest = np.broadcast_to(previous, points.shape)
+            distance = np.minimum(
+                distance, np.linalg.norm(points - closest, axis=1)
+            )
+            previous = current
+    return distance
+
+
+def metal_layers(edges):
+    """{(conductor, plane, normal sign)} of the coupon's metal layers."""
+    return {
+        (
+            int(edge["Conductor"]),
+            float(edge["Point"][2]),
+            1.0 if edge["ProcessNormal"][2] > 0.0 else -1.0,
+        )
+        for edge in edges
+    }
+
+
+def near_outline_free_knots(points, labels, edges, radius, metal_thickness, facets):
+    """Decision 360 (c*), the labelling validator: every FREE knot (label 0) in a metal
+    layer's thickness range whose plan-view distance to that conductor's mask outline is
+    within the labelling tolerance is a violation (such a knot is a PEC-boundary point whose
+    hat would prescribe a potential on the grounded metal); every free knot within
+    NEAR_OUTLINE_INSPECT_OVER_R x R is returned for inspection. Returns (violations,
+    inspect), each a list of {Vertex (1-based), Conductor, Distance}.
+
+    Run right after conductor_at_points on the same facets, height window and tolerance it
+    cannot fire unless the two predicates drift apart: it is the design's binding of the
+    generator's own labels (decision 369 review MINOR-1), not an independent check of this
+    run. The independent binding (the stored sources' labels re-judged by a fresh tree) is
+    the BC lane's evidence tool relabel_census.py, outside the repository."""
+    tolerance = 1.0e-10 * radius
+    outline_tolerance = CONDUCTOR_LABEL_TOLERANCE_OVER_R * radius
+    inspect_distance = NEAR_OUTLINE_INSPECT_OVER_R * radius
+    violations, inspect = [], []
+    if not facets:
+        return violations, inspect
+    for conductor, plane, normal_sign in sorted(metal_layers(edges)):
+        height = normal_sign * (points[:, 2] - plane)
+        at_level = (height >= -tolerance) & (height <= metal_thickness + tolerance)
+        free = np.flatnonzero(at_level & (labels == 0))
+        if len(free) == 0:
+            continue
+        distance = outline_distance(points[free, :2], facets, conductor, plane, tolerance)
+        for index, d in zip(free, distance):
+            if d <= inspect_distance:
+                record = {
+                    "Vertex": int(index) + 1,
+                    "Conductor": int(conductor),
+                    "Distance": float(d),
+                }
+                (violations if d <= outline_tolerance else inspect).append(record)
+    return violations, inspect
+
+
+def validate_mask_frame(facets, lower, upper, radius):
+    """Design round 2 review MINOR-5: the plan-view mask facets (mesh frame) must lie inside
+    the coupon box in plan view within the labelling tolerance; a mask outside the box is
+    in another frame (or clipped against another box) and the labels it would give are
+    wrong."""
+    if not facets:
+        return None
+    points = np.asarray(
+        [point for facet in facets for point in facet["Points"]], dtype=float
+    )
+    slack = CONDUCTOR_LABEL_TOLERANCE_OVER_R * radius
+    low, high = points.min(axis=0), points.max(axis=0)
+    if np.any(low < np.asarray(lower[:2]) - slack) or np.any(
+        high > np.asarray(upper[:2]) + slack
+    ):
+        raise ValueError(
+            "Plan-view mask facets lie outside the coupon box in plan view (bbox x "
+            f"[{low[0]:.6f}, {high[0]:.6f}] y [{low[1]:.6f}, {high[1]:.6f}] vs box x "
+            f"[{lower[0]:.6f}, {upper[0]:.6f}] y [{lower[1]:.6f}, {upper[1]:.6f}]): "
+            "the mask is not in the mesh frame of this box"
+        )
+    return [float(v) for v in (low[0], low[1], high[0], high[1])]
+
+
 def conductor_at_points(
     points,
     edges,
@@ -927,26 +1038,26 @@ def conductor_at_points(
     pullback = metal_thickness / math.tan(math.radians(sidewall_angle))
     width = 3.0 * radius
     tolerance = 1.0e-10 * radius
+    outline_tolerance = CONDUCTOR_LABEL_TOLERANCE_OVER_R * radius
     if facets:
-        layers = {
-            (
-                int(edge["Conductor"]),
-                float(edge["Point"][2]),
-                1.0 if edge["ProcessNormal"][2] > 0.0 else -1.0,
-            )
-            for edge in edges
-        }
-        for conductor, plane, normal_sign in sorted(layers):
+        for conductor, plane, normal_sign in sorted(metal_layers(edges)):
             height = normal_sign * (points[:, 2] - plane)
-            active = (
-                (height >= -tolerance)
-                & (height <= metal_thickness + tolerance)
-                & points_in_plan_view_mask(
+            at_level = (height >= -tolerance) & (height <= metal_thickness + tolerance)
+            # Decision 360 (c*): a knot inside the quantised mask OR within the labelling
+            # tolerance of the conductor's outline (inclusive) is in the metal: the mask
+            # vertices carry the 1e-9 R plan-view quantum, so a knot placed at the exact
+            # box corner / metal end can fall up to ~1.3 pm outside the quantised metal.
+            active = at_level & (
+                points_in_plan_view_mask(
                     points[:, :2],
                     facets,
                     conductor,
                     plane,
                     tolerance,
+                )
+                | (
+                    outline_distance(points[:, :2], facets, conductor, plane, tolerance)
+                    <= outline_tolerance
                 )
             )
             conflict = active & (labels != 0) & (labels != conductor)
@@ -2015,6 +2126,7 @@ def write_basis_contract(
     cap_interior_spacing=0.0,
     interior_trace_count=0,
     matching_support=None,
+    near_outline_free_knots=None,
 ):
     """basis-contract.json of a freshly built trace basis (the layout of
     rebuild_box_coupon_inputs: Version 1, the model, the source counts, the box-trace
@@ -2085,6 +2197,21 @@ def write_basis_contract(
     }
     if matching_support is not None:
         report["MatchingSupport"] = dict(matching_support)
+    if near_outline_free_knots:
+        # Recorded only where a FREE knot lies within NEAR_OUTLINE_INSPECT_OVER_R x R of a
+        # metal outline (decision 360 (c*), inspection): beyond the labelling tolerance, so
+        # not in the metal, but close enough to deserve a look.
+        report["NearOutlineFreeKnots"] = {
+            "Rule": (
+                "near_outline_free_knots: a free knot in a metal layer's thickness range whose "
+                "plan-view distance to that conductor's mask outline is within "
+                f"{NEAR_OUTLINE_INSPECT_OVER_R:g} R (beyond the labelling tolerance "
+                f"{CONDUCTOR_LABEL_TOLERANCE_OVER_R:g} R, inclusive, fail-closed to PEC)"
+            ),
+            "InspectDistanceOverR": NEAR_OUTLINE_INSPECT_OVER_R,
+            "LabelToleranceOverR": CONDUCTOR_LABEL_TOLERANCE_OVER_R,
+            "Knots": [dict(record) for record in near_outline_free_knots],
+        }
     (output / "basis-contract.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
 
@@ -2186,25 +2313,24 @@ def main():
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     failure_path = output / "generation-failure.json"
-    try:
-        frame, edges, facets = normalize_geometry(coupon, args.radius, args.support_span_cap)
-        validate_plan_view_geometry(edges, args.radius, facets)
-        interfaces = model_interfaces(coupon)
-    except ValueError as error:
+
+    def stop(stage, error):
         failure_path.write_text(
             json.dumps(
-                {
-                    "Version": 1,
-                    "Stage": "SpatialGeometry",
-                    "Reason": str(error),
-                },
+                {"Version": 1, "Stage": stage, "Reason": str(error)},
                 indent=2,
             )
             + "\n"
         )
         parser.error(str(error))
+
+    try:
+        frame, edges, facets = normalize_geometry(coupon, args.radius, args.support_span_cap)
+        validate_plan_view_geometry(edges, args.radius, facets)
+        interfaces = model_interfaces(coupon)
+    except ValueError as error:
+        stop("SpatialGeometry", error)
     failure_path.unlink(missing_ok=True)
-    write_mesh_signature(output / "mesh-signature.csv", edges)
     lower, upper = coupon_bounds(
         edges,
         args.radius,
@@ -2212,6 +2338,13 @@ def main():
         args.overetch_depth,
         coupon.get("Geometry", {}).get("SupportBox"),
     )
+    # The frame check precedes the first output so a mis-framed mask leaves
+    # generation-failure.json alone (decision 369 review MINOR-2).
+    try:
+        validate_mask_frame(facets, lower, upper, args.radius)
+    except ValueError as error:
+        stop("PlanViewMaskFrame", error)
+    write_mesh_signature(output / "mesh-signature.csv", edges)
     support_points = matching_support_points(
         lower, upper, frame, args.radius, args.support_span_cap
     )
@@ -2287,6 +2420,18 @@ def main():
     )
     if np.any(labels[ring_point_count:] != 0):
         raise ValueError("A cap-interior hat lies on a conductor")
+    free_on_outline, near_outline = near_outline_free_knots(
+        points, labels, edges, args.radius, args.metal_thickness, facets
+    )
+    if free_on_outline:
+        stop(
+            "ConductorLabels",
+            "A free trace knot lies within the labelling tolerance of a metal outline: "
+            + ", ".join(
+                f"vertex {k['Vertex']} (conductor {k['Conductor']}, {k['Distance']:.3e})"
+                for k in free_on_outline[:8]
+            ),
+        )
     conductor_count = max(edge["Conductor"] for edge in edges)
     if conductor_count == 1:
         active = np.arange(len(points))
@@ -2374,6 +2519,7 @@ def main():
             cap_interior_spacing=args.cap_interior_spacing,
             interior_trace_count=interior_trace_count,
             matching_support=matching_support,
+            near_outline_free_knots=near_outline,
         )
         print(output / "mesh-signature.csv")
         print(output / "basis-contract.json")
