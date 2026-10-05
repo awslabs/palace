@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdint>
+#include <cstdlib>
 #include <numeric>
+#include <string_view>
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include "utils/communication.hpp"
@@ -57,4 +59,27 @@ TEST_CASE("BroadcastLarge", "[communication][Parallel]")
     std::iota(ref.begin(), ref.end(), 0.5);
     REQUIRE(buf == ref);
   }
+}
+
+// Decision 346 (b): an exit() from a library in the middle of a run (gslib's die() on one
+// rank) must abort every rank at once instead of blocking in MPI_Finalize from Mpi's
+// destructor. The case only runs under PALACE_TEST_ABNORMAL_EXIT=1 (the ctest entry
+// mpi-AbnormalExitAbortsAllRanks sets it and passes on the abort line within its timeout):
+// in a sweep it is skipped, since passing means the launcher reports a failed job.
+TEST_CASE("AbnormalExitAbortsAllRanks", "[communication][Parallel]")
+{
+  const char *enabled = std::getenv("PALACE_TEST_ABNORMAL_EXIT");
+  if (!enabled || std::string_view(enabled) != "1")
+  {
+    SKIP("Set PALACE_TEST_ABNORMAL_EXIT=1 to exit one rank mid-run (the job must abort)");
+  }
+  MPI_Comm comm = Mpi::World();
+  Mpi::Barrier(comm);
+  if (Mpi::Rank(comm) == Mpi::Size(comm) - 1)
+  {
+    std::exit(1);
+  }
+  // Without the abort these ranks wait here forever (the R-B hang of PBS 56421).
+  Mpi::Barrier(comm);
+  FAIL("The abnormal exit of the last rank did not abort this rank!");
 }

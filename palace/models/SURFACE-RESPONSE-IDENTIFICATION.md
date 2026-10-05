@@ -1966,10 +1966,12 @@ preflight and the solve: every rank locates every tested point in its local mesh
 operator's own `ElementPointLocator` (its reference-space tolerance 1e-9 on linear
 simplices, the inverse transformation otherwise, the routing box tolerance) and the found
 flags are OR-reduced over the communicator, so the decision is the partition's union —
-identical for any rank count and for both of the operator's locator paths
-(`ElementPointLocator` below 64 ranks, `FindPointsGSLIB` at 64 and above or with
-`PALACE_RESPONSE_USE_GSLIB_POINTS`), which afterwards locate the APPLIED patches' points
-only. An excluded patch keeps weight 0 (the operator skips it like a wholly owned cell; the
+identical for any rank count and the same `ElementPointLocator` as the operator's point
+location (`DistributedPointLocator`: every point routed to the ranks whose boxes contain it
+and searched in their local meshes at any rank count, a rank-local `FindPointsGSLIB` on
+`MPI_COMM_SELF` for the points that search misses — never a global gslib hash of the device
+mesh, decision 346 (b)), which afterwards locates the APPLIED patches' points only. An
+excluded patch keeps weight 0 (the operator skips it like a wholly owned cell; the
 dry run writes it with Weight 0, its unscaled QuadratureWeight and cell, no new column) and
 its portion stays tiled (the A7 identity holds; the audit reads the record). RECORD
 (`Identification.Diagnostics.DomainBoundaryExclusions` of the preflight manifest, the

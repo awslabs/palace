@@ -275,8 +275,9 @@ std::vector<DryRunRow> ReadDryRun(const fs::path &path)
 // ends moved 1e-3 R inward) lies outside the device mesh is not applied and is recorded as
 // a DomainBoundary exclusion — in the preflight manifest (Identification.Diagnostics, the
 // inventory next to Missing, Weight 0 in the dry run) and by the operator, through one
-// containment test whose decision is independent of the rank count ([Parallel]) and of
-// the locator path (PALACE_RESPONSE_USE_GSLIB_POINTS). Here the lead's long edges meet the
+// containment test whose decision is independent of the rank count ([Parallel]; the
+// operator's point location routes every point to the ranks whose boxes contain it at any
+// rank count, decision 346 (b)). Here the lead's long edges meet the
 // tilted cut (shear 0.45: theta = 24.2 deg, R sin theta = 0.082) obliquely; each edge's
 // 0.3 from the cut to the corner window is three mesh-segment portions of two Gauss cells
 // (0.0625). The first cell [0, 0.0625] has its origin at 0.0264 along the edge (normal
@@ -516,22 +517,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
     }
 
-    // The operator: the same decision (14 applied patches, the same record), with the
-    // default locator path and with FindPointsGSLIB forced.
-    auto Construct = [&](const char *gslib)
+    // The operator: the same decision (14 applied patches, the same record).
     {
-      if (gslib)
-      {
-        setenv("PALACE_RESPONSE_USE_GSLIB_POINTS", gslib, 1);
-      }
       std::vector<std::unique_ptr<Mesh>> meshes;
       meshes.push_back(std::make_unique<Mesh>(MakeObliqueCutLeadMesh(shear, false)));
       LaplaceOperator laplace(iodata, meshes);
       SurfaceResponseOperator response(iodata, laplace);
-      if (gslib)
-      {
-        unsetenv("PALACE_RESPONSE_USE_GSLIB_POINTS");
-      }
       REQUIRE(response.GetPatchCount() == 14);
       const auto statistics = response.GetStatistics();
       const auto &operator_record = statistics["Diagnostics"]["DomainBoundaryExclusions"];
@@ -551,9 +542,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           CHECK(model["PatchCount"].get<int>() == 12);
         }
       }
-    };
-    Construct(nullptr);
-    Construct("1");
+    }
   }
 
   SECTION("a point not located for any other reason still fails closed, naming the patch")
