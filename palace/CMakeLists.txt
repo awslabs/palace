@@ -107,11 +107,7 @@ endif()
 if(PALACE_WITH_CUDA)
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
-  # C++20 device code: nvcc supports -std=c++20 from 12.0, and CMake knows it from 3.25.2
-  if(CMAKE_VERSION VERSION_LESS 3.25.2)
-    message(FATAL_ERROR
-      "PALACE_WITH_CUDA requires CMake 3.25.2 or later (found ${CMAKE_VERSION})")
-  endif()
+  # C++20 device code: nvcc supports -std=c++20 from 12.0
   if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND
      CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0)
     message(FATAL_ERROR

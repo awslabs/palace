@@ -147,7 +147,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### Build system
 
   - *Palace* now requires a C++20 compiler, including for CUDA and HIP device code, so
-    CUDA builds need CUDA 12.0 and CMake 3.25.2 or later. The Spack recipe keeps
+    CUDA builds need CUDA 12.0. The Spack recipe keeps
     `cxxstd=17` available for 0.16 to 0.18.
     [PR 654](https://github.com/awslabs/palace/pull/654).
   - GPU Spack builds from 0.19 no longer cap Umpire at 2025.12; MFEM is built as C++20 to
