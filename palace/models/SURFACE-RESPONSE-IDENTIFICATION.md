@@ -1635,10 +1635,17 @@ key whose numbers agree within `kClusterQuantumNearMatchMaxQuanta` = 4 quanta de
 geometry at the resolution of the grid: the same design cell at different chip positions rounds
 ~3-6 % of its coordinates differently by sub-quantum float noise (the three stage-2 loop-end keys
 284d6c2b5b66 / 9e103a0f291c / 20ac3e14a128 differ by exactly one quantum in 17 / 8 of their 290
-numbers; the nearest real near-key is >= 2,000 quanta away). `SignatureDeviation` of two
-clusters = max |delta| / (4 q) (<= 1 matches; no mirror orientation: the chirality is folded
-into the canonical key), `ClusterSignatureQuantumDifference` gives the largest |delta| in
-quanta and the differing paths. The matching pass (`LibrarySignatureIndex::Match`, by topology
+numbers; the nearest real near-key is >= 2,000 quanta away). Every quantum threshold is read
+HALF-QUANTUM INCLUSIVE (decisions 287 (b) / 288 (2); the phase-1 review's MINOR-1, decision
+317): an on-grid difference of k quanta computes to k +- 1e-9 in floating point, so a feature
+matches iff max |delta| <= 4 + 1/2 quanta (`WithinClusterQuantumNearMatch`) and two models or
+two allowances are one geometry iff max |delta| <= 8 + 1/2 (`ClusterQuantumDuplicate`;
+`kClusterQuantumInclusiveMargin` = 0.5, recorded as `Conventions.ClusterQuantumInclusiveMargin`
+and `QuantumNearMatch.InclusiveMargin`); exactly 4 / 8 on-grid quanta match / are refused,
+5 / 9 are not (unit tests through the matcher, the allowance resolver and the Python mirror).
+`SignatureDeviation` of two clusters = max |delta| / (4.5 q) (<= 1 matches; no mirror
+orientation: the chirality is folded into the canonical key), `ClusterSignatureQuantumDifference`
+gives the largest |delta| in quanta and the differing paths. The matching pass (`LibrarySignatureIndex::Match`, by topology
 key, the nearest model, ties by rank then name) records a near-match as
 `Features[].Match.QuantumNearMatch {ModelKey, FeatureKey, MaxDeltaQuanta, DifferingNumbers
 {Count, Paths}, MaxQuanta, Rule}` with a `Match.Note`; the status stays Matched / Exact (the
@@ -1654,15 +1661,31 @@ key), `SurfaceResponse.Diagnostics.QuantumNearMatch` in the operator record (thr
 models of one topology within 2 x 4 = 8 quanta are refused at load ("two models, one geometry"),
 so no feature can be within 4 quanta of two models; the requirement records group near-matching
 features into one record whose Hash is the lexicographically smallest member's
-(`RepresentativeSignature` of clusters: the lead, never a midpoint) and list the other members'
-keys under `NearKeys`; `signature_library.py` mirrors the comparator
-(`split_cluster_parameters` / `cluster_quantum_difference` / `signature_deviation`) and writes
-`NearKeys` on its models. Legacy-contract aliases stay EXACT-hash (decision 283, unchanged); a
-permuted entry order stays Missing (the residual knife-edge, recorded). `Conventions.
-ClusterQuantumNearMatchMaxQuanta / ClusterQuantumNearMatch`.
+(`RepresentativeSignature` of clusters: the lexicographically smallest SERIALISATION — the
+design wrote "smallest key"; deterministic, mirrored by `representative_signature`; review
+MINOR-7) and list the other members' keys under `NearKeys` (the grouping is single-linkage over
+`SignatureDeviation` <= 1, as for the translational types: three variants in one window could
+chain to 8 quanta in principle — none on the census; review MINOR-8); `signature_library.py`
+mirrors the comparator (`split_cluster_parameters` / `cluster_quantum_difference` /
+`signature_deviation` / `within_cluster_quantum_near_match` / `cluster_quantum_duplicate`) and
+writes `NearKeys` on its models. The near-match is carried by the MANIFEST (`Features[].Match.
+QuantumNearMatch`, `Summary.QuantumNearMatch.Keys`) — the patches CSV keeps its `Model` /
+`Feature` columns and stays byte-identical for every exact-matched library (the transmon stop
+condition); design MINOR-3's "ModelKey + FeatureKey in the CSV" is NOT implemented, ratified
+by decision 317 (review MINOR-2). The library-side grouping is per window (the planner runs
+one device config): `NearKeys` is populated only when two variants fall in ONE window; across
+windows the build list names the representative (the loop end 1b26671c9080 serves
+e52df843d197; a census-level grouping tool over `cluster_quantum_difference` is a follow-up,
+review MINOR-3 / decision 317). Legacy-contract aliases stay EXACT-hash (decision 283,
+unchanged); a permuted entry order stays Missing (the residual knife-edge, recorded).
+`Conventions.ClusterQuantumNearMatchMaxQuanta / ClusterQuantumInclusiveMargin /
+ClusterQuantumNearMatch`.
 
-*Per-case span-cap allowances (DESIGN section 3 (a) + A4).* `ResponseCorrection.SpatialSupport.
-SpanCapAllowances[] {ClaimsSignature, SpanCapOverR, Label, Reason, Approval}` carries the plan
+*Per-case span-cap allowances (DESIGN section 3 (a) + A4).* `Solver.Electrostatic.
+ResponseCorrection.SpatialSupport.SpanCapAllowances[]` / `Solver.SurfaceResponseCorrection.
+SpatialSupport.SpanCapAllowances[]` (beside `Library` / `PatchConstruction`; the design note's
+`Boundaries.SurfaceResponse` path does not exist — review MINOR-6) `{ClaimsSignature,
+SpanCapOverR, Label, Reason, Approval}` carries the plan
 span cap of ONE approved closed feature that cannot be split (decision 244 (i)), keyed by the
 EMBEDDED claims-only signature of the feature (verbatim as the inventory exports it:
 `Features[].SpatialSupport.ClaimsSignature` of a refused cluster — SpanCapRefusedGrowth /
@@ -1678,14 +1701,21 @@ planner copies it onto the plan coupon; `device_coupons` passes its SpanCapOverR
 generator's `--support-span-cap` unless a CLI option names the hash), `UnusedSpanCapAllowances`
 (Labels matching no cluster of the run: a warning, never an abort). Fail closed at the start of
 the identification: SpanCapOverR below `kSupportSpanCapOverRadius` (an allowance never lowers
-the cap), two allowances within 8 quanta ("two allowances, one geometry"), a ClaimsSignature
-with a Box / Context or without Portions. The generator's claim radius (`normalize_geometry`)
-is half the case's recorded span cap (default 16 R -> 8 R, byte-identical). Measured on the
-stage-2 census (`curved-clusters-20261005/phase1/recensus`): with the loop end's allowance
-(20 R) and 005bec161f6d's (21 R) exactly the four Unboxable keys box (MatchedQuanta 0 / 0 / 1 /
-1 / 1 on the five SCT windows), everything else unchanged; the loop end boxes to two
-contract-3 keys of one topology (S1 / S1p 1b26671c9080, S2p / S3p / S4 e52df843d197, 8 numbers
-one quantum apart) that one model resolves (Exact / QuantumNearMatch).
+the cap), two allowances within 8 (+ 1/2) quanta ("two allowances, one geometry"), a
+ClaimsSignature with a Box / Context or without Portions. The generator's claim radius
+(`normalize_geometry`) is half the case's recorded span cap (default 16 R -> 8 R,
+byte-identical). Measured on the stage-2 census (`curved-clusters-20261005/phase1/recensus`):
+with the loop end's allowance (20 R) and 005bec161f6d's (21 R) exactly the four Unboxable keys
+box (MatchedQuanta 0 / 0 / 1 / 1 / 1 on the five SCT windows), everything else unchanged; the
+loop end boxes to two contract-3 keys of one topology (S1 / S1p 1b26671c9080, S2p / S3p / S4
+e52df843d197, 8 numbers one quantum apart) that one model resolves (Exact / QuantumNearMatch).
+The allowance VALUES are ratified by decision 317 / STAGE2-PLAN AMENDMENT 3 (the recorded
+`Approval`) on the measured need (`phase1/fixes/allowance-sweep`, caps 16..24 R): the loop end's
+claims box spans 17.96 R and first boxes at cap 19 R (Box span 18.46 R), 005bec161f6d's spans
+19.00 R and first boxes at cap 20 R (19.50 R); both allowances are NON-BINDING — Box and key
+unchanged at allowance + 2 R and at every cap from the first boxing one to 24 R. An evidence
+config that names its `Output` inside the evidence tree is re-run ONLY from a copy with a
+scratch `Output` (review MINOR-4): a re-run in place overwrites the stored inventory.
 
 *Arc context (DESIGN section 2 + A1).* `DevicePerimeterDistance` (the A10 check extended to the
 context) reads a device segment lying on a fitted arc (`Segments[].Arc`) on the ARC of its
@@ -1712,10 +1742,15 @@ circle's deviation from the signature's is asserted <= the fit tolerance + 2 qua
 arc {ArcDeviationOverR, CentreShiftOverR, RadiusShiftOverR, Chords, Centre, RadiusOverR});
 straight coupons are unchanged (legacy byte identity). Step 0 (F0-a) of the same block: the
 builder's gap perpendicularity test admits the quantisation bound 2 x (sqrt(2) / 2 q + 2 q / L)
-of a serialised straight row (rows within the legacy exact 1e-6 test are kept bitwise, rows
-within the bound take the exact perpendicular of the chord with the serialised sign —
-`GapRederived` —, beyond it fails closed), and near-collinear line / line joints (|turn| <=
-`JUNCTION_TANGENT_ANGLE` 1e-4 rad, same class) merge in both plan-view boundaries (A3 (1)).
+of a serialised straight row and (decision 317 MAJOR-1, option (a) = the design's letter)
+re-derives EVERY straight row with 0 < |tangent . gap| <= bound as the exact perpendicular of
+the chord with the serialised sign (`GapRederived`; no threshold inside the bound — the S1p
+loop end's portion 30 at |tangent . gap| = 9.999999999995e-07 is re-derived like its 17 other
+oblique-by-rounding rows), keeps a row with |tangent . gap| == 0 exactly bitwise (every row of
+the eight group-A coupons built by stage 2.2: their sources regenerate byte-identically) and
+leaves an arc CHORD's analytic radial gap as computed (not a serialised number); beyond the
+bound it fails closed. Near-collinear line / line joints (|turn| <= `JUNCTION_TANGENT_ANGLE`
+1e-4 rad, same class) merge in both plan-view boundaries (A3 (1)).
 
 **Placement of a contract-3 (device-plan) model (decision 285 (4), R1b).** The cluster patch of
 a model whose Signature carries `Box` + `Context` records in its provenance the model's
@@ -2542,7 +2577,7 @@ matching pass). The new top-level `Identification` object carries the contract:
                            "LegacyContract": {"Model", "Key", "ContextDigest", "ClaimsKey", "Reason", "Context": {"Box", "Context"},
                                               "PlacementFrame", "Rule"} (matched through a library alias, USER decision 283),
                            "QuantumNearMatch": {"ModelKey", "FeatureKey", "MaxDeltaQuanta", "DifferingNumbers": {"Count", "Paths"},
-                                                "MaxQuanta", "Rule"} (a SpatialEdgeCluster matched within 4 signature quanta, block (b))} } ],
+                                                "MaxQuanta", "InclusiveMargin", "Rule"} (a SpatialEdgeCluster matched within 4 (+ 1/2) signature quanta, block (b))} } ],
   "Segments":  [ {"Key": [[x0,y0,z0],[x1,y1,z1]], "Length": L, "Chain": c, "Arc": a (chord of Arcs[a]; absent otherwise),
                   "Portions": [[s0, s1, feature], ...] } | {"Key": ..., "Length": L,
                   "Exclusion": {"Class": "...", "Reason": "..."}} ],
