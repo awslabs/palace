@@ -170,7 +170,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "e336f79f02c41d2a0b0f88c72abdbdcaf341834a2708b0f18993d88812059b80"
+      "SHA256": "75f98742b29c571bbfccea9c5f823a8eeaf2118f18011246428ee9d21fd829bb"
     },
     {
       "Name": "verify_canonical_case_entries.py",

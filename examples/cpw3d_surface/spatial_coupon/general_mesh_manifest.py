@@ -206,7 +206,6 @@ def box_face_cut_end_readings(evidence, contract, binding, gates):
     return readings
 
 
-
 def _same_points(expected, actual, tolerance):
     if not expected or not actual or len(expected) != len(actual):
         return False
