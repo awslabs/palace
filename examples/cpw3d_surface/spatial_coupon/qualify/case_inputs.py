@@ -229,6 +229,63 @@ def foreign_edge_segments(model, frame):
     return segments
 
 
+BUILD_CENSUS_NAME = "build-census.json"
+UNREFINED_CRACK_SEAMS_RULE = (
+    "mesher design round 2 SEAM, supervisor decision 368 (3): a thin coupon whose build census records "
+    "ThinSheetSeams.UnrefinedCrackSeams (the pinched seams of its convex tips sharper than the tip bisector's "
+    "minimum opening, every seam attributed to such a tip by the mesher) runs with Model.RefineCrackElements "
+    "false: Palace's crack opener keeps the two sheet triangles of a pinched seam edge connected along that one "
+    "edge instead of asking for a conformal refinement the prism / pyramid tube mesh refuses (geodata.cpp "
+    "refine_crack_elements -> SplitMeshElements); every DOF on the PEC sheet, the seam edge's included, is "
+    "Dirichlet (the sheet carries the prescribed potential / ground on both sides), so the coupling an unrefined "
+    "seam leaves is between two constrained values, with no effect on the potential or on the per-side charge "
+    "integrals; fail closed on a fabricated case, on a sheet attribute that is not a Dirichlet boundary of the "
+    "config, or on a census whose seam count disagrees with the record; the (F) qualification is the acceptance")
+
+
+def apply_unrefined_crack_seams(config, mesh_path, fabricated):
+    """Decision 368 (3): set Model.RefineCrackElements false exactly when the mesh's build census
+    (build-census.json beside the mesh) records ThinSheetSeams.UnrefinedCrackSeams with a positive
+    Count; returns the record written into the run record (None otherwise). Fail closed on a
+    fabricated case carrying the record, on a census with seams but no record, and on a thin
+    sheet attribute (4000 family) that is not a Dirichlet (Ground / PrescribedPotential)
+    boundary of the config."""
+    census_path = Path(mesh_path).with_name(BUILD_CENSUS_NAME)
+    if not census_path.is_file():
+        return None
+    census = json.loads(census_path.read_text())
+    seams = census.get("ThinSheetSeams")
+    if not isinstance(seams, dict):
+        return None
+    unrefined = seams.get("UnrefinedCrackSeams")
+    count = int(seams.get("Count", 0))
+    if unrefined is None:
+        if count != 0:
+            raise CaseInputError(f"{census_path}: {count} pinched thin-sheet seams without an UnrefinedCrackSeams record")
+        return None
+    if fabricated:
+        raise CaseInputError(f"{census_path}: a fabricated case carries UnrefinedCrackSeams")
+    if int(unrefined.get("Count", -1)) != count or unrefined.get("RefineCrackElements") is not False:
+        raise CaseInputError(f"{census_path}: UnrefinedCrackSeams disagrees with ThinSheetSeams ({unrefined.get('Count')} vs {count})")
+    if count == 0:
+        return None
+    dirichlet = set()
+    boundaries = config["Boundaries"]
+    dirichlet.update(int(a) for a in boundaries.get("Ground", {}).get("Attributes", []))
+    for entry in boundaries.get("PrescribedPotential", []):
+        dirichlet.update(int(a) for a in entry.get("Attributes", []))
+        dirichlet.update(int(a) for a in entry.get("TerminalAttributes", []))
+    sheets = {int(row["Attribute"]) for row in census.get("InterfaceAreas", [])
+              if 4000 <= int(row["Attribute"]) < 5000}
+    if not sheets or not sheets <= dirichlet:
+        raise CaseInputError(f"{census_path}: thin sheet attributes {sorted(sheets)} are not all Dirichlet boundaries "
+                             f"of the config ({sorted(dirichlet)}): RefineCrackElements false needs a PEC sheet")
+    config["Model"]["RefineCrackElements"] = False
+    return {"Rule": UNREFINED_CRACK_SEAMS_RULE, "Count": count, "Tips": unrefined.get("Tips"),
+            "SheetAttributes": sorted(sheets), "BuildCensus": str(census_path),
+            "BuildCensusSHA256": sha256(census_path), "RefineCrackElements": False}
+
+
 def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, output_root="<output>", traces_remote=None,
            radial_shells=None):
     """The run inputs of a case: (config, record).  `mesh` is the value written into
@@ -314,6 +371,7 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
         edge_exclude_segments=foreign_edges)
     config["Problem"]["Output"] = output_root
     config["Solver"]["Linear"]["Tol"] = physics_run["LinearTol"]
+    unrefined_crack_seams = apply_unrefined_crack_seams(config, Path(mesh_path), fabricated)
     base_config, shell_map = None, None
     if shell_parents:
         base_config = config
@@ -341,7 +399,8 @@ def derive(case, directory, *, mesh_path, physics_run, out_dir, mesh=None, outpu
                          "ContractOutputSourceSHA256Identical": contract_digests_identical(contract, sources)},
               "PlanViewBoundary": str(paths["Boundary"]),
               "RetainedEtch": str(paths["RetainedEtch"]) if "RetainedEtch" in paths else None,
-              "Signature": str(paths["Signature"]), "MeshAttributes": sorted(available), "AttributeCheck": attribute_check}
+              "Signature": str(paths["Signature"]), "MeshAttributes": sorted(available), "AttributeCheck": attribute_check,
+              "UnrefinedCrackSeams": unrefined_crack_seams}
     if base_config is not None:
         record["BaseConfig"] = base_config
         record["BaseInterfaces"] = interface_types(base_config)

@@ -24,6 +24,11 @@ executable):
   cut end, not a corner, unless that side is exactly perpendicular to the face (the
   side's face-parallel coordinate equal at both ends, exact arithmetic: the legacy
   rectilinear convention, kept bitwise);
+- a semantic corner whose two boundary sides are not exactly perpendicular (a non-zero
+  dot product of the quantised side vectors, exact arithmetic) is INVARIANT (mesher design
+  round 2 F5-A, semantic_mesh_contract.invariant_corner): recorded under
+  Derivation.InvariantCorners only where the rule acts, so every rectilinear contract is
+  unchanged; the mesher evaluates the same predicate and fails closed on a disagreement;
 - FeatureTopology is semantic_mesh_contract.derive_feature_topology (the finite
   oriented signature segments against the corners and the boundary classes);
 - whether a slot's un-etched plane (3000 + s) exists is a producer outcome of the
@@ -64,8 +69,9 @@ import hashlib
 import json
 from pathlib import Path
 
-from semantic_mesh_contract import (BOX_FACE_CUT_END_RULE, boundary_semantic_corners,
-                                    derive_feature_topology, validate_semantic_contract)
+from semantic_mesh_contract import (BOX_FACE_CUT_END_RULE, INVARIANT_CORNER_RULE,
+                                    boundary_semantic_corners, derive_feature_topology,
+                                    validate_semantic_contract)
 
 SIGNATURE = "mesh-signature.csv"
 BOUNDARY = "plan-view-boundary.csv"
@@ -152,10 +158,10 @@ def semantic_corners(boundary):
         raise ValueError("plan-view boundary lacks Class / X / Y / Plane columns")
     if any(row["Class"] not in ("Physical", "Continuation") for row in rows):
         raise ValueError("plan-view boundary has an unknown vertex class")
-    corners, cut_ends = boundary_semantic_corners(rows)
+    corners, cut_ends, invariant = boundary_semantic_corners(rows)
     if not corners:
         raise ValueError("plan-view boundary classifies no Physical vertex")
-    return corners, cut_ends
+    return corners, cut_ends, invariant
 
 
 def label_families(pairs, kind="fabricated"):
@@ -221,7 +227,7 @@ def derive(source, build_census=None, *, signature=None, boundary=None, process_
             item["AdjacentMaterialSets"] = [[1], [2]]
         boundary_labels.append(item)
     roles = [item["Role"] for item in boundary_labels]
-    corners, box_face_cut_ends = semantic_corners(boundary)
+    corners, box_face_cut_ends, invariant = semantic_corners(boundary)
     derivation = {"ProcessLibrarySHA256": (sha256(process_library) if process_library is not None
                                            else None),
                   "SlotConductorSource": (PROCESS_LIBRARY_PAIR_SOURCE if process_library is not None
@@ -233,6 +239,8 @@ def derive(source, build_census=None, *, signature=None, boundary=None, process_
     # Recorded only where the rule acts, so every rectilinear contract is unchanged.
     if box_face_cut_ends:
         derivation["BoxFaceCutEnds"] = {"Rule": BOX_FACE_CUT_END_RULE, "Points": box_face_cut_ends}
+    if invariant:
+        derivation["InvariantCorners"] = {"Rule": INVARIANT_CORNER_RULE, "Points": invariant}
     if build_census is not None:
         derivation["BuildCensusSHA256"] = sha256(build_census)
         derivation["BuildCensusInterfaceLabels"] = labels

@@ -153,11 +153,14 @@ class BoxFaceCutEndTest(unittest.TestCase):
               ("Continuation", -1.3135498, -10.9262198)]
         self.assertTrue(box_face_cut_end((o1[4][1], o1[4][2]), "Continuation", (o1[0][1], o1[0][2]),
                                          "Physical", (o1[1][1], o1[1][2])))
-        corners, cut_ends = boundary_semantic_corners(
+        corners, cut_ends, invariant = boundary_semantic_corners(
             [{"Loop": "1", "Class": cls, "X": repr(x), "Y": repr(y), "Plane": "0.0"} for cls, x, y in o1])
         self.assertEqual(cut_ends, [[5.9475643, -10.9262198, 0.0]])
         self.assertEqual([c[:2] for c in corners],
                          [[3.2135498, -4.3257243], [-0.5864502, 4.848287], [-1.3135498, 6.603659]])
+        # Design round 2 F5-A: the two oblique kinks are invariant corners; the vertex 4 where the
+        # oblique side meets the box side x = -1.3135498 is not exactly perpendicular either.
+        self.assertEqual(invariant, corners)
         # The C2 19-edge loop-2 vertices 14 / 15: the side leaving (-1.3574569, 12.9453859) runs
         # along x = -1.3574569 exactly -> theta == 0 -> the legacy corner (decision 311's
         # "SemanticCorner on face y1"), bitwise unchanged.
@@ -188,13 +191,19 @@ class BoxFaceCutEndTest(unittest.TestCase):
         (source / "mesh-signature.csv").write_text("\n".join(rows) + "\n")
         boundary = write_boundary(source / "plan-view-boundary.csv",
                                   [[("Physical", 0.0, 0.0), ("Continuation", 4.0, 4.0), ("Physical", 0.0, 4.0)]])
-        corners, cut_ends = semantic_corners(boundary)
+        corners, cut_ends, invariant = semantic_corners(boundary)
         self.assertEqual(corners, [[0.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
         self.assertEqual(cut_ends, [])
+        # Design round 2 F5-A: the 45-degree tip is an invariant corner (sides (4, 4) and
+        # (0, 4) away from it: dot product 16 != 0); the theta-0 box vertex (0, 4) is legacy
+        # (sides (0, -4) and (4, 0): exactly 0). Recorded under Derivation only where it acts.
+        self.assertEqual(invariant, [[0.0, 0.0, 0.0]])
         derived = derive(source)
         self.assertEqual(derived["SemanticCorners"], [[0.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
         self.assertEqual(derived["FeatureTopology"]["CutEndpoints"], [[4.0, 4.0, 0.0]])
         self.assertNotIn("BoxFaceCutEnds", derived["Derivation"])
+        self.assertEqual(derived["Derivation"]["InvariantCorners"]["Points"], [[0.0, 0.0, 0.0]])
+        self.assertIn("kappa_reg", derived["Derivation"]["InvariantCorners"]["Rule"])
         # (b) metal = the triangle (0, 0) -> (4, 0) -> (4, 4): the box side x = 4 ARRIVES at
         #     (4, 4), whose outgoing side is the oblique one -> Physical class, a single metal
         #     side, theta 45 > 0: a box-face cut end by decision 320 (the legacy rule would have
@@ -205,9 +214,10 @@ class BoxFaceCutEndTest(unittest.TestCase):
         (source / "mesh-signature.csv").write_text("\n".join(rows) + "\n")
         boundary = write_boundary(source / "plan-view-boundary.csv",
                                   [[("Physical", 0.0, 0.0), ("Continuation", 4.0, 0.0), ("Physical", 4.0, 4.0)]])
-        corners, cut_ends = semantic_corners(boundary)
+        corners, cut_ends, invariant = semantic_corners(boundary)
         self.assertEqual(corners, [[0.0, 0.0, 0.0]])
         self.assertEqual(cut_ends, [[4.0, 4.0, 0.0]])
+        self.assertEqual(invariant, [[0.0, 0.0, 0.0]])
         derived = derive(source)
         self.assertEqual(derived["SemanticCorners"], [[0.0, 0.0, 0.0]])
         self.assertEqual(derived["FeatureTopology"]["CutEndpoints"], [[4.0, 0.0, 0.0], [4.0, 4.0, 0.0]])
@@ -224,9 +234,12 @@ class BoxFaceCutEndTest(unittest.TestCase):
         boundary = write_boundary(source / "plan-view-boundary.csv",
                                   [[("Physical", 0.0, 0.0), ("Continuation", 4.0, 0.0),
                                     ("Continuation", 4.0, 4.0), ("Physical", 0.0, 4.0)]])
-        corners, cut_ends = semantic_corners(boundary)
+        corners, cut_ends, invariant = semantic_corners(boundary)
         self.assertEqual(corners, [[0.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
         self.assertEqual(cut_ends, [])
+        # Rectilinear: no invariant corner, nothing recorded (every built contract unchanged).
+        self.assertEqual(invariant, [])
         derived = derive(source)
         self.assertNotIn("BoxFaceCutEnds", derived["Derivation"])
+        self.assertNotIn("InvariantCorners", derived["Derivation"])
         self.assertEqual(derived["FeatureTopology"]["CutEndpoints"], [[4.0, 0.0, 0.0]])

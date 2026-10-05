@@ -158,16 +158,47 @@ BOX_FACE_CUT_END_RULE = ("supervisor decision 320: a Physical vertex whose incom
                          "the legacy rectilinear convention keeps it a corner bitwise")
 
 
+def invariant_corner(previous_point, point, following_point):
+    """Whether a semantic corner is INVARIANT (mesher design round 2 F5-A, supervisor
+    decisions 351 / 358 / 363): the two plan-view boundary sides meeting at it are not
+    exactly perpendicular.  Exact arithmetic on the quantised canonical coordinates: an
+    axis-aligned side has an exactly zero component, so the dot product of the two side
+    vectors (pointing away from the corner) is exactly 0.0 at every rectilinear corner and at
+    the theta-0 box vertex of decision 320 (its metal side perpendicular to the box side);
+    such a LEGACY corner keeps the vertex-0 corner measure, MaximumCornerAspect and the 3.8
+    target bitwise.  An invariant corner is optimized on and judged by kappa_reg (the
+    condition number of the affine map from the regular tetrahedron, order-invariant)
+    against the manifest's CornerShapeGate = min(E_pop, 5.0), with no bridging sliver
+    remaining; the mesher (mesh_spatial_coupon.semantic_corner_kinds) evaluates the same
+    predicate and fails closed on a contract disagreeing with it."""
+    a = (previous_point[0] - point[0], previous_point[1] - point[1])
+    b = (following_point[0] - point[0], following_point[1] - point[1])
+    return a[0] * b[0] + a[1] * b[1] != 0.0
+
+
+INVARIANT_CORNER_RULE = ("mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363): a semantic corner "
+                         "whose two plan-view boundary sides have a non-zero dot product on their quantised "
+                         "coordinates (exact arithmetic; every rectilinear corner and the theta-0 box vertex "
+                         "read exactly 0 and stay LEGACY, bitwise) is INVARIANT: its corner-incident seed "
+                         "cells are optimized on and judged by kappa_reg, the condition number of the affine "
+                         "map from the regular tetrahedron (order-invariant), descended to the fixed goal 3.8 "
+                         "and judged against the manifest CornerShapeGate = min(E_pop, 5.0) with no "
+                         "BridgingSliver remaining; the mesher evaluates the same predicate and a disagreeing "
+                         "contract fails closed")
+
+
 def boundary_semantic_corners(rows):
-    """Semantic corners and box-face cut ends of plan-view boundary rows (Loop / Vertex /
-    Class / X / Y / Plane, file order): the Physical vertices that are not box-face cut
-    ends (box_face_cut_end), each at its Plane height, in file order, and the excluded
-    cut ends likewise."""
+    """Semantic corners, box-face cut ends and invariant corners of plan-view boundary rows
+    (Loop / Vertex / Class / X / Y / Plane, file order): the Physical vertices that are not
+    box-face cut ends (box_face_cut_end), each at its Plane height, in file order, the
+    excluded cut ends likewise, and the corners among them whose sides are not exactly
+    perpendicular (invariant_corner)."""
     loops = {}
     for row in rows:
         loops.setdefault(row["Loop"], []).append(row)
     corners = []
     cut_ends = []
+    invariant = []
     for loop in loops.values():
         points = [(float(row["X"]), float(row["Y"])) for row in loop]
         classes = [row["Class"] for row in loop]
@@ -181,7 +212,29 @@ def boundary_semantic_corners(rows):
                 cut_ends.append(point)
             else:
                 corners.append(point)
-    return corners, cut_ends
+                if invariant_corner(points[index - 1], points[index], points[(index + 1) % n]):
+                    invariant.append(point)
+    return corners, cut_ends, invariant
+
+
+def invariant_corners(contract):
+    """The contract's recorded invariant corners (Derivation.InvariantCorners.Points; an
+    empty list when the record is absent: every corner legacy)."""
+    derivation = contract.get("Derivation") if isinstance(contract, dict) else None
+    record = derivation.get("InvariantCorners") if isinstance(derivation, dict) else None
+    if record is None:
+        return []
+    points = record.get("Points") if isinstance(record, dict) else None
+    if (not isinstance(points, list) or
+            any(not isinstance(point, list) or len(point) != 3 or
+                any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in point)
+                for point in points)):
+        raise ValueError("Derivation.InvariantCorners.Points must contain finite 3D points")
+    corners = contract.get("SemanticCorners", [])
+    if any(all(np.linalg.norm(np.asarray(point) - np.asarray(corner)) > 1e-9 for corner in corners)
+           for point in points):
+        raise ValueError("Derivation.InvariantCorners.Points must be semantic corners of the contract")
+    return points
 
 
 def derive_feature_topology(signature_path, boundary_path, semantic_corners, tolerance=1e-9):

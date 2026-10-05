@@ -13,7 +13,7 @@ import re
 from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_ORIENTATION_FLOOR,
                                 EDGE_LAYER_QUALITY_RULE)
 from trace_basis import NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE
-from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes,
+from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes, invariant_corners,
                                     material_interface_attributes)
 
 
@@ -1265,6 +1265,75 @@ GMSH_BUILD_GATE_OPTIONS = {"--maximum-corner-aspect": "MaximumCornerAspect",
                            "--maximum-quality-displacement-over-normal": "DisplacementBoundOverNormal"}
 GMSH_BUILD_ELEMENT_CAP_OPTION = "--max-elements"
 GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
+# Mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363): the verdict bound of
+# the INVARIANT (non-perpendicular) semantic corners, kappa_reg <= CornerShapeGate =
+# min(E_pop, 5.0) (manifest Gates.CornerShapeGate -> the mesher's --corner-shape-gate);
+# legacy corners keep MaximumCornerAspect. A build with an invariant corner needs it; a
+# rectilinear build does not carry it.
+GMSH_BUILD_CORNER_SHAPE_GATE_OPTION = "--corner-shape-gate"
+CORNER_SHAPE_GATE = "CornerShapeGate"
+CORNER_MEASURES = {"Legacy": "VertexFrameCondition", "Invariant": "RegularCondition"}
+INVARIANT_CORNER_TARGET = 3.8
+
+
+def validate_corner_measures(optimization, corners, maximum_corner_aspect, corner_shape_gate,
+                             semantic_invariant):
+    """The seed optimization's per-corner verdict records (CornerMeasures: one per semantic
+    corner, Point among the corners) judged by kind: a Legacy corner's VertexFrameCondition
+    After <= MaximumCornerAspect (target 0.95 x the bound); an Invariant corner's
+    RegularCondition After <= CornerShapeGate (the command's --corner-shape-gate, required
+    when any corner is invariant), Target 3.8, its BridgingSlivers counts recorded (supervisor
+    decision 365: the measure is the verdict, a candidate above the gate the reconnection
+    trigger, so none may remain above the gate); the set of Invariant corners equals the
+    contract's Derivation.InvariantCorners (fail closed on a disagreement); CornerAspectsAfter
+    mirrors the per-corner After values. Returns the number of invariant corners."""
+    measures = optimization.get("CornerMeasures")
+    if (not isinstance(measures, list) or len(measures) != len(corners) or
+            any(not isinstance(row, dict) for row in measures)):
+        raise ValueError("Seed optimization does not record one CornerMeasures row per semantic corner")
+    points = [row.get("Point") for row in measures]
+    if sorted(points) != sorted(corners):
+        raise ValueError("Seed CornerMeasures points differ from the semantic corners")
+    after_values = optimization.get("CornerAspectsAfter")
+    if not isinstance(after_values, list) or len(after_values) != len(measures):
+        raise ValueError("Seed CornerAspectsAfter differs from the CornerMeasures rows")
+    invariant_points = []
+    for row, after in zip(measures, after_values):
+        kind = row.get("Kind")
+        if kind not in CORNER_MEASURES or row.get("Measure") != CORNER_MEASURES[kind]:
+            raise ValueError(f"Seed corner measure row has an unknown kind or measure: {kind!r}")
+        value = _census_number(row, "After", "Seed corner measure")
+        if value != after or _census_number(row, "Before", "Seed corner measure") <= 0.0:
+            raise ValueError("Seed corner measure After differs from CornerAspectsAfter")
+        slivers = row.get("BridgingSlivers")
+        if (not isinstance(slivers, dict) or
+                _count(slivers.get("Before"), "Bridging slivers before") < 0 or
+                _count(slivers.get("After"), "Bridging slivers after") < 0 or
+                _count(slivers.get("AboveGateAfter"), "Bridging slivers above the gate") < 0):
+            raise ValueError("Seed corner measure row lacks the BridgingSlivers counts")
+        if kind == "Legacy":
+            expected_gate, expected_target = maximum_corner_aspect, 0.95 * maximum_corner_aspect
+        else:
+            if corner_shape_gate is None:
+                raise ValueError("An invariant semantic corner was judged without --corner-shape-gate")
+            expected_gate, expected_target = corner_shape_gate, INVARIANT_CORNER_TARGET
+            invariant_points.append(row["Point"])
+        if (_census_number(row, "Gate", "Seed corner measure") != expected_gate or
+                _census_number(row, "Target", "Seed corner measure") != expected_target):
+            raise ValueError(f"Seed corner measure gate / target differ from the {kind} rule")
+        if value > expected_gate or slivers["AboveGateAfter"] != 0 or row.get("Passed") is not True:
+            raise ValueError(f"Seed {kind} corner {row['Point']} fails its gate: {value} > {expected_gate} "
+                             f"or {slivers['AboveGateAfter']} bridging-sliver cells above the gate remain")
+    if sorted(invariant_points) != sorted(semantic_invariant):
+        raise ValueError("Seed invariant corners differ from the contract's Derivation.InvariantCorners")
+    if optimization.get("InvariantCorners") != len(invariant_points):
+        raise ValueError("Seed optimization InvariantCorners count differs from its rows")
+    recorded_gate = optimization.get(CORNER_SHAPE_GATE)
+    if (corner_shape_gate is None) != (recorded_gate is None) or (
+            corner_shape_gate is not None and
+            _census_number(optimization, CORNER_SHAPE_GATE, "Seed optimization") != corner_shape_gate):
+        raise ValueError("Seed optimization CornerShapeGate differs from the build command")
+    return len(invariant_points)
 
 # Recipe scope (supervisor decision 48; mesh_spatial_coupon.jl RECIPE_SCOPE_*): the
 # input classes the prism-tube recipe builds, the guarded classes it fails closed on
@@ -1985,10 +2054,52 @@ def validate_gmsh_build_census(build_report, census, semantic):
             not isinstance(optimization.get("CornerAspectsAfter"), list) or
             len(optimization["CornerAspectsAfter"]) != len(corners) or
             any(isinstance(value, bool) or not isinstance(value, (int, float)) or
-                not math.isfinite(value) or value > gates["MaximumCornerAspect"]
-                for value in optimization["CornerAspectsAfter"])):
+                not math.isfinite(value) for value in optimization["CornerAspectsAfter"])):
         raise ValueError("Build census does not record gated corner balls")
+    # Design round 2 F5-A: the per-corner verdict by kind (legacy MaximumCornerAspect,
+    # invariant CornerShapeGate + no bridging sliver), bound to the contract's record.
+    corner_shape_gate = (_option_or_default(command, GMSH_BUILD_CORNER_SHAPE_GATE_OPTION, None)
+                         if GMSH_BUILD_CORNER_SHAPE_GATE_OPTION in command else None)
+    if corner_shape_gate is not None and (not math.isfinite(corner_shape_gate) or corner_shape_gate <= 1.0):
+        raise ValueError("Gmsh-only build command carries an invalid --corner-shape-gate")
+    validate_corner_measures(optimization, corners, gates["MaximumCornerAspect"], corner_shape_gate,
+                             invariant_corners(semantic))
+    kinds = census.get("SemanticCornerKinds")
+    if (not isinstance(kinds, list) or len(kinds) != len(corners) or
+            [point for point, kind in zip(census["SemanticCorners"], kinds) if kind == "Invariant"] !=
+            [row["Point"] for row in optimization["CornerMeasures"] if row["Kind"] == "Invariant"] or
+            any(kind not in CORNER_MEASURES for kind in kinds)):
+        raise ValueError("Build census SemanticCornerKinds differ from the seed corner measures")
+    validate_thin_sheet_seams(census, build_coupon_kind(command))
     return census
+
+
+def validate_thin_sheet_seams(census, kind):
+    """Design round 2 SEAM (supervisor decisions 363 / 368): a thin build records the
+    pinched-seam census ThinSheetSeams {Count, Edges, ...}; its Count is 0 unless the record
+    carries UnrefinedCrackSeams (the seams of the convex tips sharper than the bisector's
+    minimum opening, every seam attributed: Count equal, RefineCrackElements false) - the
+    solve-config writer then sets Model.RefineCrackElements false (case_inputs); a
+    fabricated build carries no seam. Returns the UnrefinedCrackSeams record or None."""
+    seams = census.get("ThinSheetSeams")
+    if kind != "thin":
+        if seams is not None and _count(seams.get("Count"), "Thin sheet seams") != 0:
+            raise ValueError("A fabricated build census records thin-sheet seams")
+        return None
+    if (not isinstance(seams, dict) or _count(seams.get("Count"), "Thin sheet seams") < 0 or
+            not isinstance(seams.get("Edges"), list) or len(seams["Edges"]) != seams["Count"]):
+        raise ValueError("Thin build census lacks the ThinSheetSeams record")
+    unrefined = seams.get("UnrefinedCrackSeams")
+    if unrefined is None:
+        if seams["Count"] != 0:
+            raise ValueError(f"Thin build census records {seams['Count']} pinched seams without UnrefinedCrackSeams")
+        return None
+    if (not isinstance(unrefined, dict) or unrefined.get("RefineCrackElements") is not False or
+            _count(unrefined.get("Count"), "Unrefined crack seams") != seams["Count"] or
+            not isinstance(unrefined.get("Tips"), list) or not unrefined["Tips"] or
+            not isinstance(unrefined.get("Rule"), str) or "RefineCrackElements" not in unrefined["Rule"]):
+        raise ValueError("Thin build census UnrefinedCrackSeams record is inconsistent with ThinSheetSeams")
+    return unrefined
 
 
 def validate_curve_spacing(census, normal, tangential, growth, band_count):

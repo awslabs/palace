@@ -2228,6 +2228,48 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         with self.assertRaises(ValueError):
             analyze(read_mesh(mesh), wrong, require_material_names=True)
 
+    def test_corner_shape_gate_is_the_capped_population_envelope_with_its_provenance(self):
+        # Mesher design round 2 F5-A (decisions 351 / 358 / 363 / 365): the invariant-corner
+        # verdict bound CornerShapeGate = min(E_pop, 5.0) with the E_pop measurement of record
+        # as its provenance; the cap binds on the measured population (6.2988 > 5.0).
+        from general_mesh_manifest import (CORNER_SHAPE_GATE, CORNER_SHAPE_GATE_CAP,
+                                           CORNER_SHAPE_GATE_PROVENANCE, validate_corner_shape_gate)
+        production = json.loads((HERE / "geometry-independence-suite.json").read_text())
+        self.assertEqual(validate_corner_shape_gate(production), 5.0)
+        provenance = production["Gates"][CORNER_SHAPE_GATE_PROVENANCE]
+        self.assertGreater(provenance["PopulationEnvelope"], CORNER_SHAPE_GATE_CAP)
+        self.assertEqual(provenance["Cap"], CORNER_SHAPE_GATE_CAP)
+        self.assertIn("epop-summary.txt", provenance["PopulationRecord"])
+        for name in ("geometry-independence-calibration-ma.json", "geometry-independence-calibration-sizing.json"):
+            calibration = json.loads((HERE / name).read_text())
+            self.assertEqual(calibration["Gates"][CORNER_SHAPE_GATE], 5.0)
+            self.assertEqual(calibration["Gates"][CORNER_SHAPE_GATE_PROVENANCE], provenance)
+        # Without the gate (every rectilinear manifest) nothing is required; a gate without
+        # its provenance, off min(E_pop, cap), or above the cap fails closed.
+        ungated = copy.deepcopy(production)
+        del ungated["Gates"][CORNER_SHAPE_GATE]; del ungated["Gates"][CORNER_SHAPE_GATE_PROVENANCE]
+        self.assertIsNone(validate_corner_shape_gate(ungated))
+        def rejected(mutate, message):
+            broken = copy.deepcopy(production)
+            mutate(broken["Gates"])
+            with self.assertRaisesRegex(ValueError, message):
+                validate_corner_shape_gate(broken)
+        rejected(lambda g: g.pop(CORNER_SHAPE_GATE_PROVENANCE), "recorded E_pop provenance")
+        rejected(lambda g: g.pop(CORNER_SHAPE_GATE), "Provenance recorded without")
+        rejected(lambda g: g.__setitem__(CORNER_SHAPE_GATE, 4.5), "min\\(PopulationEnvelope, 5.0\\)")
+        rejected(lambda g: g[CORNER_SHAPE_GATE_PROVENANCE].__setitem__("PopulationEnvelope", 4.6),
+                 "min\\(PopulationEnvelope, 5.0\\)")
+        rejected(lambda g: g[CORNER_SHAPE_GATE_PROVENANCE].__setitem__("Cap", 6.0), "recorded E_pop provenance")
+        rejected(lambda g: g[CORNER_SHAPE_GATE_PROVENANCE].__setitem__("PopulationRecord", ""),
+                 "recorded E_pop provenance")
+        # A population envelope below the cap IS the gate.
+        lowered = copy.deepcopy(production)
+        lowered["Gates"][CORNER_SHAPE_GATE] = 4.6
+        lowered["Gates"][CORNER_SHAPE_GATE_PROVENANCE]["PopulationEnvelope"] = 4.6
+        self.assertEqual(validate_corner_shape_gate(lowered), 4.6)
+        # case_gates carries the gate to the build command (run_gmsh_only_case --corner-shape-gate).
+        self.assertEqual(case_gates(production, production["Cases"][0])[CORNER_SHAPE_GATE], 5.0)
+
     def test_calibration_manifest_gate_relaxation_never_reaches_production(self):
         # Supervisor decision 22: the MA/MS calibration manifest, and only it, carries
         # MinimumAchievedAspect 0.9 (anisotropy-design gate); the production suite keeps
@@ -3189,8 +3231,56 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "rings do not follow")
             rejected(lambda c: c["PrismTubes"]["CapRegions"].__setitem__("MinimumScaledJacobian", 1e-3),
                      "cap regions fail")
+            # Design round 2 F5-A (decisions 363 / 365): the per-corner verdict records judge
+            # each corner by its kind - a legacy corner by MaximumCornerAspect, an invariant one
+            # by the command's --corner-shape-gate - and bind the contract's invariant corners.
             rejected(lambda c: c["SeedQualityOptimization"]["CornerAspectsAfter"].__setitem__(0, 10.0),
-                     "gated corner balls")
+                     "After differs from CornerAspectsAfter")
+            def corner_value(c, value):
+                c["SeedQualityOptimization"]["CornerAspectsAfter"][0] = value
+                c["SeedQualityOptimization"]["CornerMeasures"][0]["After"] = value
+            rejected(lambda c: corner_value(c, 4.5), "Legacy corner .* fails its gate")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].__setitem__("Kind", "Invariant"),
+                     "unknown kind or measure")
+            def invariant_row(c):
+                row = c["SeedQualityOptimization"]["CornerMeasures"][0]
+                row.update({"Kind": "Invariant", "Measure": "RegularCondition", "Target": 3.8, "Gate": 5.0})
+            rejected(invariant_row, "judged without --corner-shape-gate")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"].pop(),
+                     "one CornerMeasures row per semantic corner")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0]["BridgingSlivers"].__setitem__(
+                         "AboveGateAfter", 1), "bridging-sliver cells above the gate remain")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].__setitem__("Target", 3.7),
+                     "gate / target differ from the Legacy rule")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__("InvariantCorners", 1),
+                     "InvariantCorners count differs")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__("CornerShapeGate", 5.0),
+                     "CornerShapeGate differs from the build command")
+            rejected(lambda c: c["SemanticCornerKinds"].__setitem__(0, "Invariant"),
+                     "SemanticCornerKinds differ")
+            # A command carrying --corner-shape-gate without an invariant corner is consistent
+            # when the optimization record carries the same gate; an invariant row judged by it
+            # needs the contract's Derivation.InvariantCorners to list the corner.
+            gated_report = copy.deepcopy(report)
+            gated_report["Command"] += ["--corner-shape-gate", "5.0"]
+            gated = copy.deepcopy(census)
+            gated["SeedQualityOptimization"]["CornerShapeGate"] = 5.0
+            self.assertIs(validate_gmsh_build_census(gated_report, gated, semantic), gated)
+            invariant_census = copy.deepcopy(gated)
+            invariant_row(invariant_census)
+            invariant_census["SeedQualityOptimization"]["InvariantCorners"] = 1
+            invariant_census["SemanticCornerKinds"][0] = "Invariant"
+            with self.assertRaisesRegex(ValueError, "differ from the contract's Derivation.InvariantCorners"):
+                validate_gmsh_build_census(gated_report, invariant_census, semantic)
+            invariant_semantic = copy.deepcopy(semantic)
+            invariant_semantic["Derivation"] = {"InvariantCorners": {"Rule": "kappa_reg",
+                                                                     "Points": [semantic["SemanticCorners"][0]]}}
+            self.assertIs(validate_gmsh_build_census(gated_report, invariant_census, invariant_semantic),
+                          invariant_census)
+            invariant_census["SeedQualityOptimization"]["CornerMeasures"][0]["After"] = 5.5
+            invariant_census["SeedQualityOptimization"]["CornerAspectsAfter"][0] = 5.5
+            with self.assertRaisesRegex(ValueError, "Invariant corner .* fails its gate"):
+                validate_gmsh_build_census(gated_report, invariant_census, invariant_semantic)
             rejected(lambda c: c.__setitem__("EdgeLayer", {"EdgeSize": .004}), "tetrahedral edge layer")
             rejected(lambda c: c["JunctionCurves"].__setitem__("CurvedCurves", 1), "straight junction")
             rejected(lambda c: c["CornerGrading"].__setitem__("CornerSize", .002),
