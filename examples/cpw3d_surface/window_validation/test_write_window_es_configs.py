@@ -209,6 +209,8 @@ class ThinConfigTest(unittest.TestCase):
         self.assertEqual([d.get("AutomaticEdges", False) for d in dielectrics], [True, True, True, False, False])
         self.assertEqual(["EdgeDistances" in d for d in dielectrics], [True, True, True, False, False])
         for d in dielectrics[3:]:
+            # The plain form exactly (the fabricated writer's): no LocalizeEdgeEnergy / SaveLocalEdgeEnergy either.
+            self.assertEqual(set(d), {"Index", "Attributes", "Type", "Thickness", "Permittivity", "LossTan"})
             self.assertEqual((d["Thickness"], d["Permittivity"], d["LossTan"]), (dielectrics[1]["Thickness"], LAYERS[d["Type"]]["Permittivity"], LAYERS[d["Type"]]["LossTan"]))
         self.assertEqual(config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"], [1, 2, 3])
         self.assertEqual(config["Boundaries"]["Ground"]["Attributes"], [114, 126, 153])
