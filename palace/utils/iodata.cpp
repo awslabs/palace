@@ -14,6 +14,7 @@
 #include <stack>
 #include <string>
 #include <string_view>
+#include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
@@ -299,21 +300,48 @@ void IoData::CheckConfiguration()
         "will be removed in a future release! By default, the mesh is only cracked "
         "along interior boundaries with PMC or absorbing boundary conditions, and "
         "along impedance and conductivity boundaries with \"Crack\": true.\n");
-    // The global option overrides the per-boundary choice.
-    const bool global_crack = *model.crack_bdr_elements;
-    auto Overridden = [global_crack](const auto &data)
-    { return data.crack != global_crack; };
-    if (std::any_of(boundaries.conductivity.begin(), boundaries.conductivity.end(),
-                    Overridden) ||
-        std::any_of(boundaries.impedance.begin(), boundaries.impedance.end(), Overridden) ||
-        std::any_of(boundaries.rational_impedance.begin(),
-                    boundaries.rational_impedance.end(), Overridden))
+    // The global option overrides the per-boundary choice. The legacy behavior also cracks
+    // impedance and conductivity boundaries with the default "Crack": false, while
+    // disabling mesh cracking contradicts the boundaries which request it.
+    if (*model.crack_bdr_elements)
     {
-      Mpi::Warning("config[\"Model\"][\"CrackInternalBoundaryElements\"] = {} overrides "
-                   "\"Crack\": {} of impedance and conductivity boundaries, which are "
-                   "then modeled as {}!\n",
-                   global_crack, !global_crack,
-                   global_crack ? "two independent surfaces (cracked)" : "thin sheets");
+      auto NotCracked = [](const auto &data) { return !data.crack; };
+      if (std::any_of(boundaries.conductivity.begin(), boundaries.conductivity.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.impedance.begin(), boundaries.impedance.end(),
+                      NotCracked) ||
+          std::any_of(boundaries.rational_impedance.begin(),
+                      boundaries.rational_impedance.end(), NotCracked))
+      {
+        Mpi::Warning(
+            "config[\"Model\"][\"CrackInternalBoundaryElements\"] = true overrides "
+            "\"Crack\": false of impedance and conductivity boundaries, which are "
+            "then modeled as two independent surfaces (cracked)!\n");
+      }
+    }
+    else
+    {
+      std::set<int> crack_attrs;
+      auto Append = [&crack_attrs](const auto &boundary_data)
+      {
+        for (const auto &data : boundary_data)
+        {
+          if (data.crack)
+          {
+            crack_attrs.insert(data.attributes.begin(), data.attributes.end());
+          }
+        }
+      };
+      Append(boundaries.conductivity);
+      Append(boundaries.impedance);
+      Append(boundaries.rational_impedance);
+      MFEM_VERIFY(crack_attrs.empty(),
+                  "\"Crack\": true on the boundaries with attributes "
+                      << fmt::format("{}", fmt::join(crack_attrs, ", "))
+                      << " conflicts with "
+                         "config[\"Model\"][\"CrackInternalBoundaryElements\"] = false, "
+                         "which disables mesh cracking! Remove the deprecated option to "
+                         "crack these boundaries, or set \"Crack\": false.");
     }
   }
 

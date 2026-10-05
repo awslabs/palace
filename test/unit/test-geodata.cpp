@@ -555,6 +555,15 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
     }
     return json{{"Conductivity", {data}}};
   };
+  auto RationalImpedance = [](json crack)
+  {
+    json data = {{"Attributes", {7}}, {"Numerator", {1.0}}, {"Denominator", {1.0}}};
+    if (!crack.is_null())
+    {
+      data["Crack"] = crack;
+    }
+    return json{{"RationalImpedance", {data}}};
+  };
 
   // Sheets with a surface impedance: thin film (not cracked) or thick conductor (cracked).
   CHECK(NumVertices(Impedance(nullptr), none) == nv);
@@ -562,16 +571,24 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   CHECK(NumVertices(Impedance(true), none) == nv_cut);
   CHECK(NumVertices(Conductivity(nullptr), none) == nv);
   CHECK(NumVertices(Conductivity(true), none) == nv_cut);
+  CHECK(NumVertices(RationalImpedance(nullptr), none) == nv);
+  CHECK(NumVertices(RationalImpedance(true), none) == nv_cut);
 
   // Perfect conductors are never cracked, one-sided boundary conditions always are.
   CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, none) == nv);
   CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, none) == nv_cut);
 
-  // Deprecated global option.
+  // Deprecated global option. Disabling mesh cracking contradicts boundaries which request
+  // it.
   CHECK(NumVertices({{"PEC", {{"Attributes", {7}}}}}, legacy) == nv_cut);
   CHECK(NumVertices(Impedance(false), legacy) == nv_cut);
+  CHECK(NumVertices(Impedance(true), legacy) == nv_cut);
   CHECK(NumVertices(Conductivity(nullptr), off) == nv);
+  CHECK(NumVertices(Impedance(false), off) == nv);
   CHECK(NumVertices({{"PMC", {{"Attributes", {7}}}}}, off) == nv);
+  CHECK_THROWS(NumVertices(Impedance(true), off));
+  CHECK_THROWS(NumVertices(Conductivity(true), off));
+  CHECK_THROWS(NumVertices(RationalImpedance(true), off));
 
   // Refinement boxes make the hexahedral mesh nonconformal, which cannot be cracked.
   const json box = {{"Refinement",

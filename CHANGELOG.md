@@ -64,8 +64,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     conductor loss compared to the cracked mesh: use `"Crack": true` to keep the previous
     results. Specifying `config["Model"]["CrackInternalBoundaryElements"]` is deprecated:
     `true` restores the previous behavior of cracking all interior boundaries with boundary
-    conditions except for lumped ports, and `false` disables cracking entirely.
-    SchemaVer 3-0-0. [PR 994](https://github.com/awslabs/palace/pull/994).
+    conditions except for lumped ports, and `false` disables cracking entirely, which is an
+    error for boundaries with `"Crack": true`. SchemaVer 3-0-0.
+    [PR 994](https://github.com/awslabs/palace/pull/994).
   - Surface flux postprocessing with `"TwoSided": false` on interior boundaries which are no
     longer cracked gives the average of the fluxes on the two sides, instead of the sum of the
     fluxes of the two faces of the cracked mesh.
