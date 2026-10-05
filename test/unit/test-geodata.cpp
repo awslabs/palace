@@ -590,6 +590,26 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   CHECK_THROWS(NumVertices(Conductivity(true), off));
   CHECK_THROWS(NumVertices(RationalImpedance(true), off));
 
+  // Each face of a cracked impedance boundary has the given surface impedance, except with
+  // the deprecated global option, which splits it between the two faces.
+  auto SplitAttributes = [&](const json &boundaries, const json &model)
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Verbose", 0}}},
+                   {"Model", {{"Mesh", mesh_path.string()}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+    config["Model"].update(model);
+    IoData iodata(config, false);
+    mesh::ReadMesh(iodata, Mpi::World());
+    REQUIRE(iodata.boundaries.cracked_attributes == std::unordered_set<int>{7});
+    return iodata.boundaries.split_impedance_attributes;
+  };
+  CHECK(SplitAttributes(Impedance(true), none).empty());
+  CHECK(SplitAttributes(RationalImpedance(true), none).empty());
+  CHECK(SplitAttributes(Impedance(false), legacy) == std::unordered_set<int>{7});
+  CHECK(SplitAttributes(Impedance(true), legacy) == std::unordered_set<int>{7});
+
   // Refinement boxes make the hexahedral mesh nonconformal, which cannot be cracked.
   const json box = {{"Refinement",
                      {{"Boxes",
