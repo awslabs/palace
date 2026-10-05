@@ -2325,7 +2325,6 @@ def main():
     except ValueError as error:
         stop("SpatialGeometry", error)
     failure_path.unlink(missing_ok=True)
-    write_mesh_signature(output / "mesh-signature.csv", edges)
     lower, upper = coupon_bounds(
         edges,
         args.radius,
@@ -2333,10 +2332,13 @@ def main():
         args.overetch_depth,
         coupon.get("Geometry", {}).get("SupportBox"),
     )
+    # The frame check precedes the first output so a mis-framed mask leaves
+    # generation-failure.json alone (decision 369 review MINOR-2).
     try:
         validate_mask_frame(facets, lower, upper, args.radius)
     except ValueError as error:
         stop("PlanViewMaskFrame", error)
+    write_mesh_signature(output / "mesh-signature.csv", edges)
     support_points = matching_support_points(
         lower, upper, frame, args.radius, args.support_span_cap
     )

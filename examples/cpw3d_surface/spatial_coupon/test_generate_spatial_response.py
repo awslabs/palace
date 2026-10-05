@@ -5,13 +5,17 @@ mask (decision 360 (c*): a tolerance of 4 x the 1e-9 R plan quantum, inclusive, 
 PEC), the labelling validator (no FREE knot within the tolerance of a metal outline; the near-
 outline inspection record) and the mask-frame check (design round 2 review MINOR-5)."""
 from pathlib import Path
+import json
+import subprocess
 import sys
+import tempfile
 import unittest
 
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import cluster_signature_geometry as csg  # noqa: E402
 import generate_spatial_response as gsr  # noqa: E402
 
 RADIUS = 1.9
@@ -83,6 +87,34 @@ class MaskFrameTest(unittest.TestCase):
         self.assertIn("not in the mesh frame", str(caught.exception))
         with self.assertRaises(ValueError):
             gsr.validate_mask_frame(FACETS, lower + [2.0 * slack, 0.0, 0.0], upper, RADIUS)
+
+    def test_generator_stops_before_any_output_on_a_foreign_frame(self):
+        """Decision 369 review MINOR-2: the frame check runs before the first output file, so a
+        mis-framed mask leaves generation-failure.json (Stage PlanViewMaskFrame) and nothing
+        else: no partial mesh-signature.csv next to it."""
+        law = '{"Type":"PEC"}'
+        portions = [{"Conductor": 1, "Gap": [0.0, 1.0], "Interfaces": ["MA", "MS", "SA"], "Law": law, "P": [-2.0, 0.0, 0.0, 0.0]},
+                    {"Conductor": 1, "Gap": [-1.0, 0.0], "Interfaces": ["MA", "MS", "SA"], "Law": law, "P": [0.0, 0.0, 0.0, 2.0]}]
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 2, "Portions": portions,
+                     "Vertices": [{"P": [0.0, 0.0], "TurnDegrees": 90.0, "Type": "ConcaveCorner"}]}
+        cluster = {"Topology": "SpatialEdgeCluster", "Geometry": {"EdgeCount": 2, "Signature": signature}, "Signature": signature,
+                   "Interfaces": [{"Slot": 0, "Type": t, "Target": n} for n, t in ((3, "MA"), (2, "MS"), (1, "SA"))],
+                   "BoundaryCondition": {"Type": "PEC"}}
+        coupon, _ = csg.cluster_coupon(cluster, RADIUS, THICKNESS, 0.05)
+        for facet in coupon["Geometry"]["PlanViewFacets"]:  # the mask of another frame: shifted by 1 um
+            facet["Points"] = [[p[0] + 1.0, p[1]] + list(p[2:]) for p in facet["Points"]]
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "coupon.json").write_text(json.dumps(coupon))
+            result = subprocess.run([sys.executable, str(HERE / "generate_spatial_response.py"), str(Path(tmp) / "coupon.json"),
+                                     "--output", str(Path(tmp) / "out"), "--radius", str(RADIUS), "--metal-thickness",
+                                     str(THICKNESS), "--overetch-depth", "0.05", "--sidewall-angle", "90", "--top-rounding", "0",
+                                     "--trench-rounding", "0", "--model-name", "m", "--basis-only"],
+                                    capture_output=True, text=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not in the mesh frame", result.stderr)
+            failure = json.loads((Path(tmp) / "out" / "generation-failure.json").read_text())
+            self.assertEqual(failure["Stage"], "PlanViewMaskFrame")
+            self.assertEqual(sorted(p.name for p in (Path(tmp) / "out").iterdir()), ["generation-failure.json"])
 
 
 if __name__ == "__main__":
