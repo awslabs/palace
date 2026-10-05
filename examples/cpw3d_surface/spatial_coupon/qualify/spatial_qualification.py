@@ -118,6 +118,12 @@ class SpatialQualificationError(ValueError):
     """The qualification inputs are inconsistent (the reason is named)."""
 
 
+class DenseTraceJumpError(SpatialQualificationError):
+    """A dense trace prescribes a non-zero potential at a conductor (PEC) knot: a Dirichlet
+    jump along the cross-section boundary (decision 360, mechanism M1). Never recorded as an
+    unsupported trace: the `traces` command aborts (fail closed)."""
+
+
 # --------------------------------------------------------------------------------------
 # Criteria (pure functions on per-class energies; every energy a float, classes the keys)
 # --------------------------------------------------------------------------------------
@@ -481,9 +487,9 @@ def write_dense_trace(path, basis, labels, coefficients):
     """A dense trace as a PrescribedPotential DataFile: sum_k c_k hat_k + sum_c s_c lift_c on
     the trace mesh vertices (the hats and lifts of case_inputs.regenerate_traces), scaled to
     its representable excitation (representable_trace); returns (path, terminal conductor,
-    energy scale). Fails closed when a hat prescribes a non-zero value at a conductor vertex
-    (label > 0): the only potential a conductor cross-section may carry is its state lift
-    (decision 360, mechanism M1)."""
+    energy scale). Fails closed (DenseTraceJumpError) when a hat prescribes a non-zero value
+    at a conductor vertex (label > 0): the only potential a conductor cross-section may carry
+    is its state lift (decision 360, mechanism M1)."""
     points, triangles, index_of = basis["Points"], basis["Triangles"], np.asarray(basis["Basis"])
     labels = np.asarray(labels)
     count = int(index_of.max())
@@ -497,10 +503,10 @@ def write_dense_trace(path, basis, labels, coefficients):
         values[index_of == k] = scaled[k - 1]
     jump = np.flatnonzero((labels > 0) & (values != 0.0))
     if len(jump):
-        raise SpatialQualificationError(f"the dense trace prescribes a non-zero potential at {len(jump)} conductor "
-                                        f"(PEC) knot(s) (vertices {(jump[:8] + 1).tolist()}, basis "
-                                        f"{index_of[jump[:8]].tolist()}): a Dirichlet jump along the cross-section "
-                                        "boundary; a conductor vertex carries its state lift only")
+        raise DenseTraceJumpError(f"the dense trace prescribes a non-zero potential at {len(jump)} conductor "
+                                  f"(PEC) knot(s) (vertices {(jump[:8] + 1).tolist()}, basis "
+                                  f"{index_of[jump[:8]].tolist()}): a Dirichlet jump along the cross-section "
+                                  "boundary; a conductor vertex carries its state lift only")
     for n, conductor in enumerate(states):
         values[np.asarray(labels) == conductor] = scaled[count + n]
     producer.write_surface_trace(Path(path), points, triangles, values)
@@ -651,7 +657,11 @@ def load_basis(source_directory):
 
 def command_traces(args):
     """Write the dense traces (T2 always; T1 from --device-traces) of a coupon source
-    directory and the fabricated / thin solve configs at the control orders."""
+    directory and the fabricated / thin solve configs at the control orders. A trace that
+    cannot be imposed as one excitation (representable_trace) is recorded as Unsupported; a
+    trace with a non-zero potential at a conductor knot aborts (DenseTraceJumpError, never
+    dropped: the T1 device trace is the only live target and a dropped T1 would let the (F)
+    stamp from T2 alone)."""
     basis, labels, model, radius, references = load_basis(args.source)
     out = Path(args.output)
     (out / "traces").mkdir(parents=True, exist_ok=True)
@@ -664,6 +674,8 @@ def command_traces(args):
         path = out / "traces" / f"{trace['Name']}.csv"
         try:
             _, terminal, energy_scale = write_dense_trace(path, basis, labels, trace["Coefficients"])
+        except DenseTraceJumpError:
+            raise
         except SpatialQualificationError as error:
             trace["Unsupported"] = str(error)
             continue
