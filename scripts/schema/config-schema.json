@@ -503,7 +503,7 @@
         "MaxSize": {
           "type": "number",
           "minimum": 0,
-          "description": "The maximum allowable number of degrees of freedom for AMR. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
+          "description": "The maximum allowable number of degrees of freedom for AMR. It is checked against the predicted size of each refined mesh before its solve unless `MaxSizePredicted` is `false`, in which case it is checked only against the last solved size. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
           "default": 0
         },
         "MaxSizePredicted": {

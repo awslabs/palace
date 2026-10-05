@@ -358,6 +358,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                                {"InitialMeshElements", initial_elem_count},
                                {"RefinedMeshElements", final_elem_count},
                                {"MaxSize", refinement.max_size}});
+      // The in-memory mesh is left refined and is not used again: Run() only writes
+      // metadata after this loop and the last solved results stay in place.
       --it;
       break;
     }

@@ -57,14 +57,17 @@ AMR stops when the error indicator falls below `"Tol"`, after `"MaxIts"` iterati
 refinement step and before its solve: the number of degrees of freedom of the refined mesh
 is predicted as the last solved size scaled by the growth of the element count in that step
 (the count of a fixed-order space scales with the element count; on graded nonconforming
-meshes the prediction is within a few percent), and when the prediction exceeds `"MaxSize"`
-the solve is skipped and the last solved mesh is the final result (the log reports the
-prediction and `palace.json` records it under `"AdaptiveMeshRefinement"`/`"MaxSizeStop"`).
-This guarantees that no solve runs on a mesh predicted larger than `"MaxSize"`; one Dörfler
-step can otherwise grow the size by a factor 2–3. Setting `"MaxSizePredicted": false`
-restores the previous rule, which checks `"MaxSize"` only against the last solved size and
-lets the final solve exceed it by the growth of one step; use it to reproduce runs made
-under that rule.
+meshes the prediction is within a few percent on fine meshes, while coarse early cycles
+over-predict by up to ~15 % and stop conservatively), and when the prediction exceeds
+`"MaxSize"` the solve is skipped and the last solved mesh is the final result (the log
+reports the prediction and `palace.json` records it under
+`"AdaptiveMeshRefinement"`/`"MaxSizeStop"`). This guarantees that no solve runs on a mesh
+predicted larger than `"MaxSize"`; one Dörfler step can otherwise grow the size by a factor
+2–3. When the prediction under-reads by a few percent the solve can still land slightly
+above `"MaxSize"`, in which case the check against the last solved size ends AMR as before.
+Setting `"MaxSizePredicted": false` restores the previous rule, which checks `"MaxSize"`
+only against the last solved size and lets the final solve exceed it by the growth of one
+step; use it to reproduce runs made under that rule.
 
 ## Material models
 
