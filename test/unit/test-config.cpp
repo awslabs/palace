@@ -2097,12 +2097,13 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(per_gaps.empty());
 
     // Ownership is an opt-in, all-fields-together partition; inactive defaults
-    // must not be synthesized into an otherwise unpartitioned interface.
+    // must not be synthesized into an otherwise unpartitioned interface. Region is the
+    // opt-in quadrature-level filter (absent = unfiltered).
     auto dielectric_gaps = SchemaCoverageGaps(
         "/$defs/Dielectric", config["Boundaries"]["Postprocessing"]["Dielectric"][0],
         /*skip=*/
-        {"OwnershipDataFile", "OwnershipGroup", "OwnershipSlot",
-         "OwnershipQuadratureOrder"});
+        {"OwnershipDataFile", "OwnershipGroup", "OwnershipSlot", "OwnershipQuadratureOrder",
+         "Region"});
     INFO("Boundaries.Postprocessing.Dielectric[] missing keys: "
          << json(dielectric_gaps).dump());
     CHECK(dielectric_gaps.empty());
