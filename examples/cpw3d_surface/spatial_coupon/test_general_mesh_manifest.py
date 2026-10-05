@@ -3222,6 +3222,58 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["Scope"]["MetalLoops"][0].__setitem__("Hole", True), "hole loops differ")
             rejected(lambda c: c["PrismTubes"].__setitem__("TubeCount", 2) or c["PrismTubes"]["Tubes"].__delitem__(slice(2, 4)),
                      "TubesPerSide x the straight sides")
+            # Block (b) design A9 family 3 (decision 304): an untubed short side recorded in
+            # Scope.UntubedEdges drops TubesPerSide tubes from TubeCount; the record must name
+            # a straight metal side of the bound boundary, keep Span / Clearances / Interval
+            # consistent with an interval below the inner ring size and CoveredByBalls equal to
+            # the reach of its corner balls; a census without the key records none.
+            from mesh_stage_contract import metal_loop_side_points, read_csv_rows
+            self.assertNotIn("UntubedEdges", scope)
+            sides = metal_loop_side_points(read_csv_rows(report["Inputs"]["source-boundary"]["Path"]),
+                                           census["CouponBox"]["Lower"], census["CouponBox"]["Upper"],
+                                           1e-7 * census["CouponBox"]["Radius"])
+            (start, stop) = sides[0][0]
+            span = math.dist(start, stop)
+            inner = census["PrismTubes"]["InnerSize"]
+            ball = census["CornerIsotropyRadius"]
+            clearances = [0.5 * (span - 0.5 * inner), 0.5 * (span - 0.5 * inner)]
+            untubed_record = {"Side": {"Start": list(start), "Stop": list(stop), "Plane": 0.0, "Conductor": 1,
+                                       "Hole": False, "Layer": 1},
+                              "Span": span, "Clearances": clearances, "Interval": 0.5 * inner,
+                              "Corners": [True, True], "CoveredByBalls": 2 * ball >= span}
+            untubed = copy.deepcopy(census)
+            untubed["Scope"]["UntubedEdges"] = [untubed_record]
+            with self.assertRaisesRegex(ValueError, "untubed edges without their rule"):
+                validate_gmsh_build_census(report, untubed, semantic)
+            untubed["Scope"]["UntubedShortEdgeRule"] = "fixture untubed short-side rule"
+            with self.assertRaisesRegex(ValueError, "minus the untubed short sides"):
+                validate_gmsh_build_census(report, untubed, semantic)
+            untubed["PrismTubes"]["TubeCount"] = 2
+            del untubed["PrismTubes"]["Tubes"][2:4]
+            self.assertIs(validate_gmsh_build_census(report, untubed, semantic), untubed)
+
+            def rejected_untubed(mutate, message):
+                broken = copy.deepcopy(untubed)
+                mutate(broken["Scope"]["UntubedEdges"][0])
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(report, broken, semantic)
+            rejected_untubed(lambda r: r.__setitem__("Side", {"Start": [0.0], "Stop": list(stop)}), "lacks its side")
+            rejected_untubed(lambda r: r["Side"].__setitem__("Start", [start[0] + 1.0, start[1]]),
+                             "not a straight metal side")
+            rejected_untubed(lambda r: r.__setitem__("Span", 0.5 * span), "lacks its span")
+            rejected_untubed(lambda r: r.__setitem__("Clearances", [clearances[0]]), "lacks its span")
+            rejected_untubed(lambda r: r.__setitem__("Corners", [True]), "lacks its span")
+            rejected_untubed(lambda r: r.__setitem__("CoveredByBalls", None), "lacks its span")
+            rejected_untubed(lambda r: r.__setitem__("Interval", inner), "not below the tube inner size")
+            rejected_untubed(lambda r: r.update(Clearances=[0.0, 0.0], Interval=span), "not below the tube inner size")
+            rejected_untubed(lambda r: r.__setitem__("CoveredByBalls", not r["CoveredByBalls"]),
+                             "coverage disagrees")
+            twice = copy.deepcopy(untubed)
+            twice["Scope"]["UntubedEdges"].append(copy.deepcopy(untubed_record))
+            with self.assertRaisesRegex(ValueError, "not a straight metal side"):
+                validate_gmsh_build_census(report, twice, semantic)
+            with self.assertRaisesRegex(ValueError, "UntubedEdges is not a list"):
+                validate_gmsh_build_census(report, dict(untubed, Scope=dict(untubed["Scope"], UntubedEdges={})), semantic)
             # Decision 66: the section names the command's kind and its tubes per side; a
             # thin census records its cutoff as the inner size, a fabricated one none.
             rejected(lambda c: c["PrismTubes"]["Section"].__setitem__("Kind", "thin"), "coupon kind and its tubes per side")

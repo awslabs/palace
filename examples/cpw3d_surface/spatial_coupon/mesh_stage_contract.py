@@ -1272,16 +1272,21 @@ GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 # class is visible in the frozen inputs, "build" when only a derived quantity shows it)
 # and the classification of an input from its frozen inputs.  The census Scope block
 # records the same lists and is bound here; the build drivers record an unsupported
-# class distinctly from any other failure with these ids.
+# class distinctly from any other failure with these ids.  UntubedShortEdges (block (b)
+# design A9 family 3, supervisor decision 304) is the one supported class known only at
+# the build (a side's tube interval against the derived corner clearances): it is
+# exhibited by the census Scope.UntubedEdges records, not by the input classification.
 RECIPE_SCOPE_RECIPE = "prism-tubes"
 RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "DownwardLayers",
                                   "ExteriorLoops", "HoleLoops", "MultipleConductors",
-                                  "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis")
+                                  "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis",
+                                  "UntubedShortEdges")
 RECIPE_SCOPE_GUARDS = {
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
-    "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build",
+    "NarrowMetal": "build",
+    "FreeEdgeEnds": "build", "FootprintWithoutEdge": "build",
     "FootprintTopology": "build"}
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
@@ -1403,22 +1408,80 @@ def scope_classes_of_build(build_report):
 
 def metal_loop_sides(boundary_rows, lower, upper, tolerance):
     """Per plan-view loop (in Loop order) the straight sides not lying on an outer box
-    face (mesh_spatial_coupon.jl metal_loop_records); each carries two tubes."""
+    face (mesh_spatial_coupon.jl metal_loop_records); each carries TubesPerSide tubes
+    unless it is an untubed short side (validate_untubed_edges)."""
+    return [len(sides) for sides in metal_loop_side_points(boundary_rows, lower, upper, tolerance)]
+
+
+def metal_loop_side_points(boundary_rows, lower, upper, tolerance):
+    """Per plan-view loop (in Loop order) the (start, stop) points of the straight sides
+    not lying on an outer box face, in vertex order."""
     loops = {}
     for row in boundary_rows:
         loops.setdefault(int(row["Loop"]), []).append((int(row["Vertex"]), float(row["X"]), float(row["Y"])))
     sides = []
     for _, vertices in sorted(loops.items()):
         points = [(x, y) for _, x, y in sorted(vertices)]
-        count = 0
+        loop_sides = []
         for i, p in enumerate(points):
             q = points[(i + 1) % len(points)]
             on_face = any((abs(p[d] - lower[d]) <= tolerance and abs(q[d] - lower[d]) <= tolerance) or
                           (abs(p[d] - upper[d]) <= tolerance and abs(q[d] - upper[d]) <= tolerance)
                           for d in range(2))
-            count += not on_face
-        sides.append(count)
+            if not on_face:
+                loop_sides.append((p, q))
+        sides.append(loop_sides)
     return sides
+
+
+def validate_untubed_edges(scope, census, side_points, tolerance):
+    """The untubed short sides of the census Scope (block (b) design A9 family 3, decision
+    304): every record names a straight metal side of the bound plan-view boundary (its
+    Start / Stop are consecutive loop vertices not on a box face), a positive Span equal
+    to the side's length, two non-negative Clearances, Interval = Span - their sum below
+    the tube's inner ring size (PrismTubes.InnerSize: an interval of at least one inner
+    ring carries a tube), its two Corners flags and CoveredByBalls exactly when the
+    corner balls (the census CornerIsotropyRadius about each corner end) reach over the
+    span; no side is recorded twice.  A census without the key (a pre-rule census)
+    records no untubed side.  Returns the record count."""
+    rows = scope.get("UntubedEdges", [])
+    if not isinstance(rows, list):
+        raise ValueError("Build census Scope UntubedEdges is not a list")
+    if rows and not (isinstance(scope.get("UntubedShortEdgeRule"), str) and scope["UntubedShortEdgeRule"]):
+        raise ValueError("Build census Scope records untubed edges without their rule")
+    inner = _census_number(census["PrismTubes"], "InnerSize", "Prism tube record")
+    radius = _census_number(census, "CornerIsotropyRadius", "Build census")
+    seen = set()
+    for row in rows:
+        side = row.get("Side") if isinstance(row, dict) else None
+        if (not isinstance(side, dict) or
+                any(not isinstance(side.get(name), list) or len(side[name]) != 2 or
+                    any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in side[name])
+                    for name in ("Start", "Stop"))):
+            raise ValueError("Build census untubed edge lacks its side")
+        start, stop = tuple(side["Start"]), tuple(side["Stop"])
+        matches = [(p, q) for loop in side_points for p, q in loop
+                   if ((math.dist(p, start) <= tolerance and math.dist(q, stop) <= tolerance) or
+                       (math.dist(p, stop) <= tolerance and math.dist(q, start) <= tolerance))]
+        if len(matches) != 1 or matches[0] in seen:
+            raise ValueError("Build census untubed edge is not a straight metal side of the bound plan-view boundary")
+        seen.add(matches[0])
+        span = _census_number(row, "Span", "Untubed edge")
+        clearances = row.get("Clearances")
+        corners = row.get("Corners")
+        if (span <= 0.0 or abs(span - math.dist(start, stop)) > tolerance or
+                not isinstance(clearances, list) or len(clearances) != 2 or
+                any(isinstance(c, bool) or not isinstance(c, (int, float)) or c < 0.0 for c in clearances) or
+                not isinstance(corners, list) or len(corners) != 2 or
+                any(not isinstance(c, bool) for c in corners) or
+                not isinstance(row.get("CoveredByBalls"), bool)):
+            raise ValueError("Build census untubed edge lacks its span, clearances, corners or coverage")
+        interval = span - clearances[0] - clearances[1]
+        if abs(_census_number(row, "Interval", "Untubed edge") - interval) > tolerance or not interval < inner:
+            raise ValueError("Build census untubed edge interval is not below the tube inner size")
+        if row["CoveredByBalls"] != (radius * sum(corners) >= span):
+            raise ValueError("Build census untubed edge coverage disagrees with its corner balls")
+    return len(rows)
 
 
 def validate_recipe_scope(build_report, census):
@@ -1426,8 +1489,9 @@ def validate_recipe_scope(build_report, census):
     guarded class lists of this contract with a statement per guard, exhibits exactly
     the classes recomputed from the bound inputs and command (none of them guarded: a
     guarded class never reaches the census), and counts per loop the sides not on the
-    census CouponBox so that TubeCount = TubesPerSide x their sum (2 for a fabricated
-    coupon, 1 for a thin one; decision 66)."""
+    census CouponBox so that TubeCount = TubesPerSide x their sum minus the untubed short
+    sides (2 for a fabricated coupon, 1 for a thin one; decision 66; the untubed sides
+    per validate_untubed_edges)."""
     scope = census.get("Scope")
     if not isinstance(scope, dict) or not isinstance(scope.get("Rule"), str) or not scope["Rule"]:
         raise ValueError("Build census lacks the recipe Scope record")
@@ -1451,8 +1515,9 @@ def validate_recipe_scope(build_report, census):
     loops = scope.get("MetalLoops")
     box = census.get("CouponBox") if isinstance(census.get("CouponBox"), dict) else {}
     radius = _census_number(box, "Radius", "Coupon box")
-    expected = metal_loop_sides(read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]),
-                                box.get("Lower"), box.get("Upper"), 1e-7 * radius)
+    side_points = metal_loop_side_points(read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]),
+                                         box.get("Lower"), box.get("Upper"), 1e-7 * radius)
+    expected = [len(sides) for sides in side_points]
     if (not isinstance(loops, list) or len(loops) != len(expected) or
             any(not isinstance(loop, dict) or not isinstance(loop.get("Hole"), bool) or
                 _count(loop.get("Sides"), "Metal loop sides") != sides or
@@ -1469,8 +1534,10 @@ def validate_recipe_scope(build_report, census):
             section.get("TubesPerSide") != TUBES_PER_SIDE[kind] or
             ("ThinMetal" in exhibited) != (kind == "thin")):
         raise ValueError("Prism tube section does not name the command's coupon kind and its tubes per side")
-    if tubes.get("TubeCount") != TUBES_PER_SIDE[kind] * sum(expected) or sum(expected) <= 0:
-        raise ValueError("Prism tube count is not TubesPerSide x the straight sides of every loop")
+    untubed = validate_untubed_edges(scope, census, side_points, 1e-7 * radius)
+    tubed_sides = sum(expected) - untubed
+    if tubes.get("TubeCount") != TUBES_PER_SIDE[kind] * tubed_sides or tubed_sides <= 0:
+        raise ValueError("Prism tube count is not TubesPerSide x the straight sides of every loop minus the untubed short sides")
     cutoff = section.get("ThinCutoff")
     if kind == "thin":
         # Decision 66: the thin coupon is recorded at its cutoff (the inner ring size).

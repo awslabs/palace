@@ -4505,12 +4505,17 @@ end
 # the class is visible in the frozen inputs ("inputs") or only in a derived
 # quantity during the build ("build"). RECIPE_SCOPE_SUPPORTED_CLASSES are the
 # input classes the recipe builds; exhibited_scope_classes lists the classes an
-# input exhibits from the frozen inputs alone. The census Scope block records
-# them and mesh_stage_contract.py binds the same lists.
+# input exhibits from the frozen inputs alone, except UntubedShortEdges (block (b)
+# design A9 family 3, decision 304): a metal side whose tube interval is shorter
+# than the tube's inner ring size carries no tube (its corner balls mesh it at
+# CornerSize), a class known only once the clearances are derived and exhibited
+# by the Scope.UntubedEdges records. The census Scope block records them and
+# mesh_stage_contract.py binds the same lists.
 const RECIPE_SCOPE_RECIPE = "prism-tubes"
 const RECIPE_SCOPE_SUPPORTED_CLASSES = [
     "ContinuationVertices", "DeviceFootprint", "DownwardLayers", "ExteriorLoops", "HoleLoops",
-    "MultipleConductors", "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis"]
+    "MultipleConductors", "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis",
+    "UntubedShortEdges"]
 const RECIPE_SCOPE_GUARDS = [
     ("TopRounding", "inputs",
      "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
@@ -4533,10 +4538,12 @@ const RECIPE_SCOPE_GUARDS = [
     ("NarrowLayerGap", "build",
      "a vacuum gap between the metal faces of an upward and a downward process layer " *
      "narrower than twice the tube reach: the tubes facing each other across it would overlap"),
+    ("NarrowMetal", "build",
+     "a metal strip narrower than twice the tube envelope (Radius + PyramidHeight) between " *
+     "two tubed metal sides of one plane facing each other across the metal: the tube parts " *
+     "over the metal would overlap (supervisor decision 347)"),
     ("FreeEdgeEnds", "build",
      "a metal edge end that is neither a semantic corner nor on the outer box"),
-    ("ShortEdges", "build",
-     "a metal edge shorter than the corner clearances at its ends: no tube interval remains"),
     ("FootprintWithoutEdge", "build",
      "an explicit etch footprint with no side coincident with a metal edge"),
     ("FootprintTopology", "build",
@@ -4549,10 +4556,24 @@ const RECIPE_SCOPE_RULE =
     "the prism-tube recipe builds every input whose classes are all in SupportedClasses; " *
     "an input exhibiting a class in GuardedClasses fails closed at the guard whose " *
     "error message carries ScopeGuard[<Id>] (Guards); ExhibitedClasses are the classes " *
-    "of this input among both lists, from the frozen inputs (loops, layers, process); " *
-    "MetalLoops counts per plan-view loop the straight sides not on the outer box, and " *
-    "TubeCount = TubesPerSide x their sum (a top and a bottom tube per side of every loop " *
-    "of a fabricated coupon, one sheet tube per side of a thin coupon; decision 66)"
+    "of this input among both lists, from the frozen inputs (loops, layers, process), " *
+    "UntubedShortEdges excepted (exhibited by a non-empty UntubedEdges: " *
+    "UntubedShortEdgeRule); MetalLoops counts per plan-view loop the straight sides not on " *
+    "the outer box, and TubeCount = TubesPerSide x their sum minus the untubed short sides " *
+    "(a top and a bottom tube per side of every loop of a fabricated coupon, one sheet tube " *
+    "per side of a thin coupon; decision 66)"
+# Family 3 (design A9; decision 304): the threshold at interval == EdgeSize separates an
+# untubed side from a one-layer tube of at least one inner ring in length (both
+# valid); an interval <= 0 was the ShortEdges refusal before.
+const UNTUBED_SHORT_EDGE_RULE =
+    "a straight metal side whose tube interval Span - Clearances[1] - Clearances[2] is below " *
+    "the tube's inner ring size EdgeSize carries no tube (an interval >= EdgeSize carries a " *
+    "tube of at least one inner ring in length); its corner balls (CornerIsotropyRadius about " *
+    "each semantic corner at its ends) mesh it with tetrahedra graded from CornerSize = " *
+    "EdgeSize, CoveredByBalls when the balls reach over the whole span (CornerIsotropyRadius x " *
+    "the corners at its ends >= Span), otherwise the uncovered middle follows the two-sided " *
+    "corner law; recorded UntubedEdges[] {Side, Span, Clearances, Interval, Corners, " *
+    "CoveredByBalls}"
 
 scope_guard_statement(id) = RECIPE_SCOPE_GUARDS[findfirst(guard -> guard[1] == id, RECIPE_SCOPE_GUARDS)][3]
 
@@ -4606,7 +4627,7 @@ function metal_loop_records(loops, lower, upper, tolerance)
     return records
 end
 
-function recipe_scope_record(exhibited, loops, lower, upper, tolerance)
+function recipe_scope_record(exhibited, loops, lower, upper, tolerance, untubed_edges)
     return Dict{String, Any}(
         "Rule" => RECIPE_SCOPE_RULE, "Recipe" => RECIPE_SCOPE_RECIPE,
         "SupportedClasses" => copy(RECIPE_SCOPE_SUPPORTED_CLASSES),
@@ -4615,7 +4636,9 @@ function recipe_scope_record(exhibited, loops, lower, upper, tolerance)
                                        "Statement" => statement)
                      for (id, detected, statement) in RECIPE_SCOPE_GUARDS],
         "ExhibitedClasses" => copy(exhibited),
-        "MetalLoops" => metal_loop_records(loops, lower, upper, tolerance))
+        "MetalLoops" => metal_loop_records(loops, lower, upper, tolerance),
+        "UntubedShortEdgeRule" => UNTUBED_SHORT_EDGE_RULE,
+        "UntubedEdges" => untubed_edges)
 end
 
 # The box face (d, side) a side end on the outer box is cut by: the face among those
@@ -4647,7 +4670,16 @@ box_face_name(d, side) = string(("x", "y")[d], side)
 # from the metal and the tube interval shrunk by the corner clearance at semantic
 # corners (0 at box continuation vertices). Returns rows with start, stop,
 # direction, normal, span, s_start, s_end, plane, conductor, corner angles, the
-# face ends and the legacy box-vertex corners.
+# face ends, the legacy box-vertex corners and the untubed short-side class.
+#
+# Untubed short sides (design A9 family 3, decision 304): a side whose tube interval
+# s_end - s_start is below `edge_size` (the tube's inner ring size) carries no tube -
+# `untubed` true, s_start / s_end kept as derived (the interval may be negative), the
+# side meshed by its corner balls at CornerSize; `covered_by_balls` says whether the
+# balls of radius `corner_radius` about its semantic corners reach over the whole
+# span (an untubed side between two acute corners can leave an uncovered middle,
+# graded by the two-sided corner law). A side that is not untubed must keep a
+# positive interval (with edge_size 0 an exactly empty interval fails closed).
 #
 # Box-face ends (design A2 / A6, supervisor decision 320): an end on the outer box
 # where no other metal side of the plane meets the edge is a FACE END when the
@@ -4663,7 +4695,8 @@ box_face_name(d, side) = string(("x", "y")[d], side)
 # sides meeting at a box vertex are a corner at any theta. The theta -> 0 class
 # boundary is a designed discontinuity between two valid treatments 3 R past the
 # claims (decision 320; dropping the theta-0 box balls is a recorded follow-up).
-function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, tolerance)
+function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, tolerance;
+                             edge_size=0.0, corner_radius=0.0)
     segments = NamedTuple[]
     on_box(p) = any(abs(p[d] - lower[d]) <= tolerance || abs(p[d] - upper[d]) <= tolerance
                     for d in 1:2)
@@ -4759,17 +4792,20 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
         stop_angle = stop_corner ? corner_angle(side.stop, side.plane, -side.direction) : Float64(pi)
         s_start = start_corner ? clearance_of_angle(start_angle) : 0.0
         s_end = side.span - (stop_corner ? clearance_of_angle(stop_angle) : 0.0)
-        s_end > s_start ||
-            scope_error("ShortEdges", "metal edge $(side.start) -> $(side.stop) of span " *
-                                      "$(side.span) against clearances $(s_start) and " *
-                                      "$(side.span - s_end)")
+        untubed = s_end - s_start < edge_size
+        untubed || s_end > s_start ||
+            error("metal edge $(side.start) -> $(side.stop) of span $(side.span) leaves no tube " *
+                  "interval against clearances $(s_start) and $(side.span - s_end)")
+        covered_by_balls = corner_radius * (start_corner + stop_corner) >= side.span
         # A theta-0 box vertex kept as a corner by the legacy convention.
         legacy_box_corners = (start_corner && on_box(side.start) && start_angle >= pi - 1.0e-9,
                               stop_corner && on_box(side.stop) && stop_angle >= pi - 1.0e-9)
         push!(segments, (side..., s_start=s_start, s_end=s_end,
                          corner_angles=(start_angle, stop_angle),
                          face_ends=(start_face, stop_face),
-                         legacy_box_corners=legacy_box_corners))
+                         legacy_box_corners=legacy_box_corners,
+                         corners=(start_corner, stop_corner),
+                         untubed=untubed, covered_by_balls=covered_by_balls))
     end
     return segments
 end
@@ -4782,6 +4818,66 @@ function segment_segment_distance_2d(a, b, c, d)
     end
     return min(point_segment_distance_2d(a, c, d), point_segment_distance_2d(b, c, d),
                point_segment_distance_2d(c, a, b), point_segment_distance_2d(d, a, b))
+end
+
+# The closest pair of points of two plan-view segments (p on a-b, q on c-d), among
+# the projections of each endpoint onto the other segment.
+function segment_closest_points_2d(a, b, c, d)
+    function project(point, first, second)
+        direction = (second[1] - first[1], second[2] - first[2])
+        span = direction[1]^2 + direction[2]^2
+        span > 0.0 || return (first[1], first[2])
+        t = clamp(((point[1] - first[1]) * direction[1] + (point[2] - first[2]) * direction[2]) / span,
+                  0.0, 1.0)
+        return (first[1] + t * direction[1], first[2] + t * direction[2])
+    end
+    candidates = [((a[1], a[2]), project(a, c, d)), ((b[1], b[2]), project(b, c, d)),
+                  (project(c, a, b), (c[1], c[2])), (project(d, a, b), (d[1], d[2]))]
+    return candidates[argmin([hypot(p[1] - q[1], p[2] - q[2]) for (p, q) in candidates])]
+end
+
+# Narrow metal strips (supervisor decision 347; family 6 of the mesher generality list):
+# the tube of a metal side reaches Radius + PyramidHeight over the metal (the thin
+# sheet tube's metal half, the fabricated top tube's quadrant above the top face and the
+# bottom tube's quadrant under the metal), so two tubed sides of one plane whose tube
+# intervals face each other ACROSS THE METAL (each lies on the metal side of the
+# other's outward normal, at the closest points of the intervals) must be more than
+# twice that envelope apart, like the sides of a hole (NarrowHoles). Returns the
+# smallest facing width found (Inf without a facing pair); the guard fails closed
+# with the measured width and the reach. Adjacent sides (sharing an end) meet at a
+# corner, where the clearance rule applies; untubed short sides carry no tube.
+function metal_facing_width(segments, envelope_radius, tolerance)
+    width = Inf
+    n = length(segments)
+    for i in 1:n, j in (i + 1):n
+        first, second = segments[i], segments[j]
+        abs(first.plane - second.plane) <= tolerance || continue
+        (first.untubed || second.untubed) && continue
+        shared = any(norm(p .- q) <= tolerance for p in (first.start, first.stop)
+                     for q in (second.start, second.stop))
+        shared && continue
+        a = first.start .+ first.s_start .* first.direction
+        b = first.start .+ first.s_end .* first.direction
+        c = second.start .+ second.s_start .* second.direction
+        d = second.start .+ second.s_end .* second.direction
+        p, q = segment_closest_points_2d(a, b, c, d)
+        separation = [q[1] - p[1], q[2] - p[2]]
+        distance = norm(separation)
+        distance > tolerance || continue
+        # Across the metal: the other interval lies against each outward normal.
+        dot(first.normal, separation) < -tolerance && dot(second.normal, separation) > tolerance ||
+            continue
+        if distance < width
+            width = distance
+            width <= 2.0 * envelope_radius &&
+                scope_error("NarrowMetal", "the tubed metal sides $(first.start) -> $(first.stop) " *
+                                           "and $(second.start) -> $(second.stop) on plane " *
+                                           "$(first.plane) face each other across $distance of " *
+                                           "metal against twice the tube envelope " *
+                                           "$(envelope_radius) (Radius + PyramidHeight)")
+        end
+    end
+    return width
 end
 
 # Width of a hole for its facing tubes: the smallest distance between two
@@ -4906,6 +5002,11 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     records = TubeRecord[]
     tubes = Tuple{EdgeTube, TubeSection}[]
     segments = NamedTuple[]
+    # The untubed short sides (design A9 family 3): recorded, no tube, not in `segments`
+    # (which stays in lock-step with `tubes`: TubesPerSide tubes per segment).
+    untubed_edges = Dict{String, Any}[]
+    # The narrowest metal strip between facing tubed sides (decision 347; Inf without one).
+    metal_facing = Inf
     # Facing process layers (an upward layer below a downward one, the only pair
     # layer_groups admits): the vacuum gap between their metal top faces must exceed
     # two tube reaches, like the width of a hole.
@@ -4923,13 +5024,19 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         layer_loops = [loop for loop in loops if abs(loop.plane - layer.plane) <= tolerance]
         isempty(layer_loops) && error("Plan-view boundary is missing the tube layer $(layer.plane)")
         layer_segments = [(segment..., layer_sign=layer.sign) for segment in
-                          metal_edge_segments(layer_loops, corners, clearance, lower, upper, tolerance)]
+                          metal_edge_segments(layer_loops, corners, clearance, lower, upper, tolerance;
+                                              edge_size=edge_size, corner_radius=corner_radius)]
         if etch_loops !== nothing
             for segment in layer_segments
                 assert_etch_carries_edge(etch_loops, segment, tolerance)
             end
         end
+        metal_facing = min(metal_facing, metal_facing_width(layer_segments, envelope_radius, tolerance))
         for segment in layer_segments
+            if segment.untubed
+                push!(untubed_edges, untubed_edge_record(segment))
+                continue
+            end
             # The tube frame follows the layer: b is the process normal (Nz), so the
             # sections' "up" (towards the metal top face) and the extrusion sense
             # e = n x b mirror for a downward layer; the top tube sits on the metal top
@@ -4972,8 +5079,8 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                     push!(tools, tool)
                 end
             end
+            push!(segments, segment)
         end
-        append!(segments, layer_segments)
     end
     description = Dict{String, Any}(
         "Rings" => rings, "RingSizes" => ring_sizes(top_section),
@@ -5018,6 +5125,13 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                            "Continuation-class one has clearance 0; two metal sides meeting at a " *
                            "box vertex are a corner at any theta (decision 320)",
         "EnvelopeRadius" => envelope_radius,
+        "MetalFacingRule" => "two tubed metal sides of one plane whose tube intervals face each " *
+                             "other across the metal (each on the metal side of the other's " *
+                             "outward normal at their closest points) are more than 2 x " *
+                             "EnvelopeRadius = 2 (Radius + PyramidHeight) apart, else the build " *
+                             "fails closed at ScopeGuard[NarrowMetal] with the measured width " *
+                             "(supervisor decision 347)",
+        "MetalFacingWidth" => isfinite(metal_facing) ? metal_facing : nothing,
         "FacingReach" => facing_reach,
         "FacingRule" => "every hole is wider than 2 x (Radius + PyramidHeight + " *
                         "ProtectedDistance) between any two of its non-adjacent sides, and the " *
@@ -5033,7 +5147,23 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "Sheet" => fabricated ? nothing :
                    Dict("Angles" => sheet_section.angles, "Materials" => sheet_section.materials,
                         "Closed" => sheet_section.closed))
-    return tools, records, tubes, segments, description
+    return tools, records, tubes, segments, description, untubed_edges
+end
+
+# The census record of an untubed short side (design A9 family 3): the side, its
+# span, the two corner clearances (0 at a box vertex or face end), the tube interval
+# they leave, which ends are semantic corners and whether their balls cover the span.
+function untubed_edge_record(segment)
+    return Dict{String, Any}(
+        "Side" => Dict{String, Any}(
+            "Start" => copy(segment.start), "Stop" => copy(segment.stop),
+            "Plane" => segment.plane, "Conductor" => segment.conductor,
+            "Hole" => segment.hole, "Layer" => segment.layer_sign),
+        "Span" => segment.span,
+        "Clearances" => [segment.s_start, segment.span - segment.s_end],
+        "Interval" => segment.s_end - segment.s_start,
+        "Corners" => collect(segment.corners),
+        "CoveredByBalls" => segment.covered_by_balls)
 end
 
 # Gmsh element type of the linear volume cells and their vertex counts.
@@ -5440,7 +5570,9 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                 (c, d) -> band_law_size(d, lc_fine, lc_far, far_growth))))
     return Dict{String, Any}(
         "Rule" => "every straight metal edge (top and bottom edge of every metal segment) " *
-                  "carries a prism tube on its dielectric side: geometric rings of size " *
+                  "carries a prism tube on its dielectric side, except the untubed short sides " *
+                  "(Scope.UntubedEdges: a tube interval below the inner ring size; their corner " *
+                  "balls mesh them at CornerSize): geometric rings of size " *
                   "EdgeSize x GrowthRatio^(k-1) (RingSizes) over the sectors (SectorDegrees), " *
                   "extruded along the edge in Layers whose thickness follows the composed size " *
                   "field on the axis (LayerRule, TubeAxisSizeLaw; Spacing = the largest layer " *
@@ -5918,6 +6050,7 @@ function generate_spatial_coupon(;
     tube_records = TubeRecord[]
     tubes = Tuple{EdgeTube, TubeSection}[]
     tube_segments = NamedTuple[]
+    tube_untubed_edges = Dict{String, Any}[]
     tube_sections = Dict{String, Any}()
     tube_volumes = Int32[]
     if fabricated
@@ -5992,7 +6125,7 @@ function generate_spatial_coupon(;
         vacuum, _ = occ.cut(field, substrates, -1, true, false)
         objects = vcat(substrates, vacuum)
         if prism_tubes
-            tube_tools, tube_records, tubes, tube_segments, tube_sections =
+            tube_tools, tube_records, tubes, tube_segments, tube_sections, tube_untubed_edges =
                 build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
@@ -6043,7 +6176,7 @@ function generate_spatial_coupon(;
         end
         sheet_tools = length(tools)
         if prism_tubes
-            tube_tools, tube_records, tubes, tube_segments, tube_sections =
+            tube_tools, tube_records, tubes, tube_segments, tube_sections, tube_untubed_edges =
                 build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
@@ -6200,7 +6333,8 @@ function generate_spatial_coupon(;
                              "generation; the registration probe's census (InterfaceAreas carries the " *
                              "label set, no areas - nothing is meshed)",
                 "Scope" => prism_tubes ?
-                    recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance) :
+                    recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance,
+                                        tube_untubed_edges) :
                     nothing,
                 "SemanticContract" => semantic_contract,
                 "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
@@ -6844,7 +6978,8 @@ function generate_spatial_coupon(;
                 "Version" => 1, "Frame" => "SourceLocal",
                 "Purpose" => "Seed corner-ball census, longitudinal-face census and interface areas; reported, not a qualification gate",
                 "Scope" => prism_tubes ?
-                    recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance) :
+                    recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance,
+                                        tube_untubed_edges) :
                     nothing,
                 "SemanticContract" => semantic_contract,
                 "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),

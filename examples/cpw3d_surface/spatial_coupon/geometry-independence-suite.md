@@ -619,6 +619,35 @@ build census (`build-census`, the bound build report):
     near-collinear merge of the boundary loops (JUNCTION_TANGENT_ANGLE) into the mask
     facets (`reconcile_mask_with_boundary`, recorded `MaskVerticesReconciled`) so the
     mask and the boundary bound the same metal;
+  - UNTUBED SHORT SIDES (block (b) design A9 family 3, supervisor decision 304): a
+    straight metal side whose tube interval s_end - s_start (the span minus the two
+    corner clearances) is below the tube's inner ring size EdgeSize carries no tube -
+    its corner balls (CornerIsotropyRadius about the semantic corners at its ends)
+    mesh it with tetrahedra graded from CornerSize = EdgeSize (the thin cutoff
+    statement of decision 66 holds on it); an interval >= EdgeSize carries a tube of
+    at least one inner ring in length (the knife edge at interval == EdgeSize
+    separates two valid treatments; the smallest tube built so far is 15 nm thin >>
+    the 2-nm thin edge size, the former ShortEdges refusal was interval <= 0). The
+    census Scope records `UntubedEdges[] {Side, Span, Clearances, Interval, Corners, CoveredByBalls}` (`CoveredByBalls` false when the balls do not reach over the
+    whole span - an untubed side between two acute corners - whose middle then follows
+    the two-sided corner law) and `UntubedShortEdgeRule`; `TubeCount = TubesPerSide x (the straight sides minus the untubed ones)`, bound by `mesh_stage_contract. validate_untubed_edges` (side on the bound boundary, span, clearances, interval
+    below InnerSize, coverage against CornerIsotropyRadius). `UntubedShortEdges` is the
+    one supported class detected at the build (the classification from the frozen
+    inputs cannot know the clearances); it is exhibited by a non-empty
+    `Scope.UntubedEdges`;
+  - NARROW METAL STRIPS (supervisor decision 347; generality family 6, recorded, not
+    fixed): the tube of a metal side reaches Radius + PyramidHeight over the metal (the
+    thin sheet tube's metal half; the fabricated top tube's quadrant above the top
+    face and the bottom tube's quadrant under the metal), so two tubed sides of one
+    plane whose tube intervals face each other across the metal (each on the metal
+    side of the other's outward normal at their closest points) must be more than
+    2 (Radius + PyramidHeight) apart - the decision-66 thin tube (R 62 nm, h_pyr 16
+    nm) needs a strip wider than 156 nm, the fabricated top tube 79.5 nm. Narrower
+    strips fail closed at `ScopeGuard[NarrowMetal]` with the measured width and the
+    envelope (`metal_facing_width`; the S2p c83be8376d3a junction leads are 121-nm
+    strips: fabricated builds, thin stops); the Section records `MetalFacingRule` and
+    `MetalFacingWidth` (the narrowest facing width, null without a facing pair). A
+    per-side or per-coupon ring bound for such strips is the family-6 design item;
   - isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
     required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
     0.1 um ball), and every tube cap centre before a corner is a graded point of the
@@ -1348,7 +1377,8 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
 
   - **Classes.** `mesh_spatial_coupon.jl` `RECIPE_SCOPE_SUPPORTED_CLASSES` are the input
     classes the recipe builds (`ContinuationVertices`, `DeviceFootprint`, `ExteriorLoops`,
-    `MultipleConductors`, `MultipleLayers`, `MultipleSlots`, `TraceBasis`);
+    `MultipleConductors`, `MultipleLayers`, `MultipleSlots`, `TraceBasis`; since block (b)
+    step 4.2 also `UntubedShortEdges`, the one class detected at the build);
     `RECIPE_SCOPE_GUARDS` are the classes it fails closed on, each with a stable id, a
     statement and its detection origin: visible in the frozen inputs (`HoleLoops`,
     `DownwardLayers`, `TopRounding`, `TrenchRounding`, `SlopedSidewalls`, `ThinMetal`,
@@ -1356,7 +1386,10 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     pyramids would reach the trench floor; `NarrowTransverseBound` - no ring fits
     min(Overetch, MetalThickness / 2, CornerIsotropyRadius); `FreeEdgeEnds` - an edge end
     neither a semantic corner nor on the box; `ShortEdges` - no tube interval remains
-    after the corner clearances; `FootprintWithoutEdge` - an explicit footprint without
+    after the corner clearances (RETIRED by block (b) step 4.2: the supported class
+    `UntubedShortEdges` above, decision 304); `NarrowMetal` - a metal strip narrower than
+    twice the tube envelope between facing tubed sides (ADDED by step 4.2, decision
+    347); `FootprintWithoutEdge` - an explicit footprint without
     the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
     simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists
     (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).
