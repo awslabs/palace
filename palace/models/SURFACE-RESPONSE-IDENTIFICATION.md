@@ -2016,9 +2016,10 @@ per translational patch): transmon 10,366 patches / 2.98 M points in 1.8 s on 1 
 2,494 / 763 k in 0.24 s on 2 ranks; the transmon preflight digest 9ada660bf6e4, record and
 dry run are unchanged (no exclusion: its domain is far from the metal). Unit test
 `SurfaceResponseOperator domain-boundary exclusion` (`test-domainboundary.cpp`): a lead cut
-by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks, the
-default and the forced-GSLIB locator path, the notch fail-closed case, and the misplaced
-coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
+by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks (the
+routing locator; its forced-GSLIB variant was removed with the global gslib hash, decision
+346 (b)), the notch fail-closed case, and the misplaced coupon (reference off the mesh,
+every point off the mesh, no applied patch left) aborts.
 
 **Conductor-consistency gate (decision 277 (A), 2026-10-03;
 `SurfaceResponseOperator::ApplyConductorConsistencyGate`, SOLVE TIME ONLY).** A spatial
