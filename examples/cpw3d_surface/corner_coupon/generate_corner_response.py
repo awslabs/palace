@@ -154,12 +154,19 @@ class TraceBasisRule:
     (the crossings) where a knot sits (both sides), the remaining free knots at equal
     fractions between the innermost graded knots — the option-(c) held-out trace ramps over
     R / 3 from the metal arc and the fixed-fraction layout resolves it to -14 % (measured,
-    corner-basis-refinement-20260930). Rings that follow off the metal have all knots free."""
+    corner-basis-refinement-20260930). Rings that follow off the metal have all knots free.
+    The graded distances are ABSOLUTE only while the ring's free arc is at least
+    free_knot_grading_reference_free_arc_over_r x R: on a shorter free arc (an acute concave
+    wedge; block (b) DESIGN A9 family 4, decision 318) they are scaled by
+    min(1, FreeArc / Reference), so the sharper node keeps the reference node's layout
+    proportions, the slot structure, like-to-like indices and zero set are unchanged and
+    every node whose free arc reaches the reference is bit-identical."""
 
     LAYOUTS = ("MetalRingsOnly", "AllRingsFollowMetal")
 
     def __init__(self, layout, metal_interior_knots, free_knots, free_knot_grading=(),
-                 extra_levels_above_over_overetch=()):
+                 extra_levels_above_over_overetch=(),
+                 free_knot_grading_reference_free_arc_over_r=None):
         if layout not in self.LAYOUTS:
             raise ValueError(f"unknown trace basis layout {layout!r}")
         grading = tuple(float(g) for g in free_knot_grading)
@@ -172,10 +179,26 @@ class TraceBasisRule:
             raise ValueError("extra levels must be increasing positive multiples of OveretchDepth")
         if layout == "MetalRingsOnly" and (grading or extra):
             raise ValueError("the MetalRingsOnly layout has no free knot grading and no extra levels")
+        if free_knot_grading_reference_free_arc_over_r is not None:
+            reference = float(free_knot_grading_reference_free_arc_over_r)
+            if not grading:
+                raise ValueError("the free knot grading reference is a graded-layout option")
+            # The unscaled grading needs a free arc longer than twice its outermost distance.
+            if not reference > 2.0 * grading[-1]:
+                raise ValueError(
+                    "the free knot grading reference free arc must exceed twice the outermost "
+                    "graded distance (over R)"
+                )
+            free_knot_grading_reference_free_arc_over_r = reference
+        elif grading:
+            raise ValueError("a graded layout needs its free knot grading reference free arc")
         self.layout = layout
         self.metal_interior_knots = int(metal_interior_knots)
         self.free_knots = int(free_knots)
         self.free_knot_grading = grading
+        self.free_knot_grading_reference_free_arc_over_r = (
+            free_knot_grading_reference_free_arc_over_r
+        )
         # Extra outer rings above the metal top at MetalThickness + k OveretchDepth
         # (AllRingsFollowMetal): k = 1 mirrors the trench ring; k = 4 (0.30 um at the recorded
         # process) resolves the trace right above the metal top over the metal arc, where the
@@ -196,8 +219,10 @@ class TraceBasisRule:
         return isinstance(other, TraceBasisRule) and (
             self.layout, self.metal_interior_knots, self.free_knots, self.free_knot_grading,
             self.extra_levels_above_over_overetch,
+            self.free_knot_grading_reference_free_arc_over_r,
         ) == (other.layout, other.metal_interior_knots, other.free_knots, other.free_knot_grading,
-              other.extra_levels_above_over_overetch)
+              other.extra_levels_above_over_overetch,
+              other.free_knot_grading_reference_free_arc_over_r)
 
     def levels(self, radius, metal_thickness, overetch_depth):
         """The outer ring heights: the fabrication planes that reach the box and the far
@@ -217,23 +242,47 @@ class TraceBasisRule:
 
     @classmethod
     def from_record(cls, record):
+        grading = record.get("FreeKnotGrading", ())
+        # A graded record without the reference key is the default reference: the key is
+        # written only where the scaling is active (decision 318), so every record built
+        # before the scaling existed (free arcs >= the reference) reads unchanged.
+        reference = record.get(
+            "FreeKnotGradingReferenceFreeArcOverR",
+            FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R if grading else None,
+        )
         return cls(
             record.get("RingLayout", "MetalRingsOnly"),
             record["MetalInteriorKnots"],
             record["FreeKnots"],
-            record.get("FreeKnotGrading", ()),
+            grading,
             record.get("ExtraLevelsAboveOverOveretch", ()),
+            reference,
         )
 
 
 # The recorded rule (corner-basis fix; RingSize 8 = the lane-2 count).
 LEGACY_RULE = TraceBasisRule("MetalRingsOnly", METAL_INTERIOR_KNOTS, FREE_KNOTS)
+# The reference free arc of the graded free-knot layout (block (b) DESIGN A9 family 4,
+# decision 318): the free arc, over R, of every ring at the family's sharpest QUALIFIED node,
+# the concave 60-degree node (2 - cot 60 deg = 2 - 1 / sqrt 3, written as a decimal literal so
+# every platform and the C++ kFreeKnotGradingReferenceFreeArcOverR parse the same double; every
+# ring of the box carries the same perimeter fractions, so one number serves every ring). A node
+# whose free arc is shorter (a concave wedge below 60 degrees: 56.3 degrees is where the unscaled
+# R / 3, 2R / 3 grading exhausts the arc) scales the graded distances by FreeArc / Reference;
+# every other node is unchanged. A free arc within the tolerance of the reference IS the
+# reference (the 60-degree node's own arc, computed from its crossing fractions, differs from
+# the literal by 1 ulp): the tolerance is the runtime's basis position tolerance (1e-9 R).
+FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R = 1.4226497308103743
+FREE_KNOT_GRADING_REFERENCE_TOLERANCE_OVER_R = 1.0e-9
 # The refined rule (corner-basis refinement 2026-09-30, Phase 1 candidate C14, supervisor
 # decision): against the converged held-out reference every SA / MS / MA of the 7 measured
 # coupons is within 5.3 % (the thin domain within 6.3 %, a known representation error of
 # every all-rings layout: the trace sits 2-4 % low between -R / 3 and -d and above t + R / 3);
 # 11 rings x 16 knots = 176 knots.
-REFINED_RULE = TraceBasisRule("AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4))
+REFINED_RULE = TraceBasisRule(
+    "AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4),
+    FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R,
+)
 RULES = {"legacy": LEGACY_RULE, "all-rings-follow-metal": REFINED_RULE}
 # The held-out reference surface (option (c); USER decision 161 (2) and the supervisor's
 # decision of 2026-09-30, corner-basis-refinement-20260930 sections 5-9): its z-levels are
@@ -270,7 +319,8 @@ def heldout_reference_levels(radius, metal_thickness, overetch_depth):
     return kept
 
 
-def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RULE):
+def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RULE,
+                     free_arc_over_r=None):
     """The TraceBasis record. With a connectivity angle the coupon is a node of an
     interpolation SEGMENT of the corner family (corner-qualification block 2026-09-29): the
     bands next to its metal rings are triangulated in the merge order of the rule's layout at
@@ -278,7 +328,11 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RUL
     hats do not jump between the segment's nodes (they do at every knot passage of a
     fixed-layout vertex under the perimeter-ordered merge; corner_family_interpolation.py
     lists the events). Without one the coupon is a legacy node: exact matches only. The
-    AllRingsFollowMetal layout has no events and takes no connectivity angle."""
+    AllRingsFollowMetal layout has no events and takes no connectivity angle. `free_arc_over_r`
+    = the node's free arc (perimeter length over R, the same on every ring): a graded layout
+    whose scaling is ACTIVE there (free arc below the rule's reference) records
+    FreeKnotGradingReferenceFreeArcOverR; a record without the key reads the default reference
+    (decision 318), so nodes the scaling does not touch keep their byte-identical record."""
     if ring_size != rule.ring_size:
         raise ValueError(
             f"ring size {ring_size} is not the rule's 2 + MetalInteriorKnots + FreeKnots = "
@@ -312,6 +366,17 @@ def trace_basis_rule(ring_size, connectivity_angle_degrees=None, rule=LEGACY_RUL
             "ExtraLevelsAboveOverOveretch": list(rule.extra_levels_above_over_overetch),
             "CapCentre": "MeanOfCrossingKnots",
         }
+        if free_arc_over_r is not None and free_knot_grading_scale(free_arc_over_r, rule) < 1.0:
+            record["Rule"] += (
+                "; the graded free-knot distances are scaled by min(1, FreeArc / "
+                "FreeKnotGradingReferenceFreeArcOverR) with FreeArc the ring's free arc over R "
+                "(the same on every ring), so this node keeps the layout proportions of the "
+                "family's reference node (the concave 60-degree node) with the same slots, "
+                "like-to-like indices and zero set (block (b) DESIGN A9 family 4, decision 318)"
+            )
+            record["FreeKnotGradingReferenceFreeArcOverR"] = (
+                rule.free_knot_grading_reference_free_arc_over_r
+            )
         return record
     record = {
         "Rule": (
@@ -425,14 +490,39 @@ def metal_ring_layout(radius, angle_degrees, topology, ring_size):
     return rule_ring_layout(radius, angle_degrees, topology, LEGACY_RULE, True)
 
 
+def free_arc_over_radius(free_arc):
+    """Perimeter length over R of a free arc (start, end) in unwrapped perimeter fractions
+    (the perimeter is 8 R)."""
+    start, end = free_arc
+    return 8.0 * (end - start)
+
+
+def free_knot_grading_scale(free_arc_over_r, rule):
+    """min(1, FreeArc / Reference): the factor on the rule's graded free-knot distances for a
+    ring whose free arc is `free_arc_over_r` (over R); exactly 1 for every ring whose free arc
+    reaches the rule's reference within FREE_KNOT_GRADING_REFERENCE_TOLERANCE_OVER_R (the
+    layout is then the unscaled one, bit for bit)."""
+    reference = rule.free_knot_grading_reference_free_arc_over_r
+    if (
+        not rule.free_knot_grading
+        or free_arc_over_r >= reference - FREE_KNOT_GRADING_REFERENCE_TOLERANCE_OVER_R
+    ):
+        return 1.0
+    return free_arc_over_r / reference
+
+
 def free_knot_fractions(free_arc, rule):
     """Unwrapped fractions of the rule's free knots on the free arc (start, end): the graded
-    knots at free_knot_grading x R from both ends, the remaining knots at equal fractions
-    between the innermost graded ones (equal fractions of the whole arc without grading)."""
+    knots at free_knot_grading x R from both ends (scaled by free_knot_grading_scale on a free
+    arc shorter than the rule's reference), the remaining knots at equal fractions between the
+    innermost graded ones (equal fractions of the whole arc without grading)."""
     start, end = free_arc
     if not rule.free_knot_grading:
         return [start + (end - start) * k / (rule.free_knots + 1) for k in range(1, rule.free_knots + 1)]
     offsets = [g / 8.0 for g in rule.free_knot_grading]  # perimeter fraction = distance / 8R
+    scale = free_knot_grading_scale(free_arc_over_radius(free_arc), rule)
+    if scale < 1.0:
+        offsets = [offset * scale for offset in offsets]
     inner_start, inner_end = start + offsets[-1], end - offsets[-1]
     if inner_end - inner_start <= KNOT_COINCIDENCE_FRACTION:
         raise ValueError("the free arc is too short for the free knot grading")
@@ -1628,7 +1718,14 @@ def main():
         args.trench_rounding,
         args.substrate_permittivity,
         interface_layers,
-        trace_basis_rule(args.ring_size, args.connectivity_angle, rule),
+        trace_basis_rule(
+            args.ring_size,
+            args.connectivity_angle,
+            rule,
+            free_arc_over_radius(
+                metal_arc_fractions(args.radius, args.angle, args.topology)[1]
+            ),
+        ),
     )
 
     # The held-out reference surface: the fixed layout of HELDOUT_REFERENCE_RING_SIZE knots

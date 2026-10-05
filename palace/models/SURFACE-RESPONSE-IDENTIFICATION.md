@@ -2377,9 +2377,19 @@ metal arc, without which the concave family's fabricated MA read +7 %), R/3, R, 
 inner cap rings — carries the SAME angle-dependent knot fractions: the two crossings,
 `MetalInteriorKnots` = 5 at equal fractions of the metal arc, `FreeKnots` = 9 with
 `FreeKnotGrading` [1/3, 2/3] (a knot at R/3 and one at 2R/3 along the perimeter from each
-crossing on the free side, 5 at equal fractions between); PEC = crossings + metal-interior
-knots on the two metal rings only (14 of 176 knots); the box corners are slaves on every
-ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing knots
+crossing on the free side, 5 at equal fractions between; ACUTE CONCAVE nodes — block (b)
+DESIGN A9 family 4, decision 318: a concave wedge's free arc is (2 - cot theta) R and the
+unscaled grading exhausts it below 56.3 deg, so on a free arc shorter than
+`FreeKnotGradingReferenceFreeArcOverR` = 2 - cot 60 deg = 1.4226497308103743 (the concave
+60-degree node's, the family's sharpest qualified node) the two graded distances are scaled
+by FreeArc / Reference — the sharper node keeps the 60-degree node's layout proportions with
+the same slots, like-to-like indices and zero set; the generator writes the key only on
+records where the scaling is active and an absent key reads as that default, so every record
+written before (free arcs at or above the reference) is unchanged and the family stays on one
+rule; `FreeKnotGradingScale`, `kFreeKnotGradingReferenceFreeArcOverR`); PEC = crossings +
+metal-interior knots on the two metal rings only (14 of 176 knots); the box corners are slaves
+on every ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing
+knots
 (the recorded fixed cap's fan diagonal gave the centre that value too; a fan from a ring
 vertex is degenerate as soon as two consecutive dense knots share the apex's side); every
 band is a regular column grid with one diagonal orientation. Consequences: NO events (no

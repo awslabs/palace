@@ -79,7 +79,17 @@ and the two cap rings — carries the same angle-dependent fractions (the two
 crossings, 5 metal-interior knots, 9 free knots graded at `R / 3` and `2R / 3` from
 each crossing), PEC on the two metal rings only, box corners as slaves, cap centres
 as slaves at the mean of the two crossing knots; 176 knots, no events (one
-interpolation segment, no `--connectivity-angle`). `--trace-basis legacy` (the
+interpolation segment, no `--connectivity-angle`). On a free arc shorter than
+`FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R` = 2 - cot 60 deg (the concave 60-degree
+node's free arc; a concave wedge's free arc is (2 - cot theta) R, and the unscaled
+grading exhausts it below 56.3 deg) the two graded distances are scaled by
+FreeArc / Reference (`free_knot_grading_scale`; block (b) DESIGN A9 family 4, decision
+318), so an acute concave node keeps the 60-degree node's layout proportions with the
+same slots, like-to-like indices and zero set; the record key
+`FreeKnotGradingReferenceFreeArcOverR` is written only where the scaling is active
+(an absent key reads as that default in the generator and in Palace), so every node
+whose free arc reaches the reference — concave >= 60 deg, every convex node — is
+bit-identical, record included. `--trace-basis legacy` (the
 default of the script) is the recorded `MetalRingsOnly` rule (8 knots per ring,
 events, segment connectivity), byte-identical to the recorded coupons in its basis,
 trace mesh, zero set and record; its held-out REFERENCE, however, is now the decoupled

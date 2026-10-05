@@ -571,5 +571,146 @@ class RefinedRuleTest(unittest.TestCase):
         self.assertTrue(np.all(values[~pec] != 0.0))
 
 
+class AcuteConcaveGradingTest(unittest.TestCase):
+    """Family 4 of block (b) (DESIGN A9; decisions 304 / 318): the REFINED_RULE's graded free-knot
+    distances (R / 3, 2R / 3 from each crossing) are scaled by min(1, FreeArc / Reference) with
+    Reference = the free arc of the concave 60-degree node, so acute concave nodes below 58
+    degrees build with the 60-degree node's layout proportions, the same slots, like-to-like
+    indices and zero set, while every node whose free arc reaches the reference is bit-identical
+    and keeps its record (the reference key is written only where the scaling is active)."""
+
+    RULE = GENERATOR.REFINED_RULE
+
+    @staticmethod
+    def free_arc(angle, topology):
+        return GENERATOR.free_arc_over_radius(GENERATOR.metal_arc_fractions(RADIUS, angle, topology)[1])
+
+    @staticmethod
+    def unscaled_free_knot_fractions(free_arc, rule):
+        # The rule before family 4: absolute distances g R from both ends of the free arc.
+        start, end = free_arc
+        offsets = [g / 8.0 for g in rule.free_knot_grading]
+        inner_start, inner_end = start + offsets[-1], end - offsets[-1]
+        remaining = rule.free_knots - 2 * len(offsets)
+        fractions = [start + o for o in offsets] + [end - o for o in offsets]
+        fractions += [inner_start + (inner_end - inner_start) * k / (remaining + 1) for k in range(1, remaining + 1)]
+        return sorted(fractions)
+
+    def test_reference_is_the_concave_60_degree_free_arc(self):
+        reference = GENERATOR.FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R
+        self.assertEqual(reference, 1.4226497308103743)
+        self.assertAlmostEqual(reference, 2.0 - 1.0 / np.sqrt(3.0), places=15)
+        self.assertEqual(self.RULE.free_knot_grading_reference_free_arc_over_r, reference)
+        # The 60-degree node's own arc (from its crossing fractions) is the reference within the
+        # tolerance: its scale is exactly 1 (no knife-edge at the reference node).
+        arc60 = self.free_arc(60.0, "concave")
+        self.assertLess(abs(arc60 - reference), GENERATOR.FREE_KNOT_GRADING_REFERENCE_TOLERANCE_OVER_R)
+        self.assertEqual(GENERATOR.free_knot_grading_scale(arc60, self.RULE), 1.0)
+        # Below the reference the scale is the arc ratio; the unscaled grading needs > 4R / 3.
+        for angle in (45.0, 52.5, 56.0, 58.0):
+            arc = self.free_arc(angle, "concave")
+            self.assertEqual(GENERATOR.free_knot_grading_scale(arc, self.RULE), arc / reference)
+        self.assertLess(self.free_arc(56.0, "concave"), 4.0 / 3.0)
+        self.assertGreater(self.free_arc(58.0, "concave"), 4.0 / 3.0)
+
+    def test_acute_concave_nodes_build_where_the_unscaled_grading_failed(self):
+        # Fail-before: the unscaled grading has no inner interval below 56.3 degrees (the group-A
+        # "58 ok / 56 fail"); pass-after: the scaled rule lays out 45 / 52.5 / 56 with 16 knots,
+        # the concave zero slots and no coincident knots.
+        for angle in (45.0, 46.809687, 51.672903, 52.5, 56.0):
+            _, free = GENERATOR.metal_arc_fractions(RADIUS, angle, "concave")
+            start, end = free
+            # The unscaled inner interval (between the two 2R / 3 knots) is exhausted.
+            self.assertLessEqual((end - start) - 2.0 * (2.0 / 3.0 / 8.0), GENERATOR.KNOT_COINCIDENCE_FRACTION, angle)
+            layout = GENERATOR.rule_ring_layout(RADIUS, angle, "concave", self.RULE, True)
+            knots = [(f, kind, slot) for f, kind, slot in layout if kind != "slave"]
+            self.assertEqual(len(knots), 16, angle)
+            self.assertEqual(sorted(slot for _, kind, slot in knots if kind == "zero"),
+                             GENERATOR.zero_slots("concave", self.RULE), angle)
+            surface = GENERATOR.build_surface(RADIUS, 16, THICKNESS, OVERETCH, angle_degrees=angle,
+                                              topology="concave", rule=self.RULE)
+            self.assertEqual(len(surface.knot_points), 176)
+            self.assertEqual(surface.contour_groups, [16] * 11)
+            self.assertEqual(GENERATOR.free_hat_pec_support(
+                np.asarray(surface.knot_points), surface.contour_groups, np.flatnonzero(surface.knot_zero),
+                pec_mask(angle, "concave"), surface.slaves), [])
+
+    def test_scaled_nodes_keep_the_60_degree_layout_proportions(self):
+        # In arc-relative coordinates (fraction of the free arc from the first crossing) the
+        # free knots of a scaled node are those of the 60-degree node: the layout proportions
+        # of the family's sharpest qualified node, like-to-like by slot.
+        def relative(angle):
+            _, free = GENERATOR.metal_arc_fractions(RADIUS, angle, "concave")
+            start, end = free
+            fractions = GENERATOR.free_knot_fractions(free, self.RULE)
+            return [(f - start) / (end - start) for f in fractions]
+        reference = relative(60.0)
+        self.assertEqual(len(reference), 9)
+        for angle in (45.0, 52.5, 56.0, 58.0):
+            np.testing.assert_allclose(relative(angle), reference, rtol=0.0, atol=1e-12, err_msg=str(angle))
+        # A node above the reference keeps the ABSOLUTE distances instead (R / 3, 2R / 3).
+        _, free = GENERATOR.metal_arc_fractions(RADIUS, 90.0, "concave")
+        fractions = GENERATOR.free_knot_fractions(free, self.RULE)
+        self.assertAlmostEqual(fractions[0] - free[0], 1.0 / 3.0 / 8.0, places=15)
+        self.assertAlmostEqual(fractions[1] - free[0], 2.0 / 3.0 / 8.0, places=15)
+
+    def test_nodes_at_or_above_the_reference_are_bit_identical(self):
+        # Every concave node >= 60 degrees and every convex node (free arcs 4-7.73 R): the scaled
+        # rule reproduces the unscaled fractions EXACTLY (the same floating-point expressions).
+        for topology, angles in (("concave", (60.0, 70.498378, 75.0, 78.0, 80.0, 82.5) + ANGLES),
+                                 ("convex", (15.0, 22.5, 30.0, 45.0, 52.82, 60.0, 63.53, 70.43) + ANGLES)):
+            for angle in angles:
+                _, free = GENERATOR.metal_arc_fractions(RADIUS, angle, topology)
+                self.assertEqual(GENERATOR.free_knot_grading_scale(GENERATOR.free_arc_over_radius(free), self.RULE), 1.0)
+                self.assertEqual(GENERATOR.free_knot_fractions(free, self.RULE),
+                                 self.unscaled_free_knot_fractions(free, self.RULE), (topology, angle))
+
+    def test_reference_key_only_where_the_scaling_is_active(self):
+        inactive = GENERATOR.trace_basis_rule(16, None, self.RULE, self.free_arc(60.0, "concave"))
+        self.assertEqual(inactive, GENERATOR.trace_basis_rule(16, None, self.RULE))
+        self.assertNotIn("FreeKnotGradingReferenceFreeArcOverR", inactive)
+        for topology, angle in (("concave", 75.0), ("concave", 180.0), ("convex", 15.0), ("convex", 90.0)):
+            self.assertEqual(GENERATOR.trace_basis_rule(16, None, self.RULE, self.free_arc(angle, topology)), inactive)
+        active = GENERATOR.trace_basis_rule(16, None, self.RULE, self.free_arc(45.0, "concave"))
+        self.assertEqual(active["FreeKnotGradingReferenceFreeArcOverR"], 1.4226497308103743)
+        self.assertIn("min(1, FreeArc / FreeKnotGradingReferenceFreeArcOverR)", active["Rule"])
+        self.assertEqual({k: v for k, v in active.items() if k not in ("Rule", "FreeKnotGradingReferenceFreeArcOverR")},
+                         {k: v for k, v in inactive.items() if k != "Rule"})
+        # Both records read as ONE rule (the runtime's one-rule-per-family check): an absent key
+        # is the default reference.
+        self.assertEqual(GENERATOR.TraceBasisRule.from_record(inactive), self.RULE)
+        self.assertEqual(GENERATOR.TraceBasisRule.from_record(active), self.RULE)
+        self.assertEqual(GENERATOR.TraceBasisRule.from_record(dict(active, FreeKnotGradingReferenceFreeArcOverR=1.5)).
+                         free_knot_grading_reference_free_arc_over_r, 1.5)
+        self.assertNotEqual(GENERATOR.TraceBasisRule.from_record(dict(active, FreeKnotGradingReferenceFreeArcOverR=1.5)), self.RULE)
+        self.assertIsNone(GENERATOR.LEGACY_RULE.free_knot_grading_reference_free_arc_over_r)
+        with self.assertRaises(ValueError):  # a graded layout needs its reference
+            GENERATOR.TraceBasisRule("AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4), None)
+        with self.assertRaises(ValueError):  # the reference must exceed twice the outermost distance
+            GENERATOR.TraceBasisRule("AllRingsFollowMetal", 5, 9, (1.0 / 3.0, 2.0 / 3.0), (1, 4), 4.0 / 3.0)
+        with self.assertRaises(ValueError):  # not a MetalRingsOnly option
+            GENERATOR.TraceBasisRule("MetalRingsOnly", 1, 5, (), (), 1.5)
+
+    def test_layout_pins_shared_with_the_cpp_rule(self):
+        # The same numbers as CornerRefinedRuleAcuteConcaveLayout in test-cornerbasisrefinement.cpp.
+        pins = {
+            45.0: ([0.5, 0.529288071241, 0.558576142482, 0.559884094988, 0.561192047494, 0.5625,
+                    0.563807952506, 0.565115905012, 0.566423857518, 0.595711928759, 0.625,
+                    0.770833333333, 0.916666666667, 0.0625, 0.208333333333, 0.354166666667], 3),
+            52.5: ([0.5, 0.536102614993, 0.572205229985, 0.573817507741, 0.575429785496,
+                    0.577042063251, 0.578654341007, 0.580266618762, 0.581878896517, 0.61798151151,
+                    0.654084126503, 0.795070105419, 0.936056084335, 0.077042063251, 0.218028042168,
+                    0.359014021084], 4),
+        }
+        for angle, (fractions, slaves) in pins.items():
+            layout = GENERATOR.rule_ring_layout(RADIUS, angle, "concave", self.RULE, True)
+            by_slot = {slot: (f, kind) for f, kind, slot in layout if kind != "slave"}
+            self.assertEqual(len(by_slot), 16)
+            self.assertEqual(sum(1 for _, kind, _ in layout if kind == "slave"), slaves)
+            for slot in range(16):
+                self.assertAlmostEqual(by_slot[slot][0], fractions[slot], places=9, msg=(angle, slot))
+                self.assertEqual(by_slot[slot][1] == "zero", slot in [0, 10, 11, 12, 13, 14, 15], (angle, slot))
+
+
 if __name__ == "__main__":
     unittest.main()

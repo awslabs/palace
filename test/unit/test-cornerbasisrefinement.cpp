@@ -28,6 +28,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
@@ -214,11 +215,12 @@ struct CouponFiles
 // A unit-test coupon of the refined rule at `angle` (basis points, trace mesh; with
 // `perturb_knot` the free knot of that 0-based index is moved 1e-6 R along its ring: a
 // coupon that is NOT the rule's).
-CouponFiles WriteRefinedCoupon(const fs::path &directory, const std::string &tag,
-                               double angle, bool convex, double radius, double t,
-                               double oe, std::optional<int> perturb_knot = std::nullopt)
+CouponFiles
+WriteRefinedCoupon(const fs::path &directory, const std::string &tag, double angle,
+                   bool convex, double radius, double t, double oe,
+                   std::optional<int> perturb_knot = std::nullopt,
+                   const CornerTraceBasisRule &rule = RefinedCornerTraceBasisRule())
 {
-  const auto rule = RefinedCornerTraceBasisRule();
   const auto seed = MakeCornerBoxSeed(radius, t, oe, convex, rule);
   const auto basis =
       BuildCornerTraceBasis(seed.points, seed.contour_groups, seed.zero_trace_indices,
@@ -389,6 +391,99 @@ MakePolygonIslandMesh(const std::vector<std::array<double, 2>> &polygon, double 
   serial.FinalizeTopology();
   serial.Finalize();
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// MakePolygonIslandMesh for a STAR-SHAPED (non-convex) polygon: the radial function is the
+// ray's hit on the boundary SEGMENT (the half-plane form above is the convex hull of the
+// edge lines), so an island with a notch — a concave metal corner whose angle is the
+// notch's opening — is exact.
+std::unique_ptr<mfem::ParMesh>
+MakeStarIslandMesh(const std::vector<std::array<double, 2>> &polygon, double extent,
+                   double h)
+{
+  const int n = static_cast<int>(std::lround(extent / h));
+  mfem::Mesh serial =
+      mfem::Mesh::MakeCartesian3D(n, 4, n, mfem::Element::HEXAHEDRON, extent, 1.0, extent);
+  const double c = 0.5 * extent;
+  auto Level = [&](const double *point)
+  { return std::max(std::abs(point[0] - c), std::abs(point[2] - c)); };
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> vertices;
+    serial.GetFaceVertices(face, vertices);
+    bool on_plane = true;
+    double level_max = 0.0;
+    for (const int vertex : vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < 1.0e-12;
+      level_max = std::max(level_max, Level(point));
+    }
+    if (on_plane && level_max <= 1.0 + 1.0e-9)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  auto StarRadius = [&](double ux, double uz)
+  {
+    double r = mfem::infinity();
+    for (std::size_t k = 0; k < polygon.size(); k++)
+    {
+      const auto &a = polygon[k], &b = polygon[(k + 1) % polygon.size()];
+      // Ray (0, 0) + s (ux, uz) against the segment a + t (b - a), t in [0, 1].
+      const double dx = b[0] - a[0], dz = b[1] - a[1];
+      const double determinant = ux * dz - uz * dx;
+      if (std::abs(determinant) < 1.0e-14)
+      {
+        continue;
+      }
+      const double s = (a[0] * dz - a[1] * dx) / determinant;
+      const double t = (a[0] * uz - a[1] * ux) / determinant;
+      if (s > 0.0 && t >= -1.0e-12 && t <= 1.0 + 1.0e-12)
+      {
+        r = std::min(r, s);
+      }
+    }
+    MFEM_VERIFY(std::isfinite(r), "The star-shaped island polygon misses a ray!");
+    return r;
+  };
+  for (int vertex = 0; vertex < serial.GetNV(); vertex++)
+  {
+    double *point = serial.GetVertex(vertex);
+    const double lx = point[0] - c, lz = point[2] - c;
+    const double norm = std::hypot(lx, lz);
+    const double level = std::max(std::abs(lx), std::abs(lz));
+    if (norm > 1.0e-12 && level < 3.0 - 1.0e-9)
+    {
+      const double ux = lx / norm, uz = lz / norm;
+      const double square = 1.0 / std::max(std::abs(ux), std::abs(uz));
+      const double polygon_scale = StarRadius(ux, uz) / square;
+      const double blend = level <= 2.0 ? 1.0 : (3.0 - level);
+      const double scale = 1.0 + blend * (polygon_scale - 1.0);
+      point[0] = c + scale * lx;
+      point[2] = c + scale * lz;
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// The unit-square island with a notch of opening `angle` degrees cut from the top side down
+// to the apex (0, 1 - 0.3 / tan(angle / 2)) between the grid-ray vertices (+-0.3, 1): one
+// CONCAVE metal corner of that angle, two convex corners at the notch mouth.
+std::vector<std::array<double, 2>> NotchedIsland(double angle)
+{
+  const double apex = 1.0 - 0.3 / std::tan(0.5 * angle * kDeg);
+  return {{-1.0, -1.0}, {1.0, -1.0}, {1.0, 1.0}, {0.3, 1.0},
+          {0.0, apex},  {-0.3, 1.0}, {-1.0, 1.0}};
 }
 
 }  // namespace
@@ -580,6 +675,185 @@ TEST_CASE("CornerRefinedRuleLayout", "[cornerbasisrefinement][Serial][Parallel]"
   }
 }
 
+TEST_CASE("CornerRefinedRuleAcuteConcaveGrading",
+          "[cornerbasisrefinement][Serial][Parallel]")
+{
+  // Block (b) family 4 (DESIGN A9; decisions 304 / 318): the graded free-knot distances
+  // scale by min(1, FreeArc / Reference), Reference = the concave 60-degree node's free arc
+  // 2 - cot 60 deg, so acute concave nodes build with that node's layout proportions (the
+  // generator refused them below 56.3 degrees: no inner interval between the two 2R / 3
+  // knots) while every node whose free arc reaches the reference is bit-identical.
+  const auto rule = RefinedCornerTraceBasisRule();
+  CHECK(rule.free_knot_grading_reference_free_arc_over_r ==
+        kFreeKnotGradingReferenceFreeArcOverR);
+  CHECK(kFreeKnotGradingReferenceFreeArcOverR == 1.4226497308103743);
+  CHECK_THAT(kFreeKnotGradingReferenceFreeArcOverR,
+             WithinAbs(2.0 - 1.0 / std::sqrt(3.0), 1.0e-15));
+  CHECK(CheckCornerTraceBasisRule(rule).empty());
+  {
+    auto bad = rule;
+    bad.free_knot_grading_reference_free_arc_over_r = 4.0 / 3.0;  // = 2 x the outermost
+    CHECK_THAT(CheckCornerTraceBasisRule(bad),
+               ContainsSubstring("FreeKnotGradingReferenceFreeArcOverR"));
+    // The default rule (no grading) ignores the reference.
+    CornerTraceBasisRule legacy;
+    legacy.free_knot_grading_reference_free_arc_over_r = 0.1;
+    CHECK(CheckCornerTraceBasisRule(legacy).empty());
+  }
+  auto FreeArc = [](double angle, bool convex)
+  {
+    const auto [first, second] = ArmCrossingFractions(kR, angle * kDeg);
+    // The free arc: the sector between the arms for a concave corner, its complement for a
+    // convex one (the generator's metal_arc_fractions), over R.
+    return 8.0 * (convex ? (first + 1.0) - second : second - first);
+  };
+  // The concave free arc is (2 - cot theta) R: the 60-degree node's own arc (from its
+  // crossing fractions) is the reference within the tolerance -> scale exactly 1; the
+  // unscaled grading needs > 4R / 3 (58 ok / 56 fail of the group-A lane).
+  CHECK_THAT(FreeArc(60.0, false), WithinAbs(kFreeKnotGradingReferenceFreeArcOverR,
+                                             kFreeKnotGradingReferenceToleranceOverR));
+  CHECK(FreeKnotGradingScale(FreeArc(60.0, false), rule) == 1.0);
+  CHECK(FreeArc(58.0, false) > 4.0 / 3.0);
+  CHECK(FreeArc(56.0, false) < 4.0 / 3.0);
+  CHECK_THAT(FreeArc(45.0, false), WithinAbs(1.0, 1.0e-12));
+  CHECK_THAT(FreeKnotGradingScale(FreeArc(45.0, false), rule),
+             WithinAbs(1.0 / kFreeKnotGradingReferenceFreeArcOverR, 1.0e-15));
+  CHECK(FreeKnotGradingScale(FreeArc(52.5, false), rule) ==
+        FreeArc(52.5, false) / kFreeKnotGradingReferenceFreeArcOverR);
+  CHECK(FreeKnotGradingScale(FreeArc(15.0, true), rule) == 1.0);
+  CHECK(FreeKnotGradingScale(FreeArc(180.0, true), rule) == 1.0);
+  // Pins shared with test_generate_corner_response.AcuteConcaveGradingTest (R = 1.9).
+  const std::vector<double> concave_45 = {
+      0.5,           0.529288071241, 0.558576142482, 0.559884094988, 0.561192047494,
+      0.5625,        0.563807952506, 0.565115905012, 0.566423857518, 0.595711928759,
+      0.625,         0.770833333333, 0.916666666667, 0.0625,         0.208333333333,
+      0.354166666667};
+  const std::vector<double> concave_52p5 = {0.5,
+                                            0.536102614993,
+                                            0.572205229985,
+                                            0.573817507741,
+                                            0.575429785496,
+                                            0.577042063251,
+                                            0.578654341007,
+                                            0.580266618762,
+                                            0.581878896517,
+                                            0.61798151151,
+                                            0.654084126503,
+                                            0.795070105419,
+                                            0.936056084335,
+                                            0.077042063251,
+                                            0.218028042168,
+                                            0.359014021084};
+  const std::vector<int> concave_zero_slots = {0, 10, 11, 12, 13, 14, 15};
+  for (const auto &[angle, pins, slaves] :
+       std::vector<std::tuple<double, std::vector<double>, int>>{{45.0, concave_45, 3},
+                                                                 {52.5, concave_52p5, 4}})
+  {
+    const auto layout = CornerRuleRingLayout(kR, angle * kDeg, false, rule, true);
+    std::map<int, CornerRingVertex> by_slot;
+    int slave_count = 0;
+    for (const auto &vertex : layout)
+    {
+      if (vertex.kind == CornerRingVertex::Kind::SLAVE)
+      {
+        slave_count++;
+      }
+      else
+      {
+        by_slot[vertex.slot] = vertex;
+      }
+    }
+    REQUIRE(by_slot.size() == 16);
+    CHECK(slave_count == slaves);
+    for (int slot = 0; slot < 16; slot++)
+    {
+      CHECK_THAT(by_slot.at(slot).fraction, WithinAbs(pins[slot], 1.0e-9));
+      const bool zero = std::find(concave_zero_slots.begin(), concave_zero_slots.end(),
+                                  slot) != concave_zero_slots.end();
+      CHECK((by_slot.at(slot).kind == CornerRingVertex::Kind::ZERO) == zero);
+    }
+  }
+  // Arc-relative free-knot positions of a scaled node = the 60-degree node's (slot by
+  // slot).
+  auto Relative = [&](double angle)
+  {
+    const auto [first, second] = ArmCrossingFractions(kR, angle * kDeg);
+    std::map<int, double> relative;
+    for (const auto &vertex : CornerRuleRingLayout(kR, angle * kDeg, false, rule, true))
+    {
+      if (vertex.kind == CornerRingVertex::Kind::FREE)
+      {
+        const double unwrapped =
+            vertex.fraction < first - 1.0e-12 ? vertex.fraction + 1.0 : vertex.fraction;
+        relative[vertex.slot] = (unwrapped - first) / (second - first);
+      }
+    }
+    return relative;
+  };
+  const auto reference = Relative(60.0);
+  REQUIRE(reference.size() == 9);
+  for (const double angle : {45.0, 46.809687, 51.672903, 52.5, 56.0, 58.0})
+  {
+    const auto relative = Relative(angle);
+    REQUIRE(relative.size() == 9);
+    for (const auto &[slot, value] : reference)
+    {
+      CHECK_THAT(relative.at(slot), WithinAbs(value, 1.0e-12));
+    }
+  }
+  // Bit-identity where the scaling is inactive: the layout under the default reference
+  // equals the layout under a reference just above the unscaled minimum (both scale 1, the
+  // same floating-point expressions) for every concave node >= 60 degrees and every convex
+  // node; it differs at 45 degrees.
+  auto unscaled = rule;
+  unscaled.free_knot_grading_reference_free_arc_over_r = 4.0 / 3.0 + 1.0e-6;
+  REQUIRE(CheckCornerTraceBasisRule(unscaled).empty());
+  auto Fractions = [&](double angle, bool convex, const CornerTraceBasisRule &r)
+  {
+    std::vector<double> fractions;
+    for (const auto &vertex : CornerRuleRingLayout(kR, angle * kDeg, convex, r, true))
+    {
+      fractions.push_back(vertex.fraction);
+    }
+    return fractions;
+  };
+  for (const bool convex : {true, false})
+  {
+    for (double angle = convex ? 15.0 : 60.0; angle <= 180.0 + 1.0e-9; angle += 2.5)
+    {
+      CHECK(Fractions(angle, convex, rule) == Fractions(angle, convex, unscaled));
+    }
+    for (const double angle : {70.498378, 63.53, 82.5, 112.5, 142.5, 176.0})
+    {
+      CHECK(Fractions(angle, convex, rule) == Fractions(angle, convex, unscaled));
+    }
+  }
+  CHECK(Fractions(45.0, false, rule) != Fractions(58.0, false, rule));
+  CHECK_THROWS_WITH(Fractions(45.0, false, unscaled), ContainsSubstring("too short"));
+  // The constructed basis of the acute nodes and of C3's two keys: 176 knots, 14 PEC, every
+  // knot on its ring's square, no degenerate triangle.
+  for (const double angle : {45.0, 46.809687, 51.672903, 52.5, 56.0})
+  {
+    const auto basis = BuildRefined(angle, false);
+    REQUIRE(basis.knots.size() == 176);
+    int zero = 0;
+    for (std::size_t k = 0; k < basis.knots.size(); k++)
+    {
+      zero += basis.zero[k] ? 1 : 0;
+      const double half_width = k < 9 * 16 ? kR : kR / 3.0;
+      CHECK_THAT(std::max(std::abs(basis.knots[k][0]), std::abs(basis.knots[k][1])),
+                 WithinAbs(half_width, 1.0e-9));
+    }
+    CHECK(zero == 14);
+    double min_area = mfem::infinity();
+    for (const auto &t : basis.triangles)
+    {
+      min_area = std::min(min_area, TriangleArea(basis, t));
+    }
+    CHECK(min_area > 1.0e-8);
+  }
+}
+
 TEST_CASE("CornerRefinedRuleNoEvents", "[cornerbasisrefinement][Serial][Parallel]")
 {
   const auto rule = RefinedCornerTraceBasisRule();
@@ -666,6 +940,230 @@ TEST_CASE("CornerRefinedRuleStencil", "[cornerbasisrefinement][Serial][Parallel]
     duplicate.push_back({105.0, std::nullopt, duplicate.size()});
     CHECK_THAT(CheckCornerFamilySegments(duplicate, convex, rule, tol),
                ContainsSubstring("two coupons at 105"));
+  }
+}
+
+TEST_CASE("CornerRefinedRuleAcuteConcaveLibraryLoad",
+          "[cornerbasisrefinement][Serial][Parallel]")
+{
+  // Family 4 at library load and match time (decision 318): a concave family whose
+  // 45-degree node records FreeKnotGradingReferenceFreeArcOverR (the scaling is active
+  // there) beside 60 / 75 / 90-degree nodes WITHOUT the key (the default reference) is ONE
+  // rule: it loads, every node's basis points pass the rule check at its own angle, a
+  // 45-degree notch matches the 45 node exactly and a 52.5-degree notch is interpolated
+  // (cubic on 45 / 60 / 75 / 90, the constructed basis scaled at 52.5). A node recording
+  // another reference is refused ("not built on one TraceBasis rule"); the key on a
+  // MetalRingsOnly record is refused at parse. R = 0.05 on the unit island (h = 0.1): the
+  // notch arms are 15.7 R long and 12 R apart at the mouth, so the apex is a ConcaveCorner
+  // feature (with R = 0.2 the two arms lie within the cluster radius and the notch is one
+  // SpatialEdgeCluster).
+  constexpr double R = 0.02, t = 0.001, oe = 0.0005;
+  test::SharedTempDir temp;
+  const fs::path isolated_points = temp.temp_dir / "isolated-points.csv";
+  const fs::path isolated_domain = temp.temp_dir / "isolated-domain.csv";
+  const fs::path isolated_surface = temp.temp_dir / "isolated-surface.csv";
+  const fs::path corner_domain = temp.temp_dir / "corner-domain.csv";
+  const fs::path corner_surface = temp.temp_dir / "corner-surface.csv";
+  std::map<std::string, fs::path> libraries;
+  for (const std::string name : {"family", "other-reference", "legacy-reference"})
+  {
+    libraries[name] = temp.temp_dir / ("library-acute-" + name + ".json");
+  }
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(isolated_points);
+      output << "x,y,z\n-0.16,-0.12,0.0\n0.16,-0.12,0.0\n0.16,0.12,0.0\n-0.16,0.12,0.0\n";
+      std::ofstream domain(isolated_domain);
+      domain << "basis_i,basis_j,Q_ij (J)\n";
+      std::ofstream surface(isolated_surface);
+      surface << "interface,edge,basis_i,basis_j,Q_total_ij (J)\n";
+      for (int i = 1; i <= 4; i++)
+      {
+        for (int j = i; j <= 4; j++)
+        {
+          const double value = (i == j ? 2.0 : 0.2) * 1.0e-12;
+          domain << i << "," << j << "," << value << "\n";
+          surface << "1,1," << i << "," << j << "," << value << "\n";
+        }
+      }
+      WriteSyntheticMatrices(corner_domain, corner_surface, 176, 3.0, 0.05, R);
+    }
+    const json base = {
+        {"Version", 3},
+        {"TraceLiftVersion", 2},
+        {"MatchingRadius", R},
+        {"Fabrication",
+         {{"MetalThickness", t},
+          {"OveretchDepth", oe},
+          {"InterfaceLayers", {{"SA", {{"Thickness", 0.002}, {"Permittivity", 4.0}}}}}}},
+        {"Models",
+         {{{"Name", "isolated"},
+           {"Topology", "IsolatedEdge"},
+           {"CouponDepth", R},
+           {"FabricatedMatrix", isolated_domain.string()},
+           {"ThinMatrix", isolated_domain.string()},
+           {"FabricatedSurfaceMatrix", isolated_surface.string()},
+           {"ThinSurfaceMatrix", isolated_surface.string()},
+           {"BasisPoints", isolated_points.string()},
+           {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}}}}}};
+    auto Model = [&](bool convex, double angle, const CouponFiles &files, json record)
+    {
+      const std::string topology = convex ? "convex" : "concave";
+      std::ostringstream tag;
+      tag << angle;
+      return json{{"Name", topology + "-corner-" + tag.str()},
+                  {"Topology", convex ? "ConvexCorner" : "ConcaveCorner"},
+                  {"Angle", angle},
+                  {"AngleDegrees", angle},
+                  {"Convexity", convex ? "Convex" : "Concave"},
+                  {"AngleTolerance", 1.0e-6},
+                  {"CornerRadius", 0.0},
+                  {"CornerRadiusTolerance", 0.0},
+                  {"FabricatedMatrix", corner_domain.string()},
+                  {"ThinMatrix", corner_domain.string()},
+                  {"FabricatedSurfaceMatrix", corner_surface.string()},
+                  {"ThinSurfaceMatrix", corner_surface.string()},
+                  {"BasisPoints", files.points.string()},
+                  {"TraceMesh",
+                   {{"Vertices", files.vertices.string()},
+                    {"Triangles", files.triangles.string()}}},
+                  {"ContourGroups", files.contour_groups},
+                  {"ZeroTraceIndices", files.zero_trace_indices},
+                  {"Interfaces", {{{"Type", "SA"}, {"Coupon", 1}}}},
+                  {"TraceBasis", record}};
+    };
+    auto Write = [&](const std::string &name, const std::vector<json> &corners)
+    {
+      json library = base;
+      library["Name"] = "unit-test-corner-acute-concave-" + name;
+      for (const auto &corner : corners)
+      {
+        library["Models"].push_back(corner);
+      }
+      std::ofstream output(libraries.at(name));
+      output << library.dump(2) << "\n";
+    };
+    // The generator writes the reference key only on the node where the scaling is active.
+    json active = RefinedTraceBasisRecord();
+    active["FreeKnotGradingReferenceFreeArcOverR"] = kFreeKnotGradingReferenceFreeArcOverR;
+    std::vector<json> family;
+    for (const double angle : {90.0, 105.0, 120.0, 135.0})
+    {
+      std::ostringstream tag;
+      tag << "acute-convex-" << angle;
+      family.push_back(Model(
+          true, angle, WriteRefinedCoupon(temp.temp_dir, tag.str(), angle, true, R, t, oe),
+          RefinedTraceBasisRecord()));
+    }
+    for (const double angle : {45.0, 60.0, 75.0, 90.0})
+    {
+      std::ostringstream tag;
+      tag << "acute-concave-" << angle;
+      family.push_back(
+          Model(false, angle,
+                WriteRefinedCoupon(temp.temp_dir, tag.str(), angle, false, R, t, oe),
+                angle < 60.0 ? active : RefinedTraceBasisRecord()));
+    }
+    Write("family", family);
+    {
+      // A 45-degree node built AND recorded with another reference: its own files pass the
+      // per-coupon rule check; the family refuses the second rule.
+      auto other_rule = RefinedCornerTraceBasisRule();
+      other_rule.free_knot_grading_reference_free_arc_over_r = 1.5;
+      json other_record = active;
+      other_record["FreeKnotGradingReferenceFreeArcOverR"] = 1.5;
+      auto other = family;
+      other[4] = Model(false, 45.0,
+                       WriteRefinedCoupon(temp.temp_dir, "acute-concave-45-other", 45.0,
+                                          false, R, t, oe, std::nullopt, other_rule),
+                       other_record);
+      Write("other-reference", other);
+    }
+    {
+      auto legacy = family;
+      legacy[4]["TraceBasis"] = {{"RingSize", 8},
+                                 {"MetalInteriorKnots", 1},
+                                 {"FreeKnots", 5},
+                                 {"Fractions", "PerimeterArcLength"},
+                                 {"FreeKnotGradingReferenceFreeArcOverR", 1.5}};
+      Write("legacy-reference", legacy);
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = {
+      {"Problem", {{"Type", "Electrostatic"}, {"Output", temp.temp_dir.string()}}},
+      {"Model", {{"Mesh", "unused.msh"}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+      {"Boundaries",
+       {{"Ground", {{"Attributes", {1, 2, 3, 4, 5, 6}}}},
+        {"Terminal", {{{"Index", 1}, {"Attributes", {9}}}}},
+        {"Postprocessing",
+         {{"Dielectric",
+           {{{"Index", 4},
+             {"Attributes", {9}},
+             {"Type", "SA"},
+             {"Thickness", 0.002},
+             {"Permittivity", 4.0},
+             {"AutomaticEdges", true},
+             {"EdgeDistances", {R}},
+             {"EdgeFrameNormal", {0.0, 1.0, 0.0}}}}}}}}},
+      {"Solver",
+       {{"Order", 1},
+        {"Electrostatic",
+         {{"ResponseCorrection",
+           {{"Library", ""},
+            {"TargetInterfaces", {4}},
+            {"UnmatchedPolicy", "Error"},
+            {"TraceCoupling", "SurfaceMortar"},
+            {"MortarOversampling", 2}}}}}}}};
+  auto notch_45 = MakeStarIslandMesh(NotchedIsland(45.0), 8.0, 0.1);
+  auto notch_52p5 = MakeStarIslandMesh(NotchedIsland(52.5), 8.0, 0.1);
+  auto Preflight = [&](const std::string &name, mfem::ParMesh &mesh)
+  {
+    auto result = config;
+    result["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        libraries.at(name).string();
+    IoData iodata(result, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    const auto manifest_path = temp.temp_dir / ("requirements-acute-" + name + ".json");
+    WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    return json::parse(input);
+  };
+  // The exact 45-degree notch resolves by the signature key (no family needed); the
+  // interpolated 52.5-degree notch assembles the family and refuses the second rule.
+  CHECK_THROWS_WITH(Preflight("other-reference", *notch_52p5),
+                    ContainsSubstring("not built on one TraceBasis rule"));
+  CHECK_THROWS_WITH(Preflight("legacy-reference", *notch_45),
+                    ContainsSubstring("FreeKnotGradingReferenceFreeArcOverR"));
+  auto ConcaveMatches = [](const json &manifest)
+  {
+    std::map<std::string, int> matched;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConcaveCorner")
+      {
+        REQUIRE(feature["Match"]["Status"] == "Matched");
+        matched[feature["Match"]["Model"].get<std::string>()]++;
+      }
+    }
+    return matched;
+  };
+  {
+    const auto matched = ConcaveMatches(Preflight("family", *notch_45));
+    REQUIRE(matched.size() == 1);
+    CHECK(matched.at("concave-corner-45") == 1);
+  }
+  {
+    const auto matched = ConcaveMatches(Preflight("family", *notch_52p5));
+    REQUIRE(matched.size() == 1);
+    const std::string name = matched.begin()->first;
+    CHECK(matched.begin()->second == 1);
+    CHECK(name.find("@corner-angle52.5-cubic") != std::string::npos);
   }
 }
 
