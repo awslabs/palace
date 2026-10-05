@@ -116,6 +116,21 @@ Rules:
     The manifest records the moved vertices, the maximum displacement, the inserted vertices
     and the coincident run length (`cross_plane_reconciliation`): the reference differs from
     the (unreconciled) thin geometry by at most delta on those runs.
+  - Window-cut sliver rules (supervisor decision 306; the stage-2 C1 / C3 windows): the
+    extraction cuts the chip polygons at the box walls, so chip-mesh nodes sit within delta of
+    the walls and of the other plane's chains. (1) A vertex is inserted into at most ONE segment
+    per loop (the nearest; never into a loop it already belongs to) — a vertex within delta of
+    two consecutive segments near their shared corner would otherwise appear twice (the C3
+    spike P, B, P). (2) A segment on a box wall (a window-cut line) is never bent: it takes only
+    vertices lying on the wall, and a vertex on a wall snaps only along that wall (the C1 case:
+    a chip node 15 nm below the wall bent the other plane's wall segment into a 2 r x 1.5 r
+    notch partition). (3) Every reconciled loop is cleaned: consecutive vertices within the
+    plan-node identity quantum (1e-6 um, the mesher's coordinate welding tolerance) are merged,
+    spikes collapsed; a loop that still visits a point twice is refused with the point. The
+    counts are recorded under `cross_plane_reconciliation.window_cut_sliver_rules`
+    (`wall_constrained_snaps`, `wall_insertions_refused`, `single_segment_insertions`,
+    `merged_consecutive_vertices`, `collapsed_spikes`); all zero on S1p / C2p, whose outputs
+    are unchanged.
 
 ## Bump object
 

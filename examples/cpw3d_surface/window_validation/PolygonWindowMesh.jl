@@ -294,7 +294,8 @@ function point_walls(p::Point2, box)
 end
 
 # The walls a segment lies along (both ends on the same wall).
-segment_walls(a::Point2, b::Point2, box) = intersect(point_walls(a, box), point_walls(b, box))
+segment_walls(a::Point2, b::Point2, box) =
+    intersect(point_walls(a, box), point_walls(b, box))
 
 # Move v onto the nearest target vertex within delta, else onto the nearest target segment
 # within delta (equal distances: the lexicographically smallest target point); else keep v.
@@ -333,7 +334,8 @@ function snap_wall_point(
 )
     on_same_wall(q) = any(in(walls), point_walls(q, box))
     wall_vertices = filter(on_same_wall, vertices)
-    wall_segments = [(a, b) for (a, b) in segments if any(in(walls), segment_walls(a, b, box))]
+    wall_segments =
+        [(a, b) for (a, b) in segments if any(in(walls), segment_walls(a, b, box))]
     w = snap_point(v, wall_vertices, wall_segments, delta)
     return w, w != snap_point(v, vertices, segments, delta)
 end
@@ -424,9 +426,11 @@ function clean_loop(loop::Vector{Point2}, tolerance::Float64, where::String)
         loop, dropped = drop_repeated_vertices(loop, tolerance)
         merged += dropped
         n = length(loop)
-        spike = n >= 3 ?
+        spike =
+            n >= 3 ?
             findfirst(
-                i -> point_distance(loop[mod1(i - 1, n)], loop[mod1(i + 1, n)]) <= tolerance,
+                i ->
+                    point_distance(loop[mod1(i - 1, n)], loop[mod1(i + 1, n)]) <= tolerance,
                 1:n
             ) : nothing
         spike === nothing && break
@@ -496,8 +500,14 @@ function reconcile_planes(spec::PolygonSet, delta::Float64)
             w = if isempty(walls)
                 snap_point(v, lower_vertices, lower_segments, delta)
             else
-                w, constrained =
-                    snap_wall_point(v, lower_vertices, lower_segments, delta, box, walls)
+                w, constrained = snap_wall_point(
+                    v,
+                    lower_vertices,
+                    lower_segments,
+                    delta,
+                    box,
+                    walls
+                )
                 constrained && (wall_constrained += 1)
                 w
             end
@@ -529,7 +539,9 @@ function reconcile_planes(spec::PolygonSet, delta::Float64)
         wall_refused += refused
     end
     merged, spikes = 0, 0
-    for (plane, loops) in ((lower, lower_loops), (upper, upper_loops)), k in eachindex(loops)
+    for (plane, loops) in ((lower, lower_loops), (upper, upper_loops)),
+        k in eachindex(loops)
+
         loops[k], m, s = clean_loop(
             loops[k],
             PLAN_NODE_MERGE_TOLERANCE_UM,
