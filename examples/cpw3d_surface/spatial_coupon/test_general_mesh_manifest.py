@@ -3073,6 +3073,70 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "surface layer at an end on the box")
             rejected(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Spacing", 1.0),
                      "exceed the tangential spacing")
+            # Block (b) design A2 / decision 320: a face-ended tube row carries its FaceEnds
+            # records (lc_end = max(TangentialSize, 4 h_pyr |tan theta|), m = ceil(2 r_env |tan
+            # theta| / lc_end)), its end layer IS lc_end (the decision-41 surface rule is
+            # replaced), its Spacing may reach lc_end, and the summary counts them; a record
+            # off the rule, a missing block or a stale summary fails closed.
+            import math as _math
+            tubes = census["PrismTubes"]
+            section = tubes["Section"]
+            radius = sum(section["RingSizes"])            # the fixture producer records no Radius
+            r_env = radius + section["PyramidHeight"]
+            theta = 70.0
+            lc_end = max(tubes["TangentialSize"], 4.0 * section["PyramidHeight"] * _math.tan(_math.radians(theta)))
+            m = max(1, _math.ceil(2.0 * r_env * _math.tan(_math.radians(theta)) / lc_end * (1.0 - 1e-9)))
+            self.assertGreaterEqual(lc_end, tubes["TangentialSize"])
+            def face_ended(c):
+                c["PrismTubes"]["Section"]["Radius"] = radius
+                c["PrismTubes"].setdefault("FaceEnds", {"Rule": "fixture face-end rule", "BoxVertexRule": "fixture",
+                                                        "Count": 0, "EndBlockLayers": 0, "LegacyBoxVertexCorners": 0})
+                row = c["PrismTubes"]["Tubes"][0]
+                shear = r_env * _math.tan(_math.radians(theta))
+                row["FaceEnds"] = [{"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": m, "EndSpacing": lc_end,
+                                    "EnvelopeShear": shear, "LayerThicknessRange": [lc_end - shear / m, lc_end + shear / m],
+                                    "OverLength": shear + tubes["TangentialSize"], "Kappa": [-_math.tan(_math.radians(theta)), 0.0]}]
+                row["EndsOnBox"] = [row["EndsOnBox"][0], True]
+                row["Spacing"] = lc_end
+                row["LayerThickness"]["Maximum"] = lc_end
+                row["LayerThickness"]["AtEnd"] = lc_end
+                row["LayerThickness"]["FaceEndBlocks"] = {"End": {"Layers": m, "Thicknesses": [lc_end] * m,
+                                                                   "NeighbourRatio": lc_end / row["LayerThickness"]["P50"]}}
+                c["PrismTubes"]["LayerThickness"]["Maximum"] = max(c["PrismTubes"]["LayerThickness"]["Maximum"], lc_end)
+                c["PrismTubes"]["SpacingMaximum"] = c["PrismTubes"]["LayerThickness"]["Maximum"]
+                c["PrismTubes"]["FaceEnds"]["Count"] = 1
+                c["PrismTubes"]["FaceEnds"]["EndBlockLayers"] = m
+                return c
+            accepted = face_ended(copy.deepcopy(census))
+            self.assertIs(validate_gmsh_build_census(report, accepted, semantic), accepted)
+            def rejected_face_end(mutate, message):
+                broken = face_ended(copy.deepcopy(census))
+                mutate(broken)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(report, broken, semantic)
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Layers", m + 1),
+                              "face-end rule")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("EndSpacing", 2 * lc_end),
+                              "face-end rule")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Face", "z1"),
+                              "lacks its face or end")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("ThetaDegrees", 0.0),
+                              "outside \\(0, 90\\) degrees")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Spacing", 1.01 * lc_end) or
+                              c["PrismTubes"]["Tubes"][0]["LayerThickness"].__setitem__("Maximum", 1.01 * lc_end),
+                              "exceed the tangential spacing")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["LayerThickness"].pop("FaceEndBlocks"),
+                              "face-end block")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["LayerThickness"].__setitem__("AtEnd", 0.5 * lc_end),
+                              "face-end block")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("EndsOnBox", [False, False]),
+                              "face-end block")
+            rejected_face_end(lambda c: c["PrismTubes"]["FaceEnds"].__setitem__("Count", 0), "face-end summary")
+            rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"].append(
+                                  dict(c["PrismTubes"]["Tubes"][0]["FaceEnds"][0])), "two face ends at one end")
+            # A census recorded before the face-end rule (no summary, no face end) still passes:
+            # the fixture producer's census is one.
+            self.assertNotIn("FaceEnds", census["PrismTubes"])
             # Coupon-scale size bound: TangentialSize = min(--lc-tangent, FarSize), the
             # request, the far size and the flag recorded and bound to the command.
             self.assertFalse(census["SizeBounds"]["TangentialSizeBoundByFarSize"])

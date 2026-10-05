@@ -559,6 +559,15 @@ end
 # ratio (each layer over the size at its midpoint) and the neighbour ratio.
 function tube_layer_statistics(tube::EdgeTube, positions, sizes)
     thicknesses = tube_layer_thicknesses(tube)
+    # The sheared end blocks of a face-ended tube (design A2) have their own spacing
+    # lc_end >= the tangential spacing: the neighbour-ratio law of decision 40 is
+    # judged over the interior layers, and each block is recorded with its ratio to
+    # the adjacent interior layer (FaceEndBlocks; absent on a plain tube).
+    start_face = face_end_at(tube, 0)
+    end_face = face_end_at(tube, 1)
+    start_block = start_face === nothing ? 0 : start_face.layers
+    end_block = end_face === nothing ? 0 : end_face.layers
+    interior = thicknesses[(start_block + 1):(length(thicknesses) - end_block)]
     function size_at(s)
         i = clamp(searchsortedlast(positions, s), 1, length(positions) - 1)
         fraction = (s - positions[i]) / (positions[i + 1] - positions[i])
@@ -571,9 +580,9 @@ function tube_layer_statistics(tube::EdgeTube, positions, sizes)
         thicknesses[i] / size_at(clamp(midpoints[i], positions[1], positions[end])) for
         i in eachindex(thicknesses)
     ]
-    ratios = thicknesses[2:end] ./ thicknesses[1:(end - 1)]
+    ratios = interior[2:end] ./ interior[1:(end - 1)]
     median(values) = sort(values)[cld(length(values), 2)]
-    return Dict{String, Any}(
+    statistics = Dict{String, Any}(
         "Minimum" => minimum(thicknesses),
         "P50" => median(thicknesses),
         "Maximum" => maximum(thicknesses),
@@ -589,6 +598,23 @@ function tube_layer_statistics(tube::EdgeTube, positions, sizes)
         "MaximumNeighbourRatio" =>
             isempty(ratios) ? 1.0 : max(maximum(ratios), 1.0 / minimum(ratios))
     )
+    blocks = Dict{String, Any}()
+    if start_block > 0
+        blocks["Start"] = Dict{String, Any}(
+            "Layers" => start_block,
+            "Thicknesses" => thicknesses[1:start_block],
+            "NeighbourRatio" => thicknesses[start_block] / thicknesses[start_block + 1]
+        )
+    end
+    if end_block > 0
+        blocks["End"] = Dict{String, Any}(
+            "Layers" => end_block,
+            "Thicknesses" => thicknesses[(end - end_block + 1):end],
+            "NeighbourRatio" => thicknesses[end - end_block + 1] / thicknesses[end - end_block]
+        )
+    end
+    isempty(blocks) || (statistics["FaceEndBlocks"] = blocks)
+    return statistics
 end
 
 # OCC tube volumes (one polygon-sector prism per material group), returned as

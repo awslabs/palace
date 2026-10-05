@@ -1573,6 +1573,71 @@ def validate_coupon_box(census):
     return box
 
 
+FACE_END_FACES = ("x0", "x1", "y0", "y1")
+FACE_END_RULE = ("block (b) design A2 (supervisor decisions 302 / 320): a tube end on a box face with a single metal side "
+                 "at the vertex and a tilt theta > 0 ends ON the face with m = ceil(2 (R + h_pyr) |tan theta| / lc_end) "
+                 "sheared layers of spacing lc_end = max(TangentialSize, 4 h_pyr |tan theta|)")
+
+
+def validate_tube_face_ends(row, tangential_size, section):
+    """The face-end records of one census tube row (Tubes[].FaceEnds, absent on a plain
+    tube): every record names a box face and an end, its tilt lies in (0, 90) degrees,
+    its spacing and layer count follow FACE_END_RULE from the section's radius and pyramid
+    height, and at most one record per end.  Returns the largest EndSpacing (0 without
+    face ends)."""
+    records = row.get("FaceEnds", [])
+    if not isinstance(records, list):
+        raise ValueError("Tube row FaceEnds is not a list")
+    if not records:
+        return 0.0
+    if not isinstance(section, dict):
+        raise ValueError("Prism tube section is missing")
+    radius = _census_number(section, "Radius", "Tube section")
+    pyramid_height = _census_number(section, "PyramidHeight", "Tube section")
+    bound = 0.0
+    ends = []
+    for record in records:
+        if (not isinstance(record, dict) or record.get("Face") not in FACE_END_FACES or
+                record.get("End") not in ("start", "end")):
+            raise ValueError("Tube face end lacks its face or end")
+        theta = _census_number(record, "ThetaDegrees", "Tube face end")
+        if not 0.0 < theta < 90.0:
+            raise ValueError("Tube face end tilt is outside (0, 90) degrees")
+        slope = abs(math.tan(math.radians(theta)))
+        spacing = _census_number(record, "EndSpacing", "Tube face end")
+        expected_spacing = max(tangential_size, 4.0 * pyramid_height * slope)
+        layers = _count(record.get("Layers"), "Tube face end layers")
+        expected_layers = max(1, math.ceil(2.0 * (radius + pyramid_height) * slope / expected_spacing * (1.0 - 1e-9)))
+        if abs(spacing - expected_spacing) > 1e-9 * expected_spacing or layers != expected_layers:
+            raise ValueError("Tube face end spacing or layer count does not follow the face-end rule")
+        thickness = record.get("LayerThicknessRange")
+        if (not isinstance(thickness, list) or len(thickness) != 2 or
+                not 0.5 * spacing * (1.0 - 1e-9) <= thickness[0] <= thickness[1] <= 1.5 * spacing * (1.0 + 1e-9)):
+            raise ValueError("Tube face end layer thickness range is outside [lc_end / 2, 3 lc_end / 2]")
+        ends.append(record["End"])
+        bound = max(bound, spacing)
+    if len(set(ends)) != len(ends):
+        raise ValueError("Tube row has two face ends at one end")
+    return bound
+
+
+def validate_tube_face_end_summary(tubes, rows):
+    """PrismTubes.FaceEnds: Count = the face-end records over the rows, EndBlockLayers their
+    layers, LegacyBoxVertexCorners the recorded theta-0 Physical-class box vertices (a
+    non-negative count), the rules named."""
+    summary = tubes.get("FaceEnds")
+    records = [record for row in rows for record in row.get("FaceEnds", [])]
+    legacy = sum(len(row.get("LegacyBoxVertexCorner", [])) for row in rows)
+    if summary is None and not records and legacy == 0:
+        return          # a census recorded before the face-end rule (no face end, no legacy corner)
+    if (not isinstance(summary, dict) or
+            _count(summary.get("Count"), "Face-end count") != len(records) or
+            _count(summary.get("EndBlockLayers"), "Face-end block layers") != sum(r["Layers"] for r in records) or
+            _count(summary.get("LegacyBoxVertexCorners"), "Legacy box-vertex corners") != legacy or
+            not all(isinstance(summary.get(name), str) and summary[name] for name in ("Rule", "BoxVertexRule"))):
+        raise ValueError("Prism tube face-end summary does not match the tube rows")
+
+
 def validate_gmsh_build_census(build_report, census, semantic):
     """The Gmsh-only build census (the build report of decision 38) is bound to the
     build command and the canonical semantic contract: the corner ball and its
@@ -1661,12 +1726,26 @@ def validate_gmsh_build_census(build_report, census, semantic):
     if tubes["InnerSize"] != corner_size:
         raise ValueError("Prism tube inner size differs from the corner size: one graded law is required")
     rows = tubes.get("Tubes")
-    if (not isinstance(rows, list) or not rows or tubes.get("TubeCount") != len(rows) or
-            any(not isinstance(row, dict) or
-                not 0.0 < _census_number(row, "Spacing", "Tube row") <= tubes["TangentialSize"] or
-                _count(row.get("Layers"), "Tube layers") <= 0 or
-                _census_number(row, "Length", "Tube row") <= 0.0 for row in rows)):
+    if not isinstance(rows, list) or not rows or tubes.get("TubeCount") != len(rows):
         raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
+    # Face ends (block (b) design A2, supervisor decisions 302 / 320): a tube ending on a
+    # box face at a tilt theta > 0 carries an end block of m sheared layers of spacing
+    # lc_end = max(TangentialSize, 4 h_pyr |tan theta|), m = ceil(2 (R + h_pyr) |tan theta| /
+    # lc_end); its Spacing may exceed TangentialSize by exactly that block.
+    section = tubes.get("Section")
+    face_end_bound = {}
+    for index, row in enumerate(rows):
+        face_end_bound[index] = validate_tube_face_ends(row, tubes["TangentialSize"], section)
+    # The interior layers are capped at TangentialSize x (1 - 1e-9) by the mesher; a face-end
+    # block layer is lc_end up to the rounding of its stations (hence the 1e-9 slack on lc_end).
+    if any(not isinstance(row, dict) or
+           not 0.0 < _census_number(row, "Spacing", "Tube row") <=
+           max(tubes["TangentialSize"], face_end_bound[index] * (1.0 + 1e-9)) or
+           _count(row.get("Layers"), "Tube layers") <= 0 or
+           _census_number(row, "Length", "Tube row") <= 0.0 for index, row in enumerate(rows)):
+        raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
+    spacing_bound = max([tubes["TangentialSize"]] + [bound * (1.0 + 1e-9) for bound in face_end_bound.values()])
+    validate_tube_face_end_summary(tubes, rows)
     # Decision 40: the layers follow the composed size field on the tube axis. Every
     # tube records its layer thickness statistics (the largest layer is its Spacing,
     # the neighbour ratio within the growth ratio), the record names the layer rule
@@ -1682,7 +1761,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
             _census_number(layer_statistics, "MaximumNeighbourRatio", "Tube layer thickness") > ratio or
             not 0.0 < _census_number(layer_statistics, "Minimum", "Tube layer thickness") <=
             _census_number(layer_statistics, "P50", "Tube layer thickness") <=
-            _census_number(layer_statistics, "Maximum", "Tube layer thickness") <= tubes["TangentialSize"] or
+            _census_number(layer_statistics, "Maximum", "Tube layer thickness") <= spacing_bound or
             _census_number(tubes, "SpacingMinimum", "Prism tube record") != layer_statistics["Minimum"] or
             _census_number(tubes, "SpacingMaximum", "Prism tube record") != layer_statistics["Maximum"] or
             _count(layer_statistics.get("LayersBelowTangentialSizeOverGrowthRatio"),
@@ -1691,7 +1770,12 @@ def validate_gmsh_build_census(build_report, census, semantic):
     for row in rows:
         layers = row.get("LayerThickness")
         ends_on_box = row.get("EndsOnBox")
-        if (not isinstance(layers, dict) or
+        # A face end replaces the decision-41 surface layer of its end by its block: the
+        # end layer IS the block spacing (the block / interior ratio is recorded, not gated).
+        face_ends = {record["End"]: record for record in row.get("FaceEnds", [])}
+        blocks = layers.get("FaceEndBlocks", {}) if isinstance(layers, dict) else {}
+        if (not isinstance(layers, dict) or not isinstance(blocks, dict) or
+                set(blocks) != {end.capitalize() for end in face_ends} or
                 any(_census_number(layers, name, "Tube row layer thickness") <= 0.0
                     for name in ("Minimum", "P50", "Maximum", "AtStart", "AtEnd",
                                  "PrescribedAtStart", "PrescribedAtEnd")) or
@@ -1702,10 +1786,25 @@ def validate_gmsh_build_census(build_report, census, semantic):
                     for name in ("Minimum", "P50", "Maximum")) or
                 not isinstance(ends_on_box, list) or len(ends_on_box) != 2 or
                 not all(isinstance(flag, bool) for flag in ends_on_box) or
-                (ends_on_box[0] and layers["AtStart"] > layers["PrescribedAtStart"] * (1.0 + 1e-9)) or
-                (ends_on_box[1] and layers["AtEnd"] > layers["PrescribedAtEnd"] * (1.0 + 1e-9))):
+                ("start" in face_ends and not ends_on_box[0]) or ("end" in face_ends and not ends_on_box[1]) or
+                ("start" not in face_ends and ends_on_box[0] and
+                 layers["AtStart"] > layers["PrescribedAtStart"] * (1.0 + 1e-9)) or
+                ("end" not in face_ends and ends_on_box[1] and
+                 layers["AtEnd"] > layers["PrescribedAtEnd"] * (1.0 + 1e-9)) or
+                ("start" in face_ends and (abs(layers["AtStart"] - face_ends["start"]["EndSpacing"]) >
+                                           1e-9 * face_ends["start"]["EndSpacing"] or
+                                           _count(blocks.get("Start", {}).get("Layers"), "Face-end block layers") !=
+                                           face_ends["start"]["Layers"] or
+                                           _census_number(blocks.get("Start", {}), "NeighbourRatio",
+                                                          "Face-end block") <= 0.0)) or
+                ("end" in face_ends and (abs(layers["AtEnd"] - face_ends["end"]["EndSpacing"]) >
+                                         1e-9 * face_ends["end"]["EndSpacing"] or
+                                         _count(blocks.get("End", {}).get("Layers"), "Face-end block layers") !=
+                                         face_ends["end"]["Layers"] or
+                                         _census_number(blocks.get("End", {}), "NeighbourRatio",
+                                                        "Face-end block") <= 0.0))):
             raise ValueError("Prism tube row lacks its layer thickness record within the growth ratio "
-                             "with the surface layer at an end on the box")
+                             "with the surface layer at an end on the box (or its face-end block)")
     section = tubes.get("Section")
     rings = _count(section.get("Rings") if isinstance(section, dict) else None, "Tube rings")
     sizes = section.get("RingSizes") if isinstance(section, dict) else None
