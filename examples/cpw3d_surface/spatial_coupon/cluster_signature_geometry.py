@@ -79,12 +79,15 @@ COINCIDENCE_OVER_R = 1.0e-5
 # components and portion ends are rounded to the signature quantum (1e-6 R), so a short
 # OBLIQUE straight portion of length L (units of R) reads |tangent . gap| up to
 # sqrt(2) / 2 q + 2 q / L from the rounding alone (the axis-aligned gaps of rectilinear
-# clusters read exactly 0). The perpendicularity test admits twice that bound; a row that
-# exceeds the legacy exact test (1e-6, every row built so far passes it and is kept bitwise)
-# but lies within the bound has its gap RE-DERIVED as the exact perpendicular of its chord
-# with the serialised sign, so the generator's and Palace's frames stay exactly orthogonal.
+# clusters read exactly 0). The perpendicularity test admits twice that bound; EVERY straight
+# row with 0 < |tangent . gap| <= bound has its gap RE-DERIVED as the exact perpendicular of
+# its chord with the serialised sign (decision 317 MAJOR-1 option (a): no threshold inside
+# the bound), so the generator's and Palace's frames stay exactly orthogonal; a row with
+# |tangent . gap| == 0 exactly (every rectilinear row built so far) is kept bitwise - it
+# re-derives to itself. An arc CHORD's gap is the arc's radial direction at the chord's
+# middle, perpendicular by construction up to round-off: it is not a serialised number and
+# is kept as computed.
 SIGNATURE_QUANTUM_OVER_R = 1.0e-6
-GAP_PERPENDICULARITY_LEGACY = 1.0e-6
 GAP_PERPENDICULARITY_MARGIN = 2.0
 # An interior cut (two facing claim cuts of one chain) spans less than the cluster's event
 # reach: the piece between two claims of the same cluster is a translational remainder shorter
@@ -322,7 +325,8 @@ def context_from_signature(signature, radius):
             continue
         p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
         label = f"context piece {edge['Portion']}"
-        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, label)
+        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, label,
+                                             serialised=edge.get("Chord") is None)
         length = float(np.linalg.norm(p1 - p0))
         pieces.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                        "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
@@ -351,12 +355,13 @@ def gap_perpendicularity_bound(length_over_R):
     return GAP_PERPENDICULARITY_MARGIN * (math.sqrt(2.0) * 0.5 * q + 2.0 * q / length_over_R)
 
 
-def perpendicular_gap(p0, p1, gap, radius, label):
-    """The unit gap of a straight row: the serialised gap when it passes the legacy exact
-    test (|tangent . gap| <= GAP_PERPENDICULARITY_LEGACY: bitwise for every row built so
-    far), else the exact perpendicular of the chord with the serialised sign when the
-    deviation lies within the quantisation bound (F0-a), else a fail-closed refusal.
-    Returns (unit gap, re-derived flag, deviation)."""
+def perpendicular_gap(p0, p1, gap, radius, label, serialised=True):
+    """The unit gap of a straight row (F0-a, decision 317 MAJOR-1 option (a)): the serialised
+    gap bitwise when |tangent . gap| == 0 exactly, else - for every deviation within the
+    quantisation bound - the exact perpendicular of the chord with the serialised sign, else
+    a fail-closed refusal naming the bound. An arc chord (``serialised`` False: its gap is the
+    arc's radial direction at the chord's middle, not a serialised number) is kept as computed
+    within the same bound. Returns (unit gap, re-derived flag, deviation)."""
     norm = float(np.linalg.norm(gap))
     if norm <= 0.0:
         raise SignatureGeometryError(f"{label} has an invalid P or Gap")
@@ -366,15 +371,15 @@ def perpendicular_gap(p0, p1, gap, radius, label):
     tangent = (p1 - p0) / length
     gap = gap / norm
     deviation = abs(float(np.dot(tangent, gap)))
-    if deviation <= GAP_PERPENDICULARITY_LEGACY:
-        return gap, False, deviation
     bound = gap_perpendicularity_bound(length / radius)
     if deviation > bound:
         raise SignatureGeometryError(f"{label}: Gap is not perpendicular to the portion (|tangent . gap| = "
                                      f"{deviation:.3e} > the quantisation bound {bound:.3e} for a {length / radius:.6f} R row)")
+    if deviation == 0.0 or not serialised:
+        return gap, False, deviation
     perpendicular = np.asarray([tangent[1], -tangent[0]])
     sign = 1.0 if float(np.dot(perpendicular, gap)) >= 0.0 else -1.0
-    return sign * perpendicular, True, deviation
+    return sign * perpendicular + 0.0, True, deviation  # + 0.0: no negative zero in the rows
 
 
 def portions_from_signature(signature, radius):
@@ -396,7 +401,8 @@ def portions_from_signature(signature, radius):
     for edge in edges:
         index = edge["Portion"]
         p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
-        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, f"portion {index}")
+        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, f"portion {index}",
+                                             serialised=edge.get("Chord") is None)
         length = float(np.linalg.norm(p1 - p0))
         portions.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                          "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',

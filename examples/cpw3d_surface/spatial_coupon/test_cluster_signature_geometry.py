@@ -502,31 +502,37 @@ def census_record(prefix):
 
 
 class GapPerpendicularityTest(unittest.TestCase):
-    """Block (b) step 0, F0-a: the three census keys the v3 builder stopped with "Gap is not
-    perpendicular to the portion" carry short OBLIQUE straight portions whose serialised Gap /
-    ends are rounded to the 1e-6 R grid (|tangent . gap| 1.1e-6..1.8e-6 against the old exact
-    1e-6 test; the quantisation bound for their 0.4-1.05 R lengths is 2.6e-6..5.7e-6). The test
-    admits the bound (x2), re-derives the gap as the exact perpendicular with the serialised
-    sign and keeps every row that passed the legacy test bitwise."""
+    """Block (b) step 0, F0-a (decision 317 MAJOR-1 option (a)): the three census keys the v3
+    builder stopped with "Gap is not perpendicular to the portion" carry short OBLIQUE straight
+    portions whose serialised Gap / ends are rounded to the 1e-6 R grid (|tangent . gap|
+    1.1e-6..1.8e-6 against the old exact 1e-6 test; the quantisation bound for their 0.4-1.05 R
+    lengths is 2.6e-6..5.7e-6). The test admits the bound (x2) and re-derives EVERY straight
+    row with 0 < |tangent . gap| <= bound as the exact perpendicular with the serialised sign
+    (no threshold inside the bound); a row with |tangent . gap| == 0 exactly is kept bitwise."""
 
     def test_the_three_census_keys_pass_the_portion_test(self):
-        expected = {"005bec161f6d": [23], "a596f5a4c303": [12, 26], "adb6d8a5d5a5": [26, 30, 41, 42]}
-        for prefix, rows in expected.items():
+        # Every oblique straight row of these keys is re-derived (the rows the legacy exact test
+        # refused - 005bec161f6d 23, a596f5a4c303 12 / 26, adb6d8a5d5a5 26 / 30 / 41 / 42 - among
+        # them); every axis-aligned row (|tangent . gap| == 0) is kept.
+        expected = {"005bec161f6d": (list(range(20, 42)), []),
+                    "a596f5a4c303": ([9, 10, 11, 12, 13, 14, 15, 16, 17] + list(range(19, 34)), list(range(6, 16))),
+                    "adb6d8a5d5a5": (list(range(21, 43)), [])}
+        for prefix, (claim_rows, context_rows) in expected.items():
             signature = census_record(prefix)["Signature"]
             portions = csg.portions_from_signature(signature, 1.9)
-            self.assertEqual([p["Portion"] for p in portions if p["GapRederived"]], rows, prefix)
-            for p in portions:
-                tangent = (p["P1"] - p["P0"]) / p["Length"]
-                self.assertLessEqual(abs(float(np.dot(tangent, p["Gap"]))), 1.0e-6)
-                if p["GapRederived"]:
-                    self.assertLessEqual(abs(float(np.dot(tangent, p["Gap"]))), 1.0e-15)
-                    serialised = np.asarray(signature["Portions"][p["Portion"]]["Gap"], dtype=float)
-                    self.assertGreater(float(np.dot(serialised, p["Gap"])), 0.999999)
-            # The context rows of the same keys are built by the same rule.
-            csg.context_from_signature(signature, 1.9)
-        # The loop end (axis-aligned gaps) re-derives nothing.
-        loop_end = csg.portions_from_signature(census_record("284d6c2b5b66")["Signature"], 1.9)
-        self.assertFalse(any(p["GapRederived"] for p in loop_end))
+            self.assertEqual([p["Portion"] for p in portions if p["GapRederived"]], claim_rows, prefix)
+            context = csg.context_from_signature(signature, 1.9)
+            self.assertEqual([p["Portion"] for p in context if p["GapRederived"]], context_rows, prefix)
+            for rows, entries in ((portions, signature["Portions"]), (context, signature.get("Context", []))):
+                for p in rows:
+                    tangent = (p["P1"] - p["P0"]) / p["Length"]
+                    deviation = abs(float(np.dot(tangent, p["Gap"])))
+                    if p["GapRederived"]:
+                        self.assertLessEqual(deviation, 1.0e-15)
+                        serialised = np.asarray(entries[p["Portion"]]["Gap"], dtype=float)
+                        self.assertGreater(float(np.dot(serialised, p["Gap"])), 0.999999)
+                    elif "Arc" not in entries[p["Portion"]]:
+                        self.assertEqual(deviation, 0.0)  # a kept straight row is exactly perpendicular
         # 005bec161f6d's claims-only placeholder builds all the way through the legacy mask
         # (its only stop was F0-a); the other two reach the face rule of the arc context
         # (F0-b, step 3).
@@ -536,7 +542,33 @@ class GapPerpendicularityTest(unittest.TestCase):
                          len(csg.portions_from_signature(signature, 1.9)) + len(csg.context_from_signature(signature, 1.9)))
         self.assertTrue(signature.get("Unboxable"))  # a span-cap key (step 2): claims only, no Box
 
-    def test_bound_and_legacy_rows(self):
+    def test_loop_end_knife_edge_row_is_rederived(self):
+        # The S1p loop end 284d6c2b5b66 (the first (b) case): portion 30 is a vertical chord
+        # with the serialised Gap [1.0, 1e-6], |tangent . gap| = 9.999999999995e-07 - the row
+        # the legacy exact test kept with a 1e-6-rad tilt (decision 317 MAJOR-1). Under option
+        # (a) it and the 17 other oblique-by-rounding straight rows (5e-8..1e-6) are re-derived;
+        # the 20 axis-aligned rows and the 291 arc chords are kept as computed.
+        signature = census_record("284d6c2b5b66")["Signature"]
+        self.assertEqual(signature["Portions"][30]["Gap"], [1.0, 1.0e-6])
+        p0 = np.asarray(signature["Portions"][30]["P"][:2]) * 1.9
+        p1 = np.asarray(signature["Portions"][30]["P"][2:]) * 1.9
+        unit, rederived, deviation = csg.perpendicular_gap(p0, p1, np.asarray([1.0, 1.0e-6]), 1.9, "portion 30")
+        self.assertTrue(rederived)
+        self.assertAlmostEqual(deviation, 9.999999999995e-07, delta=1.0e-18)
+        np.testing.assert_array_equal(unit, [1.0, 0.0])
+        self.assertFalse(np.signbit(unit[1]))  # no negative zero in the rows
+        portions = csg.portions_from_signature(signature, 1.9)
+        self.assertEqual([p["Portion"] for p in portions if p["GapRederived"]],
+                         [16, 17, 18, 19, 20, 21, 22, 23, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37])
+        self.assertEqual(len(portions), 313)
+        chords = [p for p in portions if "Arc" in signature["Portions"][p["Portion"]]]
+        self.assertEqual(len(chords), 291)
+        self.assertFalse(any(p["GapRederived"] for p in chords))
+        for p in chords:  # the analytic radial gap is perpendicular to its chord to round-off
+            tangent = (p["P1"] - p["P0"]) / p["Length"]
+            self.assertLessEqual(abs(float(np.dot(tangent, p["Gap"]))), 1.0e-13)
+
+    def test_bound_and_exact_rows(self):
         R = 1.9
         q = 1.0e-6
         # A 0.5 R oblique row whose serialised gap is tilted by 3 q / L (inside the bound 2 x
@@ -551,11 +583,27 @@ class GapPerpendicularityTest(unittest.TestCase):
         # Beyond the bound: fail closed with the bound in the message.
         with self.assertRaisesRegex(csg.SignatureGeometryError, "quantisation bound"):
             csg.perpendicular_gap(p0, p1, np.asarray([0.8, -0.6]) + 1.0e-4 * np.asarray([0.6, 0.8]), R, "row")
-        # A row passing the legacy exact test keeps its serialised gap bitwise (tilt 5e-7).
-        legacy = np.asarray([0.8, -0.6]) + 5.0e-7 * np.asarray([0.6, 0.8])
-        unit, rederived, _ = csg.perpendicular_gap(p0, p1, legacy, R, "row")
+        # A row the legacy exact test would have kept (tilt 5e-7 <= 1e-6) is re-derived too:
+        # no threshold inside the bound (decision 317 MAJOR-1 option (a)).
+        for tilt in (5.0e-7, 1.0e-6, 1.0e-6 + 1.0e-12, 1.0e-9):
+            tilted = np.asarray([0.8, -0.6]) + tilt * np.asarray([0.6, 0.8])
+            unit, rederived, _ = csg.perpendicular_gap(p0, p1, tilted, R, "row")
+            self.assertTrue(rederived, tilt)
+            np.testing.assert_allclose(unit, [0.8, -0.6], atol=1.0e-15)
+            self.assertLessEqual(abs(float(np.dot(unit, (p1 - p0) / np.linalg.norm(p1 - p0)))), 1.0e-16)
+        # An exactly perpendicular row (|tangent . gap| == 0: every axis-aligned row of the
+        # built rectilinear coupons) keeps its serialised gap bitwise.
+        for p1_axis, exact in (([0.0, 0.7 * R], [-1.0, 0.0]), ([0.7 * R, 0.0], [0.0, 1.0]), ([-0.7 * R, 0.0], [0.0, -1.0])):
+            unit, rederived, deviation = csg.perpendicular_gap(p0, np.asarray(p1_axis), np.asarray(exact), R, "row")
+            self.assertFalse(rederived)
+            self.assertEqual(deviation, 0.0)
+            np.testing.assert_array_equal(unit, exact)
+            self.assertEqual([float(v).hex() for v in unit], [float(v).hex() for v in exact])
+        # An arc chord's analytic radial gap (serialised False) is kept as computed within the bound.
+        chord_gap = np.asarray([0.8, -0.6]) + 1.0e-14 * np.asarray([0.6, 0.8])
+        unit, rederived, _ = csg.perpendicular_gap(p0, p1, chord_gap, R, "chord", serialised=False)
         self.assertFalse(rederived)
-        np.testing.assert_array_equal(unit, legacy / np.linalg.norm(legacy))
+        np.testing.assert_array_equal(unit, chord_gap / np.linalg.norm(chord_gap))
         self.assertAlmostEqual(csg.gap_perpendicularity_bound(0.5), 2.0 * (math.sqrt(2.0) * 0.5e-6 + 4.0e-6))
 
 
