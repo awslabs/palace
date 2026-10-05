@@ -5465,6 +5465,10 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                                     init=0),
             "LegacyBoxVertexCorners" => legacy_box_corners),
         "SpacingMinimum" => minimum(thicknesses), "SpacingMaximum" => maximum(thicknesses),
+        # The largest face-end block spacing lc_end (0 without face ends): the bound the
+        # tube design statement and the census validator add to TangentialSize (design A2).
+        "FaceEndSpacingMaximum" => maximum([record["EndSpacing"] for records in face_end_rows
+                                            for record in records]; init=0.0),
         "LayerRule" => TUBE_LAYER_RULE, "TubeAxisSizeLaw" => TUBE_AXIS_SIZE_LAW,
         "LayerGrowthCap" => description["RingSizes"][2] / description["RingSizes"][1],
         "LayerThickness" => Dict{String, Any}(

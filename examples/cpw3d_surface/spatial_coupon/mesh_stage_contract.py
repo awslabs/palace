@@ -1630,6 +1630,9 @@ def validate_tube_face_end_summary(tubes, rows):
     legacy = sum(len(row.get("LegacyBoxVertexCorner", [])) for row in rows)
     if summary is None and not records and legacy == 0:
         return          # a census recorded before the face-end rule (no face end, no legacy corner)
+    spacing = max([r["EndSpacing"] for r in records], default=0.0)
+    if _census_number(tubes, "FaceEndSpacingMaximum", "Prism tube record") != spacing:
+        raise ValueError("Prism tube face-end summary does not match the tube rows")
     if (not isinstance(summary, dict) or
             _count(summary.get("Count"), "Face-end count") != len(records) or
             _count(summary.get("EndBlockLayers"), "Face-end block layers") != sum(r["Layers"] for r in records) or

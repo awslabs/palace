@@ -2938,6 +2938,16 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                            {**statement, "LayerThickness": {k: v for k, v in layers.items()
                                                             if k != "LayersBelowTangentialSizeOverGrowthRatio"}}):
                 self.assertFalse(tube_design_statement(broken))
+            # Block (b) design A2: a recorded face-end block spacing admits SpacingMaximum up to it
+            # (the 1e-9 rounding slack included), no further; a negative record fails closed.
+            lc_end = statement["TangentialSize"] * 1.3
+            face_ended = {**statement, "FaceEndSpacingMaximum": lc_end, "SpacingMaximum": lc_end,
+                          "LayerThickness": {**layers, "Maximum": lc_end}}
+            self.assertTrue(tube_design_statement(face_ended))
+            self.assertFalse(tube_design_statement({**face_ended, "SpacingMaximum": lc_end * 1.01,
+                                                    "LayerThickness": {**layers, "Maximum": lc_end * 1.01}}))
+            self.assertFalse(tube_design_statement({**face_ended, "FaceEndSpacingMaximum": -1.0}))
+            self.assertTrue(tube_design_statement({**statement, "FaceEndSpacingMaximum": 0.0}))
             contract = load_semantic_contract(root / "base" / "semantic.json")
             binding = {"CaseId": "base", "Variant": "identity", "TransformSHA256": evidence["TransformSHA256"],
                        "InputSHA256": evidence["InputSHA256"], "ToolSHA256": evidence["ToolSHA256"],
@@ -3089,6 +3099,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertGreaterEqual(lc_end, tubes["TangentialSize"])
             def face_ended(c):
                 c["PrismTubes"]["Section"]["Radius"] = radius
+                c["PrismTubes"]["FaceEndSpacingMaximum"] = lc_end
                 c["PrismTubes"].setdefault("FaceEnds", {"Rule": "fixture face-end rule", "BoxVertexRule": "fixture",
                                                         "Count": 0, "EndBlockLayers": 0, "LegacyBoxVertexCorners": 0})
                 row = c["PrismTubes"]["Tubes"][0]
@@ -3132,6 +3143,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("EndsOnBox", [False, False]),
                               "face-end block")
             rejected_face_end(lambda c: c["PrismTubes"]["FaceEnds"].__setitem__("Count", 0), "face-end summary")
+            rejected_face_end(lambda c: c["PrismTubes"].__setitem__("FaceEndSpacingMaximum", 0.0), "face-end summary")
             rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"].append(
                                   dict(c["PrismTubes"]["Tubes"][0]["FaceEnds"][0])), "two face ends at one end")
             # A census recorded before the face-end rule (no summary, no face end) still passes:
