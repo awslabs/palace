@@ -142,7 +142,7 @@ def frame_from_geometry(topology, geometry):
     return np.vstack((axis_x, axis_y, normal))
 
 
-def normalize_geometry(coupon, radius):
+def normalize_geometry(coupon, radius, span_cap_over_r=None):
     topology = coupon["Topology"]
     geometry = coupon.get("Geometry", {})
     frame = frame_from_geometry(topology, geometry)
@@ -224,9 +224,16 @@ def normalize_geometry(coupon, radius):
             raise ValueError("Conductor labels are not canonical")
     if topology != "SpatialEdgeCluster" and labels != [1]:
         raise ValueError("Endpoint and junction coupons require one conductor")
-    # The claims within 8R of the origin (half the 16R plan span cap); the context rows of a
-    # device-plan coupon lie inside its box, which matching_support_points caps.
-    if any(np.linalg.norm(edge["Point"]) > 8.0 * radius for edge in edges if not edge.get("Context")):
+    # The claims within half the plan span cap of the origin (the default 16 R cap: 8 R; a
+    # per-case --support-span-cap raises it for that coupon alone, block (b) DESIGN section
+    # 3 (b) - the same recorded number as matching_support_points' cap); the context rows of
+    # a device-plan coupon lie inside its box, which matching_support_points caps.
+    if span_cap_over_r is None:
+        span_cap_over_r = DEFAULT_SUPPORT_SPAN_CAP_OVER_R
+    if span_cap_over_r <= 0.0:
+        raise ValueError("the matching-support span cap must be positive")
+    claim_radius = 0.5 * span_cap_over_r * radius
+    if any(np.linalg.norm(edge["Point"]) > claim_radius for edge in edges if not edge.get("Context")):
         raise ValueError("Spatial coupon geometry is too large for its matching radius")
 
     facets = []
@@ -389,6 +396,27 @@ def coupon_bounds(edges, radius, metal_thickness, overetch, support_box=None):
 # loop: --support-span-cap raises the bound for that coupon alone (recorded in its
 # basis-contract.json MatchingSupport); the default stays 16R.
 DEFAULT_SUPPORT_SPAN_CAP_OVER_R = 16.0
+
+# Block (b) DESIGN A3 (1) (decision 303): a joint of two plan-view boundary sides of one
+# class is SMOOTH iff |turn| <= JUNCTION_TANGENT_ANGLE (the mesher's constant: one constant,
+# one concept) and is MERGED into one side - the 1e-6 R signature grid leaves 4e-8..7e-7-rad
+# "corners" at the claim / context junctions of oblique sides that the exact integer
+# collinearity test kept as Physical vertices (2 corner balls + 4 tube caps per coupon).
+# Exactly collinear joints merge as before (every rectilinear coupon: bitwise); the
+# smallest real kink of the census is 3.9e-4 rad.
+JUNCTION_TANGENT_ANGLE = 1.0e-4
+
+
+def near_collinear(first, second, tangent_angle=JUNCTION_TANGENT_ANGLE):
+    """True when the two consecutive side directions (integer or float 2-vectors) turn by at
+    most ``tangent_angle`` radians: |first x second| <= tangent_angle |first| |second|."""
+    cross = first[0] * second[1] - first[1] * second[0]
+    if cross == 0:
+        return True
+    # Both directions follow the travel: a smooth joint has them parallel (a spike is not).
+    return first[0] * second[0] + first[1] * second[1] > 0 and abs(cross) <= tangent_angle * math.hypot(
+        first[0], first[1]
+    ) * math.hypot(second[0], second[1])
 
 
 def matching_support_points(
@@ -1927,7 +1955,7 @@ def plan_view_boundary_loops(
                     )
                     if (
                         classes[index - 1] == classes[index]
-                        and first[0] * second[1] - first[1] * second[0] == 0
+                        and near_collinear(first, second)
                     ):
                         ring.pop(index)
                         classes.pop(index)
@@ -2159,7 +2187,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     failure_path = output / "generation-failure.json"
     try:
-        frame, edges, facets = normalize_geometry(coupon, args.radius)
+        frame, edges, facets = normalize_geometry(coupon, args.radius, args.support_span_cap)
         validate_plan_view_geometry(edges, args.radius, facets)
         interfaces = model_interfaces(coupon)
     except ValueError as error:

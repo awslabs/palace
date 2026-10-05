@@ -370,6 +370,17 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             consumed_span.append(span_cap[0])
         if element_cap is not None:
             consumed_caps.append(element_cap[0])
+        # The identification's per-case span-cap allowance (block (b) DESIGN section 3 / A4:
+        # the requirement record's SpanCapAllowance, resolved by the quantum near-match on the
+        # claims-only signature) is the generator's --support-span-cap unless a CLI option
+        # names this requirement explicitly (the CLI option wins, both are recorded).
+        allowance = coupon.get("SpanCapAllowance")
+        if span_cap is None and allowance is not None:
+            span_cap = (f"SpanCapAllowance:{allowance['Label']}", float(allowance["SpanCapOverR"]))
+            span_cap_reason = (f"{allowance.get('Reason')} (identification SpanCapAllowance {allowance['Label']}, "
+                               f"approval {allowance.get('Approval')}, MatchedQuanta {allowance.get('MatchedQuanta')})")
+        else:
+            span_cap_reason = support_span_cap_reason
         command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size,
                                    cap_triangulation=cap_triangulation, cap_interior_spacing=cap_interior_spacing,
                                    python=python, support_span_cap=None if span_cap is None else span_cap[1])
@@ -392,7 +403,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                           "SupportSpanCapOverR": (None if span_cap is None else
                                                   {"Value": span_cap[1], "Prefix": span_cap[0],
                                                    "Default": generate_spatial_response_default_span_cap(),
-                                                   "Reason": support_span_cap_reason,
+                                                   "Reason": span_cap_reason,
+                                                   "Allowance": allowance,
                                                    "Rule": "generate_spatial_response --support-span-cap: this coupon's "
                                                            "matching-support plan span may exceed the default bound "
                                                            "(basis-contract.json MatchingSupport records the span); "

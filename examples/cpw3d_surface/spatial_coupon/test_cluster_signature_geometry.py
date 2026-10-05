@@ -492,6 +492,270 @@ class DevicePlanCouponTest(unittest.TestCase):
             self.assertEqual(sum(1 for e in edges if e.get("Context")), 8)
 
 
+CENSUS_B = HERE / "testdata" / "census-b-signatures" / "signatures.json"
+
+
+def census_record(prefix):
+    """A stage-2 census requirement record (S2.0, stage2-20261004/census/discovery) by its
+    12-hex key prefix: {Type, Hash, Geometry, Interfaces, BoundaryCondition, Signature, Window}."""
+    return json.loads(CENSUS_B.read_text())[prefix]
+
+
+class GapPerpendicularityTest(unittest.TestCase):
+    """Block (b) step 0, F0-a (decision 317 MAJOR-1 option (a)): the three census keys the v3
+    builder stopped with "Gap is not perpendicular to the portion" carry short OBLIQUE straight
+    portions whose serialised Gap / ends are rounded to the 1e-6 R grid (|tangent . gap|
+    1.1e-6..1.8e-6 against the old exact 1e-6 test; the quantisation bound for their 0.4-1.05 R
+    lengths is 2.6e-6..5.7e-6). The test admits the bound (x2) and re-derives EVERY straight
+    row with 0 < |tangent . gap| <= bound as the exact perpendicular with the serialised sign
+    (no threshold inside the bound); a row with |tangent . gap| == 0 exactly is kept bitwise."""
+
+    def test_the_three_census_keys_pass_the_portion_test(self):
+        # Every oblique straight row of these keys is re-derived (the rows the legacy exact test
+        # refused - 005bec161f6d 23, a596f5a4c303 12 / 26, adb6d8a5d5a5 26 / 30 / 41 / 42 - among
+        # them); every axis-aligned row (|tangent . gap| == 0) is kept.
+        expected = {"005bec161f6d": (list(range(20, 42)), []),
+                    "a596f5a4c303": ([9, 10, 11, 12, 13, 14, 15, 16, 17] + list(range(19, 34)), list(range(6, 16))),
+                    "adb6d8a5d5a5": (list(range(21, 43)), [])}
+        for prefix, (claim_rows, context_rows) in expected.items():
+            signature = census_record(prefix)["Signature"]
+            portions = csg.portions_from_signature(signature, 1.9)
+            self.assertEqual([p["Portion"] for p in portions if p["GapRederived"]], claim_rows, prefix)
+            context = csg.context_from_signature(signature, 1.9)
+            self.assertEqual([p["Portion"] for p in context if p["GapRederived"]], context_rows, prefix)
+            for rows, entries in ((portions, signature["Portions"]), (context, signature.get("Context", []))):
+                for p in rows:
+                    tangent = (p["P1"] - p["P0"]) / p["Length"]
+                    deviation = abs(float(np.dot(tangent, p["Gap"])))
+                    if p["GapRederived"]:
+                        self.assertLessEqual(deviation, 1.0e-15)
+                        serialised = np.asarray(entries[p["Portion"]]["Gap"], dtype=float)
+                        self.assertGreater(float(np.dot(serialised, p["Gap"])), 0.999999)
+                    elif "Arc" not in entries[p["Portion"]]:
+                        self.assertEqual(deviation, 0.0)  # a kept straight row is exactly perpendicular
+        # 005bec161f6d's claims-only placeholder builds all the way through the legacy mask
+        # (its only stop was F0-a); the other two reach the face rule of the arc context
+        # (F0-b, step 3).
+        coupon, _ = csg.cluster_coupon(census_record("005bec161f6d"), 1.9, 0.1, 0.05)
+        signature = coupon["Geometry"]["Signature"]
+        self.assertEqual(coupon["Geometry"]["EdgeCount"],
+                         len(csg.portions_from_signature(signature, 1.9)) + len(csg.context_from_signature(signature, 1.9)))
+        self.assertTrue(signature.get("Unboxable"))  # a span-cap key (step 2): claims only, no Box
+
+    def test_loop_end_knife_edge_row_is_rederived(self):
+        # The S1p loop end 284d6c2b5b66 (the first (b) case): portion 30 is a vertical chord
+        # with the serialised Gap [1.0, 1e-6], |tangent . gap| = 9.999999999995e-07 - the row
+        # the legacy exact test kept with a 1e-6-rad tilt (decision 317 MAJOR-1). Under option
+        # (a) it and the 17 other oblique-by-rounding straight rows (5e-8..1e-6) are re-derived;
+        # the 4 axis-aligned straight rows (24-27; the key has 22 straight portions + 16 arcs)
+        # and the 291 arc chords are kept as computed.
+        signature = census_record("284d6c2b5b66")["Signature"]
+        self.assertEqual(signature["Portions"][30]["Gap"], [1.0, 1.0e-6])
+        p0 = np.asarray(signature["Portions"][30]["P"][:2]) * 1.9
+        p1 = np.asarray(signature["Portions"][30]["P"][2:]) * 1.9
+        unit, rederived, deviation = csg.perpendicular_gap(p0, p1, np.asarray([1.0, 1.0e-6]), 1.9, "portion 30")
+        self.assertTrue(rederived)
+        self.assertAlmostEqual(deviation, 9.999999999995e-07, delta=1.0e-18)
+        np.testing.assert_array_equal(unit, [1.0, 0.0])
+        self.assertFalse(np.signbit(unit[1]))  # no negative zero in the rows
+        portions = csg.portions_from_signature(signature, 1.9)
+        self.assertEqual([p["Portion"] for p in portions if p["GapRederived"]],
+                         [16, 17, 18, 19, 20, 21, 22, 23, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37])
+        self.assertEqual(len(portions), 313)
+        chords = [p for p in portions if "Arc" in signature["Portions"][p["Portion"]]]
+        self.assertEqual(len(chords), 291)
+        self.assertFalse(any(p["GapRederived"] for p in chords))
+        for p in chords:  # the analytic radial gap is perpendicular to its chord to round-off
+            tangent = (p["P1"] - p["P0"]) / p["Length"]
+            self.assertLessEqual(abs(float(np.dot(tangent, p["Gap"]))), 1.0e-13)
+
+    def test_bound_and_exact_rows(self):
+        R = 1.9
+        q = 1.0e-6
+        # A 0.5 R oblique row whose serialised gap is tilted by 3 q / L (inside the bound 2 x
+        # (0.707 q + 4 q)): re-derived, exactly perpendicular, same side.
+        p0, p1 = np.asarray([0.0, 0.0]), np.asarray([0.3 * R, 0.4 * R])
+        tilt = 3.0 * q / 0.5
+        gap = np.asarray([0.8, -0.6]) + tilt * np.asarray([0.6, 0.8])
+        unit, rederived, deviation = csg.perpendicular_gap(p0, p1, gap, R, "row")
+        self.assertTrue(rederived)
+        self.assertAlmostEqual(deviation, tilt, delta=1.0e-9)
+        np.testing.assert_allclose(unit, [0.8, -0.6], atol=1.0e-15)
+        # Beyond the bound: fail closed with the bound in the message.
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "quantisation bound"):
+            csg.perpendicular_gap(p0, p1, np.asarray([0.8, -0.6]) + 1.0e-4 * np.asarray([0.6, 0.8]), R, "row")
+        # A row the legacy exact test would have kept (tilt 5e-7 <= 1e-6) is re-derived too:
+        # no threshold inside the bound (decision 317 MAJOR-1 option (a)).
+        for tilt in (5.0e-7, 1.0e-6, 1.0e-6 + 1.0e-12, 1.0e-9):
+            tilted = np.asarray([0.8, -0.6]) + tilt * np.asarray([0.6, 0.8])
+            unit, rederived, _ = csg.perpendicular_gap(p0, p1, tilted, R, "row")
+            self.assertTrue(rederived, tilt)
+            np.testing.assert_allclose(unit, [0.8, -0.6], atol=1.0e-15)
+            self.assertLessEqual(abs(float(np.dot(unit, (p1 - p0) / np.linalg.norm(p1 - p0)))), 1.0e-16)
+        # An exactly perpendicular row (|tangent . gap| == 0: every axis-aligned row of the
+        # built rectilinear coupons) keeps its serialised gap bitwise.
+        for p1_axis, exact in (([0.0, 0.7 * R], [-1.0, 0.0]), ([0.7 * R, 0.0], [0.0, 1.0]), ([-0.7 * R, 0.0], [0.0, -1.0])):
+            unit, rederived, deviation = csg.perpendicular_gap(p0, np.asarray(p1_axis), np.asarray(exact), R, "row")
+            self.assertFalse(rederived)
+            self.assertEqual(deviation, 0.0)
+            np.testing.assert_array_equal(unit, exact)
+            self.assertEqual([float(v).hex() for v in unit], [float(v).hex() for v in exact])
+        # An arc chord's analytic radial gap (serialised False) is kept as computed within the bound.
+        chord_gap = np.asarray([0.8, -0.6]) + 1.0e-14 * np.asarray([0.6, 0.8])
+        unit, rederived, _ = csg.perpendicular_gap(p0, p1, chord_gap, R, "chord", serialised=False)
+        self.assertFalse(rederived)
+        np.testing.assert_array_equal(unit, chord_gap / np.linalg.norm(chord_gap))
+        self.assertAlmostEqual(csg.gap_perpendicularity_bound(0.5), 2.0 * (math.sqrt(2.0) * 0.5e-6 + 4.0e-6))
+
+
+class ArcContextJointSnapTest(unittest.TestCase):
+    """Block (b) step 3 (DESIGN section 2 (b) + A1, decision 303): an arc entry's ends are the
+    serialised ends exactly, snapped onto the straight neighbour's device vertex within the
+    arc-fit tolerance (1e-3 R + 2 q) or onto a box face within one quantum, and the circle is
+    rebuilt through them. The eight census keys the v3 builder refused with "the chain segments
+    bounding a face disagree on its metal side" (F0-b; analysis/generator_stops.log) build."""
+
+    REFUSED = {"448693d60a6f": 1, "0c94ec951e10": 0, "32dc558f4810": 0, "2bc3d927fda6": 1, "baf9dacceb51": 2,
+               "efe678516aa0": 4, "a596f5a4c303": 7, "adb6d8a5d5a5": 0}
+
+    def test_the_census_arc_context_keys_build_with_recorded_snaps(self):
+        census = json.loads(CENSUS_B.read_text())
+        for prefix, rec in census.items():
+            coupon, edges = csg.cluster_coupon(rec, 1.9, 0.1, 0.05)
+            snaps = coupon["Geometry"].get("JointSnaps", [])
+            arcs = [r for r in snaps if r["Class"] == "Arc"]
+            joints = [r for r in snaps if r["Class"] != "Arc"]
+            self.assertEqual(len(arcs), sum("Arc" in e for e in rec["Signature"]["Portions"] + rec["Signature"].get("Context", [])), prefix)
+            for record in arcs:
+                self.assertLessEqual(record["ArcDeviationOverR"], csg.ARC_REBUILD_TOLERANCE_OVER_R + 1.0e-9, prefix)
+            for record in joints:
+                self.assertEqual(record["Class"], "ArcJoint")
+                self.assertLessEqual(record["DistanceOverR"], csg.ARC_JOINT_SNAP_OVER_R + 1.0e-9)
+                self.assertGreater(record["DistanceOverR"], csg.COINCIDENCE_OVER_R)
+            if prefix in self.REFUSED:
+                self.assertEqual(len(joints), self.REFUSED[prefix], prefix)
+            # Every chord vertex of a rebuilt arc lies on its rebuilt circle to double precision
+            # and the arc's first / last chord ends are the fixed ends.
+            chords, _ = csg.chorded_entries(rec["Signature"], 1.9, include_context=True)
+            for record in arcs:
+                kind, index = record["Piece"]
+                own = [e for e in chords if e["Portion"] == index and bool(e.get("Context")) == (kind == "Context") and "Chord" in e]
+                self.assertEqual(len(own), record["Chords"])
+                centre = np.asarray(record["Centre"]) * 1.9
+                for e in own:
+                    for q in (e["P0"], e["P1"]):
+                        self.assertAlmostEqual(np.linalg.norm(np.asarray(q) - centre) / 1.9, record["RadiusOverR"],
+                                               delta=1.0e-13 * max(1.0, record["RadiusOverR"]))
+        # The loop-end family: 16 arcs each, exact ends (no joint), rebuilt within one quantum.
+        for prefix in ("284d6c2b5b66", "9e103a0f291c", "20ac3e14a128"):
+            coupon, _ = csg.cluster_coupon(census[prefix], 1.9, 0.1, 0.05)
+            snaps = coupon["Geometry"]["JointSnaps"]
+            self.assertEqual([r["Class"] for r in snaps].count("Arc"), 16)
+            self.assertFalse([r for r in snaps if r["Class"] != "Arc"])
+            self.assertLessEqual(max(r["ArcDeviationOverR"] for r in snaps), 1.0e-6 + 1.0e-12)
+
+    def finger(self, shift_over_R, radius=1.0):
+        """The rounded finger end of ArcPortionTest with the top arc's side end displaced
+        along the side by shift_over_R (an unsnapped arc-fit residual)."""
+        c45 = 0.5 * math.cos(math.pi / 4)
+        top = {"Conductor": 1, "Interfaces": ["MA", "MS", "SA"], "Law": LAW, "P": [-0.5 - shift_over_R, 0.75, 0.0, 0.25],
+               "Arc": [-0.5, 0.25, -0.5 + c45, 0.25 + c45], "GapRadial": 1}
+        bottom = {"Conductor": 1, "Interfaces": ["MA", "MS", "SA"], "Law": LAW, "P": [-0.5, -0.75, 0.0, -0.25],
+                  "Arc": [-0.5, -0.25, -0.5 + c45, -0.25 - c45], "GapRadial": 1}
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 5,
+                     "Portions": [portion((0.0, -0.25, 0.0, 0.25), (1.0, 0.0)), top, bottom,
+                                  portion((-1.5, 0.75, -0.5, 0.75), (0.0, 1.0)), portion((-1.5, -0.75, -0.5, -0.75), (0.0, -1.0))],
+                     "Vertices": []}
+        return {"Topology": "SpatialEdgeCluster", "Geometry": {"EdgeCount": 5, "Signature": signature}, "Signature": signature,
+                "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"}}
+
+    def test_arc_end_snaps_onto_the_straight_neighbour_within_the_fit_tolerance(self):
+        R = 1.0
+        coupon, edges = csg.cluster_coupon(self.finger(5.0e-4), R, 0.1, 0.05)
+        joints = [r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "ArcJoint"]
+        self.assertEqual(len(joints), 1)
+        self.assertEqual(joints[0]["Piece"], ["Claim", 1])
+        self.assertEqual(joints[0]["To"][:2], ["Claim", 3])
+        self.assertAlmostEqual(joints[0]["DistanceOverR"], 5.0e-4, places=12)
+        arc = [r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] == "Arc" and r["Piece"] == ["Claim", 1]][0]
+        self.assertLessEqual(arc["ArcDeviationOverR"], 5.0e-4 + 1.0e-12)
+        self.assertGreater(arc["CentreShiftOverR"], 0.0)
+        # The snapped chord end IS the straight neighbour's end (the straight row unchanged).
+        chords, _ = csg.chorded_entries(coupon["Geometry"]["Signature"], R)
+        side_end = np.asarray([-0.5, 0.75])
+        self.assertTrue(any(np.array_equal(np.asarray(e["P0"]), side_end) or np.array_equal(np.asarray(e["P1"]), side_end)
+                            for e in chords if e["Portion"] == 1))
+        self.assertEqual([e for e in chords if e["Portion"] == 3][0]["P1"], (-0.5, 0.75))
+        # The same geometry at the exact end: no joint record, chord ends exact.
+        coupon, _ = csg.cluster_coupon(self.finger(0.0), R, 0.1, 0.05)
+        self.assertFalse([r for r in coupon["Geometry"]["JointSnaps"] if r["Class"] != "Arc"])
+        # 1.5e-3 R: beyond the fit tolerance, the end stays and the arrangement fails closed.
+        with self.assertRaises(csg.SignatureGeometryError):
+            csg.cluster_coupon(self.finger(1.5e-3), R, 0.1, 0.05)
+
+    def test_rebuilt_arc_and_the_rebuild_tolerance(self):
+        a, b, c = (1.0, 0.0), (0.0, 1.0), (0.0, 0.0)
+        m = (math.cos(math.pi / 4), math.sin(math.pi / 4))
+        vertices, centre, r, sweep = csg.rebuilt_arc(a, b, c, m, 1.0)
+        self.assertEqual(len(vertices), 19)
+        np.testing.assert_array_equal(vertices[0], a)
+        np.testing.assert_array_equal(vertices[-1], b)
+        self.assertAlmostEqual(sweep, 0.5 * math.pi, places=12)
+        for q in vertices:
+            self.assertAlmostEqual(np.linalg.norm(q - centre), r, places=13)
+        # A displaced end: the centre moves onto the bisector, the ends stay exact.
+        vertices, centre, r, _ = csg.rebuilt_arc((1.0 + 1.0e-3, 0.0), b, c, m, 1.0)
+        np.testing.assert_array_equal(vertices[0], (1.0 + 1.0e-3, 0.0))
+        self.assertAlmostEqual(np.linalg.norm(vertices[0] - centre), np.linalg.norm(vertices[-1] - centre), places=14)
+        self.assertGreater(np.linalg.norm(centre), 0.0)
+        # The other way round (clockwise) and a closed circle.
+        vertices, centre, r, sweep = csg.rebuilt_arc(a, b, c, (-m[0], -m[1]), 1.0)
+        self.assertAlmostEqual(sweep, -1.5 * math.pi, places=12)
+        vertices, centre, r, sweep = csg.rebuilt_arc(a, a, c, (-1.0, 0.0), 1.0)
+        self.assertAlmostEqual(sweep, 2.0 * math.pi, places=12)
+        self.assertEqual(len(vertices), 73)
+        # A corrupt signature (an arc end 2e-3 R off its own circle): the rebuild deviates
+        # beyond the fit tolerance and fails closed.
+        c45 = 0.5 * math.cos(math.pi / 4)
+        bad = {"Type": "SpatialEdgeCluster", "EdgeCount": 1, "Vertices": [],
+               "Portions": [{"Conductor": 1, "Interfaces": ["MA"], "Law": LAW, "P": [-0.5, 0.75 + 2.0e-3, 0.0, 0.25],
+                             "Arc": [-0.5, 0.25, -0.5 + c45, 0.25 + c45], "GapRadial": 1}]}
+        with self.assertRaisesRegex(csg.SignatureGeometryError, "arc rebuild outside the fit tolerance"):
+            csg.chorded_entries(bad, 1.0)
+
+
+class ClaimRadiusSpanCapTest(unittest.TestCase):
+    """Block (b) DESIGN section 3 (b): the generator's claim radius is half the case's span cap
+    (the default 16 R -> 8 R, byte-identical); a claim 9 R from the origin generates only under
+    --support-span-cap >= 18."""
+
+    def test_claim_radius_follows_the_span_cap(self):
+        R = 1.9
+        far = 10.0  # units of R: the second claim's row point (its P0 end) lies 9 R out
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 2,
+                     "Portions": [portion((-1.0, 0.0, 1.0, 0.0), (0.0, 1.0)), portion((far - 1.0, 0.0, far + 1.0, 0.0), (0.0, 1.0))],
+                     "Vertices": []}
+        rec = record(signature["Portions"])
+        rec["Signature"] = rec["Geometry"]["Signature"] = signature
+        # The generator's frame is a rotation about the signature's origin: the second claim's
+        # row point (the exact-portion row's P0) lies 9 R from it.
+        import generate_spatial_response as spatial_generator
+        coupon = {"Topology": "SpatialEdgeCluster", "Interfaces": INTERFACES, "BoundaryCondition": {"Type": "PEC"},
+                  "Geometry": {"EdgeCount": 2, "Signature": signature,
+                               "Edges": csg.model_edges(rec, R), "PlanViewFacets": []}}
+        with self.assertRaisesRegex(ValueError, "too large for its matching radius"):
+            spatial_generator.normalize_geometry(coupon, R)
+        with self.assertRaisesRegex(ValueError, "too large for its matching radius"):
+            spatial_generator.normalize_geometry(coupon, R, 16.0)
+        frame, edges, _ = spatial_generator.normalize_geometry(coupon, R, 30.0)
+        self.assertEqual(len(edges), 2)
+        self.assertAlmostEqual(max(np.linalg.norm(e["Point"]) for e in edges), 9.0 * R, places=9)
+        frame, edges, _ = spatial_generator.normalize_geometry(coupon, R, 18.0)
+        self.assertEqual(len(edges), 2)
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            spatial_generator.normalize_geometry(coupon, R, 0.0)
+
+
 class LegacyByteIdentityTest(unittest.TestCase):
     """A claims-only (contract-2) signature regenerates the pre-v3 builder's generator inputs
     byte for byte (testdata/legacy-byte-identity: coupon.json, mesh-signature.csv,

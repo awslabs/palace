@@ -65,12 +65,39 @@ struct IdentificationFace
   std::array<double, 3> normal{};
 };
 
+// A per-case span-cap allowance (block (b) DESIGN section 3 (a) + A4, decision 303): the
+// plan span cap of ONE approved closed feature that cannot be split (decision 244 (i)),
+// keyed by the EMBEDDED claims-only signature of the feature (verbatim as the inventory
+// exports it under SpatialSupport.ClaimsSignature), resolved by the quantum near-match
+// (kClusterQuantumNearMatchMaxQuanta) on the cluster's claims-only signature BEFORE any
+// box, so one entry serves every window instance of the feature. The Label is the recorded
+// hash prefix the allowance was approved under, never compared.
+struct ClusterSignatureDifference
+{
+  double max_delta_quanta = 0.0;
+  std::vector<std::string> differing_paths;
+};
+
+struct SpanCapAllowance
+{
+  nlohmann::json claims_signature;
+  double span_cap_over_R = 0.0;
+  std::string label;
+  std::string reason;
+  std::string approval;
+};
+
 struct IdentificationInput
 {
   double radius = 0.0;
   std::vector<IdentificationSegment> segments;
   std::vector<IdentificationVertex> vertices;
   std::vector<IdentificationFace> faces;
+  // Per-case span-cap allowances (SpatialSupport.SpanCapAllowances of the response
+  // correction config); validated at the start of the identification: SpanCapOverR >=
+  // kSupportSpanCapOverRadius and no two allowances within 2 x
+  // kClusterQuantumNearMatchMaxQuanta quanta of each other (fail closed).
+  std::vector<SpanCapAllowance> span_cap_allowances;
   // Progress and per-stage timing lines (counts, wall time, fraction done of a long loop
   // every ~10 s) so that a chip-scale identification can be monitored; unset = silent. Pure
   // diagnostics: nothing in the result depends on it.
@@ -131,6 +158,11 @@ struct IdentifiedFeature
   // interpolation rule and kappa, for an unmatched curved feature the reason (never
   // silently straight); for a straight-like feature the first-order term's node status.
   std::optional<std::string> match_note;
+  // Quantum near-match record (block (b) DESIGN section 4, decision 303; null unless a
+  // SpatialEdgeCluster matched a library model within kClusterQuantumNearMatchMaxQuanta
+  // quanta without an exact hash): {ModelKey, FeatureKey, MaxDeltaQuanta, DifferingNumbers,
+  // Rule}. Manifest Features[].Match.QuantumNearMatch; the status stays Matched / Exact.
+  nlohmann::json quantum_near_match;
 
   // Spatial-support record of a SpatialEdgeCluster (contract v3, USER decision 281 /
   // supervisor decision 282; null for every other feature): the claims-derived support box
@@ -296,6 +328,9 @@ struct IdentificationResult
     std::size_t threshold_band_hits = 0;
   };
   SpatialSupportSummary spatial_support;
+  // The Labels of the span-cap allowances no cluster of this geometry resolved (a warning,
+  // never an abort; manifest UnusedSpanCapAllowances).
+  std::vector<std::string> unused_span_cap_allowances;
 
   // Manifest "Identification" object; the length scale converts mesh units for output.
   nlohmann::json ToJson(double length_scale) const;
@@ -406,6 +441,24 @@ constexpr double kSupportFaceClearanceOverRadius = 0.25;
 constexpr double kSupportFaceGrowthStepOverRadius = 0.25;
 constexpr int kSupportFaceGrowthMaxSteps = 12;
 constexpr double kSupportSpanCapOverRadius = 16.0;
+
+// Validates a list of span-cap allowances (fail closed: a cap below
+// kSupportSpanCapOverRadius never lowers the cap; two allowances within 2 x
+// kClusterQuantumNearMatchMaxQuanta quanta are "two allowances one geometry") and
+// normalises every ClaimsSignature's Type.
+void ValidateSpanCapAllowances(std::vector<SpanCapAllowance> &allowances);
+
+// The allowance a claims-only signature resolves (the nearest within
+// kClusterQuantumNearMatchMaxQuanta quanta; ties by Label) with its quantum difference, or
+// nullopt.
+struct ResolvedSpanCapAllowance
+{
+  std::size_t index = 0;
+  ClusterSignatureDifference difference;
+};
+std::optional<ResolvedSpanCapAllowance>
+ResolveSpanCapAllowance(const nlohmann::json &claims_signature,
+                        const std::vector<SpanCapAllowance> &allowances);
 
 // The claims-derived support box [x0, y0, x1, y1] in units of R of a serialised cluster
 // signature {"Portions", "Vertices"} in its frame (rule B2 above; the same numbers the
@@ -585,12 +638,67 @@ struct SignatureParameters
   std::string topology_key;
   std::vector<double> lengths_over_R;  // in the traversal order of the signature
   std::vector<double> angles_degrees;
+  // SpatialEdgeCluster only (the quantum near-match below): the JSON path of every
+  // parameter, parallel to lengths_over_R then angles_degrees.
+  std::vector<std::string> length_paths;
+  std::vector<std::string> angle_paths;
 };
 
 // Splits a canonical signature into its topology key and its continuous parameters. A
-// SpatialEdgeCluster signature (a whole plan-view geometry in a canonical frame) has no
-// tolerance: its topology key is the full signature and its parameter lists are empty.
+// SpatialEdgeCluster signature (a whole plan-view geometry in a canonical frame; block (b)
+// DESIGN section 4, decision 303) has its topology key = the signature with every number of
+// Portions[].P / Arc / Gap, Context[].P / Arc / Gap, Box and Vertices[].P / TurnDegrees
+// replaced by null (entry ORDER preserved) and those numbers as its parameters in traversal
+// order: lengths (units of R; the Gap components and the Box included: all quantised on the
+// 1e-6 R grid) and angles (TurnDegrees, 1e-6 deg).
 SignatureParameters SplitSignatureParameters(const nlohmann::json &signature);
+
+// Quantum near-match of SpatialEdgeCluster keys (DESIGN section 4; decision 303 ruling: max
+// quanta 4). Two cluster signatures of one topology key whose numbers agree within
+// kClusterQuantumNearMatchMaxQuanta signature quanta (1e-6 R / 1e-6 deg) describe ONE
+// geometry at the resolution of the grid: the same design cell at different chip positions
+// rounds a few coordinates differently by sub-quantum float noise (the three stage-2
+// loop-end keys differ by exactly one quantum in 8-17 of 290 numbers; the nearest real
+// near-key is
+// >= 2,000 quanta away). SignatureDeviation of two clusters = max |delta| / ((k + 1/2) q)
+// (<= 1 matches: the half-quantum inclusive rule below); a permuted entry order is a
+// different topology key (Missing: the residual knife-edge, recorded). Library models
+// within 2 k (+ 1/2) quanta of each other are refused at load ("two models one geometry"),
+// so no feature can be within k quanta of two models.
+constexpr int kClusterQuantumNearMatchMaxQuanta = 4;
+
+// Decision 287 (b) / 288 (2) half-quantum INCLUSIVE reading of every quantum threshold
+// (decision 317 MINOR-1): an on-grid difference of k quanta computes to k +- 1e-9 in
+// floating point, so a threshold at exactly k would refuse a 4-quantum difference read as
+// 4.0000000006. A feature matches a model iff max |delta| <= k + 1/2 quanta; two models (or
+// two span-cap allowances) are one geometry iff max |delta| <= 2 k + 1/2.
+constexpr double kClusterQuantumInclusiveMargin = 0.5;
+
+inline bool WithinClusterQuantumNearMatch(double max_delta_quanta)
+{
+  return max_delta_quanta <=
+         kClusterQuantumNearMatchMaxQuanta + kClusterQuantumInclusiveMargin;
+}
+
+inline bool ClusterQuantumDuplicate(double max_delta_quanta)
+{
+  return max_delta_quanta <=
+         2 * kClusterQuantumNearMatchMaxQuanta + kClusterQuantumInclusiveMargin;
+}
+
+// The quantum difference of two cluster signatures of one topology key: the largest
+// |delta| in quanta over the parameters and the paths of every differing number; nullopt
+// when the topology keys differ. (ClusterSignatureDifference is declared with the
+// span-cap allowances above.)
+std::optional<ClusterSignatureDifference>
+ClusterSignatureQuantumDifference(const nlohmann::json &a, const nlohmann::json &b);
+
+// The Match.QuantumNearMatch record of a feature matched to a model within the quantum
+// near-match (null for an exact-hash match): {ModelKey, FeatureKey, MaxDeltaQuanta,
+// DifferingNumbers {Count, Paths}, Rule}.
+nlohmann::json QuantumNearMatchRecord(const std::string &model_key,
+                                      const std::string &feature_key,
+                                      const ClusterSignatureDifference &difference);
 
 // Mirror image of a translational signature (an `Edges` list): the edge order reversed,
 // gap sides negated, offsets taken from the top edge, conductors relabelled by first
@@ -600,12 +708,16 @@ SignatureParameters SplitSignatureParameters(const nlohmann::json &signature);
 nlohmann::json MirrorTranslationalSignature(const nlohmann::json &signature);
 
 // Normalised deviation of two signatures of one type: the maximum over the parameters of
-// |difference| / tolerance (both orientations of a translational signature; the smaller),
-// or nullopt when the topology keys differ. Within tolerance iff the value is <= 1.
+// |difference| / tolerance (both orientations of a translational signature; the smaller;
+// a SpatialEdgeCluster: |difference| / ((kClusterQuantumNearMatchMaxQuanta + 1/2) x
+// quantum), the half-quantum inclusive rule), or
+// nullopt when the topology keys differ. Within tolerance iff the value is <= 1.
 std::optional<double> SignatureDeviation(const nlohmann::json &a, const nlohmann::json &b);
 
 // The signature with its continuous parameters replaced, in the traversal order of
-// SplitSignatureParameters (rounded to the signature grids).
+// SplitSignatureParameters (rounded to the signature grids). A SpatialEdgeCluster is
+// returned unchanged (the representative of a near-matching group is its lexicographically
+// smallest member, never a midpoint: the group is one geometry at the grid).
 nlohmann::json SubstituteSignatureParameters(const nlohmann::json &signature,
                                              const std::vector<double> &lengths_over_R,
                                              const std::vector<double> &angles_degrees);

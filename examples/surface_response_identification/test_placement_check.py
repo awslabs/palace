@@ -91,6 +91,54 @@ class FingerEndCluster(unittest.TestCase):
         self.assertEqual(by_name["A10-placement-clusters"]["Detail"]["Features"], 1)
         self.assertEqual(by_name["A10-placement-corners"]["Detail"]["Features"], 0)  # nothing to place: PASS
 
+    def test_arc_aware_device_perimeter_distance_and_the_context_gate(self):
+        # Block (b) DESIGN section 2 (a): a context entry END cut at a box face lies on the
+        # FITTED circle, up to the chord sagitta (0.5 R x (1 - cos 7.5 deg) = 4.3e-3 R here)
+        # from the device polyline: the chord reading refuses it, the arc reading accepts it.
+        c = (-0.5, 0.25)
+        t = math.radians(7.5)  # the middle of the first 15-deg mesh chord
+        on_circle = self.origin + np.asarray([(c[0] + 0.5 * math.cos(t)) * R, (c[1] + 0.5 * math.sin(t)) * R, 0.0]) @ self.axes
+        self.assertLess(PC.device_perimeter_distance(self.identification, on_circle), 1.0e-9 * R)
+        chords_only = {**self.identification, "Segments": [{k: v for k, v in s.items() if k != "Arc"} for s in self.identification["Segments"]]}
+        sagitta = 0.5 * R * (1.0 - math.cos(t))
+        self.assertAlmostEqual(PC.device_perimeter_distance(chords_only, on_circle), sagitta, delta=1.0e-6 * R)
+        # A point radially 0.01 R off the circle inside the arc's angular range reads 0.01 R;
+        # one outside the chord's angular range reads the distance to the chord end.
+        off = self.origin + np.asarray([(c[0] + 0.51 * math.cos(t)) * R, (c[1] + 0.51 * math.sin(t)) * R, 0.0]) @ self.axes
+        self.assertAlmostEqual(PC.device_perimeter_distance(self.identification, off), 0.01 * R, delta=1.0e-9 * R)
+        a = np.asarray([0.0, 0.0, 0.0]); b = np.asarray([1.0, 0.0, 0.0]); centre = np.asarray([0.5, -0.5, 0.0])
+        rho = math.hypot(0.5, 0.5)
+        beyond = centre + rho * np.asarray([math.cos(math.radians(170.0)), math.sin(math.radians(170.0)), 0.0])  # a is at 135 deg, b at 45
+        self.assertAlmostEqual(PC._arc_chord_distance(beyond, a, b, centre, rho), min(np.linalg.norm(beyond - a), np.linalg.norm(beyond - b)), places=12)
+        self.assertAlmostEqual(PC._arc_chord_distance(np.asarray([0.5, 0.2, 0.3]), a, b, centre, rho), math.hypot(0.7 - rho, 0.3), places=12)
+        self.assertAlmostEqual(PC._arc_chord_distance(np.asarray([0.5, 0.2, 0.0]), a, b, np.asarray([2.0, 0.0, 0.0]), 1.0), 0.2, places=12)  # degenerate: the chord
+        # The context gate: a contract-3 model whose Context entry ends at the arc's middle
+        # (on the circle) passes; the same end moved 2e-3 R radially fails.
+        def library(end):
+            signature = dict(self.signature)
+            signature["Box"] = [-3.0, -2.0, 1.0, 2.0]
+            signature["Context"] = [{"P": [c[0] + 0.5 * math.cos(math.radians(45.0)), c[1] + 0.5 * math.sin(math.radians(45.0)), end[0], end[1]],
+                                     "Arc": [c[0], c[1], c[0] + 0.5 * math.cos(math.radians(26.25)), c[1] + 0.5 * math.sin(math.radians(26.25))],
+                                     "GapRadial": 1, "Conductor": 1, "Interfaces": ["SA"], "Law": LAW, "Chain": True}]
+            return {"MatchingRadius": R, "Models": [{"Name": "finger", "Topology": "SpatialEdgeCluster", "Signature": signature}]}
+        exact_end = (c[0] + 0.5 * math.cos(t), c[1] + 0.5 * math.sin(t))
+        gates, summary = PC.placement_gates(self.identification, [patch(3, "finger", self.origin, self.axes)], library(exact_end), R)
+        context = {g["Gate"]: g for g in gates}["A10-context"]
+        self.assertEqual(context["Status"], "PASS")
+        self.assertEqual(context["Detail"]["Checks"], 2)
+        self.assertEqual(context["Detail"]["ArcEnds"], 2)
+        self.assertLess(context["Detail"]["WorstDeviationOverR"], 1.0e-9)
+        self.assertEqual(summary["Context"]["Features"], 1)
+        moved_end = (c[0] + 0.502 * math.cos(t), c[1] + 0.502 * math.sin(t))
+        gates, _ = PC.placement_gates(self.identification, [patch(3, "finger", self.origin, self.axes)], library(moved_end), R)
+        context = {g["Gate"]: g for g in gates}["A10-context"]
+        self.assertEqual(context["Status"], "FAIL")
+        self.assertAlmostEqual(context["Detail"]["WorstDeviationOverR"], 2.0e-3, places=6)
+        # A claims-only model (no Box): nothing to check.
+        gates, _ = PC.placement_gates(self.identification, [patch(3, "finger", self.origin, self.axes)], self.library, R)
+        self.assertEqual({g["Gate"]: g for g in gates}["A10-context"]["Status"], "PASS")
+        self.assertEqual({g["Gate"]: g for g in gates}["A10-context"]["Detail"]["Features"], 0)
+
     def test_model_edges_scaled_from_library_units_pass(self):
         # Library in other length units (R = 1.9): Edges = the chorded portions x 1.9.
         library = {"MatchingRadius": 1.9, "Models": [{"Name": "finger", "Topology": "SpatialEdgeCluster", "Signature": self.signature, "Edges": []}]}

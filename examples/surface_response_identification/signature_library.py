@@ -56,14 +56,89 @@ PARAMETER_TOLERANCE_OVER_R = 1.0e-3
 ANGLE_TOLERANCE_DEGREES = 1.0e-2
 LENGTH_QUANTUM_OVER_R = 1.0e-6
 ANGLE_QUANTUM_DEGREES = 1.0e-6
+# Block (b) DESIGN section 4 (decision 303; surfaceresponseidentification.hpp
+# kClusterQuantumNearMatchMaxQuanta): two SpatialEdgeCluster signatures of one topology key
+# (every number of Portions / Context [].P / Arc / Gap, Box and Vertices[].P / TurnDegrees
+# nulled, entry order preserved) whose numbers agree within this many signature quanta (1e-6 R
+# / 1e-6 deg) are ONE geometry at the grid: the matcher resolves the feature to the model
+# (Match.QuantumNearMatch recorded), the library groups them into one coupon keyed by the
+# lexicographically smallest member (the others listed under NearKeys).
+CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA = 4
+# Decisions 287 (b) / 288 (2) / 317 MINOR-1 (kClusterQuantumInclusiveMargin): every quantum
+# threshold is read HALF-QUANTUM INCLUSIVE - an on-grid difference of k quanta computes to
+# k +- 1e-9 in floating point, so a feature matches iff max |delta| <= k + 1/2 quanta and two
+# models (or two span-cap allowances) are one geometry iff max |delta| <= 2 k + 1/2.
+CLUSTER_QUANTUM_INCLUSIVE_MARGIN = 0.5
+CLUSTER_LENGTH_KEYS = ("P", "Arc", "Gap", "Box")
+CLUSTER_ANGLE_KEYS = ("TurnDegrees",)
+
+
+def is_cluster_signature(signature):
+    return isinstance(signature, dict) and signature.get("Type") == "SpatialEdgeCluster"
+
+
+def split_cluster_parameters(signature):
+    """(topology key, lengths, angles, length paths, angle paths) of a SpatialEdgeCluster
+    signature: the C++ SplitSignatureParameters cluster branch (traversal order = sorted keys
+    per object, list order preserved; the paths name every number, e.g. Portions[3].P[1])."""
+    lengths, angles, length_paths, angle_paths = [], [], [], []
+
+    def walk(node, path):
+        if isinstance(node, dict):
+            out = {}
+            for key in sorted(node):
+                value = node[key]
+                entry = f"{path}.{key}" if path else key
+                if key in CLUSTER_LENGTH_KEYS or key in CLUSTER_ANGLE_KEYS:
+                    target, paths = (lengths, length_paths) if key in CLUSTER_LENGTH_KEYS else (angles, angle_paths)
+                    if isinstance(value, list):
+                        for k, v in enumerate(value):
+                            target.append(float(v))
+                            paths.append(f"{entry}[{k}]")
+                    else:
+                        target.append(float(value))
+                        paths.append(entry)
+                    out[key] = None
+                else:
+                    out[key] = walk(value, entry)
+            return out
+        if isinstance(node, list):
+            return [walk(v, f"{path}[{k}]") for k, v in enumerate(node)]
+        return node
+    topology = json.dumps(walk(signature, ""), sort_keys=True)
+    return topology, lengths, angles, length_paths, angle_paths
+
+
+def cluster_quantum_difference(a, b):
+    """(max |delta| in quanta, differing paths) of two SpatialEdgeCluster signatures of one
+    topology key (the C++ ClusterSignatureQuantumDifference), or None when the topology keys
+    differ (a permuted entry order included)."""
+    ta, la, aa, lpa, apa = split_cluster_parameters(a)
+    tb, lb, ab, _, _ = split_cluster_parameters(b)
+    if ta != tb or len(la) != len(lb) or len(aa) != len(ab):
+        return None
+    worst, paths = 0.0, []
+    for x, y, path in zip(la, lb, lpa):
+        quanta = abs(x - y) / LENGTH_QUANTUM_OVER_R
+        if quanta > 0.5:
+            paths.append(path)
+        worst = max(worst, quanta)
+    for x, y, path in zip(aa, ab, apa):
+        quanta = abs(x - y) / ANGLE_QUANTUM_DEGREES
+        if quanta > 0.5:
+            paths.append(path)
+        worst = max(worst, quanta)
+    return worst, paths
 
 
 def split_parameters(signature):
     """(topology key, lengths, angles) of a signature: the continuous entries replaced by null in
-    the serialised topology key (SpatialEdgeCluster: the whole signature, no parameters)."""
+    the serialised topology key (SpatialEdgeCluster: the quantum near-match branch, every number
+    of P / Arc / Gap / Box / TurnDegrees a parameter on its quantum)."""
     lengths, angles = [], []
-    if isinstance(signature, dict) and signature.get("Type") == "SpatialEdgeCluster":
-        return json.dumps(signature, sort_keys=True), lengths, angles
+    if is_cluster_signature(signature):
+        topology, lengths, angles, _, _ = split_cluster_parameters(signature)
+        return topology, lengths, angles
 
     def walk(node):
         if isinstance(node, dict):
@@ -84,7 +159,11 @@ def split_parameters(signature):
 
 
 def substitute_parameters(signature, lengths, angles):
-    """The signature with its continuous entries replaced in the same traversal order."""
+    """The signature with its continuous entries replaced in the same traversal order (a
+    SpatialEdgeCluster unchanged: the representative of a near-matching group is its
+    lexicographically smallest member, never a midpoint)."""
+    if is_cluster_signature(signature):
+        return signature
     lengths, angles = list(lengths), list(angles)
 
     def walk(node):
@@ -128,9 +207,27 @@ def mirror_translational(signature):
     return mirror
 
 
+def within_cluster_quantum_near_match(max_delta_quanta):
+    """The half-quantum inclusive near-match rule: max |delta| <= k + 1/2 quanta."""
+    return max_delta_quanta <= CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + CLUSTER_QUANTUM_INCLUSIVE_MARGIN
+
+
+def cluster_quantum_duplicate(max_delta_quanta):
+    """Two cluster signatures are one geometry (refused as two models / two allowances) iff
+    max |delta| <= 2 k + 1/2 quanta (half-quantum inclusive)."""
+    return max_delta_quanta <= 2 * CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + CLUSTER_QUANTUM_INCLUSIVE_MARGIN
+
+
 def signature_deviation(a, b):
-    """max |difference| / tolerance over the parameters (both orientations of b; the smaller), or
-    None when the topologies differ. Within tolerance iff <= 1."""
+    """max |difference| / tolerance over the parameters (both orientations of b; the smaller;
+    a SpatialEdgeCluster: max |delta| / ((CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + 1/2) quanta),
+    the half-quantum inclusive rule), or None when the topologies differ. Within tolerance
+    iff <= 1."""
+    if is_cluster_signature(a) or is_cluster_signature(b):
+        difference = cluster_quantum_difference(a, b)
+        if difference is None:
+            return None
+        return difference[0] / (CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + CLUSTER_QUANTUM_INCLUSIVE_MARGIN)
     ta, la, aa = split_parameters(a)
     best = None
     for candidate in (b, mirror_translational(b)):
@@ -424,6 +521,12 @@ def build_signature_library(manifest, name="signature-only", matrix_directory="s
         model["Instances"] = len(members)
         model["DistinctSignatures"] = len({json.dumps(f["Signature"], sort_keys=True) for f in members})
         model["ParameterSpread"] = spread
+        if feature_type == "SpatialEdgeCluster":
+            near_keys = sorted({signature_hash(dict(f["Signature"])) for f in members} - {signature_hash(representative)})
+            if near_keys:
+                # The members' keys the matcher resolves to this model by the quantum
+                # near-match (block (b) DESIGN section 4): recorded, never compared.
+                model["NearKeys"] = near_keys
         models.append(model)
     library = {"Version": 2, "Name": name, "MatchingRadius": radius, "TraceLiftVersion": 2, "Models": models}
     if unboxable:

@@ -3234,6 +3234,53 @@
               "description": "Three-dimensional automatic patch construction. `Features` builds the patches from the geometry identification's feature list (every matched feature becomes its patches, an unmatched feature is omitted alone, excluded segments are never corrected); `Legacy` keeps the former per-interface-group classification for comparison.",
               "default": "Features"
             },
+            "SpatialSupport": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "SpanCapAllowances": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "ClaimsSignature",
+                      "SpanCapOverR",
+                      "Label",
+                      "Reason",
+                      "Approval"
+                    ],
+                    "properties": {
+                      "ClaimsSignature": {
+                        "type": "object",
+                        "description": "The claims-only SpatialEdgeCluster signature of the approved feature, verbatim as the preflight inventory exports it (Features[].SpatialSupport.ClaimsSignature of a refused cluster); resolved by the quantum near-match before any box."
+                      },
+                      "SpanCapOverR": {
+                        "type": "number",
+                        "minimum": 16.0,
+                        "description": "The plan span cap (units of R) for the matching cluster; never below the default 16."
+                      },
+                      "Label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The hex prefix of the key the allowance was approved under (recorded, never compared)."
+                      },
+                      "Reason": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "Approval": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The decision that approved the allowance."
+                      }
+                    }
+                  },
+                  "description": "Per-case span-cap allowances (block (b) DESIGN section 3 (a) / A4, decision 303): the plan span cap of one approved closed feature that cannot be split, keyed by its embedded claims-only signature; one entry serves every window instance of the feature. Two allowances within 8 signature quanta of each other are refused; an allowance matching no cluster is recorded under UnusedSpanCapAllowances."
+                }
+              },
+              "description": "Spatial-support contract options of the automatic matching."
+            },
             "CorrectionMode": {
               "type": "string",
               "enum": [
@@ -3479,6 +3526,9 @@
               "Library"
             ],
             "PatchConstruction": [
+              "Library"
+            ],
+            "SpatialSupport": [
               "Library"
             ]
           }

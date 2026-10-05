@@ -966,7 +966,10 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                                                         {"Offset": [2.0, 0.0], "GapDirection": [-1.0, 0.0], "Conductor": 2},
                                                         {"Offset": [4.0, 0.0], "GapDirection": [1.0, 0.0], "Conductor": 2}]},
                  "Interfaces": [], "BoundaryCondition": {"Type": "PEC"}, "Signature": stack_signature, "Hash": "cd" * 32,
-                 "Instances": 2, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True},
+                 "Instances": 2, "DistinctSignatures": 1, "ParameterSpread": 0.0, "ExactParameters": True,
+                 "NearKeys": ["12" * 32], "SpanCapAllowance": {"Label": "cdcdcdcdcdcd", "SpanCapOverR": 22.0,
+                                                               "Reason": "unit", "Approval": "decision 303",
+                                                               "MatchedQuanta": 1.0}},
                 {"Topology": "ConvexCorner", "Status": "Missing", "Count": 12, "TotalEdgeLength": 45.6,
                  "Geometry": {"AngleDegrees": 90.0, "CornerRadius": 0.0}, "Interfaces": [], "BoundaryCondition": {"Type": "PEC"},
                  "Signature": {"Type": "ConvexCorner", "AngleDegrees": 90.0, "CornerRadiusOverR": 0.0}, "Hash": "ef" * 32,
@@ -978,6 +981,12 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertEqual(by_topology["SameConductorStrip"]["Signature"], signature)
         self.assertEqual(by_topology["SameConductorStrip"]["Instances"], 8)
         self.assertEqual(by_topology["ParallelEdgeCluster"]["Preparation"]["Method"], "ParallelClusterCoupon")
+        # Block (b) steps 1-2: the near-match group keys and the resolved span-cap allowance
+        # travel with the plan coupon (device_coupons reads the allowance as the generator's
+        # --support-span-cap).
+        self.assertEqual(by_topology["ParallelEdgeCluster"]["NearKeys"], ["12" * 32])
+        self.assertEqual(by_topology["ParallelEdgeCluster"]["SpanCapAllowance"]["SpanCapOverR"], 22.0)
+        self.assertNotIn("SpanCapAllowance", by_topology["SameConductorStrip"])
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "process-library.json"
             models = [
@@ -2039,6 +2048,56 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 }
             ],
         )
+
+    def test_spatial_cache_boundary_merges_near_collinear_joints(self):
+        # Block (b) DESIGN A3 (1): a 1e-7-rad quantisation kink between two boundary sides
+        # (the oblique claim / context junctions of the O1 / O4 coupons) is one side; a
+        # 2e-4-rad kink stays a vertex (the smallest real kink of the census is 3.9e-4 rad).
+        def facets(kink):
+            return [
+                {
+                    "Conductor": 1,
+                    "Points": [
+                        [0.0, 0.0, 0.0],
+                        [4.0, 0.0, 3.0],
+                        [8.0, 0.0, 6.0 + 5.0 * kink],
+                        [8.0, 0.0, 10.0],
+                        [0.0, 0.0, 10.0],
+                    ],
+                }
+            ]
+
+        merged = PREPARE.canonical_plan_view_boundary(facets(1.0e-7), 1.0)
+        self.assertEqual(len(merged[0]["Segments"]), 4)
+        self.assertIn([[0, 0, 0], [8000000000, 0, 6000000500]], merged[0]["Segments"])
+        kept = PREPARE.canonical_plan_view_boundary(facets(2.0e-4), 1.0)
+        self.assertEqual(len(kept[0]["Segments"]), 5)
+        exact = PREPARE.canonical_plan_view_boundary(facets(0.0), 1.0)
+        self.assertEqual(len(exact[0]["Segments"]), 4)
+        self.assertIn([[0, 0, 0], [8000000000, 0, 6000000000]], exact[0]["Segments"])
+
+    def test_spatial_boundary_loops_merge_near_collinear_joints_of_one_class(self):
+        # The mesher's plan-view boundary (generate_spatial_response.plan_view_boundary_loops):
+        # the same rule with the vertex classes - a 1e-7-rad Physical / Physical kink merges, a
+        # Physical / Continuation joint never does, a 2e-4-rad kink stays.
+        def loops(kink):
+            apex = [0.0, 10.0]
+            chain = [[0.0, 0.0], [4.0, 3.0], [8.0, 6.0 + 5.0 * kink], [8.0, 10.0]]
+            facets = [{"Conductor": 1, "Plane": 0.0, "Points": [apex, a, b]} for a, b in zip(chain, chain[1:])]
+            return SPATIAL.plan_view_boundary_loops(
+                facets, 1.0, np.asarray([-1.0, -1.0, -1.0]), np.asarray([8.0, 11.0, 1.0])
+            )
+
+        merged = loops(1.0e-7)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(len(merged[0]["Points"]), 4)
+        self.assertEqual(merged[0]["Classes"].count("Continuation"), 1)
+        kept = loops(2.0e-4)
+        self.assertEqual(len(kept[0]["Points"]), 5)
+        self.assertEqual(len(loops(0.0)[0]["Points"]), 4)
+        self.assertTrue(SPATIAL.near_collinear((1, 0), (1000000, 50)))
+        self.assertFalse(SPATIAL.near_collinear((1, 0), (1000000, 250)))
+        self.assertFalse(SPATIAL.near_collinear((1, 0), (-1000000, 50)))  # a near-spike, not a joint
 
     def test_spatial_boundary_loops_classify_only_coupon_clipping_edges(self):
         facets = [

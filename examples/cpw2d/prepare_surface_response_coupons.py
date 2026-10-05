@@ -314,7 +314,8 @@ def plan_from_manifest(
         }
         # Version-2 records (SURFACE-RESPONSE-IDENTIFICATION.md (d)): the canonical
         # Signature is the library model's key; the group statistics are recorded.
-        for key in ("Signature", "Hash", "Instances", "DistinctSignatures", "ParameterSpread", "ExactParameters"):
+        for key in ("Signature", "Hash", "Instances", "DistinctSignatures", "ParameterSpread", "ExactParameters",
+                    "NearKeys", "SpanCapAllowance"):
             if key in requirement:
                 coupon[key] = copy.deepcopy(requirement[key])
         if uses_finite_impedance(coupon):
@@ -515,6 +516,10 @@ def canonical_plan_view_boundary(facets, matching_radius, process_axis=1):
     if process_axis not in (0, 1, 2):
         raise ValueError("Plan-view process axis is invalid")
     tolerance = 1.0e-9 * matching_radius
+    # Block (b) DESIGN A3 (1): two consecutive boundary sides turning by at most this angle
+    # (radians) are one side (generate_spatial_response.JUNCTION_TANGENT_ANGLE, the mesher's
+    # constant); exactly collinear sides merge as before.
+    junction_tangent_angle = 1.0e-4
 
     def subtract(first, second):
         return tuple(a - b for a, b in zip(first, second))
@@ -527,6 +532,17 @@ def canonical_plan_view_boundary(facets, matching_radius, process_axis=1):
             first[1] * second[2] - first[2] * second[1],
             first[2] * second[0] - first[0] * second[2],
             first[0] * second[1] - first[1] * second[0],
+        )
+
+    def near_collinear(first, second):
+        # Both directions leave the vertex: a smooth joint has them anti-parallel.
+        turn = cross(first, second)
+        if turn == (0, 0, 0):
+            return True
+        return dot(first, second) < 0 and math.sqrt(
+            dot(turn, turn)
+        ) <= junction_tangent_angle * math.sqrt(dot(first, first)) * math.sqrt(
+            dot(second, second)
         )
 
     def quantize(point):
@@ -626,12 +642,9 @@ def canonical_plan_view_boundary(facets, matching_radius, process_axis=1):
                 if len(neighbors) != 2:
                     continue
                 first, second = tuple(neighbors)
-                if (
-                    cross(
-                        subtract(first, vertex),
-                        subtract(second, vertex),
-                    )
-                    == (0, 0, 0)
+                if near_collinear(
+                    subtract(first, vertex),
+                    subtract(second, vertex),
                 ):
                     merge = (vertex, first, second)
                     break

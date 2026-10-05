@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
@@ -4869,4 +4871,441 @@ TEST_CASE("SurfaceResponseIdentificationLegacyContractAlias",
     }
   }
   CHECK(found);
+}
+
+TEST_CASE("SurfaceResponseIdentificationClusterQuantumNearMatch",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Block (b) DESIGN section 4 (decision 303, max quanta 4): the three stage-2 loop-end
+  // keys (S1p 284d6c2b5b66, S2p 9e103a0f291c, S4 20ac3e14a128: the same design cell at
+  // three chip positions) have one topology key and differ by EXACTLY one signature quantum
+  // in 17 / 8 of their 290 numbers (analysis/knife_edge_diff.log). They resolve to ONE
+  // model; a 5-quantum perturbation and a permuted entry order stay Missing; non-cluster
+  // signatures keep the parameter-tolerance comparator.
+  const auto fixture =
+      std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+      "examples/cpw3d_surface/spatial_coupon/testdata/census-b-signatures/"
+      "signatures.json";
+  std::ifstream input(fixture);
+  REQUIRE(input);
+  const nlohmann::json census = nlohmann::json::parse(input);
+  auto Signature = [&](const std::string &prefix)
+  {
+    nlohmann::json signature = census.at(prefix).at("Signature");
+    REQUIRE(signature["Type"] == "SpatialEdgeCluster");
+    return signature;
+  };
+  const nlohmann::json s1p = Signature("284d6c2b5b66"), s2p = Signature("9e103a0f291c"),
+                       s4 = Signature("20ac3e14a128");
+  auto Hash = [](const nlohmann::json &signature)
+  { return SignatureKeyAndHash(signature, "SpatialEdgeCluster").second; };
+  REQUIRE(Hash(s1p).substr(0, 12) == "284d6c2b5b66");
+  REQUIRE(Hash(s2p).substr(0, 12) == "9e103a0f291c");
+  REQUIRE(Hash(s4).substr(0, 12) == "20ac3e14a128");
+
+  // 1. One topology key, 290 numbers each (lengths + angles), all quanta.
+  const auto p1 = SplitSignatureParameters(s1p), p2 = SplitSignatureParameters(s2p),
+             p4 = SplitSignatureParameters(s4);
+  CHECK(p1.topology_key == p2.topology_key);
+  CHECK(p1.topology_key == p4.topology_key);
+  CHECK(p1.topology_key != s1p.dump());
+  CHECK(p1.lengths_over_R.size() + p1.angles_degrees.size() == 290);
+  CHECK(p1.length_paths.size() == p1.lengths_over_R.size());
+  CHECK(p1.angle_paths.size() == p1.angles_degrees.size());
+  CHECK(p1.angles_degrees.size() == s1p["Vertices"].size());
+  CHECK(nlohmann::json::parse(p1.topology_key)["Portions"][0]["P"].is_null());
+  CHECK(nlohmann::json::parse(p1.topology_key)["Vertices"][0]["TurnDegrees"].is_null());
+  CHECK(nlohmann::json::parse(p1.topology_key)["Vertices"][0]["Type"] ==
+        s1p["Vertices"][0]["Type"]);
+  CHECK(nlohmann::json::parse(p1.topology_key)["Portions"][0]["Conductor"] ==
+        s1p["Portions"][0]["Conductor"]);
+
+  // 2. The quantum differences: 17 / 8 numbers, one quantum each; the deviation 1 / 4.
+  const auto d12 = ClusterSignatureQuantumDifference(s1p, s2p);
+  const auto d14 = ClusterSignatureQuantumDifference(s1p, s4);
+  REQUIRE(d12.has_value());
+  REQUIRE(d14.has_value());
+  CHECK(d12->differing_paths.size() == 17);
+  CHECK(d14->differing_paths.size() == 8);
+  CHECK_THAT(d12->max_delta_quanta, WithinAbs(1.0, 1.0e-6));
+  CHECK_THAT(d14->max_delta_quanta, WithinAbs(1.0, 1.0e-6));
+  CHECK(std::find(d12->differing_paths.begin(), d12->differing_paths.end(),
+                  "Vertices[5].TurnDegrees") != d12->differing_paths.end());
+  CHECK(std::find(d12->differing_paths.begin(), d12->differing_paths.end(),
+                  "Portions[0].Arc[1]") != d12->differing_paths.end());
+  // The deviation is normalised by the half-quantum INCLUSIVE threshold k + 1/2 = 4.5
+  // quanta (decisions 287 / 288 / 317 MINOR-1): one quantum reads 1 / 4.5.
+  CHECK_THAT(SignatureDeviation(s1p, s2p).value_or(-1.0), WithinAbs(1.0 / 4.5, 1.0e-6));
+  CHECK_THAT(SignatureDeviation(s2p, s4).value_or(-1.0), WithinAbs(1.0 / 4.5, 1.0e-6));
+  CHECK_THAT(SignatureDeviation(s1p, s1p).value_or(-1.0), WithinAbs(0.0, 1.0e-12));
+
+  // 3. The representative of the group is its lexicographically smallest member (never a
+  //    midpoint: the group is one geometry at the grid).
+  const auto representative = RepresentativeSignature({s1p, s2p, s4});
+  const std::string smallest = std::min({s1p.dump(), s2p.dump(), s4.dump()});
+  CHECK(representative.dump() == smallest);
+  CHECK(SubstituteSignatureParameters(s1p, p1.lengths_over_R, p1.angles_degrees) == s1p);
+
+  // 4. Exactly four ON-GRID quanta match, five do not (on the number farthest from any
+  //    other change), through the matcher's own comparisons (the half-quantum inclusive
+  //    rule, decision 317 MINOR-1): the on-grid 4-quantum difference computes to
+  //    4 +- 1e-9 in floating point and must not be refused by a threshold at exactly 4.
+  auto Perturbed = [&](int quanta)
+  {
+    nlohmann::json perturbed = s1p;
+    perturbed["Portions"][20]["P"][0] =
+        perturbed["Portions"][20]["P"][0].get<double>() + quanta * 1.0e-6;
+    return perturbed;
+  };
+  {
+    const auto four = ClusterSignatureQuantumDifference(s1p, Perturbed(4));
+    const auto five = ClusterSignatureQuantumDifference(s1p, Perturbed(5));
+    REQUIRE(four.has_value());
+    REQUIRE(five.has_value());
+    CHECK_THAT(four->max_delta_quanta, WithinAbs(4.0, 1.0e-6));
+    CHECK(four->max_delta_quanta != 4.0);  // the float-noise case the rule is for
+    CHECK(WithinClusterQuantumNearMatch(four->max_delta_quanta));
+    CHECK(!WithinClusterQuantumNearMatch(five->max_delta_quanta));
+    CHECK(SignatureDeviation(s1p, Perturbed(4)).value_or(2.0) <= 1.0);
+    CHECK(SignatureDeviation(s1p, Perturbed(5)).value_or(2.0) > 1.0);
+    CHECK(five->differing_paths == std::vector<std::string>{"Portions[20].P[0]"});
+    // The duplicate rule: exactly eight on-grid quanta are one geometry, nine are two.
+    const auto eight = ClusterSignatureQuantumDifference(s1p, Perturbed(8));
+    const auto nine = ClusterSignatureQuantumDifference(s1p, Perturbed(9));
+    REQUIRE(eight.has_value());
+    REQUIRE(nine.has_value());
+    CHECK_THAT(eight->max_delta_quanta, WithinAbs(8.0, 1.0e-6));
+    CHECK(ClusterQuantumDuplicate(eight->max_delta_quanta));
+    CHECK(!ClusterQuantumDuplicate(nine->max_delta_quanta));
+    // The rule's boundaries themselves: k + 1/2 and 2 k + 1/2 are inclusive.
+    CHECK(WithinClusterQuantumNearMatch(4.5));
+    CHECK(!WithinClusterQuantumNearMatch(4.5000001));
+    CHECK(ClusterQuantumDuplicate(8.5));
+    CHECK(!ClusterQuantumDuplicate(8.5000001));
+  }
+
+  // 5. A permuted entry order is another topology key (the residual knife-edge).
+  {
+    nlohmann::json permuted = s1p;
+    std::swap(permuted["Portions"][0], permuted["Portions"][1]);
+    CHECK(!ClusterSignatureQuantumDifference(s1p, permuted).has_value());
+    CHECK(!SignatureDeviation(s1p, permuted).has_value());
+    nlohmann::json other_conductor = s1p;
+    other_conductor["Portions"][0]["Conductor"] = 7;
+    CHECK(!SignatureDeviation(s1p, other_conductor).has_value());
+  }
+
+  // 6. Non-cluster signatures: the parameter-tolerance comparator unchanged (a pair 1e-4 R
+  //    apart deviates by 0.1; a Gap key of a cluster is not a parameter elsewhere).
+  {
+    const nlohmann::json a = {{"Type", "SameConductorGap"}, {"SeparationOverR", 1.5}},
+                         b = {{"Type", "SameConductorGap"}, {"SeparationOverR", 1.5001}};
+    CHECK_THAT(SignatureDeviation(a, b).value_or(-1.0), WithinAbs(0.1, 1.0e-9));
+    CHECK(SplitSignatureParameters(a).lengths_over_R == std::vector<double>{1.5});
+    CHECK(SplitSignatureParameters(a).length_paths.empty());
+  }
+
+  // 7. The record and its broadcast form.
+  {
+    const nlohmann::json record = QuantumNearMatchRecord(Hash(s1p), Hash(s2p), *d12);
+    CHECK(record["ModelKey"] == Hash(s1p));
+    CHECK(record["FeatureKey"] == Hash(s2p));
+    CHECK(record["DifferingNumbers"]["Count"] == 17);
+    CHECK(record["DifferingNumbers"]["Paths"].size() == 17);
+    CHECK(record["MaxQuanta"] == kClusterQuantumNearMatchMaxQuanta);
+    CHECK_THAT(record["MaxDeltaQuanta"].get<double>(), WithinAbs(1.0, 1.0e-6));
+    const double R = 2.0;
+    const std::vector<LoopSpec> loops = {{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                                         {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0}};
+    const auto input = MakeInput(loops, R);
+    IdentificationResult result = IdentifyMetalPerimeter(input);
+    const auto *cluster = ClusterContaining(result, input, {0.0, 1.0});
+    REQUIRE(cluster != nullptr);
+    for (auto &feature : result.features)
+    {
+      if (feature.id == cluster->id)
+      {
+        feature.quantum_near_match = record;
+        feature.matched_model = "loop-end-model";
+        feature.match_deviation = 0.25;
+      }
+    }
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    const nlohmann::json manifest = copy.ToJson(1.0);
+    CHECK(manifest == result.ToJson(1.0));
+    bool found = false;
+    for (const auto &entry : manifest["Features"])
+    {
+      if (entry["Id"].get<int>() == cluster->id)
+      {
+        found = true;
+        CHECK(entry["Match"]["Status"] == "Matched");
+        CHECK(entry["Match"]["QuantumNearMatch"] == record);
+      }
+      else
+      {
+        CHECK(!entry["Match"].contains("QuantumNearMatch"));
+      }
+    }
+    CHECK(found);
+    CHECK(manifest["Conventions"]["ClusterQuantumNearMatchMaxQuanta"] == 4);
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationSpanCapAllowance",
+          "[surfaceresponseidentification][Serial]")
+{
+  // Block (b) DESIGN section 3 (a) + A4 (decision 303): a per-case span-cap allowance keyed
+  // by the EMBEDDED claims-only signature, resolved by the quantum near-match BEFORE any
+  // box. Scene: a comb of ten 1 R pads at pitch 2 R (one 40-edge cluster, claims box 5 x 23
+  // R: ExceedsSpanCap under the default 16 R cap, contract 2) and a foreign strip whose end
+  // stands 0.05 R OUTSIDE the comb's end face: the face must grow, the growth would pass
+  // the cap -> SpanCapRefusedGrowth (Unboxable) without an allowance; with an allowance of
+  // 24 R the box grows twice and the cluster is a contract-3 key.
+  const double R = 2.0;
+  std::vector<LoopSpec> loops;
+  for (int k = 0; k < 10; k++)
+  {
+    loops.push_back({Rectangle(4.0 * k, 0.0, 4.0 * k + 2.0, 2.0), k, 100.0});
+  }
+  loops.push_back({Rectangle(42.1, 0.5, 70.0, 1.5), 10, 100.0});
+  auto Identify = [&](std::vector<SpanCapAllowance> allowances)
+  {
+    IdentificationInput input = MakeInput(loops, R);
+    input.span_cap_allowances = std::move(allowances);
+    auto result = IdentifyMetalPerimeter(input);
+    return std::make_pair(input, std::move(result));
+  };
+  const std::array<double, 2> probe = {1.0, 0.0};  // the first pad's bottom edge
+
+  // 1. No allowance: the growth is refused at the cap; the record exports the claims-only
+  //    signature verbatim (the object an operator copies into the allowance).
+  nlohmann::json exported;
+  std::string claims_key;
+  {
+    const auto [input, result] = Identify({});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 0);
+    CHECK(cluster->signature["Unboxable"] == true);
+    REQUIRE(support["Unboxable"].is_string());
+    CHECK_THAT(support["Unboxable"].get<std::string>(),
+               ContainsSubstring("beyond the span cap 16"));
+    CHECK(support["UnboxableReason"] == "SpanCapRefusedGrowth");
+    CHECK_THAT(support["SpanCapOverR"].get<double>(), WithinAbs(16.0, 0.0));
+    CHECK(!support.contains("SpanCapAllowance"));
+    REQUIRE(support.contains("ClaimsSignature"));
+    exported = support["ClaimsSignature"];
+    CHECK(exported["Type"] == "SpatialEdgeCluster");
+    CHECK(exported["EdgeCount"] == 40);
+    CHECK(!exported.contains("Unboxable"));
+    CHECK(!exported.contains("Box"));
+    claims_key = SignatureKeyAndHash(exported, "SpatialEdgeCluster").second;
+    CHECK(support["ClaimsKey"] == claims_key);
+    CHECK(result.unused_span_cap_allowances.empty());
+    CHECK(result.ToJson(1.0)["UnusedSpanCapAllowances"] == nlohmann::json::array());
+    CHECK(!cluster->matched_model);
+  }
+
+  // 2. The allowance (verbatim export, 24 R): the cluster boxes (contract 3), the record
+  //    names the allowance with MatchedQuanta 0, ExceedsSpanCap reads against 24 R.
+  SpanCapAllowance allowance;
+  allowance.claims_signature = exported;
+  allowance.span_cap_over_R = 24.0;
+  allowance.label = claims_key.substr(0, 12);
+  allowance.reason =
+      "unit test: one closed feature that cannot be split (decision 244 (i))";
+  allowance.approval = "decision 303";
+  {
+    const auto [input, result] = Identify({allowance});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    CHECK(support["Contract"] == 3);
+    CHECK(!cluster->signature.contains("Unboxable"));
+    CHECK(cluster->signature.contains("Box"));
+    CHECK(support["Growth"]["Grown"] == true);
+    CHECK_THAT(support["SpanCapOverR"].get<double>(), WithinAbs(24.0, 0.0));
+    CHECK(support["ExceedsSpanCap"] == false);
+    CHECK(!support.contains("ClaimsSignature"));
+    REQUIRE(support.contains("SpanCapAllowance"));
+    const auto &record = support["SpanCapAllowance"];
+    CHECK(record["Label"] == allowance.label);
+    CHECK_THAT(record["SpanCapOverR"].get<double>(), WithinAbs(24.0, 0.0));
+    CHECK(record["Approval"] == "decision 303");
+    CHECK_THAT(record["MatchedQuanta"].get<double>(), WithinAbs(0.0, 1.0e-12));
+    CHECK(record["DifferingNumbers"]["Count"] == 0);
+    CHECK(support["ClaimsKey"] == claims_key);
+    const auto box = DeviceBox(*cluster, "Box", R);
+    CHECK((box[2] - box[0]) / R > 23.0);
+    CHECK(result.unused_span_cap_allowances.empty());
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+
+  // 3. The allowance's signature one quantum off in one number (another window's rounding)
+  //    still resolves (MatchedQuanta 1), as does exactly four on-grid quanta (MatchedQuanta
+  //    4 +- 1e-9: the half-quantum inclusive rule, decision 317 MINOR-1); five quanta off
+  //    does not (Unboxable again, the allowance listed under UnusedSpanCapAllowances).
+  auto Shifted = [&](int quanta)
+  {
+    SpanCapAllowance shifted = allowance;
+    shifted.claims_signature["Portions"][3]["P"][2] =
+        shifted.claims_signature["Portions"][3]["P"][2].get<double>() + quanta * 1.0e-6;
+    shifted.label = "shifted-" + std::to_string(quanta);
+    return shifted;
+  };
+  {
+    const auto [input, result] = Identify({Shifted(1)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->spatial_support["Contract"] == 3);
+    const auto &record = cluster->spatial_support["SpanCapAllowance"];
+    CHECK(record["Label"] == "shifted-1");
+    CHECK_THAT(record["MatchedQuanta"].get<double>(), WithinAbs(1.0, 1.0e-6));
+    CHECK(record["DifferingNumbers"]["Count"] == 1);
+    CHECK(record["DifferingNumbers"]["Paths"] == nlohmann::json({"Portions[3].P[2]"}));
+    CHECK(result.unused_span_cap_allowances.empty());
+  }
+  {
+    const auto [input, result] = Identify({Shifted(4)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->spatial_support["Contract"] == 3);
+    const auto &record = cluster->spatial_support["SpanCapAllowance"];
+    CHECK(record["Label"] == "shifted-4");
+    CHECK_THAT(record["MatchedQuanta"].get<double>(), WithinAbs(4.0, 1.0e-6));
+    CHECK(result.unused_span_cap_allowances.empty());
+  }
+  {
+    const auto [input, result] = Identify({Shifted(5)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    CHECK(cluster->spatial_support["Contract"] == 0);
+    CHECK(cluster->spatial_support["UnboxableReason"] == "SpanCapRefusedGrowth");
+    CHECK(result.unused_span_cap_allowances == std::vector<std::string>{"shifted-5"});
+    const auto copy =
+        DeserializeIdentificationResult(SerializeIdentificationResult(result));
+    CHECK(copy.unused_span_cap_allowances == result.unused_span_cap_allowances);
+    CHECK(copy.ToJson(1.0)["UnusedSpanCapAllowances"] == nlohmann::json({"shifted-5"}));
+  }
+
+  // 4. Fail closed at load: a cap below 16 R; two allowances within 8 quanta ("two
+  //    allowances one geometry"; exactly eight on-grid quanta included, half-quantum
+  //    inclusive); a signature with a Box (not claims-only); no Portions.
+  {
+    SpanCapAllowance low = allowance;
+    low.span_cap_over_R = 15.0;
+    CHECK_THROWS_WITH(Identify({low}), ContainsSubstring("below the plan span cap"));
+    CHECK_THROWS_WITH(Identify({allowance, Shifted(1)}),
+                      ContainsSubstring("two allowances, one geometry"));
+    CHECK_THROWS_WITH(Identify({allowance, Shifted(8)}),
+                      ContainsSubstring("two allowances, one geometry"));
+    // Nine quanta apart: two distinct geometries, both admitted.
+    std::vector<SpanCapAllowance> both = {allowance, Shifted(9)};
+    ValidateSpanCapAllowances(both);
+    CHECK(both.size() == 2);
+    // The Missing placeholder signature (claims + "Unboxable": true, as every manifest
+    // written before the ClaimsSignature export carries it) is accepted as the allowance.
+    SpanCapAllowance placeholder = allowance;
+    placeholder.claims_signature["Unboxable"] = true;
+    {
+      const auto [input, result] = Identify({placeholder});
+      const auto *cluster = ClusterContaining(result, input, probe);
+      REQUIRE(cluster != nullptr);
+      CHECK(cluster->spatial_support["Contract"] == 3);
+      CHECK(cluster->spatial_support["SpanCapAllowance"]["MatchedQuanta"] == 0.0);
+    }
+    SpanCapAllowance boxed = allowance;
+    boxed.claims_signature["Box"] = {-1.0, -1.0, 1.0, 1.0};
+    CHECK_THROWS_WITH(Identify({boxed}), ContainsSubstring("CLAIMS-ONLY"));
+    SpanCapAllowance empty = allowance;
+    empty.claims_signature = nlohmann::json{{"Type", "SpatialEdgeCluster"}};
+    CHECK_THROWS_WITH(Identify({empty}), ContainsSubstring("with Portions"));
+    // The resolver alone: the nearest allowance wins, ties by Label.
+    std::vector<SpanCapAllowance> ranked = {Shifted(3), allowance, Shifted(2)};
+    const auto resolved = ResolveSpanCapAllowance(exported, ranked);
+    REQUIRE(resolved.has_value());
+    CHECK(resolved->index == 1);
+    CHECK(!ResolveSpanCapAllowance(exported, {Shifted(5)}).has_value());
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
+          "[surfaceresponseidentification][surfaceresponseoperator][Serial]")
+{
+  // Block (b) DESIGN section 2 (a) (decision 303): the A10-extended distance reads a
+  // segment on a fitted arc on its circle's arc, exact and chord-independent — an arc
+  // context entry's end cut at a box face lies on the FITTED circle, up to the chord
+  // sagitta from the device polyline (1.6e-3..5.4e-2 R on the stage-2 census keys, above
+  // the 1e-3 R tolerance). Scene: a 10 x 6 island with 1-um fillets (R = 2: radius 0.5 R, 4
+  // chords of 22.5 deg per fillet, sagitta 0.5 R (1 - cos 11.25 deg) = 9.6e-3 R).
+  const double R = 2.0;
+  const auto input = MakeInput({{RoundedRectangle(5.0, 3.0, 1.0, 4), 0, 1.0}}, R);
+  const auto result = IdentifyMetalPerimeter(input);
+  REQUIRE(result.arcs.size() == 4);
+  std::size_t arc_segments = 0;
+  for (const auto &segment : result.segments)
+  {
+    arc_segments += segment.arc >= 0 ? 1 : 0;
+  }
+  CHECK(arc_segments == 16);
+  // The fillet centred at (4, 2): the point of the circle at the middle of the first chord.
+  const std::array<double, 3> center = {4.0, 2.0, 0.0};
+  const double rho = 1.0;
+  const double sagitta = rho * (1.0 - std::cos(0.5 * 22.5 * std::acos(-1.0) / 180.0));
+  auto Circle = [&](double degrees, double radius)
+  {
+    const double t = degrees * std::acos(-1.0) / 180.0;
+    return std::array<double, 3>{center[0] + radius * std::cos(t),
+                                 center[1] + radius * std::sin(t), 0.0};
+  };
+  const auto on_circle = Circle(11.25, rho);
+  CHECK(DevicePerimeterDistance(result, on_circle) <= 1.0e-9 * R);
+  // The chords-only reading (every segment stripped of its arc) is the sagitta.
+  IdentificationResult chords_only = result;
+  for (auto &segment : chords_only.segments)
+  {
+    segment.arc = -1;
+  }
+  CHECK_THAT(DevicePerimeterDistance(chords_only, on_circle), WithinAbs(sagitta, 1.0e-9));
+  CHECK(sagitta / R > kSignatureParameterToleranceOverRadius);
+  CHECK(DevicePerimeterDistance(result, on_circle) <=
+        kSignatureParameterToleranceOverRadius * R);
+  // Radially 0.01 R off the circle inside the chord's range: 0.01 R; out of plane the same.
+  CHECK_THAT(DevicePerimeterDistance(result, Circle(11.25, rho + 0.01 * R)),
+             WithinAbs(0.01 * R, 1.0e-9));
+  auto lifted = on_circle;
+  lifted[2] = 0.03;
+  CHECK_THAT(DevicePerimeterDistance(result, lifted), WithinAbs(0.03, 1.0e-9));
+  // A straight side is read as before (the island's top edge y = 3).
+  CHECK_THAT(DevicePerimeterDistance(result, {0.0, 3.2, 0.0}), WithinAbs(0.2, 1.0e-9));
+  CHECK_THAT(DevicePerimeterDistance(result, {0.0, 3.0, 0.0}), WithinAbs(0.0, 1.0e-12));
+  // ArcChordDistance alone: within the chord's angular interval -> the circle; outside it
+  // -> the nearer chord end; a chord collinear with the centre -> the straight distance.
+  const std::array<double, 3> a = {0.0, 0.0, 0.0}, b = {1.0, 0.0, 0.0},
+                              c = {0.5, -0.5, 0.0};
+  const double r = std::hypot(0.5, 0.5);  // a at 135 deg, b at 45 deg
+  auto At = [&](double degrees, double radius)
+  {
+    const double t = degrees * std::acos(-1.0) / 180.0;
+    return std::array<double, 3>{c[0] + radius * std::cos(t), c[1] + radius * std::sin(t),
+                                 0.0};
+  };
+  CHECK_THAT(ArcChordDistance(At(90.0, r), a, b, c, r), WithinAbs(0.0, 1.0e-12));
+  CHECK_THAT(ArcChordDistance(At(90.0, r + 0.2), a, b, c, r), WithinAbs(0.2, 1.0e-12));
+  const auto beyond = At(170.0, r);
+  CHECK_THAT(ArcChordDistance(beyond, a, b, c, r),
+             WithinAbs(std::min(std::hypot(beyond[0] - a[0], beyond[1] - a[1]),
+                                std::hypot(beyond[0] - b[0], beyond[1] - b[1])),
+                       1.0e-12));
+  CHECK_THAT(ArcChordDistance({0.5, 0.2, 0.3}, a, b, c, r),
+             WithinAbs(std::hypot(0.7 - r, 0.3), 1.0e-12));
+  CHECK_THAT(ArcChordDistance({0.5, 0.2, 0.0}, a, b, {2.0, 0.0, 0.0}, 1.0),
+             WithinAbs(0.2, 1.0e-12));
+  CHECK_THAT(SegmentDistance({0.5, 0.2, 0.0}, a, b), WithinAbs(0.2, 1.0e-12));
+  CHECK_THAT(SegmentDistance({1.5, 0.0, 0.0}, a, b), WithinAbs(0.5, 1.0e-12));
 }

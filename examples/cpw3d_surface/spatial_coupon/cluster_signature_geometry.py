@@ -75,6 +75,20 @@ PROCESS_NORMAL = (0.0, 0.0, 1.0)
 # to one quantum). The one tolerance of "the same point" in this module: end_states, the
 # interior-cut bridges and the arrangement's node snapping all use it.
 COINCIDENCE_OVER_R = 1.0e-5
+# Block (b) step 0, F0-a (curved-clusters-20261005/DESIGN.md section 0): the serialised Gap
+# components and portion ends are rounded to the signature quantum (1e-6 R), so a short
+# OBLIQUE straight portion of length L (units of R) reads |tangent . gap| up to
+# sqrt(2) / 2 q + 2 q / L from the rounding alone (the axis-aligned gaps of rectilinear
+# clusters read exactly 0). The perpendicularity test admits twice that bound; EVERY straight
+# row with 0 < |tangent . gap| <= bound has its gap RE-DERIVED as the exact perpendicular of
+# its chord with the serialised sign (decision 317 MAJOR-1 option (a): no threshold inside
+# the bound), so the generator's and Palace's frames stay exactly orthogonal; a row with
+# |tangent . gap| == 0 exactly (every rectilinear row built so far) is kept bitwise - it
+# re-derives to itself. An arc CHORD's gap is the arc's radial direction at the chord's
+# middle, perpendicular by construction up to round-off: it is not a serialised number and
+# is kept as computed.
+SIGNATURE_QUANTUM_OVER_R = 1.0e-6
+GAP_PERPENDICULARITY_MARGIN = 2.0
 # An interior cut (two facing claim cuts of one chain) spans less than the cluster's event
 # reach: the piece between two claims of the same cluster is a translational remainder shorter
 # than 2R (a longer piece would carry its own events and belong to the cluster).
@@ -84,6 +98,215 @@ MASK_REGULARIZATION = {"Version": 1, "PhysicalBoundary": "TaperAndRound", "Conti
 
 class SignatureGeometryError(ValueError):
     """The signature admits no unambiguous coupon geometry (the reason is named)."""
+
+
+# Block (b) DESIGN section 2 (b) + A1 (decision 303): the ends of an ARC entry (claim or
+# context) are fixed FIRST - the serialised ends, each possibly replaced by a joint snap onto
+# the end of a neighbouring piece of the same conductor within ARC_JOINT_SNAP_OVER_R (the
+# identification's arc-fit tolerance kArcFitToleranceOverRadius 1e-3 R + 2 quanta, read
+# inclusive) or by a face snap onto a box face within one quantum - and the circle is REBUILT
+# through them (centre = the point of the perpendicular bisector nearest the serialised
+# centre), so every chord vertex is concyclic to double precision, the straight neighbours
+# are untouched and the arrangement closes at the joints. The rebuilt circle deviates from
+# the signature's by at most the snap (asserted <= ARC_REBUILD_TOLERANCE_OVER_R, inclusive).
+# Straight / straight joints keep COINCIDENCE_OVER_R.
+ARC_FIT_TOLERANCE_OVER_R = 1.0e-3
+ARC_JOINT_SNAP_OVER_R = ARC_FIT_TOLERANCE_OVER_R + 2.0 * SIGNATURE_QUANTUM_OVER_R
+ARC_REBUILD_TOLERANCE_OVER_R = ARC_FIT_TOLERANCE_OVER_R + 2.0 * SIGNATURE_QUANTUM_OVER_R
+ARC_FACE_SNAP_OVER_R = SIGNATURE_QUANTUM_OVER_R
+HALF_QUANTUM_OVER_R = 0.5 * SIGNATURE_QUANTUM_OVER_R
+
+
+def _arc_sweep(a, b, c, m):
+    """The signed sweep from a to b about c through m (signature_library's rule); 2 pi for a
+    closed circle (equal ends)."""
+    r = math.hypot(a[0] - c[0], a[1] - c[1])
+    if math.hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * max(r, 1.0):
+        return 2.0 * math.pi, True
+    angle = lambda q: math.atan2(q[1] - c[1], q[0] - c[0])  # noqa: E731
+    ta, tb, tm = angle(a), angle(b), angle(m)
+    ccw = (tb - ta) % (2.0 * math.pi)
+    return (ccw if ((tm - ta) % (2.0 * math.pi)) <= ccw + 1.0e-12 else ccw - 2.0 * math.pi), False
+
+
+def rebuilt_arc(a, b, c, m, radius, step_degrees=signature_library.CLUSTER_ARC_CHORD_STEP_DEGREES,
+                max_chord_over_R=signature_library.CLUSTER_ARC_CHORD_MAX_LENGTH_OVER_R):
+    """The chord vertices of an arc whose ENDS a, b (mesh units; the fixed, possibly snapped
+    ends) are kept exactly and whose circle is rebuilt through them: centre c' = the point of
+    the perpendicular bisector of ab nearest the serialised centre c, radius r' = |a - c'|; the
+    side of the arc is the side of the serialised midpoint m; interior vertices at equal
+    angular steps (n = max(ceil(sweep / step), ceil(r' sweep / (max_chord R)), 1)). A closed
+    circle (equal ends) keeps the serialised circle. Returns (vertices, centre, radius, sweep)
+    with vertices[0] is a and vertices[-1] is b exactly."""
+    a, b, c, m = (np.asarray(v, dtype=float) for v in (a, b, c, m))
+    sweep, closed = _arc_sweep(a, b, c, m)
+    if closed:
+        centre, r = c, float(np.linalg.norm(a - c))
+    else:
+        midpoint = 0.5 * (a + b)
+        chord = b - a
+        bisector = np.asarray([-chord[1], chord[0]]) / float(np.linalg.norm(chord))
+        centre = midpoint + float(np.dot(c - midpoint, bisector)) * bisector
+        r = float(np.linalg.norm(a - centre))
+        sweep, _ = _arc_sweep(a, b, centre, m)
+    ta = math.atan2(a[1] - centre[1], a[0] - centre[0])
+    n = max(int(math.ceil(abs(sweep) / math.radians(step_degrees) - 1.0e-9)),
+            int(math.ceil(r * abs(sweep) / (max_chord_over_R * radius) - 1.0e-9)), 1)
+    vertices = [a.copy()]
+    for k in range(1, n):
+        t = ta + sweep * k / n
+        vertices.append(np.asarray([centre[0] + r * math.cos(t), centre[1] + r * math.sin(t)]))
+    vertices.append(a.copy() if closed else b.copy())
+    return vertices, centre, r, sweep
+
+
+def _serialised_entries(signature, radius):
+    """Every entry of the signature (claims then context) in mesh units: {Kind, Index, A, B,
+    Arc (centre, midpoint) or None, Conductor, Entry}."""
+    entries = []
+    for kind, key in (("Claim", "Portions"), ("Context", "Context")):
+        for index, entry in enumerate(signature.get(key, [])):
+            p = [float(v) * radius for v in entry["P"]]
+            arc = None if "Arc" not in entry else [float(v) * radius for v in entry["Arc"]]
+            entries.append({"Kind": kind, "Index": index, "A": np.asarray(p[:2]), "B": np.asarray(p[2:]),
+                            "Arc": arc, "Conductor": int(entry["Conductor"]), "Entry": entry})
+    return entries
+
+
+def arc_end_snaps(signature, radius):
+    """The fixed ends of every ARC entry of the signature (block (b) DESIGN A1 (1), 2 (b)):
+    per (Kind, Index) the pair (a', b') in mesh units, and the JointSnaps records. An arc end
+    is snapped onto a box face it lies within one quantum of (inclusive), then onto the end of
+    a neighbouring piece of the same conductor within ARC_JOINT_SNAP_OVER_R (inclusive): the
+    straight neighbour's end (the device vertex) wins, between two arcs the end of the arc of
+    smaller serialised radius; the pieces must be each other's nearest such end (two candidate
+    points within the tolerance, or a non-mutual pair, fail closed). Closed circles are not
+    snapped."""
+    entries = _serialised_entries(signature, radius)
+    box = support_box(signature, radius)
+    joint_tolerance = (ARC_JOINT_SNAP_OVER_R + HALF_QUANTUM_OVER_R) * radius
+    face_tolerance = (ARC_FACE_SNAP_OVER_R + HALF_QUANTUM_OVER_R) * radius
+    coincidence = COINCIDENCE_OVER_R * radius
+
+    def radius_of(entry):
+        return float(np.linalg.norm(entry["A"] - np.asarray(entry["Arc"][:2]))) if entry["Arc"] else math.inf
+
+    def is_closed(entry):
+        return entry["Arc"] is not None and float(np.linalg.norm(entry["A"] - entry["B"])) <= 1.0e-9 * max(radius_of(entry), 1.0)
+
+    def candidates(i, point):
+        """Candidate target points for the end `point` of entry i: the ends of other pieces of
+        the same conductor within the joint tolerance, grouped by coincident point."""
+        groups = []
+        for j, other in enumerate(entries):
+            if j == i or other["Conductor"] != entries[i]["Conductor"]:
+                continue
+            for end_index, q in enumerate((other["A"], other["B"])):
+                distance = float(np.linalg.norm(point - q))
+                if distance > joint_tolerance:
+                    continue
+                for group in groups:
+                    if float(np.linalg.norm(group["Point"] - q)) <= coincidence:
+                        group["Members"].append((j, end_index, distance))
+                        break
+                else:
+                    groups.append({"Point": q, "Members": [(j, end_index, distance)]})
+        return groups
+
+    fixed = {}
+    records = []
+    for i, entry in enumerate(entries):
+        if entry["Arc"] is None or is_closed(entry):
+            continue
+        ends = []
+        for end_index, point in enumerate((entry["A"], entry["B"])):
+            snapped = point.copy()
+            if box is not None:
+                for axis, faces in ((0, (box[0], box[2])), (1, (box[1], box[3]))):
+                    for face_index, face in enumerate(faces):
+                        if snapped[axis] != face and abs(snapped[axis] - face) <= face_tolerance:
+                            records.append({"Piece": [entry["Kind"], entry["Index"]], "End": end_index, "Class": "Face",
+                                            "Face": 2 * face_index + axis, "DistanceOverR": abs(snapped[axis] - face) / radius})
+                            snapped[axis] = face
+            groups = candidates(i, snapped)
+            if len(groups) > 1:
+                raise SignatureGeometryError(f"{entry['Kind'].lower()} {entry['Index']} end {end_index} lies within the arc joint "
+                                             f"tolerance {ARC_JOINT_SNAP_OVER_R:g} R of {len(groups)} distinct piece ends (ambiguous joint)")
+            if groups:
+                group = groups[0]
+                # The target: a straight end (the device vertex) wins; between arcs the end
+                # of the arc of smaller serialised radius (this arc keeps its own end when it
+                # is the smaller one).
+                straight = [m for m in group["Members"] if entries[m[0]]["Arc"] is None]
+                members = straight or group["Members"]
+                j, k, distance = min(members, key=lambda item: (radius_of(entries[item[0]]), item[2], item[0], item[1]))
+                target = entries[j]["A"] if k == 0 else entries[j]["B"]
+                # Mutual: the target end's own candidates are this end's point alone.
+                back = candidates(j, target)
+                if len(back) != 1 or not any(m[0] == i for m in back[0]["Members"]):
+                    raise SignatureGeometryError(f"{entry['Kind'].lower()} {entry['Index']} end {end_index} and "
+                                                 f"{entries[j]['Kind'].lower()} {entries[j]['Index']} end {k} are not each "
+                                                 f"other's nearest free end (fail closed)")
+                if not straight and radius_of(entry) <= radius_of(entries[j]):
+                    target = snapped  # the smaller (or equal) arc keeps its serialised end
+                if float(np.linalg.norm(target - snapped)) > 0.0:
+                    records.append({"Piece": [entry["Kind"], entry["Index"]], "End": end_index,
+                                    "Class": "ArcJoint" if straight else "ArcArcJoint",
+                                    "To": [entries[j]["Kind"], entries[j]["Index"], k],
+                                    "DistanceOverR": float(np.linalg.norm(target - snapped)) / radius})
+                    snapped = target.copy()
+            ends.append(snapped)
+        fixed[(entry["Kind"], entry["Index"])] = (ends[0], ends[1])
+    return fixed, records
+
+
+def chorded_entries(signature, radius, include_context=False):
+    """The builder's plan-view edges: signature_library.cluster_plan_view_edges with every
+    arc entry rebuilt through its fixed ends (arc_end_snaps + rebuilt_arc), so the chord ends
+    are the serialised / snapped ends exactly and every chord vertex is concyclic. Returns
+    (edges, records): the edges in cluster_plan_view_edges' encoding (``Chord`` / ``Chords``
+    on arc chords, ``Context`` / ``Chain`` on context entries), the JointSnaps records with
+    one ``Arc`` record per rebuilt arc {Piece, ArcDeviationOverR, CentreShiftOverR,
+    RadiusShiftOverR, Chords}; a rebuilt arc farther than ARC_REBUILD_TOLERANCE_OVER_R from
+    the signature's circle fails closed."""
+    fixed, records = arc_end_snaps(signature, radius)
+    edges = []
+    tolerance = (ARC_REBUILD_TOLERANCE_OVER_R + HALF_QUANTUM_OVER_R) * radius
+    entries = [(index, portion, False) for index, portion in enumerate(signature["Portions"])]
+    if include_context:
+        entries += [(index, portion, True) for index, portion in enumerate(signature.get("Context", []))]
+    for index, portion, context in entries:
+        common = {"Conductor": int(portion["Conductor"]), "Interfaces": portion.get("Interfaces", []), "Law": portion.get("Law"), "Portion": index}
+        if context:
+            common.update({"Context": True, "Chain": bool(portion.get("Chain", False))})
+        p = [float(v) * radius for v in portion["P"]]
+        a, b = np.asarray(p[:2]), np.asarray(p[2:])
+        if "Arc" not in portion:
+            edges.append(dict(common, P0=(p[0], p[1]), P1=(p[2], p[3]), Gap=(float(portion["Gap"][0]), float(portion["Gap"][1]))))
+            continue
+        arc = [float(v) * radius for v in portion["Arc"]]
+        c, m = np.asarray(arc[:2]), np.asarray(arc[2:])
+        kind = "Context" if context else "Claim"
+        a_fixed, b_fixed = fixed.get((kind, index), (a, b))
+        vertices, centre, r, sweep = rebuilt_arc(a_fixed, b_fixed, c, m, radius)
+        r_signature = float(np.linalg.norm(a - c))
+        deviation = max(abs(float(np.linalg.norm(q - c)) - r_signature) for q in vertices)
+        if deviation > tolerance:
+            raise SignatureGeometryError(f"{kind.lower()} {index}: arc rebuild outside the fit tolerance (the rebuilt chord "
+                                         f"vertices deviate {deviation / radius:.3e} R from the signature's circle, tolerance "
+                                         f"{ARC_REBUILD_TOLERANCE_OVER_R:g} R: a snap bent a short arc too far)")
+        records.append({"Piece": [kind, index], "Class": "Arc", "ArcDeviationOverR": deviation / radius,
+                        "CentreShiftOverR": float(np.linalg.norm(centre - c)) / radius,
+                        "RadiusShiftOverR": abs(r - r_signature) / radius, "Chords": len(vertices) - 1,
+                        "Centre": [float(centre[0]) / radius, float(centre[1]) / radius], "RadiusOverR": r / radius})
+        sign = int(portion["GapRadial"])
+        n = len(vertices) - 1
+        ta = math.atan2(vertices[0][1] - centre[1], vertices[0][0] - centre[0])
+        for k in range(n):
+            tmid = ta + sweep * (k + 0.5) / n
+            edges.append(dict(common, P0=(float(vertices[k][0]), float(vertices[k][1])), P1=(float(vertices[k + 1][0]), float(vertices[k + 1][1])),
+                              Gap=(sign * math.cos(tmid), sign * math.sin(tmid)), Chord=k, Chords=n))
+    return edges, records
 
 
 def context_from_signature(signature, radius):
@@ -96,18 +319,18 @@ def context_from_signature(signature, radius):
     pieces = []
     if "Context" not in signature:
         return pieces
-    for edge in signature_library.cluster_plan_view_edges(signature, radius, include_context=True):
+    edges, _ = chorded_entries(signature, radius, include_context=True)
+    for edge in edges:
         if not edge.get("Context"):
             continue
         p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
-        gap = np.asarray(edge["Gap"], dtype=float)
+        label = f"context piece {edge['Portion']}"
+        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, label,
+                                             serialised=edge.get("Chord") is None)
         length = float(np.linalg.norm(p1 - p0))
-        norm = np.linalg.norm(gap)
-        if length <= 0.0 or norm <= 0.0:
-            raise SignatureGeometryError(f"context piece {edge['Portion']} has zero length or an invalid Gap")
-        pieces.append({"P0": p0, "P1": p1, "Gap": gap / norm, "Length": length, "Conductor": int(edge["Conductor"]),
+        pieces.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                        "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
-                       "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False))})
+                       "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False)), "GapRederived": rederived})
     return pieces
 
 
@@ -124,36 +347,66 @@ def support_box(signature, radius):
     return box
 
 
+def gap_perpendicularity_bound(length_over_R):
+    """The quantisation bound on |tangent . gap| of a serialised straight row of length
+    ``length_over_R`` (units of R) with the F0-a margin: GAP_PERPENDICULARITY_MARGIN x
+    (sqrt(2) / 2 q + 2 q / L), q = SIGNATURE_QUANTUM_OVER_R."""
+    q = SIGNATURE_QUANTUM_OVER_R
+    return GAP_PERPENDICULARITY_MARGIN * (math.sqrt(2.0) * 0.5 * q + 2.0 * q / length_over_R)
+
+
+def perpendicular_gap(p0, p1, gap, radius, label, serialised=True):
+    """The unit gap of a straight row (F0-a, decision 317 MAJOR-1 option (a)): the serialised
+    gap bitwise when |tangent . gap| == 0 exactly, else - for every deviation within the
+    quantisation bound - the exact perpendicular of the chord with the serialised sign, else
+    a fail-closed refusal naming the bound. An arc chord (``serialised`` False: its gap is the
+    arc's radial direction at the chord's middle, not a serialised number) is kept as computed
+    within the same bound. Returns (unit gap, re-derived flag, deviation)."""
+    norm = float(np.linalg.norm(gap))
+    if norm <= 0.0:
+        raise SignatureGeometryError(f"{label} has an invalid P or Gap")
+    length = float(np.linalg.norm(p1 - p0))
+    if length <= 0.0:
+        raise SignatureGeometryError(f"{label} has zero length")
+    tangent = (p1 - p0) / length
+    gap = gap / norm
+    deviation = abs(float(np.dot(tangent, gap)))
+    bound = gap_perpendicularity_bound(length / radius)
+    if deviation > bound:
+        raise SignatureGeometryError(f"{label}: Gap is not perpendicular to the portion (|tangent . gap| = "
+                                     f"{deviation:.3e} > the quantisation bound {bound:.3e} for a {length / radius:.6f} R row)")
+    if deviation == 0.0 or not serialised:
+        return gap, False, deviation
+    perpendicular = np.asarray([tangent[1], -tangent[0]])
+    sign = 1.0 if float(np.dot(perpendicular, gap)) >= 0.0 else -1.0
+    return sign * perpendicular + 0.0, True, deviation  # + 0.0: no negative zero in the rows
+
+
 def portions_from_signature(signature, radius):
     """The portions of a SpatialEdgeCluster signature in mesh units (canonical frame). An arc
     portion (option A: ``Arc`` = centre + midpoint, ``GapRadial``) is chorded at the canonical
     step (signature_library.cluster_plan_view_edges: 5 deg / 0.25 R), each chord a straight
     portion whose gap direction is the arc's radial direction at the chord's middle; the
     chords are what the coupon's plan view and the model's Edges carry (Palace places a model
-    carrying its Signature with the identity map and verifies the chords against the arc)."""
+    carrying its Signature with the identity map and verifies the chords against the arc).
+    A straight portion's gap is tested against the quantisation bound and re-derived when
+    the serialised rounding tilts it (perpendicular_gap, F0-a); ``GapRederived`` marks it."""
     if signature.get("Type") != "SpatialEdgeCluster":
         raise SignatureGeometryError(f"not a SpatialEdgeCluster signature: {signature.get('Type')!r}")
     portions = []
     for index, entry in enumerate(signature["Portions"]):
         if "Arc" not in entry and ("Gap" not in entry or len(entry["P"]) != 4):
             raise SignatureGeometryError(f"portion {index} has an invalid P or Gap")
-    for edge in signature_library.cluster_plan_view_edges(signature, radius):
+    edges, _ = chorded_entries(signature, radius)
+    for edge in edges:
         index = edge["Portion"]
         p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
-        gap = np.asarray(edge["Gap"], dtype=float)
-        norm = np.linalg.norm(gap)
-        if norm <= 0.0:
-            raise SignatureGeometryError(f"portion {index} has an invalid P or Gap")
+        gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, f"portion {index}",
+                                             serialised=edge.get("Chord") is None)
         length = float(np.linalg.norm(p1 - p0))
-        if length <= 0.0:
-            raise SignatureGeometryError(f"portion {index} has zero length")
-        tangent = (p1 - p0) / length
-        gap = gap / norm
-        if abs(float(np.dot(tangent, gap))) > 1.0e-6:
-            raise SignatureGeometryError(f"portion {index}: Gap is not perpendicular to the portion")
         portions.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                          "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
-                         "Portion": index})
+                         "Portion": index, "GapRederived": rederived})
     return portions
 
 
@@ -654,6 +907,12 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
     coupon["Geometry"]["PlanViewFacets"] = facets
     coupon["Geometry"]["PlanViewBoundary"] = planner.canonical_plan_view_boundary(facets, radius, 2)
     coupon["Geometry"]["MaskRegularization"] = dict(MASK_REGULARIZATION)
+    _, joint_snaps = chorded_entries(signature, radius, include_context=True)
+    if joint_snaps:
+        # Block (b) DESIGN A1 (3) / 2 (b): the arc end snaps (face / joint) and the rebuilt
+        # circles' deviations from the signature's (recorded; a legacy straight coupon has
+        # none, so its coupon.json is unchanged).
+        coupon["Geometry"]["JointSnaps"] = joint_snaps
     if bridges:
         coupon["Geometry"]["InteriorCuts"] = [
             {"Portions": [portions[i]["Portion"], portions[j]["Portion"]],

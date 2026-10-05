@@ -1607,6 +1607,33 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         MFEM_ABORT("Electrostatic response-correction \"PatchConstruction\" must be "
                    "\"Features\" or \"Legacy\"!");
       }
+      if (auto spatial = correction.find("SpatialSupport"); spatial != correction.end())
+      {
+        // Per-case span-cap allowances (block (b) DESIGN section 3 (a) / A4).
+        MFEM_VERIFY(spatial->is_object(),
+                    "Response-correction \"SpatialSupport\" must be an object!");
+        for (const auto &entry : spatial->value("SpanCapAllowances", json::array()))
+        {
+          MFEM_VERIFY(entry.is_object() && entry.contains("ClaimsSignature") &&
+                          entry["ClaimsSignature"].is_object() &&
+                          entry.contains("SpanCapOverR") &&
+                          entry["SpanCapOverR"].is_number(),
+                      "Response-correction \"SpatialSupport\".\"SpanCapAllowances\" "
+                      "entries need a ClaimsSignature object and a numeric SpanCapOverR!");
+          ResponseCorrectionData::SpanCapAllowanceData allowance;
+          allowance.claims_signature = entry["ClaimsSignature"].dump();
+          allowance.span_cap_over_R = entry["SpanCapOverR"].get<double>();
+          allowance.label = entry.value("Label", std::string{});
+          allowance.reason = entry.value("Reason", std::string{});
+          allowance.approval = entry.value("Approval", std::string{});
+          MFEM_VERIFY(!allowance.label.empty() && !allowance.reason.empty() &&
+                          !allowance.approval.empty(),
+                      "Response-correction \"SpatialSupport\".\"SpanCapAllowances\" "
+                      "entries need a Label (the approved key prefix), a Reason and an "
+                      "Approval (the decision)!");
+          data.span_cap_allowances.push_back(std::move(allowance));
+        }
+      }
       response_correction = std::move(data);
       return;
     }
