@@ -239,6 +239,52 @@ class DenseTracesTest(unittest.TestCase):
         self.assertGreater(x0[0], x0[1])
         self.assertGreater(x0[3], x0[2])
 
+    def single_conductor_basis(self):
+        """A single-conductor basis whose in-metal vertex IS a basis knot (the ZeroTrace
+        construction of generate_spatial_response for conductor_count == 1): the 4 rim knots
+        plus knot 5 at (-2, 0, 0) inside conductor 1."""
+        basis = dict(self.basis)
+        basis["Basis"] = np.array([1, 2, 3, 4, 0, 0, 5])
+        return basis, np.array([0, 0, 0, 0, 1, 1, 1])
+
+    def test_synthetic_family_vanishes_at_pec_knots(self):
+        """Decision 360 (b*): the line-charge value is 0 at every knot inside a conductor; the
+        free knots keep the values of the unit-range normalisation over ALL knots (so a
+        two-conductor coupon, whose PEC knots have no column, is unchanged byte for byte)."""
+        basis, labels = self.single_conductor_basis()
+        traces = sq.synthetic_traces(basis, labels, 1.0, {1: np.zeros(3)})
+        self.assertEqual([t["Name"] for t in traces], ["line-charge-x0", "line-charge-x1", "line-charge-y0",
+                                                       "line-charge-y1"])
+        knots = np.array([[-2.0, -1.0], [2.0, -1.0], [2.0, 1.0], [-2.0, 1.0], [-2.0, 0.0]])
+        for trace, source in zip(traces, ([-7.0, 0.0], [7.0, 0.0], [0.0, -6.0], [0.0, 6.0])):
+            self.assertEqual(len(trace["Coefficients"]), 5)
+            self.assertEqual(trace["Coefficients"][4], 0.0)  # the PEC knot: exactly zero
+            phi = -np.log(np.linalg.norm(knots - np.asarray(source), axis=1))
+            expected = (phi - phi.min()) / np.ptp(phi)  # normalised over all 5 knots, PEC knot included
+            np.testing.assert_allclose(trace["Coefficients"][:4], expected[:4], rtol=0, atol=1e-15)
+        # The x0 line charge is nearest to the PEC knot (-2, 0): without the fix that knot would
+        # carry the maximum 1.0; with it the free rim knots are unchanged.
+        self.assertLess(max(traces[0]["Coefficients"][:4]), 1.0)
+
+    def test_write_dense_trace_fails_closed_at_pec_knots(self):
+        """Decision 360 (b*): a hat prescribing a non-zero potential at a conductor vertex is a
+        Dirichlet jump along the PEC cross-section boundary and is refused; zero there (the
+        synthetic family, the runtime-zeroed device trace) is written."""
+        basis, labels = self.single_conductor_basis()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(sq.SpatialQualificationError) as caught:
+                sq.write_dense_trace(Path(tmp) / "jump.csv", basis, labels, [0.1, 0.2, 0.3, 0.4, 0.5])
+            self.assertIn("PEC", str(caught.exception))
+            self.assertFalse((Path(tmp) / "jump.csv").exists())
+            path, terminal, scale = sq.write_dense_trace(Path(tmp) / "ok.csv", basis, labels, [0.1, 0.2, 0.3, 0.4, 0.0])
+            self.assertEqual((terminal, scale), (None, 1.0))
+            rows = [line.split(",") for line in Path(path).read_text().splitlines() if line and not line.startswith("x")]
+            values = {tuple(round(float(v), 9) for v in row[:3]): float(row[3]) for row in rows}
+            self.assertEqual(values[(-2.0, 0.0, 0.0)], 0.0)
+            self.assertAlmostEqual(values[(-2.0, -1.0, 0.5)], 0.1)
+            for trace in sq.synthetic_traces(basis, labels, 1.0, {1: np.zeros(3)}):
+                sq.write_dense_trace(Path(tmp) / f"{trace['Name']}.csv", basis, labels, trace["Coefficients"])
+
     def test_representable_excitation(self):
         self.assertEqual(sq.representable_trace([0.5, 0.25, 0.0, 0.0], [2, 3]), ([0.5, 0.25, 0.0, 0.0], None, 1.0))
         scaled, terminal, scale = sq.representable_trace([1.0, 2.0, 4.0, 0.0], [2, 3])

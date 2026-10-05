@@ -419,15 +419,26 @@ def synthetic_traces(basis, labels, radius, conductor_references, distance_over_
     references" needs conductor potentials other than 0 / 1 V in one excitation, which
     Palace's PrescribedPotential TerminalAttributes (held at one volt) cannot impose for two
     or more conductor states at once: recorded as a limitation (a TerminalPotential field of
-    Palace would lift it); `conductor_references` is kept for that extension."""
+    Palace would lift it); `conductor_references` is kept for that extension.
+
+    The line-charge value is 0 at every knot inside a conductor (label > 0): the grounded
+    cross-section carries potential 0 in the solve, so a non-zero prescribed value at a PEC
+    knot would be a Dirichlet jump along the cross-section boundary whose energy diverges with
+    p (decision 360, mechanism M1). A single-conductor basis keeps its in-metal knots as
+    columns (the ZeroTraceIndices the device runtime zeroes); a two-conductor basis has no
+    column there, so its traces are unchanged. The unit-range normalisation is taken over
+    every knot before the zeroing, so the free knots' values do not depend on the fix."""
     points, index_of = np.asarray(basis["Points"]), np.asarray(basis["Basis"])
     lower, upper = np.asarray(basis["Lower"], dtype=float), np.asarray(basis["Upper"], dtype=float)
+    labels = np.asarray(labels)
     count = int(index_of.max())
     conductors = sorted(set(int(label) for label in labels) - {0})
     states = [c for c in conductors if c != 1]
     knots = np.zeros((count, 3))
+    knot_labels = np.zeros(count, dtype=int)
     for k in range(1, count + 1):
         knots[k - 1] = points[index_of == k][0]
+        knot_labels[k - 1] = labels[index_of == k][0]
     traces = []
     for state in states:
         traces.append({"Name": f"state-{state}", "Family": "T2",
@@ -442,6 +453,7 @@ def synthetic_traces(basis, labels, radius, conductor_references, distance_over_
         phi = -np.log(np.linalg.norm((knots - source)[:, :2], axis=1))
         scale = float(np.ptp(phi)) or 1.0
         values = (phi - phi.min()) / scale
+        values[knot_labels > 0] = 0.0
         traces.append({"Name": f"line-charge-{face}", "Family": "T2",
                        "Coefficients": values.tolist() + [0.0] * len(states)})
     return traces
@@ -469,8 +481,11 @@ def write_dense_trace(path, basis, labels, coefficients):
     """A dense trace as a PrescribedPotential DataFile: sum_k c_k hat_k + sum_c s_c lift_c on
     the trace mesh vertices (the hats and lifts of case_inputs.regenerate_traces), scaled to
     its representable excitation (representable_trace); returns (path, terminal conductor,
-    energy scale)."""
+    energy scale). Fails closed when a hat prescribes a non-zero value at a conductor vertex
+    (label > 0): the only potential a conductor cross-section may carry is its state lift
+    (decision 360, mechanism M1)."""
     points, triangles, index_of = basis["Points"], basis["Triangles"], np.asarray(basis["Basis"])
+    labels = np.asarray(labels)
     count = int(index_of.max())
     states = sorted(set(int(label) for label in labels) - {0, 1})
     if len(coefficients) != count + len(states):
@@ -480,6 +495,12 @@ def write_dense_trace(path, basis, labels, coefficients):
     values = np.zeros(len(points))
     for k in range(1, count + 1):
         values[index_of == k] = scaled[k - 1]
+    jump = np.flatnonzero((labels > 0) & (values != 0.0))
+    if len(jump):
+        raise SpatialQualificationError(f"the dense trace prescribes a non-zero potential at {len(jump)} conductor "
+                                        f"(PEC) knot(s) (vertices {(jump[:8] + 1).tolist()}, basis "
+                                        f"{index_of[jump[:8]].tolist()}): a Dirichlet jump along the cross-section "
+                                        "boundary; a conductor vertex carries its state lift only")
     for n, conductor in enumerate(states):
         values[np.asarray(labels) == conductor] = scaled[count + n]
     producer.write_surface_trace(Path(path), points, triangles, values)
