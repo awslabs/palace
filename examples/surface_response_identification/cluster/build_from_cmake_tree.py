@@ -18,13 +18,19 @@ binary's SHA-256 and `ldd`.
     python3 build_from_cmake_tree.py --source SRC --build BUILD --deps PREFIX [--jobs 96]
         [--mfem-patch extern/patch/mfem/<diff> ...] [--mfem-test TAG --mfem-test-ranks 4]
 
-`--mfem-patch` rebuilds MFEM with the frozen tree's vendored patch(es) on top of the dependency
-prefix's already patched MFEM checkout (`PREFIX/extern/mfem`, copied to `BUILD/mfem-src`, the
-patches applied with `git apply`), configured with the prefix's recorded MFEM options
-(`PREFIX/extern/mfem-cmake/tmp/mfem-cfgcmd.txt`) re-pointed to install into BUILD; the palace
-configure then uses `MFEM_DIR=BUILD`. `--mfem-test` builds MFEM's `punit_tests` and runs the
-given Catch2 filter under `mpirun -n RANKS` (the build fails if the tests fail); the output is
-`BUILD/mfem-punit-tests.log` and the summary is recorded in `binary.json`.
+The vendored MFEM patches the frozen tree carries (`SRC/extern/patch/mfem/*.diff`, the set
+`cmake/ExternalMFEM.cmake` applies in a superbuild) are ALWAYS applied: MFEM is rebuilt with
+them on top of the dependency prefix's already patched MFEM checkout (`PREFIX/extern/mfem`,
+copied to `BUILD/mfem-src`, the patches applied with `git apply`), configured with the prefix's
+recorded MFEM options (`PREFIX/extern/mfem-cmake/tmp/mfem-cfgcmd.txt`) re-pointed to install
+into BUILD; the palace configure then uses `MFEM_DIR=BUILD` and the build fails unless palace
+resolved the rebuilt library. `--mfem-patch` names the set explicitly (repeatable); a list that
+omits a frozen patch is refused, so no binary can silently link the prefix's MFEM without a
+patch its source tree depends on. `binary.json` records the applied patch set (`MFEM.Patches`,
+empty when the frozen tree carries none) and the MFEM library palace linked. `--mfem-test`
+builds MFEM's `punit_tests` and runs the given Catch2 filter under `mpirun -n RANKS` (the build
+fails if the tests fail); the output is `BUILD/mfem-punit-tests.log` and the summary is recorded
+in `binary.json`.
 
 Runs inside a PBS job (job-linux-build.pbs): the login node has too few cores for the build.
 """
@@ -68,6 +74,34 @@ def run_logged(command, log_path, cwd=None):
     print(shlex.join(command), flush=True)
     with log_path.open("w") as log:
         subprocess.run(command, cwd=cwd, check=True, stdout=log, stderr=subprocess.STDOUT)
+
+
+MFEM_PATCH_DIRECTORY = "extern/patch/mfem"
+
+
+def frozen_mfem_patches(source):
+    """The vendored MFEM patches the frozen tree carries (what cmake/ExternalMFEM.cmake applies)."""
+    return sorted(str(p.relative_to(source)) for p in (source / MFEM_PATCH_DIRECTORY).glob("*.diff"))
+
+
+def resolve_mfem_patches(source, manifest_files, requested):
+    """The MFEM patches to apply: the frozen tree's vendored set, or an explicit list that covers it.
+
+    A binary built from a tree that carries extern/patch/mfem/*.diff must not link the dependency
+    prefix's MFEM without them (a superbuild of the same tree would apply them), so an empty or
+    partial --mfem-patch list never silently drops a frozen patch; every applied patch must be in
+    the hash-bound manifest.
+    """
+    frozen = frozen_mfem_patches(source)
+    patches = [str(Path(p)) for p in requested] if requested else frozen
+    omitted = [p for p in frozen if p not in patches]
+    if omitted:
+        raise SystemExit(f"--mfem-patch omits vendored MFEM patches of the frozen tree {omitted}: "
+                         "the binary would link an MFEM without them (pass them too)")
+    unlisted = [p for p in patches if p not in manifest_files]
+    if unlisted:
+        raise SystemExit(f"MFEM patches not in the frozen manifest: {unlisted}")
+    return patches
 
 
 def rebuild_mfem(source, build, deps, patches, cmake, jobs, timing):
@@ -143,12 +177,12 @@ def main():
     parser.add_argument("--jobs", type=int, default=96)
     parser.add_argument("--binary-root", type=Path, help="where palace-<HEAD7>-<sha12>.bin is placed (default: parent of --build)")
     parser.add_argument("--mfem-patch", action="append", default=[], metavar="RELATIVE_DIFF",
-                        help="frozen-tree path of a vendored MFEM patch to apply on top of the prefix's MFEM; rebuilds MFEM into BUILD")
-    parser.add_argument("--mfem-test", metavar="CATCH2_FILTER", help="run MFEM punit_tests with this filter (requires --mfem-patch)")
+                        help="frozen-tree path of a vendored MFEM patch to apply on top of the prefix's MFEM "
+                             "(default: every extern/patch/mfem/*.diff of the frozen tree; a list that omits one is refused)")
+    parser.add_argument("--mfem-test", metavar="CATCH2_FILTER",
+                        help="run MFEM punit_tests with this filter (requires a rebuilt MFEM, i.e. at least one patch)")
     parser.add_argument("--mfem-test-ranks", type=int, default=4)
     args = parser.parse_args()
-    if args.mfem_test and not args.mfem_patch:
-        parser.error("--mfem-test requires --mfem-patch (the tests are built from the rebuilt MFEM)")
     source = args.source.resolve()
     build = args.build.resolve()
     deps = args.deps.resolve()
@@ -158,6 +192,10 @@ def main():
     mismatched = [p for p, h in manifest["Files"].items() if not (source / p).is_file() or sha256(source / p) != h]
     if mismatched:
         raise SystemExit(f"frozen source does not match its manifest: {mismatched[:5]} ...")
+    patches = resolve_mfem_patches(source, manifest["Files"], args.mfem_patch)
+    if args.mfem_test and not patches:
+        parser.error("--mfem-test needs a rebuilt MFEM: the frozen tree carries no extern/patch/mfem/*.diff and no --mfem-patch was given")
+    print(f"MFEM patches: {patches or 'none (the dependency prefix MFEM is used as is)'}", flush=True)
 
     recorded = recorded_configure_arguments(deps)
     cmake = str(args.cmake)
@@ -174,14 +212,14 @@ def main():
             argument = f"-DCMAKE_CXX_FLAGS={git_flags}"
         elif argument.startswith("-DPALACE_BUILD_EXTERNAL_DEPS="):
             argument = "-DPALACE_BUILD_EXTERNAL_DEPS=OFF"
-        elif argument.startswith("-DMFEM_DIR=") and args.mfem_patch:
+        elif argument.startswith("-DMFEM_DIR=") and patches:
             argument = f"-DMFEM_DIR={build}"
-        elif argument.startswith("-DCMAKE_PREFIX_PATH=") and args.mfem_patch:
+        elif argument.startswith("-DCMAKE_PREFIX_PATH=") and patches:
             # find_library(MFEM_LIBRARY ... HINTS ${MFEM_DIR}/lib) searches CMAKE_PREFIX_PATH before HINTS,
             # so the dependency prefix's unpatched libmfem.a would win: this prefix goes first.
             argument = f"-DCMAKE_PREFIX_PATH={build};" + argument.split("=", 1)[1]
         configure.append(argument)
-    if args.mfem_patch:
+    if patches:
         configure.append(f"-DMFEM_LIBRARY={build}/lib/libmfem.a")
     build.mkdir(parents=True)
     palace_build = build / "palace-build"
@@ -200,14 +238,15 @@ def main():
         "Environment": {k: os.environ.get(k) for k in ["PATH", "LD_LIBRARY_PATH", "LOADEDMODULES", "PBS_JOBID", "HOSTNAME"]},
         "Hostname": subprocess.check_output(["hostname"], text=True).strip(),
         "ConfigureCommand": configure, "RecordedConfigureCommand": recorded, "Jobs": args.jobs,
-        "MFEMPatches": args.mfem_patch,
+        "MFEMPatches": patches, "RequestedMFEMPatches": args.mfem_patch,
     })
     status = "incomplete"
     timing = {}
-    mfem = None
+    # Always recorded: the applied patch set (empty = the prefix's MFEM as is) and the library palace linked.
+    mfem = {"Patches": [], "Library": None}
     try:
-        if args.mfem_patch:
-            mfem = rebuild_mfem(source, build, deps, args.mfem_patch, cmake, args.jobs, timing)
+        if patches:
+            mfem = rebuild_mfem(source, build, deps, patches, cmake, args.jobs, timing)
             if args.mfem_test:
                 mfem["UnitTests"] = run_mfem_unit_tests(build, args.mpirun, args.mfem_test_ranks, args.mfem_test,
                                                         cmake, args.jobs, timing)
@@ -216,13 +255,13 @@ def main():
         with (build / "configure.log").open("w") as log:
             subprocess.run(configure, cwd=palace_build, check=True, stdout=log, stderr=subprocess.STDOUT)
         timing["ConfigureSeconds"] = time.time() - started
-        if args.mfem_patch:
-            cache = (palace_build / "CMakeCache.txt").read_text()
-            found = re.search(r"^MFEM_LIBRARY:\w+=(.*)$", cache, re.M)
+        cache = (palace_build / "CMakeCache.txt").read_text()
+        found = re.search(r"^MFEM_LIBRARY:\w+=(.*)$", cache, re.M)
+        if patches:
             expected = str(build / "lib/libmfem.a")
             if not found or found.group(1) != expected:
                 raise SystemExit(f"palace configured against {found and found.group(1)}, not the rebuilt {expected}")
-            mfem["PalaceMFEMLibrary"] = found.group(1)
+        mfem["PalaceMFEMLibrary"] = found.group(1) if found else None
         started = time.time()
         build_command = [cmake, "--build", str(palace_build), "--target", "palace", "-j", str(args.jobs)]
         print(shlex.join(build_command), flush=True)
