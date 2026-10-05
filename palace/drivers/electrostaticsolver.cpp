@@ -2218,10 +2218,15 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
   // of the thin-metal operator (PostprocessTerminals); the fixed-trace domain correction
   // adds the bilinear domain defect of the applied coupon patches,
   //         C(i, j) = Vⱼᵀ M Vᵢ + Vⱼᵀ Pᵀ W (Q_fab,dom - Q_thin,dom) P Vᵢ  (∀i, Vᵢ = 1),
-  // so that C(i, i) = 2 (E_raw + ΔE_dom,ft) / Vᵢ² (the surface-Q-corrected.csv energies).
-  // The self-consistent matrix is the same form on the corrected fields, the capacitance of
-  // the corrected operator K + Pᵀ W D P at the terminal potentials. Fixed flux is not a
-  // capacitance (its energy is not that of a fixed-potential ensemble) and is not written.
+  // so that C(i, i) = 2 (E_raw + ΔE_dom,ft) / Vᵢ² (the surface-Q-corrected.csv energies; W
+  // are the final patch weights, so the identity holds for the sources solved after the
+  // last conductor-consistency exclusion, i.e. for every source when nothing is excluded
+  // after the first). The self-consistent matrix is the same fixed-trace form on the
+  // corrected fields: the capacitance of the corrected operator K + Pᵀ W D P at the
+  // terminal potentials when the translational domain coupling is FixedTrace (under
+  // FixedFlux or Disabled the corrected fields solve a different coupling). Fixed flux is
+  // not a capacitance (its energy is not that of a fixed-potential ensemble) and is not
+  // written.
   const int n = static_cast<int>(V.size());
   MFEM_VERIFY(static_cast<int>(terminal_sources.size()) == n,
               "Terminal source and field counts differ in the corrected capacitance!");

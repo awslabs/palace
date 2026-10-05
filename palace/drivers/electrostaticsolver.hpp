@@ -87,8 +87,10 @@ private:
   // C⁻¹ variants; the raw terminal files are untouched): the fixed-trace matrix
   // C_ft(i, j) = V_jᵀ M V_i + V_jᵀ Pᵀ W (Q_fab,dom - Q_thin,dom) P V_i on the raw fields
   // (NaN unless fixed_trace: the configuration evaluates the fixed-trace response) and
-  // the self-consistent matrix, the same bilinear form on the corrected fields (NaN unless
-  // self_consistent: every source's corrected solve was accepted; fail closed).
+  // the self-consistent matrix, the same fixed-trace bilinear form on the corrected fields
+  // (the capacitance of the corrected operator when the corrected solve couples the
+  // domain in its fixed-trace form; NaN unless self_consistent: every source's corrected
+  // solve was accepted; fail closed). W are the final patch weights of the run.
   void PostprocessCorrectedTerminals(
       PostOperator<ProblemType::ELECTROSTATIC> &post_op,
       const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,

@@ -146,7 +146,8 @@ mfem::DenseMatrix CorrectedMatrix(const Table &table, const std::string &name,
 // byte-identical to the run without it; terminal-C-corrected.csv (with the C_m and C⁻¹
 // variants and the palace.json record) has the fixed-trace diagonal C_thin x E_ft / E_raw
 // of surface-Q-corrected.csv, is symmetric, and its self-consistent column is NaN unless
-// every source's corrected solve was accepted (PostprocessOnly: never).
+// every source's corrected solve was accepted (PostprocessOnly: never; an unconverged
+// corrected solve: fail closed).
 TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal capacitance",
                  "[electrostaticsolver][surfaceresponseoperator][2d][Serial][Parallel]")
 {
@@ -193,11 +194,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
   config["Boundaries"]["Ground"] = {{"Attributes", {1, 3, 4}}};
   config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {2}}},
                                       {{"Index", 2}, {"Attributes", {9, 10}}}};
-  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 200}};
+  // The raw solve converges in 6 PCG iterations (Tol 1e-12); MaxIts bounds the corrected
+  // solve of the unconverged run below.
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 12}};
   auto correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   const fs::path raw_dir = temp.temp_dir / "corrected-capacitance-raw";
   const fs::path both_dir = temp.temp_dir / "corrected-capacitance-both";
   const fs::path postprocess_dir = temp.temp_dir / "corrected-capacitance-postprocess";
+  const fs::path unconverged_dir = temp.temp_dir / "corrected-capacitance-unconverged";
 
   // The reference: no response correction.
   config["Problem"]["Output"] = raw_dir.string();
@@ -213,6 +217,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] =
       "PostprocessOnly";
   RunElectrostatic(config);
+  // Both again with a corrected solve that cannot be accepted: 12 PCG iterations (the
+  // recursive residual of this solve falls ~2.5 decades per iteration) cannot reach a
+  // relative tolerance of 1e-300, so every source's corrected solve ends unconverged while
+  // the raw solve (6 iterations) is unchanged.
+  config["Problem"]["Output"] = unconverged_dir.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["SolveTol"] = 1.0e-300;
+  RunElectrostatic(config);
   Mpi::Barrier(Mpi::World());
   if (!Mpi::Root(Mpi::World()))
   {
@@ -227,6 +239,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
     REQUIRE(fs::is_regular_file(raw_dir / file));
     CHECK(ReadFile(raw_dir / file) == ReadFile(both_dir / file));
     CHECK(ReadFile(raw_dir / file) == ReadFile(postprocess_dir / file));
+    CHECK(ReadFile(raw_dir / file) == ReadFile(unconverged_dir / file));
   }
   for (const char *file : {"terminal-C-corrected.csv", "terminal-Cm-corrected.csv",
                            "terminal-Cinv-corrected.csv"})
@@ -235,6 +248,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
     CHECK_FALSE(fs::exists(raw_dir / file));
     CHECK(fs::is_regular_file(both_dir / file));
     CHECK(fs::is_regular_file(postprocess_dir / file));
+    CHECK(fs::is_regular_file(unconverged_dir / file));
   }
 
   const Table raw_C = LoadCsv(raw_dir / "terminal-C.csv");
@@ -281,9 +295,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
   CHECK_THAT(identity(1, 0), WithinAbs(0.0, 1.0e-10));
 
   // Self-consistent: the same form on the corrected fields when every source's corrected
-  // solve was accepted (then E_sc is finite for every source), else NaN.
+  // solve was accepted (then E_sc is finite for every source), else NaN. The scaled library
+  // makes this run's corrected solves accepted (3 PCG iterations to 1e-6).
   const auto C_sc = CorrectedMatrix(corrected_C, "C", "corrected", "(F)");
   const bool accepted = std::isfinite(E_sc.data[0]) && std::isfinite(E_sc.data[1]);
+  CHECK(accepted);
   for (int i = 0; i < 2; i++)
   {
     const double C_raw = RawC(i);
@@ -335,6 +351,34 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
             .at("TerminalCapacitance")
             .at("SelfConsistent")
             .is_null());
+
+  // Unconverged corrected solves (fail closed): the energies report the corrected energy as
+  // unavailable, the self-consistent matrix is NaN and the palace.json variant null, while
+  // the fixed-trace matrix is that of the same raw fields.
+  const Table unconverged_energies = LoadCsv(unconverged_dir / "surface-Q-corrected.csv");
+  const Column &unconverged_E_sc =
+      ColumnByHeader(unconverged_energies, "E_elec corrected (J)");
+  REQUIRE(unconverged_E_sc.data.size() == 2);
+  CHECK(std::isnan(unconverged_E_sc.data[0]));
+  CHECK(std::isnan(unconverged_E_sc.data[1]));
+  const Table unconverged_C = LoadCsv(unconverged_dir / "terminal-C-corrected.csv");
+  const auto unconverged_ft = CorrectedMatrix(unconverged_C, "C", "fixed-trace", "(F)");
+  const auto unconverged_sc = CorrectedMatrix(unconverged_C, "C", "corrected", "(F)");
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      CHECK(unconverged_ft(i, j) == C_ft(i, j));
+      CHECK(std::isnan(unconverged_sc(i, j)));
+    }
+  }
+  std::ifstream unconverged_metadata_input(unconverged_dir / "palace.json");
+  REQUIRE(unconverged_metadata_input);
+  const auto unconverged_metadata = json::parse(unconverged_metadata_input);
+  const auto &unconverged_record =
+      unconverged_metadata.at("SurfaceResponse").at("TerminalCapacitance");
+  CHECK(unconverged_record.at("FixedTrace") == record.at("FixedTrace"));
+  CHECK(unconverged_record.at("SelfConsistent").is_null());
 #endif
 }
 
