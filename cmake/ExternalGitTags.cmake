@@ -20,7 +20,7 @@ set(EXTERN_ARPACK_GIT_BRANCH
   "Git branch for external ARPACK-NG build"
 )
 set(EXTERN_ARPACK_GIT_TAG
-  "804fa3149a0f773064198a8e883bd021832157ca" CACHE STRING
+  "3.9.1" CACHE STRING
   "Git tag for external ARPACK-NG build"
 )
 
@@ -62,7 +62,7 @@ set(EXTERN_HYPRE_GIT_BRANCH
   "Git branch for external HYPRE build"
 )
 set(EXTERN_HYPRE_GIT_TAG
-  "fca98afcd78a26b784dc24b0c3edb0e6140598af" CACHE STRING
+  "v3.2.0" CACHE STRING
   "Git tag for external HYPRE build"
 )
 
@@ -89,9 +89,8 @@ set(EXTERN_LIBXSMM_GIT_BRANCH
   "main" CACHE STRING
   "Git branch for external LIBXSMM build"
 )
-# libxsmm does not tag versions very often (last was Dec 2021)
 set(EXTERN_LIBXSMM_GIT_TAG
-  "ea0b20499a41377bab148257240adbbfe1b4a333" CACHE STRING
+  "2.1.0" CACHE STRING
   "Git tag for external LIBXSMM build"
 )
 
@@ -105,7 +104,7 @@ set(EXTERN_MAGMA_GIT_BRANCH
   "Git branch for external MAGMA build"
 )
 set(EXTERN_MAGMA_GIT_TAG
-  "07b2b05635f0510ea4538f7ab68e50dcf0c0c815" CACHE STRING
+  "v2.10.0" CACHE STRING
   "Git tag for external MAGMA build"
 )
 
@@ -133,7 +132,7 @@ set(EXTERN_MFEM_GIT_BRANCH
   "Git branch for external MFEM build"
 )
 set(EXTERN_MFEM_GIT_TAG
-  "d964264cdb9a13e94a201b6c236c7721e0c8765f" CACHE STRING
+  "v4.10" CACHE STRING
   "Git tag for external MFEM build"
 )
 
@@ -189,7 +188,7 @@ set(EXTERN_SCALAPACK_GIT_BRANCH
   "Git branch for external ScaLAPACK build"
 )
 set(EXTERN_SCALAPACK_GIT_TAG
-  "6423f17933eb9a2522814b78ab3c0d6da25ee85a" CACHE STRING
+  "v2.2.3" CACHE STRING
   "Git tag for external ScaLAPACK build"
 )
 
@@ -217,7 +216,7 @@ set(EXTERN_STRUMPACK_GIT_BRANCH
   "Git branch for external STRUMPACK build"
 )
 set(EXTERN_STRUMPACK_GIT_TAG
-  "cfba574f60b792433ee87e7e2a874eeb96c74d1f" CACHE STRING
+  "v8.1.0" CACHE STRING
   "Git tag for external STRUMPACK build"
 )
 
@@ -241,12 +240,11 @@ set(EXTERN_ZFP_URL
   "URL for external ZFP build"
 )
 set(EXTERN_ZFP_GIT_BRANCH
-  "develop" CACHE STRING
+  "master" CACHE STRING
   "Git branch for external ZFP build"
 )
-# ZFP does not tag versions very often (last was Dec 2023)
 set(EXTERN_ZFP_GIT_TAG
-  "a888ab7606c58cc5ab5f34298fec25473e0d28ad" CACHE STRING
+  "1.0.1" CACHE STRING
   "Git tag for external ZFP build"
 )
 
@@ -304,6 +302,6 @@ set(EXTERN_UMPIRE_GIT_BRANCH
   "Git branch for external UMPIRE build"
 )
 set(EXTERN_UMPIRE_GIT_TAG
-  "ac034c775c7b4d4f4ff0f66774398373cf5fce73" CACHE STRING
+  "v2026.07.1" CACHE STRING
   "Git tag for external UMPIRE build"
 )

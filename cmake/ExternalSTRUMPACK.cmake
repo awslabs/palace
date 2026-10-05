@@ -34,6 +34,16 @@ if(PALACE_WITH_STRUMPACK_ZFP)
   string(REPLACE ";" "; " ZFP_OPTIONS_PRINT "${ZFP_OPTIONS}")
   message(STATUS "ZFP_OPTIONS: ${ZFP_OPTIONS_PRINT}")
 
+  # Fix zfp_stream_maximum_size() overflow (https://github.com/LLNL/zfp/issues/270), using
+  # the patch from the Spack build (https://github.com/spack/spack-packages/pull/6879)
+  set(ZFP_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/zfp-patches/stream-maximum-size-overflow.patch")
+  file(DOWNLOAD
+    "https://raw.githubusercontent.com/spack/spack-packages/94ba1d9eb8e89a4e01919a9f41b8c857b5fbe5cc/repos/spack_repo/builtin/packages/zfp/stream-maximum-size-overflow.patch"
+    "${ZFP_PATCH_FILES}"
+    EXPECTED_HASH "SHA256=7ed755650fdcd79208ab165b42c902d64a916187be6dade4643814c09ba6d894"
+    TLS_VERIFY ON
+  )
+
   include(ExternalProject)
   ExternalProject_Add(zfp
     DEPENDS           ${ZFP_DEPENDENCIES}
@@ -44,6 +54,7 @@ if(PALACE_WITH_STRUMPACK_ZFP)
     INSTALL_DIR       ${CMAKE_INSTALL_PREFIX}
     PREFIX            ${CMAKE_BINARY_DIR}/extern/zfp-cmake
     UPDATE_COMMAND    ""
+    PATCH_COMMAND     git apply "${ZFP_PATCH_FILES}"
     CONFIGURE_COMMAND ${CMAKE_COMMAND} <SOURCE_DIR> "${ZFP_OPTIONS}"
     TEST_COMMAND      ""
   )
