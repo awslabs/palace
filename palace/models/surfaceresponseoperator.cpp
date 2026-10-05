@@ -19919,9 +19919,9 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
   AddPointValuesTranspose(correction, y);
 }
 
-void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) const
+void SurfaceResponseOperator::ApplyDomainDefect(const Vector &x, Vector &y,
+                                                bool fixed_trace) const
 {
-  BlockTimer timer(Timer::RESPONSE_APPLY);
   ApplyTrace(x, trace);
   response.SetSize(trace.Size());
   for (const auto &patch : patches)
@@ -19929,7 +19929,9 @@ void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) cons
     const auto &model = models[patch.model];
     Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
     Vector patch_response(response.GetData() + patch.trace_offset, model.basis_size);
-    switch (model.domain_correction_mode)
+    const auto mode =
+        fixed_trace ? DomainCorrectionMode::FIXED_TRACE : model.domain_correction_mode;
+    switch (mode)
     {
       case DomainCorrectionMode::DISABLED:
         patch_response = 0.0;
@@ -19944,6 +19946,17 @@ void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) cons
     patch_response *= patch.weight;
   }
   ApplyTraceTranspose(response, y);
+}
+
+void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) const
+{
+  BlockTimer timer(Timer::RESPONSE_APPLY);
+  ApplyDomainDefect(x, y, false);
+}
+
+void SurfaceResponseOperator::FixedTraceDomainDefectMult(const Vector &x, Vector &y) const
+{
+  ApplyDomainDefect(x, y, true);
 }
 
 void SurfaceResponseOperator::Mult(const Vector &x, Vector &y) const

@@ -514,6 +514,46 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator explicit p
   const auto local_electrostatic_response = response.GetElectrostaticResponse(x);
   CHECK_THAT(local_electrostatic_response.domain_correction,
              WithinRel(energy.domain, 1.0e-12));
+
+  // The fixed-trace domain defect as a bilinear form (the corrected capacitance,
+  // PostprocessCorrectedTerminals): on full vectors (x carries essential values), its
+  // quadratic form is twice the fixed-trace domain correction, it is symmetric, its
+  // off-diagonal value is the polarization of the quadratic form, and with the essential
+  // rows zeroed it is the correction EliminateRHS subtracts (the same apply path).
+  {
+    Vector Dx, Dy;
+    response.FixedTraceDomainDefectMult(x, Dx);
+    response.FixedTraceDomainDefectMult(y, Dy);
+    const double xDx = linalg::Dot<Vector>(Mpi::World(), x, Dx);
+    const double yDy = linalg::Dot<Vector>(Mpi::World(), y, Dy);
+    const double xDy = linalg::Dot<Vector>(Mpi::World(), x, Dy);
+    const double yDx = linalg::Dot<Vector>(Mpi::World(), y, Dx);
+    const auto response_y = response.GetElectrostaticResponse(y);
+    CHECK(xDx != 0.0);
+    CHECK_THAT(0.5 * xDx, WithinRel(local_electrostatic_response.domain_correction, 1.0e-12));
+    CHECK_THAT(0.5 * yDy, WithinRel(response_y.domain_correction, 1.0e-12));
+    CHECK(xDy != 0.0);
+    CHECK_THAT(xDy, WithinRel(yDx, 1.0e-12));
+    Vector sum(x);
+    sum += y;
+    const double polarization = response.GetElectrostaticResponse(sum).domain_correction -
+                                local_electrostatic_response.domain_correction -
+                                response_y.domain_correction;
+    CHECK_THAT(xDy, WithinRel(polarization, 1.0e-9));
+    Vector eliminated(size);
+    eliminated = 0.0;
+    response.EliminateRHS(x, eliminated);
+    eliminated += Dx;
+    eliminated.SetSubVector(laplace_op.GetDbcTDofList(), 0.0);
+    double eliminated_error = eliminated * eliminated;
+    Mpi::GlobalSum(1, &eliminated_error, Mpi::World());
+    CHECK(eliminated_error == 0.0);
+    // The masked operator drops the essential part of the trace: it is not the form.
+    Dx.GetSubVector(laplace_op.GetDbcTDofList(), essential_values);
+    double essential_norm = essential_values.Size() > 0 ? essential_values.Normlinf() : 0.0;
+    Mpi::GlobalMax(1, &essential_norm, Mpi::World());
+    CHECK(essential_norm > 0.0);
+  }
   CHECK_THAT(local_electrostatic_response.fabricated_surface_energy.at(4),
              WithinRel(fabricated_energy.at(4), 1.0e-12));
   CHECK(std::isfinite(local_electrostatic_response.domain_correction_fixed_flux));
@@ -1440,6 +1480,20 @@ TEST_CASE_METHOD(
           parallel_cluster_potential_true_2d);
   CHECK_THAT(fixed_flux_translational_energy_2d.domain,
              WithinRel(fixed_flux_translational_result_2d.domain_correction, 1.0e-12));
+  // The corrected capacitance's bilinear defect is the FIXED-TRACE form irrespective of
+  // the model's domain-coupling mode: half its quadratic form is the fixed-trace domain
+  // correction (and not the fixed-flux one the operator applies).
+  {
+    Vector fixed_trace_action;
+    fixed_flux_translational_response_2d.FixedTraceDomainDefectMult(
+        parallel_cluster_potential_true_2d, fixed_trace_action);
+    const double quadratic_form = linalg::Dot<Vector>(
+        Mpi::World(), parallel_cluster_potential_true_2d, fixed_trace_action);
+    CHECK_THAT(0.5 * quadratic_form,
+               WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction, 1.0e-12));
+    CHECK_THAT(0.5 * quadratic_form,
+               !WithinRel(fixed_flux_translational_result_2d.domain_correction, 1.0e-6));
+  }
 
   GridFunction parallel_cluster_boundary_field_2d(
       parallel_cluster_boundary_op_2d.GetNDSpace(), true);

@@ -521,6 +521,17 @@ void BaseSolver::SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::str
   }
 }
 
+void BaseSolver::SaveSurfaceResponseMetadata(const std::string &key,
+                                             const nlohmann::json &value) const
+{
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["SurfaceResponse"][key] = value;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
 template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;
 template void BaseSolver::SaveMetadata<ComplexKspSolver>(const ComplexKspSolver &) const;
 

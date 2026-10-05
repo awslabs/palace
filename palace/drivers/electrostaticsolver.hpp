@@ -33,6 +33,7 @@ class LaplaceOperator;
 class Mesh;
 class SurfacePostGeometry;
 class SurfaceResponseGeometry;
+class SurfaceResponseOperator;
 template <ProblemType>
 class PostOperator;
 template <typename OperType>
@@ -82,6 +83,17 @@ private:
   void PostprocessTerminals(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                             const std::map<int, mfem::Array<int>> &terminal_sources,
                             const std::vector<Vector> &V) const;
+  // The response-corrected capacitance matrices (terminal-C-corrected.csv with the C_m and
+  // C⁻¹ variants; the raw terminal files are untouched): the fixed-trace matrix
+  // C_ft(i, j) = V_jᵀ M V_i + V_jᵀ Pᵀ W (Q_fab,dom - Q_thin,dom) P V_i on the raw fields
+  // (NaN unless fixed_trace: the configuration evaluates the fixed-trace response) and
+  // the self-consistent matrix, the same bilinear form on the corrected fields (NaN unless
+  // self_consistent: every source's corrected solve was accepted; fail closed).
+  void PostprocessCorrectedTerminals(
+      PostOperator<ProblemType::ELECTROSTATIC> &post_op,
+      const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
+      const std::vector<Vector> &V_corrected, const SurfaceResponseOperator &response,
+      bool fixed_trace, bool self_consistent) const;
   void PostprocessResponseMatrix(PostOperator<ProblemType::ELECTROSTATIC> &post_op,
                                  const LaplaceOperator &laplace_op, const Operator &Grad,
                                  const std::vector<Vector> &V,

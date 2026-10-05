@@ -399,6 +399,10 @@ private:
   // counters, the empty lists and the rule), created on first use.
   nlohmann::json &ConductorConsistencyDiagnostics();
   void ApplyUneliminated(const Vector &x, Vector &y) const;
+  // y = Pᵀ W D P x on the full potential x (no essential-dof masking): the weighted
+  // domain defect of every patch, D = the model's fixed-trace defect when fixed_trace is
+  // set, else the defect of its domain-coupling mode (ApplyUneliminated).
+  void ApplyDomainDefect(const Vector &x, Vector &y, bool fixed_trace) const;
   void ConfigureMaxwellResponse(
       const IoData &iodata, const MaterialOperator &mat_op,
       const mfem::Array<int> &dbc_tdof_list,
@@ -488,6 +492,15 @@ public:
 
   // Evaluate the nondimensional domain- and surface-energy defects for a global field.
   EnergyCorrection GetEnergyCorrection(const Vector &x) const;
+
+  // The fixed-trace domain defect as a bilinear form on full potentials: y = Pᵀ W
+  // (Q_fab,dom - Q_thin,dom) P x with the gate-updated patch weights W and no essential-dof
+  // masking (the conductor part of the trace stays, as in GetElectrostaticResponse), every
+  // model in its fixed-trace form irrespective of its domain-coupling mode. Its quadratic
+  // form is twice the fixed-trace domain correction: 1/2 xᵀ y =
+  // GetElectrostaticResponse(x).domain_correction. Collective; x and y are true-dof
+  // vectors.
+  void FixedTraceDomainDefectMult(const Vector &x, Vector &y) const;
 
   // Evaluate the complete fabricated-coupon surface energy for every mapped target
   // interface. Corrected participation replaces the measured global core with this data.
