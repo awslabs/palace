@@ -160,6 +160,8 @@ public:
 // - Inherits from mfem::Vector, so can be used anywhere Vector is expected.
 // - Memory is automatically managed (no new/delete needed).
 // - Faster than dynamic Vector for small sizes due to stack allocation.
+// - A fixed-size view of buff. Don't re-point, resize, swap or take ownership of its data
+//   (SetData, SetSize, MakeRef, Swap, MakeDataOwner, ...); the destructor asserts in debug.
 //
 // Example usage:
 //
@@ -195,7 +197,12 @@ public:
   {
     MFEM_ASSERT(GetData() == buff,
                 "Buffer of StaticVector changed. This indicates a possible bug.");
-    MFEM_ASSERT(Size() == N, "Size of StaticVector changed. This indicates a possible bug.")
+    MFEM_ASSERT(Size() == N,
+                "Size of StaticVector changed. This indicates a possible bug.");
+    // MakeDataOwner on a Vector& would pass the checks above and make ~Vector delete[]
+    // the stack buffer.
+    MFEM_ASSERT(!OwnsData(),
+                "StaticVector cannot own its data. This indicates a possible bug.");
   }
 
   using Vector::operator=;  // Extend the implicitly defined assignment operators
