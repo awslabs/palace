@@ -7,7 +7,8 @@
 
 # CMake 3.21 was released in Jul. 2021 (required for HIP support)
 # Cmake 3.24 was released in Aug. 2022 (required for portable WHOLE_ARCHIVE linking of tests)
-cmake_minimum_required(VERSION 3.24)
+# CMake 3.27 was released in Jul. 2023 (required for AOCL in FindBLAS/FindLAPACK)
+cmake_minimum_required(VERSION 3.27)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -89,12 +90,7 @@ if(PALACE_WITH_CUDA)
   endif()
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
-  # Fail before building dependencies: Palace's C++20 device code needs nvcc 12.0, and
-  # CMake knows its -std=c++20 flag from 3.25.2
-  if(CMAKE_VERSION VERSION_LESS 3.25.2)
-    message(FATAL_ERROR
-      "PALACE_WITH_CUDA requires CMake 3.25.2 or later (found ${CMAKE_VERSION})")
-  endif()
+  # Fail before building dependencies: Palace's C++20 device code needs nvcc 12.0
   if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND
      CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0)
     message(FATAL_ERROR

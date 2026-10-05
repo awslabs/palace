@@ -7,7 +7,7 @@
 
 # CMake 3.21 was released in Jul. 2021 (required for HIP support)
 # Cmake 3.24 was released in Aug. 2022 (required for portable WHOLE_ARCHIVE linking of tests)
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.27)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
