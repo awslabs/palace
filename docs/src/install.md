@@ -234,26 +234,19 @@ which installs the binary executable in `${CMAKE_INSTALL_PREFIX}/bin/`.
 ### Math libraries
 
 During the configure step, the build system will try to detect system installations of BLAS
-and LAPACK libraries depending on the system architecture according to the following
-procedure:
+and LAPACK libraries from the following environment variables, in order (each can be given
+as `<NAME>_DIR`, `<NAME>ROOT`, or `<NAME>_ROOT`):
 
-  - For `x86_64` systems:
+  - `ARMPL`: [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries),
+    intended for `aarch64`/`arm64` systems.
+  - `AOCL`: [AMD Optimizing CPU Libraries (AOCL)](https://developer.amd.com/amd-aocl)
+    installation of BLIS and libFLAME, intended for `x86_64` systems.
+  - `MKL`: [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html),
+    intended for `x86_64` systems.
+  - `OPENBLAS`: [OpenBLAS](https://www.openblas.net/), which is permissively licensed and
+    available from most package managers.
 
-      + If the `MKLROOT` environment variable is set, looks for an
-        [Intel MKL](https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl.html)
-        installation.
-      + If the `AOCL_DIR` or `AOCLROOT` environment variables are set, looks for an
-        [AMD Optimizing CPU Libraries (AOCL)](https://developer.amd.com/amd-aocl)
-        installation of BLIS and libFLAME.
-      + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/)
-        which is permissively licensed and available from most package managers.
-
-  - For `aarch64`/`arm64` systems:
-
-      + If the `ARMPL_DIR` environment variable is set, looks for an
-        [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
-        installation.
-      + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/).
+If none of these are set, the libraries are located by CMake.
 
 This detection can be bypassed by passing a vendor to CMake with `-DBLA_VENDOR=<vendor>`
 (see the [CMake documentation](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors)
