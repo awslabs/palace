@@ -513,6 +513,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 commit = f"v{self.spec.version}"
             args.append(self.define("PALACE_GIT_COMMIT_ID", commit))
 
+        # Lets `palace --version` point at the full spec (`spack find /<hash>`)
+        args.append(self.define("PALACE_BUILD_ID", f"Spack {self.spec.dag_hash()}"))
+
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))
             if self.spec.satisfies("+mumps"):
