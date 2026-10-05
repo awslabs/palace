@@ -30,6 +30,7 @@ class GridFunction;
 class IoData;
 class Mesh;
 class BoundaryModeOperator;
+class DistributedPointLocator;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
@@ -373,7 +374,7 @@ private:
   mutable long long int trace_transpose_count = 0;
 
   void ConfigurePointCommunication(
-      const mfem::Vector &xyz, int dimension,
+      DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr);
   void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry);
   void EvaluatePointValues(const Vector &x, Vector &values) const;

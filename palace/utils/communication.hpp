@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <complex>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <fmt/color.h>
 #include <fmt/format.h>
@@ -202,6 +204,13 @@ public:
       MPI_Finalize();
     }
   }
+
+  // Record that the program is returning from main. Until then, the singleton's destructor
+  // treats the process exit as abnormal: an exit() called from a library in the middle of
+  // the run (gslib's die() on one rank, decision 346 (b)) would otherwise run ~Mpi and
+  // enter MPI_Finalize, which blocks until every other rank finalizes — a silent hang
+  // instead of a failure.
+  static void MarkNormalShutdown() { normal_shutdown = true; }
 
   // Return true if MPI has been initialized.
   static bool IsInitialized()
@@ -436,9 +445,25 @@ public:
 #endif
 
 private:
+  inline static bool normal_shutdown = false;
+
   // Prevent direct construction of objects of this class.
   Mpi() = default;
-  ~Mpi() { Finalize(); }
+  ~Mpi()
+  {
+    if (!normal_shutdown && IsInitialized() && !IsFinalized())
+    {
+      int rank = -1;
+      MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+      std::fprintf(stderr,
+                   "Abnormal exit on MPI rank %d before the end of the program: aborting "
+                   "all ranks!\n",
+                   rank);
+      std::fflush(stderr);
+      MPI_Abort(MPI_COMM_WORLD, EXIT_FAILURE);
+    }
+    Finalize();
+  }
 
   // Access the singleton instance.
   static Mpi &Instance()

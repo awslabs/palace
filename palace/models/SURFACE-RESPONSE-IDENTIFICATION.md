@@ -1966,10 +1966,12 @@ preflight and the solve: every rank locates every tested point in its local mesh
 operator's own `ElementPointLocator` (its reference-space tolerance 1e-9 on linear
 simplices, the inverse transformation otherwise, the routing box tolerance) and the found
 flags are OR-reduced over the communicator, so the decision is the partition's union —
-identical for any rank count and for both of the operator's locator paths
-(`ElementPointLocator` below 64 ranks, `FindPointsGSLIB` at 64 and above or with
-`PALACE_RESPONSE_USE_GSLIB_POINTS`), which afterwards locate the APPLIED patches' points
-only. An excluded patch keeps weight 0 (the operator skips it like a wholly owned cell; the
+identical for any rank count and the same `ElementPointLocator` as the operator's point
+location (`DistributedPointLocator`: every point routed to the ranks whose boxes contain it
+and searched in their local meshes at any rank count, a rank-local `FindPointsGSLIB` on
+`MPI_COMM_SELF` for the points that search misses — never a global gslib hash of the device
+mesh, decision 346 (b)), which afterwards locates the APPLIED patches' points only. An
+excluded patch keeps weight 0 (the operator skips it like a wholly owned cell; the
 dry run writes it with Weight 0, its unscaled QuadratureWeight and cell, no new column) and
 its portion stays tiled (the A7 identity holds; the audit reads the record). RECORD
 (`Identification.Diagnostics.DomainBoundaryExclusions` of the preflight manifest, the
@@ -2014,9 +2016,10 @@ per translational patch): transmon 10,366 patches / 2.98 M points in 1.8 s on 1 
 2,494 / 763 k in 0.24 s on 2 ranks; the transmon preflight digest 9ada660bf6e4, record and
 dry run are unchanged (no exclusion: its domain is far from the metal). Unit test
 `SurfaceResponseOperator domain-boundary exclusion` (`test-domainboundary.cpp`): a lead cut
-by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks, the
-default and the forced-GSLIB locator path, the notch fail-closed case, and the misplaced
-coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
+by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks (the
+routing locator; its forced-GSLIB variant was removed with the global gslib hash, decision
+346 (b)), the notch fail-closed case, and the misplaced coupon (reference off the mesh,
+every point off the mesh, no applied patch left) aborts.
 
 **Conductor-consistency gate (decision 277 (A), 2026-10-03;
 `SurfaceResponseOperator::ApplyConductorConsistencyGate`, SOLVE TIME ONLY).** A spatial

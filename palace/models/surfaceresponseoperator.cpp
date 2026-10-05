@@ -601,7 +601,438 @@ public:
       }
     }
   }
+
+  // The largest extent of a local element bounding box along any axis.
+  double MaxElementExtent() const
+  {
+    double extent = 0.0;
+    for (const auto &box : element_boxes)
+    {
+      for (int d = 0; d < dimension; d++)
+      {
+        extent = std::max(extent, box.max[d] - box.min[d]);
+      }
+    }
+    return extent;
+  }
 };
+
+}  // namespace
+
+// Point location in the distributed device mesh without a global search structure
+// (decision 346 (b)): FindPointsGSLIB's Setup builds a uniform global hash of the mesh
+// (hash_n = cbrt(32 N_tets)) whose crystal-router distribution overflows a 32-bit message
+// at ~17-28 M tets of a graded AMR mesh. Here the ranks' routing boxes are gathered once
+// per construction (one per AMR cycle, shared by the mortar-resolution probe and the
+// response-point location); a query goes to the ranks whose boxes contain it, is searched
+// in their rank-local meshes by the operator's ElementPointLocator, and is owned by the
+// lowest rank / lowest element containing it. A point no candidate rank finds this way is
+// searched by the candidate ranks with a rank-local FindPointsGSLIB (MPI_COMM_SELF: the
+// hash of the local mesh only, no router across ranks) with gslib's border tolerance.
+class DistributedPointLocator
+{
+public:
+  struct Result
+  {
+    // Per query point: the owning rank (the communicator size when none was found), its
+    // local element (-1 when none) and the reference coordinates (dimension per point).
+    std::vector<int> owners;
+    std::vector<int> elements;
+    std::vector<double> references;
+    // The owner's value of the optional per-element evaluation.
+    std::vector<double> owner_values;
+    long long int candidate_queries = 0;
+    long long int fallback_queries = 0;
+  };
+
+private:
+  static constexpr int routing_box_count = 8;
+  static constexpr int routing_box_values = 6;
+
+  mfem::ParMesh &mesh;
+  int dimension;
+  MPI_Comm comm;
+  int size;
+  ElementPointLocator local;
+  std::vector<double> global_routing;
+  double box_tolerance;
+  // The margin by which a rank-local FindPointsGSLIB search may find a point outside the
+  // rank's routing boxes: gslib expands every element bounding box by the relative slop
+  // bb_t = 0.01 of its size and accepts a border point within sqrt(bdr_tol) = 1e-4 mesh
+  // units (the maximum over the ranks).
+  double fallback_margin;
+
+  bool RankContains(int candidate_rank, const std::array<double, 3> &point,
+                    double tolerance) const
+  {
+    const int rank_offset = candidate_rank * routing_box_count * routing_box_values;
+    for (int box = 0; box < routing_box_count; box++)
+    {
+      ElementBox bounds;
+      for (int d = 0; d < 3; d++)
+      {
+        bounds.min[d] = global_routing[rank_offset + routing_box_values * box + d];
+        bounds.max[d] = global_routing[rank_offset + routing_box_values * box + 3 + d];
+      }
+      if (bounds.Contains(point, dimension, tolerance))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static int SetOffsets(const std::vector<int> &counts, std::vector<int> &offsets)
+  {
+    offsets.resize(counts.size());
+    int total = 0;
+    for (std::size_t i = 0; i < counts.size(); i++)
+    {
+      offsets[i] = total;
+      total += counts[i];
+    }
+    return total;
+  }
+
+  static std::vector<int> ScaleCommunicationPlan(const std::vector<int> &values, int scale)
+  {
+    std::vector<int> result(values);
+    for (auto &value : result)
+    {
+      value *= scale;
+    }
+    return result;
+  }
+
+  // The candidate exchange: every query point of the local list `points` (3 coordinates
+  // each) is sent to the ranks whose routing boxes contain it within `tolerance`; the
+  // candidate ranks answer with `answer_size` values per query (filled by `Answer` from
+  // the received coordinates), gathered here per (point, candidate rank).
+  struct CandidateExchange
+  {
+    std::vector<int> send_counts, send_offsets;
+    std::vector<int> query_indices;  // the local point of each packed query
+    std::vector<double> answers;     // answer_size values per packed query
+  };
+  template <typename Answer>
+  CandidateExchange Exchange(const std::vector<std::array<double, 3>> &points,
+                             double tolerance, int answer_size, Answer &&answer) const
+  {
+    CandidateExchange exchange;
+    exchange.send_counts.assign(size, 0);
+    for (const auto &point : points)
+    {
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        if (RankContains(candidate_rank, point, tolerance))
+        {
+          exchange.send_counts[candidate_rank]++;
+        }
+      }
+    }
+    std::vector<int> receive_counts(size);
+    Mpi::Alltoall(1, exchange.send_counts.data(), receive_counts.data(), comm);
+    std::vector<int> receive_offsets;
+    const int send_total = SetOffsets(exchange.send_counts, exchange.send_offsets);
+    const int receive_total = SetOffsets(receive_counts, receive_offsets);
+
+    exchange.query_indices.resize(send_total);
+    std::vector<double> send_coordinates(dimension * send_total);
+    std::vector<int> cursor(exchange.send_offsets);
+    for (std::size_t point = 0; point < points.size(); point++)
+    {
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        if (!RankContains(candidate_rank, points[point], tolerance))
+        {
+          continue;
+        }
+        const int packed = cursor[candidate_rank]++;
+        exchange.query_indices[packed] = static_cast<int>(point);
+        for (int d = 0; d < dimension; d++)
+        {
+          send_coordinates[dimension * packed + d] = points[point][d];
+        }
+      }
+    }
+    const auto send_coordinate_counts =
+        ScaleCommunicationPlan(exchange.send_counts, dimension);
+    const auto send_coordinate_offsets =
+        ScaleCommunicationPlan(exchange.send_offsets, dimension);
+    const auto receive_coordinate_counts =
+        ScaleCommunicationPlan(receive_counts, dimension);
+    const auto receive_coordinate_offsets =
+        ScaleCommunicationPlan(receive_offsets, dimension);
+    std::vector<double> receive_coordinates(dimension * receive_total);
+    Mpi::Alltoallv(send_coordinates.data(), send_coordinate_counts.data(),
+                   send_coordinate_offsets.data(), receive_coordinates.data(),
+                   receive_coordinate_counts.data(), receive_coordinate_offsets.data(),
+                   comm);
+
+    std::vector<double> receive_answers(answer_size * receive_total);
+    answer(receive_coordinates, receive_total, receive_answers);
+
+    const auto send_answer_counts =
+        ScaleCommunicationPlan(exchange.send_counts, answer_size);
+    const auto send_answer_offsets =
+        ScaleCommunicationPlan(exchange.send_offsets, answer_size);
+    const auto receive_answer_counts = ScaleCommunicationPlan(receive_counts, answer_size);
+    const auto receive_answer_offsets =
+        ScaleCommunicationPlan(receive_offsets, answer_size);
+    exchange.answers.resize(answer_size * send_total);
+    Mpi::Alltoallv(receive_answers.data(), receive_answer_counts.data(),
+                   receive_answer_offsets.data(), exchange.answers.data(),
+                   send_answer_counts.data(), send_answer_offsets.data(), comm);
+    return exchange;
+  }
+
+public:
+  DistributedPointLocator(mfem::ParMesh &mesh_, int dimension_)
+    : mesh(mesh_), dimension(dimension_), comm(mesh.GetComm()), size(Mpi::Size(comm)),
+      local(mesh, dimension)
+  {
+    std::array<double, routing_box_count * routing_box_values> local_routing;
+    for (int box = 0; box < routing_box_count; box++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        local_routing[routing_box_values * box + d] = mfem::infinity();
+        local_routing[routing_box_values * box + 3 + d] = -mfem::infinity();
+      }
+    }
+    const auto routing_boxes = local.GetRoutingBoxes(routing_box_count);
+    for (std::size_t box = 0; box < routing_boxes.size(); box++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        local_routing[routing_box_values * box + d] = routing_boxes[box].min[d];
+        local_routing[routing_box_values * box + 3 + d] = routing_boxes[box].max[d];
+      }
+    }
+    global_routing.resize(size * local_routing.size());
+    Mpi::Allgather(static_cast<int>(local_routing.size()), local_routing.data(),
+                   global_routing.data(), comm);
+
+    double coordinate_scale = 0.0;
+    const auto &bounds = local.GetBounds();
+    for (int d = 0; d < dimension; d++)
+    {
+      coordinate_scale = std::max({coordinate_scale, std::abs(bounds.min[d]),
+                                   std::abs(bounds.max[d]), bounds.max[d] - bounds.min[d]});
+    }
+    Mpi::GlobalMax(1, &coordinate_scale, comm);
+    box_tolerance =
+        1.0e-11 * coordinate_scale +
+        64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, coordinate_scale);
+
+    fallback_margin = 0.01 * local.MaxElementExtent() + 1.0e-4;
+    Mpi::GlobalMax(1, &fallback_margin, comm);
+  }
+
+  // Locates the local list of points (byNODES: every x, then every y, then every z). With
+  // `element_value`, the owner evaluates it on the owning element.
+  Result Locate(const mfem::Vector &xyz,
+                const std::function<double(int element)> *element_value = nullptr)
+  {
+    MFEM_VERIFY(xyz.Size() % dimension == 0, "Invalid point-coordinate array!");
+    const int point_count = xyz.Size() / dimension;
+    std::vector<std::array<double, 3>> points(point_count);
+    for (int point = 0; point < point_count; point++)
+    {
+      points[point].fill(0.0);
+      for (int d = 0; d < dimension; d++)
+      {
+        points[point][d] = xyz(d * point_count + point);
+      }
+    }
+
+    Result result;
+    result.owners.assign(point_count, size);
+    result.elements.assign(point_count, -1);
+    result.references.assign(dimension * point_count, 0.0);
+    result.owner_values.assign(element_value ? point_count : 0, 0.0);
+    const int value_size = element_value ? 1 : 0;
+
+    // The answer of a candidate rank: the local element (-1 when not found), the reference
+    // coordinates and the optional element value.
+    const int answer_size = 1 + dimension + value_size;
+    const auto exchange = Exchange(
+        points, box_tolerance, answer_size,
+        [&](const std::vector<double> &coordinates, int count, std::vector<double> &answers)
+        {
+          std::vector<int> candidates;
+          for (int i = 0; i < count; i++)
+          {
+            std::array<double, 3> coordinate{};
+            for (int d = 0; d < dimension; d++)
+            {
+              coordinate[d] = coordinates[dimension * i + d];
+            }
+            int element = -1;
+            mfem::IntegrationPoint reference;
+            double *answer = answers.data() + answer_size * i;
+            if (local.Find(coordinate, box_tolerance, element, reference, candidates))
+            {
+              reference.Get(answer + 1, dimension);
+              if (element_value)
+              {
+                answer[1 + dimension] = (*element_value)(element);
+              }
+            }
+            answer[0] = element;
+          }
+        });
+    result.candidate_queries = static_cast<long long int>(exchange.query_indices.size());
+    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+    {
+      const int begin = exchange.send_offsets[candidate_rank];
+      const int end = begin + exchange.send_counts[candidate_rank];
+      for (int packed = begin; packed < end; packed++)
+      {
+        const double *answer = exchange.answers.data() + answer_size * packed;
+        const int element = static_cast<int>(answer[0]);
+        if (element < 0)
+        {
+          continue;
+        }
+        const int point = exchange.query_indices[packed];
+        if (candidate_rank > result.owners[point] ||
+            (candidate_rank == result.owners[point] && element >= result.elements[point]))
+        {
+          continue;
+        }
+        result.owners[point] = candidate_rank;
+        result.elements[point] = element;
+        std::copy_n(answer + 1, dimension, result.references.data() + dimension * point);
+        if (element_value)
+        {
+          result.owner_values[point] = answer[1 + dimension];
+        }
+      }
+    }
+
+    std::vector<int> fallback_indices;
+    for (int point = 0; point < point_count; point++)
+    {
+      if (result.owners[point] == size)
+      {
+        fallback_indices.push_back(point);
+      }
+    }
+    result.fallback_queries = static_cast<long long int>(fallback_indices.size());
+    int fallback_count = static_cast<int>(fallback_indices.size());
+    Mpi::GlobalSum(1, &fallback_count, comm);
+    if (fallback_count == 0)
+    {
+      return result;
+    }
+    Mpi::Warning(comm,
+                 "Distributed point location could not resolve {:d} points in the local "
+                 "meshes of their candidate ranks; searching them with a rank-local "
+                 "FindPointsGSLIB!\n",
+                 fallback_count);
+
+    // Every candidate rank (its routing boxes within its own fallback margin) searches the
+    // unresolved points in its local mesh with gslib; the answer carries gslib's code
+    // (0 inside, 1 on a border within the tolerance, 2 not found), the local element, the
+    // squared distance, the reference coordinates and the optional element value. The
+    // owner is chosen as gslib's global search does: an inside point before a border one,
+    // then the smaller distance, then the lower rank.
+    std::vector<std::array<double, 3>> fallback_points(fallback_indices.size());
+    for (std::size_t i = 0; i < fallback_indices.size(); i++)
+    {
+      fallback_points[i] = points[fallback_indices[i]];
+    }
+    const int fallback_answer_size = 3 + dimension + value_size;
+    const auto fallback = Exchange(
+        fallback_points, box_tolerance + fallback_margin, fallback_answer_size,
+        [&](const std::vector<double> &coordinates, int count, std::vector<double> &answers)
+        {
+          for (int i = 0; i < count; i++)
+          {
+            double *answer = answers.data() + fallback_answer_size * i;
+            answer[0] = 2.0;
+            answer[1] = -1.0;
+            answer[2] = mfem::infinity();
+          }
+          if (count == 0)
+          {
+            return;
+          }
+#if defined(MFEM_USE_GSLIB)
+          mfem::Vector fallback_xyz(dimension * count);
+          for (int i = 0; i < count; i++)
+          {
+            for (int d = 0; d < dimension; d++)
+            {
+              fallback_xyz(d * count + i) = coordinates[dimension * i + d];
+            }
+          }
+          mfem::FindPointsGSLIB finder(MPI_COMM_SELF);
+          finder.Setup(mesh, 0.01, 1.0e-12, 256);
+          finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
+          const auto &reference = finder.GetReferencePosition();
+          for (int i = 0; i < count; i++)
+          {
+            if (finder.GetCode()[i] == 2)
+            {
+              continue;
+            }
+            double *answer = answers.data() + fallback_answer_size * i;
+            const int element = static_cast<int>(finder.GetElem()[i]);
+            answer[0] = finder.GetCode()[i];
+            answer[1] = element;
+            answer[2] = finder.GetDist()(i);
+            for (int d = 0; d < dimension; d++)
+            {
+              answer[3 + d] = reference(dimension * i + d);
+            }
+            if (element_value)
+            {
+              answer[3 + dimension] = (*element_value)(element);
+            }
+          }
+#else
+          MFEM_ABORT("Rank-local point location fallback requires MFEM_USE_GSLIB!");
+#endif
+        });
+    std::vector<double> best_code(fallback_indices.size(), 2.0);
+    std::vector<double> best_distance(fallback_indices.size(), mfem::infinity());
+    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+    {
+      const int begin = fallback.send_offsets[candidate_rank];
+      const int end = begin + fallback.send_counts[candidate_rank];
+      for (int packed = begin; packed < end; packed++)
+      {
+        const double *answer = fallback.answers.data() + fallback_answer_size * packed;
+        if (answer[0] == 2.0)
+        {
+          continue;
+        }
+        const int i = fallback.query_indices[packed];
+        if (answer[0] > best_code[i] ||
+            (answer[0] == best_code[i] && answer[2] >= best_distance[i]))
+        {
+          continue;
+        }
+        best_code[i] = answer[0];
+        best_distance[i] = answer[2];
+        const int point = fallback_indices[i];
+        result.owners[point] = candidate_rank;
+        result.elements[point] = static_cast<int>(answer[1]);
+        std::copy_n(answer + 3, dimension, result.references.data() + dimension * point);
+        if (element_value)
+        {
+          result.owner_values[point] = answer[3 + dimension];
+        }
+      }
+    }
+    return result;
+  }
+};
+
+namespace
+{
 
 enum class LibraryTopology : char
 {
@@ -17537,18 +17968,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   int global_mortar_patch_count = static_cast<int>(mortar_patch_indices.size());
   Mpi::GlobalSum(1, &global_mortar_patch_count, fespace.GetComm());
+  // One point locator per construction (= per AMR cycle) for the mortar-resolution probe
+  // and the response points below: no global search structure on the device mesh
+  // (decision 346 (b)).
+  DistributedPointLocator point_locator(response_mesh, dimension);
   if (global_mortar_patch_count > 0)
   {
-    mfem::L2_FECollection size_collection(0, dimension);
-    mfem::ParFiniteElementSpace size_space(&response_mesh, &size_collection);
-    mfem::ParGridFunction size_field(&size_space);
-    mfem::Array<int> dofs;
-    for (int element = 0; element < response_mesh.GetNE(); element++)
-    {
-      size_space.GetElementDofs(element, dofs);
-      MFEM_ASSERT(dofs.Size() == 1, "Invalid piecewise-constant mesh-size space!");
-      size_field[dofs[0]] = response_mesh.GetElementSize(element, 1);
-    }
     mfem::Vector centers(dimension * mortar_patch_indices.size());
     for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
     {
@@ -17566,11 +17991,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 coordinate_scale;
       }
     }
-    mfem::FindPointsGSLIB finder(fespace.GetComm());
-    finder.Setup(response_mesh, 0.01, 1.0e-12, 256);
-    finder.FindPoints(centers, mfem::Ordering::byNODES);
-    mfem::Vector local_resolution(mortar_patch_indices.size());
-    finder.Interpolate(size_field, local_resolution);
+    // The owning element's size (the smallest singular value of its Jacobian).
+    const std::function<double(int)> element_size = [&](int element)
+    { return response_mesh.GetElementSize(element, 1); };
+    const auto located = point_locator.Locate(centers, &element_size);
+    const auto &local_resolution = located.owner_values;
     for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
     {
       // The applied patches only (decision 258): a patch whose placed coupon section
@@ -17578,8 +18003,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       // of the placement, named.
       const auto &patch = patches[mortar_patch_indices[i]];
       MFEM_VERIFY(
-          finder.GetCode()[i] != 2 && std::isfinite(local_resolution[i]) &&
-              local_resolution[i] > 0.0,
+          located.owners[i] < Mpi::Size(fespace.GetComm()) &&
+              std::isfinite(local_resolution[i]) && local_resolution[i] > 0.0,
           "Unable to determine a local surface-mortar mesh resolution at the first "
           "basis point ("
               << centers(0 * mortar_patch_indices.size() + i) << ", "
@@ -17937,7 +18362,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
 
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
-    ConfigurePointCommunication(xyz, dimension);
+    ConfigurePointCommunication(point_locator, xyz, dimension);
   }
 
   Mpi::Print(
@@ -18896,11 +19321,13 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
       xyz(d * pending_points.size() + i) = pending_points[i].coordinate[d];
     }
   }
-  ConfigurePointCommunication(xyz, dimension, &weighted_tangents);
+  DistributedPointLocator point_locator(const_cast<mfem::ParMesh &>(fespace.GetParMesh()),
+                                        dimension);
+  ConfigurePointCommunication(point_locator, xyz, dimension, &weighted_tangents);
 }
 
 void SurfaceResponseOperator::ConfigurePointCommunication(
-    const mfem::Vector &xyz, int dimension,
+    DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
     const std::vector<std::array<double, 3>> *weighted_tangents)
 {
   MFEM_VERIFY(dimension == 2 || dimension == 3,
@@ -18912,74 +19339,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
                   static_cast<int>(weighted_tangents->size()) == point_query_count,
               "Invalid surface-response point-tangent array!");
 
-  auto &mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
-  const auto comm = fespace.GetComm();
   const int size = Mpi::Size(fespace.GetComm());
-  ElementPointLocator locator(mesh, dimension);
-
-  constexpr int routing_box_count = 8;
-  constexpr int routing_box_values = 6;
-  std::array<double, routing_box_count * routing_box_values> local_routing;
-  for (int box = 0; box < routing_box_count; box++)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      local_routing[routing_box_values * box + d] = mfem::infinity();
-      local_routing[routing_box_values * box + 3 + d] = -mfem::infinity();
-    }
-  }
-  const auto routing_boxes = locator.GetRoutingBoxes(routing_box_count);
-  for (std::size_t box = 0; box < routing_boxes.size(); box++)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      local_routing[routing_box_values * box + d] = routing_boxes[box].min[d];
-      local_routing[routing_box_values * box + 3 + d] = routing_boxes[box].max[d];
-    }
-  }
-  std::vector<double> global_routing(size * local_routing.size());
-  Mpi::Allgather(static_cast<int>(local_routing.size()), local_routing.data(),
-                 global_routing.data(), comm);
-
-  double coordinate_scale = 0.0;
-  const auto &bounds = locator.GetBounds();
-  for (int d = 0; d < dimension; d++)
-  {
-    coordinate_scale = std::max({coordinate_scale, std::abs(bounds.min[d]),
-                                 std::abs(bounds.max[d]), bounds.max[d] - bounds.min[d]});
-  }
-  Mpi::GlobalMax(1, &coordinate_scale, comm);
-  const double box_tolerance =
-      1.0e-11 * coordinate_scale +
-      64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, coordinate_scale);
-
-  auto GetPoint = [&](int point)
-  {
-    std::array<double, 3> coordinate{};
-    for (int d = 0; d < dimension; d++)
-    {
-      coordinate[d] = xyz(d * point_query_count + point);
-    }
-    return coordinate;
-  };
-  auto RankContains = [&](int candidate_rank, const std::array<double, 3> &point)
-  {
-    const int rank_offset = candidate_rank * routing_box_count * routing_box_values;
-    for (int box = 0; box < routing_box_count; box++)
-    {
-      ElementBox bounds;
-      for (int d = 0; d < 3; d++)
-      {
-        bounds.min[d] = global_routing[rank_offset + routing_box_values * box + d];
-        bounds.max[d] = global_routing[rank_offset + routing_box_values * box + 3 + d];
-      }
-      if (bounds.Contains(point, dimension, box_tolerance))
-      {
-        return true;
-      }
-    }
-    return false;
-  };
   auto SetOffsets = [](const std::vector<int> &counts, std::vector<int> &offsets)
   {
     offsets.resize(counts.size());
@@ -19001,15 +19361,16 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     return result;
   };
 
-  std::vector<int> point_owners(point_query_count, size);
-  std::vector<int> point_elements(point_query_count, -1);
-  std::vector<double> point_references(dimension * point_query_count);
   // Fail closed on an unlocated point, naming its patch (decision 258: the domain-boundary
   // exclusion removes the patches whose placed coupon sections leave the mesh before this
   // point location; anything else not located is an error, never silently dropped).
   auto DescribeUnlocatedPoint = [&](int point)
   {
-    const auto coordinate = GetPoint(point);
+    std::array<double, 3> coordinate{};
+    for (int d = 0; d < dimension; d++)
+    {
+      coordinate[d] = xyz(d * point_query_count + point);
+    }
     std::string description =
         fmt::format("Surface-response contour point {:d} at ({:.9e}, {:.9e}, {:.9e}) (mesh "
                     "units) could not be located in the device mesh",
@@ -19026,186 +19387,15 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     }
     return description + "!";
   };
-  const char *gslib_environment = std::getenv("PALACE_RESPONSE_USE_GSLIB_POINTS");
-  const bool use_gslib =
-      size >= 64 || (gslib_environment && std::string_view(gslib_environment) != "0" &&
-                     !std::string_view(gslib_environment).empty());
-  if (use_gslib)
+  auto located = locator.Locate(xyz);
+  candidate_query_count += located.candidate_queries;
+  fallback_query_count += located.fallback_queries;
+  const auto &point_owners = located.owners;
+  const auto &point_elements = located.elements;
+  const auto &point_references = located.references;
+  for (int point = 0; point < point_query_count; point++)
   {
-    Mpi::Print(" Using FindPointsGSLIB for {:d} local response points on {:d} ranks\n",
-               point_query_count, size);
-    mfem::FindPointsGSLIB finder(comm);
-    finder.Setup(mesh, 0.01, 1.0e-12, 256);
-    finder.FindPoints(xyz, mfem::Ordering::byNODES);
-    const auto &reference = finder.GetReferencePosition();
-    for (int point = 0; point < point_query_count; point++)
-    {
-      MFEM_VERIFY(finder.GetCode()[point] != 2, DescribeUnlocatedPoint(point));
-      point_owners[point] = static_cast<int>(finder.GetProc()[point]);
-      point_elements[point] = static_cast<int>(finder.GetElem()[point]);
-      for (int d = 0; d < dimension; d++)
-      {
-        point_references[dimension * point + d] = reference(dimension * point + d);
-      }
-    }
-  }
-  else
-  {
-    std::vector<int> candidate_send_counts(size, 0);
-    for (int point = 0; point < point_query_count; point++)
-    {
-      const auto coordinate = GetPoint(point);
-      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-      {
-        if (RankContains(candidate_rank, coordinate))
-        {
-          candidate_send_counts[candidate_rank]++;
-        }
-      }
-    }
-    std::vector<int> candidate_receive_counts(size);
-    Mpi::Alltoall(1, candidate_send_counts.data(), candidate_receive_counts.data(), comm);
-    std::vector<int> candidate_send_offsets, candidate_receive_offsets;
-    const int candidate_send_total =
-        SetOffsets(candidate_send_counts, candidate_send_offsets);
-    candidate_query_count += candidate_send_total;
-    const int candidate_receive_total =
-        SetOffsets(candidate_receive_counts, candidate_receive_offsets);
-
-    std::vector<int> candidate_query_indices(candidate_send_total);
-    std::vector<double> candidate_send_coordinates(dimension * candidate_send_total);
-    std::vector<int> candidate_cursor(candidate_send_offsets);
-    for (int point = 0; point < point_query_count; point++)
-    {
-      const auto coordinate = GetPoint(point);
-      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-      {
-        if (!RankContains(candidate_rank, coordinate))
-        {
-          continue;
-        }
-        const int packed = candidate_cursor[candidate_rank]++;
-        candidate_query_indices[packed] = point;
-        for (int d = 0; d < dimension; d++)
-        {
-          candidate_send_coordinates[dimension * packed + d] = coordinate[d];
-        }
-      }
-    }
-    const auto candidate_send_coordinate_counts =
-        ScaleCommunicationPlan(candidate_send_counts, dimension);
-    const auto candidate_send_coordinate_offsets =
-        ScaleCommunicationPlan(candidate_send_offsets, dimension);
-    const auto candidate_receive_coordinate_counts =
-        ScaleCommunicationPlan(candidate_receive_counts, dimension);
-    const auto candidate_receive_coordinate_offsets =
-        ScaleCommunicationPlan(candidate_receive_offsets, dimension);
-    std::vector<double> candidate_receive_coordinates(dimension * candidate_receive_total);
-    Mpi::Alltoallv(
-        candidate_send_coordinates.data(), candidate_send_coordinate_counts.data(),
-        candidate_send_coordinate_offsets.data(), candidate_receive_coordinates.data(),
-        candidate_receive_coordinate_counts.data(),
-        candidate_receive_coordinate_offsets.data(), comm);
-
-    std::vector<int> candidate_receive_elements(candidate_receive_total, -1);
-    std::vector<double> candidate_receive_references(dimension * candidate_receive_total);
-    std::vector<int> candidates;
-    for (int i = 0; i < candidate_receive_total; i++)
-    {
-      std::array<double, 3> coordinate{};
-      for (int d = 0; d < dimension; d++)
-      {
-        coordinate[d] = candidate_receive_coordinates[dimension * i + d];
-      }
-      mfem::IntegrationPoint reference;
-      if (locator.Find(coordinate, box_tolerance, candidate_receive_elements[i], reference,
-                       candidates))
-      {
-        reference.Get(candidate_receive_references.data() + dimension * i, dimension);
-      }
-    }
-
-    std::vector<int> candidate_result_elements(candidate_send_total);
-    Mpi::Alltoallv(candidate_receive_elements.data(), candidate_receive_counts.data(),
-                   candidate_receive_offsets.data(), candidate_result_elements.data(),
-                   candidate_send_counts.data(), candidate_send_offsets.data(), comm);
-    std::vector<double> candidate_result_references(dimension * candidate_send_total);
-    Mpi::Alltoallv(
-        candidate_receive_references.data(), candidate_receive_coordinate_counts.data(),
-        candidate_receive_coordinate_offsets.data(), candidate_result_references.data(),
-        candidate_send_coordinate_counts.data(), candidate_send_coordinate_offsets.data(),
-        comm);
-
-    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-    {
-      const int begin = candidate_send_offsets[candidate_rank];
-      const int end = begin + candidate_send_counts[candidate_rank];
-      for (int packed = begin; packed < end; packed++)
-      {
-        if (candidate_result_elements[packed] < 0)
-        {
-          continue;
-        }
-        const int point = candidate_query_indices[packed];
-        if (candidate_rank > point_owners[point] ||
-            (candidate_rank == point_owners[point] &&
-             candidate_result_elements[packed] >= point_elements[point]))
-        {
-          continue;
-        }
-        point_owners[point] = candidate_rank;
-        point_elements[point] = candidate_result_elements[packed];
-        for (int d = 0; d < dimension; d++)
-        {
-          point_references[dimension * point + d] =
-              candidate_result_references[dimension * packed + d];
-        }
-      }
-    }
-
-    std::vector<int> fallback_indices;
-    for (int point = 0; point < point_query_count; point++)
-    {
-      if (point_owners[point] == size)
-      {
-        fallback_indices.push_back(point);
-      }
-    }
-    fallback_query_count += fallback_indices.size();
-    int fallback_count = static_cast<int>(fallback_indices.size());
-    Mpi::GlobalSum(1, &fallback_count, comm);
-    if (fallback_count > 0)
-    {
-      Mpi::Warning(
-          comm,
-          "Distributed surface-response point location could not resolve {:d} contour "
-          "points; falling back to FindPointsGSLIB!\n",
-          fallback_count);
-      mfem::Vector fallback_xyz(dimension * fallback_indices.size());
-      for (std::size_t i = 0; i < fallback_indices.size(); i++)
-      {
-        for (int d = 0; d < dimension; d++)
-        {
-          fallback_xyz(d * fallback_indices.size() + i) =
-              xyz(d * point_query_count + fallback_indices[i]);
-        }
-      }
-      mfem::FindPointsGSLIB finder(comm);
-      finder.Setup(mesh, 0.01, 1.0e-12, 256);
-      finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
-      const auto &reference = finder.GetReferencePosition();
-      for (std::size_t i = 0; i < fallback_indices.size(); i++)
-      {
-        const int point = fallback_indices[i];
-        MFEM_VERIFY(finder.GetCode()[i] != 2, DescribeUnlocatedPoint(point));
-        point_owners[point] = static_cast<int>(finder.GetProc()[i]);
-        point_elements[point] = static_cast<int>(finder.GetElem()[i]);
-        for (int d = 0; d < dimension; d++)
-        {
-          point_references[dimension * point + d] = reference(dimension * i + d);
-        }
-      }
-    }
+    MFEM_VERIFY(point_owners[point] < size, DescribeUnlocatedPoint(point));
   }
 
   point_send_counts.assign(size, 0);
