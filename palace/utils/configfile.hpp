@@ -753,6 +753,21 @@ public:
   // Internal conversion from CSV mesh coordinates to nondimensional coordinates.
   double ownership_coordinate_scale = 1.0;
 
+  // Optional quadrature-level spatial filter (decision 352 follow-up (2)): the energies of
+  // this entry are integrated over the quadrature points inside an axis-aligned box and /
+  // or the translational cells of segments [x0, y0, z0, x1, y1, z1] (along-range between
+  // the segment's perpendicular end cuts, in-plane transverse distance <= region_distance,
+  // the plane normal region_normal), mesh length units.
+  struct RegionData
+  {
+    std::optional<std::array<double, 3>> box_min = std::nullopt;
+    std::optional<std::array<double, 3>> box_max = std::nullopt;
+    std::vector<std::array<double, 6>> segments = {};
+    double distance = 0.0;
+    std::array<double, 3> normal = {0.0, 0.0, 1.0};
+  };
+  std::optional<RegionData> region = std::nullopt;
+
   // Whether to evaluate normal electric flux using a recovered H(div) field. This is not
   // supported for cracked internal boundaries.
   bool flux_recovery = false;
@@ -1284,6 +1299,11 @@ public:
 
     // Integer quadrature refinement factor for experimental surface-mortar traces.
     int mortar_oversampling = 2;
+
+    // Write the energies of every applied patch (surface-response-patch-energy.csv, the
+    // per-patch rows of surface-response-model-energy.csv). Electrostatic only; off by
+    // default so that every existing output is unchanged.
+    bool patch_energy = false;
 
     // Legacy-contract aliases resolved by the matching pass (USER decision 283): a
     // library model used for a contract-3 key the library lists explicitly as its alias

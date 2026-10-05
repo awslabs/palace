@@ -6890,6 +6890,69 @@ TEST_CASE_METHOD(
           constructed || name.find("@corner-angle112.5-cubic") != std::string::npos;
     }
     CHECK(constructed);
+
+    // (5) Decision 352 follow-up (1): the per-patch contributions of every model kind on
+    // this island (isolated edges, exact and interpolated corners) sum per model to the
+    // ModelContribution (energies, patch count, weight) to roundoff, are ordered by patch
+    // index without repetition, and leave the model contributions themselves unchanged.
+    const auto with_patches = loaded.GetElectrostaticResponse(potential_true, true, true);
+    REQUIRE(with_patches.model_contributions.size() == reloaded.model_contributions.size());
+    REQUIRE(!with_patches.patch_contributions.empty());
+    CHECK(reloaded.patch_contributions.empty());
+    for (std::size_t m = 0; m < reloaded.model_contributions.size(); m++)
+    {
+      const auto &expected = reloaded.model_contributions[m];
+      const auto &a = with_patches.model_contributions[m];
+      CHECK(a.domain_correction == expected.domain_correction);
+      CHECK(a.fabricated_surface_energy == expected.fabricated_surface_energy);
+      double count = 0.0, weight = 0.0, domain = 0.0, domain_fixed_flux = 0.0;
+      std::map<int, double> surface, surface_fixed_flux;
+      for (const auto &patch : with_patches.patch_contributions)
+      {
+        if (patch.model != expected.model)
+        {
+          continue;
+        }
+        count += 1.0;
+        weight += patch.weight;
+        domain += patch.domain_correction;
+        domain_fixed_flux += patch.domain_correction_fixed_flux;
+        for (const auto &[interface, energy] : patch.fabricated_surface_energy)
+        {
+          surface[interface] += energy;
+          surface_fixed_flux[interface] +=
+              patch.fabricated_surface_energy_fixed_flux.at(interface);
+        }
+      }
+      CHECK(count == expected.patch_count);
+      CHECK_THAT(weight, WithinRel(expected.patch_weight, 1.0e-12));
+      CHECK_THAT(domain, WithinRel(expected.domain_correction, 1.0e-10));
+      CHECK_THAT(domain_fixed_flux,
+                 WithinRel(expected.domain_correction_fixed_flux, 1.0e-10));
+      REQUIRE(surface.size() == expected.fabricated_surface_energy.size());
+      for (const auto &[interface, energy] : expected.fabricated_surface_energy)
+      {
+        CHECK_THAT(surface.at(interface), WithinRel(energy, 1.0e-10));
+        CHECK_THAT(surface_fixed_flux.at(interface),
+                   WithinRel(expected.fabricated_surface_energy_fixed_flux.at(interface),
+                             1.0e-10));
+      }
+    }
+    for (std::size_t p = 1; p < with_patches.patch_contributions.size(); p++)
+    {
+      CHECK(with_patches.patch_contributions[p - 1].patch <
+            with_patches.patch_contributions[p].patch);
+    }
+    // The corrected-field form (no fixed flux) carries the mode's domain correction only.
+    const auto corrected_form =
+        loaded.GetElectrostaticResponse(potential_true, false, true);
+    REQUIRE(corrected_form.patch_contributions.size() ==
+            with_patches.patch_contributions.size());
+    for (const auto &patch : corrected_form.patch_contributions)
+    {
+      CHECK(patch.domain_correction_fixed_flux == 0.0);
+      CHECK(patch.fabricated_surface_energy_fixed_flux.at(4) == 0.0);
+    }
   }
 #endif
 }

@@ -20275,8 +20275,8 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
 }
 
 SurfaceResponseOperator::ElectrostaticResponse
-SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
-                                                  bool include_fixed_flux) const
+SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_fixed_flux,
+                                                  bool include_patches) const
 {
   ApplyTrace(x, trace);
   ElectrostaticResponse result;
@@ -20284,6 +20284,10 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
   Vector fixed_flux;
+  // The per-patch records (include_patches): [patch, model, feature, weight, cell begin,
+  // cell end, domain correction, fixed-flux domain correction, interface count,
+  // (interface, fixed-trace energy, fixed-flux energy)...], gathered below.
+  std::vector<double> local_patch_records;
   for (const auto &model : models)
   {
     ModelContribution contribution;
@@ -20340,16 +20344,37 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
       result.domain_correction += domain_correction_fixed_flux;
       contribution.domain_correction += domain_correction_fixed_flux;
     }
+    std::size_t patch_record_offset = 0;
+    if (include_patches)
+    {
+      // The same increments as the model's, so that the per-model sums of the patch
+      // records are the ModelContribution values.
+      const double patch_domain_correction =
+          include_fixed_flux ||
+                  model.domain_correction_mode == DomainCorrectionMode::FIXED_TRACE
+              ? domain_correction_fixed_trace
+          : model.domain_correction_mode == DomainCorrectionMode::FIXED_FLUX
+              ? domain_correction_fixed_flux
+              : 0.0;
+      patch_record_offset = local_patch_records.size();
+      local_patch_records.insert(
+          local_patch_records.end(),
+          {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+           static_cast<double>(patch.feature), patch.weight,
+           patch.mortar_longitudinal_strip[0], patch.mortar_longitudinal_strip[1],
+           patch_domain_correction, include_fixed_flux ? domain_correction_fixed_flux : 0.0,
+           static_cast<double>(model.fabricated_surfaces.size())});
+    }
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
           patch.weight * QuadraticForm(matrix, patch_trace, response);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
+      double fixed_flux_energy = 0.0;
       if (include_fixed_flux)
       {
-        const double fixed_flux_energy =
-            patch.weight * QuadraticForm(matrix, fixed_flux, response);
+        fixed_flux_energy = patch.weight * QuadraticForm(matrix, fixed_flux, response);
         result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
         contribution.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
         const double weight =
@@ -20363,7 +20388,17 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
           trace_closure_response_weight += weight;
         }
       }
+      if (include_patches)
+      {
+        local_patch_records.insert(
+            local_patch_records.end(),
+            {static_cast<double>(interface), fixed_trace_energy, fixed_flux_energy});
+      }
     }
+    MFEM_ASSERT(!include_patches ||
+                    local_patch_records.size() ==
+                        patch_record_offset + 9 + 3 * model.fabricated_surfaces.size(),
+                "Incorrect per-patch response record!");
   }
   const std::size_t values_per_interface = include_fixed_flux ? 2 : 1;
   std::vector<double> reduction;
@@ -20452,6 +20487,10 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
     }
   }
   MFEM_ASSERT(i == reduction.size(), "Incorrect batched model-contribution reduction!");
+  if (include_patches)
+  {
+    result.patch_contributions = GatherPatchContributions(local_patch_records);
+  }
 
   if (!include_fixed_flux)
   {
@@ -20477,6 +20516,61 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
       result.trace_closure_response_failure_fraction <=
           maximum_trace_closure_response_failure_fraction;
   return result;
+}
+
+std::vector<SurfaceResponseOperator::PatchContribution>
+SurfaceResponseOperator::GatherPatchContributions(
+    const std::vector<double> &local_records) const
+{
+  MFEM_VERIFY(local_records.size() <=
+                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Local per-patch response data exceeds the MPI count limit!");
+  const int local_value_count = static_cast<int>(local_records.size());
+  std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
+  Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
+  std::vector<int> value_offsets(value_counts.size());
+  int total_values = 0;
+  for (std::size_t rank = 0; rank < value_counts.size(); rank++)
+  {
+    value_offsets[rank] = total_values;
+    MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
+                "Global per-patch response data exceeds the MPI count limit!");
+    total_values += value_counts[rank];
+  }
+  std::vector<double> records(total_values);
+  Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
+                  value_counts.data(), value_offsets.data(), fespace.GetComm());
+
+  std::vector<PatchContribution> contributions;
+  std::size_t offset = 0;
+  while (offset < records.size())
+  {
+    MFEM_VERIFY(records.size() - offset >= 9, "Truncated per-patch response record!");
+    PatchContribution entry;
+    entry.patch = static_cast<int>(std::llround(records[offset++]));
+    entry.model = static_cast<int>(std::llround(records[offset++]));
+    entry.feature = static_cast<int>(std::llround(records[offset++]));
+    entry.weight = records[offset++];
+    entry.cell[0] = records[offset++];
+    entry.cell[1] = records[offset++];
+    entry.domain_correction = records[offset++];
+    entry.domain_correction_fixed_flux = records[offset++];
+    const auto interface_count = static_cast<std::size_t>(std::llround(records[offset++]));
+    MFEM_VERIFY(entry.patch >= 0 && entry.model > 0 &&
+                    3 * interface_count <= records.size() - offset,
+                "Invalid gathered per-patch response record!");
+    for (std::size_t i = 0; i < interface_count; i++)
+    {
+      const int interface = static_cast<int>(std::llround(records[offset++]));
+      entry.fabricated_surface_energy[interface] = records[offset++];
+      entry.fabricated_surface_energy_fixed_flux[interface] = records[offset++];
+    }
+    contributions.push_back(std::move(entry));
+  }
+  std::sort(contributions.begin(), contributions.end(),
+            [](const auto &first, const auto &second)
+            { return first.patch < second.patch; });
+  return contributions;
 }
 
 std::vector<SurfaceResponseOperator::PatchTrace>

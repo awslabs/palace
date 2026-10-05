@@ -668,6 +668,57 @@ InterfaceDielectricData::InterfaceDielectricData(const json &dielectric)
     edge_frame_normal = it->get<std::array<double, 3>>();
   }
   flux_recovery = dielectric.value("FluxRecovery", flux_recovery);
+  if (auto it = dielectric.find("Region"); it != dielectric.end())
+  {
+    region.emplace();
+    MFEM_VERIFY(it->contains("BoxMin") == it->contains("BoxMax"),
+                "Interface dielectric \"Region\" requires \"BoxMin\" and \"BoxMax\" "
+                "together!");
+    if (it->contains("BoxMin"))
+    {
+      region->box_min = it->at("BoxMin").get<std::array<double, 3>>();
+      region->box_max = it->at("BoxMax").get<std::array<double, 3>>();
+    }
+    region->segments = it->value("Segments", std::vector<std::array<double, 6>>{});
+    region->distance = it->value("Distance", region->distance);
+    region->normal = it->value("Normal", region->normal);
+    MFEM_VERIFY(region->box_min || !region->segments.empty(),
+                "Interface dielectric \"Region\" requires a box (\"BoxMin\", "
+                "\"BoxMax\") or \"Segments\"!");
+    MFEM_VERIFY(region->segments.empty() == !it->contains("Distance"),
+                "Interface dielectric \"Region\" \"Segments\" and \"Distance\" are "
+                "required together!");
+    MFEM_VERIFY(region->segments.empty() ||
+                    (std::isfinite(region->distance) && region->distance > 0.0),
+                "Interface dielectric \"Region\" \"Distance\" must be finite and "
+                "positive!");
+    MFEM_VERIFY(!region->box_min ||
+                    std::all_of(region->box_min->begin(), region->box_min->end(),
+                                [](double v) { return std::isfinite(v); }) &&
+                        std::all_of(region->box_max->begin(), region->box_max->end(),
+                                    [](double v) { return std::isfinite(v); }) &&
+                        (*region->box_min)[0] <= (*region->box_max)[0] &&
+                        (*region->box_min)[1] <= (*region->box_max)[1] &&
+                        (*region->box_min)[2] <= (*region->box_max)[2],
+                "Interface dielectric \"Region\" box bounds must be finite and "
+                "ordered!");
+    MFEM_VERIFY(std::all_of(region->segments.begin(), region->segments.end(),
+                            [](const std::array<double, 6> &segment)
+                            {
+                              return std::all_of(segment.begin(), segment.end(),
+                                                 [](double v)
+                                                 { return std::isfinite(v); }) &&
+                                     (segment[0] != segment[3] ||
+                                      segment[1] != segment[4] || segment[2] != segment[5]);
+                            }),
+                "Interface dielectric \"Region\" \"Segments\" must be finite segments "
+                "of nonzero length!");
+    MFEM_VERIFY(std::all_of(region->normal.begin(), region->normal.end(),
+                            [](double v) { return std::isfinite(v); }) &&
+                    (region->normal[0] != 0.0 || region->normal[1] != 0.0 ||
+                     region->normal[2] != 0.0),
+                "Interface dielectric \"Region\" \"Normal\" must be finite and nonzero!");
+  }
   if (auto it = dielectric.find("EdgeRefinement"); it != dielectric.end())
   {
     edge_refinement.emplace();
@@ -1570,6 +1621,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         correction.value("MortarOversampling", data.mortar_oversampling);
     MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
                 "Response-correction \"MortarOversampling\" must be between 1 and 8!");
+    data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
     if (auto library = correction.find("Library"); library != correction.end())
     {
       data.library = library->get<std::string>();
@@ -1821,6 +1873,9 @@ SolverData::SolverData(const json &solver)
   {
     ElectrostaticSolverData response_parser(json{{"ResponseCorrection", *it}});
     surface_response_correction = std::move(response_parser.response_correction);
+    MFEM_VERIFY(!surface_response_correction->patch_energy,
+                "\"PatchEnergy\" is an electrostatic response-correction option (the"
+                " Maxwell surface response has no per-patch energy export)!");
   }
 
   driven = ParseOptional<DrivenSolverData>(solver, "Driven");
@@ -2112,6 +2167,27 @@ void Nondimensionalize(const Units &units, InterfaceDielectricData &data)
     }
   }
   data.edge_exclude_segment_tolerance /= units.GetMeshLengthRelativeScale();
+  if (data.region)
+  {
+    for (auto *bound : {&data.region->box_min, &data.region->box_max})
+    {
+      if (*bound)
+      {
+        for (auto &x : **bound)
+        {
+          x /= units.GetMeshLengthRelativeScale();
+        }
+      }
+    }
+    for (auto &segment : data.region->segments)
+    {
+      for (auto &x : segment)
+      {
+        x /= units.GetMeshLengthRelativeScale();
+      }
+    }
+    data.region->distance /= units.GetMeshLengthRelativeScale();
+  }
   if (data.edge_refinement)
   {
     data.edge_refinement->radius /= units.GetMeshLengthRelativeScale();

@@ -15,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -379,6 +380,204 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
       unconverged_metadata.at("SurfaceResponse").at("TerminalCapacitance");
   CHECK(unconverged_record.at("FixedTrace") == record.at("FixedTrace"));
   CHECK(unconverged_record.at("SelfConsistent").is_null());
+#endif
+}
+
+// Decision 352 follow-up (1): the per-patch energies of every applied patch, written on
+// request only. The same 2D automatic library problem (two straight-edge patches of one
+// model, two terminals) run with and without "PatchEnergy": every output of the run without
+// is byte-identical with it (the model-energy, patch, corrected and raw tables); the run
+// with it adds surface-response-patch-energy.csv whose rows per (source, evaluation, model)
+// sum to the model-energy row (energies, patch count, patch weight) to roundoff, carry the
+// patch provenance of surface-response-patches.csv (origin, weight) and the evaluation
+// codes 0 / 1 / 2 of the model table; the Maxwell surface response refuses the option.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic surface-response patch energies",
+                 "[electrostaticsolver][surfaceresponseoperator][2d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "patch-energy-2d.mesh";
+  const fs::path scaled_library_path =
+      temp.temp_dir / "fabrication-process-patch-energy.json";
+  {
+    mfem::Mesh serial = MakeAutomatic2DMesh();
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+      constexpr double scale = 1.0e-6;
+      std::ifstream library_input(library_path);
+      REQUIRE(library_input);
+      json library = json::parse(library_input);
+      REQUIRE(library["Models"].size() == 1);
+      auto &model = library["Models"][0];
+      for (const auto &[key, first_energy] :
+           {std::pair<const char *, std::size_t>{"FabricatedMatrix", 2},
+            std::pair<const char *, std::size_t>{"ThinMatrix", 2},
+            std::pair<const char *, std::size_t>{"FabricatedSurfaceMatrix", 5},
+            std::pair<const char *, std::size_t>{"ThinSurfaceMatrix", 5}})
+      {
+        const fs::path source = model[key].get<std::string>();
+        const fs::path target =
+            temp.temp_dir / ("patch-energy-" + source.filename().string());
+        WriteScaledMatrix(source, target, first_energy, scale);
+        model[key] = target.string();
+      }
+      std::ofstream library_output(scaled_library_path);
+      library_output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = AutomaticConfig2D();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+      scaled_library_path.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
+  config["Boundaries"]["Ground"] = {{"Attributes", {1, 3, 4}}};
+  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {2}}},
+                                      {{"Index", 2}, {"Attributes", {9, 10}}}};
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 12}};
+  const fs::path without_dir = temp.temp_dir / "patch-energy-without";
+  const fs::path with_dir = temp.temp_dir / "patch-energy-with";
+  config["Problem"]["Output"] = without_dir.string();
+  RunElectrostatic(config);
+  config["Problem"]["Output"] = with_dir.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["PatchEnergy"] = true;
+  RunElectrostatic(config);
+  Mpi::Barrier(Mpi::World());
+
+  // The Maxwell surface response has no per-patch export.
+  {
+    json maxwell = config;
+    maxwell["Solver"]["SurfaceResponseCorrection"] =
+        maxwell["Solver"]["Electrostatic"]["ResponseCorrection"];
+    maxwell["Solver"].erase("Electrostatic");
+    CHECK_THROWS_WITH(IoData(maxwell, /*print=*/false), ContainsSubstring("PatchEnergy"));
+  }
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+
+  for (const char *file :
+       {"terminal-C.csv", "terminal-V.csv", "domain-E.csv", "surface-Q.csv",
+        "surface-Q-corrected.csv", "terminal-C-corrected.csv",
+        "surface-response-patches.csv", "surface-response-model-energy.csv"})
+  {
+    INFO(file);
+    REQUIRE(fs::is_regular_file(without_dir / file));
+    CHECK(ReadFile(without_dir / file) == ReadFile(with_dir / file));
+  }
+  CHECK_FALSE(fs::exists(without_dir / "surface-response-patch-energy.csv"));
+  REQUIRE(fs::is_regular_file(with_dir / "surface-response-patch-energy.csv"));
+
+  const Table models = LoadCsv(with_dir / "surface-response-model-energy.csv");
+  const Table patches = LoadCsv(with_dir / "surface-response-patch-energy.csv");
+  const Table assignments = LoadCsv(with_dir / "surface-response-patches.csv");
+  const Column &model_source = ColumnByHeader(models, "source");
+  const Column &model_evaluation = ColumnByHeader(models, "evaluation");
+  const Column &model_model = ColumnByHeader(models, "model");
+  const Column &model_count = ColumnByHeader(models, "patch count");
+  const Column &model_weight = ColumnByHeader(models, "patch weight");
+  const Column &model_domain = ColumnByHeader(models, "domain correction (J)");
+  const Column &patch_source = ColumnByHeader(patches, "source");
+  const Column &patch_evaluation = ColumnByHeader(patches, "evaluation");
+  const Column &patch_patch = ColumnByHeader(patches, "patch");
+  const Column &patch_model = ColumnByHeader(patches, "model");
+  const Column &patch_feature = ColumnByHeader(patches, "feature");
+  const Column &patch_weight = ColumnByHeader(patches, "weight");
+  const Column &patch_domain = ColumnByHeader(patches, "domain correction (J)");
+  const Column &patch_cell_begin = ColumnByHeader(patches, "cell begin (m)");
+  const Column &patch_cell_end = ColumnByHeader(patches, "cell end (m)");
+  // Two sources x three evaluations x one model; two patches each.
+  REQUIRE(model_source.data.size() == 6);
+  REQUIRE(patch_source.data.size() == 12);
+  REQUIRE(assignments.n_rows() == 2);
+  std::vector<std::string> interface_headers;
+  for (auto it = models.cbegin(); it != models.cend(); ++it)
+  {
+    if (it->header_text.rfind("fabricated surface energy[", 0) == 0)
+    {
+      interface_headers.push_back(it->header_text);
+    }
+  }
+  REQUIRE(!interface_headers.empty());
+  auto Sum = [&](const Column &column, int source, int evaluation, int model)
+  {
+    double sum = 0.0;
+    for (std::size_t r = 0; r < column.data.size(); r++)
+    {
+      if (patch_source.data[r] == source && patch_evaluation.data[r] == evaluation &&
+          patch_model.data[r] == model)
+      {
+        sum += column.data[r];
+      }
+    }
+    return sum;
+  };
+  auto Count = [&](int source, int evaluation, int model)
+  {
+    int count = 0;
+    for (std::size_t r = 0; r < patch_source.data.size(); r++)
+    {
+      count += patch_source.data[r] == source && patch_evaluation.data[r] == evaluation &&
+               patch_model.data[r] == model;
+    }
+    return count;
+  };
+  for (std::size_t r = 0; r < model_source.data.size(); r++)
+  {
+    const int source = static_cast<int>(model_source.data[r]);
+    const int evaluation = static_cast<int>(model_evaluation.data[r]);
+    const int model = static_cast<int>(model_model.data[r]);
+    INFO("source " << source << " evaluation " << evaluation << " model " << model);
+    CHECK(Count(source, evaluation, model) == static_cast<int>(model_count.data[r]));
+    CHECK_THAT(Sum(patch_weight, source, evaluation, model),
+               WithinRel(model_weight.data[r], 1.0e-12));
+    REQUIRE(std::isfinite(model_domain.data[r]));
+    CHECK(model_domain.data[r] != 0.0);
+    CHECK_THAT(Sum(patch_domain, source, evaluation, model),
+               WithinRel(model_domain.data[r], 1.0e-10));
+    for (const auto &header : interface_headers)
+    {
+      const double total = ColumnByHeader(models, header).data[r];
+      REQUIRE(std::isfinite(total));
+      CHECK(total != 0.0);
+      CHECK_THAT(Sum(ColumnByHeader(patches, header), source, evaluation, model),
+                 WithinRel(total, 1.0e-10));
+    }
+  }
+  // The patch provenance: 1-based patch indices 1 and 2 (the rows of the patch table), the
+  // table's origin and weight, no feature (an explicit 2D library placement), a single
+  // cross-section (cell begin = cell end = 0), and no two rows alike.
+  const Column &assignment_weight = ColumnByHeader(assignments, "weight");
+  for (std::size_t r = 0; r < patch_source.data.size(); r++)
+  {
+    const int patch = static_cast<int>(patch_patch.data[r]);
+    REQUIRE((patch == 1 || patch == 2));
+    CHECK(patch_feature.data[r] == -1.0);
+    CHECK(patch_weight.data[r] == assignment_weight.data[patch - 1]);
+    CHECK(patch_cell_begin.data[r] == 0.0);
+    CHECK(patch_cell_end.data[r] == 0.0);
+    for (const char *coordinate : {"x", "y", "z"})
+    {
+      const std::string header = fmt::format("origin {} (m)", coordinate);
+      CHECK(ColumnByHeader(patches, header).data[r] ==
+            ColumnByHeader(assignments, header).data[patch - 1]);
+    }
+    for (std::size_t q = 0; q < r; q++)
+    {
+      const bool same_row = patch_source.data[q] == patch_source.data[r] &&
+                            patch_evaluation.data[q] == patch_evaluation.data[r] &&
+                            patch_patch.data[q] == patch_patch.data[r];
+      CHECK_FALSE(same_row);
+    }
+  }
+  // The two patches differ (the two edges of the line see different fields).
+  CHECK(patch_domain.data[0] != patch_domain.data[1]);
 #endif
 }
 
