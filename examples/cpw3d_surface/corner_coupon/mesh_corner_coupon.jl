@@ -320,7 +320,7 @@ function trace_rings(vertices, radius)
         half_width = key[2] * tolerance
         sort!(
             members;
-            by = index ->
+            by=index ->
                 square_perimeter_coordinate(half_width, vertices[index].point, 1.0e-6radius)
         )
         push!(ordered, members)
@@ -387,8 +387,9 @@ function trace_basis_size_fields(occ, trace_directory, radius, lc_far, first_fie
     end
     smallest = minimum(values(class_size))
     println(
-        "Trace basis sizing: $(length(gaps)) free knots in $(length(fields)) knot-gap size " *
-        "classes, smallest knot size $(smallest) um (gradation $(TRACE_SIZE_GRADATION))"
+        "Trace basis sizing: $(length(gaps)) free knots in $(length(fields)) knot-gap " *
+        "size classes, smallest knot size $(smallest) um " *
+        "(gradation $(TRACE_SIZE_GRADATION))"
     )
     return fields, smallest
 end
@@ -796,7 +797,8 @@ function parse_command_line(args)
         haskey(names, flag) || error("Unknown option: $flag")
         index < length(args) || error("Missing value for option: $flag")
         name, type = names[flag]
-        options[name] = type === String ? String(args[index + 1]) : parse(type, args[index + 1])
+        value = args[index + 1]
+        options[name] = type === String ? String(value) : parse(type, value)
         index += 2
     end
     return options
