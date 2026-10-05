@@ -1617,6 +1617,42 @@ the fixed-flux transform, which is built from the two domain matrices (the fixed
 interface energy is the fabricated surface matrix evaluated on the fixed-flux trace). The
 thin surface matrices do not enter any reported energy.
 
+For equipotential terminal excitations, a response correction also writes
+`terminal-C-corrected.csv`, `terminal-Cm-corrected.csv`, and `terminal-Cinv-corrected.csv`
+(the layouts of `terminal-C.csv`, `terminal-Cm.csv`, and `terminal-Cinv.csv`, which stay the
+raw thin-metal result), each with a `fixed-trace` column group and a `corrected` column
+group. The fixed-trace capacitance is the raw bilinear form plus the bilinear fixed-trace
+domain defect of the applied patches,
+
+```math
+C^{ft}_{ij} = V_j^T M V_i + V_j^T P^T W (Q^{dom}_{fabricated} - Q^{dom}_{thin}) P V_i,
+```
+
+so that its diagonal is the fixed-trace energy of `surface-Q-corrected.csv`,
+``C^{ft}_{ii} = C_{ii} \, \mathcal{E}^{ft} / \mathcal{E}^{raw}``; the off-diagonals use the
+same form and the matrix is symmetric. The patch weights ``W`` are the final weights of
+the run (zero for an excluded or `DomainBoundary` cell), so that the matrix is symmetric;
+because the conductor-consistency gate can exclude a patch while a later terminal is being
+solved, the energy identity holds for every terminal when no patch is excluded after the
+first terminal (always for a single terminal), otherwise only for the terminals solved
+after the last exclusion. Every model enters in its fixed-trace form whatever its
+`TranslationalDomainCorrection`. The `corrected` columns evaluate the same fixed-trace
+form on the self-consistent corrected fields; under `TranslationalDomainCorrection:
+"FixedTrace"` this is the capacitance of the corrected operator, under `"FixedFlux"` or
+`"Disabled"` the corrected fields solve a different domain coupling and the columns are
+the fixed-trace form of those fields. They are `nan` unless every terminal's corrected
+solve was accepted (converged and positive definite; `PostprocessOnly` never evaluates
+them). Conversely, `CorrectionMode: "SelfConsistent"` writes the `fixed-trace` columns as
+`nan` (no fixed-trace evaluation of the raw fields, as in `surface-Q-corrected.csv`). No
+fixed-flux capacitance is written: the fixed-flux energy mixes a fixed-flux fabricated
+response with a fixed-potential thin response and is not the energy of a fixed-potential
+ensemble, so ``C \, \mathcal{E}^{ff} / \mathcal{E}^{raw}`` is not a capacitance. The
+fixed-trace matrix (and the self-consistent one, or `null`) is also recorded in
+`palace.json` under `SurfaceResponse.TerminalCapacitance` with the terminal `Indices`. The
+evaluation of these matrices applies the trace operators, so the diagnostic counters
+`SurfaceResponse.TraceForwardCalls` and `TraceTransposeCalls` of `palace.json` include one
+forward and one transpose application per terminal per available matrix.
+
 Electrostatic correction also writes `surface-response-model-energy.csv`. Numeric
 `evaluation` codes 0, 1, and 2 denote raw-field fixed-trace, raw-field fixed-flux, and
 self-consistent corrected-field evaluations. Each row reports additive domain correction

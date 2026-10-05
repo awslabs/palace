@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <fmt/os.h>
+#include <nlohmann/json_fwd.hpp>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/memoryreporting.hpp"
@@ -73,6 +74,10 @@ public:
   void SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::string &name,
                                          long long int solves,
                                          long long int iterations) const;
+  // Root only: palace.json SurfaceResponse.<key> = value (the record of a response-derived
+  // postprocessing result next to the operator statistics).
+  void SaveSurfaceResponseMetadata(const std::string &key,
+                                   const nlohmann::json &value) const;
 };
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder

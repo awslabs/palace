@@ -988,6 +988,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
+  // The corrected capacitance's self-consistent column (PostprocessCorrectedTerminals) is
+  // written only when every source's corrected solve was accepted (fail closed).
+  bool self_consistent_accepted = self_consistent_response;
   std::vector<std::pair<int, std::vector<SurfaceResponseOperator::PatchTrace>>>
       spatial_patch_traces;
   long long int raw_linear_solves = 0;
@@ -1240,6 +1243,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             iodata.solver.linear.initial_guess, corrected_rhs, V_corrected[step]);
         corrected_linear_solves += ksp.NumTotalMult() - solves_before;
         corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
+        self_consistent_accepted = self_consistent_accepted && corrected_record.accepted;
         if (!corrected_record.converged)
         {
           Mpi::Warning(
@@ -1342,6 +1346,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.boundaries.prescribed_potential.empty())
   {
     PostprocessTerminals(post_op, laplace_op.GetSources(), V);
+    if (response_correction)
+    {
+      BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
+      PostprocessCorrectedTerminals(post_op, laplace_op.GetSources(), V, V_corrected,
+                                    *response_correction, postprocess_response,
+                                    self_consistent_accepted);
+    }
   }
   else if (iodata.solver.electrostatic.response_matrix && !archive_stream_only)
   {
@@ -2195,6 +2206,169 @@ void ElectrostaticSolver::PostprocessTerminals(
     }
     terminal_V.WriteFullTableTrunc();
   }
+}
+
+void ElectrostaticSolver::PostprocessCorrectedTerminals(
+    PostOperator<ProblemType::ELECTROSTATIC> &post_op,
+    const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
+    const std::vector<Vector> &V_corrected, const SurfaceResponseOperator &response,
+    bool fixed_trace, bool self_consistent) const
+{
+  // The capacitance of the response-corrected energy. The raw matrix is the bilinear form
+  // of the thin-metal operator (PostprocessTerminals); the fixed-trace domain correction
+  // adds the bilinear domain defect of the applied coupon patches,
+  //         C(i, j) = Vⱼᵀ M Vᵢ + Vⱼᵀ Pᵀ W (Q_fab,dom - Q_thin,dom) P Vᵢ  (∀i, Vᵢ = 1),
+  // so that C(i, i) = 2 (E_raw + ΔE_dom,ft) / Vᵢ² (the surface-Q-corrected.csv energies; W
+  // are the final patch weights, so the identity holds for the sources solved after the
+  // last conductor-consistency exclusion, i.e. for every source when nothing is excluded
+  // after the first). The self-consistent matrix is the same fixed-trace form on the
+  // corrected fields: the capacitance of the corrected operator K + Pᵀ W D P at the
+  // terminal potentials when the translational domain coupling is FixedTrace (under
+  // FixedFlux or Disabled the corrected fields solve a different coupling). Fixed flux is
+  // not a capacitance (its energy is not that of a fixed-potential ensemble) and is not
+  // written.
+  const int n = static_cast<int>(V.size());
+  MFEM_VERIFY(static_cast<int>(terminal_sources.size()) == n,
+              "Terminal source and field counts differ in the corrected capacitance!");
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  auto &V_gf = post_op.GetVGridFunction().Real();
+  auto &D_gf = post_op.GetDomainPostOp().D;
+  Vector defect;
+  auto CorrectedMatrix = [&](const std::vector<Vector> &fields)
+  {
+    mfem::DenseMatrix C(n);
+    for (int i = 0; i < n; i++)
+    {
+      V_gf.SetFromTrueDofs(fields[i]);
+      post_op.GetDomainPostOp().M_elec->Mult(V_gf, D_gf);
+      response.FixedTraceDomainDefectMult(fields[i], defect);
+      // Upper triangle, mirrored: the form is symmetric.
+      for (int j = i; j < n; j++)
+      {
+        if (j > i)
+        {
+          V_gf.SetFromTrueDofs(fields[j]);
+        }
+        C(i, j) = linalg::Dot<Vector>(post_op.GetComm(), V_gf, D_gf) +
+                  linalg::Dot<Vector>(post_op.GetComm(), fields[j], defect);
+        C(j, i) = C(i, j);
+      }
+    }
+    return C;
+  };
+  auto Unavailable = [&]()
+  {
+    mfem::DenseMatrix C(n);
+    C = nan;
+    return C;
+  };
+  auto MutualMatrix = [&](const mfem::DenseMatrix &C)
+  {
+    mfem::DenseMatrix Cm(n);
+    for (int i = 0; i < n; i++)
+    {
+      Cm(i, i) = 0.0;
+      for (int j = 0; j < n; j++)
+      {
+        if (j != i)
+        {
+          Cm(i, j) = -C(i, j);
+          Cm(i, i) += C(i, j);
+        }
+      }
+      Cm(i, i) += C(i, i);
+    }
+    return Cm;
+  };
+  auto InverseMatrix = [&](const mfem::DenseMatrix &C, bool available)
+  {
+    if (!available)
+    {
+      return Unavailable();
+    }
+    mfem::DenseMatrix Cinv(C);
+    Cinv.Invert();
+    return Cinv;
+  };
+  const mfem::DenseMatrix C_ft = fixed_trace ? CorrectedMatrix(V) : Unavailable();
+  const mfem::DenseMatrix C_sc =
+      self_consistent ? CorrectedMatrix(V_corrected) : Unavailable();
+  const mfem::DenseMatrix Cm_ft = MutualMatrix(C_ft), Cm_sc = MutualMatrix(C_sc);
+  const mfem::DenseMatrix Cinv_ft = InverseMatrix(C_ft, fixed_trace),
+                          Cinv_sc = InverseMatrix(C_sc, self_consistent);
+
+  // Only root writes to disk (every process has full matrices).
+  if (!root)
+  {
+    return;
+  }
+  using VT = Units::ValueType;
+  auto PrintMatrices =
+      [&terminal_sources, this](const std::string &file, const std::string &name,
+                                const std::string &unit,
+                                const mfem::DenseMatrix &fixed_trace_mat,
+                                const mfem::DenseMatrix &self_consistent_mat, double scale)
+  {
+    TableWithCSVFile output(post_dir / file);
+    output.table.insert(Column("i", "i", 0, 0, 2, ""));
+    for (const auto &[idx2, data2] : terminal_sources)
+    {
+      output.table["i"] << idx2;
+    }
+    auto AppendColumns = [&](const char *variant, const mfem::DenseMatrix &mat)
+    {
+      int j = 0;
+      for (const auto &[idx2, data2] : terminal_sources)
+      {
+        const std::string key = fmt::format("{}_i2{}", variant, idx2);
+        output.table.insert(key, fmt::format("{} {}[i][{}] {}", name, variant, idx2, unit));
+        auto &col = output.table[key];
+        for (std::size_t i = 0; i < terminal_sources.size(); i++)
+        {
+          col << mat(i, j) * scale;
+        }
+        j++;
+      }
+    };
+    AppendColumns("fixed-trace", fixed_trace_mat);
+    AppendColumns("corrected", self_consistent_mat);
+    output.WriteFullTableTrunc();
+  };
+  const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
+  PrintMatrices("terminal-C-corrected.csv", "C", "(F)", C_ft, C_sc, F);
+  PrintMatrices("terminal-Cinv-corrected.csv", "C⁻¹", "(1/F)", Cinv_ft, Cinv_sc, 1.0 / F);
+  PrintMatrices("terminal-Cm-corrected.csv", "C_m", "(F)", Cm_ft, Cm_sc, F);
+
+  // The same matrices in palace.json (SurfaceResponse.TerminalCapacitance; an unavailable
+  // variant is null).
+  auto MatrixRecord = [&](const mfem::DenseMatrix &mat, bool available)
+  {
+    nlohmann::json record;
+    if (!available)
+    {
+      return record;
+    }
+    record = nlohmann::json::array();
+    for (int i = 0; i < n; i++)
+    {
+      auto row = nlohmann::json::array();
+      for (int j = 0; j < n; j++)
+      {
+        row.push_back(mat(i, j) * F);
+      }
+      record.push_back(std::move(row));
+    }
+    return record;
+  };
+  nlohmann::json record;
+  record["Indices"] = nlohmann::json::array();
+  for (const auto &[idx, data] : terminal_sources)
+  {
+    record["Indices"].push_back(idx);
+  }
+  record["FixedTrace"] = MatrixRecord(C_ft, fixed_trace);
+  record["SelfConsistent"] = MatrixRecord(C_sc, self_consistent);
+  SaveSurfaceResponseMetadata("TerminalCapacitance", record);
 }
 
 }  // namespace palace
