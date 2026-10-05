@@ -263,6 +263,238 @@ end
     bare = coincident_edge_set()
     delete!(bare, "MatchingRadius")
     @test_throws ErrorException PWM.cross_plane_snap_distance(read_polygon_set(bare), NaN)
+    # No window-cut sliver configuration here: every rule counter is zero.
+    rules = report["window_cut_sliver_rules"]
+    @test rules["wall_constrained_snaps"] == 0 &&
+          rules["wall_insertions_refused"] == 0 &&
+          rules["single_segment_insertions"] == 0 &&
+          rules["merged_consecutive_vertices"] == 0 &&
+          rules["collapsed_spikes"] == 0
+end
+
+# Two planes for the window-cut sliver rules (decision 306). The C3 class: an L2 finger whose
+# top edge y = 10.08 lies within delta of L1's ground edge y = 10 (both finger corners snap onto
+# it) while L1 carries the vertex P = (19.93, 10) on that run, 0.07 um from the snapped finger
+# corner B = (20, 10): P lies ON the snapped top edge and 0.07 um from the finger's (slightly
+# tilted) side, so an insertion into both segments would give the spike P, B, P.
+function finger_spike_set()
+    return Dict(
+        "Version" => 1,
+        "Name" => "finger-spike",
+        "MatchingRadius" => 1.9,
+        "Box" => Dict("X" => [0.0, 40.0], "Y" => [0.0, 30.0]),
+        "Planes" => [
+            Dict(
+                "Name" => "L1",
+                "SurfaceZ" => 0.0,
+                "Facing" => "up",
+                "SubstrateThickness" => 20.0,
+                "Polygons" => [
+                    Dict(
+                        "Conductor" => "ground",
+                        "Outer" => [
+                            [0.0, 0.0],
+                            [40.0, 0.0],
+                            [40.0, 10.0],
+                            [19.93, 10.0],
+                            [0.0, 10.0]
+                        ]
+                    )
+                ]
+            ),
+            Dict(
+                "Name" => "L2",
+                "SurfaceZ" => 4.8,
+                "Facing" => "down",
+                "SubstrateThickness" => 20.0,
+                "Polygons" => [
+                    Dict(
+                        "Conductor" => "finger",
+                        "Outer" => [
+                            [15.0, 5.0],
+                            [19.98, 5.0],
+                            [20.0, 10.08],
+                            [15.0, 10.08]
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+end
+
+# The C1 class: L2 ground covers the top-left box corner along the top wall y = 30 (a
+# window-cut line); L1 ground is a wedge whose edge meets the wall 0.24 um from the corner with
+# an 18-nm first chord to the chip node (0.25, 29.985), 15 nm below the wall and within delta
+# of L2's wall segment (an insertion would bend the cut line into a 2 r x 1.5 r notch at r10);
+# L2's wall vertex (0.3, 30) is nearer to that off-wall node (0.052 um) than to L1's wall
+# vertex (0.24, 30) (0.06 um): the wall rule keeps it on the wall.
+function wall_notch_set()
+    return Dict(
+        "Version" => 1,
+        "Name" => "wall-notch",
+        "MatchingRadius" => 1.9,
+        "Box" => Dict("X" => [0.0, 40.0], "Y" => [0.0, 30.0]),
+        "Planes" => [
+            Dict(
+                "Name" => "L1",
+                "SurfaceZ" => 0.0,
+                "Facing" => "up",
+                "SubstrateThickness" => 20.0,
+                "Polygons" => [
+                    Dict(
+                        "Conductor" => "ground",
+                        "Outer" => [
+                            [0.24, 30.0],
+                            [0.25, 29.985],
+                            [1.43, 28.28],
+                            [4.0, 28.28],
+                            [4.0, 30.0]
+                        ]
+                    )
+                ]
+            ),
+            Dict(
+                "Name" => "L2",
+                "SurfaceZ" => 4.8,
+                "Facing" => "down",
+                "SubstrateThickness" => 20.0,
+                "Polygons" => [
+                    Dict(
+                        "Conductor" => "ground",
+                        "Outer" => [
+                            [0.0, 20.0],
+                            [40.0, 20.0],
+                            [40.0, 30.0],
+                            [0.3, 30.0],
+                            [0.0, 30.0]
+                        ]
+                    )
+                ]
+            )
+        ]
+    )
+end
+
+@testset "window-cut sliver rules (decision 306)" begin
+    tolerance = PWM.PLAN_NODE_MERGE_TOLERANCE_UM
+    # clean_loop: consecutive vertices within the identity quantum merge onto the first, a
+    # spike collapses onto its neighbours, a self-touching loop is refused with the point.
+    loop = PWM.Point2[(0.0, 0.0), (10.0, 0.0), (10.0, 1.0e-7), (10.0, 10.0), (0.0, 10.0)]
+    cleaned, merged, spikes = PWM.clean_loop(loop, tolerance, "test")
+    @test cleaned == [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)] &&
+          merged == 1 &&
+          spikes == 0
+    spike = PWM.Point2[
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (5.0, 10.0),
+        (4.0, 10.0),
+        (5.0, 10.0),
+        (0.0, 10.0)
+    ]
+    cleaned, merged, spikes = PWM.clean_loop(spike, tolerance, "test")
+    @test cleaned == [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0), (0.0, 10.0)] &&
+          merged == 0 &&
+          spikes == 1
+    # A spike whose return point is within the quantum of the departure point, then a merge.
+    nearly = PWM.Point2[
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (5.0, 10.0),
+        (4.0, 10.0),
+        (5.0 + 1.0e-7, 10.0),
+        (0.0, 10.0)
+    ]
+    cleaned, merged, spikes = PWM.clean_loop(nearly, tolerance, "test")
+    @test cleaned == [(0.0, 0.0), (10.0, 0.0), (5.0, 10.0), (0.0, 10.0)] && spikes == 1
+    eight =
+        PWM.Point2[(0.0, 0.0), (2.0, 0.0), (1.0, 1.0), (2.0, 2.0), (0.0, 2.0), (1.0, 1.0)]
+    message = try
+        PWM.clean_loop(eight, tolerance, "Plane L2 loop 1")
+        ""
+    catch err
+        sprint(showerror, err)
+    end
+    @test occursin("Plane L2 loop 1 visits (1.0, 1.0) twice", message)
+
+    # C3 class: P is inserted into the nearest segment only (the snapped top edge), never into
+    # the finger's side as well; the loops are simple and the finger corner stays at B.
+    spec = read_polygon_set(finger_spike_set())
+    delta, _ = PWM.cross_plane_snap_distance(spec, NaN)
+    reconciled, report = reconcile_planes(spec, delta)
+    rules = report["window_cut_sliver_rules"]
+    finger = reconciled.planes[2].polygons[1].outer
+    # The snapped finger corner is the segment foot (20 + 4e-15, 10): compared to 1e-12.
+    same_points(a, b) =
+        length(a) == length(b) && all(
+            isapprox(p[1], q[1]; atol=1.0e-12) && isapprox(p[2], q[2]; atol=1.0e-12) for
+            (p, q) in zip(a, b)
+        )
+    @test same_points(
+        finger,
+        [(15.0, 5.0), (19.98, 5.0), (20.0, 10.0), (19.93, 10.0), (15.0, 10.0)]
+    )
+    @test length(unique(finger)) == length(finger)
+    @test same_points(
+        reconciled.planes[1].polygons[1].outer,
+        [
+            (0.0, 0.0),
+            (40.0, 0.0),
+            (40.0, 10.0),
+            (20.0, 10.0),
+            (19.93, 10.0),
+            (15.0, 10.0),
+            (0.0, 10.0)
+        ]
+    )
+    @test report["moved_vertices"] == 2 && report["max_displacement_um"] ≈ 0.08
+    @test rules["single_segment_insertions"] == 1 &&
+          rules["collapsed_spikes"] == 0 &&
+          rules["merged_consecutive_vertices"] == 0 &&
+          rules["wall_insertions_refused"] == 0
+    @test report["inserted_vertices"] == Dict("L1" => 2, "L2" => 1)
+    manifest = mesh_polygon_window(
+        spec,
+        0.01,
+        5.0,
+        tempname() * ".msh2";
+        verbose=false,
+        plan_only=true
+    )
+    @test manifest["cross_plane_reconciliation"]["window_cut_sliver_rules"]["single_segment_insertions"] ==
+          1
+    @test manifest["first_layer_normal_outliers_above_1p5x_target"] == 0
+
+    # C1 class: the off-wall chip node is not inserted into L2's wall segment, L2's wall
+    # vertex snaps along the wall onto L1's wall vertex, and the plan (18-nm chord 0.24 um from
+    # the box corner, at r10) meshes.
+    spec = read_polygon_set(wall_notch_set())
+    reconciled, report = reconcile_planes(spec, delta)
+    rules = report["window_cut_sliver_rules"]
+    l2 = reconciled.planes[2].polygons[1].outer
+    @test all(p -> p[2] == 30.0, filter(p -> p[2] > 29.0, l2))
+    @test (0.24, 30.0) in l2 && (4.0, 30.0) in l2 && !((0.3, 30.0) in l2)
+    @test !((0.25, 29.985) in l2)
+    @test rules["wall_insertions_refused"] == 1 &&
+          rules["wall_constrained_snaps"] == 1 &&
+          rules["single_segment_insertions"] == 0
+    @test report["moved_vertices"] == 1 && report["max_displacement_um"] ≈ 0.06
+    manifest = mesh_polygon_window(
+        spec,
+        0.01,
+        5.0,
+        tempname() * ".msh2";
+        verbose=false,
+        plan_only=true
+    )
+    @test manifest["cross_plane_reconciliation"]["window_cut_sliver_rules"]["wall_insertions_refused"] ==
+          1
+    @test manifest["perimeter_tangent_length_um"]["minimum"] ≈ hypot(0.01, 0.015) atol =
+        1.0e-9
+    @test manifest["first_layer_normal_outliers_above_1p5x_target"] == 0
+    # Wall ends: the wedge chain (both sides) and L2's edge y = 20 (both sides), two each.
+    @test manifest["band"]["wall_end_columns"] == 8
 end
 
 @testset "input refusals" begin

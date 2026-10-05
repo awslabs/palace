@@ -4241,75 +4241,94 @@ class CornerGradingContractTest(unittest.TestCase):
                  recipe_data=plain_recipe)
 
 
-class NarrowCrossSectionCutEndpointTest(unittest.TestCase):
-    """Decision 299 (4): a cut endpoint in a narrow cross-section at a box face (another contract
-    vertex on the same face within 0.25 R) is exempt from MinimumNoncornerAspect; every other cut
-    end keeps it. The numbers are S1p's spatial-19-edge-39ab2ffd68ec (R 1.9; the cut end
-    (13.1277631, 1.2716111, 0) on face x1, 0.169 R below the semantic corner (13.1277631,
-    1.5926104, 0); MaximumAspect 1.313 fabricated / 4.824 thin; the two regular cut ends 3.523 /
-    3.111), which decision 292 had to override per case before this rule."""
+class BoxFaceCutEndTest(unittest.TestCase):
+    """Decision 313: MinimumNoncornerAspect is report-only at a box-face cut end (the aspect
+    recorded and flagged, finite / positive still required); semantic corners, CAD-subdivision
+    ends and every cut end away from the box faces keep the gate. The numbers are S1p's
+    spatial-19-edge-39ab2ffd68ec (R 1.9; the cut end (13.1277631, 1.2716111, 0) on face x1 read
+    MaximumAspect 1.313 fabricated / 4.824 thin; the other two cut ends 3.523 / 3.111), which
+    decision 292 had to override per case and decision 299 (4) exempted as a narrow cross-section
+    (0.169 R below the semantic corner (13.1277631, 1.5926104, 0)); the C1 18-edge, S1b 35-edge and
+    C2 20-edge cut ends of decisions 311 / 313 (1.405 / 1.325 / 1.314, alone on their faces) are
+    the same reading without a narrow channel."""
 
     BOX = {"Lower": [-11.5472367, -12.6033897, -1.95], "Upper": [13.1277631, 12.9716097, 2.0], "Radius": 1.9}
     CUTS = [[-6.8472371, -12.6033897, 0.0], [13.1277631, 1.2716111, 0.0], [13.1277631, 7.2716097, 0.0]]
     GATES = {"CornerTolerance": 1e-8, "MaximumCornerAspect": 4.0, "MinimumNoncornerAspect": 1.5}
+    IDENTITY = {"Transform": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
 
-    def contract(self, corners=None):
-        return {"SemanticCorners": corners if corners is not None else
-                [[13.1277631, 1.5926104, 0.0], [12.6527631, 1.5926104, 0.0], [13.1277631, -6.9033897, 0.0]],
-                "FeatureTopology": {"CADSubdivisionEndpoints": [[-5.8472367, 5.0716111, 0.0]], "CutEndpoints": self.CUTS}}
+    def contract(self, cuts=None):
+        return {"SemanticCorners": [[13.1277631, 1.5926104, 0.0], [12.6527631, 1.5926104, 0.0], [13.1277631, -6.9033897, 0.0]],
+                "FeatureTopology": {"CADSubdivisionEndpoints": [[-5.8472367, 5.0716111, 0.0]],
+                                    "CutEndpoints": cuts if cuts is not None else self.CUTS}}
 
-    def evidence(self, aspects, box=True):
+    def evidence(self, aspects, box=True, cuts=None):
         return {"CutNeighborhoods": [{"Point": point, "MaximumAspect": aspect, "Cells": 1}
-                                     for point, aspect in zip(self.CUTS, aspects)],
+                                     for point, aspect in zip(cuts if cuts is not None else self.CUTS, aspects)],
                 "TraceDiagonal": {"ContinuationBoundaryBands": {"CouponBox": self.BOX}} if box else {}}
 
-    def test_narrow_cross_section_detection(self):
-        from general_mesh_manifest import (NARROW_CROSS_SECTION_OVER_RADIUS, evidence_coupon_box,
-                                           narrow_cross_section_cut_endpoints)
+    def test_box_face_cut_endpoints(self):
+        from general_mesh_manifest import box_face_cut_endpoints, evidence_coupon_box
         box = evidence_coupon_box(self.evidence([3.5, 1.3, 3.1]))
         self.assertEqual(box, (self.BOX["Lower"], self.BOX["Upper"], 1.9))
-        narrow = narrow_cross_section_cut_endpoints(self.contract(), box)
-        self.assertEqual(sorted(narrow), [1])
-        record = narrow[1]
-        self.assertEqual(record["Face"], "x1")
-        self.assertEqual(record["Nearest"]["Kind"], "SemanticCorner")
-        self.assertAlmostEqual(record["ChannelWidthOverRadius"], 0.3209993 / 1.9)
-        self.assertEqual(record["ClearanceOverRadius"], NARROW_CROSS_SECTION_OVER_RADIUS)
-        # The corner on face x1 at y = -6.9 is 8.2 um away, the one at x = 12.65 is not on the face: a
-        # corner exactly 0.25 R away reads as clearance met (the identification's own ">=" meaning).
-        far = self.contract(corners=[[13.1277631, 1.2716111 + 0.25 * 1.9, 0.0], [12.6527631, 1.5926104, 0.0]])
-        self.assertEqual(narrow_cross_section_cut_endpoints(far, box), {})
-        # Two cut ends 0.2 R apart on face y0 are each other's channel.
-        pair = {"SemanticCorners": [[0.0, 0.0, 0.0]], "FeatureTopology": {"CADSubdivisionEndpoints": [], "CutEndpoints": [
-            [-6.8472371, -12.6033897, 0.0], [-6.8472371 + 0.2 * 1.9, -12.6033897, 0.0]]}}
-        self.assertEqual(sorted(narrow_cross_section_cut_endpoints(pair, box)), [0, 1])
-        self.assertEqual(narrow_cross_section_cut_endpoints(self.contract(), None), {})
+        self.assertEqual(box_face_cut_endpoints(self.contract(), box), {0: ["y0"], 1: ["x1"], 2: ["x1"]})
+        # A cut end at a box edge lies on both faces; one inside the box (a CAD-truncated edge that
+        # does not reach a face) is on none; the face tolerance is the 1e-6 R quantum.
+        cuts = [[13.1277631, 12.9716097, 0.0], [0.0, 0.0, 0.0], [13.1277631 - 2.0e-6 * 1.9, 1.2716111, 0.0],
+                [13.1277631 - 0.5e-6 * 1.9, 1.2716111, 0.0]]
+        self.assertEqual(box_face_cut_endpoints(self.contract(cuts=cuts), box), {0: ["x1", "y1"], 3: ["x1"]})
+        self.assertEqual(box_face_cut_endpoints(self.contract(), None), {})
         self.assertIsNone(evidence_coupon_box(self.evidence([1.0], box=False)))
 
-    def test_cut_neighborhood_gate_exempts_the_narrow_cross_section(self):
-        from general_mesh_manifest import cut_neighborhood_failure
-        binding = {"Transform": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]}
+    def test_box_face_cut_end_is_report_only_for_the_minimum(self):
+        from general_mesh_manifest import BOX_FACE_CUT_END_RULE, box_face_cut_end_readings, cut_neighborhood_failure
+        # The decision-292 / 299 (4) reading (a narrow channel) passes and is recorded with the flag.
         fabricated = self.evidence([3.523216104155732, 1.3134735206566421, 3.1105118560116094])
+        self.assertFalse(cut_neighborhood_failure(fabricated, self.contract(), self.IDENTITY, self.GATES))
+        readings = box_face_cut_end_readings(fabricated, self.contract(), self.IDENTITY, self.GATES)
+        self.assertEqual([(r["CutEndpointIndex"], r["Faces"], r["BelowMinimumNoncornerAspect"]) for r in readings],
+                         [(0, ["y0"], False), (1, ["x1"], True), (2, ["x1"], False)])
+        self.assertEqual(readings[1]["Point"], self.CUTS[1])
+        self.assertEqual(readings[1]["MaximumAspect"], 1.3134735206566421)
+        self.assertEqual(readings[1]["MinimumNoncornerAspect"], 1.5)
+        self.assertEqual(readings[1]["Rule"], BOX_FACE_CUT_END_RULE)
+        # The decision-313 reading (a cut end ALONE on its face, no narrow channel: not exempt under
+        # the decision-299 (4) rule) passes too: the box face is the criterion, not the channel.
+        alone = self.evidence([3.5, 3.1, 1.3251])
+        self.assertFalse(cut_neighborhood_failure(alone, self.contract(), self.IDENTITY, self.GATES))
+        self.assertEqual([r["BelowMinimumNoncornerAspect"] for r in
+                          box_face_cut_end_readings(alone, self.contract(), self.IDENTITY, self.GATES)],
+                         [False, False, True])
         thin = self.evidence([3.628, 4.824, 5.02])
-        self.assertFalse(cut_neighborhood_failure(fabricated, self.contract(), binding, self.GATES))
-        self.assertFalse(cut_neighborhood_failure(thin, self.contract(), binding, self.GATES))
-        # Before the rule (no coupon box in the evidence: the legacy pipeline), the near-regular
-        # end fails the minimum - the decision-292 verdict.
+        self.assertFalse(cut_neighborhood_failure(thin, self.contract(), self.IDENTITY, self.GATES))
+        self.assertFalse(any(r["BelowMinimumNoncornerAspect"] for r in
+                             box_face_cut_end_readings(thin, self.contract(), self.IDENTITY, self.GATES)))
+        # Legacy evidence (no coupon box) keeps the minimum at every cut end - the decision-292 verdict.
         legacy = self.evidence([3.523216104155732, 1.3134735206566421, 3.1105118560116094], box=False)
-        self.assertTrue(cut_neighborhood_failure(legacy, self.contract(), binding, self.GATES))
-        # A regular cut end below the minimum still fails, with the narrow one exempt.
-        under = self.evidence([1.2, 1.3134735206566421, 3.1])
-        self.assertTrue(cut_neighborhood_failure(under, self.contract(), binding, self.GATES))
-        # The exempt end must still be a measured, finite positive aspect; a missing or extra
-        # neighbourhood fails; a point off the contract fails.
-        for aspects in ([3.5, float("nan"), 3.1], [3.5, 0.0, 3.1]):
-            self.assertTrue(cut_neighborhood_failure(self.evidence(aspects), self.contract(), binding, self.GATES))
+        self.assertTrue(cut_neighborhood_failure(legacy, self.contract(), self.IDENTITY, self.GATES))
+        self.assertEqual(box_face_cut_end_readings(legacy, self.contract(), self.IDENTITY, self.GATES), [])
+        # A cut end AWAY from the box faces (inside the box) keeps the minimum.
+        cuts = [self.CUTS[0], [0.0, 0.0, 0.0], self.CUTS[2]]
+        inside = self.evidence([3.5, 1.3, 3.1], cuts=cuts)
+        self.assertTrue(cut_neighborhood_failure(inside, self.contract(cuts=cuts), self.IDENTITY, self.GATES))
+        self.assertEqual([r["CutEndpointIndex"] for r in
+                          box_face_cut_end_readings(inside, self.contract(cuts=cuts), self.IDENTITY, self.GATES)], [0, 2])
+        inside_ok = self.evidence([3.5, 1.5, 3.1], cuts=cuts)
+        self.assertFalse(cut_neighborhood_failure(inside_ok, self.contract(cuts=cuts), self.IDENTITY, self.GATES))
+        # The box-face end must still be a measured, finite positive aspect; a missing or extra
+        # neighbourhood fails; a point off the contract fails (and the readings are empty).
+        for aspects in ([3.5, float("nan"), 3.1], [3.5, 0.0, 3.1], [3.5, -1.3, 3.1], [3.5, None, 3.1]):
+            self.assertTrue(cut_neighborhood_failure(self.evidence(aspects), self.contract(), self.IDENTITY, self.GATES))
+        self.assertFalse(box_face_cut_end_readings(self.evidence([3.5, float("nan"), 3.1]), self.contract(),
+                                                   self.IDENTITY, self.GATES)[1]["BelowMinimumNoncornerAspect"])
         short = self.evidence([3.5, 1.3, 3.1])
         short["CutNeighborhoods"].pop()
-        self.assertTrue(cut_neighborhood_failure(short, self.contract(), binding, self.GATES))
+        self.assertTrue(cut_neighborhood_failure(short, self.contract(), self.IDENTITY, self.GATES))
+        self.assertEqual(box_face_cut_end_readings(short, self.contract(), self.IDENTITY, self.GATES), [])
         moved = self.evidence([3.5, 1.3, 3.1])
         moved["CutNeighborhoods"][0]["Point"] = [-6.8, -12.6, 0.0]
-        self.assertTrue(cut_neighborhood_failure(moved, self.contract(), binding, self.GATES))
+        self.assertTrue(cut_neighborhood_failure(moved, self.contract(), self.IDENTITY, self.GATES))
+        self.assertEqual(box_face_cut_end_readings(moved, self.contract(), self.IDENTITY, self.GATES), [])
         # A rotated variant: the evidence points carry the placement, the box stays in the build frame.
         angle = 0.63
         c, s_ = math.cos(angle), math.sin(angle)
@@ -4319,7 +4338,36 @@ class NarrowCrossSectionCutEndpointTest(unittest.TestCase):
             x, y, z = item["Point"]
             item["Point"] = [c * x - s_ * y, s_ * x + c * y, z]
         self.assertFalse(cut_neighborhood_failure(placed, self.contract(), rotated, self.GATES))
-        self.assertTrue(cut_neighborhood_failure(placed, self.contract(), binding, self.GATES))
+        self.assertEqual([r["BelowMinimumNoncornerAspect"] for r in
+                          box_face_cut_end_readings(placed, self.contract(), rotated, self.GATES)], [False, True, False])
+        self.assertTrue(cut_neighborhood_failure(placed, self.contract(), self.IDENTITY, self.GATES))
+
+    def test_semantic_corners_and_subdivision_ends_keep_their_gates(self):
+        """The audit's gate: a box-face cut end at 1.3 (alone on face x1, 5.7 um from the nearest
+        corner: the decision-313 reading, not a narrow cross-section) passes while a CAD-subdivision
+        end below the minimum, a semantic corner above its maximum or a non-positive cut-end aspect
+        still fails semantic-corner-and-endpoint-anisotropy."""
+        from general_mesh_manifest import audit_manifest_evidence
+        corners = self.contract()["SemanticCorners"]
+        subdivisions = self.contract()["FeatureTopology"]["CADSubdivisionEndpoints"]
+        contract = {**self.contract(), "VolumeMaterials": [], "BoundaryLabels": [], "UnmatchedPolicy": "x",
+                    "ProtectedSupports": []}
+
+        def evidence(cut_aspects, subdivision_aspect, corner_aspect):
+            return {**self.evidence(cut_aspects),
+                    "ActualSemanticCorners": corners,
+                    "CornerNeighborhoods": [{"Point": p, "MaximumAspect": corner_aspect, "Cells": 1} for p in corners],
+                    "SubdivisionNeighborhoods": [{"Point": p, "MaximumAspect": subdivision_aspect, "Cells": 1}
+                                                 for p in subdivisions]}
+
+        binding = {**self.IDENTITY, "CaseId": "c", "Variant": "identity", "TransformSHA256": "t",
+                   "InputSHA256": {"Process": "p", "SemanticContract": "s", "MeshRecipe": "r"},
+                   "ToolSHA256": {}, "StageToolSHA256": {}}
+        gate = "semantic-corner-and-endpoint-anisotropy"
+        self.assertNotIn(gate, audit_manifest_evidence(evidence([3.5, 3.1, 1.3], 4.3, 2.0), self.GATES, contract, binding))
+        self.assertIn(gate, audit_manifest_evidence(evidence([3.5, 3.1, 1.3], 1.3, 2.0), self.GATES, contract, binding))
+        self.assertIn(gate, audit_manifest_evidence(evidence([3.5, 3.1, 1.3], 4.3, 4.5), self.GATES, contract, binding))
+        self.assertIn(gate, audit_manifest_evidence(evidence([3.5, 3.1, 0.0], 4.3, 2.0), self.GATES, contract, binding))
 
 
 if __name__ == "__main__":
