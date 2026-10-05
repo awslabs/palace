@@ -60,6 +60,12 @@ using ResponsePatchData = config::ElectrostaticSolverData::ResponseCorrectionPat
 constexpr double maximum_trace_closure_spread = 0.05;
 constexpr double maximum_trace_closure_response_failure_fraction = 0.01;
 
+// A response matrix is positive semidefinite "beyond roundoff" when its smallest eigenvalue
+// is >= -kResponseMatrixNegativeEigenvalueToleranceRelative x its largest |eigenvalue| (the
+// fabricated domain matrix inverted by PositiveSemidefiniteInverseProduct, and the test of
+// a constructed corner model's blended domain matrices at match time, decision 374 (B)).
+constexpr double kResponseMatrixNegativeEigenvalueToleranceRelative = 1.0e-9;
+
 struct ElementBox
 {
   std::array<double, 3> min;
@@ -1163,6 +1169,9 @@ struct ProcessLibrary
   bool exhaustive_spatial_closure = false;
   std::string name;
   double matching_radius = 0.0;
+  // The matching radius in metres (the "R (m)" of a spatial coupon's surface response
+  // files): the within-R rows a spatial model's surface matrices are read at.
+  double matching_radius_m = 0.0;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
@@ -1938,6 +1947,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   library.matching_radius = data.at("MatchingRadius").get<double>() / coordinate_scale;
   MFEM_VERIFY(std::isfinite(library.matching_radius) && library.matching_radius > 0.0,
               "Fabrication-process response-library matching radius must be positive!");
+  library.matching_radius_m =
+      units.Dimensionalize<Units::ValueType::LENGTH>(library.matching_radius);
   const auto fabrication = data.find("Fabrication");
   const nlohmann::json *interface_layers = nullptr;
   if (fabrication != data.end())
@@ -4319,7 +4330,33 @@ struct FeatureCornerMatch
   // feature's angle with the segment's connectivity (empty for an exact node, which uses
   // the node's own files).
   std::optional<ConstructedCornerTraceBasis> constructed;
+  // Recorded for every interpolated corner (decision 376): the minimum eigenvalue of each
+  // blended response matrix on the free knots relative to its largest |eigenvalue| (the
+  // fabricated / thin domain matrices, tested; the per-coupon-interface surface matrices,
+  // recorded only). Null for an exact node.
+  nlohmann::json blend_eigenvalues;
+  // The PSD fallback record (decision 374 (B)): null unless the stencil's blended
+  // fabricated or thin DOMAIN matrix was not PSD beyond roundoff and `nodes` / `rule` /
+  // `name` were replaced by the convex linear blend of the two bracketing nodes.
+  nlohmann::json interpolation_fallback;
 };
+
+// The minimum eigenvalue of each blended response matrix of a corner-family stencil on the
+// free (non-zero-trace) knots, relative to the matrix's largest |eigenvalue| (the
+// normalisation of the operator's PSD check), and whether the fabricated and thin DOMAIN
+// matrices pass that check. Defined after the response matrix readers.
+struct CornerBlendEigenvalues
+{
+  double fabricated = 0.0, thin = 0.0;
+  std::map<int, double> fabricated_surfaces, thin_surfaces;  // per coupon interface
+  bool domain_positive_semidefinite = true;
+  nlohmann::json Record() const;
+};
+
+CornerBlendEigenvalues
+ComputeCornerBlendEigenvalues(const ProcessLibrary &library,
+                              const std::vector<LibrarySelection::WeightedModel> &nodes,
+                              int basis_size, const std::vector<int> &zero_trace_indices);
 
 std::string CornerRuntimeModelName(const std::string &base, double angle_degrees,
                                    const std::string &rule)
@@ -4553,6 +4590,94 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
   if (match.rule == "exact")
   {
     return match;
+  }
+  // The PSD test of the blend (decision 374 (B), scope decision 376): the stencil's
+  // blended fabricated and thin DOMAIN matrices on the free knots must be PSD beyond
+  // roundoff by the operator's own criterion (PositiveSemidefiniteInverseProduct would
+  // otherwise abort on the fabricated one; the thin one is the energy it is compared
+  // with). Lagrange weights on more than two nodes can be negative, and over non-uniform
+  // nodes the blend of PSD matrices need not be PSD (C3's concave 70.498 deg over 60 / 75 /
+  // 80 / 90). Such a stencil is replaced by the convex LINEAR blend of the two nodes
+  // bracketing the angle (weights in [0, 1]: PSD by construction) for every matrix of the
+  // feature; the base (the nearest node, one of the pair) and so the constructed basis are
+  // unchanged. A PSD cubic blend is left untouched. The per-interface surface blends are
+  // recorded, never acted on: those matrices are rank-deficient PSD, so every blend with a
+  // negative weight has negative modes along their null spaces (decision 376).
+  {
+    const int basis_size = static_cast<int>(first_points.size());
+    const auto eigenvalues = ComputeCornerBlendEigenvalues(
+        library, match.nodes, basis_size, first.response.zero_trace_indices);
+    match.blend_eigenvalues = eigenvalues.Record();
+    if (!eigenvalues.domain_positive_semidefinite && stencil.nodes.size() > 2)
+    {
+      // The bracketing pair of the stencil (its nodes are sorted by angle, the angle is
+      // strictly inside the segment: SelectCornerFamilyStencil).
+      std::map<std::size_t, double> stencil_angles;
+      for (const auto &node : family)
+      {
+        stencil_angles[node.index] = node.angle_degrees;
+      }
+      std::optional<std::pair<std::size_t, double>> lower, upper;
+      for (const auto &[index, weight] : stencil.nodes)
+      {
+        (void)weight;
+        const double node_angle = stencil_angles.at(index);
+        if (node_angle < angle && (!lower || node_angle > lower->second))
+        {
+          lower = {index, node_angle};
+        }
+        if (node_angle > angle && (!upper || node_angle < upper->second))
+        {
+          upper = {index, node_angle};
+        }
+      }
+      MFEM_VERIFY(lower && upper, "A corner-family stencil does not bracket its angle "
+                                      << angle << " deg!");
+      MFEM_VERIFY(
+          match.base == lower->first || match.base == upper->first,
+          "The base of a corner-family stencil is not one of its bracketing nodes!");
+      const double span = upper->second - lower->second;
+      std::vector<LibrarySelection::WeightedModel> linear = {
+          {lower->first, (upper->second - angle) / span},
+          {upper->first, (angle - lower->second) / span}};
+      const auto linear_eigenvalues = ComputeCornerBlendEigenvalues(
+          library, linear, basis_size, first.response.zero_trace_indices);
+      // (A linear blend of PSD node matrices is PSD; were a node's stored matrix not, the
+      // operator's own check on the fabricated matrix fails closed as before.)
+      nlohmann::json stencil_record = nlohmann::json::array();
+      nlohmann::json cubic_weights = nlohmann::json::array();
+      for (const auto &[index, weight] : stencil.nodes)
+      {
+        stencil_record.push_back({{"Name", library.models[index].name},
+                                  {"AngleDegrees", stencil_angles.at(index)}});
+        cubic_weights.push_back(weight);
+      }
+      match.interpolation_fallback = {
+          {"Rule",
+           "decision 374 (B) / 376: the " + stencil.rule +
+               " Lagrange blend of the stencil has a fabricated or thin DOMAIN "
+               "matrix that is not positive semidefinite beyond roundoff on the "
+               "free knots (min eigenvalue < -" +
+               fmt::format("{:g}", kResponseMatrixNegativeEigenvalueToleranceRelative) +
+               " x max |eigenvalue|, the operator's PositiveSemidefiniteInverseProduct "
+               "criterion); every matrix of the feature is replaced by the convex "
+               "linear blend of the two bracketing nodes (PSD by construction); the "
+               "base node and the constructed basis are unchanged"},
+          {"Stencil", stencil_record},
+          {"StencilRule", stencil.rule},
+          {"CubicWeights", cubic_weights},
+          {"MinEigenvalueRelative", match.blend_eigenvalues},
+          {"NegativeToleranceRelative", kResponseMatrixNegativeEigenvalueToleranceRelative},
+          {"LinearNodes",
+           {library.models[lower->first].name, library.models[upper->first].name}},
+          {"LinearWeights", {linear[0].weight, linear[1].weight}},
+          {"LinearMinEigenvalueRelative", linear_eigenvalues.Record()}};
+      match.nodes = linear;
+      match.rule = "linear";
+      match.name =
+          CornerRuntimeModelName(library.models[match.base].name, angle, match.rule);
+      match.blend_eigenvalues = linear_eigenvalues.Record();
+    }
   }
   // The runtime basis at the feature's angle: the base's fixed rings, the metal rings by
   // the rule (positions) with the segment's connectivity, the same zero set and contour
@@ -7591,7 +7716,21 @@ IdentificationResult RunGeometryIdentification(
         std::ostringstream note;
         note << "corner family: " << match->rule << " at " << std::setprecision(6)
              << match->angle_degrees << " deg (turn " << match->turn_degrees << ")";
+        if (!match->interpolation_fallback.is_null())
+        {
+          note << "; PSD fallback (decision 374 (B)): the "
+               << match->interpolation_fallback["StencilRule"].get<std::string>()
+               << " blend's fabricated / thin domain min eigenvalue relative "
+               << match->interpolation_fallback["MinEigenvalueRelative"]["FabricatedMatrix"]
+                      .get<double>()
+               << " / "
+               << match->interpolation_fallback["MinEigenvalueRelative"]["ThinMatrix"]
+                      .get<double>()
+               << " -> linear on the bracketing nodes";
+        }
         feature.match_note = note.str();
+        feature.blend_eigenvalues = match->blend_eigenvalues;
+        feature.interpolation_fallback = match->interpolation_fallback;
         nlohmann::json nodes = nlohmann::json::array();
         for (const auto &node : match->nodes)
         {
@@ -7613,6 +7752,17 @@ IdentificationResult RunGeometryIdentification(
                  ? nlohmann::json(*match->connectivity_angle_degrees)
                  : nlohmann::json()},
             {"Nodes", nodes}};
+        if (!match->blend_eigenvalues.is_null())
+        {
+          // The applied blend's min eigenvalues (decision 376) and, when the stencil was
+          // replaced, the fallback record (decision 374 (B)).
+          corner_records[feature.id]["BlendEigenvalues"] = match->blend_eigenvalues;
+        }
+        if (!match->interpolation_fallback.is_null())
+        {
+          corner_records[feature.id]["InterpolationFallback"] =
+              match->interpolation_fallback;
+        }
         if (corner_matches)
         {
           corner_matches->emplace(feature.id, *match);
@@ -8260,6 +8410,8 @@ FeaturePatchSummary BuildFeaturePatches(
     std::string label;
     // A corner blend's basis constructed at the feature's angle (the trace basis rule).
     const ConstructedCornerTraceBasis *constructed = nullptr;
+    // A corner blend's PSD fallback record (null unless the stencil was replaced).
+    const nlohmann::json *interpolation_fallback = nullptr;
   };
   std::map<std::pair<std::string, std::string>, int> runtime_models;
   int next_model_index = 1;
@@ -8312,6 +8464,23 @@ FeaturePatchSummary BuildFeaturePatches(
                 << std::setprecision(6) << node.weight;
         }
         Mpi::Print(" {} {}: {}\n", blend->label, blend->name, nodes.str());
+        if (blend->interpolation_fallback && !blend->interpolation_fallback->is_null())
+        {
+          const auto &fallback = *blend->interpolation_fallback;
+          std::ostringstream stencil;
+          for (const auto &node : fallback["Stencil"])
+          {
+            stencil << (stencil.tellp() > 0 ? " / " : "")
+                    << node["Name"].get<std::string>();
+          }
+          Mpi::Print(" {} fallback {}: the {} blend on {} is not PSD beyond roundoff "
+                     "(fabricated / thin domain min eigenvalue relative {:.3e} / {:.3e}); "
+                     "linear on the bracketing nodes (decision 374 (B))\n",
+                     blend->label, blend->name, fallback["StencilRule"].get<std::string>(),
+                     stencil.str(),
+                     fallback["MinEigenvalueRelative"]["FabricatedMatrix"].get<double>(),
+                     fallback["MinEigenvalueRelative"]["ThinMatrix"].get<double>());
+        }
         if (blend->constructed)
         {
           const auto &constructed = *blend->constructed;
@@ -8351,7 +8520,8 @@ FeaturePatchSummary BuildFeaturePatches(
                        match.nodes,
                        false,
                        "Corner interpolation",
-                       match.constructed ? &*match.constructed : nullptr};
+                       match.constructed ? &*match.constructed : nullptr,
+                       &match.interpolation_fallback};
   };
 
   auto Emit = [&](ResponsePatchData patch, std::size_t model_index, int runtime,
@@ -14039,7 +14209,8 @@ mfem::DenseMatrix PositiveSemidefiniteInverseProduct(const mfem::DenseMatrix &ma
               "Failed to diagonalize a response matrix on its active quotient space!");
   const auto eigenvalues = eigensystem.eigenvalues();
   const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
-  const double negative_tolerance = 1.0e-9 * scale;
+  const double negative_tolerance =
+      kResponseMatrixNegativeEigenvalueToleranceRelative * scale;
   const double active_tolerance = 1.0e-12 * scale;
   MFEM_VERIFY(eigenvalues.minCoeff() >= -negative_tolerance,
               "Fabricated response matrix has a negative-energy mode beyond roundoff!");
@@ -14359,6 +14530,110 @@ std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
     MFEM_VERIFY(source_interfaces == interfaces,
                 "Interpolated response model sources do not share the same coupon "
                 "interfaces!");
+  }
+  return result;
+}
+
+// The smallest eigenvalue of a symmetric matrix restricted to `free_indices`, relative to
+// its largest |eigenvalue| (the normalisation of PositiveSemidefiniteInverseProduct's
+// check: PSD beyond roundoff when >= -kResponseMatrixNegativeEigenvalueToleranceRelative).
+double MinimumRelativeEigenvalue(const mfem::DenseMatrix &matrix,
+                                 const std::vector<int> &free_indices)
+{
+  const int size = static_cast<int>(free_indices.size());
+  Eigen::MatrixXd A(size, size);
+  for (int i = 0; i < size; i++)
+  {
+    for (int j = 0; j < size; j++)
+    {
+      A(i, j) = matrix(free_indices[i], free_indices[j]);
+    }
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(A, Eigen::EigenvaluesOnly);
+  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
+              "Failed to diagonalize a blended corner response matrix on its free knots!");
+  const auto eigenvalues = eigensystem.eigenvalues();
+  const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
+  return eigenvalues.minCoeff() / scale;
+}
+
+nlohmann::json CornerBlendEigenvalues::Record() const
+{
+  nlohmann::json fabricated_surface_record = nlohmann::json::object(),
+                 thin_surface_record = nlohmann::json::object();
+  for (const auto &[interface, value] : fabricated_surfaces)
+  {
+    fabricated_surface_record[std::to_string(interface)] = value;
+  }
+  for (const auto &[interface, value] : thin_surfaces)
+  {
+    thin_surface_record[std::to_string(interface)] = value;
+  }
+  return {{"FabricatedMatrix", fabricated},
+          {"ThinMatrix", thin},
+          {"FabricatedSurfaceMatrix", fabricated_surface_record},
+          {"ThinSurfaceMatrix", thin_surface_record},
+          {"DomainPositiveSemidefinite", domain_positive_semidefinite}};
+}
+
+CornerBlendEigenvalues
+ComputeCornerBlendEigenvalues(const ProcessLibrary &library,
+                              const std::vector<LibrarySelection::WeightedModel> &nodes,
+                              int basis_size, const std::vector<int> &zero_trace_indices)
+{
+  // The blend exactly as the operator forms it (BlendedDomainResponseMatrix /
+  // BlendedSurfaceResponseMatrices on a config blend: the weighted sum of the nodes'
+  // files; a spatial model's surface matrices at the library's within-R rows).
+  ResponseModelData blend;
+  for (const auto &node : nodes)
+  {
+    const auto &coupon = library.models[node.index].response;
+    blend.blend.push_back({node.weight, coupon.fabricated_matrix, coupon.thin_matrix,
+                           coupon.fabricated_surface_matrix, coupon.thin_surface_matrix});
+  }
+  MFEM_VERIFY(!blend.blend.empty(), "A corner-family blend needs nodes!");
+  std::vector<bool> constrained(basis_size, false);
+  for (const int index : zero_trace_indices)
+  {
+    MFEM_VERIFY(index >= 0 && index < basis_size,
+                "Invalid zero-trace response basis index in a corner family!");
+    constrained[index] = true;
+  }
+  std::vector<int> free_indices;
+  for (int i = 0; i < basis_size; i++)
+  {
+    if (!constrained[i])
+    {
+      free_indices.push_back(i);
+    }
+  }
+  MFEM_VERIFY(!free_indices.empty(),
+              "A corner family needs at least one free trace basis function!");
+  CornerBlendEigenvalues result;
+  result.fabricated = MinimumRelativeEigenvalue(
+      BlendedDomainResponseMatrix(blend, true, basis_size), free_indices);
+  result.thin = MinimumRelativeEigenvalue(
+      BlendedDomainResponseMatrix(blend, false, basis_size), free_indices);
+  result.domain_positive_semidefinite =
+      result.fabricated >= -kResponseMatrixNegativeEigenvalueToleranceRelative &&
+      result.thin >= -kResponseMatrixNegativeEigenvalueToleranceRelative;
+  const auto &first = library.models[nodes.front().index].response;
+  if (!first.fabricated_surface_matrix.empty() && !first.thin_surface_matrix.empty())
+  {
+    const std::optional<double> within_radius =
+        first.spatial_basis ? std::optional<double>(library.matching_radius_m)
+                            : std::nullopt;
+    for (const auto &[interface, matrix] :
+         BlendedSurfaceResponseMatrices(blend, true, basis_size, within_radius))
+    {
+      result.fabricated_surfaces[interface] =
+          MinimumRelativeEigenvalue(matrix, free_indices);
+    }
+    for (const auto &[interface, matrix] :
+         BlendedSurfaceResponseMatrices(blend, false, basis_size, within_radius))
+    {
+      result.thin_surfaces[interface] = MinimumRelativeEigenvalue(matrix, free_indices);
+    }
   }
   return result;
 }

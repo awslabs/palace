@@ -13821,6 +13821,9 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.String(f.quantum_near_match.is_null() ? std::string() : f.quantum_near_match.dump());
     w.String(f.spatial_support.is_null() ? std::string() : f.spatial_support.dump());
     w.String(f.legacy_contract.is_null() ? std::string() : f.legacy_contract.dump());
+    w.String(f.blend_eigenvalues.is_null() ? std::string() : f.blend_eigenvalues.dump());
+    w.String(f.interpolation_fallback.is_null() ? std::string()
+                                                : f.interpolation_fallback.dump());
     w.Point(f.claims_origin);
     for (const auto &axis : f.claims_axes)
     {
@@ -13990,6 +13993,12 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     const std::string legacy = r.String();
     f.legacy_contract =
         legacy.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(legacy);
+    const std::string eigenvalues = r.String();
+    f.blend_eigenvalues =
+        eigenvalues.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(eigenvalues);
+    const std::string fallback = r.String();
+    f.interpolation_fallback =
+        fallback.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(fallback);
     f.claims_origin = r.Point();
     for (auto &axis : f.claims_axes)
     {
@@ -14188,6 +14197,18 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       // 283): the legacy model, the aliased v3 key, the verified context digest and the
       // recorded context.
       entry["Match"]["LegacyContract"] = feature.legacy_contract;
+    }
+    if (!feature.blend_eigenvalues.is_null())
+    {
+      // An angle-interpolated corner (decision 376): the applied blend's min eigenvalues
+      // on the free knots relative to max |eigenvalue| per blended matrix.
+      entry["Match"]["BlendEigenvalues"] = feature.blend_eigenvalues;
+    }
+    if (!feature.interpolation_fallback.is_null())
+    {
+      // The stencil's blended fabricated or thin domain matrix was not PSD beyond roundoff:
+      // the convex linear blend of the two bracketing nodes is applied (decision 374 (B)).
+      entry["Match"]["InterpolationFallback"] = feature.interpolation_fallback;
     }
     if (!feature.spatial_support.is_null())
     {
