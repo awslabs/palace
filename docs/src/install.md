@@ -259,6 +259,10 @@ This detection can be bypassed by passing a vendor to CMake with `-DBLA_VENDOR=<
 (see the [CMake documentation](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors)
 for the supported values).
 
+On macOS, if none of these environment variables are set, CMake may pick Apple's Accelerate
+framework instead of OpenBLAS; set `OPENBLAS_DIR` or pass `-DBLA_VENDOR=OpenBLAS` to use
+OpenBLAS.
+
 If the installation path of OpenBLAS is non-standard or is not found by default, it can be
 set using the `OPENBLAS_DIR` or `OPENBLASROOT` environment variables, or added to
 `CMAKE_PREFIX_PATH` when calling CMake.

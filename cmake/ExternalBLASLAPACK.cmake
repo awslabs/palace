@@ -122,12 +122,21 @@ foreach(LIB IN LISTS LAPACK_LIBRARIES BLAS_LIBRARIES)
   endif()
 endforeach()
 list(REMOVE_DUPLICATES _BLAS_LAPACK_DIRS)
+# On macOS frameworks are searched first by default, which finds the Accelerate headers
+# for any vendor
+set(_CMAKE_FIND_FRAMEWORK ${CMAKE_FIND_FRAMEWORK})
+if("${LAPACK_LIBRARIES};${BLAS_LIBRARIES}" MATCHES "\\.framework")
+  set(CMAKE_FIND_FRAMEWORK FIRST)
+else()
+  set(CMAKE_FIND_FRAMEWORK LAST)
+endif()
 find_path(_BLAS_LAPACK_INCLUDE_DIRS
   NAMES ${_BLAS_LAPACK_HEADER}
   HINTS ${_BLAS_LAPACK_DIRS}
   PATH_SUFFIXES ${_BLAS_LAPACK_INCLUDE_SUFFIXES}
   REQUIRED
 )
+set(CMAKE_FIND_FRAMEWORK ${_CMAKE_FIND_FRAMEWORK})
 set(LAPACK_LIBRARIES "${LAPACK_LIBRARIES};-lm")
 
 # Save variables to cache
