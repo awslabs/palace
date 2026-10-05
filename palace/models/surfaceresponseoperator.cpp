@@ -4353,10 +4353,21 @@ struct CornerBlendEigenvalues
   nlohmann::json Record() const;
 };
 
+// The nodes' response matrices read once per matching pass (every rank reads the files: a
+// window's interpolated corners share a handful of node files, C3's 16 would otherwise read
+// 16 x 4 nodes x 4 files each).
+struct CornerBlendMatrixCache
+{
+  std::map<std::string, mfem::DenseMatrix> domain;  // file path -> matrix
+  std::map<std::string, std::map<int, mfem::DenseMatrix>>
+      surfaces;  // path -> per interface
+};
+
 CornerBlendEigenvalues
 ComputeCornerBlendEigenvalues(const ProcessLibrary &library,
                               const std::vector<LibrarySelection::WeightedModel> &nodes,
-                              int basis_size, const std::vector<int> &zero_trace_indices);
+                              int basis_size, const std::vector<int> &zero_trace_indices,
+                              CornerBlendMatrixCache &cache);
 
 std::string CornerRuntimeModelName(const std::string &base, double angle_degrees,
                                    const std::string &rule)
@@ -4368,7 +4379,8 @@ std::string CornerRuntimeModelName(const std::string &base, double angle_degrees
 
 std::optional<FeatureCornerMatch>
 MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &feature,
-                  const MetalBoundaryLaw &boundary_condition, std::string &reason)
+                  const MetalBoundaryLaw &boundary_condition,
+                  CornerBlendMatrixCache &blend_cache, std::string &reason)
 {
   const auto topology = ParseLibraryTopology(feature.type);
   if (topology != LibraryTopology::CONVEX_CORNER &&
@@ -4606,7 +4618,7 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
   {
     const int basis_size = static_cast<int>(first_points.size());
     const auto eigenvalues = ComputeCornerBlendEigenvalues(
-        library, match.nodes, basis_size, first.response.zero_trace_indices);
+        library, match.nodes, basis_size, first.response.zero_trace_indices, blend_cache);
     match.blend_eigenvalues = eigenvalues.Record();
     if (!eigenvalues.domain_positive_semidefinite && stencil.nodes.size() > 2)
     {
@@ -4641,7 +4653,7 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
           {lower->first, (upper->second - angle) / span},
           {upper->first, (angle - lower->second) / span}};
       const auto linear_eigenvalues = ComputeCornerBlendEigenvalues(
-          library, linear, basis_size, first.response.zero_trace_indices);
+          library, linear, basis_size, first.response.zero_trace_indices, blend_cache);
       // (A linear blend of PSD node matrices is PSD; were a node's stored matrix not, the
       // operator's own check on the fabricated matrix fails closed as before.)
       nlohmann::json stencil_record = nlohmann::json::array();
@@ -7601,6 +7613,7 @@ IdentificationResult RunGeometryIdentification(
   const auto library_keys = LibrarySignatureKeys(library, describer);
   std::map<int, nlohmann::json> curvature_records;  // per feature, for the manifest
   std::map<int, nlohmann::json> corner_records;     // per feature, for the manifest
+  CornerBlendMatrixCache corner_blend_cache;        // the corner nodes' matrices, read once
   library_keys.RefuseNearDuplicateClusters();
   for (auto &feature : result.features)
   {
@@ -7707,8 +7720,8 @@ IdentificationResult RunGeometryIdentification(
       MFEM_VERIFY(it != framed.end(),
                   "A corner feature portion lies on a segment without an edge frame!");
       std::string reason;
-      const auto match =
-          MatchCornerFamily(library, feature, it->second->boundary_condition, reason);
+      const auto match = MatchCornerFamily(library, feature, it->second->boundary_condition,
+                                           corner_blend_cache, reason);
       if (match)
       {
         feature.matched_model = match->name;
@@ -14579,19 +14592,82 @@ nlohmann::json CornerBlendEigenvalues::Record() const
 CornerBlendEigenvalues
 ComputeCornerBlendEigenvalues(const ProcessLibrary &library,
                               const std::vector<LibrarySelection::WeightedModel> &nodes,
-                              int basis_size, const std::vector<int> &zero_trace_indices)
+                              int basis_size, const std::vector<int> &zero_trace_indices,
+                              CornerBlendMatrixCache &cache)
 {
   // The blend exactly as the operator forms it (BlendedDomainResponseMatrix /
-  // BlendedSurfaceResponseMatrices on a config blend: the weighted sum of the nodes'
-  // files; a spatial model's surface matrices at the library's within-R rows).
-  ResponseModelData blend;
-  for (const auto &node : nodes)
+  // BlendedSurfaceResponseMatrices on a config blend: zero, then the weighted sum of the
+  // nodes' matrices in node order; a spatial model's surface matrices at the library's
+  // within-R rows), the files read once per matching pass.
+  MFEM_VERIFY(!nodes.empty(), "A corner-family blend needs nodes!");
+  const auto &first = library.models[nodes.front().index].response;
+  const std::optional<double> within_radius =
+      first.spatial_basis ? std::optional<double>(library.matching_radius_m) : std::nullopt;
+  auto Domain = [&](const std::string &path) -> const mfem::DenseMatrix &
   {
-    const auto &coupon = library.models[node.index].response;
-    blend.blend.push_back({node.weight, coupon.fabricated_matrix, coupon.thin_matrix,
-                           coupon.fabricated_surface_matrix, coupon.thin_surface_matrix});
-  }
-  MFEM_VERIFY(!blend.blend.empty(), "A corner-family blend needs nodes!");
+    auto it = cache.domain.find(path);
+    if (it == cache.domain.end())
+    {
+      it =
+          cache.domain.emplace(path, ReadDenseDomainResponseMatrix(path, basis_size)).first;
+    }
+    return it->second;
+  };
+  auto Surfaces = [&](const std::string &path) -> const std::map<int, mfem::DenseMatrix> &
+  {
+    auto it = cache.surfaces.find(path);
+    if (it == cache.surfaces.end())
+    {
+      it = cache.surfaces
+               .emplace(path, ReadSurfaceResponseMatrices(path, basis_size, within_radius))
+               .first;
+    }
+    return it->second;
+  };
+  auto BlendDomain = [&](bool fabricated)
+  {
+    mfem::DenseMatrix result(basis_size);
+    result = 0.0;
+    for (const auto &node : nodes)
+    {
+      const auto &coupon = library.models[node.index].response;
+      MFEM_VERIFY(std::isfinite(node.weight),
+                  "Interpolated response model weights must be finite!");
+      result.Add(node.weight,
+                 Domain(fabricated ? coupon.fabricated_matrix : coupon.thin_matrix));
+    }
+    return result;
+  };
+  auto BlendSurfaces = [&](bool fabricated)
+  {
+    std::map<int, mfem::DenseMatrix> result;
+    std::set<int> interfaces;
+    for (const auto &node : nodes)
+    {
+      const auto &coupon = library.models[node.index].response;
+      const auto &matrices = Surfaces(fabricated ? coupon.fabricated_surface_matrix
+                                                 : coupon.thin_surface_matrix);
+      std::set<int> source_interfaces;
+      for (const auto &[interface, matrix] : matrices)
+      {
+        source_interfaces.insert(interface);
+        auto [it, inserted] = result.emplace(interface, mfem::DenseMatrix(basis_size));
+        if (inserted)
+        {
+          it->second = 0.0;
+        }
+        it->second.Add(node.weight, matrix);
+      }
+      if (&node == &nodes.front())
+      {
+        interfaces = source_interfaces;
+      }
+      MFEM_VERIFY(source_interfaces == interfaces,
+                  "Interpolated response model sources do not share the same coupon "
+                  "interfaces!");
+    }
+    return result;
+  };
   std::vector<bool> constrained(basis_size, false);
   for (const int index : zero_trace_indices)
   {
@@ -14610,27 +14686,19 @@ ComputeCornerBlendEigenvalues(const ProcessLibrary &library,
   MFEM_VERIFY(!free_indices.empty(),
               "A corner family needs at least one free trace basis function!");
   CornerBlendEigenvalues result;
-  result.fabricated = MinimumRelativeEigenvalue(
-      BlendedDomainResponseMatrix(blend, true, basis_size), free_indices);
-  result.thin = MinimumRelativeEigenvalue(
-      BlendedDomainResponseMatrix(blend, false, basis_size), free_indices);
+  result.fabricated = MinimumRelativeEigenvalue(BlendDomain(true), free_indices);
+  result.thin = MinimumRelativeEigenvalue(BlendDomain(false), free_indices);
   result.domain_positive_semidefinite =
       result.fabricated >= -kResponseMatrixNegativeEigenvalueToleranceRelative &&
       result.thin >= -kResponseMatrixNegativeEigenvalueToleranceRelative;
-  const auto &first = library.models[nodes.front().index].response;
   if (!first.fabricated_surface_matrix.empty() && !first.thin_surface_matrix.empty())
   {
-    const std::optional<double> within_radius =
-        first.spatial_basis ? std::optional<double>(library.matching_radius_m)
-                            : std::nullopt;
-    for (const auto &[interface, matrix] :
-         BlendedSurfaceResponseMatrices(blend, true, basis_size, within_radius))
+    for (const auto &[interface, matrix] : BlendSurfaces(true))
     {
       result.fabricated_surfaces[interface] =
           MinimumRelativeEigenvalue(matrix, free_indices);
     }
-    for (const auto &[interface, matrix] :
-         BlendedSurfaceResponseMatrices(blend, false, basis_size, within_radius))
+    for (const auto &[interface, matrix] : BlendSurfaces(false))
     {
       result.thin_surfaces[interface] = MinimumRelativeEigenvalue(matrix, free_indices);
     }
