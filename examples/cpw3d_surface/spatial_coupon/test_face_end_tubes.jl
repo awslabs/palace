@@ -27,21 +27,52 @@ guard_message(f) =
     f45 = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 1.0, 0.0, r_env, h_pyr, lc)
     @test f45.spacing == lc && f45.layers == 2
     @test f45.over_length ≈ r_env + lc && f45.envelope_shear ≈ r_env
-    f12 = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(12.6), tan(deg2rad(12.6)), 0.0, r_env, h_pyr, lc)
+    f12 = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(12.6),
+        tan(deg2rad(12.6)),
+        0.0,
+        r_env,
+        h_pyr,
+        lc
+    )
     @test f12.spacing == lc && f12.layers == 1
-    f74 = FaceEnd(0, "y0", [0.0, -1.0, 0.0], deg2rad(74.3), tan(deg2rad(74.3)), 0.0, r_env, h_pyr, lc)
+    f74 = FaceEnd(
+        0,
+        "y0",
+        [0.0, -1.0, 0.0],
+        deg2rad(74.3),
+        tan(deg2rad(74.3)),
+        0.0,
+        r_env,
+        h_pyr,
+        lc
+    )
     @test f74.spacing ≈ 4.0 * h_pyr * tan(deg2rad(74.3)) && f74.layers == 3
     # Thin production tube: EdgeSize 2 nm, 5 rings -> R 62 nm, h_K 32, h_pyr 16, r_env 78 nm.
     t45 = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 1.0, 0.0, 0.078, 0.016, lc)
     @test t45.spacing ≈ 0.064 && t45.layers == 3
     # The shear per layer never exceeds lc_end / 2: thickness in [lc_end / 2, 3 lc_end / 2].
     for face_end in (f45, f12, f74, t45)
-        @test face_end.envelope_shear / face_end.layers <= 0.5 * face_end.spacing * (1.0 + 1.0e-9)
+        @test face_end.envelope_shear / face_end.layers <=
+              0.5 * face_end.spacing * (1.0 + 1.0e-9)
         range = face_end_record(face_end)["LayerThicknessRange"]
         @test range[1] >= 0.5 * face_end.spacing * (1.0 - 1.0e-9) &&
               range[2] <= 1.5 * face_end.spacing * (1.0 + 1.0e-9)
     end
-    @test_throws ErrorException FaceEnd(1, "x1", [1.0, 0.0, 0.0], 0.0, 0.0, 0.0, r_env, h_pyr, lc)
+    @test_throws ErrorException FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        0.0,
+        0.0,
+        0.0,
+        r_env,
+        h_pyr,
+        lc
+    )
 end
 
 @testset "face-ended tube stations: the sheared end block ends on the face plane" begin
@@ -63,10 +94,18 @@ end
     @test tube_cad_interval(tube) == (0.0, s_face + face_end.over_length)
     @test tube_end_station(tube, 1, 0.03, 0.0) ≈ s_face + 0.03 * tand(40.0) &&
           tube_end_station(tube, 0, 0.03, 0.0) == 0.0
-    stations, shear_u, shear_w, _, _ =
-        face_ended_tube_stations(tube, s -> 0.1, 0.1, 2.0; surface_start=true, surface_end=true)
+    stations, shear_u, shear_w, _, _ = face_ended_tube_stations(
+        tube,
+        s -> 0.1,
+        0.1,
+        2.0;
+        surface_start=true,
+        surface_end=true
+    )
     graded = EdgeTube(tube, stations; shear_u=shear_u, shear_w=shear_w)
-    @test graded.stations[1] == 0.0 && graded.stations[end] == s_face && all(diff(graded.stations) .> 0.0)
+    @test graded.stations[1] == 0.0 &&
+          graded.stations[end] == s_face &&
+          all(diff(graded.stations) .> 0.0)
     @test shear_u[end] == kappa && shear_w[end] == 0.0 && all(shear_u[1:(end - 1)] .== 0.0)
     L = graded.layers
     # Every node of the last station lies on the face x = -1; the block's layer thickness at
@@ -80,30 +119,42 @@ end
     end
     # The apex station is the layer midpoint at the apex's own (u, w).
     @test tube_station(graded, L - 0.5, 0.03, 0.0) ≈
-          0.5 * (tube_station(graded, L - 1, 0.03, 0.0) + tube_station(graded, L, 0.03, 0.0))
+          0.5 *
+          (tube_station(graded, L - 1, 0.03, 0.0) + tube_station(graded, L, 0.03, 0.0))
     # A start face end on the plane x = 0 through the origin (N = (1, 0, 0): the same
     # kappa) mirrors the construction, here with a 70-degree face end (m = 2).
-    start_face = FaceEnd(0, "x1", [1.0, 0.0, 0.0], deg2rad(70.0), -tand(70.0), 0.0, 0.04, 0.01, 0.1)
+    start_face =
+        FaceEnd(0, "x1", [1.0, 0.0, 0.0], deg2rad(70.0), -tand(70.0), 0.0, 0.04, 0.01, 0.1)
     @test start_face.layers == 2 && start_face.spacing ≈ 0.04 * tand(70.0)
-    both = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_face, 0.1; face_ends=[face_end, start_face])
+    both =
+        EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_face, 0.1; face_ends=[face_end, start_face])
     stations, shear_u, shear_w, _, _ = face_ended_tube_stations(both, s -> 0.1, 0.1, 2.0)
-    @test shear_u[1] == start_face.kappa_u && shear_u[2] ≈ 0.5 * start_face.kappa_u && shear_u[3] == 0.0
+    @test shear_u[1] == start_face.kappa_u &&
+          shear_u[2] ≈ 0.5 * start_face.kappa_u &&
+          shear_u[3] == 0.0
     @test stations[1] == 0.0 && stations[3] ≈ 2 * start_face.spacing
     graded = EdgeTube(both, stations; shear_u=shear_u, shear_w=shear_w)
     # With the geometric kappa of the plane x = 0 (-tan 40) the start nodes lie on it; the
     # prescribed 70-degree kappa only exercises the block arithmetic here.
-    plane_face = FaceEnd(0, "x1", [1.0, 0.0, 0.0], deg2rad(40.0), kappa, 0.0, 0.04, 0.01, 0.1)
-    planar = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_face, 0.1; face_ends=[face_end, plane_face])
+    plane_face =
+        FaceEnd(0, "x1", [1.0, 0.0, 0.0], deg2rad(40.0), kappa, 0.0, 0.04, 0.01, 0.1)
+    planar =
+        EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_face, 0.1; face_ends=[face_end, plane_face])
     stations, shear_u, shear_w, _, _ = face_ended_tube_stations(planar, s -> 0.1, 0.1, 2.0)
     planar = EdgeTube(planar, stations; shear_u=shear_u, shear_w=shear_w)
     for (u, w) in ((0.03, 0.0), (-0.03, 0.01))
-        @test tube_point(planar, u, w, tube_station(planar, 0, u, w))[1] ≈ 0.0 atol = 1.0e-12
-        @test tube_point(planar, u, w, tube_station(planar, planar.layers, u, w))[1] ≈ -1.0 atol = 1.0e-12
+        @test tube_point(planar, u, w, tube_station(planar, 0, u, w))[1] ≈ 0.0 atol =
+            1.0e-12
+        @test tube_point(planar, u, w, tube_station(planar, planar.layers, u, w))[1] ≈ -1.0 atol =
+            1.0e-12
     end
     # A tube shorter than its end blocks fails closed.
-    short = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, 0.25, 0.1; face_ends=[face_end, start_face])
-    @test occursin("shorter than its face-end blocks",
-                   guard_message(() -> face_ended_tube_stations(short, s -> 0.1, 0.1, 2.0)))
+    short =
+        EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, 0.25, 0.1; face_ends=[face_end, start_face])
+    @test occursin(
+        "shorter than its face-end blocks",
+        guard_message(() -> face_ended_tube_stations(short, s -> 0.1, 0.1, 2.0))
+    )
     # A plain tube: no shear, the (u, w) station is the axis station bitwise, the CAD
     # interval is the tube interval.
     plain = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, 1.0, 0.1)
@@ -111,11 +162,22 @@ end
     @test tube_station(plain, 3, 0.03, 0.02) === tube_station(plain, 3) &&
           tube_station(plain, 2.5, -0.03, 0.0) === tube_station(plain, 2.5)
     @test tube_cad_interval(plain) == (0.0, 1.0)
-    @test_throws ErrorException EdgeTube(plain, plain.stations; shear_u=zeros(length(plain.stations)),
-                                         shear_w=zeros(length(plain.stations)))
+    @test_throws ErrorException EdgeTube(
+        plain,
+        plain.stations;
+        shear_u=zeros(length(plain.stations)),
+        shear_w=zeros(length(plain.stations))
+    )
     @test_throws ErrorException EdgeTube(tube, tube.stations)
-    @test_throws ErrorException EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, 1.0, 0.1;
-                                         face_ends=[face_end, face_end])
+    @test_throws ErrorException EdgeTube(
+        [0.0, 0.0, 0.0],
+        n,
+        b,
+        0.0,
+        1.0,
+        0.1;
+        face_ends=[face_end, face_end]
+    )
 end
 
 @testset "face-ended tube entities: centroids of the trimmed solid match the OCC ones" begin
@@ -128,7 +190,17 @@ end
     # The tube runs towards the face x = -1 (normal (-1, 0, 0)); kappa_u = (N . n) / (N . e).
     N = [-1.0, 0.0, 0.0]
     theta = acos(abs(dot(N, e)))
-    face_end = FaceEnd(1, "x0", N, theta, dot(N, n) / dot(N, e), dot(N, b) / dot(N, e), 0.04, 0.01, 0.1)
+    face_end = FaceEnd(
+        1,
+        "x0",
+        N,
+        theta,
+        dot(N, n) / dot(N, e),
+        dot(N, b) / dot(N, e),
+        0.04,
+        0.01,
+        0.1
+    )
     s_end = (1.0 - 0.0) / abs(e[1])     # the axis from (0, 0, 0) reaches x = -1 at this s
     tube = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_end, 0.1; face_ends=[face_end])
     gmsh.initialize()
@@ -145,8 +217,8 @@ end
     @test length(matched) == length(entities)
     # Every end-cap entity of the face end lies on the face x = -1; the start cap at s = 0.
     for entity in entities
-        entity.id[2] == 1 && entity.kind in (:edge_point, :outer_point, :cap_polygon, :cap_ray, :cap) ||
-            continue
+        entity.id[2] == 1 &&
+        entity.kind in (:edge_point, :outer_point, :cap_polygon, :cap_ray, :cap) || continue
         @test entity.centroid[1] ≈ -1.0 atol = 1.0e-12
     end
     bbox = gmsh.model.getBoundingBox(3, volume[2])
@@ -156,8 +228,12 @@ end
     plain = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, 0.5, 0.1)
     @test length(add_tube_volumes!(occ, plain, section)) == 1
     gmsh.finalize()
-    @test polygon_centroid_3d([[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [2.0, 1.0, 0.0], [0.0, 1.0, 0.0]]) ≈
-          [1.0, 0.5, 0.0]
+    @test polygon_centroid_3d([
+        [0.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0],
+        [2.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0]
+    ]) ≈ [1.0, 0.5, 0.0]
 end
 
 @testset "metal edge segments: box-face ends by the VERTEX, angle-gated (decision 320)" begin
@@ -175,7 +251,8 @@ end
     upper = [4.0, 4.0]
     clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
     # The contract lists the tip only (b_exit is a box-face cut end: theta 30 > 0).
-    segments = metal_edge_segments([loop], [(0.0, 0.0, 0.0)], clearance, lower, upper, 1.0e-9)
+    segments =
+        metal_edge_segments([loop], [(0.0, 0.0, 0.0)], clearance, lower, upper, 1.0e-9)
     @test length(segments) == 2
     side_a, side_b = segments
     @test side_a.face_ends[1] === nothing && side_a.face_ends[2] === nothing   # theta == 0 exactly
@@ -187,30 +264,55 @@ end
     @test side_b.corner_angles[2] ≈ deg2rad(120.0)     # the tip angle between +x and the 120-degree side
     @test side_b.s_end ≈ side_b.span - clearance(deg2rad(120.0))
     # A contract that still lists the oblique box vertex as a corner fails closed.
-    message = guard_message(() -> metal_edge_segments([loop], [(0.0, 0.0, 0.0), (b_exit[1], b_exit[2], 0.0)],
-                                                      clearance, lower, upper, 1.0e-9))
+    message = guard_message(
+        () -> metal_edge_segments(
+            [loop],
+            [(0.0, 0.0, 0.0), (b_exit[1], b_exit[2], 0.0)],
+            clearance,
+            lower,
+            upper,
+            1.0e-9
+        )
+    )
     @test occursin("regenerate the contract", message) && occursin("decision 320", message)
     # The legacy convention at theta == 0: a Physical-class box vertex listed by the contract
     # keeps h_K and is recorded as a LegacyBoxVertexCorner (the mesh is unchanged).
     legacy_classes = ["Physical", "Physical", "Continuation", "Physical"]
     legacy_loop = (loop..., classes=legacy_classes)
-    legacy = metal_edge_segments([legacy_loop], [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0)], clearance,
-                                 lower, upper, 1.0e-9)
-    @test legacy[1].s_end ≈ 4.0 - clearance(Float64(pi)) && legacy[1].legacy_box_corners == (false, true)
+    legacy = metal_edge_segments(
+        [legacy_loop],
+        [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0)],
+        clearance,
+        lower,
+        upper,
+        1.0e-9
+    )
+    @test legacy[1].s_end ≈ 4.0 - clearance(Float64(pi)) &&
+          legacy[1].legacy_box_corners == (false, true)
     @test legacy[1].face_ends == (nothing, nothing)
     # Two metal sides meeting at a box vertex stay a corner at any tilt: an island whose
     # two oblique sides meet at (4, 0) on the face x = 4.
     island = [(4.0, 0.0), (2.0, 1.0), (2.0, -1.0)]
-    island_loop = (conductor=1, plane=0.0, hole=false, points=island, classes=fill("Physical", 3))
-    island_segments = metal_edge_segments([island_loop], [(p[1], p[2], 0.0) for p in island],
-                                          clearance, lower, upper, 1.0e-9)
+    island_loop =
+        (conductor=1, plane=0.0, hole=false, points=island, classes=fill("Physical", 3))
+    island_segments = metal_edge_segments(
+        [island_loop],
+        [(p[1], p[2], 0.0) for p in island],
+        clearance,
+        lower,
+        upper,
+        1.0e-9
+    )
     @test length(island_segments) == 3
     @test all(segment.face_ends == (nothing, nothing) for segment in island_segments)
-    @test island_segments[1].start_corner && island_segments[1].s_start ≈ clearance(2 * atan(0.5))
+    @test island_segments[1].start_corner &&
+          island_segments[1].s_start ≈ clearance(2 * atan(0.5))
     @test island_segments[1].legacy_box_corners == (false, false)
     # An oblique side through a box corner has no single face plane: fail closed.
-    @test occursin("box corner obliquely",
-                   guard_message(() -> crossed_box_face([4.0, 4.0], [0.6, 0.8], lower, upper, 1.0e-9)))
+    @test occursin(
+        "box corner obliquely",
+        guard_message(() -> crossed_box_face([4.0, 4.0], [0.6, 0.8], lower, upper, 1.0e-9))
+    )
     @test crossed_box_face([4.0, 4.0], [0.0, 1.0], lower, upper, 1.0e-9) == (2, 1)
     @test crossed_box_face([4.0, 1.0], [0.6, 0.8], lower, upper, 1.0e-9) == (1, 1)
     @test crossed_box_face([1.0, 1.0], [0.6, 0.8], lower, upper, 1.0e-9) === nothing
@@ -223,17 +325,40 @@ end
 # boundary classes are those of the plan-view builder (a vertex carries its outgoing
 # side's class) and the contract corners follow decision 320 (the tip, plus the B exit
 # when side B is exactly perpendicular to its face).
-function write_tip_inputs(directory, phi, theta; radius=0.5, side_length=2.0, plane=0.0)
+function write_tip_inputs(
+    directory,
+    phi,
+    theta;
+    radius=0.5,
+    side_length=2.0,
+    side_length_b=side_length,
+    plane=0.0
+)
     d_a = (cosd(theta), sind(theta))
     d_b = (cosd(theta + phi), sind(theta + phi))
-    rows = [(point=(0.5 * side_length * d[1], 0.5 * side_length * d[2], plane), tangent=(d[1], d[2], 0.0),
-             gap=(d[2], -d[1], 0.0) .* sign, interval=(-0.5 * side_length, 0.5 * side_length),
-             normal_sign=1.0, vertex_arm=false, slot=0, conductor=1)
-            for (d, sign) in ((d_a, 1.0), (d_b, -1.0))]
+    # Row B may be longer than row A (side_length_b): the box grows along side B, which
+    # moves side A's exit onto another face or steepens its crossing.
+    rows = [
+        (
+            point=(0.5 * L * d[1], 0.5 * L * d[2], plane),
+            tangent=(d[1], d[2], 0.0),
+            gap=(d[2], -d[1], 0.0) .* sign,
+            interval=(-0.5 * L, 0.5 * L),
+            normal_sign=1.0,
+            vertex_arm=false,
+            slot=0,
+            conductor=1
+        ) for (d, sign, L) in ((d_a, 1.0, side_length), (d_b, -1.0, side_length_b))
+    ]
     lower, upper = row_coupon_bounds(rows, radius, 0.1, 0.05)
     # The wedge clipped to the box: start from the box rectangle (counterclockwise) and
     # clip by the half-planes left of side A and right of side B.
-    polygon = [(lower[1], lower[2]), (upper[1], lower[2]), (upper[1], upper[2]), (lower[1], upper[2])]
+    polygon = [
+        (lower[1], lower[2]),
+        (upper[1], lower[2]),
+        (upper[1], upper[2]),
+        (lower[1], upper[2])
+    ]
     function clip(polygon, inside)
         result = Tuple{Float64, Float64}[]
         m = length(polygon)
@@ -253,17 +378,25 @@ function write_tip_inputs(directory, phi, theta; radius=0.5, side_length=2.0, pl
     polygon = clip(polygon, p -> d_b[2] * p[1] - d_b[1] * p[2])     # right of side B
     # Snap the exits onto the box faces exactly, quantise to the builder's 1e-9 R grid (so an
     # axis-aligned side reads exactly axis-aligned) and rotate the loop to start at the tip.
-    snap(v) = (any(abs(v[1] - f) <= 1.0e-9 for f in (lower[1], upper[1])) ?
-               (abs(v[1] - lower[1]) <= 1.0e-9 ? lower[1] : upper[1]) : round(v[1] / 1.0e-9) * 1.0e-9,
-               any(abs(v[2] - f) <= 1.0e-9 for f in (lower[2], upper[2])) ?
-               (abs(v[2] - lower[2]) <= 1.0e-9 ? lower[2] : upper[2]) : round(v[2] / 1.0e-9) * 1.0e-9)
+    snap(v) = (
+        any(abs(v[1] - f) <= 1.0e-9 for f in (lower[1], upper[1])) ?
+        (abs(v[1] - lower[1]) <= 1.0e-9 ? lower[1] : upper[1]) :
+        round(v[1] / 1.0e-9) * 1.0e-9,
+        any(abs(v[2] - f) <= 1.0e-9 for f in (lower[2], upper[2])) ?
+        (abs(v[2] - lower[2]) <= 1.0e-9 ? lower[2] : upper[2]) :
+        round(v[2] / 1.0e-9) * 1.0e-9
+    )
     polygon = [snap(v) for v in polygon]
     k = argmin([hypot(v...) for v in polygon])
     polygon = vcat(polygon[k:end], polygon[1:(k - 1)])
-    on_face(p, q) = any((abs(p[d] - lower[d]) <= 1.0e-9 && abs(q[d] - lower[d]) <= 1.0e-9) ||
-                        (abs(p[d] - upper[d]) <= 1.0e-9 && abs(q[d] - upper[d]) <= 1.0e-9) for d = 1:2)
+    on_face(p, q) = any(
+        (abs(p[d] - lower[d]) <= 1.0e-9 && abs(q[d] - lower[d]) <= 1.0e-9) ||
+            (abs(p[d] - upper[d]) <= 1.0e-9 && abs(q[d] - upper[d]) <= 1.0e-9) for
+        d = 1:2
+    )
     m = length(polygon)
-    classes = [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
+    classes =
+        [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
     @assert count(==("Physical"), classes) == 2
     # Contract corners (decision 320): a Physical vertex after a Continuation side is a
     # corner only when its side is exactly perpendicular to that face.
@@ -280,7 +413,23 @@ function write_tip_inputs(directory, phi, theta; radius=0.5, side_length=2.0, pl
     open(joinpath(directory, "signature.csv"), "w") do io
         println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
         for (i, row) in enumerate(rows)
-            println(io, join([i, 0, 1, row.point..., row.gap..., row.tangent..., 1, row.interval..., 0], ","))
+            println(
+                io,
+                join(
+                    [
+                        i,
+                        0,
+                        1,
+                        row.point...,
+                        row.gap...,
+                        row.tangent...,
+                        1,
+                        row.interval...,
+                        0
+                    ],
+                    ","
+                )
+            )
         end
     end
     open(joinpath(directory, "boundary.csv"), "w") do io
@@ -296,27 +445,68 @@ function write_tip_inputs(directory, phi, theta; radius=0.5, side_length=2.0, pl
         end
     end
     open(joinpath(directory, "semantic.json"), "w") do io
-        write_json(io, Dict{String, Any}("Version" => 1,
-                                         "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]))
+        return write_json(
+            io,
+            Dict{String, Any}(
+                "Version" => 1,
+                "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]
+            )
+        )
     end
-    return (signature=joinpath(directory, "signature.csv"), boundary=joinpath(directory, "boundary.csv"),
-            mask=joinpath(directory, "mask.csv"), semantic=joinpath(directory, "semantic.json"),
-            polygon=polygon, classes=classes, corners=corners, lower=lower, upper=upper)
+    return (
+        signature=joinpath(directory, "signature.csv"),
+        boundary=joinpath(directory, "boundary.csv"),
+        mask=joinpath(directory, "mask.csv"),
+        semantic=joinpath(directory, "semantic.json"),
+        polygon=polygon,
+        classes=classes,
+        corners=corners,
+        lower=lower,
+        upper=upper
+    )
 end
 
-function build_tip_coupon(directory, phi, theta; fabricated=true, stem="tip", lc_tangent=0.1)
+function build_tip_coupon(
+    directory,
+    phi,
+    theta;
+    fabricated=true,
+    stem="tip",
+    lc_tangent=0.1
+)
     inputs = write_tip_inputs(directory, phi, theta)
     mesh = joinpath(directory, "coupon-$stem.msh")
     census = joinpath(directory, "census-$stem.json")
     generate_spatial_coupon(;
-        signature=inputs.signature, mask=inputs.mask, boundary=inputs.boundary,
-        fabricated=fabricated, filename=mesh, radius=0.5, metal_thickness=0.1, overetch=0.05,
-        sidewall_angle=90.0, top_rounding=0.0, trench_rounding=0.0, lc_fine=0.05, lc_tangent=lc_tangent,
-        lc_far=0.3, max_nodes=2_000_000, max_elements=2_000_000, semantic_contract=inputs.semantic,
-        corner_isotropy_radius=0.1, corner_census=census, edge_size=0.01, edge_growth_ratio=2.0,
-        corner_size=0.01, prism_tubes=true, far_growth=0.5, maximum_corner_aspect=4.0,
-        minimum_scaled_jacobian=0.01, maximum_jacobian_condition=1000.0,
-        quality_displacement_over_normal=0.75)
+        signature=inputs.signature,
+        mask=inputs.mask,
+        boundary=inputs.boundary,
+        fabricated=fabricated,
+        filename=mesh,
+        radius=0.5,
+        metal_thickness=0.1,
+        overetch=0.05,
+        sidewall_angle=90.0,
+        top_rounding=0.0,
+        trench_rounding=0.0,
+        lc_fine=0.05,
+        lc_tangent=lc_tangent,
+        lc_far=0.3,
+        max_nodes=2_000_000,
+        max_elements=2_000_000,
+        semantic_contract=inputs.semantic,
+        corner_isotropy_radius=0.1,
+        corner_census=census,
+        edge_size=0.01,
+        edge_growth_ratio=2.0,
+        corner_size=0.01,
+        prism_tubes=true,
+        far_growth=0.5,
+        maximum_corner_aspect=4.0,
+        minimum_scaled_jacobian=0.01,
+        maximum_jacobian_condition=1000.0,
+        quality_displacement_over_normal=0.75
+    )
     return parse_json(read(census, String)), mesh, inputs
 end
 
@@ -334,7 +524,8 @@ end
 @testset "synthetic 45-degree tip, side A at theta 20: fabricated and thin builds end on both faces" begin
     mktempdir() do directory
         for (fabricated, stem) in ((true, "fab"), (false, "thin"))
-            census, mesh, inputs = build_tip_coupon(directory, 45.0, 20.0; fabricated=fabricated, stem=stem)
+            census, mesh, inputs =
+                build_tip_coupon(directory, 45.0, 20.0; fabricated=fabricated, stem=stem)
             tubes = census["PrismTubes"]
             per_side = tubes["Section"]["TubesPerSide"]
             # Side A exits the +x face at 20 degrees, side B (at 65 degrees) the +y face at a
@@ -364,7 +555,8 @@ end
             # Every tube volume is a single fragment descendant (the build would have failed
             # otherwise); every element positively oriented; the quality gates passed.
             quality = tubes["Quality"]
-            @test quality["Prism"]["PositiveOrientation"] && quality["Pyramid"]["PositiveOrientation"]
+            @test quality["Prism"]["PositiveOrientation"] &&
+                  quality["Pyramid"]["PositiveOrientation"]
             @test quality["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
             @test tubes["Prisms"] == sum(row["Prisms"] for row in tubes["Volumes"])
             @test occursin("decision 320", tubes["Section"]["BoxVertexRule"])
@@ -375,7 +567,8 @@ end
 
 @testset "synthetic 45-degree tip at theta 45 under TangentialSize 0.05 (m = 2 blocks) beside a theta-0 legacy box corner" begin
     mktempdir() do directory
-        census, mesh, inputs = build_tip_coupon(directory, 45.0, 45.0; stem="sharp", lc_tangent=0.05)
+        census, mesh, inputs =
+            build_tip_coupon(directory, 45.0, 45.0; stem="sharp", lc_tangent=0.05)
         tubes = census["PrismTubes"]
         face_ended = [row for row in tubes["Tubes"] if haskey(row, "FaceEnds")]
         # Side A leaves through +x at 45 degrees (m = ceil(2 x 0.04 / 0.05) = 2 at lc_end 0.05);
@@ -387,18 +580,23 @@ end
             @test record["Face"] == "x1" && record["ThetaDegrees"] ≈ 45.0
             @test record["Layers"] == 2 && record["EndSpacing"] == 0.05
             @test 0.5 * record["EndSpacing"] <= record["LayerThicknessRange"][1] &&
-                  record["LayerThicknessRange"][2] <= 1.5 * record["EndSpacing"] * (1.0 + 1.0e-9)
+                  record["LayerThicknessRange"][2] <=
+                  1.5 * record["EndSpacing"] * (1.0 + 1.0e-9)
             end_point = record["End"] == "end" ? row["EndPoint"] : row["StartPoint"]
             @test end_point[1] ≈ inputs.upper[1] atol = 1.0e-9
             near = nodes_near(mesh, end_point, 2.0 * tubes["Section"]["Radius"])
             @test all(p[1] <= inputs.upper[1] + 1.0e-9 for p in near)
-            @test count(p -> abs(p[1] - inputs.upper[1]) <= 1.0e-9, near) >= 1 + tubes["Section"]["Rings"] * 10
+            @test count(p -> abs(p[1] - inputs.upper[1]) <= 1.0e-9, near) >=
+                  1 + tubes["Section"]["Rings"] * 10
         end
-        @test tubes["FaceEnds"]["EndBlockLayers"] == 4 && tubes["FaceEnds"]["LegacyBoxVertexCorners"] == 2
+        @test tubes["FaceEnds"]["EndBlockLayers"] == 4 &&
+              tubes["FaceEnds"]["LegacyBoxVertexCorners"] == 2
         @test length(inputs.corners) == 2 && (0.0, inputs.upper[2], 0.0) in inputs.corners
-        legacy_rows = [row for row in tubes["Tubes"] if haskey(row, "LegacyBoxVertexCorner")]
-        @test length(legacy_rows) == 2 &&
-              all(row["LegacyBoxVertexCorner"] == [[0.0, inputs.upper[2]]] for row in legacy_rows)
+        legacy_rows =
+            [row for row in tubes["Tubes"] if haskey(row, "LegacyBoxVertexCorner")]
+        @test length(legacy_rows) == 2 && all(
+            row["LegacyBoxVertexCorner"] == [[0.0, inputs.upper[2]]] for row in legacy_rows
+        )
         # The 45-degree tip clearance carries the pyramid-envelope margin (design A3 (3)):
         # R / tan(22.5) + max(h_K, 1.25 h_pyr / sin(22.5)) - the envelope term wins below 77.4
         # degrees; the tubes ending at the tip start there.
@@ -407,10 +605,13 @@ end
         expected = radius / tand(22.5) + max(h_k, 1.25 * h_pyr / sind(22.5))
         @test expected > radius / tand(22.5) + h_k
         @test any(abs(row["Start"] - expected) <= 1.0e-9 for row in tubes["Tubes"])
-        @test all(any(abs(angle - deg2rad(45.0)) <= 1.0e-9 for angle in row["CornerAngles"])
-                  for row in tubes["Tubes"])
+        @test all(
+            any(abs(angle - deg2rad(45.0)) <= 1.0e-9 for angle in row["CornerAngles"]) for
+            row in tubes["Tubes"]
+        )
         @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
-        @test tubes["Quality"]["Prism"]["PositiveOrientation"] && tubes["Quality"]["Pyramid"]["PositiveOrientation"]
+        @test tubes["Quality"]["Prism"]["PositiveOrientation"] &&
+              tubes["Quality"]["Pyramid"]["PositiveOrientation"]
         # theta 0: side A along +x (the legacy perpendicular end, no FaceEnd), side B at 90
         # degrees along +y: no face end anywhere, the census carries Count 0; side B's exit is a
         # Physical-class box vertex whose side leaves perpendicularly: the legacy convention
