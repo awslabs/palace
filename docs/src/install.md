@@ -124,7 +124,7 @@ spec (e.g., compiling with other solvers or with GPU support).
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.24 or later (3.25.2 or later for CUDA)
+  - [CMake](https://cmake.org/download) version 3.27 or later
   - C++20 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
@@ -254,6 +254,10 @@ procedure:
         [Arm Performance Libraries (PL)](https://www.arm.com/products/development-tools/server-and-hpc/allinea-studio/performance-libraries)
         installation.
       + Otherwise, tries to locate an installation of [OpenBLAS](https://www.openblas.net/).
+
+This detection can be bypassed by passing a vendor to CMake with `-DBLA_VENDOR=<vendor>`
+(see the [CMake documentation](https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors)
+for the supported values).
 
 If the installation path of OpenBLAS is non-standard or is not found by default, it can be
 set using the `OPENBLAS_DIR` or `OPENBLASROOT` environment variables, or added to
