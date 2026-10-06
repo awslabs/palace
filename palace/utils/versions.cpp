@@ -4,6 +4,7 @@
 #include "versions.hpp"
 
 #include <cstdint>
+#include <cstring>
 
 #include <Eigen/Core>
 #include <HYPRE_config.h>
@@ -126,7 +127,8 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   char mpi_version[MPI_MAX_LIBRARY_VERSION_STRING];
   int mpi_len;
   MPI_Get_library_version(mpi_version, &mpi_len);
-  std::string mpi(mpi_version, mpi_len);
+  // Some implementations (e.g. Open MPI) count the terminating null in the length
+  std::string mpi(mpi_version, strnlen(mpi_version, mpi_len));
   versions.emplace_back("MPI", mpi.substr(0, mpi.find_first_of("\r\n")));
 
   versions.emplace_back("MFEM", mfem::GetVersionStr());
