@@ -1172,6 +1172,9 @@ struct ProcessLibrary
   // The matching radius in metres (the "R (m)" of a spatial coupon's surface response
   // files): the within-R rows a spatial model's surface matrices are read at.
   double matching_radius_m = 0.0;
+  // Fabrication.MetalThickness in the library's length unit (the unit of the BasisPoints
+  // files): the constrained metal band of the translational coupons (decision 404 D1).
+  std::optional<double> metal_thickness;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
@@ -1921,6 +1924,247 @@ std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
 std::string CheckCornerRuleCouponFiles(const LibraryModel &model,
                                        double position_tolerance);
 
+// The consistent translational mortar (decision 404 D1). The straight coupon generators
+// (examples/cpw2d/generate_edge_response.py, generate_edge_pair_response.py,
+// generate_edge_cluster_response.py: write_bases) insert the knots where the fabricated
+// metal meets the matching contour, (x_face, 0) and (x_face, MetalThickness) on every box
+// face the metal crosses, constrain the band between them to the conductor potential and
+// publish the FREE knots only (no ZeroTraceIndices): the coupon's hats adjacent to the
+// band ramp to zero at the band knots, while a mortar built on the listed knots alone
+// spans the band with one segment and under-reads the crossing-adjacent knots (the
+// straight-class MS lift, decisions 400 / 403). The faces a translational closed-contour
+// coupon's metal meets, from its topology (canonical frame: edge at the origin, gap toward
+// +x; the box faces are the extreme x of the knots): an IsolatedEdge / CurvedEdge on x =
+// min, a same-conductor gap on both faces, a ParallelEdgeCluster on x = min when its first
+// edge's gap points +x and on x = max when its last edge's gap points -x, a strip on none.
+// Open-contour models (different conductors) anchor their paths on conductor references
+// and are outside this rule (recorded). The band must lie strictly between two consecutive
+// knots of the face with no free knot on it, else the library's knots and constraints
+// disagree and the load fails closed. A coupon that lists the band knots as
+// ZeroTraceIndices (the library contract) is verified against the same rule and needs no
+// inserted vertex.
+struct ConsistentMortarBands
+{
+  // The inserted vertices, in contour order per crossing (empty under the contract).
+  std::vector<std::array<double, 3>> vertices;
+  std::string rule;
+  // Nonempty when the knots and the constraints disagree (fail closed).
+  std::string failure;
+};
+
+ConsistentMortarBands
+DeriveConsistentMortarBands(const LibraryModel &model,
+                            const std::vector<std::array<double, 3>> &points,
+                            std::optional<double> metal_thickness, double tolerance)
+{
+  ConsistentMortarBands result;
+  const auto &response = model.response;
+  if (!response.open_contour_paths.empty())
+  {
+    result.rule = "none: open contour paths anchor on conductor references (outside the "
+                  "consistent-mortar rule)";
+    return result;
+  }
+  std::vector<std::pair<bool, int>> faces;  // (x = min, band conductor label)
+  switch (model.topology)
+  {
+    case LibraryTopology::ISOLATED_EDGE:
+    case LibraryTopology::CURVED_EDGE:
+      faces.emplace_back(true, 1);
+      break;
+    case LibraryTopology::SAME_CONDUCTOR_GAP:
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_GAP:
+      faces.emplace_back(true, 1);
+      faces.emplace_back(false, 1);
+      break;
+    case LibraryTopology::PARALLEL_EDGE_CLUSTER:
+      if (model.cluster_edges.empty())
+      {
+        result.rule = "none: ParallelEdgeCluster without Edges";
+        return result;
+      }
+      if (model.cluster_edges.front().gap_direction == 1)
+      {
+        faces.emplace_back(true, model.cluster_edges.front().conductor);
+      }
+      if (model.cluster_edges.back().gap_direction == -1)
+      {
+        faces.emplace_back(false, model.cluster_edges.back().conductor);
+      }
+      break;
+    case LibraryTopology::SAME_CONDUCTOR_STRIP:
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP:
+      break;
+    default:
+      result.rule = "none: not a translational closed-contour topology";
+      return result;
+  }
+  if (faces.empty())
+  {
+    result.rule = "none: the metal does not meet the matching contour (strip)";
+    return result;
+  }
+  if (!metal_thickness)
+  {
+    result.rule = "none: the library records no Fabrication.MetalThickness";
+    return result;
+  }
+  if (points.empty())
+  {
+    result.rule = "none: no BasisPoints";
+    return result;
+  }
+  const double t = *metal_thickness;
+  const int n = static_cast<int>(points.size());
+  std::vector<int> group_of(n, -1), group_offset, group_size;
+  {
+    int offset = 0;
+    std::vector<int> groups = response.contour_groups;
+    if (groups.empty())
+    {
+      groups.push_back(n);
+    }
+    for (const int count : groups)
+    {
+      for (int i = 0; i < count && offset + i < n; i++)
+      {
+        group_of[offset + i] = static_cast<int>(group_offset.size());
+      }
+      group_offset.push_back(offset);
+      group_size.push_back(count);
+      offset += count;
+    }
+  }
+  const std::set<int> zero_set(response.zero_trace_indices.begin(),
+                               response.zero_trace_indices.end());
+  std::set<int> zero_used;
+  double x_min = points.front()[0], x_max = points.front()[0];
+  for (const auto &point : points)
+  {
+    x_min = std::min(x_min, point[0]);
+    x_max = std::max(x_max, point[0]);
+  }
+  std::ostringstream rule;
+  rule << "band [0, " << t << "] on";
+  for (const auto &[left, conductor] : faces)
+  {
+    const double x_face = left ? x_min : x_max;
+    std::vector<int> face_knots;
+    for (int i = 0; i < n; i++)
+    {
+      if (std::abs(points[i][0] - x_face) <= tolerance)
+      {
+        face_knots.push_back(i);
+      }
+    }
+    std::sort(face_knots.begin(), face_knots.end(),
+              [&](int a, int b) { return points[a][1] < points[b][1]; });
+    // The free knots must stay off the band; the band knots (contract) sit at its ends.
+    std::vector<int> band_knots;
+    for (const int i : face_knots)
+    {
+      const double y = points[i][1];
+      if (y < -tolerance || y > t + tolerance)
+      {
+        continue;
+      }
+      if (!zero_set.count(i))
+      {
+        result.failure =
+            fmt::format("free basis point {:d} ({:.6g}, {:.6g}) lies on the "
+                        "constrained metal band [0, {:.6g}] of the face x = "
+                        "{:.6g} (conductor {:d})",
+                        i + 1, points[i][0], points[i][1], t, x_face, conductor);
+        return result;
+      }
+      band_knots.push_back(i);
+    }
+    // The two knots the band lies between (below and above it), adjacent on the face.
+    int below = -1, above = -1;
+    for (std::size_t k = 0; k < face_knots.size(); k++)
+    {
+      const double y = points[face_knots[k]][1];
+      if (y < -tolerance)
+      {
+        below = face_knots[k];
+      }
+      else if (y > t + tolerance && above < 0)
+      {
+        above = face_knots[k];
+      }
+    }
+    if (below < 0 || above < 0)
+    {
+      result.failure = fmt::format("the face x = {:.6g} has no basis points on both sides "
+                                   "of the constrained metal band [0, {:.6g}]",
+                                   x_face, t);
+      return result;
+    }
+    auto Consecutive = [&](int a, int b)
+    {
+      if (group_of[a] < 0 || group_of[a] != group_of[b])
+      {
+        return false;
+      }
+      const int size = group_size[group_of[a]];
+      const int da = a - group_offset[group_of[a]], db = b - group_offset[group_of[b]];
+      return (da + 1) % size == db || (db + 1) % size == da;
+    };
+    if (band_knots.empty())
+    {
+      // The legacy library: insert the band vertices in contour order between the two.
+      if (!Consecutive(below, above))
+      {
+        result.failure = fmt::format(
+            "basis points {:d} and {:d} on either side of the constrained metal band of "
+            "the face x = {:.6g} are not consecutive on one closed contour",
+            below + 1, above + 1, x_face);
+        return result;
+      }
+      const int first =
+          group_offset[group_of[below]] +
+          (below - group_offset[group_of[below]] + 1) % group_size[group_of[below]];
+      const bool upward = first == above;
+      const std::array<double, 3> lower = {x_face, 0.0, 0.0}, upper = {x_face, t, 0.0};
+      result.vertices.push_back(upward ? lower : upper);
+      result.vertices.push_back(upward ? upper : lower);
+      rule << fmt::format(" x = {:.6g} between basis points {:d} and {:d} (inserted)",
+                          x_face, below + 1, above + 1);
+    }
+    else
+    {
+      // The library contract: exactly the two band ends, consecutive with their free
+      // neighbours.
+      if (band_knots.size() != 2 || std::abs(points[band_knots[0]][1]) > tolerance ||
+          std::abs(points[band_knots[1]][1] - t) > tolerance ||
+          !Consecutive(below, band_knots[0]) ||
+          !Consecutive(band_knots[0], band_knots[1]) || !Consecutive(band_knots[1], above))
+      {
+        result.failure =
+            fmt::format("the ZeroTraceIndices on the face x = {:.6g} are not the two "
+                        "consecutive band knots (x, 0) and (x, {:.6g})",
+                        x_face, t);
+        return result;
+      }
+      zero_used.insert(band_knots.begin(), band_knots.end());
+      rule << fmt::format(" x = {:.6g} at ZeroTraceIndices {:d} and {:d}", x_face,
+                          band_knots[0] + 1, band_knots[1] + 1);
+    }
+  }
+  for (const int index : response.zero_trace_indices)
+  {
+    if (!zero_used.count(index))
+    {
+      result.failure = fmt::format("ZeroTraceIndices entry {:d} is not a constrained "
+                                   "metal-band knot of the topology",
+                                   index + 1);
+      return result;
+    }
+  }
+  result.rule = rule.str();
+  return result;
+}
+
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
                                   bool geometry_only = false)
@@ -1960,6 +2204,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     if (entries != fabrication->end())
     {
       interface_layers = &*entries;
+    }
+    if (auto thickness = fabrication->find("MetalThickness");
+        thickness != fabrication->end())
+    {
+      MFEM_VERIFY(thickness->is_number() && std::isfinite(thickness->get<double>()) &&
+                      thickness->get<double>() > 0.0,
+                  "Fabrication-process response-library Fabrication.MetalThickness must "
+                  "be a positive number!");
+      library.metal_thickness = thickness->get<double>();
     }
   }
   MFEM_VERIFY(version < 3 || (interface_layers && interface_layers->is_object()),
@@ -2717,6 +2970,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       std::sort(model.response.zero_trace_indices.begin(),
                 model.response.zero_trace_indices.end());
     }
+    const bool translational_closed_contour =
+        !spatial_response && model.response.open_contour_paths.empty();
     MFEM_VERIFY(model.response.zero_trace_indices.empty() ||
                     (spatial_vertex &&
                      model.boundary_condition.type == MetalBoundaryConditionType::PEC) ||
@@ -2726,8 +2981,42 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                  {
                                    return edge.boundary_condition.type ==
                                           MetalBoundaryConditionType::PEC;
-                                 })),
-                "Finite-impedance spatial response models cannot use ZeroTraceIndices!");
+                                 })) ||
+                    (translational_closed_contour &&
+                     model.boundary_condition.type == MetalBoundaryConditionType::PEC),
+                "Finite-impedance response models cannot use ZeroTraceIndices!");
+    if (translational_closed_contour)
+    {
+      // The consistent mortar (decision 404 D1): the constrained metal-band knots of the
+      // coupon, from its ZeroTraceIndices (the library contract) or inserted by the rule
+      // from the topology and Fabrication.MetalThickness; a library whose knots disagree
+      // with its constraints fails closed. Recorded per model
+      // (Diagnostics.ConsistentMortar).
+      std::vector<std::array<double, 3>> points;
+      if (std::filesystem::is_regular_file(model.response.basis_points))
+      {
+        points = ReadBasisPoints(model.response.basis_points);
+      }
+      const auto bands =
+          DeriveConsistentMortarBands(model, points, library.metal_thickness,
+                                      1.0e-9 * library.matching_radius * coordinate_scale);
+      MFEM_VERIFY(bands.failure.empty(),
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" lists basis points that disagree with its constrained metal "
+                         "band (decision 404 D1, the consistent mortar): "
+                      << bands.failure << "!");
+      model.response.consistent_mortar_vertices = bands.vertices;
+      model.response.consistent_mortar_rule = bands.rule;
+    }
+    else
+    {
+      model.response.consistent_mortar_rule =
+          model.response.open_contour_paths.empty()
+              ? "none: spatial model (explicit trace mesh)"
+              : "none: open contour paths anchor on conductor references (outside the "
+                "consistent-mortar rule)";
+    }
     if (corner && spatial_response && !model.response.zero_trace_indices.empty() &&
         !model.response.contour_groups.empty())
     {
@@ -15218,6 +15507,8 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                       {"SpatialBasis", model.spatial_basis},
                       {"ContourGroups", model.contour_groups},
                       {"ZeroTraceIndices", model.zero_trace_indices},
+                      {"ConsistentMortarVertices", model.consistent_mortar_vertices},
+                      {"ConsistentMortarRule", model.consistent_mortar_rule},
                       {"OpenContourPaths", std::move(open_paths)},
                       {"InteriorTraceCount", model.interior_trace_count},
                       {"ConductorStateCount", model.conductor_state_count},
@@ -15263,7 +15554,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 9},
+  nlohmann::json cache = {{"Version", 10},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -15339,15 +15630,16 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 9,
+      data.value("Version", 0) == 10,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 9 carries the feature, mesh segment, chain stretch and own-edge "
+          << " (version 10 carries the feature, mesh segment, chain stretch and own-edge "
              "offset of every patch, the claims, support box and chain of every spatial "
              "cluster patch, the matching radius for the continuation and vertex "
              "ownership, the quantum near-match records of the matching pass, the "
-             "corner-arm trim records and the uncovered portions of decision 394; delete "
-             "a stale cache)!");
+             "corner-arm trim records and the uncovered portions of decision 394, and the "
+             "consistent-mortar band vertices and rule of every model (decision 404 D1); "
+             "delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -15416,6 +15708,9 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     model.spatial_basis = entry.value("SpatialBasis", false);
     model.contour_groups = entry.value("ContourGroups", std::vector<int>{});
     model.zero_trace_indices = entry.value("ZeroTraceIndices", std::vector<int>{});
+    model.consistent_mortar_vertices =
+        entry.at("ConsistentMortarVertices").get<std::vector<std::array<double, 3>>>();
+    model.consistent_mortar_rule = entry.at("ConsistentMortarRule").get<std::string>();
     model.interior_trace_count = entry.value("InteriorTraceCount", 0);
     model.conductor_state_count = entry.value("ConductorStateCount", 0);
     for (const auto &value : entry.value("OpenContourPaths", nlohmann::json::array()))
@@ -15662,6 +15957,15 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         ClipUncoveredPortionsBySpatialSupport(placed_uncovered, boxes, 3);
     diagnostics["Uncovered"] = DescribeUncoveredPortions(
         placed_uncovered, &uncovered_clipping, patches, coordinate_scale);
+    // The consistent mortar (decision 404 D1): the band vertices of every translational
+    // model's hat basis and the rule that produced them.
+    diagnostics["ConsistentMortar"] = DescribeConsistentMortar(patches);
+    manifest["Summary"]["ConsistentMortar"] = {
+        {"TranslationalModels", diagnostics["ConsistentMortar"]["TranslationalModels"]},
+        {"WithInsertedBandVertices",
+         diagnostics["ConsistentMortar"]["WithInsertedBandVertices"]},
+        {"WithZeroTraceIndices", diagnostics["ConsistentMortar"]["WithZeroTraceIndices"]},
+        {"WithoutBand", diagnostics["ConsistentMortar"]["WithoutBand"]}};
     manifest["Summary"]["CornerArmTrim"] = {
         {"Corners", diagnostics["CornerArmTrim"]["Count"]},
         {"TrimmedLength", diagnostics["CornerArmTrim"]["TrimmedLength"]},
@@ -17296,6 +17600,72 @@ nlohmann::json DescribeCornerArmTrimExcludedCoupons(
        "applied), as the corner's own window [0, R) already is. Lengths in mesh units"}};
 }
 
+// The consistent-mortar record (decision 404 D1) of the runtime models: per translational
+// model the constrained metal-band vertices of its surface-mortar hat basis (inserted by
+// the rule from the topology and Fabrication.MetalThickness, or its ZeroTraceIndices under
+// the library contract) and the rule that produced them; spatial models are listed with
+// their trace mesh as the source. Coordinates in the canonical coupon frame (the library's
+// length unit).
+nlohmann::json DescribeConsistentMortar(const ResponseCorrectionData &config)
+{
+  nlohmann::json models = nlohmann::json::array();
+  int translational = 0, inserted = 0, contract = 0, without_band = 0;
+  for (const auto &model : config.models)
+  {
+    const bool is_translational =
+        !model.spatial_basis && IsTranslationalTopology(model.topology);
+    std::string source;
+    if (!is_translational)
+    {
+      source = "TraceMesh";
+    }
+    else if (!model.consistent_mortar_vertices.empty())
+    {
+      source = "RuntimeRule";
+      inserted++;
+    }
+    else if (!model.zero_trace_indices.empty())
+    {
+      source = "ZeroTraceIndices";
+      contract++;
+    }
+    else
+    {
+      source = "None";
+      without_band++;
+    }
+    translational += is_translational ? 1 : 0;
+    models.push_back({{"Model", model.name},
+                      {"ModelIndex", model.idx},
+                      {"Topology", model.topology},
+                      {"Source", source},
+                      {"Rule", model.consistent_mortar_rule},
+                      {"ZeroTraceIndices", model.zero_trace_indices},
+                      {"BandVertices", model.consistent_mortar_vertices}});
+  }
+  return {
+      {"TranslationalModels", translational},
+      {"WithInsertedBandVertices", inserted},
+      {"WithZeroTraceIndices", contract},
+      {"WithoutBand", without_band},
+      {"Models", std::move(models)},
+      {"Rule",
+       "decision 404 D1 (2026-10-06): the translational surface mortar projects the device "
+       "trace onto the coupon's own hat basis, whose hats vanish on the constrained metal "
+       "band [0, MetalThickness] where the metal meets the matching contour (the straight "
+       "generators constrain that band and publish the free knots only). Source "
+       "RuntimeRule: the band vertices are inserted at library load from the topology "
+       "(IsolatedEdge / CurvedEdge: the face x = min; SameConductorGap: both faces; "
+       "ParallelEdgeCluster: the face of an outer edge whose gap points inward; strips: "
+       "none) and Fabrication.MetalThickness between the two consecutive knots on either "
+       "side of the band; a library whose knots lie on the band fails closed. Source "
+       "ZeroTraceIndices: the library lists the band knots (verified against the same "
+       "rule). Source None: no band (strip), open contour paths (conductor-anchored, "
+       "outside the rule) or no Fabrication.MetalThickness (legacy mortar). Collocated "
+       "trace coupling does not use the mortar. Coordinates in the canonical coupon "
+       "frame"}};
+}
+
 nlohmann::json
 DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
                        const ResponseCorrectionData &config, double coordinate_scale)
@@ -18334,6 +18704,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     model.spatial_basis = model_config.spatial_basis;
     model.contour_groups = model_config.contour_groups;
     model.zero_trace_indices = model_config.zero_trace_indices;
+    model.consistent_mortar_vertices = model_config.consistent_mortar_vertices;
+    model.consistent_mortar_rule = model_config.consistent_mortar_rule;
     for (const auto &path : model_config.open_contour_paths)
     {
       model.open_contour_paths.push_back(
@@ -18580,21 +18952,79 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       else
       {
+        // A segment end >= contour_size is a constrained metal-band vertex (decision 404
+        // D1): the coupon's hat basis has a vertex there with no coefficient.
+        auto SegmentPoint = [&](int index) -> const std::array<double, 3> &
+        {
+          return index < model.contour_size
+                     ? points[index]
+                     : model.consistent_mortar_vertices[index - model.contour_size];
+        };
         auto AddSegment = [&](int begin, int end)
         {
-          MFEM_VERIFY(begin >= 0 && begin < model.contour_size && end >= 0 &&
-                          end < model.contour_size && begin != end,
+          const int vertex_count =
+              model.contour_size +
+              static_cast<int>(model.consistent_mortar_vertices.size());
+          MFEM_VERIFY(begin >= 0 && begin < vertex_count && end >= 0 &&
+                          end < vertex_count && begin != end,
                       "Surface-mortar contour contains an invalid segment!");
           double length_squared = 0.0;
           for (int d = 0; d < 3; d++)
           {
-            const double delta = points[end][d] - points[begin][d];
+            const double delta = SegmentPoint(end)[d] - SegmentPoint(begin)[d];
             length_squared += delta * delta;
           }
           const double length = std::sqrt(length_squared);
           MFEM_VERIFY(length > 0.0,
                       "Surface-mortar contour contains a zero-length segment!");
           model.mortar_segments.push_back({begin, end, length, 1});
+        };
+        // The band vertices on the knot segment begin -> end, ordered along it; the
+        // segments between two band vertices (the metal band) carry no hat.
+        std::vector<bool> vertex_inserted(model.consistent_mortar_vertices.size(), false);
+        auto AddKnotSegment = [&](int begin, int end)
+        {
+          std::vector<std::pair<double, int>> inserted;
+          const auto &a = points[begin];
+          const auto &b = points[end];
+          double length_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            length_squared += (b[d] - a[d]) * (b[d] - a[d]);
+          }
+          for (std::size_t v = 0; v < model.consistent_mortar_vertices.size(); v++)
+          {
+            const auto &p = model.consistent_mortar_vertices[v];
+            double dot = 0.0, distance_squared = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              dot += (p[d] - a[d]) * (b[d] - a[d]);
+            }
+            const double s = dot / length_squared;
+            for (int d = 0; d < 3; d++)
+            {
+              const double foot = a[d] + s * (b[d] - a[d]);
+              distance_squared += (p[d] - foot) * (p[d] - foot);
+            }
+            if (s > 0.0 && s < 1.0 && distance_squared <= 1.0e-20 * length_squared)
+            {
+              inserted.emplace_back(s, model.contour_size + static_cast<int>(v));
+              vertex_inserted[v] = true;
+            }
+          }
+          std::sort(inserted.begin(), inserted.end());
+          int previous = begin;
+          bool previous_is_knot = true;
+          for (const auto &[s, vertex] : inserted)
+          {
+            if (previous_is_knot)
+            {
+              AddSegment(previous, vertex);
+            }
+            previous = vertex;
+            previous_is_knot = false;
+          }
+          AddSegment(previous, end);
         };
         if (!model.open_contour_paths.empty())
         {
@@ -18605,7 +19035,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 "A translational surface-mortar path requires at least two points!");
             for (std::size_t i = 1; i < path.indices.size(); i++)
             {
-              AddSegment(path.indices[i - 1], path.indices[i]);
+              AddKnotSegment(path.indices[i - 1], path.indices[i]);
             }
           }
         }
@@ -18619,17 +19049,34 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                         "three points!");
             for (int i = 0; i < count; i++)
             {
-              AddSegment(offset + i, offset + (i + 1) % count);
+              AddKnotSegment(offset + i, offset + (i + 1) % count);
             }
             offset += count;
           }
         }
+        MFEM_VERIFY(std::all_of(vertex_inserted.begin(), vertex_inserted.end(),
+                                [](bool inserted) { return inserted; }),
+                    "A consistent-mortar band vertex of response model \""
+                        << model.name
+                        << "\" lies on no contour segment between consecutive basis "
+                           "points!");
         for (const auto &segment : model.mortar_segments)
         {
-          mass(segment.begin, segment.begin) += segment.length / 3.0;
-          mass(segment.end, segment.end) += segment.length / 3.0;
-          mass(segment.begin, segment.end) += segment.length / 6.0;
-          mass(segment.end, segment.begin) += segment.length / 6.0;
+          const bool begin_knot = segment.begin < model.contour_size;
+          const bool end_knot = segment.end < model.contour_size;
+          if (begin_knot)
+          {
+            mass(segment.begin, segment.begin) += segment.length / 3.0;
+          }
+          if (end_knot)
+          {
+            mass(segment.end, segment.end) += segment.length / 3.0;
+          }
+          if (begin_knot && end_knot)
+          {
+            mass(segment.begin, segment.end) += segment.length / 6.0;
+            mass(segment.end, segment.begin) += segment.length / 6.0;
+          }
         }
       }
       if (!model.spatial_mortar)
@@ -18641,6 +19088,20 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           for (int j = 0; j < model.contour_size; j++)
           {
             model.mortar_constant_load[i] += mass(i, j);
+          }
+        }
+        // The integral of a free hat over its ramp to a band vertex (no mass column).
+        for (const auto &segment : model.mortar_segments)
+        {
+          const bool begin_knot = segment.begin < model.contour_size;
+          const bool end_knot = segment.end < model.contour_size;
+          if (begin_knot && !end_knot)
+          {
+            model.mortar_constant_load[segment.begin] += segment.length / 6.0;
+          }
+          else if (end_knot && !begin_knot)
+          {
+            model.mortar_constant_load[segment.end] += segment.length / 6.0;
           }
         }
       }
@@ -18655,6 +19116,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       model.mortar_mass_inverse.SetSize(model.contour_size);
       mfem::DenseMatrixInverse(mass, true).GetInverseMatrix(model.mortar_mass_inverse);
+      model.constrained_translational_mortar =
+          !model.spatial_mortar &&
+          (!model.zero_trace_indices.empty() || !model.consistent_mortar_vertices.empty());
     }
     auto domain_response = BuildDomainResponseMatrices(
         model_config, model.basis_size, model.zero_trace_indices, iodata.units);
@@ -18737,6 +19201,23 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         spatially_owned_patches.insert(patch);
       }
     }
+  }
+  // The consistent mortar (decision 404 D1): the constrained metal-band vertices of every
+  // translational model's surface-mortar hat basis and the rule that produced them.
+  ownership_diagnostics["ConsistentMortar"] = DescribeConsistentMortar(*config);
+  if (config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR &&
+      ownership_diagnostics["ConsistentMortar"]["WithInsertedBandVertices"].get<int>() > 0)
+  {
+    Mpi::Print(
+        fespace.GetComm(),
+        "Consistent translational mortar (decision 404 D1): {:d} of {:d} "
+        "translational model(s) project onto the coupon hats with inserted "
+        "metal-band vertices ({:d} list them as ZeroTraceIndices, {:d} have no "
+        "band)\n",
+        ownership_diagnostics["ConsistentMortar"]["WithInsertedBandVertices"].get<int>(),
+        ownership_diagnostics["ConsistentMortar"]["TranslationalModels"].get<int>(),
+        ownership_diagnostics["ConsistentMortar"]["WithZeroTraceIndices"].get<int>(),
+        ownership_diagnostics["ConsistentMortar"]["WithoutBand"].get<int>());
   }
   if (dimension == 3)
   {
@@ -19401,8 +19882,16 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                              : 0.0;
           for (const auto &segment : model.mortar_segments)
           {
-            const auto &begin = local_points[segment.begin];
-            const auto &end = local_points[segment.end];
+            // A segment end >= contour_size is a constrained metal-band vertex of the
+            // consistent mortar (decision 404 D1).
+            auto SegmentPoint = [&](int index) -> const std::array<double, 3> &
+            {
+              return index < model.contour_size
+                         ? local_points[index]
+                         : model.consistent_mortar_vertices[index - model.contour_size];
+            };
+            const auto &begin = SegmentPoint(segment.begin);
+            const auto &end = SegmentPoint(segment.end);
             const int transverse_subdivisions =
                 std::max(1, static_cast<int>(std::ceil(segment.length / coordinate_scale /
                                                        patch.mortar_resolution)));
@@ -21080,8 +21569,14 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
                 const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
                                  transverse_subdivisions;
                 const double value = correction(point++);
-                mortar_load[segment.begin] += quadrature_weight * (1.0 - t) * value;
-                mortar_load[segment.end] += quadrature_weight * t * value;
+                if (segment.begin < model.contour_size)
+                {
+                  mortar_load[segment.begin] += quadrature_weight * (1.0 - t) * value;
+                }
+                if (segment.end < model.contour_size)
+                {
+                  mortar_load[segment.end] += quadrature_weight * t * value;
+                }
               }
             }
           }
@@ -21090,15 +21585,33 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
             reference += longitudinal_weight * correction(point++);
           }
         }
+        if (model.constrained_translational_mortar)
+        {
+          // The consistent mortar (decision 404 D1): the trace relative to the reference
+          // conductor projected onto the coupon's hats, which vanish on the constrained
+          // metal band. The free hats no longer sum to one next to the band, so the
+          // reference is removed through the hats' integrals (as the spatial mortar does)
+          // and a band knot listed as a basis point keeps a zero coefficient.
+          for (int i = 0; i < model.contour_size; i++)
+          {
+            mortar_load[i] -= references[0] * model.mortar_constant_load[i];
+          }
+          for (const int index : model.zero_trace_indices)
+          {
+            mortar_load[index] = 0.0;
+          }
+        }
       }
       MFEM_ASSERT(point == patch.point_offset + patch.point_count - patch.probe_point_count,
                   "Incorrect surface-mortar point count!");
       mortar_coefficients.SetSize(model.contour_size);
       model.mortar_mass_inverse.Mult(mortar_load, mortar_coefficients);
+      const double reference_offset =
+          model.spatial_mortar || model.constrained_translational_mortar ? 0.0
+                                                                         : references[0];
       for (int i = 0; i < model.contour_size; i++)
       {
-        values(patch.trace_offset + i) =
-            mortar_coefficients[i] - (model.spatial_mortar ? 0.0 : references[0]);
+        values(patch.trace_offset + i) = mortar_coefficients[i] - reference_offset;
       }
       for (int state = 0; state < model.conductor_state_count; state++)
       {
@@ -21165,6 +21678,21 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
           const double direct = patch_values[model.contour_size + state];
           references[0] += coupling - direct;
           references[state + 1] = direct - coupling;
+        }
+      }
+      else if (model.constrained_translational_mortar)
+      {
+        // The transpose of the consistent mortar: a band knot's coefficient is not read,
+        // the reference is coupled through the hats' integrals.
+        for (const int index : model.zero_trace_indices)
+        {
+          mortar_load[index] = 0.0;
+        }
+        references[0] = -mfem::InnerProduct(model.mortar_constant_load, mortar_load);
+        for (int state = 0; state < model.conductor_state_count; state++)
+        {
+          references[state + 1] += patch_values[model.contour_size + state];
+          references[0] -= patch_values[model.contour_size + state];
         }
       }
       else
@@ -21235,6 +21763,11 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
                                               patch.mortar_resolution)));
             const double quadrature_weight =
                 longitudinal_weight * segment.length / (2.0 * transverse_subdivisions);
+            // A band vertex (index >= contour_size) has no coefficient: its hat value is 0.
+            const double begin_load =
+                segment.begin < model.contour_size ? mortar_load[segment.begin] : 0.0;
+            const double end_load =
+                segment.end < model.contour_size ? mortar_load[segment.end] : 0.0;
             for (int subdivision = 0; subdivision < transverse_subdivisions; subdivision++)
             {
               for (const double offset : {-gauss_offset, gauss_offset})
@@ -21242,8 +21775,7 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
                 const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
                                  transverse_subdivisions;
                 correction[point++] =
-                    quadrature_weight *
-                    ((1.0 - t) * mortar_load[segment.begin] + t * mortar_load[segment.end]);
+                    quadrature_weight * ((1.0 - t) * begin_load + t * end_load);
               }
             }
           }
@@ -21733,15 +22265,27 @@ SurfaceResponseOperator::GatherPatchContributions(
 std::vector<SurfaceResponseOperator::PatchTrace>
 SurfaceResponseOperator::GetSpatialPatchTraces(const Vector &x) const
 {
+  return GatherPatchTraces(x, true);
+}
+
+std::vector<SurfaceResponseOperator::PatchTrace>
+SurfaceResponseOperator::GetPatchTraces(const Vector &x) const
+{
+  return GatherPatchTraces(x, false);
+}
+
+std::vector<SurfaceResponseOperator::PatchTrace>
+SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) const
+{
   MFEM_VERIFY(!maxwell,
-              "Spatial patch-trace export currently supports electrostatic response "
-              "correction only!");
+              "Patch-trace export currently supports electrostatic response correction "
+              "only!");
   ApplyTrace(x, trace);
   std::vector<double> local_records;
   for (const auto &patch : patches)
   {
     const auto &model = models[patch.model];
-    if (!model.spatial_basis)
+    if (spatial_only && !model.spatial_basis)
     {
       continue;
     }
@@ -21757,7 +22301,7 @@ SurfaceResponseOperator::GetSpatialPatchTraces(const Vector &x) const
 
   MFEM_VERIFY(local_records.size() <=
                   static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local spatial patch-trace data exceeds the MPI count limit!");
+              "Local patch-trace data exceeds the MPI count limit!");
   const int local_value_count = static_cast<int>(local_records.size());
   std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
   Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
