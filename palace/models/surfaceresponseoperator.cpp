@@ -8354,7 +8354,10 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
       const double kept_lo = slope > 0.0 ? std::max(c0, c_cut) : c0;
       const double kept_hi = slope > 0.0 ? c1 : std::min(c1, c_cut);
       ClipLongitudinalCell(patch, a_hi > exit ? kept_lo : 0.0, a_hi > exit ? kept_hi : 0.0);
-      record.removed_cell_length += removed;
+      // The geometric length removed: the co-located patches of a first-order split share
+      // one cell (model weights summing to 1), so each counts its model weight of it; the
+      // per-patch record keeps the full removed length (the A7 audit weights it itself).
+      record.removed_cell_length += removed * patch.provenance.model_weight;
       record.cells.emplace_back(p, removed);
     }
     // The uncovered portions on the second arm (an unmatched feature beginning at the
@@ -17147,8 +17150,10 @@ DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimDa
        "quadrature weight scaled by kept / cell; a cell wholly before s keeps weight 0), "
        "and an unmatched feature's portion on that arm loses the same part. "
        "TrimmedLength = s - R per corner (the geometric trim), RemovedCellLength = the "
-       "cell length removed (a cell beginning before R, a snapped claim boundary, loses "
-       "that part too). A corner whose s - R is within ToleranceOverR x R (perpendicular "
+       "cell length removed, each patch weighted by its model weight (the co-located "
+       "patches of a first-order split share one cell; a cell beginning before R, a "
+       "snapped claim boundary, loses that part too); Cells lists the full removed length "
+       "per patch. A corner whose s - R is within ToleranceOverR x R (perpendicular "
        "arms: s = R) is untouched and not listed. Lengths in mesh units"}};
 }
 

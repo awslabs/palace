@@ -2052,10 +2052,12 @@ end) and the straight cells of every other feature are untouched. RECORD, one en
 trimmed corner, in `Identification.Diagnostics.CornerArmTrim` of the preflight manifest
 (`Summary.CornerArmTrim` = count / lengths), the operator's `Diagnostics.CornerArmTrim`
 (palace.json) and the cache: `AngleDegrees`, `ExitDistanceOverR` = s / R, `TrimmedLength`
-= s - R (the geometric trim), `RemovedCellLength` (the cell length removed, >= the trim
-when a cell began before R, smaller when the arm's cells stop short of s or the arm is an
-unmatched feature), `RemovedUncoveredLength`, the clipped `Patches`; `Cells` lists
-(`Patch`, `RemovedLength`) in mesh units for the A7 audit (`audit.py` adds them to the
+= s - R (the geometric trim), `RemovedCellLength` (the cell length removed, each patch
+weighted by its model weight so that the co-located patches of a first-order split count
+their shared cell once; >= the trim when a cell began before R, smaller when the arm's
+cells stop short of s or the arm is an unmatched feature), `RemovedUncoveredLength`, the
+clipped `Patches`; `Cells` lists (`Patch`, `RemovedLength` = the full removed length of
+that patch's cell) in mesh units for the A7 audit (`audit.py` adds them to the
 continuation ownership's owned lengths: a portion's quadrature x model weights sum to 1 -
 (owned + removed) / portion). Unit test `SurfaceResponseOperator corner-arm trim`
 (`test-cornerarmtrim.cpp`): the unit-cube lead sheared in its metal plane to a 120-deg

@@ -1358,8 +1358,10 @@ public:
     // so the second arm's straight cells begin at s (their part before s is removed); at
     // 90 deg s = R and nothing changes. One record per matched corner, lengths in patch
     // units: the exit distance, the geometric trim s - R, the cell length actually
-    // removed (a cell beginning before R loses that part too) with the patches clipped,
-    // and the uncovered-portion length removed (an unmatched feature on the second arm).
+    // removed (each patch weighted by its model weight: a first-order split's co-located
+    // patches share one cell; a cell beginning before R loses that part too) with the
+    // patches clipped (the full removed length per patch), and the uncovered-portion
+    // length removed (an unmatched feature on the second arm).
     struct CornerArmTrimData
     {
       int feature = -1;
