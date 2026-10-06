@@ -428,6 +428,169 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class ArrayRelabelIdentityTest(unittest.TestCase):
+    """Decision 388 (the rigid publisher's memory): the relabel reads the mesh as arrays
+    and classifies every centroid / quadrature point in one pass; its labels and census
+    values must equal the element-by-element relabel it replaces (the reference below is
+    that relabel's formula, element by element, on the per-element reader)."""
+
+    @staticmethod
+    def reference_relabel(data, lines, radii, source_coordinates=lambda points: points):
+        """The element-wise relabel of decision 56/61a: labels and census sums per shell."""
+        import numpy as np
+        mesh = relabel.read_msh22_binary(data)
+        coordinates = mesh["Coordinates"]
+        ma_labels = sorted({tag for dimension, tag, _ in mesh["PhysicalNames"] if dimension == 2 and tag // 1000 == 6})
+        ma_indices = [index for index, element in enumerate(mesh["Elements"])
+                      if element[0] in (2, 3) and len(element[2]) >= 2 and element[2][0] in ma_labels]
+        corners = [np.asarray([coordinates[node] for node in mesh["Elements"][index][3]]) for index in ma_indices]
+        centroids = np.asarray([c.mean(axis=0) for c in corners])
+        distances, kinds = relabel.edge_distances(source_coordinates(centroids), lines)
+        ordinals = [relabel.shell_ordinal(d, k, radii) for d, k in zip(distances, kinds)]
+        shells = {}
+        labels = {}
+        for position, index in enumerate(ma_indices):
+            element_type, _, tags, _ = mesh["Elements"][index]
+            group = (ordinals[position], tags[0])
+            shell = shells.setdefault(group, {"Area": [], "QuadratureMeasure": [], "StraddlingMeasure": [],
+                                              "Minimum": math.inf, "Maximum": 0.0})
+            points, measures = relabel.quadrature_points(element_type, corners[position])
+            point_distances, point_kinds = relabel.edge_distances(source_coordinates(points), lines)
+            shell["StraddlingMeasure"].append(sum(float(m) for m, d, k in zip(measures, point_distances, point_kinds)
+                                                  if relabel.shell_ordinal(d, k, radii) != group[0]))
+            shell["Area"].append(relabel.element_area(element_type, corners[position]))
+            shell["QuadratureMeasure"].append(float(measures.sum()))
+            shell["Minimum"] = min(shell["Minimum"], float(distances[position]))
+            shell["Maximum"] = max(shell["Maximum"], float(distances[position]))
+            labels[index] = relabel.SHELL_LABEL_STRIDE * group[0] + tags[0]
+        for shell in shells.values():
+            for key in ("Area", "QuadratureMeasure", "StraddlingMeasure"):
+                shell[key] = math.fsum(shell[key])
+        return labels, shells
+
+    def assert_equal_to_reference(self, data, lines, radii, source_coordinates=None):
+        kwargs = {} if source_coordinates is None else {"source_coordinates": source_coordinates}
+        out, mesh, shells, relabeled, _ = relabel.relabel(data, lines=lines, radii=radii, **kwargs)
+        labels, reference = self.reference_relabel(data, lines, radii, **kwargs)
+        self.assertEqual({index: label for index, (label, _, _) in relabeled.items()}, labels)
+        self.assertEqual(set(shells), set(reference))
+        for group, shell in shells.items():
+            expected = reference[group]
+            # Exact equality: the same element-wise formulas, the same fsum.
+            self.assertEqual(shell["Area"], expected["Area"], group)
+            self.assertEqual(shell["QuadratureMeasure"], expected["QuadratureMeasure"], group)
+            self.assertEqual(shell["StraddlingMeasure"], expected["StraddlingMeasure"], group)
+            self.assertEqual(shell["CentroidDistanceMinimum"], expected["Minimum"], group)
+            self.assertEqual(shell["CentroidDistanceMaximum"], expected["Maximum"], group)
+        after = relabel.read_msh22_binary(out)
+        self.assertEqual({index: after["Elements"][index][2][0] for index in labels}, labels)
+        return out, mesh, shells, relabeled
+
+    def test_strip_equals_the_element_wise_relabel(self):
+        data, _ = strip_mesh()
+        self.assert_equal_to_reference(data, LINES, RADII)
+
+    def test_rotated_strip_equals_the_element_wise_relabel_and_records_margins(self):
+        import numpy as np
+        data, expected = strip_mesh()
+        angle = 0.63
+        rotation = np.array([[math.cos(angle), -math.sin(angle), 0.0], [math.sin(angle), math.cos(angle), 0.0], [0.0, 0.0, 1.0]])
+        translation = np.array([1.2, -0.7, 0.9])
+        # The strip placed by the rotation (its nodes rewritten), classified back in the
+        # source frame through the inverse map the publisher passes.
+        table = relabel.read_msh22_table(data)
+        placed = bytearray(data)
+        records = np.frombuffer(placed, dtype=relabel.NODE_RECORD, count=len(table["NodeRecords"]),
+                                offset=table["NodesSpan"][0] + len(b"$Nodes\n") + len(str(len(table["NodeRecords"]))) + 1)
+        records["xyz"] = table["NodeRecords"]["xyz"] @ rotation.T + translation
+        placed = bytes(placed)
+
+        def source_coordinates(points):
+            return (np.asarray(points, dtype=float) - translation) @ rotation
+
+        out, mesh, shells, relabeled = self.assert_equal_to_reference(placed, LINES, RADII, source_coordinates)
+        self.assertEqual(len(relabeled), len(expected))
+        margins = mesh["DecisionMargins"]
+        for key in ("Centroids", "QuadraturePoints"):
+            self.assertGreater(margins[key]["RingRelativeMargin"], 1e-6)
+            self.assertGreater(margins[key]["KindRelativeMargin"], 1e-6)
+            self.assertEqual(margins[key]["Points"] >= margins[key]["InsideTube"], True)
+        self.assertEqual(margins["Centroids"]["Points"], len(expected))
+        self.assertEqual(margins["Centroids"]["InsideTube"], len(expected) - 1)  # one far triangle
+
+    def test_table_reader_matches_the_element_reader_on_both_header_layouts(self):
+        import numpy as np
+        data, _ = strip_mesh()
+        table = relabel.read_msh22_table(data)
+        elements = relabel.read_msh22_binary(data)["Elements"]
+        self.assertEqual(table["ElementCount"], len(elements))
+        np.testing.assert_array_equal(table["Types"], [element[0] for element in elements])
+        np.testing.assert_array_equal(table["TagOffsets"], [element[1] for element in elements])
+        np.testing.assert_array_equal(table["TagCounts"], [len(element[2]) for element in elements])
+        for run in table["Runs"]:
+            self.assertTrue(run.header_per_element)
+        # The same elements written under multi-element headers (type, count, 2) parse to
+        # the same element tuples apart from the tag offsets.
+        grouped = bytearray(data[:table["ElementsSpan"][0]])
+        grouped += f"$Elements\n{len(elements)}\n".encode()
+        tag = 0
+        for element_type in (3, 2, 4):
+            block = [element for element in elements if element[0] == element_type]
+            grouped += struct.pack("<3i", element_type, len(block), 2)
+            for element in block:
+                tag += 1
+                grouped += struct.pack(f"<{3 + len(element[3])}i", tag, *element[2], *element[3])
+        grouped += b"\n$EndElements\n"
+        regrouped = relabel.read_msh22_table(bytes(grouped))
+        # The one-tetrahedron block's header (4, 1, 2) is a per-element header: the layouts coincide.
+        self.assertEqual([run.header_per_element for run in regrouped["Runs"]], [False, False, True])
+        reordered = [element for element_type in (3, 2, 4) for element in elements if element[0] == element_type]
+        parsed = relabel.read_msh22_binary(bytes(grouped))["Elements"]
+        self.assertEqual([(e[0], e[2], e[3]) for e in parsed], [(e[0], e[2], e[3]) for e in reordered])
+        # The relabel of the regrouped file equals the element-wise relabel of it.
+        self.assert_equal_to_reference(bytes(grouped), LINES, RADII)
+
+    def test_shell_ordinals_equal_the_scalar_rule(self):
+        import numpy as np
+        distances = np.concatenate([[0.0], RADII, np.asarray(RADII) * (1 - 1e-9), np.asarray(RADII) * (1 + 1e-9), [1.0]])
+        for kind in (1, 2):
+            kinds = np.full(len(distances), kind)
+            np.testing.assert_array_equal(relabel.shell_ordinals(distances, kinds, RADII),
+                                          [relabel.shell_ordinal(d, kind, RADII) for d in distances])
+
+    def test_assert_label_only_fails_closed_on_every_other_change(self):
+        data, _ = strip_mesh()
+        out, mesh, shells, relabeled, _ = relabel.relabel(data, lines=LINES, radii=RADII)
+        record = relabel.assert_label_only(data, out, mesh, relabeled)
+        self.assertEqual(record["ChangedTagIntegers"], 2 * len(relabeled))
+        self.assertLessEqual(record["DifferingBytesAfterPhysicalNames"], record["DifferingBytesBound"])
+        after = relabel.read_msh22_table(out)
+        nodes_start = after["NodesSpan"][0] + 40
+        moved = bytearray(out); moved[nodes_start] ^= 1
+        with self.assertRaisesRegex(relabel.RelabelError, "Nodes"):
+            relabel.assert_label_only(data, bytes(moved), mesh, relabeled)
+        # A tag of an element outside the MA surfaces (the tetrahedron, last element).
+        other = bytearray(out)
+        struct.pack_into("<i", other, int(after["TagOffsets"][-1]), 99)
+        with self.assertRaisesRegex(relabel.RelabelError, "outside the relabeled MA pairs"):
+            relabel.assert_label_only(data, bytes(other), mesh, relabeled)
+        # A relabeled element with a label other than its recorded shell label.
+        index = next(iter(relabeled))
+        wrong = bytearray(out)
+        struct.pack_into("<i", wrong, int(after["TagOffsets"][index]), relabeled[index][0] + 1)
+        with self.assertRaisesRegex(relabel.RelabelError, "shell label"):
+            relabel.assert_label_only(data, bytes(wrong), mesh, relabeled)
+        # A node of a relabeled element (the record beyond its tags).
+        node = bytearray(out)
+        struct.pack_into("<i", node, int(after["TagOffsets"][index]) + 8, 7777)
+        with self.assertRaisesRegex(relabel.RelabelError, "outside the relabeled MA pairs"):
+            relabel.assert_label_only(data, bytes(node), mesh, relabeled)
+        # The reference relabel record must describe the bytes: a parent that is not the old label.
+        foreign = dict(relabeled); foreign[index] = (relabeled[index][0], relabeled[index][1], 6002)
+        with self.assertRaisesRegex(relabel.RelabelError, "shell label"):
+            relabel.assert_label_only(data, out, mesh, foreign)
+
+
 class ProductionRadialShellsTest(unittest.TestCase):
     """Decision 61a: the shells at the placement stage (publish_rigid_coupon_mesh.
     apply_radial_shells) on a rotated placement of the synthetic strip, the parent view
