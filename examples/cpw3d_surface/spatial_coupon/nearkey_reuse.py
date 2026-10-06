@@ -208,9 +208,18 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
     stamped = exact_model_entry.get("Signature")
     if stamped is not None and detection.signature_library.signature_hash(stamped) != detection.signature_library.signature_hash(exact_signature):
         raise NearKeyReuseError(f"{exact_name}: the generated basis's Signature differs from the requirement's (hash mismatch)")
-    exact = load_exact_basis(exact_basis_dir, exact_name, exact_model_entry)
     records = detection.candidate_donors(exact_signature, library, rule=rule, exact_interfaces=exact_interfaces,
                                          exact_boundary_condition=exact_boundary_condition)
+    record = {"Requirement": exact_name, "FeatureKey": key_hash, "Mode": mode, "RuleVersion": rule["RuleVersion"], "RuleFileSHA256": rule["_sha256"],
+              "Candidates": [], "Reused": False, "Model": None, "Refused": None}
+    if "*" in records:
+        # the requirement's structure key is not calibrated: refused before any basis is read (DESIGN 1.2 item 0)
+        record["Refused"] = {"Reason": records["*"]["Refusals"][0], "StructureKey": records["*"]["StructureKey"], "Candidates": [],
+                             "Rule": "DESIGN 1.4: the feature stays Missing -> uncovered (F2 raw energy, decision 398)"}
+        (output / REFUSAL_RECORD).write_text(json.dumps(record, indent=1) + "\n")
+        log(f"{exact_name}: near-key reuse REFUSED: {record['Refused']['Reason']}")
+        return record
+    exact = load_exact_basis(exact_basis_dir, exact_name, exact_model_entry)
     by_name = {m["Name"]: m for m in library["Models"]}
     candidates, evaluations = [], []
     for name, near_key in records.items():
@@ -233,10 +242,9 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
     chosen = choose_donor(evaluations)
     for evaluation in evaluations:
         candidates.append(candidate_summary(evaluation, evaluation is chosen))
-    record = {"Requirement": exact_name, "FeatureKey": key_hash, "Mode": mode, "RuleVersion": rule["RuleVersion"], "RuleFileSHA256": rule["_sha256"],
-              "Candidates": candidates, "Reused": chosen is not None, "Model": None, "Refused": None}
+    record.update({"Candidates": candidates, "Reused": chosen is not None})
     if chosen is None:
-        reason = records["*"]["Refusals"][0] if "*" in records else ("no admissible candidate donor" if evaluations else "no candidate donor qualifies")
+        reason = "no admissible candidate donor" if evaluations else "no candidate donor qualifies"
         record["Refused"] = {"Reason": reason, "Candidates": candidates, "Rule": "DESIGN 1.4: the feature stays Missing -> uncovered (F2 raw energy, decision 398)"}
         (output / REFUSAL_RECORD).write_text(json.dumps(record, indent=1) + "\n")
         log(f"{exact_name}: near-key reuse REFUSED: {reason}")
