@@ -558,6 +558,36 @@ class ArrayRelabelIdentityTest(unittest.TestCase):
             np.testing.assert_array_equal(relabel.shell_ordinals(distances, kinds, RADII),
                                           [relabel.shell_ordinal(d, kind, RADII) for d in distances])
 
+    def test_decision_margins_of_an_absent_decision_are_none(self):
+        """A decision that never happens has no margin: None (the census convention of the
+        far shell's OuterRadius), never a non-standard JSON Infinity."""
+        import numpy as np
+
+        def margins(points, lines):
+            points = np.asarray(points, dtype=float).reshape(-1, 3)
+            distances, kinds = relabel.edge_distances(points, lines)
+            ordinals = relabel.shell_ordinals(distances, kinds, RADII)
+            record = relabel.decision_margins(points, distances, kinds, ordinals, lines, RADII)
+            self.assertEqual(json.loads(json.dumps(record, allow_nan=False)), record)
+            return record
+
+        # No point at all: neither decision happens.
+        self.assertEqual(margins(np.zeros((0, 3)), LINES),
+                         {"Points": 0, "InsideTube": 0, "RingRelativeMargin": None, "KindRelativeMargin": None})
+        # Every point far from the tube: the ring decision has a margin, the kind decision none.
+        far = margins([[0.5, 0.5, 0.0], [0.7, 0.2, 0.05]], LINES)
+        self.assertEqual((far["Points"], far["InsideTube"], far["KindRelativeMargin"]), (2, 0, None))
+        self.assertGreater(far["RingRelativeMargin"], 0.0)
+        # Points inside the tube of a single line kind: no top-versus-bottom decision.
+        one_kind = margins([[1e-4, 0.5, 0.1], [2e-4, 0.4, 0.1]], [LINES[0]])
+        self.assertEqual((one_kind["Points"], one_kind["InsideTube"], one_kind["KindRelativeMargin"]), (2, 2, None))
+        self.assertGreater(one_kind["RingRelativeMargin"], 0.0)
+        # Both kinds present and points inside: both margins are finite numbers.
+        both = margins([[1e-4, 0.5, 0.1], [2e-4, 0.4, 0.0]], LINES)
+        self.assertEqual((both["Points"], both["InsideTube"]), (2, 2))
+        self.assertGreater(both["RingRelativeMargin"], 0.0)
+        self.assertGreater(both["KindRelativeMargin"], 0.0)
+
     def test_assert_label_only_fails_closed_on_every_other_change(self):
         data, _ = strip_mesh()
         out, mesh, shells, relabeled, _ = relabel.relabel(data, lines=LINES, radii=RADII)

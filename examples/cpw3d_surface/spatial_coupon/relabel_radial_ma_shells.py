@@ -310,12 +310,14 @@ def decision_margins(points, distances, kinds, ordinals, lines, radii):
     |d_top - d_bottom| / d over the points inside the tube radius (the kind is the nearer
     of the nearest top and the nearest bottom line; far points carry no kind).  A margin
     far above the roundoff of the inverse placement map (~1e-15 relative) shows no
-    rounding of the rigid publication can move a point across a decision."""
+    rounding of the rigid publication can move a point across a decision.  A decision
+    that never happens (no point; no point inside the tube or a single line kind) has
+    no margin: None, the census convention (OuterRadius of the far shell)."""
     distances = np.asarray(distances, dtype=float)
     ring = float(np.min(np.abs(distances[:, None] - np.asarray(radii, dtype=float)[None, :])
-                        / np.asarray(radii, dtype=float)[None, :])) if len(distances) else math.inf
+                        / np.asarray(radii, dtype=float)[None, :])) if len(distances) else None
     inside = np.asarray(ordinals) != FAR_ORDINAL
-    kind = math.inf
+    kind = None
     if inside.any():
         near = np.asarray(points, dtype=float)[inside]
         by_kind = {name: edge_distances(near, [line for line in lines if line["Kind"] == name])[0]
