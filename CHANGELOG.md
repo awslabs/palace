@@ -51,6 +51,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Diagnostics.Uncovered.ClippedBySpatialSupport` and in the CSV), and trimmed corners
     whose coupon is not applied are counted under
     `Diagnostics.CornerArmTrim.ExcludedCoupons`. Response-geometry cache version 9.
+  - The translational `SurfaceMortar` projects the device trace onto the coupon's own hat
+    basis: the constrained metal-band knots where the fabricated metal meets the matching
+    contour (listed as `ZeroTraceIndices`, or inserted at library load from the model's
+    topology and `Fabrication.MetalThickness` for a library that publishes the free knots
+    only; a library whose knots disagree with its constraints is refused) are vertices of
+    the basis without a coefficient, so the adjacent hats no longer span the band. Recorded
+    under `Diagnostics.ConsistentMortar`; libraries without a derivable band and the
+    `Collocated` coupling are unchanged. Response-geometry cache version 10.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

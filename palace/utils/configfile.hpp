@@ -1191,6 +1191,16 @@ public:
     // without integrating an anchor line through the conductor.
     std::vector<int> zero_trace_indices;
 
+    // Internal (library load, decision 404 D1: the consistent mortar): the constrained
+    // metal-band knots of a translational closed-contour coupon whose BasisPoints list only
+    // its free knots. The coupon's trace vanishes on the band between them, so they are
+    // vertices of the surface-mortar hat basis without a basis coefficient (the adjacent
+    // free hats ramp to zero there). Canonical coupon frame, in the units of the
+    // BasisPoints file. Empty when the coupon lists them as ZeroTraceIndices, has no band
+    // (a strip), or the rule does not apply; consistent_mortar_rule records which.
+    std::vector<std::array<double, 3>> consistent_mortar_vertices;
+    std::string consistent_mortar_rule;
+
     // Internal metadata for a three-dimensional coupon whose matching-surface trace mesh
     // carries hats in the interior of the box caps (above / below claimed features much
     // smaller than the box): the number of trailing BasisPoints on no closed contour and
