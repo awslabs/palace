@@ -787,15 +787,15 @@ const STEP_FACE_Z_GRADINGS = (:legacy, :mirrored)
 
 The `step_face_z_grading = :mirrored` levels (D1 of the reference-quality lane, supervisor
 decision 406): the plan band's row heights r (2^k - 1), k = 1, 2, ..., mirrored into z beyond
-BOTH faces of every plane's fabricated step — metal top + r, 3r, 7r, ... and trench bottom
-- r, 3r, 7r, ... — while they stay strictly inside the first fixed cell beyond that face (the
-first of `VACUUM_SIDE_OFFSETS_UM` above the surface, of `SUBSTRATE_SIDE_OFFSETS_UM` below),
-inside the plane's substrate and, with two planes, on the plane's own side of the gap
-midpoint. The legacy stack (`:legacy`, the recorded stage-1 / S2.1 reference family)
-resolves z in r only inside the step, so the air cell at the metal top corner and the
-substrate cell under the trench foot are r x 50 nm at every r and only p resolves the corner
-singularities there (the measured MA / SA under-read of the window references). The graded
-sweep thins these levels away from the edge like any level (they are not interfaces).
+BOTH faces of every plane's fabricated step (the metal top plus r, 3r, 7r, ... and the trench
+bottom minus r, 3r, 7r, ...) while they stay strictly inside the first fixed cell beyond that
+face (the first of `VACUUM_SIDE_OFFSETS_UM` above the surface, of `SUBSTRATE_SIDE_OFFSETS_UM`
+below), inside the plane's substrate and, with two planes, on the plane's own side of the gap
+midpoint. The legacy stack (`:legacy`, the recorded stage-1 / S2.1 reference family) resolves
+z in r only inside the step, so the air cell at the metal top corner and the substrate cell
+under the trench foot are r x 50 nm at every r and only p resolves the corner singularities
+there (the measured MA / SA under-read of the window references). The graded sweep thins
+these levels away from the edge like any level (they are not interfaces).
 """
 function step_face_z_levels(spec::PolygonSet, radial_um::Float64)
     radial_um > 0.0 || error("step_face_z_levels needs a positive radial size")
@@ -810,7 +810,11 @@ function step_face_z_levels(spec::PolygonSet, radial_um::Float64)
         faces = (
             # (face z, outward sign, room to the first fixed level beyond the face)
             (s + f * m, f, VACUUM_SIDE_OFFSETS_UM[1] - m),
-            (s - f * o, -f, min(SUBSTRATE_SIDE_OFFSETS_UM[1], plane.substrate_thickness) - o)
+            (
+                s - f * o,
+                -f,
+                min(SUBSTRATE_SIDE_OFFSETS_UM[1], plane.substrate_thickness) - o
+            )
         )
         for (face, sign, room) in faces
             k = 1
@@ -1207,13 +1211,8 @@ function mesh_plan(
             if vertex_column_grading
                 phi_a = get(vertex_angles, curve.points[1], NaN)
                 phi_b = get(vertex_angles, curve.points[2], NaN)
-                nodes_by_curve[k], added = vertex_graded_curve_nodes(
-                    curve,
-                    tangential_um,
-                    radial_um,
-                    phi_a,
-                    phi_b
-                )
+                nodes_by_curve[k], added =
+                    vertex_graded_curve_nodes(curve, tangential_um, radial_um, phi_a, phi_b)
                 ladder_stations += added
                 graded_curve_ends += !isnan(phi_a) + !isnan(phi_b)
             else

@@ -151,7 +151,10 @@ function plan_vertex_angles(curves::Vector{PlanCurve}, box, min_turn::Float64)
         curve.metal || continue
         for (point, from, to) in
             ((curve.points[1], curve.a, curve.b), (curve.points[2], curve.b, curve.a))
-            push!(get!(directions, point, Point2[]), unit((to[1] - from[1], to[2] - from[2])))
+            push!(
+                get!(directions, point, Point2[]),
+                unit((to[1] - from[1], to[2] - from[2]))
+            )
             coordinates[point] = from
         end
     end
