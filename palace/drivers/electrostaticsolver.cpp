@@ -1724,9 +1724,17 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // surface-response-model-energy.csv: 0 / 1 the raw field kept in the fixed-trace /
       // fixed-flux energies, 2 the corrected field kept in the self-consistent energy) and
       // feature type (one row per type and a Total row), with the portion count and length
-      // of that type and, per target interface, the energy and its share of the
-      // evaluation's corrected interface energy. Written only when something is uncovered.
-      std::map<std::string, std::pair<int, double>> portions_by_type;
+      // of that type, the length removed from that type's portions inside the matched
+      // clusters' support boxes at placement (decision 399 MAJOR-1) and, per target
+      // interface, the energy and its share of the evaluation's corrected interface
+      // energy. Written only when something is uncovered.
+      struct UncoveredTypeRow
+      {
+        int portions = 0;
+        double length = 0.0;
+        double clipped_length = 0.0;
+      };
+      std::map<std::string, UncoveredTypeRow> portions_by_type;
       for (const auto &portion : response_correction->GetUncoveredPortions())
       {
         double length2 = 0.0;
@@ -1735,14 +1743,20 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
         }
         auto &entry = portions_by_type[portion.topology];
-        entry.first++;
-        entry.second += std::sqrt(length2);
+        entry.portions++;
+        entry.length += std::sqrt(length2);
       }
-      std::pair<int, double> portions_total{0, 0.0};
+      for (const auto &clip :
+           response_correction->GetUncoveredSpatialSupportClipping().clips)
+      {
+        portions_by_type[clip.topology].clipped_length += clip.length;
+      }
+      UncoveredTypeRow portions_total;
       for (const auto &[type, entry] : portions_by_type)
       {
-        portions_total.first += entry.first;
-        portions_total.second += entry.second;
+        portions_total.portions += entry.portions;
+        portions_total.length += entry.length;
+        portions_total.clipped_length += entry.clipped_length;
       }
       // A plain writer: the type column is text (the table columns are numeric). The
       // previous adaptive iteration leaves a symlink into its archive folder at this path
@@ -1754,7 +1768,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       std::ofstream uncovered_output(uncovered_path);
       MFEM_VERIFY(uncovered_output,
                   "Unable to open surface-response-uncovered-energy.csv for writing!");
-      uncovered_output << "source,evaluation,type,portions,length (m)";
+      uncovered_output
+          << "source,evaluation,type,portions,length (m),clipped by spatial support (m)";
       for (const auto &[interface, data] : interfaces)
       {
         (void)data;
@@ -1764,13 +1779,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       uncovered_output << '\n';
       auto AppendUncovered =
           [&](int source, int evaluation, const std::string &type,
-              const std::pair<int, double> &portions,
+              const UncoveredTypeRow &portions,
               const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> &uncovered,
               const EnergyData &energies, bool available)
       {
         uncovered_output << fmt::format(
-            "{},{},{},{},{:+.12e}", source, evaluation, type, portions.first,
-            iodata.units.Dimensionalize<VT::LENGTH>(portions.second));
+            "{},{},{},{},{:+.12e},{:+.12e}", source, evaluation, type, portions.portions,
+            iodata.units.Dimensionalize<VT::LENGTH>(portions.length),
+            iodata.units.Dimensionalize<VT::LENGTH>(portions.clipped_length));
         for (const auto &[interface, interface_data] : interfaces)
         {
           (void)interface_data;

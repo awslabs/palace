@@ -15652,20 +15652,37 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         patches.patches, boxes, 3, continuation_tolerance, patches.matching_radius);
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
     // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of the
-    // built patches: the dry run's cells are the trimmed ones; the inventory summary
-    // carries both.
+    // built patches: the dry run's cells are the trimmed ones; the uncovered portions are
+    // clipped by the matched clusters' boxes (decision 399 MAJOR-1) as the cells above; the
+    // inventory summary carries both.
     diagnostics["CornerArmTrim"] =
         DescribeCornerArmTrims(patches.corner_arm_trims, patches, coordinate_scale);
-    diagnostics["Uncovered"] =
-        DescribeUncoveredPortions(patches.uncovered_portions, coordinate_scale);
+    auto placed_uncovered = patches.uncovered_portions;
+    const auto uncovered_clipping =
+        ClipUncoveredPortionsBySpatialSupport(placed_uncovered, boxes, 3);
+    diagnostics["Uncovered"] = DescribeUncoveredPortions(
+        placed_uncovered, &uncovered_clipping, patches, coordinate_scale);
     manifest["Summary"]["CornerArmTrim"] = {
         {"Corners", diagnostics["CornerArmTrim"]["Count"]},
         {"TrimmedLength", diagnostics["CornerArmTrim"]["TrimmedLength"]},
         {"RemovedCellLength", diagnostics["CornerArmTrim"]["RemovedCellLength"]}};
-    manifest["Summary"]["Uncovered"] = {{"Features", diagnostics["Uncovered"]["Features"]},
-                                        {"Portions", diagnostics["Uncovered"]["Count"]},
-                                        {"Length", diagnostics["Uncovered"]["Length"]},
-                                        {"ByType", diagnostics["Uncovered"]["ByType"]}};
+    manifest["Summary"]["Uncovered"] = {
+        {"Features", diagnostics["Uncovered"]["Features"]},
+        {"Portions", diagnostics["Uncovered"]["Count"]},
+        {"Length", diagnostics["Uncovered"]["Length"]},
+        {"ByType", diagnostics["Uncovered"]["ByType"]},
+        {"ClippedBySpatialSupport",
+         diagnostics["Uncovered"]["ClippedBySpatialSupport"]["Length"]}};
+    if (uncovered_clipping.clipped_portions > 0)
+    {
+      Mpi::Warning(
+          "Uncovered requirements inside matched clusters' support boxes (decision "
+          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
+          "portions ({:d} wholly inside, {:d} split)\n",
+          uncovered_clipping.clipped_portions,
+          uncovered_clipping.removed_length * coordinate_scale,
+          uncovered_clipping.removed_portions, uncovered_clipping.split_portions);
+    }
     if (diagnostics["CornerArmTrim"]["Count"].get<int>() > 0)
     {
       Mpi::Print("Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
@@ -15710,6 +15727,35 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         patches.matching_radius, {});
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
+    // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
+    diagnostics["CornerArmTrim"]["ExcludedCoupons"] = DescribeCornerArmTrimExcludedCoupons(
+        patches.corner_arm_trims, patches,
+        [&](std::size_t patch_idx) -> std::optional<std::string>
+        {
+          if (std::any_of(exclusions.patches.begin(), exclusions.patches.end(),
+                          [&](const auto &exclusion)
+                          { return exclusion.patch == patch_idx; }))
+          {
+            return "DomainBoundary";
+          }
+          if (std::any_of(ownership.vertices.begin(), ownership.vertices.end(),
+                          [&](const auto &vertex) { return vertex.patch == patch_idx; }))
+          {
+            return "VertexOwnership";
+          }
+          return std::nullopt;
+        },
+        coordinate_scale);
+    manifest["Summary"]["CornerArmTrim"]["ExcludedCoupons"] =
+        diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"];
+    if (diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
+    {
+      Mpi::Warning(
+          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not "
+          "applied (decision 399 MINOR-7): their second arm's [R, s) is modelled by "
+          "nothing\n",
+          diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
+    }
     const auto &exclusion_diagnostics = diagnostics["DomainBoundaryExclusions"];
     manifest["Summary"]["Counts"]["DomainBoundary"] = exclusion_diagnostics["Count"];
     manifest["Summary"]["TotalEdgeLengths"]["DomainBoundary"] =
@@ -16071,36 +16117,46 @@ ContinuedSupportClaimEnd(const TranslationalStretch &stretch,
   return std::nullopt;
 }
 
+// The offsets along the line origin + c axis strictly inside a box, intersected with the
+// interval [c0, c1]; nullopt when the interval does not enter the box (an interval touching
+// a face is not inside: 1e-12 x max(1, c1 - c0)).
+std::optional<std::array<double, 2>>
+LineInsideBox(const std::array<double, 3> &origin, const std::array<double, 3> &axis,
+              double c0, double c1, const SpatialSupportBounds &box, int dimension)
+{
+  double lo = c0, hi = c1;
+  for (int d = 0; d < dimension; d++)
+  {
+    const double w = axis[d];
+    if (std::abs(w) <= 1.0e-14)
+    {
+      if (!(origin[d] > box.min[d] && origin[d] < box.max[d]))
+      {
+        return std::nullopt;
+      }
+      continue;
+    }
+    const double a = (box.min[d] - origin[d]) / w;
+    const double b = (box.max[d] - origin[d]) / w;
+    lo = std::max(lo, std::min(a, b));
+    hi = std::min(hi, std::max(a, b));
+  }
+  const double scale = std::max(1.0, c1 - c0);
+  if (hi - lo <= 1.0e-12 * scale)
+  {
+    return std::nullopt;
+  }
+  return std::array<double, 2>{lo, hi};
+}
+
 // The offsets along a cell's AxisW line (relative to the patch origin) strictly inside a
 // box, intersected with the cell [c0, c1]; nullopt when the cell does not enter the box.
 std::optional<std::array<double, 2>> CellInsideBox(const ResponsePatchData &patch,
                                                    const SpatialSupportBounds &box,
                                                    int dimension)
 {
-  double lo = patch.longitudinal_cell[0], hi = patch.longitudinal_cell[1];
-  for (int d = 0; d < dimension; d++)
-  {
-    const double w = patch.axis_w[d];
-    if (std::abs(w) <= 1.0e-14)
-    {
-      if (!(patch.origin[d] > box.min[d] && patch.origin[d] < box.max[d]))
-      {
-        return std::nullopt;
-      }
-      continue;
-    }
-    const double a = (box.min[d] - patch.origin[d]) / w;
-    const double b = (box.max[d] - patch.origin[d]) / w;
-    lo = std::max(lo, std::min(a, b));
-    hi = std::min(hi, std::max(a, b));
-  }
-  const double scale =
-      std::max(1.0, patch.longitudinal_cell[1] - patch.longitudinal_cell[0]);
-  if (hi - lo <= 1.0e-12 * scale)
-  {
-    return std::nullopt;
-  }
-  return std::array<double, 2>{lo, hi};
+  return LineInsideBox(patch.origin, patch.axis_w, patch.longitudinal_cell[0],
+                       patch.longitudinal_cell[1], box, dimension);
 }
 
 }  // namespace
@@ -16598,6 +16654,110 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
   return ownership;
 }
 
+UncoveredSpatialSupportClipping ClipUncoveredPortionsBySpatialSupport(
+    std::vector<ResponseCorrectionData::UncoveredPortionData> &portions,
+    const std::vector<SpatialSupportBounds> &supports, int dimension)
+{
+  UncoveredSpatialSupportClipping clipping;
+  std::vector<ResponseCorrectionData::UncoveredPortionData> placed;
+  placed.reserve(portions.size());
+  bool changed = false;
+  for (const auto &portion : portions)
+  {
+    const Point3D chord = Subtract(portion.p1, portion.p0);
+    const double length = Norm(chord);
+    if (length <= 0.0)
+    {
+      placed.push_back(portion);
+      continue;
+    }
+    const Point3D direction = Scale(1.0 / length, chord);
+    // The inside interval per matched cluster's box along the portion, [0, length].
+    std::vector<std::pair<std::array<double, 2>, std::size_t>> inside;
+    for (const auto &support : supports)
+    {
+      if (support.claims.empty())
+      {
+        continue;  // a vertex coupon's support: no claims, no box the coupon models
+      }
+      if (const auto interval =
+              LineInsideBox(portion.p0, direction, 0.0, length, support, dimension))
+      {
+        inside.emplace_back(*interval, support.patch);
+      }
+    }
+    if (inside.empty())
+    {
+      placed.push_back(portion);
+      continue;
+    }
+    changed = true;
+    clipping.clipped_portions++;
+    std::sort(inside.begin(), inside.end());
+    // The union of the inside intervals, then its complement in [0, length]: the kept
+    // pieces, each a portion of its own.
+    const double scale = std::max(1.0, length);
+    std::vector<std::array<double, 2>> removed;
+    for (const auto &[interval, spatial_patch] : inside)
+    {
+      UncoveredSpatialSupportClip clip;
+      clip.feature = portion.feature;
+      clip.topology = portion.topology;
+      clip.segment = portion.segment;
+      clip.spatial_patch = spatial_patch;
+      clip.length = interval[1] - interval[0];
+      clipping.clips.push_back(std::move(clip));
+      if (!removed.empty() && interval[0] <= removed.back()[1] + 1.0e-12 * scale)
+      {
+        removed.back()[1] = std::max(removed.back()[1], interval[1]);
+      }
+      else
+      {
+        removed.push_back(interval);
+      }
+    }
+    std::vector<std::array<double, 2>> kept;
+    double cursor = 0.0;
+    for (const auto &interval : removed)
+    {
+      if (interval[0] - cursor > 1.0e-12 * scale)
+      {
+        kept.push_back({cursor, interval[0]});
+      }
+      cursor = interval[1];
+      clipping.removed_length += interval[1] - interval[0];
+      clipping.removed_by_feature[portion.feature] += interval[1] - interval[0];
+    }
+    if (length - cursor > 1.0e-12 * scale)
+    {
+      kept.push_back({cursor, length});
+    }
+    if (kept.empty())
+    {
+      clipping.removed_portions++;
+    }
+    else if (kept.size() > 1)
+    {
+      clipping.split_portions++;
+    }
+    for (const auto &piece : kept)
+    {
+      auto placed_portion = portion;
+      // An end at the portion's own end keeps that end's coordinates exactly.
+      placed_portion.p0 =
+          piece[0] <= 0.0 ? portion.p0 : Add(portion.p0, Scale(piece[0], direction));
+      placed_portion.p1 =
+          piece[1] >= length ? portion.p1 : Add(portion.p0, Scale(piece[1], direction));
+      placed.push_back(std::move(placed_portion));
+    }
+  }
+  if (changed)
+  {
+    portions = std::move(placed);
+  }
+  return clipping;
+}
+
 std::vector<SpatialSupportMarginOverlap>
 FindSpatialSupportMarginOverlaps(const std::vector<SpatialSupportBounds> &supports,
                                  int dimension, double continuation_tolerance)
@@ -17092,6 +17252,50 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
       diagnostics["OwnedLength"].get<double>(), lines);
 }
 
+nlohmann::json DescribeCornerArmTrimExcludedCoupons(
+    const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
+    const ResponseCorrectionData &config,
+    const std::function<std::optional<std::string>(std::size_t patch_idx)> &excluded_reason,
+    double coordinate_scale)
+{
+  nlohmann::json corners = nlohmann::json::array();
+  for (const auto &trim : trims)
+  {
+    for (std::size_t patch_idx = 0; patch_idx < config.patches.size(); patch_idx++)
+    {
+      const auto &provenance = config.patches[patch_idx].provenance;
+      if (provenance.feature != trim.feature || provenance.coupon_depth != 0.0 ||
+          !provenance.claims.empty() || provenance.stretch >= 0 ||
+          provenance.has_support_box)
+      {
+        continue;  // not the corner's vertex coupon
+      }
+      if (const auto reason = excluded_reason(patch_idx))
+      {
+        corners.push_back(
+            {{"Feature", trim.feature},
+             {"Topology", trim.topology},
+             {"Patch", patch_idx},
+             {"Reason", *reason},
+             {"AngleDegrees", trim.angle_degrees},
+             {"TrimmedLength", trim.trimmed_length * coordinate_scale},
+             {"RemovedCellLength", trim.removed_cell_length * coordinate_scale},
+             {"RemovedUncoveredLength", trim.removed_uncovered_length * coordinate_scale}});
+      }
+    }
+  }
+  return {
+      {"Count", static_cast<int>(corners.size())},
+      {"Corners", std::move(corners)},
+      {"Rule",
+       "decision 399 (MINOR-7, 2026-10-06): the trimmed corners whose vertex coupon the "
+       "placement then does not apply (Reason: DomainBoundary = decision 258 "
+       "exclusion, VertexOwnership = decision 282 rule B4, SpatialClusterPriority = an "
+       "exact cluster owning the overlapping corner). KNOWN LIMIT: the second arm's "
+       "[R, s) stays unmodelled there (its cells were trimmed for a coupon that is not "
+       "applied), as the corner's own window [0, R) already is. Lengths in mesh units"}};
+}
+
 nlohmann::json
 DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
                        const ResponseCorrectionData &config, double coordinate_scale)
@@ -17159,6 +17363,7 @@ DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimDa
 
 nlohmann::json DescribeUncoveredPortions(
     const std::vector<ResponseCorrectionData::UncoveredPortionData> &portions,
+    const UncoveredSpatialSupportClipping *clipping, const ResponseCorrectionData &config,
     double coordinate_scale)
 {
   nlohmann::json entries = nlohmann::json::array();
@@ -17191,16 +17396,77 @@ nlohmann::json DescribeUncoveredPortions(
   {
     types[type] = {{"Portions", entry.first}, {"Length", entry.second}};
   }
+  // The parts removed inside the matched clusters' support boxes (decision 399 MAJOR-1):
+  // per feature, per box and per clip.
+  nlohmann::json clipped = {
+      {"Portions", 0},
+      {"RemovedPortions", 0},
+      {"SplitPortions", 0},
+      {"Length", 0.0},
+      {"ByFeature", nlohmann::json::array()},
+      {"BySupport", nlohmann::json::array()},
+      {"Clips", nlohmann::json::array()},
+      {"Rule",
+       "decision 399 (MAJOR-1, 2026-10-06): the part of an uncovered portion strictly "
+       "inside a matched SpatialEdgeCluster's support box (the bounds the continuation "
+       "ownership of decision 236 clips the translational cells with, the same "
+       "strict-interior test) is removed at placement, the kept pieces (none, one, or two "
+       "when the portion crosses the box) replacing the portion: the coupon models its "
+       "whole box, so the raw within-R energy there is the coupon's. Length = the removed "
+       "length; Portions = the portions that lost a part, RemovedPortions those wholly "
+       "inside, SplitPortions those cut into two pieces. Without a matched cluster the "
+       "portions are untouched. Lengths in mesh units"}};
+  if (clipping)
+  {
+    clipped["Portions"] = clipping->clipped_portions;
+    clipped["RemovedPortions"] = clipping->removed_portions;
+    clipped["SplitPortions"] = clipping->split_portions;
+    clipped["Length"] = clipping->removed_length * coordinate_scale;
+    std::map<int, std::string> topologies;
+    std::map<std::size_t, std::pair<int, double>> by_support;
+    for (const auto &clip : clipping->clips)
+    {
+      topologies.emplace(clip.feature, clip.topology);
+      auto &support = by_support[clip.spatial_patch];
+      support.first++;
+      support.second += clip.length * coordinate_scale;
+      clipped["Clips"].push_back(
+          {{"Feature", clip.feature},
+           {"Topology", clip.topology},
+           {"Segment", clip.segment},
+           {"SpatialPatch", clip.spatial_patch},
+           {"SpatialFeature", config.patches[clip.spatial_patch].provenance.feature},
+           {"Length", clip.length * coordinate_scale}});
+    }
+    for (const auto &[feature, removed] : clipping->removed_by_feature)
+    {
+      clipped["ByFeature"].push_back({{"Feature", feature},
+                                      {"Topology", topologies.at(feature)},
+                                      {"Length", removed * coordinate_scale}});
+    }
+    for (const auto &[spatial_patch, entry] : by_support)
+    {
+      clipped["BySupport"].push_back(
+          {{"SpatialPatch", spatial_patch},
+           {"SpatialFeature", config.patches[spatial_patch].provenance.feature},
+           {"Clips", entry.first},
+           {"Length", entry.second}});
+    }
+  }
   return {
       {"Count", static_cast<int>(portions.size())},
       {"Features", static_cast<int>(features.size())},
       {"Length", length},
       {"ByType", std::move(types)},
       {"Portions", std::move(entries)},
+      {"ClippedBySpatialSupport", std::move(clipped)},
       {"Rule",
        "decision 394 (F2, 2026-10-06): the portions of every feature the library has no "
        "model for (Status Missing: unmatched alone, no neighbour affected), as global "
-       "sub-segments of the metal perimeter after the corner-arm trim. The electrostatic "
+       "sub-segments of the metal perimeter after the corner-arm trim and after the clip "
+       "by "
+       "the matched clusters' support boxes (ClippedBySpatialSupport, decision 399). The "
+       "electrostatic "
        "driver keeps the device's RAW within-R surface energy whose nearest perimeter "
        "point lies on one of them in every corrected interface energy (fixed trace and "
        "fixed flux on the raw field, self-consistent on the corrected field) instead of "
@@ -18455,6 +18721,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   };
   std::vector<SpatialSupport> spatial_supports;
   std::set<std::size_t> spatially_owned_patches;
+  // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
+  std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
   // The placed patches: the configured ones with the continuation ownership applied (3D).
   std::vector<ResponsePatchData> placed_patches = config->patches;
   // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
@@ -18538,6 +18806,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           // coupon operator is not yet supported.
           const auto subordinate = first_cluster ? j : i;
           spatially_owned_patches.insert(spatial_supports[subordinate].patch);
+          vertex_coupon_exclusion_reasons.emplace(spatial_supports[subordinate].patch,
+                                                  "SpatialClusterPriority");
           continue;
         }
         // Two clusters (decision 244): a margins-only overlap (no claim of either inside
@@ -18564,13 +18834,17 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
     // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of
     // the built (or cached) patches in the operator record: the applied cells are the
-    // trimmed ones; the uncovered portions keep their raw within-R energy in the driver's
-    // corrected interface energies (GetUncoveredPortions).
+    // trimmed ones; the uncovered portions, clipped by the matched clusters' support boxes
+    // (decision 399 MAJOR-1) as the continuation ownership clips the cells below, keep
+    // their raw within-R energy in the driver's corrected interface energies
+    // (GetUncoveredPortions).
     ownership_diagnostics["CornerArmTrim"] =
         DescribeCornerArmTrims(config->corner_arm_trims, *config, coordinate_scale);
-    ownership_diagnostics["Uncovered"] =
-        DescribeUncoveredPortions(config->uncovered_portions, coordinate_scale);
     uncovered_portions = config->uncovered_portions;
+    uncovered_spatial_support_clipping =
+        ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
+    ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
+        uncovered_portions, &uncovered_spatial_support_clipping, *config, coordinate_scale);
     if (!config->corner_arm_trims.empty())
     {
       Mpi::Print(fespace.GetComm(),
@@ -18580,7 +18854,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                  ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
                  ownership_diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
     }
-    if (!config->uncovered_portions.empty())
+    if (!uncovered_portions.empty())
     {
       Mpi::Warning(fespace.GetComm(),
                    "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
@@ -18590,6 +18864,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    ownership_diagnostics["Uncovered"]["Count"].get<int>(),
                    ownership_diagnostics["Uncovered"]["Features"].get<int>(),
                    ownership_diagnostics["Uncovered"]["Length"].get<double>());
+    }
+    if (uncovered_spatial_support_clipping.clipped_portions > 0)
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Uncovered requirements inside matched clusters' support boxes (decision "
+          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
+          "portions ({:d} wholly inside, {:d} split)\n",
+          uncovered_spatial_support_clipping.clipped_portions,
+          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
+          uncovered_spatial_support_clipping.removed_portions,
+          uncovered_spatial_support_clipping.split_portions);
     }
     if (!config->quantum_near_match.empty())
     {
@@ -18672,6 +18958,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       for (const auto &vertex : ownership.vertices)
       {
         spatially_owned_patches.insert(vertex.patch);
+        vertex_coupon_exclusion_reasons.emplace(vertex.patch, "VertexOwnership");
       }
       ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
           DescribeTranslationalOwnershipRecords(records, boxes, *config, coordinate_scale,
@@ -18707,6 +18994,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);
+        vertex_coupon_exclusion_reasons.emplace(exclusion.patch, "DomainBoundary");
       }
       ownership_diagnostics["DomainBoundaryExclusions"] =
           DescribeDomainBoundaryExclusions(exclusions, *config, coordinate_scale);
@@ -18720,6 +19008,26 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    DescribeDomainBoundaryExclusionSummary(
                        ownership_diagnostics["DomainBoundaryExclusions"]));
       }
+    }
+    // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
+    ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
+        DescribeCornerArmTrimExcludedCoupons(
+            config->corner_arm_trims, *config,
+            [&](std::size_t patch_idx) -> std::optional<std::string>
+            {
+              const auto it = vertex_coupon_exclusion_reasons.find(patch_idx);
+              return it == vertex_coupon_exclusion_reasons.end()
+                         ? std::nullopt
+                         : std::optional<std::string>(it->second);
+            },
+            coordinate_scale);
+    if (ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not applied "
+          "(decision 399 MINOR-7): their second arm's [R, s) is modelled by nothing\n",
+          ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
   }
 

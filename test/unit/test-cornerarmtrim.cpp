@@ -23,8 +23,13 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
+#include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
+#include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/materialoperator.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
@@ -586,6 +591,19 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
       CHECK_THAT(sum, WithinAbs(1.0, 1.0e-12));
     }
     CHECK(rows.size() == 18);
+    // Byte identity with the trim-disabled dry run (decision 399 MINOR-6): the golden
+    // test/data/surfaceresponse/corner-arm-trim-90deg-trim-disabled-patches.csv was written
+    // by this very dry run with the ApplyCornerArmTrim call removed (serial and 2 ranks
+    // identical; its README records the provenance), so a 90-degree corner's patches are
+    // the legacy layout to the byte, not only in the asserted columns.
+    if (Mpi::Root(Mpi::World()))
+    {
+      const fs::path golden =
+          fs::path(PALACE_TEST_DATA_DIR) /
+          "surfaceresponse/corner-arm-trim-90deg-trim-disabled-patches.csv";
+      REQUIRE(fs::is_regular_file(golden));
+      CHECK(ReadFile(patches_path) == ReadFile(golden));
+    }
   }
 #endif
 }
@@ -852,6 +870,230 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(record.at("ByType").at("ConvexCorner").at("Portions").get<int>() == 8);
   }
 #endif
+}
+
+// Decision 399 MAJOR-1: an uncovered portion inside a matched spatial cluster's support box
+// would be counted twice (the cluster coupon models its whole box; F2 keeps the raw
+// within-R energy of the portion), so the placement clips the uncovered portions by every
+// matched cluster's box exactly as the continuation ownership clips the translational cells
+// (the same bounds, the same strict-interior test). On the top face of the unit cube (an MA
+// interface under an exactly represented field; the perimeter's tree segments are the mesh
+// edges) a portion of the edge y = 0 crossing a box face is clipped exactly at the face,
+// a portion straddling a box is cut into two pieces, a portion wholly inside is removed, a
+// portion touching a face is untouched, and the uncovered energies of the kept pieces and
+// the removed piece partition the portion's energy to 1e-10; without a cluster box (no
+// support, or a vertex coupon's support without claims) the portions are untouched bitwise.
+TEST_CASE("SurfaceResponseOperator uncovered portions clipped by spatial supports",
+          "[surfaceresponseoperator][cornerarmtrim][Serial][Parallel]")
+{
+  using Portion =
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData;
+  using Claim =
+      config::ElectrostaticSolverData::ResponseCorrectionPatchData::Provenance::Claim;
+  auto Same = [](const Portion &a, const Portion &b)
+  {
+    return a.feature == b.feature && a.topology == b.topology && a.segment == b.segment &&
+           a.p0 == b.p0 && a.p1 == b.p1;
+  };
+  // The portion of the edge y = 0, z = 1 (a tree segment [0, 0.5] of the 2 x 2 x 1 mesh
+  // below) from x = 0.05 to x = 0.45, feature 7.
+  const Portion portion{7, "SpatialEdgeCluster", 3, {0.05, 0.0, 1.0}, {0.45, 0.0, 1.0}};
+  // A matched cluster's box (claims non-empty) whose x face at 0.2137 the portion crosses,
+  // R above and below the plane; a vertex coupon's box (no claims) containing the portion.
+  SpatialSupportBounds cluster;
+  cluster.patch = 2;
+  cluster.min = {0.2137, -0.3, 0.75};
+  cluster.max = {0.9, 0.3, 1.25};
+  cluster.claims = {Claim{3, {0.5, 0.0, 1.0}, {0.9, 0.0, 1.0}}};
+  SpatialSupportBounds corner = cluster;
+  corner.patch = 5;
+  corner.min = {-0.1, -0.3, 0.75};
+  corner.max = {0.6, 0.3, 1.25};
+  corner.claims.clear();
+
+  SECTION("no cluster box: bitwise untouched")
+  {
+    std::vector<Portion> portions = {portion, portion};
+    portions[1].feature = 8;
+    const Portion second = portions[1];
+    const auto none = ClipUncoveredPortionsBySpatialSupport(portions, {}, 3);
+    CHECK(none.clips.empty());
+    CHECK(none.clipped_portions == 0);
+    CHECK(none.removed_length == 0.0);
+    REQUIRE(portions.size() == 2);
+    CHECK(Same(portions[0], portion));
+    CHECK(Same(portions[1], second));
+    const auto vertex_only = ClipUncoveredPortionsBySpatialSupport(portions, {corner}, 3);
+    CHECK(vertex_only.clips.empty());
+    CHECK(vertex_only.clipped_portions == 0);
+    REQUIRE(portions.size() == 2);
+    CHECK(Same(portions[0], portion));
+    CHECK(Same(portions[1], second));
+  }
+
+  SECTION("a portion crossing a box face is clipped exactly at the face")
+  {
+    std::vector<Portion> portions = {portion};
+    const auto clipping =
+        ClipUncoveredPortionsBySpatialSupport(portions, {corner, cluster}, 3);
+    REQUIRE(clipping.clips.size() == 1);
+    CHECK(clipping.clips[0].feature == 7);
+    CHECK(clipping.clips[0].topology == "SpatialEdgeCluster");
+    CHECK(clipping.clips[0].segment == 3);
+    CHECK(clipping.clips[0].spatial_patch == 2);
+    CHECK_THAT(clipping.clips[0].length, WithinAbs(0.45 - 0.2137, 1.0e-12));
+    CHECK(clipping.clipped_portions == 1);
+    CHECK(clipping.removed_portions == 0);
+    CHECK(clipping.split_portions == 0);
+    CHECK_THAT(clipping.removed_length, WithinAbs(0.45 - 0.2137, 1.0e-12));
+    REQUIRE(clipping.removed_by_feature.size() == 1);
+    CHECK_THAT(clipping.removed_by_feature.at(7), WithinAbs(0.45 - 0.2137, 1.0e-12));
+    REQUIRE(portions.size() == 1);
+    CHECK(portions[0].feature == 7);
+    CHECK(portions[0].segment == 3);
+    CHECK(portions[0].p0 == portion.p0);  // the untouched end keeps its coordinates
+    CHECK_THAT(portions[0].p1[0], WithinAbs(0.2137, 1.0e-12));
+    CHECK(portions[0].p1[1] == 0.0);
+    CHECK(portions[0].p1[2] == 1.0);
+    // The same portion reversed is clipped at the same face.
+    std::vector<Portion> reversed = {
+        Portion{7, "SpatialEdgeCluster", 3, portion.p1, portion.p0}};
+    ClipUncoveredPortionsBySpatialSupport(reversed, {cluster}, 3);
+    REQUIRE(reversed.size() == 1);
+    CHECK_THAT(reversed[0].p0[0], WithinAbs(0.2137, 1.0e-12));
+    CHECK(reversed[0].p1 == portion.p0);
+  }
+
+  SECTION("a box inside the portion splits it, a portion inside a box is removed, a face "
+          "touched is not inside")
+  {
+    SpatialSupportBounds middle = cluster;
+    middle.min[0] = 0.15;
+    middle.max[0] = 0.3;
+    SpatialSupportBounds whole = cluster;
+    whole.patch = 9;
+    whole.min[0] = -0.5;
+    whole.max[0] = 0.6;
+    SpatialSupportBounds touching = cluster;
+    touching.patch = 11;
+    touching.min[0] = 0.45;
+    touching.max[0] = 0.8;
+    std::vector<Portion> portions = {portion, portion, portion};
+    portions[1].feature = 8;
+    portions[2].feature = 9;
+    portions[2].p0 = {0.85, 0.0, 1.0};  // beyond both boxes: wholly outside
+    portions[2].p1 = {0.95, 0.0, 1.0};
+    const auto clipping =
+        ClipUncoveredPortionsBySpatialSupport(portions, {middle, touching}, 3);
+    CHECK(clipping.clipped_portions == 2);
+    CHECK(clipping.split_portions == 2);
+    CHECK(clipping.removed_portions == 0);
+    CHECK_THAT(clipping.removed_length, WithinAbs(2.0 * 0.15, 1.0e-12));
+    REQUIRE(portions.size() == 5);
+    CHECK(portions[0].feature == 7);
+    CHECK(portions[0].p0 == portion.p0);
+    CHECK_THAT(portions[0].p1[0], WithinAbs(0.15, 1.0e-12));
+    CHECK(portions[1].feature == 7);
+    CHECK_THAT(portions[1].p0[0], WithinAbs(0.3, 1.0e-12));
+    CHECK(portions[1].p1 == portion.p1);
+    CHECK(portions[2].feature == 8);
+    CHECK(portions[3].feature == 8);
+    CHECK(portions[4].feature == 9);
+    CHECK(portions[4].p0 == std::array<double, 3>{0.85, 0.0, 1.0});
+    std::vector<Portion> removed = {portion};
+    const auto wholly = ClipUncoveredPortionsBySpatialSupport(removed, {whole}, 3);
+    CHECK(removed.empty());
+    CHECK(wholly.removed_portions == 1);
+    CHECK(wholly.clipped_portions == 1);
+    CHECK_THAT(wholly.removed_length, WithinAbs(0.4, 1.0e-12));
+    // Two boxes sharing the portion: the union is removed once, each box records its part.
+    std::vector<Portion> shared = {portion};
+    const auto two = ClipUncoveredPortionsBySpatialSupport(shared, {middle, cluster}, 3);
+    REQUIRE(two.clips.size() == 2);
+    CHECK_THAT(two.removed_length, WithinAbs(0.45 - 0.15, 1.0e-12));
+    REQUIRE(shared.size() == 1);
+    CHECK_THAT(shared[0].p1[0], WithinAbs(0.15, 1.0e-12));
+  }
+
+  SECTION("the uncovered energies of the kept and removed pieces partition the portion's")
+  {
+    auto serial = mfem::Mesh::MakeCartesian3D(2, 2, 1, mfem::Element::TETRAHEDRON);
+    int top = -1;
+    mfem::Vector center(3);
+    for (int be = 0; be < serial.GetNBE(); be++)
+    {
+      auto *T = serial.GetBdrElementTransformation(be);
+      T->Transform(mfem::Geometries.GetCenter(T->GetGeometryType()), center);
+      if (std::abs(center(2) - 1.0) < 1e-12)
+      {
+        top = serial.GetBdrAttribute(be);
+        break;
+      }
+    }
+    REQUIRE(top > 0);
+    Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
+    mfem::H1_FECollection h1(2, 3);
+    mfem::ND_FECollection nd(2, 3);
+    FiniteElementSpace h1_space(mesh, &h1), nd_space(mesh, &nd);
+    fem::DefaultIntegrationOrder::p_trial = 2;
+    config::MaterialData material;
+    material.attributes = {1};
+    config::PeriodicBoundaryData periodic;
+    MaterialOperator materials({material}, periodic, ProblemType::ELECTROSTATIC, mesh);
+    GridFunction field(nd_space, false);
+    mfem::VectorFunctionCoefficient coefficient(3,
+                                                [](const mfem::Vector &x, mfem::Vector &E)
+                                                {
+                                                  E.SetSize(3);
+                                                  E = 0.0;
+                                                  E(2) = 1.0 + x(0) + 0.5 * x(1);
+                                                });
+    field.Real().ProjectCoefficient(coefficient);
+    config::InterfaceDielectricData data;
+    data.attributes = {top};
+    data.type = InterfaceDielectric::MA;
+    data.t = 0.2;
+    data.epsilon_r = 2.0;
+    data.edge_attributes = {top};
+    data.edge_distances = {0.25};
+    config::BoundaryPostData postpro;
+    postpro.dielectric.emplace(1, data);
+    SurfacePostOperator surf_post_op(postpro, ProblemType::ELECTROSTATIC, materials,
+                                     h1_space, nd_space);
+    auto Energy = [&](const std::vector<Portion> &portions)
+    {
+      std::vector<SurfacePostOperator::UncoveredPerimeterPortion> perimeter;
+      for (const auto &entry : portions)
+      {
+        perimeter.push_back({entry.p0, entry.p1, entry.topology, entry.feature});
+      }
+      const auto energies =
+          surf_post_op.GetInterfaceUncoveredEdgeEnergies({1}, field, nullptr, perimeter);
+      REQUIRE(energies.size() == 1);
+      return energies.at(1).energy;
+    };
+    const double whole = Energy({portion});
+    REQUIRE(whole > 0.0);
+    // Crossing: kept [0.05, 0.2137] + removed [0.2137, 0.45].
+    std::vector<Portion> kept = {portion};
+    ClipUncoveredPortionsBySpatialSupport(kept, {cluster}, 3);
+    REQUIRE(kept.size() == 1);
+    const Portion removed{7, "SpatialEdgeCluster", 3, kept[0].p1, portion.p1};
+    const double kept_energy = Energy(kept), removed_energy = Energy({removed});
+    CHECK(kept_energy > 0.0);
+    CHECK(removed_energy > 0.0);
+    CHECK_THAT(kept_energy + removed_energy, WithinRel(whole, 1.0e-10));
+    // Straddling: two kept pieces + the removed middle.
+    SpatialSupportBounds middle = cluster;
+    middle.min[0] = 0.15;
+    middle.max[0] = 0.3;
+    std::vector<Portion> pieces = {portion};
+    ClipUncoveredPortionsBySpatialSupport(pieces, {middle}, 3);
+    REQUIRE(pieces.size() == 2);
+    const Portion middle_piece{7, "SpatialEdgeCluster", 3, pieces[0].p1, pieces[1].p0};
+    CHECK_THAT(Energy(pieces) + Energy({middle_piece}), WithinRel(whole, 1.0e-10));
+    CHECK(Energy(pieces) < whole);
+  }
 }
 
 }  // namespace palace
