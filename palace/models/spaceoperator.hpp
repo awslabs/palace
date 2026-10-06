@@ -156,11 +156,22 @@ public:
                 const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
   SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
-  // Restrict the stiffness, damping, mass and extra system matrices to the elements with
-  // the given domain attributes and the boundary elements bounding them (nullptr: no
-  // restriction). The matrix-free wave-port and Floquet terms of GetExtraSystemOperator
-  // are not restricted.
-  void SetAssemblyDomains(const std::vector<int> *domain_attrs);
+  // Restricts the stiffness, damping, mass and extra system matrices to the elements with
+  // the given domain attributes and the boundary elements bounding them while in scope
+  // (the previous restriction is restored). The matrix-free wave-port and Floquet terms of
+  // GetExtraSystemOperator are not restricted.
+  class AssemblyRestriction
+  {
+  public:
+    AssemblyRestriction(SpaceOperator &op, const std::vector<int> &domain_attrs);
+    ~AssemblyRestriction() { op.assembly_domains = std::move(previous); }
+    AssemblyRestriction(const AssemblyRestriction &) = delete;
+    AssemblyRestriction &operator=(const AssemblyRestriction &) = delete;
+
+  private:
+    SpaceOperator &op;
+    std::optional<std::pair<mfem::Array<int>, mfem::Array<int>>> previous;
+  };
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const

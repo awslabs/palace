@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -21,6 +22,7 @@
 #include "fixtures.hpp"
 #include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/drivensubstructure.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/substructuringsolver.hpp"
 #include "models/superconductorsheetoperator.hpp"
@@ -2152,7 +2154,11 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
   const double omega = 1.3;  // nondimensional (the configuration is not nondimensionalized)
   auto assemble = [&](const std::vector<int> *domains)
   {
-    space_op.SetAssemblyDomains(domains);
+    std::optional<SpaceOperator::AssemblyRestriction> restriction;
+    if (domains)
+    {
+      restriction.emplace(space_op, *domains);
+    }
     std::vector<std::unique_ptr<ComplexOperator>> ops;
     ops.push_back(space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO));
     ops.push_back(space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO));
@@ -2162,7 +2168,6 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
     return ops;
   };
   auto full = assemble(nullptr), reg = assemble(&region), env = assemble(&environment);
-  space_op.SetAssemblyDomains(nullptr);
 
   // y = A x, for one part (real or imaginary) of an operator (zero if absent).
   auto apply = [](const ComplexOperator *A, bool imag, const Vector &x, Vector &y)
@@ -2210,6 +2215,210 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
     CHECK(linalg::Norml2(pmesh.GetComm(), y_env) > 0.0);
   }
 }
+
+#if defined(MFEM_USE_MUMPS)
+TEST_CASE("DrivenSubstructure condenses the environment exactly",
+          "[substructure][Serial][Parallel]")
+{
+  // S_E(ω) from the partial factorization of the real form of the environment operator
+  // against a dense condensation of the same operator: PEC in the region, a lumped port in
+  // the environment, a second-order absorbing boundary on both sides, an impedance sheet
+  // crossing Γ, a lossy dielectric region and a conducting environment. A second frequency
+  // reuses the analysis.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  json config = {
+      {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permittivity", 2.0}, {"LossTan", 0.01}},
+          {{"Attributes", {2}}, {"Permittivity", 4.0}, {"Conductivity", 0.5}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {1}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"R", 1.0},
+           {"Attributes", {2}},
+           {"Direction", "+Y"},
+           {"Excitation", true}}}},
+        {"Absorbing", {{"Attributes", {3}}, {"Order", 2}}},
+        {"Impedance", {{{"Attributes", {4}}, {"Rs", 1.0}, {"Ls", 2.0}, {"Cs", 0.5}}}}}},
+      {"Solver",
+       {{"Order", order},
+        {"Device", "CPU"},
+        {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  IoData iodata(config, false);
+  RegionDesign design;
+  design.sheet = true;
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 3, 2, design)));
+  SpaceOperator space_op(iodata, mesh);
+  const auto &fes = space_op.GetNDSpace().Get();
+  MPI_Comm comm = fes.GetComm();
+  const bool root = Mpi::Root(comm);
+  DrivenSubstructure ds(space_op, {1}, {2});
+  const int nG = ds.InterfaceSize();
+  REQUIRE(nG > 0);
+
+  // Global environment-interior and interface true DOFs (replicated), and the environment
+  // operator parts, for the dense reference.
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
+  std::vector<HYPRE_BigInt> E_loc, E;
+  for (int i = 0; i < nt; i++)
+  {
+    if (ds.EnvironmentInterior()[i])
+    {
+      E_loc.push_back(tstart + i);
+    }
+  }
+  {
+    int n = static_cast<int>(E_loc.size());
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    E.resize(disp[nranks - 1] + cnt[nranks - 1]);
+    MPI_Allgatherv(E_loc.data(), n, HYPRE_MPI_BIG_INT, E.data(), cnt.data(), disp.data(),
+                   HYPRE_MPI_BIG_INT, comm);
+  }
+  const std::vector<HYPRE_BigInt> &G = ds.InterfaceTrueDofs();
+  std::vector<HYPRE_BigInt> idx(E);
+  idx.insert(idx.end(), G.begin(), G.end());
+  const int nE = static_cast<int>(E.size()), n = nE + nG;
+  const std::vector<int> environment = {2};
+  std::unique_ptr<ComplexOperator> K, C, M;
+  {
+    SpaceOperator::AssemblyRestriction restriction(space_op, environment);
+    K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  }
+
+  // Dense A_E(ω) on (E, Γ) at rank 0 from the operators applied to unit vectors.
+  std::vector<int> cnt(nranks), disp(nranks, 0);
+  MPI_Allgather(&nt, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nranks; r++)
+  {
+    disp[r] = disp[r - 1] + cnt[r - 1];
+  }
+  auto dense_operator = [&](double omega)
+  {
+    std::unique_ptr<ComplexOperator> A2;
+    {
+      SpaceOperator::AssemblyRestriction restriction(space_op, environment);
+      A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+    }
+    std::vector<std::complex<double>> A(root ? static_cast<std::size_t>(n) * n : 0);
+    Vector x(nt), y(nt), yr(nt), yi(nt),
+        full(root ? disp[nranks - 1] + cnt[nranks - 1] : 0), full_i(full.Size());
+    auto add = [&](const ComplexOperator *X, std::complex<double> a)
+    {
+      for (const bool imag : {false, true})
+      {
+        const Operator *part = X ? (imag ? X->Imag() : X->Real()) : nullptr;
+        if (part)
+        {
+          part->Mult(x, y);
+          const std::complex<double> c = imag ? a * std::complex<double>(0.0, 1.0) : a;
+          yr.Add(c.real(), y);
+          yi.Add(c.imag(), y);
+        }
+      }
+    };
+    for (int j = 0; j < n; j++)
+    {
+      x = 0.0;
+      if (idx[j] >= tstart && idx[j] < tstart + nt)
+      {
+        x(static_cast<int>(idx[j] - tstart)) = 1.0;
+      }
+      yr = 0.0;
+      yi = 0.0;
+      add(K.get(), 1.0);
+      add(C.get(), {0.0, omega});
+      add(M.get(), -omega * omega);
+      add(A2.get(), 1.0);
+      MPI_Gatherv(yr.GetData(), nt, MPI_DOUBLE, full.GetData(), cnt.data(), disp.data(),
+                  MPI_DOUBLE, 0, comm);
+      MPI_Gatherv(yi.GetData(), nt, MPI_DOUBLE, full_i.GetData(), cnt.data(), disp.data(),
+                  MPI_DOUBLE, 0, comm);
+      for (int i = 0; root && i < n; i++)
+      {
+        A[static_cast<std::size_t>(j) * n + i] = {full(idx[i]), full_i(idx[i])};
+      }
+    }
+    return A;
+  };
+
+  // S_ref = A_GG - A_GE A_EE^-1 A_EG with the standard real representation [[Re, -Im],
+  // [Im, Re]] of the complex blocks.
+  auto dense_schur = [&](const std::vector<std::complex<double>> &A)
+  {
+    auto real_form = [&](int r0, int nr, int c0, int nc)
+    {
+      mfem::DenseMatrix T(2 * nr, 2 * nc);
+      for (int i = 0; i < nr; i++)
+      {
+        for (int j = 0; j < nc; j++)
+        {
+          const auto a = A[static_cast<std::size_t>(c0 + j) * n + (r0 + i)];
+          T(i, j) = T(nr + i, nc + j) = a.real();
+          T(i, nc + j) = -a.imag();
+          T(nr + i, j) = a.imag();
+        }
+      }
+      return T;
+    };
+    mfem::DenseMatrix Aee = real_form(0, nE, 0, nE), Aeg = real_form(0, nE, nE, nG),
+                      Age = real_form(nE, nG, 0, nE), Agg = real_form(nE, nG, nE, nG);
+    mfem::DenseMatrixInverse inv(Aee);
+    mfem::DenseMatrix X(2 * nE, 2 * nG), Y(2 * nG, 2 * nG);
+    inv.Mult(Aeg, X);
+    mfem::Mult(Age, X, Y);
+    Agg -= Y;
+    std::vector<std::complex<double>> S(static_cast<std::size_t>(nG) * nG);
+    for (int b = 0; b < nG; b++)
+    {
+      for (int a = 0; a < nG; a++)
+      {
+        S[static_cast<std::size_t>(b) * nG + a] = {Agg(a, b), Agg(nG + a, b)};
+      }
+    }
+    return S;
+  };
+
+  for (const double omega : {1.3, 0.7})
+  {
+    CAPTURE(omega);
+    ds.Condense(omega);
+    const auto A = dense_operator(omega);
+    if (root)
+    {
+      const auto S_ref = dense_schur(A);
+      const auto &S = ds.Schur();
+      REQUIRE(S.size() == S_ref.size());
+      double d = 0.0, m = 0.0, asym = 0.0;
+      for (int b = 0; b < nG; b++)
+      {
+        for (int a = 0; a < nG; a++)
+        {
+          const std::size_t ab = static_cast<std::size_t>(b) * nG + a;
+          d = std::max(d, std::abs(S[ab] - S_ref[ab]));
+          m = std::max(m, std::abs(S_ref[ab]));
+          asym = std::max(asym, std::abs(S[ab] - S[static_cast<std::size_t>(a) * nG + b]));
+        }
+      }
+      CAPTURE(nG, nE, d, m, asym);
+      CHECK(d <= 1.0e-10 * m);
+      CHECK(asym <= 1.0e-10 * m);
+    }
+  }
+}
+#endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver on a nonconforming mesh",

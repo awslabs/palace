@@ -27,12 +27,16 @@ public:
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
   // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
   // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
-  // avoids MUMPS's per-rank workspace).
+  // avoids MUMPS's per-rank workspace). With refactor, the input entries are kept so that
+  // Refactor can factor new values with the same pattern, reusing the analysis.
   MumpsSchurSolver(const mfem::HypreParMatrix &A,
                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                   bool serial = false);
+                   bool serial = false, bool refactor = false);
 
   ~MumpsSchurSolver();
+
+  // Factor A with new values and the sparsity pattern of the analysis (collective).
+  void Refactor(const mfem::HypreParMatrix &A);
 
   // Dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric).
   const std::vector<double> &Schur() const { return schur; }
@@ -43,11 +47,13 @@ public:
                      const std::vector<mfem::Vector *> &Y);
 
 private:
+  void Factor();
   void Check(const char *phase) const;
 
   MPI_Comm comm;
   int rank = 0;
-  bool serial = false, active = true;  // active: this rank takes part in the factorization
+  bool serial = false, refactor = false;
+  bool active = true;  // this rank takes part in the factorization
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
   std::vector<int> row_cnt, row_disp;

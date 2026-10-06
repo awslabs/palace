@@ -1299,15 +1299,12 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   return B;
 }
 
-void SpaceOperator::SetAssemblyDomains(const std::vector<int> *domain_attrs)
+SpaceOperator::AssemblyRestriction::AssemblyRestriction(
+    SpaceOperator &op, const std::vector<int> &domain_attrs)
+  : op(op), previous(std::move(op.assembly_domains))
 {
-  if (!domain_attrs)
-  {
-    assembly_domains.reset();
-    return;
-  }
-  assembly_domains.emplace(GetMesh().GetCeedAttributes(*domain_attrs),
-                           GetMesh().GetCeedBdrAttributesByNeighbor(*domain_attrs));
+  op.assembly_domains.emplace(op.GetMesh().GetCeedAttributes(domain_attrs),
+                              op.GetMesh().GetCeedBdrAttributesByNeighbor(domain_attrs));
 }
 
 void SpaceOperator::RestrictToAssemblyDomains(

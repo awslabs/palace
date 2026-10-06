@@ -12,26 +12,17 @@
 namespace palace
 {
 
-MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
-                                   const std::vector<HYPRE_BigInt> &schur_vars,
-                                   double blr_tol, bool serial)
-  : comm(A.GetComm()), serial(serial), n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
-    n_schur(static_cast<int>(schur_vars.size())), blr_tol(blr_tol)
+namespace
 {
-  MPI_Comm_rank(comm, &rank);
-  active = !serial || rank == 0;
-  int nranks;
-  MPI_Comm_size(comm, &nranks);
-  row_cnt.assign(nranks, 0);
-  row_disp.assign(nranks, 0);
-  MPI_Allgather(&n_loc, 1, MPI_INT, row_cnt.data(), 1, MPI_INT, comm);
-  for (int r = 1; r < nranks; r++)
-  {
-    row_disp[r] = row_disp[r - 1] + row_cnt[r - 1];
-  }
 
-  // Local rows as 1-based COO, lower triangle only (symmetric storage: MUMPS sums
-  // duplicates).
+// Local rows of A as 1-based COO, lower triangle only (symmetric storage: MUMPS sums
+// duplicates).
+void LowerTriangleCOO(const mfem::HypreParMatrix &A, std::vector<MUMPS_INT> &irn,
+                      std::vector<MUMPS_INT> &jcn, std::vector<double> &val)
+{
+  irn.clear();
+  jcn.clear();
+  val.clear();
   auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
   A.HostRead();
   hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
@@ -42,7 +33,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   const HYPRE_Int *Jp = csr->j;
 #endif
   const HYPRE_BigInt row0 = parcsr->first_row_index;
-  for (int i = 0; i < n_loc; i++)
+  for (int i = 0; i < A.Height(); i++)
   {
     for (HYPRE_Int k = Ip[i]; k < Ip[i + 1]; k++)
     {
@@ -56,6 +47,30 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     }
   }
   hypre_CSRMatrixDestroy(csr);
+}
+
+}  // namespace
+
+MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
+                                   const std::vector<HYPRE_BigInt> &schur_vars,
+                                   double blr_tol, bool serial, bool refactor)
+  : comm(A.GetComm()), serial(serial), refactor(refactor), n_glob(A.GetGlobalNumRows()),
+    n_loc(A.Height()), n_schur(static_cast<int>(schur_vars.size())), blr_tol(blr_tol)
+{
+  MPI_Comm_rank(comm, &rank);
+  active = !serial || rank == 0;
+  int nranks;
+  MPI_Comm_size(comm, &nranks);
+  row_cnt.assign(nranks, 0);
+  row_disp.assign(nranks, 0);
+  MPI_Allgather(&n_loc, 1, MPI_INT, row_cnt.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nranks; r++)
+  {
+    row_disp[r] = row_disp[r - 1] + row_cnt[r - 1];
+  }
+
+  LowerTriangleCOO(A, irn, jcn, val);
+  MFEM_VERIFY(!(refactor && serial), "MumpsSchurSolver: Refactor needs distributed input!");
   if (blr_tol > 0.0)
   {
     // The BLR dropping parameter CNTL(7) is absolute, and the Schur option excludes
@@ -170,6 +185,11 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
                  0.0);
     id.schur = schur.data();
   }
+  Factor();
+}
+
+void MumpsSchurSolver::Factor()
+{
   // Factorization (+ Schur). The workspace estimate from the analysis can be too small
   // (the dense Schur root sits on one rank): on a workspace failure (INFOG(1) = -8, -9,
   // -20) double the relaxation and retry, as the MUMPS user guide recommends.
@@ -180,16 +200,20 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     const MUMPS_INT err = id.infog[0];
     if ((err == -8 || err == -9 || err == -20) && attempt < 5)
     {
-      icntl(14) *= 2;
+      id.icntl[13] *= 2;  // ICNTL(14)
       continue;
     }
     break;
   }
   Check("factorization");
-  // The factors do not need the input entries (no iterative refinement).
-  irn = {};
-  jcn = {};
-  val = {};
+  // The factors do not need the input entries (no iterative refinement), unless they are
+  // refactored with new values.
+  if (!refactor)
+  {
+    irn = {};
+    jcn = {};
+    val = {};
+  }
   if (blr_tol > 0.0)
   {
     for (auto &v : schur)
@@ -205,6 +229,25 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
         blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]),
         100.0 * id.rinfog[13] / id.rinfog[2]);
   }
+}
+
+void MumpsSchurSolver::Refactor(const mfem::HypreParMatrix &A)
+{
+  MFEM_VERIFY(refactor, "MumpsSchurSolver was not set up for refactorization!");
+  std::vector<MUMPS_INT> irn_new, jcn_new;
+  std::vector<double> val_new;
+  LowerTriangleCOO(A, irn_new, jcn_new, val_new);
+  int same = (irn_new == irn && jcn_new == jcn);
+  MPI_Allreduce(MPI_IN_PLACE, &same, 1, MPI_INT, MPI_MIN, comm);
+  MFEM_VERIFY(same,
+              "MumpsSchurSolver::Refactor needs the sparsity pattern of the analysis!");
+  val.swap(val_new);
+  for (auto &v : val)
+  {
+    v /= scale;
+  }
+  id.a_loc = val.data();
+  Factor();
 }
 
 MumpsSchurSolver::~MumpsSchurSolver()
