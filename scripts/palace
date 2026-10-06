@@ -83,7 +83,11 @@ done
 set -- "${POSITIONAL[@]}"  # Restore positional parameters
 
 # Check arguments: Config file and everything remaining is passed to Palace binary
-if [[ -z "$@" ]] && ! $VERSION; then
+if $VERSION; then
+    CONFIG="--version"
+    DRY_RUN=""
+    NUM_PROCS="1"
+elif [[ -z "$@" ]]; then
     help
     exit 1
 else
@@ -115,11 +119,6 @@ fi
 if ! echo $PALACE | grep -q $ARCH; then
     echo "Error: Palace binary \"$PALACE\" does not match host architecture"
     exit 1
-fi
-
-# Version information needs neither a configuration file nor an MPI launcher
-if $VERSION; then
-    exec $PALACE --version
 fi
 
 # Configure --dry-run
