@@ -3145,7 +3145,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertTrue(json.loads(output.read_text())["Passed"])
             self.assertEqual({key: recorded[key] for key in bound}, bound)
             self.assertLess(recorded["ElapsedSeconds"], recorded["Seconds"])
-            self.assertIn("decision 410", recorded["Rule"])
+            self.assertIn("decisions 410 / 433", recorded["Rule"])
 
     def test_verification_time_bound_scales_with_the_entries_element_count(self):
         """Decision 410: the verifier's whole-run bound is the manifest stage bound per
