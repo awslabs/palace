@@ -34,7 +34,7 @@ set(EXTERN_BUTTERFLYPACK_GIT_BRANCH
   "Git branch for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "v4.1.0" CACHE STRING
+  "v5.0.0" CACHE STRING
   "Git tag for external ButterflyPACK build"
 )
 
@@ -76,7 +76,7 @@ set(EXTERN_LIBCEED_GIT_BRANCH
   "Git branch for external libCEED build"
 )
 set(EXTERN_LIBCEED_GIT_TAG
-  "39f259f89332e936122f7e02d6088a1dae3fb628" CACHE STRING
+  "5927cb160d93babeaf7b742413ad82db540e0af7" CACHE STRING
   "Git tag for external libCEED build"
 )
 
@@ -160,7 +160,7 @@ set(EXTERN_PARMETIS_GIT_BRANCH
   "Git branch for external ParMETIS build"
 )
 set(EXTERN_PARMETIS_GIT_TAG
-  "v4.0.3-p10" CACHE STRING
+  "v4.0.3-p11" CACHE STRING
   "Git tag for external ParMETIS build"
 )
 
@@ -174,7 +174,7 @@ set(EXTERN_PETSC_GIT_BRANCH
   "Git branch for external PETSc build"
 )
 set(EXTERN_PETSC_GIT_TAG
-  "v3.24.3" CACHE STRING
+  "v3.26.0" CACHE STRING
   "Git tag for external PETSc build"
 )
 
@@ -202,7 +202,7 @@ set(EXTERN_SLEPC_GIT_BRANCH
   "Git branch for external SLEPc build"
 )
 set(EXTERN_SLEPC_GIT_TAG
-  "v3.24.1" CACHE STRING
+  "v3.26.0" CACHE STRING
   "Git tag for external SLEPc build"
 )
 
@@ -230,7 +230,7 @@ set(EXTERN_SUPERLU_GIT_BRANCH
   "Git branch for external SuperLU_DIST build"
 )
 set(EXTERN_SUPERLU_GIT_TAG
-  "v9.2.1" CACHE STRING
+  "v9.3.0" CACHE STRING
   "Git tag for external SuperLU_DIST build"
 )
 
@@ -274,7 +274,7 @@ set(EXTERN_SCN_URL
 
 # Eigen
 set(EXTERN_EIGEN_URL
-  "https://gitlab.com/libeigen/eigen/-/archive/5.0.0/eigen-5.0.0.tar.gz" CACHE STRING
+  "https://gitlab.com/libeigen/eigen/-/archive/5.0.1/eigen-5.0.1.tar.gz" CACHE STRING
   "URL for external Eigen build"
 )
 
@@ -288,7 +288,7 @@ set(EXTERN_SUNDIALS_GIT_BRANCH
   "Git branch for external SUNDIALS build"
 )
 set(EXTERN_SUNDIALS_GIT_TAG
-  "v7.5.0" CACHE STRING
+  "v7.9.0" CACHE STRING
   "Git tag for external SUNDIALS build"
 )
 

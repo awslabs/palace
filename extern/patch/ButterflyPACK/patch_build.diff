@@ -1,46 +1,21 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index f2e884e..cb6d7f8 100755
+index 8a03ff0..a411c8d 100755
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -5,7 +5,7 @@
- ######################################################################
+@@ -574,7 +574,7 @@ install(TARGETS butterflypack EXPORT MYBPACKTargets
+   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
  
- # Required version
--cmake_minimum_required(VERSION 3.3 FATAL_ERROR)
-+cmake_minimum_required(VERSION 3.5...4.0 FATAL_ERROR)
- 
- # SET(CMAKE_INSTALL_PREFIX < install_path >)
- 
-@@ -494,7 +494,7 @@ add_subdirectory(SRC_DOUBLE)
- add_subdirectory(SRC_DOUBLECOMPLEX)
- add_subdirectory(SRC_SINGLE)
- add_subdirectory(SRC_COMPLEX)
 -add_subdirectory(EXAMPLE)
 +# add_subdirectory(EXAMPLE)
- add_subdirectory(CPP_INTERFACE)
  
  
-diff --git a/CPP_INTERFACE/CPPWrapper.cpp b/CPP_INTERFACE/CPPWrapper.cpp
-index f019df4..40a1848 100755
---- a/CPP_INTERFACE/CPPWrapper.cpp
-+++ b/CPP_INTERFACE/CPPWrapper.cpp
-@@ -30,6 +30,11 @@
-  * \brief Templated CPP Interface to ButterflyPACK, modified from HODLRWrapper.cpp of STRUMPACK
-  */
- #include <cassert>
-+#include <climits>
-+#include <unistd.h>
-+#ifndef HOST_NAME_MAX
-+#define HOST_NAME_MAX 256
-+#endif
- #include <complex>
- #include <iomanip>
- 
+ # Documentation
 diff --git a/SRC/BPACK_factor.f90 b/SRC/BPACK_factor.f90
-index 394e93e..f257c3c 100755
+index f4e12ff..2a911f8 100755
 --- a/SRC/BPACK_factor.f90
 +++ b/SRC/BPACK_factor.f90
-@@ -671,12 +671,18 @@ endif
+@@ -1057,12 +1057,18 @@ endif
  #endif
  #endif
                      do ij = 1, (num_blocks-kk)*(num_blocks-kk)
@@ -59,7 +34,7 @@ index 394e93e..f257c3c 100755
                          call g2l(i, num_blocks, nprow, 1, iproc1, myi1)
                          call g2l(j, num_blocks, npcol, 1, jproc1, myj1)
                          if(iproc1==myrow .and. jproc1==mycol)then
-@@ -693,7 +699,10 @@ endif
+@@ -1079,7 +1085,10 @@ endif
                              call Hmat_block_delete(blocks_ll)
                              call Hmat_block_delete(blocks_uu)
                          endif
@@ -70,16 +45,3 @@ index 394e93e..f257c3c 100755
                          t_total(tid+1) = t_total(tid+1) + (t_stop - t_start)
                      enddo
  #ifdef HAVE_TOPLEVEL_OPENMP
-diff --git a/SRC/Bplus_utilities.f90 b/SRC/Bplus_utilities.f90
-index fb06388..f89e56b 100755
---- a/SRC/Bplus_utilities.f90
-+++ b/SRC/Bplus_utilities.f90
-@@ -10240,7 +10240,7 @@ contains
-                         rank = size(blocks%ButterflyU%blocks(1)%matrix, 2)
-                         index_i = blocks%ButterflyU%idx
-                         index_i_loc_s = (index_i - BFvec%vec(1)%idx_r)/BFvec%vec(1)%inc_r + 1
--                        if(rank*num_vectors=1)then
-+                        if(rank*num_vectors==1)then
-                            vtmp = BFvec%vec(1)%blocks(index_i_loc_s, 1)%matrix(1,1)
-                            call MPI_ALLREDUCE(vtmp, BFvec%vec(1)%blocks(index_i_loc_s, 1)%matrix, rank*num_vectors, MPI_DT, MPI_SUM, ptree%pgrp(pgno_sub)%Comm, ierr)
-                         else
