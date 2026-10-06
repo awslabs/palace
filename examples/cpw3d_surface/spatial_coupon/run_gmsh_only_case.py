@@ -54,7 +54,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from estimate_build_cost import gate as estimate_gate  # noqa: E402
 from general_mesh_manifest import (FABRICATED_CASE_KEY, THIN_RECIPE_KEY, case_gates, case_kind,  # noqa: E402
-                                   thin_build_options)
+                                   minimum_qualified_rings, thin_build_options)
 from mesh_stage_contract import scope_guard_in_text  # noqa: E402
 BUILD_SUMMARY = "build-summary.json"
 TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contract"),
@@ -291,7 +291,11 @@ def main():
                # Design round 2 F5-A: the invariant-corner verdict bound, only when the
                # manifest carries it (every rectilinear manifest's command is unchanged).
                *(["--corner-shape-gate", number(judged["CornerShapeGate"])]
-                 if judged.get("CornerShapeGate") is not None else [])]
+                 if judged.get("CornerShapeGate") is not None else []),
+               # Design round 2 F6: the case kind's qualified ring-count minimum, only when the
+               # manifest carries the range (a manifest without it builds no reduced side).
+               *(["--minimum-qualified-rings", str(minimum_qualified_rings(manifest, case))]
+                 if minimum_qualified_rings(manifest, case) is not None else [])]
         if args.labels_only:
             # The same mesher command as the gmsh-build stage plus the labels-only output:
             # the label set comes from the production code path on the production options.

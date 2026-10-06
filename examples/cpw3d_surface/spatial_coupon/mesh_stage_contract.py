@@ -1271,6 +1271,86 @@ GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 # legacy corners keep MaximumCornerAspect. A build with an invariant corner needs it; a
 # rectilinear build does not carry it.
 GMSH_BUILD_CORNER_SHAPE_GATE_OPTION = "--corner-shape-gate"
+# Mesher design round 2 F6 (decisions 437 / 443): the smallest ring count validated by (F) for
+# the coupon kind, the mesher's qualified ring-count range (Gates.MinimumQualifiedRings of the
+# manifest per kind -> run_gmsh_only_case -> this option).
+GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION = "--minimum-qualified-rings"
+RINGS_PER_SIDE_RULE = ("mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): every tubed side's ring count K_side is "
+                       "the largest K with r_K + h_K <= FacingBound = min(TransverseBound, FacingWidth / 2), FacingWidth its "
+                       "smallest facing width across the metal; a side at the coupon's Rings records nothing, every other "
+                       "Tubes[].Rings / FacingWidth / FacingBound; K_side below MinimumQualifiedRings fails closed at "
+                       "ScopeGuard[UnqualifiedRingCount]")
+
+
+def ring_count_within(inner_size, ratio, bound):
+    """The largest K with r_K + h_K <= bound (the mesher's tube_ring_count; 0 when none fits)."""
+    rings = 0
+    while True:
+        k = rings + 1
+        radius = inner_size * (ratio**k - 1.0) / (ratio - 1.0)
+        if radius + inner_size * ratio**(k - 1) > bound:
+            return rings
+        rings = k
+
+
+def validate_tube_rings_per_side(tubes, rows, command):
+    """Design round 2 F6: the per-side ring records. Section.Rings is the coupon's (process)
+    count; a row carrying Rings is a side reduced by its facing width - Rings in [1,
+    Section.Rings), equal to the largest K with r_K + h_K <= FacingBound, FacingBound ==
+    min(Section.TransverseBound, FacingWidth / 2) < the bound of Section.Rings, FacingWidth >=
+    Section.MetalFacingWidth, and Rings >= the command's --minimum-qualified-rings (required
+    when any row is reduced); Section.MinimumRings / ReducedSides / FacingBound /
+    MinimumQualifiedRings follow the rows and the command. A census without the records
+    (before F6) validates when no row carries Rings."""
+    section = tubes.get("Section")
+    if not isinstance(section, dict):
+        raise ValueError("Prism tube section is missing")
+    coupon_rings = _count(section.get("Rings"), "Tube rings")
+    inner = tubes["InnerSize"]
+    ratio = tubes["GrowthRatio"]
+    reduced = [row for row in rows if "Rings" in row]
+    minimum_option = (int(_option_or_default(command, GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, None))
+                      if GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION in command else None)
+    if minimum_option is not None and minimum_option < 1:
+        raise ValueError(f"Gmsh-only build command carries an invalid {GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION}")
+    if "MinimumRings" not in section:
+        if reduced:
+            raise ValueError("Prism tube rows record per-side rings without the section's per-side record")
+        return
+    transverse = _census_number(section, "TransverseBound", "Tube section")
+    facing_bound = _census_number(section, "FacingBound", "Tube section")
+    minimum_rings = _count(section.get("MinimumRings"), "Tube section MinimumRings")
+    reduced_count = _count(section.get("ReducedSides"), "Tube section ReducedSides")
+    recorded_minimum = section.get("MinimumQualifiedRings")
+    if (recorded_minimum is None) != (minimum_option is None) or (
+            recorded_minimum is not None and recorded_minimum != minimum_option):
+        raise ValueError("Prism tube section MinimumQualifiedRings differs from the build command")
+    if not isinstance(section.get("RingsPerSideRule"), str) or "UnqualifiedRingCount" not in section["RingsPerSideRule"]:
+        raise ValueError("Prism tube section lacks the per-side ring rule")
+    if reduced and minimum_option is None:
+        raise ValueError("Prism tube rows are reduced by their facing width without a qualified ring-count range")
+    smallest_bound = transverse
+    smallest_rings = coupon_rings
+    for row in reduced:
+        rings = _count(row.get("Rings"), "Tube row rings")
+        width = _census_number(row, "FacingWidth", "Tube row")
+        bound = _census_number(row, "FacingBound", "Tube row")
+        if not 1 <= rings < coupon_rings or rings < minimum_option:
+            raise ValueError("Prism tube row rings lie outside [MinimumQualifiedRings, Section.Rings)")
+        if abs(bound - min(transverse, 0.5 * width)) > 1e-12 * transverse or ring_count_within(inner, ratio, bound) != rings:
+            raise ValueError("Prism tube row rings do not follow the largest K with r_K + h_K <= min(TransverseBound, FacingWidth / 2)")
+        smallest_bound = min(smallest_bound, bound)
+        smallest_rings = min(smallest_rings, rings)
+    tubes_per_side = _count(section.get("TubesPerSide"), "Tubes per side")
+    if (minimum_rings != smallest_rings or reduced_count * tubes_per_side != len(reduced) or
+            abs(facing_bound - smallest_bound) > 1e-12 * transverse):
+        raise ValueError("Prism tube section MinimumRings / ReducedSides / FacingBound do not follow the rows")
+    width = section.get("MetalFacingWidth")
+    if width is not None and any(row["FacingWidth"] < width * (1.0 - 1e-12) for row in reduced):
+        raise ValueError("Prism tube row facing width lies below the section's MetalFacingWidth")
+    if reduced and width is None:
+        raise ValueError("Prism tube rows are reduced by their facing width but the section records none")
+
 CORNER_SHAPE_GATE = "CornerShapeGate"
 CORNER_MEASURES = {"Legacy": "VertexFrameCondition", "Invariant": "RegularCondition"}
 INVARIANT_CORNER_TARGET = 3.8
@@ -1419,7 +1499,10 @@ RECIPE_SCOPE_GUARDS = {
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
-    "NarrowMetal": "build",
+    # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): a per-side ring count below the
+    # smallest ring count validated by (F) for the coupon kind (NarrowMetal retired into the
+    # per-side bound).
+    "UnqualifiedRingCount": "build",
     # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face end beyond the validity
     # ceiling of the capped end block (2 h_pyr |tan theta| >= lc_cap).
     "SteepFaceCrossing": "build",
@@ -1959,7 +2042,8 @@ def section_frame_angles(section):
     raise ValueError("Tube section lacks the Top / Sheet rays")
 
 
-def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=None, round2b=False):
+def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=None, round2b=False,
+                            inner_size=None, growth_ratio=None):
     """The face-end records of one census tube row (Tubes[].FaceEnds, absent on a plain
     tube): every record names a box face and an end, its tilt lies in (0, 90) degrees,
     its spacing and layer count follow FACE_END_RULE from the section's radius and pyramid
@@ -1981,6 +2065,16 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
         raise ValueError("Prism tube section is missing")
     radius = _census_number(section, "Radius", "Tube section")
     pyramid_height = _census_number(section, "PyramidHeight", "Tube section")
+    ring_radii = section.get("RingRadii")
+    if "Rings" in row:
+        # A side reduced by its facing width (design round 2 F6): its own tube's radius,
+        # pyramid height and rings bound its face ends.
+        rings = _count(row.get("Rings"), "Tube row rings")
+        if inner_size is None or growth_ratio is None:
+            raise ValueError("Tube row records per-side rings without the recipe's inner size and ratio")
+        ring_radii = [inner_size * (growth_ratio**k - 1.0) / (growth_ratio - 1.0) for k in range(1, rings + 1)]
+        radius = ring_radii[-1]
+        pyramid_height = GMSH_BUILD_PYRAMID_HEIGHT_OVER_OUTER_RING * inner_size * growth_ratio**(rings - 1)
     bound = 0.0
     ends = []
     cap = None
@@ -2003,12 +2097,14 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
             if cap is None:
                 if condition_ceiling is None:
                     raise ValueError("Tube face end records a regime without the command's Jacobian-condition ceiling")
-                ring_radii = section.get("RingRadii")
                 if not isinstance(ring_radii, list) or not ring_radii:
                     raise ValueError("Tube section lacks its ring radii")
                 cap = face_end_spacing_cap(ring_radii, section_frame_angles(section), condition_ceiling)
+                # The section's cap is the coupon section's (its RingRadii); a reduced row's own
+                # cap is bound per record below.
                 recorded_cap = _census_number(section, "FaceEndSpacingCap", "Tube section")
-                if abs(recorded_cap - cap) > 1e-12 * cap or not (
+                coupon_cap = face_end_spacing_cap(section.get("RingRadii"), section_frame_angles(section), condition_ceiling)
+                if abs(recorded_cap - coupon_cap) > 1e-12 * coupon_cap or not (
                         isinstance(section.get("FaceEndSpacingCapRule"), str) and section["FaceEndSpacingCapRule"]):
                     raise ValueError("Tube section FaceEndSpacingCap does not follow the section's prism frames")
             regime = record["Regime"]
@@ -2240,7 +2336,8 @@ def validate_gmsh_build_census(build_report, census, semantic):
     round2b = _mesher_digest(build_report) == sha256(ROUND2_MESHER)
     for index, row in enumerate(rows):
         face_end_bound[index] = validate_tube_face_ends(row, tubes["TangentialSize"], section,
-                                                        condition_ceiling, round2b)
+                                                        condition_ceiling, round2b,
+                                                        tubes["InnerSize"], tubes["GrowthRatio"])
     if (isinstance(section, dict) and section.get("FaceEndSpacingCap") is not None and
             not any(row.get("FaceEnds") for row in rows)):
         raise ValueError("Tube section records a face-end spacing cap without a face end")
@@ -2254,6 +2351,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
         raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
     spacing_bound = max([tubes["TangentialSize"]] + [bound * (1.0 + 1e-9) for bound in face_end_bound.values()])
     validate_tube_face_end_summary(tubes, rows)
+    validate_tube_rings_per_side(tubes, rows, command)
     validate_arc_tubes(tubes, rows, read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]))
     # Decision 40: the layers follow the composed size field on the tube axis. Every
     # tube records its layer thickness statistics (the largest layer is its Spacing,

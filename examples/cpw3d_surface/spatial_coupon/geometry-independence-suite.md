@@ -641,12 +641,29 @@ build census (`build-census`, the bound build report):
     plane whose tube intervals face each other across the metal (each on the metal
     side of the other's outward normal at their closest points) must be more than
     2 (Radius + PyramidHeight) apart - the decision-66 thin tube (R 62 nm, h_pyr 16
-    nm) needs a strip wider than 156 nm, the fabricated top tube 79.5 nm. Narrower
-    strips fail closed at `ScopeGuard[NarrowMetal]` with the measured width and the
-    envelope (`metal_facing_width`; the S2p c83be8376d3a junction leads are 121-nm
-    strips: fabricated builds, thin stops); the Section records `MetalFacingRule` and
-    `MetalFacingWidth` (the narrowest facing width, null without a facing pair). A
-    per-side or per-coupon ring bound for such strips is the family-6 design item;
+    nm) needs a strip wider than 156 nm, the fabricated top tube 79.5 nm. Step 4.2
+    stopped narrower strips at `ScopeGuard[NarrowMetal]`; mesher design round 2 F6
+    (section 2.2, decisions 437 / 443) RETIRES that guard into a PER-SIDE ring bound
+    (`RingsPerSideRule`): every tubed side's ring count K_side is the largest K with
+    r_K + h_K <= FacingBound_side = min(TransverseBound, FacingWidth_side / 2),
+    FacingWidth_side its smallest facing width across the metal measured on the tube
+    intervals (`metal_facing_widths`; arc intervals by their exact circle geometry -
+    the interval ends, the straight interval's foot of the arc centre, the line of
+    centres, a common angle of concentric arcs; decision 391 MINOR-6), iterated with
+    the sides' own corner clearances (R, h_K, h_pyr of K_side) to a fixed point (a
+    count only decreases); the two facing envelopes r_K + h_K / 2 stay one outer ring
+    apart. The thin tube on a 121-nm finger takes 4 rings (30 + 16 <= 60.5 nm), the
+    fabricated tubes keep 7 (47.75 <= 60.5); every built coupon (facing widths >= 203
+    nm, above 2 (r_K + h_K) = 188 nm thin) is unchanged. Recorded: `Tubes[].Rings / FacingWidth / FacingBound` on a reduced side only, `Section.MinimumRings / ReducedSides / FacingBound / MinimumQualifiedRings`, `MetalFacingWidth` (the
+    narrowest facing width, null without a facing pair), the labels-only
+    `PrismTubeRings`. A side at a count below the smallest ring count validated by (F)
+    for the coupon KIND - the manifest `Gates.MinimumQualifiedRings {Fabricated 7, Thin 5}` with its provenance, the mesher's `--minimum-qualified-rings`
+    (run_gmsh_only_case passes the case kind's value) - fails closed at
+    `ScopeGuard[UnqualifiedRingCount]` until an (F) case extends the range (the
+    qualified-range mechanism per kind); a smooth joint between sides of different
+    counts fails closed (one shared section). The census validator recomputes every
+    reduced row's count and bound, binds the command's range and the section
+    aggregates (`validate_tube_rings_per_side`);
   - ARC SIDES - T2 (block (b) design sections 1-2, AMENDMENT 1 A1 (4), A2, A3, A7
     MINOR-6 / MINOR-7; supervisor decision 303; step 4.3): the plan-view boundary of a
     cluster whose signature carries arc entries is TAGGED by the generator
@@ -707,8 +724,8 @@ build census (`build-census`, the bound build report):
         end reads 7 corners / 24 caps instead of 313 / 1,244). Not supported, fail closed:
         an arc of fewer than four chords (the untagged fit of the trench footprint needs
         four), an untubed arc, a tilted arc / arc joint of two different circles, a loop
-        made of one closed arc; arc sides are not in the NarrowMetal facing test (a narrow
-        curved strip fails closed at the fragment). Decision 391 MAJOR-2 (ii) (mesher review
+        made of one closed arc; arc sides take part in the facing test with their exact circle
+        geometry since round 2 F6 (above). Decision 391 MAJOR-2 (ii) (mesher review
         R2): until the next mesher lane's four synthetic FULL builds (arc face ends at 45 /
         70 degrees, a kinked arc / line joint, a 5e-5-rad smooth joint, a 2e-4-rad corner
         joint) exist, two more guards fail closed in `metal_edge_segments`:
@@ -1462,7 +1479,10 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     after the corner clearances (RETIRED by block (b) step 4.2: the supported class
     `UntubedShortEdges` above, decision 304); `NarrowMetal` - a metal strip narrower than
     twice the tube envelope between facing tubed sides (ADDED by step 4.2, decision
-    347); `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
+    347; RETIRED by mesher design round 2 F6 into the per-side ring bound, decision 437);
+    `UnqualifiedRingCount` - a per-side ring count below the smallest count validated by
+    (F) for the coupon kind (ADDED by round 2 F6, decisions 437 / 443);
+    `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
     decision-391 stop-gaps above, until the synthetic arc builds exist);
     `SteepFaceCrossing` - a face end beyond the validity ceiling of the capped end block,
     2 h_pyr |tan theta| >= lc_cap (ADDED by mesher design round 2 F2b, decision 437);

@@ -23,6 +23,21 @@
       "Population": "E_pop: the kappa_reg envelope of the corner-incident seed cells of the 500 (all exactly perpendicular) semantic corners of the 18 stored gmsh-build.msh of the (F)-Qualified coupons - the 7 group-A pairs (decision 322: C2 19 / 20-edge d67abe58c1cf / 9ef3555507eb, S1b 19 / 19 / 35-edge fa8b8709e234 / 2fb07e6f93a5 / da5ddc0466ba, C1 18 / 36-edge 836268084cff / c90e419ed62e) and the 2 S1p v3 pairs (decision 340: 39ab2ffd68ec / c5952e69af66) - measured read-only on 2026-10-05 before any round-2 build: envelope 6.2988 (S1p 39ab2ffd68ec thin, corner 7, kappa_v0 3.31, eta 0.36), per-corner-maximum p50 3.498 / p99 5.295, 14 of 500 corners and 17 of 6799 cells above 5.0; the cap binds (FIX-UPS F.1: the identified fab flat-kink slivers read 5.28-6.16; per-case-overridden and PendingQualification coupons excluded, F.6); E_pop is NOT re-derived when more coupons qualify",
       "PopulationRecord": "coupon-accuracy-assessment-20260913/mesher-design-round2-20261005/seed-impl/cluster/epop-summary.txt (+ epop/*.json per build with the mesh sha256, epop_corner_census.jl)"
     },
+    "MinimumQualifiedRings": {
+      "Fabricated": 7,
+      "Thin": 5
+    },
+    "MinimumQualifiedRingsProvenance": {
+      "Rule": "mesher design round 2 F6 (supervisor decisions 347 / 349 / 437 / 443): every tubed metal side's ring count is the largest K with r_K + h_K <= min(TransverseBound, FacingWidth / 2) (its facing width across the metal; RingsPerSideRule); a side whose count falls below the kind's MinimumQualifiedRings - the smallest ring count validated by (F) for that coupon kind - fails closed at ScopeGuard[UnqualifiedRingCount] until an (F) case extends the range (the qualified-range mechanism per kind, decision 443; the NarrowMetal guard of decision 347 is retired into the per-side bound); the mesher reads the case kind's value as --minimum-qualified-rings (run_gmsh_only_case)",
+      "Fabricated": {
+        "Cases": "every (F)-Qualified fabricated coupon carries the process count 7 (EdgeSize 0.25 nm, ratio 2, bound min(Overetch 0.05, MetalThickness / 2, CornerIsotropyRadius 0.1): r_7 + h_7 = 47.75 nm): the 8 group-A pairs (C2 19 / 20-edge d67abe58c1cf / 9ef3555507eb, S2p 3-edge 2c54db92028f, S1b 19 / 19 / 35-edge fa8b8709e234 / 2fb07e6f93a5 / da5ddc0466ba, C1 18 / 36-edge 836268084cff / c90e419ed62e) and the S1p v3 pairs (39ab2ffd68ec / c5952e69af66); no fabricated tube with fewer rings has been (F)-validated (the 121-nm fingers of the family-6 cases keep 7: 47.75 <= 60.5 nm)",
+        "Record": "coupon-accuracy-assessment-20260913/stage2-20261004/coupons-a/REPORT.md (the group-A (F) records), device-plan-coupons-20260913/r2 (S1p v3); the per-side rule: mesher-design-round2-20261005/DESIGN.md section 2.2 + ERRATA E2"
+      },
+      "Thin": {
+        "Cases": "every (F)-Qualified thin coupon carries the process count 5 (EdgeSize 2 nm, ratio 2, bound CornerIsotropyRadius 0.1: r_5 + h_5 = 94 nm): the same 8 group-A pairs and the S1p v3 pairs; the 4-ring thin tube of the family-6 cases (S2p c83be8376d3a claims, 9f6184a5de53 context; 121-nm fingers, facing bound 60.5 nm) awaits its (F) validation (prediction B15, STAGE2-PLAN AMENDMENT 10)",
+        "Record": "coupon-accuracy-assessment-20260913/stage2-20261004/coupons-a/REPORT.md, device-plan-coupons-20260913/r2; mesher-design-round2-20261005/DESIGN.md section 2.2 + ERRATA E2"
+      }
+    },
     "PreviousValues": {
       "Decision": "61c (user decision 60(3), 2026-09-21): the build-machine resource bounds are GUIDELINES for the 36 GiB workstation with at most 2 concurrent builds, not hard restrictions",
       "ChangedOn": "2026-09-21",
@@ -178,7 +193,7 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "9557b776e951b580aa1490e527fcc20aed6d5c32141fffe11de75899a26ad071"
+      "SHA256": "a8902cb5162aa56e07558211f36cbce40ab3c29fc7376046dd0517749c20b577"
     },
     {
       "Name": "verify_canonical_case_entries.py",
@@ -238,7 +253,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "b9543cce6267e5839923176e61372e94d9caedb1fbee7b9fcfc093d37165a8ed"
+      "SHA256": "7e0fc19cdcbd706163aa7f1dfff07c408f8d56b83df496e753b2f15bb57bb2bc"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -2375,7 +2390,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "5219d2cddcc2a01369ddbe45ab4382a14bf9c5a0aeafd76612f7bef1ada649ae"
+      "mesher": "207a66f90551bdb4d1371dc970f7040ef00986ec7562c4d777ac1e5304876e6d"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

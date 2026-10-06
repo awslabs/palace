@@ -547,3 +547,129 @@ end
         )
     end
 end
+
+@testset "F6 / decision 391 MINOR-6: facing widths of ARC tube intervals (exact circle geometry)" begin
+    # Synthetic side records of one plane (the fields metal_facing_widths reads): an arc side's
+    # interval runs from the angle of s_start to that of s_end along its travel (theta(s) =
+    # theta_start + sign(sweep) s / rho), its outward normal is sigma x the radial direction;
+    # a straight side's interval is (start + s_start d, start + s_end d) with its normal.
+    function arc_side(
+        centre,
+        rho,
+        sigma,
+        theta_a,
+        theta_b;
+        s_start=0.0,
+        s_end=nothing,
+        plane=0.0
+    )
+        sweep = theta_b - theta_a
+        span = rho * abs(sweep)
+        a = centre .+ rho .* [cos(theta_a), sin(theta_a)]
+        b = centre .+ rho .* [cos(theta_b), sin(theta_b)]
+        return (
+            kind=:arc,
+            start=a,
+            stop=b,
+            direction=sign(sweep) .* [-sin(theta_a), cos(theta_a)],
+            normal=sigma .* [cos(theta_a), sin(theta_a)],
+            span=span,
+            plane=plane,
+            untubed=false,
+            s_start=s_start,
+            s_end=s_end === nothing ? span : s_end,
+            arc=(
+                id=1,
+                centre=centre,
+                rho=rho,
+                sigma=sigma,
+                theta_start=theta_a,
+                theta_end=theta_b,
+                sweep=sweep,
+                part=1,
+                parts=1,
+                run_sweep=sweep,
+                chords=[]
+            )
+        )
+    end
+    function straight_side(a, b, normal; s_start=0.0, s_end=nothing, plane=0.0)
+        d = b .- a
+        span = norm(d)
+        return (
+            kind=:straight,
+            start=a,
+            stop=b,
+            direction=d ./ span,
+            normal=normal,
+            span=span,
+            plane=plane,
+            untubed=false,
+            s_start=s_start,
+            s_end=s_end === nothing ? span : s_end,
+            arc=nothing
+        )
+    end
+    centre = [0.0, 0.0]
+    # An annular metal strip of width w between two concentric quarter arcs (the outer arc
+    # convex: dielectric outside, sigma +1; the inner one concave about the metal: sigma -1):
+    # both sides read exactly w, at every chording (no sampling: the closest points lie at
+    # a common angle).
+    w = 0.121
+    outer = arc_side(centre, 1.0 + w, 1.0, -pi / 2, 0.0)
+    inner = arc_side(centre, 1.0, -1.0, 0.0, -pi / 2)
+    widths, pairs = metal_facing_widths([outer, inner], 1.0e-9)
+    @test widths ≈ [w, w] && length(pairs) == 1 && pairs[1].width ≈ w
+    @test metal_facing_width([outer, inner], 1.0e-9) ≈ w
+    # The intervals retracted at their ends (a corner clearance): still w where they overlap
+    # in angle, Inf once the angular intervals no longer overlap.
+    retracted = arc_side(centre, 1.0, -1.0, 0.0, -pi / 2; s_start=0.3, s_end=1.2)
+    @test metal_facing_widths([outer, retracted], 1.0e-9)[1] ≈ [w, w]
+    far = arc_side(centre, 1.0 + w, 1.0, pi / 4, pi / 2)
+    @test metal_facing_widths([far, inner], 1.0e-9)[1] == [Inf, Inf]
+    # The same two arcs with the metal OUTSIDE both (a dielectric annulus: the normals point at
+    # each other) face across dielectric, not metal: no facing pair.
+    dielectric_outer = arc_side(centre, 1.0 + w, -1.0, -pi / 2, 0.0)
+    dielectric_inner = arc_side(centre, 1.0, 1.0, 0.0, -pi / 2)
+    @test metal_facing_widths([dielectric_outer, dielectric_inner], 1.0e-9)[1] == [Inf, Inf]
+    # An arc against a straight side: a concave arc of radius 1 about the origin (the metal
+    # outside the circle, sigma -1) and a straight side along y = 1 + w (its metal below it,
+    # normal +y) enclose a metal ribbon of width w: the closest pair is the foot of the centre
+    # on the straight side against the arc's top point, exactly w; a straight interval starting
+    # at x = 1 has its END as the closest point, against the arc point at the end's own angle
+    # (48.3 degrees, on the arc): the exact distance from the end to the circle.
+    top_arc = arc_side(centre, 1.0, -1.0, pi / 4, 3 * pi / 4)
+    line = straight_side([-2.0, 1.0 + w], [2.0, 1.0 + w], [0.0, 1.0])
+    widths, pairs = metal_facing_widths([top_arc, line], 1.0e-9)
+    @test widths ≈ [w, w] &&
+          pairs[1].points[2] ≈ [0.0, 1.0 + w] &&
+          pairs[1].points[1] ≈ [0.0, 1.0]
+    offset_line = straight_side([1.0, 1.0 + w], [2.0, 1.0 + w], [0.0, 1.0])
+    widths, pairs = metal_facing_widths([top_arc, offset_line], 1.0e-9)
+    expected = norm([1.0, 1.0 + w]) - 1.0
+    @test widths ≈ [expected, expected] &&
+          pairs[1].points[2] ≈ [1.0, 1.0 + w] &&
+          pairs[1].points[1] ≈ [1.0, 1.0 + w] ./ norm([1.0, 1.0 + w])
+    # A straight interval entirely past the arc's angular range (below and to the right, its
+    # metal above it so that the metal lies between the two): the arc's END is the closest
+    # point.
+    beyond_line = straight_side([1.5, 0.5], [2.0, 0.5], [0.0, -1.0])
+    widths, pairs = metal_facing_widths([top_arc, beyond_line], 1.0e-9)
+    @test length(pairs) == 1 &&
+          pairs[1].points[1] ≈ [cos(pi / 4), sin(pi / 4)] &&
+          widths ≈ fill(norm([1.5, 0.5] .- [cos(pi / 4), sin(pi / 4)]), 2)
+    # Two arcs on different circles: the closest points lie on the line of centres when both
+    # arcs contain its direction (two concave arcs - the metal outside both circles, i.e.
+    # between them - facing across the metal between them).
+    left = arc_side([-1.0, 0.0], 0.5, -1.0, -pi / 4, pi / 4)       # bulging towards +x, metal to its right
+    right = arc_side([1.0, 0.0], 0.5, -1.0, 3 * pi / 4, 5 * pi / 4) # bulging towards -x, metal to its left
+    widths, pairs = metal_facing_widths([left, right], 1.0e-9)
+    @test widths ≈ [1.0, 1.0] &&
+          pairs[1].points[1] ≈ [-0.5, 0.0] &&
+          pairs[1].points[2] ≈ [0.5, 0.0]
+    # Adjacent sides (sharing an end) and untubed sides are not facing pairs.
+    leg = straight_side([1.0 + w, 0.0], [1.0 + w, -1.0], [1.0, 0.0])
+    @test metal_facing_widths([outer, leg], 1.0e-9)[1] == [Inf, Inf]
+    untubed_inner = (inner..., untubed=true)
+    @test metal_facing_widths([outer, untubed_inner], 1.0e-9)[1] == [Inf, Inf]
+end

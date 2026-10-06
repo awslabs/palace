@@ -5512,10 +5512,13 @@ const RECIPE_SCOPE_GUARDS = [
     ("NarrowLayerGap", "build",
      "a vacuum gap between the metal faces of an upward and a downward process layer " *
      "narrower than twice the tube reach: the tubes facing each other across it would overlap"),
-    ("NarrowMetal", "build",
-     "a metal strip narrower than twice the tube envelope (Radius + PyramidHeight) between " *
-     "two tubed metal sides of one plane facing each other across the metal: the tube parts " *
-     "over the metal would overlap (supervisor decision 347)"),
+    ("UnqualifiedRingCount", "build",
+     "a tubed metal side whose per-side ring count (the largest K with r_K + h_K <= " *
+     "min(TransverseBound, w_facing / 2), w_facing its smallest facing width across the metal) " *
+     "lies below the smallest ring count validated by (F) for the coupon kind " *
+     "(--minimum-qualified-rings): the thinner tube is unqualified until an (F) case extends " *
+     "the range (mesher design round 2 F6; supervisor decisions 347 / 349 / 437 / 443; the " *
+     "NarrowMetal guard of decision 347 retired into the per-side bound)"),
     ("SteepFaceCrossing", "build",
      "a tube end on a box face whose tilt lies beyond the validity ceiling of the capped end " *
      "block, 2 PyramidHeight |tan theta| >= the section's end-spacing cap lc_cap (the largest " *
@@ -5937,8 +5940,12 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
         stop_corner = side.stop_corner && stop_face === nothing
         start_angle = start_corner ? corner_angle(side.start, side.plane, side.away[1]) : Float64(pi)
         stop_angle = stop_corner ? corner_angle(side.stop, side.plane, side.away[2]) : Float64(pi)
-        s_start = start_corner ? clearance_of_angle(start_angle) : 0.0
-        s_end = side.span - (stop_corner ? clearance_of_angle(stop_angle) : 0.0)
+        # The clearance of this side's own tube (design round 2 F6: a per-side ring count gives
+        # a per-side R / h_K / h_pyr; a one-argument clearance law is the coupon's).
+        clearance_here(angle) = applicable(clearance_of_angle, angle, index) ?
+                                clearance_of_angle(angle, index) : clearance_of_angle(angle)
+        s_start = start_corner ? clearance_here(start_angle) : 0.0
+        s_end = side.span - (stop_corner ? clearance_here(stop_angle) : 0.0)
         untubed = s_end - s_start < edge_size
         untubed || s_end > s_start ||
             error("metal edge $(side.start) -> $(side.stop) of span $(side.span) leaves no tube " *
@@ -6236,52 +6243,160 @@ function thin_sheet_seam_census(sheet_surfaces, lower, upper, tolerance)
         "Edges" => [[coordinates[edge[1]], coordinates[edge[2]]] for edge in seams])
 end
 
-# Narrow metal strips (supervisor decision 347; family 6 of the mesher generality list):
-# the tube of a metal side reaches Radius + PyramidHeight over the metal (the thin
-# sheet tube's metal half, the fabricated top tube's quadrant above the top face and the
-# bottom tube's quadrant under the metal), so two tubed sides of one plane whose tube
-# intervals face each other ACROSS THE METAL (each lies on the metal side of the
-# other's outward normal, at the closest points of the intervals) must be more than
-# twice that envelope apart, like the sides of a hole (NarrowHoles). Returns the
-# smallest facing width found (Inf without a facing pair); the guard fails closed
-# with the measured width and the reach. Adjacent sides (sharing an end) meet at a
-# corner, where the clearance rule applies; untubed short sides carry no tube.
-function metal_facing_width(segments, envelope_radius, tolerance)
-    width = Inf
+# Narrow metal strips (supervisor decisions 347 / 349; family 6 of the mesher generality
+# list; mesher design round 2 F6, section 2.2): the tube of a metal side reaches Radius +
+# PyramidHeight over the metal (the thin sheet tube's metal half, the fabricated top tube's
+# quadrant above the top face and the bottom tube's quadrant under the metal), so two tubed
+# sides of one plane whose tube intervals face each other ACROSS THE METAL (each lies on the
+# metal side of the other's outward normal, at the closest points of the intervals) bound
+# each other's rings: the per-side transverse bound is min(the process bound, w_facing / 2)
+# with w_facing the smallest facing width of the side (metal_facing_widths; Inf without a
+# facing pair). Adjacent sides (sharing an end) meet at a corner, where the clearance rule
+# applies; untubed short sides carry no tube. ARC sides take part with their exact circle
+# geometry (decision 391 MINOR-6): the closest points of an arc interval against a straight
+# interval or another arc are the critical points of the distance (the interval ends, the
+# straight interval's foot of the centre, the line of centres), and the outward normal at a
+# point of an arc is sigma x the radial direction.
+
+# The plan-view geometry of a side's TUBE INTERVAL: a straight interval (a, b) with the
+# side's outward normal, or an arc interval of the side's circle between the angles of
+# s_start and s_end along its travel.
+function tube_interval_geometry(segment)
+    if segment.kind == :arc
+        arc = segment.arc
+        travel = sign(arc.sweep)
+        angle_at(s) = arc.theta_start + travel * s / arc.rho
+        return (kind=:arc, centre=[arc.centre[1], arc.centre[2]], rho=arc.rho, sigma=arc.sigma,
+                theta_a=angle_at(segment.s_start), theta_b=angle_at(segment.s_end), travel=travel)
+    end
+    a = segment.start .+ segment.s_start .* segment.direction
+    b = segment.start .+ segment.s_end .* segment.direction
+    return (kind=:straight, a=[a[1], a[2]], b=[b[1], b[2]], normal=[segment.normal[1], segment.normal[2]])
+end
+
+# Whether the angle phi lies on the arc interval (from theta_a to theta_b along the travel).
+function arc_interval_contains(geometry, phi)
+    span = abs(geometry.theta_b - geometry.theta_a)
+    delta = mod(geometry.travel * (phi - geometry.theta_a), 2.0 * pi)
+    return delta <= span + 1.0e-12 || delta >= 2.0 * pi - 1.0e-12
+end
+
+arc_interval_point(geometry, phi) = geometry.centre .+ geometry.rho .* [cos(phi), sin(phi)]
+arc_interval_angle(geometry, point) = atan(point[2] - geometry.centre[2], point[1] - geometry.centre[1])
+
+# The outward normal of a side's interval geometry at one of its points.
+function interval_normal(geometry, point)
+    geometry.kind == :straight && return geometry.normal
+    phi = arc_interval_angle(geometry, point)
+    return geometry.sigma .* [cos(phi), sin(phi)]
+end
+
+# The point of an interval closest to P (exact: the foot on a straight interval; on an arc
+# the radial projection when its angle lies on the arc, else the nearer end).
+function closest_interval_point(geometry, point)
+    if geometry.kind == :straight
+        direction = geometry.b .- geometry.a
+        span = dot(direction, direction)
+        span > 0.0 || return copy(geometry.a)
+        t = clamp(dot(point .- geometry.a, direction) / span, 0.0, 1.0)
+        return geometry.a .+ t .* direction
+    end
+    candidates = [arc_interval_point(geometry, geometry.theta_a), arc_interval_point(geometry, geometry.theta_b)]
+    radial = point .- geometry.centre
+    if norm(radial) > 0.0
+        phi = atan(radial[2], radial[1])
+        arc_interval_contains(geometry, phi) && push!(candidates, arc_interval_point(geometry, phi))
+    end
+    return candidates[argmin([norm(point .- c) for c in candidates])]
+end
+
+# The closest points (p on the first interval, q on the second) of two tube intervals, exact
+# for every kind pair: the candidates are each interval's ends against the other interval,
+# the straight interval's foot of the arc centre against the arc, the line of centres of two
+# arcs (a common angle of two concentric arcs), and the two straight intervals' own closest
+# points (segment_closest_points_2d).
+function tube_interval_closest_points(first, second)
+    if first.kind == :straight && second.kind == :straight
+        p, q = segment_closest_points_2d(first.a, first.b, second.a, second.b)
+        return [p[1], p[2]], [q[1], q[2]]
+    end
+    ends(g) = g.kind == :straight ? (g.a, g.b) :
+              (arc_interval_point(g, g.theta_a), arc_interval_point(g, g.theta_b))
+    candidates = Tuple{Vector{Float64}, Vector{Float64}}[]
+    for e in ends(first)
+        push!(candidates, (e, closest_interval_point(second, e)))
+    end
+    for e in ends(second)
+        push!(candidates, (closest_interval_point(first, e), e))
+    end
+    # A straight interval against an arc: the foot of the arc centre on the interval, if its
+    # radial direction lies on the arc.
+    for (straight, arc, swap) in ((first, second, false), (second, first, true))
+        straight.kind == :straight && arc.kind == :arc || continue
+        foot = closest_interval_point(straight, arc.centre)
+        radial = foot .- arc.centre
+        norm(radial) > 0.0 || continue
+        phi = atan(radial[2], radial[1])
+        arc_interval_contains(arc, phi) || continue
+        pair = (foot, arc_interval_point(arc, phi))
+        push!(candidates, swap ? (pair[2], pair[1]) : pair)
+    end
+    if first.kind == :arc && second.kind == :arc
+        between = second.centre .- first.centre
+        distance = norm(between)
+        if distance <= 1.0e-12 * max(first.rho, second.rho)
+            # Concentric arcs: the distance |rho_1 - rho_2| at any common angle; the common
+            # angles include an end of one arc whenever the intervals overlap.
+            for phi in (first.theta_a, first.theta_b, second.theta_a, second.theta_b)
+                arc_interval_contains(first, phi) && arc_interval_contains(second, phi) &&
+                    push!(candidates, (arc_interval_point(first, phi), arc_interval_point(second, phi)))
+            end
+        else
+            u = between ./ distance
+            for s1 in (-1.0, 1.0), s2 in (-1.0, 1.0)
+                p = first.centre .+ s1 .* first.rho .* u
+                q = second.centre .+ s2 .* second.rho .* u
+                arc_interval_contains(first, arc_interval_angle(first, p)) &&
+                    arc_interval_contains(second, arc_interval_angle(second, q)) &&
+                    push!(candidates, (p, q))
+            end
+        end
+    end
+    return candidates[argmin([norm(q .- p) for (p, q) in candidates])]
+end
+
+# The smallest facing width of every tubed side of one plane against the non-adjacent tubed
+# sides across the metal (Inf without a facing pair), and the facing pairs (side indices, the
+# closest points, the width). The guard of decision 347 (NarrowMetal) is retired: the width
+# bounds the side's rings instead (design round 2 F6).
+function metal_facing_widths(segments, tolerance)
     n = length(segments)
+    widths = fill(Inf, n)
+    pairs = NamedTuple[]
+    geometries = [segment.untubed ? nothing : tube_interval_geometry(segment) for segment in segments]
     for i in 1:n, j in (i + 1):n
         first, second = segments[i], segments[j]
         abs(first.plane - second.plane) <= tolerance || continue
         (first.untubed || second.untubed) && continue
-        # Arc sides are not in the facing test (their interval is not a plan-view segment;
-        # a narrow curved strip fails closed at the fragment, as every tube overlap does).
-        (first.kind == :arc || second.kind == :arc) && continue
         shared = any(norm(p .- q) <= tolerance for p in (first.start, first.stop)
                      for q in (second.start, second.stop))
         shared && continue
-        a = first.start .+ first.s_start .* first.direction
-        b = first.start .+ first.s_end .* first.direction
-        c = second.start .+ second.s_start .* second.direction
-        d = second.start .+ second.s_end .* second.direction
-        p, q = segment_closest_points_2d(a, b, c, d)
-        separation = [q[1] - p[1], q[2] - p[2]]
+        p, q = tube_interval_closest_points(geometries[i], geometries[j])
+        separation = q .- p
         distance = norm(separation)
         distance > tolerance || continue
         # Across the metal: the other interval lies against each outward normal.
-        dot(first.normal, separation) < -tolerance && dot(second.normal, separation) > tolerance ||
-            continue
-        if distance < width
-            width = distance
-            width <= 2.0 * envelope_radius &&
-                scope_error("NarrowMetal", "the tubed metal sides $(first.start) -> $(first.stop) " *
-                                           "and $(second.start) -> $(second.stop) on plane " *
-                                           "$(first.plane) face each other across $distance of " *
-                                           "metal against twice the tube envelope " *
-                                           "$(envelope_radius) (Radius + PyramidHeight)")
-        end
+        dot(interval_normal(geometries[i], p), separation) < -tolerance &&
+            dot(interval_normal(geometries[j], q), separation) > tolerance || continue
+        widths[i] = min(widths[i], distance)
+        widths[j] = min(widths[j], distance)
+        push!(pairs, (sides=(i, j), points=(p, q), width=distance))
     end
-    return width
+    return widths, pairs
 end
+
+# The coupon's smallest facing width (Inf without a facing pair).
+metal_facing_width(segments, tolerance) = minimum(metal_facing_widths(segments, tolerance)[1]; init=Inf)
 
 # Width of a hole for its facing tubes: the smallest distance between two
 # non-adjacent sides of the loop (adjacent sides meet at a corner, where the corner
@@ -6338,7 +6453,7 @@ end
 # edges, corner isotropy radius), so the pyramid apexes (h_K / 2 outside the
 # tube) stay one outer ring size away from the trench floor and the two tubes of
 # one sidewall never meet.
-function tube_ring_count(edge_size, ratio, bound)
+function tube_ring_count(edge_size, ratio, bound; context::String="")
     rings = 0
     while true
         next = rings + 1
@@ -6348,7 +6463,8 @@ function tube_ring_count(edge_size, ratio, bound)
         rings = next
     end
     rings >= 1 || scope_error("NarrowTransverseBound",
-                              "the tube inner size $edge_size does not fit the transverse bound $bound")
+                              "the tube inner size $edge_size does not fit the transverse bound $bound" *
+                              (isempty(context) ? "" : " ($context)"))
     return rings
 end
 
@@ -6361,7 +6477,8 @@ const TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
 function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, ratio,
                            sector_degrees, metal_thickness, overetch, corner_radius, lc_tangent,
                            lc_fine, lower, upper, tolerance; fabricated::Bool=true,
-                           maximum_jacobian_condition::Float64=0.0)
+                           maximum_jacobian_condition::Float64=0.0,
+                           minimum_qualified_rings::Int=0)
     fabricated && (overetch > 0.0 || scope_error("NoTrench", "Overetch $overetch"))
     sectors = round(Int, 270.0 / sector_degrees)
     abs(sectors * sector_degrees - 270.0) <= 1.0e-9 || error("Tube sector angle must divide 270 degrees")
@@ -6379,44 +6496,59 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # diameter - substrate from the sheet's substrate side (180) down (270) to the SA
     # floor ray (360), vacuum from the SA floor up (450) to the sheet's vacuum side
     # (540 = 180: a closed section, the sheet ray is both bounding rays).
-    top_section = TubeSection(edge_size, ratio, rings,
+    # The sections of a tube of K rings (design round 2 F6: the ring count is PER SIDE, the
+    # coupon's `rings` the process bound's count; every side whose facing bound does not
+    # bind keeps it). Cached per K: the same TubeSection object serves every tube of that
+    # count (shared CAD / mesh bookkeeping keys on the section are per tube anyway).
+    full_turn = 4 * per_quadrant
+    section_cache = Dict{Int, NamedTuple}()
+    function sections_of(K)
+        return get!(section_cache, K) do
+            top = TubeSection(edge_size, ratio, K,
                               [-90.0 + sector_degrees * j for j in 0:sectors], fill(2, sectors))
-    bottom_section = TubeSection(edge_size, ratio, rings,
+            bottom = TubeSection(edge_size, ratio, K,
                                  [180.0 + sector_degrees * j for j in 0:sectors],
                                  vcat(fill(1, per_quadrant), fill(2, sectors - per_quadrant)))
-    full_turn = 4 * per_quadrant
-    sheet_section = TubeSection(edge_size, ratio, rings,
+            sheet = TubeSection(edge_size, ratio, K,
                                 [180.0 + sector_degrees * j for j in 0:full_turn],
                                 vcat(fill(1, 2 * per_quadrant), fill(2, 2 * per_quadrant)))
-    radius = tube_radius(top_section)
-    outer_ring = ring_sizes(top_section)[end]
-    pyramid_height = TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer_ring
-    # The face-end end-spacing cap of the section (design round 2 F2b 3.2): derived from
-    # the section's own prism frames and the Jacobian-condition ceiling, needed only where
-    # a face end exists (a coupon without one never reads it: regime I is bitwise and a
-    # theta-0 end has no FaceEnd); the ceiling is required then (fail closed).
-    face_end_cap = Ref{Union{Nothing, Float64}}(nothing)
-    function face_end_spacing_cap_of_coupon()
-        if face_end_cap[] === nothing
+            outer = ring_sizes(top)[end]
+            (top=top, bottom=bottom, sheet=sheet, rings=K, radius=tube_radius(top), outer_ring=outer,
+             pyramid_height=TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer,
+             envelope_radius=tube_radius(top) + TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer)
+        end
+    end
+    process = sections_of(rings)
+    top_section, bottom_section, sheet_section = process.top, process.bottom, process.sheet
+    radius = process.radius
+    outer_ring = process.outer_ring
+    pyramid_height = process.pyramid_height
+    # The face-end end-spacing cap of a section (design round 2 F2b 3.2): derived from the
+    # section's own prism frames and the Jacobian-condition ceiling, needed only where a
+    # face end exists (a coupon without one never reads it: regime I is bitwise and a
+    # theta-0 end has no FaceEnd); the ceiling is required then (fail closed). Per ring
+    # count (the frames of a K-ring section; equal for every K >= 2 at one inner size).
+    face_end_caps = Dict{Int, Float64}()
+    function face_end_spacing_cap_of(K)
+        return get!(face_end_caps, K) do
             maximum_jacobian_condition > 1.0 ||
                 error("a face end needs the Jacobian-condition ceiling " *
                       "(--maximum-jacobian-condition) to derive its end-spacing cap")
-            face_end_cap[] = face_end_spacing_cap(fabricated ? top_section : sheet_section,
-                                                  maximum_jacobian_condition)
+            face_end_spacing_cap(fabricated ? sections_of(K).top : sections_of(K).sheet,
+                                 maximum_jacobian_condition)
         end
-        return face_end_cap[]
     end
     # The validity ceiling of the capped end block (design 3.2): beyond it no sheared layer
     # keeps its pyramid apex inside the box within the cap - fail closed.
-    function guard_steep_face_crossing(face)
-        cap = face_end_spacing_cap_of_coupon()
-        apex = 2.0 * pyramid_height * abs(tan(face.theta))
+    function guard_steep_face_crossing(face, K)
+        cap = face_end_spacing_cap_of(K)
+        apex = 2.0 * sections_of(K).pyramid_height * abs(tan(face.theta))
         apex < cap ||
             scope_error("SteepFaceCrossing",
                         "the tube end on face $(face.face) at $(rad2deg(face.theta)) degrees " *
                         "needs a thinnest layer 2 PyramidHeight |tan theta| = $apex at or above " *
                         "the end-spacing cap $cap of the tube section (the validity ceiling is " *
-                        "$(rad2deg(atan(cap / (2.0 * pyramid_height)))) degrees)")
+                        "$(rad2deg(atan(cap / (2.0 * sections_of(K).pyramid_height)))) degrees)")
         return cap
     end
     fabricated && (radius + pyramid_height < overetch ||
@@ -6429,8 +6561,14 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # h_pyr / 2 margin of plan-view separation 2 (c - R / tan(phi / 2)) sin(phi / 2)).
     # The max() is h_K exactly wherever sin(phi / 2) >= 0.625 (phi >= 77.4 degrees:
     # every rectilinear corner, a single tube edge at phi = pi), so those stay bitwise.
-    clearance(angle) = (angle < pi - 1.0e-9 ? radius / tan(0.5 * angle) : 0.0) +
-                       max(outer_ring, 1.25 * pyramid_height / sin(0.5 * angle))
+    # Per side (design round 2 F6): each side's clearance uses its own tube's R, h_K and
+    # h_pyr; a side at the process count keeps the coupon's law bitwise.
+    function clearance_of(K)
+        own = sections_of(K)
+        return angle -> (angle < pi - 1.0e-9 ? own.radius / tan(0.5 * angle) : 0.0) +
+                        max(own.outer_ring, 1.25 * own.pyramid_height / sin(0.5 * angle))
+    end
+    clearance = clearance_of(rings)
     envelope_radius = radius + pyramid_height
     # Facing tubes (the sides of a hole carry tubes pointing into it): the hole must be
     # wider than two tube reaches, a reach being the tube radius, the pyramid height and
@@ -6457,8 +6595,13 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # The untubed short sides (design A9 family 3): recorded, no tube, not in `segments`
     # (which stays in lock-step with `tubes`: TubesPerSide tubes per segment).
     untubed_edges = Dict{String, Any}[]
-    # The narrowest metal strip between facing tubed sides (decision 347; Inf without one).
+    # The narrowest metal strip between facing tubed sides (decisions 347 / 349, design round 2
+    # F6; Inf without one), the smallest per-side bound min(bound, w_facing / 2) and the number
+    # of sides whose ring count the facing bound reduces.
     metal_facing = Inf
+    facing_bound = bound
+    reduced_sides = 0
+    minimum_rings = rings
     # Facing process layers (an upward layer below a downward one, the only pair
     # layer_groups admits): the vacuum gap between their metal top faces must exceed
     # two tube reaches, like the width of a hole.
@@ -6475,15 +6618,72 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     for layer in layers
         layer_loops = [loop for loop in loops if abs(loop.plane - layer.plane) <= tolerance]
         isempty(layer_loops) && error("Plan-view boundary is missing the tube layer $(layer.plane)")
-        layer_segments = [(segment..., layer_sign=layer.sign) for segment in
-                          metal_edge_segments(layer_loops, corners, clearance, lower, upper, tolerance;
-                                              edge_size=edge_size, corner_radius=corner_radius)]
+        # Design round 2 F6 (section 2.2): every tubed side's ring count K_side is the largest
+        # K with r_K + h_K <= b_side = min(bound, w_facing / 2), w_facing its smallest facing
+        # width across the metal (metal_facing_widths, measured on the TUBE INTERVALS). The
+        # intervals depend on the sides' clearances and those on K_side, so the counts are
+        # iterated to a fixed point from the process count (a smaller tube retracts less, so
+        # a count can only decrease; an increase fails closed; at most `rings` rounds).
+        rings_per_side = Int[]
+        layer_segments = NamedTuple[]
+        facing = (Float64[], NamedTuple[])
+        for round in 0:rings
+            side_rings(index) = isempty(rings_per_side) ? rings : rings_per_side[index]
+            layer_segments = [(segment..., layer_sign=layer.sign) for segment in
+                              metal_edge_segments(layer_loops, corners,
+                                                  (angle, index) -> clearance_of(side_rings(index))(angle),
+                                                  lower, upper, tolerance;
+                                                  edge_size=edge_size, corner_radius=corner_radius)]
+            facing = metal_facing_widths(layer_segments, tolerance)
+            next_rings = [segment.untubed ? rings :
+                          tube_ring_count(edge_size, ratio, min(bound, 0.5 * facing[1][index]);
+                                          context="metal side $(segment.start) -> $(segment.stop) on " *
+                                                  "plane $(segment.plane) facing across " *
+                                                  "$(facing[1][index]) of metal")
+                          for (index, segment) in enumerate(layer_segments)]
+            if !isempty(rings_per_side)
+                all(next_rings .<= rings_per_side) ||
+                    error("the per-side ring counts increased between rounds ($rings_per_side -> " *
+                          "$next_rings): the facing widths are not monotone in the clearances")
+                next_rings == rings_per_side && break
+            end
+            rings_per_side = next_rings
+            round < rings || error("the per-side ring counts did not converge in $rings rounds")
+        end
+        # The qualification range (design 2.2, decision 443): a side below the smallest ring
+        # count validated by (F) for this coupon kind stops the build; without the range
+        # (--minimum-qualified-rings) a reduced side fails closed.
+        for (index, segment) in enumerate(layer_segments)
+            segment.untubed && continue
+            K = rings_per_side[index]
+            K == rings && continue
+            minimum_qualified_rings >= 1 ||
+                error("metal side $(segment.start) -> $(segment.stop) on plane $(segment.plane) " *
+                      "takes $K rings under its facing bound $(min(bound, 0.5 * facing[1][index])) " *
+                      "(the process bound gives $rings) but no qualified ring-count range is set " *
+                      "(--minimum-qualified-rings)")
+            K >= minimum_qualified_rings ||
+                scope_error("UnqualifiedRingCount",
+                            "metal side $(segment.start) -> $(segment.stop) on plane $(segment.plane) " *
+                            "takes $K rings under its facing bound $(min(bound, 0.5 * facing[1][index])) " *
+                            "(facing width $(facing[1][index]) across the metal) below the smallest " *
+                            "ring count validated by (F) for this coupon kind, $minimum_qualified_rings")
+        end
+        layer_segments = [(segment..., rings=rings_per_side[index], facing_width=facing[1][index],
+                           facing_bound=min(bound, 0.5 * facing[1][index]))
+                          for (index, segment) in enumerate(layer_segments)]
         if etch_loops !== nothing
             for segment in layer_segments
                 assert_etch_carries_edge(etch_loops, segment, tolerance)
             end
         end
-        metal_facing = min(metal_facing, metal_facing_width(layer_segments, envelope_radius, tolerance))
+        metal_facing = min(metal_facing, minimum(facing[1]; init=Inf))
+        for segment in layer_segments
+            segment.untubed && continue
+            facing_bound = min(facing_bound, segment.facing_bound)
+            minimum_rings = min(minimum_rings, segment.rings)
+            segment.rings < rings && (reduced_sides += 1)
+        end
         # The tubes of this layer's segments in segment order (TubesPerSide per segment); the
         # joints are resolved on the indices into `tubes` once every segment has its tubes.
         layer_tube_index = Dict{Int, Int}()
@@ -6494,20 +6694,23 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                 continue
             end
             b = [0.0, 0.0, Float64(layer.sign)]
+            # The side's own sections (design round 2 F6: its ring count K_side) and their
+            # envelope / pyramid height / end-spacing cap.
+            own = sections_of(segment.rings)
             placements = fabricated ?
-                ((layer.plane + layer.sign * metal_thickness, top_section),
-                 (layer.plane, bottom_section)) :
-                ((layer.plane, sheet_section),)
+                ((layer.plane + layer.sign * metal_thickness, own.top),
+                 (layer.plane, own.bottom)) :
+                ((layer.plane, own.sheet),)
             layer_tube_index[segment_index] = length(tubes)
             if segment.kind == :arc
                 # An ARC part (design 1.2 (3)): the tube revolves about the arc centre; its
                 # travel e = n x b runs with the loop (orientation -sigma b_z = travel) or
                 # against it, as the straight tube's `along` does.
                 arc = segment.arc
-                envelope_radius <= 0.25 * arc.rho ||
+                own.envelope_radius <= 0.25 * arc.rho ||
                     scope_error("ArcTubeRadiusVsCurvature",
                                 "arc $(arc.id) of radius $(arc.rho) against the tube envelope " *
-                                "$(envelope_radius) (Radius + PyramidHeight)")
+                                "$(own.envelope_radius) (Radius + PyramidHeight)")
                 orientation = -arc.sigma * layer.sign
                 travel = sign(arc.sweep)
                 along = orientation * travel
@@ -6518,8 +6721,8 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                     end_index = (along > 0.0) == (segment_end == 1) ? 0 : 1
                     normal = [face.normal[1], face.normal[2], 0.0]
                     push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta, 0.0, 0.0,
-                                             envelope_radius, pyramid_height, lc_tangent;
-                                             spacing_cap=guard_steep_face_crossing(face),
+                                             own.envelope_radius, own.pyramid_height, lc_tangent;
+                                             spacing_cap=guard_steep_face_crossing(face, segment.rings),
                                              face_axis=face.axis, face_value=face.value))
                 end
                 for (z, section) in placements
@@ -6555,8 +6758,8 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                     abs(along_normal) > 0.0 || error("Tube axis lies in the box face $(face.face)")
                     push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta,
                                              dot(normal, n) / along_normal, dot(normal, b) / along_normal,
-                                             envelope_radius, pyramid_height, lc_tangent;
-                                             spacing_cap=guard_steep_face_crossing(face),
+                                             own.envelope_radius, own.pyramid_height, lc_tangent;
+                                             spacing_cap=guard_steep_face_crossing(face, segment.rings),
                                              face_axis=face.axis, face_value=face.value))
                 end
                 for (z, section) in placements
@@ -6579,8 +6782,14 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                         outward = end_index == 1 ? e : -e
                         dot(tangent, outward) < 0.0 && (tangent = -tangent)
                         tilt = acos(clamp(dot(tangent, outward), -1.0, 1.0))
+                        # A shared section needs one ring count on both sides (design round 2 F6).
+                        other.rings == segment.rings ||
+                            error("the smooth joint at $(joint[2] == 1 ? other.start : other.stop) joins " *
+                                  "sides of $(segment.rings) and $(other.rings) rings: a shared section " *
+                                  "needs one ring count (a facing bound on one side of a smooth joint " *
+                                  "is not supported)")
                         push!(joint_ends, JointEnd(end_index, origin, n_arc, b, tangent, tilt,
-                                                   envelope_radius, lc_tangent))
+                                                   own.envelope_radius, lc_tangent))
                     end
                     tube = if along > 0.0
                         EdgeTube([segment.start[1], segment.start[2], z], n, b, segment.s_start,
@@ -6639,11 +6848,29 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "Rings" => rings, "RingSizes" => ring_sizes(top_section),
         "RingRadii" => copy(top_section.ring_radii), "Radius" => radius,
         "TransverseBound" => bound,
-        "RingRule" => fabricated ?
-                      "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, " *
-                      "CornerIsotropyRadius)" :
-                      "largest K with r_K + h_K <= CornerIsotropyRadius (thin sheet: no " *
-                      "trench and no thickness bound the tube)",
+        "RingRule" => (fabricated ?
+                       "largest K with r_K + h_K <= min(Overetch, MetalThickness / 2, " *
+                       "CornerIsotropyRadius)" :
+                       "largest K with r_K + h_K <= CornerIsotropyRadius (thin sheet: no " *
+                       "trench and no thickness bound the tube)") *
+                      "; per SIDE (mesher design round 2 F6, decisions 347 / 349 / 437): a side " *
+                      "facing another tubed side of its plane across the metal takes the largest " *
+                      "K with r_K + h_K <= min(TransverseBound, w_facing / 2), w_facing its " *
+                      "smallest facing width on the tube intervals (RingsPerSideRule)",
+        "RingsPerSideRule" => "every tubed side's ring count K_side is the largest K with r_K + h_K " *
+                              "<= FacingBound_side = min(TransverseBound, FacingWidth_side / 2) " *
+                              "(the two facing envelopes r_K + h_K / 2 stay one outer ring apart), " *
+                              "iterated with the sides' own corner clearances (R, h_K, h_pyr of " *
+                              "K_side) to a fixed point; a side at the coupon's Rings is unchanged " *
+                              "and every other records Tubes[].Rings / FacingWidth / FacingBound; " *
+                              "K_side below MinimumQualifiedRings (the smallest ring count validated " *
+                              "by (F) for this coupon kind) fails closed at " *
+                              "ScopeGuard[UnqualifiedRingCount]; the thin cutoff is the inner ring " *
+                              "(unchanged)",
+        "FacingBound" => facing_bound,
+        "MinimumRings" => minimum_rings,
+        "ReducedSides" => reduced_sides,
+        "MinimumQualifiedRings" => minimum_qualified_rings >= 1 ? minimum_qualified_rings : nothing,
         "Kind" => fabricated ? "fabricated" : "thin",
         "TubesPerSide" => fabricated ? 2 : 1,
         "TubesPerSideRule" => fabricated ?
@@ -6686,7 +6913,9 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                    "x min sigma_2 (closed form; the production sections' smallest " *
                                    "sigma_2 is the second ring's (a, c, d) triangle at its ring-2 " *
                                    "vertex); null on a coupon without a face end",
-        "FaceEndSpacingCap" => face_end_cap[],
+        # The coupon's cap: that of the process section (every K >= 2 at one inner size shares
+        # the critical frame; a reduced side's own cap is recorded per face end).
+        "FaceEndSpacingCap" => isempty(face_end_caps) ? nothing : face_end_spacing_cap_of(rings),
         "BoxVertexRule" => "a box-face vertex with a single metal side is a cut end (FaceEnd, no " *
                            "ball, clearance 0) when theta > 0; at theta == 0 exactly the legacy " *
                            "convention holds bitwise: a Physical-class box vertex is a semantic " *
@@ -6703,10 +6932,11 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "EnvelopeRadius" => envelope_radius,
         "MetalFacingRule" => "two tubed metal sides of one plane whose tube intervals face each " *
                              "other across the metal (each on the metal side of the other's " *
-                             "outward normal at their closest points) are more than 2 x " *
-                             "EnvelopeRadius = 2 (Radius + PyramidHeight) apart, else the build " *
-                             "fails closed at ScopeGuard[NarrowMetal] with the measured width " *
-                             "(supervisor decision 347)",
+                             "outward normal at their closest points; arc intervals by their " *
+                             "exact circle geometry) bound each other's rings through " *
+                             "RingsPerSideRule (mesher design round 2 F6; the ScopeGuard[NarrowMetal] " *
+                             "of decision 347 is retired); MetalFacingWidth is the coupon's " *
+                             "smallest facing width",
         "MetalFacingWidth" => isfinite(metal_facing) ? metal_facing : nothing,
         "FacingReach" => facing_reach,
         "FacingRule" => "every hole is wider than 2 x (Radius + PyramidHeight + " *
@@ -7117,6 +7347,13 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "Edge" => tubes_per_side == 1 ? "sheet" : isodd(k) ? "top" : "bottom"))
         # Face ends (design A2) and theta-0 legacy box-vertex corners (decision 320) are
         # recorded only where they occur, so a rectilinear census is unchanged.
+        # Design round 2 F6: a side bound below the coupon's ring count by its facing width
+        # records its own count and bound (every other row is unchanged).
+        if ring_count(section) != description["Rings"]
+            tube_rows[end]["Rings"] = ring_count(section)
+            tube_rows[end]["FacingWidth"] = segment.facing_width
+            tube_rows[end]["FacingBound"] = segment.facing_bound
+        end
         isempty(tube.face_ends) ||
             (tube_rows[end]["FaceEnds"] = [face_end_record(face_end) for face_end in tube.face_ends])
         if any(segment.legacy_box_corners)
@@ -7391,6 +7628,7 @@ function generate_spatial_coupon(;
     tube_sector_degrees::Float64=30.0,
     far_growth::Float64=0.0,
     corner_shape_gate::Float64=0.0,
+    minimum_qualified_rings::Int=0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -7814,7 +8052,8 @@ function generate_spatial_coupon(;
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
                                   lc_tangent, lc_fine, lower, upper, tolerance;
-                                  maximum_jacobian_condition=maximum_jacobian_condition)
+                                  maximum_jacobian_condition=maximum_jacobian_condition,
+                                  minimum_qualified_rings=minimum_qualified_rings)
         end
         domains, domain_map = occ.fragment(objects, tube_tools)
         substrate_seed = domain_map[1:length(substrates)] |> Iterators.flatten |> collect
@@ -7867,7 +8106,8 @@ function generate_spatial_coupon(;
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
                                   lc_tangent, lc_fine, lower, upper, tolerance; fabricated=false,
-                                  maximum_jacobian_condition=maximum_jacobian_condition)
+                                  maximum_jacobian_condition=maximum_jacobian_condition,
+                                  minimum_qualified_rings=minimum_qualified_rings)
             append!(tools, tube_tools)
             # SEAM (design round 2): the tip bisector curves of the convex thin tips below
             # 90 degrees, fragmented with the sheet after the tube tools (the tube map
@@ -8055,6 +8295,17 @@ function generate_spatial_coupon(;
                 # The face ends of the tubes (design A2; decision 320), known at the CAD
                 # stage: the registration probe records them before any mesh exists.
                 "PrismTubeEntitiesMatched" => matched_tube_entities,
+                # The per-side ring counts (design round 2 F6), known at the CAD stage.
+                "PrismTubeRings" => prism_tubes ?
+                    Dict{String, Any}(
+                        "Rings" => tube_sections["Rings"], "MinimumRings" => tube_sections["MinimumRings"],
+                        "ReducedSides" => tube_sections["ReducedSides"],
+                        "FacingBound" => tube_sections["FacingBound"],
+                        "MetalFacingWidth" => tube_sections["MetalFacingWidth"],
+                        "MinimumQualifiedRings" => tube_sections["MinimumQualifiedRings"],
+                        "Tubes" => [Dict{String, Any}("Tube" => k, "Rings" => ring_count(section))
+                                    for (k, (_, section)) in enumerate(tubes)
+                                    if ring_count(section) != tube_sections["Rings"]]) : nothing,
                 "PrismTubeFaceEnds" => prism_tubes ?
                     Dict{String, Any}(
                         "Count" => sum(length(tube.face_ends) for (tube, _) in tubes; init=0),
@@ -8235,8 +8486,11 @@ function generate_spatial_coupon(;
             end
             tubes[k] = (graded, section)
             push!(tube_layer_records, tube_layer_statistics(graded, axis_positions, axis_sizes))
+            # The pyramid height of the tube's OWN section (design round 2 F6: a side bound by
+            # its facing width carries fewer rings; 0.5 x its outermost ring).
             push!(tube_states, TubeMesh(graded, section, tube_volume_groups[k];
-                                        pyramid_height=tube_sections["PyramidHeight"]))
+                                        pyramid_height=TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING *
+                                                       ring_sizes(section)[end]))
         end
         for (adopting, own_end, owning, owner_end) in tube_joints
             register_joint!(tube_states[adopting], own_end, tube_states[owning], owner_end)
@@ -9127,7 +9381,8 @@ function parse_options(args)
         "--prism-tubes" => ("prism_tubes", Bool),
         "--tube-sector-degrees" => ("tube_sector_degrees", Float64),
         "--far-growth" => ("far_growth", Float64),
-        "--corner-shape-gate" => ("corner_shape_gate", Float64)
+        "--corner-shape-gate" => ("corner_shape_gate", Float64),
+        "--minimum-qualified-rings" => ("minimum_qualified_rings", Int)
     )
     index = 4
     while index <= length(args)
@@ -9206,6 +9461,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         prism_tubes = get(options, "prism_tubes", false),
         tube_sector_degrees = get(options, "tube_sector_degrees", 30.0),
         far_growth = get(options, "far_growth", 0.0),
-        corner_shape_gate = get(options, "corner_shape_gate", 0.0)
+        corner_shape_gate = get(options, "corner_shape_gate", 0.0),
+        minimum_qualified_rings = get(options, "minimum_qualified_rings", 0)
     )
 end

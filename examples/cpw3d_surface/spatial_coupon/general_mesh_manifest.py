@@ -634,6 +634,49 @@ CORNER_SHAPE_GATE_PROVENANCE = "CornerShapeGateProvenance"
 CORNER_SHAPE_GATE_CAP = 5.0
 
 
+# Mesher design round 2 F6 (supervisor decisions 347 / 349 / 437 / 443): the qualified
+# ring-count RANGE per coupon kind - the smallest tube ring count validated by (F) for
+# fabricated and for thin coupons. A side whose facing bound min(TransverseBound,
+# FacingWidth / 2) leaves fewer rings than the kind's minimum fails closed at
+# ScopeGuard[UnqualifiedRingCount] until an (F) case extends the range (the mesher's
+# --minimum-qualified-rings; run_gmsh_only_case passes the case kind's value). Optional:
+# a manifest without it builds no reduced side (the mesher fails closed on one).
+MINIMUM_QUALIFIED_RINGS = "MinimumQualifiedRings"
+MINIMUM_QUALIFIED_RINGS_PROVENANCE = "MinimumQualifiedRingsProvenance"
+MINIMUM_QUALIFIED_RINGS_KINDS = {"fabricated": "Fabricated", "thin": "Thin"}
+
+
+def validate_minimum_qualified_rings(manifest):
+    """Gates.MinimumQualifiedRings (if present) maps Fabricated / Thin to positive integers,
+    each with a provenance record Gates.MinimumQualifiedRingsProvenance {Rule, Fabricated
+    {Cases, Record}, Thin {Cases, Record}} naming the (F) cases behind the number. Returns
+    the mapping or None."""
+    gates = manifest.get("Gates", {})
+    rings = gates.get(MINIMUM_QUALIFIED_RINGS)
+    if rings is None:
+        if MINIMUM_QUALIFIED_RINGS_PROVENANCE in gates:
+            raise ValueError("MinimumQualifiedRingsProvenance recorded without MinimumQualifiedRings")
+        return None
+    provenance = gates.get(MINIMUM_QUALIFIED_RINGS_PROVENANCE)
+    if (not isinstance(rings, dict) or set(rings) != set(MINIMUM_QUALIFIED_RINGS_KINDS.values()) or
+            any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in rings.values()) or
+            not isinstance(provenance, dict) or
+            not isinstance(provenance.get("Rule"), str) or "UnqualifiedRingCount" not in provenance["Rule"] or
+            any(not isinstance(provenance.get(name), dict) or
+                not isinstance(provenance[name].get("Cases"), str) or not provenance[name]["Cases"].strip() or
+                not isinstance(provenance[name].get("Record"), str) or not provenance[name]["Record"].strip()
+                for name in MINIMUM_QUALIFIED_RINGS_KINDS.values())):
+        raise ValueError("MinimumQualifiedRings must map Fabricated / Thin to positive integers with a recorded "
+                         "provenance (Rule, per kind the (F) Cases and Record)")
+    return rings
+
+
+def minimum_qualified_rings(manifest, case):
+    """The case kind's qualified ring-count minimum, or None without the gate."""
+    rings = validate_minimum_qualified_rings(manifest)
+    return None if rings is None else rings[MINIMUM_QUALIFIED_RINGS_KINDS[case_kind(case)]]
+
+
 def validate_corner_shape_gate(manifest):
     """Gates.CornerShapeGate (if present) is a finite number in (1, CORNER_SHAPE_GATE_CAP]
     equal to min(PopulationEnvelope, Cap) of its provenance record
@@ -872,6 +915,7 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
         raise ValueError("Manifest has missing or invalid mesh gates")
     validate_edge_layer_quality_rule_gate(manifest)
     validate_corner_shape_gate(manifest)
+    validate_minimum_qualified_rings(manifest)
     validate_production_recipe(manifest)
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
     tools = manifest.get("Tools")

@@ -36,7 +36,7 @@ from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT
                                     LAYER_ADJACENT_BAND_RULE)
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, audit_manifest_evidence, case_gates,
-                                   element_cap_override, layer_covered_band, run_manifest, sha256,
+                                   case_kind, element_cap_override, layer_covered_band, run_manifest, sha256,
                                    validate_case_element_cap_override, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
@@ -2270,6 +2270,49 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         # case_gates carries the gate to the build command (run_gmsh_only_case --corner-shape-gate).
         self.assertEqual(case_gates(production, production["Cases"][0])[CORNER_SHAPE_GATE], 5.0)
 
+    def test_minimum_qualified_rings_is_the_per_kind_range_with_its_provenance(self):
+        # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): the qualified ring-count
+        # range per coupon kind - Fabricated 7 / Thin 5 on the production manifest (every
+        # (F)-Qualified tube: the process counts), each with the (F) cases behind it; a case
+        # reads its kind's value (run_gmsh_only_case --minimum-qualified-rings).
+        from general_mesh_manifest import (MINIMUM_QUALIFIED_RINGS, MINIMUM_QUALIFIED_RINGS_PROVENANCE,
+                                           minimum_qualified_rings, validate_minimum_qualified_rings)
+        production = json.loads((HERE / "geometry-independence-suite.json").read_text())
+        self.assertEqual(validate_minimum_qualified_rings(production), {"Fabricated": 7, "Thin": 5})
+        provenance = production["Gates"][MINIMUM_QUALIFIED_RINGS_PROVENANCE]
+        self.assertIn("UnqualifiedRingCount", provenance["Rule"])
+        self.assertIn("d67abe58c1cf", provenance["Fabricated"]["Cases"])
+        self.assertIn("c83be8376d3a", provenance["Thin"]["Cases"])
+        fabricated = next(c for c in production["Cases"] if case_kind(c) == "fabricated")
+        thin = next(c for c in production["Cases"] if case_kind(c) == "thin")
+        self.assertEqual(minimum_qualified_rings(production, fabricated), 7)
+        self.assertEqual(minimum_qualified_rings(production, thin), 5)
+        # Without the gate nothing is required (a manifest without it builds no reduced side);
+        # a gate without its provenance, a missing kind, a non-integer, or an empty case list
+        # fails closed.
+        ungated = copy.deepcopy(production)
+        del ungated["Gates"][MINIMUM_QUALIFIED_RINGS]; del ungated["Gates"][MINIMUM_QUALIFIED_RINGS_PROVENANCE]
+        self.assertIsNone(validate_minimum_qualified_rings(ungated))
+        self.assertIsNone(minimum_qualified_rings(ungated, thin))
+        def rejected(mutate, message):
+            broken = copy.deepcopy(production)
+            mutate(broken["Gates"])
+            with self.assertRaisesRegex(ValueError, message):
+                validate_minimum_qualified_rings(broken)
+        rejected(lambda g: g.pop(MINIMUM_QUALIFIED_RINGS_PROVENANCE), "recorded provenance")
+        rejected(lambda g: g.pop(MINIMUM_QUALIFIED_RINGS), "Provenance recorded without")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].pop("Thin"), "Fabricated / Thin")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", 4.5), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", 0), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", True), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS_PROVENANCE]["Thin"].__setitem__("Cases", ""), "recorded provenance")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS_PROVENANCE].__setitem__("Rule", "no guard named"), "recorded provenance")
+        # The whole-manifest validation carries the check.
+        broken = copy.deepcopy(production)
+        broken["Gates"][MINIMUM_QUALIFIED_RINGS]["Thin"] = 0
+        with self.assertRaisesRegex(ValueError, "positive integers"):
+            validate_manifest(broken, HERE / "geometry-independence-suite.json", check_available_files=False)
+
     def test_calibration_manifest_gate_relaxation_never_reaches_production(self):
         # Supervisor decision 22: the MA/MS calibration manifest, and only it, carries
         # MinimumAchievedAspect 0.9 (anisotropy-design gate); the production suite keeps
@@ -3312,6 +3355,80 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             from_round2b["Tools"]["mesher"]["SHA256"] = sha256(ROUND2_MESHER)
             with self.assertRaisesRegex(ValueError, "round-2b mesher lacks its Regime"):
                 validate_gmsh_build_census(from_round2b, face_ended(copy.deepcopy(census)), semantic)
+            # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): a tube row reduced by its
+            # facing width records Rings / FacingWidth / FacingBound; the section records
+            # MinimumRings / ReducedSides / FacingBound / MinimumQualifiedRings and the per-side
+            # rule; the validator recomputes the largest K with r_K + h_K <= min(TransverseBound,
+            # FacingWidth / 2), binds the command's --minimum-qualified-rings and the section
+            # aggregates; a census without the per-side record (pre-F6) passes with no reduced row.
+            from mesh_stage_contract import GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, ring_count_within
+            inner, growth = tubes["InnerSize"], tubes["GrowthRatio"]
+            coupon_rings = section["Rings"]
+            self.assertEqual(ring_count_within(0.00025, 2.0, 0.05), 7)      # the production fabricated tube
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.1), 5)         # the production thin tube
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.0605), 4)      # the 121-nm finger's thin sides
+            self.assertEqual(ring_count_within(0.00025, 2.0, 0.0605), 7)    # its fabricated sides fit
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.003), 0)
+            transverse = sum(section["RingSizes"]) + 0.5 * section["RingSizes"][-1]   # r_K + h_K of the fixture
+            reduced_rings = coupon_rings - 1
+            # A facing width whose half lies between r_{K-1} + h_{K-1} and r_K + h_K reduces the side by one ring.
+            facing_width = 2.0 * 0.5 * (sum(section["RingSizes"][:reduced_rings]) + 0.5 * section["RingSizes"][reduced_rings - 1] + transverse)
+            facing_bound = min(transverse, 0.5 * facing_width)
+            self.assertEqual(ring_count_within(inner, growth, facing_bound), reduced_rings)
+            per_side_report = copy.deepcopy(report)
+            per_side_report["Command"] += [GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, str(reduced_rings)]
+            def per_side(c, *, minimum=reduced_rings, reduce=True):
+                sec = c["PrismTubes"]["Section"]
+                sec["TransverseBound"] = transverse
+                sec["RingsPerSideRule"] = "fixture: ... ScopeGuard[UnqualifiedRingCount] ..."
+                sec["MinimumQualifiedRings"] = minimum
+                sec["MetalFacingWidth"] = facing_width if reduce else None
+                sec["MinimumRings"] = reduced_rings if reduce else coupon_rings
+                sec["ReducedSides"] = 1 if reduce else 0
+                sec["FacingBound"] = facing_bound if reduce else transverse
+                if reduce:
+                    for k in range(sec["TubesPerSide"]):
+                        row = c["PrismTubes"]["Tubes"][k]
+                        row.update({"Rings": reduced_rings, "FacingWidth": facing_width, "FacingBound": facing_bound})
+                return c
+            self.assertEqual(len(census["PrismTubes"]["Tubes"]) % section["TubesPerSide"], 0)
+            accepted = per_side(copy.deepcopy(census))
+            self.assertIs(validate_gmsh_build_census(per_side_report, accepted, semantic), accepted)
+            unreduced = per_side(copy.deepcopy(census), reduce=False)
+            self.assertIs(validate_gmsh_build_census(per_side_report, unreduced, semantic), unreduced)
+            # The pre-F6 census (no per-side record) with the command's range passes as well.
+            pre_f6 = copy.deepcopy(census)
+            self.assertIs(validate_gmsh_build_census(per_side_report, pre_f6, semantic), pre_f6)
+            def rejected_rings(mutate, message, target_report=per_side_report):
+                broken = per_side(copy.deepcopy(census))
+                mutate(broken)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(target_report, broken, semantic)
+            rejected_rings(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Rings", coupon_rings), "outside \[MinimumQualifiedRings")
+            rejected_rings(lambda c: [row.__setitem__("Rings", reduced_rings - 1) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "outside \[MinimumQualifiedRings|do not follow the largest K")
+            rejected_rings(lambda c: [row.__setitem__("FacingWidth", 4.0 * facing_width) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "do not follow the largest K")
+            rejected_rings(lambda c: [row.__setitem__("FacingBound", 0.9 * facing_bound) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "do not follow the largest K")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumRings", coupon_rings), "MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("ReducedSides", 2), "MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("FacingBound", transverse), "MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
+                           "MinimumQualifiedRings differs from the build command")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", 2.0 * facing_width),
+                           "below the section's MetalFacingWidth")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", None),
+                           "the section records none")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("RingsPerSideRule"), "per-side ring rule")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("MinimumRings"), "without the section's per-side record")
+            # The command's range binds: a reduced row below it, or no range at all, fails closed.
+            above = copy.deepcopy(per_side_report)
+            above["Command"][-1] = str(reduced_rings + 1)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
+                           "outside \[MinimumQualifiedRings", target_report=above)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", None),
+                           "without a qualified ring-count range|MinimumQualifiedRings differs", target_report=report)
             # A census recorded before the face-end rule (no summary, no face end) still passes:
             # the fixture producer's census is one.
             self.assertNotIn("FaceEnds", census["PrismTubes"])
