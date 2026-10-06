@@ -255,7 +255,7 @@
     {
       "Name": "label_interface_patches.jl",
       "Path": "examples/cpw3d_surface/spatial_coupon/label_interface_patches.jl",
-      "SHA256": "8b494d4f84e8922cfa319b3acfb628ecb949dda8fb24b0b9b58fd8fde1f38e63"
+      "SHA256": "2f823e7f5e51091fe302eab219f61fa44524c75392f44d718e1700e8040a8f4d"
     },
     {
       "Name": "mesh_spatial_coupon_edge_cluster.jl",
