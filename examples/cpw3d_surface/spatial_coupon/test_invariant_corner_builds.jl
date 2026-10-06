@@ -172,15 +172,26 @@ end
             @test 5.2 <= row["AfterDescent"] <= 5.6
             @test row["After"] <= 0.95 * 5.0
             @test length(row["Reconnections"]) == 1
-            @test row["Reconnections"][1]["Kind"] == "edge-removal"
-            @test row["Reconnections"][1]["After"] < row["Reconnections"][1]["Before"]
+            reconnection = row["Reconnections"][1]
+            @test reconnection["Kind"] == "edge-removal"
+            @test reconnection["After"] < reconnection["Before"]
+            # Exact records (decision 392 MINOR-7): the one trigger cell is the corner's worst
+            # cell after the descent, so Before is AfterDescent to the digit, the removed
+            # bridging edge is a 2-vertex element and the ring of 3 cells became 2.
+            @test reconnection["Before"] == row["AfterDescent"] &&
+                  reconnection["Round"] == 1
+            @test length(reconnection["Element"]) == 2 &&
+                  reconnection["Element"][1] != reconnection["Element"][2]
+            @test reconnection["ReplacedCells"] == 3 && reconnection["AddedCells"] == 2
             @test row["BridgingSlivers"]["Before"] >= 1 &&
                   row["BridgingSlivers"]["AboveGateAfter"] == 0
             optimization = census["SeedQualityOptimization"]
             @test optimization["CornerReconnections"] == 1
             @test optimization["ReconnectionReplacedCells"] == 3 &&
                   optimization["ReconnectionAddedCells"] == 2
-            @test occursin("2-3 flip", optimization["CornerReconnectionRule"])
+            rule = optimization["CornerReconnectionRule"]
+            @test occursin("2-3 flip", rule) && occursin("edge removal", rule)
+            @test occursin("trigger cell's", rule) && occursin("reused being skipped", rule)
         end
     end
 end

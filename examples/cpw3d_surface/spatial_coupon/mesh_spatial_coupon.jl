@@ -1431,22 +1431,34 @@ end
 # sidewalls, kappa_reg 5.28-6.16 at 150-151 degrees, which the bounded descent cannot
 # repair - the vertices are confined to the walls). Trigger = a bridging-sliver
 # candidate still above CornerShapeGate after the kappa_reg descent (decision 365).
-# Each trigger cell is replaced by the 2-3 flip across one of its INTERIOR faces (a face
-# that is no surface triangle, shared with a cell of the same volume entity; the union
-# of the two cells convex so the three new cells are positively oriented) with the best
-# resulting maximum kappa_reg, which must improve on the trigger cell and keep the
-# scaled-Jacobian floor and the Jacobian-condition ceiling of the pair it replaces;
+# Each trigger cell takes the better of two operations: the 2-3 flip across one of its
+# INTERIOR faces (a face that is no surface triangle, shared with a cell of the same
+# volume entity; the union of the two cells convex so the three new cells are positively
+# oriented) and the EDGE REMOVAL of one of its interior edges (the closed ring of n >= 3
+# cells of one entity around the edge re-triangulated by every fan: 2 (n - 2) cells; the
+# 3-2 flip for n = 3 - the operation every measured S4-type sliver used, whose two
+# interior faces have non-convex unions so no 2-3 flip applies), each by the smallest
+# resulting maximum kappa_reg (the edge removal preferred when its quality is <= the
+# flip's), which must improve on the trigger cell; every new cell keeps the TRIGGER
+# cell's scaled-Jacobian floor (min(its original value, 2 x MinimumScaledJacobian)) and
+# its Jacobian-condition ceiling (max(its original value, JacobianConditionTarget));
 # then the descent runs again. Boundary triangles are never flipped; the moves of the
 # descent stay bounded as before. Recorded CornerReconnections per corner.
 const CORNER_RECONNECTION_RULE =
     "a bridging-sliver candidate above CornerShapeGate after the kappa_reg descent (a " *
     "corner-incident cell with its four vertices on the two sidewalls, one strictly on each, " *
-    "in an obtuse wedge) is replaced by the 2-3 flip across one of its interior faces (no " *
-    "surface triangle; the neighbour in the same volume entity; the three new cells " *
-    "positively oriented) with the smallest resulting maximum kappa_reg, which must improve " *
-    "on the cell and keep min(replaced, 2 x MinimumScaledJacobian) scaled Jacobian and " *
-    "max(replaced, JacobianConditionTarget) condition; the descent then runs again; up to " *
-    "CornerReconnectionRounds rounds per corner (mesher design round 2 F5-B, decisions 363 / 365)"
+    "in an obtuse wedge) is replaced by the better of its 2-3 flip across one of its interior " *
+    "faces (no surface triangle; the neighbour in the same volume entity; the three new cells " *
+    "positively oriented) and its edge removal of one of its interior edges (no surface edge; " *
+    "the closed ring of n >= 3 cells of one volume entity around the edge re-triangulated by " *
+    "every fan into 2 (n - 2) positively oriented cells; the 3-2 flip for n = 3), each by the " *
+    "smallest resulting maximum kappa_reg (the edge removal preferred when its quality is <= " *
+    "the flip's), which must improve on the cell; every new cell keeps the trigger cell's " *
+    "floor min(its original scaled Jacobian, 2 x MinimumScaledJacobian) and its ceiling " *
+    "max(its original Jacobian condition, JacobianConditionTarget); the descent then runs " *
+    "again; up to CornerReconnectionRounds rounds per corner, a trigger slot an earlier " *
+    "reconnection of the round reused being skipped until the next round (mesher design " *
+    "round 2 F5-B, decisions 363 / 365 / 392)"
 const CORNER_RECONNECTION_ROUNDS = 4
 
 function oriented_tetrahedron(points, cell)
@@ -2021,16 +2033,23 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         bridging_after = invariant ? bridging_slivers(center, sides, targets) : Int[]
         # Decision 365: the reconnection trigger = a bridging-sliver candidate still above
         # the gate after the kappa_reg descent (none at a legacy corner). F5-B: each trigger
-        # cell takes its best 2-3 flip, then the descent runs again, for up to
-        # CORNER_RECONNECTION_ROUNDS rounds while triggers remain and a flip was found.
+        # cell takes its best 2-3 flip or edge removal, then the descent runs again, for up
+        # to CORNER_RECONNECTION_ROUNDS rounds while triggers remain and a flip was found.
         trigger = invariant ? above_gate(bridging_after, gate) : Int[]
         reconnections = Dict{String, Any}[]
         after_descent = after
         for round in 1:CORNER_RECONNECTION_ROUNDS
             isempty(trigger) && break
             flips = 0
-            for k in trigger
+            # The trigger cells as they were when the round started (decision 392 MINOR-7): an
+            # earlier reconnection of this round may reuse a later trigger's slot for a NEW
+            # cell (the replaced slots take the new cells); such a slot is skipped so every
+            # Element / Before record names a trigger cell - the slot's cell, if still a
+            # candidate above the gate after the descent, triggers again next round.
+            trigger_cells = [tetrahedra[k] for k in trigger]
+            for (slot, k) in enumerate(trigger)
                 k in dead && continue
+                tetrahedra[k] == trigger_cells[slot] || continue
                 origin[k] in remapped_by_collapse && continue
                 before_flip = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
                 flip = best_two_three_flip(points, tetrahedra, incident, surface_faces,
@@ -5527,7 +5546,7 @@ const TIP_BISECTOR_STATION_STEP = 1.0e-4
 # production-size thin family 26-45 degrees, three exit tilts: measured / floor at most
 # 1.19; seed-impl REPORT section 2). The bisector is therefore embedded only at tips of
 # opening phi >= TipBisectorMinimumOpening = 2 alpha* with f(alpha*) = CornerShapeGate /
-# TIP_BISECTOR_DESCENT_EXCESS (31.47 degrees at the gate 5.0: 31 / 32 degrees measured
+# TIP_BISECTOR_DESCENT_EXCESS (31.556 degrees at the gate 5.0: 31 / 32 degrees measured
 # 4.85 / 4.82 with the bisector, 29 / 30 up to 5.41 / 5.04 - the law's crossing); a
 # sharper convex tip keeps its fan and its pinched seams, which the mesher records as
 # UnrefinedCrackSeams for the solve config (Model.RefineCrackElements false; FIX-UPS F.7:

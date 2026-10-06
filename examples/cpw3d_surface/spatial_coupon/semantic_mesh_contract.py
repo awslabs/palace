@@ -167,24 +167,32 @@ def invariant_corner(previous_point, point, following_point):
     the theta-0 box vertex of decision 320 (its metal side perpendicular to the box side);
     such a LEGACY corner keeps the vertex-0 corner measure, MaximumCornerAspect and the 3.8
     target bitwise.  An invariant corner is optimized on and judged by kappa_reg (the
-    condition number of the affine map from the regular tetrahedron, order-invariant)
-    against the manifest's CornerShapeGate = min(E_pop, 5.0), with no bridging sliver
-    remaining; the mesher (mesh_spatial_coupon.semantic_corner_kinds) evaluates the same
-    predicate and fails closed on a contract disagreeing with it."""
+    condition number of the affine map from the regular tetrahedron, order-invariant),
+    descended to the fixed goal 3.8 and judged against the manifest's CornerShapeGate =
+    min(E_pop, 5.0); a BridgingSliver candidate (a corner-incident cell whose four vertices
+    all lie on the kink's two sidewalls, at least one strictly on each, in a wedge of obtuse
+    opening) still above the gate after the descent triggers the corner-local reconnection
+    pass (supervisor decision 365: the measure is the verdict, the predicate the trigger);
+    the mesher (mesh_spatial_coupon.semantic_corner_kinds) evaluates the same predicate and
+    fails closed on a contract disagreeing with it."""
     a = (previous_point[0] - point[0], previous_point[1] - point[1])
     b = (following_point[0] - point[0], following_point[1] - point[1])
     return a[0] * b[0] + a[1] * b[1] != 0.0
 
 
-INVARIANT_CORNER_RULE = ("mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363): a semantic corner "
-                         "whose two plan-view boundary sides have a non-zero dot product on their quantised "
-                         "coordinates (exact arithmetic; every rectilinear corner and the theta-0 box vertex "
-                         "read exactly 0 and stay LEGACY, bitwise) is INVARIANT: its corner-incident seed "
+INVARIANT_CORNER_RULE = ("mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363 / 365): a semantic "
+                         "corner whose two plan-view boundary sides have a non-zero dot product on their "
+                         "quantised coordinates (exact arithmetic; every rectilinear corner and the theta-0 box "
+                         "vertex read exactly 0 and stay LEGACY, bitwise) is INVARIANT: its corner-incident seed "
                          "cells are optimized on and judged by kappa_reg, the condition number of the affine "
                          "map from the regular tetrahedron (order-invariant), descended to the fixed goal 3.8 "
-                         "and judged against the manifest CornerShapeGate = min(E_pop, 5.0) with no "
-                         "BridgingSliver remaining; the mesher evaluates the same predicate and a disagreeing "
-                         "contract fails closed")
+                         "and judged against the manifest CornerShapeGate = min(E_pop, 5.0) (E_pop the kappa_reg "
+                         "envelope of the (F)-qualified 90-degree corners); a BridgingSliver candidate (a "
+                         "corner-incident cell whose four vertices all lie on the kink's two sidewalls, at least "
+                         "one strictly on each, in a wedge of obtuse opening) still above the gate after the "
+                         "descent triggers the corner-local reconnection pass (supervisor decision 365: the "
+                         "measure is the verdict, the predicate the trigger); the mesher evaluates the same "
+                         "predicate and a disagreeing contract fails closed")
 
 
 def boundary_semantic_corners(rows):

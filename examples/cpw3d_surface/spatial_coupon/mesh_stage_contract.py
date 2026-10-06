@@ -1274,10 +1274,47 @@ GMSH_BUILD_CORNER_SHAPE_GATE_OPTION = "--corner-shape-gate"
 CORNER_SHAPE_GATE = "CornerShapeGate"
 CORNER_MEASURES = {"Legacy": "VertexFrameCondition", "Invariant": "RegularCondition"}
 INVARIANT_CORNER_TARGET = 3.8
+# The round-2 census records (F5-A / F5-B / SEAM; decisions 363 / 365 / 368) and the rule
+# round of a census (supervisor decision 392 MINOR-6 ruling, the 4.1 / 4.2 convention): a
+# census declaring NONE of them is a PRE-RULE census and validates only as one - judged by
+# the pre-rule corner rule (every CornerAspectsAfter <= MaximumCornerAspect; no
+# --corner-shape-gate, no contract invariant corner, no seam census) and bound to its
+# declared tool version (its build report's mesher digest is not the round-2 mesher's beside
+# this module: ROUND2_MESHER); a census declaring any of them is a ROUND-2 census and every
+# round-2 record is required (a missing one fails closed).
+ROUND2_CENSUS_RECORDS = ("SemanticCornerKinds", "InvariantCorners", "TipBisectors", "ThinSheetSeams")
+ROUND2_OPTIMIZATION_RECORDS = ("CornerMeasures", "InvariantCorners", "CornerShapeGate",
+                               "InvariantCornerTarget", "InvariantCornerRule", "CornerReconnectionRule")
+CENSUS_RULE_ROUNDS = ("pre-rule", "round-2")
+ROUND2_MESHER = Path(__file__).resolve().parent / "mesh_spatial_coupon.jl"
+
+
+def census_rule_round(census, optimization):
+    """'round-2' when the census or its SeedQualityOptimization declares any round-2 record,
+    'pre-rule' when it declares none (a census written before mesher design round 2)."""
+    declared = ([name for name in ROUND2_CENSUS_RECORDS if name in census] +
+                [name for name in ROUND2_OPTIMIZATION_RECORDS
+                 if isinstance(optimization, dict) and name in optimization])
+    return "round-2" if declared else "pre-rule"
+
+
+def validate_pre_rule_census_tool(build_report):
+    """A pre-rule census is bound to its declared tool: the build report's mesher digest must
+    be recorded and must differ from the round-2 mesher beside this module (which writes
+    every round-2 record, so a census from it lacking them is not a pre-rule census)."""
+    tools = build_report.get("Tools")
+    mesher = tools.get("mesher") if isinstance(tools, dict) else None
+    digest = mesher.get("SHA256") if isinstance(mesher, dict) else None
+    if not isinstance(digest, str) or not digest:
+        raise ValueError("A pre-rule build census (no round-2 record) needs the build report's mesher digest")
+    if digest == sha256(ROUND2_MESHER):
+        raise ValueError("Build census from the round-2 mesher lacks the round-2 records "
+                         "(CornerMeasures / SemanticCornerKinds / InvariantCorners / TipBisectors / ThinSheetSeams)")
+    return digest
 
 
 def validate_corner_measures(optimization, corners, maximum_corner_aspect, corner_shape_gate,
-                             semantic_invariant):
+                             semantic_invariant, rule_round="round-2"):
     """The seed optimization's per-corner verdict records (CornerMeasures: one per semantic
     corner, Point among the corners) judged by kind: a Legacy corner's VertexFrameCondition
     After <= MaximumCornerAspect (target 0.95 x the bound); an Invariant corner's
@@ -1286,7 +1323,23 @@ def validate_corner_measures(optimization, corners, maximum_corner_aspect, corne
     decision 365: the measure is the verdict, a candidate above the gate the reconnection
     trigger, so none may remain above the gate); the set of Invariant corners equals the
     contract's Derivation.InvariantCorners (fail closed on a disagreement); CornerAspectsAfter
-    mirrors the per-corner After values. Returns the number of invariant corners."""
+    mirrors the per-corner After values. A PRE-RULE census (rule_round 'pre-rule', decision
+    392 MINOR-6: no round-2 record declared) is judged by the pre-rule rule alone - every
+    CornerAspectsAfter <= MaximumCornerAspect, no --corner-shape-gate, no contract invariant
+    corner (such a contract needs a round-2 build). Returns the number of invariant corners."""
+    if rule_round not in CENSUS_RULE_ROUNDS:
+        raise ValueError(f"Unknown census rule round {rule_round!r}")
+    after_values = optimization.get("CornerAspectsAfter")
+    if rule_round == "pre-rule":
+        if corner_shape_gate is not None:
+            raise ValueError("A pre-rule build census (no CornerMeasures) cannot be judged by --corner-shape-gate")
+        if semantic_invariant:
+            raise ValueError("A pre-rule build census (no CornerMeasures) cannot judge the contract's invariant "
+                             "corners: rebuild under the round-2 mesher")
+        if (not isinstance(after_values, list) or len(after_values) != len(corners) or
+                any(value > maximum_corner_aspect for value in after_values)):
+            raise ValueError("Pre-rule build census corner aspects exceed MaximumCornerAspect")
+        return 0
     measures = optimization.get("CornerMeasures")
     if (not isinstance(measures, list) or len(measures) != len(corners) or
             any(not isinstance(row, dict) for row in measures)):
@@ -1294,7 +1347,6 @@ def validate_corner_measures(optimization, corners, maximum_corner_aspect, corne
     points = [row.get("Point") for row in measures]
     if sorted(points) != sorted(corners):
         raise ValueError("Seed CornerMeasures points differ from the semantic corners")
-    after_values = optimization.get("CornerAspectsAfter")
     if not isinstance(after_values, list) or len(after_values) != len(measures):
         raise ValueError("Seed CornerAspectsAfter differs from the CornerMeasures rows")
     invariant_points = []
@@ -2057,31 +2109,44 @@ def validate_gmsh_build_census(build_report, census, semantic):
                 not math.isfinite(value) for value in optimization["CornerAspectsAfter"])):
         raise ValueError("Build census does not record gated corner balls")
     # Design round 2 F5-A: the per-corner verdict by kind (legacy MaximumCornerAspect,
-    # invariant CornerShapeGate + no bridging sliver), bound to the contract's record.
+    # invariant CornerShapeGate with no bridging-sliver candidate above it), bound to the
+    # contract's record; a pre-rule census (decision 392 MINOR-6) by the pre-rule rule, bound
+    # to its declared tool.
     corner_shape_gate = (_option_or_default(command, GMSH_BUILD_CORNER_SHAPE_GATE_OPTION, None)
                          if GMSH_BUILD_CORNER_SHAPE_GATE_OPTION in command else None)
     if corner_shape_gate is not None and (not math.isfinite(corner_shape_gate) or corner_shape_gate <= 1.0):
         raise ValueError("Gmsh-only build command carries an invalid --corner-shape-gate")
+    rule_round = census_rule_round(census, optimization)
     validate_corner_measures(optimization, corners, gates["MaximumCornerAspect"], corner_shape_gate,
-                             invariant_corners(semantic))
-    kinds = census.get("SemanticCornerKinds")
-    if (not isinstance(kinds, list) or len(kinds) != len(corners) or
-            [point for point, kind in zip(census["SemanticCorners"], kinds) if kind == "Invariant"] !=
-            [row["Point"] for row in optimization["CornerMeasures"] if row["Kind"] == "Invariant"] or
-            any(kind not in CORNER_MEASURES for kind in kinds)):
-        raise ValueError("Build census SemanticCornerKinds differ from the seed corner measures")
-    validate_thin_sheet_seams(census, build_coupon_kind(command))
+                             invariant_corners(semantic), rule_round)
+    if rule_round == "pre-rule":
+        validate_pre_rule_census_tool(build_report)
+    else:
+        kinds = census.get("SemanticCornerKinds")
+        if (not isinstance(kinds, list) or len(kinds) != len(corners) or
+                [point for point, kind in zip(census["SemanticCorners"], kinds) if kind == "Invariant"] !=
+                [row["Point"] for row in optimization["CornerMeasures"] if row["Kind"] == "Invariant"] or
+                any(kind not in CORNER_MEASURES for kind in kinds)):
+            raise ValueError("Build census SemanticCornerKinds differ from the seed corner measures")
+    validate_thin_sheet_seams(census, build_coupon_kind(command), rule_round)
     return census
 
 
-def validate_thin_sheet_seams(census, kind):
+def validate_thin_sheet_seams(census, kind, rule_round="round-2"):
     """Design round 2 SEAM (supervisor decisions 363 / 368): a thin build records the
     pinched-seam census ThinSheetSeams {Count, Edges, ...}; its Count is 0 unless the record
     carries UnrefinedCrackSeams (the seams of the convex tips sharper than the bisector's
     minimum opening, every seam attributed: Count equal, RefineCrackElements false) - the
     solve-config writer then sets Model.RefineCrackElements false (case_inputs); a
-    fabricated build carries no seam. Returns the UnrefinedCrackSeams record or None."""
+    fabricated build carries no seam. A PRE-RULE census (rule_round 'pre-rule', decision 392
+    MINOR-6: no round-2 record declared) carries no seam census and is accepted as such; a
+    round-2 thin census lacking the record fails closed. Returns the UnrefinedCrackSeams
+    record or None."""
+    if rule_round not in CENSUS_RULE_ROUNDS:
+        raise ValueError(f"Unknown census rule round {rule_round!r}")
     seams = census.get("ThinSheetSeams")
+    if rule_round == "pre-rule":
+        return None         # no round-2 record declared: no seam census to bind
     if kind != "thin":
         if seams is not None and _count(seams.get("Count"), "Thin sheet seams") != 0:
             raise ValueError("A fabricated build census records thin-sheet seams")

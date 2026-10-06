@@ -48,7 +48,9 @@ class UnrefinedCrackSeamsTest(unittest.TestCase):
 
     def test_no_census_or_no_seams_leaves_the_default(self):
         config = copy.deepcopy(CONFIG)
-        self.assertIsNone(case_inputs.apply_unrefined_crack_seams(config, self.write(None), False))
+        # A fabricated case without a census beside its mesh: nothing to apply (a fabricated
+        # build never carries the record).
+        self.assertIsNone(case_inputs.apply_unrefined_crack_seams(config, self.write(None), True))
         clean = copy.deepcopy(CENSUS)
         clean["ThinSheetSeams"] = {"Count": 0, "Edges": [], "UnrefinedCrackSeams": None}
         self.assertIsNone(case_inputs.apply_unrefined_crack_seams(config, self.write(clean), False))
@@ -57,6 +59,16 @@ class UnrefinedCrackSeamsTest(unittest.TestCase):
         fabricated["ThinSheetSeams"] = None
         self.assertIsNone(case_inputs.apply_unrefined_crack_seams(config, self.write(fabricated), True))
         self.assertNotIn("RefineCrackElements", config["Model"])
+
+    def test_thin_case_without_a_census_fails_closed(self):
+        # Decision 392 MINOR-5 (decision 368 (3) "fail closed"): a thin case whose mesh has no
+        # build-census.json beside it is refused - its UnrefinedCrackSeams record cannot be
+        # read, so Model.RefineCrackElements is not silently left at the default.
+        config = copy.deepcopy(CONFIG)
+        with self.assertRaisesRegex(case_inputs.CaseInputError, "thin case has no build census"):
+            case_inputs.apply_unrefined_crack_seams(config, self.write(None), False)
+        self.assertNotIn("RefineCrackElements", config["Model"])
+        self.assertIn("without a build census", case_inputs.UNREFINED_CRACK_SEAMS_RULE)
 
     def test_fail_closed(self):
         with self.assertRaisesRegex(case_inputs.CaseInputError, "fabricated case carries UnrefinedCrackSeams"):

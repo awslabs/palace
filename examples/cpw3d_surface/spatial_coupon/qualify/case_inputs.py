@@ -239,20 +239,26 @@ UNREFINED_CRACK_SEAMS_RULE = (
     "refine_crack_elements -> SplitMeshElements); every DOF on the PEC sheet, the seam edge's included, is "
     "Dirichlet (the sheet carries the prescribed potential / ground on both sides), so the coupling an unrefined "
     "seam leaves is between two constrained values, with no effect on the potential or on the per-side charge "
-    "integrals; fail closed on a fabricated case, on a sheet attribute that is not a Dirichlet boundary of the "
-    "config, or on a census whose seam count disagrees with the record; the (F) qualification is the acceptance")
+    "integrals; fail closed on a thin case without a build census beside its mesh (supervisor decision 392 "
+    "MINOR-5: the record cannot be read, so the default is not applied silently), on a fabricated case carrying "
+    "the record, on a sheet attribute that is not a Dirichlet boundary of the config, or on a census whose seam "
+    "count disagrees with the record; the (F) qualification is the acceptance")
 
 
 def apply_unrefined_crack_seams(config, mesh_path, fabricated):
     """Decision 368 (3): set Model.RefineCrackElements false exactly when the mesh's build census
     (build-census.json beside the mesh) records ThinSheetSeams.UnrefinedCrackSeams with a positive
     Count; returns the record written into the run record (None otherwise). Fail closed on a
-    fabricated case carrying the record, on a census with seams but no record, and on a thin
-    sheet attribute (4000 family) that is not a Dirichlet (Ground / PrescribedPotential)
-    boundary of the config."""
+    thin case without a build census beside its mesh (decision 392 MINOR-5), on a fabricated
+    case carrying the record, on a census with seams but no record, and on a thin sheet
+    attribute (4000 family) that is not a Dirichlet (Ground / PrescribedPotential) boundary of
+    the config."""
     census_path = Path(mesh_path).with_name(BUILD_CENSUS_NAME)
     if not census_path.is_file():
-        return None
+        if fabricated:
+            return None
+        raise CaseInputError(f"{census_path}: the thin case has no build census beside its mesh, so its "
+                             "UnrefinedCrackSeams record cannot be read (Model.RefineCrackElements is not defaulted)")
     census = json.loads(census_path.read_text())
     seams = census.get("ThinSheetSeams")
     if not isinstance(seams, dict):

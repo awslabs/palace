@@ -113,7 +113,7 @@
     {
       "Name": "semantic_mesh_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/semantic_mesh_contract.py",
-      "SHA256": "d3b6adb6e86f8bbccc108bb4c88e564aacdb158e291f93d779b9a3d5ece1d3c3"
+      "SHA256": "04b6f57616818feb02767a377faaa6410b7f2a0156f8b95438ff15fcc1ce55a4"
     },
     {
       "Name": "trace_basis.py",
@@ -158,7 +158,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "b34c2fb971e396d8860ebec82e7106eb63e405c7e0b9d2501c8968996386828c"
+      "SHA256": "286afb6cdd2a418f43b7dc06d592777a4f07b4214b77faf6a2f5ff97b46ad15e"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -208,7 +208,7 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "a0d6a6a1b935bb2a1c5b71930ed82144592376686990af4ea8f75962629af136"
+      "mesher": "ffe779c4b49d354845a2145135fa825cfc541a902d6c0e94bbd354537e739c50"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",

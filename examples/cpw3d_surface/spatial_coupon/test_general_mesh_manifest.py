@@ -3281,6 +3281,57 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             invariant_census["SeedQualityOptimization"]["CornerAspectsAfter"][0] = 5.5
             with self.assertRaisesRegex(ValueError, "Invariant corner .* fails its gate"):
                 validate_gmsh_build_census(gated_report, invariant_census, invariant_semantic)
+            # Decision 392 MINOR-6 (the 4.1 / 4.2 convention): a census declaring NONE of the
+            # round-2 records is a PRE-RULE census - judged by the pre-rule corner rule (every
+            # CornerAspectsAfter <= MaximumCornerAspect) and bound to its declared tool (the
+            # fixture report's mesher is not the round-2 mesher); a pre-rule census from the
+            # round-2 mesher, one judged by --corner-shape-gate, one facing a contract invariant
+            # corner, or one above the corner bound fails closed; a ROUND-2 census lacking any
+            # record fails closed.
+            from mesh_stage_contract import (ROUND2_CENSUS_RECORDS, ROUND2_MESHER,
+                                             ROUND2_OPTIMIZATION_RECORDS, census_rule_round,
+                                             validate_thin_sheet_seams)
+            self.assertEqual(census_rule_round(census, census["SeedQualityOptimization"]), "round-2")
+            pre_rule = copy.deepcopy(census)
+            for name in ROUND2_CENSUS_RECORDS:
+                pre_rule.pop(name, None)
+            for name in ROUND2_OPTIMIZATION_RECORDS:
+                pre_rule["SeedQualityOptimization"].pop(name, None)
+            self.assertEqual(census_rule_round(pre_rule, pre_rule["SeedQualityOptimization"]), "pre-rule")
+            self.assertNotEqual(report["Tools"]["mesher"]["SHA256"], sha256(ROUND2_MESHER))
+            self.assertIs(validate_gmsh_build_census(report, pre_rule, semantic), pre_rule)
+            def rejected_pre_rule(mutate, message, report_used=report, semantic_used=semantic):
+                broken_report, broken = copy.deepcopy(report_used), copy.deepcopy(pre_rule)
+                mutate(broken, broken_report)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(broken_report, broken, semantic_used)
+            rejected_pre_rule(lambda c, r: c["SeedQualityOptimization"]["CornerAspectsAfter"].__setitem__(0, 10.0),
+                              "Pre-rule build census corner aspects exceed MaximumCornerAspect")
+            rejected_pre_rule(lambda c, r: r["Tools"]["mesher"].__setitem__("SHA256", sha256(ROUND2_MESHER)),
+                              "from the round-2 mesher lacks the round-2 records")
+            rejected_pre_rule(lambda c, r: r.pop("Tools"), "needs the build report's mesher digest")
+            rejected_pre_rule(lambda c, r: None, "cannot be judged by --corner-shape-gate",
+                              report_used=gated_report)
+            rejected_pre_rule(lambda c, r: None, "cannot judge the contract's invariant corners",
+                              semantic_used=invariant_semantic)
+            # One round-2 record declared makes the census a round-2 census: every record required.
+            for name in ("CornerMeasures", "InvariantCorners", "CornerShapeGate", "InvariantCornerTarget"):
+                partial = copy.deepcopy(pre_rule)
+                partial["SeedQualityOptimization"][name] = census["SeedQualityOptimization"][name]
+                self.assertEqual(census_rule_round(partial, partial["SeedQualityOptimization"]), "round-2")
+                with self.assertRaises(ValueError):
+                    validate_gmsh_build_census(report, partial, semantic)
+            rejected(lambda c: c["SeedQualityOptimization"].pop("CornerMeasures"),
+                     "one CornerMeasures row per semantic corner")
+            rejected(lambda c: c.pop("SemanticCornerKinds"), "SemanticCornerKinds differ")
+            # The seam census by rule round: a round-2 thin census lacking ThinSheetSeams fails
+            # closed, a pre-rule thin census carries none and is accepted as such.
+            with self.assertRaisesRegex(ValueError, "lacks the ThinSheetSeams record"):
+                validate_thin_sheet_seams({}, "thin")
+            self.assertIsNone(validate_thin_sheet_seams({}, "thin", "pre-rule"))
+            self.assertIsNone(validate_thin_sheet_seams(census, "thin"))
+            with self.assertRaisesRegex(ValueError, "Unknown census rule round"):
+                validate_thin_sheet_seams(census, "thin", "round-3")
             rejected(lambda c: c.__setitem__("EdgeLayer", {"EdgeSize": .004}), "tetrahedral edge layer")
             rejected(lambda c: c["JunctionCurves"].__setitem__("CurvedCurves", 1), "straight junction")
             rejected(lambda c: c["CornerGrading"].__setitem__("CornerSize", .002),
