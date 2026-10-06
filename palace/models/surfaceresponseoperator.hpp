@@ -582,7 +582,14 @@ public:
   // three-dimensional spatial response patch. The result is ordered by global patch
   // index and replicated on all ranks.
   std::vector<PatchTrace> GetSpatialPatchTraces(const Vector &x) const;
+  // The same for every applied patch (translational patches included; their coefficients
+  // are the surface-mortar projection or the collocated values of the trace coupling).
+  std::vector<PatchTrace> GetPatchTraces(const Vector &x) const;
 
+private:
+  std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only) const;
+
+public:
   // Conductor-consistency gate (decision 277 (A)), solve time only: measure every applied
   // spatial surface-mortar patch on the potential x of excitation `source`
   // (ConductorConsistencyRecord), exclude the patches whose max_ratio exceeds

@@ -22265,15 +22265,27 @@ SurfaceResponseOperator::GatherPatchContributions(
 std::vector<SurfaceResponseOperator::PatchTrace>
 SurfaceResponseOperator::GetSpatialPatchTraces(const Vector &x) const
 {
+  return GatherPatchTraces(x, true);
+}
+
+std::vector<SurfaceResponseOperator::PatchTrace>
+SurfaceResponseOperator::GetPatchTraces(const Vector &x) const
+{
+  return GatherPatchTraces(x, false);
+}
+
+std::vector<SurfaceResponseOperator::PatchTrace>
+SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) const
+{
   MFEM_VERIFY(!maxwell,
-              "Spatial patch-trace export currently supports electrostatic response "
-              "correction only!");
+              "Patch-trace export currently supports electrostatic response correction "
+              "only!");
   ApplyTrace(x, trace);
   std::vector<double> local_records;
   for (const auto &patch : patches)
   {
     const auto &model = models[patch.model];
-    if (!model.spatial_basis)
+    if (spatial_only && !model.spatial_basis)
     {
       continue;
     }
@@ -22289,7 +22301,7 @@ SurfaceResponseOperator::GetSpatialPatchTraces(const Vector &x) const
 
   MFEM_VERIFY(local_records.size() <=
                   static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local spatial patch-trace data exceeds the MPI count limit!");
+              "Local patch-trace data exceeds the MPI count limit!");
   const int local_value_count = static_cast<int>(local_records.size());
   std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
   Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());

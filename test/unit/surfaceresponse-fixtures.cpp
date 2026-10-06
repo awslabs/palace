@@ -1182,17 +1182,17 @@ mfem::Mesh SurfaceResponseFiles::MakeAutomatic2DMesh()
 std::unique_ptr<mfem::ParMesh>
 SurfaceResponseFiles::MakeIslandMesh(bool rounded, bool tetrahedral, bool aperture,
                                      bool neighboring_island, bool second_layer,
-                                     bool high_order_rounded)
+                                     bool high_order_rounded, int normal_elements)
 {
   const double in_plane_extent = aperture || neighboring_island ? 2.0 : 1.0;
   const double center = 0.5 * in_plane_extent;
   const double half_width = 0.25;
   const int in_plane_elements =
       (rounded && !high_order_rounded ? 16 : 8) * (aperture || neighboring_island ? 2 : 1);
-  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(in_plane_elements, 4, in_plane_elements,
-                                                  tetrahedral ? mfem::Element::TETRAHEDRON
-                                                              : mfem::Element::HEXAHEDRON,
-                                                  in_plane_extent, 1.0, in_plane_extent);
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
+      in_plane_elements, normal_elements, in_plane_elements,
+      tetrahedral ? mfem::Element::TETRAHEDRON : mfem::Element::HEXAHEDRON, in_plane_extent,
+      1.0, in_plane_extent);
   for (int face = 0; face < serial.GetNumFaces(); face++)
   {
     int element1, element2;
