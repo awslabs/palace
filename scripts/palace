@@ -24,7 +24,6 @@ Options:
 
 # Parse arguments
 DRY_RUN=""
-VERSION="false"
 SERIAL="false"
 NUM_PROCS="1"
 NUM_THREADS=""
@@ -37,10 +36,6 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
         help
         exit 0
-        ;;
-        --version)
-        VERSION="true"
-        shift
         ;;
         -dry-run|--dry-run)
         DRY_RUN="--dry-run"
@@ -83,11 +78,7 @@ done
 set -- "${POSITIONAL[@]}"  # Restore positional parameters
 
 # Check arguments: Config file and everything remaining is passed to Palace binary
-if $VERSION; then
-    CONFIG="--version"
-    DRY_RUN=""
-    NUM_PROCS="1"
-elif [[ -z "$@" ]]; then
+if [[ -z "$@" ]]; then
     help
     exit 1
 else

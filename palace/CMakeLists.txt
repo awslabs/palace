@@ -755,7 +755,7 @@ string(TOLOWER "${_blas_lapack}" _blas_lapack)
 if(_blas_lapack MATCHES "(^|;)(lib)?openblas")
   list(APPEND VERSION_DEFINITIONS PALACE_BLAS_OPENBLAS)
   # ILP64 OpenBLAS built with SYMBOLSUFFIX=64_ is named libopenblas64_
-  if(_blas_lapack MATCHES "(^|;)(lib)?openblas64")
+  if(_blas_lapack MATCHES "(^|;)(lib)?openblas[op]?64_")
     list(APPEND VERSION_DEFINITIONS PALACE_BLAS_OPENBLAS64)
   endif()
 elseif(_blas_lapack MATCHES "(^|;)((lib)?mkl_|intel10)")

@@ -113,6 +113,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     detected from the environment, and AOCL is located through CMake's `FindBLAS` and
     `FindLAPACK`. *Palace* now requires CMake 3.27 or later.
     [PR 1026](https://github.com/awslabs/palace/pull/1026).
+  - `palace --version` now reports the version of every linked dependency, and the build
+    identifier set with the `PALACE_BUILD_ID` CMake option (the Spack package sets it to
+    its DAG hash).
+    [PR 1028](https://github.com/awslabs/palace/pull/1028).
+  - The superbuild dependencies are now pinned to release tags instead of commit SHAs
+    (except libCEED), and were bumped to their latest releases, including STRUMPACK 8.1.0,
+    ZFP 1.0.1 (with the `zfp_stream_maximum_size()` overflow fix backported), and libxsmm
+    2.1.0.
+    [PR 1028](https://github.com/awslabs/palace/pull/1028).
 
 ## [0.18.1] - 2026-09-21
 
