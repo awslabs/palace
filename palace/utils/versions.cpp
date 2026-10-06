@@ -101,6 +101,11 @@ extern "C"
 namespace palace
 {
 
+#if defined(PALACE_WITH_GSLIB)
+// Defined in utils/gslibversion.cpp, which isolates the GSLIB header
+int GetGslibReleaseVersion();
+#endif
+
 namespace
 {
 
@@ -221,8 +226,8 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   cudssGetProperty(PATCH_LEVEL, &patch);
   versions.emplace_back("cuDSS", fmt::format("{}.{}.{}", major, minor, patch));
 #endif
-#if defined(PALACE_GSLIB_VERSION)
-  versions.emplace_back("GSLIB", PALACE_GSLIB_VERSION);
+#if defined(PALACE_WITH_GSLIB)
+  versions.emplace_back("GSLIB", DecodeVersion(GetGslibReleaseVersion(), 10000, 100));
 #endif
   versions.emplace_back("METIS", fmt::format("{}.{}.{}", METIS_VER_MAJOR, METIS_VER_MINOR,
                                              METIS_VER_SUBMINOR));
