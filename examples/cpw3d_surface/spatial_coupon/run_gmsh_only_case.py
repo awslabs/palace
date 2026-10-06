@@ -293,7 +293,11 @@ def main():
                "--maximum-corner-aspect", number(judged["MaximumCornerAspect"]),
                "--minimum-scaled-jacobian", number(judged["MinimumScaledJacobian"]),
                "--maximum-jacobian-condition", number(judged["MaximumJacobianCondition"]),
-               "--maximum-quality-displacement-over-normal", "0.75"]
+               "--maximum-quality-displacement-over-normal", "0.75",
+               # Design round 2 F5-A: the invariant-corner verdict bound, only when the
+               # manifest carries it (every rectilinear manifest's command is unchanged).
+               *(["--corner-shape-gate", number(judged["CornerShapeGate"])]
+                 if judged.get("CornerShapeGate") is not None else [])]
         if args.labels_only:
             # The same mesher command as the gmsh-build stage plus the labels-only output:
             # the label set comes from the production code path on the production options.

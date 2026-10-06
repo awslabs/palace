@@ -37,7 +37,7 @@ from mixed_mesh import (H1_ENTITY_NAMES, SHELL_LABEL_STRIDE, SURFACE_KINDS, VOLU
                         h1_dofs_from_counts, h1_entity_counts, parent_label_view, shell_labels, shell_parent)
 from mixed_mesh import simplicial_view as _simplicial_view_uncached
 from mixed_mesh import volume_quality as _volume_quality_uncached
-from semantic_mesh_contract import load_semantic_contract
+from semantic_mesh_contract import invariant_corners, load_semantic_contract
 
 
 KINDS = ("bounded-run", "mesh-topology-quality", "mesh-complexity",
@@ -681,14 +681,46 @@ def _tetrahedron_aspect_frames(mesh):
     return _memo(mesh, ("tetrahedron_aspect_frames",), compute)
 
 
-def _point_aspects(mesh, points):
+# Mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363): kappa_reg, the
+# condition number of the affine map from the REGULAR tetrahedron (J W^-1, W the regular
+# tetrahedron's edge matrix), order-invariant - the measure of the INVARIANT
+# (non-perpendicular) semantic corners, judged against the manifest CornerShapeGate; the
+# vertex-frame condition above stays the measure of every other neighborhood.
+REGULAR_TETRAHEDRON_EDGES_INVERSE = np.linalg.inv(np.array(
+    [[1.0, 0.5, 0.5], [0.0, math.sqrt(3.0) / 2.0, math.sqrt(3.0) / 6.0], [0.0, 0.0, math.sqrt(2.0 / 3.0)]]))
+CORNER_MEASURES = {"Legacy": "VertexFrameCondition", "Invariant": "RegularCondition"}
+
+
+def _tetrahedron_regular_conditions(mesh):
+    def compute():
+        xyz, _, _ = _tetrahedron_aspect_frames(mesh)
+        jacobian = np.stack((xyz[:, 1] - xyz[:, 0], xyz[:, 2] - xyz[:, 0],
+                             xyz[:, 3] - xyz[:, 0]), axis=2) @ REGULAR_TETRAHEDRON_EDGES_INVERSE
+        singular = np.linalg.svd(jacobian, compute_uv=False)
+        return singular[:, 0] / singular[:, -1]
+    return _memo(mesh, ("tetrahedron_regular_conditions",), compute)
+
+
+def _point_aspects(mesh, points, invariant=None):
+    """Per point the maximum corner measure of the incident tetrahedra: the vertex-frame
+    condition, or kappa_reg for the points listed in `invariant` (the contract's invariant
+    semantic corners, in the mesh frame), whose rows carry Measure = RegularCondition (a row
+    without Measure is the legacy vertex-frame measure, so every rectilinear evidence
+    record is unchanged)."""
     xyz, centers, aspects = _tetrahedron_aspect_frames(mesh)
+    invariant = np.asarray(invariant if invariant is not None else [], dtype=float).reshape(-1, 3)
     result = []
     for point in np.asarray(points, dtype=float).reshape(-1, 3):
         incident = np.flatnonzero(np.any(np.linalg.norm(xyz - point, axis=2) <= 1e-10, axis=1))
         selected = incident if len(incident) else [int(np.argmin(np.linalg.norm(centers-point, axis=1)))]
-        result.append({"Point": point.tolist(), "MaximumAspect": float(aspects[selected].max()),
-                       "Cells": int(len(selected))})
+        regular = len(invariant) and np.linalg.norm(invariant - point, axis=1).min() <= 1e-9
+        values = _tetrahedron_regular_conditions(mesh) if regular else aspects
+        row = {"Point": point.tolist(), "MaximumAspect": float(values[selected].max()),
+               "Cells": int(len(selected))}
+        if regular:
+            row["Measure"] = CORNER_MEASURES["Invariant"]
+            row["MaximumVertexFrameAspect"] = float(aspects[selected].max())
+        result.append(row)
     return result
 
 
@@ -1402,7 +1434,9 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
               "OwnershipClosure": _ownership_report(
                   ownership_report_path, ownership_quadrature_path, contract),
               "ActualSemanticCorners": transformed_corners.tolist(),
-              "CornerNeighborhoods": _point_aspects(mesh, transformed_corners),
+              "CornerNeighborhoods": _point_aspects(
+                  mesh, transformed_corners,
+                  transformed(np.asarray(invariant_corners(contract), dtype=float).reshape(-1, 3))),
               "SubdivisionNeighborhoods": _point_aspects(mesh, transformed(subdivision_points)),
               "CutNeighborhoods": _point_aspects(mesh, transformed(cut_points)),
               "ProtectedSurfaces": _protected_surface_report(

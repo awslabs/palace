@@ -444,14 +444,31 @@ function write_tip_inputs(
             println(io, join([1, 1, plane, point[1], point[2]], ","))
         end
     end
-    open(joinpath(directory, "semantic.json"), "w") do io
-        return write_json(
-            io,
-            Dict{String, Any}(
-                "Version" => 1,
-                "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]
+    # Design round 2 F5-A (decision 363): the contract records the INVARIANT corners (the
+    # two sides' quantised dot product non-zero: the tip unless phi is exactly 90 with the
+    # same arm coordinates; never the theta-0 box vertex) under Derivation.InvariantCorners,
+    # as derive_semantic_contract does; the mesher fails closed on a disagreement.
+    invariant = Vector{Float64}[]
+    for c in corners
+        i = findfirst(v -> v[1] == c[1] && v[2] == c[2], polygon)
+        a = polygon[mod1(i - 1, m)] .- polygon[i]
+        b = polygon[mod1(i + 1, m)] .- polygon[i]
+        a[1] * b[1] + a[2] * b[2] == 0.0 || push!(invariant, [c[1], c[2], c[3]])
+    end
+    contract = Dict{String, Any}(
+        "Version" => 1,
+        "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]
+    )
+    isempty(invariant) || (
+        contract["Derivation"] = Dict{String, Any}(
+            "InvariantCorners" => Dict{String, Any}(
+                "Rule" => "test fixture: the exact dot-product predicate",
+                "Points" => invariant
             )
         )
+    )
+    open(joinpath(directory, "semantic.json"), "w") do io
+        return write_json(io, contract)
     end
     return (
         signature=joinpath(directory, "signature.csv"),
@@ -461,6 +478,7 @@ function write_tip_inputs(
         polygon=polygon,
         classes=classes,
         corners=corners,
+        invariant=invariant,
         lower=lower,
         upper=upper
     )
@@ -505,7 +523,9 @@ function build_tip_coupon(
         maximum_corner_aspect=4.0,
         minimum_scaled_jacobian=0.01,
         maximum_jacobian_condition=1000.0,
-        quality_displacement_over_normal=0.75
+        quality_displacement_over_normal=0.75,
+        # The invariant-corner verdict bound (design round 2 F5-A): the tip is invariant.
+        corner_shape_gate=5.0
     )
     return parse_json(read(census, String)), mesh, inputs
 end
