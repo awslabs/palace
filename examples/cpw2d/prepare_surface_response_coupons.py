@@ -26,6 +26,12 @@ CORNER_MESH = CORNER_ROOT / "mesh_corner_coupon.jl"
 CORNER_GENERATOR = CORNER_ROOT / "generate_corner_response.py"
 CORNER_FINALIZER = CORNER_ROOT / "finalize_corner_response.py"
 CORNER_CONVERGENCE = CORNER_ROOT / "run_probe_convergence.py"
+# The trace RESOLVABILITY gate of every corner coupon mesh (block (b) family 4 round 2,
+# supervisor decision 328 (1), 2026-10-05): every free hat of the trace basis must hold at
+# least MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED x p^2 active boundary nodes of the order-p
+# mesh, fail-closed before any solve; the mesher sizes the mesh at the knot gaps
+# (mesh_corner_coupon.jl --trace-mesh) so that it holds, whatever the basis layout.
+CORNER_RESOLVABILITY = CORNER_ROOT / "trace_resolvability.py"
 # Knots per ring of the corner trace basis rules (generate_corner_response.RULES: 2 crossings
 # + MetalInteriorKnots + FreeKnots; legacy = the recorded MetalRingsOnly rule).
 CORNER_TRACE_BASIS_RING_SIZES = {"legacy": 8, "all-rings-follow-metal": 16}
@@ -1573,9 +1579,36 @@ def build_parallel_cluster(coupon, args, parameters, cache):
     return final_library, qualification_path
 
 
+def check_corner_trace_resolvability(root, mesh_root, meshes, args):
+    """The trace resolvability gate on a corner coupon's meshes (CORNER_RESOLVABILITY at the
+    final solve order; report mesh_root/trace-resolvability.json); fail-closed."""
+    report = mesh_root / "trace-resolvability.json"
+    code = run(
+        [
+            sys.executable,
+            CORNER_RESOLVABILITY,
+            root,
+            *(option for kind in ("thin", "fabricated") for option in ("--mesh", meshes[kind])),
+            "--order",
+            max(args.orders),
+            "--radius",
+            args.matching_radius,
+            "--report",
+            report,
+        ],
+        check=False,
+    )
+    # The gate exits 0 only when every mesh passed (its report records the counts per hat).
+    return code == 0, report
+
+
 def generate_corner_meshes(
     root, topology, angle, corner_radius, args, parameters, spec, factor
 ):
+    """The corner coupon's meshes at lc_fine x factor, sized at the trace basis knots (the
+    generator's trace mesh in `root`, written before the meshes: `--trace-mesh`; the mesher
+    fails closed without it) and gated for trace resolvability
+    (check_corner_trace_resolvability; a failing mesh root raises)."""
     mesh_root = (
         root
         if math.isclose(factor, 1.0)
@@ -1594,6 +1627,8 @@ def generate_corner_meshes(
                 CORNER_MESH,
                 f"{topology}-{kind}",
                 mesh,
+                "--trace-mesh",
+                root,
                 "--radius",
                 args.matching_radius,
                 "--angle",
@@ -1618,7 +1653,22 @@ def generate_corner_meshes(
                 spec["Mesh"]["Order"],
             ]
         )
+    passed, report = check_corner_trace_resolvability(root, mesh_root, meshes, args)
+    if not passed:
+        raise RuntimeError(
+            f"Corner coupon meshes in {mesh_root} do not resolve the trace basis: {report}"
+        )
     return mesh_root, meshes
+
+
+def corner_resolvability_constant():
+    """MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED of the trace resolvability gate (recorded in the
+    coupon spec)."""
+    if str(CORNER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CORNER_ROOT))
+    import trace_resolvability
+
+    return trace_resolvability.MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED
 
 
 def corner_trace_basis(coupon_id, corner_radius, args):
@@ -1720,13 +1770,23 @@ def build_corner(coupon, args, parameters, cache):
             ),
         },
         "ProcessResolution": resolution,
-        "Response": {"RingSize": corner_ring_size, "TraceBasis": trace_basis},
+        "Response": {
+            "RingSize": corner_ring_size,
+            "TraceBasis": trace_basis,
+            # Decision 328: the mesh is sized at the trace knots and gated (the recipe change
+            # of family-4 round 2; the fingerprint below covers the mesher and the gate).
+            "TraceResolvability": {
+                "MeshSizing": "KnotGap",
+                "MinimumActiveNodesPerOrderSquared": corner_resolvability_constant(),
+            },
+        },
         "ToolFingerprint": tool_fingerprint(
             (
                 CORNER_MESH,
                 CORNER_GENERATOR,
                 CORNER_FINALIZER,
                 CORNER_CONVERGENCE,
+                CORNER_RESOLVABILITY,
                 Path(__file__),
             )
         ),
@@ -1763,16 +1823,9 @@ def build_corner(coupon, args, parameters, cache):
 
     root.mkdir(parents=True, exist_ok=True)
     write_json(root / "coupon-spec.json", spec)
-    _, meshes = generate_corner_meshes(
-        root,
-        topology,
-        angle,
-        corner_radius,
-        args,
-        parameters,
-        spec,
-        1.0,
-    )
+    # The generator first (it reads no mesh: the configs name the mesh files), then the
+    # meshes sized at its trace knots and gated for resolvability (decision 328).
+    meshes = {kind: root / f"corner_{kind}.msh" for kind in ("thin", "fabricated")}
     run(
         [
             sys.executable,
@@ -1815,6 +1868,33 @@ def build_corner(coupon, args, parameters, cache):
             *material_options(parameters),
         ]
     )
+    try:
+        _, generated = generate_corner_meshes(
+            root,
+            topology,
+            angle,
+            corner_radius,
+            args,
+            parameters,
+            spec,
+            1.0,
+        )
+    except RuntimeError as failure:
+        write_json(
+            qualification_path,
+            {
+                "Version": 1,
+                "Fingerprint": key,
+                "Family": "corner",
+                "Library": str(library_path),
+                "TraceResolvabilityReport": str(root / "trace-resolvability.json"),
+                "Passed": False,
+                "Reason": str(failure),
+            },
+        )
+        raise
+    if generated != meshes:
+        raise RuntimeError(f"{coupon['Id']}: the corner meshes are not the generator's")
     if getattr(args, "coverage_only", False):
         for name in ("thin", "fabricated"):
             run(palace_command(args, root / f"{name}.json"), cwd=root)
@@ -1855,16 +1935,37 @@ def build_corner(coupon, args, parameters, cache):
         if math.isclose(factor, 1.0):
             calibration = convergence_root / f"p{max(args.orders)}"
         else:
-            mesh_root, factor_meshes = generate_corner_meshes(
-                root,
-                topology,
-                angle,
-                corner_radius,
-                args,
-                parameters,
-                spec,
-                factor,
-            )
+            try:
+                mesh_root, factor_meshes = generate_corner_meshes(
+                    root,
+                    topology,
+                    angle,
+                    corner_radius,
+                    args,
+                    parameters,
+                    spec,
+                    factor,
+                )
+            except RuntimeError as failure:
+                write_json(
+                    qualification_path,
+                    {
+                        "Version": 1,
+                        "Fingerprint": key,
+                        "Family": "corner",
+                        "Library": str(library_path),
+                        "ConvergenceReport": str(convergence_report),
+                        "TraceResolvabilityReport": str(
+                            root
+                            / "mesh-calibrations"
+                            / f"h-{slug(factor)}"
+                            / "trace-resolvability.json"
+                        ),
+                        "Passed": False,
+                        "Reason": str(failure),
+                    },
+                )
+                raise
             calibration = prepare_probe_mesh_calibration(
                 root, mesh_root / "calibration", factor_meshes
             )

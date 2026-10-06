@@ -4,6 +4,8 @@
 #include "basesolver.hpp"
 
 #include <array>
+#include <cmath>
+#include <utility>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -308,13 +310,6 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                     ? ", max. size = " + std::to_string(refinement.max_size)
                     : ""));
 
-    // Optionally save off the previous solution.
-    if (refinement.save_adapt_iterations)
-    {
-      SaveIteration(comm, post_dir, it,
-                    1 + static_cast<int>(std::log10(refinement.max_it)));
-    }
-
     // Mark.
     const auto marked_elements = [&comm, &refinement](const auto &marking_indicators)
     {
@@ -331,15 +326,49 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }(marking_indicators);
 
     // Refine.
+    const auto [initial_elem_count, final_elem_count] =
+        [&mesh, &refinement, &marked_elements]
     {
       mfem::ParMesh &fine_mesh = *mesh.back();
-      const auto initial_elem_count = fine_mesh.GetGlobalNE();
+      const long long int initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
-      const auto final_elem_count = fine_mesh.GetGlobalNE();
+      const long long int final_elem_count = fine_mesh.GetGlobalNE();
       Mpi::Print(" {} mesh refinement added {:d} elements (initial = {:d}, final = {:d})\n",
                  fine_mesh.Nonconforming() ? "Nonconforming" : "Conforming",
                  final_elem_count - initial_elem_count, initial_elem_count,
                  final_elem_count);
+      return std::make_pair(initial_elem_count, final_elem_count);
+    }();
+
+    // Stop before a solve whose predicted size exceeds the maximum size: the last solved
+    // mesh is the final result and its postprocessing output stays in place.
+    if (ExceedsPredictedMaxSize(refinement, ntdof, initial_elem_count, final_elem_count))
+    {
+      const auto predicted_ntdof =
+          PredictRefinedSize(ntdof, initial_elem_count, final_elem_count);
+      Mpi::Print(
+          " Predicted global unknowns of the refined mesh = {:d} (last solved {:d} x "
+          "element growth {:d}/{:d} = {:.3f}) exceed max. size = {:d}: stopping AMR "
+          "before the solve, the last solved mesh is the final result\n",
+          predicted_ntdof, ntdof, final_elem_count, initial_elem_count,
+          static_cast<double>(final_elem_count) / initial_elem_count, refinement.max_size);
+      SaveMaxSizeStopMetadata({{"Iteration", it},
+                               {"LastSolvedDegreesOfFreedom", ntdof},
+                               {"PredictedDegreesOfFreedom", predicted_ntdof},
+                               {"InitialMeshElements", initial_elem_count},
+                               {"RefinedMeshElements", final_elem_count},
+                               {"MaxSize", refinement.max_size}});
+      // The in-memory mesh is left refined and is not used again: Run() only writes
+      // metadata after this loop and the last solved results stay in place.
+      --it;
+      break;
+    }
+
+    // Optionally save off the previous solution.
+    if (refinement.save_adapt_iterations)
+    {
+      SaveIteration(comm, post_dir, it,
+                    1 + static_cast<int>(std::log10(refinement.max_it)));
     }
 
     // Optionally rebalance and write the adapted mesh to file.
@@ -519,6 +548,53 @@ void BaseSolver::SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::str
     meta["SurfaceResponse"]["CorrectedSolver"][name]["LinearIterations"] = minimum[1];
     WriteMetadata(post_dir, meta);
   }
+}
+
+void BaseSolver::SaveSurfaceResponseMetadata(const std::string &key,
+                                             const nlohmann::json &value) const
+{
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["SurfaceResponse"][key] = value;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::SaveMaxSizeStopMetadata(const nlohmann::json &record) const
+{
+  if (root)
+  {
+    nlohmann::json meta = LoadMetadata(post_dir);
+    meta["AdaptiveMeshRefinement"]["MaxSizeStop"] = record;
+    WriteMetadata(post_dir, meta);
+  }
+}
+
+long long int PredictRefinedSize(long long int ntdof, long long int initial_elem_count,
+                                 long long int final_elem_count)
+{
+  MFEM_VERIFY(ntdof >= 0 && initial_elem_count > 0 &&
+                  final_elem_count >= initial_elem_count,
+              "Invalid sizes for the predicted size of a refined mesh (ntdof = "
+                  << ntdof << ", elements " << initial_elem_count << " -> "
+                  << final_elem_count << ")!");
+  const double predicted = static_cast<double>(ntdof) *
+                           static_cast<double>(final_elem_count) /
+                           static_cast<double>(initial_elem_count);
+  return static_cast<long long int>(std::ceil(predicted));
+}
+
+bool ExceedsPredictedMaxSize(const config::RefinementData &refinement, long long int ntdof,
+                             long long int initial_elem_count,
+                             long long int final_elem_count)
+{
+  if (!refinement.max_size_predicted || refinement.max_size <= 0)
+  {
+    return false;
+  }
+  return PredictRefinedSize(ntdof, initial_elem_count, final_elem_count) >
+         refinement.max_size;
 }
 
 template void BaseSolver::SaveMetadata<KspSolver>(const KspSolver &) const;

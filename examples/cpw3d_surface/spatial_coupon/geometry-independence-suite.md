@@ -648,6 +648,80 @@ build census (`build-census`, the bound build report):
     strips: fabricated builds, thin stops); the Section records `MetalFacingRule` and
     `MetalFacingWidth` (the narrowest facing width, null without a facing pair). A
     per-side or per-coupon ring bound for such strips is the family-6 design item;
+  - ARC SIDES - T2 (block (b) design sections 1-2, AMENDMENT 1 A1 (4), A2, A3, A7
+    MINOR-6 / MINOR-7; supervisor decision 303; step 4.3): the plan-view boundary of a
+    cluster whose signature carries arc entries is TAGGED by the generator
+    (`generate_spatial_response.tag_arc_boundary_loops`, columns `ArcId, ArcCx, ArcCy, ArcR, ArcSign, JointTurn, JointSmooth`: the outgoing side's rebuilt circle -
+    `cluster_signature_geometry.rebuilt_arcs`, the numbers the chord vertices were
+    computed from - and at every arc end the signature's joint turn with
+    `JointSmooth` = |turn| <= JUNCTION_TANGENT_ANGLE 1e-4 rad). The mesher's
+    `tagged_arc_runs` is SEEDED by the tags (one run per ArcId over its consecutive
+    chord sides, the fit through first / middle / last vertex cross-checked against the
+    tagged circle and every vertex within the fit tolerance, fail closed; a boundary
+    without the columns takes the untagged `circular_arc_runs`, bitwise). One run is
+    ONE arc side (`Scope.MetalLoops[].Sides` counts it as its parts), split into
+    `arc_part_count(sweep)` = ceil(sweep / 90 degrees) parts of EQUAL angular fraction
+      + the same radial planes at which `polygon_wire` splits every arc of the metal
+        loft and of the trench wall under it (new points on the circle; the split angles
+        depend on the run's two end vertices alone, so the CAD and the mesh do not depend
+        on the chord count: `test_arc_tubes.jl` builds the same strip chorded every 5 and
+        every 2.5 degrees to a sha-identical mesh). Each part carries an `ArcTube`
+        (`prism_edge_tubes.jl`): the section revolved about the vertical axis through the
+        arc centre (`occ.revolve`; the axis coordinate is the arc length on the edge circle,
+        tube_point = centre + (rho + sigma u) radial(theta(s)) + w b with sigma = +1 when the
+        dielectric lies outside the circle), so the sidewall rays are the cylinder of radius
+        rho = the exact metal / trench wall (a PRISMATIC loft whose wire carries arcs is
+        EXTRUDED so its walls are analytic cylinders OCC merges with the tube's; a
+        ThruSections BSpline wall is not merged) and the fragment splits the sectors at the
+        wall (the decision-249 root cause of "2 volume descendants" under chords). The
+        revolved faces' centroids are integrated exactly from the section (A7 MINOR-6:
+        circle arcs closed-form, surfaces of revolution by Gauss-Legendre over the segment
+        with the per-node end angles), the periodic revolved faces are hidden from Gmsh's
+        surface pass (their meshes are the explicit prisms' anyway). SMOOTH JOINTS (A3
+        (1)-(2)): a joint whose turn is at most 1e-4 rad is no corner (no ball, no caps,
+        clearance 0) - `derive_semantic_contract` excludes ArcInterior vertices and smooth
+        joints from the SemanticCorners (`Derivation.ArcVertices`; FeatureTopology counts
+        one arc as one feature, `ArcInteriorEndpoints` recorded, a smooth joint is a
+        CAD-subdivision end) and the mesher fails closed on a contract listing one as a
+        corner; the two tubes share ONE cross-section owned by the arc (its radial plane
+        through the joint vertex, its frame): the straight tube's end nodes ARE the arc
+        tube's (`TubeMesh.register_joint!` / `adopt_joint_tags!`, the owner installed
+        first), its CAD solid is extruded over-long and cut by the half-space behind the
+        radial plane when the post-snap tilt is positive (`JointEnd`; recorded
+        `Tubes[].Joints {TiltRadians, PlaneCut}`); consecutive parts of one arc share their
+        split section the same way. A KINKED joint is a corner under CornerClearanceRule
+        (the arc tube retracts by the clearance along its arc). FACE ENDS of an arc (A2):
+        theta = the angle between the arc tangent at the face point and the face normal;
+        the node of radius rho + sigma u meets the face where ITS circle crosses the face
+        plane (closed form per node, `arc_face_station`), the block fraction growing
+        linearly to 1 at the face. The exact arcs also decide the metal of the mask tests
+        (`point_in_mask` with the registered circular segments of the tagged arcs: the
+        chorded facets are off the metal wall by the sagitta) and the surface point of a
+        curved face is a true surface point (`point_on_surface` no longer takes a centre of
+        mass that lies off a curved face). Guard `ScopeGuard[ArcTubeRadiusVsCurvature]`:
+        Radius + PyramidHeight <= 0.25 rho (the loop end: rho >= 1 um vs <= 62 nm).
+        Records: `PrismTubes.ArcTubes {Count, JointEnds, SharedSections, TotalArcLength, Rule, SmoothJointRule}`, `Tubes[].Arc {ArcId, Centre, Radius, Sign, Part, Parts, SweepDegrees}`, `Scope.MetalLoops[].{StraightSides, ArcParts, Arcs[]}`, the class
+        `ArcSides`; bound by `mesh_stage_contract.validate_arc_tubes` and the arc-aware
+        `metal_loop_side_points` / `metal_loop_arc_parts` (TubeCount = TubesPerSide x
+        (straight sides + arc parts - untubed sides)). The estimator counts an arc side by
+        its length and its corners / caps from the arc classes (no chord corners: the loop
+        end reads 7 corners / 24 caps instead of 313 / 1,244). Not supported, fail closed:
+        an arc of fewer than four chords (the untagged fit of the trench footprint needs
+        four), an untubed arc, a tilted arc / arc joint of two different circles, a loop
+        made of one closed arc; arc sides are not in the NarrowMetal facing test (a narrow
+        curved strip fails closed at the fragment). Decision 391 MAJOR-2 (ii) (mesher review
+        R2): until the next mesher lane's four synthetic FULL builds (arc face ends at 45 /
+        70 degrees, a kinked arc / line joint, a 5e-5-rad smooth joint, a 2e-4-rad corner
+        joint) exist, two more guards fail closed in `metal_edge_segments`:
+        `ScopeGuard[ArcFaceEnds]` - an arc side with an end on the outer box (a cut end at
+        any tilt, an end exactly perpendicular to the face, a box-vertex corner); and
+        `ScopeGuard[ArcJointTilt]` - an arc side meeting another side at a joint whose turn
+        (the arc's end tangent against the other side's direction, by atan of cross and
+        dot) exceeds `ARC_JOINT_TURN_BOUND` = 1.6e-6 rad, the loop end 1b26671c9080's
+        tested range (its 32 smooth arc / line joints turn by 3.0e-8 .. 1.6e-6 rad on the
+        signature; the mesher reads post-snap tilts <= 1.27e-6 rad on its built meshes),
+        so smooth joints turning more, kinked arc / line joints and arc corners stop
+        (`mesh_stage_contract.py` `ARC_JOINT_TURN_BOUND_RADIANS`, the same list);
   - isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
     required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
     0.1 um ball), and every tube cap centre before a corner is a graded point of the
@@ -1389,7 +1463,9 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     after the corner clearances (RETIRED by block (b) step 4.2: the supported class
     `UntubedShortEdges` above, decision 304); `NarrowMetal` - a metal strip narrower than
     twice the tube envelope between facing tubed sides (ADDED by step 4.2, decision
-    347); `FootprintWithoutEdge` - an explicit footprint without
+    347); `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
+    decision-391 stop-gaps above, until the synthetic arc builds exist);
+    `FootprintWithoutEdge` - an explicit footprint without
     the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
     simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists
     (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).

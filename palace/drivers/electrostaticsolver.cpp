@@ -857,6 +857,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       response_config && response_config->IncludesPostprocessing();
   const bool self_consistent_response =
       response_config && response_config->IncludesSelfConsistent();
+  // Decision 352 follow-up (1): the per-patch energies (surface-response-patch-energy.csv)
+  // are evaluated and written only on request; every other output is unchanged.
+  const bool patch_energy_response = response_config && response_config->patch_energy;
   MFEM_VERIFY(!archive_reduce_only || !response_config,
               "PALACE_RESPONSE_REDUCE_ONLY reduces archived fields of a configuration "
               "without ResponseCorrection!");
@@ -978,6 +981,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     EnergyData corrected;
     std::vector<SurfaceResponseOperator::ModelContribution> raw_model_contributions;
     std::vector<SurfaceResponseOperator::ModelContribution> corrected_model_contributions;
+    std::vector<SurfaceResponseOperator::PatchContribution> raw_patch_contributions;
+    std::vector<SurfaceResponseOperator::PatchContribution> corrected_patch_contributions;
     std::map<int, double> trace_closure_spread;
     double maximum_trace_closure_spread;
     double response_weighted_trace_closure_spread;
@@ -988,6 +993,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
+  // The corrected capacitance's self-consistent column (PostprocessCorrectedTerminals) is
+  // written only when every source's corrected solve was accepted (fail closed).
+  bool self_consistent_accepted = self_consistent_response;
   std::vector<std::pair<int, std::vector<SurfaceResponseOperator::PatchTrace>>>
       spatial_patch_traces;
   long long int raw_linear_solves = 0;
@@ -1162,7 +1170,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       if (postprocess_response)
       {
         BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-        response = response_correction->GetElectrostaticResponse(V[step]);
+        response = response_correction->GetElectrostaticResponse(V[step], true,
+                                                                 patch_energy_response);
         auto traces = response_correction->GetSpatialPatchTraces(V[step]);
         if (!traces.empty())
         {
@@ -1229,6 +1238,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
       EnergyData corrected_energies = Unavailable(raw_energies);
       std::vector<SurfaceResponseOperator::ModelContribution> corrected_contributions;
+      std::vector<SurfaceResponseOperator::PatchContribution> corrected_patch_contributions;
       if (self_consistent_response)
       {
         Mpi::Print(" Solving fabrication-response corrected field\n");
@@ -1240,6 +1250,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             iodata.solver.linear.initial_guess, corrected_rhs, V_corrected[step]);
         corrected_linear_solves += ksp.NumTotalMult() - solves_before;
         corrected_linear_iterations += ksp.NumTotalMultIterations() - iterations_before;
+        self_consistent_accepted = self_consistent_accepted && corrected_record.accepted;
         if (!corrected_record.converged)
         {
           Mpi::Warning(
@@ -1297,13 +1308,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           SurfaceResponseOperator::ElectrostaticResponse corrected_response;
           {
             BlockTimer coupon_timer(Timer::POSTPRO_RESPONSE_COUPON);
-            corrected_response =
-                response_correction->GetElectrostaticResponse(V_corrected[step], false);
+            corrected_response = response_correction->GetElectrostaticResponse(
+                V_corrected[step], false, patch_energy_response);
           }
           corrected_energies = ApplyResponse(std::move(corrected_energies),
                                              corrected_response.domain_correction,
                                              corrected_response.fabricated_surface_energy);
           corrected_contributions = std::move(corrected_response.model_contributions);
+          corrected_patch_contributions = std::move(corrected_response.patch_contributions);
         }
       }
 
@@ -1313,7 +1325,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             idx, std::move(raw_energies), std::move(postprocessed_fixed_trace),
             std::move(postprocessed_fixed_flux), std::move(corrected_energies),
             std::move(response.model_contributions), std::move(corrected_contributions),
-            response.trace_closure_spread, response.maximum_trace_closure_spread,
+            std::move(response.patch_contributions),
+            std::move(corrected_patch_contributions), response.trace_closure_spread,
+            response.maximum_trace_closure_spread,
             response.response_weighted_trace_closure_spread,
             response.trace_closure_response_failure_fraction, postprocess_response,
             self_consistent_response, response.confident});
@@ -1342,6 +1356,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.boundaries.prescribed_potential.empty())
   {
     PostprocessTerminals(post_op, laplace_op.GetSources(), V);
+    if (response_correction)
+    {
+      BlockTimer response_timer(Timer::POSTPRO_RESPONSE);
+      PostprocessCorrectedTerminals(post_op, laplace_op.GetSources(), V, V_corrected,
+                                    *response_correction, postprocess_response,
+                                    self_consistent_accepted);
+    }
   }
   else if (iodata.solver.electrostatic.response_matrix && !archive_stream_only)
   {
@@ -1563,6 +1584,95 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
     }
     model_output.WriteFullTableTrunc();
+
+    if (patch_energy_response)
+    {
+      // Decision 352 follow-up (1): one row per applied patch, source and evaluation (the
+      // codes of surface-response-model-energy.csv); the rows of one (source, evaluation,
+      // model) sum to that model's row. `patch` is the 1-based placed patch index of
+      // surface-response-traces.csv (the preflight dry run's 0-based `Patch` + 1); the
+      // origin and the longitudinal cell (offsets along the patch's AxisW) locate it.
+      std::map<int, const SurfaceResponseOperator::PatchAssignment *> assignments;
+      for (const auto &assignment : response_correction->GetPatchAssignments())
+      {
+        assignments.emplace(assignment.global_index, &assignment);
+      }
+      TableWithCSVFile patch_output(post_dir / "surface-response-patch-energy.csv");
+      patch_output.table.insert(Column("source", "source", 0, 0, 2, ""));
+      patch_output.table.insert(Column("evaluation", "evaluation", 0, 0, 2, ""));
+      patch_output.table.insert(Column("patch", "patch", 0, 0, 2, ""));
+      patch_output.table.insert(Column("model", "model", 0, 0, 2, ""));
+      patch_output.table.insert(Column("feature", "feature", 0, 0, 2, ""));
+      patch_output.table.insert("weight", "weight");
+      patch_output.table.insert("cell_begin", "cell begin (m)");
+      patch_output.table.insert("cell_end", "cell end (m)");
+      for (const char *coordinate : {"x", "y", "z"})
+      {
+        patch_output.table.insert(fmt::format("origin_{}", coordinate),
+                                  fmt::format("origin {} (m)", coordinate));
+      }
+      patch_output.table.insert("domain_correction", "domain correction (J)");
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        patch_output.table.insert(
+            fmt::format("interface_{}", interface),
+            fmt::format("fabricated surface energy[{}] (J)", interface));
+      }
+      auto AppendPatch = [&](int source, int evaluation,
+                             const SurfaceResponseOperator::PatchContribution &data,
+                             bool available, bool fixed_flux)
+      {
+        const auto assignment = assignments.find(data.patch);
+        MFEM_VERIFY(assignment != assignments.end(),
+                    "Per-patch response energy of an unknown patch " << data.patch + 1
+                                                                     << "!");
+        patch_output.table["source"] << source;
+        patch_output.table["evaluation"] << evaluation;
+        patch_output.table["patch"] << data.patch + 1;
+        patch_output.table["model"] << data.model;
+        patch_output.table["feature"] << data.feature;
+        patch_output.table["weight"] << data.weight;
+        patch_output.table["cell_begin"]
+            << iodata.units.Dimensionalize<VT::LENGTH>(data.cell[0]);
+        patch_output.table["cell_end"]
+            << iodata.units.Dimensionalize<VT::LENGTH>(data.cell[1]);
+        for (int d = 0; d < 3; d++)
+        {
+          patch_output.table[fmt::format("origin_{}", "xyz"[d])]
+              << iodata.units.Dimensionalize<VT::LENGTH>(assignment->second->origin[d]);
+        }
+        patch_output.table["domain_correction"]
+            << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
+                                fixed_flux ? data.domain_correction_fixed_flux
+                                           : data.domain_correction)
+                          : nan);
+        for (const auto &[interface, interface_data] : interfaces)
+        {
+          (void)interface_data;
+          const auto &energies = fixed_flux ? data.fabricated_surface_energy_fixed_flux
+                                            : data.fabricated_surface_energy;
+          const auto energy = energies.find(interface);
+          patch_output.table[fmt::format("interface_{}", interface)]
+              << (available ? iodata.units.Dimensionalize<VT::ENERGY>(
+                                  energy != energies.end() ? energy->second : 0.0)
+                            : nan);
+        }
+      };
+      for (const auto &result : corrected_results)
+      {
+        for (const auto &contribution : result.raw_patch_contributions)
+        {
+          AppendPatch(result.source, 0, contribution, result.has_postprocessed, false);
+          AppendPatch(result.source, 1, contribution, result.has_postprocessed, true);
+        }
+        for (const auto &contribution : result.corrected_patch_contributions)
+        {
+          AppendPatch(result.source, 2, contribution, result.has_self_consistent, false);
+        }
+      }
+      patch_output.WriteFullTableTrunc();
+    }
   }
   post_op.MeasureFinalize(indicator);
   if (self_consistent_response)
@@ -2195,6 +2305,169 @@ void ElectrostaticSolver::PostprocessTerminals(
     }
     terminal_V.WriteFullTableTrunc();
   }
+}
+
+void ElectrostaticSolver::PostprocessCorrectedTerminals(
+    PostOperator<ProblemType::ELECTROSTATIC> &post_op,
+    const std::map<int, mfem::Array<int>> &terminal_sources, const std::vector<Vector> &V,
+    const std::vector<Vector> &V_corrected, const SurfaceResponseOperator &response,
+    bool fixed_trace, bool self_consistent) const
+{
+  // The capacitance of the response-corrected energy. The raw matrix is the bilinear form
+  // of the thin-metal operator (PostprocessTerminals); the fixed-trace domain correction
+  // adds the bilinear domain defect of the applied coupon patches,
+  //         C(i, j) = Vⱼᵀ M Vᵢ + Vⱼᵀ Pᵀ W (Q_fab,dom - Q_thin,dom) P Vᵢ  (∀i, Vᵢ = 1),
+  // so that C(i, i) = 2 (E_raw + ΔE_dom,ft) / Vᵢ² (the surface-Q-corrected.csv energies; W
+  // are the final patch weights, so the identity holds for the sources solved after the
+  // last conductor-consistency exclusion, i.e. for every source when nothing is excluded
+  // after the first). The self-consistent matrix is the same fixed-trace form on the
+  // corrected fields: the capacitance of the corrected operator K + Pᵀ W D P at the
+  // terminal potentials when the translational domain coupling is FixedTrace (under
+  // FixedFlux or Disabled the corrected fields solve a different coupling). Fixed flux is
+  // not a capacitance (its energy is not that of a fixed-potential ensemble) and is not
+  // written.
+  const int n = static_cast<int>(V.size());
+  MFEM_VERIFY(static_cast<int>(terminal_sources.size()) == n,
+              "Terminal source and field counts differ in the corrected capacitance!");
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  auto &V_gf = post_op.GetVGridFunction().Real();
+  auto &D_gf = post_op.GetDomainPostOp().D;
+  Vector defect;
+  auto CorrectedMatrix = [&](const std::vector<Vector> &fields)
+  {
+    mfem::DenseMatrix C(n);
+    for (int i = 0; i < n; i++)
+    {
+      V_gf.SetFromTrueDofs(fields[i]);
+      post_op.GetDomainPostOp().M_elec->Mult(V_gf, D_gf);
+      response.FixedTraceDomainDefectMult(fields[i], defect);
+      // Upper triangle, mirrored: the form is symmetric.
+      for (int j = i; j < n; j++)
+      {
+        if (j > i)
+        {
+          V_gf.SetFromTrueDofs(fields[j]);
+        }
+        C(i, j) = linalg::Dot<Vector>(post_op.GetComm(), V_gf, D_gf) +
+                  linalg::Dot<Vector>(post_op.GetComm(), fields[j], defect);
+        C(j, i) = C(i, j);
+      }
+    }
+    return C;
+  };
+  auto Unavailable = [&]()
+  {
+    mfem::DenseMatrix C(n);
+    C = nan;
+    return C;
+  };
+  auto MutualMatrix = [&](const mfem::DenseMatrix &C)
+  {
+    mfem::DenseMatrix Cm(n);
+    for (int i = 0; i < n; i++)
+    {
+      Cm(i, i) = 0.0;
+      for (int j = 0; j < n; j++)
+      {
+        if (j != i)
+        {
+          Cm(i, j) = -C(i, j);
+          Cm(i, i) += C(i, j);
+        }
+      }
+      Cm(i, i) += C(i, i);
+    }
+    return Cm;
+  };
+  auto InverseMatrix = [&](const mfem::DenseMatrix &C, bool available)
+  {
+    if (!available)
+    {
+      return Unavailable();
+    }
+    mfem::DenseMatrix Cinv(C);
+    Cinv.Invert();
+    return Cinv;
+  };
+  const mfem::DenseMatrix C_ft = fixed_trace ? CorrectedMatrix(V) : Unavailable();
+  const mfem::DenseMatrix C_sc =
+      self_consistent ? CorrectedMatrix(V_corrected) : Unavailable();
+  const mfem::DenseMatrix Cm_ft = MutualMatrix(C_ft), Cm_sc = MutualMatrix(C_sc);
+  const mfem::DenseMatrix Cinv_ft = InverseMatrix(C_ft, fixed_trace),
+                          Cinv_sc = InverseMatrix(C_sc, self_consistent);
+
+  // Only root writes to disk (every process has full matrices).
+  if (!root)
+  {
+    return;
+  }
+  using VT = Units::ValueType;
+  auto PrintMatrices =
+      [&terminal_sources, this](const std::string &file, const std::string &name,
+                                const std::string &unit,
+                                const mfem::DenseMatrix &fixed_trace_mat,
+                                const mfem::DenseMatrix &self_consistent_mat, double scale)
+  {
+    TableWithCSVFile output(post_dir / file);
+    output.table.insert(Column("i", "i", 0, 0, 2, ""));
+    for (const auto &[idx2, data2] : terminal_sources)
+    {
+      output.table["i"] << idx2;
+    }
+    auto AppendColumns = [&](const char *variant, const mfem::DenseMatrix &mat)
+    {
+      int j = 0;
+      for (const auto &[idx2, data2] : terminal_sources)
+      {
+        const std::string key = fmt::format("{}_i2{}", variant, idx2);
+        output.table.insert(key, fmt::format("{} {}[i][{}] {}", name, variant, idx2, unit));
+        auto &col = output.table[key];
+        for (std::size_t i = 0; i < terminal_sources.size(); i++)
+        {
+          col << mat(i, j) * scale;
+        }
+        j++;
+      }
+    };
+    AppendColumns("fixed-trace", fixed_trace_mat);
+    AppendColumns("corrected", self_consistent_mat);
+    output.WriteFullTableTrunc();
+  };
+  const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
+  PrintMatrices("terminal-C-corrected.csv", "C", "(F)", C_ft, C_sc, F);
+  PrintMatrices("terminal-Cinv-corrected.csv", "C⁻¹", "(1/F)", Cinv_ft, Cinv_sc, 1.0 / F);
+  PrintMatrices("terminal-Cm-corrected.csv", "C_m", "(F)", Cm_ft, Cm_sc, F);
+
+  // The same matrices in palace.json (SurfaceResponse.TerminalCapacitance; an unavailable
+  // variant is null).
+  auto MatrixRecord = [&](const mfem::DenseMatrix &mat, bool available)
+  {
+    nlohmann::json record;
+    if (!available)
+    {
+      return record;
+    }
+    record = nlohmann::json::array();
+    for (int i = 0; i < n; i++)
+    {
+      auto row = nlohmann::json::array();
+      for (int j = 0; j < n; j++)
+      {
+        row.push_back(mat(i, j) * F);
+      }
+      record.push_back(std::move(row));
+    }
+    return record;
+  };
+  nlohmann::json record;
+  record["Indices"] = nlohmann::json::array();
+  for (const auto &[idx, data] : terminal_sources)
+  {
+    record["Indices"].push_back(idx);
+  }
+  record["FixedTrace"] = MatrixRecord(C_ft, fixed_trace);
+  record["SelfConsistent"] = MatrixRecord(C_sc, self_consistent);
+  SaveSurfaceResponseMetadata("TerminalCapacitance", record);
 }
 
 }  // namespace palace

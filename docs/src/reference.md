@@ -757,6 +757,47 @@ This path does not by itself qualify a library, establish convergence of the PDE
 field, or prove stability of the assembled domain correction. It is separate from
 the global-device mortar coupling.
 
+### Quadrature-level interface regions
+
+An interface dielectric entry may carry a `Region`: a spatial filter evaluated at every
+surface quadrature point, so that the energies of one physical interface can be
+partitioned into several entries on the same boundary attributes without re-tagging mesh
+faces (a face-based partition is coarse along and across the metal edges: on a graded
+reference mesh the band faces are several micrometres long). The region is the
+intersection of an optional axis-aligned box (`BoxMin`, `BoxMax`) with, when `Segments`
+are given, the union of their translational cells: with the plane `Normal` (default
+``\hat z``) projected out, a point belongs to the cell of a segment when its
+along-coordinate lies between the perpendicular cuts at the segment's ends and its
+in-plane transverse distance to the segment's line is at most `Distance` — the
+construction of the thin device's longitudinal response cells and of the reference
+controls. Coordinates are mesh length units. The along-range and the box are half-open
+(start / lower bound inclusive, end / upper bound exclusive) in a canonical segment
+orientation (the direction made lexicographically positive, whichever end is listed
+first), so that a quadrature point lying exactly on a cut or box face shared by two
+adjacent regions is counted once: on extruded reference meshes the cuts of a
+device-derived partition do coincide with quadrature points, and closed bounds would
+double count them. For the same reason adjacent regions must share one cut coordinate
+exactly: cells whose ends are rounded independently overlap or gap by the rounding
+(1e-10 of a mesh unit sufficed on the S6 reference to double count 5-7 % of the energy).
+The transverse bound is closed.
+
+```json
+"Dielectric": [
+  {"Index": 2, "Attributes": [5, 8], "Type": "MS", "Thickness": 0.002, "Permittivity": 11.45},
+  {"Index": 20, "Attributes": [5, 8], "Type": "MS", "Thickness": 0.002, "Permittivity": 11.45,
+   "Region": {"Segments": [[100.0, 50.0, 0.0, 160.0, 50.0, 0.0]], "Distance": 5.0,
+              "BoxMin": [0.0, 0.0, -0.5], "BoxMax": [400.0, 400.0, 0.5]}}
+]
+```
+
+The filter applies to every energy of the entry: the total of `surface-Q.csv`, the
+`EdgeDistances` outside and annulus energies, the localized edge energies and the response
+matrices; the entry's quadrature rule is unchanged. A set of entries whose regions
+partition the interface (adjacent cells, complementary boxes) sums to the unfiltered
+entry to roundoff. Like the ownership partition, a region filters surfaces only: enabling
+`LocalizeEdgeEnergy` on a region-filtered entry requires `SaveLocalEdgeEnergy: false`
+(no localized volume diagnostics). Without `Region` every output is unchanged.
+
 ### Local fabrication response matrices
 
 An electrostatic fabrication-resolved coupon can be driven by a set of
@@ -1617,6 +1658,42 @@ the fixed-flux transform, which is built from the two domain matrices (the fixed
 interface energy is the fabricated surface matrix evaluated on the fixed-flux trace). The
 thin surface matrices do not enter any reported energy.
 
+For equipotential terminal excitations, a response correction also writes
+`terminal-C-corrected.csv`, `terminal-Cm-corrected.csv`, and `terminal-Cinv-corrected.csv`
+(the layouts of `terminal-C.csv`, `terminal-Cm.csv`, and `terminal-Cinv.csv`, which stay the
+raw thin-metal result), each with a `fixed-trace` column group and a `corrected` column
+group. The fixed-trace capacitance is the raw bilinear form plus the bilinear fixed-trace
+domain defect of the applied patches,
+
+```math
+C^{ft}_{ij} = V_j^T M V_i + V_j^T P^T W (Q^{dom}_{fabricated} - Q^{dom}_{thin}) P V_i,
+```
+
+so that its diagonal is the fixed-trace energy of `surface-Q-corrected.csv`,
+``C^{ft}_{ii} = C_{ii} \, \mathcal{E}^{ft} / \mathcal{E}^{raw}``; the off-diagonals use the
+same form and the matrix is symmetric. The patch weights ``W`` are the final weights of
+the run (zero for an excluded or `DomainBoundary` cell), so that the matrix is symmetric;
+because the conductor-consistency gate can exclude a patch while a later terminal is being
+solved, the energy identity holds for every terminal when no patch is excluded after the
+first terminal (always for a single terminal), otherwise only for the terminals solved
+after the last exclusion. Every model enters in its fixed-trace form whatever its
+`TranslationalDomainCorrection`. The `corrected` columns evaluate the same fixed-trace
+form on the self-consistent corrected fields; under `TranslationalDomainCorrection:
+"FixedTrace"` this is the capacitance of the corrected operator, under `"FixedFlux"` or
+`"Disabled"` the corrected fields solve a different domain coupling and the columns are
+the fixed-trace form of those fields. They are `nan` unless every terminal's corrected
+solve was accepted (converged and positive definite; `PostprocessOnly` never evaluates
+them). Conversely, `CorrectionMode: "SelfConsistent"` writes the `fixed-trace` columns as
+`nan` (no fixed-trace evaluation of the raw fields, as in `surface-Q-corrected.csv`). No
+fixed-flux capacitance is written: the fixed-flux energy mixes a fixed-flux fabricated
+response with a fixed-potential thin response and is not the energy of a fixed-potential
+ensemble, so ``C \, \mathcal{E}^{ff} / \mathcal{E}^{raw}`` is not a capacitance. The
+fixed-trace matrix (and the self-consistent one, or `null`) is also recorded in
+`palace.json` under `SurfaceResponse.TerminalCapacitance` with the terminal `Indices`. The
+evaluation of these matrices applies the trace operators, so the diagnostic counters
+`SurfaceResponse.TraceForwardCalls` and `TraceTransposeCalls` of `palace.json` include one
+forward and one transpose application per terminal per available matrix.
+
 Electrostatic correction also writes `surface-response-model-energy.csv`. Numeric
 `evaluation` codes 0, 1, and 2 denote raw-field fixed-trace, raw-field fixed-flux, and
 self-consistent corrected-field evaluations. Each row reports additive domain correction
@@ -1625,7 +1702,20 @@ topology, basis size, patch count, and patch weight are recorded in
 `palace.json` under `SurfaceResponse.ModelCatalog`. Summing model rows reproduces the
 aggregate coupon response and makes straight, corner, and spatial over-correction
 observable without rerunning filtered libraries. Electrostatic runs also write
-`surface-response-patches.csv` with each patch origin, frame, model index, and weight. The
+`surface-response-patches.csv` with each patch origin, frame, model index, and weight. With
+`"PatchEnergy": true` in `ResponseCorrection` (default `false`; every other output is
+unchanged), electrostatic runs also write `surface-response-patch-energy.csv`: one row
+per applied patch, source and `evaluation` (the codes above) with the patch's `model`,
+`feature` (the identification's feature id, -1 for an explicit patch), gate-updated
+`weight`, longitudinal `cell begin` / `cell end` (offsets along the patch's AxisW, m;
+both zero for a single cross-section), `origin` (m), `domain correction (J)` and
+`fabricated surface energy[k] (J)` per target interface — for every model kind (isolated
+edges, corners, curved nodes, stacks, spatial clusters). `patch` is the 1-based placed
+patch index of `surface-response-traces.csv` (the preflight dry run's 0-based `Patch`
+plus one). The rows of one source, evaluation and model sum to that model's row of
+`surface-response-model-energy.csv` to roundoff, and their count and weight sum to its
+`patch count` and `patch weight`; a patch excluded by the conductor-consistency gate
+keeps its row with weight 0. The
 single-transmon plotting helper can overlay these assignments on the chip-plane metal mesh:
 
 ```text

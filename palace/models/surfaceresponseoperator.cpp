@@ -60,6 +60,12 @@ using ResponsePatchData = config::ElectrostaticSolverData::ResponseCorrectionPat
 constexpr double maximum_trace_closure_spread = 0.05;
 constexpr double maximum_trace_closure_response_failure_fraction = 0.01;
 
+// A response matrix is positive semidefinite "beyond roundoff" when its smallest eigenvalue
+// is >= -kResponseMatrixNegativeEigenvalueToleranceRelative x its largest |eigenvalue| (the
+// fabricated domain matrix inverted by PositiveSemidefiniteInverseProduct, and the test of
+// a constructed corner model's blended domain matrices at match time, decision 374 (B)).
+constexpr double kResponseMatrixNegativeEigenvalueToleranceRelative = 1.0e-9;
+
 struct ElementBox
 {
   std::array<double, 3> min;
@@ -601,7 +607,438 @@ public:
       }
     }
   }
+
+  // The largest extent of a local element bounding box along any axis.
+  double MaxElementExtent() const
+  {
+    double extent = 0.0;
+    for (const auto &box : element_boxes)
+    {
+      for (int d = 0; d < dimension; d++)
+      {
+        extent = std::max(extent, box.max[d] - box.min[d]);
+      }
+    }
+    return extent;
+  }
 };
+
+}  // namespace
+
+// Point location in the distributed device mesh without a global search structure
+// (decision 346 (b)): FindPointsGSLIB's Setup builds a uniform global hash of the mesh
+// (hash_n = cbrt(32 N_tets)) whose crystal-router distribution overflows a 32-bit message
+// at ~17-28 M tets of a graded AMR mesh. Here the ranks' routing boxes are gathered once
+// per construction (one per AMR cycle, shared by the mortar-resolution probe and the
+// response-point location); a query goes to the ranks whose boxes contain it, is searched
+// in their rank-local meshes by the operator's ElementPointLocator, and is owned by the
+// lowest rank / lowest element containing it. A point no candidate rank finds this way is
+// searched by the candidate ranks with a rank-local FindPointsGSLIB (MPI_COMM_SELF: the
+// hash of the local mesh only, no router across ranks) with gslib's border tolerance.
+class DistributedPointLocator
+{
+public:
+  struct Result
+  {
+    // Per query point: the owning rank (the communicator size when none was found), its
+    // local element (-1 when none) and the reference coordinates (dimension per point).
+    std::vector<int> owners;
+    std::vector<int> elements;
+    std::vector<double> references;
+    // The owner's value of the optional per-element evaluation.
+    std::vector<double> owner_values;
+    long long int candidate_queries = 0;
+    long long int fallback_queries = 0;
+  };
+
+private:
+  static constexpr int routing_box_count = 8;
+  static constexpr int routing_box_values = 6;
+
+  mfem::ParMesh &mesh;
+  int dimension;
+  MPI_Comm comm;
+  int size;
+  ElementPointLocator local;
+  std::vector<double> global_routing;
+  double box_tolerance;
+  // The margin by which a rank-local FindPointsGSLIB search may find a point outside the
+  // rank's routing boxes: gslib expands every element bounding box by the relative slop
+  // bb_t = 0.01 of its size and accepts a border point within sqrt(bdr_tol) = 1e-4 mesh
+  // units (the maximum over the ranks).
+  double fallback_margin;
+
+  bool RankContains(int candidate_rank, const std::array<double, 3> &point,
+                    double tolerance) const
+  {
+    const int rank_offset = candidate_rank * routing_box_count * routing_box_values;
+    for (int box = 0; box < routing_box_count; box++)
+    {
+      ElementBox bounds;
+      for (int d = 0; d < 3; d++)
+      {
+        bounds.min[d] = global_routing[rank_offset + routing_box_values * box + d];
+        bounds.max[d] = global_routing[rank_offset + routing_box_values * box + 3 + d];
+      }
+      if (bounds.Contains(point, dimension, tolerance))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static int SetOffsets(const std::vector<int> &counts, std::vector<int> &offsets)
+  {
+    offsets.resize(counts.size());
+    int total = 0;
+    for (std::size_t i = 0; i < counts.size(); i++)
+    {
+      offsets[i] = total;
+      total += counts[i];
+    }
+    return total;
+  }
+
+  static std::vector<int> ScaleCommunicationPlan(const std::vector<int> &values, int scale)
+  {
+    std::vector<int> result(values);
+    for (auto &value : result)
+    {
+      value *= scale;
+    }
+    return result;
+  }
+
+  // The candidate exchange: every query point of the local list `points` (3 coordinates
+  // each) is sent to the ranks whose routing boxes contain it within `tolerance`; the
+  // candidate ranks answer with `answer_size` values per query (filled by `Answer` from
+  // the received coordinates), gathered here per (point, candidate rank).
+  struct CandidateExchange
+  {
+    std::vector<int> send_counts, send_offsets;
+    std::vector<int> query_indices;  // the local point of each packed query
+    std::vector<double> answers;     // answer_size values per packed query
+  };
+  template <typename Answer>
+  CandidateExchange Exchange(const std::vector<std::array<double, 3>> &points,
+                             double tolerance, int answer_size, Answer &&answer) const
+  {
+    CandidateExchange exchange;
+    exchange.send_counts.assign(size, 0);
+    for (const auto &point : points)
+    {
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        if (RankContains(candidate_rank, point, tolerance))
+        {
+          exchange.send_counts[candidate_rank]++;
+        }
+      }
+    }
+    std::vector<int> receive_counts(size);
+    Mpi::Alltoall(1, exchange.send_counts.data(), receive_counts.data(), comm);
+    std::vector<int> receive_offsets;
+    const int send_total = SetOffsets(exchange.send_counts, exchange.send_offsets);
+    const int receive_total = SetOffsets(receive_counts, receive_offsets);
+
+    exchange.query_indices.resize(send_total);
+    std::vector<double> send_coordinates(dimension * send_total);
+    std::vector<int> cursor(exchange.send_offsets);
+    for (std::size_t point = 0; point < points.size(); point++)
+    {
+      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+      {
+        if (!RankContains(candidate_rank, points[point], tolerance))
+        {
+          continue;
+        }
+        const int packed = cursor[candidate_rank]++;
+        exchange.query_indices[packed] = static_cast<int>(point);
+        for (int d = 0; d < dimension; d++)
+        {
+          send_coordinates[dimension * packed + d] = points[point][d];
+        }
+      }
+    }
+    const auto send_coordinate_counts =
+        ScaleCommunicationPlan(exchange.send_counts, dimension);
+    const auto send_coordinate_offsets =
+        ScaleCommunicationPlan(exchange.send_offsets, dimension);
+    const auto receive_coordinate_counts =
+        ScaleCommunicationPlan(receive_counts, dimension);
+    const auto receive_coordinate_offsets =
+        ScaleCommunicationPlan(receive_offsets, dimension);
+    std::vector<double> receive_coordinates(dimension * receive_total);
+    Mpi::Alltoallv(send_coordinates.data(), send_coordinate_counts.data(),
+                   send_coordinate_offsets.data(), receive_coordinates.data(),
+                   receive_coordinate_counts.data(), receive_coordinate_offsets.data(),
+                   comm);
+
+    std::vector<double> receive_answers(answer_size * receive_total);
+    answer(receive_coordinates, receive_total, receive_answers);
+
+    const auto send_answer_counts =
+        ScaleCommunicationPlan(exchange.send_counts, answer_size);
+    const auto send_answer_offsets =
+        ScaleCommunicationPlan(exchange.send_offsets, answer_size);
+    const auto receive_answer_counts = ScaleCommunicationPlan(receive_counts, answer_size);
+    const auto receive_answer_offsets =
+        ScaleCommunicationPlan(receive_offsets, answer_size);
+    exchange.answers.resize(answer_size * send_total);
+    Mpi::Alltoallv(receive_answers.data(), receive_answer_counts.data(),
+                   receive_answer_offsets.data(), exchange.answers.data(),
+                   send_answer_counts.data(), send_answer_offsets.data(), comm);
+    return exchange;
+  }
+
+public:
+  DistributedPointLocator(mfem::ParMesh &mesh_, int dimension_)
+    : mesh(mesh_), dimension(dimension_), comm(mesh.GetComm()), size(Mpi::Size(comm)),
+      local(mesh, dimension)
+  {
+    std::array<double, routing_box_count * routing_box_values> local_routing;
+    for (int box = 0; box < routing_box_count; box++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        local_routing[routing_box_values * box + d] = mfem::infinity();
+        local_routing[routing_box_values * box + 3 + d] = -mfem::infinity();
+      }
+    }
+    const auto routing_boxes = local.GetRoutingBoxes(routing_box_count);
+    for (std::size_t box = 0; box < routing_boxes.size(); box++)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        local_routing[routing_box_values * box + d] = routing_boxes[box].min[d];
+        local_routing[routing_box_values * box + 3 + d] = routing_boxes[box].max[d];
+      }
+    }
+    global_routing.resize(size * local_routing.size());
+    Mpi::Allgather(static_cast<int>(local_routing.size()), local_routing.data(),
+                   global_routing.data(), comm);
+
+    double coordinate_scale = 0.0;
+    const auto &bounds = local.GetBounds();
+    for (int d = 0; d < dimension; d++)
+    {
+      coordinate_scale = std::max({coordinate_scale, std::abs(bounds.min[d]),
+                                   std::abs(bounds.max[d]), bounds.max[d] - bounds.min[d]});
+    }
+    Mpi::GlobalMax(1, &coordinate_scale, comm);
+    box_tolerance =
+        1.0e-11 * coordinate_scale +
+        64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, coordinate_scale);
+
+    fallback_margin = 0.01 * local.MaxElementExtent() + 1.0e-4;
+    Mpi::GlobalMax(1, &fallback_margin, comm);
+  }
+
+  // Locates the local list of points (byNODES: every x, then every y, then every z). With
+  // `element_value`, the owner evaluates it on the owning element.
+  Result Locate(const mfem::Vector &xyz,
+                const std::function<double(int element)> *element_value = nullptr)
+  {
+    MFEM_VERIFY(xyz.Size() % dimension == 0, "Invalid point-coordinate array!");
+    const int point_count = xyz.Size() / dimension;
+    std::vector<std::array<double, 3>> points(point_count);
+    for (int point = 0; point < point_count; point++)
+    {
+      points[point].fill(0.0);
+      for (int d = 0; d < dimension; d++)
+      {
+        points[point][d] = xyz(d * point_count + point);
+      }
+    }
+
+    Result result;
+    result.owners.assign(point_count, size);
+    result.elements.assign(point_count, -1);
+    result.references.assign(dimension * point_count, 0.0);
+    result.owner_values.assign(element_value ? point_count : 0, 0.0);
+    const int value_size = element_value ? 1 : 0;
+
+    // The answer of a candidate rank: the local element (-1 when not found), the reference
+    // coordinates and the optional element value.
+    const int answer_size = 1 + dimension + value_size;
+    const auto exchange = Exchange(
+        points, box_tolerance, answer_size,
+        [&](const std::vector<double> &coordinates, int count, std::vector<double> &answers)
+        {
+          std::vector<int> candidates;
+          for (int i = 0; i < count; i++)
+          {
+            std::array<double, 3> coordinate{};
+            for (int d = 0; d < dimension; d++)
+            {
+              coordinate[d] = coordinates[dimension * i + d];
+            }
+            int element = -1;
+            mfem::IntegrationPoint reference;
+            double *answer = answers.data() + answer_size * i;
+            if (local.Find(coordinate, box_tolerance, element, reference, candidates))
+            {
+              reference.Get(answer + 1, dimension);
+              if (element_value)
+              {
+                answer[1 + dimension] = (*element_value)(element);
+              }
+            }
+            answer[0] = element;
+          }
+        });
+    result.candidate_queries = static_cast<long long int>(exchange.query_indices.size());
+    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+    {
+      const int begin = exchange.send_offsets[candidate_rank];
+      const int end = begin + exchange.send_counts[candidate_rank];
+      for (int packed = begin; packed < end; packed++)
+      {
+        const double *answer = exchange.answers.data() + answer_size * packed;
+        const int element = static_cast<int>(answer[0]);
+        if (element < 0)
+        {
+          continue;
+        }
+        const int point = exchange.query_indices[packed];
+        if (candidate_rank > result.owners[point] ||
+            (candidate_rank == result.owners[point] && element >= result.elements[point]))
+        {
+          continue;
+        }
+        result.owners[point] = candidate_rank;
+        result.elements[point] = element;
+        std::copy_n(answer + 1, dimension, result.references.data() + dimension * point);
+        if (element_value)
+        {
+          result.owner_values[point] = answer[1 + dimension];
+        }
+      }
+    }
+
+    std::vector<int> fallback_indices;
+    for (int point = 0; point < point_count; point++)
+    {
+      if (result.owners[point] == size)
+      {
+        fallback_indices.push_back(point);
+      }
+    }
+    result.fallback_queries = static_cast<long long int>(fallback_indices.size());
+    int fallback_count = static_cast<int>(fallback_indices.size());
+    Mpi::GlobalSum(1, &fallback_count, comm);
+    if (fallback_count == 0)
+    {
+      return result;
+    }
+    Mpi::Warning(comm,
+                 "Distributed point location could not resolve {:d} points in the local "
+                 "meshes of their candidate ranks; searching them with a rank-local "
+                 "FindPointsGSLIB!\n",
+                 fallback_count);
+
+    // Every candidate rank (its routing boxes within its own fallback margin) searches the
+    // unresolved points in its local mesh with gslib; the answer carries gslib's code
+    // (0 inside, 1 on a border within the tolerance, 2 not found), the local element, the
+    // squared distance, the reference coordinates and the optional element value. The
+    // owner is chosen as gslib's global search does: an inside point before a border one,
+    // then the smaller distance, then the lower rank.
+    std::vector<std::array<double, 3>> fallback_points(fallback_indices.size());
+    for (std::size_t i = 0; i < fallback_indices.size(); i++)
+    {
+      fallback_points[i] = points[fallback_indices[i]];
+    }
+    const int fallback_answer_size = 3 + dimension + value_size;
+    const auto fallback = Exchange(
+        fallback_points, box_tolerance + fallback_margin, fallback_answer_size,
+        [&](const std::vector<double> &coordinates, int count, std::vector<double> &answers)
+        {
+          for (int i = 0; i < count; i++)
+          {
+            double *answer = answers.data() + fallback_answer_size * i;
+            answer[0] = 2.0;
+            answer[1] = -1.0;
+            answer[2] = mfem::infinity();
+          }
+          if (count == 0)
+          {
+            return;
+          }
+#if defined(MFEM_USE_GSLIB)
+          mfem::Vector fallback_xyz(dimension * count);
+          for (int i = 0; i < count; i++)
+          {
+            for (int d = 0; d < dimension; d++)
+            {
+              fallback_xyz(d * count + i) = coordinates[dimension * i + d];
+            }
+          }
+          mfem::FindPointsGSLIB finder(MPI_COMM_SELF);
+          finder.Setup(mesh, 0.01, 1.0e-12, 256);
+          finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
+          const auto &reference = finder.GetReferencePosition();
+          for (int i = 0; i < count; i++)
+          {
+            if (finder.GetCode()[i] == 2)
+            {
+              continue;
+            }
+            double *answer = answers.data() + fallback_answer_size * i;
+            const int element = static_cast<int>(finder.GetElem()[i]);
+            answer[0] = finder.GetCode()[i];
+            answer[1] = element;
+            answer[2] = finder.GetDist()(i);
+            for (int d = 0; d < dimension; d++)
+            {
+              answer[3 + d] = reference(dimension * i + d);
+            }
+            if (element_value)
+            {
+              answer[3 + dimension] = (*element_value)(element);
+            }
+          }
+#else
+          MFEM_ABORT("Rank-local point location fallback requires MFEM_USE_GSLIB!");
+#endif
+        });
+    std::vector<double> best_code(fallback_indices.size(), 2.0);
+    std::vector<double> best_distance(fallback_indices.size(), mfem::infinity());
+    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
+    {
+      const int begin = fallback.send_offsets[candidate_rank];
+      const int end = begin + fallback.send_counts[candidate_rank];
+      for (int packed = begin; packed < end; packed++)
+      {
+        const double *answer = fallback.answers.data() + fallback_answer_size * packed;
+        if (answer[0] == 2.0)
+        {
+          continue;
+        }
+        const int i = fallback.query_indices[packed];
+        if (answer[0] > best_code[i] ||
+            (answer[0] == best_code[i] && answer[2] >= best_distance[i]))
+        {
+          continue;
+        }
+        best_code[i] = answer[0];
+        best_distance[i] = answer[2];
+        const int point = fallback_indices[i];
+        result.owners[point] = candidate_rank;
+        result.elements[point] = static_cast<int>(answer[1]);
+        std::copy_n(answer + 3, dimension, result.references.data() + dimension * point);
+        if (element_value)
+        {
+          result.owner_values[point] = answer[3 + dimension];
+        }
+      }
+    }
+    return result;
+  }
+};
+
+namespace
+{
 
 enum class LibraryTopology : char
 {
@@ -732,6 +1169,9 @@ struct ProcessLibrary
   bool exhaustive_spatial_closure = false;
   std::string name;
   double matching_radius = 0.0;
+  // The matching radius in metres (the "R (m)" of a spatial coupon's surface response
+  // files): the within-R rows a spatial model's surface matrices are read at.
+  double matching_radius_m = 0.0;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
@@ -1507,6 +1947,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   library.matching_radius = data.at("MatchingRadius").get<double>() / coordinate_scale;
   MFEM_VERIFY(std::isfinite(library.matching_radius) && library.matching_radius > 0.0,
               "Fabrication-process response-library matching radius must be positive!");
+  library.matching_radius_m =
+      units.Dimensionalize<Units::ValueType::LENGTH>(library.matching_radius);
   const auto fabrication = data.find("Fabrication");
   const nlohmann::json *interface_layers = nullptr;
   if (fabrication != data.end())
@@ -2070,6 +2512,21 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                              << "\" TraceBasis FreeKnotGrading must be an "
                                                 "array of distances over R!");
         rule.free_knot_grading = grading->get<std::vector<double>>();
+      }
+      if (auto reference = trace_basis->find("FreeKnotGradingReferenceFreeArcOverR");
+          reference != trace_basis->end())
+      {
+        // Written by the generator only where the scaling of the graded free knots is
+        // active (an acute concave node, decision 318); an absent key is the default
+        // reference kFreeKnotGradingReferenceFreeArcOverR, so the records of the family's
+        // other nodes are unchanged and the family stays on one rule.
+        MFEM_VERIFY(reference->is_number() && reference->get<double>() > 0.0 &&
+                        !rule.free_knot_grading.empty(),
+                    "Fabrication-process response model \""
+                        << model.name
+                        << "\" TraceBasis FreeKnotGradingReferenceFreeArcOverR must be a "
+                           "positive free arc over R of a FreeKnotGrading layout!");
+        rule.free_knot_grading_reference_free_arc_over_r = reference->get<double>();
       }
       if (auto extra = trace_basis->find("ExtraLevelsAboveOverOveretch");
           extra != trace_basis->end())
@@ -3873,7 +4330,44 @@ struct FeatureCornerMatch
   // feature's angle with the segment's connectivity (empty for an exact node, which uses
   // the node's own files).
   std::optional<ConstructedCornerTraceBasis> constructed;
+  // Recorded for every interpolated corner (decision 376): the minimum eigenvalue of each
+  // blended response matrix on the free knots relative to its largest |eigenvalue| (the
+  // fabricated / thin domain matrices, tested; the per-coupon-interface surface matrices,
+  // recorded only). Null for an exact node.
+  nlohmann::json blend_eigenvalues;
+  // The PSD fallback record (decision 374 (B)): null unless the stencil's blended
+  // fabricated or thin DOMAIN matrix was not PSD beyond roundoff and `nodes` / `rule` /
+  // `name` were replaced by the convex linear blend of the two bracketing nodes.
+  nlohmann::json interpolation_fallback;
 };
+
+// The minimum eigenvalue of each blended response matrix of a corner-family stencil on the
+// free (non-zero-trace) knots, relative to the matrix's largest |eigenvalue| (the
+// normalisation of the operator's PSD check), and whether the fabricated and thin DOMAIN
+// matrices pass that check. Defined after the response matrix readers.
+struct CornerBlendEigenvalues
+{
+  double fabricated = 0.0, thin = 0.0;
+  std::map<int, double> fabricated_surfaces, thin_surfaces;  // per coupon interface
+  bool domain_positive_semidefinite = true;
+  nlohmann::json Record() const;
+};
+
+// The nodes' response matrices read once per matching pass (every rank reads the files: a
+// window's interpolated corners share a handful of node files, C3's 16 would otherwise read
+// 16 x 4 nodes x 4 files each).
+struct CornerBlendMatrixCache
+{
+  std::map<std::string, mfem::DenseMatrix> domain;  // file path -> matrix
+  std::map<std::string, std::map<int, mfem::DenseMatrix>>
+      surfaces;  // path -> per interface
+};
+
+CornerBlendEigenvalues
+ComputeCornerBlendEigenvalues(const ProcessLibrary &library,
+                              const std::vector<LibrarySelection::WeightedModel> &nodes,
+                              int basis_size, const std::vector<int> &zero_trace_indices,
+                              CornerBlendMatrixCache &cache);
 
 std::string CornerRuntimeModelName(const std::string &base, double angle_degrees,
                                    const std::string &rule)
@@ -3885,7 +4379,8 @@ std::string CornerRuntimeModelName(const std::string &base, double angle_degrees
 
 std::optional<FeatureCornerMatch>
 MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &feature,
-                  const MetalBoundaryLaw &boundary_condition, std::string &reason)
+                  const MetalBoundaryLaw &boundary_condition,
+                  CornerBlendMatrixCache &blend_cache, std::string &reason)
 {
   const auto topology = ParseLibraryTopology(feature.type);
   if (topology != LibraryTopology::CONVEX_CORNER &&
@@ -4107,6 +4602,94 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
   if (match.rule == "exact")
   {
     return match;
+  }
+  // The PSD test of the blend (decision 374 (B), scope decision 376): the stencil's
+  // blended fabricated and thin DOMAIN matrices on the free knots must be PSD beyond
+  // roundoff by the operator's own criterion (PositiveSemidefiniteInverseProduct would
+  // otherwise abort on the fabricated one; the thin one is the energy it is compared
+  // with). Lagrange weights on more than two nodes can be negative, and over non-uniform
+  // nodes the blend of PSD matrices need not be PSD (C3's concave 70.498 deg over 60 / 75 /
+  // 80 / 90). Such a stencil is replaced by the convex LINEAR blend of the two nodes
+  // bracketing the angle (weights in [0, 1]: PSD by construction) for every matrix of the
+  // feature; the base (the nearest node, one of the pair) and so the constructed basis are
+  // unchanged. A PSD cubic blend is left untouched. The per-interface surface blends are
+  // recorded, never acted on: those matrices are rank-deficient PSD, so every blend with a
+  // negative weight has negative modes along their null spaces (decision 376).
+  {
+    const int basis_size = static_cast<int>(first_points.size());
+    const auto eigenvalues = ComputeCornerBlendEigenvalues(
+        library, match.nodes, basis_size, first.response.zero_trace_indices, blend_cache);
+    match.blend_eigenvalues = eigenvalues.Record();
+    if (!eigenvalues.domain_positive_semidefinite && stencil.nodes.size() > 2)
+    {
+      // The bracketing pair of the stencil (its nodes are sorted by angle, the angle is
+      // strictly inside the segment: SelectCornerFamilyStencil).
+      std::map<std::size_t, double> stencil_angles;
+      for (const auto &node : family)
+      {
+        stencil_angles[node.index] = node.angle_degrees;
+      }
+      std::optional<std::pair<std::size_t, double>> lower, upper;
+      for (const auto &[index, weight] : stencil.nodes)
+      {
+        (void)weight;
+        const double node_angle = stencil_angles.at(index);
+        if (node_angle < angle && (!lower || node_angle > lower->second))
+        {
+          lower = {index, node_angle};
+        }
+        if (node_angle > angle && (!upper || node_angle < upper->second))
+        {
+          upper = {index, node_angle};
+        }
+      }
+      MFEM_VERIFY(lower && upper, "A corner-family stencil does not bracket its angle "
+                                      << angle << " deg!");
+      MFEM_VERIFY(
+          match.base == lower->first || match.base == upper->first,
+          "The base of a corner-family stencil is not one of its bracketing nodes!");
+      const double span = upper->second - lower->second;
+      std::vector<LibrarySelection::WeightedModel> linear = {
+          {lower->first, (upper->second - angle) / span},
+          {upper->first, (angle - lower->second) / span}};
+      const auto linear_eigenvalues = ComputeCornerBlendEigenvalues(
+          library, linear, basis_size, first.response.zero_trace_indices, blend_cache);
+      // (A linear blend of PSD node matrices is PSD; were a node's stored matrix not, the
+      // operator's own check on the fabricated matrix fails closed as before.)
+      nlohmann::json stencil_record = nlohmann::json::array();
+      nlohmann::json stencil_weights = nlohmann::json::array();
+      for (const auto &[index, weight] : stencil.nodes)
+      {
+        stencil_record.push_back({{"Name", library.models[index].name},
+                                  {"AngleDegrees", stencil_angles.at(index)}});
+        stencil_weights.push_back(weight);
+      }
+      match.interpolation_fallback = {
+          {"Rule",
+           "decision 374 (B) / 376: the " + stencil.rule +
+               " Lagrange blend of the stencil has a fabricated or thin DOMAIN "
+               "matrix that is not positive semidefinite beyond roundoff on the "
+               "free knots (min eigenvalue < -" +
+               fmt::format("{:g}", kResponseMatrixNegativeEigenvalueToleranceRelative) +
+               " x max |eigenvalue|, the operator's PositiveSemidefiniteInverseProduct "
+               "criterion); every matrix of the feature is replaced by the convex "
+               "linear blend of the two bracketing nodes (PSD by construction); the "
+               "base node and the constructed basis are unchanged"},
+          {"Stencil", stencil_record},
+          {"StencilRule", stencil.rule},
+          {"StencilWeights", stencil_weights},
+          {"MinEigenvalueRelative", match.blend_eigenvalues},
+          {"NegativeToleranceRelative", kResponseMatrixNegativeEigenvalueToleranceRelative},
+          {"LinearNodes",
+           {library.models[lower->first].name, library.models[upper->first].name}},
+          {"LinearWeights", {linear[0].weight, linear[1].weight}},
+          {"LinearMinEigenvalueRelative", linear_eigenvalues.Record()}};
+      match.nodes = linear;
+      match.rule = "linear";
+      match.name =
+          CornerRuntimeModelName(library.models[match.base].name, angle, match.rule);
+      match.blend_eigenvalues = linear_eigenvalues.Record();
+    }
   }
   // The runtime basis at the feature's angle: the base's fixed rings, the metal rings by
   // the rule (positions) with the segment's connectivity, the same zero set and contour
@@ -7030,6 +7613,7 @@ IdentificationResult RunGeometryIdentification(
   const auto library_keys = LibrarySignatureKeys(library, describer);
   std::map<int, nlohmann::json> curvature_records;  // per feature, for the manifest
   std::map<int, nlohmann::json> corner_records;     // per feature, for the manifest
+  CornerBlendMatrixCache corner_blend_cache;        // the corner nodes' matrices, read once
   library_keys.RefuseNearDuplicateClusters();
   for (auto &feature : result.features)
   {
@@ -7136,8 +7720,8 @@ IdentificationResult RunGeometryIdentification(
       MFEM_VERIFY(it != framed.end(),
                   "A corner feature portion lies on a segment without an edge frame!");
       std::string reason;
-      const auto match =
-          MatchCornerFamily(library, feature, it->second->boundary_condition, reason);
+      const auto match = MatchCornerFamily(library, feature, it->second->boundary_condition,
+                                           corner_blend_cache, reason);
       if (match)
       {
         feature.matched_model = match->name;
@@ -7145,7 +7729,21 @@ IdentificationResult RunGeometryIdentification(
         std::ostringstream note;
         note << "corner family: " << match->rule << " at " << std::setprecision(6)
              << match->angle_degrees << " deg (turn " << match->turn_degrees << ")";
+        if (!match->interpolation_fallback.is_null())
+        {
+          note << "; PSD fallback (decision 374 (B)): the "
+               << match->interpolation_fallback["StencilRule"].get<std::string>()
+               << " blend's fabricated / thin domain min eigenvalue relative "
+               << match->interpolation_fallback["MinEigenvalueRelative"]["FabricatedMatrix"]
+                      .get<double>()
+               << " / "
+               << match->interpolation_fallback["MinEigenvalueRelative"]["ThinMatrix"]
+                      .get<double>()
+               << " -> linear on the bracketing nodes";
+        }
         feature.match_note = note.str();
+        feature.blend_eigenvalues = match->blend_eigenvalues;
+        feature.interpolation_fallback = match->interpolation_fallback;
         nlohmann::json nodes = nlohmann::json::array();
         for (const auto &node : match->nodes)
         {
@@ -7167,6 +7765,17 @@ IdentificationResult RunGeometryIdentification(
                  ? nlohmann::json(*match->connectivity_angle_degrees)
                  : nlohmann::json()},
             {"Nodes", nodes}};
+        if (!match->blend_eigenvalues.is_null())
+        {
+          // The applied blend's min eigenvalues (decision 376) and, when the stencil was
+          // replaced, the fallback record (decision 374 (B)).
+          corner_records[feature.id]["BlendEigenvalues"] = match->blend_eigenvalues;
+        }
+        if (!match->interpolation_fallback.is_null())
+        {
+          corner_records[feature.id]["InterpolationFallback"] =
+              match->interpolation_fallback;
+        }
         if (corner_matches)
         {
           corner_matches->emplace(feature.id, *match);
@@ -7814,6 +8423,8 @@ FeaturePatchSummary BuildFeaturePatches(
     std::string label;
     // A corner blend's basis constructed at the feature's angle (the trace basis rule).
     const ConstructedCornerTraceBasis *constructed = nullptr;
+    // A corner blend's PSD fallback record (null unless the stencil was replaced).
+    const nlohmann::json *interpolation_fallback = nullptr;
   };
   std::map<std::pair<std::string, std::string>, int> runtime_models;
   int next_model_index = 1;
@@ -7866,6 +8477,23 @@ FeaturePatchSummary BuildFeaturePatches(
                 << std::setprecision(6) << node.weight;
         }
         Mpi::Print(" {} {}: {}\n", blend->label, blend->name, nodes.str());
+        if (blend->interpolation_fallback && !blend->interpolation_fallback->is_null())
+        {
+          const auto &fallback = *blend->interpolation_fallback;
+          std::ostringstream stencil;
+          for (const auto &node : fallback["Stencil"])
+          {
+            stencil << (stencil.tellp() > 0 ? " / " : "")
+                    << node["Name"].get<std::string>();
+          }
+          Mpi::Print(" {} fallback {}: the {} blend on {} is not PSD beyond roundoff "
+                     "(fabricated / thin domain min eigenvalue relative {:.3e} / {:.3e}); "
+                     "linear on the bracketing nodes (decision 374 (B))\n",
+                     blend->label, blend->name, fallback["StencilRule"].get<std::string>(),
+                     stencil.str(),
+                     fallback["MinEigenvalueRelative"]["FabricatedMatrix"].get<double>(),
+                     fallback["MinEigenvalueRelative"]["ThinMatrix"].get<double>());
+        }
         if (blend->constructed)
         {
           const auto &constructed = *blend->constructed;
@@ -7905,7 +8533,8 @@ FeaturePatchSummary BuildFeaturePatches(
                        match.nodes,
                        false,
                        "Corner interpolation",
-                       match.constructed ? &*match.constructed : nullptr};
+                       match.constructed ? &*match.constructed : nullptr,
+                       &match.interpolation_fallback};
   };
 
   auto Emit = [&](ResponsePatchData patch, std::size_t model_index, int runtime,
@@ -13593,7 +14222,8 @@ mfem::DenseMatrix PositiveSemidefiniteInverseProduct(const mfem::DenseMatrix &ma
               "Failed to diagonalize a response matrix on its active quotient space!");
   const auto eigenvalues = eigensystem.eigenvalues();
   const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
-  const double negative_tolerance = 1.0e-9 * scale;
+  const double negative_tolerance =
+      kResponseMatrixNegativeEigenvalueToleranceRelative * scale;
   const double active_tolerance = 1.0e-12 * scale;
   MFEM_VERIFY(eigenvalues.minCoeff() >= -negative_tolerance,
               "Fabricated response matrix has a negative-energy mode beyond roundoff!");
@@ -13913,6 +14543,165 @@ std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
     MFEM_VERIFY(source_interfaces == interfaces,
                 "Interpolated response model sources do not share the same coupon "
                 "interfaces!");
+  }
+  return result;
+}
+
+// The smallest eigenvalue of a symmetric matrix restricted to `free_indices`, relative to
+// its largest |eigenvalue| (the normalisation of PositiveSemidefiniteInverseProduct's
+// check: PSD beyond roundoff when >= -kResponseMatrixNegativeEigenvalueToleranceRelative).
+double MinimumRelativeEigenvalue(const mfem::DenseMatrix &matrix,
+                                 const std::vector<int> &free_indices)
+{
+  const int size = static_cast<int>(free_indices.size());
+  Eigen::MatrixXd A(size, size);
+  for (int i = 0; i < size; i++)
+  {
+    for (int j = 0; j < size; j++)
+    {
+      A(i, j) = matrix(free_indices[i], free_indices[j]);
+    }
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(A, Eigen::EigenvaluesOnly);
+  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
+              "Failed to diagonalize a blended corner response matrix on its free knots!");
+  const auto eigenvalues = eigensystem.eigenvalues();
+  const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
+  return eigenvalues.minCoeff() / scale;
+}
+
+nlohmann::json CornerBlendEigenvalues::Record() const
+{
+  nlohmann::json fabricated_surface_record = nlohmann::json::object(),
+                 thin_surface_record = nlohmann::json::object();
+  for (const auto &[interface, value] : fabricated_surfaces)
+  {
+    fabricated_surface_record[std::to_string(interface)] = value;
+  }
+  for (const auto &[interface, value] : thin_surfaces)
+  {
+    thin_surface_record[std::to_string(interface)] = value;
+  }
+  return {{"FabricatedMatrix", fabricated},
+          {"ThinMatrix", thin},
+          {"FabricatedSurfaceMatrix", fabricated_surface_record},
+          {"ThinSurfaceMatrix", thin_surface_record},
+          {"DomainPositiveSemidefinite", domain_positive_semidefinite}};
+}
+
+CornerBlendEigenvalues
+ComputeCornerBlendEigenvalues(const ProcessLibrary &library,
+                              const std::vector<LibrarySelection::WeightedModel> &nodes,
+                              int basis_size, const std::vector<int> &zero_trace_indices,
+                              CornerBlendMatrixCache &cache)
+{
+  // The blend exactly as the operator forms it (BlendedDomainResponseMatrix /
+  // BlendedSurfaceResponseMatrices on a config blend: zero, then the weighted sum of the
+  // nodes' matrices in node order; a spatial model's surface matrices at the library's
+  // within-R rows), the files read once per matching pass.
+  MFEM_VERIFY(!nodes.empty(), "A corner-family blend needs nodes!");
+  const auto &first = library.models[nodes.front().index].response;
+  const std::optional<double> within_radius =
+      first.spatial_basis ? std::optional<double>(library.matching_radius_m) : std::nullopt;
+  auto Domain = [&](const std::string &path) -> const mfem::DenseMatrix &
+  {
+    auto it = cache.domain.find(path);
+    if (it == cache.domain.end())
+    {
+      it =
+          cache.domain.emplace(path, ReadDenseDomainResponseMatrix(path, basis_size)).first;
+    }
+    return it->second;
+  };
+  auto Surfaces = [&](const std::string &path) -> const std::map<int, mfem::DenseMatrix> &
+  {
+    auto it = cache.surfaces.find(path);
+    if (it == cache.surfaces.end())
+    {
+      it = cache.surfaces
+               .emplace(path, ReadSurfaceResponseMatrices(path, basis_size, within_radius))
+               .first;
+    }
+    return it->second;
+  };
+  auto BlendDomain = [&](bool fabricated)
+  {
+    mfem::DenseMatrix result(basis_size);
+    result = 0.0;
+    for (const auto &node : nodes)
+    {
+      const auto &coupon = library.models[node.index].response;
+      MFEM_VERIFY(std::isfinite(node.weight),
+                  "Interpolated response model weights must be finite!");
+      result.Add(node.weight,
+                 Domain(fabricated ? coupon.fabricated_matrix : coupon.thin_matrix));
+    }
+    return result;
+  };
+  auto BlendSurfaces = [&](bool fabricated)
+  {
+    std::map<int, mfem::DenseMatrix> result;
+    std::set<int> interfaces;
+    for (const auto &node : nodes)
+    {
+      const auto &coupon = library.models[node.index].response;
+      const auto &matrices = Surfaces(fabricated ? coupon.fabricated_surface_matrix
+                                                 : coupon.thin_surface_matrix);
+      std::set<int> source_interfaces;
+      for (const auto &[interface, matrix] : matrices)
+      {
+        source_interfaces.insert(interface);
+        auto [it, inserted] = result.emplace(interface, mfem::DenseMatrix(basis_size));
+        if (inserted)
+        {
+          it->second = 0.0;
+        }
+        it->second.Add(node.weight, matrix);
+      }
+      if (&node == &nodes.front())
+      {
+        interfaces = source_interfaces;
+      }
+      MFEM_VERIFY(source_interfaces == interfaces,
+                  "Interpolated response model sources do not share the same coupon "
+                  "interfaces!");
+    }
+    return result;
+  };
+  std::vector<bool> constrained(basis_size, false);
+  for (const int index : zero_trace_indices)
+  {
+    MFEM_VERIFY(index >= 0 && index < basis_size,
+                "Invalid zero-trace response basis index in a corner family!");
+    constrained[index] = true;
+  }
+  std::vector<int> free_indices;
+  for (int i = 0; i < basis_size; i++)
+  {
+    if (!constrained[i])
+    {
+      free_indices.push_back(i);
+    }
+  }
+  MFEM_VERIFY(!free_indices.empty(),
+              "A corner family needs at least one free trace basis function!");
+  CornerBlendEigenvalues result;
+  result.fabricated = MinimumRelativeEigenvalue(BlendDomain(true), free_indices);
+  result.thin = MinimumRelativeEigenvalue(BlendDomain(false), free_indices);
+  result.domain_positive_semidefinite =
+      result.fabricated >= -kResponseMatrixNegativeEigenvalueToleranceRelative &&
+      result.thin >= -kResponseMatrixNegativeEigenvalueToleranceRelative;
+  if (!first.fabricated_surface_matrix.empty() && !first.thin_surface_matrix.empty())
+  {
+    for (const auto &[interface, matrix] : BlendSurfaces(true))
+    {
+      result.fabricated_surfaces[interface] =
+          MinimumRelativeEigenvalue(matrix, free_indices);
+    }
+    for (const auto &[interface, matrix] : BlendSurfaces(false))
+    {
+      result.thin_surfaces[interface] = MinimumRelativeEigenvalue(matrix, free_indices);
+    }
   }
   return result;
 }
@@ -17522,18 +18311,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   int global_mortar_patch_count = static_cast<int>(mortar_patch_indices.size());
   Mpi::GlobalSum(1, &global_mortar_patch_count, fespace.GetComm());
+  // One point locator per construction (= per AMR cycle) for the mortar-resolution probe
+  // and the response points below: no global search structure on the device mesh
+  // (decision 346 (b)).
+  DistributedPointLocator point_locator(response_mesh, dimension);
   if (global_mortar_patch_count > 0)
   {
-    mfem::L2_FECollection size_collection(0, dimension);
-    mfem::ParFiniteElementSpace size_space(&response_mesh, &size_collection);
-    mfem::ParGridFunction size_field(&size_space);
-    mfem::Array<int> dofs;
-    for (int element = 0; element < response_mesh.GetNE(); element++)
-    {
-      size_space.GetElementDofs(element, dofs);
-      MFEM_ASSERT(dofs.Size() == 1, "Invalid piecewise-constant mesh-size space!");
-      size_field[dofs[0]] = response_mesh.GetElementSize(element, 1);
-    }
     mfem::Vector centers(dimension * mortar_patch_indices.size());
     for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
     {
@@ -17551,11 +18334,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 coordinate_scale;
       }
     }
-    mfem::FindPointsGSLIB finder(fespace.GetComm());
-    finder.Setup(response_mesh, 0.01, 1.0e-12, 256);
-    finder.FindPoints(centers, mfem::Ordering::byNODES);
-    mfem::Vector local_resolution(mortar_patch_indices.size());
-    finder.Interpolate(size_field, local_resolution);
+    // The owning element's size (the smallest singular value of its Jacobian).
+    const std::function<double(int)> element_size = [&](int element)
+    { return response_mesh.GetElementSize(element, 1); };
+    const auto located = point_locator.Locate(centers, &element_size);
+    const auto &local_resolution = located.owner_values;
     for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
     {
       // The applied patches only (decision 258): a patch whose placed coupon section
@@ -17563,8 +18346,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       // of the placement, named.
       const auto &patch = patches[mortar_patch_indices[i]];
       MFEM_VERIFY(
-          finder.GetCode()[i] != 2 && std::isfinite(local_resolution[i]) &&
-              local_resolution[i] > 0.0,
+          located.owners[i] < Mpi::Size(fespace.GetComm()) &&
+              std::isfinite(local_resolution[i]) && local_resolution[i] > 0.0,
           "Unable to determine a local surface-mortar mesh resolution at the first "
           "basis point ("
               << centers(0 * mortar_patch_indices.size() + i) << ", "
@@ -17922,7 +18705,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
 
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
-    ConfigurePointCommunication(xyz, dimension);
+    ConfigurePointCommunication(point_locator, xyz, dimension);
   }
 
   Mpi::Print(
@@ -18881,11 +19664,13 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
       xyz(d * pending_points.size() + i) = pending_points[i].coordinate[d];
     }
   }
-  ConfigurePointCommunication(xyz, dimension, &weighted_tangents);
+  DistributedPointLocator point_locator(const_cast<mfem::ParMesh &>(fespace.GetParMesh()),
+                                        dimension);
+  ConfigurePointCommunication(point_locator, xyz, dimension, &weighted_tangents);
 }
 
 void SurfaceResponseOperator::ConfigurePointCommunication(
-    const mfem::Vector &xyz, int dimension,
+    DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
     const std::vector<std::array<double, 3>> *weighted_tangents)
 {
   MFEM_VERIFY(dimension == 2 || dimension == 3,
@@ -18897,74 +19682,7 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
                   static_cast<int>(weighted_tangents->size()) == point_query_count,
               "Invalid surface-response point-tangent array!");
 
-  auto &mesh = const_cast<mfem::ParMesh &>(fespace.GetParMesh());
-  const auto comm = fespace.GetComm();
   const int size = Mpi::Size(fespace.GetComm());
-  ElementPointLocator locator(mesh, dimension);
-
-  constexpr int routing_box_count = 8;
-  constexpr int routing_box_values = 6;
-  std::array<double, routing_box_count * routing_box_values> local_routing;
-  for (int box = 0; box < routing_box_count; box++)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      local_routing[routing_box_values * box + d] = mfem::infinity();
-      local_routing[routing_box_values * box + 3 + d] = -mfem::infinity();
-    }
-  }
-  const auto routing_boxes = locator.GetRoutingBoxes(routing_box_count);
-  for (std::size_t box = 0; box < routing_boxes.size(); box++)
-  {
-    for (int d = 0; d < 3; d++)
-    {
-      local_routing[routing_box_values * box + d] = routing_boxes[box].min[d];
-      local_routing[routing_box_values * box + 3 + d] = routing_boxes[box].max[d];
-    }
-  }
-  std::vector<double> global_routing(size * local_routing.size());
-  Mpi::Allgather(static_cast<int>(local_routing.size()), local_routing.data(),
-                 global_routing.data(), comm);
-
-  double coordinate_scale = 0.0;
-  const auto &bounds = locator.GetBounds();
-  for (int d = 0; d < dimension; d++)
-  {
-    coordinate_scale = std::max({coordinate_scale, std::abs(bounds.min[d]),
-                                 std::abs(bounds.max[d]), bounds.max[d] - bounds.min[d]});
-  }
-  Mpi::GlobalMax(1, &coordinate_scale, comm);
-  const double box_tolerance =
-      1.0e-11 * coordinate_scale +
-      64.0 * std::numeric_limits<double>::epsilon() * std::max(1.0, coordinate_scale);
-
-  auto GetPoint = [&](int point)
-  {
-    std::array<double, 3> coordinate{};
-    for (int d = 0; d < dimension; d++)
-    {
-      coordinate[d] = xyz(d * point_query_count + point);
-    }
-    return coordinate;
-  };
-  auto RankContains = [&](int candidate_rank, const std::array<double, 3> &point)
-  {
-    const int rank_offset = candidate_rank * routing_box_count * routing_box_values;
-    for (int box = 0; box < routing_box_count; box++)
-    {
-      ElementBox bounds;
-      for (int d = 0; d < 3; d++)
-      {
-        bounds.min[d] = global_routing[rank_offset + routing_box_values * box + d];
-        bounds.max[d] = global_routing[rank_offset + routing_box_values * box + 3 + d];
-      }
-      if (bounds.Contains(point, dimension, box_tolerance))
-      {
-        return true;
-      }
-    }
-    return false;
-  };
   auto SetOffsets = [](const std::vector<int> &counts, std::vector<int> &offsets)
   {
     offsets.resize(counts.size());
@@ -18986,15 +19704,16 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     return result;
   };
 
-  std::vector<int> point_owners(point_query_count, size);
-  std::vector<int> point_elements(point_query_count, -1);
-  std::vector<double> point_references(dimension * point_query_count);
   // Fail closed on an unlocated point, naming its patch (decision 258: the domain-boundary
   // exclusion removes the patches whose placed coupon sections leave the mesh before this
   // point location; anything else not located is an error, never silently dropped).
   auto DescribeUnlocatedPoint = [&](int point)
   {
-    const auto coordinate = GetPoint(point);
+    std::array<double, 3> coordinate{};
+    for (int d = 0; d < dimension; d++)
+    {
+      coordinate[d] = xyz(d * point_query_count + point);
+    }
     std::string description =
         fmt::format("Surface-response contour point {:d} at ({:.9e}, {:.9e}, {:.9e}) (mesh "
                     "units) could not be located in the device mesh",
@@ -19011,186 +19730,15 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     }
     return description + "!";
   };
-  const char *gslib_environment = std::getenv("PALACE_RESPONSE_USE_GSLIB_POINTS");
-  const bool use_gslib =
-      size >= 64 || (gslib_environment && std::string_view(gslib_environment) != "0" &&
-                     !std::string_view(gslib_environment).empty());
-  if (use_gslib)
+  auto located = locator.Locate(xyz);
+  candidate_query_count += located.candidate_queries;
+  fallback_query_count += located.fallback_queries;
+  const auto &point_owners = located.owners;
+  const auto &point_elements = located.elements;
+  const auto &point_references = located.references;
+  for (int point = 0; point < point_query_count; point++)
   {
-    Mpi::Print(" Using FindPointsGSLIB for {:d} local response points on {:d} ranks\n",
-               point_query_count, size);
-    mfem::FindPointsGSLIB finder(comm);
-    finder.Setup(mesh, 0.01, 1.0e-12, 256);
-    finder.FindPoints(xyz, mfem::Ordering::byNODES);
-    const auto &reference = finder.GetReferencePosition();
-    for (int point = 0; point < point_query_count; point++)
-    {
-      MFEM_VERIFY(finder.GetCode()[point] != 2, DescribeUnlocatedPoint(point));
-      point_owners[point] = static_cast<int>(finder.GetProc()[point]);
-      point_elements[point] = static_cast<int>(finder.GetElem()[point]);
-      for (int d = 0; d < dimension; d++)
-      {
-        point_references[dimension * point + d] = reference(dimension * point + d);
-      }
-    }
-  }
-  else
-  {
-    std::vector<int> candidate_send_counts(size, 0);
-    for (int point = 0; point < point_query_count; point++)
-    {
-      const auto coordinate = GetPoint(point);
-      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-      {
-        if (RankContains(candidate_rank, coordinate))
-        {
-          candidate_send_counts[candidate_rank]++;
-        }
-      }
-    }
-    std::vector<int> candidate_receive_counts(size);
-    Mpi::Alltoall(1, candidate_send_counts.data(), candidate_receive_counts.data(), comm);
-    std::vector<int> candidate_send_offsets, candidate_receive_offsets;
-    const int candidate_send_total =
-        SetOffsets(candidate_send_counts, candidate_send_offsets);
-    candidate_query_count += candidate_send_total;
-    const int candidate_receive_total =
-        SetOffsets(candidate_receive_counts, candidate_receive_offsets);
-
-    std::vector<int> candidate_query_indices(candidate_send_total);
-    std::vector<double> candidate_send_coordinates(dimension * candidate_send_total);
-    std::vector<int> candidate_cursor(candidate_send_offsets);
-    for (int point = 0; point < point_query_count; point++)
-    {
-      const auto coordinate = GetPoint(point);
-      for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-      {
-        if (!RankContains(candidate_rank, coordinate))
-        {
-          continue;
-        }
-        const int packed = candidate_cursor[candidate_rank]++;
-        candidate_query_indices[packed] = point;
-        for (int d = 0; d < dimension; d++)
-        {
-          candidate_send_coordinates[dimension * packed + d] = coordinate[d];
-        }
-      }
-    }
-    const auto candidate_send_coordinate_counts =
-        ScaleCommunicationPlan(candidate_send_counts, dimension);
-    const auto candidate_send_coordinate_offsets =
-        ScaleCommunicationPlan(candidate_send_offsets, dimension);
-    const auto candidate_receive_coordinate_counts =
-        ScaleCommunicationPlan(candidate_receive_counts, dimension);
-    const auto candidate_receive_coordinate_offsets =
-        ScaleCommunicationPlan(candidate_receive_offsets, dimension);
-    std::vector<double> candidate_receive_coordinates(dimension * candidate_receive_total);
-    Mpi::Alltoallv(
-        candidate_send_coordinates.data(), candidate_send_coordinate_counts.data(),
-        candidate_send_coordinate_offsets.data(), candidate_receive_coordinates.data(),
-        candidate_receive_coordinate_counts.data(),
-        candidate_receive_coordinate_offsets.data(), comm);
-
-    std::vector<int> candidate_receive_elements(candidate_receive_total, -1);
-    std::vector<double> candidate_receive_references(dimension * candidate_receive_total);
-    std::vector<int> candidates;
-    for (int i = 0; i < candidate_receive_total; i++)
-    {
-      std::array<double, 3> coordinate{};
-      for (int d = 0; d < dimension; d++)
-      {
-        coordinate[d] = candidate_receive_coordinates[dimension * i + d];
-      }
-      mfem::IntegrationPoint reference;
-      if (locator.Find(coordinate, box_tolerance, candidate_receive_elements[i], reference,
-                       candidates))
-      {
-        reference.Get(candidate_receive_references.data() + dimension * i, dimension);
-      }
-    }
-
-    std::vector<int> candidate_result_elements(candidate_send_total);
-    Mpi::Alltoallv(candidate_receive_elements.data(), candidate_receive_counts.data(),
-                   candidate_receive_offsets.data(), candidate_result_elements.data(),
-                   candidate_send_counts.data(), candidate_send_offsets.data(), comm);
-    std::vector<double> candidate_result_references(dimension * candidate_send_total);
-    Mpi::Alltoallv(
-        candidate_receive_references.data(), candidate_receive_coordinate_counts.data(),
-        candidate_receive_coordinate_offsets.data(), candidate_result_references.data(),
-        candidate_send_coordinate_counts.data(), candidate_send_coordinate_offsets.data(),
-        comm);
-
-    for (int candidate_rank = 0; candidate_rank < size; candidate_rank++)
-    {
-      const int begin = candidate_send_offsets[candidate_rank];
-      const int end = begin + candidate_send_counts[candidate_rank];
-      for (int packed = begin; packed < end; packed++)
-      {
-        if (candidate_result_elements[packed] < 0)
-        {
-          continue;
-        }
-        const int point = candidate_query_indices[packed];
-        if (candidate_rank > point_owners[point] ||
-            (candidate_rank == point_owners[point] &&
-             candidate_result_elements[packed] >= point_elements[point]))
-        {
-          continue;
-        }
-        point_owners[point] = candidate_rank;
-        point_elements[point] = candidate_result_elements[packed];
-        for (int d = 0; d < dimension; d++)
-        {
-          point_references[dimension * point + d] =
-              candidate_result_references[dimension * packed + d];
-        }
-      }
-    }
-
-    std::vector<int> fallback_indices;
-    for (int point = 0; point < point_query_count; point++)
-    {
-      if (point_owners[point] == size)
-      {
-        fallback_indices.push_back(point);
-      }
-    }
-    fallback_query_count += fallback_indices.size();
-    int fallback_count = static_cast<int>(fallback_indices.size());
-    Mpi::GlobalSum(1, &fallback_count, comm);
-    if (fallback_count > 0)
-    {
-      Mpi::Warning(
-          comm,
-          "Distributed surface-response point location could not resolve {:d} contour "
-          "points; falling back to FindPointsGSLIB!\n",
-          fallback_count);
-      mfem::Vector fallback_xyz(dimension * fallback_indices.size());
-      for (std::size_t i = 0; i < fallback_indices.size(); i++)
-      {
-        for (int d = 0; d < dimension; d++)
-        {
-          fallback_xyz(d * fallback_indices.size() + i) =
-              xyz(d * point_query_count + fallback_indices[i]);
-        }
-      }
-      mfem::FindPointsGSLIB finder(comm);
-      finder.Setup(mesh, 0.01, 1.0e-12, 256);
-      finder.FindPoints(fallback_xyz, mfem::Ordering::byNODES);
-      const auto &reference = finder.GetReferencePosition();
-      for (std::size_t i = 0; i < fallback_indices.size(); i++)
-      {
-        const int point = fallback_indices[i];
-        MFEM_VERIFY(finder.GetCode()[i] != 2, DescribeUnlocatedPoint(point));
-        point_owners[point] = static_cast<int>(finder.GetProc()[i]);
-        point_elements[point] = static_cast<int>(finder.GetElem()[i]);
-        for (int d = 0; d < dimension; d++)
-        {
-          point_references[dimension * point + d] = reference(dimension * i + d);
-        }
-      }
-    }
+    MFEM_VERIFY(point_owners[point] < size, DescribeUnlocatedPoint(point));
   }
 
   point_send_counts.assign(size, 0);
@@ -19919,9 +20467,9 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
   AddPointValuesTranspose(correction, y);
 }
 
-void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) const
+void SurfaceResponseOperator::ApplyDomainDefect(const Vector &x, Vector &y,
+                                                bool fixed_trace) const
 {
-  BlockTimer timer(Timer::RESPONSE_APPLY);
   ApplyTrace(x, trace);
   response.SetSize(trace.Size());
   for (const auto &patch : patches)
@@ -19929,7 +20477,9 @@ void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) cons
     const auto &model = models[patch.model];
     Vector patch_trace(trace.GetData() + patch.trace_offset, model.basis_size);
     Vector patch_response(response.GetData() + patch.trace_offset, model.basis_size);
-    switch (model.domain_correction_mode)
+    const auto mode =
+        fixed_trace ? DomainCorrectionMode::FIXED_TRACE : model.domain_correction_mode;
+    switch (mode)
     {
       case DomainCorrectionMode::DISABLED:
         patch_response = 0.0;
@@ -19944,6 +20494,17 @@ void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) cons
     patch_response *= patch.weight;
   }
   ApplyTraceTranspose(response, y);
+}
+
+void SurfaceResponseOperator::ApplyUneliminated(const Vector &x, Vector &y) const
+{
+  BlockTimer timer(Timer::RESPONSE_APPLY);
+  ApplyDomainDefect(x, y, false);
+}
+
+void SurfaceResponseOperator::FixedTraceDomainDefectMult(const Vector &x, Vector &y) const
+{
+  ApplyDomainDefect(x, y, true);
 }
 
 void SurfaceResponseOperator::Mult(const Vector &x, Vector &y) const
@@ -20057,8 +20618,8 @@ SurfaceResponseOperator::GetFabricatedSurfaceEnergy(const Vector &x) const
 }
 
 SurfaceResponseOperator::ElectrostaticResponse
-SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
-                                                  bool include_fixed_flux) const
+SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x, bool include_fixed_flux,
+                                                  bool include_patches) const
 {
   ApplyTrace(x, trace);
   ElectrostaticResponse result;
@@ -20066,6 +20627,10 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
   Vector fixed_flux;
+  // The per-patch records (include_patches): [patch, model, feature, weight, cell begin,
+  // cell end, domain correction, fixed-flux domain correction, interface count,
+  // (interface, fixed-trace energy, fixed-flux energy)...], gathered below.
+  std::vector<double> local_patch_records;
   for (const auto &model : models)
   {
     ModelContribution contribution;
@@ -20122,16 +20687,37 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
       result.domain_correction += domain_correction_fixed_flux;
       contribution.domain_correction += domain_correction_fixed_flux;
     }
+    std::size_t patch_record_offset = 0;
+    if (include_patches)
+    {
+      // The same increments as the model's, so that the per-model sums of the patch
+      // records are the ModelContribution values.
+      const double patch_domain_correction =
+          include_fixed_flux ||
+                  model.domain_correction_mode == DomainCorrectionMode::FIXED_TRACE
+              ? domain_correction_fixed_trace
+          : model.domain_correction_mode == DomainCorrectionMode::FIXED_FLUX
+              ? domain_correction_fixed_flux
+              : 0.0;
+      patch_record_offset = local_patch_records.size();
+      local_patch_records.insert(
+          local_patch_records.end(),
+          {static_cast<double>(patch.global_index), static_cast<double>(model.idx),
+           static_cast<double>(patch.feature), patch.weight,
+           patch.mortar_longitudinal_strip[0], patch.mortar_longitudinal_strip[1],
+           patch_domain_correction, include_fixed_flux ? domain_correction_fixed_flux : 0.0,
+           static_cast<double>(model.fabricated_surfaces.size())});
+    }
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
           patch.weight * QuadraticForm(matrix, patch_trace, response);
       result.fabricated_surface_energy[interface] += fixed_trace_energy;
       contribution.fabricated_surface_energy[interface] += fixed_trace_energy;
+      double fixed_flux_energy = 0.0;
       if (include_fixed_flux)
       {
-        const double fixed_flux_energy =
-            patch.weight * QuadraticForm(matrix, fixed_flux, response);
+        fixed_flux_energy = patch.weight * QuadraticForm(matrix, fixed_flux, response);
         result.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
         contribution.fabricated_surface_energy_fixed_flux[interface] += fixed_flux_energy;
         const double weight =
@@ -20145,7 +20731,17 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
           trace_closure_response_weight += weight;
         }
       }
+      if (include_patches)
+      {
+        local_patch_records.insert(
+            local_patch_records.end(),
+            {static_cast<double>(interface), fixed_trace_energy, fixed_flux_energy});
+      }
     }
+    MFEM_ASSERT(!include_patches ||
+                    local_patch_records.size() ==
+                        patch_record_offset + 9 + 3 * model.fabricated_surfaces.size(),
+                "Incorrect per-patch response record!");
   }
   const std::size_t values_per_interface = include_fixed_flux ? 2 : 1;
   std::vector<double> reduction;
@@ -20234,6 +20830,10 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
     }
   }
   MFEM_ASSERT(i == reduction.size(), "Incorrect batched model-contribution reduction!");
+  if (include_patches)
+  {
+    result.patch_contributions = GatherPatchContributions(local_patch_records);
+  }
 
   if (!include_fixed_flux)
   {
@@ -20259,6 +20859,61 @@ SurfaceResponseOperator::GetElectrostaticResponse(const Vector &x,
       result.trace_closure_response_failure_fraction <=
           maximum_trace_closure_response_failure_fraction;
   return result;
+}
+
+std::vector<SurfaceResponseOperator::PatchContribution>
+SurfaceResponseOperator::GatherPatchContributions(
+    const std::vector<double> &local_records) const
+{
+  MFEM_VERIFY(local_records.size() <=
+                  static_cast<std::size_t>(std::numeric_limits<int>::max()),
+              "Local per-patch response data exceeds the MPI count limit!");
+  const int local_value_count = static_cast<int>(local_records.size());
+  std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
+  Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
+  std::vector<int> value_offsets(value_counts.size());
+  int total_values = 0;
+  for (std::size_t rank = 0; rank < value_counts.size(); rank++)
+  {
+    value_offsets[rank] = total_values;
+    MFEM_VERIFY(value_counts[rank] <= std::numeric_limits<int>::max() - total_values,
+                "Global per-patch response data exceeds the MPI count limit!");
+    total_values += value_counts[rank];
+  }
+  std::vector<double> records(total_values);
+  Mpi::Allgatherv(local_value_count, local_records.data(), records.data(),
+                  value_counts.data(), value_offsets.data(), fespace.GetComm());
+
+  std::vector<PatchContribution> contributions;
+  std::size_t offset = 0;
+  while (offset < records.size())
+  {
+    MFEM_VERIFY(records.size() - offset >= 9, "Truncated per-patch response record!");
+    PatchContribution entry;
+    entry.patch = static_cast<int>(std::llround(records[offset++]));
+    entry.model = static_cast<int>(std::llround(records[offset++]));
+    entry.feature = static_cast<int>(std::llround(records[offset++]));
+    entry.weight = records[offset++];
+    entry.cell[0] = records[offset++];
+    entry.cell[1] = records[offset++];
+    entry.domain_correction = records[offset++];
+    entry.domain_correction_fixed_flux = records[offset++];
+    const auto interface_count = static_cast<std::size_t>(std::llround(records[offset++]));
+    MFEM_VERIFY(entry.patch >= 0 && entry.model > 0 &&
+                    3 * interface_count <= records.size() - offset,
+                "Invalid gathered per-patch response record!");
+    for (std::size_t i = 0; i < interface_count; i++)
+    {
+      const int interface = static_cast<int>(std::llround(records[offset++]));
+      entry.fabricated_surface_energy[interface] = records[offset++];
+      entry.fabricated_surface_energy_fixed_flux[interface] = records[offset++];
+    }
+    contributions.push_back(std::move(entry));
+  }
+  std::sort(contributions.begin(), contributions.end(),
+            [](const auto &first, const auto &second)
+            { return first.patch < second.patch; });
+  return contributions;
 }
 
 std::vector<SurfaceResponseOperator::PatchTrace>

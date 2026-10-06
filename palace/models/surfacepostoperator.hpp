@@ -20,6 +20,7 @@ class IoData;
 class MaterialOperator;
 class EdgeDistanceTree;
 class InterfaceOwnershipPartition;
+class InterfaceRegion;
 class OwnershipQuadrature;
 
 namespace config
@@ -106,14 +107,22 @@ private:
     std::shared_ptr<const OwnershipQuadrature> ownership_rule;
     int ownership_slot;
     int ownership_quadrature_order;
+    // The optional quadrature-level spatial filter (decision 352 follow-up (2)).
+    std::shared_ptr<const InterfaceRegion> region;
     std::shared_ptr<const EdgeDistanceTree> edge_distance_tree;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::Array<int> &bdr_attr_marker);
 
+    // The entry's energy density coefficient on its attributes, zero at the quadrature
+    // points outside its ownership slot and its region.
     std::unique_ptr<mfem::Coefficient> GetCoefficient(
         const GridFunction &E, const GridFunction *D, const MaterialOperator &mat_op,
         InterfaceDielectricComponent component = InterfaceDielectricComponent::TOTAL) const;
+
+    // Whether a quadrature point enters this entry's integrals (the ownership slot and the
+    // region); the explicit sample loops apply the same filter as GetCoefficient.
+    bool Includes(const mfem::Vector &point) const;
   };
   struct FarFieldData : public SurfaceData
   {

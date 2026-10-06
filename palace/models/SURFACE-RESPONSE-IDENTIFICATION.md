@@ -1966,10 +1966,12 @@ preflight and the solve: every rank locates every tested point in its local mesh
 operator's own `ElementPointLocator` (its reference-space tolerance 1e-9 on linear
 simplices, the inverse transformation otherwise, the routing box tolerance) and the found
 flags are OR-reduced over the communicator, so the decision is the partition's union —
-identical for any rank count and for both of the operator's locator paths
-(`ElementPointLocator` below 64 ranks, `FindPointsGSLIB` at 64 and above or with
-`PALACE_RESPONSE_USE_GSLIB_POINTS`), which afterwards locate the APPLIED patches' points
-only. An excluded patch keeps weight 0 (the operator skips it like a wholly owned cell; the
+identical for any rank count and the same `ElementPointLocator` as the operator's point
+location (`DistributedPointLocator`: every point routed to the ranks whose boxes contain it
+and searched in their local meshes at any rank count, a rank-local `FindPointsGSLIB` on
+`MPI_COMM_SELF` for the points that search misses — never a global gslib hash of the device
+mesh, decision 346 (b)), which afterwards locates the APPLIED patches' points only. An
+excluded patch keeps weight 0 (the operator skips it like a wholly owned cell; the
 dry run writes it with Weight 0, its unscaled QuadratureWeight and cell, no new column) and
 its portion stays tiled (the A7 identity holds; the audit reads the record). RECORD
 (`Identification.Diagnostics.DomainBoundaryExclusions` of the preflight manifest, the
@@ -2014,9 +2016,10 @@ per translational patch): transmon 10,366 patches / 2.98 M points in 1.8 s on 1 
 2,494 / 763 k in 0.24 s on 2 ranks; the transmon preflight digest 9ada660bf6e4, record and
 dry run are unchanged (no exclusion: its domain is far from the metal). Unit test
 `SurfaceResponseOperator domain-boundary exclusion` (`test-domainboundary.cpp`): a lead cut
-by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks, the
-default and the forced-GSLIB locator path, the notch fail-closed case, and the misplaced
-coupon (reference off the mesh, every point off the mesh, no applied patch left) aborts.
+by a domain face tilted out of the metal plane (theta 24.2 deg) on 1 and 2 ranks (the
+routing locator; its forced-GSLIB variant was removed with the global gslib hash, decision
+346 (b)), the notch fail-closed case, and the misplaced coupon (reference off the mesh,
+every point off the mesh, no applied patch left) aborts.
 
 **Conductor-consistency gate (decision 277 (A), 2026-10-03;
 `SurfaceResponseOperator::ApplyConductorConsistencyGate`, SOLVE TIME ONLY).** A spatial
@@ -2354,6 +2357,40 @@ edge is triangulated), recorded as an UNCERTAINTY of the corner family's MA — 
 (a finer band basis: an extra ring near the metal top or 16 metal-ring knots, decision 140 (3)),
 not a defect of the rule (every stencil is consistent with one triangulation).
 
+**PSD fallback of an interpolated corner (supervisor decisions 374 (B) / 376, 2026-10-05;
+`MatchCornerFamily`, `ComputeCornerBlendEigenvalues`).** Lagrange weights on more than two
+nodes are negative on some node, and over NON-UNIFORM nodes the blend of PSD coupon matrices
+need not be PSD: C3's concave 70.498-degree corner over the nodes 60 / 75 / 80 / 90 (weights
++0.093 / +1.729 / -0.922 / +0.100) blended a fabricated domain matrix with min eigenvalue
+-1.45e-4 x max |eigenvalue| (thin -1.33e-2) and the operator aborted in
+`PositiveSemidefiniteInverseProduct` ("negative-energy mode beyond roundoff"). Rule: after
+the stencil is selected, the blended FABRICATED and THIN DOMAIN matrices are tested on the
+free knots with the operator's own criterion (min eigenvalue >= -1e-9 x max |eigenvalue|,
+`kResponseMatrixNegativeEigenvalueToleranceRelative`, the one constant both checks use); a
+stencil whose blend fails is replaced by the convex LINEAR blend of the two nodes bracketing
+the angle (weights in [0, 1]: PSD by construction) for every matrix of the feature; the base
+(the nearest node, one of the pair), the segment connectivity and so the constructed basis
+are unchanged; the runtime model is `<base>@corner-angle<deg>-linear`. A PSD blend is left
+bitwise untouched. Recorded per feature: `Features[].Match.BlendEigenvalues` for EVERY
+interpolated corner (the applied blend's min relative eigenvalue of the fabricated / thin
+domain matrices and of the per-coupon-interface surface matrices, `DomainPositiveSemidefinite`)
+and, on a fallback, `Features[].Match.InterpolationFallback` {Rule, Stencil [{Name,
+AngleDegrees}], StencilRule, StencilWeights (the stencil rule's Lagrange weights,
+cubic or quadratic), MinEigenvalueRelative (the stencil blend's),
+NegativeToleranceRelative, LinearNodes, LinearWeights, LinearMinEigenvalueRelative}; the same
+two objects on the version-1 record `CornerFamily` (whose `InterpolationRule` / `Nodes` are the
+APPLIED linear selection) and in `Match.Note`; the operator log prints a "Corner interpolation
+fallback" line under the blend. The per-interface SURFACE blends are recorded, never acted on
+(decision 376): the stored surface matrices are rank-deficient PSD (the SA interface of a
+176-knot concave node has 65 of 162 free-knot eigenvalues above 1e-6 x max), so every blend with
+a negative weight has negative modes along their null spaces (all seven C3 interpolations read
+-6.5e-7 .. -4.4e-2 there); what matters is the energy of the actual device trace, measured
+separately (lane psd-interp). Follow-ups recorded, not implemented: a surface-energy safety
+rule at the patch level and the stencil-selection rule over non-uniform nodes (Lebesgue /
+max-weight). Test `SurfaceResponseOperatorCornerBlendPositivity` (non-uniform 90 / 105 / 110 /
+135 family with a bumped node: fallback taken, recorded, the operator constructs; the bump on a
+PEC knot or the uniform family: the cubic unchanged).
+
 **Refined trace basis: `RingLayout` `AllRingsFollowMetal` (corner-basis refinement
 2026-09-30, USER decision 161; `generate_corner_response.TraceBasisRule` / `REFINED_RULE`,
 C++ `CornerRingLayout` / `RefinedCornerTraceBasisRule`; evidence
@@ -2377,9 +2414,33 @@ metal arc, without which the concave family's fabricated MA read +7 %), R/3, R, 
 inner cap rings — carries the SAME angle-dependent knot fractions: the two crossings,
 `MetalInteriorKnots` = 5 at equal fractions of the metal arc, `FreeKnots` = 9 with
 `FreeKnotGrading` [1/3, 2/3] (a knot at R/3 and one at 2R/3 along the perimeter from each
-crossing on the free side, 5 at equal fractions between); PEC = crossings + metal-interior
-knots on the two metal rings only (14 of 176 knots); the box corners are slaves on every
-ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing knots
+crossing on the free side, 5 at equal fractions between; ACUTE CONCAVE nodes — block (b)
+DESIGN A9 family 4, decision 318: a concave wedge's free arc is (2 - cot theta) R and the
+unscaled grading exhausts it below 56.3 deg, so on a free arc shorter than
+`FreeKnotGradingReferenceFreeArcOverR` = 2 - cot 60 deg = 1.4226497308103743 (the concave
+60-degree node's, the family's sharpest qualified node) the two graded distances are scaled
+by FreeArc / Reference — the sharper node keeps the 60-degree node's layout proportions with
+the same slots, like-to-like indices and zero set; the generator writes the key only on
+records where the scaling is active and an absent key reads as that default, so every record
+written before (free arcs at or above the reference) is unchanged and the family stays on one
+rule; `FreeKnotGradingScale`, `kFreeKnotGradingReferenceFreeArcOverR`; STATUS, decisions 325 /
+328, 2026-10-05: the scaling rule stands; the 48.75-degree held-out coupon's failure to
+finalize — two scaled free hats of the z = -R cap ring had no active boundary DOF in the
+fabricated p4 solve — is a COUPON MESH defect: the coupon prescribes hats by nodal
+interpolation, and the cap rings' inner knots (9.4 nm apart at 60 degrees, 7.4 at 48.75) were
+unresolved by the 300-nm far mesh at every concave node <= 60 degrees, the published 60 node
+included; round 2 adds the generator-side trace resolvability gate (`trace_resolvability.py`,
+5 p^2 active boundary nodes per free hat) and the knot-gap mesh sizing of
+`mesh_corner_coupon.jl --trace-mesh`, a corner-coupon RECIPE change (new cache keys; the
+published caches are not rebuilt); the DEVICE runtime is unaffected: the SurfaceMortar lift is
+an L2 projection on the coupon's trace triangles with the device field sampled by
+FindPointsGSLIB, independent of the device mesh's DOF layout
+(test-cornerbasisrefinement.cpp CornerRefinedRuleAcuteConcaveDeviceMortar); round 2 was
+reviewed (fresh-context review, 0 blockers / 0 majors) and merged, merge step decision 348);
+PEC = crossings +
+metal-interior knots on the two metal rings only (14 of 176 knots); the box corners are slaves
+on every ring; each cap is a fan from a centre slave at the mean of the cap ring's two crossing
+knots
 (the recorded fixed cap's fan diagonal gave the centre that value too; a fan from a ring
 vertex is degenerate as soon as two consecutive dense knots share the apex's side); every
 band is a regular column grid with one diagonal orientation. Consequences: NO events (no

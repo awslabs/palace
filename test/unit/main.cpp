@@ -37,6 +37,13 @@ int main(int argc, char *argv[])
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
   Mpi::Init(argc, argv);
+  // Every return from main is a normal shutdown; an exit() before it (a library's die(),
+  // or the AbnormalExitAbortsAllRanks case) skips this guard and Mpi's destructor aborts
+  // all ranks instead of blocking in MPI_Finalize.
+  struct NormalShutdownGuard
+  {
+    ~NormalShutdownGuard() { Mpi::MarkNormalShutdown(); }
+  } shutdown_guard;
 
   // See https://github.com/catchorg/Catch2/blob/devel/docs/own-main.md.
   Catch::Session session;

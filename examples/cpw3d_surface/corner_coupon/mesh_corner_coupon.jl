@@ -229,6 +229,170 @@ function on_outer_box(bounds, center, radius, tolerance)
     )
 end
 
+# Trace RESOLVABILITY (block (b) family 4 round 2, supervisor decision 328 (2), 2026-10-05).
+# The coupon solve prescribes every trace hat by nodal interpolation onto the boundary degrees
+# of freedom of the order-p space, so a hat whose support holds no boundary node is a zero
+# response row (the concave 48.75-degree coupon of decision 325: five free knots of the z = -R
+# cap ring 7.4 nm apart on the 300-nm far mesh) and a hat sampled by one or two nodes is a
+# response of the wrong magnitude. Given the generator's trace mesh (`--trace-mesh DIR` with
+# trace-vertices.csv), the mesher sizes the coupon mesh to RESOLVE the basis, whatever the
+# layout: around every free knot the mesh size is the knot's smaller gap to its ring
+# neighbours (one element per trace edge, so a hat's support spans two elements and the
+# order-p lattice samples it across as well as along), growing with the distance at gradation
+# TRACE_SIZE_GRADATION to the recipe's far size — one Distance / Threshold field per distinct
+# gap, joined to the recipe's background by a Min field. The knots are OCC points used as the
+# Distance sources only (not embedded: Gmsh's surface mesher does not recover 7-nm embedded
+# edges or points inside 300-nm faces; the points are not saved, Mesh.SaveAll = 0). Nothing
+# here is a case constant: the sizes come from the knot gaps alone, so a layout whose knots the
+# background already resolves (the near-metal rings at lc_fine) is unchanged. The planner's
+# trace_resolvability.py gate then verifies the count of active boundary nodes per free hat.
+const TRACE_SIZE_GRADATION = 0.5
+# Knot gaps are grouped by this resolution (over R) into size classes (one field pair each).
+const TRACE_GAP_CLASS_RESOLUTION = 1.0e-3
+
+struct TraceRingVertex
+    point::NTuple{3, Float64}
+    free::Bool          # a free knot (basis > 0, conductor 0)
+end
+
+function read_trace_vertices(directory)
+    path = joinpath(directory, "trace-vertices.csv")
+    isfile(path) || error("Trace mesh directory has no trace-vertices.csv: $directory")
+    vertices = TraceRingVertex[]
+    header = nothing
+    for line in eachline(path)
+        isempty(strip(line)) && continue
+        fields = strip.(split(line, ","))
+        if header === nothing
+            header = Dict(name => index for (index, name) in enumerate(fields))
+            for name in ("x", "y", "z", "basis", "conductor")
+                haskey(header, name) || error("trace-vertices.csv lacks the column $name")
+            end
+            continue
+        end
+        point = (
+            parse(Float64, fields[header["x"]]),
+            parse(Float64, fields[header["y"]]),
+            parse(Float64, fields[header["z"]])
+        )
+        basis = parse(Int, fields[header["basis"]])
+        conductor = parse(Int, fields[header["conductor"]])
+        push!(vertices, TraceRingVertex(point, basis > 0 && conductor == 0))
+    end
+    isempty(vertices) && error("trace-vertices.csv has no vertices")
+    return vertices
+end
+
+# Perimeter coordinate of a point on the square |x|, |y| <= half_width, counterclockwise from
+# (-half_width, 0) (generate_corner_response.square_perimeter_fraction).
+function square_perimeter_coordinate(half_width, point, tolerance)
+    x, y, _ = point
+    if abs(x + half_width) <= tolerance && y <= 0.0
+        return -y
+    elseif abs(y + half_width) <= tolerance
+        return half_width + (x + half_width)
+    elseif abs(x - half_width) <= tolerance
+        return 3half_width + (y + half_width)
+    elseif abs(y - half_width) <= tolerance
+        return 5half_width + (half_width - x)
+    elseif abs(x + half_width) <= tolerance
+        return 7half_width + (half_width - y)
+    end
+    return error("Trace vertex $point is not on the square of half width $half_width")
+end
+
+# The trace mesh's rings: the vertices grouped by (height, half width), each ring in perimeter
+# order so that consecutive vertices are the ring's trace edges (the all-rings layout is a
+# column grid; the legacy layout's rings are the same polylines).
+function trace_rings(vertices, radius)
+    tolerance = 1.0e-9radius
+    rings = Dict{Tuple{Int, Int}, Vector{Int}}()
+    for (index, vertex) in enumerate(vertices)
+        x, y, z = vertex.point
+        half_width = max(abs(x), abs(y))
+        half_width > tolerance || continue  # a cap centre
+        key = (round(Int, z / tolerance), round(Int, half_width / tolerance))
+        push!(get!(rings, key, Int[]), index)
+    end
+    ordered = Vector{Vector{Int}}()
+    for (key, members) in rings
+        length(members) >= 3 || continue
+        half_width = key[2] * tolerance
+        sort!(
+            members;
+            by = index ->
+                square_perimeter_coordinate(half_width, vertices[index].point, 1.0e-6radius)
+        )
+        push!(ordered, members)
+    end
+    return ordered
+end
+
+# The gap of every free knot to its nearer ring neighbour (vertex index => gap).
+function free_knot_gaps(vertices, rings, radius)
+    tolerance = 1.0e-7radius
+    gaps = Dict{Int, Float64}()
+    for ring in rings
+        count = length(ring)
+        for (position, index) in enumerate(ring)
+            vertices[index].free || continue
+            previous = vertices[ring[mod1(position - 1, count)]].point
+            next = vertices[ring[mod1(position + 1, count)]].point
+            point = vertices[index].point
+            gap = min(
+                sqrt(sum((point .- previous) .^ 2)),
+                sqrt(sum((point .- next) .^ 2))
+            )
+            gap > tolerance || error("Trace knot $index coincides with its neighbour")
+            gaps[index] = gap
+        end
+    end
+    isempty(gaps) && error("The trace mesh has no free knot")
+    return gaps
+end
+
+# The knot-gap size fields (see the TRACE_SIZE_GRADATION note); returns the Threshold field
+# tags (from `first_field` on) and the smallest knot size.
+function trace_basis_size_fields(occ, trace_directory, radius, lc_far, first_field)
+    vertices = read_trace_vertices(trace_directory)
+    gaps = free_knot_gaps(vertices, trace_rings(vertices, radius), radius)
+    class_of(gap) = max(round(Int, gap / (TRACE_GAP_CLASS_RESOLUTION * radius)), 1)
+    classes = Dict{Int, Vector{Int32}}()
+    class_size = Dict{Int, Float64}()
+    for (index, gap) in gaps
+        x, y, z = vertices[index].point
+        class = class_of(gap)
+        push!(get!(classes, class, Int32[]), occ.addPoint(x, y, z))
+        class_size[class] = min(get(class_size, class, Inf), gap)
+    end
+    occ.synchronize()
+    fields = Int32[]
+    next_field = first_field
+    for class in sort!(collect(keys(classes)))
+        size = class_size[class]
+        distance = gmsh.model.mesh.field.add("Distance", next_field)
+        gmsh.model.mesh.field.setNumbers(distance, "PointsList", Float64.(classes[class]))
+        threshold = gmsh.model.mesh.field.add("Threshold", next_field + 1)
+        gmsh.model.mesh.field.setNumber(threshold, "InField", distance)
+        gmsh.model.mesh.field.setNumber(threshold, "SizeMin", size)
+        gmsh.model.mesh.field.setNumber(threshold, "SizeMax", lc_far)
+        gmsh.model.mesh.field.setNumber(threshold, "DistMin", size)
+        gmsh.model.mesh.field.setNumber(
+            threshold,
+            "DistMax",
+            size + max(lc_far - size, 0.0) / TRACE_SIZE_GRADATION
+        )
+        push!(fields, threshold)
+        next_field += 2
+    end
+    smallest = minimum(values(class_size))
+    println(
+        "Trace basis sizing: $(length(gaps)) free knots in $(length(fields)) knot-gap size " *
+        "classes, smallest knot size $(smallest) um (gradation $(TRACE_SIZE_GRADATION))"
+    )
+    return fields, smallest
+end
+
 function generate_corner_coupon(;
     topology::Symbol         = :convex,
     fabricated::Bool         = false,
@@ -243,6 +407,7 @@ function generate_corner_coupon(;
     lc_fine::Float64         = 0.02,
     lc_far::Float64          = 0.3,
     mesh_order::Int          = 1,
+    trace_mesh::Union{Nothing, String} = nothing,
     filename::String
 )
     radius > 0.0 || error("radius must be positive")
@@ -525,9 +690,21 @@ function generate_corner_coupon(;
     gmsh.model.mesh.field.setNumber(2, "SizeMax", lc_far)
     gmsh.model.mesh.field.setNumber(2, "DistMin", 2lc_fine)
     gmsh.model.mesh.field.setNumber(2, "DistMax", 0.5radius)
-    gmsh.model.mesh.field.setAsBackgroundMesh(2)
+    background = 2
+    smallest_trace_size = Inf
+    if trace_mesh !== nothing
+        trace_fields, smallest_trace_size =
+            trace_basis_size_fields(occ, trace_mesh, radius, lc_far, 3)
+        background = gmsh.model.mesh.field.add("Min", maximum(trace_fields) + 1)
+        gmsh.model.mesh.field.setNumbers(
+            background,
+            "FieldsList",
+            Float64.(vcat(Int32(2), trace_fields))
+        )
+    end
+    gmsh.model.mesh.field.setAsBackgroundMesh(background)
     for (name, value) in [
-        ("Mesh.MeshSizeMin", lc_fine),
+        ("Mesh.MeshSizeMin", min(lc_fine, smallest_trace_size)),
         ("Mesh.MeshSizeMax", lc_far),
         ("Mesh.MeshSizeExtendFromBoundary", 0),
         ("Mesh.MeshSizeFromPoints", 0),
@@ -606,7 +783,8 @@ function parse_command_line(args)
         "--bottom-radius" => ("trench_rounding", Float64),
         "--lc-fine" => ("lc_fine", Float64),
         "--lc-far" => ("lc_far", Float64),
-        "--mesh-order" => ("mesh_order", Int)
+        "--mesh-order" => ("mesh_order", Int),
+        "--trace-mesh" => ("trace_mesh", String)
     )
     index = 3
     if index <= length(args) && !startswith(args[index], "--")
@@ -618,7 +796,7 @@ function parse_command_line(args)
         haskey(names, flag) || error("Unknown option: $flag")
         index < length(args) || error("Missing value for option: $flag")
         name, type = names[flag]
-        options[name] = parse(type, args[index + 1])
+        options[name] = type === String ? String(args[index + 1]) : parse(type, args[index + 1])
         index += 2
     end
     return options
@@ -640,6 +818,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         trench_rounding = get(options, "trench_rounding", 0.01),
         lc_fine         = get(options, "lc_fine", 0.02),
         lc_far          = get(options, "lc_far", 0.3),
-        mesh_order      = get(options, "mesh_order", 1)
+        mesh_order      = get(options, "mesh_order", 1),
+        trace_mesh      = get(options, "trace_mesh", nothing)
     )
 end

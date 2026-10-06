@@ -3356,7 +3356,7 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected(lambda c: c["Scope"]["SupportedClasses"].append("HoleLoops"), "classes differ from the recipe scope")
             rejected(lambda c: c["Scope"]["GuardedClasses"].remove("TopRounding"), "classes differ from the recipe scope")
             rejected(lambda c: c["Scope"]["Guards"][0].__setitem__("Statement", ""), "guards lack their id")
-            rejected(lambda c: c["Scope"]["Guards"][0].__setitem__("DetectedFrom", "build"), "guards lack their id")
+            rejected(lambda c: c["Scope"]["Guards"][0].__setitem__("DetectedFrom", "inputs"), "guards lack their id")
             rejected(lambda c: c["Scope"]["ExhibitedClasses"].append("TopRounding"), "exhibited classes differ")
             rejected(lambda c: c["Scope"]["ExhibitedClasses"].remove("ExteriorLoops"), "exhibited classes differ")
             rejected(lambda c: c["Scope"]["MetalLoops"][0].__setitem__("Sides", 3), "metal loops differ")
