@@ -8203,6 +8203,206 @@ double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 
   return Norm(Subtract(q, Add(a, Scale(t, ab))));
 }
 
+namespace
+{
+
+// Clip the longitudinal cell of a translational patch to the kept interval [kept_lo,
+// kept_hi] of its cell offsets (the continuation ownership's clipping, decision 236 (2)):
+// the origin moves to the kept midpoint with the cell symmetric about it, the weight and
+// the provenance quadrature weight scale by kept / cell, the Maxwell anchors move with the
+// origin; an empty kept interval leaves weight 0 and cell {0, 0} (the operator skips it).
+void ClipLongitudinalCell(ResponsePatchData &patch, double kept_lo, double kept_hi)
+{
+  const double cell_length = patch.longitudinal_cell[1] - patch.longitudinal_cell[0];
+  const double kept_length = std::max(0.0, kept_hi - kept_lo);
+  const bool wholly = kept_length <= 1.0e-12 * std::max(1.0, cell_length);
+  const double fraction = wholly ? 0.0 : kept_length / cell_length;
+  const double shift = wholly ? 0.0 : 0.5 * (kept_lo + kept_hi);
+  for (int d = 0; d < 3; d++)
+  {
+    patch.origin[d] += shift * patch.axis_w[d];
+    for (auto &anchor : patch.maxwell_conductor_anchors)
+    {
+      anchor[d] += shift * patch.axis_w[d];
+    }
+  }
+  patch.longitudinal_cell =
+      wholly ? std::array<double, 2>{0.0, 0.0}
+             : std::array<double, 2>{-0.5 * kept_length, 0.5 * kept_length};
+  patch.weight *= fraction;
+  patch.provenance.quadrature_weight *= fraction;
+}
+
+// Corner-arm trim (decision 394, F1). A matched corner's coupon is calibrated on the
+// matching square |u|, |v| <= R of its canonical frame (u = the first arm away from the
+// vertex, the second arm counterclockwise at the corner angle theta), whose energy is
+// localised to the radius-R tubes of BOTH arms inside the square. The identification's
+// vertex window claims R along each arm, so the second arm's straight cells begin at R
+// from the vertex while the square contains that arm up to s = R / max(|cos theta|, |sin
+// theta|): the stretch [R, s) was modelled twice (the corner coupon's tube and the straight
+// cells; the corner-class diagnosis of decision 393 measured +1.0 % of the within-R MS on a
+// 120 / 135-deg window). RULE: every translational cell on the second arm's line (its
+// own-edge cell within kSignatureParameterToleranceOverRadius x R of the arm's line and
+// plane) loses its part before s along the arm, the kept part re-expressed as the
+// continuation ownership does (a cell beginning before R — a snapped claim boundary — loses
+// that part too: the cells start where the arm exits the square); an unmatched feature's
+// portion on that arm (decision 394 F2) loses the same part. A corner whose trim s - R is
+// within the tolerance (90 deg exactly: s = R) is left untouched (the legacy layout,
+// bitwise). One record per trimmed corner, lengths in patch units.
+std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
+    const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
+    std::vector<ResponseCorrectionData::UncoveredPortionData> &uncovered, double R)
+{
+  std::vector<ResponseCorrectionData::CornerArmTrimData> records;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  constexpr double pi = 3.14159265358979323846;
+  std::set<int> patched_corners;
+  for (const auto &patch : patches)
+  {
+    if (patch.provenance.coupon_depth == 0.0 && patch.provenance.claims.empty() &&
+        patch.provenance.stretch < 0 && !patch.provenance.has_support_box &&
+        patch.weight > 0.0)
+    {
+      patched_corners.insert(patch.provenance.feature);
+    }
+  }
+  for (const auto &feature : identification.features)
+  {
+    if ((feature.type != "ConvexCorner" && feature.type != "ConcaveCorner") ||
+        !feature.matched_model || patched_corners.find(feature.id) == patched_corners.end())
+    {
+      continue;
+    }
+    MFEM_VERIFY(feature.signature.contains("AngleDegrees"),
+                "Corner feature " << feature.id << " carries no AngleDegrees!");
+    const double angle_degrees = feature.signature.at("AngleDegrees").get<double>();
+    const double theta = angle_degrees * pi / 180.0;
+    const double cos_theta = std::cos(theta), sin_theta = std::sin(theta);
+    const double exit_over_radius =
+        1.0 / std::max(std::abs(cos_theta), std::abs(sin_theta));
+    const double exit = exit_over_radius * R;
+    if (exit - R <= tolerance)
+    {
+      continue;  // perpendicular arms within the tolerance: the legacy layout
+    }
+    const Point3D &vertex = feature.origin;
+    const Point3D &u = feature.axes[0];
+    const Point3D &v = feature.axes[1];
+    const Point3D &n = feature.axes[2];
+    const Point3D arm = Normalize(Add(Scale(cos_theta, u), Scale(sin_theta, v)));
+    // The along-arm coordinate of a point on the second arm's line (nullopt off the line
+    // or off the plane).
+    auto Along = [&](const Point3D &point) -> std::optional<double>
+    {
+      const Point3D r = Subtract(point, vertex);
+      const double w = Dot(r, n);
+      const double a = Dot(r, arm);
+      const Point3D transverse = Subtract(r, Add(Scale(a, arm), Scale(w, n)));
+      if (std::abs(w) > tolerance || Norm(transverse) > tolerance)
+      {
+        return std::nullopt;
+      }
+      return a;
+    };
+    ResponseCorrectionData::CornerArmTrimData record;
+    record.feature = feature.id;
+    record.topology = feature.type;
+    record.angle_degrees = angle_degrees;
+    record.exit_distance_over_radius = exit_over_radius;
+    record.trimmed_length = exit - R;
+    for (std::size_t p = 0; p < patches.size(); p++)
+    {
+      auto &patch = patches[p];
+      const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+      if (patch.provenance.coupon_depth <= 0.0 || patch.weight <= 0.0 || c1 <= c0)
+      {
+        continue;
+      }
+      // The own-edge cell ends (the cell shifted by the provenance edge offset along
+      // AxisU: a pair's cells sit on the midline, a stack's on the first side).
+      std::array<std::optional<double>, 2> along;
+      for (int k = 0; k < 2; k++)
+      {
+        Point3D end = patch.origin;
+        for (int d = 0; d < 3; d++)
+        {
+          end[d] += patch.provenance.edge_offset * patch.axis_u[d] +
+                    (k == 0 ? c0 : c1) * patch.axis_w[d];
+        }
+        along[k] = Along(end);
+      }
+      if (!along[0] || !along[1])
+      {
+        continue;
+      }
+      const double a0 = *along[0], a1 = *along[1];
+      const double a_lo = std::min(a0, a1), a_hi = std::max(a0, a1);
+      const double scale = std::max(1.0, c1 - c0);
+      if (a_hi <= tolerance || a_lo >= exit - 1.0e-12 * scale)
+      {
+        continue;  // the opposite ray, or a cell beginning at / beyond the exit
+      }
+      const double removed = std::min(a_hi, exit) - std::max(a_lo, 0.0);
+      if (removed <= 1.0e-12 * scale)
+      {
+        continue;
+      }
+      // The kept part [exit, a_hi) in the cell's own offsets: a(c) is linear in c with
+      // slope AxisW . arm = +-1.
+      const double slope = (a1 - a0) / (c1 - c0);
+      const double c_cut = c0 + (exit - a0) / slope;
+      const double kept_lo = slope > 0.0 ? std::max(c0, c_cut) : c0;
+      const double kept_hi = slope > 0.0 ? c1 : std::min(c1, c_cut);
+      ClipLongitudinalCell(patch, a_hi > exit ? kept_lo : 0.0, a_hi > exit ? kept_hi : 0.0);
+      record.removed_cell_length += removed;
+      record.cells.emplace_back(p, removed);
+    }
+    // The uncovered portions on the second arm (an unmatched feature beginning at the
+    // corner's window): the same part removed.
+    for (auto it = uncovered.begin(); it != uncovered.end();)
+    {
+      const auto along0 = Along(it->p0), along1 = Along(it->p1);
+      if (!along0 || !along1)
+      {
+        ++it;
+        continue;
+      }
+      const double a_lo = std::min(*along0, *along1), a_hi = std::max(*along0, *along1);
+      const double length = Norm(Subtract(it->p1, it->p0));
+      const double scale = std::max(1.0, length);
+      if (a_hi <= tolerance || a_lo >= exit - 1.0e-12 * scale)
+      {
+        ++it;
+        continue;
+      }
+      const double removed = std::min(a_hi, exit) - std::max(a_lo, 0.0);
+      if (removed <= 1.0e-12 * scale)
+      {
+        ++it;
+        continue;
+      }
+      record.removed_uncovered_length += removed;
+      if (a_hi <= exit + 1.0e-12 * scale)
+      {
+        it = uncovered.erase(it);
+        continue;
+      }
+      // The portion's near end moves to the exit along the portion's own direction.
+      const bool p0_near = *along0 < *along1;
+      Point3D &near = p0_near ? it->p0 : it->p1;
+      const Point3D &far = p0_near ? it->p1 : it->p0;
+      const double a_near = std::min(*along0, *along1);
+      const Point3D direction = Normalize(Subtract(far, near));
+      near = Add(near, Scale(exit - a_near, direction));
+      ++it;
+    }
+    records.push_back(std::move(record));
+  }
+  return records;
+}
+
+}  // namespace
+
 // Distance from a point to the ARC of the fitted circle (centre C, radius rho) that the
 // chord a-b subtends (block (b) DESIGN section 2 (a), A10-extended arc-aware): the point's
 // projection into the circle's plane is tested against the chord's angular interval (the
@@ -9201,6 +9401,40 @@ FeaturePatchSummary BuildFeaturePatches(
       summary.first_order_missing_features++;
     }
   }
+
+  // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
+  // global sub-segments of the perimeter, in the order of the feature list.
+  result.uncovered_portions.clear();
+  for (const auto &feature : identification.features)
+  {
+    if (feature.matched_model)
+    {
+      continue;
+    }
+    for (const auto &portion : feature.portions)
+    {
+      const auto &segment = identification.segments[portion.segment];
+      auto SegmentPoint = [&](double s)
+      {
+        const double fraction = segment.length > 0.0 ? s / segment.length : 0.0;
+        return Add(segment.key[0],
+                   Scale(fraction, Subtract(segment.key[1], segment.key[0])));
+      };
+      if (portion.s1 <= portion.s0)
+      {
+        continue;
+      }
+      result.uncovered_portions.push_back(
+          {feature.id, feature.type, static_cast<int>(portion.segment),
+           SegmentPoint(portion.s0), SegmentPoint(portion.s1)});
+    }
+  }
+
+  // Corner-arm trim (decision 394, F1): the second arm's straight cells of a matched corner
+  // whose arms are not perpendicular begin where that arm exits the coupon's matching
+  // square.
+  result.corner_arm_trims =
+      ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R);
   return summary;
 }
 
@@ -15026,10 +15260,42 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 8},
+  nlohmann::json cache = {{"Version", 9},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
+  {
+    // Corner-arm trim records (decision 394 F1): the cached patches are the trimmed ones.
+    nlohmann::json trims = nlohmann::json::array();
+    for (const auto &trim : config.corner_arm_trims)
+    {
+      nlohmann::json cells = nlohmann::json::array();
+      for (const auto &[patch, removed] : trim.cells)
+      {
+        cells.push_back({{"Patch", patch}, {"RemovedLength", removed}});
+      }
+      trims.push_back({{"Feature", trim.feature},
+                       {"Topology", trim.topology},
+                       {"AngleDegrees", trim.angle_degrees},
+                       {"ExitDistanceOverR", trim.exit_distance_over_radius},
+                       {"TrimmedLength", trim.trimmed_length},
+                       {"RemovedCellLength", trim.removed_cell_length},
+                       {"RemovedUncoveredLength", trim.removed_uncovered_length},
+                       {"Cells", std::move(cells)}});
+    }
+    cache["CornerArmTrims"] = std::move(trims);
+    // Uncovered requirements (decision 394 F2).
+    nlohmann::json uncovered = nlohmann::json::array();
+    for (const auto &portion : config.uncovered_portions)
+    {
+      uncovered.push_back({{"Feature", portion.feature},
+                           {"Topology", portion.topology},
+                           {"Segment", portion.segment},
+                           {"P0", portion.p0},
+                           {"P1", portion.p1}});
+    }
+    cache["UncoveredPortions"] = std::move(uncovered);
+  }
   if (!config.quantum_near_match.empty())
   {
     // Quantum near-matches resolved for this geometry (block (b) DESIGN section 4).
@@ -15070,21 +15336,51 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 8,
+      data.value("Version", 0) == 9,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 8 carries the feature, mesh segment, chain stretch and own-edge "
+          << " (version 9 carries the feature, mesh segment, chain stretch and own-edge "
              "offset of every patch, the claims, support box and chain of every spatial "
              "cluster patch, the matching radius for the continuation and vertex "
-             "ownership and the quantum near-match records of the matching pass; delete a "
-             "stale cache)!");
+             "ownership, the quantum near-match records of the matching pass, the "
+             "corner-arm trim records and the uncovered portions of decision 394; delete "
+             "a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
   result.patches.clear();
   result.legacy_contract.clear();
   result.quantum_near_match.clear();
+  result.corner_arm_trims.clear();
+  result.uncovered_portions.clear();
   result.matching_radius = data.at("MatchingRadius");
+  for (const auto &entry : data.at("CornerArmTrims"))
+  {
+    ResponseCorrectionData::CornerArmTrimData trim;
+    trim.feature = entry.at("Feature");
+    trim.topology = entry.at("Topology");
+    trim.angle_degrees = entry.at("AngleDegrees");
+    trim.exit_distance_over_radius = entry.at("ExitDistanceOverR");
+    trim.trimmed_length = entry.at("TrimmedLength");
+    trim.removed_cell_length = entry.at("RemovedCellLength");
+    trim.removed_uncovered_length = entry.at("RemovedUncoveredLength");
+    for (const auto &cell : entry.at("Cells"))
+    {
+      trim.cells.emplace_back(cell.at("Patch").get<std::size_t>(),
+                              cell.at("RemovedLength").get<double>());
+    }
+    result.corner_arm_trims.push_back(std::move(trim));
+  }
+  for (const auto &entry : data.at("UncoveredPortions"))
+  {
+    ResponseCorrectionData::UncoveredPortionData portion;
+    portion.feature = entry.at("Feature");
+    portion.topology = entry.at("Topology");
+    portion.segment = entry.at("Segment");
+    portion.p0 = entry.at("P0");
+    portion.p1 = entry.at("P1");
+    result.uncovered_portions.push_back(std::move(portion));
+  }
   for (const auto &entry : data.at("Models"))
   {
     ResponseModelData model;
@@ -15352,6 +15648,29 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     const auto ownership = ApplyContinuationOwnership(
         patches.patches, boxes, 3, continuation_tolerance, patches.matching_radius);
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
+    // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of the
+    // built patches: the dry run's cells are the trimmed ones; the inventory summary
+    // carries both.
+    diagnostics["CornerArmTrim"] =
+        DescribeCornerArmTrims(patches.corner_arm_trims, patches, coordinate_scale);
+    diagnostics["Uncovered"] =
+        DescribeUncoveredPortions(patches.uncovered_portions, coordinate_scale);
+    manifest["Summary"]["CornerArmTrim"] = {
+        {"Corners", diagnostics["CornerArmTrim"]["Count"]},
+        {"TrimmedLength", diagnostics["CornerArmTrim"]["TrimmedLength"]},
+        {"RemovedCellLength", diagnostics["CornerArmTrim"]["RemovedCellLength"]}};
+    manifest["Summary"]["Uncovered"] = {{"Features", diagnostics["Uncovered"]["Features"]},
+                                        {"Portions", diagnostics["Uncovered"]["Count"]},
+                                        {"Length", diagnostics["Uncovered"]["Length"]},
+                                        {"ByType", diagnostics["Uncovered"]["ByType"]}};
+    if (diagnostics["CornerArmTrim"]["Count"].get<int>() > 0)
+    {
+      Mpi::Print("Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+                 "second-arm cells removed ({:.6e} geometric)\n",
+                 diagnostics["CornerArmTrim"]["Count"].get<int>(),
+                 diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
+                 diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
+    }
     diagnostics["TranslationalStretchesInsideSpatialSupport"] =
         DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
                                               skipped, &ownership);
@@ -16770,6 +17089,121 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
       diagnostics["OwnedLength"].get<double>(), lines);
 }
 
+nlohmann::json
+DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
+                       const ResponseCorrectionData &config, double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  nlohmann::json corners = nlohmann::json::array(), cells = nlohmann::json::array();
+  double trimmed = 0.0, removed_cells = 0.0, removed_uncovered = 0.0;
+  for (const auto &trim : trims)
+  {
+    trimmed += trim.trimmed_length;
+    removed_cells += trim.removed_cell_length;
+    removed_uncovered += trim.removed_uncovered_length;
+    nlohmann::json patches = nlohmann::json::array();
+    for (const auto &[patch, removed] : trim.cells)
+    {
+      patches.push_back(patch);
+      const auto &data = config.patches[patch];
+      cells.push_back({{"Patch", patch},
+                       {"Corner", trim.feature},
+                       {"Feature", data.provenance.feature},
+                       {"Stretch", data.provenance.stretch},
+                       {"Segment", data.provenance.segment},
+                       {"Model", models.at(data.model)->name},
+                       {"RemovedLength", removed * coordinate_scale}});
+    }
+    corners.push_back(
+        {{"Feature", trim.feature},
+         {"Topology", trim.topology},
+         {"AngleDegrees", trim.angle_degrees},
+         {"ExitDistanceOverR", trim.exit_distance_over_radius},
+         {"TrimmedLength", trim.trimmed_length * coordinate_scale},
+         {"RemovedCellLength", trim.removed_cell_length * coordinate_scale},
+         {"RemovedUncoveredLength", trim.removed_uncovered_length * coordinate_scale},
+         {"Patches", std::move(patches)}});
+  }
+  return {
+      {"Count", static_cast<int>(trims.size())},
+      {"TrimmedLength", trimmed * coordinate_scale},
+      {"RemovedCellLength", removed_cells * coordinate_scale},
+      {"RemovedUncoveredLength", removed_uncovered * coordinate_scale},
+      {"ToleranceOverR", kSignatureParameterToleranceOverRadius},
+      {"Corners", std::move(corners)},
+      {"Cells", std::move(cells)},
+      {"Rule",
+       "decision 394 (F1, 2026-10-06): a matched corner's coupon is calibrated on the "
+       "matching square |u|, |v| <= R of its canonical frame (u = the first arm), which "
+       "contains the second arm up to s = R / max(|cos theta|, |sin theta|) from the "
+       "vertex (theta = the corner angle) while the vertex window claims R along each "
+       "arm; the second arm's translational cells (every own-edge cell within "
+       "ToleranceOverR x R of that arm's line and plane) begin at s: their part before s "
+       "is removed (the kept part re-expressed as a cell at its midpoint, weight and "
+       "quadrature weight scaled by kept / cell; a cell wholly before s keeps weight 0), "
+       "and an unmatched feature's portion on that arm loses the same part. "
+       "TrimmedLength = s - R per corner (the geometric trim), RemovedCellLength = the "
+       "cell length removed (a cell beginning before R, a snapped claim boundary, loses "
+       "that part too). A corner whose s - R is within ToleranceOverR x R (perpendicular "
+       "arms: s = R) is untouched and not listed. Lengths in mesh units"}};
+}
+
+nlohmann::json DescribeUncoveredPortions(
+    const std::vector<ResponseCorrectionData::UncoveredPortionData> &portions,
+    double coordinate_scale)
+{
+  nlohmann::json entries = nlohmann::json::array();
+  std::map<std::string, std::pair<int, double>> by_type;
+  std::set<int> features;
+  double length = 0.0;
+  for (const auto &portion : portions)
+  {
+    const double portion_length = Norm(Subtract(portion.p1, portion.p0)) * coordinate_scale;
+    length += portion_length;
+    features.insert(portion.feature);
+    auto &entry = by_type[portion.topology];
+    entry.first++;
+    entry.second += portion_length;
+    std::array<double, 3> p0{}, p1{};
+    for (int d = 0; d < 3; d++)
+    {
+      p0[d] = portion.p0[d] * coordinate_scale;
+      p1[d] = portion.p1[d] * coordinate_scale;
+    }
+    entries.push_back({{"Feature", portion.feature},
+                       {"Topology", portion.topology},
+                       {"Segment", portion.segment},
+                       {"P0", p0},
+                       {"P1", p1},
+                       {"Length", portion_length}});
+  }
+  nlohmann::json types = nlohmann::json::object();
+  for (const auto &[type, entry] : by_type)
+  {
+    types[type] = {{"Portions", entry.first}, {"Length", entry.second}};
+  }
+  return {
+      {"Count", static_cast<int>(portions.size())},
+      {"Features", static_cast<int>(features.size())},
+      {"Length", length},
+      {"ByType", std::move(types)},
+      {"Portions", std::move(entries)},
+      {"Rule",
+       "decision 394 (F2, 2026-10-06): the portions of every feature the library has no "
+       "model for (Status Missing: unmatched alone, no neighbour affected), as global "
+       "sub-segments of the metal perimeter after the corner-arm trim. The electrostatic "
+       "driver keeps the device's RAW within-R surface energy whose nearest perimeter "
+       "point lies on one of them in every corrected interface energy (fixed trace and "
+       "fixed flux on the raw field, self-consistent on the corrected field) instead of "
+       "dropping it with the within-R energy of the modelled perimeter, and reports that "
+       "share per feature type (surface-response-uncovered-energy.csv). Lengths and "
+       "coordinates in mesh units"}};
+}
+
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh, std::vector<ResponsePatchData> &patches,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
@@ -18109,6 +18543,35 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    << ". Replace them with one coupled spatial model or an explicit "
                       "nonoverlapping partition!");
       }
+    }
+    // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of
+    // the built (or cached) patches in the operator record: the applied cells are the
+    // trimmed ones; the uncovered portions keep their raw within-R energy in the driver's
+    // corrected interface energies (GetUncoveredPortions).
+    ownership_diagnostics["CornerArmTrim"] =
+        DescribeCornerArmTrims(config->corner_arm_trims, *config, coordinate_scale);
+    ownership_diagnostics["Uncovered"] =
+        DescribeUncoveredPortions(config->uncovered_portions, coordinate_scale);
+    uncovered_portions = config->uncovered_portions;
+    if (!config->corner_arm_trims.empty())
+    {
+      Mpi::Print(fespace.GetComm(),
+                 "Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+                 "second-arm cells removed ({:.6e} geometric)\n",
+                 ownership_diagnostics["CornerArmTrim"]["Count"].get<int>(),
+                 ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
+                 ownership_diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
+    }
+    if (!config->uncovered_portions.empty())
+    {
+      Mpi::Warning(fespace.GetComm(),
+                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
+                   "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
+                   "surface energy in the corrected interface energies (reported per type "
+                   "in surface-response-uncovered-energy.csv)!\n",
+                   ownership_diagnostics["Uncovered"]["Count"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Features"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Length"].get<double>());
     }
     if (!config->quantum_near_match.empty())
     {

@@ -1790,7 +1790,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 8);
+      CHECK(cache["Version"] == 9);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3080,7 +3080,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 8);
+      CHECK(cache["Version"] == 9);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -7732,7 +7732,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
   }
   SECTION("fresh and cache-round-tripped patches classify identically")
   {
-    // The geometry cache (version 8) carries the mesh segment and the own-edge offset of
+    // The geometry cache (version 9) carries the mesh segment and the own-edge offset of
     // every patch with the cluster patch's claims, support box and chain: the ownership on
     // the cached patches is
     // the ownership on the fresh ones (a cache without the segment would send every
@@ -7829,7 +7829,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 8);
+    CHECK(stale["Version"] == 9);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {

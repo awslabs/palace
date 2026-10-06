@@ -360,6 +360,11 @@ private:
   // The ownership records of the translational stretches inside the spatial supports
   // (decision 236), reported under Diagnostics with the statistics.
   nlohmann::json ownership_diagnostics;
+  // The uncovered requirements (decision 394 F2): the portions of the unmatched features
+  // as perimeter sub-segments in mesh coordinates, whose raw within-R surface energy the
+  // electrostatic driver keeps in the corrected interface energies.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      uncovered_portions;
   long long int candidate_query_count = 0;
   long long int fallback_query_count = 0;
   long long int point_send_peer_count = 0;
@@ -564,6 +569,13 @@ public:
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
+  // The uncovered requirements (decision 394 F2; empty when every feature is matched).
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetUncoveredPortions() const
+  {
+    return uncovered_portions;
+  }
 
   int GetBasisSize() const { return global_basis_size; }
   int GetPatchCount() const { return global_patch_count; }
@@ -855,6 +867,20 @@ nlohmann::json DescribeSpatialSupportMarginOverlaps(
 // non-empty continuation-ownership entry.
 std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &diagnostics);
 std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnostics);
+
+// The Diagnostics entries of the corner-arm trim (decision 394 F1) and of the uncovered
+// requirements (decision 394 F2) of a response configuration (lengths and coordinates in
+// mesh units); both empty-but-complete when nothing was trimmed / nothing is uncovered.
+nlohmann::json DescribeCornerArmTrims(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+nlohmann::json DescribeUncoveredPortions(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        &portions,
+    double coordinate_scale);
 
 // Domain-boundary exclusion (decision 258): a coupon's trace coupling is undefined beyond
 // the device domain, which a placed coupon reaches wherever a metal edge meets an

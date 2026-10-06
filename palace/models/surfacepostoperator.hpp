@@ -4,9 +4,11 @@
 #ifndef PALACE_MODELS_SURFACE_POST_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_POST_OPERATOR_HPP
 
+#include <array>
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
 #include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
@@ -267,6 +269,36 @@ public:
   GetInterfaceOuterElectricFieldEnergies(const std::set<int> &indices,
                                          const GridFunction &E,
                                          const GridFunction *D = nullptr) const;
+
+  // Uncovered requirements (decision 394 F2): a sub-segment of the metal perimeter (mesh
+  // coordinates) claimed by a feature the response library has no model for, with the
+  // feature's type and id.
+  struct UncoveredPerimeterPortion
+  {
+    std::array<double, 3> p0{}, p1{};
+    std::string type;
+    int feature = -1;
+  };
+  // The interface energy within the largest configured edge distance R whose nearest
+  // perimeter point lies on an uncovered portion (the same edge-distance window weight as
+  // the outside energy, so that outside + uncovered + the modelled within-R partition the
+  // interface), in total and per feature type (the total is the sum of the types).
+  struct UncoveredEdgeEnergy
+  {
+    double energy = 0.0;
+    std::map<std::string, double> by_type;
+  };
+  // Per requested interface (each with EdgeDistances): the quadrature point's nearest
+  // perimeter segment comes from the interface's own edge-distance tree and its foot
+  // parameter is tested against the closed intervals of the uncovered portions found on
+  // that segment (a portion within kSignatureParameterToleranceOverRadius x R of a segment
+  // of this perimeter; a portion of another plane finds no segment and is skipped), an
+  // exact partition without a distance tolerance: a foot at a shared vertex belongs to
+  // both incident portions of one feature (a corner's two arms), an interior boundary has
+  // measure zero.
+  std::map<int, UncoveredEdgeEnergy> GetInterfaceUncoveredEdgeEnergies(
+      const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+      const std::vector<UncoveredPerimeterPortion> &portions) const;
   std::vector<InterfaceLocalEdgeEnergy>
   GetInterfaceLocalEdgeElectricFieldEnergies(int idx, const GridFunction &E,
                                              const GridFunction *D = nullptr,
