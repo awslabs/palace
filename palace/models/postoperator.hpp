@@ -705,6 +705,22 @@ public:
     return energies;
   }
 
+  // Uncovered-requirement energies (decision 394 F2) of the field the grid functions hold
+  // (the raw field after MeasureAndPrintAll, the corrected field after
+  // GetElectrostaticEnergies): per response target interface, the raw within-R interface
+  // energy whose nearest perimeter point lies on an uncovered portion, in total and per
+  // feature type.
+  template <ProblemType U = solver_t>
+  auto GetElectrostaticUncoveredEdgeEnergies(
+      const std::set<int> &response_targets,
+      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions) const
+      -> std::enable_if_t<U == ProblemType::ELECTROSTATIC,
+                          std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>>
+  {
+    return surf_post_op.GetInterfaceUncoveredEdgeEnergies(response_targets, *E,
+                                                          D_recovered.get(), portions);
+  }
+
   // Evaluate localized interface energies for an electrostatic field without producing
   // ordinary measurement output. Volume-annulus diagnostics are omitted because response
   // matrix calibration uses only the surface energies.

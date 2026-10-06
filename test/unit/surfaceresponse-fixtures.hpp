@@ -275,10 +275,13 @@ struct SurfaceResponseFiles
 
   // Meshes.
   static mfem::Mesh MakeAutomatic2DMesh();
+  // normal_elements: the element count across the plane normal y (4: planes at 0.25,
+  // 0.5, 0.75; 16: a plane every 0.0625, so a trace with kinks at multiples of 0.0625
+  // above and below the metal is a Q1 function).
   static std::unique_ptr<mfem::ParMesh>
   MakeIslandMesh(bool rounded = false, bool tetrahedral = false, bool aperture = false,
                  bool neighboring_island = false, bool second_layer = false,
-                 bool high_order_rounded = false);
+                 bool high_order_rounded = false, int normal_elements = 4);
   static std::unique_ptr<mfem::ParMesh> MakeTouchingIslandMesh();
   static std::unique_ptr<mfem::ParMesh> MakeOffsetCornerPairMesh();
   // The SA edge segments of interface `interface` (with their length and vertex types).

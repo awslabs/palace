@@ -1172,6 +1172,9 @@ struct ProcessLibrary
   // The matching radius in metres (the "R (m)" of a spatial coupon's surface response
   // files): the within-R rows a spatial model's surface matrices are read at.
   double matching_radius_m = 0.0;
+  // Fabrication.MetalThickness in the library's length unit (the unit of the BasisPoints
+  // files): the constrained metal band of the translational coupons (decision 404 D1).
+  std::optional<double> metal_thickness;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
@@ -1921,6 +1924,247 @@ std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
 std::string CheckCornerRuleCouponFiles(const LibraryModel &model,
                                        double position_tolerance);
 
+// The consistent translational mortar (decision 404 D1). The straight coupon generators
+// (examples/cpw2d/generate_edge_response.py, generate_edge_pair_response.py,
+// generate_edge_cluster_response.py: write_bases) insert the knots where the fabricated
+// metal meets the matching contour, (x_face, 0) and (x_face, MetalThickness) on every box
+// face the metal crosses, constrain the band between them to the conductor potential and
+// publish the FREE knots only (no ZeroTraceIndices): the coupon's hats adjacent to the
+// band ramp to zero at the band knots, while a mortar built on the listed knots alone
+// spans the band with one segment and under-reads the crossing-adjacent knots (the
+// straight-class MS lift, decisions 400 / 403). The faces a translational closed-contour
+// coupon's metal meets, from its topology (canonical frame: edge at the origin, gap toward
+// +x; the box faces are the extreme x of the knots): an IsolatedEdge / CurvedEdge on x =
+// min, a same-conductor gap on both faces, a ParallelEdgeCluster on x = min when its first
+// edge's gap points +x and on x = max when its last edge's gap points -x, a strip on none.
+// Open-contour models (different conductors) anchor their paths on conductor references
+// and are outside this rule (recorded). The band must lie strictly between two consecutive
+// knots of the face with no free knot on it, else the library's knots and constraints
+// disagree and the load fails closed. A coupon that lists the band knots as
+// ZeroTraceIndices (the library contract) is verified against the same rule and needs no
+// inserted vertex.
+struct ConsistentMortarBands
+{
+  // The inserted vertices, in contour order per crossing (empty under the contract).
+  std::vector<std::array<double, 3>> vertices;
+  std::string rule;
+  // Nonempty when the knots and the constraints disagree (fail closed).
+  std::string failure;
+};
+
+ConsistentMortarBands
+DeriveConsistentMortarBands(const LibraryModel &model,
+                            const std::vector<std::array<double, 3>> &points,
+                            std::optional<double> metal_thickness, double tolerance)
+{
+  ConsistentMortarBands result;
+  const auto &response = model.response;
+  if (!response.open_contour_paths.empty())
+  {
+    result.rule = "none: open contour paths anchor on conductor references (outside the "
+                  "consistent-mortar rule)";
+    return result;
+  }
+  std::vector<std::pair<bool, int>> faces;  // (x = min, band conductor label)
+  switch (model.topology)
+  {
+    case LibraryTopology::ISOLATED_EDGE:
+    case LibraryTopology::CURVED_EDGE:
+      faces.emplace_back(true, 1);
+      break;
+    case LibraryTopology::SAME_CONDUCTOR_GAP:
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_GAP:
+      faces.emplace_back(true, 1);
+      faces.emplace_back(false, 1);
+      break;
+    case LibraryTopology::PARALLEL_EDGE_CLUSTER:
+      if (model.cluster_edges.empty())
+      {
+        result.rule = "none: ParallelEdgeCluster without Edges";
+        return result;
+      }
+      if (model.cluster_edges.front().gap_direction == 1)
+      {
+        faces.emplace_back(true, model.cluster_edges.front().conductor);
+      }
+      if (model.cluster_edges.back().gap_direction == -1)
+      {
+        faces.emplace_back(false, model.cluster_edges.back().conductor);
+      }
+      break;
+    case LibraryTopology::SAME_CONDUCTOR_STRIP:
+    case LibraryTopology::CURVED_SAME_CONDUCTOR_STRIP:
+      break;
+    default:
+      result.rule = "none: not a translational closed-contour topology";
+      return result;
+  }
+  if (faces.empty())
+  {
+    result.rule = "none: the metal does not meet the matching contour (strip)";
+    return result;
+  }
+  if (!metal_thickness)
+  {
+    result.rule = "none: the library records no Fabrication.MetalThickness";
+    return result;
+  }
+  if (points.empty())
+  {
+    result.rule = "none: no BasisPoints";
+    return result;
+  }
+  const double t = *metal_thickness;
+  const int n = static_cast<int>(points.size());
+  std::vector<int> group_of(n, -1), group_offset, group_size;
+  {
+    int offset = 0;
+    std::vector<int> groups = response.contour_groups;
+    if (groups.empty())
+    {
+      groups.push_back(n);
+    }
+    for (const int count : groups)
+    {
+      for (int i = 0; i < count && offset + i < n; i++)
+      {
+        group_of[offset + i] = static_cast<int>(group_offset.size());
+      }
+      group_offset.push_back(offset);
+      group_size.push_back(count);
+      offset += count;
+    }
+  }
+  const std::set<int> zero_set(response.zero_trace_indices.begin(),
+                               response.zero_trace_indices.end());
+  std::set<int> zero_used;
+  double x_min = points.front()[0], x_max = points.front()[0];
+  for (const auto &point : points)
+  {
+    x_min = std::min(x_min, point[0]);
+    x_max = std::max(x_max, point[0]);
+  }
+  std::ostringstream rule;
+  rule << "band [0, " << t << "] on";
+  for (const auto &[left, conductor] : faces)
+  {
+    const double x_face = left ? x_min : x_max;
+    std::vector<int> face_knots;
+    for (int i = 0; i < n; i++)
+    {
+      if (std::abs(points[i][0] - x_face) <= tolerance)
+      {
+        face_knots.push_back(i);
+      }
+    }
+    std::sort(face_knots.begin(), face_knots.end(),
+              [&](int a, int b) { return points[a][1] < points[b][1]; });
+    // The free knots must stay off the band; the band knots (contract) sit at its ends.
+    std::vector<int> band_knots;
+    for (const int i : face_knots)
+    {
+      const double y = points[i][1];
+      if (y < -tolerance || y > t + tolerance)
+      {
+        continue;
+      }
+      if (!zero_set.count(i))
+      {
+        result.failure =
+            fmt::format("free basis point {:d} ({:.6g}, {:.6g}) lies on the "
+                        "constrained metal band [0, {:.6g}] of the face x = "
+                        "{:.6g} (conductor {:d})",
+                        i + 1, points[i][0], points[i][1], t, x_face, conductor);
+        return result;
+      }
+      band_knots.push_back(i);
+    }
+    // The two knots the band lies between (below and above it), adjacent on the face.
+    int below = -1, above = -1;
+    for (std::size_t k = 0; k < face_knots.size(); k++)
+    {
+      const double y = points[face_knots[k]][1];
+      if (y < -tolerance)
+      {
+        below = face_knots[k];
+      }
+      else if (y > t + tolerance && above < 0)
+      {
+        above = face_knots[k];
+      }
+    }
+    if (below < 0 || above < 0)
+    {
+      result.failure = fmt::format("the face x = {:.6g} has no basis points on both sides "
+                                   "of the constrained metal band [0, {:.6g}]",
+                                   x_face, t);
+      return result;
+    }
+    auto Consecutive = [&](int a, int b)
+    {
+      if (group_of[a] < 0 || group_of[a] != group_of[b])
+      {
+        return false;
+      }
+      const int size = group_size[group_of[a]];
+      const int da = a - group_offset[group_of[a]], db = b - group_offset[group_of[b]];
+      return (da + 1) % size == db || (db + 1) % size == da;
+    };
+    if (band_knots.empty())
+    {
+      // The legacy library: insert the band vertices in contour order between the two.
+      if (!Consecutive(below, above))
+      {
+        result.failure = fmt::format(
+            "basis points {:d} and {:d} on either side of the constrained metal band of "
+            "the face x = {:.6g} are not consecutive on one closed contour",
+            below + 1, above + 1, x_face);
+        return result;
+      }
+      const int first =
+          group_offset[group_of[below]] +
+          (below - group_offset[group_of[below]] + 1) % group_size[group_of[below]];
+      const bool upward = first == above;
+      const std::array<double, 3> lower = {x_face, 0.0, 0.0}, upper = {x_face, t, 0.0};
+      result.vertices.push_back(upward ? lower : upper);
+      result.vertices.push_back(upward ? upper : lower);
+      rule << fmt::format(" x = {:.6g} between basis points {:d} and {:d} (inserted)",
+                          x_face, below + 1, above + 1);
+    }
+    else
+    {
+      // The library contract: exactly the two band ends, consecutive with their free
+      // neighbours.
+      if (band_knots.size() != 2 || std::abs(points[band_knots[0]][1]) > tolerance ||
+          std::abs(points[band_knots[1]][1] - t) > tolerance ||
+          !Consecutive(below, band_knots[0]) ||
+          !Consecutive(band_knots[0], band_knots[1]) || !Consecutive(band_knots[1], above))
+      {
+        result.failure =
+            fmt::format("the ZeroTraceIndices on the face x = {:.6g} are not the two "
+                        "consecutive band knots (x, 0) and (x, {:.6g})",
+                        x_face, t);
+        return result;
+      }
+      zero_used.insert(band_knots.begin(), band_knots.end());
+      rule << fmt::format(" x = {:.6g} at ZeroTraceIndices {:d} and {:d}", x_face,
+                          band_knots[0] + 1, band_knots[1] + 1);
+    }
+  }
+  for (const int index : response.zero_trace_indices)
+  {
+    if (!zero_used.count(index))
+    {
+      result.failure = fmt::format("ZeroTraceIndices entry {:d} is not a constrained "
+                                   "metal-band knot of the topology",
+                                   index + 1);
+      return result;
+    }
+  }
+  result.rule = rule.str();
+  return result;
+}
+
 ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                   bool nondimensionalize, bool allow_empty_models = false,
                                   bool geometry_only = false)
@@ -1960,6 +2204,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
     if (entries != fabrication->end())
     {
       interface_layers = &*entries;
+    }
+    if (auto thickness = fabrication->find("MetalThickness");
+        thickness != fabrication->end())
+    {
+      MFEM_VERIFY(thickness->is_number() && std::isfinite(thickness->get<double>()) &&
+                      thickness->get<double>() > 0.0,
+                  "Fabrication-process response-library Fabrication.MetalThickness must "
+                  "be a positive number!");
+      library.metal_thickness = thickness->get<double>();
     }
   }
   MFEM_VERIFY(version < 3 || (interface_layers && interface_layers->is_object()),
@@ -2717,6 +2970,8 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
       std::sort(model.response.zero_trace_indices.begin(),
                 model.response.zero_trace_indices.end());
     }
+    const bool translational_closed_contour =
+        !spatial_response && model.response.open_contour_paths.empty();
     MFEM_VERIFY(model.response.zero_trace_indices.empty() ||
                     (spatial_vertex &&
                      model.boundary_condition.type == MetalBoundaryConditionType::PEC) ||
@@ -2726,8 +2981,42 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                                  {
                                    return edge.boundary_condition.type ==
                                           MetalBoundaryConditionType::PEC;
-                                 })),
-                "Finite-impedance spatial response models cannot use ZeroTraceIndices!");
+                                 })) ||
+                    (translational_closed_contour &&
+                     model.boundary_condition.type == MetalBoundaryConditionType::PEC),
+                "Finite-impedance response models cannot use ZeroTraceIndices!");
+    if (translational_closed_contour)
+    {
+      // The consistent mortar (decision 404 D1): the constrained metal-band knots of the
+      // coupon, from its ZeroTraceIndices (the library contract) or inserted by the rule
+      // from the topology and Fabrication.MetalThickness; a library whose knots disagree
+      // with its constraints fails closed. Recorded per model
+      // (Diagnostics.ConsistentMortar).
+      std::vector<std::array<double, 3>> points;
+      if (std::filesystem::is_regular_file(model.response.basis_points))
+      {
+        points = ReadBasisPoints(model.response.basis_points);
+      }
+      const auto bands =
+          DeriveConsistentMortarBands(model, points, library.metal_thickness,
+                                      1.0e-9 * library.matching_radius * coordinate_scale);
+      MFEM_VERIFY(bands.failure.empty(),
+                  "Fabrication-process response model \""
+                      << model.name
+                      << "\" lists basis points that disagree with its constrained metal "
+                         "band (decision 404 D1, the consistent mortar): "
+                      << bands.failure << "!");
+      model.response.consistent_mortar_vertices = bands.vertices;
+      model.response.consistent_mortar_rule = bands.rule;
+    }
+    else
+    {
+      model.response.consistent_mortar_rule =
+          model.response.open_contour_paths.empty()
+              ? "none: spatial model (explicit trace mesh)"
+              : "none: open contour paths anchor on conductor references (outside the "
+                "consistent-mortar rule)";
+    }
     if (corner && spatial_response && !model.response.zero_trace_indices.empty() &&
         !model.response.contour_groups.empty())
     {
@@ -8203,6 +8492,209 @@ double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 
   return Norm(Subtract(q, Add(a, Scale(t, ab))));
 }
 
+namespace
+{
+
+// Clip the longitudinal cell of a translational patch to the kept interval [kept_lo,
+// kept_hi] of its cell offsets (the continuation ownership's clipping, decision 236 (2)):
+// the origin moves to the kept midpoint with the cell symmetric about it, the weight and
+// the provenance quadrature weight scale by kept / cell, the Maxwell anchors move with the
+// origin; an empty kept interval leaves weight 0 and cell {0, 0} (the operator skips it).
+void ClipLongitudinalCell(ResponsePatchData &patch, double kept_lo, double kept_hi)
+{
+  const double cell_length = patch.longitudinal_cell[1] - patch.longitudinal_cell[0];
+  const double kept_length = std::max(0.0, kept_hi - kept_lo);
+  const bool wholly = kept_length <= 1.0e-12 * std::max(1.0, cell_length);
+  const double fraction = wholly ? 0.0 : kept_length / cell_length;
+  const double shift = wholly ? 0.0 : 0.5 * (kept_lo + kept_hi);
+  for (int d = 0; d < 3; d++)
+  {
+    patch.origin[d] += shift * patch.axis_w[d];
+    for (auto &anchor : patch.maxwell_conductor_anchors)
+    {
+      anchor[d] += shift * patch.axis_w[d];
+    }
+  }
+  patch.longitudinal_cell =
+      wholly ? std::array<double, 2>{0.0, 0.0}
+             : std::array<double, 2>{-0.5 * kept_length, 0.5 * kept_length};
+  patch.weight *= fraction;
+  patch.provenance.quadrature_weight *= fraction;
+}
+
+// Corner-arm trim (decision 394, F1). A matched corner's coupon is calibrated on the
+// matching square |u|, |v| <= R of its canonical frame (u = the first arm away from the
+// vertex, the second arm counterclockwise at the corner angle theta), whose energy is
+// localised to the radius-R tubes of BOTH arms inside the square. The identification's
+// vertex window claims R along each arm, so the second arm's straight cells begin at R
+// from the vertex while the square contains that arm up to s = R / max(|cos theta|, |sin
+// theta|): the stretch [R, s) was modelled twice (the corner coupon's tube and the straight
+// cells; the corner-class diagnosis of decision 393 measured +1.0 % of the within-R MS on a
+// 120 / 135-deg window). RULE: every translational cell on the second arm's line (its
+// own-edge cell within kSignatureParameterToleranceOverRadius x R of the arm's line and
+// plane) loses its part before s along the arm, the kept part re-expressed as the
+// continuation ownership does (a cell beginning before R — a snapped claim boundary — loses
+// that part too: the cells start where the arm exits the square); an unmatched feature's
+// portion on that arm (decision 394 F2) loses the same part. A corner whose trim s - R is
+// within the tolerance (90 deg exactly: s = R) is left untouched (the legacy layout,
+// bitwise). One record per trimmed corner, lengths in patch units.
+std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
+    const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
+    std::vector<ResponseCorrectionData::UncoveredPortionData> &uncovered, double R)
+{
+  std::vector<ResponseCorrectionData::CornerArmTrimData> records;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  constexpr double pi = 3.14159265358979323846;
+  std::set<int> patched_corners;
+  for (const auto &patch : patches)
+  {
+    if (patch.provenance.coupon_depth == 0.0 && patch.provenance.claims.empty() &&
+        patch.provenance.stretch < 0 && !patch.provenance.has_support_box &&
+        patch.weight > 0.0)
+    {
+      patched_corners.insert(patch.provenance.feature);
+    }
+  }
+  for (const auto &feature : identification.features)
+  {
+    if ((feature.type != "ConvexCorner" && feature.type != "ConcaveCorner") ||
+        !feature.matched_model || patched_corners.find(feature.id) == patched_corners.end())
+    {
+      continue;
+    }
+    MFEM_VERIFY(feature.signature.contains("AngleDegrees"),
+                "Corner feature " << feature.id << " carries no AngleDegrees!");
+    const double angle_degrees = feature.signature.at("AngleDegrees").get<double>();
+    const double theta = angle_degrees * pi / 180.0;
+    const double cos_theta = std::cos(theta), sin_theta = std::sin(theta);
+    const double exit_over_radius =
+        1.0 / std::max(std::abs(cos_theta), std::abs(sin_theta));
+    const double exit = exit_over_radius * R;
+    if (exit - R <= tolerance)
+    {
+      continue;  // perpendicular arms within the tolerance: the legacy layout
+    }
+    const Point3D &vertex = feature.origin;
+    const Point3D &u = feature.axes[0];
+    const Point3D &v = feature.axes[1];
+    const Point3D &n = feature.axes[2];
+    const Point3D arm = Normalize(Add(Scale(cos_theta, u), Scale(sin_theta, v)));
+    // The along-arm coordinate of a point on the second arm's line (nullopt off the line
+    // or off the plane).
+    auto Along = [&](const Point3D &point) -> std::optional<double>
+    {
+      const Point3D r = Subtract(point, vertex);
+      const double w = Dot(r, n);
+      const double a = Dot(r, arm);
+      const Point3D transverse = Subtract(r, Add(Scale(a, arm), Scale(w, n)));
+      if (std::abs(w) > tolerance || Norm(transverse) > tolerance)
+      {
+        return std::nullopt;
+      }
+      return a;
+    };
+    ResponseCorrectionData::CornerArmTrimData record;
+    record.feature = feature.id;
+    record.topology = feature.type;
+    record.angle_degrees = angle_degrees;
+    record.exit_distance_over_radius = exit_over_radius;
+    record.trimmed_length = exit - R;
+    for (std::size_t p = 0; p < patches.size(); p++)
+    {
+      auto &patch = patches[p];
+      const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+      if (patch.provenance.coupon_depth <= 0.0 || patch.weight <= 0.0 || c1 <= c0)
+      {
+        continue;
+      }
+      // The own-edge cell ends (the cell shifted by the provenance edge offset along
+      // AxisU: a pair's cells sit on the midline, a stack's on the first side).
+      std::array<std::optional<double>, 2> along;
+      for (int k = 0; k < 2; k++)
+      {
+        Point3D end = patch.origin;
+        for (int d = 0; d < 3; d++)
+        {
+          end[d] += patch.provenance.edge_offset * patch.axis_u[d] +
+                    (k == 0 ? c0 : c1) * patch.axis_w[d];
+        }
+        along[k] = Along(end);
+      }
+      if (!along[0] || !along[1])
+      {
+        continue;
+      }
+      const double a0 = *along[0], a1 = *along[1];
+      const double a_lo = std::min(a0, a1), a_hi = std::max(a0, a1);
+      const double scale = std::max(1.0, c1 - c0);
+      if (a_hi <= tolerance || a_lo >= exit - 1.0e-12 * scale)
+      {
+        continue;  // the opposite ray, or a cell beginning at / beyond the exit
+      }
+      const double removed = std::min(a_hi, exit) - std::max(a_lo, 0.0);
+      if (removed <= 1.0e-12 * scale)
+      {
+        continue;
+      }
+      // The kept part [exit, a_hi) in the cell's own offsets: a(c) is linear in c with
+      // slope AxisW . arm = +-1.
+      const double slope = (a1 - a0) / (c1 - c0);
+      const double c_cut = c0 + (exit - a0) / slope;
+      const double kept_lo = slope > 0.0 ? std::max(c0, c_cut) : c0;
+      const double kept_hi = slope > 0.0 ? c1 : std::min(c1, c_cut);
+      ClipLongitudinalCell(patch, a_hi > exit ? kept_lo : 0.0, a_hi > exit ? kept_hi : 0.0);
+      // The geometric length removed: the co-located patches of a first-order split share
+      // one cell (model weights summing to 1), so each counts its model weight of it; the
+      // per-patch record keeps the full removed length (the A7 audit weights it itself).
+      record.removed_cell_length += removed * patch.provenance.model_weight;
+      record.cells.emplace_back(p, removed);
+    }
+    // The uncovered portions on the second arm (an unmatched feature beginning at the
+    // corner's window): the same part removed.
+    for (auto it = uncovered.begin(); it != uncovered.end();)
+    {
+      const auto along0 = Along(it->p0), along1 = Along(it->p1);
+      if (!along0 || !along1)
+      {
+        ++it;
+        continue;
+      }
+      const double a_lo = std::min(*along0, *along1), a_hi = std::max(*along0, *along1);
+      const double length = Norm(Subtract(it->p1, it->p0));
+      const double scale = std::max(1.0, length);
+      if (a_hi <= tolerance || a_lo >= exit - 1.0e-12 * scale)
+      {
+        ++it;
+        continue;
+      }
+      const double removed = std::min(a_hi, exit) - std::max(a_lo, 0.0);
+      if (removed <= 1.0e-12 * scale)
+      {
+        ++it;
+        continue;
+      }
+      record.removed_uncovered_length += removed;
+      if (a_hi <= exit + 1.0e-12 * scale)
+      {
+        it = uncovered.erase(it);
+        continue;
+      }
+      // The portion's near end moves to the exit along the portion's own direction.
+      const bool p0_near = *along0 < *along1;
+      Point3D &near = p0_near ? it->p0 : it->p1;
+      const Point3D &far = p0_near ? it->p1 : it->p0;
+      const double a_near = std::min(*along0, *along1);
+      const Point3D direction = Normalize(Subtract(far, near));
+      near = Add(near, Scale(exit - a_near, direction));
+      ++it;
+    }
+    records.push_back(std::move(record));
+  }
+  return records;
+}
+
+}  // namespace
+
 // Distance from a point to the ARC of the fitted circle (centre C, radius rho) that the
 // chord a-b subtends (block (b) DESIGN section 2 (a), A10-extended arc-aware): the point's
 // projection into the circle's plane is tested against the chord's angular interval (the
@@ -9201,6 +9693,40 @@ FeaturePatchSummary BuildFeaturePatches(
       summary.first_order_missing_features++;
     }
   }
+
+  // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
+  // global sub-segments of the perimeter, in the order of the feature list.
+  result.uncovered_portions.clear();
+  for (const auto &feature : identification.features)
+  {
+    if (feature.matched_model)
+    {
+      continue;
+    }
+    for (const auto &portion : feature.portions)
+    {
+      const auto &segment = identification.segments[portion.segment];
+      auto SegmentPoint = [&](double s)
+      {
+        const double fraction = segment.length > 0.0 ? s / segment.length : 0.0;
+        return Add(segment.key[0],
+                   Scale(fraction, Subtract(segment.key[1], segment.key[0])));
+      };
+      if (portion.s1 <= portion.s0)
+      {
+        continue;
+      }
+      result.uncovered_portions.push_back(
+          {feature.id, feature.type, static_cast<int>(portion.segment),
+           SegmentPoint(portion.s0), SegmentPoint(portion.s1)});
+    }
+  }
+
+  // Corner-arm trim (decision 394, F1): the second arm's straight cells of a matched corner
+  // whose arms are not perpendicular begin where that arm exits the coupon's matching
+  // square.
+  result.corner_arm_trims =
+      ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R);
   return summary;
 }
 
@@ -14981,6 +15507,8 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                       {"SpatialBasis", model.spatial_basis},
                       {"ContourGroups", model.contour_groups},
                       {"ZeroTraceIndices", model.zero_trace_indices},
+                      {"ConsistentMortarVertices", model.consistent_mortar_vertices},
+                      {"ConsistentMortarRule", model.consistent_mortar_rule},
                       {"OpenContourPaths", std::move(open_paths)},
                       {"InteriorTraceCount", model.interior_trace_count},
                       {"ConductorStateCount", model.conductor_state_count},
@@ -15026,10 +15554,42 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 8},
+  nlohmann::json cache = {{"Version", 10},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
+  {
+    // Corner-arm trim records (decision 394 F1): the cached patches are the trimmed ones.
+    nlohmann::json trims = nlohmann::json::array();
+    for (const auto &trim : config.corner_arm_trims)
+    {
+      nlohmann::json cells = nlohmann::json::array();
+      for (const auto &[patch, removed] : trim.cells)
+      {
+        cells.push_back({{"Patch", patch}, {"RemovedLength", removed}});
+      }
+      trims.push_back({{"Feature", trim.feature},
+                       {"Topology", trim.topology},
+                       {"AngleDegrees", trim.angle_degrees},
+                       {"ExitDistanceOverR", trim.exit_distance_over_radius},
+                       {"TrimmedLength", trim.trimmed_length},
+                       {"RemovedCellLength", trim.removed_cell_length},
+                       {"RemovedUncoveredLength", trim.removed_uncovered_length},
+                       {"Cells", std::move(cells)}});
+    }
+    cache["CornerArmTrims"] = std::move(trims);
+    // Uncovered requirements (decision 394 F2).
+    nlohmann::json uncovered = nlohmann::json::array();
+    for (const auto &portion : config.uncovered_portions)
+    {
+      uncovered.push_back({{"Feature", portion.feature},
+                           {"Topology", portion.topology},
+                           {"Segment", portion.segment},
+                           {"P0", portion.p0},
+                           {"P1", portion.p1}});
+    }
+    cache["UncoveredPortions"] = std::move(uncovered);
+  }
   if (!config.quantum_near_match.empty())
   {
     // Quantum near-matches resolved for this geometry (block (b) DESIGN section 4).
@@ -15070,21 +15630,52 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 8,
+      data.value("Version", 0) == 10,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 8 carries the feature, mesh segment, chain stretch and own-edge "
+          << " (version 10 carries the feature, mesh segment, chain stretch and own-edge "
              "offset of every patch, the claims, support box and chain of every spatial "
              "cluster patch, the matching radius for the continuation and vertex "
-             "ownership and the quantum near-match records of the matching pass; delete a "
-             "stale cache)!");
+             "ownership, the quantum near-match records of the matching pass, the "
+             "corner-arm trim records and the uncovered portions of decision 394, and the "
+             "consistent-mortar band vertices and rule of every model (decision 404 D1); "
+             "delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
   result.patches.clear();
   result.legacy_contract.clear();
   result.quantum_near_match.clear();
+  result.corner_arm_trims.clear();
+  result.uncovered_portions.clear();
   result.matching_radius = data.at("MatchingRadius");
+  for (const auto &entry : data.at("CornerArmTrims"))
+  {
+    ResponseCorrectionData::CornerArmTrimData trim;
+    trim.feature = entry.at("Feature");
+    trim.topology = entry.at("Topology");
+    trim.angle_degrees = entry.at("AngleDegrees");
+    trim.exit_distance_over_radius = entry.at("ExitDistanceOverR");
+    trim.trimmed_length = entry.at("TrimmedLength");
+    trim.removed_cell_length = entry.at("RemovedCellLength");
+    trim.removed_uncovered_length = entry.at("RemovedUncoveredLength");
+    for (const auto &cell : entry.at("Cells"))
+    {
+      trim.cells.emplace_back(cell.at("Patch").get<std::size_t>(),
+                              cell.at("RemovedLength").get<double>());
+    }
+    result.corner_arm_trims.push_back(std::move(trim));
+  }
+  for (const auto &entry : data.at("UncoveredPortions"))
+  {
+    ResponseCorrectionData::UncoveredPortionData portion;
+    portion.feature = entry.at("Feature");
+    portion.topology = entry.at("Topology");
+    portion.segment = entry.at("Segment");
+    portion.p0 = entry.at("P0");
+    portion.p1 = entry.at("P1");
+    result.uncovered_portions.push_back(std::move(portion));
+  }
   for (const auto &entry : data.at("Models"))
   {
     ResponseModelData model;
@@ -15117,6 +15708,9 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     model.spatial_basis = entry.value("SpatialBasis", false);
     model.contour_groups = entry.value("ContourGroups", std::vector<int>{});
     model.zero_trace_indices = entry.value("ZeroTraceIndices", std::vector<int>{});
+    model.consistent_mortar_vertices =
+        entry.at("ConsistentMortarVertices").get<std::vector<std::array<double, 3>>>();
+    model.consistent_mortar_rule = entry.at("ConsistentMortarRule").get<std::string>();
     model.interior_trace_count = entry.value("InteriorTraceCount", 0);
     model.conductor_state_count = entry.value("ConductorStateCount", 0);
     for (const auto &value : entry.value("OpenContourPaths", nlohmann::json::array()))
@@ -15352,6 +15946,55 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     const auto ownership = ApplyContinuationOwnership(
         patches.patches, boxes, 3, continuation_tolerance, patches.matching_radius);
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
+    // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of the
+    // built patches: the dry run's cells are the trimmed ones; the uncovered portions are
+    // clipped by the matched clusters' boxes (decision 399 MAJOR-1) as the cells above; the
+    // inventory summary carries both.
+    diagnostics["CornerArmTrim"] =
+        DescribeCornerArmTrims(patches.corner_arm_trims, patches, coordinate_scale);
+    auto placed_uncovered = patches.uncovered_portions;
+    const auto uncovered_clipping =
+        ClipUncoveredPortionsBySpatialSupport(placed_uncovered, boxes, 3);
+    diagnostics["Uncovered"] = DescribeUncoveredPortions(
+        placed_uncovered, &uncovered_clipping, patches, coordinate_scale);
+    // The consistent mortar (decision 404 D1): the band vertices of every translational
+    // model's hat basis and the rule that produced them.
+    diagnostics["ConsistentMortar"] = DescribeConsistentMortar(patches);
+    manifest["Summary"]["ConsistentMortar"] = {
+        {"TranslationalModels", diagnostics["ConsistentMortar"]["TranslationalModels"]},
+        {"WithInsertedBandVertices",
+         diagnostics["ConsistentMortar"]["WithInsertedBandVertices"]},
+        {"WithZeroTraceIndices", diagnostics["ConsistentMortar"]["WithZeroTraceIndices"]},
+        {"WithoutBand", diagnostics["ConsistentMortar"]["WithoutBand"]}};
+    manifest["Summary"]["CornerArmTrim"] = {
+        {"Corners", diagnostics["CornerArmTrim"]["Count"]},
+        {"TrimmedLength", diagnostics["CornerArmTrim"]["TrimmedLength"]},
+        {"RemovedCellLength", diagnostics["CornerArmTrim"]["RemovedCellLength"]}};
+    manifest["Summary"]["Uncovered"] = {
+        {"Features", diagnostics["Uncovered"]["Features"]},
+        {"Portions", diagnostics["Uncovered"]["Count"]},
+        {"Length", diagnostics["Uncovered"]["Length"]},
+        {"ByType", diagnostics["Uncovered"]["ByType"]},
+        {"ClippedBySpatialSupport",
+         diagnostics["Uncovered"]["ClippedBySpatialSupport"]["Length"]}};
+    if (uncovered_clipping.clipped_portions > 0)
+    {
+      Mpi::Warning(
+          "Uncovered requirements inside matched clusters' support boxes (decision "
+          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
+          "portions ({:d} wholly inside, {:d} split)\n",
+          uncovered_clipping.clipped_portions,
+          uncovered_clipping.removed_length * coordinate_scale,
+          uncovered_clipping.removed_portions, uncovered_clipping.split_portions);
+    }
+    if (diagnostics["CornerArmTrim"]["Count"].get<int>() > 0)
+    {
+      Mpi::Print("Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+                 "second-arm cells removed ({:.6e} geometric)\n",
+                 diagnostics["CornerArmTrim"]["Count"].get<int>(),
+                 diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
+                 diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
+    }
     diagnostics["TranslationalStretchesInsideSpatialSupport"] =
         DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
                                               skipped, &ownership);
@@ -15388,6 +16031,35 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         patches.matching_radius, {});
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
+    // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
+    diagnostics["CornerArmTrim"]["ExcludedCoupons"] = DescribeCornerArmTrimExcludedCoupons(
+        patches.corner_arm_trims, patches,
+        [&](std::size_t patch_idx) -> std::optional<std::string>
+        {
+          if (std::any_of(exclusions.patches.begin(), exclusions.patches.end(),
+                          [&](const auto &exclusion)
+                          { return exclusion.patch == patch_idx; }))
+          {
+            return "DomainBoundary";
+          }
+          if (std::any_of(ownership.vertices.begin(), ownership.vertices.end(),
+                          [&](const auto &vertex) { return vertex.patch == patch_idx; }))
+          {
+            return "VertexOwnership";
+          }
+          return std::nullopt;
+        },
+        coordinate_scale);
+    manifest["Summary"]["CornerArmTrim"]["ExcludedCoupons"] =
+        diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"];
+    if (diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
+    {
+      Mpi::Warning(
+          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not "
+          "applied (decision 399 MINOR-7): their second arm's [R, s) is modelled by "
+          "nothing\n",
+          diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
+    }
     const auto &exclusion_diagnostics = diagnostics["DomainBoundaryExclusions"];
     manifest["Summary"]["Counts"]["DomainBoundary"] = exclusion_diagnostics["Count"];
     manifest["Summary"]["TotalEdgeLengths"]["DomainBoundary"] =
@@ -15749,36 +16421,46 @@ ContinuedSupportClaimEnd(const TranslationalStretch &stretch,
   return std::nullopt;
 }
 
+// The offsets along the line origin + c axis strictly inside a box, intersected with the
+// interval [c0, c1]; nullopt when the interval does not enter the box (an interval touching
+// a face is not inside: 1e-12 x max(1, c1 - c0)).
+std::optional<std::array<double, 2>>
+LineInsideBox(const std::array<double, 3> &origin, const std::array<double, 3> &axis,
+              double c0, double c1, const SpatialSupportBounds &box, int dimension)
+{
+  double lo = c0, hi = c1;
+  for (int d = 0; d < dimension; d++)
+  {
+    const double w = axis[d];
+    if (std::abs(w) <= 1.0e-14)
+    {
+      if (!(origin[d] > box.min[d] && origin[d] < box.max[d]))
+      {
+        return std::nullopt;
+      }
+      continue;
+    }
+    const double a = (box.min[d] - origin[d]) / w;
+    const double b = (box.max[d] - origin[d]) / w;
+    lo = std::max(lo, std::min(a, b));
+    hi = std::min(hi, std::max(a, b));
+  }
+  const double scale = std::max(1.0, c1 - c0);
+  if (hi - lo <= 1.0e-12 * scale)
+  {
+    return std::nullopt;
+  }
+  return std::array<double, 2>{lo, hi};
+}
+
 // The offsets along a cell's AxisW line (relative to the patch origin) strictly inside a
 // box, intersected with the cell [c0, c1]; nullopt when the cell does not enter the box.
 std::optional<std::array<double, 2>> CellInsideBox(const ResponsePatchData &patch,
                                                    const SpatialSupportBounds &box,
                                                    int dimension)
 {
-  double lo = patch.longitudinal_cell[0], hi = patch.longitudinal_cell[1];
-  for (int d = 0; d < dimension; d++)
-  {
-    const double w = patch.axis_w[d];
-    if (std::abs(w) <= 1.0e-14)
-    {
-      if (!(patch.origin[d] > box.min[d] && patch.origin[d] < box.max[d]))
-      {
-        return std::nullopt;
-      }
-      continue;
-    }
-    const double a = (box.min[d] - patch.origin[d]) / w;
-    const double b = (box.max[d] - patch.origin[d]) / w;
-    lo = std::max(lo, std::min(a, b));
-    hi = std::min(hi, std::max(a, b));
-  }
-  const double scale =
-      std::max(1.0, patch.longitudinal_cell[1] - patch.longitudinal_cell[0]);
-  if (hi - lo <= 1.0e-12 * scale)
-  {
-    return std::nullopt;
-  }
-  return std::array<double, 2>{lo, hi};
+  return LineInsideBox(patch.origin, patch.axis_w, patch.longitudinal_cell[0],
+                       patch.longitudinal_cell[1], box, dimension);
 }
 
 }  // namespace
@@ -16276,6 +16958,110 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
   return ownership;
 }
 
+UncoveredSpatialSupportClipping ClipUncoveredPortionsBySpatialSupport(
+    std::vector<ResponseCorrectionData::UncoveredPortionData> &portions,
+    const std::vector<SpatialSupportBounds> &supports, int dimension)
+{
+  UncoveredSpatialSupportClipping clipping;
+  std::vector<ResponseCorrectionData::UncoveredPortionData> placed;
+  placed.reserve(portions.size());
+  bool changed = false;
+  for (const auto &portion : portions)
+  {
+    const Point3D chord = Subtract(portion.p1, portion.p0);
+    const double length = Norm(chord);
+    if (length <= 0.0)
+    {
+      placed.push_back(portion);
+      continue;
+    }
+    const Point3D direction = Scale(1.0 / length, chord);
+    // The inside interval per matched cluster's box along the portion, [0, length].
+    std::vector<std::pair<std::array<double, 2>, std::size_t>> inside;
+    for (const auto &support : supports)
+    {
+      if (support.claims.empty())
+      {
+        continue;  // a vertex coupon's support: no claims, no box the coupon models
+      }
+      if (const auto interval =
+              LineInsideBox(portion.p0, direction, 0.0, length, support, dimension))
+      {
+        inside.emplace_back(*interval, support.patch);
+      }
+    }
+    if (inside.empty())
+    {
+      placed.push_back(portion);
+      continue;
+    }
+    changed = true;
+    clipping.clipped_portions++;
+    std::sort(inside.begin(), inside.end());
+    // The union of the inside intervals, then its complement in [0, length]: the kept
+    // pieces, each a portion of its own.
+    const double scale = std::max(1.0, length);
+    std::vector<std::array<double, 2>> removed;
+    for (const auto &[interval, spatial_patch] : inside)
+    {
+      UncoveredSpatialSupportClip clip;
+      clip.feature = portion.feature;
+      clip.topology = portion.topology;
+      clip.segment = portion.segment;
+      clip.spatial_patch = spatial_patch;
+      clip.length = interval[1] - interval[0];
+      clipping.clips.push_back(std::move(clip));
+      if (!removed.empty() && interval[0] <= removed.back()[1] + 1.0e-12 * scale)
+      {
+        removed.back()[1] = std::max(removed.back()[1], interval[1]);
+      }
+      else
+      {
+        removed.push_back(interval);
+      }
+    }
+    std::vector<std::array<double, 2>> kept;
+    double cursor = 0.0;
+    for (const auto &interval : removed)
+    {
+      if (interval[0] - cursor > 1.0e-12 * scale)
+      {
+        kept.push_back({cursor, interval[0]});
+      }
+      cursor = interval[1];
+      clipping.removed_length += interval[1] - interval[0];
+      clipping.removed_by_feature[portion.feature] += interval[1] - interval[0];
+    }
+    if (length - cursor > 1.0e-12 * scale)
+    {
+      kept.push_back({cursor, length});
+    }
+    if (kept.empty())
+    {
+      clipping.removed_portions++;
+    }
+    else if (kept.size() > 1)
+    {
+      clipping.split_portions++;
+    }
+    for (const auto &piece : kept)
+    {
+      auto placed_portion = portion;
+      // An end at the portion's own end keeps that end's coordinates exactly.
+      placed_portion.p0 =
+          piece[0] <= 0.0 ? portion.p0 : Add(portion.p0, Scale(piece[0], direction));
+      placed_portion.p1 =
+          piece[1] >= length ? portion.p1 : Add(portion.p0, Scale(piece[1], direction));
+      placed.push_back(std::move(placed_portion));
+    }
+  }
+  if (changed)
+  {
+    portions = std::move(placed);
+  }
+  return clipping;
+}
+
 std::vector<SpatialSupportMarginOverlap>
 FindSpatialSupportMarginOverlaps(const std::vector<SpatialSupportBounds> &supports,
                                  int dimension, double continuation_tolerance)
@@ -16768,6 +17554,295 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
       diagnostics["Cells"].get<int>(), diagnostics["WhollyOwnedCells"].get<int>(),
       diagnostics["ClippedCells"].get<int>(), diagnostics["Shared"]["Cells"].get<int>(),
       diagnostics["OwnedLength"].get<double>(), lines);
+}
+
+nlohmann::json DescribeCornerArmTrimExcludedCoupons(
+    const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
+    const ResponseCorrectionData &config,
+    const std::function<std::optional<std::string>(std::size_t patch_idx)> &excluded_reason,
+    double coordinate_scale)
+{
+  nlohmann::json corners = nlohmann::json::array();
+  for (const auto &trim : trims)
+  {
+    for (std::size_t patch_idx = 0; patch_idx < config.patches.size(); patch_idx++)
+    {
+      const auto &provenance = config.patches[patch_idx].provenance;
+      if (provenance.feature != trim.feature || provenance.coupon_depth != 0.0 ||
+          !provenance.claims.empty() || provenance.stretch >= 0 ||
+          provenance.has_support_box)
+      {
+        continue;  // not the corner's vertex coupon
+      }
+      if (const auto reason = excluded_reason(patch_idx))
+      {
+        corners.push_back(
+            {{"Feature", trim.feature},
+             {"Topology", trim.topology},
+             {"Patch", patch_idx},
+             {"Reason", *reason},
+             {"AngleDegrees", trim.angle_degrees},
+             {"TrimmedLength", trim.trimmed_length * coordinate_scale},
+             {"RemovedCellLength", trim.removed_cell_length * coordinate_scale},
+             {"RemovedUncoveredLength", trim.removed_uncovered_length * coordinate_scale}});
+      }
+    }
+  }
+  return {
+      {"Count", static_cast<int>(corners.size())},
+      {"Corners", std::move(corners)},
+      {"Rule",
+       "decision 399 (MINOR-7, 2026-10-06): the trimmed corners whose vertex coupon the "
+       "placement then does not apply (Reason: DomainBoundary = decision 258 "
+       "exclusion, VertexOwnership = decision 282 rule B4, SpatialClusterPriority = an "
+       "exact cluster owning the overlapping corner). KNOWN LIMIT: the second arm's "
+       "[R, s) stays unmodelled there (its cells were trimmed for a coupon that is not "
+       "applied), as the corner's own window [0, R) already is. Lengths in mesh units"}};
+}
+
+// The consistent-mortar record (decision 404 D1) of the runtime models: per translational
+// model the constrained metal-band vertices of its surface-mortar hat basis (inserted by
+// the rule from the topology and Fabrication.MetalThickness, or its ZeroTraceIndices under
+// the library contract) and the rule that produced them; spatial models are listed with
+// their trace mesh as the source. Coordinates in the canonical coupon frame (the library's
+// length unit).
+nlohmann::json DescribeConsistentMortar(const ResponseCorrectionData &config)
+{
+  nlohmann::json models = nlohmann::json::array();
+  int translational = 0, inserted = 0, contract = 0, without_band = 0;
+  for (const auto &model : config.models)
+  {
+    const bool is_translational =
+        !model.spatial_basis && IsTranslationalTopology(model.topology);
+    std::string source;
+    if (!is_translational)
+    {
+      source = "TraceMesh";
+    }
+    else if (!model.consistent_mortar_vertices.empty())
+    {
+      source = "RuntimeRule";
+      inserted++;
+    }
+    else if (!model.zero_trace_indices.empty())
+    {
+      source = "ZeroTraceIndices";
+      contract++;
+    }
+    else
+    {
+      source = "None";
+      without_band++;
+    }
+    translational += is_translational ? 1 : 0;
+    models.push_back({{"Model", model.name},
+                      {"ModelIndex", model.idx},
+                      {"Topology", model.topology},
+                      {"Source", source},
+                      {"Rule", model.consistent_mortar_rule},
+                      {"ZeroTraceIndices", model.zero_trace_indices},
+                      {"BandVertices", model.consistent_mortar_vertices}});
+  }
+  return {
+      {"TranslationalModels", translational},
+      {"WithInsertedBandVertices", inserted},
+      {"WithZeroTraceIndices", contract},
+      {"WithoutBand", without_band},
+      {"Models", std::move(models)},
+      {"Rule",
+       "decision 404 D1 (2026-10-06): the translational surface mortar projects the device "
+       "trace onto the coupon's own hat basis, whose hats vanish on the constrained metal "
+       "band [0, MetalThickness] where the metal meets the matching contour (the straight "
+       "generators constrain that band and publish the free knots only). Source "
+       "RuntimeRule: the band vertices are inserted at library load from the topology "
+       "(IsolatedEdge / CurvedEdge: the face x = min; SameConductorGap: both faces; "
+       "ParallelEdgeCluster: the face of an outer edge whose gap points inward; strips: "
+       "none) and Fabrication.MetalThickness between the two consecutive knots on either "
+       "side of the band; a library whose knots lie on the band fails closed. Source "
+       "ZeroTraceIndices: the library lists the band knots (verified against the same "
+       "rule). Source None: no band (strip), open contour paths (conductor-anchored, "
+       "outside the rule) or no Fabrication.MetalThickness (legacy mortar). Collocated "
+       "trace coupling does not use the mortar. Coordinates in the canonical coupon "
+       "frame"}};
+}
+
+nlohmann::json
+DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
+                       const ResponseCorrectionData &config, double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  nlohmann::json corners = nlohmann::json::array(), cells = nlohmann::json::array();
+  double trimmed = 0.0, removed_cells = 0.0, removed_uncovered = 0.0;
+  for (const auto &trim : trims)
+  {
+    trimmed += trim.trimmed_length;
+    removed_cells += trim.removed_cell_length;
+    removed_uncovered += trim.removed_uncovered_length;
+    nlohmann::json patches = nlohmann::json::array();
+    for (const auto &[patch, removed] : trim.cells)
+    {
+      patches.push_back(patch);
+      const auto &data = config.patches[patch];
+      cells.push_back({{"Patch", patch},
+                       {"Corner", trim.feature},
+                       {"Feature", data.provenance.feature},
+                       {"Stretch", data.provenance.stretch},
+                       {"Segment", data.provenance.segment},
+                       {"Model", models.at(data.model)->name},
+                       {"RemovedLength", removed * coordinate_scale}});
+    }
+    corners.push_back(
+        {{"Feature", trim.feature},
+         {"Topology", trim.topology},
+         {"AngleDegrees", trim.angle_degrees},
+         {"ExitDistanceOverR", trim.exit_distance_over_radius},
+         {"TrimmedLength", trim.trimmed_length * coordinate_scale},
+         {"RemovedCellLength", trim.removed_cell_length * coordinate_scale},
+         {"RemovedUncoveredLength", trim.removed_uncovered_length * coordinate_scale},
+         {"Patches", std::move(patches)}});
+  }
+  return {
+      {"Count", static_cast<int>(trims.size())},
+      {"TrimmedLength", trimmed * coordinate_scale},
+      {"RemovedCellLength", removed_cells * coordinate_scale},
+      {"RemovedUncoveredLength", removed_uncovered * coordinate_scale},
+      {"ToleranceOverR", kSignatureParameterToleranceOverRadius},
+      {"Corners", std::move(corners)},
+      {"Cells", std::move(cells)},
+      {"Rule",
+       "decision 394 (F1, 2026-10-06): a matched corner's coupon is calibrated on the "
+       "matching square |u|, |v| <= R of its canonical frame (u = the first arm), which "
+       "contains the second arm up to s = R / max(|cos theta|, |sin theta|) from the "
+       "vertex (theta = the corner angle) while the vertex window claims R along each "
+       "arm; the second arm's translational cells (every own-edge cell within "
+       "ToleranceOverR x R of that arm's line and plane) begin at s: their part before s "
+       "is removed (the kept part re-expressed as a cell at its midpoint, weight and "
+       "quadrature weight scaled by kept / cell; a cell wholly before s keeps weight 0), "
+       "and an unmatched feature's portion on that arm loses the same part. "
+       "TrimmedLength = s - R per corner (the geometric trim), RemovedCellLength = the "
+       "cell length removed, each patch weighted by its model weight (the co-located "
+       "patches of a first-order split share one cell; a cell beginning before R, a "
+       "snapped claim boundary, loses that part too); Cells lists the full removed length "
+       "per patch. A corner whose s - R is within ToleranceOverR x R (perpendicular "
+       "arms: s = R) is untouched and not listed. Lengths in mesh units"}};
+}
+
+nlohmann::json DescribeUncoveredPortions(
+    const std::vector<ResponseCorrectionData::UncoveredPortionData> &portions,
+    const UncoveredSpatialSupportClipping *clipping, const ResponseCorrectionData &config,
+    double coordinate_scale)
+{
+  nlohmann::json entries = nlohmann::json::array();
+  std::map<std::string, std::pair<int, double>> by_type;
+  std::set<int> features;
+  double length = 0.0;
+  for (const auto &portion : portions)
+  {
+    const double portion_length = Norm(Subtract(portion.p1, portion.p0)) * coordinate_scale;
+    length += portion_length;
+    features.insert(portion.feature);
+    auto &entry = by_type[portion.topology];
+    entry.first++;
+    entry.second += portion_length;
+    std::array<double, 3> p0{}, p1{};
+    for (int d = 0; d < 3; d++)
+    {
+      p0[d] = portion.p0[d] * coordinate_scale;
+      p1[d] = portion.p1[d] * coordinate_scale;
+    }
+    entries.push_back({{"Feature", portion.feature},
+                       {"Topology", portion.topology},
+                       {"Segment", portion.segment},
+                       {"P0", p0},
+                       {"P1", p1},
+                       {"Length", portion_length}});
+  }
+  nlohmann::json types = nlohmann::json::object();
+  for (const auto &[type, entry] : by_type)
+  {
+    types[type] = {{"Portions", entry.first}, {"Length", entry.second}};
+  }
+  // The parts removed inside the matched clusters' support boxes (decision 399 MAJOR-1):
+  // per feature, per box and per clip.
+  nlohmann::json clipped = {
+      {"Portions", 0},
+      {"RemovedPortions", 0},
+      {"SplitPortions", 0},
+      {"Length", 0.0},
+      {"ByFeature", nlohmann::json::array()},
+      {"BySupport", nlohmann::json::array()},
+      {"Clips", nlohmann::json::array()},
+      {"Rule",
+       "decision 399 (MAJOR-1, 2026-10-06): the part of an uncovered portion strictly "
+       "inside a matched SpatialEdgeCluster's support box (the bounds the continuation "
+       "ownership of decision 236 clips the translational cells with, the same "
+       "strict-interior test) is removed at placement, the kept pieces (none, one, or two "
+       "when the portion crosses the box) replacing the portion: the coupon models its "
+       "whole box, so the raw within-R energy there is the coupon's. Length = the removed "
+       "length; Portions = the portions that lost a part, RemovedPortions those wholly "
+       "inside, SplitPortions those cut into two pieces. Without a matched cluster the "
+       "portions are untouched. Lengths in mesh units"}};
+  if (clipping)
+  {
+    clipped["Portions"] = clipping->clipped_portions;
+    clipped["RemovedPortions"] = clipping->removed_portions;
+    clipped["SplitPortions"] = clipping->split_portions;
+    clipped["Length"] = clipping->removed_length * coordinate_scale;
+    std::map<int, std::string> topologies;
+    std::map<std::size_t, std::pair<int, double>> by_support;
+    for (const auto &clip : clipping->clips)
+    {
+      topologies.emplace(clip.feature, clip.topology);
+      auto &support = by_support[clip.spatial_patch];
+      support.first++;
+      support.second += clip.length * coordinate_scale;
+      clipped["Clips"].push_back(
+          {{"Feature", clip.feature},
+           {"Topology", clip.topology},
+           {"Segment", clip.segment},
+           {"SpatialPatch", clip.spatial_patch},
+           {"SpatialFeature", config.patches[clip.spatial_patch].provenance.feature},
+           {"Length", clip.length * coordinate_scale}});
+    }
+    for (const auto &[feature, removed] : clipping->removed_by_feature)
+    {
+      clipped["ByFeature"].push_back({{"Feature", feature},
+                                      {"Topology", topologies.at(feature)},
+                                      {"Length", removed * coordinate_scale}});
+    }
+    for (const auto &[spatial_patch, entry] : by_support)
+    {
+      clipped["BySupport"].push_back(
+          {{"SpatialPatch", spatial_patch},
+           {"SpatialFeature", config.patches[spatial_patch].provenance.feature},
+           {"Clips", entry.first},
+           {"Length", entry.second}});
+    }
+  }
+  return {
+      {"Count", static_cast<int>(portions.size())},
+      {"Features", static_cast<int>(features.size())},
+      {"Length", length},
+      {"ByType", std::move(types)},
+      {"Portions", std::move(entries)},
+      {"ClippedBySpatialSupport", std::move(clipped)},
+      {"Rule",
+       "decision 394 (F2, 2026-10-06): the portions of every feature the library has no "
+       "model for (Status Missing: unmatched alone, no neighbour affected), as global "
+       "sub-segments of the metal perimeter after the corner-arm trim and after the clip "
+       "by "
+       "the matched clusters' support boxes (ClippedBySpatialSupport, decision 399). The "
+       "electrostatic "
+       "driver keeps the device's RAW within-R surface energy whose nearest perimeter "
+       "point lies on one of them in every corrected interface energy (fixed trace and "
+       "fixed flux on the raw field, self-consistent on the corrected field) instead of "
+       "dropping it with the within-R energy of the modelled perimeter, and reports that "
+       "share per feature type (surface-response-uncovered-energy.csv). Lengths and "
+       "coordinates in mesh units"}};
 }
 
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
@@ -17629,6 +18704,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     model.spatial_basis = model_config.spatial_basis;
     model.contour_groups = model_config.contour_groups;
     model.zero_trace_indices = model_config.zero_trace_indices;
+    model.consistent_mortar_vertices = model_config.consistent_mortar_vertices;
+    model.consistent_mortar_rule = model_config.consistent_mortar_rule;
     for (const auto &path : model_config.open_contour_paths)
     {
       model.open_contour_paths.push_back(
@@ -17875,21 +18952,79 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       else
       {
+        // A segment end >= contour_size is a constrained metal-band vertex (decision 404
+        // D1): the coupon's hat basis has a vertex there with no coefficient.
+        auto SegmentPoint = [&](int index) -> const std::array<double, 3> &
+        {
+          return index < model.contour_size
+                     ? points[index]
+                     : model.consistent_mortar_vertices[index - model.contour_size];
+        };
         auto AddSegment = [&](int begin, int end)
         {
-          MFEM_VERIFY(begin >= 0 && begin < model.contour_size && end >= 0 &&
-                          end < model.contour_size && begin != end,
+          const int vertex_count =
+              model.contour_size +
+              static_cast<int>(model.consistent_mortar_vertices.size());
+          MFEM_VERIFY(begin >= 0 && begin < vertex_count && end >= 0 &&
+                          end < vertex_count && begin != end,
                       "Surface-mortar contour contains an invalid segment!");
           double length_squared = 0.0;
           for (int d = 0; d < 3; d++)
           {
-            const double delta = points[end][d] - points[begin][d];
+            const double delta = SegmentPoint(end)[d] - SegmentPoint(begin)[d];
             length_squared += delta * delta;
           }
           const double length = std::sqrt(length_squared);
           MFEM_VERIFY(length > 0.0,
                       "Surface-mortar contour contains a zero-length segment!");
           model.mortar_segments.push_back({begin, end, length, 1});
+        };
+        // The band vertices on the knot segment begin -> end, ordered along it; the
+        // segments between two band vertices (the metal band) carry no hat.
+        std::vector<bool> vertex_inserted(model.consistent_mortar_vertices.size(), false);
+        auto AddKnotSegment = [&](int begin, int end)
+        {
+          std::vector<std::pair<double, int>> inserted;
+          const auto &a = points[begin];
+          const auto &b = points[end];
+          double length_squared = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            length_squared += (b[d] - a[d]) * (b[d] - a[d]);
+          }
+          for (std::size_t v = 0; v < model.consistent_mortar_vertices.size(); v++)
+          {
+            const auto &p = model.consistent_mortar_vertices[v];
+            double dot = 0.0, distance_squared = 0.0;
+            for (int d = 0; d < 3; d++)
+            {
+              dot += (p[d] - a[d]) * (b[d] - a[d]);
+            }
+            const double s = dot / length_squared;
+            for (int d = 0; d < 3; d++)
+            {
+              const double foot = a[d] + s * (b[d] - a[d]);
+              distance_squared += (p[d] - foot) * (p[d] - foot);
+            }
+            if (s > 0.0 && s < 1.0 && distance_squared <= 1.0e-20 * length_squared)
+            {
+              inserted.emplace_back(s, model.contour_size + static_cast<int>(v));
+              vertex_inserted[v] = true;
+            }
+          }
+          std::sort(inserted.begin(), inserted.end());
+          int previous = begin;
+          bool previous_is_knot = true;
+          for (const auto &[s, vertex] : inserted)
+          {
+            if (previous_is_knot)
+            {
+              AddSegment(previous, vertex);
+            }
+            previous = vertex;
+            previous_is_knot = false;
+          }
+          AddSegment(previous, end);
         };
         if (!model.open_contour_paths.empty())
         {
@@ -17900,7 +19035,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 "A translational surface-mortar path requires at least two points!");
             for (std::size_t i = 1; i < path.indices.size(); i++)
             {
-              AddSegment(path.indices[i - 1], path.indices[i]);
+              AddKnotSegment(path.indices[i - 1], path.indices[i]);
             }
           }
         }
@@ -17914,17 +19049,34 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                         "three points!");
             for (int i = 0; i < count; i++)
             {
-              AddSegment(offset + i, offset + (i + 1) % count);
+              AddKnotSegment(offset + i, offset + (i + 1) % count);
             }
             offset += count;
           }
         }
+        MFEM_VERIFY(std::all_of(vertex_inserted.begin(), vertex_inserted.end(),
+                                [](bool inserted) { return inserted; }),
+                    "A consistent-mortar band vertex of response model \""
+                        << model.name
+                        << "\" lies on no contour segment between consecutive basis "
+                           "points!");
         for (const auto &segment : model.mortar_segments)
         {
-          mass(segment.begin, segment.begin) += segment.length / 3.0;
-          mass(segment.end, segment.end) += segment.length / 3.0;
-          mass(segment.begin, segment.end) += segment.length / 6.0;
-          mass(segment.end, segment.begin) += segment.length / 6.0;
+          const bool begin_knot = segment.begin < model.contour_size;
+          const bool end_knot = segment.end < model.contour_size;
+          if (begin_knot)
+          {
+            mass(segment.begin, segment.begin) += segment.length / 3.0;
+          }
+          if (end_knot)
+          {
+            mass(segment.end, segment.end) += segment.length / 3.0;
+          }
+          if (begin_knot && end_knot)
+          {
+            mass(segment.begin, segment.end) += segment.length / 6.0;
+            mass(segment.end, segment.begin) += segment.length / 6.0;
+          }
         }
       }
       if (!model.spatial_mortar)
@@ -17936,6 +19088,20 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           for (int j = 0; j < model.contour_size; j++)
           {
             model.mortar_constant_load[i] += mass(i, j);
+          }
+        }
+        // The integral of a free hat over its ramp to a band vertex (no mass column).
+        for (const auto &segment : model.mortar_segments)
+        {
+          const bool begin_knot = segment.begin < model.contour_size;
+          const bool end_knot = segment.end < model.contour_size;
+          if (begin_knot && !end_knot)
+          {
+            model.mortar_constant_load[segment.begin] += segment.length / 6.0;
+          }
+          else if (end_knot && !begin_knot)
+          {
+            model.mortar_constant_load[segment.end] += segment.length / 6.0;
           }
         }
       }
@@ -17950,6 +19116,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       model.mortar_mass_inverse.SetSize(model.contour_size);
       mfem::DenseMatrixInverse(mass, true).GetInverseMatrix(model.mortar_mass_inverse);
+      model.constrained_translational_mortar =
+          !model.spatial_mortar &&
+          (!model.zero_trace_indices.empty() || !model.consistent_mortar_vertices.empty());
     }
     auto domain_response = BuildDomainResponseMatrices(
         model_config, model.basis_size, model.zero_trace_indices, iodata.units);
@@ -18016,8 +19185,40 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   };
   std::vector<SpatialSupport> spatial_supports;
   std::set<std::size_t> spatially_owned_patches;
+  // Why a vertex coupon is not applied (the trimmed-corner record of decision 399 MINOR-7).
+  std::map<std::size_t, std::string> vertex_coupon_exclusion_reasons;
   // The placed patches: the configured ones with the continuation ownership applied (3D).
   std::vector<ResponsePatchData> placed_patches = config->patches;
+  // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
+  // weight 0 at construction and is skipped like a wholly owned cell.
+  for (const auto &trim : config->corner_arm_trims)
+  {
+    for (const auto &[patch, removed] : trim.cells)
+    {
+      (void)removed;
+      if (placed_patches[patch].weight <= 0.0)
+      {
+        spatially_owned_patches.insert(patch);
+      }
+    }
+  }
+  // The consistent mortar (decision 404 D1): the constrained metal-band vertices of every
+  // translational model's surface-mortar hat basis and the rule that produced them.
+  ownership_diagnostics["ConsistentMortar"] = DescribeConsistentMortar(*config);
+  if (config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR &&
+      ownership_diagnostics["ConsistentMortar"]["WithInsertedBandVertices"].get<int>() > 0)
+  {
+    Mpi::Print(
+        fespace.GetComm(),
+        "Consistent translational mortar (decision 404 D1): {:d} of {:d} "
+        "translational model(s) project onto the coupon hats with inserted "
+        "metal-band vertices ({:d} list them as ZeroTraceIndices, {:d} have no "
+        "band)\n",
+        ownership_diagnostics["ConsistentMortar"]["WithInsertedBandVertices"].get<int>(),
+        ownership_diagnostics["ConsistentMortar"]["TranslationalModels"].get<int>(),
+        ownership_diagnostics["ConsistentMortar"]["WithZeroTraceIndices"].get<int>(),
+        ownership_diagnostics["ConsistentMortar"]["WithoutBand"].get<int>());
+  }
   if (dimension == 3)
   {
     std::vector<std::string> skipped;
@@ -18086,6 +19287,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           // coupon operator is not yet supported.
           const auto subordinate = first_cluster ? j : i;
           spatially_owned_patches.insert(spatial_supports[subordinate].patch);
+          vertex_coupon_exclusion_reasons.emplace(spatial_supports[subordinate].patch,
+                                                  "SpatialClusterPriority");
           continue;
         }
         // Two clusters (decision 244): a margins-only overlap (no claim of either inside
@@ -18109,6 +19312,51 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    << ". Replace them with one coupled spatial model or an explicit "
                       "nonoverlapping partition!");
       }
+    }
+    // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of
+    // the built (or cached) patches in the operator record: the applied cells are the
+    // trimmed ones; the uncovered portions, clipped by the matched clusters' support boxes
+    // (decision 399 MAJOR-1) as the continuation ownership clips the cells below, keep
+    // their raw within-R energy in the driver's corrected interface energies
+    // (GetUncoveredPortions).
+    ownership_diagnostics["CornerArmTrim"] =
+        DescribeCornerArmTrims(config->corner_arm_trims, *config, coordinate_scale);
+    uncovered_portions = config->uncovered_portions;
+    uncovered_spatial_support_clipping =
+        ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
+    ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
+        uncovered_portions, &uncovered_spatial_support_clipping, *config, coordinate_scale);
+    if (!config->corner_arm_trims.empty())
+    {
+      Mpi::Print(fespace.GetComm(),
+                 "Corner-arm trim (decision 394 F1): {:d} corner(s), {:.6e} mesh units of "
+                 "second-arm cells removed ({:.6e} geometric)\n",
+                 ownership_diagnostics["CornerArmTrim"]["Count"].get<int>(),
+                 ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
+                 ownership_diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
+    }
+    if (!uncovered_portions.empty())
+    {
+      Mpi::Warning(fespace.GetComm(),
+                   "Uncovered requirements (decision 394 F2): {:d} portion(s) of {:d} "
+                   "unmatched feature(s), {:.6e} mesh units, keep their raw within-R "
+                   "surface energy in the corrected interface energies (reported per type "
+                   "in surface-response-uncovered-energy.csv)!\n",
+                   ownership_diagnostics["Uncovered"]["Count"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Features"].get<int>(),
+                   ownership_diagnostics["Uncovered"]["Length"].get<double>());
+    }
+    if (uncovered_spatial_support_clipping.clipped_portions > 0)
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Uncovered requirements inside matched clusters' support boxes (decision "
+          "399): {:d} portion(s), {:.6e} mesh units removed from the uncovered "
+          "portions ({:d} wholly inside, {:d} split)\n",
+          uncovered_spatial_support_clipping.clipped_portions,
+          uncovered_spatial_support_clipping.removed_length * coordinate_scale,
+          uncovered_spatial_support_clipping.removed_portions,
+          uncovered_spatial_support_clipping.split_portions);
     }
     if (!config->quantum_near_match.empty())
     {
@@ -18191,6 +19439,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       for (const auto &vertex : ownership.vertices)
       {
         spatially_owned_patches.insert(vertex.patch);
+        vertex_coupon_exclusion_reasons.emplace(vertex.patch, "VertexOwnership");
       }
       ownership_diagnostics["TranslationalStretchesInsideSpatialSupport"] =
           DescribeTranslationalOwnershipRecords(records, boxes, *config, coordinate_scale,
@@ -18226,6 +19475,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);
+        vertex_coupon_exclusion_reasons.emplace(exclusion.patch, "DomainBoundary");
       }
       ownership_diagnostics["DomainBoundaryExclusions"] =
           DescribeDomainBoundaryExclusions(exclusions, *config, coordinate_scale);
@@ -18239,6 +19489,26 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                    DescribeDomainBoundaryExclusionSummary(
                        ownership_diagnostics["DomainBoundaryExclusions"]));
       }
+    }
+    // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
+    ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"] =
+        DescribeCornerArmTrimExcludedCoupons(
+            config->corner_arm_trims, *config,
+            [&](std::size_t patch_idx) -> std::optional<std::string>
+            {
+              const auto it = vertex_coupon_exclusion_reasons.find(patch_idx);
+              return it == vertex_coupon_exclusion_reasons.end()
+                         ? std::nullopt
+                         : std::optional<std::string>(it->second);
+            },
+            coordinate_scale);
+    if (ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>() > 0)
+    {
+      Mpi::Warning(
+          fespace.GetComm(),
+          "Corner-arm trim: {:d} trimmed corner(s) whose vertex coupon is not applied "
+          "(decision 399 MINOR-7): their second arm's [R, s) is modelled by nothing\n",
+          ownership_diagnostics["CornerArmTrim"]["ExcludedCoupons"]["Count"].get<int>());
     }
   }
 
@@ -18612,8 +19882,16 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                              : 0.0;
           for (const auto &segment : model.mortar_segments)
           {
-            const auto &begin = local_points[segment.begin];
-            const auto &end = local_points[segment.end];
+            // A segment end >= contour_size is a constrained metal-band vertex of the
+            // consistent mortar (decision 404 D1).
+            auto SegmentPoint = [&](int index) -> const std::array<double, 3> &
+            {
+              return index < model.contour_size
+                         ? local_points[index]
+                         : model.consistent_mortar_vertices[index - model.contour_size];
+            };
+            const auto &begin = SegmentPoint(segment.begin);
+            const auto &end = SegmentPoint(segment.end);
             const int transverse_subdivisions =
                 std::max(1, static_cast<int>(std::ceil(segment.length / coordinate_scale /
                                                        patch.mortar_resolution)));
@@ -18972,8 +20250,33 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
-  global_patch_count = static_cast<int>(config.patches.size());
-  for (const auto &patch_config : config.patches)
+  // The applied patches: a second-arm cell wholly before its corner's square exit
+  // (decision 394 F1) keeps weight 0 at construction and is not applied.
+  std::vector<ResponsePatchData> applied_patches;
+  {
+    std::set<std::size_t> wholly_trimmed;
+    for (const auto &trim : config.corner_arm_trims)
+    {
+      for (const auto &[patch, removed] : trim.cells)
+      {
+        (void)removed;
+        if (config.patches[patch].weight <= 0.0)
+        {
+          wholly_trimmed.insert(patch);
+        }
+      }
+    }
+    applied_patches.reserve(config.patches.size());
+    for (std::size_t patch_index = 0; patch_index < config.patches.size(); patch_index++)
+    {
+      if (!wholly_trimmed.count(patch_index))
+      {
+        applied_patches.push_back(config.patches[patch_index]);
+      }
+    }
+  }
+  global_patch_count = static_cast<int>(applied_patches.size());
+  for (const auto &patch_config : applied_patches)
   {
     const auto model_it = model_indices.find(patch_config.model);
     MFEM_VERIFY(model_it != model_indices.end(),
@@ -18981,14 +20284,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     global_basis_size += models[model_it->second].basis_size;
   }
   const std::size_t local_patch_capacity =
-      (config.patches.size() + static_cast<std::size_t>(size) - 1) / size;
+      (applied_patches.size() + static_cast<std::size_t>(size) - 1) / size;
   maxwell_contours.reserve(local_patch_capacity);
   maxwell_conductor_anchors.reserve(local_patch_capacity);
   maxwell_paths.reserve(local_patch_capacity);
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
-  for (std::size_t patch_index = 0; patch_index < config.patches.size(); patch_index++)
+  for (std::size_t patch_index = 0; patch_index < applied_patches.size(); patch_index++)
   {
-    const auto &patch_config = config.patches[patch_index];
+    const auto &patch_config = applied_patches[patch_index];
     const auto model_it = model_indices.find(patch_config.model);
     MFEM_VERIFY(model_it != model_indices.end(),
                 "Response-correction patch refers to an unknown model index!");
@@ -20266,8 +21569,14 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
                 const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
                                  transverse_subdivisions;
                 const double value = correction(point++);
-                mortar_load[segment.begin] += quadrature_weight * (1.0 - t) * value;
-                mortar_load[segment.end] += quadrature_weight * t * value;
+                if (segment.begin < model.contour_size)
+                {
+                  mortar_load[segment.begin] += quadrature_weight * (1.0 - t) * value;
+                }
+                if (segment.end < model.contour_size)
+                {
+                  mortar_load[segment.end] += quadrature_weight * t * value;
+                }
               }
             }
           }
@@ -20276,15 +21585,33 @@ void SurfaceResponseOperator::ApplyTrace(const Vector &x, Vector &values) const
             reference += longitudinal_weight * correction(point++);
           }
         }
+        if (model.constrained_translational_mortar)
+        {
+          // The consistent mortar (decision 404 D1): the trace relative to the reference
+          // conductor projected onto the coupon's hats, which vanish on the constrained
+          // metal band. The free hats no longer sum to one next to the band, so the
+          // reference is removed through the hats' integrals (as the spatial mortar does)
+          // and a band knot listed as a basis point keeps a zero coefficient.
+          for (int i = 0; i < model.contour_size; i++)
+          {
+            mortar_load[i] -= references[0] * model.mortar_constant_load[i];
+          }
+          for (const int index : model.zero_trace_indices)
+          {
+            mortar_load[index] = 0.0;
+          }
+        }
       }
       MFEM_ASSERT(point == patch.point_offset + patch.point_count - patch.probe_point_count,
                   "Incorrect surface-mortar point count!");
       mortar_coefficients.SetSize(model.contour_size);
       model.mortar_mass_inverse.Mult(mortar_load, mortar_coefficients);
+      const double reference_offset =
+          model.spatial_mortar || model.constrained_translational_mortar ? 0.0
+                                                                         : references[0];
       for (int i = 0; i < model.contour_size; i++)
       {
-        values(patch.trace_offset + i) =
-            mortar_coefficients[i] - (model.spatial_mortar ? 0.0 : references[0]);
+        values(patch.trace_offset + i) = mortar_coefficients[i] - reference_offset;
       }
       for (int state = 0; state < model.conductor_state_count; state++)
       {
@@ -20351,6 +21678,21 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
           const double direct = patch_values[model.contour_size + state];
           references[0] += coupling - direct;
           references[state + 1] = direct - coupling;
+        }
+      }
+      else if (model.constrained_translational_mortar)
+      {
+        // The transpose of the consistent mortar: a band knot's coefficient is not read,
+        // the reference is coupled through the hats' integrals.
+        for (const int index : model.zero_trace_indices)
+        {
+          mortar_load[index] = 0.0;
+        }
+        references[0] = -mfem::InnerProduct(model.mortar_constant_load, mortar_load);
+        for (int state = 0; state < model.conductor_state_count; state++)
+        {
+          references[state + 1] += patch_values[model.contour_size + state];
+          references[0] -= patch_values[model.contour_size + state];
         }
       }
       else
@@ -20421,6 +21763,11 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
                                               patch.mortar_resolution)));
             const double quadrature_weight =
                 longitudinal_weight * segment.length / (2.0 * transverse_subdivisions);
+            // A band vertex (index >= contour_size) has no coefficient: its hat value is 0.
+            const double begin_load =
+                segment.begin < model.contour_size ? mortar_load[segment.begin] : 0.0;
+            const double end_load =
+                segment.end < model.contour_size ? mortar_load[segment.end] : 0.0;
             for (int subdivision = 0; subdivision < transverse_subdivisions; subdivision++)
             {
               for (const double offset : {-gauss_offset, gauss_offset})
@@ -20428,8 +21775,7 @@ void SurfaceResponseOperator::ApplyTraceTranspose(const Vector &values, Vector &
                 const double t = (static_cast<double>(subdivision) + 0.5 + offset) /
                                  transverse_subdivisions;
                 correction[point++] =
-                    quadrature_weight *
-                    ((1.0 - t) * mortar_load[segment.begin] + t * mortar_load[segment.end]);
+                    quadrature_weight * ((1.0 - t) * begin_load + t * end_load);
               }
             }
           }
@@ -20919,15 +22265,27 @@ SurfaceResponseOperator::GatherPatchContributions(
 std::vector<SurfaceResponseOperator::PatchTrace>
 SurfaceResponseOperator::GetSpatialPatchTraces(const Vector &x) const
 {
+  return GatherPatchTraces(x, true);
+}
+
+std::vector<SurfaceResponseOperator::PatchTrace>
+SurfaceResponseOperator::GetPatchTraces(const Vector &x) const
+{
+  return GatherPatchTraces(x, false);
+}
+
+std::vector<SurfaceResponseOperator::PatchTrace>
+SurfaceResponseOperator::GatherPatchTraces(const Vector &x, bool spatial_only) const
+{
   MFEM_VERIFY(!maxwell,
-              "Spatial patch-trace export currently supports electrostatic response "
-              "correction only!");
+              "Patch-trace export currently supports electrostatic response correction "
+              "only!");
   ApplyTrace(x, trace);
   std::vector<double> local_records;
   for (const auto &patch : patches)
   {
     const auto &model = models[patch.model];
-    if (!model.spatial_basis)
+    if (spatial_only && !model.spatial_basis)
     {
       continue;
     }
@@ -20943,7 +22301,7 @@ SurfaceResponseOperator::GetSpatialPatchTraces(const Vector &x) const
 
   MFEM_VERIFY(local_records.size() <=
                   static_cast<std::size_t>(std::numeric_limits<int>::max()),
-              "Local spatial patch-trace data exceeds the MPI count limit!");
+              "Local patch-trace data exceeds the MPI count limit!");
   const int local_value_count = static_cast<int>(local_records.size());
   std::vector<int> value_counts(Mpi::Size(fespace.GetComm()));
   Mpi::Allgather(1, &local_value_count, value_counts.data(), fespace.GetComm());
