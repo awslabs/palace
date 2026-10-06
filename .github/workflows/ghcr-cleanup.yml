@@ -68,8 +68,7 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     # A cleanup normally takes well under two minutes. Bound it so that a stuck
-    # run cannot hold the concurrency group below, and with it every index
-    # refresh of the same package, for the default six hours.
+    # run cannot hold the concurrency group below.
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -78,15 +77,9 @@ jobs:
           - palace-1.2
           - palace-develop
           - palace-container-build-cache
-    # Never delete versions while `spack buildcache update-index` is reading the
-    # same package: it lists every tag and then fetches each one, so a tag
-    # deleted in between returns 404 and aborts the refresh. Join the group of
-    # the package's index refresh in spack.yml (palace-1.2-buildcache-index) or
-    # lookahead.yml (palace-develop-buildcache-index). The container build cache
-    # has no index refresh, so its group is unused. Keep cancel-in-progress and
-    # queue identical to the refresh jobs: the default `queue: single` cancels
-    # pending jobs in the group whenever a new one is queued, which could cancel
-    # refreshes waiting there.
+    # Same group as the refresh-*-buildcache-index jobs in spack.yml and
+    # lookahead.yml, so versions are never deleted while update-index reads
+    # the package. Settings must match theirs exactly.
     concurrency:
       group: ${{ matrix.package }}-buildcache-index
       cancel-in-progress: false
