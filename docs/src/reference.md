@@ -1395,7 +1395,7 @@ its own edge (a cell on the claimed mesh segment, or the side's edge abutting th
 within the signature parameter tolerance along and across the chain), so the side whose edge
 the cluster does not claim keeps its cells. Cells of foreign features inside the box keep
 their patches (the coupon's twins do not contain that metal; the mismatch is second order).
-The response-geometry cache (`PALACE_RESPONSE_GEOMETRY_CACHE`, version 9) stores the
+The response-geometry cache (`PALACE_RESPONSE_GEOMETRY_CACHE`, version 10) stores the
 unplaced patches with the provenance this needs, the corner-arm trim records and the
 uncovered portions; older caches are refused. The placed cells
 are reported under `Diagnostics.ContinuationOwnership` (per cell, per coupon) and the

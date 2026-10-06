@@ -285,7 +285,18 @@ private:
     int interior_trace_count = 0;
     bool surface_mortar = false;
     bool spatial_mortar = false;
+    // Translational surface mortar: the hat segments between consecutive contour vertices.
+    // A segment end >= contour_size is a constrained metal-band vertex
+    // consistent_mortar_vertices[end - contour_size] (decision 404 D1): no basis
+    // coefficient, no load, so the adjacent free hat ramps to zero there; the band between
+    // two such vertices carries no segment.
     std::vector<MortarSegment> mortar_segments;
+    std::vector<std::array<double, 3>> consistent_mortar_vertices;
+    std::string consistent_mortar_rule;
+    // A translational mortar whose hat basis has constrained vertices (inserted band
+    // vertices or band knots listed as ZeroTraceIndices): the free hats do not sum to one
+    // beside them, so the projection removes the reference through the hats' integrals.
+    bool constrained_translational_mortar = false;
     std::vector<MortarVertex> mortar_vertices;
     std::vector<MortarTriangle> mortar_triangles;
     mfem::DenseMatrix mortar_mass_inverse;
@@ -916,6 +927,11 @@ nlohmann::json DescribeSpatialSupportMarginOverlaps(
 std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &diagnostics);
 std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnostics);
 
+// The Diagnostics entry of the consistent translational mortar (decision 404 D1): per
+// model the constrained metal-band vertices of its surface-mortar hat basis and the rule
+// that produced them (canonical coupon frame, the library's length unit).
+nlohmann::json DescribeConsistentMortar(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config);
 // The Diagnostics entries of the corner-arm trim (decision 394 F1) and of the uncovered
 // requirements (decision 394 F2) of a response configuration (lengths and coordinates in
 // mesh units); both empty-but-complete when nothing was trimmed / nothing is uncovered.
