@@ -11,7 +11,13 @@
    426,
    427,
    428
-  ]
+  ],
+  "SHA256Note": "the sha256 of DESIGN v2 as confirmed (decision 427) and ruled on (decision 428); ERRATUM 1 (decision 431) was appended afterwards without rewording",
+  "Erratum1": {
+   "Decision": 431,
+   "SHA256": "48731a31723d8178a3eecc7fe4f44b40ed7ef73ea0867ebd87bd278c25b15468",
+   "Rule": "item 1.2 (8): DEFAULT admits a donor whose only BuildGateOverride is the decision-311 cut-end kind (semantic-corner-and-endpoint-anisotropy, Band.Kind CutNeighborhoods; SupersededBy 316), refuses any other gate / kind and an unrecorded build-override mesh path; the donor pool is the library of record v3-b1"
+  }
  },
  "CalibrationRecord": {
   "Path": "coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-reuse-design/evidence/calibration.json",
@@ -105,7 +111,15 @@
   },
   "DefaultActive": false,
   "DefaultActivation": null,
-  "DefaultActivationRule": "DESIGN v2 section 3 / decision 428: the DEFAULT mode is active only after validation pair 5 (an independent in-domain pair at |W| ~ 2 %) has read inside its bound; until then every qualifying reuse is FALLBACK-only. Activation = a DefaultActivation record {ValidationPair, RecordSHA256} written here by a reviewed amendment."
+  "DefaultActivationRule": "DESIGN v2 section 3 / decision 428: the DEFAULT mode is active only after validation pair 5 (an independent in-domain pair at |W| ~ 2 %) has read inside its bound; until then every qualifying reuse is FALLBACK-only. Activation = a DefaultActivation record {ValidationPair, RecordSHA256} written here by a reviewed amendment.",
+  "DonorBuildGateOverride": {
+   "DefaultAdmittedKind": {
+    "Gate": "semantic-corner-and-endpoint-anisotropy",
+    "BandKind": "CutNeighborhoods",
+    "SupersededBy": 316
+   },
+   "Rule": "decision 431 (1)(b)"
+  }
  },
  "AdmissibleStructureKeys": [
   {

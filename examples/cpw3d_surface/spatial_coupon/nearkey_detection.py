@@ -169,10 +169,13 @@ def correspondence(exact_entries, donor_entries, attributes, tolerance):
     return indices, "GeometricNearestMidpoint"
 
 
-def donor_override_record(model):
+def donor_override_record(model, admitted_kind=None):
     """DonorBuildGateOverride {Gate, Approval, Kind, SupersededBy, Path, SHA256, DefaultAdmitted} or None
     (decision 431 (1)(b)); a build-override mesh path without a record is a record of its own kind
-    (DefaultAdmitted false, fail closed)."""
+    (DefaultAdmitted false, fail closed). `admitted_kind` = the rule file's Policy.DonorBuildGateOverride.
+    DefaultAdmittedKind {Gate, BandKind, SupersededBy} (default: ADMITTED_OVERRIDE)."""
+    admitted_kind = admitted_kind or {"Gate": ADMITTED_OVERRIDE["Gate"], "BandKind": ADMITTED_OVERRIDE["Kind"],
+                                      "SupersededBy": ADMITTED_OVERRIDE["SupersededBy"]}
     override = model.get("BuildGateOverride")
     mesh_path = str((model.get("CouponMesh") or {}).get("Path", ""))
     if not override:
@@ -183,16 +186,16 @@ def donor_override_record(model):
                             "(fail closed)"}
         return None
     kind = (override.get("Band") or {}).get("Kind")
-    admitted = override.get("Gate") == ADMITTED_OVERRIDE["Gate"] and kind == ADMITTED_OVERRIDE["Kind"]
+    admitted = override.get("Gate") == admitted_kind["Gate"] and kind == admitted_kind["BandKind"]
     return {"Gate": override.get("Gate"), "Approval": override.get("Approval"), "Kind": kind,
-            "SupersededBy": ADMITTED_OVERRIDE["SupersededBy"] if admitted else None, "Path": override.get("Path"),
+            "SupersededBy": admitted_kind["SupersededBy"] if admitted else None, "Path": override.get("Path"),
             "SHA256": override.get("SHA256"), "DefaultAdmitted": bool(admitted),
             "Rule": "decision 431 (1)(b): DEFAULT reuse admits a donor whose only BuildGateOverride is the decision-311 cut-end kind "
                     "(semantic-corner-and-endpoint-anisotropy at box-face cut ends, superseded by the merged cut-end gate rule of "
                     "decisions 313 / 316) and refuses an override on any other gate"}
 
 
-def donor_status(model):
+def donor_status(model, admitted_kind=None):
     """DESIGN 1.2 item 8 (+ decision 431 (1)(b) on the BuildGateOverride): (admissible for default,
     admissible for fallback, reasons, the override record)."""
     reasons = []
@@ -204,7 +207,7 @@ def donor_status(model):
         reasons.append("donor is itself a reused model (no chaining)")
     if model.get("Topology") not in (None, "SpatialEdgeCluster"):
         reasons.append(f"donor Topology {model.get('Topology')!r}")
-    override = donor_override_record(model)
+    override = donor_override_record(model, admitted_kind)
     return not reasons and (override is None or override["DefaultAdmitted"]), not reasons, reasons, override
 
 
@@ -354,7 +357,8 @@ def analyse_pair(exact_signature, donor_model, *, rule, radius, exact_interfaces
     if S > float(domain["SMax"]):
         refusals.append(f"S {S:.5f} > {domain['SMax']}")
     # item 8: the donor's status
-    default_ok, fallback_ok, status_reasons, override = donor_status(donor_model)
+    default_ok, fallback_ok, status_reasons, override = donor_status(
+        donor_model, (rule["Policy"].get("DonorBuildGateOverride") or {}).get("DefaultAdmittedKind"))
     record["DonorBuildGateOverride"] = override
     refusals.extend(status_reasons)
     # item 9: Vertices (derived; may differ)

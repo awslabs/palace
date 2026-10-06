@@ -141,7 +141,7 @@ def evaluate_candidate(exact, exact_signature, model, near_key, *, rule, library
                                    donor_stored_state2=stored)
     tail = donor_tail(model)
     prediction = predictor.predict(rule, w=near_key["W"], s=near_key["S"], t2e_max=result["T2eMax"], tail_donor=tail)
-    override = detection.donor_override_record(model)
+    override = detection.donor_override_record(model, (rule["Policy"].get("DonorBuildGateOverride") or {}).get("DefaultAdmittedKind"))
     default_admits_donor = near_key["DefaultAdmissible"]
     in_domain = near_key["Qualifies"]
     decisions = {}
