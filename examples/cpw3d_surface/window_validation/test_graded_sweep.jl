@@ -1337,6 +1337,26 @@ end
     # 16 polygon corners; the L1 and L2 traces share the corners (40, 28) and (40, 32) -> one
     # plan point each: 14 vertices.
     @test corners == 16 && plan["band"]["vertex_column_grading"]["vertices"] == 14
+    # A bump with a SQUARE footprint (90-deg joints) adds no vertex: its footprint edges are no
+    # plane's conductor edges (the bump is a column between the grounds, not a corner class).
+    square_bump = synthetic_two_level_window()
+    square_bump["Bumps"] = [
+        Dict(
+            "Conductor" => "ground",
+            "Footprint" => [[11.0, 4.0], [19.0, 4.0], [19.0, 12.0], [11.0, 12.0]]
+        )
+    ]
+    bumped = mesh_polygon_window(
+        read_polygon_set(square_bump),
+        0.05,
+        5.0,
+        joinpath(directory, "square_bump.msh2");
+        verbose=false,
+        sweep=:graded,
+        plan_only=true,
+        vertex_column_grading=true
+    )
+    @test bumped["bumps"] == 1 && bumped["band"]["vertex_column_grading"]["vertices"] == 14
     @test plan["band"]["inward_corners"] > 2 * corners # the crossings are band corners, not vertices
     # The option needs the own band.
     @test_throws ErrorException mesh_polygon_window(

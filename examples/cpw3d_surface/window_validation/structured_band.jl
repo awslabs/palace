@@ -206,8 +206,10 @@ function plan_vertex_angles(
     return angles
 end
 
-# The planes a metal curve is an edge of: those on which the conductor differs across it (a
-# bump footprint edge, differing in bump membership only, belongs to both planes).
+# The planes a metal curve is a CONDUCTOR edge of: those on which the conductor differs across
+# it. A bump footprint edge (bump membership differs, the conductors do not) has none: the
+# bump is a metal column between the two grounds, its footprint corners are not corners of a
+# plane's metal and belong to no corner class, so D3 does not grade toward them.
 function metal_curve_planes(curves::Vector{PlanCurve}, class_by_surface::Dict)
     planes_by_curve = Dict{Int, Vector{Int}}()
     for (k, curve) in enumerate(curves)
@@ -220,9 +222,8 @@ function metal_curve_planes(curves::Vector{PlanCurve}, class_by_surface::Dict)
         length(owners) == 2 ||
             error("Metal curve $(curve.tag) bounds $(length(owners)) partitions")
         a, b = owners
-        planes = [j for j in eachindex(a.conductors) if a.conductors[j] != b.conductors[j]]
-        isempty(planes) && (planes = collect(eachindex(a.conductors)))
-        planes_by_curve[k] = planes
+        planes_by_curve[k] =
+            [j for j in eachindex(a.conductors) if a.conductors[j] != b.conductors[j]]
     end
     return planes_by_curve
 end
