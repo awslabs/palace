@@ -695,6 +695,16 @@ if(PALACE_WITH_GSLIB)
   find_library(GSLIB_LIBRARY NAMES gs gslib HINTS ${GSLIB_ROOT}/lib REQUIRED)
   message(STATUS "Found GSLIB: ${GSLIB_LIBRARY}")
   target_link_libraries(${LIB_TARGET_NAME} PUBLIC ${GSLIB_LIBRARY})
+
+  # Only utils/gslibversion.cpp includes the GSLIB header, for the version query
+  get_filename_component(_gslib_prefix "${GSLIB_LIBRARY}" DIRECTORY)
+  find_path(GSLIB_INCLUDE_DIR gslib.h
+    HINTS ${GSLIB_ROOT}/include ${_gslib_prefix}/../include PATH_SUFFIXES gslib REQUIRED)
+  target_sources(${LIB_TARGET_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/utils/gslibversion.cpp)
+  set_property(
+    SOURCE ${CMAKE_SOURCE_DIR}/utils/gslibversion.cpp
+    APPEND PROPERTY INCLUDE_DIRECTORIES ${GSLIB_INCLUDE_DIR}
+  )
 endif()
 
 target_link_libraries(
@@ -754,22 +764,6 @@ elseif(_blas_lapack MATCHES "(^|;)((lib)?armpl|arm)")
   list(APPEND VERSION_DEFINITIONS PALACE_BLAS_ARMPL)
 elseif(_blas_lapack MATCHES "(^|;)((lib)?blis|aocl)")
   list(APPEND VERSION_DEFINITIONS PALACE_BLAS_AOCL)
-endif()
-# Reading gslib.h in C++ would leak its C99 compatibility macros (e.g. an empty "inline")
-if(PALACE_WITH_GSLIB)
-  get_filename_component(_gslib_prefix "${GSLIB_LIBRARY}" DIRECTORY)
-  find_file(GSLIB_VERSION_HEADER gslib.h
-    HINTS ${GSLIB_ROOT}/include ${_gslib_prefix}/../include PATH_SUFFIXES gslib)
-  if(GSLIB_VERSION_HEADER)
-    file(STRINGS ${GSLIB_VERSION_HEADER} _gslib_version
-      REGEX "^#define GSLIB_RELEASE_VERSION [0-9]+")
-    if(_gslib_version MATCHES "([0-9]+)$")
-      math(EXPR _major "${CMAKE_MATCH_1} / 10000")
-      math(EXPR _minor "(${CMAKE_MATCH_1} / 100) % 100")
-      math(EXPR _patch "${CMAKE_MATCH_1} % 100")
-      list(APPEND VERSION_DEFINITIONS "PALACE_GSLIB_VERSION=\"${_major}.${_minor}.${_patch}\"")
-    endif()
-  endif()
 endif()
 if(nlohmann_json_schema_validator_VERSION)
   list(APPEND VERSION_DEFINITIONS
