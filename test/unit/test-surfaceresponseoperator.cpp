@@ -7106,14 +7106,14 @@ TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerBlendPos
       const auto &fallback = feature["Match"]["InterpolationFallback"];
       CHECK(fallback["StencilRule"] == "cubic");
       REQUIRE(fallback["Stencil"].size() == 4);
-      REQUIRE(fallback["CubicWeights"].size() == 4);
+      REQUIRE(fallback["StencilWeights"].size() == 4);
       for (std::size_t k = 0; k < node_angles.size(); k++)
       {
         CHECK(fallback["Stencil"][k]["Name"] ==
               "convex-corner-" + std::to_string(static_cast<int>(node_angles[k])));
         CHECK_THAT(fallback["Stencil"][k]["AngleDegrees"].get<double>(),
                    WithinAbs(node_angles[k], 1.0e-9));
-        CHECK_THAT(fallback["CubicWeights"][k].get<double>(),
+        CHECK_THAT(fallback["StencilWeights"][k].get<double>(),
                    WithinAbs(cubic_weights[k], 1.0e-9));
       }
       const auto &cubic = fallback["MinEigenvalueRelative"];

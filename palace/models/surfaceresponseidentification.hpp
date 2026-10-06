@@ -193,7 +193,8 @@ struct IdentifiedFeature
   // matrices tested, the per-interface surface matrices recorded) and, when the stencil's
   // blended fabricated or thin domain matrix was not PSD beyond roundoff, the fallback to
   // the convex linear blend of the two bracketing nodes (decision 374 (B)): {Stencil,
-  // StencilRule, CubicWeights, MinEigenvalueRelative, LinearNodes, LinearWeights, ...}.
+  // StencilRule, StencilWeights (the stencil rule's Lagrange weights, cubic or quadratic),
+  // MinEigenvalueRelative, LinearNodes, LinearWeights, ...}.
   // Manifest Features[].Match.BlendEigenvalues / Features[].Match.InterpolationFallback.
   nlohmann::json blend_eigenvalues;
   nlohmann::json interpolation_fallback;

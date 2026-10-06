@@ -2375,7 +2375,8 @@ bitwise untouched. Recorded per feature: `Features[].Match.BlendEigenvalues` for
 interpolated corner (the applied blend's min relative eigenvalue of the fabricated / thin
 domain matrices and of the per-coupon-interface surface matrices, `DomainPositiveSemidefinite`)
 and, on a fallback, `Features[].Match.InterpolationFallback` {Rule, Stencil [{Name,
-AngleDegrees}], StencilRule, CubicWeights, MinEigenvalueRelative (the cubic's),
+AngleDegrees}], StencilRule, StencilWeights (the stencil rule's Lagrange weights,
+cubic or quadratic), MinEigenvalueRelative (the stencil blend's),
 NegativeToleranceRelative, LinearNodes, LinearWeights, LinearMinEigenvalueRelative}; the same
 two objects on the version-1 record `CornerFamily` (whose `InterpolationRule` / `Nodes` are the
 APPLIED linear selection) and in `Match.Note`; the operator log prints a "Corner interpolation

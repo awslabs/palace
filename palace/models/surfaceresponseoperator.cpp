@@ -4657,12 +4657,12 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
       // (A linear blend of PSD node matrices is PSD; were a node's stored matrix not, the
       // operator's own check on the fabricated matrix fails closed as before.)
       nlohmann::json stencil_record = nlohmann::json::array();
-      nlohmann::json cubic_weights = nlohmann::json::array();
+      nlohmann::json stencil_weights = nlohmann::json::array();
       for (const auto &[index, weight] : stencil.nodes)
       {
         stencil_record.push_back({{"Name", library.models[index].name},
                                   {"AngleDegrees", stencil_angles.at(index)}});
-        cubic_weights.push_back(weight);
+        stencil_weights.push_back(weight);
       }
       match.interpolation_fallback = {
           {"Rule",
@@ -4677,7 +4677,7 @@ MatchCornerFamily(const ProcessLibrary &library, const IdentifiedFeature &featur
                "base node and the constructed basis are unchanged"},
           {"Stencil", stencil_record},
           {"StencilRule", stencil.rule},
-          {"CubicWeights", cubic_weights},
+          {"StencilWeights", stencil_weights},
           {"MinEigenvalueRelative", match.blend_eigenvalues},
           {"NegativeToleranceRelative", kResponseMatrixNegativeEigenvalueToleranceRelative},
           {"LinearNodes",
