@@ -2091,8 +2091,133 @@ def plan_view_boundary_loops(
     return loops
 
 
+def reconcile_mask_with_boundary(facets, loops, radius):
+    """Move every mask facet vertex that the near-collinear merge dropped from the boundary
+    loops (plan_view_boundary_loops; JUNCTION_TANGENT_ANGLE) onto the merged side it lay on,
+    so that the mask region and the boundary loops bound the SAME metal (the mesher tests
+    its metal surfaces against the mask facets at 1e-7 R, below the <= L tau_s / 2 kink
+    offset of a merged vertex).  A facet vertex that is a loop vertex, or exactly collinear
+    with its side in the quantised integer arithmetic of the loops, is untouched (every
+    rectilinear coupon: byte-identical).  Returns the moved vertices [(from, to)]."""
+    tolerance = 1.0e-9 * radius
+
+    def quantize(value):
+        scaled = value / tolerance
+        return math.floor(scaled + 0.5) if scaled >= 0.0 else math.ceil(scaled - 0.5)
+
+    moved = []
+    for loop in loops:
+        vertices = {(quantize(p[0]), quantize(p[1])) for p in loop["Points"]}
+        points = np.asarray(loop["Points"], dtype=float)
+        n = len(points)
+        for facet in facets:
+            if facet["Conductor"] != loop["Conductor"] or abs(facet["Plane"] - loop["Plane"]) > tolerance:
+                continue
+            for index, point in enumerate(facet["Points"]):
+                q = (quantize(point[0]), quantize(point[1]))
+                if q in vertices:
+                    continue
+                for i in range(n):
+                    a, b = points[i], points[(i + 1) % n]
+                    qa = (quantize(a[0]), quantize(a[1]))
+                    qb = (quantize(b[0]), quantize(b[1]))
+                    direction = (qb[0] - qa[0], qb[1] - qa[1])
+                    offset = (q[0] - qa[0], q[1] - qa[1])
+                    if direction[0] * offset[1] - direction[1] * offset[0] == 0:
+                        continue          # exactly collinear: nothing to move
+                    length2 = direction[0] ** 2 + direction[1] ** 2
+                    along = direction[0] * offset[0] + direction[1] * offset[1]
+                    if not 0 < along < length2:
+                        continue
+                    distance = abs(direction[0] * offset[1] - direction[1] * offset[0]) / math.sqrt(length2)
+                    if distance > JUNCTION_TANGENT_ANGLE * math.sqrt(length2):
+                        continue
+                    t = (np.dot(np.asarray(point[:2]) - a, b - a)) / np.dot(b - a, b - a)
+                    target = a + t * (b - a)
+                    moved.append(([float(point[0]), float(point[1])], target.tolist()))
+                    facet["Points"][index] = [float(target[0]), float(target[1])]
+                    break
+    return moved
+
+
+# Block (b) DESIGN 1.2 (1) / A1 (4) (decision 303): the plan-view boundary carries the ARC
+# identity of the signature.  Every loop row (= its OUTGOING side, like Class) that is a
+# chord of a rebuilt arc entry carries ArcId (1-based, the entry order of
+# cluster_signature_geometry.rebuilt_arcs), the REBUILT circle ArcCx / ArcCy / ArcR (17
+# digits: the numbers the chord vertices were computed from) and ArcSign (GapRadial: +1 when
+# the dielectric lies outside the circle); every vertex that ends or starts an arc carries
+# JointTurn (the signature's turn at the joint, radians; empty at a box-face or free end) and
+# JointSmooth (1 iff |turn| <= JUNCTION_TANGENT_ANGLE, design A3 (1)).  A chord vertex
+# strictly inside one arc has both adjacent rows on the same ArcId (the mesher's ArcInterior
+# class); the columns are empty on every straight row (a legacy coupon: no column at all).
+ARC_BOUNDARY_COLUMNS = ("ArcId", "ArcCx", "ArcCy", "ArcR", "ArcSign", "JointTurn", "JointSmooth")
+
+
+def tag_arc_boundary_loops(loops, coupon, frame, radius):
+    """Attach the arc tags (ARC_BOUNDARY_COLUMNS) to the boundary loops of a SpatialEdgeCluster
+    coupon whose Geometry.Signature carries arc entries: loop["Arcs"][i] = the tag dict of the
+    side from vertex i to i + 1 (None on a straight side), loop["Joints"][i] = (turn, smooth)
+    at vertex i (None away from an arc end).  Every chord vertex of every rebuilt arc must be a
+    loop vertex and every chord a loop side (fail closed: the merge or the arrangement dropped
+    one); loops without any arc carry no tags (byte-identical CSV).  Returns the arc count."""
+    signature = coupon.get("Geometry", {}).get("Signature")
+    if coupon.get("Topology") != "SpatialEdgeCluster" or not signature:
+        return 0
+    if not any("Arc" in entry for key in ("Portions", "Context") for entry in signature.get(key, [])):
+        return 0
+    import cluster_signature_geometry  # noqa: E402  (imports this module; resolved at call time)
+    arcs, _ = cluster_signature_geometry.rebuilt_arcs(signature, radius)
+    tolerance = 1.0e-9 * radius
+    rotation = np.asarray(frame, dtype=float)[:2, :2]
+
+    def quantize(value):
+        scaled = value / tolerance
+        return math.floor(scaled + 0.5) if scaled >= 0.0 else math.ceil(scaled - 0.5)
+
+    def key(point):
+        return (quantize(float(point[0])), quantize(float(point[1])))
+
+    vertex_index = {}
+    for loop_index, loop in enumerate(loops):
+        for i, point in enumerate(loop["Points"]):
+            vertex_index.setdefault(key(point), []).append((loop_index, i))
+        loop["Arcs"] = [None] * len(loop["Points"])
+        loop["Joints"] = [None] * len(loop["Points"])
+    for arc in arcs:
+        local = [rotation @ np.asarray(v, dtype=float) for v in arc["Vertices"]]
+        centre = rotation @ np.asarray(arc["Centre"], dtype=float)
+        tag = {"ArcId": arc["ArcId"], "ArcCx": float(centre[0]), "ArcCy": float(centre[1]),
+               "ArcR": float(arc["Radius"]), "ArcSign": int(arc["Sign"])}
+        n = len(local) - 1
+        for k in range(n):
+            a, b = key(local[k]), key(local[k + 1])
+            sides = [(loop_index, i) for loop_index, i in vertex_index.get(a, [])
+                     if key(loops[loop_index]["Points"][(i + 1) % len(loops[loop_index]["Points"])]) == b]
+            sides += [(loop_index, (i - 1) % len(loops[loop_index]["Points"])) for loop_index, i in vertex_index.get(a, [])
+                      if key(loops[loop_index]["Points"][(i - 1) % len(loops[loop_index]["Points"])]) == b]
+            if len(sides) != 1:
+                raise ValueError(f"arc {arc['ArcId']} ({arc['Kind'].lower()} {arc['Index']}) chord {k} is not exactly one "
+                                 f"side of the plan-view boundary loops ({len(sides)} found): the boundary does not "
+                                 f"carry the signature's arc")
+            loop_index, i = sides[0]
+            if loops[loop_index]["Arcs"][i] is not None:
+                raise ValueError(f"plan-view boundary side {loop_index + 1} / {i + 1} is a chord of two arcs")
+            loops[loop_index]["Arcs"][i] = dict(tag)
+        if arc["Closed"]:
+            continue
+        for end_index, point in enumerate((local[0], local[-1])):
+            turn = arc["Joints"][end_index]
+            for loop_index, i in vertex_index.get(key(point), []):
+                loop = loops[loop_index]
+                if loop["Joints"][i] is not None and turn is not None and loop["Joints"][i][0] is not None:
+                    turn = min(turn, loop["Joints"][i][0])
+                loop["Joints"][i] = (turn, turn is not None and abs(turn) <= JUNCTION_TANGENT_ANGLE)
+    return len(arcs)
+
+
 def write_plan_view_boundary(path, loops):
-    lines = ["Loop,Vertex,Conductor,Plane,Hole,Class,X,Y"]
+    tagged = any(loop.get("Arcs") and any(arc is not None for arc in loop["Arcs"]) for loop in loops)
+    lines = ["Loop,Vertex,Conductor,Plane,Hole,Class,X,Y" + ("," + ",".join(ARC_BOUNDARY_COLUMNS) if tagged else "")]
     for loop_index, loop in enumerate(loops, start=1):
         for vertex, (point, boundary_class) in enumerate(
             zip(loop["Points"], loop["Classes"]), start=1
@@ -2106,6 +2231,14 @@ def write_plan_view_boundary(path, loops):
                 boundary_class,
                 *point,
             )
+            if tagged:
+                arc = (loop.get("Arcs") or [None] * len(loop["Points"]))[vertex - 1]
+                joint = (loop.get("Joints") or [None] * len(loop["Points"]))[vertex - 1]
+                arc_values = ("",) * 5 if arc is None else (
+                    arc["ArcId"], repr(arc["ArcCx"]), repr(arc["ArcCy"]), repr(arc["ArcR"]), arc["ArcSign"])
+                joint_values = ("", "") if joint is None else (
+                    "" if joint[0] is None else repr(float(joint[0])), int(bool(joint[1])))
+                values = values + arc_values + joint_values
             lines.append(",".join(str(value) for value in values))
     path.write_text("\n".join(lines) + "\n")
 
@@ -2126,6 +2259,7 @@ def write_basis_contract(
     cap_interior_spacing=0.0,
     interior_trace_count=0,
     matching_support=None,
+    mask_vertices_reconciled=None,
     near_outline_free_knots=None,
 ):
     """basis-contract.json of a freshly built trace basis (the layout of
@@ -2197,6 +2331,16 @@ def write_basis_contract(
     }
     if matching_support is not None:
         report["MatchingSupport"] = dict(matching_support)
+    if mask_vertices_reconciled:
+        # Recorded only where the near-collinear merge moved a mask vertex (design A3 (1)).
+        report["MaskVerticesReconciled"] = {
+            "Rule": (
+                "reconcile_mask_with_boundary: a mask facet vertex dropped from the boundary "
+                "loops by the near-collinear merge (JUNCTION_TANGENT_ANGLE) is moved onto the "
+                "merged side it lay on, so the mask and the boundary bound the same metal"
+            ),
+            "Moved": [{"From": before, "To": after} for before, after in mask_vertices_reconciled],
+        }
     if near_outline_free_knots:
         # Recorded only where a FREE knot lies within NEAR_OUTLINE_INSPECT_OVER_R x R of a
         # metal outline (decision 360 (c*), inspection): beyond the labelling tolerance, so
@@ -2338,6 +2482,22 @@ def main():
         args.overetch_depth,
         coupon.get("Geometry", {}).get("SupportBox"),
     )
+    # The near-collinear merge of the boundary loops (design A3 (1)) is carried into the mask
+    # BEFORE anything consumes it (decision 391 MAJOR-1: the frame check below and
+    # conductor_at_points label against the reconciled mask), so that the mask and the
+    # boundary bound the same metal; a rectilinear coupon moves nothing.
+    loops, moved_mask_vertices = [], []
+    if facets:
+        loops = plan_view_boundary_loops(
+            facets,
+            args.radius,
+            lower,
+            upper,
+            classified_continuation_segments(
+                coupon.get("Geometry", {}), frame, args.radius
+            ),
+        )
+        moved_mask_vertices = reconcile_mask_with_boundary(facets, loops, args.radius)
     # The frame check precedes the first output so a mis-framed mask leaves
     # generation-failure.json alone (decision 369 review MINOR-2).
     try:
@@ -2362,19 +2522,11 @@ def main():
     mask_path = output / "plan-view-mask.csv"
     boundary_path = output / "plan-view-boundary.csv"
     if facets:
+        # The signature's arcs tag their chords and joints (design A1 (4)); a coupon without
+        # an arc entry writes the unchanged columns.
+        tag_arc_boundary_loops(loops, coupon, frame, args.radius)
         write_plan_view_mask(mask_path, facets)
-        write_plan_view_boundary(
-            boundary_path,
-            plan_view_boundary_loops(
-                facets,
-                args.radius,
-                lower,
-                upper,
-                classified_continuation_segments(
-                    coupon.get("Geometry", {}), frame, args.radius
-                ),
-            ),
-        )
+        write_plan_view_boundary(boundary_path, loops)
     else:
         mask_path.unlink(missing_ok=True)
         boundary_path.unlink(missing_ok=True)
@@ -2519,6 +2671,7 @@ def main():
             cap_interior_spacing=args.cap_interior_spacing,
             interior_trace_count=interior_trace_count,
             matching_support=matching_support,
+            mask_vertices_reconciled=moved_mask_vertices,
             near_outline_free_knots=near_outline,
         )
         print(output / "mesh-signature.csv")

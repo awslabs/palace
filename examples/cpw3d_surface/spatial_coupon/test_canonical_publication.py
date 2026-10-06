@@ -17,8 +17,8 @@ from canonical_mesh_build import (CANONICAL_ARTIFACT_ROLES, CANONICAL_TOOL_ROLES
                                   build_record, canonical_sha256, same_canonical_build,
                                   validate_build_record)
 from mesh_stage_contract import CANONICAL_STAGE_ORDER
-from publish_rigid_coupon_mesh import (_exact_mesh_structure, sha256,
-                                       transform_gmsh22)
+from publish_rigid_coupon_mesh import (_exact_mesh_structure, _node_section, _nodes_only_change,
+                                       _same_file_bytes, sha256, transform_gmsh22)
 from run_native_mmg_adaptation import effective_far_size, resolve_mmg_library, run
 from testdata.build_tiny_native_adapter import build as build_native_fixture, compiler
 from transform_coupon_source_contract import validate_rigid_transform
@@ -242,7 +242,7 @@ class ExactRigidGmshTest(unittest.TestCase):
             identity_output = root / "identity.msh"
             before, after, error = transform_gmsh22(source, identity_output, identity)
             self.assertEqual(source.read_bytes(), identity_output.read_bytes())
-            self.assertEqual(before["tags"], after["tags"]); self.assertEqual(error, 0.)
+            np.testing.assert_array_equal(before["tags"], after["tags"]); self.assertEqual(error, 0.)
             angle = .63
             matrix = validate_rigid_transform([
                 math.cos(angle), -math.sin(angle), 0, 1.2,
@@ -251,12 +251,46 @@ class ExactRigidGmshTest(unittest.TestCase):
             rotated = root / "rotated.msh"
             before, after, error = transform_gmsh22(source, rotated, matrix)
             self.assertNotEqual(sha256(source), sha256(rotated))
-            self.assertEqual(before["tags"], after["tags"])
+            np.testing.assert_array_equal(before["tags"], after["tags"])
             self.assertLessEqual(error, 1e-15)
             left, right = meshio.read(source), meshio.read(rotated)
             self.assertTrue(_exact_mesh_structure(left, right))
             expected = left.points @ np.asarray(matrix)[:3, :3].T + np.asarray(matrix)[:3, 3]
             np.testing.assert_allclose(right.points, expected, rtol=0, atol=1e-15)
+
+    def test_node_section_is_the_array_parse_and_the_byte_proof_is_chunked(self):
+        """Decision 388: the node section is parsed as one record array (the tags and
+        points meshio reads), the transformed records are written without a second copy
+        of the file, and the nodes-only proof compares the files in chunks."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); source = root / "source.msh"; self.mesh(source)
+            section = _node_section(source.read_bytes())
+            mesh = meshio.read(source)
+            self.assertTrue(section["binary"])
+            np.testing.assert_array_equal(section["tags"], np.arange(1, len(mesh.points) + 1))
+            np.testing.assert_array_equal(section["points"], mesh.points)
+            self.assertTrue(section["points"].flags.c_contiguous)
+            angle = .63
+            matrix = validate_rigid_transform([
+                math.cos(angle), -math.sin(angle), 0, 1.2,
+                math.sin(angle), math.cos(angle), 0, -.7,
+                0, 0, 1, .9, 0, 0, 0, 1])
+            rotated = root / "rotated.msh"
+            before, after, _ = transform_gmsh22(source, rotated, matrix)
+            self.assertTrue(_nodes_only_change(source, rotated, before, after))
+            data, published = source.read_bytes(), rotated.read_bytes()
+            self.assertEqual(len(data), len(published))
+            self.assertEqual(data[:before["start"]], published[:after["start"]])
+            self.assertEqual(data[before["end"]:], published[after["end"]:])
+            self.assertNotEqual(data[before["start"]:before["end"]], published[after["start"]:after["end"]])
+            # The chunked comparison with a chunk smaller than the span, equal and unequal.
+            self.assertTrue(_same_file_bytes(source, rotated, (0, before["start"]), (0, after["start"]), chunk=7))
+            self.assertFalse(_same_file_bytes(source, rotated, (0, before["end"]), (0, after["end"]), chunk=7))
+            self.assertFalse(_same_file_bytes(source, rotated, (0, before["start"]), (0, after["start"] - 1), chunk=7))
+            # A changed element byte after the records fails the proof.
+            tampered = bytearray(published); tampered[after["end"] + 20] ^= 1
+            broken = root / "broken.msh"; broken.write_bytes(bytes(tampered))
+            self.assertFalse(_nodes_only_change(source, broken, before, after))
 
     def test_reflection_and_preexisting_output_are_rejected(self):
         with self.assertRaises(ValueError):

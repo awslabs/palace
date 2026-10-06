@@ -8,7 +8,8 @@ import shutil
 import tempfile
 import unittest
 
-from derive_semantic_contract import derive
+from derive_semantic_contract import derive, semantic_corners
+from semantic_mesh_contract import box_face_cut_end, boundary_semantic_corners
 
 HERE = Path(__file__).resolve().parent
 TEN_EDGE = HERE / "testdata" / "ten-edge-6791f1c84123"
@@ -122,3 +123,110 @@ class DeriveSemanticContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def write_boundary(path, loops):
+    """loops: [[(class, x, y), ...], ...] in loop order (a vertex carries its outgoing side's
+    class, as the plan-view builder writes it)."""
+    lines = ["Loop,Vertex,Conductor,Plane,Hole,Class,X,Y"]
+    for loop_index, loop in enumerate(loops, start=1):
+        for vertex, (cls, x, y) in enumerate(loop, start=1):
+            lines.append(f"{loop_index},{vertex},1,0.0,0,{cls},{x!r},{y!r}")
+    Path(path).write_text("\n".join(lines) + "\n")
+    return path
+
+
+class BoxFaceCutEndTest(unittest.TestCase):
+    """Supervisor decision 320 (block (b) design A2 / A6): a Physical vertex whose incoming
+    side is a Continuation (box) side has a single metal side there; it is a box-face cut
+    end - not a semantic corner - unless its side is exactly perpendicular to the face."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_oblique_box_vertex_is_a_cut_end_and_a_perpendicular_one_a_legacy_corner(self):
+        # The O1 2-edge geometry (coupons-a probe source): vertex 1 (5.9475643, -10.9262198) on
+        # the face y0 after the Continuation side 5 -> 1, its side leaving at 22.5 degrees.
+        o1 = [("Physical", 5.9475643, -10.9262198), ("Physical", 3.2135498, -4.3257243),
+              ("Physical", -0.5864502, 4.848287), ("Physical", -1.3135498, 6.603659),
+              ("Continuation", -1.3135498, -10.9262198)]
+        self.assertTrue(box_face_cut_end((o1[4][1], o1[4][2]), "Continuation", (o1[0][1], o1[0][2]),
+                                         "Physical", (o1[1][1], o1[1][2])))
+        corners, cut_ends = boundary_semantic_corners(
+            [{"Loop": "1", "Class": cls, "X": repr(x), "Y": repr(y), "Plane": "0.0"} for cls, x, y in o1])
+        self.assertEqual(cut_ends, [[5.9475643, -10.9262198, 0.0]])
+        self.assertEqual([c[:2] for c in corners],
+                         [[3.2135498, -4.3257243], [-0.5864502, 4.848287], [-1.3135498, 6.603659]])
+        # The C2 19-edge loop-2 vertices 14 / 15: the side leaving (-1.3574569, 12.9453859) runs
+        # along x = -1.3574569 exactly -> theta == 0 -> the legacy corner (decision 311's
+        # "SemanticCorner on face y1"), bitwise unchanged.
+        self.assertFalse(box_face_cut_end((-0.9484572, 12.9453859), "Continuation",
+                                          (-1.3574569, 12.9453859), "Physical", (-1.3574569, 12.4703859)))
+        # Two Physical sides meeting at a box vertex stay a corner at any angle; a Continuation
+        # vertex is never a corner.
+        self.assertFalse(box_face_cut_end((1.0, 2.0), "Physical", (4.0, 0.0), "Physical", (1.0, -2.0)))
+        self.assertFalse(box_face_cut_end((1.0, 0.0), "Physical", (4.0, 0.0), "Continuation", (4.0, 4.0)))
+        # A Continuation side must run along one box face.
+        with self.assertRaisesRegex(ValueError, "along one box face"):
+            box_face_cut_end((1.0, 1.0), "Continuation", (4.0, 0.0), "Physical", (1.0, -2.0))
+
+    def test_derived_contract_classifies_the_oblique_box_vertex_as_a_cut_endpoint(self):
+        # Two 45-degree metal tips at the origin inside the box [-4, 4]^2 whose oblique side
+        # runs from the tip to the box corner-free point (4, 4) of the face x = 4 ... the same
+        # oblique side with the metal on either side of it: the vertex class at (4, 4) is that
+        # of the OUTGOING side, so one orientation reads Continuation there and the other
+        # Physical; both are box-face cut ends of the topology, never corners.
+        source = self.tmp / "tip"
+        source.mkdir()
+        # (a) metal = the triangle (0, 0) -> (4, 4) -> (0, 4): side A leaves at 45 degrees
+        #     (Continuation class at (4, 4)), side B along +y leaves (0, 4) perpendicularly
+        #     (Physical class after the box side y = 4: the legacy corner, theta == 0).
+        rows = ["Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm",
+                "1,0,1,2,2,0,0.70710678118654757,-0.70710678118654757,0,0.70710678118654757,0.70710678118654757,0,1,-2.8284271247461903,2.8284271247461903,0",
+                "2,0,1,0,2,0,-1,0,0,0,-1,0,1,-2,2,0"]
+        (source / "mesh-signature.csv").write_text("\n".join(rows) + "\n")
+        boundary = write_boundary(source / "plan-view-boundary.csv",
+                                  [[("Physical", 0.0, 0.0), ("Continuation", 4.0, 4.0), ("Physical", 0.0, 4.0)]])
+        corners, cut_ends = semantic_corners(boundary)
+        self.assertEqual(corners, [[0.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
+        self.assertEqual(cut_ends, [])
+        derived = derive(source)
+        self.assertEqual(derived["SemanticCorners"], [[0.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
+        self.assertEqual(derived["FeatureTopology"]["CutEndpoints"], [[4.0, 4.0, 0.0]])
+        self.assertNotIn("BoxFaceCutEnds", derived["Derivation"])
+        # (b) metal = the triangle (0, 0) -> (4, 0) -> (4, 4): the box side x = 4 ARRIVES at
+        #     (4, 4), whose outgoing side is the oblique one -> Physical class, a single metal
+        #     side, theta 45 > 0: a box-face cut end by decision 320 (the legacy rule would have
+        #     made it a corner with h_K + a ball on the face), recorded under Derivation.
+        rows = ["Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm",
+                "1,0,1,2,0,0,0,-1,0,1,0,0,1,-2,2,0",
+                "2,0,1,2,2,0,-0.70710678118654757,0.70710678118654757,0,-0.70710678118654757,-0.70710678118654757,0,1,-2.8284271247461903,2.8284271247461903,0"]
+        (source / "mesh-signature.csv").write_text("\n".join(rows) + "\n")
+        boundary = write_boundary(source / "plan-view-boundary.csv",
+                                  [[("Physical", 0.0, 0.0), ("Continuation", 4.0, 0.0), ("Physical", 4.0, 4.0)]])
+        corners, cut_ends = semantic_corners(boundary)
+        self.assertEqual(corners, [[0.0, 0.0, 0.0]])
+        self.assertEqual(cut_ends, [[4.0, 4.0, 0.0]])
+        derived = derive(source)
+        self.assertEqual(derived["SemanticCorners"], [[0.0, 0.0, 0.0]])
+        self.assertEqual(derived["FeatureTopology"]["CutEndpoints"], [[4.0, 0.0, 0.0], [4.0, 4.0, 0.0]])
+        self.assertEqual(derived["Derivation"]["BoxFaceCutEnds"]["Points"], [[4.0, 4.0, 0.0]])
+        self.assertIn("decision 320", derived["Derivation"]["BoxFaceCutEnds"]["Rule"])
+        # (c) the same triangle with the oblique side exactly perpendicular instead - the
+        #     legacy rectilinear case: (4, 4) -> (0, 4) is not possible here, so take the
+        #     rectangle (0, 0) -> (4, 0) -> (4, 4) -> (0, 4): its Physical-class box vertex (0, 4)
+        #     after the box side y = 4 leaves along x = 0 exactly -> a corner, nothing recorded.
+        rows = ["Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm",
+                "1,0,1,2,0,0,0,-1,0,1,0,0,1,-2,2,0",
+                "2,0,1,0,2,0,-1,0,0,0,-1,0,1,-2,2,0"]
+        (source / "mesh-signature.csv").write_text("\n".join(rows) + "\n")
+        boundary = write_boundary(source / "plan-view-boundary.csv",
+                                  [[("Physical", 0.0, 0.0), ("Continuation", 4.0, 0.0),
+                                    ("Continuation", 4.0, 4.0), ("Physical", 0.0, 4.0)]])
+        corners, cut_ends = semantic_corners(boundary)
+        self.assertEqual(corners, [[0.0, 0.0, 0.0], [0.0, 4.0, 0.0]])
+        self.assertEqual(cut_ends, [])
+        derived = derive(source)
+        self.assertNotIn("BoxFaceCutEnds", derived["Derivation"])
+        self.assertEqual(derived["FeatureTopology"]["CutEndpoints"], [[4.0, 0.0, 0.0]])

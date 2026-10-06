@@ -11,6 +11,37 @@ include(joinpath(@__DIR__, "interface_ownership.jl"))
 # triangles or linear quadrangles (the radial faces of the prism edge tubes);
 # both use the positive-weight Gauss4 rule of their type.
 const INTERFACE_ELEMENT_VERTICES = Dict("Triangle" => 3, "Quadrilateral" => 4)
+
+# Compensated (Neumaier) accumulation of the quadrature measures (supervisor decision 379):
+# the whole measure and the per-owner measures are sums of the SAME positive terms in two
+# groupings, so their difference is summation error alone; plain accumulation over ~10^6
+# interface quadrature points (the block (b) loop end: 10.17 M elements) exceeded the
+# 1e-12 closure tolerance by rounding, a compensated sum reads the closure at machine
+# precision. The tolerance itself is unchanged. Note (mesher review R2 MINOR-7, decision
+# 391): since decision 379 the WHOLE measure is formed per quadrature point by the same
+# add! calls, in the same order, as the per-owner measures (before, it summed the
+# per-element `area` values) - the two sums are the same terms in the same order, so the
+# closure measures the fold of the per-owner totals against the whole and nothing beyond
+# it; that is what the check always was (summation-only: every point has exactly one
+# owner by construction, `classify` returning one attribute), stated here so nobody reads
+# it as an independent ownership test. `areas[target]` keeps the plain per-element sum.
+mutable struct CompensatedSum
+    sum::Float64
+    compensation::Float64
+end
+CompensatedSum() = CompensatedSum(0.0, 0.0)
+function add!(accumulator::CompensatedSum, value)
+    t = accumulator.sum + value
+    if abs(accumulator.sum) >= abs(value)
+        accumulator.compensation += (accumulator.sum - t) + value
+    else
+        accumulator.compensation += (value - t) + accumulator.sum
+    end
+    accumulator.sum = t
+    return accumulator
+end
+total(accumulator::CompensatedSum) = accumulator.sum + accumulator.compensation
+
 function label_interface_patches(
     edges,
     loops,
@@ -40,8 +71,8 @@ function label_interface_patches(
     counts = Dict{Int, Int}()
     unresolved_area = Dict{Int, Float64}();
     unresolved_count = Dict{Int, Int}()
-    quadrature_area = Dict{Int, Float64}();
-    quadrature_whole = 0.0;
+    quadrature_area = Dict{Int, CompensatedSum}();
+    quadrature_whole = CompensatedSum();
     quadrature_points = 0
     refinement_points = NTuple{4, Float64}[]
     certificates = Tuple{UInt64, Int, Bool, NTuple{4, UInt64}}[]
@@ -93,7 +124,6 @@ function label_interface_patches(
                         q = 1:nq
                     )
                     area>0 || error("Nonpositive integrated interface area")
-                    quadrature_whole += area
                     for q = 1:nq
                         coordinate_index = 3*((i-1)*nq+q-1)
                         point = (
@@ -104,7 +134,8 @@ function label_interface_patches(
                         owner = classify(attribute, ownership_coordinates(point))
                         measure = integration_weights[q]*jacobian_measures[(i - 1) * nq + q]
                         measure>0 || error("Nonpositive response-ownership measure")
-                        quadrature_area[owner] = get(quadrature_area, owner, 0.0)+measure
+                        add!(quadrature_whole, measure)
+                        add!(get!(quadrature_area, owner, CompensatedSum()), measure)
                         quadrature_points += 1
                     end
                     areas[target] = get(areas, target, 0.0)+area
@@ -167,7 +198,10 @@ function label_interface_patches(
         end
         gmsh.model.addPhysicalGroup(2, [entity], attribute, "surface_$attribute")
     end
-    owned_measure = sum(values(quadrature_area))
+    owned_measure = total(
+        foldl(add!, (total(a) for a in values(quadrature_area)); init=CompensatedSum())
+    )
+    quadrature_whole = total(quadrature_whole)
     closure_tolerance = 1e-12
     relative_closure = abs(owned_measure-quadrature_whole)/quadrature_whole
     relative_closure<=closure_tolerance ||
@@ -189,7 +223,7 @@ function label_interface_patches(
     open(report_path*".quadrature.csv", "w") do f
         println(f, "attribute,measure")
         for attribute in sort!(collect(keys(quadrature_area)))
-            println(f, "$attribute,$(quadrature_area[attribute])")
+            println(f, "$attribute,$(total(quadrature_area[attribute]))")
         end
     end
     open(report_path*".refine.csv", "w") do f

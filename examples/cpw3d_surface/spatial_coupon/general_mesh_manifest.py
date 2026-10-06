@@ -1526,6 +1526,19 @@ TUBE_DESIGN_STATISTICS = ("InnerSize", "GrowthRatio", "TangentialSize", "Spacing
                           "SpacingMaximum", "Prisms", "Pyramids", "MeshPrisms", "MeshPyramids")
 
 
+def _tube_spacing_bound(widths):
+    """The largest layer a tube design statement admits: TangentialSize, or the recorded
+    face-end block spacing FaceEndSpacingMaximum (block (b) design A2: lc_end = max(TangentialSize,
+    4 h_pyr |tan theta|), a 1e-9 slack for the block stations' rounding) when a face end has it;
+    a statement without the field (recorded before the face-end rule) has none."""
+    face_end = widths.get("FaceEndSpacingMaximum")
+    if face_end is None:
+        return widths["TangentialSize"]
+    if not _finite_number(face_end) or face_end < 0.0:
+        return float("-inf")
+    return max(widths["TangentialSize"], face_end * (1.0 + 1e-9))
+
+
 def tube_design_statement(widths):
     """True when the achieved-anisotropy design gate is replaced by the prism tube
     design statement (Gmsh-only pipeline, supervisor decision 38): the record
@@ -1533,8 +1546,8 @@ def tube_design_statement(widths):
     positive inner size / ratio > 1 / spacing within the tangential size, rings >= 1,
     positive prism and pyramid counts, the decision-40 layer record: the layer rule
     and axis size law named, LayerGrowthCap equal to the growth ratio, the layer
-    thickness Minimum <= P50 <= Maximum <= TangentialSize equal to the spacing
-    extremes, the neighbour ratio within the cap and the count of layers below
+    thickness Minimum <= P50 <= Maximum <= TangentialSize (or the recorded face-end block
+    spacing FaceEndSpacingMaximum, block (b) design A2) equal to the spacing extremes, the neighbour ratio within the cap and the count of layers below
     TangentialSize / GrowthRatio within the layer count) and the mesh's prism and pyramid
     counts equal to the census (CensusMatchesMesh).  Anything less is judged by the
     anisotropy gate as an ordinary band sample (and fails on Samples 0)."""
@@ -1550,7 +1563,7 @@ def tube_design_statement(widths):
             not _finite_number(widths.get("NormalTarget"), positive=True) or
             not _finite_number(widths.get("SpacingMinimum"), positive=True) or
             not _finite_number(widths.get("SpacingMaximum"), positive=True) or
-            not widths["SpacingMinimum"] <= widths["SpacingMaximum"] <= widths["TangentialSize"] or
+            not widths["SpacingMinimum"] <= widths["SpacingMaximum"] <= _tube_spacing_bound(widths) or
             not isinstance(widths.get("Rings"), int) or widths["Rings"] < 1 or
             not isinstance(widths.get("RingSizes"), list) or len(widths["RingSizes"]) != widths["Rings"] or
             any(not isinstance(widths.get(name), int) or widths[name] <= 0
@@ -1565,7 +1578,7 @@ def tube_design_statement(widths):
             not isinstance(layers, dict) or
             any(not _finite_number(layers.get(name), positive=True)
                 for name in ("Minimum", "P50", "Maximum", "MaximumNeighbourRatio")) or
-            not layers["Minimum"] <= layers["P50"] <= layers["Maximum"] <= widths["TangentialSize"] or
+            not layers["Minimum"] <= layers["P50"] <= layers["Maximum"] <= _tube_spacing_bound(widths) or
             layers["Minimum"] != widths["SpacingMinimum"] or layers["Maximum"] != widths["SpacingMaximum"] or
             layers["MaximumNeighbourRatio"] > widths["LayerGrowthCap"] or
             isinstance(layers.get("LayersBelowTangentialSizeOverGrowthRatio"), bool) or

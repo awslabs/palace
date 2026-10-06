@@ -260,33 +260,55 @@ def arc_end_snaps(signature, radius):
     return fixed, records
 
 
-def chorded_entries(signature, radius, include_context=False):
-    """The builder's plan-view edges: signature_library.cluster_plan_view_edges with every
-    arc entry rebuilt through its fixed ends (arc_end_snaps + rebuilt_arc), so the chord ends
-    are the serialised / snapped ends exactly and every chord vertex is concyclic. Returns
-    (edges, records): the edges in cluster_plan_view_edges' encoding (``Chord`` / ``Chords``
-    on arc chords, ``Context`` / ``Chain`` on context entries), the JointSnaps records with
-    one ``Arc`` record per rebuilt arc {Piece, ArcDeviationOverR, CentreShiftOverR,
-    RadiusShiftOverR, Chords}; a rebuilt arc farther than ARC_REBUILD_TOLERANCE_OVER_R from
-    the signature's circle fails closed."""
+# Block (b) DESIGN A3 (1): the turn at a joint of two entries (the angle between their
+# tangents at the shared end, read on the SIGNATURE, pre-snap) classifies the joint SMOOTH
+# (|turn| <= JUNCTION_TANGENT_ANGLE, the curved-offset constant of the mesher: no corner, a
+# shared tube section) or a CORNER (the ball, the caps and the clearance rule). One constant,
+# one concept; the mesher reads the classification from the plan-view boundary tags.
+JUNCTION_TANGENT_ANGLE = 1.0e-4
+
+
+def _entry_tangent_at(entry, point, radius):
+    """The unit tangent (travel direction A -> B) of a serialised entry at its end `point`
+    (A or B): the chord direction of a straight entry, the circle tangent of an arc entry."""
+    a, b = entry["A"], entry["B"]
+    if entry["Arc"] is None:
+        d = b - a
+        return d / float(np.linalg.norm(d))
+    c = np.asarray(entry["Arc"][:2])
+    m = np.asarray(entry["Arc"][2:])
+    sweep, closed = _arc_sweep(a, b, c, m)
+    if closed:
+        raise SignatureGeometryError("a closed circle has no joint")
+    rad = point - c
+    tangent = np.asarray([-rad[1], rad[0]]) / float(np.linalg.norm(rad))
+    return tangent if sweep > 0.0 else -tangent
+
+
+def rebuilt_arcs(signature, radius):
+    """Every ARC entry of the signature (claims then context) rebuilt through its fixed ends
+    (arc_end_snaps + rebuilt_arc), in mesh units of the canonical frame: a list of
+    {ArcId (1-based, in entry order), Kind, Index, Vertices (the chord vertices, ends exact),
+    Centre, Radius, Sweep (signed, the travel A -> B), Sign (GapRadial), Conductor,
+    Joints [turn at A, turn at B]} with the JointSnaps records (arc_end_snaps' plus one ``Arc``
+    record per rebuilt arc {Piece, ArcDeviationOverR, CentreShiftOverR, RadiusShiftOverR,
+    Chords, Centre, RadiusOverR}); a rebuilt arc farther than ARC_REBUILD_TOLERANCE_OVER_R
+    from the signature's circle fails closed.  The joint turn at an end is the angle between
+    the arc's serialised tangent there and the serialised tangent of the neighbouring entry
+    of the same conductor whose end lies within ARC_JOINT_SNAP_OVER_R (design A3 (1): read on
+    the signature, before any snap); None at an end without a neighbour (a box face, a free
+    end).  A closed circle has no joints and keeps its serialised circle."""
     fixed, records = arc_end_snaps(signature, radius)
-    edges = []
+    entries = _serialised_entries(signature, radius)
     tolerance = (ARC_REBUILD_TOLERANCE_OVER_R + HALF_QUANTUM_OVER_R) * radius
-    entries = [(index, portion, False) for index, portion in enumerate(signature["Portions"])]
-    if include_context:
-        entries += [(index, portion, True) for index, portion in enumerate(signature.get("Context", []))]
-    for index, portion, context in entries:
-        common = {"Conductor": int(portion["Conductor"]), "Interfaces": portion.get("Interfaces", []), "Law": portion.get("Law"), "Portion": index}
-        if context:
-            common.update({"Context": True, "Chain": bool(portion.get("Chain", False))})
-        p = [float(v) * radius for v in portion["P"]]
-        a, b = np.asarray(p[:2]), np.asarray(p[2:])
-        if "Arc" not in portion:
-            edges.append(dict(common, P0=(p[0], p[1]), P1=(p[2], p[3]), Gap=(float(portion["Gap"][0]), float(portion["Gap"][1]))))
+    joint_tolerance = (ARC_JOINT_SNAP_OVER_R + HALF_QUANTUM_OVER_R) * radius
+    arcs = []
+    for i, entry in enumerate(entries):
+        if entry["Arc"] is None:
             continue
-        arc = [float(v) * radius for v in portion["Arc"]]
-        c, m = np.asarray(arc[:2]), np.asarray(arc[2:])
-        kind = "Context" if context else "Claim"
+        kind, index = entry["Kind"], entry["Index"]
+        a, b = entry["A"], entry["B"]
+        c, m = np.asarray(entry["Arc"][:2]), np.asarray(entry["Arc"][2:])
         a_fixed, b_fixed = fixed.get((kind, index), (a, b))
         vertices, centre, r, sweep = rebuilt_arc(a_fixed, b_fixed, c, m, radius)
         r_signature = float(np.linalg.norm(a - c))
@@ -299,7 +321,56 @@ def chorded_entries(signature, radius, include_context=False):
                         "CentreShiftOverR": float(np.linalg.norm(centre - c)) / radius,
                         "RadiusShiftOverR": abs(r - r_signature) / radius, "Chords": len(vertices) - 1,
                         "Centre": [float(centre[0]) / radius, float(centre[1]) / radius], "RadiusOverR": r / radius})
-        sign = int(portion["GapRadial"])
+        closed = float(np.linalg.norm(a - b)) <= 1.0e-9 * max(r_signature, 1.0)
+        joints = [None, None]
+        if not closed:
+            for end_index, point in enumerate((a, b)):
+                own = _entry_tangent_at(entry, point, radius)
+                for j, other in enumerate(entries):
+                    if j == i or other["Conductor"] != entry["Conductor"]:
+                        continue
+                    for other_point in (other["A"], other["B"]):
+                        if float(np.linalg.norm(point - other_point)) > joint_tolerance:
+                            continue
+                        if other["Arc"] is not None and float(np.linalg.norm(other["A"] - other["B"])) <= 1.0e-9 * radius:
+                            continue
+                        neighbour = _entry_tangent_at(other, other_point, radius)
+                        # The two travel directions meet head-on or tail-to-head at the joint:
+                        # the turn is the angle between the lines of travel through it.
+                        cosine = abs(float(np.dot(own, neighbour)))
+                        turn = math.acos(min(1.0, cosine))
+                        joints[end_index] = turn if joints[end_index] is None else min(joints[end_index], turn)
+        arcs.append({"ArcId": len(arcs) + 1, "Kind": kind, "Index": index, "Vertices": vertices, "Centre": centre,
+                     "Radius": r, "Sweep": sweep, "Sign": int(entry["Entry"]["GapRadial"]), "Conductor": entry["Conductor"],
+                     "Joints": joints, "Closed": closed})
+    return arcs, records
+
+
+def chorded_entries(signature, radius, include_context=False):
+    """The builder's plan-view edges: signature_library.cluster_plan_view_edges with every
+    arc entry rebuilt through its fixed ends (arc_end_snaps + rebuilt_arc), so the chord ends
+    are the serialised / snapped ends exactly and every chord vertex is concyclic. Returns
+    (edges, records): the edges in cluster_plan_view_edges' encoding (``Chord`` / ``Chords``
+    on arc chords, ``Context`` / ``Chain`` on context entries), the JointSnaps records with
+    one ``Arc`` record per rebuilt arc {Piece, ArcDeviationOverR, CentreShiftOverR,
+    RadiusShiftOverR, Chords}; a rebuilt arc farther than ARC_REBUILD_TOLERANCE_OVER_R from
+    the signature's circle fails closed."""
+    arcs, records = rebuilt_arcs(signature, radius)
+    rebuilt = {(arc["Kind"], arc["Index"]): arc for arc in arcs}
+    edges = []
+    entries = [(index, portion, False) for index, portion in enumerate(signature["Portions"])]
+    if include_context:
+        entries += [(index, portion, True) for index, portion in enumerate(signature.get("Context", []))]
+    for index, portion, context in entries:
+        common = {"Conductor": int(portion["Conductor"]), "Interfaces": portion.get("Interfaces", []), "Law": portion.get("Law"), "Portion": index}
+        if context:
+            common.update({"Context": True, "Chain": bool(portion.get("Chain", False))})
+        p = [float(v) * radius for v in portion["P"]]
+        if "Arc" not in portion:
+            edges.append(dict(common, P0=(p[0], p[1]), P1=(p[2], p[3]), Gap=(float(portion["Gap"][0]), float(portion["Gap"][1]))))
+            continue
+        arc = rebuilt[("Context" if context else "Claim", index)]
+        vertices, centre, sweep, sign = arc["Vertices"], arc["Centre"], arc["Sweep"], arc["Sign"]
         n = len(vertices) - 1
         ta = math.atan2(vertices[0][1] - centre[1], vertices[0][0] - centre[0])
         for k in range(n):
