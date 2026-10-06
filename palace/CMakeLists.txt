@@ -716,6 +716,9 @@ endif()
 # Tell utils/versions.cpp which optional dependencies are linked. Versions of dependencies
 # without a header or runtime query that Palace can reach are taken from CMake.
 set(VERSION_DEFINITIONS)
+if(PALACE_WITH_SUPERLU)
+  list(APPEND VERSION_DEFINITIONS PALACE_WITH_SUPERLU)
+endif()
 if(PALACE_WITH_CUDA OR PALACE_WITH_HIP)
   list(APPEND VERSION_DEFINITIONS PALACE_WITH_UMPIRE)
 endif()
@@ -741,6 +744,10 @@ endforeach()
 string(TOLOWER "${_blas_lapack}" _blas_lapack)
 if(_blas_lapack MATCHES "(^|;)(lib)?openblas")
   list(APPEND VERSION_DEFINITIONS PALACE_BLAS_OPENBLAS)
+  # ILP64 OpenBLAS built with SYMBOLSUFFIX=64_ is named libopenblas64_
+  if(_blas_lapack MATCHES "(^|;)(lib)?openblas64")
+    list(APPEND VERSION_DEFINITIONS PALACE_BLAS_OPENBLAS64)
+  endif()
 elseif(_blas_lapack MATCHES "(^|;)((lib)?mkl_|intel10)")
   list(APPEND VERSION_DEFINITIONS PALACE_BLAS_MKL)
 elseif(_blas_lapack MATCHES "(^|;)((lib)?armpl|arm)")
@@ -775,24 +782,37 @@ if(PALACE_WITH_STRUMPACK AND ButterflyPACK_FOUND AND ButterflyPACK_VERSION)
   list(APPEND VERSION_DEFINITIONS
     "PALACE_BUTTERFLYPACK_VERSION=\"${ButterflyPACK_VERSION}\"")
 endif()
-# libxsmm and MAGMA are only linked by libCEED, so check its pkg-config dependencies
-pkg_check_modules(_ceed_deps QUIET ceed)
-if(_ceed_deps_STATIC_LIBRARIES MATCHES "(^|;)(:lib)?xsmm(\\.a)?(;|$)")
-  pkg_check_modules(_libxsmm QUIET libxsmm)
-  if(_libxsmm_VERSION)
-    list(APPEND VERSION_DEFINITIONS "PALACE_LIBXSMM_VERSION=\"${_libxsmm_VERSION}\"")
+# libxsmm and MAGMA are only linked by libCEED, so check its pkg-config dependencies. Query
+# pkg-config directly, since pkg_check_modules caches its results across reconfigures.
+if(libCEED_STATIC_LIBRARIES MATCHES "(^|;)(:lib)?xsmm(\\.a)?(;|$)")
+  execute_process(
+    COMMAND ${PKG_CONFIG_EXECUTABLE} --modversion libxsmm
+    OUTPUT_VARIABLE _libxsmm_version OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _result ERROR_QUIET
+  )
+  if(_result EQUAL 0 AND _libxsmm_version)
+    list(APPEND VERSION_DEFINITIONS "PALACE_LIBXSMM_VERSION=\"${_libxsmm_version}\"")
   endif()
 endif()
-if(_ceed_deps_STATIC_LIBRARIES MATCHES "(^|;)(:lib)?magma(\\.a)?(;|$)")
+if(libCEED_STATIC_LIBRARIES MATCHES "(^|;)(:lib)?magma(\\.a)?(;|$)")
   # magma.pc carries no version, so read it from the headers
-  pkg_check_modules(_magma QUIET magma)
-  find_file(MAGMA_TYPES_HEADER magma_types.h HINTS ${_magma_INCLUDE_DIRS})
+  pkg_get_variable(_magma_includedir magma includedir)
+  find_file(MAGMA_TYPES_HEADER magma_types.h HINTS ${_magma_includedir})
   if(MAGMA_TYPES_HEADER)
-    file(STRINGS ${MAGMA_TYPES_HEADER} _magma_version
-      REGEX "^#define MAGMA_VERSION_(MAJOR|MINOR|MICRO) ")
-    string(REGEX REPLACE "[^;]* ([0-9]+)" "\\1" _magma_version "${_magma_version}")
-    list(JOIN _magma_version "." _magma_version)
-    list(APPEND VERSION_DEFINITIONS "PALACE_MAGMA_VERSION=\"${_magma_version}\"")
+    set(_magma_version)
+    foreach(_part MAJOR MINOR MICRO)
+      file(STRINGS ${MAGMA_TYPES_HEADER} _define
+        REGEX "^#define MAGMA_VERSION_${_part}[ \t]+[0-9]+")
+      if(NOT _define MATCHES "^#define MAGMA_VERSION_${_part}[ \t]+([0-9]+)")
+        set(_magma_version)
+        break()
+      endif()
+      list(APPEND _magma_version ${CMAKE_MATCH_1})
+    endforeach()
+    if(_magma_version)
+      list(JOIN _magma_version "." _magma_version)
+      list(APPEND VERSION_DEFINITIONS "PALACE_MAGMA_VERSION=\"${_magma_version}\"")
+    endif()
   endif()
 endif()
 set_property(

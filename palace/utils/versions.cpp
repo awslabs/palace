@@ -6,17 +6,22 @@
 #include <cstdint>
 
 #include <Eigen/Core>
+#include <HYPRE_config.h>
 #include <ceed.h>
 #include <metis.h>
 #include <mpi.h>
 #include <parmetis.h>
 #include <fmt/format.h>
-#include <scn/scan.h>
-#include <mfem.hpp>
+#include <scn/fwd.h>
 #include <nlohmann/json.hpp>
+#include <mfem/config/config.hpp>
+#include <mfem/general/version.hpp>
 
-#if defined(MFEM_USE_SUPERLU)
+#if defined(PALACE_WITH_SUPERLU)
 #include <superlu_defs.h>
+#endif
+#if defined(MFEM_USE_MUMPS)
+#include <dmumps_c.h>
 #endif
 #if defined(MFEM_USE_STRUMPACK)
 #include <StrumpackConfig.hpp>
@@ -35,7 +40,7 @@
 #endif
 #if defined(PALACE_WITH_UMPIRE)
 #include <camp/config.hpp>
-#include <umpire/Umpire.hpp>
+#include <umpire/config.hpp>
 #endif
 #if defined(PALACE_WITH_CUDSS)
 #include <cudss.h>
@@ -71,11 +76,17 @@ int lapackpp_version();
 // LAPACK and vendor BLAS version queries, declared here since their headers are
 // vendor-specific. Integer arguments are 64-bit and zero-initialized so they read correctly
 // from both LP64 and ILP64 libraries (little-endian).
+#if defined(PALACE_BLAS_OPENBLAS64)
+#define PALACE_BLAS_SYMBOL(name) name##64_
+#else
+#define PALACE_BLAS_SYMBOL(name) name
+#endif
 extern "C"
 {
-  void ilaver_(std::int64_t *major, std::int64_t *minor, std::int64_t *patch);
+  void PALACE_BLAS_SYMBOL(ilaver_)(std::int64_t *major, std::int64_t *minor,
+                                   std::int64_t *patch);
 #if defined(PALACE_BLAS_OPENBLAS)
-  char *openblas_get_config();
+  char *PALACE_BLAS_SYMBOL(openblas_get_config)();
 #elif defined(PALACE_BLAS_MKL)
   void MKL_Get_Version_String(char *buffer, int len);
 #elif defined(PALACE_BLAS_ARMPL)
@@ -129,11 +140,11 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   versions.emplace_back("HYPRE", HYPRE_RELEASE_VERSION);
 
   std::int64_t lapack_major = 0, lapack_minor = 0, lapack_patch = 0;
-  ilaver_(&lapack_major, &lapack_minor, &lapack_patch);
+  PALACE_BLAS_SYMBOL(ilaver_)(&lapack_major, &lapack_minor, &lapack_patch);
   versions.emplace_back("LAPACK API",
                         fmt::format("{}.{}.{}", lapack_major, lapack_minor, lapack_patch));
 #if defined(PALACE_BLAS_OPENBLAS)
-  versions.emplace_back("OpenBLAS", openblas_get_config());
+  versions.emplace_back("OpenBLAS", PALACE_BLAS_SYMBOL(openblas_get_config)());
 #elif defined(PALACE_BLAS_MKL)
   char mkl_version[256];
   MKL_Get_Version_String(mkl_version, sizeof(mkl_version));
@@ -163,7 +174,7 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   versions.emplace_back("ARPACK-NG", "unknown");
 #endif
 #endif
-#if defined(MFEM_USE_SUPERLU)
+#if defined(PALACE_WITH_SUPERLU)
   superlu_dist_GetVersionNumber(&major, &minor, &patch);
   versions.emplace_back("SuperLU_DIST", fmt::format("{}.{}.{}", major, minor, patch));
 #endif
@@ -176,7 +187,13 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   versions.emplace_back("ButterflyPACK", PALACE_BUTTERFLYPACK_VERSION);
 #endif
 #if defined(PALACE_WITH_ZFP)
-  versions.emplace_back("ZFP", zfp_version_string);
+  // zfp_version_string reads "zfp version X.Y.Z (<release date>)"
+  std::string zfp(zfp_version_string);
+  if (zfp.rfind("zfp version ", 0) == 0)
+  {
+    zfp = zfp.substr(12, zfp.find(' ', 12) - 12);
+  }
+  versions.emplace_back("ZFP", zfp);
 #endif
 #if defined(PALACE_WITH_SLATE)
   versions.emplace_back("SLATE", DateVersion(slate::version()));
@@ -226,9 +243,9 @@ std::vector<std::pair<std::string, std::string>> GetDependencyVersions()
   }
 #endif
 #if defined(PALACE_WITH_UMPIRE)
-  versions.emplace_back("Umpire", fmt::format("{}.{}.{}", umpire::get_major_version(),
-                                              umpire::get_minor_version(),
-                                              umpire::get_patch_version()));
+  // Umpire versions are dates (vYYYY.MM.P)
+  versions.emplace_back("Umpire", fmt::format("{}.{:02}.{}", UMPIRE_VERSION_MAJOR,
+                                              UMPIRE_VERSION_MINOR, UMPIRE_VERSION_PATCH));
   versions.emplace_back("camp", fmt::format("{}.{}.{}", CAMP_VERSION_MAJOR,
                                             CAMP_VERSION_MINOR, CAMP_VERSION_PATCH));
 #endif

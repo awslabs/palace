@@ -7,7 +7,8 @@ help()
 {
     echo "Usage: update-submodules [OPTIONS]
 
-Fetch most recent commit from dependency repositories
+Fetch most recent release tag (or commit, for dependencies pinned to a commit) from
+dependency repositories
 
 Options:
   -h, --help                       Show this help message and exit
@@ -84,28 +85,40 @@ git init && printf "\n"
 for GIT_URL in $GIT_REMOTE_URLS; do
     echo "Repository: $GIT_URL" && printf "\n"
 
-    git remote add origin $GIT_URL
-    GIT_BRANCH=$(grep -A 4 "$GIT_URL" $SOURCE_DIR/cmake/ExternalGitTags.cmake | tail -1 | awk '{print $1}' | sed 's/\"//g')
-    if $VERBOSE; then
-        git fetch --depth=1 origin $GIT_BRANCH && printf "\n"
+    TAG_LINE=$(($(grep -nF "\"$GIT_URL\"" $SOURCE_DIR/cmake/ExternalGitTags.cmake | cut -d: -f1) + 8))
+    GIT_TAG=$(sed -n "${TAG_LINE}p" $SOURCE_DIR/cmake/ExternalGitTags.cmake | awk '{print $1}' | sed 's/\"//g')
+    if [[ "$GIT_TAG" =~ ^[0-9a-f]{40}$ ]]; then
+        # Commit pin: compare against the tip of the tracked branch
+        git remote add origin $GIT_URL
+        GIT_BRANCH=$(grep -A 4 "$GIT_URL" $SOURCE_DIR/cmake/ExternalGitTags.cmake | tail -1 | awk '{print $1}' | sed 's/\"//g')
+        if $VERBOSE; then
+            git fetch --depth=1 origin $GIT_BRANCH && printf "\n"
+        else
+            GIT_FETCH=$(git fetch --progress --depth=1 origin $GIT_BRANCH 2>&1)
+        fi
+        GIT_LOG=$(git log -1 origin/$GIT_BRANCH)
+        git remote remove origin
+        GIT_TAG_NEW=$(echo "$GIT_LOG" | head -1 | awk '{print $NF}')
     else
-        GIT_FETCH=$(git fetch --progress --depth=1 origin $GIT_BRANCH 2>&1)
+        # Release pin: compare against the newest tag of the same form (e.g. vX.Y.Z-pN),
+        # which excludes release candidates
+        TAG_REGEX=$(echo "$GIT_TAG" | sed -E 's/[0-9]+(\.[0-9]+)*/@/g; s/[.+]/\\&/g; s/@/[0-9]+(\\.[0-9]+)*/g')
+        GIT_TAG_NEW=$(git ls-remote --tags --refs $GIT_URL | awk '{print $2}' | sed 's|^refs/tags/||' | \
+            grep -E "^${TAG_REGEX}$" | sort -V | tail -1)
+        GIT_LOG=""
     fi
-    GIT_LOG=$(git log -1 origin/$GIT_BRANCH)
-    git remote remove origin
-
-    GIT_TAG=$(grep -A 8 "$GIT_URL" $SOURCE_DIR/cmake/ExternalGitTags.cmake | tail -1 | awk '{print $1}' | sed 's/\"//g')
-    GIT_TAG_NEW=$(echo "$GIT_LOG" | head -1 | awk '{print $NF}')
-    if [[ ! "$GIT_TAG_NEW" == "$GIT_TAG" ]]; then
+    if [[ -n "$GIT_TAG_NEW" ]] && [[ ! "$GIT_TAG_NEW" == "$GIT_TAG" ]]; then
         echo "** NEW PACKAGE VERSION AVAILABLE! **" && printf "\n"
 
         echo "Previous tag: $GIT_TAG"
         echo "New tag:      $GIT_TAG_NEW" && printf "\n"
 
-        echo "$GIT_LOG" && printf "\n"
+        if [[ -n "$GIT_LOG" ]]; then
+            echo "$GIT_LOG" && printf "\n"
+        fi
 
         if $UPDATE_TAGS; then
-            sed -i .b  "s|\"$GIT_TAG\" CACHE|\"$GIT_TAG_NEW\" CACHE|" $SOURCE_DIR/cmake/ExternalGitTags.cmake
+            sed -i.b "${TAG_LINE}s|\"[^\"]*\" CACHE|\"$GIT_TAG_NEW\" CACHE|" $SOURCE_DIR/cmake/ExternalGitTags.cmake
             rm $SOURCE_DIR/cmake/ExternalGitTags.cmake.b
         fi
     else

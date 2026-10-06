@@ -294,7 +294,7 @@ set(EXTERN_SUNDIALS_GIT_TAG
 
 # Umpire (for HYPRE)
 set(EXTERN_UMPIRE_URL
-  "https://github.com/LLNL/Umpire" CACHE STRING
+  "https://github.com/LLNL/Umpire.git" CACHE STRING
   "URL for external UMPIRE build"
 )
 set(EXTERN_UMPIRE_GIT_BRANCH
