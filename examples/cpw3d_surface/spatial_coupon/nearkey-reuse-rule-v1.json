@@ -17,6 +17,11 @@
    "Decision": 431,
    "SHA256": "48731a31723d8178a3eecc7fe4f44b40ed7ef73ea0867ebd87bd278c25b15468",
    "Rule": "item 1.2 (8): DEFAULT admits a donor whose only BuildGateOverride is the decision-311 cut-end kind (semantic-corner-and-endpoint-anisotropy, Band.Kind CutNeighborhoods; SupersededBy 316), refuses any other gate / kind and an unrecorded build-override mesh path; the donor pool is the library of record v3-b1"
+  },
+  "Erratum2": {
+   "Decision": 438,
+   "SHA256": "9ed2f4fad557be6e3003211a15c6f1858293a5f2061fb88c3879b29717184e7d",
+   "Rule": "section 4.4's MA_sharp tail sentence vs the 2.6 form the budget applies (+0.006 / +0.012 / +0.019 points on S3p / S4 / C3); the decision-438 fail-closed checks (assemble per model, donor (F) record required + sha, key assertion, STOP record class, Default refuses a rule override, DefaultActivation.RecordSHA256 verified)"
   }
  },
  "CalibrationRecord": {
@@ -111,7 +116,7 @@
   },
   "DefaultActive": false,
   "DefaultActivation": null,
-  "DefaultActivationRule": "DESIGN v2 section 3 / decision 428: the DEFAULT mode is active only after validation pair 5 (an independent in-domain pair at |W| ~ 2 %) has read inside its bound; until then every qualifying reuse is FALLBACK-only. Activation = a DefaultActivation record {ValidationPair, RecordSHA256} written here by a reviewed amendment.",
+  "DefaultActivationRule": "DESIGN v2 section 3 / decisions 428 / 438 (5): the DEFAULT mode is active only after validation pair 5 (an independent in-domain pair at |W| ~ 2 %) has read inside its bound; until then every qualifying reuse is FALLBACK-only. Activation = a DefaultActivation {ValidationPair, RecordPath, RecordSHA256, Decision} record written here by a reviewed amendment that also records the new rule-file sha in SUPERVISOR-DECISIONS; RecordPath must be readable and re-hash to RecordSHA256 (nearkey_predictor.default_active, fail closed); only this shipped, test-pinned rule file activates default reuse (a --nearkey-rule override is refused in Default mode).",
   "DonorBuildGateOverride": {
    "DefaultAdmittedKind": {
     "Gate": "semantic-corner-and-endpoint-anisotropy",
