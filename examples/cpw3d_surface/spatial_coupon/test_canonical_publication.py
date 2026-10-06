@@ -242,7 +242,7 @@ class ExactRigidGmshTest(unittest.TestCase):
             identity_output = root / "identity.msh"
             before, after, error = transform_gmsh22(source, identity_output, identity)
             self.assertEqual(source.read_bytes(), identity_output.read_bytes())
-            self.assertEqual(before["tags"], after["tags"]); self.assertEqual(error, 0.)
+            np.testing.assert_array_equal(before["tags"], after["tags"]); self.assertEqual(error, 0.)
             angle = .63
             matrix = validate_rigid_transform([
                 math.cos(angle), -math.sin(angle), 0, 1.2,
@@ -251,7 +251,7 @@ class ExactRigidGmshTest(unittest.TestCase):
             rotated = root / "rotated.msh"
             before, after, error = transform_gmsh22(source, rotated, matrix)
             self.assertNotEqual(sha256(source), sha256(rotated))
-            self.assertEqual(before["tags"], after["tags"])
+            np.testing.assert_array_equal(before["tags"], after["tags"])
             self.assertLessEqual(error, 1e-15)
             left, right = meshio.read(source), meshio.read(rotated)
             self.assertTrue(_exact_mesh_structure(left, right))

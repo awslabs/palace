@@ -51,6 +51,12 @@ def _line(data, start):
     return raw, end + 1
 
 
+def _node_record_dtype(endian):
+    """The binary Gmsh 2.2 node record (tag, x, y, z) with the file's byte order: the
+    28 packed bytes struct's `endian + "i3d"` reads and writes."""
+    return np.dtype([("tag", endian + "i4"), ("xyz", endian + "f8", (3,))])
+
+
 def _node_section(data):
     marker = b"$Nodes"
     starts = []
@@ -105,13 +111,12 @@ def _node_section(data):
         end_marker, finish = _line(data, after)
         if end_marker != b"$EndNodes":
             raise ValueError("Missing $EndNodes marker")
-        tags, points = [], []
-        for index in range(count):
-            tag, x, y, z = struct.unpack_from(endian + "i3d", data, records + index * width)
-            tags.append(tag); points.append((x, y, z))
+        # One structured view of the records (no per-node Python object); the tags and
+        # points are copies, so the file bytes can be released.
+        node_records = np.frombuffer(data, dtype=_node_record_dtype(endian), count=count, offset=records)
         return {"binary": True, "endian": endian, "start": records, "end": end,
-                "finish": finish, "count": count, "tags": tags,
-                "points": np.asarray(points, dtype=float)}
+                "finish": finish, "count": count, "tags": node_records["tag"].astype(np.int64),
+                "points": np.ascontiguousarray(node_records["xyz"], dtype=float)}
     tags, points, lines = [], [], []
     cursor = records
     for _ in range(count):
@@ -125,11 +130,16 @@ def _node_section(data):
     if end_marker != b"$EndNodes":
         raise ValueError("Missing $EndNodes marker")
     return {"binary": False, "start": records, "end": cursor, "finish": finish,
-            "count": count, "tags": tags, "points": np.asarray(points, dtype=float),
-            "lines": lines}
+            "count": count, "tags": np.asarray(tags, dtype=np.int64),
+            "points": np.asarray(points, dtype=float).reshape(-1, 3), "lines": lines}
 
 
 def transform_gmsh22(source, output, matrix):
+    """Write `output` = `source` with its $Nodes records rigidly transformed by `matrix`
+    (every other byte identical): the transformed records are written between the
+    source's prefix and suffix without assembling a second copy of the file in memory.
+    Returns the source's node section, the output's node section (re-read from the
+    written file) and the coordinate error of the written records."""
     source, output = Path(source).resolve(), Path(output).resolve()
     if source == output or not source.is_file() or output.exists():
         raise ValueError("Rigid publication requires distinct existing input and fresh output")
@@ -140,22 +150,40 @@ def transform_gmsh22(source, output, matrix):
     if not np.all(np.isfinite(transformed)):
         raise ValueError("Rigid transform produced nonfinite coordinates")
     if section["binary"]:
-        records = bytearray(data[section["start"]:section["end"]])
-        width = struct.calcsize(section["endian"] + "i3d")
-        for index, (tag, point) in enumerate(zip(section["tags"], transformed)):
-            struct.pack_into(section["endian"] + "i3d", records, index * width,
-                             tag, *map(float, point))
-        published = data[:section["start"]] + bytes(records) + data[section["end"]:]
+        records = np.empty(section["count"], dtype=_node_record_dtype(section["endian"]))
+        records["tag"] = section["tags"]
+        records["xyz"] = transformed
+        records = records.tobytes()
     else:
         newline = b"\r\n" if b"\r\n" in data[section["start"]:section["end"]] else b"\n"
         records = b"".join((f"{tag} " + " ".join(format(value, '.17g') for value in point))
                            .encode() + newline
-                           for tag, point in zip(section["tags"], transformed))
-        published = data[:section["start"]] + records + data[section["end"]:]
-    output.write_bytes(published)
-    actual = _node_section(published)
+                           for tag, point in zip(section["tags"].tolist(), transformed))
+    view = memoryview(data)
+    with output.open("wb") as stream:
+        stream.write(view[:section["start"]])
+        stream.write(records)
+        stream.write(view[section["end"]:])
+    del view, records, data
+    actual = _node_section(output.read_bytes())
     error = float(np.max(np.linalg.norm(actual["points"] - transformed, axis=1)))
     return section, actual, error
+
+
+def _same_file_bytes(left, right, left_span, right_span, chunk=1 << 26):
+    """left[left_span] == right[right_span] byte for byte, read in chunks (equal spans)."""
+    if left_span[1] - left_span[0] != right_span[1] - right_span[0]:
+        return False
+    with Path(left).open("rb") as first, Path(right).open("rb") as second:
+        first.seek(left_span[0]); second.seek(right_span[0])
+        remaining = left_span[1] - left_span[0]
+        while remaining > 0:
+            count = min(chunk, remaining)
+            a, b = first.read(count), second.read(count)
+            if len(a) != count or a != b:
+                return False
+            remaining -= count
+    return True
 
 
 def _nodes_only_change(source, output, before_section, after_section):
@@ -163,11 +191,13 @@ def _nodes_only_change(source, output, before_section, after_section):
     records alone: identical bytes before the records and after them (the $MeshFormat,
     $PhysicalNames, $Elements and every other section), the same node count.  What the
     meshio structure comparison established through two full reads follows from it
-    (decision 62 step 3, proposal 7)."""
-    data, published = Path(source).read_bytes(), Path(output).read_bytes()
+    (decision 62 step 3, proposal 7).  The files are compared in chunks, never held
+    whole."""
+    source_size, output_size = Path(source).stat().st_size, Path(output).stat().st_size
     return (before_section["count"] == after_section["count"] and
-            data[:before_section["start"]] == published[:after_section["start"]] and
-            data[before_section["end"]:] == published[after_section["end"]:])
+            _same_file_bytes(source, output, (0, before_section["start"]), (0, after_section["start"])) and
+            _same_file_bytes(source, output, (before_section["end"], source_size),
+                             (after_section["end"], output_size)))
 
 
 def _equal_data(left, right):
@@ -240,6 +270,8 @@ def apply_radial_shells(output_mesh, census_path, *, canonical_build, matrix, si
     out, mesh, shells, relabeled, ma_labels = radial_shells.relabel(data, lines=lines, radii=radii,
                                                                     source_coordinates=source_coordinates)
     label_only = radial_shells.assert_label_only(data, out, mesh, relabeled)
+    margins = mesh["DecisionMargins"]
+    del data, mesh, relabeled
     parents = radial_shells.parent_area_check(shells, ma_labels, partition_path)
     closure = radial_shells.closure_check(shells)
     Path(output_mesh).write_bytes(out)
@@ -253,16 +285,76 @@ def apply_radial_shells(output_mesh, census_path, *, canonical_build, matrix, si
                              "Rule": "shell of an element = ring interval of its centroid distance to the nearest metal "
                                      "edge line, both taken in source-local coordinates through the inverse rigid map"},
                "BuildCensus": {"Path": str(build_census_path), "SHA256": sha256(build_census_path)},
-               "CanonicalOwnershipPartition": {"Path": str(partition_path), "SHA256": sha256(partition_path)}})
+               "CanonicalOwnershipPartition": {"Path": str(partition_path), "SHA256": sha256(partition_path)},
+               "DecisionMargins": margins})
+    del out
     census_path.write_text(json.dumps(census, indent=2) + "\n")
     return {"Applied": True, "Path": str(census_path.resolve()), "SHA256": sha256(census_path), "Kind": RADIAL_SHELLS_KIND,
             "Tool": census["Tool"], "ToolSHA256": census["ToolSHA256"], "ShellCount": len(census["Shells"]),
             "MAParents": ma_labels, "RingRadii": radii, "LabelOnly": label_only,
             "StraddlingFraction": closure["StraddlingFraction"], "RelativeClosure": closure["RelativeClosure"],
             "ParentAreaMaximumRelativeDifference": max(item["RelativeDifference"] for item in parents.values()),
+            "DecisionMargins": margins,
             "Rule": "label-only: the $Nodes block and every element apart from the (physical, elementary) pair of the MA "
                     "elements are byte-identical to the parent-labeled publication (LabelOnly); the shells sum to the "
                     "canonical ownership partition's parent areas; the ownership audit below runs on the shelled mesh"}
+
+
+def _check_publication(canonical_mesh, output_mesh, radial_shells_path, matrix, before_section, after_section,
+                       coordinate_error, *, tolerance, kind, canonical_build, signature, boundary, process, parent_digest,
+                       canonical_digest):
+    """The structure, coordinate, orientation and measure checks of the published mesh
+    against the canonical one, then the radial MA shells (fabricated coupons) and the
+    proof that they changed the MA labels alone; returns (coordinate error, volume
+    quality, measure error, shell record) and releases every mesh object."""
+    if before_section["binary"] and after_section["binary"]:
+        # Binary publication: the byte-diff proof that only the $Nodes records changed,
+        # then one parse of the output; the canonical mesh is that parse with the
+        # canonical coordinates (its node records are the same doubles the parse of the
+        # canonical file would give, its cells and data the byte-identical sections).
+        if not _nodes_only_change(canonical_mesh, output_mesh, before_section, after_section):
+            raise ValueError("Rigid publication changed cell blocks, connectivity, labels, or data")
+        right = read_mesh(output_mesh)
+        left = meshio.Mesh(np.ascontiguousarray(before_section["points"], dtype=float),
+                           [(cell.type, cell.data) for cell in right.cells], point_data=dict(right.point_data),
+                           cell_data=dict(right.cell_data), field_data=dict(right.field_data))
+    else:
+        left, right = meshio.read(canonical_mesh), meshio.read(output_mesh)
+        if not _exact_mesh_structure(left, right):
+            raise ValueError("Rigid publication changed cell blocks, connectivity, labels, or data")
+    expected = left.points @ np.asarray(matrix)[:3, :3].T + np.asarray(matrix)[:3, 3]
+    coordinate_error = max(coordinate_error,
+                           float(np.max(np.linalg.norm(right.points - expected, axis=1))))
+    del expected
+    if coordinate_error > tolerance:
+        raise ValueError("Rigid publication coordinate error exceeds the frozen tolerance")
+    quality = _volume_quality(right)
+    if quality["PositiveOrientation"] is not True:
+        raise ValueError("Rigid publication changed volume element orientation")
+    before_invariants, after_invariants = _mesh_invariants(left), _mesh_invariants(right)
+    del left
+    measure_error = max((abs(after_invariants[key] - value) / max(abs(value), 1e-300)
+                         for key, value in before_invariants.items()), default=0.0)
+    if measure_error > 1e-11:
+        raise ValueError("Rigid publication changed a material or physical measure")
+    # The per-ring radial MA shells (decision 61a), label-only on the published bytes.
+    # A thin coupon carries none (decision 66): its MS / MA are the two sides of one
+    # sheet label and its participations are recorded at the recipe cutoff, never
+    # extrapolated.
+    shells = (apply_radial_shells(output_mesh, radial_shells_path, canonical_build=canonical_build, matrix=matrix,
+                                  signature=signature, boundary=boundary, process=process,
+                                  parent_digest=parent_digest, canonical_digest=canonical_digest)
+              if kind == "fabricated" else
+              {"Applied": False, "Reason": "thin coupon (decision 66): no radial MA shells - the sheet label carries "
+                                           "both MS and MA and the thin participations are recorded at the recipe "
+                                           "cutoff (the tube inner size), never extrapolated"})
+    if shells["Applied"]:
+        shelled = parent_label_view(read_mesh(output_mesh))
+        if not _exact_mesh_structure(right, shelled, cell_data_keys=("gmsh:physical",)):
+            raise ValueError("Radial shell relabel changed the mesh beyond the MA shell labels")
+        if _mesh_invariants(shelled) != after_invariants:
+            raise ValueError("Radial shell relabel changed a material or physical measure")
+    return coordinate_error, quality, measure_error, shells
 
 
 def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
@@ -289,58 +381,23 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
         raise ValueError("Canonical candidate differs from the bound canonical build")
     before_section, after_section, coordinate_error = transform_gmsh22(
         canonical_mesh, output_mesh, matrix)
-    if before_section["tags"] != after_section["tags"]:
+    if not np.array_equal(before_section["tags"], after_section["tags"]):
         raise ValueError("Rigid publication changed node tags")
-    if before_section["binary"] and after_section["binary"]:
-        # Binary publication: the byte-diff proof that only the $Nodes records changed,
-        # then one parse of the output; the canonical mesh is that parse with the
-        # canonical coordinates (its node records are the same doubles the parse of the
-        # canonical file would give, its cells and data the byte-identical sections).
-        if not _nodes_only_change(canonical_mesh, output_mesh, before_section, after_section):
-            raise ValueError("Rigid publication changed cell blocks, connectivity, labels, or data")
-        right = read_mesh(output_mesh)
-        left = meshio.Mesh(np.ascontiguousarray(before_section["points"], dtype=float),
-                           [(cell.type, cell.data) for cell in right.cells], point_data=dict(right.point_data),
-                           cell_data=dict(right.cell_data), field_data=dict(right.field_data))
-    else:
-        left, right = meshio.read(canonical_mesh), meshio.read(output_mesh)
-        if not _exact_mesh_structure(left, right):
-            raise ValueError("Rigid publication changed cell blocks, connectivity, labels, or data")
-    expected = left.points @ np.asarray(matrix)[:3, :3].T + np.asarray(matrix)[:3, 3]
-    coordinate_error = max(coordinate_error,
-                           float(np.max(np.linalg.norm(right.points - expected, axis=1))))
-    if coordinate_error > tolerance:
-        raise ValueError("Rigid publication coordinate error exceeds the frozen tolerance")
+    node_count = int(before_section["count"])
     identity = np.array_equal(np.asarray(matrix), np.eye(4))
     parent_digest = sha256(output_mesh)
     if not identity and parent_digest == canonical_digest:
         raise ValueError("Nonidentity rigid publication reused canonical mesh bytes")
-    quality = _volume_quality(right)
-    if quality["PositiveOrientation"] is not True:
-        raise ValueError("Rigid publication changed volume element orientation")
-    before_invariants, after_invariants = _mesh_invariants(left), _mesh_invariants(right)
-    measure_error = max((abs(after_invariants[key] - value) / max(abs(value), 1e-300)
-                         for key, value in before_invariants.items()), default=0.0)
-    if measure_error > 1e-11:
-        raise ValueError("Rigid publication changed a material or physical measure")
-    # The per-ring radial MA shells (decision 61a), label-only on the published bytes.
-    # A thin coupon carries none (decision 66): its MS / MA are the two sides of one
-    # sheet label and its participations are recorded at the recipe cutoff, never
-    # extrapolated.
-    shells = (apply_radial_shells(output_mesh, radial_shells_path, canonical_build=canonical_build, matrix=matrix,
-                                  signature=signature, boundary=boundary, process=process,
-                                  parent_digest=parent_digest, canonical_digest=canonical_digest)
-              if kind == "fabricated" else
-              {"Applied": False, "Reason": "thin coupon (decision 66): no radial MA shells - the sheet label carries "
-                                           "both MS and MA and the thin participations are recorded at the recipe "
-                                           "cutoff (the tube inner size), never extrapolated"})
+    # The mesh objects live inside _check_publication alone: the ownership auditor below
+    # runs with the publisher holding the records only (the bounded stage measures the
+    # process tree).
+    checks = _check_publication(canonical_mesh, output_mesh, radial_shells_path, matrix, before_section, after_section,
+                                coordinate_error, tolerance=tolerance, kind=kind, canonical_build=canonical_build,
+                                signature=signature, boundary=boundary, process=process, parent_digest=parent_digest,
+                                canonical_digest=canonical_digest)
+    del before_section, after_section
+    coordinate_error, quality, measure_error, shells = checks
     output_digest = sha256(output_mesh)
-    if shells["Applied"]:
-        shelled = parent_label_view(read_mesh(output_mesh))
-        if not _exact_mesh_structure(right, shelled, cell_data_keys=("gmsh:physical",)):
-            raise ValueError("Radial shell relabel changed the mesh beyond the MA shell labels")
-        if _mesh_invariants(shelled) != after_invariants:
-            raise ValueError("Radial shell relabel changed a material or physical measure")
 
     transform_digest = sha256(transform_path)
     semantic_digest = sha256(semantic_input)
@@ -391,7 +448,7 @@ def publish(canonical_mesh, transform_path, output_mesh, receipt_path, *,
         "Identity": bool(identity),
         "MaximumCoordinateError": coordinate_error,
         "CoordinateTolerance": tolerance,
-        "NodeCount": len(before_section["tags"]),
+        "NodeCount": node_count,
         "NodeTagsExact": True,
         "CellBlocksConnectivityLabelsAndDataExact": True,
         "CellBlocksConnectivityLabelsAndDataExactRule": "the rigidly published mesh before the radial shell relabel "
