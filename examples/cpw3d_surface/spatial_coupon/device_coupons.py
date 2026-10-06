@@ -34,6 +34,18 @@ source-directory adapter).
    the device path binds no retained-etch.csv; InventoryStatus DeviceDerived; the mesh
    recipe every trace-basis case of the manifest binds, or --mesh-recipe).
 
+Near-key reuse (USER decision 428 = Option A; decision 431; DESIGN v2; nearkey_reuse.py): with
+`--nearkey-reuse default | fallback` (default `off`) every spatial coupon's generated basis is
+offered to the near-key rule BEFORE registration: a qualifying library donor (the four calibrated
+structure keys of RuleVersion v1, every item of DESIGN 1.2, the transplant gates, the predicted
+bound inside the policy) gives a REUSED model under output/reused/<case>-reused/ (status
+ReusedResponse; never registered / built here; `nearkey_reuse.py assemble` adds it to a
+library) and the coupon is recorded reused; a refusal is recorded and the coupon follows the
+normal path. `default` needs the rule file's DefaultActivation record (validation pair 5);
+`fallback` needs --nearkey-fallback-approval and a --nearkey-fallback-stop-record
+HASH_PREFIX=PATH (the exact key's registration / build STOP record) per requirement it may
+reuse; every other requirement follows the normal path.
+
 usage: device_coupons.py DEVICE_CONFIG --palace PATH --output DIR [--manifest PATH]
        [--mesh-recipe REPOSITORY_PATH] [--ring-size N] [--cap-triangulation METHOD] [--register]
 """
@@ -55,6 +67,8 @@ for path in (str(HERE), str(CPW2D)):
         sys.path.insert(0, path)
 import cluster_signature_geometry  # noqa: E402
 import general_mesh_manifest  # noqa: E402
+import nearkey_predictor  # noqa: E402
+import nearkey_reuse  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
 import register_case  # noqa: E402
 from refreeze_manifest_tools import PRODUCTION_MANIFEST  # noqa: E402
@@ -279,11 +293,15 @@ def check_requirement_options_consumed(options, consumed, name):
                                  f"{unused} (an omitted requirement or another family cannot carry it)")
 
 
+NEARKEY_MODES = ("off", "default", "fallback")
+
+
 def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODUCTION_MANIFEST, ring_size=DEFAULT_RING_SIZE,
                            cap_triangulation=DEFAULT_CAP_TRIANGULATION,
                            cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print,
                            omit_requirements=(), support_span_caps=(), support_span_cap_reason=None, element_caps=(),
-                           element_cap_approval=None, element_cap_reason=None):
+                           element_cap_approval=None, element_cap_reason=None, nearkey_reuse_mode="off",
+                           nearkey_fallback_approval=None, nearkey_fallback_stop_records=(), nearkey_rule=None, nearkey_record_roots=()):
     """Steps 1-3: the source directories of every spatial coupon of the device under
     output/sources/<case id>; returns the device record (written to output/device-coupons.json).
     `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
@@ -292,13 +310,51 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     `support_span_caps` / `element_caps`: HASH_PREFIX=VALUE options (parse_requirement_option)
     naming one spatial coupon each - the generator's --support-span-cap (x R) for it, and the
     element cap its registered cases carry as GateOverrides.MaximumElements (register_device_sources)
-    - with their reason (and approval) texts, all recorded in the provenance and the record."""
+    - with their reason (and approval) texts, all recorded in the provenance and the record.
+    `nearkey_reuse_mode` off | default | fallback (nearkey_reuse.py; the module docstring): a reused
+    coupon is recorded under NearKeyReuse and is not registered."""
     span_caps = requirement_options(support_span_caps, float, "--support-span-cap")
     caps = requirement_options(element_caps, int, "--element-cap")
     if span_caps and not (isinstance(support_span_cap_reason, str) and support_span_cap_reason.strip()):
         raise DeviceAdapterError("--support-span-cap needs --support-span-cap-reason (recorded with the coupon)")
     if caps and not all(isinstance(text, str) and text.strip() for text in (element_cap_approval, element_cap_reason)):
         raise DeviceAdapterError("--element-cap needs --element-cap-approval and --element-cap-reason (recorded in the manifest)")
+    if nearkey_reuse_mode not in NEARKEY_MODES:
+        raise DeviceAdapterError(f"--nearkey-reuse must be one of {NEARKEY_MODES}, not {nearkey_reuse_mode!r}")
+    stop_records = {}
+    for text in nearkey_fallback_stop_records or ():
+        prefix, separator, path = str(text).partition("=")
+        if not separator or not prefix or not path or any(character not in "0123456789abcdef" for character in prefix):
+            raise DeviceAdapterError(f"--nearkey-fallback-stop-record expects HASH_PREFIX=PATH with a hex prefix, not {text!r}")
+        if prefix in stop_records:
+            raise DeviceAdapterError(f"--nearkey-fallback-stop-record: the prefix {prefix} is given twice")
+        stop_records[prefix] = path
+    if nearkey_reuse_mode == "fallback":
+        if not (isinstance(nearkey_fallback_approval, str) and nearkey_fallback_approval.strip()):
+            raise DeviceAdapterError("--nearkey-reuse fallback needs --nearkey-fallback-approval TEXT (recorded on the reused model)")
+        if not stop_records:
+            raise DeviceAdapterError("--nearkey-reuse fallback needs a --nearkey-fallback-stop-record HASH_PREFIX=PATH per requirement")
+    elif stop_records or nearkey_fallback_approval:
+        raise DeviceAdapterError("--nearkey-fallback-approval / --nearkey-fallback-stop-record apply to --nearkey-reuse fallback only")
+    record_roots = {}
+    for text in nearkey_record_roots or ():
+        remote, separator, local = str(text).partition("=")
+        if not separator or not remote or not local:
+            raise DeviceAdapterError(f"--nearkey-record-root expects REMOTE=LOCAL, not {text!r}")
+        record_roots[remote] = local
+    rule = None
+    if nearkey_reuse_mode != "off":
+        if nearkey_reuse_mode == "default" and nearkey_rule is not None:
+            raise DeviceAdapterError("--nearkey-reuse default refuses --nearkey-rule: only the shipped, test-pinned rule file activates "
+                                     "default reuse (decision 438 (5))")
+        try:
+            rule = nearkey_predictor.load_rule(nearkey_rule or nearkey_predictor.RULE_FILE)
+            if nearkey_reuse_mode == "default" and not nearkey_predictor.default_active(rule)[0]:
+                raise DeviceAdapterError("--nearkey-reuse default: the rule carries no DefaultActivation record (validation pair 5): "
+                                         "default reuse is not active (DESIGN v2 section 3; decision 428)")
+        except nearkey_predictor.NearKeyRuleError as error:
+            raise DeviceAdapterError(f"near-key rule: {error}") from error
+    consumed_stop = []
     consumed_span, consumed_caps = [], []
     device_config = Path(device_config).resolve()
     output = Path(output).resolve()
@@ -341,6 +397,11 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                      "decision 57) re-triangulates the two box caps without needle ears, ear-clipping "
                                      "is the gallery producer's (an explicit option; device coupons only, never a "
                                      "gallery reference)"},
+              "NearKeyReuse": {"Mode": nearkey_reuse_mode, "RuleVersion": rule["RuleVersion"] if rule else None,
+                               "RuleFileSHA256": rule["_sha256"] if rule else None, "Reused": [], "Refused": [],
+                               "Rule": "USER decision 428 (Option A) / decision 431 / DESIGN v2: nearkey_reuse.reuse_requirement on the "
+                                       "generated "
+                                       "basis before registration; a reused coupon is not registered / built; a refusal is recorded"},
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
         method = coupon["Preparation"]["Method"]
@@ -389,6 +450,17 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
         edge_count = int(coupon["Geometry"].get("EdgeCount", len(coupon["Geometry"].get("Edges", []))))
         case_id = f"spatial-{edge_count}-edge-{digest[:12]}"
         directory = output / "sources" / case_id
+        near_key = None
+        if rule is not None:
+            stop_option = requirement_option_for(stop_records, coupon["Hash"]) if nearkey_reuse_mode == "fallback" else None
+            if stop_option is not None:
+                consumed_stop.append(stop_option[0])
+            near_key = nearkey_reuse_for_coupon(coupon, work, case_id, library=library, library_path=library_path, rule=rule,
+                                                mode=nearkey_reuse_mode, output=output / "reused",
+                                                stop_record_path=None if stop_option is None else stop_option[1],
+                                                approval=nearkey_fallback_approval, record_roots=record_roots, log=log)
+            (record["NearKeyReuse"]["Reused"] if near_key["Reused"] else record["NearKeyReuse"]["Refused"]).append(
+                {key: near_key[key] for key in ("Case", "Requirement", "Reason", "Donor", "ReuseMode", "ModelDirectory")})
         provenance = {
             "Version": 1, "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
             "SPDX-License-Identifier": "Apache-2.0",
@@ -455,20 +527,56 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                                          {"Value": element_cap[1], "Prefix": element_cap[0],
                                                           "Approval": element_cap_approval, "Reason": element_cap_reason}),
                                   "Interfaces": coupon["Interfaces"], "DeviceOccurrences": coupon["DeviceOccurrences"],
-                                  "DeviceEdgeLength": coupon["DeviceEdgeLength"], "Registration": None})
-        log(f"{case_id}: source directory {status} ({edge_count} edges, requirement {coupon['Id']})")
+                                  "DeviceEdgeLength": coupon["DeviceEdgeLength"], "Registration": None, "NearKeyReuse": near_key})
+        log(f"{case_id}: source directory {status} ({edge_count} edges, requirement {coupon['Id']})"
+            + (f"; near-key REUSED from {near_key['Donor']} ({near_key['ReuseMode']}): not registered"
+               if near_key and near_key["Reused"] else ""))
     check_requirement_options_consumed(span_caps, consumed_span, "--support-span-cap")
     check_requirement_options_consumed(caps, consumed_caps, "--element-cap")
+    if nearkey_reuse_mode == "fallback":
+        check_requirement_options_consumed(stop_records, consumed_stop, "--nearkey-fallback-stop-record")
     record["Manifest"] = str(manifest_path)
     record["Output"] = str(output)
     (output / DEVICE_RECORD).write_text(json.dumps(record, indent=2) + "\n")
     return record
 
 
+def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, rule, mode, output, stop_record_path, approval,
+                             record_roots=None, log=print):
+    """The near-key reuse decision of one planned spatial coupon on its generated basis (`work`): the
+    coupon record's NearKeyReuse block {Reused, Case, Requirement, Reason, Donor, ReuseMode, ModelDirectory,
+    Record}. In fallback mode a requirement without a STOP record is not offered (recorded)."""
+    base = {"Reused": False, "Case": case_id, "Requirement": coupon["Id"], "Reason": None, "Donor": None, "ReuseMode": None,
+            "ModelDirectory": None, "Record": None}
+    signature = coupon["Geometry"].get("Signature")
+    if coupon["Topology"] != "SpatialEdgeCluster" or signature is None:
+        return {**base, "Reason": "NotApplicable: no SpatialEdgeCluster Signature (a version-1 record)"}
+    if mode == "fallback" and stop_record_path is None:
+        return {**base, "Reason": "NoStopRecord: fallback reuse is offered only to a requirement with a --nearkey-fallback-stop-record"}
+    entry = json.loads((Path(work) / "process-library.json").read_text())["Models"][0]
+    try:
+        stop = nearkey_reuse.stop_record_from_path(stop_record_path, entry["Name"], case_id) if stop_record_path else None
+        result = nearkey_reuse.reuse_requirement(
+            exact_signature=signature, exact_basis_dir=work, exact_model_entry=entry, library=library, library_path=library_path, rule=rule,
+            mode=mode, output=output, requirement_key=coupon.get("Hash"), stop_record=stop, approval=approval, record_roots=record_roots,
+            exact_interfaces=coupon.get("Interfaces"), exact_boundary_condition=coupon.get("BoundaryCondition"), log=log)
+    except (nearkey_reuse.NearKeyReuseError, nearkey_predictor.NearKeyRuleError, nearkey_reuse.detection.NearKeyDetectionError,
+            nearkey_reuse.transplant.TransplantError) as error:
+        raise DeviceAdapterError(f"coupon {coupon['Id']}: near-key reuse stopped: {error}") from error
+    record_path = Path(output) / f"{entry['Name']}-nearkey-reuse.json"
+    record_path.write_text(json.dumps(result, indent=1) + "\n")
+    if not result["Reused"]:
+        return {**base, "Reason": result["Refused"]["Reason"], "Record": str(record_path)}
+    return {**base, "Reused": True, "Reason": None, "Donor": result["Model"]["ReusedFrom"]["Donor"],
+            "ReuseMode": result["Model"]["ReuseMode"],
+            "ModelDirectory": result["ModelDirectory"], "Record": str(record_path)}
+
+
 DEFAULT_REGISTER_JOBS = 2
 
 
 REGISTRATION_KEYS = ("Status", "Message", "FixtureVersion", "ContractSHA256", "Scope", "StoppedBy", "Work")
+STATUS_NEARKEY_REUSED = "near-key-reused"
 
 
 def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=None, python=sys.executable, julia=None,
@@ -529,7 +637,14 @@ def register_device_sources(record, *, manifest_path, mesh_recipe=None, work=Non
                 registration = json.loads(failed.read_text())
             return registration
 
-    coupons = list(record["Coupons"])
+    # a near-key REUSED coupon (decision 428) is not registered / built: its reused model replaces the exact coupon
+    reused = [coupon for coupon in record["Coupons"] if (coupon.get("NearKeyReuse") or {}).get("Reused")]
+    for coupon in reused:
+        coupon["Registration"] = {"Status": STATUS_NEARKEY_REUSED, "Message": f"near-key reused from {coupon['NearKeyReuse']['Donor']} "
+                                  f"({coupon['NearKeyReuse']['ReuseMode']}): not registered (DESIGN v2 section 3)"}
+        coupon["ThinCase"], coupon["ThinRegistration"] = None, None
+        log(f"{coupon['Case']}: {coupon['Registration']['Message']}")
+    coupons = [coupon for coupon in record["Coupons"] if coupon not in reused]
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(jobs, max(len(coupons), 1))) as pool:
         prepared = list(pool.map(prepare, coupons))
@@ -580,12 +695,28 @@ def add_requirement_option_arguments(parser):
                              "--element-cap-approval and --element-cap-reason")
     parser.add_argument("--element-cap-approval", help="who approved the element cap override (recorded in the manifest)")
     parser.add_argument("--element-cap-reason", help="why the element cap is raised (recorded in the manifest)")
+    parser.add_argument("--nearkey-reuse", choices=NEARKEY_MODES, default="off",
+                        help="with --device: offer every spatial coupon to the near-key reuse rule (USER decision 428, Option A; "
+                             "nearkey_reuse.py) before registration: default (needs the rule's DefaultActivation record) or fallback "
+                             "(needs --nearkey-fallback-approval and a --nearkey-fallback-stop-record per requirement); off = never")
+    parser.add_argument("--nearkey-fallback-approval", help="fallback reuse: the recorded approval text (the supervisor decision)")
+    parser.add_argument("--nearkey-fallback-stop-record", action="append", default=[], metavar="HASH_PREFIX=PATH",
+                        help="fallback reuse: the registration / build STOP record (JSON) of the requirement whose Hash starts with the "
+                             "prefix (repeatable; a prefix matching no spatial coupon fails closed)")
+    parser.add_argument("--nearkey-rule", help="the near-key rule file (default: the repository's nearkey-reuse-rule-v1.json; refused "
+                                               "in default mode, decision 438 (5))")
+    parser.add_argument("--nearkey-record-root", action="append", default=[], metavar="REMOTE=LOCAL",
+                        help="map the library's record paths (cluster) to a local mirror: the donors' stored (F) records are REQUIRED "
+                             "for the T4 gate in default / fallback (decision 438 (2))")
 
 
 def requirement_option_kwargs(args):
     return {"support_span_caps": args.support_span_cap, "support_span_cap_reason": args.support_span_cap_reason,
             "element_caps": args.element_cap, "element_cap_approval": args.element_cap_approval,
-            "element_cap_reason": args.element_cap_reason}
+            "element_cap_reason": args.element_cap_reason, "nearkey_reuse_mode": args.nearkey_reuse,
+            "nearkey_fallback_approval": args.nearkey_fallback_approval,
+            "nearkey_fallback_stop_records": args.nearkey_fallback_stop_record, "nearkey_rule": args.nearkey_rule,
+            "nearkey_record_roots": args.nearkey_record_root}
 
 
 def main(argv=None):

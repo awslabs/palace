@@ -17,6 +17,22 @@ archive hygiene, the frozen class gates of `qualify/qualification-gates.json`,
 plans without contacting the cluster). See "Two commands" in
 `geometry-independence-suite.md`.
 
+### Near-key reuse (USER decision 428 = Option A; decision 431; DESIGN v2 of the nearkey-reuse-design lane)
+
+|W| <= 11.3 % (the junction gap scaling with it, claim-length change S <= 0.75 %, shifts <= 0.05 R;
+`nearkey_detection.py`) has its response transplanted onto the feature's own basis (`nearkey_transplant.py`:
+the interpolation map P, Q_reused = P^T Q_D P for the fabricated / thin domain + surface and the
+fabricated SHELLED surface matrix, gates T1-T5 / T2e / knots); the predictor (`nearkey_predictor.py`,
+two regimes, r_T = -a_T W, bound (1 + rho) a |W| + b S + phi + 2 T2e, MA on MA_sharp) and the policy
+decide: DEFAULT (bound <= 0.5 % SA / MS, <= 1.0 % MA_sharp; active only once the rule file carries a
+DefaultActivation record = validation pair 5) or FALLBACK (the exact coupon unbuildable: STOP record +
+approval, bound <= 3.5 %); otherwise the feature stays Missing. A reused model (status
+`ReusedResponse`, records ReusedFrom / NearKey / PredictedReuseError / TransplantTests) is written
+under `ROOT/device/reused/`, never registered or built, and added to a library by
+`nearkey_reuse.py assemble` (the header `NearKeyReuse`). `nearkey_window_report.py` reports a run's
+reused share per Type and the reuse error budget (MA on MA_sharp) beside the D4 figures. Every other
+structure key is refused `StructureKeyNotCalibrated` (`test_nearkey_reuse.py`).
+
 ## Exact blockwise response matrices
 
 Large high-order coupons can exceed node memory because the ordinary response-matrix
