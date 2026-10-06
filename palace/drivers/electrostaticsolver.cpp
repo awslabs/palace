@@ -1744,8 +1744,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         portions_total.first += entry.first;
         portions_total.second += entry.second;
       }
-      // A plain writer: the type column is text (the table columns are numeric).
-      std::ofstream uncovered_output(post_dir / "surface-response-uncovered-energy.csv");
+      // A plain writer: the type column is text (the table columns are numeric). The
+      // previous adaptive iteration leaves a symlink into its archive folder at this path
+      // (BaseSolver::SaveIteration): remove it first, as TableWithCSVFile does, so that the
+      // file is written at the root and the archived iteration keeps its own.
+      const std::filesystem::path uncovered_path =
+          post_dir / "surface-response-uncovered-energy.csv";
+      std::filesystem::remove(uncovered_path);
+      std::ofstream uncovered_output(uncovered_path);
       MFEM_VERIFY(uncovered_output,
                   "Unable to open surface-response-uncovered-energy.csv for writing!");
       uncovered_output << "source,evaluation,type,portions,length (m)";
