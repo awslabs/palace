@@ -1341,6 +1341,41 @@ TEST_CASE("SurfaceResponseIdentificationPortCutAndBroadcast",
   const auto copy = DeserializeIdentificationResult(SerializeIdentificationResult(result));
   CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
   CHECK(copy.geometry_digest == result.geometry_digest);
+
+  // The corner-family blend records (decisions 374 (B) / 376) survive the broadcast form
+  // and reach the manifest's Match entry of their feature only.
+  IdentificationResult blend_source = result;
+  REQUIRE(!blend_source.features.empty());
+  auto &blend_feature = blend_source.features.front();
+  blend_feature.blend_eigenvalues = {{"FabricatedMatrix", -1.4513e-4},
+                                     {"ThinMatrix", -1.3291e-2},
+                                     {"DomainPositiveSemidefinite", false}};
+  blend_feature.interpolation_fallback = {
+      {"StencilRule", "cubic"},
+      {"StencilWeights", {0.092682, 1.729172, -0.921641, 0.099788}},
+      {"LinearNodes", {"concave-corner-60deg", "concave-corner-75deg"}},
+      {"LinearWeights", {0.300108, 0.699892}}};
+  const auto blend_copy =
+      DeserializeIdentificationResult(SerializeIdentificationResult(blend_source));
+  CHECK(blend_copy.ToJson(1.0) == blend_source.ToJson(1.0));
+  bool blend_found = false;
+  const nlohmann::json blend_manifest = blend_copy.ToJson(1.0);
+  for (const auto &entry : blend_manifest["Features"])
+  {
+    if (entry["Id"].get<int>() == blend_feature.id)
+    {
+      blend_found = true;
+      CHECK(entry["Match"]["BlendEigenvalues"] == blend_feature.blend_eigenvalues);
+      CHECK(entry["Match"]["InterpolationFallback"] ==
+            blend_feature.interpolation_fallback);
+    }
+    else
+    {
+      CHECK(!entry["Match"].contains("BlendEigenvalues"));
+      CHECK(!entry["Match"].contains("InterpolationFallback"));
+    }
+  }
+  CHECK(blend_found);
 }
 
 TEST_CASE("SurfaceResponseIdentificationStacks", "[surfaceresponseidentification][Serial]")

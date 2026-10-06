@@ -2357,6 +2357,40 @@ edge is triangulated), recorded as an UNCERTAINTY of the corner family's MA — 
 (a finer band basis: an extra ring near the metal top or 16 metal-ring knots, decision 140 (3)),
 not a defect of the rule (every stencil is consistent with one triangulation).
 
+**PSD fallback of an interpolated corner (supervisor decisions 374 (B) / 376, 2026-10-05;
+`MatchCornerFamily`, `ComputeCornerBlendEigenvalues`).** Lagrange weights on more than two
+nodes are negative on some node, and over NON-UNIFORM nodes the blend of PSD coupon matrices
+need not be PSD: C3's concave 70.498-degree corner over the nodes 60 / 75 / 80 / 90 (weights
++0.093 / +1.729 / -0.922 / +0.100) blended a fabricated domain matrix with min eigenvalue
+-1.45e-4 x max |eigenvalue| (thin -1.33e-2) and the operator aborted in
+`PositiveSemidefiniteInverseProduct` ("negative-energy mode beyond roundoff"). Rule: after
+the stencil is selected, the blended FABRICATED and THIN DOMAIN matrices are tested on the
+free knots with the operator's own criterion (min eigenvalue >= -1e-9 x max |eigenvalue|,
+`kResponseMatrixNegativeEigenvalueToleranceRelative`, the one constant both checks use); a
+stencil whose blend fails is replaced by the convex LINEAR blend of the two nodes bracketing
+the angle (weights in [0, 1]: PSD by construction) for every matrix of the feature; the base
+(the nearest node, one of the pair), the segment connectivity and so the constructed basis
+are unchanged; the runtime model is `<base>@corner-angle<deg>-linear`. A PSD blend is left
+bitwise untouched. Recorded per feature: `Features[].Match.BlendEigenvalues` for EVERY
+interpolated corner (the applied blend's min relative eigenvalue of the fabricated / thin
+domain matrices and of the per-coupon-interface surface matrices, `DomainPositiveSemidefinite`)
+and, on a fallback, `Features[].Match.InterpolationFallback` {Rule, Stencil [{Name,
+AngleDegrees}], StencilRule, StencilWeights (the stencil rule's Lagrange weights,
+cubic or quadratic), MinEigenvalueRelative (the stencil blend's),
+NegativeToleranceRelative, LinearNodes, LinearWeights, LinearMinEigenvalueRelative}; the same
+two objects on the version-1 record `CornerFamily` (whose `InterpolationRule` / `Nodes` are the
+APPLIED linear selection) and in `Match.Note`; the operator log prints a "Corner interpolation
+fallback" line under the blend. The per-interface SURFACE blends are recorded, never acted on
+(decision 376): the stored surface matrices are rank-deficient PSD (the SA interface of a
+176-knot concave node has 65 of 162 free-knot eigenvalues above 1e-6 x max), so every blend with
+a negative weight has negative modes along their null spaces (all seven C3 interpolations read
+-6.5e-7 .. -4.4e-2 there); what matters is the energy of the actual device trace, measured
+separately (lane psd-interp). Follow-ups recorded, not implemented: a surface-energy safety
+rule at the patch level and the stencil-selection rule over non-uniform nodes (Lebesgue /
+max-weight). Test `SurfaceResponseOperatorCornerBlendPositivity` (non-uniform 90 / 105 / 110 /
+135 family with a bumped node: fallback taken, recorded, the operator constructs; the bump on a
+PEC knot or the uniform family: the cubic unchanged).
+
 **Refined trace basis: `RingLayout` `AllRingsFollowMetal` (corner-basis refinement
 2026-09-30, USER decision 161; `generate_corner_response.TraceBasisRule` / `REFINED_RULE`,
 C++ `CornerRingLayout` / `RefinedCornerTraceBasisRule`; evidence
