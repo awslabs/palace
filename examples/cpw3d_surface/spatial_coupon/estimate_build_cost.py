@@ -63,6 +63,7 @@ HERE = Path(__file__).resolve().parent
 import sys  # noqa: E402
 sys.path.insert(0, str(HERE))
 from general_mesh_manifest import case_kind, thin_build_options, validate_case_element_cap_override  # noqa: E402
+from semantic_mesh_contract import arc_vertex_class, boundary_arc_tags, box_face_cut_end  # noqa: E402
 TUBE_SECTOR_SPAN_DEGREES = 270.0   # the dielectric side of a metal edge (3 / 4 turn)
 DIELECTRIC_FRACTION = 0.75         # of a ball / cylinder around a metal edge or corner
 # Thin sheet (decision 66): the whole turn around the sheet edge is dielectric.
@@ -211,13 +212,31 @@ def row_coupon_box(edges, radius, metal_thickness, overetch):
 
 
 def read_loops(boundary):
+    """Per loop the vertices ((x, y), Class, Plane, arc class) in vertex order; the arc class is
+    "Interior" (a chord vertex strictly inside one tagged arc), "Smooth" (a smooth arc joint),
+    "Joint" (a kinked arc end) or None (block (b) design A1 (4), semantic_mesh_contract).
+    read_loops_with_arcs also returns per loop the outgoing-side arc tags."""
+    return [loop for loop, _ in read_loops_with_arcs(boundary)]
+
+
+def read_loops_with_arcs(boundary):
     with Path(boundary).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
-    loops = {}
-    for row in rows:
-        loops.setdefault(int(row["Loop"]), []).append(
-            ((float(row["X"]), float(row["Y"])), row["Class"], float(row["Plane"])))
-    return list(loops.values())
+    arcs, joints = boundary_arc_tags(rows)
+    grouped = {}
+    for row, arc, joint in zip(rows, arcs, joints):
+        grouped.setdefault(int(row["Loop"]), []).append((row, arc, joint))
+    loops = []
+    for loop_rows in grouped.values():
+        loop_arcs = [arc for _, arc, _ in loop_rows]
+        vertices = []
+        for index, (row, _, joint) in enumerate(loop_rows):
+            vertex_class = arc_vertex_class(loop_arcs, index)
+            if vertex_class == "Joint" and joint is not None and joint[1]:
+                vertex_class = "Smooth"
+            vertices.append(((float(row["X"]), float(row["Y"])), row["Class"], float(row["Plane"]), vertex_class))
+        loops.append((vertices, loop_arcs))
+    return loops
 
 
 def on_box(point, lower, upper, tolerance):
@@ -225,25 +244,95 @@ def on_box(point, lower, upper, tolerance):
                for d in range(2))
 
 
+def face_end_tilt(point, direction, lower, upper, tolerance):
+    """|tan theta| of a side end on the coupon box, theta the angle between the side and
+    the normal of the face it crosses (the face the side crosses most steeply); 0 when the
+    side is exactly perpendicular to that face (its face-parallel coordinate equal at both
+    ends: the mesher's exact test) or the end is not on the box."""
+    faces = [d for d in range(2) if abs(point[d] - lower[d]) <= tolerance or
+             abs(point[d] - upper[d]) <= tolerance]
+    if not faces:
+        return 0.0
+    d = max(faces, key=lambda d: abs(direction[d]))
+    if direction[1 - d] == 0.0:
+        return 0.0
+    return abs(direction[1 - d]) / abs(direction[d])
+
+
 def metal_sides(loops, lower, upper, tolerance):
-    """Straight metal loop sides that are not box faces (each carries two tubes) and the
-    number of tube caps: two per side end at a semantic (Physical) corner.  A side with
-    both ends on the same face of the coupon box (the plan's box-face closing segment;
-    the mesher's side_on_box_face) is not a tubed metal side."""
-    sides, caps = [], 0
+    """Straight metal loop sides that are not box faces (each carries two tubes), the
+    number of tube caps - two per side end at a semantic (Physical) corner - and the
+    face-end tilts |tan theta| of the side ends on the box (design A2: a tube ending on a
+    face it does not cross perpendicularly gains an end block of m sheared layers).  A side
+    with both ends on the same face of the coupon box (the plan's box-face closing
+    segment; the mesher's side_on_box_face) is not a tubed metal side.  A Physical vertex
+    that is a box-face cut end (decision 320) carries no cap."""
+    sides, caps, tilts = [], 0, []
+    for loop in loops:
+        n = len(loop)
+        box_side = [any((abs(loop[i][0][d] - lower[d]) <= tolerance and
+                         abs(loop[(i + 1) % n][0][d] - lower[d]) <= tolerance) or
+                        (abs(loop[i][0][d] - upper[d]) <= tolerance and
+                         abs(loop[(i + 1) % n][0][d] - upper[d]) <= tolerance)
+                        for d in range(2)) for i in range(n)]
+        # Arc sides (block (b) design 1.2 (5)): the chords of one tagged arc are ONE side of
+        # the arc's length (the tube layers follow it); a chord vertex inside the arc and a
+        # smooth joint carry no cap (no corner, a shared section); a kinked arc end carries
+        # its caps like a Physical vertex. The arc's box ends (an arc cut by a face) are face
+        # ends with the chord's tilt at the face.
+        arc_class = [vertex[3] if len(vertex) > 3 else None for vertex in loop]
+        for i in range(n):
+            if box_side[i]:
+                continue
+            (p, class_p, _, *_), (q, class_q, _, *_) = loop[i], loop[(i + 1) % n]
+            chord = math.dist(p, q)
+            inside_arc = arc_class[(i + 1) % n] == "Interior"
+            if arc_class[i] == "Interior" and i > 0 and sides:
+                sides[-1] += chord          # the next chord of the same arc
+            else:
+                sides.append(chord)
+            direction = ((q[0] - p[0]) / chord, (q[1] - p[1]) / chord)
+            for point, cls, vertex_class, single in ((p, class_p, arc_class[i], box_side[i - 1]),
+                                                     (q, class_q, arc_class[(i + 1) % n], box_side[(i + 1) % n])):
+                if vertex_class in ("Interior", "Smooth"):
+                    continue
+                if cls == "Physical" and not on_box(point, lower, upper, tolerance):
+                    caps += 2
+                # A face end has a single metal side at the vertex: the adjacent side is a box side.
+                tilt = face_end_tilt(point, direction, lower, upper, tolerance) if single else 0.0
+                if tilt > 0.0:
+                    tilts.append(tilt)
+    return sides, caps, tilts
+
+
+def semantic_corner_count(loops):
+    """The semantic corners of the plan-view loops: the Physical vertices except the
+    box-face cut ends of decision 320 (semantic_mesh_contract.box_face_cut_end, the
+    contract's rule)."""
+    corners = 0
     for loop in loops:
         n = len(loop)
         for i in range(n):
-            (p, class_p, _), (q, class_q, _) = loop[i], loop[(i + 1) % n]
-            same_face = any((abs(p[d] - lower[d]) <= tolerance and abs(q[d] - lower[d]) <= tolerance) or
-                            (abs(p[d] - upper[d]) <= tolerance and abs(q[d] - upper[d]) <= tolerance)
-                            for d in range(2))
-            if same_face:
-                continue
-            sides.append(math.dist(p, q))
-            caps += 2 * sum(1 for point, cls in ((p, class_p), (q, class_q))
-                            if cls == "Physical" and not on_box(point, lower, upper, tolerance))
-    return sides, caps
+            (p, class_p, *_), (q, class_q, *rest) = loop[i - 1], loop[i]
+            if len(rest) > 1 and rest[1] in ("Interior", "Smooth"):
+                continue            # an arc vertex that is no corner (design 1.2 (1) / A3 (1))
+            if class_q == "Physical" and not box_face_cut_end(p, class_p, q, class_q,
+                                                              loop[(i + 1) % n][0]):
+                corners += 1
+    return corners
+
+
+def face_end_layers(tilts, ring_sizes, tube_radius, tangent):
+    """End-block layers of the face ends (design A2): m = ceil(2 r_env |tan theta| / lc_end),
+    lc_end = max(lc_tangent, 4 h_pyr |tan theta|), r_env the tube radius plus the pyramid
+    height."""
+    pyramid_height = TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * ring_sizes[-1]
+    envelope = tube_radius + pyramid_height
+    layers = 0
+    for tilt in tilts:
+        spacing = max(tangent, 4.0 * pyramid_height * tilt)
+        layers += max(1, math.ceil(2.0 * envelope * tilt / spacing * (1.0 - 1e-9)))
+    return layers
 
 
 def tube_rings(edge_size, ratio, overetch, metal_thickness, corner_radius, *, thin=False):
@@ -342,15 +431,17 @@ def estimate(paths, options, tetrahedra_per_cubic_size, kind="fabricated"):
     extent = upper - lower
     volume = float(np.prod(extent))
     loops = read_loops(paths["Boundary"])
-    sides, caps = metal_sides(loops, lower, upper, tolerance)
-    corners = sum(1 for loop in loops for _, cls, _ in loop if cls == "Physical")
+    sides, caps, tilts = metal_sides(loops, lower, upper, tolerance)
+    corners = semantic_corner_count(loops)
     ring_sizes, tube_radius = tube_rings(edge_size, growth_ratio, overetch, thickness, corner_radius, thin=thin)
     sectors = int(round((THIN_TUBE_SECTOR_SPAN_DEGREES if thin else TUBE_SECTOR_SPAN_DEGREES) / 30.0))
     rings = len(ring_sizes)
     tube_length = tubes_per_side * sum(sides)
     # The caps counted by metal_sides are per side end for two tubes; one tube has half.
     caps = caps * tubes_per_side // FABRICATED_TUBES_PER_SIDE
-    layers = sum(tubes_per_side * math.ceil(side / tangent) for side in sides)
+    # Every face end (per tube of the side) adds its sheared end block of m layers.
+    end_block_layers = tubes_per_side * face_end_layers(tilts, ring_sizes, tube_radius, tangent)
+    layers = sum(tubes_per_side * math.ceil(side / tangent) for side in sides) + end_block_layers
     prisms = layers * (sectors + 2 * sectors * (rings - 1))
     pyramids = layers * sectors
     offset = tube_radius + TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * ring_sizes[-1]
@@ -394,7 +485,8 @@ def estimate(paths, options, tetrahedra_per_cubic_size, kind="fabricated"):
                       "FarSize": far, "CornerIsotropyRadius": corner_radius, "EdgeSize": edge_size,
                       "CornerSize": corner_size, "GrowthRatio": growth_ratio, "FarGrowth": far_growth},
             "Tubes": {"Sides": len(sides), "Length": tube_length, "Layers": layers, "Rings": rings,
-                      "Sectors": sectors, "TubeRadius": tube_radius, "Prisms": prisms, "Pyramids": pyramids},
+                      "Sectors": sectors, "TubeRadius": tube_radius, "Prisms": prisms, "Pyramids": pyramids,
+                      "FaceEnds": len(tilts), "FaceEndLayers": end_block_layers},
             "Corners": corners, "Caps": caps, "LoopPerimeter": perimeter,
             "TraceBasis": trace,
             "Integrals": integrals, "TotalIntegral": total_integral,

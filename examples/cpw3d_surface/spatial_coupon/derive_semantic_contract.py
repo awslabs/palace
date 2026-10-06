@@ -18,7 +18,12 @@ executable):
   (InterfaceSlot, Conductor) and must agree with the signature's Slot / Conductor
   columns;
 - semantic corners are the plan-view boundary vertices classified Physical, in
-  file order, at the vertex's Plane height;
+  file order, at the vertex's Plane height, EXCEPT the box-face cut ends of supervisor
+  decision 320 (semantic_mesh_contract.box_face_cut_end): a Physical vertex whose
+  incoming side is a Continuation (box) side has a single metal side there and is a
+  cut end, not a corner, unless that side is exactly perpendicular to the face (the
+  side's face-parallel coordinate equal at both ends, exact arithmetic: the legacy
+  rectilinear convention, kept bitwise);
 - FeatureTopology is semantic_mesh_contract.derive_feature_topology (the finite
   oriented signature segments against the corners and the boundary classes);
 - whether a slot's un-etched plane (3000 + s) exists is a producer outcome of the
@@ -59,7 +64,9 @@ import hashlib
 import json
 from pathlib import Path
 
-from semantic_mesh_contract import derive_feature_topology, validate_semantic_contract
+from semantic_mesh_contract import (ARC_VERTEX_RULE, BOX_FACE_CUT_END_RULE, boundary_arc_vertices,
+                                    boundary_semantic_corners, derive_feature_topology,
+                                    validate_semantic_contract)
 
 SIGNATURE = "mesh-signature.csv"
 BOUNDARY = "plan-view-boundary.csv"
@@ -146,11 +153,18 @@ def semantic_corners(boundary):
         raise ValueError("plan-view boundary lacks Class / X / Y / Plane columns")
     if any(row["Class"] not in ("Physical", "Continuation") for row in rows):
         raise ValueError("plan-view boundary has an unknown vertex class")
-    corners = [[float(row["X"]), float(row["Y"]), float(row["Plane"])]
-               for row in rows if row["Class"] == "Physical"]
+    corners, cut_ends = boundary_semantic_corners(rows)
     if not corners:
         raise ValueError("plan-view boundary classifies no Physical vertex")
-    return corners
+    return corners, cut_ends
+
+
+def arc_vertices(boundary):
+    """The arc vertices excluded from the corners (semantic_mesh_contract.boundary_arc_vertices):
+    {"Interior": [...], "SmoothJoints": [...]}; both empty without arc tags."""
+    with Path(boundary).open(newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    return boundary_arc_vertices(rows)
 
 
 def label_families(pairs, kind="fabricated"):
@@ -216,7 +230,7 @@ def derive(source, build_census=None, *, signature=None, boundary=None, process_
             item["AdjacentMaterialSets"] = [[1], [2]]
         boundary_labels.append(item)
     roles = [item["Role"] for item in boundary_labels]
-    corners = semantic_corners(boundary)
+    corners, box_face_cut_ends = semantic_corners(boundary)
     derivation = {"ProcessLibrarySHA256": (sha256(process_library) if process_library is not None
                                            else None),
                   "SlotConductorSource": (PROCESS_LIBRARY_PAIR_SOURCE if process_library is not None
@@ -225,6 +239,13 @@ def derive(source, build_census=None, *, signature=None, boundary=None, process_
                   "SignatureSHA256": sha256(signature),
                   "CouponKind": kind,
                   "Rules": RULES if kind == "fabricated" else RULES + "; " + THIN_RULE}
+    # Recorded only where the rule acts, so every rectilinear contract is unchanged.
+    if box_face_cut_ends:
+        derivation["BoxFaceCutEnds"] = {"Rule": BOX_FACE_CUT_END_RULE, "Points": box_face_cut_ends}
+    excluded_arc_vertices = arc_vertices(boundary)
+    if any(excluded_arc_vertices.values()):
+        # Block (b) design 1.2 (1) / A3 (1): the arc vertices that are not corners.
+        derivation["ArcVertices"] = {"Rule": ARC_VERTEX_RULE, **excluded_arc_vertices}
     if build_census is not None:
         derivation["BuildCensusSHA256"] = sha256(build_census)
         derivation["BuildCensusInterfaceLabels"] = labels
