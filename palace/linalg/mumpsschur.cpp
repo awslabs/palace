@@ -53,9 +53,10 @@ void LowerTriangleCOO(const mfem::HypreParMatrix &A, std::vector<MUMPS_INT> &irn
 
 MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
                                    const std::vector<HYPRE_BigInt> &schur_vars,
-                                   double blr_tol, bool serial, bool refactor)
-  : comm(A.GetComm()), serial(serial), refactor(refactor), n_glob(A.GetGlobalNumRows()),
-    n_loc(A.Height()), n_schur(static_cast<int>(schur_vars.size())), blr_tol(blr_tol)
+                                   double blr_tol, bool serial, bool refactor, bool spd)
+  : comm(A.GetComm()), serial(serial), refactor(refactor), spd(spd),
+    n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
+    n_schur(static_cast<int>(schur_vars.size())), blr_tol(blr_tol)
 {
   MPI_Comm_rank(comm, &rank);
   active = !serial || rank == 0;
@@ -147,9 +148,12 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
     if (blr_tol > 0.0)
     {
-      icntl(35) = 2;     // BLR in both factorization and solve (compressed factors)
-      icntl(36) = 1;     // UCFS variant: compress earlier, fewer operations
-      id.cntl[0] = 0.0;  // CNTL(1): no numerical pivoting (the environment operator is SPD)
+      icntl(35) = 2;  // BLR in both factorization and solve (compressed factors)
+      icntl(36) = 1;  // UCFS variant: compress earlier, fewer operations
+      if (spd)
+      {
+        id.cntl[0] = 0.0;  // CNTL(1): no numerical pivoting
+      }
       id.cntl[6] = blr_tol;  // CNTL(7): dropping parameter (relative, after the scaling)
     }
     id.n = static_cast<MUMPS_INT>(n_glob);
@@ -234,13 +238,17 @@ void MumpsSchurSolver::Factor()
     }
     // INFOG(29/35): theoretical / effective factor entries; RINFOG(3/14): operations.
     auto big = [](MUMPS_INT v) { return v >= 0 ? static_cast<double>(v) : -1.0e6 * v; };
-    Mpi::Print(
-        comm,
-        " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}%, operations {:.1f}% of full "
-        "rank\n",
-        blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]),
-        100.0 * id.rinfog[13] / id.rinfog[2]);
+    if (!factored)
+    {
+      Mpi::Print(
+          comm,
+          " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}%, operations {:.1f}% of full "
+          "rank\n",
+          blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]),
+          100.0 * id.rinfog[13] / id.rinfog[2]);
+    }
   }
+  factored = true;
 }
 
 void MumpsSchurSolver::Refactor(const mfem::HypreParMatrix &A)

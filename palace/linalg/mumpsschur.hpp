@@ -28,10 +28,11 @@ public:
   // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
   // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
   // avoids MUMPS's per-rank workspace). With refactor, the input entries are kept so that
-  // Refactor can factor new values with the same pattern, reusing the analysis.
+  // Refactor can factor new values with the same pattern, reusing the analysis. spd: A is
+  // positive definite, so the BLR factorization skips numerical pivoting.
   MumpsSchurSolver(const mfem::HypreParMatrix &A,
                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                   bool serial = false, bool refactor = false);
+                   bool serial = false, bool refactor = false, bool spd = true);
 
   ~MumpsSchurSolver();
 
@@ -52,7 +53,7 @@ private:
 
   MPI_Comm comm;
   int rank = 0;
-  bool serial = false, refactor = false;
+  bool serial = false, refactor = false, spd = true, factored = false;
   bool active = true;  // this rank takes part in the factorization
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;

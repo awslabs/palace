@@ -22,7 +22,8 @@ class SpaceOperator;
 // A_E(ω) = K_E + iω C_E - ω² M_E + A2_E(ω), assembled with Palace's operators restricted
 // to the environment, is condensed onto the interface Γ by a partial MUMPS factorization
 // of its real symmetric form [[Ar, Ai], [Ai, -Ar]], whose Schur complement is the same
-// form of S_E(ω). The region operator plus S_E(ω) on Γ is then factored in the same form.
+// form of S_E(ω). The region is condensed onto Γ in the same way, and the interface system
+// S_R(ω) + S_E(ω) is factored densely in complex arithmetic.
 //
 class DrivenSubstructure
 {
@@ -57,28 +58,28 @@ public:
 private:
   SpaceOperator &space_op;
   std::vector<int> region_attrs, env_attrs;
-  std::vector<char> is_env_int, is_gamma, is_region_free;
+  std::vector<char> is_env_int, is_gamma, is_region_int;
   // Local true DOFs pinned in the environment operator (outside its interior and Γ) and in
-  // the region operator (outside the region-free DOFs, which include Γ).
+  // the region operator (outside the region interior and Γ).
   mfem::Array<int> other_env, other_region;
-  std::vector<HYPRE_BigInt> gamma_tdofs;
-  int gamma_off = 0, gamma_nloc = 0;
+  std::vector<HYPRE_BigInt> gamma_tdofs, schur_vars;
+  std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank
   std::unique_ptr<ComplexOperator> K_env, C_env, M_env, K_region, C_region, M_region;
-  std::unique_ptr<MumpsSchurSolver> env_schur, region_lu;
-  std::unique_ptr<mfem::HypreParMatrix> env_op;  // real form of A_E(ω), last frequency
-  std::vector<std::complex<double>> S, S_rows;   // S_E on rank 0, and this rank's rows
+  std::unique_ptr<MumpsSchurSolver> env_schur, region_schur;
+  // Real forms of A_E(ω) and A_R(ω) at the last frequency.
+  std::unique_ptr<mfem::HypreParMatrix> env_op, region_op;
+  // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots.
+  std::vector<std::complex<double>> S, T;
+  std::vector<int> T_piv;
 
-  // The real form of K + iω C - ω² M + A2(ω) for one side (+ X on Γ), with the given DOFs
-  // pinned.
+  // The real form of K + iω C - ω² M + A2(ω) for one side, with the given DOFs pinned.
   std::unique_ptr<mfem::HypreParMatrix>
   BlockOperator(double omega, const std::vector<int> &attrs, const ComplexOperator *K,
                 const ComplexOperator *C, const ComplexOperator *M,
-                const mfem::Array<int> &pinned, const mfem::HypreParMatrix *Xr = nullptr,
-                const mfem::HypreParMatrix *Xi = nullptr);
+                const mfem::Array<int> &pinned);
 
-  // S_E on Γ as parent-space matrices (dense Γ x Γ block): real and imaginary parts.
-  std::pair<std::unique_ptr<mfem::HypreParMatrix>, std::unique_ptr<mfem::HypreParMatrix>>
-  InterfaceMatrices() const;
+  // The complex Schur complement on rank 0 (column-major) from a real-form one.
+  std::vector<std::complex<double>> ComplexSchur(const MumpsSchurSolver &schur) const;
 };
 
 }  // namespace palace

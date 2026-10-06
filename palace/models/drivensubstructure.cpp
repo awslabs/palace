@@ -11,6 +11,14 @@
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
 
+extern "C"
+{
+  void zsytrf_(const char *, const int *, std::complex<double> *, const int *, int *,
+               std::complex<double> *, const int *, int *);
+  void zsytrs_(const char *, const int *, const int *, const std::complex<double> *,
+               const int *, const int *, std::complex<double> *, const int *, int *);
+}
+
 namespace palace
 {
 
@@ -22,6 +30,11 @@ class MumpsSchurSolver
 
 namespace
 {
+
+// BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization of these
+// symmetric indefinite operators is several times faster than its full-rank one even
+// without compression, at no loss of accuracy.
+constexpr double kBlrTol = 1.0e-14;
 
 // The assembled real (imag = false) or imaginary part of an operator, if any.
 const mfem::HypreParMatrix *Part(const ComplexOperator *A, bool imag)
@@ -92,17 +105,17 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   }
   is_env_int.assign(nt, 0);
   is_gamma.assign(nt, 0);
-  is_region_free.assign(nt, 0);
+  is_region_int.assign(nt, 0);
   for (int i = 0; i < nt; i++)
   {
     is_gamma[i] = !dbc[i] && rm[i] && em[i];
     is_env_int[i] = !dbc[i] && em[i] && !rm[i];
-    is_region_free[i] = !dbc[i] && rm[i];
+    is_region_int[i] = !dbc[i] && rm[i] && !em[i];
     if (!is_gamma[i] && !is_env_int[i])
     {
       other_env.Append(i);
     }
-    if (!is_region_free[i])
+    if (!is_gamma[i] && !is_region_int[i])
     {
       other_region.Append(i);
     }
@@ -119,18 +132,17 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
     }
   }
   MPI_Comm comm = fes.GetComm();
-  const int nranks = Mpi::Size(comm);
-  gamma_nloc = static_cast<int>(mine.size());
-  std::vector<int> cnt(nranks), disp(nranks, 0);
-  MPI_Allgather(&gamma_nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+  const int nranks = Mpi::Size(comm), nloc = static_cast<int>(mine.size());
+  gamma_cnt.assign(nranks, 0);
+  gamma_disp.assign(nranks, 0);
+  MPI_Allgather(&nloc, 1, MPI_INT, gamma_cnt.data(), 1, MPI_INT, comm);
   for (int r = 1; r < nranks; r++)
   {
-    disp[r] = disp[r - 1] + cnt[r - 1];
+    gamma_disp[r] = gamma_disp[r - 1] + gamma_cnt[r - 1];
   }
-  gamma_off = disp[Mpi::Rank(comm)];
-  gamma_tdofs.resize(disp[nranks - 1] + cnt[nranks - 1]);
-  MPI_Allgatherv(mine.data(), gamma_nloc, HYPRE_MPI_BIG_INT, gamma_tdofs.data(), cnt.data(),
-                 disp.data(), HYPRE_MPI_BIG_INT, comm);
+  gamma_tdofs.resize(gamma_disp[nranks - 1] + gamma_cnt[nranks - 1]);
+  MPI_Allgatherv(mine.data(), nloc, HYPRE_MPI_BIG_INT, gamma_tdofs.data(), gamma_cnt.data(),
+                 gamma_disp.data(), HYPRE_MPI_BIG_INT, comm);
 
   // The frequency-independent operators of each side.
   {
@@ -149,13 +161,13 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
 
 DrivenSubstructure::~DrivenSubstructure() = default;
 
-std::unique_ptr<mfem::HypreParMatrix> DrivenSubstructure::BlockOperator(
-    double omega, const std::vector<int> &attrs, const ComplexOperator *K,
-    const ComplexOperator *C, const ComplexOperator *M, const mfem::Array<int> &pinned,
-    const mfem::HypreParMatrix *Xr, const mfem::HypreParMatrix *Xi)
+std::unique_ptr<mfem::HypreParMatrix>
+DrivenSubstructure::BlockOperator(double omega, const std::vector<int> &attrs,
+                                  const ComplexOperator *K, const ComplexOperator *C,
+                                  const ComplexOperator *M, const mfem::Array<int> &pinned)
 {
-  // K + iω C - ω² M + A2(ω) (+ X): real part Kr - ω Ci - ω² Mr + A2r (+ Xr), imaginary part
-  // Ki + ω Cr - ω² Mi + A2i (+ Xi).
+  // K + iω C - ω² M + A2(ω): real part Kr - ω Ci - ω² Mr + A2r, imaginary part
+  // Ki + ω Cr - ω² Mi + A2i.
   std::unique_ptr<ComplexOperator> A2;
   {
     SpaceOperator::AssemblyRestriction side(space_op, attrs);
@@ -165,13 +177,11 @@ std::unique_ptr<mfem::HypreParMatrix> DrivenSubstructure::BlockOperator(
   auto Ar = Sum({{1.0, Part(K, false)},
                  {-omega, Part(C, true)},
                  {-w2, Part(M, false)},
-                 {1.0, Part(A2.get(), false)},
-                 {1.0, Xr}});
+                 {1.0, Part(A2.get(), false)}});
   auto Ai = Sum({{1.0, Part(K, true)},
                  {omega, Part(C, false)},
                  {-w2, Part(M, true)},
-                 {1.0, Part(A2.get(), true)},
-                 {1.0, Xi}});
+                 {1.0, Part(A2.get(), true)}});
   MFEM_VERIFY(Ar, "Missing real part of a substructure operator!");
   if (!Ai)
   {
@@ -208,40 +218,28 @@ std::unique_ptr<mfem::HypreParMatrix> DrivenSubstructure::BlockOperator(
       mfem::HypreParMatrixFromBlocks(blocks, &coeffs));
 }
 
-std::pair<std::unique_ptr<mfem::HypreParMatrix>, std::unique_ptr<mfem::HypreParMatrix>>
-DrivenSubstructure::InterfaceMatrices() const
+std::vector<std::complex<double>>
+DrivenSubstructure::ComplexSchur(const MumpsSchurSolver &schur) const
 {
-  const auto &fes = space_op.GetNDSpace().Get();
-  const int nt = fes.GetTrueVSize(), nG = InterfaceSize();
-  std::vector<int> I(nt + 1, 0);
-  std::vector<HYPRE_BigInt> J;
-  std::vector<double> Vr, Vi;
-  J.reserve(static_cast<std::size_t>(gamma_nloc) * nG);
-  Vr.reserve(J.capacity());
-  Vi.reserve(J.capacity());
-  for (int i = 0, g = 0; i < nt; i++)
+  // The Schur complement of [[Ar, Ai], [Ai, -Ar]] is [[Sr, Si], [Si, -Sr]].
+  std::vector<std::complex<double>> X;
+#if defined(MFEM_USE_MUMPS)
+  if (Mpi::Root(space_op.GetComm()))
   {
-    if (is_gamma[i])
+    const int nG = InterfaceSize();
+    const auto &SB = schur.Schur();
+    const std::size_t ld = 2 * static_cast<std::size_t>(nG);
+    X.resize(static_cast<std::size_t>(nG) * nG);
+    for (int b = 0; b < nG; b++)
     {
-      for (int j = 0; j < nG; j++)
+      for (int a = 0; a < nG; a++)
       {
-        const auto v = S_rows[static_cast<std::size_t>(g) * nG + j];
-        J.push_back(gamma_tdofs[j]);
-        Vr.push_back(v.real());
-        Vi.push_back(v.imag());
+        X[static_cast<std::size_t>(b) * nG + a] = {SB[b * ld + a], SB[(nG + b) * ld + a]};
       }
-      g++;
     }
-    I[i + 1] = static_cast<int>(J.size());
   }
-  const HYPRE_BigInt glob = fes.GlobalTrueVSize();
-  auto *offsets = const_cast<mfem::ParFiniteElementSpace &>(fes).GetTrueDofOffsets();
-  auto make = [&](std::vector<double> &V)
-  {
-    return std::make_unique<mfem::HypreParMatrix>(fes.GetComm(), nt, glob, glob, I.data(),
-                                                  J.data(), V.data(), offsets, offsets);
-  };
-  return {make(Vr), make(Vi)};
+#endif
+  return X;
 }
 
 void DrivenSubstructure::Condense(double omega)
@@ -253,74 +251,55 @@ void DrivenSubstructure::Condense(double omega)
   const int nG = InterfaceSize();
   env_op =
       BlockOperator(omega, env_attrs, K_env.get(), C_env.get(), M_env.get(), other_env);
+  region_op = BlockOperator(omega, region_attrs, K_region.get(), C_region.get(),
+                            M_region.get(), other_region);
   if (!env_schur)
   {
-    // Schur variables of the real form: the real, then the imaginary interface parts. Its
-    // local rows are the local real rows, then the local imaginary rows.
+    // Schur variables of the real forms: the real, then the imaginary interface parts.
+    // Their local rows are the local real rows, then the local imaginary rows.
     const auto &fes = space_op.GetNDSpace().Get();
     const HYPRE_BigInt tstart = fes.GetMyTDofOffset(), bstart = env_op->GetRowStarts()[0];
     const int nt = fes.GetTrueVSize();
-    std::vector<HYPRE_BigInt> vars(2 * nG);
+    schur_vars.assign(2 * nG, -1);
     for (int g = 0; g < nG; g++)
     {
       const HYPRE_BigInt i = gamma_tdofs[g] - tstart;  // local only on its owner
-      vars[g] = vars[nG + g] = -1;
       if (i >= 0 && i < nt)
       {
-        vars[g] = bstart + i;
-        vars[nG + g] = bstart + nt + i;
+        schur_vars[g] = bstart + i;
+        schur_vars[nG + g] = bstart + nt + i;
       }
     }
-    MPI_Allreduce(MPI_IN_PLACE, vars.data(), 2 * nG, HYPRE_MPI_BIG_INT, MPI_MAX, comm);
-    env_schur = std::make_unique<MumpsSchurSolver>(*env_op, vars, 0.0, false, true);
+    MPI_Allreduce(MPI_IN_PLACE, schur_vars.data(), 2 * nG, HYPRE_MPI_BIG_INT, MPI_MAX,
+                  comm);
+    env_schur = std::make_unique<MumpsSchurSolver>(*env_op, schur_vars, kBlrTol, false,
+                                                   true, false);
+    region_schur = std::make_unique<MumpsSchurSolver>(*region_op, schur_vars, kBlrTol,
+                                                      false, true, false);
   }
   else
   {
     env_schur->Refactor(*env_op);
+    region_schur->Refactor(*region_op);
   }
 
-  // The Schur complement of [[Ar, Ai], [Ai, -Ar]] is [[Sr, Si], [Si, -Sr]].
-  S.clear();
+  // The interface system S_R + S_E, factored on rank 0 (complex symmetric).
+  S = ComplexSchur(*env_schur);
+  T = ComplexSchur(*region_schur);
   if (Mpi::Root(comm))
   {
-    const auto &SB = env_schur->Schur();
-    const std::size_t ld = 2 * static_cast<std::size_t>(nG);
-    S.resize(static_cast<std::size_t>(nG) * nG);
-    for (int b = 0; b < nG; b++)
+    for (std::size_t k = 0; k < T.size(); k++)
     {
-      for (int a = 0; a < nG; a++)
-      {
-        S[static_cast<std::size_t>(b) * nG + a] = {SB[b * ld + a], SB[(nG + b) * ld + a]};
-      }
+      T[k] += S[k];
     }
-  }
-
-  // Each rank's interface rows of S_E (symmetric: the columns of rank 0's column-major
-  // array), then the region operator with S_E on Γ.
-  {
-    const int nranks = Mpi::Size(comm);
-    std::vector<int> cnt(nranks), disp(nranks);
-    const int mine = gamma_nloc * nG;
-    MPI_Allgather(&mine, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-    for (int r = 0, d = 0; r < nranks; d += cnt[r], r++)
-    {
-      disp[r] = d;
-    }
-    S_rows.resize(mine);
-    MPI_Scatterv(S.data(), cnt.data(), disp.data(), MPI_C_DOUBLE_COMPLEX, S_rows.data(),
-                 mine, MPI_C_DOUBLE_COMPLEX, 0, comm);
-  }
-  auto [Sr, Si] = InterfaceMatrices();
-  auto region_op = BlockOperator(omega, region_attrs, K_region.get(), C_region.get(),
-                                 M_region.get(), other_region, Sr.get(), Si.get());
-  if (!region_lu)
-  {
-    region_lu = std::make_unique<MumpsSchurSolver>(*region_op, std::vector<HYPRE_BigInt>{},
-                                                   0.0, false, true);
-  }
-  else
-  {
-    region_lu->Refactor(*region_op);
+    T_piv.resize(nG);
+    int info = 0, lwork = -1;
+    std::complex<double> wq;
+    zsytrf_("L", &nG, T.data(), &nG, T_piv.data(), &wq, &lwork, &info);
+    lwork = std::max(1, static_cast<int>(wq.real()));
+    std::vector<std::complex<double>> work(lwork);
+    zsytrf_("L", &nG, T.data(), &nG, T_piv.data(), work.data(), &lwork, &info);
+    MFEM_VERIFY(info == 0, "Factorization of the interface system failed: info = " << info);
   }
 #endif
 }
@@ -331,9 +310,11 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
 #if !defined(MFEM_USE_MUMPS)
   MFEM_ABORT("Driven substructuring requires MUMPS!");
 #else
-  MFEM_VERIFY(env_op && region_lu, "Condense must be called before Solve!");
+  MFEM_VERIFY(env_schur && region_schur, "Condense must be called before Solve!");
+  MPI_Comm comm = space_op.GetComm();
   const int n = static_cast<int>(rhs.size()), nt = space_op.GetNDSpace().GetTrueVSize();
-  // Vectors of the real form [Re(x); -Im(x)] act as x; right-hand sides are
+  const int nG = InterfaceSize(), nloc = gamma_cnt[Mpi::Rank(comm)];
+  // Vectors of the real forms [Re(x); -Im(x)] act as x; right-hand sides are
   // [Re(b); Im(b)]. Local layout: the real rows, then the imaginary rows.
   auto rhs_block = [&](const ComplexVector &b, const std::vector<char> &mask)
   {
@@ -356,55 +337,81 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
     }
     lu.SolveInternal(X, Y);
   };
-
-  // Environment sources b_E: interface loads -(A_E A_EE^-1 b_E)|_Γ.
-  std::vector<mfem::Vector> w(n), x(n);
-  for (int k = 0; k < n; k++)
-  {
-    w[k] = rhs_block(*rhs[k], is_env_int);
-  }
-  solve(*env_schur, w);
   mfem::Vector t(2 * nt);
-  for (int k = 0; k < n; k++)
+  auto subtract_rows = [&](const mfem::HypreParMatrix &A, const mfem::Vector &x,
+                           const std::vector<char> &mask, mfem::Vector &y)
   {
-    x[k] = rhs_block(*rhs[k], is_region_free);
-    env_op->Mult(w[k], t);
+    A.Mult(x, t);
     for (int i = 0; i < nt; i++)
     {
-      if (is_gamma[i])
+      if (mask[i])
       {
-        x[k](i) -= t(i);
-        x[k](nt + i) -= t(nt + i);
+        y(i) -= t(i);
+        y(nt + i) -= t(nt + i);
       }
     }
-  }
-  solve(*region_lu, x);
+  };
 
-  // Environment interior: A_EE^-1 (b_E - A_EΓ u_Γ).
-  mfem::Vector xg(2 * nt);
+  // Interior solves with the interface held at zero: environment and region sources.
+  std::vector<mfem::Vector> w(n), y(n), r(n);
   for (int k = 0; k < n; k++)
   {
-    xg = 0.0;
-    for (int i = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        xg(i) = x[k](i);
-        xg(nt + i) = x[k](nt + i);
-      }
-    }
-    env_op->Mult(xg, t);
     w[k] = rhs_block(*rhs[k], is_env_int);
-    for (int i = 0; i < nt; i++)
-    {
-      if (is_env_int[i])
-      {
-        w[k](i) -= t(i);
-        w[k](nt + i) -= t(nt + i);
-      }
-    }
+    y[k] = rhs_block(*rhs[k], is_region_int);
   }
   solve(*env_schur, w);
+  solve(*region_schur, y);
+
+  // Interface right-hand sides b_Γ - A_ΓE w - A_ΓR y, gathered on rank 0 (complex).
+  std::vector<std::complex<double>> rG(Mpi::Root(comm) ? static_cast<std::size_t>(nG) * n
+                                                       : 0),
+      mine(nloc);
+  for (int k = 0; k < n; k++)
+  {
+    r[k] = rhs_block(*rhs[k], is_gamma);
+    subtract_rows(*env_op, w[k], is_gamma, r[k]);
+    subtract_rows(*region_op, y[k], is_gamma, r[k]);
+    for (int i = 0, g = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        mine[g++] = {r[k](i), r[k](nt + i)};
+      }
+    }
+    MPI_Gatherv(mine.data(), nloc, MPI_C_DOUBLE_COMPLEX,
+                Mpi::Root(comm) ? rG.data() + static_cast<std::size_t>(k) * nG : nullptr,
+                gamma_cnt.data(), gamma_disp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
+  }
+  if (Mpi::Root(comm) && nG > 0)
+  {
+    int info = 0;
+    zsytrs_("L", &nG, &n, T.data(), &nG, T_piv.data(), rG.data(), &nG, &info);
+    MFEM_VERIFY(info == 0, "Solve of the interface system failed: info = " << info);
+  }
+
+  // The interface solution in real form, then both interiors: A_II^-1 (b_I - A_IΓ u_Γ).
+  for (int k = 0; k < n; k++)
+  {
+    MPI_Scatterv(Mpi::Root(comm) ? rG.data() + static_cast<std::size_t>(k) * nG : nullptr,
+                 gamma_cnt.data(), gamma_disp.data(), MPI_C_DOUBLE_COMPLEX, mine.data(),
+                 nloc, MPI_C_DOUBLE_COMPLEX, 0, comm);
+    r[k] = 0.0;
+    for (int i = 0, g = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        r[k](i) = mine[g].real();
+        r[k](nt + i) = -mine[g].imag();
+        g++;
+      }
+    }
+    w[k] = rhs_block(*rhs[k], is_env_int);
+    y[k] = rhs_block(*rhs[k], is_region_int);
+    subtract_rows(*env_op, r[k], is_env_int, w[k]);
+    subtract_rows(*region_op, r[k], is_region_int, y[k]);
+  }
+  solve(*env_schur, w);
+  solve(*region_schur, y);
   u.resize(n);
   for (int k = 0; k < n; k++)
   {
@@ -413,9 +420,9 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
     double *ur = u[k].Real().HostWrite(), *ui = u[k].Imag().HostWrite();
     for (int i = 0; i < nt; i++)
     {
-      const bool env = is_env_int[i];
-      ur[i] = env ? w[k](i) : x[k](i);
-      ui[i] = -(env ? w[k](nt + i) : x[k](nt + i));
+      const mfem::Vector &x = is_env_int[i] ? w[k] : (is_region_int[i] ? y[k] : r[k]);
+      ur[i] = x(i);
+      ui[i] = -x(nt + i);
     }
   }
 #endif
