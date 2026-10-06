@@ -2221,10 +2221,10 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel]")
 {
   // S_E(ω) from the partial factorization of the real form of the environment operator
-  // against a dense condensation of the same operator: PEC in the region, a lumped port in
-  // the environment, a second-order absorbing boundary on both sides, an impedance sheet
-  // crossing Γ, a lossy dielectric region and a conducting environment. A second frequency
-  // reuses the analysis.
+  // against a dense condensation of the same operator, and the substructured solve against
+  // the full system: PEC in the region, a lumped port in the environment, a second-order
+  // absorbing boundary on both sides, an impedance sheet crossing Γ, a lossy dielectric
+  // region and a conducting environment. A second frequency reuses the analyses.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   json config = {
@@ -2415,6 +2415,34 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       CAPTURE(nG, nE, d, m, asym);
       CHECK(d <= 1.0e-10 * m);
       CHECK(asym <= 1.0e-10 * m);
+    }
+
+    // Substructured solves for the port excitation (an environment source) and a random
+    // right-hand side (sources on both sides): residuals of the full system.
+    std::vector<ComplexVector> b(2, ComplexVector(nt)), u;
+    space_op.GetExcitationVector(1, omega, b[0]);
+    b[1].Real().Randomize(3 + Mpi::Rank(comm));
+    b[1].Imag().Randomize(5 + Mpi::Rank(comm));
+    for (int d : space_op.GetNDDbcTDofLists().back())
+    {
+      b[1].Real()(d) = b[1].Imag()(d) = 0.0;
+    }
+    ds.Solve({&b[0], &b[1]}, u);
+    auto K1 = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C1 = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M1 = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A21 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+    auto A_full = space_op.GetSystemMatrix(
+        std::complex<double>(1.0, 0.0), std::complex<double>(0.0, omega),
+        std::complex<double>(-omega * omega, 0.0), K1.get(), C1.get(), M1.get(), A21.get());
+    for (int k = 0; k < 2; k++)
+    {
+      ComplexVector r(nt);
+      A_full->Mult(u[k], r);
+      r -= b[k];
+      const double res = linalg::Norml2(comm, r) / linalg::Norml2(comm, b[k]);
+      CAPTURE(k, res);
+      CHECK(res <= 1.0e-10);
     }
   }
 }
