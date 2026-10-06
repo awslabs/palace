@@ -1298,6 +1298,14 @@ def census_rule_round(census, optimization):
     return "round-2" if declared else "pre-rule"
 
 
+def _mesher_digest(build_report):
+    """The build report's recorded mesher digest (None when absent)."""
+    tools = build_report.get("Tools")
+    mesher = tools.get("mesher") if isinstance(tools, dict) else None
+    digest = mesher.get("SHA256") if isinstance(mesher, dict) else None
+    return digest if isinstance(digest, str) and digest else None
+
+
 def validate_pre_rule_census_tool(build_report):
     """A pre-rule census is bound to its declared tool: the build report's mesher digest must
     be recorded and must differ from the round-2 mesher beside this module (which writes
@@ -1412,6 +1420,9 @@ RECIPE_SCOPE_GUARDS = {
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
     "NarrowMetal": "build",
+    # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face end beyond the validity
+    # ceiling of the capped end block (2 h_pyr |tan theta| >= lc_cap).
+    "SteepFaceCrossing": "build",
     "FreeEdgeEnds": "build", "FootprintWithoutEdge": "build",
     "FootprintTopology": "build"}
 # The largest arc-joint turn any full build has exercised: the loop end 1b26671c9080's
@@ -1866,15 +1877,101 @@ def validate_coupon_box(census):
 FACE_END_FACES = ("x0", "x1", "y0", "y1")
 FACE_END_RULE = ("block (b) design A2 (supervisor decisions 302 / 320): a tube end on a box face with a single metal side "
                  "at the vertex and a tilt theta > 0 ends ON the face with m = ceil(2 (R + h_pyr) |tan theta| / lc_end) "
-                 "sheared layers of spacing lc_end = max(TangentialSize, 4 h_pyr |tan theta|)")
+                 "sheared layers of spacing lc_end = max(TangentialSize, 4 h_pyr |tan theta|) (regime I); mesher design "
+                 "round 2 F2b 3.2 (decisions 358 / 363 / 437): above 4 h_pyr |tan theta| > lc_cap the spacing is capped at "
+                 "lc_cap = FACE_END_CONDITION_MARGIN x MaximumJacobianCondition x the smallest planar singular value of "
+                 "the section's prism corner frames and m = max(ceil((R + h_pyr) |tan theta| / (lc_cap - 2 h_pyr |tan theta|)), "
+                 "the regime-I count at lc_cap) (regime II), so the thinnest layer keeps t_min >= 2 h_pyr |tan theta|; "
+                 "2 h_pyr |tan theta| >= lc_cap fails closed at ScopeGuard[SteepFaceCrossing]")
+FACE_END_CONDITION_MARGIN = 0.95
+FACE_END_REGIMES = ("I", "II")
+GMSH_BUILD_CONDITION_OPTION = "--maximum-jacobian-condition"
 
 
-def validate_tube_face_ends(row, tangential_size, section):
+def section_frame_singular_values(ring_radii, angles):
+    """The planar corner frames of a tube section's prisms (mesher design round 2 F2b; the
+    mesher's section_frame_singular_values): for every sector triangle of the section - the
+    inner triangle (edge point, ring 1 at both rays) and, per outer ring k, the two triangles
+    (r_{k-1} j, r_k j, r_k j+1) and (r_{k-1} j, r_k j+1, r_{k-1} j+1) - the two edges leaving
+    each vertex as the columns of a 2 x 2 matrix; returns (sigma_1, sigma_2) per frame in
+    closed form.  A prism layer of axial spacing lc adds the orthogonal column lc e, so its
+    corner frame has the singular values {lc, sigma_1, sigma_2}."""
+    radii = [0.0] + [float(r) for r in ring_radii]
+    rays = [float(a) for a in angles]
+    if len(radii) < 2 or len(rays) < 2:
+        raise ValueError("Tube section frames need at least one ring and one sector")
+
+    def node(k, j):
+        angle = math.radians(rays[j])
+        return (radii[k] * math.cos(angle), radii[k] * math.sin(angle))
+
+    frames = []
+    for j in range(len(rays) - 1):
+        triangles = [(node(0, j), node(1, j), node(1, j + 1))]
+        for k in range(2, len(radii)):
+            a, b, c, d = node(k - 1, j), node(k, j), node(k, j + 1), node(k - 1, j + 1)
+            triangles.append((a, b, c))
+            triangles.append((a, c, d))
+        for triangle in triangles:
+            for v in range(3):
+                p = triangle[v]
+                e1 = (triangle[(v + 1) % 3][0] - p[0], triangle[(v + 1) % 3][1] - p[1])
+                e2 = (triangle[(v + 2) % 3][0] - p[0], triangle[(v + 2) % 3][1] - p[1])
+                n1 = e1[0] ** 2 + e1[1] ** 2
+                n2 = e2[0] ** 2 + e2[1] ** 2
+                dot = e1[0] * e2[0] + e1[1] * e2[1]
+                half = 0.5 * (n1 + n2)
+                root = 0.5 * math.sqrt((n1 - n2) ** 2 + 4.0 * dot ** 2)
+                frames.append((math.sqrt(half + root), math.sqrt(max(half - root, 0.0))))
+    return frames
+
+
+def section_prism_condition(ring_radii, angles, spacing):
+    """The largest Jacobian condition over the prism corner frames of one regular layer of
+    axial spacing `spacing` (the mesher's section_prism_condition)."""
+    if not spacing > 0.0:
+        raise ValueError("A prism layer needs a positive spacing")
+    return max(max(spacing, s1) / min(spacing, s2) for s1, s2 in section_frame_singular_values(ring_radii, angles))
+
+
+def face_end_spacing_cap(ring_radii, angles, maximum_jacobian_condition):
+    """The end-spacing cap lc_cap of a face end (design round 2 F2b 3.2): FACE_END_CONDITION_MARGIN
+    x the Jacobian-condition ceiling x the smallest sigma_2 over the section's prism frames,
+    valid only in the spacing-dominated regime (every sigma_1 at or below it)."""
+    if (isinstance(maximum_jacobian_condition, bool) or not isinstance(maximum_jacobian_condition, (int, float)) or
+            not math.isfinite(maximum_jacobian_condition) or not maximum_jacobian_condition > 1.0):
+        raise ValueError("A face end's end-spacing cap needs a finite Jacobian-condition ceiling > 1")
+    ceiling = FACE_END_CONDITION_MARGIN * maximum_jacobian_condition
+    frames = section_frame_singular_values(ring_radii, angles)
+    cap = ceiling * min(s2 for _, s2 in frames)
+    if any(s1 > cap for s1, _ in frames):
+        raise ValueError("The face-end spacing cap is not in the spacing-dominated regime of the prism frames")
+    return cap
+
+
+def section_frame_angles(section):
+    """The rays of the section whose prism frames the face-end cap reads: the fabricated top
+    section or the thin sheet section (both carry every ring of the coupon's tubes)."""
+    for name in ("Top", "Sheet"):
+        rays = section.get(name)
+        if isinstance(rays, dict) and isinstance(rays.get("Angles"), list) and len(rays["Angles"]) >= 2:
+            return rays["Angles"]
+    raise ValueError("Tube section lacks the Top / Sheet rays")
+
+
+def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=None, round2b=False):
     """The face-end records of one census tube row (Tubes[].FaceEnds, absent on a plain
     tube): every record names a box face and an end, its tilt lies in (0, 90) degrees,
     its spacing and layer count follow FACE_END_RULE from the section's radius and pyramid
-    height, and at most one record per end.  Returns the largest EndSpacing (0 without
-    face ends)."""
+    height, and at most one record per end.  A record carrying Regime (mesher design round
+    2 F2b) is judged by its regime against the cap recomputed from the section's rings and
+    rays and the command's Jacobian-condition ceiling (`condition_ceiling`): regime I below
+    4 h_pyr |tan theta| <= lc_cap with the A2 (4) formulas, regime II above with lc_end ==
+    lc_cap and the apex-rule layer count; every record binds EndSpacing <= lc_cap,
+    EndSpacingCap == lc_cap, ApexThickness == 2 h_pyr |tan theta| and the apex inequality
+    LayerThicknessRange[0] >= ApexThickness.  A record without Regime is a pre-F2b record
+    (the regime-I formulas alone); from the round-2b mesher (`round2b`) it fails closed.
+    Returns the largest EndSpacing (0 without face ends)."""
     records = row.get("FaceEnds", [])
     if not isinstance(records, list):
         raise ValueError("Tube row FaceEnds is not a list")
@@ -1886,6 +1983,7 @@ def validate_tube_face_ends(row, tangential_size, section):
     pyramid_height = _census_number(section, "PyramidHeight", "Tube section")
     bound = 0.0
     ends = []
+    cap = None
     for record in records:
         if (not isinstance(record, dict) or record.get("Face") not in FACE_END_FACES or
                 record.get("End") not in ("start", "end")):
@@ -1895,9 +1993,56 @@ def validate_tube_face_ends(row, tangential_size, section):
             raise ValueError("Tube face end tilt is outside (0, 90) degrees")
         slope = abs(math.tan(math.radians(theta)))
         spacing = _census_number(record, "EndSpacing", "Tube face end")
-        expected_spacing = max(tangential_size, 4.0 * pyramid_height * slope)
         layers = _count(record.get("Layers"), "Tube face end layers")
-        expected_layers = max(1, math.ceil(2.0 * (radius + pyramid_height) * slope / expected_spacing * (1.0 - 1e-9)))
+        regime_one_spacing = max(tangential_size, 4.0 * pyramid_height * slope)
+
+        def regime_one_layers(lc):
+            return max(1, math.ceil(2.0 * (radius + pyramid_height) * slope / lc * (1.0 - 1e-9)))
+
+        if "Regime" in record:
+            if cap is None:
+                if condition_ceiling is None:
+                    raise ValueError("Tube face end records a regime without the command's Jacobian-condition ceiling")
+                ring_radii = section.get("RingRadii")
+                if not isinstance(ring_radii, list) or not ring_radii:
+                    raise ValueError("Tube section lacks its ring radii")
+                cap = face_end_spacing_cap(ring_radii, section_frame_angles(section), condition_ceiling)
+                recorded_cap = _census_number(section, "FaceEndSpacingCap", "Tube section")
+                if abs(recorded_cap - cap) > 1e-12 * cap or not (
+                        isinstance(section.get("FaceEndSpacingCapRule"), str) and section["FaceEndSpacingCapRule"]):
+                    raise ValueError("Tube section FaceEndSpacingCap does not follow the section's prism frames")
+            regime = record["Regime"]
+            apex = 2.0 * pyramid_height * slope
+            if regime not in FACE_END_REGIMES:
+                raise ValueError("Tube face end regime is unknown")
+            if abs(_census_number(record, "EndSpacingCap", "Tube face end") - cap) > 1e-12 * cap or \
+                    abs(_census_number(record, "ApexThickness", "Tube face end") - apex) > 1e-12 * apex:
+                raise ValueError("Tube face end cap or apex thickness does not follow the section")
+            if 4.0 * pyramid_height * slope <= cap:
+                expected_regime, expected_spacing = "I", regime_one_spacing
+                expected_layers = regime_one_layers(expected_spacing)
+            else:
+                if not apex < cap:
+                    raise ValueError("Tube face end lies beyond the validity ceiling of the capped end block")
+                expected_regime, expected_spacing = "II", cap
+                expected_layers = max(math.ceil((radius + pyramid_height) * slope / (cap - apex)),
+                                      regime_one_layers(cap))
+            if regime != expected_regime:
+                raise ValueError("Tube face end regime does not follow 4 h_pyr |tan theta| against the cap")
+            # lc_end <= lc_cap (design 3.2); a regime-I block never exceeds the regular layers
+            # either, so TangentialSize above the cap (never a production size: 50 nm against
+            # 80.6 nm fabricated) stays the bitwise A2 (4) value.
+            if spacing > max(cap, tangential_size) * (1.0 + 1e-9):
+                raise ValueError("Tube face end spacing exceeds the end-spacing cap")
+            thickness = record.get("LayerThicknessRange")
+            if (not isinstance(thickness, list) or len(thickness) != 2 or
+                    not thickness[0] >= apex * (1.0 - 1e-9)):
+                raise ValueError("Tube face end thinnest layer violates the apex rule")
+        else:
+            if round2b:
+                raise ValueError("Tube face end from the round-2b mesher lacks its Regime record")
+            expected_spacing = regime_one_spacing
+            expected_layers = regime_one_layers(expected_spacing)
         if abs(spacing - expected_spacing) > 1e-9 * expected_spacing or layers != expected_layers:
             raise ValueError("Tube face end spacing or layer count does not follow the face-end rule")
         thickness = record.get("LayerThicknessRange")
@@ -2090,8 +2235,15 @@ def validate_gmsh_build_census(build_report, census, semantic):
     # lc_end); its Spacing may exceed TangentialSize by exactly that block.
     section = tubes.get("Section")
     face_end_bound = {}
+    condition_ceiling = (_option_or_default(command, GMSH_BUILD_CONDITION_OPTION, None)
+                         if GMSH_BUILD_CONDITION_OPTION in command else None)
+    round2b = _mesher_digest(build_report) == sha256(ROUND2_MESHER)
     for index, row in enumerate(rows):
-        face_end_bound[index] = validate_tube_face_ends(row, tubes["TangentialSize"], section)
+        face_end_bound[index] = validate_tube_face_ends(row, tubes["TangentialSize"], section,
+                                                        condition_ceiling, round2b)
+    if (isinstance(section, dict) and section.get("FaceEndSpacingCap") is not None and
+            not any(row.get("FaceEnds") for row in rows)):
+        raise ValueError("Tube section records a face-end spacing cap without a face end")
     # The interior layers are capped at TangentialSize x (1 - 1e-9) by the mesher; a face-end
     # block layer is lc_end up to the rounding of its stations (hence the 1e-9 slack on lc_end).
     if any(not isinstance(row, dict) or

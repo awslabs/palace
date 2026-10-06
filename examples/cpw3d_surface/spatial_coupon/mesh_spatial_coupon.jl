@@ -5516,6 +5516,12 @@ const RECIPE_SCOPE_GUARDS = [
      "a metal strip narrower than twice the tube envelope (Radius + PyramidHeight) between " *
      "two tubed metal sides of one plane facing each other across the metal: the tube parts " *
      "over the metal would overlap (supervisor decision 347)"),
+    ("SteepFaceCrossing", "build",
+     "a tube end on a box face whose tilt lies beyond the validity ceiling of the capped end " *
+     "block, 2 PyramidHeight |tan theta| >= the section's end-spacing cap lc_cap (the largest " *
+     "axial spacing at which the section's own prism frames read <= 0.95 x the Jacobian-" *
+     "condition ceiling): no sheared layer can keep its pyramid apex inside the box within " *
+     "the cap (mesher design round 2 F2b 3.2, supervisor decisions 358 / 363 / 437)"),
     ("FreeEdgeEnds", "build",
      "a metal edge end that is neither a semantic corner nor on the outer box"),
     ("FootprintWithoutEdge", "build",
@@ -6354,7 +6360,8 @@ const TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING = 0.5
 # pairs, the edge segments and the section description for the census.
 function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, ratio,
                            sector_degrees, metal_thickness, overetch, corner_radius, lc_tangent,
-                           lc_fine, lower, upper, tolerance; fabricated::Bool=true)
+                           lc_fine, lower, upper, tolerance; fabricated::Bool=true,
+                           maximum_jacobian_condition::Float64=0.0)
     fabricated && (overetch > 0.0 || scope_error("NoTrench", "Overetch $overetch"))
     sectors = round(Int, 270.0 / sector_degrees)
     abs(sectors * sector_degrees - 270.0) <= 1.0e-9 || error("Tube sector angle must divide 270 degrees")
@@ -6384,6 +6391,34 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     radius = tube_radius(top_section)
     outer_ring = ring_sizes(top_section)[end]
     pyramid_height = TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer_ring
+    # The face-end end-spacing cap of the section (design round 2 F2b 3.2): derived from
+    # the section's own prism frames and the Jacobian-condition ceiling, needed only where
+    # a face end exists (a coupon without one never reads it: regime I is bitwise and a
+    # theta-0 end has no FaceEnd); the ceiling is required then (fail closed).
+    face_end_cap = Ref{Union{Nothing, Float64}}(nothing)
+    function face_end_spacing_cap_of_coupon()
+        if face_end_cap[] === nothing
+            maximum_jacobian_condition > 1.0 ||
+                error("a face end needs the Jacobian-condition ceiling " *
+                      "(--maximum-jacobian-condition) to derive its end-spacing cap")
+            face_end_cap[] = face_end_spacing_cap(fabricated ? top_section : sheet_section,
+                                                  maximum_jacobian_condition)
+        end
+        return face_end_cap[]
+    end
+    # The validity ceiling of the capped end block (design 3.2): beyond it no sheared layer
+    # keeps its pyramid apex inside the box within the cap - fail closed.
+    function guard_steep_face_crossing(face)
+        cap = face_end_spacing_cap_of_coupon()
+        apex = 2.0 * pyramid_height * abs(tan(face.theta))
+        apex < cap ||
+            scope_error("SteepFaceCrossing",
+                        "the tube end on face $(face.face) at $(rad2deg(face.theta)) degrees " *
+                        "needs a thinnest layer 2 PyramidHeight |tan theta| = $apex at or above " *
+                        "the end-spacing cap $cap of the tube section (the validity ceiling is " *
+                        "$(rad2deg(atan(cap / (2.0 * pyramid_height)))) degrees)")
+        return cap
+    end
     fabricated && (radius + pyramid_height < overetch ||
         scope_error("ShallowTrench", "tube radius $radius + pyramid height $pyramid_height " *
                                      "against Overetch $overetch"))
@@ -6484,6 +6519,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                     normal = [face.normal[1], face.normal[2], 0.0]
                     push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta, 0.0, 0.0,
                                              envelope_radius, pyramid_height, lc_tangent;
+                                             spacing_cap=guard_steep_face_crossing(face),
                                              face_axis=face.axis, face_value=face.value))
                 end
                 for (z, section) in placements
@@ -6520,6 +6556,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                     push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta,
                                              dot(normal, n) / along_normal, dot(normal, b) / along_normal,
                                              envelope_radius, pyramid_height, lc_tangent;
+                                             spacing_cap=guard_steep_face_crossing(face),
                                              face_axis=face.axis, face_value=face.value))
                 end
                 for (z, section) in placements
@@ -6630,10 +6667,26 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                          "two ends: exact arithmetic, no tolerance) ends ON the face: the CAD " *
                          "solid is extruded over-long by (R + h_pyr) |tan theta| + TangentialSize " *
                          "and intersected with the coupon box before the fragment; the mesh ends " *
-                         "with m = ceil(2 (R + h_pyr) |tan theta| / lc_end) sheared layers of " *
-                         "axial spacing lc_end = max(TangentialSize, 4 h_pyr |tan theta|) whose " *
-                         "last station is the face plane (Tubes[].FaceEnds); theta == 0 keeps " *
-                         "the unchanged perpendicular end (decisions 302 / 320)",
+                         "with m sheared layers of axial spacing lc_end whose last station is the " *
+                         "face plane (Tubes[].FaceEnds). Regime I (4 h_pyr |tan theta| <= lc_cap): " *
+                         "lc_end = max(TangentialSize, 4 h_pyr |tan theta|), m = ceil(2 (R + h_pyr) " *
+                         "|tan theta| / lc_end) (block (b) design A2 (4), bitwise); regime II (4 h_pyr " *
+                         "|tan theta| > lc_cap): lc_end = lc_cap, m = max(ceil((R + h_pyr) |tan theta| / " *
+                         "(lc_cap - 2 h_pyr |tan theta|)), the regime-I count at lc_cap), so the " *
+                         "thinnest layer keeps the apex rule t_min >= 2 h_pyr |tan theta| (mesher " *
+                         "design round 2 F2b 3.2); lc_cap = FaceEndSpacingCap (FaceEndSpacingCapRule); " *
+                         "2 h_pyr |tan theta| >= lc_cap fails closed at ScopeGuard[SteepFaceCrossing]; " *
+                         "theta == 0 keeps the unchanged perpendicular end (decisions 302 / 320)",
+        "FaceEndSpacingCapRule" => "the largest axial spacing at which the section's own prism " *
+                                   "corner frames (every sector triangle of the section at each " *
+                                   "vertex, the axial edge orthogonal: singular values {lc, " *
+                                   "sigma_1, sigma_2} of the frame) read a Jacobian condition " *
+                                   "<= $(FACE_END_CONDITION_MARGIN) x MaximumJacobianCondition: " *
+                                   "lc_cap = $(FACE_END_CONDITION_MARGIN) x MaximumJacobianCondition " *
+                                   "x min sigma_2 (closed form; the production sections' smallest " *
+                                   "sigma_2 is the second ring's (a, c, d) triangle at its ring-2 " *
+                                   "vertex); null on a coupon without a face end",
+        "FaceEndSpacingCap" => face_end_cap[],
         "BoxVertexRule" => "a box-face vertex with a single metal side is a cut end (FaceEnd, no " *
                            "ball, clearance 0) when theta > 0; at theta == 0 exactly the legacy " *
                            "convention holds bitwise: a Physical-class box vertex is a semantic " *
@@ -7760,7 +7813,8 @@ function generate_spatial_coupon(;
                 build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
-                                  lc_tangent, lc_fine, lower, upper, tolerance)
+                                  lc_tangent, lc_fine, lower, upper, tolerance;
+                                  maximum_jacobian_condition=maximum_jacobian_condition)
         end
         domains, domain_map = occ.fragment(objects, tube_tools)
         substrate_seed = domain_map[1:length(substrates)] |> Iterators.flatten |> collect
@@ -7812,7 +7866,8 @@ function generate_spatial_coupon(;
                 build_edge_tubes!(occ, layers, boundary_loops, etch_loops, semantic_corners,
                                   edge_size, edge_growth_ratio, tube_sector_degrees,
                                   metal_thickness, overetch, corner_isotropy_radius,
-                                  lc_tangent, lc_fine, lower, upper, tolerance; fabricated=false)
+                                  lc_tangent, lc_fine, lower, upper, tolerance; fabricated=false,
+                                  maximum_jacobian_condition=maximum_jacobian_condition)
             append!(tools, tube_tools)
             # SEAM (design round 2): the tip bisector curves of the convex thin tips below
             # 90 degrees, fragmented with the sheet after the tube tools (the tube map
@@ -8003,6 +8058,8 @@ function generate_spatial_coupon(;
                 "PrismTubeFaceEnds" => prism_tubes ?
                     Dict{String, Any}(
                         "Count" => sum(length(tube.face_ends) for (tube, _) in tubes; init=0),
+                        # The section's end-spacing cap lc_cap (design round 2 F2b; null without a face end).
+                        "SpacingCap" => tube_sections["FaceEndSpacingCap"],
                         "Tubes" => [Dict{String, Any}(
                                         "Tube" => k,
                                         "Origin" => tube isa ArcTube ? arc_frame(tube, tube.s_start).origin : tube.origin,

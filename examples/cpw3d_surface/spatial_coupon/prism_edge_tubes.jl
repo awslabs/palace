@@ -124,6 +124,92 @@ function cad_rays(section::TubeSection)
     return sort!(unique!(rays))
 end
 
+# The planar corner frames of a cross-section's prisms (mesher design round 2 F2b,
+# section 3.2): every sector triangle of the section (sector_triangles) seen from each
+# of its three vertices, the two triangle edges leaving the vertex as the columns of a
+# 2 x 2 matrix; a prism layer of axial spacing lc adds the orthogonal third column lc e,
+# so its corner frame (VOLUME_CORNER_FRAMES, mixed_volume_quality) has the singular
+# values {lc, sigma_1, sigma_2} of this planar block. Returns (sigma_1, sigma_2) per frame
+# (closed form for a 2 x 2 matrix). The smallest sigma_2 of the production section is
+# the second ring's (a, c, d) triangle at its ring-2 vertex c (0.33925 r_1 at ratio 2 and
+# 30-degree sectors), not the inner triangle's edge-point frame (0.36603 r_1).
+function section_frame_singular_values(section::TubeSection)
+    radii = vcat(0.0, section.ring_radii)
+    node(k, j) = radii[k + 1] .* (cosd(section.angles[j + 1]), sind(section.angles[j + 1]))
+    frames = Tuple{Float64, Float64}[]
+    for j = 0:(length(section.angles) - 2)
+        for (a, b, c) in sector_triangles(section, j)
+            # sector_triangles indexes the section nodes; their polar coordinates follow
+            # from the ring and ray of each local index.
+            triangle = [
+                node(section_ring_ray(section, local_index, j)...) for
+                local_index in (a, b, c)
+            ]
+            for v = 1:3
+                p = triangle[v]
+                e1 = triangle[mod1(v + 1, 3)] .- p
+                e2 = triangle[mod1(v + 2, 3)] .- p
+                n1 = e1[1]^2 + e1[2]^2
+                n2 = e2[1]^2 + e2[2]^2
+                cross = e1[1] * e2[1] + e1[2] * e2[2]
+                half = 0.5 * (n1 + n2)
+                root = 0.5 * sqrt((n1 - n2)^2 + 4.0 * cross^2)
+                push!(frames, (sqrt(half + root), sqrt(max(half - root, 0.0))))
+            end
+        end
+    end
+    return frames
+end
+
+# The (ring, ray) of a local section node index on sector j (the inverse of section_node
+# restricted to the two rays of one sector; the edge point is ring 0).
+function section_ring_ray(section::TubeSection, local_index, j)
+    local_index == 1 && return (0, 0)
+    for k = 1:ring_count(section), ray in (j, j + 1)
+        section_node(section, k, ray) == local_index && return (k, ray)
+    end
+    return error("section node $local_index does not lie on sector $j")
+end
+
+# The largest Jacobian condition over the prism corner frames of one regular layer of
+# axial spacing `spacing` of this section: max(spacing, sigma_1) / min(spacing, sigma_2)
+# over the planar frames - a closed-form function of the section, non-decreasing in the
+# spacing once it exceeds every sigma_1 (the production tubes: 589.33 at 49.98 nm on the
+# fabricated 0.25-nm section, 73.52 at 49.88 nm on the thin 2-nm section, equal to the
+# stored S2p 3-edge censuses' Prism.MaximumJacobianCondition to 1e-12 relative).
+function section_prism_condition(section::TubeSection, spacing)
+    spacing > 0.0 || error("a prism layer needs a positive spacing")
+    return maximum(
+        max(spacing, s1) / min(spacing, s2) for
+        (s1, s2) in section_frame_singular_values(section)
+    )
+end
+
+# The end-spacing cap of a face end (design round 2 F2b 3.2): the largest axial spacing
+# at which the section's own prism frames read <= FACE_END_CONDITION_MARGIN x the
+# Jacobian-condition ceiling, lc_cap = margin x ceiling x min sigma_2 over the frames
+# (80.572 nm on the fabricated production section at the ceiling 1000, 644.58 nm thin).
+# Fails closed when the cap does not lie in the spacing-dominated regime (some frame's
+# sigma_1 above it), where the condition would not be monotone in the spacing.
+const FACE_END_CONDITION_MARGIN = 0.95
+
+function face_end_spacing_cap(section::TubeSection, maximum_jacobian_condition)
+    isfinite(maximum_jacobian_condition) && maximum_jacobian_condition > 1.0 || error(
+        "a face end's end-spacing cap needs a finite Jacobian-condition ceiling > 1 " *
+        "(--maximum-jacobian-condition), got $maximum_jacobian_condition"
+    )
+    ceiling = FACE_END_CONDITION_MARGIN * maximum_jacobian_condition
+    frames = section_frame_singular_values(section)
+    cap = ceiling * minimum(s2 for (_, s2) in frames)
+    all(s1 <= cap for (s1, _) in frames) || error(
+        "the end-spacing cap $cap of the tube section lies below a prism frame's " *
+        "largest planar singular value: the prism condition is not spacing-dominated"
+    )
+    section_prism_condition(section, cap) <= ceiling * (1.0 + 1.0e-12) ||
+        error("the end-spacing cap $cap does not meet the condition ceiling $ceiling")
+    return cap
+end
+
 # A tube end on a face of the coupon box that the edge does not cross
 # perpendicularly (block (b) design AMENDMENT 1 A2, supervisor decisions 302 / 320):
 # the tube ENDS ON THE FACE. The face plane through the axis point at the end
@@ -133,14 +219,23 @@ end
 # the angle between the tube axis and N. The CAD solid is extruded over-long by
 # over_length = (radius + pyramid height) |tan theta| + the tangential spacing (its
 # perpendicular end wholly outside the box) and intersected with the coupon box
-# before the fragment; the mesh ends with a block of `layers` = m =
-# ceil(2 r_env |tan theta| / spacing) sheared layers of axial spacing `spacing` =
-# lc_end = max(lc_tangent, 4 h_pyr |tan theta|) whose last station is the face
-# plane (every end node on the face), so every end-block layer keeps an axial
-# thickness in [lc_end / 2, 3 lc_end / 2], every lateral quadrangle stays a planar
-# trapezoid and every pyramid apex of the block stays inside the box. A tube end
-# with theta == 0 exactly (every rectilinear coupon) has no FaceEnd and takes the
-# unchanged path.
+# before the fragment; the mesh ends with a block of `layers` = m sheared layers of
+# axial spacing `spacing` = lc_end whose last station is the face plane (every end
+# node on the face), so every lateral quadrangle stays a planar trapezoid and every
+# pyramid apex of the block stays inside the box. Two regimes (mesher design round 2
+# F2b, section 3.2; supervisor decisions 358 / 363 / 437), split by the section's
+# end-spacing cap lc_cap (face_end_spacing_cap):
+#   regime I  (4 h_pyr |tan theta| <= lc_cap): lc_end = max(lc_tangent, 4 h_pyr |tan theta|),
+#             m = ceil(2 r_env |tan theta| / lc_end) - the A2 (4) formulas bitwise; every
+#             layer's axial thickness lies in [lc_end / 2, 3 lc_end / 2];
+#   regime II (4 h_pyr |tan theta| > lc_cap): lc_end = lc_cap and m = max(ceil(r_env |tan
+#             theta| / (lc_cap - 2 h_pyr |tan theta|)), the regime-I count at lc_cap), so the
+#             thinnest layer t_min = lc_cap - r_env |tan theta| / m keeps the exact apex rule
+#             t_min >= 2 h_pyr |tan theta| while the shear per layer stays <= lc_cap / 2;
+#   beyond the validity ceiling 2 h_pyr |tan theta| >= lc_cap no block exists: the build
+#             fails closed (ScopeGuard[SteepFaceCrossing], checked by the caller).
+# A tube end with theta == 0 exactly (every rectilinear coupon) has no FaceEnd and
+# takes the unchanged path.
 struct FaceEnd
     end_index::Int            # 0: the tube start (s_start) lies on the face, 1: the end
     face::String              # "x0" / "x1" / "y0" / "y1"
@@ -154,6 +249,9 @@ struct FaceEnd
     over_length::Float64      # the CAD over-length beyond the face before the box intersection
     face_axis::Int            # the plan-view axis (1 x, 2 y) the face is normal to (0: unknown)
     face_value::Float64       # the face coordinate on that axis (an ArcTube crosses it per node)
+    regime::Int               # 1 or 2 (design round 2 F2b)
+    spacing_cap::Float64      # lc_cap of the tube's section
+    apex_thickness::Float64   # 2 h_pyr |tan theta|: the thinnest layer the apex rule admits
 end
 
 function FaceEnd(
@@ -166,13 +264,38 @@ function FaceEnd(
     envelope_radius,
     pyramid_height,
     lc_tangent;
+    spacing_cap,
     face_axis=0,
     face_value=NaN
 )
     theta > 0.0 || error("a face end needs a positive tilt")
+    spacing_cap > 0.0 || error("a face end needs a positive end-spacing cap")
     slope = abs(tan(theta))
-    spacing = max(lc_tangent, 4.0 * pyramid_height * slope)
-    layers = max(1, ceil(Int, 2.0 * envelope_radius * slope / spacing * (1.0 - 1.0e-9)))
+    apex_thickness = 2.0 * pyramid_height * slope
+    regime_one_spacing = max(lc_tangent, 4.0 * pyramid_height * slope)
+    regime_one_layers(spacing) =
+        max(1, ceil(Int, 2.0 * envelope_radius * slope / spacing * (1.0 - 1.0e-9)))
+    if 4.0 * pyramid_height * slope <= spacing_cap
+        regime = 1
+        spacing = regime_one_spacing
+        layers = regime_one_layers(spacing)
+    else
+        apex_thickness < spacing_cap || error(
+            "face end at $(rad2deg(theta)) degrees lies beyond the validity ceiling of the " *
+            "capped end block: 2 h_pyr |tan theta| = $apex_thickness >= lc_cap $spacing_cap"
+        )
+        regime = 2
+        spacing = spacing_cap
+        layers = max(
+            ceil(Int, envelope_radius * slope / (spacing_cap - apex_thickness)),
+            regime_one_layers(spacing_cap)
+        )
+    end
+    # The exact apex rule holds in both regimes (regime I: t_min >= lc_end / 2 >= 2 h_pyr
+    # |tan theta| up to the layer count's 1e-9 rounding slack; regime II by the layer
+    # count), fail closed otherwise.
+    spacing - envelope_radius * slope / layers >= apex_thickness * (1.0 - 1.0e-9) ||
+        error("face end block violates the apex rule")
     return FaceEnd(
         end_index,
         face,
@@ -185,12 +308,17 @@ function FaceEnd(
         envelope_radius * slope,
         envelope_radius * slope + lc_tangent,
         face_axis,
-        face_value
+        face_value,
+        regime,
+        spacing_cap,
+        apex_thickness
     )
 end
 
 # The census record of a face end: the block's axial layer thickness over the tube
-# envelope lies in EndSpacing -+ EnvelopeShear / Layers (within [lc_end / 2, 3 lc_end / 2]).
+# envelope lies in EndSpacing -+ EnvelopeShear / Layers (within [lc_end / 2, 3 lc_end / 2]
+# and at or above ApexThickness, the exact apex rule); Regime "I" / "II" and the section's
+# EndSpacingCap bind lc_end <= lc_cap (design round 2 F2b).
 face_end_record(face_end::FaceEnd) = Dict{String, Any}(
     "End" => face_end.end_index == 0 ? "start" : "end",
     "Face" => face_end.face,
@@ -203,7 +331,10 @@ face_end_record(face_end::FaceEnd) = Dict{String, Any}(
         face_end.spacing + face_end.envelope_shear / face_end.layers
     ],
     "OverLength" => face_end.over_length,
-    "Kappa" => [face_end.kappa_u, face_end.kappa_w]
+    "Kappa" => [face_end.kappa_u, face_end.kappa_w],
+    "Regime" => face_end.regime == 1 ? "I" : "II",
+    "EndSpacingCap" => face_end.spacing_cap,
+    "ApexThickness" => face_end.apex_thickness
 )
 
 # A SMOOTH joint of a straight tube with an arc tube (block (b) design A3 (2), decision

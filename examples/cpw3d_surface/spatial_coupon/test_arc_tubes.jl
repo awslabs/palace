@@ -305,6 +305,7 @@ end
         0.04,
         0.01,
         0.1;
+        spacing_cap=Inf,
         face_axis=1,
         face_value=0.3
     )

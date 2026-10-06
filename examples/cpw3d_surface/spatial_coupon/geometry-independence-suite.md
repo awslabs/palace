@@ -592,18 +592,17 @@ build census (`build-census`, the bound build report):
     design A3 (3), supervisor decision 303: the pyramid-envelope margin, which is h_K
     exactly for phi >= 77.4 degrees - every rectilinear corner bitwise - and larger
     at the acute tips of the oblique family);
-  - FACE ENDS (block (b) design A2 / A6, supervisor decisions 302 / 320): a tube end
-    on a box face where a single metal side meets the face at a tilt theta > 0 (the
-    side is not exactly perpendicular to the face: its face-parallel coordinate
-    differs between its two ends, exact arithmetic, no tolerance) ends ON the face -
-    the CAD solid is extruded over-long by (R + h_pyr) |tan theta| + TangentialSize
-    and intersected with the coupon box before the fragment (the single-descendant
-    check unchanged), and the mesh ends with m = ceil(2 (R + h_pyr) |tan theta| /
-    lc_end) sheared layers of axial spacing lc_end = max(TangentialSize, 4 h_pyr |tan
-    theta|) whose last station is the face plane (every end node on the face; layer
-    thickness in [lc_end / 2, 3 lc_end / 2]; planar trapezoid quadrangles; apexes
-    inside the box; recorded `Tubes[].FaceEnds` and `PrismTubes.FaceEnds`, the
-    labels-only census `PrismTubeFaceEnds`). The box-face VERTEX class is decided by
+  - |tan theta| / (lc_cap - 2 h_pyr |tan theta|)), the regime-I count at lc_cap), the exact
+    apex rule t_min >= 2 h_pyr |tan theta| on the thinnest layer (70 degrees: lc_end 80.57
+    nm, m 3; 74.3: m 6; 75.5: m 9; the maximum prism condition then reads ~958 < 1000);
+    beyond the validity ceiling 2 h_pyr |tan theta| >= lc_cap (78.77 degrees fabricated)
+    the build fails closed at `ScopeGuard[SteepFaceCrossing]`. Recorded per face end
+    `Regime` ("I" / "II"), `EndSpacingCap`, `ApexThickness`; per section
+    `FaceEndSpacingCap` / `FaceEndSpacingCapRule`; the census validator recomputes the
+    cap from the section's rings and rays and the command's ceiling and binds the regime,
+    lc_end <= lc_cap and the apex inequality per record (a round-2b mesher's record
+    without a Regime fails closed; a pre-F2b record is judged by the regime-I formulas).
+    The box-face VERTEX class is decided by
     the vertex, angle-gated: with theta > 0 such an end is a box-face cut end
     (clearance 0, no corner ball; `derive_semantic_contract` excludes it from the
     SemanticCorners and records `Derivation.BoxFaceCutEnds`; the estimator counts the
@@ -1465,6 +1464,8 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     twice the tube envelope between facing tubed sides (ADDED by step 4.2, decision
     347); `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
     decision-391 stop-gaps above, until the synthetic arc builds exist);
+    `SteepFaceCrossing` - a face end beyond the validity ceiling of the capped end block,
+    2 h_pyr |tan theta| >= lc_cap (ADDED by mesher design round 2 F2b, decision 437);
     `FootprintWithoutEdge` - an explicit footprint without
     the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
     simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists

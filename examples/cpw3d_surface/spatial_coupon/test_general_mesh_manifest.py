@@ -3188,6 +3188,130 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected_face_end(lambda c: c["PrismTubes"].__setitem__("FaceEndSpacingMaximum", 0.0), "face-end summary")
             rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"].append(
                                   dict(c["PrismTubes"]["Tubes"][0]["FaceEnds"][0])), "two face ends at one end")
+            # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face-end record carrying its
+            # Regime is judged against the end-spacing cap recomputed from the section's rings and
+            # rays and the command's Jacobian-condition ceiling (lc_cap = 0.95 x ceiling x the smallest
+            # planar singular value of the prism frames; the production fab section reads 80.572 nm at
+            # 1000): regime I below 4 h_pyr |tan theta| <= lc_cap with the A2 (4) formulas, regime II
+            # above with lc_end = lc_cap and the apex-rule layer count; every record binds EndSpacing <=
+            # lc_cap, the cap and apex fields and the apex inequality; a round-2b mesher's record without
+            # a Regime fails closed.
+            from mesh_stage_contract import (FACE_END_CONDITION_MARGIN, ROUND2_MESHER, face_end_spacing_cap,
+                                             section_frame_singular_values, section_prism_condition)
+            production_radii = [0.00025 * (2.0**k - 1.0) for k in range(1, 8)]
+            production_rays = [-90.0 + 30.0 * j for j in range(10)]
+            self.assertAlmostEqual(face_end_spacing_cap(production_radii, production_rays, 1000.0),
+                                   0.08057212272716054, delta=1e-15)
+            self.assertAlmostEqual(section_prism_condition(production_radii, production_rays, 0.04998265841897798),
+                                   589.3294590097332, delta=1e-6)
+            self.assertAlmostEqual(min(s2 for _, s2 in section_frame_singular_values(production_radii, production_rays)),
+                                   0.33925104306172854 * 0.00025, delta=1e-18)
+            with self.assertRaisesRegex(ValueError, "spacing-dominated"):
+                face_end_spacing_cap(production_radii, production_rays, 1.5)
+            with self.assertRaisesRegex(ValueError, "Jacobian-condition ceiling"):
+                face_end_spacing_cap(production_radii, production_rays, 0.0)
+            ceiling = float(report["Command"][report["Command"].index("--maximum-jacobian-condition") + 1])
+            ring_radii = [sum(section["RingSizes"][:k + 1]) for k in range(len(section["RingSizes"]))]
+            rays = [-90.0 + 30.0 * j for j in range(10)]
+            cap = face_end_spacing_cap(ring_radii, rays, ceiling)
+            self.assertAlmostEqual(cap, FACE_END_CONDITION_MARGIN * ceiling *
+                                   min(s2 for _, s2 in section_frame_singular_values(ring_radii, rays)))
+            def regime_record(theta, regime):
+                slope = _math.tan(_math.radians(theta))
+                apex = 2.0 * section["PyramidHeight"] * slope
+                if regime == "I":
+                    lc = max(tubes["TangentialSize"], 4.0 * section["PyramidHeight"] * slope)
+                    layers = max(1, _math.ceil(2.0 * r_env * slope / lc * (1.0 - 1e-9)))
+                else:
+                    lc = cap
+                    layers = max(_math.ceil(r_env * slope / (cap - apex)),
+                                 max(1, _math.ceil(2.0 * r_env * slope / cap * (1.0 - 1e-9))))
+                shear = r_env * slope
+                return lc, layers, {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": layers,
+                                    "EndSpacing": lc, "EnvelopeShear": shear,
+                                    "LayerThicknessRange": [lc - shear / layers, lc + shear / layers],
+                                    "OverLength": shear + tubes["TangentialSize"], "Kappa": [-slope, 0.0],
+                                    "Regime": regime, "EndSpacingCap": cap, "ApexThickness": apex}
+            # The two regimes of the fixture section: the boundary 4 h_pyr |tan theta| = cap.
+            boundary = _math.degrees(_math.atan(cap / (4.0 * section["PyramidHeight"])))
+            ceiling_theta = _math.degrees(_math.atan(cap / (2.0 * section["PyramidHeight"])))
+            self.assertLess(boundary, ceiling_theta)
+            def face_ended_2b(c, theta, regime):
+                lc, layers, record = regime_record(theta, regime)
+                face_ended(c)
+                c["PrismTubes"]["Section"]["RingRadii"] = ring_radii
+                c["PrismTubes"]["Section"]["Top"] = {"Angles": rays, "Materials": [2] * 9}
+                c["PrismTubes"]["Section"]["FaceEndSpacingCap"] = cap
+                c["PrismTubes"]["Section"]["FaceEndSpacingCapRule"] = "fixture cap rule"
+                row = c["PrismTubes"]["Tubes"][0]
+                row["FaceEnds"] = [record]
+                row["Spacing"] = max(lc, row["LayerThickness"]["P50"])
+                row["LayerThickness"]["Maximum"] = row["Spacing"]
+                row["LayerThickness"]["AtEnd"] = lc
+                row["LayerThickness"]["FaceEndBlocks"] = {"End": {"Layers": layers, "Thicknesses": [lc] * layers,
+                                                                   "NeighbourRatio": max(lc, row["LayerThickness"]["P50"]) /
+                                                                   min(lc, row["LayerThickness"]["P50"])}}
+                c["PrismTubes"]["FaceEndSpacingMaximum"] = lc
+                c["PrismTubes"]["LayerThickness"]["Maximum"] = max(census["PrismTubes"]["LayerThickness"]["Maximum"], lc)
+                c["PrismTubes"]["SpacingMaximum"] = c["PrismTubes"]["LayerThickness"]["Maximum"]
+                c["PrismTubes"]["FaceEnds"]["EndBlockLayers"] = layers
+                return c
+            regime_one = face_ended_2b(copy.deepcopy(census), 0.5 * boundary, "I")
+            self.assertIs(validate_gmsh_build_census(report, regime_one, semantic), regime_one)
+            steep = 0.5 * (boundary + ceiling_theta)
+            regime_two = face_ended_2b(copy.deepcopy(census), steep, "II")
+            self.assertIs(validate_gmsh_build_census(report, regime_two, semantic), regime_two)
+            record_two = regime_two["PrismTubes"]["Tubes"][0]["FaceEnds"][0]
+            self.assertEqual(record_two["EndSpacing"], cap)
+            self.assertGreaterEqual(record_two["LayerThicknessRange"][0], record_two["ApexThickness"])
+            def rejected_2b(theta, regime, mutate, message, target="census"):
+                broken = face_ended_2b(copy.deepcopy(census), theta, regime)
+                broken_report = copy.deepcopy(report)
+                mutate(broken if target == "census" else broken_report)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(broken_report, broken, semantic)
+            rejected_2b(steep, "I", lambda c: None, "regime does not follow")
+            rejected_2b(0.5 * boundary, "II", lambda c: None, "regime does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Regime", "III"),
+                        "regime is unknown")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("FaceEndSpacingCap", 1.01 * cap),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].pop("FaceEndSpacingCapRule"),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("EndSpacingCap", 0.99 * cap),
+                        "cap or apex thickness")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("ApexThickness", 0.0),
+                        "cap or apex thickness")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Layers", 1),
+                        "face-end rule|apex rule")
+            # lc_end <= max(lc_cap, TangentialSize): the fixture's TangentialSize exceeds its cap (gate 100
+            # on a 1-nm ring; never a production size), so the bound reads the tangential size here.
+            over_cap = 1.001 * max(cap, tubes["TangentialSize"])
+            rejected_2b(steep, "II", lambda c: (c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("EndSpacing", over_cap),
+                                              c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
+                                                  "LayerThicknessRange", [over_cap, over_cap])),
+                        "exceeds the end-spacing cap")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
+                            "LayerThicknessRange", [0.5 * c["PrismTubes"]["Tubes"][0]["FaceEnds"][0]["ApexThickness"], cap]),
+                        "apex rule")
+            rejected_2b(ceiling_theta + 0.5, "II", lambda c: None, "validity ceiling")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("RingRadii", [ring_radii[0]]),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].pop("Top"), "Top / Sheet rays")
+            rejected_2b(steep, "II", lambda r: r["Command"].__delitem__(slice(r["Command"].index("--maximum-jacobian-condition"),
+                                                                               r["Command"].index("--maximum-jacobian-condition") + 2)),
+                        "without the command's Jacobian-condition ceiling|--maximum-jacobian-condition", target="report")
+            # A cap recorded on a coupon without a face end fails closed.
+            no_face_end = copy.deepcopy(census)
+            no_face_end["PrismTubes"]["Section"]["FaceEndSpacingCap"] = cap
+            with self.assertRaisesRegex(ValueError, "spacing cap without a face end"):
+                validate_gmsh_build_census(report, no_face_end, semantic)
+            # A pre-F2b record (no Regime) from the round-2b mesher beside this module fails closed;
+            # from another mesher it is judged by the regime-I formulas alone (the block above).
+            from_round2b = copy.deepcopy(report)
+            from_round2b["Tools"]["mesher"]["SHA256"] = sha256(ROUND2_MESHER)
+            with self.assertRaisesRegex(ValueError, "round-2b mesher lacks its Regime"):
+                validate_gmsh_build_census(from_round2b, face_ended(copy.deepcopy(census)), semantic)
             # A census recorded before the face-end rule (no summary, no face end) still passes:
             # the fixture producer's census is one.
             self.assertNotIn("FaceEnds", census["PrismTubes"])
