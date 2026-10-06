@@ -11,6 +11,46 @@ index 8a03ff0..a411c8d 100755
  
  
  # Documentation
+diff --git a/PrecisionPreprocessing.sh b/PrecisionPreprocessing.sh
+index 2659667..772960a 100755
+--- a/PrecisionPreprocessing.sh
++++ b/PrecisionPreprocessing.sh
+@@ -191,7 +191,7 @@ sed -i -e "s/py_bpack/z_py_bpack/g" $ZSRCDIR/CMakeLists.txt
+ sed -i -e "s/c_bf_/z_c_bf_/g" $ZSRCDIR/*.h
+ sed -i -e "s/c_bf_/z_c_bf_/g" $ZSRCDIR/*.cpp
+ sed -i -e "s/BPACK_WRAP/z_BPACK_WRAP/g" $ZSRCDIR/*.h
+-sed -i -e "s/BPACK_wrapper.h/zBPACK_wrapper.h/g" $ZSRCDIR/*.cpp
++sed -i -e "s/\"BPACK_wrapper.h\"/\"zBPACK_wrapper.h\"/g" $ZSRCDIR/*.cpp
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/zparsec_hmat_ptg_bridge.h/g" $ZSRCDIR/*.c
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/zparsec_hmat_ptg_bridge.h/g" $ZSRCDIR/*.jdf
+ sed -i -e "s/c_bpack_/z_c_bpack_/g" $ZSRCDIR/*.f90
+@@ -257,7 +257,7 @@ sed -i -e "s/py_bpack/d_py_bpack/g" $DSRCDIR/CMakeLists.txt
+ sed -i -e "s/c_bf_/d_c_bf_/g" $DSRCDIR/*.h
+ sed -i -e "s/c_bf_/d_c_bf_/g" $DSRCDIR/*.cpp
+ sed -i -e "s/BPACK_WRAP/d_BPACK_WRAP/g" $DSRCDIR/*.h
+-sed -i -e "s/BPACK_wrapper.h/dBPACK_wrapper.h/g" $DSRCDIR/*.cpp
++sed -i -e "s/\"BPACK_wrapper.h\"/\"dBPACK_wrapper.h\"/g" $DSRCDIR/*.cpp
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/dparsec_hmat_ptg_bridge.h/g" $DSRCDIR/*.c
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/dparsec_hmat_ptg_bridge.h/g" $DSRCDIR/*.jdf
+ sed -i -e "s/c_bpack_/d_c_bpack_/g" $DSRCDIR/*.f90
+@@ -322,7 +322,7 @@ sed -i -e "s/py_bpack/c_py_bpack/g" $CSRCDIR/CMakeLists.txt
+ sed -i -e "s/c_bf_/c_c_bf_/g" $CSRCDIR/*.h
+ sed -i -e "s/c_bf_/c_c_bf_/g" $CSRCDIR/*.cpp
+ sed -i -e "s/BPACK_WRAP/c_BPACK_WRAP/g" $CSRCDIR/*.h
+-sed -i -e "s/BPACK_wrapper.h/cBPACK_wrapper.h/g" $CSRCDIR/*.cpp
++sed -i -e "s/\"BPACK_wrapper.h\"/\"cBPACK_wrapper.h\"/g" $CSRCDIR/*.cpp
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/cparsec_hmat_ptg_bridge.h/g" $CSRCDIR/*.c
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/cparsec_hmat_ptg_bridge.h/g" $CSRCDIR/*.jdf
+ sed -i -e "s/c_bpack_/c_c_bpack_/g" $CSRCDIR/*.f90
+@@ -387,7 +387,7 @@ sed -i -e "s/py_bpack/s_py_bpack/g" $SSRCDIR/CMakeLists.txt
+ sed -i -e "s/c_bf_/s_c_bf_/g" $SSRCDIR/*.h
+ sed -i -e "s/c_bf_/s_c_bf_/g" $SSRCDIR/*.cpp
+ sed -i -e "s/BPACK_WRAP/s_BPACK_WRAP/g" $SSRCDIR/*.h
+-sed -i -e "s/BPACK_wrapper.h/sBPACK_wrapper.h/g" $SSRCDIR/*.cpp
++sed -i -e "s/\"BPACK_wrapper.h\"/\"sBPACK_wrapper.h\"/g" $SSRCDIR/*.cpp
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/sparsec_hmat_ptg_bridge.h/g" $SSRCDIR/*.c
+ sed -i -e "s/parsec_hmat_ptg_bridge.h/sparsec_hmat_ptg_bridge.h/g" $SSRCDIR/*.jdf
+ sed -i -e "s/c_bpack_/s_c_bpack_/g" $SSRCDIR/*.f90
 diff --git a/SRC/BPACK_factor.f90 b/SRC/BPACK_factor.f90
 index f4e12ff..2a911f8 100755
 --- a/SRC/BPACK_factor.f90
