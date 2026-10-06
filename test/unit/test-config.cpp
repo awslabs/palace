@@ -240,6 +240,48 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
+  SECTION("Driven substructuring")
+  {
+    auto make_config = [](const json &driven, const json &extra_boundaries)
+    {
+      json boundaries = {{"LumpedPort",
+                          {{{"Index", 1},
+                            {"R", 50.0},
+                            {"Attributes", {4}},
+                            {"Direction", "+X"},
+                            {"Excitation", true}}}}};
+      boundaries.update(extra_boundaries);
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                  {"Boundaries", boundaries},
+                  {"Solver",
+                   {{"Driven", driven},
+                    {"Substructuring",
+                     {{"Region", {{"Attributes", {1}}}},
+                      {"Environment", {{"Attributes", {2}}}}}}}}};
+    };
+    const json uniform = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}};
+#if defined(MFEM_USE_MUMPS)
+    CHECK_NOTHROW(IoData(make_config(uniform, json::object()), false));
+#endif
+    json adaptive = uniform;
+    adaptive["AdaptiveTol"] = 1.0e-3;
+    CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
+                      Catch::Matchers::ContainsSubstring("uniform frequency sweeps"));
+    const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
+    CHECK_THROWS_WITH(IoData(make_config(uniform, wave), false),
+                      Catch::Matchers::ContainsSubstring("does not support wave ports"));
+    json saved = make_config(uniform, json::object());
+    saved["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
+    CHECK_THROWS_WITH(IoData(saved, false),
+                      Catch::Matchers::ContainsSubstring("does not save or load a model"));
+    json fields = uniform;
+    fields["Save"] = {1.0};
+    CHECK_THROWS_WITH(IoData(make_config(fields, json::object()), false),
+                      Catch::Matchers::ContainsSubstring("does not write fields"));
+  }
+
   SECTION("Magnetostatic substructuring excitations")
   {
     const json surface_current = {{{"Attributes", {4}}, {"Index", 1}, {"Direction", "+X"}}};

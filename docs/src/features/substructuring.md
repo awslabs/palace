@@ -14,8 +14,9 @@ an **environment** (everything else). The environment is condensed onto its inte
 region, once; each redesign then only solves the region against the condensed environment.
 
 Substructuring is available for [electrostatic](../guide/problem.md#Electrostatic-problems) capacitance
-extraction and [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction with
-flux-loop excitations.
+extraction, [magnetostatic](../guide/problem.md#Magnetostatic-problems) inductance extraction, and
+[driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) frequency sweeps (see
+[Driven problems](#Driven-problems)).
 
 ## How it works
 
@@ -147,6 +148,24 @@ magnetostatic solution and is rejected.
     With substructuring, inactive surface-current ports must be `"Open"` (see
     [`config["Solver"]["Magnetostatic"]["InactivePorts"]`](../config/reference.md#config-solver-magnetostatic-inactiveports)):
     every excitation is solved against the same condensed environment.
+
+## Driven problems
+
+For a [driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) simulation the environment operator depends on
+the frequency, and substructuring condenses it exactly at each frequency of a uniform sweep
+(`"Solver"/"Driven"` with `"MinFreq"`, `"MaxFreq"` and `"FreqStep"`): one partial
+factorization of the environment gives ``\bm{S}_E(\omega)``, and the region is factored against
+it once for all excitations. Lumped ports, impedance, absorbing and conductivity boundaries, and
+lossy materials may lie in the region, in the environment, or on both sides; the outputs are
+those of a regular simulation (port S-parameters, voltages and currents, and domain energies).
+The cost per frequency is that of a direct solve of the whole problem plus the dense interface
+block, so this exact form pays off with many excitations; saving the environment for
+redesigns is planned.
+
+!!! note
+
+    Driven substructuring needs MUMPS. Adaptive sweeps, wave ports, Floquet ports, periodic
+    boundaries, saved models, field output (`"Save"`) and restarts are not supported yet.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

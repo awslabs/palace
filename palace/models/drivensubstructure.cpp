@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <utility>
+#include "fem/substructure.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
 #include "models/spaceoperator.hpp"
@@ -21,34 +22,6 @@ class MumpsSchurSolver
 
 namespace
 {
-
-// Local true DOFs touched by the elements with the given attributes.
-std::vector<char> MarkTrueDofs(const mfem::ParFiniteElementSpace &fes,
-                               const std::vector<int> &attrs)
-{
-  const mfem::ParMesh &mesh = *fes.GetParMesh();
-  mfem::Vector m(fes.GetVSize()), mt(fes.GetTrueVSize());
-  m = 0.0;
-  mfem::Array<int> vdofs;
-  for (int e = 0; e < mesh.GetNE(); e++)
-  {
-    if (std::ranges::find(attrs, mesh.GetAttribute(e)) != attrs.end())
-    {
-      fes.GetElementVDofs(e, vdofs);
-      for (int d : vdofs)
-      {
-        m(d >= 0 ? d : -1 - d) = 1.0;
-      }
-    }
-  }
-  fes.GetProlongationMatrix()->MultTranspose(m, mt);
-  std::vector<char> mark(mt.Size());
-  for (int i = 0; i < mt.Size(); i++)
-  {
-    mark[i] = (mt(i) > 0.0);
-  }
-  return mark;
-}
 
 // The assembled real (imag = false) or imaginary part of an operator, if any.
 const mfem::HypreParMatrix *Part(const ComplexOperator *A, bool imag)
@@ -104,8 +77,13 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   // Interface DOFs: on region and environment elements; environment interior: on
   // environment elements only; region-free: on region elements (all without the Dirichlet
   // DOFs).
-  const std::vector<char> rm = MarkTrueDofs(fes, region_attrs),
-                          em = MarkTrueDofs(fes, env_attrs);
+  mfem::Array<int> rm, em, im;
+  {
+    mfem::Array<int> ra(region_attrs.data(), static_cast<int>(region_attrs.size())),
+        ea(env_attrs.data(), static_cast<int>(env_attrs.size()));
+    MarkInterfaceTrueDofs(const_cast<mfem::ParFiniteElementSpace &>(fes), ra, ea, rm, em,
+                          im);
+  }
   const int nt = fes.GetTrueVSize();
   std::vector<char> dbc(nt, 0);
   for (int d : space_op.GetNDDbcTDofLists().back())

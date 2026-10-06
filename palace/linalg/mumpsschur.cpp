@@ -192,15 +192,27 @@ void MumpsSchurSolver::Factor()
 {
   // Factorization (+ Schur). The workspace estimate from the analysis can be too small
   // (the dense Schur root sits on one rank): on a workspace failure (INFOG(1) = -8, -9,
-  // -20) double the relaxation and retry, as the MUMPS user guide recommends.
+  // -20) raise the relaxation and retry, as the MUMPS user guide recommends. The missing
+  // workspace (INFOG(2)) shrinks linearly with the relaxation ICNTL(14), whose base can be
+  // small next to the Schur root, so the relaxation is extrapolated from two attempts.
+  int r_prev = -1, m_prev = 0;
   for (int attempt = 0; active; attempt++)
   {
     id.job = 2;
     dmumps_c(&id);
     const MUMPS_INT err = id.infog[0];
-    if ((err == -8 || err == -9 || err == -20) && attempt < 5)
+    if ((err == -8 || err == -9 || err == -20) && attempt < 8)
     {
-      id.icntl[13] *= 2;  // ICNTL(14)
+      const int r = id.icntl[13], m = id.infog[1];  // ICNTL(14), INFOG(2)
+      int r_next = 2 * r;
+      if (r_prev >= 0 && m > 0 && m_prev > m)
+      {
+        const double slope = static_cast<double>(m_prev - m) / (r - r_prev);
+        r_next = std::max(r_next, r + static_cast<int>(std::ceil(1.25 * m / slope)) + 10);
+      }
+      r_prev = r;
+      m_prev = m;
+      id.icntl[13] = r_next;
       continue;
     }
     break;

@@ -17,6 +17,7 @@
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/drivensubstructure.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
@@ -72,8 +73,70 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
 
   // Main frequency sweep loop.
+  if (iodata.solver.substructuring)
+  {
+    return {SweepSubstructured(space_op), space_op.GlobalTrueVSize()};
+  }
   return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
           space_op.GlobalTrueVSize()};
+}
+
+ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
+{
+  // Exact per-frequency substructuring: at each frequency, condense the environment and
+  // factor the region against it once, then solve all excitations (so the frequency loop
+  // is the outer one).
+  const auto &port_excitations = space_op.GetPortExcitations();
+  const auto &omega_sample = iodata.solver.driven.sample_f;
+  const auto &sub = *iodata.solver.substructuring;
+  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
+  DrivenSubstructure ds(space_op, sub.region_attributes, sub.environment_attributes);
+  Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", ds.InterfaceSize());
+  const auto &Curl = space_op.GetCurlMatrix();
+  std::vector<int> ex_idx;
+  for (const auto &[idx, spec] : port_excitations)
+  {
+    ex_idx.push_back(idx);
+  }
+  const int n = static_cast<int>(ex_idx.size());
+  std::vector<ComplexVector> rhs(n, ComplexVector(Curl.Width())), E;
+  std::vector<const ComplexVector *> rhs_ptr(n);
+  ComplexVector B(Curl.Height());
+  B.UseDevice(true);
+  auto t0 = Timer::Now();
+  for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
+  {
+    const double omega = omega_sample[omega_i];
+    Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
+               omega_i + 1, omega_sample.size(),
+               iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                   (2 * std::numbers::pi),
+               Timer::Duration(Timer::Now() - t0).count());
+    {
+      BlockTimer bt(Timer::KSP);
+      ds.Condense(omega);
+      for (int k = 0; k < n; k++)
+      {
+        rhs[k].UseDevice(true);
+        space_op.GetExcitationVector(ex_idx[k], omega, rhs[k]);
+        rhs_ptr[k] = &rhs[k];
+      }
+      ds.Solve(rhs_ptr, E);
+    }
+    for (int k = 0; k < n; k++)
+    {
+      BlockTimer bt(Timer::POSTPRO);
+      // B = -1/(iω) ∇ x E on the true dofs.
+      Curl.Mult(E[k].Real(), B.Real());
+      Curl.Mult(E[k].Imag(), B.Imag());
+      B *= -1.0 / (1i * omega);
+      post_op.MeasureAndPrintAll(ex_idx[k], int(omega_i), E[k], B, omega);
+    }
+  }
+  // Substructuring computes no error estimate.
+  ErrorIndicator indicator;
+  post_op.MeasureFinalize(indicator);
+  return indicator;
 }
 
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const

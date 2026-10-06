@@ -1134,6 +1134,19 @@ TEST_CASE("substructuring_magnetostatic_mixed_london", "[Serial][Parallel][Regre
                                   "magnetostatic_mixed_london.json", "mixed_london", opts);
 }
 
+// Driven substructuring with exact per-frequency condensation: lumped ports across two
+// holes of a PEC film crossing the interface, one in the region (lossy dielectric) and one
+// in the environment. The references are regular simulations of the same configuration.
+TEST_CASE("substructuring_driven", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_driven", "driven.json", "lumped", opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and

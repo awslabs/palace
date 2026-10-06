@@ -708,9 +708,10 @@ void IoData::CheckConfiguration()
   {
     const auto &sub = *solver.substructuring;
     MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
-                    problem.type == ProblemType::MAGNETOSTATIC,
-                "Substructuring is only supported for electrostatic and magnetostatic "
-                "problem types!");
+                    problem.type == ProblemType::MAGNETOSTATIC ||
+                    problem.type == ProblemType::DRIVEN,
+                "Substructuring is only supported for electrostatic, magnetostatic and "
+                "driven problem types!");
     MFEM_VERIFY(!sub.region_attributes.empty() && !sub.environment_attributes.empty(),
                 "Substructuring requires nonempty Region and Environment attribute sets!");
     MFEM_VERIFY(solver.device == Device::CPU,
@@ -734,6 +735,24 @@ void IoData::CheckConfiguration()
                   "Adaptive mesh refinement with substructuring requires nonconforming "
                   "refinement (\"Nonconformal\": true) without a level constraint "
                   "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
+    }
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      // Exact per-frequency condensation of a uniform sweep with a direct factorization.
+      // Wave and Floquet ports carry matrix-free terms a factorization cannot absorb.
+      MFEM_VERIFY(solver.driven.adaptive_tol <= 0.0,
+                  "Driven substructuring supports uniform frequency sweeps only!");
+      MFEM_VERIFY(boundaries.waveport.empty() && boundaries.floquetport.empty() &&
+                      boundaries.periodic.boundary_pairs.empty(),
+                  "Driven substructuring does not support wave ports, Floquet ports or "
+                  "periodic boundaries!");
+      MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE && sub.save_model.empty(),
+                  "Driven substructuring does not save or load a model yet!");
+      MFEM_VERIFY(solver.driven.save_indices.empty() && solver.driven.restart == 1,
+                  "Driven substructuring does not write fields or restart a sweep yet!");
+#if !defined(MFEM_USE_MUMPS)
+      MFEM_ABORT("Driven substructuring requires MUMPS!");
+#endif
     }
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {

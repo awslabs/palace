@@ -2225,8 +2225,11 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   // the full system: PEC in the region, a lumped port in the environment, a second-order
   // absorbing boundary on both sides, an impedance sheet crossing Γ, a lossy dielectric
   // region and a conducting environment. A second frequency reuses the analyses.
+  // Hex meshes with an impedance sheet, and tet meshes with a non-planar interface (where
+  // second-order Nédélec face DOFs shared between ranks combine with signs).
   const int order = GENERATE(1, 2);
-  CAPTURE(order);
+  const bool tet = GENERATE(false, true);
+  CAPTURE(order, tet);
   json config = {
       {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
       {"Model", {{"Mesh", "test.msh"}}},
@@ -2248,11 +2251,16 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
        {{"Order", order},
         {"Device", "CPU"},
         {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}}}}};
+  if (tet)
+  {
+    config["Boundaries"].erase("Impedance");
+  }
   IoData iodata(config, false);
   RegionDesign design;
   design.sheet = true;
   std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(2, 3, 2, design)));
+  mesh.push_back(
+      std::make_unique<Mesh>(tet ? MakeWavyTetSplit(3) : MakeGradedSplit(2, 3, 2, design)));
   SpaceOperator space_op(iodata, mesh);
   const auto &fes = space_op.GetNDSpace().Get();
   MPI_Comm comm = fes.GetComm();
