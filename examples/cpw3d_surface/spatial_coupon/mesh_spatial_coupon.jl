@@ -1071,9 +1071,11 @@ const INVARIANT_CORNER_TARGET = 3.8
 
 const INVARIANT_CORNER_RULE =
     "a semantic corner is LEGACY when the two plan-view boundary sides meeting at it have " *
-    "an exactly zero dot product on their quantised coordinates (every rectilinear corner; " *
-    "the theta-0 box vertex of decision 320 included: its metal side is exactly " *
-    "perpendicular to the box side): it keeps the vertex-0 Jacobian condition " *
+    "an exactly zero dot product in exact integer arithmetic on their quantum counts (every " *
+    "coordinate divided by the plan-view quantum 1e-9 R and rounded to the generator's " *
+    "integer; every rectilinear corner, the theta-0 box vertex of decision 320 - its metal " *
+    "side exactly perpendicular to the box side - and every rigidly rotated perpendicular " *
+    "corner, whatever its rotation): it keeps the vertex-0 Jacobian condition " *
     "tetrahedron_aspect, MaximumCornerAspect and the 0.95 target bitwise; every other corner " *
     "is INVARIANT: its corner-incident seed cells are optimized on and judged by kappa_reg, " *
     "the condition number of the affine map from the regular tetrahedron (order-invariant), " *
@@ -1084,16 +1086,37 @@ const INVARIANT_CORNER_RULE =
     "the descent triggers the corner-local reconnection pass (supervisor decision 365: the " *
     "measure is the verdict, the predicate the trigger); the contract " *
     "(derive_semantic_contract: Derivation.InvariantCorners) and the mesher evaluate the " *
-    "same predicate and a disagreement fails closed (supervisor decisions 351 / 358 / 363)"
+    "same predicate on the same quantum and a disagreement fails closed (supervisor " *
+    "decisions 351 / 358 / 363 / 416)"
+
+# The plan-view boundary's coordinate quantum per unit coupon radius: the generator
+# (generate_spatial_response.plan_view_boundary_loops) snaps every loop vertex to the
+# 1e-9 R grid and writes the float k x 1e-9 R (semantic_mesh_contract.
+# PLAN_VIEW_QUANTUM_OVER_RADIUS is the same number; both tools count in 1e-9 x --radius).
+const PLAN_VIEW_QUANTUM_OVER_RADIUS = 1.0e-9
+
+# The integer count of `quantum` nearest to a plan-view coordinate (the generator's
+# rounding: half away from zero), exact for every generated coordinate - the float
+# k x quantum lies within 1e-6 quanta of k. Int128: two sides of ~1e10 quanta each
+# multiply beyond Int64.
+function plan_view_quantum_count(value, quantum)
+    scaled = value / quantum
+    return scaled >= 0.0 ? floor(Int128, scaled + 0.5) : ceil(Int128, scaled - 0.5)
+end
 
 # The two plan-view boundary sides meeting at every semantic corner, as unit 2D
 # directions pointing away from the corner, the unit direction into the metal between
 # them (the kink's metal sector: inside an exterior loop, outside a hole), and the
-# corner's kind (:legacy / :invariant) by the exact dot-product predicate above. Every
-# corner must be exactly one boundary vertex of its plane (fail closed otherwise).
+# corner's kind (:legacy / :invariant) by the exact dot-product predicate above, evaluated
+# in integer arithmetic on the quantum counts of the three vertices (`quantum` = 1e-9 R,
+# the generator's grid): exactly 0 at every perpendicular corner, axis-aligned or rigidly
+# rotated. (The float dot product of the float side vectors is exact only for axis-aligned
+# sides: the loop end's rotated perpendicular corner read -1.776e-15 and was classed
+# invariant by both tools; supervisor decision 416.) The returned dots are those integers.
+# Every corner must be exactly one boundary vertex of its plane (fail closed otherwise).
 # `corners` and `loops` share the seed frame.
-function semantic_corner_kinds(corners, loops, tolerance)
-    kinds = Symbol[]; sides = NamedTuple[]; dots = Float64[]
+function semantic_corner_kinds(corners, loops, tolerance, quantum)
+    kinds = Symbol[]; sides = NamedTuple[]; dots = Int128[]
     for corner in corners
         matches = NamedTuple[]
         for loop in loops
@@ -1102,22 +1125,25 @@ function semantic_corner_kinds(corners, loops, tolerance)
             for i in 1:n
                 p = loop.points[i]
                 hypot(p[1] - corner[1], p[2] - corner[2]) <= tolerance || continue
-                before = loop.points[mod1(i - 1, n)]
-                after = loop.points[mod1(i + 1, n)]
-                push!(matches, (a=[before[1] - p[1], before[2] - p[2]],
-                                b=[after[1] - p[1], after[2] - p[2]], point=p, loop=loop))
+                push!(matches, (before=loop.points[mod1(i - 1, n)],
+                                after=loop.points[mod1(i + 1, n)], point=p, loop=loop))
             end
         end
         length(matches) == 1 ||
             error("Semantic corner $(corner) matches $(length(matches)) plan-view boundary " *
                   "vertices of its plane (exactly one is required)")
-        a, b, p, loop = matches[1].a, matches[1].b, matches[1].point, matches[1].loop
+        before, after, p, loop = matches[1].before, matches[1].after, matches[1].point, matches[1].loop
+        a = [before[1] - p[1], before[2] - p[2]]
+        b = [after[1] - p[1], after[2] - p[2]]
         all(norm(v) > 0.0 for v in (a, b)) ||
             error("Degenerate plan-view boundary side at the semantic corner $(corner)")
-        # Exact arithmetic on the quantised coordinates: an axis-aligned side has an
-        # exactly zero component, so a rectilinear corner's dot product is exactly 0.0.
-        product = a[1] * b[1] + a[2] * b[2]
-        push!(kinds, product == 0.0 ? :legacy : :invariant)
+        quantised(point) =
+            (plan_view_quantum_count(point[1], quantum), plan_view_quantum_count(point[2], quantum))
+        qp = quantised(p)
+        qa = quantised(before) .- qp
+        qb = quantised(after) .- qp
+        product = qa[1] * qb[1] + qa[2] * qb[2]
+        push!(kinds, product == 0 ? :legacy : :invariant)
         wall_1, wall_2 = a ./ norm(a), b ./ norm(b)
         # The metal direction: the bisector (or its perpendicular at a straight joint),
         # oriented by a probe just inside the loop (inside an exterior loop = metal).
@@ -7486,14 +7512,16 @@ function generate_spatial_coupon(;
     outer_tolerance = 1.0e-4 * radius
     validate_plan_view_geometry(edges, radius, tolerance, facets)
     # Design round 2 F5-A (decision 363): the kind of every semantic corner by the exact
-    # dot-product predicate on its two plan-view boundary sides (INVARIANT_CORNER_RULE),
-    # checked against the contract's Derivation.InvariantCorners (fail closed on a
-    # disagreement); invariant corners need the CornerShapeGate. Without a classified
-    # boundary (no plan-view loops) every corner keeps the legacy convention.
+    # dot-product predicate on its two plan-view boundary sides (INVARIANT_CORNER_RULE;
+    # integer arithmetic on the generator's 1e-9 R quantum counts, decision 416), checked
+    # against the contract's Derivation.InvariantCorners (fail closed on a disagreement);
+    # invariant corners need the CornerShapeGate. Without a classified boundary (no
+    # plan-view loops) every corner keeps the legacy convention.
     corner_shape_gate == 0.0 || (isfinite(corner_shape_gate) && corner_shape_gate > 1.0) ||
         error("--corner-shape-gate must be a finite number above 1 (0: none)")
     corner_kinds, corner_sides = if corner_isotropy && !isempty(boundary_loops)
-        kinds, sides, _ = semantic_corner_kinds(semantic_corners, boundary_loops, tolerance)
+        kinds, sides, _ = semantic_corner_kinds(semantic_corners, boundary_loops, tolerance,
+                                                PLAN_VIEW_QUANTUM_OVER_RADIUS * radius)
         check_invariant_corner_contract(semantic_corners, kinds,
                                         read_invariant_corners(semantic_contract, transform),
                                         tolerance)

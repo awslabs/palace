@@ -61,6 +61,9 @@ end
 loop(points; plane=0.0, classes=fill("Physical", length(points))) =
     (conductor=1, plane=plane, hole=false, points=points, classes=classes)
 
+# The plan-view quantum of the production coupons (Radius 1.9 um): 1.9e-9.
+const TEST_QUANTUM = PLAN_VIEW_QUANTUM_OVER_RADIUS * 1.9
+
 @testset "corner kinds: the exact dot-product predicate" begin
     # A rectilinear polygon with quantised (many-digit) coordinates: every corner legacy.
     square = loop([
@@ -70,8 +73,8 @@ loop(points; plane=0.0, classes=fill("Physical", length(points))) =
         (7.2265417, 0.6218871)
     ])
     corners = [(p[1], p[2], 0.0) for p in square.points]
-    kinds, sides, dots = semantic_corner_kinds(corners, [square], 1.0e-8)
-    @test all(kind -> kind === :legacy, kinds) && all(==(0.0), dots)
+    kinds, sides, dots = semantic_corner_kinds(corners, [square], 1.0e-8, TEST_QUANTUM)
+    @test all(kind -> kind === :legacy, kinds) && all(==(0), dots)
     @test all(norm(wall) ≈ 1.0 for side in sides for wall in side.walls)
     # The metal direction points into the (counter-clockwise) square: at the first vertex
     # (top left, walls down and right) it is the diagonal (1, -1) / sqrt 2.
@@ -83,10 +86,14 @@ loop(points; plane=0.0, classes=fill("Physical", length(points))) =
         [(0.0, 0.0), (0.6, 0.0), (0.6, 0.1), (0.6 * cosd(22.5), 0.6 * sind(22.5))];
         classes=["Physical", "Continuation", "Physical", "Physical"]
     )
-    kinds, sides, dots =
-        semantic_corner_kinds([(0.0, 0.0, 0.0), (0.6, 0.0, 0.0)], [tip], 1.0e-8)
+    kinds, sides, dots = semantic_corner_kinds(
+        [(0.0, 0.0, 0.0), (0.6, 0.0, 0.0)],
+        [tip],
+        1.0e-8,
+        TEST_QUANTUM
+    )
     @test kinds == [:invariant, :legacy]
-    @test dots[1] > 0.0 && dots[2] == 0.0
+    @test dots[1] > 0 && dots[2] == 0
     @test sort(sides[1].walls; by=first) ≈ [[cosd(22.5), sind(22.5)], [1.0, 0.0]]
     # The metal of the tip is the 22.5-degree wedge between its sides.
     @test sides[1].metal ≈ [cosd(11.25), sind(11.25)]
@@ -95,21 +102,151 @@ loop(points; plane=0.0, classes=fill("Physical", length(points))) =
           !in_metal_sector(sides[1], [cosd(-30.0), sind(-30.0)])
     kink =
         loop([(0.0, 0.0), (0.6, 0.0), (0.6, 0.3), (0.6 * cosd(150.0), 0.6 * sind(150.0))])
-    kinds, sides, dots = semantic_corner_kinds([(0.0, 0.0, 0.0)], [kink], 1.0e-8)
-    @test kinds == [:invariant] && dots[1] < 0.0
+    kinds, sides, dots =
+        semantic_corner_kinds([(0.0, 0.0, 0.0)], [kink], 1.0e-8, TEST_QUANTUM)
+    @test kinds == [:invariant] && dots[1] < 0
     @test sides[1].metal ≈ [cosd(75.0), sind(75.0)]
     # A hole loop (the metal outside): the metal direction flips to the 210-degree side.
     hole = (conductor=1, plane=0.0, hole=true, points=kink.points, classes=kink.classes)
-    _, hole_sides, _ = semantic_corner_kinds([(0.0, 0.0, 0.0)], [hole], 1.0e-8)
+    _, hole_sides, _ =
+        semantic_corner_kinds([(0.0, 0.0, 0.0)], [hole], 1.0e-8, TEST_QUANTUM)
     @test hole_sides[1].metal ≈ -[cosd(75.0), sind(75.0)]
     # A corner absent from the loops, or present twice, fails closed; the plane matters.
-    @test_throws ErrorException semantic_corner_kinds([(5.0, 5.0, 0.0)], [square], 1.0e-8)
-    @test_throws ErrorException semantic_corner_kinds([(0.0, 0.0, 1.0)], [kink], 1.0e-8)
+    @test_throws ErrorException semantic_corner_kinds(
+        [(5.0, 5.0, 0.0)],
+        [square],
+        1.0e-8,
+        TEST_QUANTUM
+    )
+    @test_throws ErrorException semantic_corner_kinds(
+        [(0.0, 0.0, 1.0)],
+        [kink],
+        1.0e-8,
+        TEST_QUANTUM
+    )
     @test_throws ErrorException semantic_corner_kinds(
         [(0.0, 0.0, 0.0)],
         [kink, kink],
-        1.0e-8
+        1.0e-8,
+        TEST_QUANTUM
     )
+end
+
+# The seven semantic corners of the SCT loop end 1b26671c9080 (sct002-S1p, Radius 1.9;
+# merge-preparation registration PBS 57005) with their two plan-view loop neighbours, as
+# the plan-view boundary CSV spells them: the two 135-degree corners, the box corner, a
+# rigidly ROTATED perpendicular corner (both sides tilted 9.5e-7 rad: (2.0000008, -0.0000019)
+# and (0.0000019, 2.0000008), exactly 1000 quanta off the axes) and three corners whose
+# sides are tilted by real ~1e-6-rad amounts (supervisor decision 416's erratum to 410).
+const LOOP_END_CORNERS = [
+    (
+        before=(10.8001909, -14.6336328),
+        point=(14.6001928, -10.833638500000001),
+        after=(14.600213700000001, 11.1663608),
+        kind=:invariant
+    ),
+    (
+        before=(14.6001928, -10.833638500000001),
+        point=(14.600213700000001, 11.1663608),
+        after=(10.8002023, 14.966381700000001),
+        kind=:invariant
+    ),
+    (
+        before=(-19.730892, 14.966381700000001),
+        point=(-19.730892, 1.1663834),
+        after=(-6.8997949, 1.1663834),
+        kind=:legacy
+    ),
+    (
+        before=(-6.899793, 3.1663823),
+        point=(-8.8997938, 3.1663842),
+        after=(-8.8997919, 5.166385),
+        kind=:legacy
+    ),
+    (
+        before=(-8.8997938, 3.1663842),
+        point=(-8.8997919, 5.166385),
+        after=(-7.8997915, 5.1663831),
+        kind=:invariant
+    ),
+    (
+        before=(-8.8997919, 5.166385),
+        point=(-7.8997915, 5.1663831),
+        after=(-7.8997915, 6.1663835),
+        kind=:invariant
+    ),
+    (
+        before=(-7.8998029, -5.8336156),
+        point=(-7.899801, -4.8336171000000006),
+        after=(-19.730892, -4.8336171000000006),
+        kind=:invariant
+    )
+]
+
+@testset "corner kinds: exact on the quantum counts, rotation-independent (decision 416)" begin
+    # Every coordinate of the loop end is an integer count of its 1.9e-9 quantum.
+    for corner in LOOP_END_CORNERS,
+        point in (corner.before, corner.point, corner.after),
+        value in point
+
+        @test abs(value / TEST_QUANTUM - round(value / TEST_QUANTUM)) < 1.0e-5
+    end
+    for corner in LOOP_END_CORNERS
+        triangle = loop([corner.before, corner.point, corner.after])
+        kinds, _, dots = semantic_corner_kinds(
+            [(corner.point[1], corner.point[2], 0.0)],
+            [triangle],
+            1.0e-8,
+            TEST_QUANTUM
+        )
+        @test kinds == [corner.kind]
+        @test (dots[1] == 0) == (corner.kind === :legacy)
+    end
+    # The rotated perpendicular corner: the float dot product of the float side vectors is
+    # NOT zero (-1.776e-15, the coordinates' rounding), the integer one is exactly 0.
+    rotated = LOOP_END_CORNERS[4]
+    a = collect(rotated.before) .- collect(rotated.point)
+    b = collect(rotated.after) .- collect(rotated.point)
+    @test a[1] * b[1] + a[2] * b[2] != 0.0
+    @test plan_view_quantum_count.(a, TEST_QUANTUM) == [1052632000, -1000]
+    @test plan_view_quantum_count.(b, TEST_QUANTUM) == [1000, 1052632000]
+    # The same corner rotated rigidly to other angles (integer rotations on the quantum
+    # grid: 3-4-5 and 5-12-13 triangles of 1e8 quanta) stays legacy; the real tilts read
+    # 526316000 x 1000 (twice) and 6226890000 x 1000 quanta squared.
+    for (c, s) in ((3, 4), (4, 3), (-4, 3), (5, 12))
+        q = 100_000_000
+        p = (0.38, -0.76)
+        before = p .+ TEST_QUANTUM .* (c * q, s * q)
+        after = p .+ TEST_QUANTUM .* (-s * q, c * q)
+        kinds, _, dots = semantic_corner_kinds(
+            [(p[1], p[2], 0.0)],
+            [loop([before, p, after])],
+            1.0e-8,
+            TEST_QUANTUM
+        )
+        @test kinds == [:legacy] && dots[1] == 0
+    end
+    tilted = LOOP_END_CORNERS[5]
+    _, _, dots = semantic_corner_kinds(
+        [(tilted.point[1], tilted.point[2], 0.0)],
+        [loop([tilted.before, tilted.point, tilted.after])],
+        1.0e-8,
+        TEST_QUANTUM
+    )
+    @test dots[1] == 526316000 * 1000
+    _, _, dots = semantic_corner_kinds(
+        [(LOOP_END_CORNERS[7].point[1], LOOP_END_CORNERS[7].point[2], 0.0)],
+        [
+            loop([
+                LOOP_END_CORNERS[7].before,
+                LOOP_END_CORNERS[7].point,
+                LOOP_END_CORNERS[7].after
+            ])
+        ],
+        1.0e-8,
+        TEST_QUANTUM
+    )
+    @test dots[1] == 6226890000 * 1000
 end
 
 @testset "contract record of the invariant corners: present iff the mesher finds them" begin

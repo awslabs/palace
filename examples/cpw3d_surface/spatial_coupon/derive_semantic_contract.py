@@ -25,8 +25,11 @@ executable):
   side's face-parallel coordinate equal at both ends, exact arithmetic: the legacy
   rectilinear convention, kept bitwise);
 - a semantic corner whose two boundary sides are not exactly perpendicular (a non-zero
-  dot product of the quantised side vectors, exact arithmetic) is INVARIANT (mesher design
-  round 2 F5-A, semantic_mesh_contract.invariant_corner): recorded under
+  dot product of the side vectors in exact integer arithmetic on their plan-view quantum
+  counts, the quantum 1e-9 R of SOURCE_DIR/process.toml's Radius - the number the mesher
+  receives as --radius - or of --radius for a source without one) is INVARIANT (mesher
+  design round 2 F5-A, semantic_mesh_contract.invariant_corner; a rigidly rotated
+  perpendicular corner is legacy, decision 416): recorded under
   Derivation.InvariantCorners only where the rule acts, so every rectilinear contract is
   unchanged; the mesher evaluates the same predicate and fails closed on a disagreement;
 - FeatureTopology is semantic_mesh_contract.derive_feature_topology (the finite
@@ -61,21 +64,23 @@ repository fixtures) takes its slot / conductor pairs from the signature alone a
 records that source under Derivation.SlotConductorSource.
 
 usage: derive_semantic_contract.py SOURCE_DIR OUTPUT [--build-census CENSUS]
-       [--signature PATH] [--boundary PATH] [--process-library PATH]
+       [--signature PATH] [--boundary PATH] [--process-library PATH] [--radius R]
 """
 import argparse
 import csv
 import hashlib
 import json
 from pathlib import Path
+import tomllib
 
 from semantic_mesh_contract import (ARC_VERTEX_RULE, BOX_FACE_CUT_END_RULE, INVARIANT_CORNER_RULE,
                                     boundary_arc_vertices, boundary_semantic_corners,
-                                    derive_feature_topology, validate_semantic_contract)
+                                    derive_feature_topology, plan_view_quantum, validate_semantic_contract)
 
 SIGNATURE = "mesh-signature.csv"
 BOUNDARY = "plan-view-boundary.csv"
 PROCESS_LIBRARY = "process-library.json"
+PROCESS = "process.toml"
 MATCHING_SURFACE = 1
 UNETCHED_BASE, ETCHED_BASE, THIN_BASE, MS_BASE, MA_BASE = 3000, 3100, 4000, 5000, 6000
 COUPON_KINDS = ("fabricated", "thin")
@@ -151,14 +156,33 @@ def slot_conductor_pairs(signature, process_library):
     return pairs
 
 
-def semantic_corners(boundary):
+def coupon_radius(source, radius):
+    """The coupon radius R whose plan-view quantum 1e-9 R the invariant-corner predicate
+    counts in: SOURCE_DIR/process.toml's Radius (the number run_gmsh_only_case passes the
+    mesher as --radius), or an explicit `radius` for a source without the file; an explicit
+    radius disagreeing with the file fails closed."""
+    process = Path(source) / PROCESS
+    if not process.is_file():
+        if radius is None:
+            raise ValueError(f"{source}: no {PROCESS} (Radius) and no explicit radius: the invariant-corner "
+                             f"predicate needs the plan-view quantum 1e-9 R")
+        return float(radius)
+    recorded = tomllib.loads(process.read_text()).get("Radius")
+    if not isinstance(recorded, (int, float)) or isinstance(recorded, bool) or not recorded > 0.0:
+        raise ValueError(f"{process}: Radius must be a positive number, found {recorded!r}")
+    if radius is not None and float(radius) != float(recorded):
+        raise ValueError(f"explicit radius {radius!r} differs from {process} Radius {recorded!r}")
+    return float(recorded)
+
+
+def semantic_corners(boundary, quantum):
     with Path(boundary).open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     if not rows or not {"Class", "X", "Y", "Plane"} <= set(rows[0]):
         raise ValueError("plan-view boundary lacks Class / X / Y / Plane columns")
     if any(row["Class"] not in ("Physical", "Continuation") for row in rows):
         raise ValueError("plan-view boundary has an unknown vertex class")
-    corners, cut_ends, invariant = boundary_semantic_corners(rows)
+    corners, cut_ends, invariant = boundary_semantic_corners(rows, quantum)
     if not corners:
         raise ValueError("plan-view boundary classifies no Physical vertex")
     return corners, cut_ends, invariant
@@ -205,12 +229,13 @@ def census_labels(census_path):
 
 
 def derive(source, build_census=None, *, signature=None, boundary=None, process_library=None,
-           kind="fabricated"):
+           kind="fabricated", radius=None):
     source = Path(source)
     signature = Path(signature) if signature is not None else source / SIGNATURE
     boundary = Path(boundary) if boundary is not None else source / BOUNDARY
     if process_library is None and (source / PROCESS_LIBRARY).exists():
         process_library = source / PROCESS_LIBRARY
+    quantum = plan_view_quantum(coupon_radius(source, radius))
     pairs = slot_conductor_pairs(signature, process_library)
     families = label_families(pairs, kind)
     required = {attribute for attribute, (_, _, optional) in families.items() if not optional}
@@ -235,7 +260,7 @@ def derive(source, build_census=None, *, signature=None, boundary=None, process_
             item["AdjacentMaterialSets"] = [[1], [2]]
         boundary_labels.append(item)
     roles = [item["Role"] for item in boundary_labels]
-    corners, box_face_cut_ends, invariant = semantic_corners(boundary)
+    corners, box_face_cut_ends, invariant = semantic_corners(boundary, quantum)
     derivation = {"ProcessLibrarySHA256": (sha256(process_library) if process_library is not None
                                            else None),
                   "SlotConductorSource": (PROCESS_LIBRARY_PAIR_SOURCE if process_library is not None
@@ -290,9 +315,13 @@ def main():
                         help="default SOURCE_DIR/process-library.json when it exists")
     parser.add_argument("--kind", choices=COUPON_KINDS, default="fabricated",
                         help="coupon kind: fabricated (default) or thin (the two-sided sheet family, decision 66)")
+    parser.add_argument("--radius", type=float,
+                        help="coupon radius R of a source without process.toml (the plan-view quantum is 1e-9 R); "
+                             "must equal process.toml's Radius when the file exists")
     args = parser.parse_args()
     contract = derive(args.source, args.build_census, signature=args.signature,
-                      boundary=args.boundary, process_library=args.process_library, kind=args.kind)
+                      boundary=args.boundary, process_library=args.process_library, kind=args.kind,
+                      radius=args.radius)
     args.output.write_text(json.dumps(contract, indent=2) + "\n")
     print(f"{args.output}: {len(contract['BoundaryLabels'])} labels, "
           f"{len(contract['SemanticCorners'])} semantic corners"

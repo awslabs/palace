@@ -92,7 +92,7 @@
     {
       "Name": "semantic_mesh_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/semantic_mesh_contract.py",
-      "SHA256": "989a85421c63a444945fe174cf9a64f368bade5c5277236735c5830e07d6bfe7"
+      "SHA256": "246a82fedb608710e22323f586210c7f5882a47cea7f3cd8b09f6b21d3f831c8"
     },
     {
       "Name": "trace_basis.py",
@@ -187,7 +187,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "fcee3e808ce1395c6a524bcdb9e532d6a3e9d4e1c578a59ece92f44702759dbb"
+      "mesher": "a68c365db1e0f88302133deab054aae3154068cb0d06426590175de149e7814b"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
