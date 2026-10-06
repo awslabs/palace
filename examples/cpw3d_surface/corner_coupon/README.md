@@ -79,12 +79,63 @@ and the two cap rings — carries the same angle-dependent fractions (the two
 crossings, 5 metal-interior knots, 9 free knots graded at `R / 3` and `2R / 3` from
 each crossing), PEC on the two metal rings only, box corners as slaves, cap centres
 as slaves at the mean of the two crossing knots; 176 knots, no events (one
-interpolation segment, no `--connectivity-angle`). `--trace-basis legacy` (the
+interpolation segment, no `--connectivity-angle`). On a free arc shorter than
+`FREE_KNOT_GRADING_REFERENCE_FREE_ARC_OVER_R` = 2 - cot 60 deg (the concave 60-degree
+node's free arc; a concave wedge's free arc is (2 - cot theta) R, and the unscaled
+grading exhausts it below 56.3 deg) the two graded distances are scaled by
+FreeArc / Reference (`free_knot_grading_scale`; block (b) DESIGN A9 family 4, decision
+318), so an acute concave node keeps the 60-degree node's layout proportions with the
+same slots, like-to-like indices and zero set; the record key
+`FreeKnotGradingReferenceFreeArcOverR` is written only where the scaling is active
+(an absent key reads as that default in the generator and in Palace), so every node
+whose free arc reaches the reference — concave >= 60 deg, every convex node — is
+bit-identical, record included. STATUS (decisions 325 / 328, 2026-10-05): the round-1
+scaling rule stands unchanged; the 48.75-degree held-out coupon's failure to finalize (two
+scaled free hats of the z = -R cap ring had no active boundary DOF in the fabricated p4
+solve) is a COUPON MESH defect fixed by round 2's trace resolvability gate and knot-gap mesh
+sizing (below); round 2 was reviewed (fresh-context review, 0 blockers / 0 majors) and
+merged (decisions 318 / 325 / 328, merge step decision 348). `--trace-basis legacy` (the
 default of the script) is the recorded `MetalRingsOnly` rule (8 knots per ring,
 events, segment connectivity), byte-identical to the recorded coupons in its basis,
 trace mesh, zero set and record; its held-out REFERENCE, however, is now the decoupled
 31-level surface below, so a legacy rebuild is judged against the converged reference
 (the recorded 7-level self-checks were not).
+
+**Trace resolvability (block (b) family 4 round 2, supervisor decision 328, 2026-10-05).**
+The coupon solve prescribes every trace hat by NODAL interpolation onto the boundary degrees
+of freedom of the order-p space, so a hat whose support holds no boundary node is a zero
+response row (refused by `finalize_corner_response.py`'s positive-definiteness check) and a
+hat sampled by a few nodes is a response of the wrong magnitude that nothing refused: the
+five inner free knots of the two cap rings (|x|, |y| <= R / 3 at z = +-R) are 9.4 nm apart
+at concave 60 degrees and 7.4 nm at 48.75 on the recipe's 300-nm far mesh (1-3 active p3 /
+p4 nodes at 45-60 degrees, 0 on two hats of the 48.75 fabricated coupon; the published
+concave nodes' cap-hat domain diagonals scatter 2.6-59x at 60, 1.6-1.9x at 75 and settle
+at <= 1.4x from 120 degrees, 52-56 nodes). Two generic pieces, no case constants: (1) the
+GATE `trace_resolvability.py DIR --mesh ... --order p --radius R` counts, for every free
+hat and every coupon mesh, the boundary nodes of the order-p mesh (MFEM's closed
+Gauss-Lobatto H1 triangle lattice on the matching-surface triangles) at which the hat is
+nonzero, and fails closed below 5 p^2 (the count between the scattering and the settled
+regimes of the audit; report `trace-resolvability.json` per mesh root, counts per hat);
+(2) the MESHER `mesh_corner_coupon.jl ... --trace-mesh DIR` reads the generator's
+`trace-vertices.csv` and sizes the mesh at every free knot's smaller gap to its ring
+neighbours, growing at gradation 0.5 to `lc_far` (one Distance / Threshold field per gap
+class on OCC points that are not embedded nor saved, joined to the recipe's background by a
+Min field; +9 % nodes at the recipe's sizes; the cap hats then hold 270-290 nodes at p4).
+The planner therefore runs the generator BEFORE the mesher, passes `--trace-mesh`, and
+gates every corner mesh (h1 and the h-refinement meshes) before any solve; the coupon spec
+records `Response.TraceResolvability` and the tool fingerprint (hence the cache key) covers
+the mesher and the gate: every corner coupon built from now on is on the new recipe, the
+published caches are not rebuilt (they were audited read-only, family4/round2). Recorded
+limits (round-2 review, 2026-10-06): the gate runs at the LARGEST order of `--orders` only
+(the lower orders of the p -> p + 1 comparison share the meshes with ~(p / (p + 1))^2 of the
+nodes; with the knot-gap sizing the p4 minima 127-186 leave p3 at ~70-105 >= 45, so the
+gate is not binding there); the knot-gap sizes do not scale with the h factor and `lc_far`
+is unchanged, so the h-2 and h-1 meshes are identical on the cap faces and the h2 -> h1
+gate cannot see the far-hat rows: the cap-hat domain diagonals of congruent hats still
+scatter 1.3-1.96x (a domain-only quantity, <= 0.005 % of SA / MS / MA), the residual far-hat
+uncertainty of the recipe; and k = 5 p^2 sits one node-count step above the scattering
+regime (44 at p3) and below the settled one (52) — the practical margin is the mesher's
+(~3.4x the gate on the cap hats).
 
 `finalize_corner_response.py` checks the domain and surface matrices, aggregates
 the per-edge response localized to the union of the physical-edge radius-`R`

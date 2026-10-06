@@ -30,6 +30,7 @@ class GridFunction;
 class IoData;
 class Mesh;
 class BoundaryModeOperator;
+class DistributedPointLocator;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
@@ -373,7 +374,7 @@ private:
   mutable long long int trace_transpose_count = 0;
 
   void ConfigurePointCommunication(
-      const mfem::Vector &xyz, int dimension,
+      DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
       const std::vector<std::array<double, 3>> *weighted_tangents = nullptr);
   void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry);
   void EvaluatePointValues(const Vector &x, Vector &values) const;
@@ -399,6 +400,10 @@ private:
   // counters, the empty lists and the rule), created on first use.
   nlohmann::json &ConductorConsistencyDiagnostics();
   void ApplyUneliminated(const Vector &x, Vector &y) const;
+  // y = Pᵀ W D P x on the full potential x (no essential-dof masking): the weighted
+  // domain defect of every patch, D = the model's fixed-trace defect when fixed_trace is
+  // set, else the defect of its domain-coupling mode (ApplyUneliminated).
+  void ApplyDomainDefect(const Vector &x, Vector &y, bool fixed_trace) const;
   void ConfigureMaxwellResponse(
       const IoData &iodata, const MaterialOperator &mat_op,
       const mfem::Array<int> &dbc_tdof_list,
@@ -430,6 +435,23 @@ public:
     std::map<int, double> fabricated_surface_energy_fixed_flux;
   };
 
+  // The energies of one applied patch (decision 352 follow-up (1)): the increments the
+  // patch adds to its model's ModelContribution (the gate-updated weight included), with
+  // its provenance (the placed patch index, feature, longitudinal cell in mesh units).
+  // Ordered by patch index and replicated on all ranks when requested.
+  struct PatchContribution
+  {
+    int patch = 0;
+    int model = 0;
+    int feature = -1;
+    double weight = 0.0;
+    std::array<double, 2> cell = {0.0, 0.0};
+    double domain_correction = 0.0;
+    double domain_correction_fixed_flux = 0.0;
+    std::map<int, double> fabricated_surface_energy;
+    std::map<int, double> fabricated_surface_energy_fixed_flux;
+  };
+
   struct ElectrostaticResponse
   {
     double domain_correction = 0.0;
@@ -438,6 +460,7 @@ public:
     std::map<int, double> fabricated_surface_energy_fixed_flux;
     std::map<int, double> trace_closure_spread;
     std::vector<ModelContribution> model_contributions;
+    std::vector<PatchContribution> patch_contributions;
     double maximum_trace_closure_spread = 0.0;
     double response_weighted_trace_closure_spread = 0.0;
     double trace_closure_response_failure_fraction = 0.0;
@@ -489,6 +512,15 @@ public:
   // Evaluate the nondimensional domain- and surface-energy defects for a global field.
   EnergyCorrection GetEnergyCorrection(const Vector &x) const;
 
+  // The fixed-trace domain defect as a bilinear form on full potentials: y = Pᵀ W
+  // (Q_fab,dom - Q_thin,dom) P x with the gate-updated patch weights W and no essential-dof
+  // masking (the conductor part of the trace stays, as in GetElectrostaticResponse), every
+  // model in its fixed-trace form irrespective of its domain-coupling mode. Its quadratic
+  // form is twice the fixed-trace domain correction: 1/2 xᵀ y =
+  // GetElectrostaticResponse(x).domain_correction. Collective; x and y are true-dof
+  // vectors.
+  void FixedTraceDomainDefectMult(const Vector &x, Vector &y) const;
+
   // Evaluate the complete fabricated-coupon surface energy for every mapped target
   // interface. Corrected participation replaces the measured global core with this data.
   std::map<int, double> GetFabricatedSurfaceEnergy(const Vector &x) const;
@@ -496,9 +528,12 @@ public:
   // Evaluate coupon responses on an electrostatic potential. With fixed flux enabled,
   // return both complete postprocessing-only closure ensembles. Otherwise use the active
   // per-model domain-coupling policy for corrected-domain accounting while retaining the
-  // fabricated fixed-trace surface evaluation.
+  // fabricated fixed-trace surface evaluation. With include_patches, also return every
+  // applied patch's own increments (PatchContribution; their sums per model are the
+  // ModelContribution values to roundoff), gathered on all ranks.
   ElectrostaticResponse GetElectrostaticResponse(const Vector &x,
-                                                 bool include_fixed_flux = true) const;
+                                                 bool include_fixed_flux = true,
+                                                 bool include_patches = false) const;
 
   // Collect the actual local contour and conductor-state coefficients for every
   // three-dimensional spatial response patch. The result is ordered by global patch
@@ -553,6 +588,12 @@ public:
   // Collect deterministic setup/work-distribution counters and runtime application
   // counts. This method is collective over the response operator communicator.
   nlohmann::json GetStatistics() const;
+
+private:
+  // Gather the local per-patch response records of GetElectrostaticResponse on every rank
+  // and decode them, ordered by patch index.
+  std::vector<PatchContribution>
+  GatherPatchContributions(const std::vector<double> &local_records) const;
 };
 
 // Classify the configured automatic surface-response neighborhoods without assembling a

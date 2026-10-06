@@ -187,6 +187,17 @@ struct IdentifiedFeature
   // for a legacy model): {Model, Key, ContextDigest, Reason, Context}. Manifest
   // Features[].Match.LegacyContract; never a fallback for any other key.
   nlohmann::json legacy_contract;
+  // Corner-family blend records (null unless the feature is an angle-INTERPOLATED corner):
+  // the applied blend's minimum eigenvalue of each blended response matrix on the free
+  // knots relative to its largest |eigenvalue| (decision 376; the fabricated / thin domain
+  // matrices tested, the per-interface surface matrices recorded) and, when the stencil's
+  // blended fabricated or thin domain matrix was not PSD beyond roundoff, the fallback to
+  // the convex linear blend of the two bracketing nodes (decision 374 (B)): {Stencil,
+  // StencilRule, StencilWeights (the stencil rule's Lagrange weights, cubic or quadratic),
+  // MinEigenvalueRelative, LinearNodes, LinearWeights, ...}.
+  // Manifest Features[].Match.BlendEigenvalues / Features[].Match.InterpolationFallback.
+  nlohmann::json blend_eigenvalues;
+  nlohmann::json interpolation_fallback;
 };
 
 struct IdentifiedSegment

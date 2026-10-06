@@ -35,6 +35,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-communication.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-config.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedcapacitance.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedsolve.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerbasisrefinement.cpp
@@ -47,6 +48,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-geodata.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-interfaceownership.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-interfaceregion.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-libceed.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-lumpedportintegration.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
@@ -236,6 +238,21 @@ catch_discover_tests(unit-tests
     PROCESSORS ${PALACE_TESTS_PROCESSORS}
     SKIP_RETURN_CODE 4
     ENVIRONMENT "${PALACE_TESTS_OMP_ENV};$<${SHOULD_SET_LLVM_PROFILE_FILE}:LLVM_PROFILE_FILE=${CMAKE_BINARY_DIR}/coverage/mpi/coverage-%p.profraw>"
+)
+
+# Fail-fast check (decision 346 (b)): one rank exits mid-run and the job must abort (the
+# abort line of Mpi's destructor) instead of hanging in MPI_Finalize; a hang fails on the
+# timeout. The case skips itself unless PALACE_TEST_ABNORMAL_EXIT=1, so its mpi-* entry
+# above (the discovered [Parallel] case) is a skip and only this entry exercises the abort.
+add_test(NAME failfast-AbnormalExitAbortsAllRanks
+  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
+          $<TARGET_FILE:unit-tests> ${MPIEXEC_POSTFLAGS} AbnormalExitAbortsAllRanks
+)
+set_tests_properties(failfast-AbnormalExitAbortsAllRanks PROPERTIES
+  ENVIRONMENT "${PALACE_TESTS_OMP_ENV};PALACE_TEST_ABNORMAL_EXIT=1"
+  PASS_REGULAR_EXPRESSION "Abnormal exit on MPI rank [0-9]+ before the end of the program: aborting all ranks"
+  TIMEOUT 120
+  PROCESSORS ${PALACE_TESTS_PROCESSORS}
 )
 
 # Regression tests: full-mesh Palace solves diffed against reference CSVs under

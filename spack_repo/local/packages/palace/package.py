@@ -260,6 +260,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                     sha256="482655b6b740b880713d67bcca843571244b7d383c95e0cef3d3102b3327ff2f",
                     when="@:4.9",
                 ),
+                # https://github.com/mfem/mfem/pull/5494 (parallel NC tet
+                # hanging-vertex ownership + edge-face communication).
+                # Re-based onto MFEM 4.9 (no FlipIndexSign helper), so it has
+                # no immutable upstream URL: a copy of
+                # extern/patch/mfem/mfem_pr5494.diff kept identical to it.
+                # Remove once merged upstream and MFEM is bumped.
+                patch("mfem_pr5494.diff", when="@:4.9"),
             ],
         )
         depends_on("mfem+shared", when="+shared")

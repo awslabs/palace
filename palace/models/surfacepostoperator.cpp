@@ -22,6 +22,7 @@
 #include "utils/edgedistance.hpp"
 #include "utils/geodata.hpp"
 #include "utils/interfaceownership.hpp"
+#include "utils/interfaceregion.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metaledge.hpp"
 #include "utils/ownershipquadrature.hpp"
@@ -158,6 +159,29 @@ public:
   }
 };
 
+// The quadrature-level spatial filter of an interface entry (decision 352 follow-up (2)):
+// the coefficient inside the region, zero outside.
+class RegionCoefficient : public mfem::Coefficient
+{
+private:
+  std::unique_ptr<mfem::Coefficient> coefficient;
+  std::shared_ptr<const InterfaceRegion> region;
+
+public:
+  RegionCoefficient(std::unique_ptr<mfem::Coefficient> coefficient_,
+                    std::shared_ptr<const InterfaceRegion> region_)
+    : coefficient(std::move(coefficient_)), region(std::move(region_))
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    return region->Contains(point) ? coefficient->Eval(T, ip) : 0.0;
+  }
+};
+
 class EdgeDistanceCoefficient : public mfem::Coefficient
 {
 private:
@@ -277,6 +301,12 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
     ownership_rule = std::make_shared<OwnershipQuadrature>(data.ownership_quadrature_order);
   }
   ownership_quadrature_order = data.ownership_quadrature_order;
+  if (data.region)
+  {
+    region = std::make_shared<InterfaceRegion>(data.region->box_min, data.region->box_max,
+                                               data.region->segments, data.region->distance,
+                                               data.region->normal);
+  }
   flux_recovery = data.flux_recovery;
 
   // Calculate surface dielectric loss according to the formulas from J. Wenner et al.,
@@ -340,10 +370,20 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
   }
   if (ownership)
   {
-    return std::make_unique<OwnershipCoefficient>(std::move(coefficient), ownership,
-                                                  ownership_slot);
+    coefficient = std::make_unique<OwnershipCoefficient>(std::move(coefficient), ownership,
+                                                         ownership_slot);
+  }
+  if (region)
+  {
+    coefficient = std::make_unique<RegionCoefficient>(std::move(coefficient), region);
   }
   return coefficient;
+}
+
+bool SurfacePostOperator::InterfaceDielectricData::Includes(const mfem::Vector &point) const
+{
+  return (!ownership || ownership->SelectSlot(point) == ownership_slot) &&
+         (!region || region->Contains(point));
 }
 
 SurfacePostOperator::FarFieldData::FarFieldData(const config::FarFieldPostData &data,
@@ -793,6 +833,8 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
   MFEM_VERIFY(
       !data.ownership || !include_volume,
       "Quadrature ownership partitions surfaces, not localized volume diagnostics!");
+  MFEM_VERIFY(!data.region || !include_volume,
+              "An interface region filters surfaces, not localized volume diagnostics!");
 
   const auto &mesh = *h1_fespace.GetParMesh();
   const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
@@ -835,7 +877,7 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
       const auto &ip = ir.IntPoint(q);
       T->SetIntPoint(&ip);
       T->Transform(ip, point);
-      if (data.ownership && data.ownership->SelectSlot(point) != data.ownership_slot)
+      if (!data.Includes(point))
       {
         continue;
       }
@@ -1043,7 +1085,7 @@ SurfacePostOperator::GetInterfaceElectricFieldEnergyMatricesImpl(
       const auto &ip = ir.IntPoint(q);
       T->SetIntPoint(&ip);
       T->Transform(ip, point);
-      if (data.ownership && data.ownership->SelectSlot(point) != data.ownership_slot)
+      if (!data.Includes(point))
       {
         continue;
       }
@@ -1277,7 +1319,7 @@ SurfacePostOperator::CacheInterfaceResponseSamples() const
         const auto &ip = ir.IntPoint(q);
         T->SetIntPoint(&ip);
         T->Transform(ip, point);
-        if (data.ownership && data.ownership->SelectSlot(point) != data.ownership_slot)
+        if (!data.Includes(point))
         {
           continue;
         }

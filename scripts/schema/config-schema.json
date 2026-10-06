@@ -503,8 +503,14 @@
         "MaxSize": {
           "type": "number",
           "minimum": 0,
-          "description": "The maximum allowable number of degrees of freedom for AMR. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
+          "description": "The maximum allowable number of degrees of freedom for AMR. It is checked against the predicted size of each refined mesh before its solve unless `MaxSizePredicted` is `false`, in which case it is checked only against the last solved size. If an adapted mesh exceeds this value no further adaptation will occur. A value less than 1 means that no maximum size constraint will be imposed.",
           "default": 0
+        },
+        "MaxSizePredicted": {
+          "type": "boolean",
+          "description": "Check `MaxSize` against the predicted size of each refined mesh (the last solved number of degrees of freedom scaled by the element-count growth of the refinement step) and stop AMR before the solve when the prediction exceeds `MaxSize`; the last solved mesh is then the final result. When `false`, `MaxSize` is checked only against the last solved size, so the final AMR solve may exceed `MaxSize` by the growth of one refinement step (the behavior before this option; keep it to reproduce such runs).",
+          "default": true,
+          "x-palace-advanced": true
         },
         "UpdateFraction": {
           "type": "number",
@@ -1948,6 +1954,61 @@
           "type": "boolean",
           "description": "For MA, MS, and SA interfaces, evaluate the normal electric displacement entering interface dielectric loss from an H(div)-conforming recovered flux. This improves normal-trace convergence while retaining the native electric field for tangential components.",
           "default": false
+        },
+        "Region": {
+          "type": "object",
+          "description": "Optional quadrature-level spatial filter of this entry: its energies (total, `EdgeDistances` outside / annulus, localized, response matrices) integrate only the quadrature points inside the region, so that one interface can be partitioned into entries on the same attributes without re-tagging mesh faces. A point is inside when it lies in the axis-aligned box `BoxMin`..`BoxMax` (when given) and in the translational cell of at least one of the `Segments` (when given): with the plane `Normal` projected out, the along-coordinate lies between the segment's perpendicular end cuts and the in-plane transverse distance to the segment's line is at most `Distance`. Mesh length units; the along-range and the box are half-open (start / lower bound inclusive, end / upper bound exclusive, in the canonical lexicographically positive segment orientation) so that adjacent regions partition a plane exactly even where quadrature points lie on the cuts; the transverse bound is closed.",
+          "additionalProperties": false,
+          "properties": {
+            "BoxMin": {
+              "type": "array",
+              "description": "Lower corner `[x, y, z]` of the axis-aligned box, in mesh length units. Requires `BoxMax`.",
+              "items": {"type": "number"},
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "BoxMax": {
+              "type": "array",
+              "description": "Upper corner `[x, y, z]` of the axis-aligned box, in mesh length units. Requires `BoxMin`.",
+              "items": {"type": "number"},
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "Segments": {
+              "type": "array",
+              "description": "Segments `[x0, y0, z0, x1, y1, z1]`, in mesh length units, whose translational cells (union) define the region together with `Distance`.",
+              "items": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 6,
+                "maxItems": 6
+              },
+              "minItems": 1
+            },
+            "Distance": {
+              "type": "number",
+              "description": "In-plane transverse distance of the translational cells from their segments, in mesh length units. Required with `Segments`.",
+              "exclusiveMinimum": 0.0
+            },
+            "Normal": {
+              "type": "array",
+              "description": "Normal of the plane in which the along-range and the transverse distance of the translational cells are measured (its component is projected out).",
+              "items": {"type": "number"},
+              "minItems": 3,
+              "maxItems": 3,
+              "default": [0.0, 0.0, 1.0]
+            }
+          },
+          "dependencies": {
+            "BoxMin": ["BoxMax"],
+            "BoxMax": ["BoxMin"],
+            "Segments": ["Distance"],
+            "Distance": ["Segments"]
+          },
+          "anyOf": [
+            {"required": ["BoxMin", "BoxMax"]},
+            {"required": ["Segments", "Distance"]}
+          ]
         }
       },
       "dependencies": {
@@ -3322,6 +3383,11 @@
               "maximum": 8,
               "description": "Quadrature refinement factor relative to the local finite-element mesh size for SurfaceMortar trace coupling.",
               "default": 2
+            },
+            "PatchEnergy": {
+              "type": "boolean",
+              "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`. Electrostatic only; every other output is unchanged.",
+              "default": false
             },
             "FabricatedMatrix": {
               "type": "string",

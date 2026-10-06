@@ -230,6 +230,7 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
         TranslationalDomainCorrectionName(response.translational_domain_correction);
     j_response["TraceCoupling"] = TraceCouplingName(response.trace_coupling);
     j_response["MortarOversampling"] = response.mortar_oversampling;
+    j_response["PatchEnergy"] = response.patch_energy;
     if (response.IsAutomatic())
     {
       j_response["Library"] = response.library;
@@ -385,6 +386,7 @@ void ConcretizeModel(const config::ModelData &model, json &j_model)
                {{"Tol", ref.tol},
                 {"MaxIts", ref.max_it},
                 {"MaxSize", ref.max_size},
+                {"MaxSizePredicted", ref.max_size_predicted},
                 {"Nonconformal", ref.nonconformal},
                 {"MaxNCLevels", ref.max_nc_levels},
                 {"UpdateFraction", ref.update_fraction},
@@ -612,6 +614,10 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
                   {{"OuterRadiusFactor", it->second.edge_refinement->outer_radius_factor},
                    {"CoreIndicatorWeight",
                     it->second.edge_refinement->core_indicator_weight}});
+            }
+            if (it->second.region && j_entry.contains("Region"))
+            {
+              Concretize(j_entry["Region"], "Normal", it->second.region->normal);
             }
           }
         });

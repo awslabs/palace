@@ -29,6 +29,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Multi-slot spatial coupons now partition MA/MS surfaces by interface slot and
     conductor before summing repeated target-interface contributions. Electrostatic runs
     also report additive per-model response energies and model metadata.
+  - Added `"PatchEnergy"` to the electrostatic `"ResponseCorrection"` (default `false`):
+    `surface-response-patch-energy.csv` with the domain correction and fabricated
+    interface energies of every applied patch (model, feature, longitudinal cell, weight,
+    origin) per source and evaluation, the per-patch rows of
+    `surface-response-model-energy.csv`. Added an optional `"Region"` to interface
+    dielectric postprocessing entries: a quadrature-level spatial filter (axis-aligned box
+    and / or the translational cells of given segments: along-range between the end cuts,
+    in-plane transverse distance), so that one interface can be partitioned into entries
+    on the same attributes without re-tagging mesh faces. Without either option every
+    output is unchanged.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial
@@ -55,6 +65,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - AMR now checks `config["Model"]["Refinement"]["MaxSize"]` against the predicted size
+    of each refined mesh (the last solved number of degrees of freedom scaled by the
+    element-count growth of the refinement step) and stops before the solve when the
+    prediction exceeds it; the last solved mesh is the final result and `palace.json`
+    records the stop under `"AdaptiveMeshRefinement"`/`"MaxSizeStop"`. Previously the
+    check used only the last solved size, so the final solve could exceed `"MaxSize"` by
+    the growth of one Dörfler step (observed 2-3x). The new optional
+    `"MaxSizePredicted": false` restores the previous rule for reproducibility.
   - Eigenmode simulations with frequency-dependent boundary conditions (e.g. waveports,
     second-order absorbing, surface conductivity) now evaluate the boundary conditions at
     the true complex frequency/eigenmode. Previously, the boundary conditions were
@@ -111,6 +129,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed intermittent MPI deadlocks in output-directory unit tests when ranks observed
     filesystem changes at different times. [PR
     839](https://github.com/awslabs/palace/pull/839).
+  - Fixed a hang in `ParFiniteElementSpace` construction and partition-dependent spurious
+    H1 true DOFs on parallel nonconforming tetrahedral meshes (seen after AMR rebalancing at
+    several hundred ranks) by applying MFEM [PR 5494](https://github.com/mfem/mfem/pull/5494)
+    as a vendored patch (`extern/patch/mfem/mfem_pr5494.diff`).
 
 ## [0.17.0] - 2026-06-28
 

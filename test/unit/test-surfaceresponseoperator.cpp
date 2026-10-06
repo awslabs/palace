@@ -223,9 +223,11 @@ WriteCornerBasisFiles(const fs::path &directory, const std::string &tag,
 
 // Synthetic N x N response matrices (domain and one-interface surface, with the within-R
 // column) of a unit-test corner coupon: diagonal `diagonal`, off-diagonal couplings
-// decaying with the index distance.
+// decaying with the index distance; `bump` is added to the diagonal entry of basis index
+// `bump_index` (0-based; none when negative).
 void WriteCornerMatrices(const fs::path &domain_path, const fs::path &surface_path,
-                         int size, double diagonal, double coupling_scale, double radius_m)
+                         int size, double diagonal, double coupling_scale, double radius_m,
+                         int bump_index = -1, double bump = 0.0)
 {
   std::ofstream domain(domain_path);
   domain << "basis_i,basis_j,Q_ij (J)\n";
@@ -236,7 +238,9 @@ void WriteCornerMatrices(const fs::path &domain_path, const fs::path &surface_pa
     for (int j = 0; j < size; j++)
     {
       const double coupling = 1.0 / (1.0 + std::abs(i - j));
-      const double value = (i == j ? diagonal : coupling_scale * coupling) * 1.0e-12;
+      const double value =
+          (i == j ? diagonal + (i == bump_index ? bump : 0.0) : coupling_scale * coupling) *
+          1.0e-12;
       if (j >= i)
       {
         domain << i + 1 << "," << j + 1 << "," << value << "\n";
@@ -514,6 +518,47 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator explicit p
   const auto local_electrostatic_response = response.GetElectrostaticResponse(x);
   CHECK_THAT(local_electrostatic_response.domain_correction,
              WithinRel(energy.domain, 1.0e-12));
+
+  // The fixed-trace domain defect as a bilinear form (the corrected capacitance,
+  // PostprocessCorrectedTerminals): on full vectors (x carries essential values), its
+  // quadratic form is twice the fixed-trace domain correction, it is symmetric, its
+  // off-diagonal value is the polarization of the quadratic form, and with the essential
+  // rows zeroed it is the correction EliminateRHS subtracts (the same apply path).
+  {
+    Vector Dx, Dy;
+    response.FixedTraceDomainDefectMult(x, Dx);
+    response.FixedTraceDomainDefectMult(y, Dy);
+    const double xDx = linalg::Dot<Vector>(Mpi::World(), x, Dx);
+    const double yDy = linalg::Dot<Vector>(Mpi::World(), y, Dy);
+    const double xDy = linalg::Dot<Vector>(Mpi::World(), x, Dy);
+    const double yDx = linalg::Dot<Vector>(Mpi::World(), y, Dx);
+    const auto response_y = response.GetElectrostaticResponse(y);
+    CHECK(xDx != 0.0);
+    CHECK_THAT(0.5 * xDx,
+               WithinRel(local_electrostatic_response.domain_correction, 1.0e-12));
+    CHECK_THAT(0.5 * yDy, WithinRel(response_y.domain_correction, 1.0e-12));
+    CHECK(xDy != 0.0);
+    CHECK_THAT(xDy, WithinRel(yDx, 1.0e-12));
+    Vector sum(x);
+    sum += y;
+    const double polarization = response.GetElectrostaticResponse(sum).domain_correction -
+                                local_electrostatic_response.domain_correction -
+                                response_y.domain_correction;
+    CHECK_THAT(xDy, WithinRel(polarization, 1.0e-9));
+    Vector eliminated(size);
+    eliminated = 0.0;
+    response.EliminateRHS(x, eliminated);
+    eliminated += Dx;
+    eliminated.SetSubVector(laplace_op.GetDbcTDofList(), 0.0);
+    double eliminated_error = eliminated * eliminated;
+    Mpi::GlobalSum(1, &eliminated_error, Mpi::World());
+    CHECK(eliminated_error == 0.0);
+    // The masked operator drops the essential part of the trace: it is not the form.
+    Dx.GetSubVector(laplace_op.GetDbcTDofList(), essential_values);
+    double essential_norm = essential_values.Size() > 0 ? essential_values.Normlinf() : 0.0;
+    Mpi::GlobalMax(1, &essential_norm, Mpi::World());
+    CHECK(essential_norm > 0.0);
+  }
   CHECK_THAT(local_electrostatic_response.fabricated_surface_energy.at(4),
              WithinRel(fabricated_energy.at(4), 1.0e-12));
   CHECK(std::isfinite(local_electrostatic_response.domain_correction_fixed_flux));
@@ -1440,6 +1485,21 @@ TEST_CASE_METHOD(
           parallel_cluster_potential_true_2d);
   CHECK_THAT(fixed_flux_translational_energy_2d.domain,
              WithinRel(fixed_flux_translational_result_2d.domain_correction, 1.0e-12));
+  // The corrected capacitance's bilinear defect is the FIXED-TRACE form irrespective of
+  // the model's domain-coupling mode: half its quadratic form is the fixed-trace domain
+  // correction (and not the fixed-flux one the operator applies).
+  {
+    Vector fixed_trace_action;
+    fixed_flux_translational_response_2d.FixedTraceDomainDefectMult(
+        parallel_cluster_potential_true_2d, fixed_trace_action);
+    const double quadratic_form = linalg::Dot<Vector>(
+        Mpi::World(), parallel_cluster_potential_true_2d, fixed_trace_action);
+    CHECK_THAT(
+        0.5 * quadratic_form,
+        WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction, 1.0e-12));
+    CHECK_THAT(0.5 * quadratic_form,
+               !WithinRel(fixed_flux_translational_result_2d.domain_correction, 1.0e-6));
+  }
 
   GridFunction parallel_cluster_boundary_field_2d(
       parallel_cluster_boundary_op_2d.GetNDSpace(), true);
@@ -6834,6 +6894,385 @@ TEST_CASE_METHOD(
           constructed || name.find("@corner-angle112.5-cubic") != std::string::npos;
     }
     CHECK(constructed);
+
+    // (5) Decision 352 follow-up (1): the per-patch contributions of every model kind on
+    // this island (isolated edges, exact and interpolated corners) sum per model to the
+    // ModelContribution (energies, patch count, weight) to roundoff, are ordered by patch
+    // index without repetition, and leave the model contributions themselves unchanged.
+    const auto with_patches = loaded.GetElectrostaticResponse(potential_true, true, true);
+    REQUIRE(with_patches.model_contributions.size() == reloaded.model_contributions.size());
+    REQUIRE(!with_patches.patch_contributions.empty());
+    CHECK(reloaded.patch_contributions.empty());
+    for (std::size_t m = 0; m < reloaded.model_contributions.size(); m++)
+    {
+      const auto &expected = reloaded.model_contributions[m];
+      const auto &a = with_patches.model_contributions[m];
+      CHECK(a.domain_correction == expected.domain_correction);
+      CHECK(a.fabricated_surface_energy == expected.fabricated_surface_energy);
+      double count = 0.0, weight = 0.0, domain = 0.0, domain_fixed_flux = 0.0;
+      std::map<int, double> surface, surface_fixed_flux;
+      for (const auto &patch : with_patches.patch_contributions)
+      {
+        if (patch.model != expected.model)
+        {
+          continue;
+        }
+        count += 1.0;
+        weight += patch.weight;
+        domain += patch.domain_correction;
+        domain_fixed_flux += patch.domain_correction_fixed_flux;
+        for (const auto &[interface, energy] : patch.fabricated_surface_energy)
+        {
+          surface[interface] += energy;
+          surface_fixed_flux[interface] +=
+              patch.fabricated_surface_energy_fixed_flux.at(interface);
+        }
+      }
+      CHECK(count == expected.patch_count);
+      CHECK_THAT(weight, WithinRel(expected.patch_weight, 1.0e-12));
+      CHECK_THAT(domain, WithinRel(expected.domain_correction, 1.0e-10));
+      CHECK_THAT(domain_fixed_flux,
+                 WithinRel(expected.domain_correction_fixed_flux, 1.0e-10));
+      REQUIRE(surface.size() == expected.fabricated_surface_energy.size());
+      for (const auto &[interface, energy] : expected.fabricated_surface_energy)
+      {
+        CHECK_THAT(surface.at(interface), WithinRel(energy, 1.0e-10));
+        CHECK_THAT(surface_fixed_flux.at(interface),
+                   WithinRel(expected.fabricated_surface_energy_fixed_flux.at(interface),
+                             1.0e-10));
+      }
+    }
+    for (std::size_t p = 1; p < with_patches.patch_contributions.size(); p++)
+    {
+      CHECK(with_patches.patch_contributions[p - 1].patch <
+            with_patches.patch_contributions[p].patch);
+    }
+    // The corrected-field form (no fixed flux) carries the mode's domain correction only.
+    const auto corrected_form =
+        loaded.GetElectrostaticResponse(potential_true, false, true);
+    REQUIRE(corrected_form.patch_contributions.size() ==
+            with_patches.patch_contributions.size());
+    for (const auto &patch : corrected_form.patch_contributions)
+    {
+      CHECK(patch.domain_correction_fixed_flux == 0.0);
+      CHECK(patch.fabricated_surface_energy_fixed_flux.at(4) == 0.0);
+    }
+  }
+#endif
+}
+
+// The PSD fallback of an angle-interpolated corner (decision 374 (B), scope decision 376):
+// the stencil's blended fabricated and thin DOMAIN matrices on the free knots must be PSD
+// beyond roundoff by the operator's own criterion (min eigenvalue >= -1e-9 x max |eig|,
+// PositiveSemidefiniteInverseProduct); otherwise the convex LINEAR blend of the two
+// bracketing nodes replaces the stencil for every matrix of the feature, recorded per
+// feature (Match.InterpolationFallback: stencil, Lagrange weights, min eigenvalues, linear
+// nodes and weights) and in the requirement record (CornerFamily), the base node and the
+// constructed basis unchanged; every PSD blend is left untouched (recorded under
+// Match.BlendEigenvalues only). Synthetic family on the NON-UNIFORM nodes 90 / 105 / 110 /
+// 135 (one segment keyed 112.5): the house's 120-degree corners are cubic on all four with
+// the Lagrange weights 1/6, -2, 2.7, 2/15 (sum one). (a) Node 105 carries a diagonal bump
+// on the free knot 0 in its fabricated and thin matrices (3 -> 5 and 1 -> 2, x 1e-12): the
+// cubic blend's entry is 3 - 2 x 2 = -1 (thin 1 - 2 x 1 = -1), not PSD -> the fallback to
+// 110 / 135 with weights 0.6 / 0.4 (base 110), the operator constructs (without the
+// fallback PositiveSemidefiniteInverseProduct aborts on the fabricated matrix). (b) The
+// same bump on the thin matrix only: the fallback is taken (the operator never tested the
+// thin matrix). (c) The bump on a PEC knot (zero-trace index 28) of both matrices: the free
+// block is untouched, the cubic stays. (d) The uniform family (identical matrices on every
+// node, the fixture's `family` library) on the steep house: the 112.5-degree cubic stays
+// with its Lagrange weights, no fallback recorded.
+TEST_CASE_METHOD(CornerTraceBasisFixture, "SurfaceResponseOperatorCornerBlendPositivity",
+                 "[surfaceresponseoperator][corner][tracebasis][psd][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double connectivity = 112.5;
+  const std::vector<double> node_angles = {90.0, 105.0, 110.0, 135.0};
+  struct Variant
+  {
+    std::string tag;
+    int bump_index;
+    bool bump_fabricated, bump_thin;
+  };
+  const std::vector<Variant> variants = {{"bump-both", 0, true, true},
+                                         {"bump-thin", 0, false, true},
+                                         {"bump-pec", 28, true, true}};
+  std::map<std::string, fs::path> variant_libraries;
+  for (const auto &variant : variants)
+  {
+    variant_libraries[variant.tag] =
+        temp.temp_dir / ("library-psd-" + variant.tag + ".json");
+  }
+  if (Mpi::Root(Mpi::World()))
+  {
+    for (const auto &variant : variants)
+    {
+      const auto fabricated_path =
+          temp.temp_dir / ("psd-" + variant.tag + "-fabricated.csv");
+      const auto thin_path = temp.temp_dir / ("psd-" + variant.tag + "-thin.csv");
+      const auto fabricated_surface_path =
+          temp.temp_dir / ("psd-" + variant.tag + "-fabricated-surface.csv");
+      const auto thin_surface_path =
+          temp.temp_dir / ("psd-" + variant.tag + "-thin-surface.csv");
+      WriteCornerMatrices(fabricated_path, fabricated_surface_path, 72, 3.0, 0.05, R,
+                          variant.bump_fabricated ? variant.bump_index : -1, 2.0);
+      WriteCornerMatrices(thin_path, thin_surface_path, 72, 1.0, 0.01, R,
+                          variant.bump_thin ? variant.bump_index : -1, 1.0);
+      auto library = base_library;
+      library["Name"] = "unit-test-corner-blend-positivity-" + variant.tag;
+      for (const double angle : node_angles)
+      {
+        const auto files = WriteCornerBasisFiles(
+            temp.temp_dir,
+            "psd-" + variant.tag + "-" + std::to_string(static_cast<int>(angle)), angle,
+            true, R, t, oe, true, connectivity);
+        json model = CornerModel(angle, files, true);
+        if (angle == 105.0)
+        {
+          model["FabricatedMatrix"] = fabricated_path.string();
+          model["ThinMatrix"] = thin_path.string();
+          model["FabricatedSurfaceMatrix"] = fabricated_surface_path.string();
+          model["ThinSurfaceMatrix"] = thin_surface_path.string();
+        }
+        library["Models"].push_back(model);
+      }
+      std::ofstream output(variant_libraries.at(variant.tag));
+      output << library.dump(2) << "\n";
+    }
+  }
+  Mpi::Barrier(Mpi::World());
+
+  // The cubic Lagrange weights of 120 on the nodes (sum one; -2 on 105).
+  std::vector<double> cubic_weights;
+  for (const double node : node_angles)
+  {
+    double weight = 1.0;
+    for (const double other : node_angles)
+    {
+      if (other != node)
+      {
+        weight *= (120.0 - other) / (node - other);
+      }
+    }
+    cubic_weights.push_back(weight);
+  }
+  CHECK_THAT(cubic_weights[1], WithinAbs(-2.0, 1.0e-12));
+  CHECK_THAT(cubic_weights[2], WithinAbs(2.7, 1.0e-12));
+
+  auto CornerFeatures = [](const json &manifest, double angle)
+  {
+    std::vector<json> features;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConvexCorner" &&
+          std::abs(feature["Signature"]["AngleDegrees"].get<double>() - angle) < 1.0e-6)
+      {
+        features.push_back(feature);
+      }
+    }
+    return features;
+  };
+  auto CornerRecord = [](const json &manifest, double angle)
+  {
+    for (const auto &record : manifest["Requirements"])
+    {
+      if (record["Topology"] == "ConvexCorner" &&
+          std::abs(record["Geometry"]["AngleDegrees"].get<double>() - angle) < 1.0e-6)
+      {
+        return record;
+      }
+    }
+    FAIL("no ConvexCorner requirement record at " << angle << " deg");
+    return json();
+  };
+  const double tolerance = 1.0e-9;
+
+  // (a) + (b): the fallback is taken, recorded and applied; the operator constructs.
+  for (const std::string tag : {"bump-both", "bump-thin"})
+  {
+    const bool fabricated_bumped = tag == "bump-both";
+    const json manifest =
+        Requirements(variant_libraries.at(tag), *house_mesh, "psd-" + tag);
+    const auto corners = CornerFeatures(manifest, 120.0);
+    REQUIRE(corners.size() == 3);
+    for (const auto &feature : corners)
+    {
+      REQUIRE(feature["Match"]["Status"] == "Matched");
+      REQUIRE(feature["Match"]["Model"] == "convex-corner-110@corner-angle120-linear");
+      CHECK(feature["Match"]["Note"].get<std::string>().find("PSD fallback") !=
+            std::string::npos);
+      REQUIRE(feature["Match"].contains("InterpolationFallback"));
+      const auto &fallback = feature["Match"]["InterpolationFallback"];
+      CHECK(fallback["StencilRule"] == "cubic");
+      REQUIRE(fallback["Stencil"].size() == 4);
+      REQUIRE(fallback["StencilWeights"].size() == 4);
+      for (std::size_t k = 0; k < node_angles.size(); k++)
+      {
+        CHECK(fallback["Stencil"][k]["Name"] ==
+              "convex-corner-" + std::to_string(static_cast<int>(node_angles[k])));
+        CHECK_THAT(fallback["Stencil"][k]["AngleDegrees"].get<double>(),
+                   WithinAbs(node_angles[k], 1.0e-9));
+        CHECK_THAT(fallback["StencilWeights"][k].get<double>(),
+                   WithinAbs(cubic_weights[k], 1.0e-9));
+      }
+      const auto &cubic = fallback["MinEigenvalueRelative"];
+      CHECK(cubic["DomainPositiveSemidefinite"] == false);
+      // The bumped matrix reads a negative mode far beyond roundoff (the free block's
+      // entry -1 x 1e-12 against a largest eigenvalue of a few 1e-12); the unbumped
+      // fabricated matrix of (b) is the nodes' common matrix (the weights sum to one): PSD.
+      CHECK(cubic["ThinMatrix"].get<double>() < -1.0e-2);
+      if (fabricated_bumped)
+      {
+        CHECK(cubic["FabricatedMatrix"].get<double>() < -1.0e-2);
+      }
+      else
+      {
+        CHECK(cubic["FabricatedMatrix"].get<double>() >= -tolerance);
+      }
+      CHECK(cubic["FabricatedSurfaceMatrix"].contains("1"));
+      CHECK(cubic["ThinSurfaceMatrix"].contains("1"));
+      CHECK_THAT(fallback["NegativeToleranceRelative"].get<double>(),
+                 WithinAbs(tolerance, 0.0));
+      REQUIRE(fallback["LinearNodes"].size() == 2);
+      CHECK(fallback["LinearNodes"][0] == "convex-corner-110");
+      CHECK(fallback["LinearNodes"][1] == "convex-corner-135");
+      REQUIRE(fallback["LinearWeights"].size() == 2);
+      CHECK_THAT(fallback["LinearWeights"][0].get<double>(), WithinAbs(0.6, 1.0e-12));
+      CHECK_THAT(fallback["LinearWeights"][1].get<double>(), WithinAbs(0.4, 1.0e-12));
+      const auto &linear = fallback["LinearMinEigenvalueRelative"];
+      CHECK(linear["DomainPositiveSemidefinite"] == true);
+      CHECK(linear["FabricatedMatrix"].get<double>() >= -tolerance);
+      CHECK(linear["ThinMatrix"].get<double>() >= -tolerance);
+      // The applied blend's record is the linear one.
+      REQUIRE(feature["Match"].contains("BlendEigenvalues"));
+      CHECK(feature["Match"]["BlendEigenvalues"] == linear);
+    }
+    // The exact 90-degree corners carry no blend record.
+    const auto exact = CornerFeatures(manifest, 90.0);
+    REQUIRE(exact.size() == 2);
+    for (const auto &feature : exact)
+    {
+      CHECK(feature["Match"]["Model"] == "convex-corner-90");
+      CHECK(!feature["Match"].contains("BlendEigenvalues"));
+      CHECK(!feature["Match"].contains("InterpolationFallback"));
+    }
+    // The requirement record: Interpolated, the LINEAR selection with the fallback record.
+    const json record = CornerRecord(manifest, 120.0);
+    CHECK(record["Status"] == "Interpolated");
+    const auto &family = record["CornerFamily"];
+    CHECK(family["InterpolationRule"] == "linear");
+    CHECK(family["Base"] == "convex-corner-110");
+    REQUIRE(family["Nodes"].size() == 2);
+    CHECK(family["Nodes"][0]["Name"] == "convex-corner-110");
+    CHECK_THAT(family["Nodes"][0]["Weight"].get<double>(), WithinAbs(0.6, 1.0e-12));
+    CHECK(family["Nodes"][1]["Name"] == "convex-corner-135");
+    CHECK_THAT(family["Nodes"][1]["Weight"].get<double>(), WithinAbs(0.4, 1.0e-12));
+    CHECK_THAT(family["ConnectivityAngleDegrees"].get<double>(),
+               WithinAbs(connectivity, 1.0e-9));
+    REQUIRE(family.contains("InterpolationFallback"));
+    CHECK(family["InterpolationFallback"] ==
+          corners.front()["Match"]["InterpolationFallback"]);
+    REQUIRE(family.contains("BlendEigenvalues"));
+    CHECK(family["BlendEigenvalues"]["DomainPositiveSemidefinite"] == true);
+
+    // The operator on the fallback library: the linear runtime model (0.6 x the 110 node +
+    // 0.4 x the 135 node = the nodes' common matrices) constructs and its three patches
+    // read a fabricated surface energy within a factor two of the exact 90-degree patches.
+    {
+      IoData iodata(ConfigFor(variant_libraries.at(tag)), false);
+      iodata.boundaries.cracked_attributes.insert(9);
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      meshes.push_back(
+          std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(*house_mesh)));
+      LaplaceOperator laplace(iodata, meshes);
+      SurfaceResponseOperator response(iodata, laplace);
+      const auto result = response.GetElectrostaticResponse(ProjectedPotential(laplace));
+      const auto per_patch = PerPatchEnergies(response, result);
+      REQUIRE(per_patch.count("convex-corner-110@corner-angle120-linear") == 1);
+      REQUIRE(per_patch.count("convex-corner-90") == 1);
+      const double ninety = per_patch.at("convex-corner-90");
+      const double interpolated = per_patch.at("convex-corner-110@corner-angle120-linear");
+      CHECK(interpolated > 0.5 * ninety);
+      CHECK(interpolated < 2.0 * ninety);
+      for (const auto &contribution : result.model_contributions)
+      {
+        if (response.GetModelNames().at(contribution.model) ==
+            "convex-corner-110@corner-angle120-linear")
+        {
+          CHECK_THAT(contribution.patch_count, WithinAbs(3.0, 1.0e-12));
+        }
+      }
+    }
+  }
+
+  // (c) The bump on a PEC knot leaves the free block untouched: the cubic stays, recorded
+  // PSD, no fallback.
+  {
+    const json manifest =
+        Requirements(variant_libraries.at("bump-pec"), *house_mesh, "psd-bump-pec");
+    const auto corners = CornerFeatures(manifest, 120.0);
+    REQUIRE(corners.size() == 3);
+    for (const auto &feature : corners)
+    {
+      REQUIRE(feature["Match"]["Status"] == "Matched");
+      CHECK(feature["Match"]["Model"] == "convex-corner-110@corner-angle120-cubic");
+      CHECK(!feature["Match"].contains("InterpolationFallback"));
+      REQUIRE(feature["Match"].contains("BlendEigenvalues"));
+      const auto &eigenvalues = feature["Match"]["BlendEigenvalues"];
+      CHECK(eigenvalues["DomainPositiveSemidefinite"] == true);
+      CHECK(eigenvalues["FabricatedMatrix"].get<double>() >= -tolerance);
+      CHECK(eigenvalues["ThinMatrix"].get<double>() >= -tolerance);
+    }
+    const json record = CornerRecord(manifest, 120.0);
+    const auto &family = record["CornerFamily"];
+    CHECK(family["InterpolationRule"] == "cubic");
+    CHECK(!family.contains("InterpolationFallback"));
+    REQUIRE(family["Nodes"].size() == 4);
+    for (std::size_t k = 0; k < node_angles.size(); k++)
+    {
+      CHECK_THAT(family["Nodes"][k]["Weight"].get<double>(),
+                 WithinAbs(cubic_weights[k], 1.0e-12));
+    }
+  }
+
+  // (d) The uniform family (the fixture's: identical matrices on every node) on the steep
+  // house: the 112.5-degree cubic on 90 / 105 / 120 / 135 is unchanged (its Lagrange
+  // weights to 1e-12), recorded PSD, no fallback.
+  {
+    const json manifest = Requirements(libraries.at("family"), *steep_mesh, "psd-uniform");
+    const auto corners = CornerFeatures(manifest, 112.5);
+    REQUIRE(corners.size() == 2);
+    for (const auto &feature : corners)
+    {
+      REQUIRE(feature["Match"]["Status"] == "Matched");
+      const std::string model = feature["Match"]["Model"].get<std::string>();
+      CHECK(model.find("@corner-angle112.5-cubic") != std::string::npos);
+      CHECK(!feature["Match"].contains("InterpolationFallback"));
+      REQUIRE(feature["Match"].contains("BlendEigenvalues"));
+      CHECK(feature["Match"]["BlendEigenvalues"]["DomainPositiveSemidefinite"] == true);
+      CHECK(feature["Match"]["Note"].get<std::string>().find("PSD fallback") ==
+            std::string::npos);
+    }
+    const json record = CornerRecord(manifest, 112.5);
+    const auto &family = record["CornerFamily"];
+    CHECK(family["InterpolationRule"] == "cubic");
+    CHECK(!family.contains("InterpolationFallback"));
+    REQUIRE(family["Nodes"].size() == 4);
+    const std::vector<double> uniform_nodes = {90.0, 105.0, 120.0, 135.0};
+    for (const auto &node : family["Nodes"])
+    {
+      const double node_angle = node["AngleDegrees"].get<double>();
+      double expected = 1.0;
+      for (const double other : uniform_nodes)
+      {
+        if (std::abs(other - node_angle) > 1.0e-6)
+        {
+          expected *= (112.5 - other) / (node_angle - other);
+        }
+      }
+      CHECK_THAT(node["Weight"].get<double>(), WithinAbs(expected, 1.0e-12));
+    }
   }
 #endif
 }

@@ -159,6 +159,13 @@ int main(int argc, char *argv[])
   Mpi::default_thread_required = MPI_THREAD_MULTIPLE;
 #endif
   Mpi::Init(argc, argv);
+  // Every return from main is a normal shutdown; an exit() before it (a library's die())
+  // skips this guard and Mpi's destructor aborts all ranks instead of blocking in
+  // MPI_Finalize.
+  struct NormalShutdownGuard
+  {
+    ~NormalShutdownGuard() { Mpi::MarkNormalShutdown(); }
+  } shutdown_guard;
   MPI_Comm world_comm = Mpi::World();
   bool world_root = Mpi::Root(world_comm);
   int world_size = Mpi::Size(world_comm);

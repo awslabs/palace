@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <fmt/os.h>
+#include <nlohmann/json_fwd.hpp>
 #include "fem/errorindicator.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/memoryreporting.hpp"
@@ -26,6 +27,11 @@ class Mesh;
 class Timer;
 class PortExcitations;
 class SurfaceResponseOperator;
+
+namespace config
+{
+struct RefinementData;
+}  // namespace config
 
 //
 // Base driver class for all simulation types.
@@ -73,7 +79,30 @@ public:
   void SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::string &name,
                                          long long int solves,
                                          long long int iterations) const;
+  // Root only: palace.json SurfaceResponse.<key> = value (the record of a response-derived
+  // postprocessing result next to the operator statistics).
+  void SaveSurfaceResponseMetadata(const std::string &key,
+                                   const nlohmann::json &value) const;
+  // Root only: palace.json AdaptiveMeshRefinement.MaxSizeStop = record (the AMR step at
+  // which the predicted size of the refined mesh exceeded Refinement.MaxSize and the
+  // solve was skipped).
+  void SaveMaxSizeStopMetadata(const nlohmann::json &record) const;
 };
+
+// Predicted number of global true dofs of a refined mesh: the last solved size scaled by
+// the element-count growth of the refinement step and rounded up (for a fixed polynomial
+// order the dof count scales with the element count; the exact count depends on the space
+// of the driver and is only known once that space is built on the refined mesh).
+long long int PredictRefinedSize(long long int ntdof, long long int initial_elem_count,
+                                 long long int final_elem_count);
+
+// Refinement.MaxSize rule applied after a refinement step and before its solve: true when
+// MaxSize is set and the predicted size of the refined mesh exceeds it. The legacy rule
+// (MaxSizePredicted = false) never stops here and leaves MaxSize to the check against the
+// last solved size at the head of the AMR loop.
+bool ExceedsPredictedMaxSize(const config::RefinementData &refinement, long long int ntdof,
+                             long long int initial_elem_count,
+                             long long int final_elem_count);
 
 // Archive the current postprocessing output for an AMR iteration. Creates a subfolder
 // "iterationXX" inside output_dir and moves all files and directories into it, leaving

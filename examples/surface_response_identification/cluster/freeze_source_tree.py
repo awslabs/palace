@@ -6,7 +6,8 @@
 The freeze carries every file `palace/CMakeLists.txt` reaches at configure time: `palace/`
 (sources, `palace/cmake/`), `cmake/` (EmbedSchema), `scripts/schema/` (embedded JSON schemas)
 `test/unit/` (`add_subdirectory(../test/unit)` at configure time; the unit tests are not
-built) and this `cluster/` recipe itself (so the freeze carries the build script that consumes it). Working-tree contents are frozen (tracked files plus untracked, non-ignored files
+built), `extern/patch/mfem/` (the vendored MFEM patches `build_from_cmake_tree.py` rebuilds MFEM with)
+and this `cluster/` recipe itself (so the freeze carries the build script that consumes it). Working-tree contents are frozen (tracked files plus untracked, non-ignored files
 under those directories), the tracked diff and status are recorded, and `manifest.json`
 carries HEAD, `git describe`, and the SHA-256 of every frozen file. The tarball is what the
 cluster build (`build_from_cmake_tree.py`) verifies before configuring.
@@ -21,7 +22,8 @@ import shutil
 import subprocess
 import tarfile
 
-FROZEN_DIRECTORIES = ("palace", "cmake", "scripts/schema", "test/unit", "examples/surface_response_identification/cluster")
+FROZEN_DIRECTORIES = ("palace", "cmake", "scripts/schema", "test/unit", "extern/patch/mfem",
+                      "examples/surface_response_identification/cluster")
 
 
 def git(repo, *args):
