@@ -6,13 +6,15 @@ the element cap before any build (headroom gate)."""
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 import tempfile
 import tomllib
 import unittest
 
-from estimate_build_cost import (actual_counts, case_paths, coupon_box, edge_chains, estimate, gate, metal_sides,
-                                 read_edges, read_loops, read_support_box, row_coupon_box, tube_rings)
+from estimate_build_cost import (actual_counts, case_paths, coupon_box, edge_chains, estimate, face_end_layers,
+                                 gate, metal_sides, read_edges, read_loops, read_support_box, row_coupon_box,
+                                 semantic_corner_count, tube_rings)
 from general_mesh_manifest import (BUILD_COST_ESTIMATE_KEY, preflight_build_cost, thin_build_options,
                                    validate_build_cost_estimate_model, validate_manifest)
 
@@ -270,3 +272,44 @@ class EstimateBuildCostTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FaceEndEstimateTest(unittest.TestCase):
+    """Block (b) design A2 / decision 320 in the estimator: a side end on a box face with a
+    single metal side and a tilt theta > 0 adds its sheared end block of m layers; a
+    Physical-class box vertex is a corner only when its side is exactly perpendicular."""
+
+    def test_oblique_face_ends_add_end_block_layers_and_lose_their_corner(self):
+        lower, upper = (-4.0, -4.0), (4.0, 4.0)
+        # The O4-like tip: side A leaves x = 4 at 45 degrees (Continuation class at the exit),
+        # side B along +y leaves y = 4 perpendicularly (a Physical-class legacy box corner).
+        legacy = [[((0.0, 0.0), "Physical", 0.0), ((4.0, 4.0), "Continuation", 0.0),
+                   ((0.0, 4.0), "Physical", 0.0)]]
+        sides, caps, tilts = metal_sides(legacy, lower, upper, 1e-9)
+        self.assertEqual(len(sides), 2)
+        self.assertEqual(caps, 4)                       # the tip only: two tubes x two side ends
+        self.assertEqual(tilts, [1.0])                   # tan 45 at the A exit; the B exit is exact
+        self.assertEqual(semantic_corner_count(legacy), 2)
+        # The box side arriving at the oblique exit (Physical class there): a cut end, no corner.
+        oblique = [[((0.0, 0.0), "Physical", 0.0), ((4.0, 0.0), "Continuation", 0.0),
+                    ((4.0, 4.0), "Physical", 0.0)]]
+        sides, caps, tilts = metal_sides(oblique, lower, upper, 1e-9)
+        self.assertEqual(len(sides), 2)
+        self.assertEqual(tilts, [1.0])
+        self.assertEqual(semantic_corner_count(oblique), 1)
+        # Two metal sides meeting at a box vertex: a corner, no face end (an island touching x = 4).
+        island = [[((4.0, 0.0), "Physical", 0.0), ((2.0, 1.0), "Physical", 0.0), ((2.0, -1.0), "Physical", 0.0)]]
+        sides, caps, tilts = metal_sides(island, lower, upper, 1e-9)
+        self.assertEqual((len(sides), tilts), (3, []))
+        self.assertEqual(semantic_corner_count(island), 3)
+        # The end-block layer counts of the production fabricated tube (R 31.75 nm, h_K 16 nm,
+        # TangentialSize 50 nm): 45 degrees -> 2 layers at lc_end 50 nm; 74.3 degrees -> 3 at
+        # lc_end 114 nm; 12.6 degrees -> 1 (design A2 (4)); thin (R 62, h_K 32) at 45 -> 3.
+        ring_sizes, radius = tube_rings(0.00025, 2.0, 0.05, 0.1, 0.1)
+        self.assertEqual(face_end_layers([1.0], ring_sizes, radius, 0.05), 2)
+        self.assertEqual(face_end_layers([math.tan(math.radians(74.3))], ring_sizes, radius, 0.05), 3)
+        self.assertEqual(face_end_layers([math.tan(math.radians(12.6))], ring_sizes, radius, 0.05), 1)
+        self.assertEqual(face_end_layers([1.0, 1.0], ring_sizes, radius, 0.05), 4)
+        thin_sizes, thin_radius = tube_rings(0.002, 2.0, 0.05, 0.1, 0.1, thin=True)
+        self.assertEqual(face_end_layers([1.0], thin_sizes, thin_radius, 0.05), 3)
+        self.assertEqual(face_end_layers([], ring_sizes, radius, 0.05), 0)

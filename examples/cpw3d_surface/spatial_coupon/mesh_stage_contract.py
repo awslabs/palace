@@ -1272,17 +1272,31 @@ GMSH_BUILD_VOLUME_TYPES = ("Tetrahedron", "Prism", "Pyramid")
 # class is visible in the frozen inputs, "build" when only a derived quantity shows it)
 # and the classification of an input from its frozen inputs.  The census Scope block
 # records the same lists and is bound here; the build drivers record an unsupported
-# class distinctly from any other failure with these ids.
+# class distinctly from any other failure with these ids.  UntubedShortEdges (block (b)
+# design A9 family 3, supervisor decision 304) is the one supported class known only at
+# the build (a side's tube interval against the derived corner clearances): it is
+# exhibited by the census Scope.UntubedEdges records, not by the input classification.
 RECIPE_SCOPE_RECIPE = "prism-tubes"
-RECIPE_SCOPE_SUPPORTED_CLASSES = ("ContinuationVertices", "DeviceFootprint", "DownwardLayers",
+RECIPE_SCOPE_SUPPORTED_CLASSES = ("ArcSides", "ContinuationVertices", "DeviceFootprint", "DownwardLayers",
                                   "ExteriorLoops", "HoleLoops", "MultipleConductors",
-                                  "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis")
+                                  "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis",
+                                  "UntubedShortEdges")
 RECIPE_SCOPE_GUARDS = {
+    "ArcTubeRadiusVsCurvature": "build",
+    # Decision 391 MAJOR-2 (ii): arc face ends and arc joints beyond the loop end's tested
+    # turn range (ARC_JOINT_TURN_BOUND_RADIANS) fail closed until the synthetic full builds
+    # of the next mesher lane lift the guards (mesh_spatial_coupon.jl spells the same list).
+    "ArcFaceEnds": "build", "ArcJointTilt": "build",
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
-    "FreeEdgeEnds": "build", "ShortEdges": "build", "FootprintWithoutEdge": "build",
+    "NarrowMetal": "build",
+    "FreeEdgeEnds": "build", "FootprintWithoutEdge": "build",
     "FootprintTopology": "build"}
+# The largest arc-joint turn any full build has exercised: the loop end 1b26671c9080's
+# smooth arc / line joints (3.0e-8 .. 1.6e-6 rad on the signature); the mesher's
+# ScopeGuard[ArcJointTilt] bound (decision 391 MAJOR-2 (ii)).
+ARC_JOINT_TURN_BOUND_RADIANS = 1.6e-6
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)
@@ -1359,7 +1373,69 @@ def scope_classes(signature_rows, boundary_rows, *, fabricated=True, sidewall_an
         classes.append("ThinMetal")
     if overetch == 0.0:
         classes.append("NoTrench")
+    # Block (b) design A1 (4): a boundary carrying arc tags (one tagged chord side at least).
+    if boundary_rows and "ArcId" in boundary_rows[0] and any(row.get("ArcId") not in (None, "") for row in boundary_rows):
+        classes.append("ArcSides")
     return sorted(classes)
+
+
+# The parts an arc side of signed sweep `sweep` (radians) is split into (mesh_spatial_coupon.jl
+# arc_part_count): <= 90-degree parts of equal angular fraction.
+def arc_part_count(sweep):
+    return max(1, math.ceil(abs(sweep) / (0.5 * math.pi) - 1.0e-9))
+
+
+def boundary_arc_runs(rows):
+    """Per loop (Loop order) the tagged arc runs of plan-view boundary rows (block (b) design
+    A1 (4)): [{ArcId, Centre, Radius, Sign, Chords, Sweep (signed, radians: the angular travel
+    from the run's first to its last vertex about the centre), Parts, EdgeIndices}]; empty
+    without the arc columns.  The sweep is a function of the two end vertices alone
+    (mesh_spatial_coupon.jl run_sweep), so the part count does not depend on the chord count."""
+    loops = {}
+    for row in rows:
+        loops.setdefault(int(row["Loop"]), []).append(row)
+    result = []
+    for _, loop_rows in sorted(loops.items()):
+        loop_rows.sort(key=lambda row: int(row["Vertex"]))
+        points = [(float(row["X"]), float(row["Y"])) for row in loop_rows]
+        n = len(points)
+        ids = [int(row["ArcId"]) if row.get("ArcId") not in (None, "") else 0 for row in loop_rows]
+        runs = []
+        if any(ids):
+            start = next((i for i in range(n) if ids[i] and ids[i - 1] != ids[i]), None)
+            if start is None:
+                raise ValueError("a plan-view loop made of one closed arc is not supported by the tube recipe")
+            seen = set()
+            for step in range(n):
+                index = (start + step) % n
+                if not ids[index] or ids[index - 1] == ids[index]:
+                    continue
+                if ids[index] in seen:
+                    raise ValueError(f"arc {ids[index]} of the plan-view boundary is not one consecutive run of chords")
+                seen.add(ids[index])
+                edges = []
+                k = index
+                while ids[k] == ids[index] and len(edges) < n:
+                    edges.append(k)
+                    k = (k + 1) % n
+                row = loop_rows[index]
+                centre = (float(row["ArcCx"]), float(row["ArcCy"]))
+                first, last = points[edges[0]], points[(edges[-1] + 1) % n]
+                steps = []
+                for e in edges:
+                    a, b = points[e], points[(e + 1) % n]
+                    ra, rb = (a[0] - centre[0], a[1] - centre[1]), (b[0] - centre[0], b[1] - centre[1])
+                    steps.append(math.atan2(ra[0] * rb[1] - ra[1] * rb[0], ra[0] * rb[0] + ra[1] * rb[1]))
+                orientation = 1.0 if sum(steps) >= 0.0 else -1.0
+                theta_first = math.atan2(first[1] - centre[1], first[0] - centre[0])
+                theta_last = math.atan2(last[1] - centre[1], last[0] - centre[0])
+                travel = (orientation * (theta_last - theta_first)) % (2.0 * math.pi)
+                sweep = orientation * (2.0 * math.pi if first == last else travel)
+                runs.append({"ArcId": ids[index], "Centre": centre, "Radius": float(row["ArcR"]),
+                             "Sign": int(row["ArcSign"]), "Chords": len(edges), "Sweep": sweep,
+                             "Parts": arc_part_count(sweep), "EdgeIndices": edges})
+        result.append(runs)
+    return result
 
 
 def unsupported_scope_classes(classes):
@@ -1403,22 +1479,91 @@ def scope_classes_of_build(build_report):
 
 def metal_loop_sides(boundary_rows, lower, upper, tolerance):
     """Per plan-view loop (in Loop order) the straight sides not lying on an outer box
-    face (mesh_spatial_coupon.jl metal_loop_records); each carries two tubes."""
+    face (mesh_spatial_coupon.jl metal_loop_records); each carries TubesPerSide tubes
+    unless it is an untubed short side (validate_untubed_edges)."""
+    return [len(sides) for sides in metal_loop_side_points(boundary_rows, lower, upper, tolerance)]
+
+
+def metal_loop_side_points(boundary_rows, lower, upper, tolerance):
+    """Per plan-view loop (in Loop order) the (start, stop) points of the straight sides
+    not lying on an outer box face, in vertex order; the chords of a tagged arc are not
+    straight sides (metal_loop_arc_parts counts the arc's parts)."""
     loops = {}
     for row in boundary_rows:
         loops.setdefault(int(row["Loop"]), []).append((int(row["Vertex"]), float(row["X"]), float(row["Y"])))
+    arc_runs = boundary_arc_runs(boundary_rows)
     sides = []
-    for _, vertices in sorted(loops.items()):
+    for loop_index, (_, vertices) in enumerate(sorted(loops.items())):
         points = [(x, y) for _, x, y in sorted(vertices)]
-        count = 0
+        arc_edges = {e for run in arc_runs[loop_index] for e in run["EdgeIndices"]}
+        loop_sides = []
         for i, p in enumerate(points):
+            if i in arc_edges:
+                continue
             q = points[(i + 1) % len(points)]
             on_face = any((abs(p[d] - lower[d]) <= tolerance and abs(q[d] - lower[d]) <= tolerance) or
                           (abs(p[d] - upper[d]) <= tolerance and abs(q[d] - upper[d]) <= tolerance)
                           for d in range(2))
-            count += not on_face
-        sides.append(count)
+            if not on_face:
+                loop_sides.append((p, q))
+        sides.append(loop_sides)
     return sides
+
+
+def metal_loop_arc_parts(boundary_rows):
+    """Per plan-view loop (Loop order) the number of arc PARTS its tagged arcs carry (block (b)
+    design 1.2 (2): every part is a side with TubesPerSide tubes); 0 without arcs."""
+    return [sum(run["Parts"] for run in runs) for runs in boundary_arc_runs(boundary_rows)]
+
+
+def validate_untubed_edges(scope, census, side_points, tolerance):
+    """The untubed short sides of the census Scope (block (b) design A9 family 3, decision
+    304): every record names a straight metal side of the bound plan-view boundary (its
+    Start / Stop are consecutive loop vertices not on a box face), a positive Span equal
+    to the side's length, two non-negative Clearances, Interval = Span - their sum below
+    the tube's inner ring size (PrismTubes.InnerSize: an interval of at least one inner
+    ring carries a tube), its two Corners flags and CoveredByBalls exactly when the
+    corner balls (the census CornerIsotropyRadius about each corner end) reach over the
+    span; no side is recorded twice.  A census without the key (a pre-rule census)
+    records no untubed side.  Returns the record count."""
+    rows = scope.get("UntubedEdges", [])
+    if not isinstance(rows, list):
+        raise ValueError("Build census Scope UntubedEdges is not a list")
+    if rows and not (isinstance(scope.get("UntubedShortEdgeRule"), str) and scope["UntubedShortEdgeRule"]):
+        raise ValueError("Build census Scope records untubed edges without their rule")
+    inner = _census_number(census["PrismTubes"], "InnerSize", "Prism tube record")
+    radius = _census_number(census, "CornerIsotropyRadius", "Build census")
+    seen = set()
+    for row in rows:
+        side = row.get("Side") if isinstance(row, dict) else None
+        if (not isinstance(side, dict) or
+                any(not isinstance(side.get(name), list) or len(side[name]) != 2 or
+                    any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in side[name])
+                    for name in ("Start", "Stop"))):
+            raise ValueError("Build census untubed edge lacks its side")
+        start, stop = tuple(side["Start"]), tuple(side["Stop"])
+        matches = [(p, q) for loop in side_points for p, q in loop
+                   if ((math.dist(p, start) <= tolerance and math.dist(q, stop) <= tolerance) or
+                       (math.dist(p, stop) <= tolerance and math.dist(q, start) <= tolerance))]
+        if len(matches) != 1 or matches[0] in seen:
+            raise ValueError("Build census untubed edge is not a straight metal side of the bound plan-view boundary")
+        seen.add(matches[0])
+        span = _census_number(row, "Span", "Untubed edge")
+        clearances = row.get("Clearances")
+        corners = row.get("Corners")
+        if (span <= 0.0 or abs(span - math.dist(start, stop)) > tolerance or
+                not isinstance(clearances, list) or len(clearances) != 2 or
+                any(isinstance(c, bool) or not isinstance(c, (int, float)) or c < 0.0 for c in clearances) or
+                not isinstance(corners, list) or len(corners) != 2 or
+                any(not isinstance(c, bool) for c in corners) or
+                not isinstance(row.get("CoveredByBalls"), bool)):
+            raise ValueError("Build census untubed edge lacks its span, clearances, corners or coverage")
+        interval = span - clearances[0] - clearances[1]
+        if abs(_census_number(row, "Interval", "Untubed edge") - interval) > tolerance or not interval < inner:
+            raise ValueError("Build census untubed edge interval is not below the tube inner size")
+        if row["CoveredByBalls"] != (radius * sum(corners) >= span):
+            raise ValueError("Build census untubed edge coverage disagrees with its corner balls")
+    return len(rows)
 
 
 def validate_recipe_scope(build_report, census):
@@ -1426,8 +1571,9 @@ def validate_recipe_scope(build_report, census):
     guarded class lists of this contract with a statement per guard, exhibits exactly
     the classes recomputed from the bound inputs and command (none of them guarded: a
     guarded class never reaches the census), and counts per loop the sides not on the
-    census CouponBox so that TubeCount = TubesPerSide x their sum (2 for a fabricated
-    coupon, 1 for a thin one; decision 66)."""
+    census CouponBox so that TubeCount = TubesPerSide x their sum minus the untubed short
+    sides (2 for a fabricated coupon, 1 for a thin one; decision 66; the untubed sides
+    per validate_untubed_edges)."""
     scope = census.get("Scope")
     if not isinstance(scope, dict) or not isinstance(scope.get("Rule"), str) or not scope["Rule"]:
         raise ValueError("Build census lacks the recipe Scope record")
@@ -1451,8 +1597,10 @@ def validate_recipe_scope(build_report, census):
     loops = scope.get("MetalLoops")
     box = census.get("CouponBox") if isinstance(census.get("CouponBox"), dict) else {}
     radius = _census_number(box, "Radius", "Coupon box")
-    expected = metal_loop_sides(read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]),
-                                box.get("Lower"), box.get("Upper"), 1e-7 * radius)
+    boundary_rows = read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"])
+    side_points = metal_loop_side_points(boundary_rows, box.get("Lower"), box.get("Upper"), 1e-7 * radius)
+    arc_parts = metal_loop_arc_parts(boundary_rows)
+    expected = [len(sides) + parts for sides, parts in zip(side_points, arc_parts)]
     if (not isinstance(loops, list) or len(loops) != len(expected) or
             any(not isinstance(loop, dict) or not isinstance(loop.get("Hole"), bool) or
                 _count(loop.get("Sides"), "Metal loop sides") != sides or
@@ -1460,6 +1608,25 @@ def validate_recipe_scope(build_report, census):
                 _count(loop.get("Loop"), "Metal loop index") != index + 1
                 for index, (loop, sides) in enumerate(zip(loops, expected)))):
         raise ValueError("Build census Scope metal loops differ from the bound plan-view boundary")
+    # Arc loops (design 1.2 (2)): the straight sides, the arc parts and the arcs themselves.
+    for loop, sides, parts, runs in zip(loops, side_points, arc_parts, boundary_arc_runs(boundary_rows)):
+        if not runs:
+            if any(key in loop for key in ("StraightSides", "ArcParts", "Arcs")):
+                raise ValueError("Build census Scope metal loop records arcs the bound boundary does not carry")
+            continue
+        arcs = loop.get("Arcs")
+        if (_count(loop.get("StraightSides"), "Metal loop straight sides") != len(sides) or
+                _count(loop.get("ArcParts"), "Metal loop arc parts") != parts or
+                not isinstance(arcs, list) or len(arcs) != len(runs) or
+                any(not isinstance(arc, dict) or arc.get("ArcId") != run["ArcId"] or
+                    _count(arc.get("Parts"), "Metal loop arc parts") != run["Parts"] or
+                    _count(arc.get("Chords"), "Metal loop arc chords") != run["Chords"] or
+                    abs(_census_number(arc, "Radius", "Metal loop arc") - run["Radius"]) > 1e-9 * run["Radius"] or
+                    abs(_census_number(arc, "SweepDegrees", "Metal loop arc") - math.degrees(run["Sweep"])) > 1e-9
+                    for arc, run in zip(arcs, runs))):
+            raise ValueError("Build census Scope metal loop arcs differ from the bound plan-view boundary")
+    if ("ArcSides" in exhibited) != any(arc_parts):
+        raise ValueError("Build census Scope arc sides differ from the exhibited classes")
     if ("HoleLoops" in exhibited) != any(loop["Hole"] for loop in loops):
         raise ValueError("Build census Scope hole loops differ from the exhibited classes")
     tubes = census.get("PrismTubes")
@@ -1469,8 +1636,10 @@ def validate_recipe_scope(build_report, census):
             section.get("TubesPerSide") != TUBES_PER_SIDE[kind] or
             ("ThinMetal" in exhibited) != (kind == "thin")):
         raise ValueError("Prism tube section does not name the command's coupon kind and its tubes per side")
-    if tubes.get("TubeCount") != TUBES_PER_SIDE[kind] * sum(expected) or sum(expected) <= 0:
-        raise ValueError("Prism tube count is not TubesPerSide x the straight sides of every loop")
+    untubed = validate_untubed_edges(scope, census, side_points, 1e-7 * radius)
+    tubed_sides = sum(expected) - untubed
+    if tubes.get("TubeCount") != TUBES_PER_SIDE[kind] * tubed_sides or tubed_sides <= 0:
+        raise ValueError("Prism tube count is not TubesPerSide x the straight sides of every loop minus the untubed short sides")
     cutoff = section.get("ThinCutoff")
     if kind == "thin":
         # Decision 66: the thin coupon is recorded at its cutoff (the inner ring size).
@@ -1573,6 +1742,137 @@ def validate_coupon_box(census):
     return box
 
 
+FACE_END_FACES = ("x0", "x1", "y0", "y1")
+FACE_END_RULE = ("block (b) design A2 (supervisor decisions 302 / 320): a tube end on a box face with a single metal side "
+                 "at the vertex and a tilt theta > 0 ends ON the face with m = ceil(2 (R + h_pyr) |tan theta| / lc_end) "
+                 "sheared layers of spacing lc_end = max(TangentialSize, 4 h_pyr |tan theta|)")
+
+
+def validate_tube_face_ends(row, tangential_size, section):
+    """The face-end records of one census tube row (Tubes[].FaceEnds, absent on a plain
+    tube): every record names a box face and an end, its tilt lies in (0, 90) degrees,
+    its spacing and layer count follow FACE_END_RULE from the section's radius and pyramid
+    height, and at most one record per end.  Returns the largest EndSpacing (0 without
+    face ends)."""
+    records = row.get("FaceEnds", [])
+    if not isinstance(records, list):
+        raise ValueError("Tube row FaceEnds is not a list")
+    if not records:
+        return 0.0
+    if not isinstance(section, dict):
+        raise ValueError("Prism tube section is missing")
+    radius = _census_number(section, "Radius", "Tube section")
+    pyramid_height = _census_number(section, "PyramidHeight", "Tube section")
+    bound = 0.0
+    ends = []
+    for record in records:
+        if (not isinstance(record, dict) or record.get("Face") not in FACE_END_FACES or
+                record.get("End") not in ("start", "end")):
+            raise ValueError("Tube face end lacks its face or end")
+        theta = _census_number(record, "ThetaDegrees", "Tube face end")
+        if not 0.0 < theta < 90.0:
+            raise ValueError("Tube face end tilt is outside (0, 90) degrees")
+        slope = abs(math.tan(math.radians(theta)))
+        spacing = _census_number(record, "EndSpacing", "Tube face end")
+        expected_spacing = max(tangential_size, 4.0 * pyramid_height * slope)
+        layers = _count(record.get("Layers"), "Tube face end layers")
+        expected_layers = max(1, math.ceil(2.0 * (radius + pyramid_height) * slope / expected_spacing * (1.0 - 1e-9)))
+        if abs(spacing - expected_spacing) > 1e-9 * expected_spacing or layers != expected_layers:
+            raise ValueError("Tube face end spacing or layer count does not follow the face-end rule")
+        thickness = record.get("LayerThicknessRange")
+        if (not isinstance(thickness, list) or len(thickness) != 2 or
+                not 0.5 * spacing * (1.0 - 1e-9) <= thickness[0] <= thickness[1] <= 1.5 * spacing * (1.0 + 1e-9)):
+            raise ValueError("Tube face end layer thickness range is outside [lc_end / 2, 3 lc_end / 2]")
+        ends.append(record["End"])
+        bound = max(bound, spacing)
+    if len(set(ends)) != len(ends):
+        raise ValueError("Tube row has two face ends at one end")
+    return bound
+
+
+def validate_tube_face_end_summary(tubes, rows):
+    """PrismTubes.FaceEnds: Count = the face-end records over the rows, EndBlockLayers their
+    layers, LegacyBoxVertexCorners the recorded theta-0 Physical-class box vertices (a
+    non-negative count), the rules named."""
+    summary = tubes.get("FaceEnds")
+    records = [record for row in rows for record in row.get("FaceEnds", [])]
+    legacy = sum(len(row.get("LegacyBoxVertexCorner", [])) for row in rows)
+    if summary is None and not records and legacy == 0:
+        return          # a census recorded before the face-end rule (no face end, no legacy corner)
+    spacing = max([r["EndSpacing"] for r in records], default=0.0)
+    if _census_number(tubes, "FaceEndSpacingMaximum", "Prism tube record") != spacing:
+        raise ValueError("Prism tube face-end summary does not match the tube rows")
+    if (not isinstance(summary, dict) or
+            _count(summary.get("Count"), "Face-end count") != len(records) or
+            _count(summary.get("EndBlockLayers"), "Face-end block layers") != sum(r["Layers"] for r in records) or
+            _count(summary.get("LegacyBoxVertexCorners"), "Legacy box-vertex corners") != legacy or
+            not all(isinstance(summary.get(name), str) and summary[name] for name in ("Rule", "BoxVertexRule"))):
+        raise ValueError("Prism tube face-end summary does not match the tube rows")
+
+
+ARC_CURVATURE_BOUND = 0.25
+
+
+def validate_arc_tubes(tubes, rows, boundary_rows):
+    """The arc tubes of a census (block (b) design 1.2 (3) / A3 (2)): PrismTubes.ArcTubes
+    {Count, JointEnds, PartSplits, SharedSections = JointEnds + PartSplits, TotalArcLength, Rule,
+    SmoothJointRule} against the rows
+    carrying an Arc record (ArcId / Centre / Radius / Sign of a tagged run of the bound boundary,
+    Part in 1..Parts = the run's parts, SweepDegrees = the run's sweep over its parts, Length =
+    Radius x sweep of the tube's interval <= the part's), the section's envelope within
+    ARC_CURVATURE_BOUND x Radius, and the rows' Joints records (TiltRadians >= 0, PlaneCut iff
+    tilt > 0); a census without arc rows carries no ArcTubes record (None).  Returns the arc row count."""
+    arc_rows = [row for row in rows if isinstance(row, dict) and "Arc" in row]
+    summary = tubes.get("ArcTubes")
+    if not arc_rows:
+        if summary is not None:
+            raise ValueError("Prism tube record names arc tubes without arc rows")
+        if any("Joints" in row for row in rows if isinstance(row, dict)):
+            raise ValueError("Prism tube rows record joints without arc tubes")
+        return 0
+    runs = {run["ArcId"]: run for loop_runs in boundary_arc_runs(boundary_rows) for run in loop_runs}
+    section = tubes.get("Section") if isinstance(tubes, dict) else None
+    envelope = (_census_number(section, "Radius", "Tube section") +
+                _census_number(section, "PyramidHeight", "Tube section"))
+    joint_ends = 0
+    for row in rows:
+        for joint in row.get("Joints", []):
+            tilt = _census_number(joint, "TiltRadians", "Tube joint")
+            if (tilt < 0.0 or joint.get("End") not in ("start", "end") or
+                    joint.get("PlaneCut") is not (tilt > 0.0)):
+                raise ValueError("Prism tube joint record lacks its end, tilt or plane-cut flag")
+            joint_ends += 1
+    for row in arc_rows:
+        arc = row["Arc"]
+        run = runs.get(arc.get("ArcId")) if isinstance(arc, dict) else None
+        if run is None:
+            raise ValueError("Prism tube arc row names an arc the bound boundary does not carry")
+        radius = _census_number(arc, "Radius", "Tube arc")
+        parts = _count(arc.get("Parts"), "Tube arc parts")
+        part = _count(arc.get("Part"), "Tube arc part")
+        centre = arc.get("Centre")
+        if (not isinstance(centre, list) or len(centre) != 2 or
+                any(abs(float(c) - r) > 1e-9 * max(1.0, radius) for c, r in zip(centre, run["Centre"])) or
+                abs(radius - run["Radius"]) > 1e-9 * run["Radius"] or arc.get("Sign") != run["Sign"] or
+                parts != run["Parts"] or not 1 <= part <= parts or
+                abs(_census_number(arc, "SweepDegrees", "Tube arc") - math.degrees(abs(run["Sweep"])) / parts) > 1e-9 or
+                envelope > ARC_CURVATURE_BOUND * radius * (1.0 + 1e-12) or
+                _census_number(row, "Length", "Tube row") > radius * abs(run["Sweep"]) / parts * (1.0 + 1e-9)):
+            raise ValueError("Prism tube arc row does not follow its tagged arc (centre, radius, sign, parts, sweep)")
+    part_splits = sum(1 for row in arc_rows if _count(row["Arc"].get("Part"), "Tube arc part") <
+                      _count(row["Arc"].get("Parts"), "Tube arc parts"))
+    if (not isinstance(summary, dict) or
+            _count(summary.get("Count"), "Arc tube count") != len(arc_rows) or
+            _count(summary.get("JointEnds"), "Arc tube joint ends") != joint_ends or
+            _count(summary.get("PartSplits"), "Arc tube part splits") != part_splits or
+            _count(summary.get("SharedSections"), "Arc tube shared sections") != joint_ends + part_splits or
+            abs(_census_number(summary, "TotalArcLength", "Arc tubes") -
+                sum(float(row["Length"]) for row in arc_rows)) > 1e-9 * max(1.0, sum(float(row["Length"]) for row in arc_rows)) or
+            not all(isinstance(summary.get(name), str) and summary[name] for name in ("Rule", "SmoothJointRule"))):
+        raise ValueError("Prism tube arc summary does not match the arc rows")
+    return len(arc_rows)
+
+
 def validate_gmsh_build_census(build_report, census, semantic):
     """The Gmsh-only build census (the build report of decision 38) is bound to the
     build command and the canonical semantic contract: the corner ball and its
@@ -1661,12 +1961,27 @@ def validate_gmsh_build_census(build_report, census, semantic):
     if tubes["InnerSize"] != corner_size:
         raise ValueError("Prism tube inner size differs from the corner size: one graded law is required")
     rows = tubes.get("Tubes")
-    if (not isinstance(rows, list) or not rows or tubes.get("TubeCount") != len(rows) or
-            any(not isinstance(row, dict) or
-                not 0.0 < _census_number(row, "Spacing", "Tube row") <= tubes["TangentialSize"] or
-                _count(row.get("Layers"), "Tube layers") <= 0 or
-                _census_number(row, "Length", "Tube row") <= 0.0 for row in rows)):
+    if not isinstance(rows, list) or not rows or tubes.get("TubeCount") != len(rows):
         raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
+    # Face ends (block (b) design A2, supervisor decisions 302 / 320): a tube ending on a
+    # box face at a tilt theta > 0 carries an end block of m sheared layers of spacing
+    # lc_end = max(TangentialSize, 4 h_pyr |tan theta|), m = ceil(2 (R + h_pyr) |tan theta| /
+    # lc_end); its Spacing may exceed TangentialSize by exactly that block.
+    section = tubes.get("Section")
+    face_end_bound = {}
+    for index, row in enumerate(rows):
+        face_end_bound[index] = validate_tube_face_ends(row, tubes["TangentialSize"], section)
+    # The interior layers are capped at TangentialSize x (1 - 1e-9) by the mesher; a face-end
+    # block layer is lc_end up to the rounding of its stations (hence the 1e-9 slack on lc_end).
+    if any(not isinstance(row, dict) or
+           not 0.0 < _census_number(row, "Spacing", "Tube row") <=
+           max(tubes["TangentialSize"], face_end_bound[index] * (1.0 + 1e-9)) or
+           _count(row.get("Layers"), "Tube layers") <= 0 or
+           _census_number(row, "Length", "Tube row") <= 0.0 for index, row in enumerate(rows)):
+        raise ValueError("Prism tube rows are missing or exceed the tangential spacing")
+    spacing_bound = max([tubes["TangentialSize"]] + [bound * (1.0 + 1e-9) for bound in face_end_bound.values()])
+    validate_tube_face_end_summary(tubes, rows)
+    validate_arc_tubes(tubes, rows, read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]))
     # Decision 40: the layers follow the composed size field on the tube axis. Every
     # tube records its layer thickness statistics (the largest layer is its Spacing,
     # the neighbour ratio within the growth ratio), the record names the layer rule
@@ -1682,7 +1997,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
             _census_number(layer_statistics, "MaximumNeighbourRatio", "Tube layer thickness") > ratio or
             not 0.0 < _census_number(layer_statistics, "Minimum", "Tube layer thickness") <=
             _census_number(layer_statistics, "P50", "Tube layer thickness") <=
-            _census_number(layer_statistics, "Maximum", "Tube layer thickness") <= tubes["TangentialSize"] or
+            _census_number(layer_statistics, "Maximum", "Tube layer thickness") <= spacing_bound or
             _census_number(tubes, "SpacingMinimum", "Prism tube record") != layer_statistics["Minimum"] or
             _census_number(tubes, "SpacingMaximum", "Prism tube record") != layer_statistics["Maximum"] or
             _count(layer_statistics.get("LayersBelowTangentialSizeOverGrowthRatio"),
@@ -1691,7 +2006,12 @@ def validate_gmsh_build_census(build_report, census, semantic):
     for row in rows:
         layers = row.get("LayerThickness")
         ends_on_box = row.get("EndsOnBox")
-        if (not isinstance(layers, dict) or
+        # A face end replaces the decision-41 surface layer of its end by its block: the
+        # end layer IS the block spacing (the block / interior ratio is recorded, not gated).
+        face_ends = {record["End"]: record for record in row.get("FaceEnds", [])}
+        blocks = layers.get("FaceEndBlocks", {}) if isinstance(layers, dict) else {}
+        if (not isinstance(layers, dict) or not isinstance(blocks, dict) or
+                set(blocks) != {end.capitalize() for end in face_ends} or
                 any(_census_number(layers, name, "Tube row layer thickness") <= 0.0
                     for name in ("Minimum", "P50", "Maximum", "AtStart", "AtEnd",
                                  "PrescribedAtStart", "PrescribedAtEnd")) or
@@ -1702,10 +2022,25 @@ def validate_gmsh_build_census(build_report, census, semantic):
                     for name in ("Minimum", "P50", "Maximum")) or
                 not isinstance(ends_on_box, list) or len(ends_on_box) != 2 or
                 not all(isinstance(flag, bool) for flag in ends_on_box) or
-                (ends_on_box[0] and layers["AtStart"] > layers["PrescribedAtStart"] * (1.0 + 1e-9)) or
-                (ends_on_box[1] and layers["AtEnd"] > layers["PrescribedAtEnd"] * (1.0 + 1e-9))):
+                ("start" in face_ends and not ends_on_box[0]) or ("end" in face_ends and not ends_on_box[1]) or
+                ("start" not in face_ends and ends_on_box[0] and
+                 layers["AtStart"] > layers["PrescribedAtStart"] * (1.0 + 1e-9)) or
+                ("end" not in face_ends and ends_on_box[1] and
+                 layers["AtEnd"] > layers["PrescribedAtEnd"] * (1.0 + 1e-9)) or
+                ("start" in face_ends and (abs(layers["AtStart"] - face_ends["start"]["EndSpacing"]) >
+                                           1e-9 * face_ends["start"]["EndSpacing"] or
+                                           _count(blocks.get("Start", {}).get("Layers"), "Face-end block layers") !=
+                                           face_ends["start"]["Layers"] or
+                                           _census_number(blocks.get("Start", {}), "NeighbourRatio",
+                                                          "Face-end block") <= 0.0)) or
+                ("end" in face_ends and (abs(layers["AtEnd"] - face_ends["end"]["EndSpacing"]) >
+                                         1e-9 * face_ends["end"]["EndSpacing"] or
+                                         _count(blocks.get("End", {}).get("Layers"), "Face-end block layers") !=
+                                         face_ends["end"]["Layers"] or
+                                         _census_number(blocks.get("End", {}), "NeighbourRatio",
+                                                        "Face-end block") <= 0.0))):
             raise ValueError("Prism tube row lacks its layer thickness record within the growth ratio "
-                             "with the surface layer at an end on the box")
+                             "with the surface layer at an end on the box (or its face-end block)")
     section = tubes.get("Section")
     rings = _count(section.get("Rings") if isinstance(section, dict) else None, "Tube rings")
     sizes = section.get("RingSizes") if isinstance(section, dict) else None

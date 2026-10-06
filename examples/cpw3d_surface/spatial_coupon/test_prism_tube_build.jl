@@ -1116,12 +1116,24 @@ end
             )
         )
     )
-    @test occursin(
-        "ScopeGuard[ShortEdges]",
-        guard_message(
-            () -> metal_edge_segments([loop], corners, angle -> 5.0, lower, upper, 1.0e-9)
-        )
+    # A side shorter than its clearances is no longer a guard (block (b) design A9
+    # family 3): with the inner ring size given it is an untubed short side; the
+    # class is not among the guards.
+    @test !any(guard -> guard[1] == "ShortEdges", RECIPE_SCOPE_GUARDS)
+    @test "UntubedShortEdges" in RECIPE_SCOPE_SUPPORTED_CLASSES
+    short_segments = metal_edge_segments(
+        [loop],
+        corners,
+        angle -> 5.0,
+        lower,
+        upper,
+        1.0e-9;
+        edge_size=0.01,
+        corner_radius=0.1
     )
+    @test [segment.untubed for segment in short_segments] == [false, true, false]
+    @test short_segments[2].covered_by_balls == false   # span 2.83 > 2 x 0.1
+    @test short_segments[2].corners == (true, true)
     @test occursin(
         "ScopeGuard[NarrowTransverseBound]",
         guard_message(() -> tube_ring_count(0.01, 2.0, 0.005))
@@ -1225,11 +1237,22 @@ end
     @test records[1]["Vertices"] == 7 &&
           records[1]["Conductor"] == 1 &&
           records[1]["Plane"] == 0.0
-    scope = recipe_scope_record(["ExteriorLoops"], [loop], lower, upper, 1.0e-9)
+    scope = recipe_scope_record(
+        ["ExteriorLoops"],
+        [loop],
+        lower,
+        upper,
+        1.0e-9,
+        Dict{String, Any}[]
+    )
     @test scope["Recipe"] == "prism-tubes" && scope["GuardedClasses"] == ids
     @test scope["SupportedClasses"] == RECIPE_SCOPE_SUPPORTED_CLASSES
     @test [guard["Id"] for guard in scope["Guards"]] == ids
     @test 2 * sum(record["Sides"] for record in scope["MetalLoops"]) == 6
+    # Block (b) design A9 family 3: the untubed short sides are part of the Scope record.
+    @test scope["UntubedEdges"] == [] &&
+          scope["UntubedShortEdgeRule"] == UNTUBED_SHORT_EDGE_RULE
+    @test occursin("minus the untubed short sides", scope["Rule"])
 end
 
 @testset "tube and band volume size laws" begin
