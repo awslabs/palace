@@ -2021,6 +2021,99 @@ routing locator; its forced-GSLIB variant was removed with the global gslib hash
 346 (b)), the notch fail-closed case, and the misplaced coupon (reference off the mesh,
 every point off the mesh, no applied patch left) aborts.
 
+**Corner-arm trim (decision 394 F1, 2026-10-06; `ApplyCornerArmTrim`).** A matched corner's
+coupon is calibrated on the matching square |u|, |v| <= R of its canonical frame (u = the
+first arm away from the vertex, the second arm counterclockwise at the corner angle theta;
+`corner_frame` / `arm_crossing_fractions` of the corner generator), its surface energy
+localised to the radius-R tubes of BOTH arms inside the square, while the vertex window of
+item 1 claims R along each arm. The square contains the second arm up to s = R / max(|cos
+theta|, |sin theta|) from the vertex (1.155 R at 120 / 150 deg, 1.414 R at 135, 1.256 R at
+52.8, 1.005 R at 174), so the stretch [R, s) of that arm was modelled twice (the corner
+coupon's tube and the straight cells): the corner-class diagnosis of decision 393 measured
+it as +1.0 % of the within-R MS of a 120 / 135-deg window (0.155-0.414 R per non-90-deg
+corner). RULE (generic in theta): the second arm's translational cells begin where the arm
+exits the square. Every translational patch (coupon depth > 0) whose own-edge cell (the cell
+shifted by the provenance `EdgeOffset` along AxisU: a pair's cells sit on the midline, a
+stack's on the first side) lies within `kSignatureParameterToleranceOverRadius` x R of the
+second arm's line and plane loses its part before s along the arm — the kept part is
+re-expressed as the continuation ownership does (a cell at the kept midpoint, weight and
+provenance quadrature weight scaled by kept / cell, the Maxwell anchors moved; a cell wholly
+before s keeps weight 0 and is not applied, like a wholly owned cell) — and a cell that
+begins BEFORE R (a snapped claim boundary: the C4 L2 arm cells at 1.807-1.844 um of R =
+1.9) loses that part too: the cells start at s. An unmatched feature's portion on that arm
+(F2 below) loses the same part. A corner whose trim s - R is within the tolerance
+(perpendicular arms: s = R exactly for the quantised 90-deg signature) is untouched and
+not listed: the 90-deg layout is the legacy one, bitwise (the transmon alias preflight
+patches CSV b362840fcc34 unchanged; the 91.5-deg C4 corners at 0.00034 R are below the
+tolerance). Only the arms of a corner whose coupon is applied are trimmed (a Missing
+corner has no coupon). Applied at the end of `BuildFeaturePatches`, so the geometry cache
+(version 9) and the dry run carry the trimmed cells; the first arm (exit at R = the window
+end) and the straight cells of every other feature are untouched. RECORD, one entry per
+trimmed corner, in `Identification.Diagnostics.CornerArmTrim` of the preflight manifest
+(`Summary.CornerArmTrim` = count / lengths), the operator's `Diagnostics.CornerArmTrim`
+(palace.json) and the cache: `AngleDegrees`, `ExitDistanceOverR` = s / R, `TrimmedLength`
+= s - R (the geometric trim), `RemovedCellLength` (the cell length removed, >= the trim
+when a cell began before R, smaller when the arm's cells stop short of s or the arm is an
+unmatched feature), `RemovedUncoveredLength`, the clipped `Patches`; `Cells` lists
+(`Patch`, `RemovedLength`) in mesh units for the A7 audit (`audit.py` adds them to the
+continuation ownership's owned lengths: a portion's quadrature x model weights sum to 1 -
+(owned + removed) / portion). Unit test `SurfaceResponseOperator corner-arm trim`
+(`test-cornerarmtrim.cpp`): the unit-cube lead sheared in its metal plane to a 120-deg
+convex corner (s = 1.1547 R, one cell clipped exactly to s, the first arm at R, the
+portion sums 1 - trim / portion, the operator record = the manifest's on 1 and 2 ranks) and
+the unsheared 90-deg lead (no record, 18 rows, every arm cell at R, unit portion sums).
+KNOWN LIMITS: a cell on the second arm that continues a cluster claim is clipped here and
+again by the continuation ownership (both on the current cell: consistent); a corner coupon
+later excluded (DomainBoundary, vertex ownership) leaves its trimmed stretch uncorrected
+with its window (the exclusion records cover the corner, not the stretch); a
+SpatialEdgeCluster patch on the second arm is dense and not clippable (the decision-244
+class).
+
+**Uncovered requirements keep their raw within-R energy (decision 394 F2, 2026-10-06).**
+The corrected interface energy of a target is E_out (the raw energy beyond R of EVERY metal
+edge of the interface) + the applied models' fabricated surface energies: a feature the
+library has no model for (Status Missing — unmatched alone, no neighbour affected) had its
+within-R raw energy subtracted with nothing added (S5's Missing cluster 448693d60a6f, -3.0 /
+-2.9 / -2.4 % of the window at the reference's share; decision 393 (b)). RULE: the portions
+of every unmatched feature are recorded as global sub-segments of the perimeter
+(`ResponseCorrectionData::uncovered_portions`, after the corner-arm trim; carried by the
+geometry cache and the operator, `GetUncoveredPortions`), and the electrostatic driver adds
+to every corrected interface energy the RAW within-R energy whose nearest perimeter point
+lies on one of them — the fixed-trace and fixed-flux columns on the raw field, the
+self-consistent column on the CORRECTED field (the field whose E_out that column already
+carries: one field per column; the decision-341 non-target convention keeps a plain sheet
+RAW because no corrected field exists for it, whereas here it does). The partition is
+exact: `SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies` finds the quadrature point's
+nearest perimeter segment in the interface's own edge-distance tree (the one E_out uses),
+weights it by 1 - the outside window weight (the same `EdgeDistances` smoothing), and tests
+the foot parameter against the closed intervals of the uncovered portions found on that
+segment (a portion within `kSignatureParameterToleranceOverRadius` x R of a segment of this
+perimeter; a portion of another plane finds none and is skipped; a portion near a segment
+at its midpoint but off it at its ends fails closed: the identification's and the
+postprocessing perimeters differ). A foot at a shared vertex belongs to both incident
+portions of one feature (a corner's two arms, the window's exterior sector), an interior
+boundary has measure zero, so E_out + uncovered + the modelled perimeter's within-R energy
+partition the interface and the fully matched case is bitwise unchanged (no portion, no
+new file; the identity ft = E_out + sum of the model energies holds as before). The
+uncovered energy is NOT a correction (it is the thin device's own unconverged sheet-edge
+energy there): it is REPORTED separately per feature type in
+`surface-response-uncovered-energy.csv` (written only when something is uncovered): per
+source, evaluation (0 / 1 the raw field kept in the fixed-trace / fixed-flux energies, 2
+the corrected field kept in the self-consistent energy; NaN when that evaluation is
+unavailable) and type (one row per type and a Total row), the portion count and length of
+that type, and per target interface the uncovered raw energy and its share of that
+evaluation's corrected interface energy; `Diagnostics.Uncovered` (manifest, palace.json)
+lists the portions with `ByType` counts and lengths and `Summary.Uncovered` the totals.
+The Maxwell surface response (eigenmode) is unchanged (its corrected energies drop the
+uncovered within-R energy as before; recorded). Unit test `Electrostatic uncovered
+requirements keep their raw energy` (`test-cornerarmtrim.cpp`): the two-corner lead with
+and without the corner model — the fully matched run writes no table and keeps the
+identity, the Missing-corner run reads ft = E_out + models + uncovered (1e-10), uncovered
+= the raw within-R energy minus the three isolated-edge portions' translational cells
+(decision-366 `Region` entries on the same quadrature: 1e-9, an exact partition at a
+90-deg convex corner), the raw outputs byte-identical between the two runs, the
+self-consistent row on the corrected field, on 1 and 2 ranks.
+
 **Conductor-consistency gate (decision 277 (A), 2026-10-03;
 `SurfaceResponseOperator::ApplyConductorConsistencyGate`, SOLVE TIME ONLY).** A spatial
 coupon holds its metal cross-sections on the box faces at the conductor potentials (the

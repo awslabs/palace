@@ -18452,6 +18452,19 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   std::set<std::size_t> spatially_owned_patches;
   // The placed patches: the configured ones with the continuation ownership applied (3D).
   std::vector<ResponsePatchData> placed_patches = config->patches;
+  // A second-arm cell wholly before its corner's square exit (decision 394 F1) keeps
+  // weight 0 at construction and is skipped like a wholly owned cell.
+  for (const auto &trim : config->corner_arm_trims)
+  {
+    for (const auto &[patch, removed] : trim.cells)
+    {
+      (void)removed;
+      if (placed_patches[patch].weight <= 0.0)
+      {
+        spatially_owned_patches.insert(patch);
+      }
+    }
+  }
   if (dimension == 3)
   {
     std::vector<std::string> skipped;
@@ -19435,8 +19448,33 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
-  global_patch_count = static_cast<int>(config.patches.size());
-  for (const auto &patch_config : config.patches)
+  // The applied patches: a second-arm cell wholly before its corner's square exit
+  // (decision 394 F1) keeps weight 0 at construction and is not applied.
+  std::vector<ResponsePatchData> applied_patches;
+  {
+    std::set<std::size_t> wholly_trimmed;
+    for (const auto &trim : config.corner_arm_trims)
+    {
+      for (const auto &[patch, removed] : trim.cells)
+      {
+        (void)removed;
+        if (config.patches[patch].weight <= 0.0)
+        {
+          wholly_trimmed.insert(patch);
+        }
+      }
+    }
+    applied_patches.reserve(config.patches.size());
+    for (std::size_t patch_index = 0; patch_index < config.patches.size(); patch_index++)
+    {
+      if (!wholly_trimmed.count(patch_index))
+      {
+        applied_patches.push_back(config.patches[patch_index]);
+      }
+    }
+  }
+  global_patch_count = static_cast<int>(applied_patches.size());
+  for (const auto &patch_config : applied_patches)
   {
     const auto model_it = model_indices.find(patch_config.model);
     MFEM_VERIFY(model_it != model_indices.end(),
@@ -19444,14 +19482,14 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     global_basis_size += models[model_it->second].basis_size;
   }
   const std::size_t local_patch_capacity =
-      (config.patches.size() + static_cast<std::size_t>(size) - 1) / size;
+      (applied_patches.size() + static_cast<std::size_t>(size) - 1) / size;
   maxwell_contours.reserve(local_patch_capacity);
   maxwell_conductor_anchors.reserve(local_patch_capacity);
   maxwell_paths.reserve(local_patch_capacity);
   const double coordinate_scale = iodata.units.GetMeshLengthRelativeScale();
-  for (std::size_t patch_index = 0; patch_index < config.patches.size(); patch_index++)
+  for (std::size_t patch_index = 0; patch_index < applied_patches.size(); patch_index++)
   {
-    const auto &patch_config = config.patches[patch_index];
+    const auto &patch_config = applied_patches[patch_index];
     const auto model_it = model_indices.find(patch_config.model);
     MFEM_VERIFY(model_it != model_indices.end(),
                 "Response-correction patch refers to an unknown model index!");
