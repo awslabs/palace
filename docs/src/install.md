@@ -216,6 +216,8 @@ Additional build options are (with default values in brackets):
   - `PALACE_GIT_COMMIT_ID []` :  Version string to embed (reported as `GitTag` in
     `palace.json`), for builds from a source tree without Git metadata. When empty, the
     `PALACE_GIT_COMMIT_ID` environment variable is used if set, otherwise `git describe`
+  - `PALACE_BUILD_ID []` :  Build identifier reported as `Build:` in `palace --version`. The
+    Spack package sets it to `Spack <DAG hash>`
 
 The build step is invoked by running (for example with 4 `make` threads)
 
