@@ -67,7 +67,8 @@ def donor_tail(model):
     library `MA` record; fail closed without one."""
     ma = model.get("MA")
     if not isinstance(ma, dict) or not isinstance(ma.get("MA_raw"), dict) or not isinstance(ma.get("MA_sharp"), dict):
-        raise NearKeyReuseError(f"donor {model.get('Name')}: no per-source MA shell record (MA_raw / MA_sharp): the MA_sharp bound needs t_donor")
+        raise NearKeyReuseError(f"donor {model.get('Name')}: no per-source MA shell record (MA_raw / MA_sharp): the MA_sharp bound "
+                                "needs t_donor")
     raw, sharp = ma["MA_raw"], ma["MA_sharp"]
     total_raw = sum(float(v) for v in raw.values())
     if total_raw <= 0 or set(raw) != set(sharp):
@@ -85,7 +86,9 @@ def donor_stored_state2(model, record_path=None):
     trace = next((t for t in record.get("Traces", []) if t.get("Name") == "state-2"), None)
     if trace is None or "MatrixIdentity" not in trace:
         return None, sha256(path)
-    return {cls: value["Predicted"] for cls, value in trace["MatrixIdentity"].items() if isinstance(value, dict) and "Predicted" in value}, sha256(path)
+    predicted = {cls: value["Predicted"] for cls, value in trace["MatrixIdentity"].items()
+                 if isinstance(value, dict) and "Predicted" in value}
+    return predicted, sha256(path)
 
 
 def load_exact_basis(basis_dir, name, model_entry):
@@ -145,9 +148,11 @@ def evaluate_candidate(exact, exact_signature, model, near_key, *, rule, library
     for requested in ("default", "fallback"):
         reasons = []
         if requested == "default" and not default_admits_donor:
-            reasons.append("DonorBuildGateOverride: " + (override["Kind"] if override else "donor status") + " refuses default reuse (decision 431)")
+            reasons.append("DonorBuildGateOverride: " + (override["Kind"] if override else "donor status")
+                           + " refuses default reuse (decision 431)")
         decision = predictor.policy_decision(rule, prediction, requested_mode=requested, t2_passed=result["T2Passed"],
-                                             gates_passed=result["GatesPassed"], in_domain=in_domain, in_domain_reasons=near_key["Refusals"],
+                                             gates_passed=result["GatesPassed"], in_domain=in_domain,
+                                             in_domain_reasons=near_key["Refusals"],
                                              stop_record=stop_record if requested == "fallback" else None,
                                              approval=approval if requested == "fallback" else None)
         if reasons:
@@ -206,11 +211,13 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
     exact_name = exact_model_entry["Name"]
     key_hash = requirement_key or detection.signature_library.signature_hash(exact_signature)
     stamped = exact_model_entry.get("Signature")
-    if stamped is not None and detection.signature_library.signature_hash(stamped) != detection.signature_library.signature_hash(exact_signature):
+    signature_hash = detection.signature_library.signature_hash
+    if stamped is not None and signature_hash(stamped) != signature_hash(exact_signature):
         raise NearKeyReuseError(f"{exact_name}: the generated basis's Signature differs from the requirement's (hash mismatch)")
     records = detection.candidate_donors(exact_signature, library, rule=rule, exact_interfaces=exact_interfaces,
                                          exact_boundary_condition=exact_boundary_condition)
-    record = {"Requirement": exact_name, "FeatureKey": key_hash, "Mode": mode, "RuleVersion": rule["RuleVersion"], "RuleFileSHA256": rule["_sha256"],
+    record = {"Requirement": exact_name, "FeatureKey": key_hash, "Mode": mode, "RuleVersion": rule["RuleVersion"],
+              "RuleFileSHA256": rule["_sha256"],
               "Candidates": [], "Reused": False, "Model": None, "Refused": None}
     if "*" in records:
         # the requirement's structure key is not calibrated: refused before any basis is read (DESIGN 1.2 item 0)
@@ -236,12 +243,15 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
             continue
         log(f"{exact_name}: candidate donor {name} (W {100 * near_key['W']:+.3f} %, S {100 * near_key['S']:.4f} %): transplant")
         try:
-            evaluation = evaluate_candidate(exact, exact_signature, by_name[name], near_key, rule=rule, library_root=library_root, mode=mode,
+            evaluation = evaluate_candidate(exact, exact_signature, by_name[name], near_key, rule=rule,
+                                            library_root=library_root, mode=mode,
                                             matrices_root=matrices_root, shelled_path=(shelled_paths or {}).get(name),
-                                            record_path=(record_paths or {}).get(name), stop_record=stop_record, approval=approval, radius=radius)
+                                            record_path=(record_paths or {}).get(name), stop_record=stop_record, approval=approval,
+                                            radius=radius)
         except (NearKeyReuseError, transplant.TransplantError) as error:
             # a candidate whose matrices / records cannot be read is not a donor (fail closed per candidate, recorded)
-            candidates.append({"Model": name, "W": near_key.get("W"), "S": near_key.get("S"), "Chosen": False, "RejectedReason": f"NotLoadable: {error}"})
+            candidates.append({"Model": name, "W": near_key.get("W"), "S": near_key.get("S"), "Chosen": False,
+                               "RejectedReason": f"NotLoadable: {error}"})
             log(f"{exact_name}: candidate donor {name} rejected: {error}")
             continue
         evaluations.append(evaluation)
@@ -251,17 +261,20 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
     record.update({"Candidates": candidates, "Reused": chosen is not None})
     if chosen is None:
         reason = "no admissible candidate donor" if evaluations else "no candidate donor qualifies"
-        record["Refused"] = {"Reason": reason, "Candidates": candidates, "Rule": "DESIGN 1.4: the feature stays Missing -> uncovered (F2 raw energy, decision 398)"}
+        record["Refused"] = {"Reason": reason, "Candidates": candidates,
+                             "Rule": "DESIGN 1.4: the feature stays Missing -> uncovered (F2 raw energy, decision 398)"}
         (output / REFUSAL_RECORD).write_text(json.dumps(record, indent=1) + "\n")
         log(f"{exact_name}: near-key reuse REFUSED: {reason}")
         return record
-    entry, model_dir = write_reused_model(exact=exact, exact_basis_dir=exact_basis_dir, exact_model_entry=exact_model_entry, evaluation=chosen,
+    entry, model_dir = write_reused_model(exact=exact, exact_basis_dir=exact_basis_dir, exact_model_entry=exact_model_entry,
+                                          evaluation=chosen,
                                          library=library, library_path=library_path, rule=rule, mode=mode, output=output, key_hash=key_hash,
                                          candidates=candidates, stop_record=stop_record, approval=approval, generator=generator)
     record["Model"] = entry
     record["ModelDirectory"] = str(model_dir)
     log(f"{exact_name}: near-key reuse {entry['ReuseMode']} from {chosen['Donor']} (W {100 * chosen['NearKey']['W']:+.3f} %; bounds "
-        + " / ".join(f"{100 * chosen['Prediction'][T]['Bound']:.3f}" for T in predictor.TYPES) + f" %, MA_sharp {100 * chosen['Prediction']['MA_sharp']['Bound']:.3f} %)")
+        + " / ".join(f"{100 * chosen['Prediction'][T]['Bound']:.3f}" for T in predictor.TYPES)
+        + f" %, MA_sharp {100 * chosen['Prediction']['MA_sharp']['Bound']:.3f} %)")
     return record
 
 
@@ -285,7 +298,8 @@ def write_reused_model(*, exact, exact_basis_dir, exact_model_entry, evaluation,
     written, map_record = transplant.write_matrices(model_dir, donor, result)
     tests = transplant.test_summary(result)
     near_key = dict(evaluation["NearKey"])
-    near_key.update({"FeatureKey": key_hash, "Knots": {k: tests["Knots"][k] for k in ("Exact", "Donor", "Displaced", "DonorOrphans", "ExactOrphans",
+    near_key.update({"FeatureKey": key_hash, "Knots": {k: tests["Knots"][k] for k in ("Exact", "Donor", "Displaced",
+                                                                                      "DonorOrphans", "ExactOrphans",
                                                                                       "MaxMatchedDisplacementOverR", "KnotsInterpolated")},
                      "KnotMaxOverR": tests["Knots"]["MaxMatchedDisplacementOverR"], "Candidates": candidates})
     prediction = dict(evaluation["Prediction"])
@@ -319,14 +333,17 @@ def write_reused_model(*, exact, exact_basis_dir, exact_model_entry, evaluation,
     entry["StatusProvisional"] = False
     entry["LibraryQualified"] = False
     entry["ReuseMode"] = reuse_mode
-    entry["ReusedFrom"] = {"Donor": donor_entry["Name"], "DonorKey": donor_entry.get("Signature") and detection.signature_library.signature_hash(donor_entry["Signature"]),
+    entry["ReusedFrom"] = {"Donor": donor_entry["Name"],
+                           "DonorKey": (detection.signature_library.signature_hash(donor_entry["Signature"])
+                                        if donor_entry.get("Signature") else None),
                            "DonorLibrary": {"Name": library.get("Name"), "Version": library.get("Version"), "Path": str(library_path),
                                             "SHA256": sha256(library_path)},
                            "DonorRecordSHA256": evaluation["DonorRecordSHA256"],
                            "DonorMatrixSHA256": {role: value["SHA256"] for role, value in transplant_record["DonorMatrixFiles"].items()},
                            "MapCSVSHA256": map_record["SHA256"], "TransplantRecordSHA256": sha256(record_path),
                            "Tool": transplant_record["Tool"], "ToolSHA256": transplant_record["ToolSHA256"],
-                           "BasisGenerator": generator or {"Command": "generate_spatial_response.py --basis-only (the registration's bound basis)",
+                           "BasisGenerator": generator or {"Command": "generate_spatial_response.py --basis-only (the registration's "
+                                                                      "bound basis)",
                                                            "BasisFilesSHA256": copied},
                            "GeneratedSignatureHashEqualsKey": True, "DonorBuildGateOverride": evaluation["Override"]}
     entry["NearKey"] = near_key
@@ -341,7 +358,8 @@ def write_reused_model(*, exact, exact_basis_dir, exact_model_entry, evaluation,
     else:
         entry["MeasurementOnly"] = True
         entry["ExactModelName"] = exact_name
-    entry["Note"] = (f"REUSED RESPONSE ({reuse_mode}; {rule['RuleVersion']}; decisions 420 / 428 / 431): the response matrices of the donor "
+    entry["Note"] = (f"REUSED RESPONSE ({reuse_mode}; {rule['RuleVersion']}; decisions 420 / 428 / 431): the response matrices of the "
+                     f"donor "
                      f"{donor_entry['Name']} transplanted onto this feature's own generated basis (W {100 * near_key['W']:+.3f} %, S "
                      f"{100 * near_key['S']:.4f} %); predicted |r| bound SA / MS / MA "
                      + " / ".join(f"{100 * prediction[T]['Bound']:.3f}" for T in predictor.TYPES)
@@ -389,7 +407,8 @@ def assemble_library(library, reused_models, *, rule, name, note=None, measureme
     out["NearKeyReuse"]["Replaced"] = replaced
     if measurement_only:
         out["MeasurementOnly"] = True
-        out["Note"] = ("MEASUREMENT-ONLY near-key reuse demo (decisions 428 / 431; nearkey-reuse-impl lane): NEVER a library of record, never "
+        out["Note"] = ("MEASUREMENT-ONLY near-key reuse demo (decisions 428 / 431; nearkey-reuse-impl lane): NEVER a library of record, "
+                       "never "
                        "for production or any window verdict. " + (note or "") + " " + str(library.get("Note", "")))
     elif note:
         out["Note"] = note + " " + str(library.get("Note", ""))
@@ -433,7 +452,8 @@ def command_evaluate(args):
     if (basis_dir / "process-library.json").is_file():
         generated = json.loads((basis_dir / "process-library.json").read_text())
         if len(generated.get("Models", [])) != 1:
-            raise NearKeyReuseError(f"{basis_dir}: the basis directory's process-library.json carries {len(generated.get('Models', []))} models, not one")
+            raise NearKeyReuseError(f"{basis_dir}: the basis directory's process-library.json carries "
+                                    f"{len(generated.get('Models', []))} models, not one")
         entry = generated["Models"][0]
     elif not args.exact_signature_from:
         raise NearKeyReuseError(f"{basis_dir}: no process-library.json (the generated model entry) and no --exact-signature-from")
@@ -445,7 +465,8 @@ def command_evaluate(args):
         entry = copy.deepcopy(source)
         for key in ("BasisPoints", "TraceMesh"):
             entry.pop(key, None)
-        entry.update({"BasisPoints": "basis-points.csv", "TraceMesh": {"Vertices": "trace-vertices.csv", "Triangles": "trace-triangles.csv"}})
+        entry.update({"BasisPoints": "basis-points.csv", "TraceMesh": {"Vertices": "trace-vertices.csv",
+                                                                       "Triangles": "trace-triangles.csv"}})
         for key in ("FabricatedSurfaceMatrixShelled", "CouponMesh", "ThinCouponMesh", "Qualification", "ThinQualification",
                     "SpatialQualification", "CombinedFrom", "SourceProcessLibrary", "BuildGateOverride", "StatusProvisionalTool"):
             entry.pop(key, None)
@@ -456,8 +477,10 @@ def command_evaluate(args):
     stop = stop_record_from_path(args.stop_record, entry["Name"]) if args.stop_record else None
     record = reuse_requirement(exact_signature=signature, exact_basis_dir=basis_dir, exact_model_entry=entry, library=library,
                                library_path=args.library, rule=rule, mode=args.mode, output=args.output, donors=args.donor or None,
-                               matrices_root=args.donor_matrices_root, shelled_paths=parse_assignments(args.donor_shelled, "--donor-shelled"),
-                               record_paths=parse_assignments(args.donor_record, "--donor-record"), stop_record=stop, approval=args.approval)
+                               matrices_root=args.donor_matrices_root, shelled_paths=parse_assignments(args.donor_shelled,
+                                                                                                       "--donor-shelled"),
+                               record_paths=parse_assignments(args.donor_record,
+                                                              "--donor-record"), stop_record=stop, approval=args.approval)
     (Path(args.output) / f"{entry['Name']}-nearkey-reuse.json").write_text(json.dumps(record, indent=1) + "\n")
     return 0 if record["Reused"] else 2
 
@@ -478,16 +501,22 @@ def build_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     evaluate = commands.add_parser("evaluate", help="detect, transplant, predict and decide one requirement")
-    evaluate.add_argument("--library", required=True, help="the process library (the donor pool; its Models' paths resolve against its directory)")
-    evaluate.add_argument("--exact-basis", required=True, help="the requirement's --basis-only directory (trace mesh, basis points, process-library.json)")
-    evaluate.add_argument("--exact-signature-from", help="take the requirement's Signature / geometric entry from this library model (the demo: "
-                                                         "the exact model exists in the library; its own entry is refused as a quantum match)")
+    evaluate.add_argument("--library", required=True,
+                          help="the process library (the donor pool; its Models' paths resolve against its directory)")
+    evaluate.add_argument("--exact-basis", required=True,
+                          help="the requirement's --basis-only directory (trace mesh, basis points, process-library.json)")
+    evaluate.add_argument("--exact-signature-from",
+                          help="take the requirement's Signature / geometric entry from this library model (the demo: "
+                                                         "the exact model exists in the library; its own entry is refused as a quantum "
+                                                         "match)")
     evaluate.add_argument("--output", required=True)
     evaluate.add_argument("--mode", choices=MODES, default="fallback")
     evaluate.add_argument("--donor", action="append", help="restrict the candidate donors to these model Names (recorded)")
     evaluate.add_argument("--donor-matrices-root", help="local mirror of the donors' model directories (<model dir name>/<csv>)")
-    evaluate.add_argument("--donor-shelled", action="append", metavar="NAME=PATH", help="the donor's fabricated SHELLED surface matrix file")
-    evaluate.add_argument("--donor-record", action="append", metavar="NAME=PATH", help="the donor's (F) spatial-qualification.json (T4 vs the stored energies)")
+    evaluate.add_argument("--donor-shelled", action="append", metavar="NAME=PATH",
+                          help="the donor's fabricated SHELLED surface matrix file")
+    evaluate.add_argument("--donor-record", action="append", metavar="NAME=PATH",
+                          help="the donor's (F) spatial-qualification.json (T4 vs the stored energies)")
     evaluate.add_argument("--stop-record", help="fallback: the registration / build STOP record of the exact key (JSON)")
     evaluate.add_argument("--approval", help="fallback: the recorded approval text")
     evaluate.add_argument("--rule", default=str(predictor.RULE_FILE))
@@ -498,7 +527,8 @@ def build_parser():
     assemble.add_argument("--output", required=True)
     assemble.add_argument("--name", required=True)
     assemble.add_argument("--note")
-    assemble.add_argument("--measurement-only", action="store_true", help="a measurement-only library (the exact models of the same Name replaced)")
+    assemble.add_argument("--measurement-only", action="store_true",
+                          help="a measurement-only library (the exact models of the same Name replaced)")
     assemble.add_argument("--rule", default=str(predictor.RULE_FILE))
     assemble.set_defaults(func=command_assemble)
     return parser

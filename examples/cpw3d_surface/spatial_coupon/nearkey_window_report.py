@@ -139,13 +139,15 @@ def window_report(library, postpro, reference_energies=None):
             "ReusedShare": share, "ReuseBudgetPoints": budget,
             "BudgetOfRecord": {"SA": budget["SA"], "MS": budget["MS"], "MA_sharp": budget["MA_sharp"], "MA_raw_information": budget["MA"]},
             "ReuseBudgetLarge": flagged, "Counts": {"Reused": len(per_model), "Models": len(names)},
-            "Rule": "DESIGN v2 4.4 phase 1: share_T = SUM_reused E_T / E_ref,T; budget_T = SUM_reused Bound_T x E_T / E_ref,T (points; a bound, "
+            "Rule": "DESIGN v2 4.4 phase 1: share_T = SUM_reused E_T / E_ref,T; budget_T = SUM_reused Bound_T x E_T / E_ref,T (points; "
+                    "a bound, "
                     "signs may cancel); MA of record on the MA_sharp bound x the raw-MA share (conservative by (1 + t_donor)); "
                     f"ReuseBudgetLarge above {REUSE_BUDGET_LARGE_POINTS} point"}
 
 
 def markdown(report):
-    lines = ["| reused model | mode | donor | W % | share SA / MS / MA % | bound SA / MS / MA / MA_sharp % | budget SA / MS / MA_sharp (MA raw) points |",
+    lines = ["| reused model | mode | donor | W % | share SA / MS / MA % | bound SA / MS / MA / MA_sharp % | "
+             "budget SA / MS / MA_sharp (MA raw) points |",
              "|---|---|---|---|---|---|---|"]
     for m in report["ReusedModels"]:
         lines.append(f"| {m['Model']} | {m['ReuseMode']} | {m['Donor']} | {100 * (m['W'] or 0):+.3f} | "

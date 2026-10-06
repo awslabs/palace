@@ -390,7 +390,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                      "gallery reference)"},
               "NearKeyReuse": {"Mode": nearkey_reuse_mode, "RuleVersion": rule["RuleVersion"] if rule else None,
                                "RuleFileSHA256": rule["_sha256"] if rule else None, "Reused": [], "Refused": [],
-                               "Rule": "USER decision 428 (Option A) / decision 431 / DESIGN v2: nearkey_reuse.reuse_requirement on the generated "
+                               "Rule": "USER decision 428 (Option A) / decision 431 / DESIGN v2: nearkey_reuse.reuse_requirement on the "
+                                       "generated "
                                        "basis before registration; a reused coupon is not registered / built; a refusal is recorded"},
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
@@ -446,7 +447,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             if stop_option is not None:
                 consumed_stop.append(stop_option[0])
             near_key = nearkey_reuse_for_coupon(coupon, work, case_id, library=library, library_path=library_path, rule=rule,
-                                                mode=nearkey_reuse_mode, output=output / "reused", stop_record_path=None if stop_option is None else stop_option[1],
+                                                mode=nearkey_reuse_mode, output=output / "reused",
+                                                stop_record_path=None if stop_option is None else stop_option[1],
                                                 approval=nearkey_fallback_approval, log=log)
             (record["NearKeyReuse"]["Reused"] if near_key["Reused"] else record["NearKeyReuse"]["Refused"]).append(
                 {key: near_key[key] for key in ("Case", "Requirement", "Reason", "Donor", "ReuseMode", "ModelDirectory")})
@@ -518,7 +520,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                   "Interfaces": coupon["Interfaces"], "DeviceOccurrences": coupon["DeviceOccurrences"],
                                   "DeviceEdgeLength": coupon["DeviceEdgeLength"], "Registration": None, "NearKeyReuse": near_key})
         log(f"{case_id}: source directory {status} ({edge_count} edges, requirement {coupon['Id']})"
-            + (f"; near-key REUSED from {near_key['Donor']} ({near_key['ReuseMode']}): not registered" if near_key and near_key["Reused"] else ""))
+            + (f"; near-key REUSED from {near_key['Donor']} ({near_key['ReuseMode']}): not registered"
+               if near_key and near_key["Reused"] else ""))
     check_requirement_options_consumed(span_caps, consumed_span, "--support-span-cap")
     check_requirement_options_consumed(caps, consumed_caps, "--element-cap")
     if nearkey_reuse_mode == "fallback":
@@ -554,7 +557,8 @@ def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, ru
     record_path.write_text(json.dumps(result, indent=1) + "\n")
     if not result["Reused"]:
         return {**base, "Reason": result["Refused"]["Reason"], "Record": str(record_path)}
-    return {**base, "Reused": True, "Reason": None, "Donor": result["Model"]["ReusedFrom"]["Donor"], "ReuseMode": result["Model"]["ReuseMode"],
+    return {**base, "Reused": True, "Reason": None, "Donor": result["Model"]["ReusedFrom"]["Donor"],
+            "ReuseMode": result["Model"]["ReuseMode"],
             "ModelDirectory": result["ModelDirectory"], "Record": str(record_path)}
 
 

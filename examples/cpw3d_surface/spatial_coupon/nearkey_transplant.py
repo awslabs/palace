@@ -87,7 +87,8 @@ class TraceBasis:
         basis_points = np.array([[float(r[k]) for k in "xyz"] for r in rows(self.directory / "basis-points.csv")])
         self.n_free = int(self.basis.max())
         if (self.basis > 0).sum() != self.n_free or len(basis_points) != self.n_free:
-            raise TransplantError(f"{name}: basis columns {(self.basis > 0).sum()} / max {self.n_free} / basis-points {len(basis_points)} disagree")
+            raise TransplantError(f"{name}: basis columns {(self.basis > 0).sum()} / max {self.n_free} / basis-points "
+                                  f"{len(basis_points)} disagree")
         free = self.points[self.basis > 0][np.argsort(self.basis[self.basis > 0])]
         if not np.array_equal(free, basis_points):
             raise TransplantError(f"{name}: basis-points.csv != the free trace vertices in basis order")
@@ -327,7 +328,8 @@ def knot_matching(mapped_donor_knots, exact_knots, radius):
     exact_orphans = [{"ExactKnot": int(e + 1), "NearestDonorDistanceUm": float(d[:, e].min())} for e in range(len(exact_knots))
                      if e not in matched_exact]
     displacement = max((x for _, _, x in matched), default=0.0)
-    displaced = [{"DonorKnot": int(a + 1), "ExactKnot": int(e + 1), "DisplacementUm": x} for a, e, x in matched if x > SNAP_QUANTA * QUANTUM_OVER_R * radius]
+    displaced = [{"DonorKnot": int(a + 1), "ExactKnot": int(e + 1), "DisplacementUm": x} for a, e,
+                 x in matched if x > SNAP_QUANTA * QUANTUM_OVER_R * radius]
     return {"Matched": len(matched), "Displaced": displaced, "DonorOrphans": donor_orphans, "ExactOrphans": exact_orphans,
             "MaxMatchedDisplacementUm": displacement, "MaxMatchedDisplacementOverR": displacement / radius}
 
@@ -349,7 +351,8 @@ def transplant(exact, donor, radius, *, gates=DEFAULT_GATES, domain_limits=None,
                    "RowsTouchingConductor1": [r["SourceKnot"] for r in map_record if any(c == 1 for c, _ in r["ConductorVertexWeights"])]}
     # T2 (trace form) and T2e (energy form) on the five synthetic traces
     exact_knots, exact_labels = exact.free_knots()
-    donor_knots, donor_labels = mapped[donor.basis > 0][np.argsort(donor.basis[donor.basis > 0])], donor.conductor[donor.basis > 0][np.argsort(donor.basis[donor.basis > 0])]
+    donor_order = np.argsort(donor.basis[donor.basis > 0])
+    donor_knots, donor_labels = mapped[donor.basis > 0][donor_order], donor.conductor[donor.basis > 0][donor_order]
     analytic_exact = analytic_traces(exact, radius, exact_knots, exact_labels, exact_knots)
     analytic_donor = analytic_traces(exact, radius, donor_knots, donor_labels, exact_knots)
     t2, t2e_per_trace = {}, {}
@@ -375,7 +378,8 @@ def transplant(exact, donor, radius, *, gates=DEFAULT_GATES, domain_limits=None,
                    "Passed": all(x["Passed"] for x in t2.values())}
     tests["T2e"] = {"PerTrace": t2e_per_trace, "PerClass": t2e_classes, "Max": t2e_max, "Tolerance": gates["T2eMax"],
                     "TransplantTerm": 2.0 * t2e_max, "Passed": bool(t2e_max <= gates["T2eMax"]),
-                    "Rule": "max over the four line-charge traces and the classes SA / MS / MA of |E_D(P t_E) - E_D(t_D)| / E_D(t_D) on the "
+                    "Rule": "max over the four line-charge traces and the classes SA / MS / MA of |E_D(P t_E) - E_D(t_D)| / E_D(t_D) "
+                            "on the "
                             "donor's fabricated matrices; the predictor's transplant term = 2 x Max"}
     # T3: the round trip E -> D -> E on the synthetic line charges (information)
     P_back, _ = build_map(exact, donor, inverse_affine_points(exact.points, affine), radius)
@@ -390,10 +394,12 @@ def transplant(exact, donor, radius, *, gates=DEFAULT_GATES, domain_limits=None,
     e_s[exact.n_free:] = 1.0
     donor_state = np.zeros(donor.size)
     donor_state[donor.n_free:] = 1.0
-    t4 = {"ImageMinusDonorState2Max": float(np.max(np.abs(P @ e_s - donor_state))), "Classes": {}, "StoredRecordUsed": donor_stored_state2 is not None}
+    t4 = {"ImageMinusDonorState2Max": float(np.max(np.abs(P @ e_s - donor_state))), "Classes": {},
+          "StoredRecordUsed": donor_stored_state2 is not None}
     worst = t4["ImageMinusDonorState2Max"]
     for label, q_reused, q_donor, stored_key in (
-            [(f"fab {cls}", reused["fab_surface"][k]["Q_ij (J)"], donor.matrices["fab_surface"][k]["Q_ij (J)"], cls) for k, cls in CLASSES.items()]
+            [(f"fab {cls}", reused["fab_surface"][k]["Q_ij (J)"], donor.matrices["fab_surface"][k]["Q_ij (J)"], cls) for k,
+             cls in CLASSES.items()]
             + [("fab Domain", reused["fab_domain"]["Q_ij (J)"], donor.matrices["fab_domain"]["Q_ij (J)"], "Domain")]):
         e_reused, e_donor = quad(q_reused, e_s), quad(q_donor, donor_state)
         entry = {"E_reused": e_reused, "E_donor_matrix": e_donor, "Relative": abs(e_reused - e_donor) / abs(e_donor)}
@@ -419,10 +425,12 @@ def transplant(exact, donor, radius, *, gates=DEFAULT_GATES, domain_limits=None,
                                      "MaxEig": float(eig.max()),
                                      "Passed": bool(sym <= gates["T5Symmetry"] and eig.min() >= -gates["T5PSD"] * eig.max())}
     tests["T5"] = {"Matrices": t5, "Passed": all(x["Passed"] for x in t5.values()),
-                   "Rule": "symmetric to 1e-12; min eigenvalue >= -T5PSD x max (the domain matrices PSD; the surface matrices PSD to roundoff)"}
+                   "Rule": "symmetric to 1e-12; min eigenvalue >= -T5PSD x max (the domain matrices PSD; the surface matrices PSD "
+                           "to roundoff)"}
     # knots
     knots = knot_matching(donor_knots, exact_knots, radius)
-    knots.update({"Exact": exact.n_free, "Donor": donor.n_free, "KnotsInterpolated": [r["SourceKnot"] for r in map_record if not r["Exact"]],
+    knots.update({"Exact": exact.n_free, "Donor": donor.n_free,
+                  "KnotsInterpolated": [r["SourceKnot"] for r in map_record if not r["Exact"]],
                   "MaxNearestVertexDistanceUm": max(r["NearestTargetVertexDistanceUm"] for r in map_record),
                   "OrphanCap": limits["OrphanKnotsMax"], "KnotShiftMaxOverR": limits["KnotShiftMaxOverR"]})
     knots["Passed"] = bool(len(knots["DonorOrphans"]) <= limits["OrphanKnotsMax"] and len(knots["ExactOrphans"]) <= limits["OrphanKnotsMax"]
@@ -431,7 +439,8 @@ def transplant(exact, donor, radius, *, gates=DEFAULT_GATES, domain_limits=None,
     gates_passed = all(tests[k]["Passed"] for k in ("T1", "T2e", "T4", "T5", "Knots"))
     return {"P": P, "Mapped": mapped, "Affine": affine,
             "Map": {"Rows": map_record, "SnapUm": SNAP_QUANTA * QUANTUM_OVER_R * radius,
-                    "SnapRule": "within 4.5 quanta of 1e-6 R of an exact vertex = that vertex (decisions 303 / 317 near-match tolerance; 380 (3)(A))"},
+                    "SnapRule": "within 4.5 quanta of 1e-6 R of an exact vertex = that vertex (decisions 303 / 317 near-match "
+                                "tolerance; 380 (3)(A))"},
             "Reused": reused, "Tests": tests, "T2eMax": t2e_max, "GatesPassed": gates_passed, "T2Passed": tests["T2"]["Passed"],
             "Sizes": {"ExactFree": exact.n_free, "DonorFree": donor.n_free, "States": exact.states}}
 
@@ -457,7 +466,8 @@ def write_surface(path, meta, per_interface):
             for i in range(n):
                 for j in range(i, n):
                     values = ", ".join(f"{per_interface[k][c][i, j]:+.12e}" for c in meta["columns"])
-                    out.write(f" {fmt_index(k)}, {fmt_index(meta['edge'])},        {meta['R (m)']}, {fmt_index(i + 1)}, {fmt_index(j + 1)}, {values}\n")
+                    out.write(f" {fmt_index(k)}, {fmt_index(meta['edge'])},        {meta['R (m)']}, {fmt_index(i + 1)}, "
+                              f"{fmt_index(j + 1)}, {values}\n")
 
 
 def check_written(path, role, reference):

@@ -33,12 +33,18 @@ MODELS_MIRROR = S2 / "nearkey-sensitivity" / "work" / "models"
 SENS_LIBRARY = S2 / "nearkey-sensitivity" / "library" / "s2-r1p9-v3-b-sens-c3"
 SHELLED = S2 / "nearkey-reuse-impl" / "work" / "shelled"
 # the design evidence (pair-geometry.json / transplant-report.json): the six pairs' golden metrics and donors
-SIX_PAIRS = {"B2": ("078-spatialedgecluster-edgecount-19-5ae3dbdd2c3d", "spatialedgecluster_edgecount-19_dcfd1e0fe3fa", -0.009527170077628535, 0.0007573071691547667),
-             "B3": ("081-spatialedgecluster-edgecount-19-1de0718f1fc8", "spatialedgecluster_edgecount-19_dcfd1e0fe3fa", 0.014625330182121218, 0.001268858969695948),
-             "B4": ("079-spatialedgecluster-edgecount-19-7d88636452b7", "spatialedgecluster_edgecount-19_a2f53cd8630e", 0.003123125975976694, 0.00020145052418115068),
-             "B5": ("080-spatialedgecluster-edgecount-19-5bda1bc70e63", "spatialedgecluster_edgecount-19_a2f53cd8630e", 0.015825391576225978, 0.00101035359560976),
-             "C1": ("076-spatialedgecluster-edgecount-19-6b38cd966bbc", "spatialedgecluster_edgecount-19_130f26d56c23", -0.06064641022620769, 0.0073833166876292955),
-             "C2": ("077-spatialedgecluster-edgecount-20-31b6896dc54d", "spatialedgecluster_edgecount-20_e04e3eb5891d", -0.11280045501005607, 0.006391354806027371)}
+SIX_PAIRS = {"B2": ("078-spatialedgecluster-edgecount-19-5ae3dbdd2c3d", "spatialedgecluster_edgecount-19_dcfd1e0fe3fa",
+                    -0.009527170077628535, 0.0007573071691547667),
+             "B3": ("081-spatialedgecluster-edgecount-19-1de0718f1fc8", "spatialedgecluster_edgecount-19_dcfd1e0fe3fa",
+                    0.014625330182121218, 0.001268858969695948),
+             "B4": ("079-spatialedgecluster-edgecount-19-7d88636452b7", "spatialedgecluster_edgecount-19_a2f53cd8630e",
+                    0.003123125975976694, 0.00020145052418115068),
+             "B5": ("080-spatialedgecluster-edgecount-19-5bda1bc70e63", "spatialedgecluster_edgecount-19_a2f53cd8630e",
+                    0.015825391576225978, 0.00101035359560976),
+             "C1": ("076-spatialedgecluster-edgecount-19-6b38cd966bbc", "spatialedgecluster_edgecount-19_130f26d56c23",
+                    -0.06064641022620769, 0.0073833166876292955),
+             "C2": ("077-spatialedgecluster-edgecount-20-31b6896dc54d", "spatialedgecluster_edgecount-20_e04e3eb5891d",
+                    -0.11280045501005607, 0.006391354806027371)}
 
 
 def rule():
@@ -183,7 +189,8 @@ class Detection(unittest.TestCase):
                 moved["Portions"][i]["P"] = [portion["P"][0] + dx, portion["P"][1] + dy, portion["P"][2] + dx, portion["P"][3] + dy]
         record = analyse(donor=donor_with(signature=moved))
         self.assertFalse(record["Qualifies"])
-        self.assertTrue(any("does not scale with the lead" in r or "not one width" in r or "narrowest strip" in r for r in record["Refusals"]),
+        self.assertTrue(any("does not scale with the lead" in r or "not one width" in r or "narrowest strip" in r
+                            for r in record["Refusals"]),
                         record["Refusals"])
 
     def test_displacements_outside_the_domain_are_refused(self):
@@ -191,7 +198,8 @@ class Detection(unittest.TestCase):
         far_vertex = shifted(exact, dx=0.06, portions=[0])          # a claim vertex moved 0.06 R > 0.05 R
         record = analyse(donor=donor_with(signature=far_vertex))
         self.assertFalse(record["Qualifies"])
-        self.assertTrue(any("claim vertex displacement" in r or "PortionCorrespondence" in r for r in record["Refusals"]), record["Refusals"])
+        self.assertTrue(any("claim vertex displacement" in r or "PortionCorrespondence" in r for r in record["Refusals"]),
+                        record["Refusals"])
         far_context = shifted(exact, dy=0.06, context=[0])          # a context endpoint moved 0.06 R
         record = analyse(donor=donor_with(signature=far_context))
         self.assertFalse(record["Qualifies"])
@@ -213,8 +221,10 @@ class Detection(unittest.TestCase):
         self.assertFalse(record["Qualifies"])
 
     def test_donor_status_refusals(self):
-        for fields, needle in (({"QualificationStatus": "PendingQualification"}, "not Qualified"), ({"StatusProvisional": True}, "StatusProvisional"),
-                               ({"QualificationStatus": detection.STATUS_REUSED}, "reused model"), ({"ReusedFrom": {"Donor": "x"}}, "reused model"),
+        for fields, needle in (({"QualificationStatus": "PendingQualification"}, "not Qualified"), ({"StatusProvisional": True},
+                                                                                                    "StatusProvisional"),
+                               ({"QualificationStatus": detection.STATUS_REUSED},
+                                "reused model"), ({"ReusedFrom": {"Donor": "x"}}, "reused model"),
                                ({"TransplantedFrom": {"Donor": "x"}}, "reused model")):
             record = analyse(donor=donor_with(**fields))
             self.assertFalse(record["Qualifies"], fields)
@@ -336,7 +346,8 @@ def write_synthetic_matrices(directory, size, seed=0):
         else:
             per = {k: {c: spd(1e-19 * k) for c in ("Q_ij (J)", "Q_ij normal (J)", "Q_ij tangential (J)")} for k in (1, 2, 3)}
             meta = {"columns": ["Q_ij (J)", "Q_ij normal (J)", "Q_ij tangential (J)"], "R (m)": "+1.900000000000e-06", "edge": 1,
-                    "header": "interface,     edge,                      R (m),  basis_i,  basis_j,                   Q_ij (J),            Q_ij normal (J),        Q_ij tangential (J)"}
+                    "header": "interface,     edge,                      R (m),  basis_i,  basis_j,                   Q_ij (J),"
+                              "            Q_ij normal (J),        Q_ij tangential (J)"}
             transplant.write_surface(path, meta, per)
         files[role] = str(path)
     return files
@@ -417,9 +428,12 @@ class SyntheticTransplant(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             exact, donor = self.bases(tmp)
             library = {"Name": "synthetic", "Version": 3, "MatchingRadius": RADIUS,
-                       "Models": [{"Name": "donor", "Topology": "SpatialEdgeCluster", "FabricatedMatrix": "donor/fabricated-domain-response-matrix.csv",
-                                   "FabricatedSurfaceMatrix": "donor/fabricated-surface-response-matrix.csv", "ThinMatrix": "donor/thin-domain-response-matrix.csv",
-                                   "ThinSurfaceMatrix": "donor/thin-surface-response-matrix.csv", "FabricatedSurfaceMatrixShelled": None, "Interfaces": self.INTERFACES}]}
+                       "Models": [{"Name": "donor", "Topology": "SpatialEdgeCluster",
+                                   "FabricatedMatrix": "donor/fabricated-domain-response-matrix.csv",
+                                   "FabricatedSurfaceMatrix": "donor/fabricated-surface-response-matrix.csv",
+                                   "ThinMatrix": "donor/thin-domain-response-matrix.csv",
+                                   "ThinSurfaceMatrix": "donor/thin-surface-response-matrix.csv", "FabricatedSurfaceMatrixShelled": None,
+                                   "Interfaces": self.INTERFACES}]}
             path = Path(tmp) / "process-library.json"
             path.write_text(json.dumps(library))
             with self.assertRaises(reuse.NearKeyReuseError):
@@ -464,7 +478,8 @@ class ReuseRecords(unittest.TestCase):
             library_path.write_text(json.dumps(library))
             exact = copy.deepcopy(FIXTURE["Transmon4Edge"])
             # a requirement outside the admissible keys: refused before any basis is read (no basis directory needed)
-            record = reuse.reuse_requirement(exact_signature=exact["Signature"], exact_basis_dir=Path(tmp) / "no-basis", exact_model_entry=exact,
+            record = reuse.reuse_requirement(exact_signature=exact["Signature"], exact_basis_dir=Path(tmp) / "no-basis",
+                                             exact_model_entry=exact,
                                              library=library, library_path=library_path, rule=rule(), mode="measurement-only",
                                              output=Path(tmp) / "out", log=lambda *_: None)
             self.assertFalse(record["Reused"])
@@ -473,7 +488,8 @@ class ReuseRecords(unittest.TestCase):
 
     def test_assemble_adds_models_and_the_header(self):
         library = {"Name": "base", "Version": 3, "MatchingRadius": RADIUS, "Note": "base note", "Models": [copy.deepcopy(FIXTURE["Donor"])]}
-        reused = {"Name": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d-reused", "QualificationStatus": detection.STATUS_REUSED, "ReuseMode": "Fallback"}
+        reused = {"Name": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d-reused", "QualificationStatus": detection.STATUS_REUSED,
+                  "ReuseMode": "Fallback"}
         out = reuse.assemble_library(library, [reused], rule=rule(), name="base+reuse")
         self.assertEqual(len(out["Models"]), 2)
         header = out["NearKeyReuse"]
@@ -505,8 +521,10 @@ class BuildHook(unittest.TestCase):
                            {"nearkey_reuse_mode": "fallback"},                                  # no approval / stop record
                            {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x"},
                            {"nearkey_reuse_mode": "fallback", "nearkey_fallback_stop_records": ["5ae3=stop.json"]},
-                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x", "nearkey_fallback_stop_records": ["zz=stop.json"]},
-                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x", "nearkey_fallback_stop_records": ["5a=a.json", "5a=b.json"]},
+                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x",
+                            "nearkey_fallback_stop_records": ["zz=stop.json"]},
+                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x",
+                            "nearkey_fallback_stop_records": ["5a=a.json", "5a=b.json"]},
                            {"nearkey_reuse_mode": "off", "nearkey_fallback_approval": "x"}):
                 with self.assertRaises(device_coupons.DeviceAdapterError, msg=str(kwargs)):
                     device_coupons.prepare_device_sources(Path(tmp) / "device.json", **common, **kwargs)
@@ -528,18 +546,22 @@ class BuildHook(unittest.TestCase):
     def test_version_1_record_and_missing_stop_record_are_recorded_not_offered(self):
         rule_v1 = rule()
         with tempfile.TemporaryDirectory() as tmp:
-            coupon = {"Id": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d", "Topology": "SpatialEdgeCluster", "Geometry": {"Edges": [1]}, "Hash": "5ae3"}
-            result = device_coupons.nearkey_reuse_for_coupon(coupon, tmp, "case", library={}, library_path=tmp, rule=rule_v1, mode="fallback",
+            coupon = {"Id": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d", "Topology": "SpatialEdgeCluster",
+                      "Geometry": {"Edges": [1]}, "Hash": "5ae3"}
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, tmp, "case", library={}, library_path=tmp, rule=rule_v1,
+                                                             mode="fallback",
                                                              output=Path(tmp) / "reused", stop_record_path=None, approval="x")
             self.assertFalse(result["Reused"])
             self.assertTrue(result["Reason"].startswith("NotApplicable"))
             coupon["Geometry"] = {"Signature": FIXTURE["Exact"]["Signature"]}
-            result = device_coupons.nearkey_reuse_for_coupon(coupon, tmp, "case", library={}, library_path=tmp, rule=rule_v1, mode="fallback",
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, tmp, "case", library={}, library_path=tmp, rule=rule_v1,
+                                                             mode="fallback",
                                                              output=Path(tmp) / "reused", stop_record_path=None, approval="x")
             self.assertTrue(result["Reason"].startswith("NoStopRecord"))
 
 
-@unittest.skipUnless(LIBRARY_OF_RECORD.is_file() and MODELS_MIRROR.is_dir() and SENS_LIBRARY.is_dir(), "the local evidence mirror is not mounted")
+@unittest.skipUnless(LIBRARY_OF_RECORD.is_file() and MODELS_MIRROR.is_dir() and SENS_LIBRARY.is_dir(),
+                     "the local evidence mirror is not mounted")
 class SixPairsIdentity(unittest.TestCase):
     """The production transplant reproduces the sensitivity lane's transplanted matrices BYTE-IDENTICALLY (the four
     coupon matrices and interpolation-map-P.csv of s2-r1p9-v3-b-sens-c3) on the six measured pairs; the written model
@@ -557,7 +579,8 @@ class SixPairsIdentity(unittest.TestCase):
                 record = reuse.reuse_requirement(
                     exact_signature=exact_entry["Signature"], exact_basis_dir=MODELS_MIRROR / exact_dir, exact_model_entry=exact_entry,
                     library=library, library_path=LIBRARY_OF_RECORD, rule=the_rule, mode="measurement-only", output=Path(tmp) / pair,
-                    donors=[donor_name], matrices_root=MODELS_MIRROR, shelled_paths={donor_name: str(shelled)} if shelled.is_file() else None,
+                    donors=[donor_name], matrices_root=MODELS_MIRROR,
+                    shelled_paths={donor_name: str(shelled)} if shelled.is_file() else None,
                     log=lambda *_: None)
                 self.assertTrue(record["Reused"], (pair, record["Refused"]))
                 model = record["Model"]
@@ -574,7 +597,8 @@ class SixPairsIdentity(unittest.TestCase):
                 self.assertTrue(model["TransplantTests"]["GatesPassed"], pair)
                 model_dir = Path(record["ModelDirectory"])
                 sens_dir = SENS_LIBRARY / "models" / f"{exact_dir}-sens"
-                for name in ("fabricated-domain-response-matrix.csv", "fabricated-surface-response-matrix.csv", "thin-domain-response-matrix.csv",
+                for name in ("fabricated-domain-response-matrix.csv", "fabricated-surface-response-matrix.csv",
+                             "thin-domain-response-matrix.csv",
                              "thin-surface-response-matrix.csv", "interpolation-map-P.csv"):
                     self.assertEqual(transplant.sha256(model_dir / name), transplant.sha256(sens_dir / name), (pair, name))
                 if shelled.is_file():
@@ -602,10 +626,12 @@ class SixPairsIdentity(unittest.TestCase):
             work.mkdir()
             for name in ("trace-vertices.csv", "trace-triangles.csv", "basis-points.csv"):
                 (work / name).write_bytes((MODELS_MIRROR / exact_dir / name).read_bytes())
-            generated = {key: exact_entry[key] for key in ("Name", "Topology", "Signature", "Interfaces", "SupportBox", "Edges", "ContextEdges")}
+            generated = {key: exact_entry[key] for key in ("Name", "Topology", "Signature", "Interfaces", "SupportBox", "Edges",
+                                                           "ContextEdges")}
             (work / "process-library.json").write_text(json.dumps({"Models": [generated]}))
             stop = Path(tmp) / "stop.json"
-            stop.write_text(json.dumps({"Status": "failed", "StoppedBy": "family-6 (synthetic test record)", "Case": "spatial-19-edge-74b842a93a96 1de0718f1fc8"}))
+            stop.write_text(json.dumps({"Status": "failed", "StoppedBy": "family-6 (synthetic test record)",
+                                        "Case": "spatial-19-edge-74b842a93a96 1de0718f1fc8"}))
             # a local library whose donor paths resolve: the models' relative paths against the mirror root
             local = copy.deepcopy(library)
             for model in local["Models"]:
@@ -618,8 +644,10 @@ class SixPairsIdentity(unittest.TestCase):
             library_path.write_text(json.dumps(local))
             coupon = {"Id": exact_entry["Name"], "Topology": "SpatialEdgeCluster", "Geometry": {"Signature": exact_entry["Signature"]},
                       "Hash": "5d3d8ac62dd1", "Interfaces": exact_entry["Interfaces"]}
-            result = device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", library=local, library_path=library_path,
-                                                             rule=rule(), mode="fallback", output=Path(tmp) / "reused", stop_record_path=str(stop),
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", library=local,
+                                                             library_path=library_path,
+                                                             rule=rule(), mode="fallback", output=Path(tmp) / "reused",
+                                                             stop_record_path=str(stop),
                                                              approval="supervisor decision NNN (test)", log=lambda *_: None)
             self.assertTrue(result["Reused"], result)
             self.assertEqual(result["ReuseMode"], "Fallback")

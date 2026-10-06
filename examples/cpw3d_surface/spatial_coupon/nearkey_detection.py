@@ -179,7 +179,8 @@ def donor_override_record(model):
         if "build-override" in mesh_path:
             return {"Gate": None, "Approval": None, "Kind": "UnrecordedBuildOverrideMeshPath", "SupersededBy": None, "Path": mesh_path,
                     "SHA256": None, "DefaultAdmitted": False,
-                    "Rule": "decision 431: a build-override mesh path without a BuildGateOverride record refuses default reuse (fail closed)"}
+                    "Rule": "decision 431: a build-override mesh path without a BuildGateOverride record refuses default reuse "
+                            "(fail closed)"}
         return None
     kind = (override.get("Band") or {}).get("Kind")
     admitted = override.get("Gate") == ADMITTED_OVERRIDE["Gate"] and kind == ADMITTED_OVERRIDE["Kind"]

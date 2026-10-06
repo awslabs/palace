@@ -44,7 +44,8 @@ def write_run(postpro, energies, classes):
 
 def reused_entry(name, bounds, sharp):
     return {"Name": name, "QualificationStatus": "ReusedResponse", "ReuseMode": "Fallback", "ReusedFrom": {"Donor": "donor"},
-            "NearKey": {"W": -0.01}, "PredictedReuseError": {**{T: {"Bound": b} for T, b in zip(report.TYPES, bounds)}, "MA_sharp": {"Bound": sharp}}}
+            "NearKey": {"W": -0.01}, "PredictedReuseError": {**{T: {"Bound": b} for T, b in zip(report.TYPES, bounds)},
+                                                             "MA_sharp": {"Bound": sharp}}}
 
 
 class Synthetic(unittest.TestCase):
@@ -56,14 +57,16 @@ class Synthetic(unittest.TestCase):
                         3: {1: 2.0, 2: 2.0, 3: 0.2, 4: 2.0, 5: 0.2}}     # reused: SA 2, MS 4, MA 0.4
             write_run(Path(tmp) / "postpro", energies, classes)
             library = {"Name": "lib", "NearKeyReuse": {"RuleVersion": "nearkey-reuse-rule-v1"},
-                       "Models": [reused_entry("model-1", (0.005, 0.0025, 0.01), 0.0105), {"Name": "model-2", "QualificationStatus": "Qualified"},
+                       "Models": [reused_entry("model-1", (0.005, 0.0025, 0.01), 0.0105), {"Name": "model-2",
+                                                                                           "QualificationStatus": "Qualified"},
                                   reused_entry("model-3", (0.01, 0.01, 0.02), 0.021)]}
             out = report.window_report(library, Path(tmp) / "postpro", {"SA": 20.0, "MS": 20.0, "MA": 2.0})
             self.assertEqual(out["Counts"], {"Reused": 2, "Models": 3})
             self.assertAlmostEqual(out["ReusedShare"]["SA"], 0.2)
             self.assertAlmostEqual(out["ReusedShare"]["MS"], 0.3)
             self.assertAlmostEqual(out["ReusedShare"]["MA"], 0.3)
-            # budget SA = 100 x (0.005 x 0.1 + 0.01 x 0.1) = 0.15 points; MS = 100 x (0.0025 x 0.1 + 0.01 x 0.2) = 0.225; MA raw = 100 x (0.01 x 0.1 + 0.02 x 0.2) = 0.5
+            # budget SA = 100 x (0.005 x 0.1 + 0.01 x 0.1) = 0.15 points; MS = 100 x (0.0025 x 0.1 + 0.01 x 0.2) = 0.225;
+            # MA raw = 100 x (0.01 x 0.1 + 0.02 x 0.2) = 0.5
             self.assertAlmostEqual(out["ReuseBudgetPoints"]["SA"], 0.15)
             self.assertAlmostEqual(out["ReuseBudgetPoints"]["MS"], 0.225)
             self.assertAlmostEqual(out["ReuseBudgetPoints"]["MA"], 0.5)
