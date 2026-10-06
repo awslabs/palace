@@ -235,9 +235,15 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
                                "RejectedReason": "; ".join(near_key["Refusals"])})
             continue
         log(f"{exact_name}: candidate donor {name} (W {100 * near_key['W']:+.3f} %, S {100 * near_key['S']:.4f} %): transplant")
-        evaluation = evaluate_candidate(exact, exact_signature, by_name[name], near_key, rule=rule, library_root=library_root, mode=mode,
-                                        matrices_root=matrices_root, shelled_path=(shelled_paths or {}).get(name),
-                                        record_path=(record_paths or {}).get(name), stop_record=stop_record, approval=approval, radius=radius)
+        try:
+            evaluation = evaluate_candidate(exact, exact_signature, by_name[name], near_key, rule=rule, library_root=library_root, mode=mode,
+                                            matrices_root=matrices_root, shelled_path=(shelled_paths or {}).get(name),
+                                            record_path=(record_paths or {}).get(name), stop_record=stop_record, approval=approval, radius=radius)
+        except (NearKeyReuseError, transplant.TransplantError) as error:
+            # a candidate whose matrices / records cannot be read is not a donor (fail closed per candidate, recorded)
+            candidates.append({"Model": name, "W": near_key.get("W"), "S": near_key.get("S"), "Chosen": False, "RejectedReason": f"NotLoadable: {error}"})
+            log(f"{exact_name}: candidate donor {name} rejected: {error}")
+            continue
         evaluations.append(evaluation)
     chosen = choose_donor(evaluations)
     for evaluation in evaluations:

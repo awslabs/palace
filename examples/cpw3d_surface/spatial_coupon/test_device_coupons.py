@@ -131,10 +131,20 @@ class DeviceBasisDefaultTest(unittest.TestCase):
         self.assertEqual(device_coupons.requirement_option_kwargs(args),
                          {"support_span_caps": ["5ed91f8890c0=20"], "support_span_cap_reason": "closed loop",
                           "element_caps": ["5ed91f8890c0=16000000"], "element_cap_approval": "supervisor",
-                          "element_cap_reason": "12-13 M elements"})
+                          "element_cap_reason": "12-13 M elements", "nearkey_reuse_mode": "off", "nearkey_fallback_approval": None,
+                          "nearkey_fallback_stop_records": [], "nearkey_rule": None})
         self.assertEqual(parser.parse_args(common).support_span_cap, [])
         with self.assertRaises(SystemExit):
             coupon_library.main(["build", "--manifest", "m.json", "--element-cap", "5ed91f8890c0=16000000"])
+        # the near-key reuse options (decision 428) are --device options too: refused without --device
+        with self.assertRaises(SystemExit):
+            coupon_library.main(["build", "--manifest", "m.json", "--nearkey-reuse", "fallback"])
+        with self.assertRaises(SystemExit):
+            coupon_library.main(["build", "--manifest", "m.json", "--nearkey-fallback-approval", "x"])
+        nearkey = parser.parse_args(common + ["--nearkey-reuse", "fallback", "--nearkey-fallback-approval", "decision NNN",
+                                              "--nearkey-fallback-stop-record", "5d3d8ac62dd1=stop.json"])
+        self.assertEqual(device_coupons.requirement_option_kwargs(nearkey)["nearkey_reuse_mode"], "fallback")
+        self.assertEqual(device_coupons.requirement_option_kwargs(nearkey)["nearkey_fallback_stop_records"], ["5d3d8ac62dd1=stop.json"])
         self.assertEqual(device_coupons.requirement_options(["5ed91f8890c0=20", "abcd=18.5"], float, "--support-span-cap"),
                          {"5ed91f8890c0": 20.0, "abcd": 18.5})
         self.assertEqual(device_coupons.requirement_options(["5ed91f8890c0=16000000"], int, "--element-cap"),

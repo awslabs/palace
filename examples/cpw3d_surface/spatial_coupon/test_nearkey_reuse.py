@@ -18,6 +18,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import device_coupons  # noqa: E402
 import nearkey_detection as detection  # noqa: E402
 import nearkey_predictor as predictor  # noqa: E402
 import nearkey_reuse as reuse  # noqa: E402
@@ -493,6 +494,51 @@ class ReuseRecords(unittest.TestCase):
         self.assertIn("NEVER a library of record", demo["Note"])
 
 
+class BuildHook(unittest.TestCase):
+    """device_coupons: the --nearkey-reuse options fail closed before any discovery; a reused coupon is not registered."""
+
+    def test_option_validation_fails_closed_before_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            common = {"palace": "/nonexistent/palace", "output": Path(tmp) / "out", "manifest_path": Path(tmp) / "manifest.json"}
+            for kwargs in ({"nearkey_reuse_mode": "always"},
+                           {"nearkey_reuse_mode": "default"},                                   # no DefaultActivation record
+                           {"nearkey_reuse_mode": "fallback"},                                  # no approval / stop record
+                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x"},
+                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_stop_records": ["5ae3=stop.json"]},
+                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x", "nearkey_fallback_stop_records": ["zz=stop.json"]},
+                           {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x", "nearkey_fallback_stop_records": ["5a=a.json", "5a=b.json"]},
+                           {"nearkey_reuse_mode": "off", "nearkey_fallback_approval": "x"}):
+                with self.assertRaises(device_coupons.DeviceAdapterError, msg=str(kwargs)):
+                    device_coupons.prepare_device_sources(Path(tmp) / "device.json", **common, **kwargs)
+            self.assertFalse((Path(tmp) / "out").exists())
+
+    def test_reused_coupon_is_not_registered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            manifest.write_text(json.dumps({"Cases": [], "Gates": {}}))
+            record = {"Device": {"Config": "d.json", "SHA256": "0" * 64}, "Output": tmp,
+                      "Coupons": [{"Case": "spatial-19-edge-000000000000", "Requirement": "r", "ContentHash": "0" * 64, "Directory": tmp,
+                                   "NearKeyReuse": {"Reused": True, "Donor": "donor", "ReuseMode": "Fallback"}}]}
+            out = device_coupons.register_device_sources(record, manifest_path=manifest, mesh_recipe="recipe", probe=None)
+            coupon = out["Coupons"][0]
+            self.assertEqual(coupon["Registration"]["Status"], device_coupons.STATUS_NEARKEY_REUSED)
+            self.assertIsNone(coupon["ThinCase"])
+            self.assertTrue((Path(tmp) / device_coupons.DEVICE_RECORD).is_file())
+
+    def test_version_1_record_and_missing_stop_record_are_recorded_not_offered(self):
+        rule_v1 = rule()
+        with tempfile.TemporaryDirectory() as tmp:
+            coupon = {"Id": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d", "Topology": "SpatialEdgeCluster", "Geometry": {"Edges": [1]}, "Hash": "5ae3"}
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, tmp, "case", library={}, library_path=tmp, rule=rule_v1, mode="fallback",
+                                                             output=Path(tmp) / "reused", stop_record_path=None, approval="x")
+            self.assertFalse(result["Reused"])
+            self.assertTrue(result["Reason"].startswith("NotApplicable"))
+            coupon["Geometry"] = {"Signature": FIXTURE["Exact"]["Signature"]}
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, tmp, "case", library={}, library_path=tmp, rule=rule_v1, mode="fallback",
+                                                             output=Path(tmp) / "reused", stop_record_path=None, approval="x")
+            self.assertTrue(result["Reason"].startswith("NoStopRecord"))
+
+
 @unittest.skipUnless(LIBRARY_OF_RECORD.is_file() and MODELS_MIRROR.is_dir() and SENS_LIBRARY.is_dir(), "the local evidence mirror is not mounted")
 class SixPairsIdentity(unittest.TestCase):
     """The production transplant reproduces the sensitivity lane's transplanted matrices BYTE-IDENTICALLY (the four
@@ -542,6 +588,55 @@ class SixPairsIdentity(unittest.TestCase):
                 self.assertTrue(decisions["FallbackIfStopRecorded"]["Allowed"], pair)
                 for name in model_dir.iterdir():
                     name.unlink()
+
+    def test_build_hook_fallback_reuse_of_b3(self):
+        """B3 (T2 failed, SA bound 0.568 > 0.5): fallback-only; through the device_coupons hook with a STOP record + approval."""
+        library = json.loads(LIBRARY_OF_RECORD.read_text())
+        exact_dir, donor_name, _, _ = SIX_PAIRS["B3"]
+        exact_entry = copy.deepcopy(next(m for m in library["Models"] if m["Name"].endswith("1de0718f1fc8")))
+        shelled = SHELLED / donor_name.split("_")[-1] / "surface-response-matrix.csv"
+        if not shelled.is_file():
+            self.skipTest("the donor's shelled matrix is not mirrored")
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp) / "work"
+            work.mkdir()
+            for name in ("trace-vertices.csv", "trace-triangles.csv", "basis-points.csv"):
+                (work / name).write_bytes((MODELS_MIRROR / exact_dir / name).read_bytes())
+            generated = {key: exact_entry[key] for key in ("Name", "Topology", "Signature", "Interfaces", "SupportBox", "Edges", "ContextEdges")}
+            (work / "process-library.json").write_text(json.dumps({"Models": [generated]}))
+            stop = Path(tmp) / "stop.json"
+            stop.write_text(json.dumps({"Status": "failed", "StoppedBy": "family-6 (synthetic test record)", "Case": "spatial-19-edge-74b842a93a96 1de0718f1fc8"}))
+            # a local library whose donor paths resolve: the models' relative paths against the mirror root
+            local = copy.deepcopy(library)
+            for model in local["Models"]:
+                for key in ("FabricatedMatrix", "FabricatedSurfaceMatrix", "ThinMatrix", "ThinSurfaceMatrix", "BasisPoints"):
+                    if key in model:
+                        model[key] = str(MODELS_MIRROR / Path(model[key]).parent.name / Path(model[key]).name)
+                if model["Name"] == donor_name:
+                    model["FabricatedSurfaceMatrixShelled"] = str(shelled)
+            library_path = Path(tmp) / "process-library.json"
+            library_path.write_text(json.dumps(local))
+            coupon = {"Id": exact_entry["Name"], "Topology": "SpatialEdgeCluster", "Geometry": {"Signature": exact_entry["Signature"]},
+                      "Hash": "5d3d8ac62dd1", "Interfaces": exact_entry["Interfaces"]}
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", library=local, library_path=library_path,
+                                                             rule=rule(), mode="fallback", output=Path(tmp) / "reused", stop_record_path=str(stop),
+                                                             approval="supervisor decision NNN (test)", log=lambda *_: None)
+            self.assertTrue(result["Reused"], result)
+            self.assertEqual(result["ReuseMode"], "Fallback")
+            self.assertEqual(result["Donor"], donor_name)
+            model = json.loads((Path(result["ModelDirectory"]) / reuse.REUSED_MODEL_RECORD).read_text())
+            self.assertEqual(model["Name"], exact_entry["Name"] + "-reused")
+            self.assertEqual(model["FallbackStopRecord"]["Path"], str(stop))
+            self.assertEqual(model["Approval"], "supervisor decision NNN (test)")
+            self.assertFalse(model["TransplantTests"]["T2"]["Passed"])
+            self.assertTrue(model["TransplantTests"]["GatesPassed"])
+            self.assertEqual(model["ShelledMatrix"]["Status"], "Transplanted")
+            self.assertTrue(model["PredictedReuseError"]["PolicyDecisions"]["fallback"]["Allowed"])
+            self.assertFalse(model["PredictedReuseError"]["PolicyDecisions"]["default"]["Allowed"])
+            record = json.loads(Path(result["Record"]).read_text())
+            self.assertEqual([c["Model"] for c in record["Candidates"] if c["Chosen"]], [donor_name])
+            # the other candidate of the family (B2's exact model, W +2.44 %) is recorded with its bound, not chosen
+            self.assertTrue(any(c["Model"].endswith("5ae3dbdd2c3d") for c in record["Candidates"]))
 
 
 if __name__ == "__main__":
