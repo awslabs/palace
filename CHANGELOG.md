@@ -39,6 +39,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     in-plane transverse distance), so that one interface can be partitioned into entries
     on the same attributes without re-tagging mesh faces. Without either option every
     output is unchanged.
+  - Corner-class placement rules of the automatic surface-response correction: at a matched
+    corner whose arms are not perpendicular the second arm's straight cells begin where
+    that arm exits the corner coupon's matching square, at `R / max(|cos t|, |sin t|)`
+    from the vertex (t the corner angle; unchanged at 90 degrees), recorded under
+    `Diagnostics.CornerArmTrim`; and a feature without a library model keeps its raw
+    within-`R` surface energy in the corrected interface energies, reported per feature
+    type in `surface-response-uncovered-energy.csv` (written only when something is
+    uncovered); the part of an uncovered portion inside a matched spatial cluster's
+    support box is removed at placement (recorded under
+    `Diagnostics.Uncovered.ClippedBySpatialSupport` and in the CSV), and trimmed corners
+    whose coupon is not applied are counted under
+    `Diagnostics.CornerArmTrim.ExcludedCoupons`. Response-geometry cache version 9.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

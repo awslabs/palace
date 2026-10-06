@@ -983,6 +983,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::vector<SurfaceResponseOperator::ModelContribution> corrected_model_contributions;
     std::vector<SurfaceResponseOperator::PatchContribution> raw_patch_contributions;
     std::vector<SurfaceResponseOperator::PatchContribution> corrected_patch_contributions;
+    // Uncovered requirements (decision 394 F2): the raw within-R interface energy of the
+    // unmatched features' portions per target interface, on the raw field (kept in the
+    // fixed-trace and fixed-flux energies) and on the corrected field (kept in the
+    // self-consistent energy); empty when nothing is uncovered.
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_uncovered;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_uncovered;
     std::map<int, double> trace_closure_spread;
     double maximum_trace_closure_spread;
     double response_weighted_trace_closure_spread;
@@ -993,6 +999,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   };
   std::vector<CorrectedResult> corrected_results;
   corrected_results.reserve(response_correction ? n_step : 0);
+  // The uncovered requirements (decision 394 F2) as the postoperator's perimeter portions.
+  std::vector<SurfacePostOperator::UncoveredPerimeterPortion> uncovered_portions;
+  if (response_correction)
+  {
+    for (const auto &portion : response_correction->GetUncoveredPortions())
+    {
+      uncovered_portions.push_back(
+          {portion.p0, portion.p1, portion.topology, portion.feature});
+    }
+  }
   // The corrected capacitance's self-consistent column (PostprocessCorrectedTerminals) is
   // written only when every source's corrected solve was accepted (fail closed).
   bool self_consistent_accepted = self_consistent_response;
@@ -1138,9 +1154,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, V[step], E, idx);
 
     EnergyData raw_energies;
+    std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_uncovered;
     if (response_correction)
     {
       raw_energies = post_op.GetCachedElectrostaticEnergies();
+      if (!uncovered_portions.empty())
+      {
+        // The uncovered requirements' raw within-R energy (decision 394 F2) on the raw
+        // field the grid functions hold after MeasureAndPrintAll.
+        BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
+        raw_uncovered = post_op.GetElectrostaticUncoveredEdgeEnergies(
+            response_correction->GetTargetInterfaces(), uncovered_portions);
+      }
     }
 
     if (response_correction)
@@ -1178,8 +1203,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           spatial_patch_traces.emplace_back(idx, std::move(traces));
         }
       }
-      auto ApplyResponse = [&](EnergyData energies, double domain_correction,
-                               const std::map<int, double> &fabricated_surface)
+      auto ApplyResponse =
+          [&](EnergyData energies, double domain_correction,
+              const std::map<int, double> &fabricated_surface,
+              const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> &uncovered)
       {
         energies.domain += domain_correction;
         for (const auto &[interface, energy] : fabricated_surface)
@@ -1193,8 +1220,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
               "Response-corrected target interface "
                   << interface << " requires EdgeDistances and EdgeAttributes or AutomaticEdges!");
           // EdgeDistances are sorted. The largest configured radius is the matching
-          // distance of the coupon response model.
+          // distance of the coupon response model. An uncovered requirement (decision 394
+          // F2) keeps its raw within-R energy of the same field.
           it->second.energy = it->second.edge_energies.back().energy_outside + energy;
+          const auto uncovered_energy = uncovered.find(interface);
+          if (uncovered_energy != uncovered.end())
+          {
+            it->second.energy += uncovered_energy->second.energy;
+          }
         }
         MFEM_VERIFY(energies.domain > 0.0,
                     "Response-corrected electrostatic energy is not positive!");
@@ -1213,13 +1246,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         return energies;
       };
       auto postprocessed_fixed_trace =
-          postprocess_response ? ApplyResponse(raw_energies, response.domain_correction,
-                                               response.fabricated_surface_energy)
-                               : Unavailable(raw_energies);
+          postprocess_response
+              ? ApplyResponse(raw_energies, response.domain_correction,
+                              response.fabricated_surface_energy, raw_uncovered)
+              : Unavailable(raw_energies);
       auto postprocessed_fixed_flux =
           postprocess_response
               ? ApplyResponse(raw_energies, response.domain_correction_fixed_flux,
-                              response.fabricated_surface_energy_fixed_flux)
+                              response.fabricated_surface_energy_fixed_flux, raw_uncovered)
               : Unavailable(raw_energies);
       if (postprocess_response && !response.confident)
       {
@@ -1237,6 +1271,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
 
       EnergyData corrected_energies = Unavailable(raw_energies);
+      std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> corrected_uncovered;
       std::vector<SurfaceResponseOperator::ModelContribution> corrected_contributions;
       std::vector<SurfaceResponseOperator::PatchContribution> corrected_patch_contributions;
       if (self_consistent_response)
@@ -1304,6 +1339,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
             corrected_energies = post_op.GetElectrostaticEnergies(
                 V_corrected[step], E_corrected, D_corrected_ptr, &target_interfaces);
+            if (!uncovered_portions.empty())
+            {
+              // The uncovered requirements' within-R energy of the corrected field (the
+              // field whose outside energy the self-consistent column carries).
+              corrected_uncovered = post_op.GetElectrostaticUncoveredEdgeEnergies(
+                  target_interfaces, uncovered_portions);
+            }
           }
           SurfaceResponseOperator::ElectrostaticResponse corrected_response;
           {
@@ -1311,9 +1353,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             corrected_response = response_correction->GetElectrostaticResponse(
                 V_corrected[step], false, patch_energy_response);
           }
-          corrected_energies = ApplyResponse(std::move(corrected_energies),
-                                             corrected_response.domain_correction,
-                                             corrected_response.fabricated_surface_energy);
+          corrected_energies = ApplyResponse(
+              std::move(corrected_energies), corrected_response.domain_correction,
+              corrected_response.fabricated_surface_energy, corrected_uncovered);
           corrected_contributions = std::move(corrected_response.model_contributions);
           corrected_patch_contributions = std::move(corrected_response.patch_contributions);
         }
@@ -1326,7 +1368,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
             std::move(postprocessed_fixed_flux), std::move(corrected_energies),
             std::move(response.model_contributions), std::move(corrected_contributions),
             std::move(response.patch_contributions),
-            std::move(corrected_patch_contributions), response.trace_closure_spread,
+            std::move(corrected_patch_contributions), std::move(raw_uncovered),
+            std::move(corrected_uncovered), response.trace_closure_spread,
             response.maximum_trace_closure_spread,
             response.response_weighted_trace_closure_spread,
             response.trace_closure_response_failure_fraction, postprocess_response,
@@ -1672,6 +1715,123 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         }
       }
       patch_output.WriteFullTableTrunc();
+    }
+
+    if (!uncovered_portions.empty())
+    {
+      // Decision 394 F2: the uncovered requirements' raw within-R energy kept in the
+      // corrected interface energies, per source, evaluation (the codes of
+      // surface-response-model-energy.csv: 0 / 1 the raw field kept in the fixed-trace /
+      // fixed-flux energies, 2 the corrected field kept in the self-consistent energy) and
+      // feature type (one row per type and a Total row), with the portion count and length
+      // of that type, the length removed from that type's portions inside the matched
+      // clusters' support boxes at placement (decision 399 MAJOR-1) and, per target
+      // interface, the energy and its share of the evaluation's corrected interface
+      // energy. Written only when something is uncovered.
+      struct UncoveredTypeRow
+      {
+        int portions = 0;
+        double length = 0.0;
+        double clipped_length = 0.0;
+      };
+      std::map<std::string, UncoveredTypeRow> portions_by_type;
+      for (const auto &portion : response_correction->GetUncoveredPortions())
+      {
+        double length2 = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          length2 += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+        }
+        auto &entry = portions_by_type[portion.topology];
+        entry.portions++;
+        entry.length += std::sqrt(length2);
+      }
+      for (const auto &clip :
+           response_correction->GetUncoveredSpatialSupportClipping().clips)
+      {
+        portions_by_type[clip.topology].clipped_length += clip.length;
+      }
+      UncoveredTypeRow portions_total;
+      for (const auto &[type, entry] : portions_by_type)
+      {
+        portions_total.portions += entry.portions;
+        portions_total.length += entry.length;
+        portions_total.clipped_length += entry.clipped_length;
+      }
+      // A plain writer: the type column is text (the table columns are numeric). The
+      // previous adaptive iteration leaves a symlink into its archive folder at this path
+      // (BaseSolver::SaveIteration): remove it first, as TableWithCSVFile does, so that the
+      // file is written at the root and the archived iteration keeps its own.
+      const std::filesystem::path uncovered_path =
+          post_dir / "surface-response-uncovered-energy.csv";
+      std::filesystem::remove(uncovered_path);
+      std::ofstream uncovered_output(uncovered_path);
+      MFEM_VERIFY(uncovered_output,
+                  "Unable to open surface-response-uncovered-energy.csv for writing!");
+      uncovered_output
+          << "source,evaluation,type,portions,length (m),clipped by spatial support (m)";
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        uncovered_output << fmt::format(",uncovered raw energy[{}] (J),uncovered share[{}]",
+                                        interface, interface);
+      }
+      uncovered_output << '\n';
+      auto AppendUncovered =
+          [&](int source, int evaluation, const std::string &type,
+              const UncoveredTypeRow &portions,
+              const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> &uncovered,
+              const EnergyData &energies, bool available)
+      {
+        uncovered_output << fmt::format(
+            "{},{},{},{},{:+.12e},{:+.12e}", source, evaluation, type, portions.portions,
+            iodata.units.Dimensionalize<VT::LENGTH>(portions.length),
+            iodata.units.Dimensionalize<VT::LENGTH>(portions.clipped_length));
+        for (const auto &[interface, interface_data] : interfaces)
+        {
+          (void)interface_data;
+          double energy = nan, share = nan;
+          const auto it = uncovered.find(interface);
+          if (available && it != uncovered.end())
+          {
+            if (type == "Total")
+            {
+              energy = it->second.energy;
+            }
+            else
+            {
+              const auto by_type = it->second.by_type.find(type);
+              energy = by_type != it->second.by_type.end() ? by_type->second : 0.0;
+            }
+            const auto corrected = energies.interfaces.find(interface);
+            share = corrected != energies.interfaces.end() && corrected->second.energy > 0.0
+                        ? energy / corrected->second.energy
+                        : nan;
+            energy = iodata.units.Dimensionalize<VT::ENERGY>(energy);
+          }
+          uncovered_output << fmt::format(",{:+.12e},{:+.12e}", energy, share);
+        }
+        uncovered_output << '\n';
+      };
+      for (const auto &result : corrected_results)
+      {
+        for (const auto &[type, portions] : portions_by_type)
+        {
+          AppendUncovered(result.source, 0, type, portions, result.raw_uncovered,
+                          result.postprocessed_fixed_trace, result.has_postprocessed);
+          AppendUncovered(result.source, 1, type, portions, result.raw_uncovered,
+                          result.postprocessed_fixed_flux, result.has_postprocessed);
+          AppendUncovered(result.source, 2, type, portions, result.corrected_uncovered,
+                          result.corrected, result.has_self_consistent);
+        }
+        AppendUncovered(result.source, 0, "Total", portions_total, result.raw_uncovered,
+                        result.postprocessed_fixed_trace, result.has_postprocessed);
+        AppendUncovered(result.source, 1, "Total", portions_total, result.raw_uncovered,
+                        result.postprocessed_fixed_flux, result.has_postprocessed);
+        AppendUncovered(result.source, 2, "Total", portions_total,
+                        result.corrected_uncovered, result.corrected,
+                        result.has_self_consistent);
+      }
     }
   }
   post_op.MeasureFinalize(indicator);

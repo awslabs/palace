@@ -564,6 +564,12 @@ def patch_gates(identification, patches, radius):
     owned_by_patch = {}
     for cell in identification.get("Diagnostics", {}).get("ContinuationOwnership", {}).get("OwnedCells", []):
         owned_by_patch[cell["Patch"]] = float(cell["OwnedLength"])
+    # Corner-arm trim (decision 394 F1): the second arm's cells of a non-perpendicular
+    # corner begin where the arm exits the coupon's matching square; the removed length per
+    # patch (Diagnostics.CornerArmTrim.Cells, mesh units) leaves the portion like an owned
+    # length does.
+    for cell in identification.get("Diagnostics", {}).get("CornerArmTrim", {}).get("Cells", []):
+        owned_by_patch[cell["Patch"]] = owned_by_patch.get(cell["Patch"], 0.0) + float(cell["RemovedLength"])
     # Domain-boundary exclusions (decision 258): the excluded patch keeps its cell and
     # quadrature weight (its portion stays tiled) and is written with Weight 0; the record
     # lists it with its cell length.
@@ -632,7 +638,7 @@ def patch_gates(identification, patches, radius):
             {"Defects": len(coverage_defects), "Examples": coverage_defects[:10], "CoveredLength": covered_length, "MatchedLength": matched_length, "AssignedLength": assigned_length, "CoveredFractionOfAssigned": covered_length / assigned_length if assigned_length else None, "Basis": "every portion of a matched longitudinal feature is one quadrature interval; a vertex / cluster feature is one patch"},
         )
     )
-    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2)); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster"}))
+    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2), plus Diagnostics.CornerArmTrim.Cells, decision 394 F1); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster"}))
     summary = {
         "Patches": len(patches),
         "PatchesByTopology": dict(Counter(r["Topology"] for r in patches)),

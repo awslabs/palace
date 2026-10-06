@@ -1352,6 +1352,46 @@ public:
     };
     std::vector<QuantumNearMatchData> quantum_near_match;
 
+    // Corner-arm trim (decision 394, F1): at a matched corner whose arms are not
+    // perpendicular, the coupon's matching square |u|, |v| <= R (u = the first arm)
+    // contains the second arm up to s = R / max(|cos theta|, |sin theta|) from the vertex,
+    // so the second arm's straight cells begin at s (their part before s is removed); at
+    // 90 deg s = R and nothing changes. One record per matched corner, lengths in patch
+    // units: the exit distance, the geometric trim s - R, the cell length actually
+    // removed (each patch weighted by its model weight: a first-order split's co-located
+    // patches share one cell; a cell beginning before R loses that part too) with the
+    // patches clipped (the full removed length per patch), and the uncovered-portion
+    // length removed (an unmatched feature on the second arm).
+    struct CornerArmTrimData
+    {
+      int feature = -1;
+      std::string topology;
+      double angle_degrees = 0.0;
+      double exit_distance_over_radius = 1.0;
+      double trimmed_length = 0.0;
+      double removed_cell_length = 0.0;
+      double removed_uncovered_length = 0.0;
+      std::vector<std::pair<std::size_t, double>> cells;  // (patch, removed length)
+    };
+    std::vector<CornerArmTrimData> corner_arm_trims;
+
+    // Uncovered requirements (decision 394, F2): the portions of every feature the
+    // library has no model for (Status Missing), as global sub-segments of the metal
+    // perimeter (patch units, after the corner-arm trim) with the feature's id and type.
+    // The electrostatic driver keeps the device's RAW within-R surface energy whose
+    // nearest perimeter point lies on one of them in the corrected interface energies
+    // (fixed trace, fixed flux: the raw field; self-consistent: the corrected field) and
+    // reports that share per type; carried into the operator record and the geometry
+    // cache. Empty when every feature is matched (every output then unchanged).
+    struct UncoveredPortionData
+    {
+      int feature = -1;
+      std::string topology;
+      int segment = -1;
+      std::array<double, 3> p0{}, p1{};
+    };
+    std::vector<UncoveredPortionData> uncovered_portions;
+
     // Reusable local coupon models and their nonoverlapping global placements. A placement
     // may represent one isolated edge or a coupled cluster of nearby edges.
     std::vector<ResponseCorrectionModelData> models;

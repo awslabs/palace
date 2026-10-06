@@ -37,6 +37,30 @@ class SpaceOperator;
 struct IdentifiedFeature;
 struct IdentificationResult;
 
+// The placement's clip of the uncovered requirements (decision 394 F2) by the matched
+// spatial clusters' support boxes (decision 399 MAJOR-1): the part of an uncovered portion
+// strictly inside a matched cluster's box (the same bounds and strict-interior test the
+// continuation ownership clips the translational cells with, CellInsideBox) is removed —
+// the coupon models its whole box, so that raw within-R energy would be counted twice.
+// One record per (portion, box); lengths in patch units.
+struct UncoveredSpatialSupportClip
+{
+  int feature = -1;
+  std::string topology;
+  int segment = -1;
+  std::size_t spatial_patch = 0;
+  double length = 0.0;  // removed from the portion by this box
+};
+struct UncoveredSpatialSupportClipping
+{
+  std::vector<UncoveredSpatialSupportClip> clips;  // in portion order, then box order
+  int clipped_portions = 0;  // portions that lost a part (wholly removed ones included)
+  int removed_portions = 0;  // portions wholly inside the boxes (nothing kept)
+  int split_portions = 0;    // portions whose kept part is two pieces (a box crossed)
+  double removed_length = 0.0;
+  std::map<int, double> removed_by_feature;  // feature id -> removed length
+};
+
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
 // finite-element point interpolation is still rebuilt for every refined mesh.
 class SurfaceResponseGeometry
@@ -360,6 +384,14 @@ private:
   // The ownership records of the translational stretches inside the spatial supports
   // (decision 236), reported under Diagnostics with the statistics.
   nlohmann::json ownership_diagnostics;
+  // The uncovered requirements (decision 394 F2): the portions of the unmatched features
+  // as perimeter sub-segments in mesh coordinates, whose raw within-R surface energy the
+  // electrostatic driver keeps in the corrected interface energies.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      uncovered_portions;
+  // The placement's clip of those portions by the matched clusters' support boxes
+  // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
+  UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   long long int candidate_query_count = 0;
   long long int fallback_query_count = 0;
   long long int point_send_peer_count = 0;
@@ -564,6 +596,19 @@ public:
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
+  // The uncovered requirements (decision 394 F2; empty when every feature is matched).
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetUncoveredPortions() const
+  {
+    return uncovered_portions;
+  }
+  // The parts of the uncovered requirements removed inside the matched clusters' support
+  // boxes at placement (decision 399 MAJOR-1; GetUncoveredPortions holds the remainder).
+  const UncoveredSpatialSupportClipping &GetUncoveredSpatialSupportClipping() const
+  {
+    return uncovered_spatial_support_clipping;
+  }
 
   int GetBasisSize() const { return global_basis_size; }
   int GetPatchCount() const { return global_patch_count; }
@@ -812,6 +857,21 @@ ContinuationOwnership ApplyContinuationOwnership(
     const std::vector<SpatialSupportBounds> &supports, int dimension,
     double continuation_tolerance, double matching_radius);
 
+// Clip the uncovered requirements' portions by the matched spatial clusters' support boxes
+// (decision 399 MAJOR-1): for every support with claims (a matched SpatialEdgeCluster; a
+// vertex coupon's support has none) the part of every portion strictly inside the
+// support's bounds — the interval the continuation ownership's CellInsideBox finds on a
+// translational cell, the same bounds and the same 1e-12 x max(1, length) tolerance — is
+// removed; the kept part (nothing, one piece, or two pieces when the portion crosses the
+// box) replaces the portion in place, in portion order. Without such a support the
+// portions are left untouched (bitwise). Called at placement on a copy of the
+// configuration's portions (the boxes need the models' basis points), never on the cache.
+UncoveredSpatialSupportClipping ClipUncoveredPortionsBySpatialSupport(
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        &portions,
+    const std::vector<SpatialSupportBounds> &supports, int dimension);
+
 // Coupon-vs-coupon margin overlap (decision 244): two spatial cluster supports whose boxes
 // overlap in their interiors are recorded, not aborted, when the overlap is MARGINS ONLY —
 // no claim SEGMENT of either enters the other's claims hull (the bounding box of its
@@ -855,6 +915,34 @@ nlohmann::json DescribeSpatialSupportMarginOverlaps(
 // non-empty continuation-ownership entry.
 std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &diagnostics);
 std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnostics);
+
+// The Diagnostics entries of the corner-arm trim (decision 394 F1) and of the uncovered
+// requirements (decision 394 F2) of a response configuration (lengths and coordinates in
+// mesh units); both empty-but-complete when nothing was trimmed / nothing is uncovered.
+nlohmann::json DescribeCornerArmTrims(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+// The trimmed corners whose vertex coupon the placement does not apply (decision 399
+// MINOR-7): excluded_reason names the exclusion of a patch index (nullopt: applied). Their
+// second arm's [R, s) is then modelled by nothing (a recorded KNOWN LIMIT).
+nlohmann::json DescribeCornerArmTrimExcludedCoupons(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const std::function<std::optional<std::string>(std::size_t patch_idx)> &excluded_reason,
+    double coordinate_scale);
+// The uncovered entry describes the placed (clipped) portions and, under
+// ClippedBySpatialSupport, the parts removed inside the matched clusters' boxes (decision
+// 399 MAJOR-1; nullptr when the portions were not placed against boxes, e.g. a 2D request).
+nlohmann::json DescribeUncoveredPortions(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        &portions,
+    const UncoveredSpatialSupportClipping *clipping,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
 
 // Domain-boundary exclusion (decision 258): a coupon's trace coupling is undefined beyond
 // the device domain, which a placed coupon reaches wherever a metal edge meets an

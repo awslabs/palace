@@ -39,6 +39,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-correctedsolve.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerbasisrefinement.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerarmtrim.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-cornerfamily.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-conductorconsistency.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainboundary.cpp
