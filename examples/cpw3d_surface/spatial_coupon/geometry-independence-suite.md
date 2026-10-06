@@ -709,7 +709,19 @@ build census (`build-census`, the bound build report):
         an arc of fewer than four chords (the untagged fit of the trench footprint needs
         four), an untubed arc, a tilted arc / arc joint of two different circles, a loop
         made of one closed arc; arc sides are not in the NarrowMetal facing test (a narrow
-        curved strip fails closed at the fragment);
+        curved strip fails closed at the fragment). Decision 391 MAJOR-2 (ii) (mesher review
+        R2): until the next mesher lane's four synthetic FULL builds (arc face ends at 45 /
+        70 degrees, a kinked arc / line joint, a 5e-5-rad smooth joint, a 2e-4-rad corner
+        joint) exist, two more guards fail closed in `metal_edge_segments`:
+        `ScopeGuard[ArcFaceEnds]` - an arc side with an end on the outer box (a cut end at
+        any tilt, an end exactly perpendicular to the face, a box-vertex corner); and
+        `ScopeGuard[ArcJointTilt]` - an arc side meeting another side at a joint whose turn
+        (the arc's end tangent against the other side's direction, by atan of cross and
+        dot) exceeds `ARC_JOINT_TURN_BOUND` = 1.6e-6 rad, the loop end 1b26671c9080's
+        tested range (its 32 smooth arc / line joints turn by 3.0e-8 .. 1.6e-6 rad on the
+        signature; the mesher reads post-snap tilts <= 1.27e-6 rad on its built meshes),
+        so smooth joints turning more, kinked arc / line joints and arc corners stop
+        (`mesh_stage_contract.py` `ARC_JOINT_TURN_BOUND_RADIANS`, the same list);
   - isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
     required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
     0.1 um ball), and every tube cap centre before a corner is a graded point of the
@@ -1451,7 +1463,9 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     after the corner clearances (RETIRED by block (b) step 4.2: the supported class
     `UntubedShortEdges` above, decision 304); `NarrowMetal` - a metal strip narrower than
     twice the tube envelope between facing tubed sides (ADDED by step 4.2, decision
-    347); `FootprintWithoutEdge` - an explicit footprint without
+    347); `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
+    decision-391 stop-gaps above, until the synthetic arc builds exist);
+    `FootprintWithoutEdge` - an explicit footprint without
     the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
     simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists
     (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).

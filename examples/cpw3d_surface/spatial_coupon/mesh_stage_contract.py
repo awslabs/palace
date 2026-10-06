@@ -1283,12 +1283,20 @@ RECIPE_SCOPE_SUPPORTED_CLASSES = ("ArcSides", "ContinuationVertices", "DeviceFoo
                                   "UntubedShortEdges")
 RECIPE_SCOPE_GUARDS = {
     "ArcTubeRadiusVsCurvature": "build",
+    # Decision 391 MAJOR-2 (ii): arc face ends and arc joints beyond the loop end's tested
+    # turn range (ARC_JOINT_TURN_BOUND_RADIANS) fail closed until the synthetic full builds
+    # of the next mesher lane lift the guards (mesh_spatial_coupon.jl spells the same list).
+    "ArcFaceEnds": "build", "ArcJointTilt": "build",
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
     "NarrowMetal": "build",
     "FreeEdgeEnds": "build", "FootprintWithoutEdge": "build",
     "FootprintTopology": "build"}
+# The largest arc-joint turn any full build has exercised: the loop end 1b26671c9080's
+# smooth arc / line joints (3.0e-8 .. 1.6e-6 rad on the signature); the mesher's
+# ScopeGuard[ArcJointTilt] bound (decision 391 MAJOR-2 (ii)).
+ARC_JOINT_TURN_BOUND_RADIANS = 1.6e-6
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)

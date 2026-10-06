@@ -421,3 +421,128 @@ end
         @test digests[5.0] == digests[2.5]
     end
 end
+
+@testset "decision 391 MAJOR-2 (ii): arc face ends and arc joints beyond the tested turn fail closed" begin
+    # Both guards are in the recipe scope list (mesh_stage_contract.py spells the same list)
+    # and the turn bound is the loop end's tested range.
+    ids = [guard[1] for guard in RECIPE_SCOPE_GUARDS]
+    @test "ArcFaceEnds" in ids && "ArcJointTilt" in ids
+    @test ARC_JOINT_TURN_BOUND == 1.6e-6
+    @test occursin(string(ARC_JOINT_TURN_BOUND), scope_guard_statement("ArcJointTilt"))
+    clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
+    segments_of(inputs; lower=inputs.lower, upper=inputs.upper) = metal_edge_segments(
+        read_boundary(inputs.boundary),
+        inputs.corners,
+        clearance,
+        lower,
+        upper,
+        1.0e-7 * 0.5;
+        edge_size=0.01,
+        corner_radius=0.1
+    )
+    mktempdir() do directory
+        # POSITIVE: the exactly tangent strip (turn 0 at both joints) and a joint turning by
+        # 1e-6 rad (inside the tested range, tagged smooth) pass; the census of a labels-only
+        # build spells both guards among the GuardedClasses.
+        tangent = write_strip_inputs(mkpath(joinpath(directory, "t0")))
+        segments = segments_of(tangent)
+        @test count(s.kind == :arc for s in segments) == 1
+        @test all(s.face_ends == (nothing, nothing) for s in segments if s.kind == :arc)
+        inside = write_strip_inputs(
+            mkpath(joinpath(directory, "t1e-6"));
+            kink_degrees=rad2deg(1.0e-6)
+        )
+        @test count(s.kind == :arc for s in segments_of(inside)) == 1
+        census, _, _ = build_strip_coupon(
+            mkpath(joinpath(directory, "labels"));
+            fabricated=true,
+            stem="labels",
+            labels_only=true
+        )
+        @test census["Scope"]["GuardedClasses"] == ids
+        @test any(
+            guard["Id"] == "ArcJointTilt" && guard["DetectedFrom"] == "build" for
+            guard in census["Scope"]["Guards"]
+        )
+        # NEGATIVE (ArcJointTilt): a smooth-tagged joint turning by 1e-5 rad (A3 (1) smooth,
+        # above the tested 1.6e-6), a 2e-4-rad corner joint and a 30-degree kinked arc / line
+        # joint all fail closed at the same guard, naming the arc and the turn.
+        for (turn, label) in
+            ((1.0e-5, "smooth"), (2.0e-4, "corner"), (deg2rad(30.0), "kink"))
+            kinked = write_strip_inputs(
+                mkpath(joinpath(directory, label));
+                kink_degrees=rad2deg(turn)
+            )
+            message = guard_message(() -> segments_of(kinked))
+            @test occursin("ScopeGuard[ArcJointTilt]", message) &&
+                  occursin("arc 1 part 1", message) &&
+                  occursin("straight side", message)
+            @test occursin(r"turn of ([0-9.e+-]+) rad", message)
+            read_turn = parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1])
+            @test isapprox(read_turn, turn; rtol=1.0e-6)
+        end
+        # The bound is exclusive-above: a turn 1 % above it fails, 1 % below it passes.
+        for (factor, fails) in ((1.01, true), (0.99, false))
+            edge = write_strip_inputs(
+                mkpath(joinpath(directory, "bound-$factor"));
+                kink_degrees=rad2deg(factor * ARC_JOINT_TURN_BOUND)
+            )
+            message = guard_message(() -> segments_of(edge))
+            @test occursin("ScopeGuard[ArcJointTilt]", message) == fails
+        end
+        # NEGATIVE (ArcFaceEnds): a metal strip entering through the x0 face whose outer edge
+        # bends about (0, 1) along a convex arc of radius 1 from (0, 0) and leaves the box along
+        # the x1 face: with a 45-degree sweep the arc ends ON the x1 face at a 45-degree tilt
+        # (a box-face cut end), with a 90-degree sweep its end tangent (0, 1) runs along the
+        # face (the box face through the arc end at any angle); both fail closed at the arc
+        # (a straight side ending on the box keeps its decision-320 treatment).
+        for sweep in (45.0, 90.0)
+            chords = 9
+            arc_points = [
+                (cosd(-90.0 + sweep * k / chords), 1.0 + sind(-90.0 + sweep * k / chords)) for k = 0:chords
+            ]
+            x_face = arc_points[end][1]
+            points = vcat([(-3.0, 0.0)], arc_points, [(x_face, 3.0), (-3.0, 3.0)])
+            m = length(points)
+            classes = [
+                i == m - 2 || i == m - 1 || i == m ? "Continuation" : "Physical" for i = 1:m
+            ]
+            arcs = Vector{Union{Nothing, NamedTuple}}(nothing, m)
+            for i = 2:(chords + 1)
+                arcs[i] = (id=1, centre=(0.0, 1.0), radius=1.0, sign=1)
+            end
+            joints = Vector{Union{Nothing, NamedTuple}}(nothing, m)
+            joints[2] = (turn=0.0, smooth=true)
+            loop = (
+                conductor=1,
+                plane=0.0,
+                hole=false,
+                points=points,
+                classes=classes,
+                arcs=arcs,
+                joints=joints
+            )
+            message = guard_message(
+                () -> metal_edge_segments(
+                    [loop],
+                    Tuple{Float64, Float64, Float64}[],
+                    clearance,
+                    [-3.0, -3.0],
+                    [x_face, 3.0],
+                    1.0e-9;
+                    edge_size=0.01,
+                    corner_radius=0.1
+                )
+            )
+            @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+                  occursin("arc 1 part 1", message) &&
+                  occursin("on the outer box", message)
+        end
+        # A straight side ending on the box keeps its face end (decision 320): the guard is
+        # the arc's alone.
+        @test any(
+            s.face_ends != (nothing, nothing) || s.legacy_box_corners != (false, false) for
+            s in segments if s.kind == :straight
+        )
+    end
+end

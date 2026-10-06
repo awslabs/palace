@@ -6,10 +6,15 @@ arc_part_count / metal_loop_side_points / metal_loop_arc_parts on tagged plan-vi
 scope_classes ArcSides, validate_arc_tubes positives and negatives."""
 import copy
 import math
+from pathlib import Path
+import re
 import unittest
 
-from mesh_stage_contract import (arc_part_count, boundary_arc_runs, metal_loop_arc_parts, metal_loop_side_points,
-                                 scope_classes, validate_arc_tubes)
+from mesh_stage_contract import (ARC_JOINT_TURN_BOUND_RADIANS, RECIPE_SCOPE_GUARDS, arc_part_count, boundary_arc_runs,
+                                 metal_loop_arc_parts, metal_loop_side_points, scope_classes, scope_guard_in_text,
+                                 validate_arc_tubes)
+
+HERE = Path(__file__).resolve().parent
 
 HEADER = ("Loop", "Vertex", "Conductor", "Plane", "Hole", "Class", "X", "Y", "ArcId", "ArcCx", "ArcCy", "ArcR", "ArcSign",
           "JointTurn", "JointSmooth")
@@ -142,6 +147,31 @@ class ValidateArcTubesTest(unittest.TestCase):
         rejected(lambda c: c["ArcTubes"].__setitem__("Count", 1), "arc summary does not match")
         rejected(lambda c: c["Tubes"][2]["Joints"][0].__setitem__("PlaneCut", True), "joint record")
         rejected(lambda c: c.pop("ArcTubes"), "arc summary does not match")
+
+
+class ArcScopeGuardsTest(unittest.TestCase):
+    """Decision 391 MAJOR-2 (ii): the arc face-end and arc-joint-tilt guards are in the contract's
+    scope list, with the mesher's list spelled identically (ids, order, detection origin) and the
+    loop end's tested turn bound."""
+
+    def julia_guards(self):
+        source = (HERE / "mesh_spatial_coupon.jl").read_text()
+        block = re.search(r"const RECIPE_SCOPE_GUARDS = \[(.*?)\n(?:const|\S)", source, re.S).group(1)
+        return [(m.group(1), m.group(2)) for m in re.finditer(r'\("([A-Za-z]+)", "(inputs|build)",', block)]
+
+    def test_guards_present_and_parsed(self):
+        for guard in ("ArcFaceEnds", "ArcJointTilt"):
+            self.assertEqual(RECIPE_SCOPE_GUARDS[guard], "build")
+            self.assertEqual(scope_guard_in_text(f"ERROR: ScopeGuard[{guard}]: an arc ...; arc 1 part 1"), guard)
+        self.assertEqual(ARC_JOINT_TURN_BOUND_RADIANS, 1.6e-6)
+
+    def test_lists_identical_with_the_mesher(self):
+        julia = self.julia_guards()
+        self.assertEqual([guard for guard, _ in julia], list(RECIPE_SCOPE_GUARDS))
+        self.assertEqual(dict(julia), dict(RECIPE_SCOPE_GUARDS))
+        source = (HERE / "mesh_spatial_coupon.jl").read_text()
+        bound = re.search(r"const ARC_JOINT_TURN_BOUND = ([0-9.e+-]+)", source).group(1)
+        self.assertEqual(float(bound), ARC_JOINT_TURN_BOUND_RADIANS)
 
 
 if __name__ == "__main__":

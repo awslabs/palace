@@ -17,7 +17,14 @@ const INTERFACE_ELEMENT_VERTICES = Dict("Triangle" => 3, "Quadrilateral" => 4)
 # groupings, so their difference is summation error alone; plain accumulation over ~10^6
 # interface quadrature points (the block (b) loop end: 10.17 M elements) exceeded the
 # 1e-12 closure tolerance by rounding, a compensated sum reads the closure at machine
-# precision. The tolerance itself is unchanged.
+# precision. The tolerance itself is unchanged. Note (mesher review R2 MINOR-7, decision
+# 391): since decision 379 the WHOLE measure is formed per quadrature point by the same
+# add! calls, in the same order, as the per-owner measures (before, it summed the
+# per-element `area` values) - the two sums are the same terms in the same order, so the
+# closure measures the fold of the per-owner totals against the whole and nothing beyond
+# it; that is what the check always was (summation-only: every point has exactly one
+# owner by construction, `classify` returning one attribute), stated here so nobody reads
+# it as an independent ownership test. `areas[target]` keeps the plain per-element sum.
 mutable struct CompensatedSum
     sum::Float64
     compensation::Float64
@@ -191,7 +198,9 @@ function label_interface_patches(
         end
         gmsh.model.addPhysicalGroup(2, [entity], attribute, "surface_$attribute")
     end
-    owned_measure = total(foldl(add!, (total(a) for a in values(quadrature_area)); init=CompensatedSum()))
+    owned_measure = total(
+        foldl(add!, (total(a) for a in values(quadrature_area)); init=CompensatedSum())
+    )
     quadrature_whole = total(quadrature_whole)
     closure_tolerance = 1e-12
     relative_closure = abs(owned_measure-quadrature_whole)/quadrature_whole

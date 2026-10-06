@@ -4775,10 +4775,30 @@ const RECIPE_SCOPE_SUPPORTED_CLASSES = [
     "ArcSides", "ContinuationVertices", "DeviceFootprint", "DownwardLayers", "ExteriorLoops",
     "HoleLoops", "MultipleConductors", "MultipleLayers", "MultipleSlots", "ThinMetal", "TraceBasis",
     "UntubedShortEdges"]
+# Decision 391 MAJOR-2 (ii): the arc tube paths that no full build has exercised fail
+# closed until the four synthetic full builds of the next mesher lane (arc face ends at
+# 45 / 70 degrees, a kinked arc / line joint, a 5e-5-rad smooth joint, a 2e-4-rad corner
+# joint) lift the guards. The tested range of an arc joint's turn is the loop end
+# 1b26671c9080's: 32 smooth arc / line joints turning by 3.0e-8 .. 1.6e-6 rad on the
+# signature (the mesher's post-snap tilts read <= 1.27e-6 rad on its built thin and
+# measurement-only fabricated meshes) and the exact part splits of one arc (turn 0).
+const ARC_JOINT_TURN_BOUND = 1.6e-6
 const RECIPE_SCOPE_GUARDS = [
     ("ArcTubeRadiusVsCurvature", "build",
      "an arc metal side whose radius is below four times the tube envelope (Radius + " *
      "PyramidHeight): the revolved sections would fold (block (b) design 1.2 (3))"),
+    ("ArcFaceEnds", "build",
+     "an arc metal side with an end on the outer box (a box-face cut end at any tilt, an end " *
+     "exactly perpendicular to the face or a box-vertex corner): no full build has exercised " *
+     "an arc tube reaching a box face (supervisor decision 391 MAJOR-2 (ii); lifted by the " *
+     "synthetic arc face-end builds at 45 / 70 degrees)"),
+    ("ArcJointTilt", "build",
+     "an arc metal side meeting another side (straight or arc) at a joint whose turn (the " *
+     "angle between the arc's end tangent and the other side's direction) exceeds " *
+     "$(ARC_JOINT_TURN_BOUND) rad, the loop end's tested range (smooth joints turning more, " *
+     "kinked arc / line joints and arc corners): no full build has exercised a sheared or a " *
+     "capped arc joint beyond it (supervisor decision 391 MAJOR-2 (ii); lifted by the " *
+     "synthetic 5e-5-rad smooth, 2e-4-rad corner and kinked arc / line joint builds)"),
     ("TopRounding", "inputs",
      "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
     ("TrenchRounding", "inputs",
@@ -5162,6 +5182,38 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
         side.kind == :arc || sides[partners[1][1]].kind == :arc ||
             error("the smooth joint at $point joins two straight sides: the builder merges those (design A3 (1))")
         return partners[1]
+    end
+    # Decision 391 MAJOR-2 (ii): an arc side is built only in the tested configuration -
+    # no end on the outer box, and every joint with another side of its plane turning by at
+    # most ARC_JOINT_TURN_BOUND (a tangent joint turns by 0; the split between two parts of
+    # one arc is exact). The turn is read on the sides' away directions (the arc's end
+    # tangent against the other side's direction leaving the joint), by atan of the cross
+    # and dot products (exact to the rounding of the directions, unlike acos near 1).
+    function arc_end_guards(side)
+        side.kind == :arc || return
+        for (point, away) in ((side.start, side.away[1]), (side.stop, side.away[2]))
+            on_box(point) && scope_error("ArcFaceEnds",
+                                          "arc $(side.arc.id) part $(side.arc.part) of conductor " *
+                                          "$(side.conductor) ends at $point on the outer box")
+            for other in sides
+                other === side && continue
+                abs(other.plane - side.plane) <= tolerance || continue
+                for (other_point, other_away) in ((other.start, other.away[1]), (other.stop, other.away[2]))
+                    norm(other_point .- point) <= tolerance || continue
+                    continuing = -other_away
+                    turn = atan(abs(cross2d((away[1], away[2]), (continuing[1], continuing[2]))),
+                                dot(away, continuing))
+                    turn <= ARC_JOINT_TURN_BOUND ||
+                        scope_error("ArcJointTilt",
+                                    "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
+                                    "meets a $(other.kind == :arc ? "arc" : "straight") side at $point " *
+                                    "with a turn of $turn rad")
+                end
+            end
+        end
+    end
+    for side in sides
+        arc_end_guards(side)
     end
     for (index, side) in enumerate(sides)
         start_joint = smooth_joint(index, side.start, side.plane)
@@ -5646,7 +5698,14 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                            "convention holds bitwise: a Physical-class box vertex is a semantic " *
                            "corner with h_K + its ball (Tubes[].LegacyBoxVertexCorner), a " *
                            "Continuation-class one has clearance 0; two metal sides meeting at a " *
-                           "box vertex are a corner at any theta (decision 320)",
+                           "box vertex are a corner at any theta (decision 320). An ARC end exactly " *
+                           "perpendicular to a box face (|tangent[d]| == 1.0) is a cut end for the " *
+                           "contract (box_face_cut_end reads the next chord vertex's face-parallel " *
+                           "coordinate) and the legacy perpendicular end for the mesher (clearance " *
+                           "0, no ball, no disagreement error since the contract lists no corner " *
+                           "there): consistent in effect, recorded here (mesher review R2 MINOR-5, " *
+                           "decision 391); every arc end on the outer box fails closed at " *
+                           "ScopeGuard[ArcFaceEnds] until the next mesher lane lifts it",
         "EnvelopeRadius" => envelope_radius,
         "MetalFacingRule" => "two tubed metal sides of one plane whose tube intervals face each " *
                              "other across the metal (each on the metal side of the other's " *
