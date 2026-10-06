@@ -1729,11 +1729,17 @@ corrected interface energies (fixed trace and fixed flux on the raw field, self-
 on the corrected field) instead of losing it with the modelled perimeter's within-`R`
 energy. That share is reported per feature type in
 `surface-response-uncovered-energy.csv`: `source`, `evaluation` 0 / 1 / 2 as above, `type`
-with a `Total` row, `portions`, `length (m)`, then per target interface
-`uncovered raw energy[k] (J)` and the share of the evaluation's corrected interface energy
-`uncovered share[k]`; written only when something is uncovered, with the portions under
-`Diagnostics.Uncovered`. The
-single-transmon plotting helper can overlay these assignments on the chip-plane metal mesh:
+with a `Total` row, `portions`, `length (m)`, `clipped by spatial support (m)`, then per
+target interface `uncovered raw energy[k] (J)` and the share of the evaluation's corrected
+interface energy `uncovered share[k]`; written only when something is uncovered, with the
+portions under `Diagnostics.Uncovered`. The part of an uncovered portion inside a matched
+spatial cluster's support box is removed at placement (the cluster coupon models its whole
+box, so that energy would be counted twice): the removed length per feature and per
+cluster is recorded under `Diagnostics.Uncovered.ClippedBySpatialSupport` and in the CSV
+column above; without a matched cluster nothing changes. Trimmed corners whose coupon is
+then not applied (domain boundary, vertex ownership) are counted under
+`Diagnostics.CornerArmTrim.ExcludedCoupons` (their trimmed stretch is modelled by nothing).
+The single-transmon plotting helper can overlay these assignments on the chip-plane metal mesh:
 
 ```text
 python3 examples/transmon/plot_surface_response_assignments.py \

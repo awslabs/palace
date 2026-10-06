@@ -2063,13 +2063,24 @@ continuation ownership's owned lengths: a portion's quadrature x model weights s
 (`test-cornerarmtrim.cpp`): the unit-cube lead sheared in its metal plane to a 120-deg
 convex corner (s = 1.1547 R, one cell clipped exactly to s, the first arm at R, the
 portion sums 1 - trim / portion, the operator record = the manifest's on 1 and 2 ranks) and
-the unsheared 90-deg lead (no record, 18 rows, every arm cell at R, unit portion sums).
-KNOWN LIMITS: a cell on the second arm that continues a cluster claim is clipped here and
-again by the continuation ownership (both on the current cell: consistent); a corner coupon
-later excluded (DomainBoundary, vertex ownership) leaves its trimmed stretch uncorrected
-with its window (the exclusion records cover the corner, not the stretch); a
-SpatialEdgeCluster patch on the second arm is dense and not clippable (the decision-244
-class).
+the unsheared 90-deg lead (no record, 18 rows, every arm cell at R, unit portion sums, and
+— decision 399 MINOR-6 — its patches CSV byte-identical to the committed TRIM-DISABLED
+dry run `test/data/surfaceresponse/corner-arm-trim-90deg-trim-disabled-patches.csv`,
+written by a build without the `ApplyCornerArmTrim` call; provenance in that folder's
+README). KNOWN LIMITS: a cell on the second arm that continues a cluster claim is clipped
+here and again by the continuation ownership (both on the current cell: consistent); a
+corner coupon later excluded (DomainBoundary, vertex ownership, an exact cluster's
+priority) leaves its trimmed stretch [R, s) modelled by NOTHING, as its window [0, R)
+already is (the exclusion records cover the corner, not the stretch) — such corners are
+counted at placement under `Diagnostics.CornerArmTrim.ExcludedCoupons` (manifest and
+palace.json: `Count`, per corner `Feature`, `Patch`, `Reason` = DomainBoundary /
+VertexOwnership / SpatialClusterPriority, the trim lengths; `Summary.CornerArmTrim.
+ExcludedCoupons` = the count; a warning when > 0; decision 399 MINOR-7; 0 on C4 / C3 /
+S5); a SpatialEdgeCluster patch on the second arm is dense and not clippable (the
+decision-244 class); a FIRST-arm cell beginning before R (a snapped claim boundary) keeps
+its sub-R part inside the vertex window — ~0.18 um over C3's 17 corners, a change that
+would also touch 90-deg corners and therefore the transmon, recorded as a separate
+follow-up (decision 399 MINOR-5), not done here.
 
 **Uncovered requirements keep their raw within-R energy (decision 394 F2, 2026-10-06).**
 The corrected interface energy of a target is E_out (the raw energy beyond R of EVERY metal
@@ -2083,8 +2094,10 @@ geometry cache and the operator, `GetUncoveredPortions`), and the electrostatic 
 to every corrected interface energy the RAW within-R energy whose nearest perimeter point
 lies on one of them — the fixed-trace and fixed-flux columns on the raw field, the
 self-consistent column on the CORRECTED field (the field whose E_out that column already
-carries: one field per column; the decision-341 non-target convention keeps a plain sheet
-RAW because no corrected field exists for it, whereas here it does). The partition is
+carries: one field per column — the same convention as decision 344's as-written rule for
+a non-target sheet, whose sc column is the sheet energy on the self-consistent potential;
+ERRATUM of the first wording, which mis-cited decision 341's "RAW non-target" sentence that
+344 had already corrected). The partition is
 exact: `SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies` finds the quadrature point's
 nearest perimeter segment in the interface's own edge-distance tree (the one E_out uses),
 weights it by 1 - the outside window weight (the same `EdgeDistances` smoothing), and tests
@@ -2106,6 +2119,34 @@ unavailable) and type (one row per type and a Total row), the portion count and 
 that type, and per target interface the uncovered raw energy and its share of that
 evaluation's corrected interface energy; `Diagnostics.Uncovered` (manifest, palace.json)
 lists the portions with `ByType` counts and lengths and `Summary.Uncovered` the totals.
+CLIP BY THE MATCHED CLUSTERS' SUPPORT BOXES (decision 399 MAJOR-1;
+`ClipUncoveredPortionsBySpatialSupport`, at placement — the dry run and the operator
+constructor — right after the boxes of `CollectSpatialSupports` are known, on a copy of
+the cached portions): a matched SpatialEdgeCluster's coupon models its WHOLE support box
+(the continuation ownership of decision 236 exists for that reason), so the part of an
+uncovered portion strictly inside such a box would be counted twice — by the coupon and as
+uncovered raw energy. Every portion is clipped by every support with claims (a cluster;
+a vertex coupon's support has none) exactly as the continuation ownership clips a
+translational cell: the same `SpatialSupportBounds` (the global bounds of the model's basis
+points placed by the patch frame, R above and below the plane), the same strict-interior
+interval (`LineInsideBox`, the cell rule's `CellInsideBox`, tolerance 1e-12 x max(1,
+length)); the inside intervals of all boxes are united and the complement replaces the
+portion — none (wholly inside), one piece (the end inside a box moved to the box face), or
+two pieces (a box crossed by the portion; a cell cannot be, a portion can). Without a
+matched cluster the portions are untouched (bitwise). RECORD
+`Diagnostics.Uncovered.ClippedBySpatialSupport` (manifest + palace.json): `Portions`
+(portions that lost a part), `RemovedPortions`, `SplitPortions`, `Length` (removed),
+`ByFeature` (the removed length per uncovered feature), `BySupport` (per cluster patch),
+`Clips` (one per portion x box: feature, segment, spatial patch / feature, length);
+`Summary.Uncovered.ClippedBySpatialSupport` = the length; a warning when > 0; the uncovered
+CSV carries the removed length per type in the column `clipped by spatial support (m)`
+(written when portions remain; portions wholly clipped leave no CSV and the record in
+Diagnostics). Measured runs: 0 um inside on S5 (no matched cluster) and C3 (2 matched
+clusters, 195 portions) — unaffected. Unit test `SurfaceResponseOperator uncovered portions
+clipped by spatial supports` (`test-cornerarmtrim.cpp`): exact clip at the face, a split, a
+wholly removed portion, a face touched not inside, two boxes sharing a portion, bitwise
+without a cluster box, and the uncovered energies of the kept and removed pieces partition
+the portion's energy to 1e-10 (a projected field on the unit cube's top face).
 The Maxwell surface response (eigenmode) is unchanged (its corrected energies drop the
 uncovered within-R energy as before; recorded). Unit test `Electrostatic uncovered
 requirements keep their raw energy` (`test-cornerarmtrim.cpp`): the two-corner lead with
