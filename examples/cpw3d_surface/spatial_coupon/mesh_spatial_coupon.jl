@@ -1021,6 +1021,256 @@ function tetrahedron_aspect(xyz)
     return singular[1] / singular[end]
 end
 
+# ---------------------------------------------------------------------------
+# Order-invariant corner cell measures (mesher design round 2 F5-A, supervisor
+# decisions 351 / 358 / 363). tetrahedron_aspect is MFEM's linear-tet Jacobian
+# condition against the RIGHT-ANGLED reference tetrahedron in the STORED node order:
+# the same cell reads differently by first vertex (O1 thin 22.5-degree tip: 5.03 /
+# 4.63 / 4.61 / 9.10), a corner-first cell spanning a tip of opening phi is floored
+# at cot(phi / 2), and the solver reorients the cells at load, so the measure is a
+# node-order lottery at non-perpendicular corners. kappa_reg is the condition number
+# of the affine map from the REGULAR tetrahedron (J W^-1, W the regular tetrahedron's
+# edge matrix): the regular tetrahedron's relabellings are orthogonal maps, so the
+# value is the same in every node order; kappa_reg = 1 for the regular tetrahedron,
+# 2 for the trirectangular one, and lies in [kappa_v0 / 2, 2 kappa_v0] for every
+# frame (kappa(W) = 2). It is the objective and the verdict at INVARIANT corners
+# (semantic_corner_kinds); LEGACY (exactly perpendicular) corners keep
+# tetrahedron_aspect bitwise. The frame extremes and the mean ratio are recorded
+# as information at every corner (FIX-UPS F.2 / F.6).
+const REGULAR_TETRAHEDRON_EDGES_INVERSE =
+    inv(hcat([1.0, 0.0, 0.0], [0.5, sqrt(3.0) / 2.0, 0.0], [0.5, sqrt(3.0) / 6.0, sqrt(2.0 / 3.0)]))
+
+function tetrahedron_regular_condition(xyz)
+    jacobian = hcat(xyz[2] .- xyz[1], xyz[3] .- xyz[1], xyz[4] .- xyz[1]) *
+               REGULAR_TETRAHEDRON_EDGES_INVERSE
+    singular = svdvals(jacobian)
+    return singular[1] / singular[end]
+end
+
+# (minimum, maximum) of tetrahedron_aspect over the four first-vertex choices.
+function tetrahedron_frame_conditions(xyz)
+    values = [tetrahedron_aspect(xyz[[i; setdiff(1:4, i)]]) for i in 1:4]
+    return minimum(values), maximum(values)
+end
+
+# Mean ratio 12 (3 V)^(2/3) / sum of the squared edge lengths: 1 for the regular
+# tetrahedron, 0 for a flat one (information).
+function tetrahedron_mean_ratio(xyz)
+    a = xyz[2] .- xyz[1]; b = xyz[3] .- xyz[1]; c = xyz[4] .- xyz[1]
+    volume = abs(dot(a, cross(b, c))) / 6.0
+    squared = sum(sum((xyz[i] .- xyz[j]) .^ 2) for i in 1:4 for j in (i + 1):4)
+    return 12.0 * (3.0 * volume)^(2.0 / 3.0) / squared
+end
+
+# The optimizer goal at an invariant corner: the constant 3.8 (= 0.95 x 4.0, the
+# number every legacy corner descends to), decoupled from the verdict CornerShapeGate
+# (FIX-UPS F.2: the after-values are then the E3 production predictions by
+# construction; a goal tied to the gate would stop the descent at shapes the
+# qualified population never produced).
+const INVARIANT_CORNER_TARGET = 3.8
+
+const INVARIANT_CORNER_RULE =
+    "a semantic corner is LEGACY when the two plan-view boundary sides meeting at it have " *
+    "an exactly zero dot product in exact integer arithmetic on their quantum counts (every " *
+    "coordinate divided by the plan-view quantum 1e-9 R and rounded to the generator's " *
+    "integer; every rectilinear corner, the theta-0 box vertex of decision 320 - its metal " *
+    "side exactly perpendicular to the box side - and every rigidly rotated perpendicular " *
+    "corner, whatever its rotation): it keeps the vertex-0 Jacobian condition " *
+    "tetrahedron_aspect, MaximumCornerAspect and the 0.95 target bitwise; every other corner " *
+    "is INVARIANT: its corner-incident seed cells are optimized on and judged by kappa_reg, " *
+    "the condition number of the affine map from the regular tetrahedron (order-invariant), " *
+    "descended to the fixed goal 3.8 and judged against CornerShapeGate = min(E_pop, 5.0) " *
+    "(E_pop the kappa_reg envelope of the (F)-qualified 90-degree corners); a BridgingSliver " *
+    "candidate (a corner-incident cell whose four vertices all lie on the kink's two sidewalls, " *
+    "at least one strictly on each, in a wedge of obtuse opening) still above the gate after " *
+    "the descent triggers the corner-local reconnection pass (supervisor decision 365: the " *
+    "measure is the verdict, the predicate the trigger); the contract " *
+    "(derive_semantic_contract: Derivation.InvariantCorners) and the mesher evaluate the " *
+    "same predicate on the same quantum and a disagreement fails closed (supervisor " *
+    "decisions 351 / 358 / 363 / 416)"
+
+# The plan-view boundary's coordinate quantum per unit coupon radius: the generator
+# (generate_spatial_response.plan_view_boundary_loops) snaps every loop vertex to the
+# 1e-9 R grid and writes the float k x 1e-9 R (semantic_mesh_contract.
+# PLAN_VIEW_QUANTUM_OVER_RADIUS is the same number; both tools count in 1e-9 x --radius).
+const PLAN_VIEW_QUANTUM_OVER_RADIUS = 1.0e-9
+
+# The integer count of `quantum` nearest to a plan-view coordinate (the generator's
+# rounding: half away from zero), exact for every generated coordinate - the float
+# k x quantum lies within 1e-6 quanta of k. Int128: two sides of ~1e10 quanta each
+# multiply beyond Int64.
+function plan_view_quantum_count(value, quantum)
+    scaled = value / quantum
+    return scaled >= 0.0 ? floor(Int128, scaled + 0.5) : ceil(Int128, scaled - 0.5)
+end
+
+# The two plan-view boundary sides meeting at every semantic corner, as unit 2D
+# directions pointing away from the corner, the unit direction into the metal between
+# them (the kink's metal sector: inside an exterior loop, outside a hole), and the
+# corner's kind (:legacy / :invariant) by the exact dot-product predicate above, evaluated
+# in integer arithmetic on the quantum counts of the three vertices (`quantum` = 1e-9 R,
+# the generator's grid): exactly 0 at every perpendicular corner, axis-aligned or rigidly
+# rotated. (The float dot product of the float side vectors is exact only for axis-aligned
+# sides: the loop end's rotated perpendicular corner read -1.776e-15 and was classed
+# invariant by both tools; supervisor decision 416.) The returned dots are those integers.
+# Every corner must be exactly one boundary vertex of its plane (fail closed otherwise).
+# `corners` and `loops` share the seed frame.
+function semantic_corner_kinds(corners, loops, tolerance, quantum)
+    kinds = Symbol[]; sides = NamedTuple[]; dots = Int128[]
+    for corner in corners
+        matches = NamedTuple[]
+        for loop in loops
+            abs(loop.plane - corner[3]) <= tolerance || continue
+            n = length(loop.points)
+            for i in 1:n
+                p = loop.points[i]
+                hypot(p[1] - corner[1], p[2] - corner[2]) <= tolerance || continue
+                push!(matches, (before=loop.points[mod1(i - 1, n)],
+                                after=loop.points[mod1(i + 1, n)], point=p, loop=loop))
+            end
+        end
+        length(matches) == 1 ||
+            error("Semantic corner $(corner) matches $(length(matches)) plan-view boundary " *
+                  "vertices of its plane (exactly one is required)")
+        before, after, p, loop = matches[1].before, matches[1].after, matches[1].point, matches[1].loop
+        a = [before[1] - p[1], before[2] - p[2]]
+        b = [after[1] - p[1], after[2] - p[2]]
+        all(norm(v) > 0.0 for v in (a, b)) ||
+            error("Degenerate plan-view boundary side at the semantic corner $(corner)")
+        quantised(point) =
+            (plan_view_quantum_count(point[1], quantum), plan_view_quantum_count(point[2], quantum))
+        qp = quantised(p)
+        qa = quantised(before) .- qp
+        qb = quantised(after) .- qp
+        product = qa[1] * qb[1] + qa[2] * qb[2]
+        push!(kinds, product == 0 ? :legacy : :invariant)
+        wall_1, wall_2 = a ./ norm(a), b ./ norm(b)
+        # The metal direction: the bisector (or its perpendicular at a straight joint),
+        # oriented by a probe just inside the loop (inside an exterior loop = metal).
+        bisector = wall_1 .+ wall_2
+        metal = norm(bisector) > 1.0e-9 ? bisector ./ norm(bisector) : [-wall_1[2], wall_1[1]]
+        probe_distance = 1.0e-3 * min(norm(a), norm(b))
+        probe = (p[1] + probe_distance * metal[1], p[2] + probe_distance * metal[2])
+        point_in_polygon(probe, loop.points, tolerance) == !loop.hole || (metal = -metal)
+        probe = (p[1] + probe_distance * metal[1], p[2] + probe_distance * metal[2])
+        point_in_polygon(probe, loop.points, tolerance) == !loop.hole ||
+            error("Unable to orient the metal side of the semantic corner $(corner)")
+        push!(sides, (walls=[wall_1, wall_2], metal=metal))
+        push!(dots, product)
+    end
+    return kinds, sides, dots
+end
+
+# Whether the plan-view direction `u` (from the corner) lies in the metal sector of a
+# corner: the sector from wall 1 to wall 2 that contains the metal direction.
+function in_metal_sector(sides, u)
+    angle(v) = mod(atan(v[2], v[1]) - atan(sides.walls[1][2], sides.walls[1][1]), 2.0 * pi)
+    span = angle(sides.walls[2])
+    return (angle(u) <= span) == (angle(sides.metal) <= span)
+end
+
+# The opening angle (radians) of the wedge between the two sidewalls that contains the
+# plan-view direction `u`: the metal sector's angle or its complement to 2 pi.
+function wedge_opening(sides, u)
+    angle(v) = mod(atan(v[2], v[1]) - atan(sides.walls[1][2], sides.walls[1][1]), 2.0 * pi)
+    span = angle(sides.walls[2])
+    metal_span = angle(sides.metal) <= span ? span : 2.0 * pi - span
+    return in_metal_sector(sides, u) ? metal_span : 2.0 * pi - metal_span
+end
+
+# The contract's recorded invariant corners (Derivation.InvariantCorners.Points,
+# pulled back into the seed frame; an empty list when the record is absent).
+function read_invariant_corners(path, transform)
+    contract = parse_json(read(path, String))
+    derivation = get(contract, "Derivation", nothing)
+    derivation isa AbstractDict && haskey(derivation, "InvariantCorners") || return NTuple{3, Float64}[]
+    record = derivation["InvariantCorners"]
+    record isa AbstractDict && record["Points"] isa AbstractVector ||
+        error("Semantic contract Derivation.InvariantCorners must record Points")
+    return [inverse_transform_point(transform, json_point(point)) for point in record["Points"]]
+end
+
+# The mesher's corner kinds against the contract's record: the set of invariant
+# corners must agree exactly (a contract derived before the rule, or by a tool
+# disagreeing with the mesher, fails closed: regenerate it).
+function check_invariant_corner_contract(corners, kinds, recorded, tolerance)
+    found = [collect(corner) for (corner, kind) in zip(corners, kinds) if kind === :invariant]
+    matched(point, list) = any(norm(collect(point) .- other) <= tolerance for other in list)
+    missing_in_contract = [point for point in found if !matched(point, [collect(r) for r in recorded])]
+    missing_in_mesher = [point for point in recorded if !matched(point, found)]
+    isempty(missing_in_contract) && isempty(missing_in_mesher) ||
+        error("the semantic contract's invariant corners disagree with the plan-view boundary: " *
+              "invariant by the mesher but not recorded $(missing_in_contract), recorded but " *
+              "perpendicular by the mesher $(missing_in_mesher): regenerate the contract " *
+              "(derive_semantic_contract records Derivation.InvariantCorners; $(INVARIANT_CORNER_RULE))")
+    return length(found)
+end
+
+# A sidewall of an invariant corner: the vertical CAD plane through the corner along
+# one of its sides. A mesh vertex lies on wall i when a VERTICAL surface triangle
+# containing it lies in that plane on the side's half (a thin coupon has no vertical
+# triangle at a kink, so no wall and no bridging sliver there; a box-face triangle is
+# vertical but never in a metal side's plane). Returns per vertex a 2-bit wall mask.
+const SIDEWALL_PLANE_TOLERANCE = 1.0e-8
+
+function sidewall_vertex_masks(points, triangles, center, sides, radius)
+    directions = sides.walls
+    normals = [[-d[2], d[1]] for d in directions]
+    in_wall(p, w) = abs((p[1] - center[1]) * normals[w][1] + (p[2] - center[2]) * normals[w][2]) <=
+                    SIDEWALL_PLANE_TOLERANCE &&
+                    (p[1] - center[1]) * directions[w][1] + (p[2] - center[2]) * directions[w][2] >=
+                    -SIDEWALL_PLANE_TOLERANCE
+    # The vertices of the vertical triangles lying in a wall plane near the corner ...
+    wall_vertices = Set{Int}()
+    for triangle in triangles
+        xyz = [points[:, i] for i in triangle]
+        any(norm(p .- center) <= radius for p in xyz) || continue
+        n = cross(xyz[2] .- xyz[1], xyz[3] .- xyz[1])
+        length_n = norm(n)
+        length_n > 0.0 && abs(n[3]) <= 1.0e-6 * length_n || continue
+        any(all(in_wall(p, w) for p in xyz) for w in eachindex(directions)) || continue
+        union!(wall_vertices, triangle)
+    end
+    # ... each masked by the wall planes it lies in (a corner-line vertex lies in both,
+    # whichever wall's triangles happen to contain it).
+    masks = Dict{Int, UInt8}()
+    for i in wall_vertices
+        mask = 0x00
+        for w in eachindex(directions)
+            in_wall(points[:, i], w) && (mask |= UInt8(1 << (w - 1)))
+        end
+        masks[i] = mask
+    end
+    return masks
+end
+
+# FIX-UPS F.1 (b) as ruled by supervisor decision 365: a corner-incident cell is a
+# BRIDGING SLIVER candidate when all four of its vertices lie on the kink's two
+# SIDEWALLS only (none interior, none on a third CAD surface), at least one strictly on
+# wall 1 (off wall 2) and one strictly on wall 2, in a wedge whose opening at the corner
+# is OBTUSE (> 90 degrees exactly) - the S4 150-degree fab cell: the corner and a
+# corner-line vertex on both walls, one vertex on each wall, in the 150-degree wedge
+# under the metal (kappa_reg 5.28-6.16). The same combinatorial type is the ideal
+# trirectangular cell at 90 degrees and an unavoidable healthy wedge cell at a
+# fabricated tip (the substrate fan under a 22.5-degree tip, kappa_reg 3.4-4.2), so the
+# predicate is NOT a verdict: the verdict is kappa_reg <= CornerShapeGate, and the
+# predicate restricted to cells still above the gate after the kappa_reg descent is the
+# TRIGGER of the corner-local reconnection pass (F5-B).
+function bridging_sliver_cells(points, tetrahedra, cells, masks, center, sides)
+    bridging = Int[]
+    for k in cells
+        cell = tetrahedra[k]
+        all(get(masks, i, 0x00) != 0x00 for i in cell) || continue
+        wall_1 = any(get(masks, i, 0x00) == 0x01 for i in cell)
+        wall_2 = any(get(masks, i, 0x00) == 0x02 for i in cell)
+        wall_1 && wall_2 || continue
+        centroid = sum(points[:, i] for i in cell) ./ 4
+        wedge_opening(sides, [centroid[1] - center[1], centroid[2] - center[2]]) > pi / 2 || continue
+        push!(bridging, k)
+    end
+    return bridging
+end
+
 # Edge lengths and cell aspects of the linear seed inside each semantic corner
 # ball, and per shell of the corner law (corner_shell_radii: the geometric shell
 # boundaries, then the radius) the ball edges by midpoint distance, their length
@@ -1047,7 +1297,9 @@ function corner_shell_census(points, edges, cells, center, grading::CornerGradin
     return rows
 end
 
-function seed_corner_census(corners, grading::CornerGrading, tolerance)
+function seed_corner_census(corners, grading::CornerGrading, tolerance;
+                            corner_kinds=fill(:legacy, length(corners)),
+                            maximum_corner_aspect=0.0, corner_shape_gate=0.0)
     radius, isotropic_size = grading.radius, grading.lc_fine
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(coordinates, 3, :)
@@ -1080,8 +1332,25 @@ function seed_corner_census(corners, grading::CornerGrading, tolerance)
         aspects = [tetrahedron_aspect([points[:, i] for i in cell]) for cell in incident]
         ring = unique([i for cell in incident for i in cell if !at_corner[i]])
         ring_radii = [norm(points[:, i] .- center) for i in ring]
+        # Design round 2 F5-A: the corner's kind and the measure of its verdict
+        # (kappa_reg at an invariant corner, the vertex-0 condition at a legacy one), with
+        # the order-invariant measures of every corner as information (FIX-UPS F.6).
+        invariant = corner_kinds[k] === :invariant
+        cells = [[points[:, i] for i in cell] for cell in incident]
+        frames = [tetrahedron_frame_conditions(xyz) for xyz in cells]
+        kappa_reg = [tetrahedron_regular_condition(xyz) for xyz in cells]
+        measure = isempty(cells) ? nothing : Dict{String, Any}(
+            "Kind" => invariant ? "Invariant" : "Legacy",
+            "Name" => invariant ? "RegularCondition" : "VertexFrameCondition",
+            "Value" => invariant ? maximum(kappa_reg) : maximum(aspects),
+            "Gate" => invariant ? (corner_shape_gate > 0.0 ? corner_shape_gate : nothing) :
+                      (maximum_corner_aspect > 0.0 ? maximum_corner_aspect : nothing),
+            "KappaRegMax" => maximum(kappa_reg), "KappaV0Max" => maximum(aspects),
+            "KappaMinMax" => maximum(first(f) for f in frames),
+            "KappaMaxMax" => maximum(last(f) for f in frames),
+            "EtaMin" => minimum(tetrahedron_mean_ratio(xyz) for xyz in cells))
         push!(rows, Dict{String, Any}(
-            "Corner" => k - 1, "Point" => collect(corner),
+            "Corner" => k - 1, "Point" => collect(corner), "Measure" => measure,
             "BallCells" => length(ball), "BallEdges" => length(lengths),
             "EdgeMinimum" => isempty(lengths) ? nothing : lengths[1],
             "EdgeMedian" => isempty(lengths) ? nothing : sorted_median(lengths),
@@ -1239,9 +1508,13 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
     function cell_xyz(cell)
         return [points[:, i] for i in cell]
     end
-    aspect_of = objective === :edge_aspect ? tetrahedron_edge_aspect : tetrahedron_aspect
+    # :regular_condition is the invariant corner objective (kappa_reg, design round 2
+    # F5-A) through the same p-norm proxy as :aspect.
+    minimizing = objective in (:aspect, :edge_aspect, :regular_condition)
+    aspect_of = objective === :edge_aspect ? tetrahedron_edge_aspect :
+                objective === :regular_condition ? tetrahedron_regular_condition : tetrahedron_aspect
     function value()
-        if objective === :aspect || objective === :edge_aspect
+        if minimizing
             aspects = [aspect_of(cell_xyz(tetrahedra[k])) for k in targets]
             scale = maximum(aspects)
             return scale * sum((aspects ./ scale) .^ SEED_ASPECT_PROXY_POWER)^(1 / SEED_ASPECT_PROXY_POWER)
@@ -1249,12 +1522,11 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
         return -minimum(tetrahedron_scaled_jacobian(cell_xyz(tetrahedra[k])) for k in targets)
     end
     function achieved()
-        if objective === :aspect || objective === :edge_aspect
+        if minimizing
             return maximum(aspect_of(cell_xyz(tetrahedra[k])) for k in targets)
         end
         return -value()
     end
-    minimizing = objective === :aspect || objective === :edge_aspect
     vertices = unique(i for k in targets for i in tetrahedra[k])
     movable = [(i, get(bases, i, Matrix{Float64}(I, 3, 3))) for i in vertices]
     filter!(pair -> size(pair[2], 2) > 0, movable)
@@ -1313,6 +1585,165 @@ function optimize_seed_cells!(points, original, tetrahedra, incident, bases, flo
         improved || break
     end
     return achieved(), moves
+end
+
+# ---------------------------------------------------------------------------
+# F5-B (mesher design round 2 section 1.4 (b) / FIX-UPS F.1 (b); supervisor decisions
+# 363 / 365): the corner-local reconnection pass for the fabricated flat-kink sliver
+# (family-5 root cause B: a corner-incident cell with its four vertices on the two
+# sidewalls, kappa_reg 5.28-6.16 at 150-151 degrees, which the bounded descent cannot
+# repair - the vertices are confined to the walls). Trigger = a bridging-sliver
+# candidate still above CornerShapeGate after the kappa_reg descent (decision 365).
+# Each trigger cell takes the better of two operations: the 2-3 flip across one of its
+# INTERIOR faces (a face that is no surface triangle, shared with a cell of the same
+# volume entity; the union of the two cells convex so the three new cells are positively
+# oriented) and the EDGE REMOVAL of one of its interior edges (the closed ring of n >= 3
+# cells of one entity around the edge re-triangulated by every fan: 2 (n - 2) cells; the
+# 3-2 flip for n = 3 - the operation every measured S4-type sliver used, whose two
+# interior faces have non-convex unions so no 2-3 flip applies), each by the smallest
+# resulting maximum kappa_reg (the edge removal preferred when its quality is <= the
+# flip's), which must improve on the trigger cell; every new cell keeps the TRIGGER
+# cell's scaled-Jacobian floor (min(its original value, 2 x MinimumScaledJacobian)) and
+# its Jacobian-condition ceiling (max(its original value, JacobianConditionTarget));
+# then the descent runs again. Boundary triangles are never flipped; the moves of the
+# descent stay bounded as before. Recorded CornerReconnections per corner.
+const CORNER_RECONNECTION_RULE =
+    "a bridging-sliver candidate above CornerShapeGate after the kappa_reg descent (a " *
+    "corner-incident cell with its four vertices on the two sidewalls, one strictly on each, " *
+    "in an obtuse wedge) is replaced by the better of its 2-3 flip across one of its interior " *
+    "faces (no surface triangle; the neighbour in the same volume entity; the three new cells " *
+    "positively oriented) and its edge removal of one of its interior edges (no surface edge; " *
+    "the closed ring of n >= 3 cells of one volume entity around the edge re-triangulated by " *
+    "every fan into 2 (n - 2) positively oriented cells; the 3-2 flip for n = 3), each by the " *
+    "smallest resulting maximum kappa_reg (the edge removal preferred when its quality is <= " *
+    "the flip's), which must improve on the cell; every new cell keeps the trigger cell's " *
+    "floor min(its original scaled Jacobian, 2 x MinimumScaledJacobian) and its ceiling " *
+    "max(its original Jacobian condition, JacobianConditionTarget); the descent then runs " *
+    "again; up to CornerReconnectionRounds rounds per corner, a trigger slot an earlier " *
+    "reconnection of the round reused being skipped until the next round (mesher design " *
+    "round 2 F5-B, decisions 363 / 365 / 392)"
+const CORNER_RECONNECTION_ROUNDS = 4
+
+function oriented_tetrahedron(points, cell)
+    xyz = [points[:, i] for i in cell]
+    volume = dot(xyz[2] .- xyz[1], cross(xyz[3] .- xyz[1], xyz[4] .- xyz[1]))
+    volume == 0.0 && return nothing
+    return volume > 0.0 ? cell : (cell[1], cell[2], cell[4], cell[3])
+end
+
+# The best 2-3 flip of cell k: (neighbour j, the three new cells, their maximum
+# kappa_reg) or nothing.
+function best_two_three_flip(points, tetrahedra, incident, surface_faces, cell_entity, k,
+                             scaled_floor, condition_ceiling)
+    cell = tetrahedra[k]
+    best = nothing
+    for opposite in 1:4
+        face = Tuple(sort!([cell[i] for i in 1:4 if i != opposite]))
+        face in surface_faces && continue
+        apex_k = cell[opposite]
+        neighbours = [j for j in incident[face[1]]
+                      if j != k && all(v in tetrahedra[j] for v in face)]
+        length(neighbours) == 1 || continue
+        j = neighbours[1]
+        cell_entity(j) == cell_entity(k) || continue
+        apex_j = only(v for v in tetrahedra[j] if !(v in face))
+        candidates = NTuple{4, Int}[]
+        valid = true
+        for (a, b) in ((face[1], face[2]), (face[2], face[3]), (face[3], face[1]))
+            oriented = oriented_tetrahedron(points, (apex_k, apex_j, a, b))
+            oriented === nothing && (valid = false; break)
+            push!(candidates, oriented)
+        end
+        valid || continue
+        # The three cells fill the union only when the segment apex_k - apex_j pierces
+        # the face: the signed volumes of the three cells then have one sign and sum to
+        # the pair's volume.
+        volume(c) = (xyz = [points[:, i] for i in c];
+                     dot(xyz[2] .- xyz[1], cross(xyz[3] .- xyz[1], xyz[4] .- xyz[1])) / 6.0)
+        pair = abs(volume(cell)) + abs(volume(tetrahedra[j]))
+        total = sum(abs(volume(c)) for c in candidates)
+        quality = maximum(tetrahedron_regular_condition([points[:, i] for i in c])
+                          for c in candidates)
+        scaled = minimum(tetrahedron_scaled_jacobian([points[:, i] for i in c])
+                         for c in candidates)
+        condition = maximum(tetrahedron_aspect([points[:, i] for i in c]) for c in candidates)
+        abs(total - pair) <= 1.0e-9 * pair || continue
+        scaled >= scaled_floor * (1.0 - 1.0e-9) || continue
+        condition <= condition_ceiling * (1.0 + 1.0e-9) || continue
+        if best === nothing || quality < best.quality
+            best = (neighbour=j, cells=candidates, quality=quality, face=face)
+        end
+    end
+    return best
+end
+
+# The best edge removal of cell k: for an interior edge (no surface edge) with n >= 3
+# cells around it in one closed ring of the same volume entity, the ring polygon is
+# re-triangulated (every fan of the ring) and each ring triangle gives the two cells
+# with the edge's ends (the 3-2 flip for n = 3, the 4-4 flip for n = 4, ...); the
+# candidate is valid when every new cell is positively oriented and the volumes sum to
+# the ring's. Returns (ring cells, new cells, quality, edge) or nothing.
+function best_edge_removal(points, tetrahedra, incident, surface_edges, cell_entity, k,
+                           scaled_floor, condition_ceiling)
+    cell = tetrahedra[k]
+    best = nothing
+    volume(c) = (xyz = [points[:, i] for i in c];
+                 dot(xyz[2] .- xyz[1], cross(xyz[3] .- xyz[1], xyz[4] .- xyz[1])) / 6.0)
+    for a in 1:4, b in (a + 1):4
+        u, v = minmax(cell[a], cell[b])
+        (u, v) in surface_edges && continue
+        ring = [j for j in incident[u] if v in tetrahedra[j]]
+        length(ring) >= 3 || continue
+        all(cell_entity(j) == cell_entity(k) for j in ring) || continue
+        others = Dict(j => Tuple(w for w in tetrahedra[j] if w != u && w != v) for j in ring)
+        all(length(others[j]) == 2 for j in ring) || continue
+        # Chain the ring: consecutive cells share one ring vertex; a closed single cycle.
+        cycle = Int[]
+        current = ring[1]
+        vertex = others[current][1]
+        visited = Set{Int}()
+        closed = true
+        for _ in 1:length(ring)
+            push!(cycle, vertex); push!(visited, current)
+            vertex = others[current][1] == vertex ? others[current][2] : others[current][1]
+            next = [j for j in ring if !(j in visited) && vertex in others[j]]
+            if isempty(next)
+                closed = (length(visited) == length(ring)) && vertex == cycle[1]
+                break
+            end
+            length(next) == 1 || (closed = false; break)
+            current = next[1]
+        end
+        closed && length(cycle) == length(ring) && length(unique(cycle)) == length(ring) || continue
+        n = length(cycle)
+        ring_volume = sum(abs(volume(tetrahedra[j])) for j in ring)
+        for pivot in 1:n
+            triangles = [(cycle[pivot], cycle[mod1(pivot + i, n)], cycle[mod1(pivot + i + 1, n)])
+                         for i in 1:(n - 2)]
+            candidates = NTuple{4, Int}[]
+            valid = true
+            for (wa, wb, wc) in triangles, apex in (u, v)
+                oriented = oriented_tetrahedron(points, (apex, wa, wb, wc))
+                oriented === nothing && (valid = false; break)
+                push!(candidates, oriented)
+            end
+            valid || continue
+            total = sum(abs(volume(c)) for c in candidates)
+            quality = maximum(tetrahedron_regular_condition([points[:, i] for i in c])
+                              for c in candidates)
+            scaled = minimum(tetrahedron_scaled_jacobian([points[:, i] for i in c])
+                             for c in candidates)
+            condition = maximum(tetrahedron_aspect([points[:, i] for i in c])
+                                for c in candidates)
+            abs(total - ring_volume) <= 1.0e-9 * ring_volume || continue
+            scaled >= scaled_floor * (1.0 - 1.0e-9) || continue
+            condition <= condition_ceiling * (1.0 + 1.0e-9) || continue
+            if best === nothing || quality < best.quality
+                best = (ring=ring, cells=candidates, quality=quality, edge=(u, v))
+            end
+        end
+    end
+    return best
 end
 
 # Below-target cells of a target set grouped into vertex-sharing components.
@@ -1612,8 +2043,20 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                                    corner_grading=CornerGrading(0.0, growth_ratio, lc_fine, radius),
                                    triangle_entities=zeros(Int, length(triangles)),
                                    lines=NTuple{2, Int}[], line_entities=Int[],
-                                   fixed=falses(size(points, 2)))
+                                   fixed=falses(size(points, 2)),
+                                   corner_kinds=fill(:legacy, length(corners)),
+                                   corner_sides=fill(nothing, length(corners)),
+                                   corner_shape_gate=0.0,
+                                   cell_entities=zeros(Int, length(tetrahedra)))
     original = copy(points)
+    original_cell_count = length(tetrahedra)
+    length(cell_entities) == original_cell_count || error("Every seed cell needs its volume entity")
+    length(corner_kinds) == length(corners) == length(corner_sides) ||
+        error("Every semantic corner needs a kind and its sides")
+    invariant_corners = count(kind -> kind === :invariant, corner_kinds)
+    invariant_corners == 0 || (isfinite(corner_shape_gate) && corner_shape_gate > 1.0) ||
+        error("$(invariant_corners) invariant (non-perpendicular) semantic corners need " *
+              "--corner-shape-gate (CornerShapeGate = min(E_pop, 5.0) above 1; $(INVARIANT_CORNER_RULE))")
     reach = isempty(spans) ? 0.0 : layer_thickness * (1.0 + row_zigzag) + edge_size
     layer_rule = edge_layer_maximum_aspect > 0.0
     layer_rule && isempty(spans) &&
@@ -1650,6 +2093,19 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     for (k, cell) in enumerate(tetrahedra), i in cell
         push!(incident[i], k)
     end
+    # F5-B bookkeeping: the original index (Gmsh tag slot) of every current cell (0 for a
+    # cell created by a reconnection), its volume entity, the cells a reconnection
+    # replaced (original indices) and added (current index => (entity, cell)); a cell the
+    # collapse remapped keeps its fresh Gmsh element and is never reconnected.
+    origin = setdiff(1:original_cell_count, collapse.cells_removed)
+    length(origin) == length(tetrahedra) || error("Seed collapse bookkeeping lost a cell")
+    entity_of = [cell_entities[o] for o in origin]
+    remapped_by_collapse = Set(keys(collapse.cells_remapped))
+    reconnection_replaced = Int[]
+    reconnection_added = Dict{Int, Tuple{Int, NTuple{4, Int}}}()
+    surface_faces = Set(Tuple(sort!(collect(triangle))) for triangle in triangles)
+    surface_edges = Set(minmax(triangle[i], triangle[mod1(i + 1, 3)]) for triangle in triangles for i in 1:3)
+    dead = Set{Int}()
     bases = surface_movement_bases(points, triangles, lines)
     scaled_target = 2.0 * minimum_scaled_jacobian
     corner_target = 0.95 * maximum_corner_aspect
@@ -1688,23 +2144,187 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
               corner_distance[i] <= radius ? corner_ball_size(corner_grading, corner_distance[i]) :
                                              lc_fine)
               for i in axes(points, 2)]
+    # Per corner: the measure of its kind (legacy: tetrahedron_aspect, target 0.95 x
+    # MaximumCornerAspect, verdict MaximumCornerAspect - bitwise the production path;
+    # invariant: kappa_reg, goal INVARIANT_CORNER_TARGET, verdict corner_shape_gate), plus
+    # the frame extremes / mean ratio and the bridging-sliver candidates (decision 365:
+    # the reconnection trigger = a candidate still above the gate) as information.
     corner_before = Float64[]; corner_after = Float64[]; corner_moves = Int[]
-    for corner in corners
+    corner_measures = Dict{String, Any}[]
+    corner_incident(center) = [k for (k, cell) in enumerate(tetrahedra)
+                               if !(k in dead) && any(norm(points[:, i] .- center) <= tolerance for i in cell)]
+    function corner_information(targets)
+        cells = [[points[:, i] for i in tetrahedra[k]] for k in targets]
+        frames = [tetrahedron_frame_conditions(xyz) for xyz in cells]
+        return Dict{String, Any}(
+            "KappaRegMax" => maximum(tetrahedron_regular_condition(xyz) for xyz in cells),
+            "KappaV0Max" => maximum(tetrahedron_aspect(xyz) for xyz in cells),
+            "KappaMinMax" => maximum(first(f) for f in frames),
+            "KappaMaxMax" => maximum(last(f) for f in frames),
+            "EtaMin" => minimum(tetrahedron_mean_ratio(xyz) for xyz in cells),
+            "Cells" => length(targets))
+    end
+    function bridging_slivers(center, sides, targets)
+        sides === nothing && return Int[]
+        masks = sidewall_vertex_masks(points, triangles, center, sides, radius)
+        return bridging_sliver_cells(points, tetrahedra, targets, masks, center, sides)
+    end
+    above_gate(cells, gate) = [k for k in cells
+                               if tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]]) > gate]
+    for (corner, kind, sides) in zip(corners, corner_kinds, corner_sides)
         center = collect(corner)
-        targets = [k for (k, cell) in enumerate(tetrahedra)
-                   if any(norm(points[:, i] .- center) <= tolerance for i in cell)]
+        targets = corner_incident(center)
         isempty(targets) && error("Semantic corner is absent from the seed volume mesh")
-        before = maximum(tetrahedron_aspect([points[:, i] for i in tetrahedra[k]]) for k in targets)
+        invariant = kind === :invariant
+        measure_of = invariant ? tetrahedron_regular_condition : tetrahedron_aspect
+        objective = invariant ? :regular_condition : :aspect
+        target = invariant ? INVARIANT_CORNER_TARGET : corner_target
+        gate = invariant ? corner_shape_gate : maximum_corner_aspect
+        before = maximum(measure_of([points[:, i] for i in tetrahedra[k]]) for k in targets)
+        information_before = corner_information(targets)
+        bridging_before = invariant ? bridging_slivers(center, sides, targets) : Int[]
         push!(corner_before, before)
-        if before <= corner_target
-            push!(corner_after, before); push!(corner_moves, 0)
-            continue
+        if before <= target
+            after, moves = before, 0
+        else
+            after, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases,
+                                                floors, bounds, targets, objective, target;
+                                                ceilings=ceilings,
+                                                condition_ceilings=condition_ceilings,
+                                                edge_floors=edge_floors)
         end
-        after, moves = optimize_seed_cells!(points, original, tetrahedra, incident, bases, floors,
-                                            bounds, targets, :aspect, corner_target;
-                                            ceilings=ceilings, condition_ceilings=condition_ceilings,
-                                            edge_floors=edge_floors)
+        bridging_after = invariant ? bridging_slivers(center, sides, targets) : Int[]
+        # Decision 365: the reconnection trigger = a bridging-sliver candidate still above
+        # the gate after the kappa_reg descent (none at a legacy corner). F5-B: each trigger
+        # cell takes its best 2-3 flip or edge removal, then the descent runs again, for up
+        # to CORNER_RECONNECTION_ROUNDS rounds while triggers remain and a flip was found.
+        trigger = invariant ? above_gate(bridging_after, gate) : Int[]
+        reconnections = Dict{String, Any}[]
+        after_descent = after
+        for round in 1:CORNER_RECONNECTION_ROUNDS
+            isempty(trigger) && break
+            flips = 0
+            # The trigger cells as they were when the round started (decision 392 MINOR-7): an
+            # earlier reconnection of this round may reuse a later trigger's slot for a NEW
+            # cell (the replaced slots take the new cells); such a slot is skipped so every
+            # Element / Before record names a trigger cell - the slot's cell, if still a
+            # candidate above the gate after the descent, triggers again next round.
+            trigger_cells = [tetrahedra[k] for k in trigger]
+            for (slot, k) in enumerate(trigger)
+                k in dead && continue
+                tetrahedra[k] == trigger_cells[slot] || continue
+                origin[k] in remapped_by_collapse && continue
+                before_flip = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
+                flip = best_two_three_flip(points, tetrahedra, incident, surface_faces,
+                                           p -> entity_of[p], k, floors[k], condition_ceilings[k])
+                removal = best_edge_removal(points, tetrahedra, incident, surface_edges,
+                                            p -> entity_of[p], k, floors[k], condition_ceilings[k])
+                flip !== nothing && origin[flip.neighbour] in remapped_by_collapse && (flip = nothing)
+                removal !== nothing && any(origin[j] in remapped_by_collapse for j in removal.ring) &&
+                    (removal = nothing)
+                flip === nothing && removal === nothing && continue
+                use_removal = removal !== nothing &&
+                              (flip === nothing || removal.quality <= flip.quality)
+                quality = use_removal ? removal.quality : flip.quality
+                quality < before_flip || continue
+                replaced = use_removal ? removal.ring : [k, flip.neighbour]
+                new_cells = use_removal ? removal.cells : flip.cells
+                entity = entity_of[k]
+                for p in replaced
+                    for i in tetrahedra[p]
+                        filter!(!=(p), incident[i])
+                    end
+                    origin[p] > 0 && push!(reconnection_replaced, origin[p])
+                    origin[p] = 0
+                    delete!(reconnection_added, p)
+                end
+                # The new cells take the replaced slots; extra slots die, extra cells append.
+                slots = Int[]
+                for (index, new_cell) in enumerate(new_cells)
+                    if index <= length(replaced)
+                        p = replaced[index]
+                        tetrahedra[p] = new_cell
+                        scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
+                        floors[p] = min(scaled_new, scaled_target); ceilings[p] = Inf
+                        condition_ceilings[p] = max(tetrahedron_aspect([points[:, i] for i in new_cell]),
+                                                    condition_target)
+                    else
+                        push!(tetrahedra, new_cell)
+                        p = length(tetrahedra)
+                        push!(origin, 0); push!(entity_of, entity)
+                        scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
+                        push!(floors, min(scaled_new, scaled_target)); push!(ceilings, Inf)
+                        push!(condition_ceilings,
+                              max(tetrahedron_aspect([points[:, i] for i in new_cell]), condition_target))
+                    end
+                    push!(slots, p)
+                    reconnection_added[p] = (entity, new_cell)
+                    for i in new_cell
+                        push!(incident[i], p)
+                    end
+                end
+                for p in replaced[(length(new_cells) + 1):end]
+                    push!(dead, p)
+                end
+                flips += 1
+                push!(reconnections, Dict{String, Any}(
+                    "Round" => round, "Kind" => use_removal ? "edge-removal" : "2-3",
+                    "Element" => use_removal ? collect(removal.edge) : collect(flip.face),
+                    "Before" => before_flip, "After" => quality,
+                    "ReplacedCells" => length(replaced), "AddedCells" => length(new_cells)))
+            end
+            flips == 0 && break
+            targets = corner_incident(center)
+            after, descent_moves = optimize_seed_cells!(points, original, tetrahedra, incident,
+                                                        bases, floors, bounds, targets, objective,
+                                                        target; ceilings=ceilings,
+                                                        condition_ceilings=condition_ceilings,
+                                                        edge_floors=edge_floors)
+            moves += descent_moves
+            bridging_after = bridging_slivers(center, sides, targets)
+            trigger = above_gate(bridging_after, gate)
+        end
         push!(corner_after, after); push!(corner_moves, moves)
+        push!(corner_measures, Dict{String, Any}(
+            "Point" => center, "Kind" => invariant ? "Invariant" : "Legacy",
+            "Measure" => invariant ? "RegularCondition" : "VertexFrameCondition",
+            "Before" => before, "After" => after, "Target" => target, "Gate" => gate,
+            "Moves" => moves,
+            "Sides" => sides === nothing ? nothing :
+                       Dict{String, Any}("Walls" => [collect(w) for w in sides.walls],
+                                         "Metal" => collect(sides.metal)),
+            "BridgingSlivers" => Dict{String, Any}("Before" => length(bridging_before),
+                                                   "After" => length(bridging_after),
+                                                   "AboveGateAfter" => length(trigger)),
+            "AfterDescent" => after_descent,
+            "Reconnections" => reconnections,
+            "InformationBefore" => information_before,
+            "Information" => corner_information(targets),
+            "Passed" => after <= gate))
+    end
+    if !isempty(reconnection_added)
+        # The reconnections changed the cell list: the dead slots (an edge removal replaces
+        # n cells by 2 (n - 2)) are compacted out of every per-cell array, the incidence
+        # rebuilt and the required set recomputed on the new list.
+        if !isempty(dead)
+            keep = [p for p in eachindex(tetrahedra) if !(p in dead)]
+            remap = Dict(p => q for (q, p) in enumerate(keep))
+            tetrahedra_kept = tetrahedra[keep]
+            empty!(tetrahedra); append!(tetrahedra, tetrahedra_kept)
+            floors = floors[keep]; ceilings = ceilings[keep]
+            condition_ceilings = condition_ceilings[keep]
+            origin = origin[keep]; entity_of = entity_of[keep]
+            reconnection_added = Dict(remap[p] => value for (p, value) in reconnection_added if haskey(remap, p))
+            empty!(dead)
+            for list in incident
+                empty!(list)
+            end
+            for (k, cell) in enumerate(tetrahedra), i in cell
+                push!(incident[i], k)
+            end
+        end
+        required, span_distance, in_layer = required_region_cells(points, tetrahedra, corners,
+                                                                  radius, spans, reach)
     end
     scaled_of(k) = tetrahedron_scaled_jacobian([points[:, i] for i in tetrahedra[k]])
     edge_aspect_of(k) = tetrahedron_edge_aspect([points[:, i] for i in tetrahedra[k]])
@@ -1851,6 +2471,16 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                             for row in collapse.records]),
         "ScaledJacobianGateCells" => length(gated_cells),
         "MaximumCornerAspect" => maximum_corner_aspect, "CornerAspectTarget" => corner_target,
+        "InvariantCornerRule" => INVARIANT_CORNER_RULE,
+        "InvariantCornerTarget" => INVARIANT_CORNER_TARGET,
+        "CornerReconnectionRule" => CORNER_RECONNECTION_RULE,
+        "CornerReconnectionRounds" => CORNER_RECONNECTION_ROUNDS,
+        "CornerReconnections" => sum(length(row["Reconnections"]) for row in corner_measures; init=0),
+        "ReconnectionReplacedCells" => length(reconnection_replaced),
+        "ReconnectionAddedCells" => length(reconnection_added),
+        "CornerShapeGate" => corner_shape_gate > 0.0 ? corner_shape_gate : nothing,
+        "InvariantCorners" => invariant_corners,
+        "CornerMeasures" => corner_measures,
         "MinimumScaledJacobian" => minimum_scaled_jacobian, "ScaledJacobianTarget" => scaled_target,
         "MaximumJacobianCondition" => maximum_jacobian_condition,
         "JacobianConditionRule" => "the Jacobian condition number (largest over smallest " *
@@ -1886,6 +2516,16 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         "MaximumDisplacement" => isempty(moved) ? 0.0 : maximum(displacement[moved]),
         "MaximumDisplacementOverBound" =>
             isempty(moved) ? 0.0 : maximum(displacement[i] / bounds[i] for i in moved))
+    for row in corner_measures
+        println("Seed corner $(row["Kind"]) $(row["Point"]): $(row["Measure"]) $(row["Before"]) -> " *
+                "$(row["After"]) (target $(row["Target"]), gate $(row["Gate"]), moves $(row["Moves"])), " *
+                "bridging slivers $(row["BridgingSlivers"]["Before"]) -> " *
+                "$(row["BridgingSlivers"]["After"]) (above the gate $(row["BridgingSlivers"]["AboveGateAfter"])), " *
+                "reconnections $(length(row["Reconnections"])) (after the descent $(row["AfterDescent"])), " *
+                "kappa_reg $(row["Information"]["KappaRegMax"]) " *
+                "kappa_v0 $(row["Information"]["KappaV0Max"]) kappa_min $(row["Information"]["KappaMinMax"]) " *
+                "kappa_max $(row["Information"]["KappaMaxMax"]) eta $(row["Information"]["EtaMin"])")
+    end
     println("Seed required-region optimization: corners $(corner_before) -> $(corner_after), " *
             "required cells $(required_before_moves) -> $(length(required_cells)) " *
             "($(recomputations) recomputations) min scaled Jacobian $(required_before) -> " *
@@ -1930,20 +2570,38 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                 "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
     end
     failures = String[]
-    if !all(<=(maximum_corner_aspect), corner_after)
-        for (corner, after) in zip(corners, corner_after)
-            after <= maximum_corner_aspect && continue
-            center = collect(corner)
-            incident = [k for (k, cell) in enumerate(tetrahedra)
-                        if any(norm(points[:, i] .- center) <= tolerance for i in cell)]
-            aspect_of(k) = tetrahedron_aspect([points[:, i] for i in tetrahedra[k]])
-            for k in sort(incident; by=aspect_of, rev=true)[1:min(6, end)]
-                describe("corner $(center) aspect", k, "aspect $(aspect_of(k))")
+    legacy_failed = [row["After"] for row in corner_measures
+                     if row["Kind"] == "Legacy" && row["After"] > row["Gate"]]
+    invariant_failed = [row for row in corner_measures
+                        if row["Kind"] == "Invariant" && row["After"] > row["Gate"]]
+    for row in corner_measures
+        row["Passed"] && continue
+        center = row["Point"]
+        incident = corner_incident(center)
+        measure = row["Kind"] == "Invariant" ? tetrahedron_regular_condition : tetrahedron_aspect
+        measure_of(k) = measure([points[:, i] for i in tetrahedra[k]])
+        for k in sort(incident; by=measure_of, rev=true)[1:min(6, end)]
+            describe("corner $(center) $(row["Measure"])", k, "$(row["Measure"]) $(measure_of(k))")
+        end
+        if row["BridgingSlivers"]["After"] > 0
+            sides = (walls=row["Sides"]["Walls"], metal=row["Sides"]["Metal"])
+            masks = sidewall_vertex_masks(points, triangles, center, sides, radius)
+            for k in bridging_sliver_cells(points, tetrahedra, incident, masks, center, sides)
+                describe("corner $(center) BridgingSliver", k,
+                         "kappa_reg $(tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])) " *
+                         "walls $([get(masks, i, 0x00) for i in tetrahedra[k]])")
             end
         end
-        push!(failures, "Seed semantic-corner aspect exceeds the gate after optimization: " *
-                        "$(maximum(corner_after)) > $(maximum_corner_aspect)")
     end
+    isempty(legacy_failed) ||
+        push!(failures, "Seed semantic-corner aspect exceeds the gate after optimization: " *
+                        "$(maximum(legacy_failed)) > $(maximum_corner_aspect)")
+    isempty(invariant_failed) ||
+        push!(failures, "Seed invariant semantic-corner kappa_reg exceeds CornerShapeGate after " *
+                        "optimization: $(maximum(row["After"] for row in invariant_failed)) > " *
+                        "$(corner_shape_gate) at $([row["Point"] for row in invariant_failed]) " *
+                        "(bridging-sliver cells above the gate: " *
+                        "$([row["BridgingSlivers"]["AboveGateAfter"] for row in invariant_failed]))")
     if below_gate > 0
         failing = sort([k for k in gated_cells if scaled_of(k) < minimum_scaled_jacobian];
                        by=scaled_of)
@@ -1977,7 +2635,9 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             error("Seed edge layer keeps $(layer_above_bound) cells above the edge aspect bound " *
                   "$(edge_layer_maximum_aspect) after optimization (maximum $(layer_aspect_after))")
     end
-    return record, moved, collapse
+    reconnection = (replaced=reconnection_replaced,
+                    added=[(entity, cell) for (entity, cell) in values(reconnection_added)])
+    return record, moved, collapse, reconnection
 end
 
 # The linear cells of one dimension with their Gmsh element tags and entity tags
@@ -2024,7 +2684,10 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
                                         edge_layer_maximum_aspect,
                                         corner_grading=CornerGrading(0.0, growth_ratio, lc_fine,
                                                                      radius);
-                                        fixed_node_tags=UInt[])
+                                        fixed_node_tags=UInt[],
+                                        corner_kinds=fill(:legacy, length(corners)),
+                                        corner_sides=fill(nothing, length(corners)),
+                                        corner_shape_gate=0.0)
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(copy(coordinates), 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
@@ -2037,18 +2700,21 @@ function optimize_required_seed_region!(corners, radius, lc_fine, spans, edge_si
     for tag in fixed_node_tags
         fixed[index[tag]] = true
     end
-    record, moved, collapse = optimize_required_region!(
+    record, moved, collapse, reconnection = optimize_required_region!(
         points, tetrahedra, triangles, corners, radius, lc_fine, spans, edge_size, growth_ratio,
         layer_thickness, row_zigzag, maximum_corner_aspect, minimum_scaled_jacobian,
         maximum_jacobian_condition, displacement_ratio, tolerance;
         edge_layer_maximum_aspect=edge_layer_maximum_aspect, corner_grading=corner_grading,
         triangle_entities=triangle_entities, lines=lines, line_entities=line_entities,
-        fixed=fixed)
+        fixed=fixed, corner_kinds=corner_kinds, corner_sides=corner_sides,
+        corner_shape_gate=corner_shape_gate, cell_entities=Int.(entities))
     for i in moved
         gmsh.model.mesh.setNode(node_tags[i], points[:, i], Float64[])
     end
     apply_seed_cell_collapse!(node_tags, tags, entities, collapse.cells_removed,
                               collapse.cells_remapped)
+    apply_seed_cell_reconnection!(node_tags, tags, entities, reconnection.replaced,
+                                  reconnection.added)
     apply_seed_cell_collapse!(node_tags, triangle_tags, triangle_entities,
                               collapse.triangles_removed, collapse.triangles_remapped; dimension=2)
     apply_seed_cell_collapse!(node_tags, line_tags, line_entities, collapse.lines_removed,
@@ -2090,6 +2756,32 @@ function apply_seed_cell_collapse!(node_tags, tags, entities, removed, remapped;
     end
     _, element_tags, _ = gmsh.model.mesh.getElements(dimension)
     return sum(length(block) for block in element_tags; init=0)
+end
+
+# Apply a corner reconnection (F5-B) to the Gmsh model: the replaced cells (original
+# indices, untouched by the collapse) are deleted and the added cells created in their
+# volume entity with fresh element tags.
+function apply_seed_cell_reconnection!(node_tags, tags, entities, replaced, added)
+    isempty(replaced) && isempty(added) && return 0
+    by_entity = Dict{Int, Vector{UInt}}()
+    for k in replaced
+        push!(get!(by_entity, entities[k], UInt[]), tags[k])
+    end
+    for (entity, element_tags) in by_entity
+        gmsh.model.mesh.removeElements(3, entity, element_tags)
+    end
+    next_tag = gmsh.model.mesh.getMaxElementTag()
+    nodes_by_entity = Dict{Int, Vector{Int}}()
+    for (entity, cell) in added
+        append!(get!(nodes_by_entity, entity, Int[]), [Int(node_tags[i]) for i in cell])
+    end
+    for (entity, nodes) in nodes_by_entity
+        count = length(nodes) ÷ 4
+        gmsh.model.mesh.addElementsByType(entity, GMSH_LINEAR_ELEMENT_TYPE[3],
+                                          collect((next_tag + 1):(next_tag + count)), nodes)
+        next_tag += count
+    end
+    return length(added)
 end
 
 function sorted_median(values)
@@ -5289,6 +5981,255 @@ function segment_closest_points_2d(a, b, c, d)
     return candidates[argmin([hypot(p[1] - q[1], p[2] - q[2]) for (p, q) in candidates])]
 end
 
+# ---------------------------------------------------------------------------
+# SEAM (mesher design round 2 section 5 / FIX-UPS F.7; supervisor decisions 350 / 351 /
+# 358 / 363): the acute thin-tip pinched seam. Palace opens the thin sheet as a crack
+# by duplicating its interior vertices; a sheet edge shared by two sheet triangles
+# whose two vertices both lie on the sheet's FREE boundary (never duplicated) is a
+# coarse crack edge that geodata.cpp refine_crack_elements must split conformally,
+# which a prism / pyramid tube mesh refuses (the O1 thin and the stored O4 thin V7
+# meshes: 6 / 1 such seams at their 22.5 / 45-degree tips). At a convex sheet tip of
+# opening phi < 90 degrees the Delaunay fan at the tip is one triangle (its opposite
+# edge joins the two sheet edges) and seams follow along the wedge while the local
+# size exceeds the wedge width. The fix embeds a TIP BISECTOR curve in the sheet
+# surface (an OCC line fragmented with the sheet: Gmsh records it as an embedded
+# curve of the sheet face, so every triangle edge crossing the wedge meets a bisector
+# node and every fan / wedge triangle has an interior, duplicable vertex) from the
+# tip to the first station d_b where the half width d sin(phi / 2) reaches the corner
+# law s(d) (CornerSize -> NormalSize inside the ball, FarGrowth beyond), capped at the
+# tube start station (beyond it the sheet edges are tube axes inside the structured
+# tubes and no free-sheet triangle can join them). Exact predicate: a semantic corner
+# whose two sides have a positive quantised dot product (opening < 90 degrees) with
+# the metal in the acute sector between them. Thin kind under the prism-tube recipe.
+const TIP_BISECTOR_RULE =
+    "a convex thin-sheet tip whose two plan-view sides have a positive quantised dot product " *
+    "(opening phi < 90 degrees) with the metal in the acute sector between them carries an " *
+    "embedded bisector curve in the sheet surface from the tip to the first station d_b with " *
+    "d_b sin(phi / 2) >= s(d_b) (s the corner law: CornerSize graded to NormalSize inside " *
+    "CornerIsotropyRadius, FarGrowth beyond), capped at the tube start station of the shorter " *
+    "clearance (the station whose along-edge projection reaches the side's tube start; beyond " *
+    "it the sheet edges are tube axes); the curve clears every tube envelope (fail closed " *
+    "otherwise) and is meshed by the composed size field, so no sheet triangle edge joins the " *
+    "two sheet edges: seam count 0 by conformity (ThinSheetSeams); supervisor decisions 350 / " *
+    "351 / 358 / 363 (mesher design round 2, SEAM)"
+
+const TIP_BISECTOR_STATION_STEP = 1.0e-4
+
+# Supervisor decision 368: the bisector splits the tip fan into two phi / 2 sectors, so
+# the corner cells on those sectors carry a kappa_reg FLOOR of their own - the 2D
+# condition number of the affine map from the equilateral triangle onto the isoceles
+# triangle of apex angle alpha = phi / 2 (singular-value interlacing: no tetrahedron on
+# such a sector reads below it; exact: 5.862 at phi 22.5, 5.272 at 25, 4.385 at 30,
+# reproduced by a free 3D minimisation to 4 digits). The bounded descent at the
+# production sizes reaches the floor within TIP_BISECTOR_DESCENT_EXCESS (the synthetic
+# production-size thin family 26-45 degrees, three exit tilts: measured / floor at most
+# 1.19; seed-impl REPORT section 2). The bisector is therefore embedded only at tips of
+# opening phi >= TipBisectorMinimumOpening = 2 alpha* with f(alpha*) = CornerShapeGate /
+# TIP_BISECTOR_DESCENT_EXCESS (31.556 degrees at the gate 5.0: 31 / 32 degrees measured
+# 4.85 / 4.82 with the bisector, 29 / 30 up to 5.41 / 5.04 - the law's crossing); a
+# sharper convex tip keeps its fan and its pinched seams, which the mesher records as
+# UnrefinedCrackSeams for the solve config (Model.RefineCrackElements false; FIX-UPS F.7:
+# every DOF of the PEC sheet, the seam edge's included, is Dirichlet, so the coupling an
+# unrefined seam leaves is between two constrained values).
+const TIP_BISECTOR_DESCENT_EXCESS = 1.2
+
+function sector_regular_floor(alpha)
+    matrix = [1.0 (2.0 * cos(alpha) - 1.0) / sqrt(3.0); 0.0 2.0 * sin(alpha) / sqrt(3.0)]
+    singular = svdvals(matrix)
+    return singular[1] / singular[end]
+end
+
+function tip_bisector_minimum_opening(corner_shape_gate)
+    target = corner_shape_gate / TIP_BISECTOR_DESCENT_EXCESS
+    target > sector_regular_floor(pi / 4) || return Float64(pi)
+    low, high = 1.0e-6, pi / 4
+    for _ in 1:200
+        middle = 0.5 * (low + high)
+        sector_regular_floor(middle) > target ? (low = middle) : (high = middle)
+    end
+    return 2.0 * 0.5 * (low + high)
+end
+
+const UNREFINED_CRACK_SEAMS_RULE =
+    "a convex thin tip sharper than TipBisectorMinimumOpening keeps its one-triangle fan and the " *
+    "pinched seams along its wedge (every seam within the tip's tube start station, fail closed " *
+    "otherwise); the solve config of such a thin coupon sets Model.RefineCrackElements false " *
+    "(every DOF of the PEC sheet, the seam edge's included, is Dirichlet: the coupling an " *
+    "unrefined seam leaves is between two constrained values, with no effect on the potential " *
+    "or the per-side charge integrals) - supervisor decision 368 (3); the (F) qualification of " *
+    "such a coupon is the acceptance"
+
+# The bisector tools of every convex thin tip at or above the minimum opening (OCC
+# lines, to be fragmented with the sheet), their records, and the sharper tips whose
+# seams stay unrefined.
+function tip_bisector_tools!(occ, corners, kinds, sides, segments, radius_envelope,
+                             grading::CornerGrading, lc_far, far_growth, tolerance;
+                             corner_shape_gate=0.0)
+    tools = Tuple{Int32, Int32}[]
+    records = Dict{String, Any}[]
+    unrefined = Dict{String, Any}[]
+    minimum_opening = tip_bisector_minimum_opening(corner_shape_gate)
+    size_law(d) = d <= grading.radius ? corner_ball_size(grading, d) :
+                  min(lc_far, grading.lc_fine + far_growth * (d - grading.radius))
+    for (k, (corner, kind, side)) in enumerate(zip(corners, kinds, sides))
+        kind === :invariant || continue
+        a, b = side.walls
+        product = a[1] * b[1] + a[2] * b[2]
+        product > 0.0 || continue
+        bisector = (a .+ b) ./ norm(a .+ b)
+        in_metal_sector(side, bisector) || continue
+        phi = acos(clamp(product, -1.0, 1.0))
+        half_sine, half_cosine = sin(phi / 2), cos(phi / 2)
+        point = (corner[1], corner[2])
+        # The tube start stations of the two sides at this corner (the whole span of an
+        # untubed side), projected onto the bisector.
+        clearances = Float64[]
+        for segment in segments
+            abs(segment.plane - corner[3]) <= tolerance || continue
+            if norm(segment.start .- collect(point)) <= tolerance
+                push!(clearances, segment.untubed ? segment.span : segment.s_start)
+            elseif norm(segment.stop .- collect(point)) <= tolerance
+                push!(clearances, segment.untubed ? segment.span : segment.span - segment.s_end)
+            end
+        end
+        length(clearances) == 2 ||
+            error("Thin tip $(corner) has $(length(clearances)) metal sides in its plane (two expected)")
+        tube_station = minimum(clearances) / half_cosine
+        if phi < minimum_opening
+            push!(unrefined, Dict{String, Any}(
+                "Corner" => k - 1, "Point" => collect(corner), "OpeningDegrees" => rad2deg(phi),
+                "TubeStation" => tube_station,
+                "SplitFloor" => sector_regular_floor(phi / 2),
+                "MinimumOpeningDegrees" => rad2deg(minimum_opening)))
+            continue
+        end
+        half_width_station = nothing
+        d = TIP_BISECTOR_STATION_STEP
+        while d <= tube_station
+            if d * half_sine >= size_law(d)
+                half_width_station = d
+                break
+            end
+            d += TIP_BISECTOR_STATION_STEP
+        end
+        length_b = half_width_station === nothing ? tube_station : half_width_station
+        stop = (point[1] + length_b * bisector[1], point[2] + length_b * bisector[2])
+        # The curve must clear every tube envelope of the plane (its own two tubes start
+        # beyond the station by construction: the corner clearance R / tan(phi / 2) +
+        # the envelope margin is where the two envelopes separate on the bisector).
+        for segment in segments
+            abs(segment.plane - corner[3]) <= tolerance && !segment.untubed || continue
+            axis_start = segment.start .+ segment.s_start .* segment.direction
+            axis_stop = segment.start .+ segment.s_end .* segment.direction
+            distance = segment_segment_distance_2d(point, stop, axis_start, axis_stop)
+            distance >= radius_envelope * (1.0 - 1.0e-9) ||
+                error("the tip bisector curve of the thin tip $(corner) (length $(length_b)) comes " *
+                      "within $(distance) of the tube axis $(segment.start) -> $(segment.stop) " *
+                      "(envelope $(radius_envelope)): TipBisectorTube")
+        end
+        p0 = occ.addPoint(corner[1], corner[2], corner[3])
+        p1 = occ.addPoint(stop[1], stop[2], corner[3])
+        push!(tools, (Int32(1), occ.addLine(p0, p1)))
+        push!(records, Dict{String, Any}(
+            "Corner" => k - 1, "Point" => collect(corner), "OpeningDegrees" => rad2deg(phi),
+            "Direction" => collect(bisector), "Length" => length_b, "End" => [stop[1], stop[2], corner[3]],
+            "HalfWidthStation" => half_width_station, "TubeStation" => tube_station,
+            "StationRule" => half_width_station === nothing ? "TubeStart" : "HalfWidthReachesCornerLaw",
+            "SplitFloor" => sector_regular_floor(phi / 2),
+            "MinimumOpeningDegrees" => rad2deg(minimum_opening),
+            "Curves" => Int[], "Nodes" => 0, "EmbeddedIn" => Int[]))
+    end
+    return tools, records, unrefined
+end
+
+# After the fragment: the curve pieces of every bisector tool (domain_map entries) and,
+# after the mesh, their node counts and the sheet surfaces they are embedded in (fail
+# closed when a piece is embedded in no surface of the tip's plane).
+function bind_tip_bisector_curves!(records, tool_map, tolerance)
+    for (record, descendants) in zip(records, tool_map)
+        curves = [Int(tag) for (dim, tag) in descendants if dim == 1]
+        isempty(curves) && error("the tip bisector curve of $(record["Point"]) vanished in the fragment")
+        record["Curves"] = curves
+    end
+    return records
+end
+
+function census_tip_bisector_curves!(records, tolerance)
+    for record in records
+        nodes = 0
+        embedded = Int[]
+        for curve in record["Curves"]
+            tags, _, _ = gmsh.model.mesh.getNodes(1, curve, true)
+            nodes = max(nodes, length(tags))
+            for (dim, surface) in gmsh.model.getEntities(2)
+                (1, curve) in [(Int(d), Int(t)) for (d, t) in gmsh.model.mesh.getEmbedded(2, surface)] || continue
+                # The OCC bounding box carries the CAD's absolute tolerance (1e-7).
+                _, _, zmin, _, _, zmax = gmsh.model.getBoundingBox(2, surface)
+                plane_tolerance = max(tolerance, 1.0e-6)
+                abs(zmin - record["Point"][3]) <= plane_tolerance &&
+                    abs(zmax - record["Point"][3]) <= plane_tolerance ||
+                    error("the tip bisector curve $(curve) of $(record["Point"]) is embedded in the " *
+                          "surface $(surface) outside the sheet plane")
+                push!(embedded, Int(surface))
+            end
+        end
+        isempty(embedded) &&
+            error("the tip bisector curve of $(record["Point"]) is embedded in no sheet surface")
+        record["Nodes"] = nodes
+        record["EmbeddedIn"] = sort!(unique!(embedded))
+        nodes >= 2 || error("the tip bisector curve of $(record["Point"]) carries $(nodes) nodes")
+    end
+    return records
+end
+
+# The pinched-seam census of the thin sheet (Palace's crack opener, geodata.cpp
+# refine_crack_elements): over the sheet faces (the 4000-family surfaces; triangles and
+# quadrangles), an edge shared by two faces whose two vertices both lie on the sheet's
+# FREE boundary (an edge of one face, off the outer box) is a pinched seam. Recorded
+# ThinSheetSeams {Count, Edges}; a thin coupon fails closed on a non-zero count.
+function thin_sheet_seam_census(sheet_surfaces, lower, upper, tolerance)
+    faces = Vector{Vector{Int}}()
+    for surface in sheet_surfaces
+        types, _, blocks = gmsh.model.mesh.getElements(2, surface)
+        for (type, block) in zip(types, blocks)
+            name, _, _, nodes_per_element, _, _ = gmsh.model.mesh.getElementProperties(type)
+            (startswith(name, "Triangle") || startswith(name, "Quadrilateral")) || continue
+            corners = startswith(name, "Triangle") ? 3 : 4
+            for start in 1:nodes_per_element:length(block)
+                push!(faces, [Int(block[start + i - 1]) for i in 1:corners])
+            end
+        end
+    end
+    counts = Dict{Tuple{Int, Int}, Int}()
+    for face in faces, i in eachindex(face)
+        edge = minmax(face[i], face[mod1(i + 1, length(face))])
+        counts[edge] = get(counts, edge, 0) + 1
+    end
+    coordinates = Dict{Int, Vector{Float64}}()
+    for node in unique(reduce(vcat, faces; init=Int[]))
+        coordinates[node] = gmsh.model.mesh.getNode(node)[1]
+    end
+    on_box(node) = any(abs(coordinates[node][d] - lower[d]) <= tolerance ||
+                       abs(coordinates[node][d] - upper[d]) <= tolerance for d in 1:2)
+    free = Set{Int}()
+    for (edge, count) in counts
+        count == 1 || continue
+        for node in edge
+            on_box(node) || push!(free, node)
+        end
+    end
+    seams = [edge for (edge, count) in counts if count == 2 && all(in(free), edge)]
+    return Dict{String, Any}(
+        "Rule" => "a sheet edge shared by two sheet faces whose two vertices both lie on the " *
+                  "sheet's free boundary (off the outer box) is a pinched seam: Palace's crack " *
+                  "opener (geodata.cpp refine_crack_elements) must split it conformally, which " *
+                  "a prism / pyramid mesh refuses; every thin coupon requires Count 0 (mesher " *
+                  "design round 2 SEAM, decision 363)",
+        "SheetSurfaces" => length(sheet_surfaces), "SheetFaces" => length(faces),
+        "FreeBoundaryVertices" => length(free), "Count" => length(seams),
+        "Edges" => [[coordinates[edge[1]], coordinates[edge[2]]] for edge in seams])
+end
+
 # Narrow metal strips (supervisor decision 347; family 6 of the mesher generality list):
 # the tube of a metal side reaches Radius + PyramidHeight over the metal (the thin
 # sheet tube's metal half, the fabricated top tube's quadrant above the top face and the
@@ -6396,6 +7337,7 @@ function generate_spatial_coupon(;
     prism_tubes::Bool=false,
     tube_sector_degrees::Float64=30.0,
     far_growth::Float64=0.0,
+    corner_shape_gate::Float64=0.0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -6569,6 +7511,31 @@ function generate_spatial_coupon(;
     end
     outer_tolerance = 1.0e-4 * radius
     validate_plan_view_geometry(edges, radius, tolerance, facets)
+    # Design round 2 F5-A (decision 363): the kind of every semantic corner by the exact
+    # dot-product predicate on its two plan-view boundary sides (INVARIANT_CORNER_RULE;
+    # integer arithmetic on the generator's 1e-9 R quantum counts, decision 416), checked
+    # against the contract's Derivation.InvariantCorners (fail closed on a disagreement);
+    # invariant corners need the CornerShapeGate. Without a classified boundary (no
+    # plan-view loops) every corner keeps the legacy convention.
+    corner_shape_gate == 0.0 || (isfinite(corner_shape_gate) && corner_shape_gate > 1.0) ||
+        error("--corner-shape-gate must be a finite number above 1 (0: none)")
+    corner_kinds, corner_sides = if corner_isotropy && !isempty(boundary_loops)
+        kinds, sides, _ = semantic_corner_kinds(semantic_corners, boundary_loops, tolerance,
+                                                PLAN_VIEW_QUANTUM_OVER_RADIUS * radius)
+        check_invariant_corner_contract(semantic_corners, kinds,
+                                        read_invariant_corners(semantic_contract, transform),
+                                        tolerance)
+        kinds, sides
+    else
+        fill(:legacy, length(semantic_corners)), fill(nothing, length(semantic_corners))
+    end
+    invariant_corner_count = count(kind -> kind === :invariant, corner_kinds)
+    invariant_corner_count == 0 || !seed_quality_gates || corner_shape_gate > 1.0 ||
+        error("$(invariant_corner_count) invariant (non-perpendicular) semantic corners " *
+              "$([collect(c) for (c, k) in zip(semantic_corners, corner_kinds) if k === :invariant]) " *
+              "need --corner-shape-gate (CornerShapeGate = min(E_pop, 5.0); $(INVARIANT_CORNER_RULE))")
+    println("Semantic corner kinds: $(length(semantic_corners) - invariant_corner_count) legacy " *
+            "(exactly perpendicular), $(invariant_corner_count) invariant")
     layers = layer_groups(edges, tolerance)
     pullback_metal = metal_thickness / tan(deg2rad(sidewall_angle))
     etch_loops = etch_boundary === nothing ? nothing : read_boundary(etch_boundary)
@@ -6714,6 +7681,8 @@ function generate_spatial_coupon(;
     tube_joints = Tuple{Int, Int, Int, Int}[]
     tube_sections = Dict{String, Any}()
     tube_volumes = Int32[]
+    tip_bisectors = Dict{String, Any}[]
+    unrefined_tips = Dict{String, Any}[]
     if fabricated
         metal = Tuple{Int32, Int32}[]
         for layer in layers
@@ -6845,9 +7814,22 @@ function generate_spatial_coupon(;
                                   metal_thickness, overetch, corner_isotropy_radius,
                                   lc_tangent, lc_fine, lower, upper, tolerance; fabricated=false)
             append!(tools, tube_tools)
+            # SEAM (design round 2): the tip bisector curves of the convex thin tips below
+            # 90 degrees, fragmented with the sheet after the tube tools (the tube map
+            # offsets are unchanged).
+            bisector_tools, tip_bisectors, unrefined_tips = tip_bisector_tools!(
+                occ, semantic_corners, corner_kinds, corner_sides, tube_segments,
+                tube_sections["Radius"] + tube_sections["PyramidHeight"], corner_grading, lc_far,
+                far_growth, tolerance; corner_shape_gate=corner_shape_gate)
+            bisector_offset = length(tools)
+            append!(tools, bisector_tools)
         end
         objects = vcat(substrates, vacuum)
         domains, domain_map = occ.fragment(objects, tools)
+        isempty(tip_bisectors) ||
+            bind_tip_bisector_curves!(tip_bisectors,
+                                      domain_map[(length(objects) + bisector_offset + 1):(length(objects) + length(tools))],
+                                      tolerance)
         substrate_seed = domain_map[1:length(substrates)] |> Iterators.flatten |> collect
         vacuum_seed =
             domain_map[(length(substrates) + 1):(length(substrates) + length(vacuum))] |>
@@ -7618,7 +8600,9 @@ function generate_spatial_coupon(;
             EDGE_LAYER_ROW_ZIGZAG, maximum_corner_aspect, minimum_scaled_jacobian,
             maximum_jacobian_condition, quality_displacement_over_normal, tolerance,
             edge_layer_maximum_aspect,
-            corner_grading; fixed_node_tags=prism_tubes ? non_simplex_volume_nodes() : UInt[]) :
+            corner_grading; fixed_node_tags=prism_tubes ? non_simplex_volume_nodes() : UInt[],
+            corner_kinds=corner_kinds, corner_sides=corner_sides,
+            corner_shape_gate=corner_shape_gate) :
         nothing
     # Per-type quality of the mixed mesh, gated after the corner-ball optimization
     # (fail closed): positive orientation and Jacobian condition for every type,
@@ -7627,7 +8611,9 @@ function generate_spatial_coupon(;
     prism_tubes && gate_mixed_volume_quality(mixed_quality, minimum_scaled_jacobian,
                                              maximum_jacobian_condition)
     census_rows = corner_isotropy ?
-        seed_corner_census(semantic_corners, corner_grading, tolerance) :
+        seed_corner_census(semantic_corners, corner_grading, tolerance;
+                           corner_kinds=corner_kinds, maximum_corner_aspect=maximum_corner_aspect,
+                           corner_shape_gate=corner_shape_gate) :
         Dict{String, Any}[]
     corner_reach = corner_isotropy ?
         corner_law_reach(corner_isotropy_radius, lc_fine, lc_tangent, corner_grading_slope) :
@@ -7638,6 +8624,42 @@ function generate_spatial_coupon(;
         longitudinal_face_census(setdiff(longitudinal_curves, junction_curves),
                                  semantic_corners, corner_reach) :
         Dict{String, Any}[]
+    # SEAM (design round 2): the embedded tip bisector curves (node counts, the sheet
+    # surfaces they are embedded in) and the pinched-seam census of the thin sheet, which
+    # every thin coupon must pass with Count 0 (fail closed).
+    isempty(tip_bisectors) || census_tip_bisector_curves!(tip_bisectors, tolerance)
+    thin_sheet_seams = nothing
+    if !fabricated && corner_isotropy
+        sheet_surfaces = sort!(unique!(reduce(vcat, [surfaces for (attribute, surfaces) in boundary_groups
+                                                     if 4000 <= attribute < 5000]; init=Int32[])))
+        thin_sheet_seams = thin_sheet_seam_census(sheet_surfaces, lower, upper, tolerance)
+        println("Thin sheet seam census: $(thin_sheet_seams["Count"]) pinched seams on " *
+                "$(thin_sheet_seams["SheetFaces"]) sheet faces of $(length(sheet_surfaces)) surfaces; " *
+                "tip bisectors $(length(tip_bisectors)), unrefined tips $(length(unrefined_tips))")
+        for record in tip_bisectors
+            println("  tip bisector at $(record["Point"]) ($(record["OpeningDegrees"]) degrees): length " *
+                    "$(record["Length"]) ($(record["StationRule"])), $(record["Nodes"]) nodes, embedded in " *
+                    "surfaces $(record["EmbeddedIn"])")
+        end
+        # Decision 368: the seams of a tip below the minimum opening stay (recorded for the
+        # solve config); a seam away from every such tip is the fail-closed class.
+        attributed = [edge for edge in thin_sheet_seams["Edges"]
+                      if any(norm(0.5 .* (edge[1] .+ edge[2]) .- tip["Point"]) <= tip["TubeStation"] * (1.0 + 1.0e-6)
+                             for tip in unrefined_tips)]
+        unattributed = length(thin_sheet_seams["Edges"]) - length(attributed)
+        thin_sheet_seams["UnrefinedCrackSeams"] = isempty(unrefined_tips) ? nothing : Dict{String, Any}(
+            "Rule" => UNREFINED_CRACK_SEAMS_RULE, "Count" => length(attributed), "Edges" => attributed,
+            "Tips" => unrefined_tips, "RefineCrackElements" => false)
+        for tip in unrefined_tips
+            println("  unrefined tip at $(tip["Point"]) ($(tip["OpeningDegrees"]) degrees < " *
+                    "$(tip["MinimumOpeningDegrees"])): split floor $(tip["SplitFloor"]), seams within its tube " *
+                    "station $(count(edge -> norm(0.5 .* (edge[1] .+ edge[2]) .- tip["Point"]) <= tip["TubeStation"] * (1.0 + 1.0e-6), attributed))")
+        end
+        unattributed == 0 ||
+            error("ThinSheetSeams: $(unattributed) pinched seam edges on the thin sheet away from every " *
+                  "unrefined tip (Palace's crack opener cannot split them on a prism / pyramid mesh): " *
+                  "$([edge for edge in thin_sheet_seams["Edges"] if !(edge in attributed)][1:min(6, end)])")
+    end
     gmsh.model.mesh.setOrder(mesh_order)
     node_tags, _, _ = gmsh.model.mesh.getNodes()
     _, volume_element_tags, _ = gmsh.model.mesh.getElements(3)
@@ -7720,6 +8742,14 @@ function generate_spatial_coupon(;
                 "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
                 "RigidTransform" => vec(transform'),
                 "SemanticCorners" => [collect(corner) for corner in semantic_corners],
+                "SemanticCornerKinds" => [kind === :invariant ? "Invariant" : "Legacy"
+                                          for kind in corner_kinds],
+                "InvariantCorners" => Dict{String, Any}(
+                    "Rule" => INVARIANT_CORNER_RULE,
+                    "Points" => [collect(corner) for (corner, kind) in
+                                 zip(semantic_corners, corner_kinds) if kind === :invariant],
+                    "CornerShapeGate" => corner_shape_gate > 0.0 ? corner_shape_gate : nothing,
+                    "Target" => INVARIANT_CORNER_TARGET),
                 "CornerIsotropyRadius" => corner_isotropy_radius,
                 "IsotropicSize" => lc_fine,
                 "Sqrt2IsotropicSize" => sqrt(2.0) * lc_fine,
@@ -7903,6 +8933,21 @@ function generate_spatial_coupon(;
                     "RidgeNodesAdded" => edge_layer_ridge_nodes),
                 "TraceBasisSizing" => trace_basis_record,
                 "SeedQualityOptimization" => seed_quality,
+                "TipBisectors" => Dict{String, Any}(
+                    "Rule" => TIP_BISECTOR_RULE, "Count" => length(tip_bisectors),
+                    "Curves" => tip_bisectors,
+                    "MinimumOpeningDegrees" => corner_shape_gate > 0.0 ?
+                                               rad2deg(tip_bisector_minimum_opening(corner_shape_gate)) :
+                                               nothing,
+                    "DescentExcess" => TIP_BISECTOR_DESCENT_EXCESS,
+                    "SplitFloorRule" => "the 2D condition number of the affine map from the " *
+                                        "equilateral triangle onto the isoceles triangle of apex " *
+                                        "angle phi / 2 (singular-value interlacing: the kappa_reg " *
+                                        "floor of every cell on a split fan sector); the bisector is " *
+                                        "embedded for phi >= 2 alpha* with floor(alpha*) = " *
+                                        "CornerShapeGate / DescentExcess (supervisor decision 368)",
+                    "UnrefinedTips" => length(unrefined_tips)),
+                "ThinSheetSeams" => thin_sheet_seams,
                 "InterfaceAreas" => area_rows,
                 "Corners" => census_rows))
             println(stream)
@@ -8024,7 +9069,8 @@ function parse_options(args)
         "--corner-size" => ("corner_size", Float64),
         "--prism-tubes" => ("prism_tubes", Bool),
         "--tube-sector-degrees" => ("tube_sector_degrees", Float64),
-        "--far-growth" => ("far_growth", Float64)
+        "--far-growth" => ("far_growth", Float64),
+        "--corner-shape-gate" => ("corner_shape_gate", Float64)
     )
     index = 4
     while index <= length(args)
@@ -8102,6 +9148,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         corner_size = get(options, "corner_size", 0.0),
         prism_tubes = get(options, "prism_tubes", false),
         tube_sector_degrees = get(options, "tube_sector_degrees", 30.0),
-        far_growth = get(options, "far_growth", 0.0)
+        far_growth = get(options, "far_growth", 0.0),
+        corner_shape_gate = get(options, "corner_shape_gate", 0.0)
     )
 end
