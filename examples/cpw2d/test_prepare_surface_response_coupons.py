@@ -2123,6 +2123,44 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         self.assertFalse(SPATIAL.near_collinear((1, 0), (1000000, 250)))
         self.assertFalse(SPATIAL.near_collinear((1, 0), (-1000000, 50)))  # a near-spike, not a joint
 
+    def test_spatial_mask_facets_follow_the_merged_boundary(self):
+        # Block (b) step 4.1: the merged near-collinear vertex is moved onto the merged side in
+        # the mask facets too (the mesher tests its metal surfaces against the mask at 1e-7 R,
+        # below the kink offset), so the mask and the boundary bound the same metal; an exactly
+        # collinear vertex and a loop vertex are untouched; a 2e-4-rad kink (kept in the
+        # boundary) moves nothing.
+        def facets_and_loops(kink):
+            apex = [0.0, 10.0]
+            chain = [[0.0, 0.0], [4.0, 3.0], [8.0, 6.0 + 5.0 * kink], [8.0, 10.0]]
+            facets = [{"Conductor": 1, "Plane": 0.0, "Points": [list(apex), list(a), list(b)]}
+                      for a, b in zip(chain, chain[1:])]
+            loops = SPATIAL.plan_view_boundary_loops(
+                facets, 1.0, np.asarray([-1.0, -1.0, -1.0]), np.asarray([8.0, 11.0, 1.0])
+            )
+            return facets, loops
+
+        facets, loops = facets_and_loops(1.0e-7)
+        before = [list(map(tuple, facet["Points"])) for facet in facets]
+        moved = SPATIAL.reconcile_mask_with_boundary(facets, loops, 1.0)
+        self.assertEqual(len(moved), 2)                       # the dropped (4, 3) in two facets
+        for origin, target in moved:
+            self.assertEqual(origin, [4.0, 3.0])
+            # Onto the merged side (0, 0) -> (8, 6 + 5e-7): the foot of the perpendicular.
+            self.assertAlmostEqual(target[1] - 0.75 * target[0], 0.0, delta=1.0e-6)
+            self.assertGreater(abs(target[1] - 3.0) + abs(target[0] - 4.0), 0.0)
+        loop_vertices = {tuple(np.round(p, 9)) for p in loops[0]["Points"]}
+        for facet in facets:
+            for point in facet["Points"]:
+                rounded = tuple(np.round(point, 9))
+                if rounded not in loop_vertices:
+                    self.assertAlmostEqual(point[1] - 0.75 * point[0], 0.0, delta=1.0e-6)
+        facets, loops = facets_and_loops(0.0)                 # exactly collinear: byte-identical
+        before = [[list(p) for p in facet["Points"]] for facet in facets]
+        self.assertEqual(SPATIAL.reconcile_mask_with_boundary(facets, loops, 1.0), [])
+        self.assertEqual([[list(p) for p in facet["Points"]] for facet in facets], before)
+        facets, loops = facets_and_loops(2.0e-4)              # a kept kink: nothing to move
+        self.assertEqual(SPATIAL.reconcile_mask_with_boundary(facets, loops, 1.0), [])
+
     def test_spatial_boundary_loops_classify_only_coupon_clipping_edges(self):
         facets = [
             {
