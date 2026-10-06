@@ -224,11 +224,14 @@ DEGENERATE_COMPONENT_RULE = (
 # cylinder about the arc centre; the mesh facets follow the true circle at the surface
 # size while the signature records the arc as chords) is aligned with the arc when its
 # FULL build-frame direction is within the direction tolerance of the circle's HORIZONTAL
-# tangent at the band centroid: the tolerance is the larger of the MESH facet turn
-# 2 asin(ShortEdgeThreshold / 2 Radius) (a facet of the surface size on the cylinder) and the
-# band's own subtended angle 2 asin(Span / 2 Radius) (a band following the circle over its
-# span deviates from the centroid tangent by at most half of it).  A sloped (helical) band
-# on the cylinder has its elevation as the angle and is rejected (decision 433 MAJOR-1).
+# tangent at the band centroid: the tolerance is the MESH facet turn 2 asin(ShortEdgeThreshold
+# / 2 Radius) alone - the angle one facet of the surface size turns on the cylinder, the
+# resolution at which the mesh follows the circle.  A straight band of any length on the
+# cylinder is parallel to the tangent at its centroid (the recorded loop-end bands read
+# ~1e-6 deg), so no term grows with the band (decision 445: the band's own subtended angle
+# is NOT a tolerance term - it admitted 16-36 deg of elevation to long bands).  A sloped
+# (helical) band on the cylinder has its elevation as the angle and is rejected (decision
+# 433 MAJOR-1).
 # Membership is geometric in the build (SourceLocal) frame: every band vertex within the
 # LATERAL ENVELOPE + the chord sagitta of the arc circle in plan view - the envelope is of the
 # order of the etch depth, Overetch for a vertical sidewall and the slanted sidewall's
@@ -242,16 +245,17 @@ ARC_SIDEWALL_RULE = (
     "circle (LateralEnvelope = a lateral envelope of the order of the etch depth: the process "
     "Overetch, or the slanted sidewall's lateral excursion Overetch / tan(SidewallAngle) when "
     "larger) and inside the angular sweep of one of its tube parts (one ChordTurn of slack), "
-    "and whose FULL build-frame direction is within DirectionTolerance = max(MeshFacetTurn = "
-    "2 asin(ShortEdgeThreshold / 2 Radius), BandSubtendedAngle = 2 asin(Span / 2 Radius)) of "
-    "the circle's horizontal tangent at the band centroid (a sloped band is rejected by its "
-    "elevation), is aligned with that arc sidewall (AlignedWithArcSidewall, a feature band); "
+    "and whose FULL build-frame direction is within DirectionTolerance = MeshFacetTurn = "
+    "2 asin(ShortEdgeThreshold / 2 Radius) (the mesh's own facet turn on the cylinder; no term "
+    "grows with the band's span) of the circle's horizontal tangent at the band centroid (a "
+    "sloped band is rejected by its elevation), is aligned with that arc sidewall "
+    "(AlignedWithArcSidewall, a feature band); "
     "ChordTurn = the largest angle 2 asin(chord / 2 Radius) subtended by the signature chords "
     "of that arc (both chord ends on the circle within ARC_CHORD_MATCH_TOLERANCE x Radius, "
     "chord midpoint inside the sweep); an arc without signature chords accepts no band; needs "
     "the Gmsh-only census PrismTubes.Tubes[].Arc rows (ArcId, Centre, Radius, "
     "ThetaStartDegrees, SweepDegrees, Orientation), the process Overetch and SidewallAngle "
-    "(supervisor decisions 410 / 433)")
+    "(supervisor decisions 410 / 433 / 445)")
 # Chord ends are the plan-view boundary's vertices quantised to its 1e-9 R grid.
 ARC_CHORD_MATCH_TOLERANCE = 1.0e-6
 
@@ -330,10 +334,10 @@ def _census_arc_sidewalls(census, signature_segments, overetch, sidewall_angle, 
 def _arc_sidewall_alignment(points, direction, arc_sidewalls, threshold):
     """ARC_SIDEWALL_RULE for one line-like band given its vertices and principal
     direction (mesh frame) and the audit's ShortEdgeThreshold: the record {ArcId, Radius,
-    Chords, ChordTurn, MeshFacetTurn, BandSubtendedAngle, DirectionTolerance, AngleToTangent,
-    MaximumRadialDeviation, LateralEnvelope} of the tagged arc whose sidewall carries the
-    band and whose horizontal tangent the band's full direction follows within the
-    direction tolerance, else None."""
+    Chords, ChordTurn, MeshFacetTurn, BandSubtendedAngle (recorded, not a tolerance term),
+    DirectionTolerance = MeshFacetTurn, AngleToTangent, MaximumRadialDeviation,
+    LateralEnvelope} of the tagged arc whose sidewall carries the band and whose horizontal
+    tangent the band's full direction follows within the mesh facet turn, else None."""
     if arc_sidewalls is None:
         return None
     arcs, lateral_envelope, inverse = arc_sidewalls
@@ -366,8 +370,10 @@ def _arc_sidewall_alignment(points, direction, arc_sidewalls, threshold):
         # sidewall reads its elevation as the angle (decision 433 MAJOR-1).
         angle = _alignment_angle(abs(float(np.dot(build_direction, tangent))))
         mesh_facet_turn = 2.0 * math.asin(min(1.0, float(threshold) / (2.0 * arc["Radius"])))
+        # The band's subtended angle is recorded for the reader only: a straight band is
+        # parallel to the centroid tangent whatever its span (decision 445).
         band_angle = 2.0 * math.asin(min(1.0, span / (2.0 * arc["Radius"])))
-        tolerance = max(mesh_facet_turn, band_angle)
+        tolerance = mesh_facet_turn
         if angle <= tolerance:
             return {"ArcId": arc["ArcId"], "Radius": arc["Radius"], "Chords": arc["Chords"],
                     "ChordTurn": arc["ChordTurn"], "MeshFacetTurn": mesh_facet_turn,
@@ -449,8 +455,9 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     ContinuationBoundaryBand (CONTINUATION_BAND_RULE: at one lateral side of the
     coupon box `coupon_box` = (lower, upper, radius, inverse transform) and farther
     than 2R from every feature; reported under ContinuationBoundaryBands).  A band on
-    a tagged arc sidewall following the circle's tangent within the arc's facet turn
-    (ARC_SIDEWALL_RULE; `arc_sidewalls` from _census_arc_sidewalls) is a feature band;
+    a tagged arc sidewall whose full direction follows the circle's horizontal tangent
+    within the MESH facet turn 2 asin(ShortEdgeThreshold / 2 Radius) (ARC_SIDEWALL_RULE;
+    `arc_sidewalls` from _census_arc_sidewalls) is a feature band;
     a component of fewer than three vertices is degenerate (DEGENERATE_COMPONENT_RULE):
     recorded, never counted.
     """
