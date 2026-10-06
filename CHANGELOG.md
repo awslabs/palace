@@ -41,12 +41,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     output is unchanged.
   - Corner-class placement rules of the automatic surface-response correction: at a matched
     corner whose arms are not perpendicular the second arm's straight cells begin where
-    that arm exits the corner coupon's matching square (`s = R / max(|cos theta|,
-    |sin theta|)`; unchanged at 90 degrees), recorded under `Diagnostics.CornerArmTrim`;
-    and a feature without a library model keeps its raw within-`R` surface energy in the
-    corrected interface energies, reported per feature type in
-    `surface-response-uncovered-energy.csv` (written only when something is uncovered).
-    Response-geometry cache version 9.
+    that arm exits the corner coupon's matching square, at `R / max(|cos t|, |sin t|)`
+    from the vertex (t the corner angle; unchanged at 90 degrees), recorded under
+    `Diagnostics.CornerArmTrim`; and a feature without a library model keeps its raw
+    within-`R` surface energy in the corrected interface energies, reported per feature
+    type in `surface-response-uncovered-energy.csv` (written only when something is
+    uncovered). Response-geometry cache version 9.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

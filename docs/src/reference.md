@@ -1720,18 +1720,19 @@ keeps its row with weight 0.
 
 Two placement rules of the corner class (decision 394; `SURFACE-RESPONSE-IDENTIFICATION.md`
 section (e)): at a matched corner whose arms are not perpendicular, the second arm's
-straight cells begin where that arm exits the corner coupon's matching square, at `s = R /
-max(|cos theta|, |sin theta|)` from the vertex instead of `R` (the stretch `[R, s)` was
-modelled twice; at 90 degrees `s = R` and nothing changes), recorded per corner under
+straight cells begin where that arm exits the corner coupon's matching square, at
+`R / max(|cos t|, |sin t|)` from the vertex (t the corner angle) instead of `R` — that
+stretch was modelled twice; at 90 degrees nothing changes — recorded per corner under
 `Diagnostics.CornerArmTrim` of the preflight manifest and of `palace.json`; and a feature
 the library has no model for (`Missing`) keeps its RAW within-`R` surface energy in the
 corrected interface energies (fixed trace and fixed flux on the raw field, self-consistent
 on the corrected field) instead of losing it with the modelled perimeter's within-`R`
-energy — that share is reported per feature type in
-`surface-response-uncovered-energy.csv` (`source`, `evaluation` 0 / 1 / 2 as above, `type`
-with a `Total` row, `portions`, `length (m)`, `uncovered raw energy[k] (J)` and `uncovered
-share[k]` of the evaluation's corrected interface energy per target interface), written
-only when something is uncovered, with the portions under `Diagnostics.Uncovered`. The
+energy. That share is reported per feature type in
+`surface-response-uncovered-energy.csv`: `source`, `evaluation` 0 / 1 / 2 as above, `type`
+with a `Total` row, `portions`, `length (m)`, then per target interface
+`uncovered raw energy[k] (J)` and the share of the evaluation's corrected interface energy
+`uncovered share[k]`; written only when something is uncovered, with the portions under
+`Diagnostics.Uncovered`. The
 single-transmon plotting helper can overlay these assignments on the chip-plane metal mesh:
 
 ```text
