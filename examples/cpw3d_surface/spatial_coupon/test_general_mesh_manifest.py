@@ -3038,9 +3038,74 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                              ["canonical-source-validation", "gmsh-build", "canonical-gmsh-publication",
                               "proper-rigid-publication"])
             # Independent per-entry verification of the Gmsh-only case.
-            from verify_canonical_case_entries import verify_case
+            from verify_canonical_case_entries import verify_case, verification_time_bound
             report = verify_case(manifest_path, audits, "six-edge-supplemental")
             self.assertTrue(report["Passed"], report["Failures"])
+            self.assertIsNone(report["TimeBound"])
+            # The command line binds the element-scaled whole-run time bound (decision 410) and
+            # records it with the elapsed seconds; the tiny fixture sits at the one-stage floor.
+            manifest = json.loads(manifest_path.read_text())
+            case = next(item for item in manifest["Cases"] if item["Id"] == "six-edge-supplemental")
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual(bound["Seconds"], manifest["Gates"]["MaximumSeconds"]); self.assertEqual(bound["Scale"], 1.0)
+            self.assertEqual(set(bound["EntryElements"]), {variant["Id"] for variant in case["Variants"]})
+            self.assertTrue(all(isinstance(count, int) and count > 0 for count in bound["EntryElements"].values()))
+            output = root / "six-edge-supplemental-verification.json"
+            result = subprocess.run([sys.executable, str(HERE / "verify_canonical_case_entries.py"), str(manifest_path),
+                                     str(audits), str(output), "six-edge-supplemental"],
+                                    capture_output=True, text=True, timeout=600)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('"TimeBound"', result.stdout.splitlines()[0])
+            recorded = json.loads(output.read_text())["TimeBound"]
+            self.assertTrue(json.loads(output.read_text())["Passed"])
+            self.assertEqual({key: recorded[key] for key in bound}, bound)
+            self.assertLess(recorded["ElapsedSeconds"], recorded["Seconds"])
+            self.assertIn("decision 410", recorded["Rule"])
+
+    def test_verification_time_bound_scales_with_the_entries_element_count(self):
+        """Decision 410: the verifier's whole-run bound is the manifest stage bound per
+        MaximumElements elements scaled to the elements the verification reads (the sum of the
+        entries' audited element counts), never below one stage bound; an explicit
+        --timeout-seconds is recorded; a variant without readable evidence contributes nothing."""
+        from verify_canonical_case_entries import VERIFICATION_TIME_BOUND_RULE, verification_time_bound
+        manifest = {"Gates": {"MaximumSeconds": 3600, "MaximumElements": 6000000}}
+        case = {"Id": "spatial-38-edge-f0461584cccf", "Variants": [{"Id": "identity"}, {"Id": "rotate-z-0.63"}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            audits = Path(temporary)
+            def evidence(variant, elements):
+                (audits / f"{case['Id']}--{variant}.json").write_text(json.dumps({"Resources": {"Elements": elements}}))
+            # The gallery scale: two 100 k-element entries stay at the one-stage floor.
+            evidence("identity", 100000); evidence("rotate-z-0.63", 100000)
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual((bound["Seconds"], bound["Scale"], bound["TotalElements"]), (3600, 1.0, 200000))
+            self.assertEqual(bound["EntryElements"], {"identity": 100000, "rotate-z-0.63": 100000})
+            self.assertIsNone(bound["Explicit"]); self.assertEqual(bound["Rule"], VERIFICATION_TIME_BOUND_RULE)
+            # The loop-end fab (PBS 57005): two 9,095,033-element entries -> 3.03 stage bounds =
+            # 10,915 s (the former fixed 1800 s was exceeded at 1801 s).
+            evidence("identity", 9095033); evidence("rotate-z-0.63", 9095033)
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual(bound["TotalElements"], 18190066)
+            self.assertAlmostEqual(bound["Scale"], 18190066 / 6000000)
+            self.assertEqual(bound["Seconds"], math.ceil(3600 * 18190066 / 6000000)); self.assertEqual(bound["Seconds"], 10915)
+            self.assertEqual(bound["ScaledSeconds"], bound["Seconds"])
+            # A placement whose evidence is unreadable or lacks the count contributes nothing (it
+            # fails on its own); the other entry still scales the bound.
+            (audits / f"{case['Id']}--rotate-z-0.63.json").unlink()
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual(bound["EntryElements"], {"identity": 9095033, "rotate-z-0.63": None})
+            self.assertEqual(bound["Seconds"], math.ceil(3600 * 9095033 / 6000000))
+            (audits / f"{case['Id']}--rotate-z-0.63.json").write_text(json.dumps({"Resources": {"Elements": 1.5}}))
+            self.assertIsNone(verification_time_bound(manifest, case, audits)["EntryElements"]["rotate-z-0.63"])
+            # An explicit bound replaces the scaled one and is recorded as such.
+            explicit = verification_time_bound(manifest, case, audits, 1800)
+            self.assertEqual((explicit["Seconds"], explicit["Explicit"]), (1800, 1800))
+            self.assertEqual(explicit["ScaledSeconds"], math.ceil(3600 * 9095033 / 6000000))
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                verification_time_bound(manifest, case, audits, 0)
+            with self.assertRaisesRegex(ValueError, "MaximumSeconds"):
+                verification_time_bound({"Gates": {"MaximumSeconds": 0, "MaximumElements": 6000000}}, case, audits)
+            with self.assertRaisesRegex(ValueError, "MaximumElements"):
+                verification_time_bound({"Gates": {"MaximumSeconds": 3600, "MaximumElements": 6.0e6}}, case, audits)
 
     def test_gmsh_only_negatives_fail_closed(self):
         from general_mesh_audit_producer import TUBE_DESIGN_GATE

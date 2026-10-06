@@ -95,7 +95,7 @@
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "8a24cf35667c965e6759bf5889499be0a6d028a447fdcde1e53c3f6d788f8ad5"
+      "SHA256": "40ba8454fbc834898c12280be1207fa6249a362648b5d9f0b17a04de23eb84cb"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -145,7 +145,7 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "2d6d9816e023a68004247568a7192913d52600dbb11bc9430f5fb444bbe756a3"
+      "SHA256": "c877cc771180e2d7622d02b0a32670c5abe1000ef2288f2b14412d73d012ccb3"
     },
     {
       "Name": "mesh_stage_contract.py",

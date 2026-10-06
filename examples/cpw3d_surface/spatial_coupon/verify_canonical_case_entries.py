@@ -15,13 +15,22 @@ seed/metric/adaptation/restoration commands or the Gmsh-only build command).
 The report is written whether or not the case passed;
 the exit status is nonzero unless everything passed.  Scope: a single case and
 its manifest variants; no matrix, physics or release qualification.
+
+The whole run is bounded in wall-clock time by VERIFICATION_TIME_BOUND_RULE: the
+manifest's stage bound Gates.MaximumSeconds per Gates.MaximumElements elements, scaled
+to the elements this verification reads (the sum of the entries' audited mesh element
+counts), never below one stage bound; the bound and its terms are recorded in the
+report (TimeBound).  Supervisor decision 410: the loop-end fab (two 9.1 M-element
+entries) exceeded the former fixed 1800-s default.
 """
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import signal
 import sys
+import time
 
 from canonical_mesh_build import same_canonical_build
 from general_mesh_audit_producer import read_audit_mesh
@@ -138,6 +147,53 @@ def validate_edge_layer_quality_rule_binding(manifest, case, bounded_stages):
     return bound
 
 
+VERIFICATION_TIME_BOUND_RULE = (
+    "the whole-run wall-clock bound of the per-entry verification is Gates.MaximumSeconds x "
+    "max(1, TotalElements / Gates.MaximumElements), TotalElements = the sum over the case's "
+    "variants of the audited mesh element count recorded in its evidence (Resources.Elements; a "
+    "variant without readable evidence contributes 0 and fails on its own): the manifest's stage "
+    "bound per MaximumElements elements, scaled to the elements this verification reads, never "
+    "below one stage bound; --timeout-seconds overrides it (recorded as Explicit); the bound, its "
+    "terms and the elapsed seconds are recorded in the report (supervisor decision 410)")
+
+
+def verification_time_bound(manifest, case, audit_root, explicit_seconds=None):
+    """The TimeBound record of one case's verification (VERIFICATION_TIME_BOUND_RULE):
+    Seconds (an integer, the alarm), MaximumSeconds / MaximumElements (the manifest
+    gates), EntryElements per variant (None without readable evidence), TotalElements,
+    Scale and the rule; `explicit_seconds` replaces the scaled bound and is recorded."""
+    gates = manifest["Gates"]
+    maximum_seconds, maximum_elements = gates["MaximumSeconds"], gates["MaximumElements"]
+    if (not _finite_number(maximum_seconds, positive=True) or
+            isinstance(maximum_elements, bool) or not isinstance(maximum_elements, int) or maximum_elements <= 0):
+        raise ValueError("Gates.MaximumSeconds and Gates.MaximumElements must be positive numbers")
+    audit_root = Path(audit_root)
+    entry_elements = {}
+    for variant in case["Variants"]:
+        count = None
+        try:
+            evidence = json.loads((audit_root / f"{case['Id']}--{variant['Id']}.json").read_text())
+            candidate = evidence.get("Resources", {}).get("Elements")
+            if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+                count = candidate
+        except (OSError, json.JSONDecodeError, AttributeError):
+            count = None
+        entry_elements[variant["Id"]] = count
+    total = sum(count for count in entry_elements.values() if count is not None)
+    scale = max(1.0, total / maximum_elements)
+    record = {"MaximumSeconds": maximum_seconds, "MaximumElements": maximum_elements,
+              "EntryElements": entry_elements, "TotalElements": total, "Scale": scale,
+              "ScaledSeconds": int(math.ceil(maximum_seconds * scale)),
+              "Explicit": explicit_seconds, "Rule": VERIFICATION_TIME_BOUND_RULE}
+    if explicit_seconds is not None:
+        if isinstance(explicit_seconds, bool) or not isinstance(explicit_seconds, int) or explicit_seconds <= 0:
+            raise ValueError("an explicit verification time bound must be a positive integer of seconds")
+        record["Seconds"] = explicit_seconds
+    else:
+        record["Seconds"] = record["ScaledSeconds"]
+    return record
+
+
 def _immutable_inputs(manifest_path, repository, case):
     """Hash-check every immutable input of the case; returns (hashes, paths)."""
     directory = Path(case["Source"]["Directory"])
@@ -244,15 +300,22 @@ def covariance_failures(manifest, case, evidence_by_variant):
     return failures, coordinate_error
 
 
-def verify_case(manifest_path, audit_root, case_id):
-    """Verify every variant of `case_id` and the case covariance; never stops at the
-    first failure.  Returns the report (Passed is true only with no failure)."""
-    manifest_path, audit_root = Path(manifest_path).resolve(), Path(audit_root).resolve()
-    manifest = json.loads(manifest_path.read_text())
-    repository, tools, matrix = validate_manifest(manifest, manifest_path)
+def manifest_case(manifest, case_id):
     case = next((item for item in manifest["Cases"] if item["Id"] == case_id), None)
     if case is None:
         raise ValueError(f"case {case_id} is not in the manifest")
+    return case
+
+
+def verify_case(manifest_path, audit_root, case_id, time_bound=None):
+    """Verify every variant of `case_id` and the case covariance; never stops at the
+    first failure.  Returns the report (Passed is true only with no failure); `time_bound`
+    (verification_time_bound) is recorded with the elapsed seconds."""
+    started = time.monotonic()
+    manifest_path, audit_root = Path(manifest_path).resolve(), Path(audit_root).resolve()
+    manifest = json.loads(manifest_path.read_text())
+    repository, tools, matrix = validate_manifest(manifest, manifest_path)
+    case = manifest_case(manifest, case_id)
     hashes, paths, contract = _immutable_inputs(manifest_path, repository, case)
     shared = {"meshes": set(), "variant_digests": set(), "canonical": {}, "identity_meshes": {}}
     entries, evidence_by_variant, failures = {}, {}, []
@@ -296,6 +359,8 @@ def verify_case(manifest_path, audit_root, case_id):
             "CanonicalReuseFailures": reuse_failures,
             "TransformComparisonFailures": comparison_failures,
             "TransformMaximumCoordinateError": coordinate_error,
+            "TimeBound": (None if time_bound is None else
+                          {**time_bound, "ElapsedSeconds": time.monotonic() - started}),
             "ProductionFunctions": PRODUCTION_FUNCTIONS}
 
 
@@ -305,15 +370,23 @@ def main():
     parser.add_argument("audit_root", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("case_id")
-    parser.add_argument("--timeout-seconds", type=int, default=1800,
-                        help="wall-clock bound on the whole verification (default 1800)")
+    parser.add_argument("--timeout-seconds", type=int, default=None,
+                        help="explicit wall-clock bound on the whole verification; the default is the "
+                             "element-scaled bound of VERIFICATION_TIME_BOUND_RULE (Gates.MaximumSeconds x "
+                             "max(1, TotalElements / Gates.MaximumElements))")
     args = parser.parse_args()
     if args.output.exists():
         raise ValueError("verification output must be fresh")
+    manifest = json.loads(Path(args.manifest).read_text())
+    time_bound = verification_time_bound(manifest, manifest_case(manifest, args.case_id), args.audit_root,
+                                         args.timeout_seconds)
+    seconds = time_bound["Seconds"]
+    print(json.dumps({"TimeBound": {key: time_bound[key] for key in
+                                    ("Seconds", "ScaledSeconds", "Explicit", "TotalElements", "Scale")}}), flush=True)
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(
-        TimeoutError(f"verification exceeded {args.timeout_seconds} seconds")))
-    signal.alarm(args.timeout_seconds)
-    report = verify_case(args.manifest, args.audit_root, args.case_id)
+        TimeoutError(f"verification exceeded {seconds} seconds")))
+    signal.alarm(seconds)
+    report = verify_case(args.manifest, args.audit_root, args.case_id, time_bound)
     signal.alarm(0)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({key: report[key] for key in
