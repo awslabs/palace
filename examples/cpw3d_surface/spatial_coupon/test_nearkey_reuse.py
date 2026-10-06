@@ -23,6 +23,7 @@ import nearkey_detection as detection  # noqa: E402
 import nearkey_predictor as predictor  # noqa: E402
 import nearkey_reuse as reuse  # noqa: E402
 import nearkey_transplant as transplant  # noqa: E402
+from test_nearkey_predictor import activated  # noqa: E402
 
 FIXTURE = json.loads((HERE / "testdata" / "nearkey-calibrated-pair.json").read_text())
 RADIUS = float(FIXTURE["MatchingRadius"])
@@ -219,6 +220,20 @@ class Detection(unittest.TestCase):
         scaled["Box"] = [1.15 * v for v in scaled["Box"]]
         record = analyse(donor=donor_with(signature=scaled))
         self.assertFalse(record["Qualifies"])
+
+    def test_lead_width_above_wmax_is_refused_directly(self):
+        """Decision 438 (7): the |W| > WMax branch asserted on its own - the fixture pair (|W| 0.953 %) against a rule whose
+        WMax is lowered below it; every other item of the pair is inside its limit, so the |W| refusal is the only one."""
+        narrow = copy.deepcopy(rule())
+        narrow["Policy"]["Domain"]["WMax"] = 0.005
+        record = detection.analyse_pair(FIXTURE["Exact"]["Signature"], FIXTURE["Donor"], rule=narrow, radius=RADIUS)
+        self.assertFalse(record["Qualifies"])
+        self.assertEqual(len(record["Refusals"]), 1, record["Refusals"])
+        self.assertTrue(record["Refusals"][0].startswith("|W| 0.00953 > 0.005"), record["Refusals"])
+        self.assertAlmostEqual(record["W"], -0.009527170077628535, places=15)   # the metric is still recorded
+        # the shipped WMax (11.3 %) admits the calibrated maximum (C2, 11.28 %) and refuses 11.31 %
+        self.assertGreaterEqual(rule()["Policy"]["Domain"]["WMax"], 0.11280045501005607)
+        self.assertLess(rule()["Policy"]["Domain"]["WMax"], 0.1131)
 
     def test_donor_status_refusals(self):
         for fields, needle in (({"QualificationStatus": "PendingQualification"}, "not Qualified"), ({"StatusProvisional": True},
@@ -459,14 +474,86 @@ class ReuseRecords(unittest.TestCase):
                 reuse.reuse_requirement(mode="fallback", stop_record={"Path": "p", "SHA256": "s"}, **common)
             with self.assertRaises(reuse.NearKeyReuseError):
                 reuse.reuse_requirement(mode="off", **common)
-            with self.assertRaises(reuse.NearKeyReuseError):
-                reuse.stop_record_from_path(Path(tmp) / "missing.json", "spatialedgecluster_edgecount-19_5ae3dbdd2c3d")
+            # decision 438 (5): default mode refuses a rule-file override even when that file activates the default
+            override = Path(tmp) / "rule.json"
+            override.write_text(json.dumps({k: v for k, v in activated(rule()).items() if not k.startswith("_")}))
+            with self.assertRaises(reuse.NearKeyReuseError) as context:
+                reuse.reuse_requirement(mode="default", **{**common, "rule": predictor.load_rule(override)})
+            self.assertIn("refuses a rule-file override", str(context.exception))
+
+    def test_stop_record_class_and_key_fields_are_checked(self):
+        """Decision 438 (4): the STOP record's Status / StoppedBy class and its binding to the exact key."""
+        name, case = "spatialedgecluster_edgecount-19_5ae3dbdd2c3d", "spatial-19-edge-5163ddf143c2"
+        good = {"Case": case, "Status": "failed", "StoppedBy": {"Kind": "Stage", "Id": "mesh", "Stage": "mesh", "Message": "family-6"}}
+        with tempfile.TemporaryDirectory() as tmp:
             stop = Path(tmp) / "stop.json"
-            stop.write_text(json.dumps({"Status": "failed", "StoppedBy": "family-6", "Case": "other"}))
             with self.assertRaises(reuse.NearKeyReuseError):
-                reuse.stop_record_from_path(stop, "spatialedgecluster_edgecount-19_5ae3dbdd2c3d")
-            stop.write_text(json.dumps({"Status": "failed", "StoppedBy": "family-6", "Case": "spatial-19-edge-5163ddf143c2 5ae3dbdd2c3d"}))
-            self.assertEqual(len(reuse.stop_record_from_path(stop, "spatialedgecluster_edgecount-19_5ae3dbdd2c3d")["SHA256"]), 64)
+                reuse.stop_record_from_path(Path(tmp) / "missing.json", name)
+            for bad in ("not json", json.dumps([good]), json.dumps({**good, "Status": "registered"}),
+                        json.dumps({**good, "Status": "built", "Passed": True}), json.dumps({**good, "StoppedBy": "family-6"}),
+                        json.dumps({**good, "StoppedBy": {"Kind": "Weather", "Id": "x"}}), json.dumps({**good,
+                                                                                                       "StoppedBy": {"Kind": "Stage"}}),
+                        json.dumps({**good, "Case": "other-case"})):
+                stop.write_text(bad)
+                with self.assertRaises(reuse.NearKeyReuseError, msg=bad):
+                    reuse.stop_record_from_path(stop, name, case)
+            stop.write_text(json.dumps({**good, "Case": "spatial-19-edge-000000000000"}))   # another case, hash12 absent
+            with self.assertRaises(reuse.NearKeyReuseError):
+                reuse.stop_record_from_path(stop, name)
+            stop.write_text(json.dumps(good))
+            record = reuse.stop_record_from_path(stop, name, case)
+            self.assertEqual((record["Status"], record["StoppedBy"]["Kind"], record["Case"], len(record["SHA256"])), ("failed",
+                                                                                                                      "Stage", case, 64))
+            # a build case record: Passed false + StoppedBy of the build matrix
+            stop.write_text(json.dumps({"Case": case, "Status": "failed", "Passed": False,
+                                        "StoppedBy": {"Kind": "HeadroomGate", "Id": "MaximumElements", "Stage": "headroom"}}))
+            self.assertEqual(reuse.stop_record_from_path(stop, name, case)["StoppedBy"]["Id"], "MaximumElements")
+            # without a case id the record must name the requirement's hash12 in Case / Requirement / Key
+            stop.write_text(json.dumps({**good, "Case": "x", "Requirement": name}))
+            self.assertEqual(reuse.stop_record_from_path(stop, name)["Case"], "x")
+
+    def test_requirement_key_must_be_the_signature_hash(self):
+        """Decision 438 (3): signature_hash(requirement Signature) == the requirement key, asserted before any transplant."""
+        with tempfile.TemporaryDirectory() as tmp:
+            library = {"Name": "x", "Version": 3, "MatchingRadius": RADIUS, "Models": [FIXTURE["Donor"]]}
+            library_path = Path(tmp) / "process-library.json"
+            library_path.write_text(json.dumps(library))
+            common = {"exact_signature": FIXTURE["Exact"]["Signature"], "exact_basis_dir": Path(tmp) / "no-basis",
+                      "exact_model_entry": FIXTURE["Exact"], "library": library, "library_path": library_path, "rule": rule(),
+                      "mode": "measurement-only", "output": Path(tmp) / "out", "log": lambda *_: None}
+            with self.assertRaises(reuse.NearKeyReuseError) as context:
+                reuse.reuse_requirement(requirement_key="0123456789ab", **common)
+            self.assertIn("!= the requirement key", str(context.exception))
+            # the right key (the full hash or its >= 12-hex prefix) passes the assertion and fails later on the absent basis
+            key = detection.signature_library.signature_hash(FIXTURE["Exact"]["Signature"])
+            for given in (key, key[:12]):
+                with self.assertRaises((transplant.TransplantError, OSError)):
+                    reuse.reuse_requirement(requirement_key=given, **common)
+
+    def test_donor_stored_record_required_and_sha_checked(self):
+        """Decision 438 (2): in Default / Fallback the donor's stored (F) record is required and must re-hash to the
+        library's SpatialQualification.RecordSHA256."""
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "spatial-qualification.json"
+            record.write_text(json.dumps({"Traces": [{"Name": "state-2", "MatrixIdentity": {"SA": {"Predicted": 1.0},
+                                                                                            "Domain": {"Predicted": 2.0}}}]}))
+            sha = transplant.sha256(record)
+            donor = {"Name": "donor", "SpatialQualification": {"Record": "/cluster/root/spatial-qualification.json", "RecordSHA256": sha}}
+            with self.assertRaises(reuse.NearKeyReuseError):              # unreadable, required
+                reuse.donor_stored_state2(donor, required=True)
+            self.assertEqual(reuse.donor_stored_state2(donor, required=False), (None, None))   # measurement-only: recorded, not refused
+            predicted, actual = reuse.donor_stored_state2(donor, record_path=record, required=True)
+            self.assertEqual((predicted["SA"], actual), (1.0, sha))
+            mapped, _ = reuse.donor_stored_state2(donor, record_roots={"/cluster/root/": str(Path(tmp)) + "/"}, required=True)
+            self.assertEqual(mapped["Domain"], 2.0)
+            with self.assertRaises(reuse.NearKeyReuseError):              # sha mismatch (in every mode)
+                reuse.donor_stored_state2({**donor, "SpatialQualification": {"Record": None, "RecordSHA256": "0" * 64}}, record_path=record)
+            with self.assertRaises(reuse.NearKeyReuseError):              # no recorded sha to check against
+                reuse.donor_stored_state2({"Name": "donor"}, record_path=record)
+            record.write_text(json.dumps({"Traces": []}))
+            donor["SpatialQualification"]["RecordSHA256"] = transplant.sha256(record)
+            with self.assertRaises(reuse.NearKeyReuseError):              # no state-2 identity in the record
+                reuse.donor_stored_state2(donor, record_path=record)
 
     def test_donor_tail_and_structure_key_refusal_record(self):
         self.assertAlmostEqual(reuse.donor_tail(FIXTURE["Donor"]), 0.022262609816823264, places=12)
@@ -486,11 +573,23 @@ class ReuseRecords(unittest.TestCase):
             self.assertTrue(record["Refused"]["Reason"].startswith(detection.REFUSAL_STRUCTURE_KEY))
             self.assertTrue((Path(tmp) / "out" / reuse.REFUSAL_RECORD).is_file())
 
+    @staticmethod
+    def reused_model(the_rule, name="spatialedgecluster_edgecount-19_5ae3dbdd2c3d-reused", mode="Fallback", **fields):
+        """A complete reused model record (the fields check_reused_model reads) for the assembling rule."""
+        model = {"Name": name, "QualificationStatus": detection.STATUS_REUSED, "ReuseMode": mode,
+                 "PredictedReuseError": {"RuleVersion": the_rule["RuleVersion"], "RuleFileSHA256": the_rule["_sha256"]},
+                 "ReusedFrom": {"Donor": "donor"}, "NearKey": {"W": -0.01}, "TransplantTests": {"GatesPassed": True}}
+        if mode == "Fallback":
+            model.update({"FallbackStopRecord": {"Path": "stop.json", "SHA256": "a" * 64}, "Approval": "supervisor decision NNN"})
+        if mode == "Default":
+            model["DefaultActivation"] = the_rule["Policy"]["DefaultActivation"]
+        model.update(fields)
+        return model
+
     def test_assemble_adds_models_and_the_header(self):
         library = {"Name": "base", "Version": 3, "MatchingRadius": RADIUS, "Note": "base note", "Models": [copy.deepcopy(FIXTURE["Donor"])]}
-        reused = {"Name": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d-reused", "QualificationStatus": detection.STATUS_REUSED,
-                  "ReuseMode": "Fallback"}
-        out = reuse.assemble_library(library, [reused], rule=rule(), name="base+reuse")
+        the_rule = rule()
+        out = reuse.assemble_library(library, [self.reused_model(the_rule)], rule=the_rule, name="base+reuse")
         self.assertEqual(len(out["Models"]), 2)
         header = out["NearKeyReuse"]
         self.assertEqual(header["RuleVersion"], "nearkey-reuse-rule-v1")
@@ -499,15 +598,62 @@ class ReuseRecords(unittest.TestCase):
         self.assertFalse(header["Policy"]["DefaultActive"])
         self.assertEqual(header["Counts"]["Fallback"], 1)
         self.assertNotIn("MeasurementOnly", out)
+        active = activated(the_rule)
+        default = reuse.assemble_library(library, [self.reused_model(active, mode="Default")], rule=active, name="base+default")
+        self.assertEqual(default["NearKeyReuse"]["Counts"]["Default"], 1)
+        self.assertTrue(default["NearKeyReuse"]["Policy"]["DefaultActive"])
+        same_name = self.reused_model(the_rule, name=FIXTURE["Donor"]["Name"], mode="MeasurementOnly")
         with self.assertRaises(reuse.NearKeyReuseError):
-            reuse.assemble_library(library, [{"Name": "x", "QualificationStatus": "Qualified"}], rule=rule(), name="bad")
-        same_name = {"Name": FIXTURE["Donor"]["Name"], "QualificationStatus": detection.STATUS_REUSED, "ReuseMode": "MeasurementOnly"}
-        with self.assertRaises(reuse.NearKeyReuseError):
-            reuse.assemble_library(library, [same_name], rule=rule(), name="clash")
-        demo = reuse.assemble_library(library, [same_name], rule=rule(), name="demo", measurement_only=True)
+            reuse.assemble_library(library, [same_name], rule=the_rule, name="clash")
+        demo = reuse.assemble_library(library, [same_name], rule=the_rule, name="demo", measurement_only=True)
         self.assertTrue(demo["MeasurementOnly"])
         self.assertEqual(demo["NearKeyReuse"]["Replaced"], 1)
         self.assertIn("NEVER a library of record", demo["Note"])
+
+    def test_assemble_is_fail_closed_per_model(self):
+        """Decision 438 (1) / review MAJOR-1: the four reproduced acceptances are refusals, plus every listed check."""
+        library = {"Name": "base", "Version": 3, "MatchingRadius": RADIUS, "Models": []}
+        the_rule = rule()
+        active = activated(the_rule)
+
+        def refused(model, assembling_rule=the_rule, needle=None, **kwargs):
+            with self.assertRaises(reuse.NearKeyReuseError) as context:
+                reuse.assemble_library(library, [model], rule=assembling_rule, name="bad", **kwargs)
+            if needle:
+                self.assertIn(needle, str(context.exception))
+        # review case 1: a MeasurementOnly model (exact Name kept) assembled WITHOUT --measurement-only
+        refused(self.reused_model(the_rule, name="spatialedgecluster_edgecount-19_5ae3dbdd2c3d", mode="MeasurementOnly"),
+                needle="MeasurementOnly model enters a measurement-only assembly only")
+        # review case 2: a Default model while the rule's default is inactive
+        refused(self.reused_model(the_rule, mode="Default", DefaultActivation={"ValidationPair": "pair-5", "RecordSHA256": "f" * 64}),
+                needle="default is inactive")
+        # review case 3: a Fallback model without its records
+        refused({"Name": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d-reused", "QualificationStatus": detection.STATUS_REUSED,
+                 "ReuseMode": "Fallback"}, needle="FallbackStopRecord")
+        refused(self.reused_model(the_rule, FallbackStopRecord={"Path": "stop.json"}), needle="FallbackStopRecord")
+        refused(self.reused_model(the_rule, Approval="   "), needle="Approval")
+        # review case 4: the model's RuleVersion / RuleFileSHA256 vs the assembling rule's
+        refused(self.reused_model(the_rule, PredictedReuseError={"RuleVersion": "nearkey-reuse-rule-v2",
+                                                                 "RuleFileSHA256": the_rule["_sha256"]}),
+                needle="RuleVersion / RuleFileSHA256")
+        refused(self.reused_model(the_rule, PredictedReuseError={"RuleVersion": the_rule["RuleVersion"], "RuleFileSHA256": "0" * 64}),
+                needle="RuleVersion / RuleFileSHA256")
+        # Default: the model's DefaultActivation must equal the rule's
+        refused(self.reused_model(active, mode="Default", DefaultActivation={**active["Policy"]["DefaultActivation"],
+                                                                             "RecordSHA256": "0" * 64}),
+                assembling_rule=active, needle="DefaultActivation")
+        # the remaining checks
+        refused({**self.reused_model(the_rule), "QualificationStatus": "Qualified"}, needle="not a ReusedResponse")
+        refused(self.reused_model(the_rule, mode="Always"), needle="ReuseMode")
+        for key in ("ReusedFrom", "NearKey", "TransplantTests", "PredictedReuseError"):
+            model = self.reused_model(the_rule)
+            del model[key]
+            refused(model, needle=key)
+        refused(self.reused_model(the_rule, TransplantTests={"GatesPassed": False}), needle="GatesPassed")
+        refused(self.reused_model(the_rule, name="spatialedgecluster_edgecount-19_5ae3dbdd2c3d"), needle="-reused")
+        # a complete Fallback model passes; the same model is accepted under --measurement-only too
+        out = reuse.assemble_library(library, [self.reused_model(the_rule)], rule=the_rule, name="ok")
+        self.assertEqual(out["NearKeyReuse"]["Counts"]["Fallback"], 1)
 
 
 class BuildHook(unittest.TestCase):
@@ -630,8 +776,9 @@ class SixPairsIdentity(unittest.TestCase):
                                                            "ContextEdges")}
             (work / "process-library.json").write_text(json.dumps({"Models": [generated]}))
             stop = Path(tmp) / "stop.json"
-            stop.write_text(json.dumps({"Status": "failed", "StoppedBy": "family-6 (synthetic test record)",
-                                        "Case": "spatial-19-edge-74b842a93a96 1de0718f1fc8"}))
+            stop.write_text(json.dumps({"Case": "spatial-19-edge-74b842a93a96", "Status": "failed",
+                                        "StoppedBy": {"Kind": "Stage", "Id": "mesh", "Stage": "mesh",
+                                                      "Message": "family-6 (synthetic test record)"}}))
             # a local library whose donor paths resolve: the models' relative paths against the mirror root
             local = copy.deepcopy(library)
             for model in local["Models"]:
@@ -640,22 +787,52 @@ class SixPairsIdentity(unittest.TestCase):
                         model[key] = str(MODELS_MIRROR / Path(model[key]).parent.name / Path(model[key]).name)
                 if model["Name"] == donor_name:
                     model["FabricatedSurfaceMatrixShelled"] = str(shelled)
+                    local_donor = model
             library_path = Path(tmp) / "process-library.json"
             library_path.write_text(json.dumps(local))
             coupon = {"Id": exact_entry["Name"], "Topology": "SpatialEdgeCluster", "Geometry": {"Signature": exact_entry["Signature"]},
                       "Hash": "5d3d8ac62dd1", "Interfaces": exact_entry["Interfaces"]}
-            result = device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", library=local,
-                                                             library_path=library_path,
-                                                             rule=rule(), mode="fallback", output=Path(tmp) / "reused",
-                                                             stop_record_path=str(stop),
-                                                             approval="supervisor decision NNN (test)", log=lambda *_: None)
+            roots = {"/data/home/simlap/bedrock-tests/": "/Users/simlap/bedrock-tests/"}   # the donors' (F) records of record, mirrored
+            hook = {"library": local, "library_path": library_path, "rule": rule(), "mode": "fallback", "output": Path(tmp) / "reused",
+                    "stop_record_path": str(stop), "approval": "supervisor decision NNN (test)", "log": lambda *_: None}
+            # decision 438 (2): without the donors' stored (F) records every candidate is NotLoadable -> refused, recorded
+            refused = device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", **hook)
+            self.assertFalse(refused["Reused"])
+            self.assertIn("rejected as NotLoadable", refused["Reason"])
+            refusal = json.loads(Path(refused["Record"]).read_text())
+            donor_entry = next(c for c in refusal["Candidates"] if c["Model"] == donor_name)
+            self.assertTrue(donor_entry["RejectedReason"].startswith("NotLoadable") and "(F) record" in donor_entry["RejectedReason"],
+                            donor_entry)
+            # decision 438 (3): a requirement key that is not the signature hash stops the reuse
+            with self.assertRaises(device_coupons.DeviceAdapterError):
+                device_coupons.nearkey_reuse_for_coupon({**coupon, "Hash": "000000000000"}, work, "spatial-19-edge-74b842a93a96",
+                                                        record_roots=roots, **hook)
+            # decision 438 (4): a STOP record of another case is refused
+            other = Path(tmp) / "other-stop.json"
+            other.write_text(json.dumps({"Case": "spatial-19-edge-000000000000", "Status": "failed",
+                                         "StoppedBy": {"Kind": "Stage", "Id": "mesh", "Stage": "mesh"}}))
+            with self.assertRaises(device_coupons.DeviceAdapterError):
+                device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", record_roots=roots,
+                                                        **{**hook, "stop_record_path": str(other)})
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", record_roots=roots, **hook)
             self.assertTrue(result["Reused"], result)
             self.assertEqual(result["ReuseMode"], "Fallback")
             self.assertEqual(result["Donor"], donor_name)
             model = json.loads((Path(result["ModelDirectory"]) / reuse.REUSED_MODEL_RECORD).read_text())
             self.assertEqual(model["Name"], exact_entry["Name"] + "-reused")
             self.assertEqual(model["FallbackStopRecord"]["Path"], str(stop))
+            self.assertEqual((model["FallbackStopRecord"]["Status"], model["FallbackStopRecord"]["StoppedBy"]["Kind"]), ("failed", "Stage"))
             self.assertEqual(model["Approval"], "supervisor decision NNN (test)")
+            self.assertTrue(model["TransplantTests"]["T4"]["StoredRecordUsed"])
+            self.assertEqual(model["ReusedFrom"]["DonorRecordSHA256"], local_donor["SpatialQualification"]["RecordSHA256"])
+            key_check = model["ReusedFrom"]["GeneratedSignatureHashEqualsKey"]
+            self.assertTrue(key_check["Equal"])
+            self.assertTrue(key_check["SignatureHash"].startswith("5d3d8ac62dd1"))
+            self.assertEqual(key_check["SignatureHash"], key_check["GeneratedSignatureHash"])
+            # the written Fallback model passes the library-of-record assembly checks (decision 438 (1))
+            assembled = reuse.assemble_library({"Name": "base", "Version": 3, "MatchingRadius": 1.9, "Models": []}, [model], rule=rule(),
+                                               name="base+b3")
+            self.assertEqual(assembled["NearKeyReuse"]["Counts"]["Fallback"], 1)
             self.assertFalse(model["TransplantTests"]["T2"]["Passed"])
             self.assertTrue(model["TransplantTests"]["GatesPassed"])
             self.assertEqual(model["ShelledMatrix"]["Status"], "Transplanted")

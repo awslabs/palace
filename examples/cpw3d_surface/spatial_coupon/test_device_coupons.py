@@ -132,7 +132,7 @@ class DeviceBasisDefaultTest(unittest.TestCase):
                          {"support_span_caps": ["5ed91f8890c0=20"], "support_span_cap_reason": "closed loop",
                           "element_caps": ["5ed91f8890c0=16000000"], "element_cap_approval": "supervisor",
                           "element_cap_reason": "12-13 M elements", "nearkey_reuse_mode": "off", "nearkey_fallback_approval": None,
-                          "nearkey_fallback_stop_records": [], "nearkey_rule": None})
+                          "nearkey_fallback_stop_records": [], "nearkey_rule": None, "nearkey_record_roots": []})
         self.assertEqual(parser.parse_args(common).support_span_cap, [])
         with self.assertRaises(SystemExit):
             coupon_library.main(["build", "--manifest", "m.json", "--element-cap", "5ed91f8890c0=16000000"])

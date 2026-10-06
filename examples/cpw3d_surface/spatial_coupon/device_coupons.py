@@ -301,7 +301,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                            cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print,
                            omit_requirements=(), support_span_caps=(), support_span_cap_reason=None, element_caps=(),
                            element_cap_approval=None, element_cap_reason=None, nearkey_reuse_mode="off",
-                           nearkey_fallback_approval=None, nearkey_fallback_stop_records=(), nearkey_rule=None):
+                           nearkey_fallback_approval=None, nearkey_fallback_stop_records=(), nearkey_rule=None, nearkey_record_roots=()):
     """Steps 1-3: the source directories of every spatial coupon of the device under
     output/sources/<case id>; returns the device record (written to output/device-coupons.json).
     `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
@@ -336,8 +336,17 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             raise DeviceAdapterError("--nearkey-reuse fallback needs a --nearkey-fallback-stop-record HASH_PREFIX=PATH per requirement")
     elif stop_records or nearkey_fallback_approval:
         raise DeviceAdapterError("--nearkey-fallback-approval / --nearkey-fallback-stop-record apply to --nearkey-reuse fallback only")
+    record_roots = {}
+    for text in nearkey_record_roots or ():
+        remote, separator, local = str(text).partition("=")
+        if not separator or not remote or not local:
+            raise DeviceAdapterError(f"--nearkey-record-root expects REMOTE=LOCAL, not {text!r}")
+        record_roots[remote] = local
     rule = None
     if nearkey_reuse_mode != "off":
+        if nearkey_reuse_mode == "default" and nearkey_rule is not None:
+            raise DeviceAdapterError("--nearkey-reuse default refuses --nearkey-rule: only the shipped, test-pinned rule file activates "
+                                     "default reuse (decision 438 (5))")
         try:
             rule = nearkey_predictor.load_rule(nearkey_rule or nearkey_predictor.RULE_FILE)
             if nearkey_reuse_mode == "default" and not nearkey_predictor.default_active(rule)[0]:
@@ -449,7 +458,7 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             near_key = nearkey_reuse_for_coupon(coupon, work, case_id, library=library, library_path=library_path, rule=rule,
                                                 mode=nearkey_reuse_mode, output=output / "reused",
                                                 stop_record_path=None if stop_option is None else stop_option[1],
-                                                approval=nearkey_fallback_approval, log=log)
+                                                approval=nearkey_fallback_approval, record_roots=record_roots, log=log)
             (record["NearKeyReuse"]["Reused"] if near_key["Reused"] else record["NearKeyReuse"]["Refused"]).append(
                 {key: near_key[key] for key in ("Case", "Requirement", "Reason", "Donor", "ReuseMode", "ModelDirectory")})
         provenance = {
@@ -532,7 +541,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     return record
 
 
-def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, rule, mode, output, stop_record_path, approval, log=print):
+def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, rule, mode, output, stop_record_path, approval,
+                             record_roots=None, log=print):
     """The near-key reuse decision of one planned spatial coupon on its generated basis (`work`): the
     coupon record's NearKeyReuse block {Reused, Case, Requirement, Reason, Donor, ReuseMode, ModelDirectory,
     Record}. In fallback mode a requirement without a STOP record is not offered (recorded)."""
@@ -545,10 +555,10 @@ def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, ru
         return {**base, "Reason": "NoStopRecord: fallback reuse is offered only to a requirement with a --nearkey-fallback-stop-record"}
     entry = json.loads((Path(work) / "process-library.json").read_text())["Models"][0]
     try:
-        stop = nearkey_reuse.stop_record_from_path(stop_record_path, entry["Name"]) if stop_record_path else None
+        stop = nearkey_reuse.stop_record_from_path(stop_record_path, entry["Name"], case_id) if stop_record_path else None
         result = nearkey_reuse.reuse_requirement(
             exact_signature=signature, exact_basis_dir=work, exact_model_entry=entry, library=library, library_path=library_path, rule=rule,
-            mode=mode, output=output, requirement_key=coupon.get("Hash"), stop_record=stop, approval=approval,
+            mode=mode, output=output, requirement_key=coupon.get("Hash"), stop_record=stop, approval=approval, record_roots=record_roots,
             exact_interfaces=coupon.get("Interfaces"), exact_boundary_condition=coupon.get("BoundaryCondition"), log=log)
     except (nearkey_reuse.NearKeyReuseError, nearkey_predictor.NearKeyRuleError, nearkey_reuse.detection.NearKeyDetectionError,
             nearkey_reuse.transplant.TransplantError) as error:
@@ -693,7 +703,11 @@ def add_requirement_option_arguments(parser):
     parser.add_argument("--nearkey-fallback-stop-record", action="append", default=[], metavar="HASH_PREFIX=PATH",
                         help="fallback reuse: the registration / build STOP record (JSON) of the requirement whose Hash starts with the "
                              "prefix (repeatable; a prefix matching no spatial coupon fails closed)")
-    parser.add_argument("--nearkey-rule", help="the near-key rule file (default: the repository's nearkey-reuse-rule-v1.json)")
+    parser.add_argument("--nearkey-rule", help="the near-key rule file (default: the repository's nearkey-reuse-rule-v1.json; refused "
+                                               "in default mode, decision 438 (5))")
+    parser.add_argument("--nearkey-record-root", action="append", default=[], metavar="REMOTE=LOCAL",
+                        help="map the library's record paths (cluster) to a local mirror: the donors' stored (F) records are REQUIRED "
+                             "for the T4 gate in default / fallback (decision 438 (2))")
 
 
 def requirement_option_kwargs(args):
@@ -701,7 +715,8 @@ def requirement_option_kwargs(args):
             "element_caps": args.element_cap, "element_cap_approval": args.element_cap_approval,
             "element_cap_reason": args.element_cap_reason, "nearkey_reuse_mode": args.nearkey_reuse,
             "nearkey_fallback_approval": args.nearkey_fallback_approval,
-            "nearkey_fallback_stop_records": args.nearkey_fallback_stop_record, "nearkey_rule": args.nearkey_rule}
+            "nearkey_fallback_stop_records": args.nearkey_fallback_stop_record, "nearkey_rule": args.nearkey_rule,
+            "nearkey_record_roots": args.nearkey_record_root}
 
 
 def main(argv=None):

@@ -6,6 +6,7 @@ domain corner and validation pair 5), the MA_sharp form and the Option-A policy 
 (B2 / B4 / B5 Default once activated, B3 / C1 / C2 Fallback-only, Option B B4 only, |W| 15 %
 refused, DefaultActive false -> fallback-only, fail closed on every missing record)."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -51,10 +52,19 @@ COMBOS = {
 STOP = {"Path": "registration/stop-record.json", "SHA256": "0" * 64}
 
 
-def activated(rule):
+ACTIVATION_DIR = Path(tempfile.mkdtemp(prefix="nearkey-activation-"))
+PAIR5_RECORD = ACTIVATION_DIR / "pair-5-record.json"
+PAIR5_RECORD.write_text(json.dumps({"ValidationPair": "pair-5", "r_pre": {"SA": -0.0046, "MS": -0.0022, "MA": -0.0055},
+                                    "InsideBound": True}))
+PAIR5_SHA = hashlib.sha256(PAIR5_RECORD.read_bytes()).hexdigest()
+
+
+def activated(rule, record_path=None, record_sha=None):
+    """The rule with a synthetic DefaultActivation record (a readable validation-pair record that re-hashes to RecordSHA256)."""
     active = copy.deepcopy(rule)
     active["Policy"]["DefaultActive"] = True
-    active["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordSHA256": "f" * 64}
+    active["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordPath": str(record_path or PAIR5_RECORD),
+                                             "RecordSHA256": record_sha or PAIR5_SHA, "Decision": "synthetic (test)"}
     return active
 
 
@@ -268,6 +278,27 @@ class Policy(unittest.TestCase):
         flag_only["Policy"]["DefaultActive"] = True   # no record: fail closed
         with self.assertRaises(predictor.NearKeyRuleError):
             self.decide(flag_only, "B4", "default")
+        # decision 438 (5): the activation record is verified against the validation-pair record: a missing path, an unreadable
+        # path or a sha mismatch fails closed
+        partial = copy.deepcopy(self.rule)
+        partial["Policy"]["DefaultActive"] = True
+        partial["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordSHA256": PAIR5_SHA}
+        with self.assertRaises(predictor.NearKeyRuleError):
+            predictor.default_active(partial)
+        with self.assertRaises(predictor.NearKeyRuleError):
+            predictor.default_active(activated(self.rule, record_path=ACTIVATION_DIR / "missing.json"))
+        with self.assertRaises(predictor.NearKeyRuleError):
+            predictor.default_active(activated(self.rule, record_sha="0" * 64))
+        active, activation = predictor.default_active(self.active)
+        self.assertTrue(active)
+        self.assertEqual(activation["RecordSHA256"], PAIR5_SHA)
+
+    def test_only_the_shipped_rule_file_is_the_shipped_rule(self):
+        self.assertTrue(predictor.is_shipped_rule(self.rule))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rule.json"
+            path.write_text(predictor.RULE_FILE.read_text())
+            self.assertFalse(predictor.is_shipped_rule(predictor.load_rule(path)))
 
     def test_fallback_needs_stop_record_approval_and_the_cap(self):
         self.assertFalse(self.decide(self.rule, "C2", "fallback", approval="x")["Allowed"])

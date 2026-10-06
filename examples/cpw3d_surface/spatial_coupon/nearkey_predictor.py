@@ -124,14 +124,31 @@ def predict(rule, *, w, s, t2e_max, tail_donor):
 
 
 def default_active(rule):
-    """The rule's DefaultActive flag is honoured only with a DefaultActivation record (fail closed)."""
+    """The rule's DefaultActive flag is honoured only with a DefaultActivation {ValidationPair, RecordPath,
+    RecordSHA256, Decision} record whose RecordPath is readable and re-hashes to RecordSHA256 (decision 438 (5):
+    a missing / unreadable / mismatching validation-pair record fails closed)."""
     policy = rule["Policy"]
     activation = policy.get("DefaultActivation")
     if not policy.get("DefaultActive"):
         return False, None
-    if not (isinstance(activation, dict) and activation.get("ValidationPair") and activation.get("RecordSHA256")):
-        raise NearKeyRuleError("the rule says DefaultActive true without a DefaultActivation {ValidationPair, RecordSHA256} record")
+    if not (isinstance(activation, dict) and activation.get("ValidationPair") and activation.get("RecordSHA256")
+            and activation.get("RecordPath")):
+        raise NearKeyRuleError("the rule says DefaultActive true without a DefaultActivation {ValidationPair, RecordPath, RecordSHA256} "
+                               "record")
+    record = Path(activation["RecordPath"])
+    if not record.is_file():
+        raise NearKeyRuleError(f"DefaultActivation.RecordPath {record} is not readable: the validation-pair record cannot be verified")
+    actual = hashlib.sha256(record.read_bytes()).hexdigest()
+    if actual != activation["RecordSHA256"]:
+        raise NearKeyRuleError(f"DefaultActivation.RecordSHA256 {activation['RecordSHA256'][:16]}… != the validation-pair record's "
+                               f"{actual[:16]}… ({record}): default reuse stays inactive")
     return True, activation
+
+
+def is_shipped_rule(rule):
+    """True iff the rule was loaded from the repository's pinned rule file (decision 438 (5): only the shipped,
+    test-pinned rule activates default reuse; a --nearkey-rule override is refused in Default mode)."""
+    return Path(rule.get("_path", "")).resolve() == RULE_FILE.resolve()
 
 
 def policy_decision(rule, prediction, *, requested_mode, t2_passed, gates_passed, in_domain, in_domain_reasons=(),

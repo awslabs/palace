@@ -11,7 +11,7 @@ an exact coupon).
     nearkey_reuse.py evaluate   --library LIB.json --exact-basis DIR [--exact-signature-from NAME] --output DIR
                                 [--mode default|fallback|measurement-only] [--donor NAME ...]
                                 [--donor-matrices-root DIR] [--donor-shelled NAME=PATH ...] [--donor-record NAME=PATH ...]
-                                [--stop-record PATH --approval TEXT] [--rule PATH]
+                                [--record-root REMOTE=LOCAL ...] [--stop-record PATH [--stop-case ID] --approval TEXT] [--rule PATH]
     nearkey_reuse.py assemble   --library LIB.json --reused-model MODEL.json ... --output LIB.json --name NAME
                                 [--note TEXT] [--measurement-only] [--keep-exact-names]
 
@@ -76,19 +76,45 @@ def donor_tail(model):
     return sum(float(v) for v in sharp.values()) / total_raw - 1.0
 
 
-def donor_stored_state2(model, record_path=None):
-    """The donor's (F) record state-2 MatrixIdentity Predicted energies per class, when the record is
-    readable (the library's SpatialQualification.Record or an explicit local path); None otherwise."""
-    path = record_path or (model.get("SpatialQualification") or {}).get("Record")
+def resolve_record_path(path, record_roots=None):
+    """A library record path (a cluster path in the libraries of record) under the REMOTE=LOCAL root
+    mappings `record_roots`; the first mapping whose remote prefix matches wins, else the path as given."""
+    if path is None:
+        return None
+    for remote, local in (record_roots or {}).items():
+        if str(path).startswith(remote):
+            return str(local) + str(path)[len(remote):]
+    return str(path)
+
+
+def donor_stored_state2(model, record_path=None, *, record_roots=None, required=False):
+    """The donor's stored (F) record (SpatialQualification.Record, or an explicit local path) read for T4:
+    (state-2 MatrixIdentity Predicted energies per class, the record's sha256). Decision 438 (2): the record's
+    sha256 must equal the library's SpatialQualification.RecordSHA256 (fail closed on a mismatch); with
+    `required` (Default / Fallback) an unreadable record fails closed, else (measurement-only) (None, None)."""
+    recorded_sha = (model.get("SpatialQualification") or {}).get("RecordSHA256")
+    path = record_path or resolve_record_path((model.get("SpatialQualification") or {}).get("Record"), record_roots)
     if not path or not Path(path).is_file():
+        if required:
+            raise NearKeyReuseError(f"donor {model.get('Name')}: the stored (F) record is not readable ({path}): T4 needs it in Default / "
+                                    f"Fallback (decision 438 (2); --donor-record NAME=PATH or a --record-root mapping)")
         return None, None
+    actual = sha256(path)
+    if recorded_sha is None:
+        raise NearKeyReuseError(f"donor {model.get('Name')}: the library carries no SpatialQualification.RecordSHA256 to check the (F) "
+                                f"record against")
+    if actual != recorded_sha:
+        raise NearKeyReuseError(f"donor {model.get('Name')}: the (F) record {path} sha256 {actual[:16]}… != the library's RecordSHA256 "
+                                f"{recorded_sha[:16]}…")
     record = json.loads(Path(path).read_text())
     trace = next((t for t in record.get("Traces", []) if t.get("Name") == "state-2"), None)
     if trace is None or "MatrixIdentity" not in trace:
-        return None, sha256(path)
+        raise NearKeyReuseError(f"donor {model.get('Name')}: the (F) record {path} carries no state-2 MatrixIdentity")
     predicted = {cls: value["Predicted"] for cls, value in trace["MatrixIdentity"].items()
                  if isinstance(value, dict) and "Predicted" in value}
-    return predicted, sha256(path)
+    if not predicted:
+        raise NearKeyReuseError(f"donor {model.get('Name')}: the (F) record {path} carries no Predicted state-2 energies")
+    return predicted, actual
 
 
 def load_exact_basis(basis_dir, name, model_entry):
@@ -130,13 +156,13 @@ def choose_donor(evaluations):
 
 
 def evaluate_candidate(exact, exact_signature, model, near_key, *, rule, library_root, mode, matrices_root=None, shelled_path=None,
-                       record_path=None, stop_record=None, approval=None, radius):
+                       record_path=None, record_roots=None, stop_record=None, approval=None, radius):
     """One qualifying candidate: transplant + prediction + policy; returns the evaluation record (the
     transplant result kept under "Result" for the writer)."""
     require_shelled = mode != MODE_MEASUREMENT
     donor, paths, shelled_missing = load_donor(model, library_root, matrices_root=matrices_root, shelled_path=shelled_path,
                                                require_shelled=require_shelled)
-    stored, record_sha = donor_stored_state2(model, record_path)
+    stored, record_sha = donor_stored_state2(model, record_path, record_roots=record_roots, required=require_shelled)
     result = transplant.transplant(exact, donor, radius, gates=rule["Policy"]["Gates"], domain_limits=rule["Policy"]["Domain"],
                                    donor_stored_state2=stored)
     tail = donor_tail(model)
@@ -188,13 +214,16 @@ def candidate_summary(evaluation, chosen):
 
 
 def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, library, library_path, rule, mode, output,
-                      requirement_key=None, donors=None, matrices_root=None, shelled_paths=None, record_paths=None, stop_record=None,
-                      approval=None, exact_interfaces=None, exact_boundary_condition=None, log=print, generator=None):
+                      requirement_key=None, donors=None, matrices_root=None, shelled_paths=None, record_paths=None, record_roots=None,
+                      stop_record=None, approval=None, exact_interfaces=None, exact_boundary_condition=None, log=print, generator=None):
     """The reuse decision for one requirement; writes the model directory and returns the record
     {"Reused": bool, "Model": entry | None, "Refused": {...} | None, "Candidates": [...]}."""
     if mode not in MODES:
         raise NearKeyReuseError(f"--nearkey-reuse mode {mode!r} is not one of {MODES}")
     if mode == "default":
+        if not predictor.is_shipped_rule(rule):
+            raise NearKeyReuseError(f"--nearkey-reuse default refuses a rule-file override ({rule.get('_path')}): only the shipped, "
+                                    f"test-pinned rule {predictor.RULE_FILE} activates default reuse (decision 438 (5))")
         active, _ = predictor.default_active(rule)
         if not active:
             raise NearKeyReuseError("--nearkey-reuse default: the rule file carries no DefaultActivation record (validation pair 5): "
@@ -209,11 +238,22 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
     library_root = Path(library_path).resolve().parent
     radius = float(library["MatchingRadius"])
     exact_name = exact_model_entry["Name"]
-    key_hash = requirement_key or detection.signature_library.signature_hash(exact_signature)
-    stamped = exact_model_entry.get("Signature")
     signature_hash = detection.signature_library.signature_hash
-    if stamped is not None and signature_hash(stamped) != signature_hash(exact_signature):
+    exact_hash = signature_hash(exact_signature)
+    # decision 438 (3) / DESIGN 4.1 item 1: the requirement key IS the signature hash (the manifest records it, possibly as a
+    # prefix); the generated basis's stamped Signature must hash to it too; both comparisons recorded on the model
+    if requirement_key is not None and not (str(requirement_key) == exact_hash or
+                                            (len(str(requirement_key)) >= 12 and exact_hash.startswith(str(requirement_key)))):
+        raise NearKeyReuseError(f"{exact_name}: signature_hash(requirement Signature) {exact_hash[:16]}… != the requirement key "
+                                f"{str(requirement_key)[:16]}…")
+    key_hash = exact_hash
+    stamped = exact_model_entry.get("Signature")
+    if stamped is not None and signature_hash(stamped) != exact_hash:
         raise NearKeyReuseError(f"{exact_name}: the generated basis's Signature differs from the requirement's (hash mismatch)")
+    key_check = {"RequirementKey": None if requirement_key is None else str(requirement_key), "SignatureHash": exact_hash,
+                 "GeneratedSignatureHash": None if stamped is None else signature_hash(stamped), "Equal": True,
+                 "Rule": "decision 438 (3): signature_hash(requirement Signature) == the requirement key (or its >= 12-hex prefix) and == "
+                         "the generated basis's stamped Signature; asserted before any transplant"}
     records = detection.candidate_donors(exact_signature, library, rule=rule, exact_interfaces=exact_interfaces,
                                          exact_boundary_condition=exact_boundary_condition)
     record = {"Requirement": exact_name, "FeatureKey": key_hash, "Mode": mode, "RuleVersion": rule["RuleVersion"],
@@ -246,8 +286,8 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
             evaluation = evaluate_candidate(exact, exact_signature, by_name[name], near_key, rule=rule,
                                             library_root=library_root, mode=mode,
                                             matrices_root=matrices_root, shelled_path=(shelled_paths or {}).get(name),
-                                            record_path=(record_paths or {}).get(name), stop_record=stop_record, approval=approval,
-                                            radius=radius)
+                                            record_path=(record_paths or {}).get(name), record_roots=record_roots,
+                                            stop_record=stop_record, approval=approval, radius=radius)
         except (NearKeyReuseError, transplant.TransplantError) as error:
             # a candidate whose matrices / records cannot be read is not a donor (fail closed per candidate, recorded)
             candidates.append({"Model": name, "W": near_key.get("W"), "S": near_key.get("S"), "Chosen": False,
@@ -260,16 +300,19 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
         candidates.append(candidate_summary(evaluation, evaluation is chosen))
     record.update({"Candidates": candidates, "Reused": chosen is not None})
     if chosen is None:
-        reason = "no admissible candidate donor" if evaluations else "no candidate donor qualifies"
+        not_loadable = [c for c in candidates if str(c.get("RejectedReason", "")).startswith("NotLoadable")]
+        reason = ("no admissible candidate donor" if evaluations else
+                  (f"every qualifying candidate donor was rejected as NotLoadable ({len(not_loadable)})" if not_loadable
+                   else "no candidate donor qualifies"))
         record["Refused"] = {"Reason": reason, "Candidates": candidates,
                              "Rule": "DESIGN 1.4: the feature stays Missing -> uncovered (F2 raw energy, decision 398)"}
         (output / REFUSAL_RECORD).write_text(json.dumps(record, indent=1) + "\n")
         log(f"{exact_name}: near-key reuse REFUSED: {reason}")
         return record
     entry, model_dir = write_reused_model(exact=exact, exact_basis_dir=exact_basis_dir, exact_model_entry=exact_model_entry,
-                                          evaluation=chosen,
-                                         library=library, library_path=library_path, rule=rule, mode=mode, output=output, key_hash=key_hash,
-                                         candidates=candidates, stop_record=stop_record, approval=approval, generator=generator)
+                                          evaluation=chosen, library=library, library_path=library_path, rule=rule, mode=mode,
+                                          output=output, key_hash=key_hash, candidates=candidates, stop_record=stop_record,
+                                          approval=approval, generator=generator, key_check=key_check)
     record["Model"] = entry
     record["ModelDirectory"] = str(model_dir)
     log(f"{exact_name}: near-key reuse {entry['ReuseMode']} from {chosen['Donor']} (W {100 * chosen['NearKey']['W']:+.3f} %; bounds "
@@ -279,7 +322,7 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
 
 
 def write_reused_model(*, exact, exact_basis_dir, exact_model_entry, evaluation, library, library_path, rule, mode, output, key_hash,
-                       candidates, stop_record, approval, generator):
+                       candidates, stop_record, approval, generator, key_check=None):
     """The model directory and the reused model entry (DESIGN 4.1 item 3 / 4.3)."""
     exact_name = exact_model_entry["Name"]
     case = Path(exact_basis_dir).name
@@ -345,7 +388,8 @@ def write_reused_model(*, exact, exact_basis_dir, exact_model_entry, evaluation,
                            "BasisGenerator": generator or {"Command": "generate_spatial_response.py --basis-only (the registration's "
                                                                       "bound basis)",
                                                            "BasisFilesSHA256": copied},
-                           "GeneratedSignatureHashEqualsKey": True, "DonorBuildGateOverride": evaluation["Override"]}
+                           "GeneratedSignatureHashEqualsKey": key_check or {"Equal": True, "Rule": "asserted in reuse_requirement"},
+                           "DonorBuildGateOverride": evaluation["Override"]}
     entry["NearKey"] = near_key
     entry["PredictedReuseError"] = prediction
     entry["TransplantTests"] = tests
@@ -385,16 +429,61 @@ def library_header(rule, reused_models):
             "Models": [model["Name"] for model in reused_models], "Counts": counts}
 
 
+def check_reused_model(model, rule, *, measurement_only=False):
+    """Decision 438 (1): the per-model checks of a reused model before it enters a library (fail closed; the
+    first failing check is the error): QualificationStatus ReusedResponse; ReuseMode Default / Fallback
+    (MeasurementOnly only under a measurement-only assembly); Default needs default_active(rule) AND
+    model.DefaultActivation == rule.Policy.DefaultActivation; Fallback needs FallbackStopRecord {Path, SHA256} and
+    a non-blank Approval; PredictedReuseError.RuleVersion / RuleFileSHA256 equal the assembling rule's; ReusedFrom /
+    NearKey / TransplantTests present with GatesPassed true; the Name ends in -reused unless measurement-only."""
+    name = model.get("Name")
+    if model.get("QualificationStatus") != STATUS_REUSED:
+        raise NearKeyReuseError(f"{name}: not a ReusedResponse model")
+    mode = model.get("ReuseMode")
+    if mode == "MeasurementOnly":
+        if not measurement_only:
+            raise NearKeyReuseError(f"{name}: a MeasurementOnly model enters a measurement-only assembly only (--measurement-only)")
+    elif mode not in ("Default", "Fallback"):
+        raise NearKeyReuseError(f"{name}: ReuseMode {mode!r} is not Default / Fallback")
+    if mode == "Default":
+        active, activation = predictor.default_active(rule)
+        if not active:
+            raise NearKeyReuseError(f"{name}: a Default reused model while the rule's default is inactive")
+        if model.get("DefaultActivation") != activation:
+            raise NearKeyReuseError(f"{name}: DefaultActivation {model.get('DefaultActivation')} != the rule's {activation}")
+    if mode == "Fallback":
+        stop = model.get("FallbackStopRecord")
+        if not (isinstance(stop, dict) and stop.get("Path") and stop.get("SHA256")):
+            raise NearKeyReuseError(f"{name}: a Fallback reused model without a FallbackStopRecord {{Path, SHA256}}")
+        if not (isinstance(model.get("Approval"), str) and model["Approval"].strip()):
+            raise NearKeyReuseError(f"{name}: a Fallback reused model without a recorded Approval")
+    prediction = model.get("PredictedReuseError")
+    if not isinstance(prediction, dict):
+        raise NearKeyReuseError(f"{name}: no PredictedReuseError record")
+    if prediction.get("RuleVersion") != rule["RuleVersion"] or prediction.get("RuleFileSHA256") != rule["_sha256"]:
+        raise NearKeyReuseError(f"{name}: PredictedReuseError RuleVersion / RuleFileSHA256 ({prediction.get('RuleVersion')} / "
+                                f"{str(prediction.get('RuleFileSHA256'))[:16]}…) != the assembling rule's ({rule['RuleVersion']} / "
+                                f"{rule['_sha256'][:16]}…)")
+    for key in ("ReusedFrom", "NearKey", "TransplantTests"):
+        if not isinstance(model.get(key), dict):
+            raise NearKeyReuseError(f"{name}: no {key} record")
+    if model["TransplantTests"].get("GatesPassed") is not True:
+        raise NearKeyReuseError(f"{name}: TransplantTests.GatesPassed is not true")
+    if not measurement_only and not str(name).endswith("-reused"):
+        raise NearKeyReuseError(f"{name}: a reused model of record is named <exact>-reused")
+    return mode
+
+
 def assemble_library(library, reused_models, *, rule, name, note=None, measurement_only=False, library_path=None):
     """The base library with the reused models added (or, under a measurement-only assembly keeping the
-    exact names, replacing the exact models of the same Name) and the NearKeyReuse header."""
+    exact names, replacing the exact models of the same Name) and the NearKeyReuse header; every model passes
+    check_reused_model first (decision 438 (1), fail closed)."""
     out = copy.deepcopy(library)
     out["Name"] = name
     replaced = 0
     by_name = {m["Name"]: n for n, m in enumerate(out["Models"])}
     for model in reused_models:
-        if model.get("QualificationStatus") != STATUS_REUSED:
-            raise NearKeyReuseError(f"{model.get('Name')}: not a ReusedResponse model")
+        check_reused_model(model, rule, measurement_only=measurement_only)
         if model["Name"] in by_name:
             if not measurement_only:
                 raise NearKeyReuseError(f"{model['Name']}: a model of that Name is already in the library (only a measurement-only "
@@ -428,20 +517,42 @@ def parse_assignments(values, option):
     return out
 
 
-def stop_record_from_path(path, requirement_name):
-    """The fallback STOP record of the exact key: an existing JSON file naming the requirement (its Name or
-    its case id) in its text; recorded with its sha256 (fail closed otherwise)."""
+# register_case.STATUS_FAILED / STATUS_UNSUPPORTED; a build case record carries Passed false instead
+STOP_STATUSES = ("failed", "unsupported-class")
+STOP_KINDS = ("ScopeGuard", "Stage", "HeadroomGate", "Verification", "Driver", "Registration", "Mesher", "BuildLimit")
+
+
+def stop_record_from_path(path, requirement_name, case_id=None):
+    """The fallback STOP record of the exact key (decision 438 (4)): an existing JSON object of the registration /
+    build class - `Status` in {failed, unsupported-class} or `Passed` false, a `StoppedBy` {Kind, Id} of a known
+    kind - bound to the exact key: its `Case` equals `case_id` (when given) or its Case / Requirement / Key field
+    names the requirement's hash12. Returns {Path, SHA256, Status, StoppedBy {Kind, Id, Stage}, Case} (fail closed)."""
     path = Path(path)
     if not path.is_file():
         raise NearKeyReuseError(f"STOP record {path} does not exist")
-    text = path.read_text()
     try:
-        json.loads(text)
+        record = json.loads(path.read_text())
     except json.JSONDecodeError as error:
         raise NearKeyReuseError(f"STOP record {path} is not JSON: {error}") from error
-    if requirement_name.split("_")[-1] not in text:
-        raise NearKeyReuseError(f"STOP record {path} does not name the requirement {requirement_name}")
-    return {"Path": str(path), "SHA256": sha256(path)}
+    if not isinstance(record, dict):
+        raise NearKeyReuseError(f"STOP record {path} is not a JSON object")
+    status = record.get("Status")
+    if not (status in STOP_STATUSES or record.get("Passed") is False):
+        raise NearKeyReuseError(f"STOP record {path}: Status {status!r} / Passed {record.get('Passed')!r} is not a registration / build "
+                                f"STOP (Status in {STOP_STATUSES} or Passed false)")
+    stopped = record.get("StoppedBy")
+    if not (isinstance(stopped, dict) and stopped.get("Kind") in STOP_KINDS and stopped.get("Id")):
+        raise NearKeyReuseError(f"STOP record {path}: StoppedBy {stopped!r} is not a {{Kind in {STOP_KINDS}, Id}} record")
+    hash12 = requirement_name.split("_")[-1]
+    if case_id is not None:
+        if record.get("Case") != case_id:
+            raise NearKeyReuseError(f"STOP record {path}: Case {record.get('Case')!r} is not the exact case {case_id}")
+    elif not any(hash12 in str(record.get(key, "")) for key in ("Case", "Requirement", "Key", "FeatureKey")):
+        raise NearKeyReuseError(f"STOP record {path} does not name the requirement {requirement_name} (Case / Requirement / Key)")
+    return {"Path": str(path), "SHA256": sha256(path), "Status": status, "Passed": record.get("Passed"),
+            "StoppedBy": {key: stopped.get(key) for key in ("Kind", "Id", "Stage")}, "Case": record.get("Case"),
+            "Rule": "decision 438 (4): a registration / build STOP record (Status failed / unsupported-class or Passed false, StoppedBy "
+                    "{Kind, Id}) bound to the exact case / requirement key"}
 
 
 def command_evaluate(args):
@@ -474,13 +585,13 @@ def command_evaluate(args):
         signature = entry.get("Signature")
         if signature is None:
             raise NearKeyReuseError(f"{basis_dir}: the generated model carries no Signature")
-    stop = stop_record_from_path(args.stop_record, entry["Name"]) if args.stop_record else None
+    stop = stop_record_from_path(args.stop_record, entry["Name"], args.stop_case) if args.stop_record else None
     record = reuse_requirement(exact_signature=signature, exact_basis_dir=basis_dir, exact_model_entry=entry, library=library,
                                library_path=args.library, rule=rule, mode=args.mode, output=args.output, donors=args.donor or None,
-                               matrices_root=args.donor_matrices_root, shelled_paths=parse_assignments(args.donor_shelled,
-                                                                                                       "--donor-shelled"),
-                               record_paths=parse_assignments(args.donor_record,
-                                                              "--donor-record"), stop_record=stop, approval=args.approval)
+                               matrices_root=args.donor_matrices_root,
+                               shelled_paths=parse_assignments(args.donor_shelled, "--donor-shelled"),
+                               record_paths=parse_assignments(args.donor_record, "--donor-record"),
+                               record_roots=parse_assignments(args.record_root, "--record-root"), stop_record=stop, approval=args.approval)
     (Path(args.output) / f"{entry['Name']}-nearkey-reuse.json").write_text(json.dumps(record, indent=1) + "\n")
     return 0 if record["Reused"] else 2
 
@@ -517,7 +628,11 @@ def build_parser():
                           help="the donor's fabricated SHELLED surface matrix file")
     evaluate.add_argument("--donor-record", action="append", metavar="NAME=PATH",
                           help="the donor's (F) spatial-qualification.json (T4 vs the stored energies)")
+    evaluate.add_argument("--record-root", action="append", metavar="REMOTE=LOCAL",
+                          help="map the library's record paths (cluster) to a local mirror (the donors' stored (F) records are REQUIRED "
+                               "in Default / Fallback, decision 438 (2))")
     evaluate.add_argument("--stop-record", help="fallback: the registration / build STOP record of the exact key (JSON)")
+    evaluate.add_argument("--stop-case", help="fallback: the exact case id the STOP record's Case field must equal")
     evaluate.add_argument("--approval", help="fallback: the recorded approval text")
     evaluate.add_argument("--rule", default=str(predictor.RULE_FILE))
     evaluate.set_defaults(func=command_evaluate)
