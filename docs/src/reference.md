@@ -1000,7 +1000,13 @@ longitudinal cell, the interval of its edge portion that its quadrature point in
 so that each patch coefficient is the length-average of the transverse projection over its
 cell rather than the projection in one cross-section. Its quadrature is
 refined with the global mesh resolution, preventing a fixed-weight point functional from
-dominating successively smaller H1 finite-element modes. Fixed-trace and fixed-flux
+dominating successively smaller H1 finite-element modes. The translational hat basis is the
+coupon's own: the constrained metal-band knots where the fabricated metal meets the
+matching contour (listed as `ZeroTraceIndices`, or inserted at library load from the model's
+topology and `Fabrication.MetalThickness` when the library publishes the free knots only) are
+vertices of the basis without a coefficient, so no hat spans the band; a library whose knots
+disagree with its constraints is refused, and the rule applied to every model is recorded
+under `Diagnostics.ConsistentMortar`. Fixed-trace and fixed-flux
 postprocessing remain available and use the same selected trace map. The mortar
 implementation covers electrostatic isolated-edge, gap, strip, and parallel-edge models,
 as well as single-conductor spatial clusters and corners represented by equal closed

@@ -2157,6 +2157,64 @@ identity, the Missing-corner run reads ft = E_out + models + uncovered (1e-10), 
 90-deg convex corner), the raw outputs byte-identical between the two runs, the
 self-consistent row on the corrected field, on 1 and 2 ranks.
 
+**The consistent translational mortar (decision 404 D1, 2026-10-06; `DeriveConsistentMortarBands`
+at library load, the translational branch of the surface mortar).** The straight coupon
+generators (`examples/cpw2d/generate_edge_response.py`, `generate_edge_pair_response.py`,
+`generate_edge_cluster_response.py`: `write_bases`) insert the knots where the fabricated
+metal meets the matching contour, (x_face, 0) and (x_face, MetalThickness) on every box face
+the metal crosses, constrain the band between them to the conductor potential and publish the
+FREE knots only, so the coupon's hats adjacent to the band ramp to zero at the band knots. The
+runtime's translational mortar built its hats over the segments between consecutive PUBLISHED
+knots, one segment spanning the band: an L2 projection onto a different basis than the
+coupon's, which under-read the two crossing-adjacent knots of the device's V-shaped trace
+(zero on the sheet, -E |y| beside it) by the straight-class MS lift -0.9..-1.6 % of decisions
+400 / 403 (reproduced offline per cell to 0.01-0.04 points; the Collocated run 56883 = the
+nodal limit, +1.42 % MS). RULE: the mortar's hat basis IS the coupon's. The constrained
+metal-band knots are vertices of the basis with no coefficient — from the library contract
+where present (ZeroTraceIndices on a PEC translational closed contour, now accepted and
+verified against the rule below), else inserted at library load by the RECORDED runtime rule
+from the topology (IsolatedEdge / CurvedEdge: the face x = min of the knots — edge at the
+origin, gap toward +x; SameConductorGap: both faces; a single-conductor ParallelEdgeCluster:
+the face of an outer edge whose gap points inward (`Edges[0].GapDirection` +1: x = min;
+`Edges[-1].GapDirection` -1: x = max); strips: none) and `Fabrication.MetalThickness` (the band
+[0, t] on that face), between the two consecutive published knots on either side of the band
+(`ResponseModelData::consistent_mortar_vertices`, canonical coupon frame; geometry cache
+version 10). FAIL CLOSED when the library's knots and constraints disagree: a free knot on the
+band, the band not between consecutive knots of one closed contour, or ZeroTraceIndices that
+are not the two band knots. Open-contour models (different conductors) anchor their band knots
+on conductor references and are outside this rule (recorded as such); a library without
+`Fabrication.MetalThickness` keeps the legacy mortar (recorded). Projection: a segment with a
+band vertex at one end contributes L/3 to the free knot's mass alone (the band segment carries
+no hat and no quadrature), the free hats no longer sum to one beside the band, so the trace
+relative to the reference conductor is projected as `M^-1 (load - V_ref * integral(hats))` (the
+spatial mortar's form) and a band knot listed as a basis point keeps a zero coefficient; the
+transpose is the exact adjoint (`-InnerProduct(integrals, M^-T v)` on the reference point). A
+model without constrained vertices runs the legacy statements in the same order (bitwise). The
+Collocated coupling is untouched. Record `Diagnostics.ConsistentMortar` (manifest and
+palace.json; `Summary.ConsistentMortar` counts): per model Source (RuntimeRule /
+ZeroTraceIndices / None / TraceMesh), Rule, BandVertices, ZeroTraceIndices. Libraries of
+record (census `consistent-mortar/results/republish-scope-*.md`): s2-r1p9-v3-b(1) 26
+translational models with inserted bands (isolated edge, 8 curved edges, 3 same-conductor
+gaps, 14 single-conductor clusters), 11 strips, 2 open-path clusters, 42 spatial; the transmon
+alias 9 / 9 / 0 / 5; every library loads (no disagreement) — no republish is needed for the
+device numbers (the inserted vertices are the generator's constrained knots and the published
+free hats and Q entries are the coupon's). Unit tests `SurfaceResponseOperator consistent
+translational mortar` (`test-consistentmortar.cpp`, serial and 2 ranks): on the PEC island
+with R = 3 h_y, t = h_y and knots every h_y, a Q1 device trace that vanishes on the band and is
+linear between knots is in the coupon's hat space, so the consistent projection returns its
+value at every knot (the nodal strip average: the cell midpoint along a trace linear along
+the edge) to 1e-9 while the legacy mortar misreads the band-adjacent knots by > 1 % of the
+amplitude; the ZeroTraceIndices contract gives the same free coefficients (1e-11), zero band
+coefficients and energies (1e-10); a library listing a free knot on the band is refused; the
+record; the fixed-trace defect form is symmetric (the transpose is the adjoint) and positive
+for a positive defect, and its quadratic form is twice the domain correction.
+`examples/cpw2d/test_consistent_mortar_bands.py` pins every straight generator's band
+constraint to the rule (isolated edge; pair gap / strip / different conductors; cluster
+single- and two-conductor; a tampered knot on the band refused). KNOWN LIMITS: the open-path
+(different-conductor) models' path-end hats lack the ramp segments to their conductor
+anchors (a conductor-vertex analogue of this rule, not booked); the rule reads the band from
+the topology, not from the coupon's own mesh.
+
 **Conductor-consistency gate (decision 277 (A), 2026-10-03;
 `SurfaceResponseOperator::ApplyConductorConsistencyGate`, SOLVE TIME ONLY).** A spatial
 coupon holds its metal cross-sections on the box faces at the conductor potentials (the
