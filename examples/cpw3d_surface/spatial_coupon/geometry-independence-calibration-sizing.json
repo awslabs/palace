@@ -129,7 +129,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "070e103ed36078a04e6d606633455cb94794016a09c35465eefd35a792736436"
+      "SHA256": "60e8cda879a9367a2467ca0b7cd6f3ad8af7b64a516c8becc7e01f4d017276e7"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -179,7 +179,7 @@
     },
     "gmsh-build": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "3ce7a5bcbab2e251a766aaf537fdaf26c3922f6b6da692291fd1753f030de3f7"
+      "mesher": "4f0dfb14f088fdc6ed12995c685647b4c1690a568c27fa5cc82dbb5545a134d0"
     },
     "canonical-gmsh-publication": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",

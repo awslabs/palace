@@ -332,7 +332,7 @@ end
         tubes = census["PrismTubes"]
         @test tubes["ArcTubes"]["Count"] == 2            # a top and a bottom arc tube
         @test tubes["ArcTubes"]["SharedSections"] == 4   # two joints x two placements
-        @test tubes["ArcTubes"]["JointEnds"] == 4
+        @test tubes["ArcTubes"]["JointEnds"] == 4 && tubes["ArcTubes"]["PartSplits"] == 0
         @test census["Scope"]["ExhibitedClasses"] ==
               ["ArcSides", "ContinuationVertices", "ExteriorLoops"]
         loop = census["Scope"]["MetalLoops"][1]

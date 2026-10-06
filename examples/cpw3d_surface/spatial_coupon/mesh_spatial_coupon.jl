@@ -6084,7 +6084,10 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             (tube_rows[end]["Joints"] = [joint_end_record(joint) for joint in tube.joints])
     end
     arc_rows = count(haskey(row, "Arc") for row in tube_rows)
+    # The straight tubes' joint ends (Tubes[].Joints) and the arc part splits (an arc row whose
+    # Part < Parts shares its end section with the next part) make up the shared sections.
     joint_rows = sum(length(row["Joints"]) for row in tube_rows if haskey(row, "Joints"); init=0)
+    part_splits = count(haskey(row, "Arc") && row["Arc"]["Part"] < row["Arc"]["Parts"] for row in tube_rows)
     face_end_rows = [row["FaceEnds"] for row in tube_rows if haskey(row, "FaceEnds")]
     face_end_count = sum(length, face_end_rows; init=0)
     legacy_box_corners = sum(length(row["LegacyBoxVertexCorner"]) for row in tube_rows
@@ -6170,7 +6173,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         # Arc tubes and smooth joints (design 1.2 (3) / A3 (2)), recorded only where they occur.
         "ArcTubes" => arc_rows == 0 ? nothing : Dict{String, Any}(
             "Rule" => description["ArcTubeRule"], "SmoothJointRule" => description["SmoothJointRule"],
-            "Count" => arc_rows, "JointEnds" => joint_rows,
+            "Count" => arc_rows, "JointEnds" => joint_rows, "PartSplits" => part_splits,
             "SharedSections" => description["SharedSections"],
             "TotalArcLength" => sum(row["Length"] for row in tube_rows if haskey(row, "Arc"))),
         "LayerRule" => TUBE_LAYER_RULE, "TubeAxisSizeLaw" => TUBE_AXIS_SIZE_LAW,

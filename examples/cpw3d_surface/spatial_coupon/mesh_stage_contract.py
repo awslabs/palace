@@ -1807,7 +1807,8 @@ ARC_CURVATURE_BOUND = 0.25
 
 def validate_arc_tubes(tubes, rows, boundary_rows):
     """The arc tubes of a census (block (b) design 1.2 (3) / A3 (2)): PrismTubes.ArcTubes
-    {Count, JointEnds, SharedSections, TotalArcLength, Rule, SmoothJointRule} against the rows
+    {Count, JointEnds, PartSplits, SharedSections = JointEnds + PartSplits, TotalArcLength, Rule,
+    SmoothJointRule} against the rows
     carrying an Arc record (ArcId / Centre / Radius / Sign of a tagged run of the bound boundary,
     Part in 1..Parts = the run's parts, SweepDegrees = the run's sweep over its parts, Length =
     Radius x sweep of the tube's interval <= the part's), the section's envelope within
@@ -1850,10 +1851,13 @@ def validate_arc_tubes(tubes, rows, boundary_rows):
                 envelope > ARC_CURVATURE_BOUND * radius * (1.0 + 1e-12) or
                 _census_number(row, "Length", "Tube row") > radius * abs(run["Sweep"]) / parts * (1.0 + 1e-9)):
             raise ValueError("Prism tube arc row does not follow its tagged arc (centre, radius, sign, parts, sweep)")
+    part_splits = sum(1 for row in arc_rows if _count(row["Arc"].get("Part"), "Tube arc part") <
+                      _count(row["Arc"].get("Parts"), "Tube arc parts"))
     if (not isinstance(summary, dict) or
             _count(summary.get("Count"), "Arc tube count") != len(arc_rows) or
             _count(summary.get("JointEnds"), "Arc tube joint ends") != joint_ends or
-            _count(summary.get("SharedSections"), "Arc tube shared sections") * 2 != joint_ends or
+            _count(summary.get("PartSplits"), "Arc tube part splits") != part_splits or
+            _count(summary.get("SharedSections"), "Arc tube shared sections") != joint_ends + part_splits or
             abs(_census_number(summary, "TotalArcLength", "Arc tubes") -
                 sum(float(row["Length"]) for row in arc_rows)) > 1e-9 * max(1.0, sum(float(row["Length"]) for row in arc_rows)) or
             not all(isinstance(summary.get(name), str) and summary[name] for name in ("Rule", "SmoothJointRule"))):
