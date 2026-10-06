@@ -84,14 +84,15 @@
   },
   "FallbackMaxBound": 0.035,
   "Domain": {
-   "WMax": 0.1128,
+   "WMax": 0.113,
    "WDefaultMax": 0.025,
    "SMax": 0.0075,
    "ShiftMaxOverR": 0.05,
    "BoxShiftMaxOverR": 0.015,
    "KnotShiftMaxOverR": 0.055,
    "OrphanKnotsMax": 2,
-   "GapScalingTolerance": 0.005
+   "GapScalingTolerance": 0.005,
+   "Rule": "the calibrated domain (DESIGN 1.2 items 4-7, 4.2): |W| <= 11.3 % (the measured maximum, C2 11.28 %), S <= 0.75 % (C1 0.738 %), claim / context vertex shifts <= 0.05 R, box faces <= 0.015 R, matched donor knots <= 0.055 R after the transplant, orphan knots <= 2 in both directions and modes, the facing gap scaling with the lead within GapScalingTolerance"
   },
   "Gates": {
    "T1": 1e-12,
