@@ -135,26 +135,51 @@ end
 # DEFAULT_VERTEX_GRADING_MIN_TURN_DEG): the joints of a polyline arc (the device windows' CPW
 # bends and loop ends turn by 3-16 deg per chord) are the curve they discretise, not corners
 # (decision 121 / 122), while every corner class of the library (turns of 45-165 deg) is
-# graded; a junction of three or more metal curves (the cross-plane snap's T / X) always is.
+# graded; a junction of three or more metal curves OF ONE PLANE always is, a plan crossing of
+# the two planes' edges never (`plan_vertex_angles`).
 
 const VERTEX_COLLINEAR_SIN = 1.0e-7
 const VERTEX_WALL_TOLERANCE_UM = 1.0e-5
 const DEFAULT_VERTEX_GRADING_MIN_TURN_DEG = 30.0
 
+# Whether two outward unit directions at a point are one collinear pair (a curve split by an
+# inserted point: turn 0) and, if not, the turn of their joint (pi - the wedge angle).
+function joint_turn(u::Point2, v::Point2)
+    cross = u[1] * v[2] - u[2] * v[1]
+    dot = u[1] * v[1] + u[2] * v[2]
+    abs(cross) <= VERTEX_COLLINEAR_SIN && dot < 0.0 && return 0.0
+    return pi - acos(clamp(dot, -1.0, 1.0))
+end
+
 # The smallest wedge angle (rad) at every plan vertex, by point tag; a point that is no plan
-# vertex (on the window wall, or exactly two metal curves turning by less than `min_turn`
-# rad) is absent.
-function plan_vertex_angles(curves::Vector{PlanCurve}, box, min_turn::Float64)
+# vertex is absent. A point is a vertex when, on SOME plane, the incident metal curves OF THAT
+# PLANE (`planes_by_curve`: curve index -> plane indices; `nothing` = every metal curve on one
+# plane) are three or more, or two turning by at least `min_turn` rad; a point on the window
+# wall never is. With two planes a crossing of an L1 edge with an L2 edge in plan (four
+# incident curves, two per plane, each pair collinear) is therefore NOT a vertex: the planes
+# are apart in z and neither has a corner there; an L2 polygon corner snapped onto an L1 edge
+# is one (L2's own two curves turn). The wedge angle is the smallest over ALL incident metal
+# curves: the band's clearance rule concerns the plan's wedges, whichever plane.
+function plan_vertex_angles(
+    curves::Vector{PlanCurve},
+    box,
+    min_turn::Float64;
+    planes_by_curve::Union{Nothing, Dict{Int, Vector{Int}}}=nothing
+)
     directions = Dict{Int32, Vector{Point2}}()
+    plane_directions = Dict{Int32, Dict{Int, Vector{Point2}}}()
     coordinates = Dict{Int32, Point2}()
-    for curve in curves
+    for (k, curve) in enumerate(curves)
         curve.metal || continue
+        planes = planes_by_curve === nothing ? [1] : planes_by_curve[k]
         for (point, from, to) in
             ((curve.points[1], curve.a, curve.b), (curve.points[2], curve.b, curve.a))
-            push!(
-                get!(directions, point, Point2[]),
-                unit((to[1] - from[1], to[2] - from[2]))
-            )
+            direction = unit((to[1] - from[1], to[2] - from[2]))
+            push!(get!(directions, point, Point2[]), direction)
+            by_plane = get!(plane_directions, point, Dict{Int, Vector{Point2}}())
+            for plane in planes
+                push!(get!(by_plane, plane, Point2[]), direction)
+            end
             coordinates[point] = from
         end
     end
@@ -167,21 +192,39 @@ function plan_vertex_angles(curves::Vector{PlanCurve}, box, min_turn::Float64)
     for (point, incident) in directions
         on_wall(coordinates[point]) && continue
         length(incident) >= 2 || continue
-        if length(incident) == 2
-            u, v = incident
-            cross = u[1] * v[2] - u[2] * v[1]
-            dot = u[1] * v[1] + u[2] * v[2]
-            abs(cross) <= VERTEX_COLLINEAR_SIN && dot < 0.0 && continue
-            # The turn of the joint = pi - the wedge angle between the outward directions.
-            turn = pi - acos(clamp(dot, -1.0, 1.0))
-            turn >= min_turn - 1.0e-12 || continue
-        end
+        vertex = any(
+            length(own) >= 3 ||
+            (length(own) == 2 && joint_turn(own[1], own[2]) >= min_turn - 1.0e-12) for
+            own in values(plane_directions[point])
+        )
+        vertex || continue
         bearings = sort([atan(d[2], d[1]) for d in incident])
         gaps = [bearings[i + 1] - bearings[i] for i = 1:(length(bearings) - 1)]
         push!(gaps, 2.0 * pi - (bearings[end] - bearings[1]))
         angles[point] = minimum(gaps)
     end
     return angles
+end
+
+# The planes a metal curve is an edge of: those on which the conductor differs across it (a
+# bump footprint edge, differing in bump membership only, belongs to both planes).
+function metal_curve_planes(curves::Vector{PlanCurve}, class_by_surface::Dict)
+    planes_by_curve = Dict{Int, Vector{Int}}()
+    for (k, curve) in enumerate(curves)
+        curve.metal || continue
+        upward, _ = gmsh.model.get_adjacencies(1, curve.tag)
+        owners = [
+            class_by_surface[(Int32(2), Int32(s))] for
+            s in upward if haskey(class_by_surface, (Int32(2), Int32(s)))
+        ]
+        length(owners) == 2 ||
+            error("Metal curve $(curve.tag) bounds $(length(owners)) partitions")
+        a, b = owners
+        planes = [j for j in eachindex(a.conductors) if a.conductors[j] != b.conductors[j]]
+        isempty(planes) && (planes = collect(eachindex(a.conductors)))
+        planes_by_curve[k] = planes
+    end
+    return planes_by_curve
 end
 
 # Ladder stations (distances from the vertex) along a curve of length `length_um` toward a

@@ -1302,6 +1302,42 @@ end
         )
         @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
     end
+    # Two planes whose edges CROSS in plan (the synthetic two-level window): a crossing is four
+    # incident curves, two collinear per plane — no plane has a corner there, so it is not a
+    # vertex; the vertices are exactly the off-wall polygon corners of both planes (turn >= 30).
+    crossing = read_polygon_set(synthetic_two_level_window())
+    corners = 0
+    for plane in crossing.planes,
+        polygon in plane.polygons,
+        ring in (polygon.outer, polygon.holes...)
+
+        n = length(ring)
+        for i = 1:n
+            a, b, c = ring[mod1(i - 1, n)], ring[i], ring[mod1(i + 1, n)]
+            any(
+                abs(b[j] - crossing.box[k]) <= 1.0e-5 for
+                (j, k) in ((1, 1), (1, 2), (2, 3), (2, 4))
+            ) && continue
+            u = PWM.unit((b[1] - a[1], b[2] - a[2]))
+            v = PWM.unit((c[1] - b[1], c[2] - b[2]))
+            acos(clamp(u[1] * v[1] + u[2] * v[2], -1.0, 1.0)) >= deg2rad(30.0) - 1.0e-9 &&
+                (corners += 1)
+        end
+    end
+    plan = mesh_polygon_window(
+        crossing,
+        0.05,
+        5.0,
+        joinpath(directory, "crossing.msh2");
+        verbose=false,
+        sweep=:graded,
+        plan_only=true,
+        vertex_column_grading=true
+    )
+    # 16 polygon corners; the L1 and L2 traces share the corners (40, 28) and (40, 32) -> one
+    # plan point each: 14 vertices.
+    @test corners == 16 && plan["band"]["vertex_column_grading"]["vertices"] == 14
+    @test plan["band"]["inward_corners"] > 2 * corners # the crossings are band corners, not vertices
     # The option needs the own band.
     @test_throws ErrorException mesh_polygon_window(
         hole_window(),

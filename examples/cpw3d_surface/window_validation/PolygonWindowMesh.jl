@@ -1201,8 +1201,12 @@ function mesh_plan(
             error("vertex_grading_min_turn_deg must lie in [0, 180)")
         vertex_angles =
             vertex_column_grading ?
-            plan_vertex_angles(curves, spec.box, deg2rad(vertex_grading_min_turn_deg)) :
-            Dict{Int32, Float64}()
+            plan_vertex_angles(
+                curves,
+                spec.box,
+                deg2rad(vertex_grading_min_turn_deg);
+                planes_by_curve=metal_curve_planes(curves, class_by_surface)
+            ) : Dict{Int32, Float64}()
         ladder_stations = 0
         graded_curve_ends = 0
         nodes_by_curve = Dict{Int, Vector{Point2}}()
@@ -1712,7 +1716,8 @@ stack grown from the fabricated steps' faces (`region_z_graded_levels`). Both sw
 both faces of every plane's fabricated step (`step_face_z_levels`; `:legacy` leaves the first
 cell beyond each face at 50 nm); `vertex_column_grading=true` (D3, own band only) grades the
 band's column stations along every metal curve toward its plan vertices (joints turning by at
-least `vertex_grading_min_turn_deg`, junctions always) with the same r (2^k - 1) ladder
+least `vertex_grading_min_turn_deg` on one plane; plan crossings of the two planes' edges are
+not vertices) with the same r (2^k - 1) ladder
 (`vertex_graded_curve_nodes`). Gmsh mode only: `exact_band_thickness=true` passes
 the exact geometric sum as the boundary-layer Thickness (the recorded transmon generator's
 formula; see the header); `band_cap` applies the local band cap rule (`:none`: the rule is only

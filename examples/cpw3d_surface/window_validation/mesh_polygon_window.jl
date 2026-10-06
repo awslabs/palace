@@ -26,7 +26,8 @@
 # beyond both faces of every fabricated step; `--vertex-column-grading on` (D3; default off,
 # own band only) grades the band's column stations toward every plan vertex with the same
 # ladder (`--vertex-grading-min-turn-deg A`, default 30: a joint of two metal curves is a
-# vertex when it turns by at least A degrees; junctions always). `--plan-only` builds and checks the plan
+# vertex when it turns by at least A degrees on one plane; a plan crossing of the two planes'
+# edges is not). `--plan-only` builds and checks the plan
 # mesh only and prints the manifest (no volume mesh). `--band-mode own` (default) builds the
 # structured boundary-layer band itself with the per-segment, per-side band cap
 # (structured_band.jl); `gmsh` uses Gmsh's BoundaryLayer field as the recorded transmon
