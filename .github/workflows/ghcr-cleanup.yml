@@ -67,6 +67,9 @@ permissions:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    # A cleanup normally takes well under two minutes. Bound it so that a stuck
+    # run cannot hold the concurrency group below.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -74,6 +77,13 @@ jobs:
           - palace-1.2
           - palace-develop
           - palace-container-build-cache
+    # Same group as the refresh-*-buildcache-index jobs in spack.yml and
+    # lookahead.yml, so versions are never deleted while update-index reads
+    # the package. Settings must match theirs exactly.
+    concurrency:
+      group: ${{ matrix.package }}-buildcache-index
+      cancel-in-progress: false
+      queue: max
     steps:
       - name: Print buildcache version count before cleanup
         continue-on-error: true
