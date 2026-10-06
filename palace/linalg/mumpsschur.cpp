@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
+#include <utility>
 #include "utils/communication.hpp"
 
 namespace palace
@@ -15,45 +17,115 @@ namespace palace
 namespace
 {
 
-// Local rows of A as 1-based COO, lower triangle only (symmetric storage: MUMPS sums
-// duplicates).
-void LowerTriangleCOO(const mfem::HypreParMatrix &A, std::vector<MUMPS_INT> &irn,
-                      std::vector<MUMPS_INT> &jcn, std::vector<double> &val)
+// The local rows of a HypreParMatrix with global column indices.
+struct LocalRows
+{
+  hypre_CSRMatrix *csr;
+  HYPRE_BigInt row0;
+  explicit LocalRows(const mfem::HypreParMatrix &A)
+  {
+    auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
+    A.HostRead();
+    csr = hypre_MergeDiagAndOffd(parcsr);
+    row0 = parcsr->first_row_index;
+  }
+  ~LocalRows() { hypre_CSRMatrixDestroy(csr); }
+  HYPRE_BigInt Col(HYPRE_Int k) const
+  {
+#if MFEM_HYPRE_VERSION >= 21600
+    return csr->big_j[k];
+#else
+    return csr->j[k];
+#endif
+  }
+};
+
+// Local rows of A (= Ar + i Ai) as 1-based COO, lower triangle only (symmetric storage),
+// one entry per position.
+template <typename T>
+void LowerTriangleCOO(const mfem::HypreParMatrix &A, const mfem::HypreParMatrix *Ai,
+                      std::vector<MUMPS_INT> &irn, std::vector<MUMPS_INT> &jcn,
+                      std::vector<T> &val)
 {
   irn.clear();
   jcn.clear();
   val.clear();
-  auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
-  A.HostRead();
-  hypre_CSRMatrix *csr = hypre_MergeDiagAndOffd(parcsr);
-  const HYPRE_Int *Ip = csr->i;
-#if MFEM_HYPRE_VERSION >= 21600
-  const HYPRE_BigInt *Jp = csr->big_j;
-#else
-  const HYPRE_Int *Jp = csr->j;
-#endif
-  const HYPRE_BigInt row0 = parcsr->first_row_index;
-  for (int i = 0; i < A.Height(); i++)
+  LocalRows R(A);
+  std::unique_ptr<LocalRows> I;
+  if constexpr (!std::is_same_v<T, double>)
   {
-    for (HYPRE_Int k = Ip[i]; k < Ip[i + 1]; k++)
+    if (Ai)
     {
-      const HYPRE_BigInt ii = row0 + i + 1, jj = static_cast<HYPRE_BigInt>(Jp[k]) + 1;
-      if (ii >= jj)
-      {
-        irn.push_back(static_cast<MUMPS_INT>(ii));
-        jcn.push_back(static_cast<MUMPS_INT>(jj));
-        val.push_back(csr->data[k]);
-      }
+      MFEM_VERIFY(Ai->Height() == A.Height() &&
+                      Ai->GetRowStarts()[0] == A.GetRowStarts()[0],
+                  "Real and imaginary parts must have the same row distribution!");
+      I = std::make_unique<LocalRows>(*Ai);
     }
   }
-  hypre_CSRMatrixDestroy(csr);
+  else
+  {
+    MFEM_VERIFY(!Ai, "A real MUMPS factorization takes no imaginary part!");
+  }
+  std::vector<std::pair<HYPRE_BigInt, T>> row;
+  for (int i = 0; i < A.Height(); i++)
+  {
+    const HYPRE_BigInt ii = R.row0 + i;
+    row.clear();
+    for (HYPRE_Int k = R.csr->i[i]; k < R.csr->i[i + 1]; k++)
+    {
+      if (R.Col(k) <= ii)
+      {
+        row.emplace_back(R.Col(k), T(R.csr->data[k]));
+      }
+    }
+    if constexpr (!std::is_same_v<T, double>)
+    {
+      for (HYPRE_Int k = I ? I->csr->i[i] : 0; I && k < I->csr->i[i + 1]; k++)
+      {
+        if (I->Col(k) <= ii)
+        {
+          row.emplace_back(I->Col(k), T(0.0, I->csr->data[k]));
+        }
+      }
+      // Merge the parts: one entry per column (a pattern independent of their overlap).
+      std::sort(row.begin(), row.end(),
+                [](const auto &a, const auto &b) { return a.first < b.first; });
+      std::size_t m = 0;
+      for (std::size_t q = 0; q < row.size(); q++)
+      {
+        if (m > 0 && row[m - 1].first == row[q].first)
+        {
+          row[m - 1].second += row[q].second;
+        }
+        else
+        {
+          row[m++] = row[q];
+        }
+      }
+      row.resize(m);
+    }
+    for (const auto &[j, v] : row)
+    {
+      irn.push_back(static_cast<MUMPS_INT>(ii + 1));
+      jcn.push_back(static_cast<MUMPS_INT>(j + 1));
+      val.push_back(v);
+    }
+  }
+}
+
+template <typename T>
+MPI_Datatype MpiType()
+{
+  return std::is_same_v<T, double> ? MPI_DOUBLE : MPI_C_DOUBLE_COMPLEX;
 }
 
 }  // namespace
 
-MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
-                                   const std::vector<HYPRE_BigInt> &schur_vars,
-                                   double blr_tol, bool serial, bool refactor, bool spd)
+template <typename T>
+MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
+                                        const std::vector<HYPRE_BigInt> &schur_vars,
+                                        double blr_tol, bool serial, bool refactor,
+                                        bool spd, const mfem::HypreParMatrix *Ai)
   : comm(A.GetComm()), serial(serial), refactor(refactor), spd(spd),
     n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
     n_schur(static_cast<int>(schur_vars.size())), blr_tol(blr_tol)
@@ -70,7 +142,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     row_disp[r] = row_disp[r - 1] + row_cnt[r - 1];
   }
 
-  LowerTriangleCOO(A, irn, jcn, val);
+  LowerTriangleCOO(A, Ai, irn, jcn, val);
   MFEM_VERIFY(!(refactor && serial), "MumpsSchurSolver: Refactor needs distributed input!");
   if (blr_tol > 0.0)
   {
@@ -83,7 +155,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     {
       if (irn[q] == jcn[q])
       {
-        dmax = std::max(dmax, std::abs(val[q]));
+        dmax = std::max(dmax, static_cast<double>(std::abs(val[q])));
       }
     }
     MPI_Allreduce(MPI_IN_PLACE, &dmax, 1, MPI_DOUBLE, MPI_MAX, comm);
@@ -107,13 +179,13 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
       total += cnt[r];
     }
     std::vector<MUMPS_INT> irn_g(total), jcn_g(total);
-    std::vector<double> val_g(total);
+    std::vector<T> val_g(total);
     MPI_Gatherv(irn.data(), nnz_loc, MPI_INT, irn_g.data(), cnt.data(), disp.data(),
                 MPI_INT, 0, comm);
     MPI_Gatherv(jcn.data(), nnz_loc, MPI_INT, jcn_g.data(), cnt.data(), disp.data(),
                 MPI_INT, 0, comm);
-    MPI_Gatherv(val.data(), nnz_loc, MPI_DOUBLE, val_g.data(), cnt.data(), disp.data(),
-                MPI_DOUBLE, 0, comm);
+    MPI_Gatherv(val.data(), nnz_loc, MpiType<T>(), val_g.data(), cnt.data(), disp.data(),
+                MpiType<T>(), 0, comm);
     irn.swap(irn_g);
     jcn.swap(jcn_g);
     val.swap(val_g);
@@ -130,7 +202,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     id.par = 1;  // the host takes part in the factorization
     id.comm_fortran = static_cast<MUMPS_INT>(MPI_Comm_c2f(serial ? MPI_COMM_SELF : comm));
     id.job = -1;
-    dmumps_c(&id);
+    Call();
     icntl(1) = -1;  // silence errors / diagnostics / global info / printing
     icntl(2) = -1;
     icntl(3) = -1;
@@ -144,7 +216,6 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     icntl(7) = 5;    // METIS ordering
     icntl(20) = 0;   // dense, centralized right-hand sides
     icntl(21) = 0;   // centralized solution
-    icntl(26) = 0;   // solve the internal problem (Schur variables held at 0)
     icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
     if (blr_tol > 0.0)
     {
@@ -162,14 +233,14 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
       id.nnz = static_cast<MUMPS_INT8>(irn.size());
       id.irn = irn.data();
       id.jcn = jcn.data();
-      id.a = val.data();
+      id.a = Entries(val.data());
     }
     else
     {
       id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
       id.irn_loc = irn.data();
       id.jcn_loc = jcn.data();
-      id.a_loc = val.data();
+      id.a_loc = Entries(val.data());
     }
     id.size_schur = n_schur;
     id.listvar_schur = listvar.data();
@@ -178,7 +249,7 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     id.mblock = 64;
     id.nblock = 64;
     id.job = 1;  // analysis
-    dmumps_c(&id);
+    Call();
   }
   Check("analysis");
   if (rank == 0 && n_schur > 0)
@@ -186,13 +257,27 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
     id.schur_lld = std::max<MUMPS_INT>(1, id.schur_mloc);
     schur.assign(static_cast<std::size_t>(id.schur_lld) *
                      std::max<MUMPS_INT>(1, id.schur_nloc),
-                 0.0);
-    id.schur = schur.data();
+                 T(0.0));
+    id.schur = Entries(schur.data());
   }
   Factor();
 }
 
-void MumpsSchurSolver::Factor()
+template <typename T>
+void MumpsSchurSolverT<T>::Call()
+{
+  if constexpr (kComplex)
+  {
+    zmumps_c(&id);
+  }
+  else
+  {
+    dmumps_c(&id);
+  }
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::Factor()
 {
   // Factorization (+ Schur). The workspace estimate from the analysis can be too small
   // (the dense Schur root sits on one rank): on a workspace failure (INFOG(1) = -8, -9,
@@ -203,7 +288,7 @@ void MumpsSchurSolver::Factor()
   for (int attempt = 0; active; attempt++)
   {
     id.job = 2;
-    dmumps_c(&id);
+    Call();
     const MUMPS_INT err = id.infog[0];
     if ((err == -8 || err == -9 || err == -20) && attempt < 8)
     {
@@ -236,27 +321,29 @@ void MumpsSchurSolver::Factor()
     {
       v *= scale;  // Schur(A / s) = S / s
     }
-    // INFOG(29/35): theoretical / effective factor entries; RINFOG(3/14): operations.
-    auto big = [](MUMPS_INT v) { return v >= 0 ? static_cast<double>(v) : -1.0e6 * v; };
     if (!factored)
     {
-      Mpi::Print(
-          comm,
-          " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}%, operations {:.1f}% of full "
-          "rank\n",
-          blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]),
-          100.0 * id.rinfog[13] / id.rinfog[2]);
+      // INFOG(21/22): effective memory, max per rank / total (MB); INFOG(29/35):
+      // theoretical / effective factor entries.
+      auto big = [](MUMPS_INT v) { return v >= 0 ? static_cast<double>(v) : -1.0e6 * v; };
+      Mpi::Print(comm,
+                 " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}% of full rank, memory "
+                 "{:.2f} GB ({:.2f} GB max per rank)\n",
+                 blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]),
+                 id.infog[21] / 1024.0, id.infog[20] / 1024.0);
     }
   }
   factored = true;
 }
 
-void MumpsSchurSolver::Refactor(const mfem::HypreParMatrix &A)
+template <typename T>
+void MumpsSchurSolverT<T>::Refactor(const mfem::HypreParMatrix &A,
+                                    const mfem::HypreParMatrix *Ai)
 {
   MFEM_VERIFY(refactor, "MumpsSchurSolver was not set up for refactorization!");
   std::vector<MUMPS_INT> irn_new, jcn_new;
-  std::vector<double> val_new;
-  LowerTriangleCOO(A, irn_new, jcn_new, val_new);
+  std::vector<T> val_new;
+  LowerTriangleCOO(A, Ai, irn_new, jcn_new, val_new);
   int same = (irn_new == irn && jcn_new == jcn);
   MPI_Allreduce(MPI_IN_PLACE, &same, 1, MPI_INT, MPI_MIN, comm);
   MFEM_VERIFY(same,
@@ -266,70 +353,179 @@ void MumpsSchurSolver::Refactor(const mfem::HypreParMatrix &A)
   {
     v /= scale;
   }
-  id.a_loc = val.data();
+  id.a_loc = Entries(val.data());
   Factor();
 }
 
-MumpsSchurSolver::~MumpsSchurSolver()
+template <typename T>
+MumpsSchurSolverT<T>::~MumpsSchurSolverT()
 {
   if (active)
   {
     id.job = -2;
-    dmumps_c(&id);
+    Call();
   }
 }
 
-void MumpsSchurSolver::SolveInternal(const std::vector<const mfem::Vector *> &X,
-                                     const std::vector<mfem::Vector *> &Y)
+template <typename T>
+void MumpsSchurSolverT<T>::Gather(const std::vector<const VecType *> &X)
 {
+  // The right-hand sides on rank 0 (n_glob x |X|, column-major).
+  const int nb = static_cast<int>(X.size());
+  std::vector<T> loc(n_loc);
+  if (rank == 0)
+  {
+    rhs.assign(static_cast<std::size_t>(n_glob) * nb, T(0.0));
+  }
+  for (int k = 0; k < nb; k++)
+  {
+    const VecType &x = *X[k];
+    if constexpr (kComplex)
+    {
+      const double *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
+      for (int i = 0; i < n_loc; i++)
+      {
+        loc[i] = {xr[i], xi[i]};
+      }
+    }
+    else
+    {
+      const double *xr = x.HostRead();
+      std::copy(xr, xr + n_loc, loc.begin());
+    }
+    MPI_Gatherv(loc.data(), n_loc, MpiType<T>(),
+                rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
+                row_cnt.data(), row_disp.data(), MpiType<T>(), 0, comm);
+  }
+  if (rank == 0)
+  {
+    id.rhs = Entries(rhs.data());
+    id.nrhs = nb;
+    id.lrhs = static_cast<MUMPS_INT>(n_glob);
+  }
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::Scatter(const std::vector<VecType *> &Y)
+{
+  // The solutions from rank 0, unscaled: (A / s)^-1 b = s A^-1 b.
+  std::vector<T> loc(n_loc);
+  for (std::size_t k = 0; k < Y.size(); k++)
+  {
+    MPI_Scatterv(rank == 0 ? rhs.data() + k * static_cast<std::size_t>(n_glob) : nullptr,
+                 row_cnt.data(), row_disp.data(), MpiType<T>(), loc.data(), n_loc,
+                 MpiType<T>(), 0, comm);
+    VecType &y = *Y[k];
+    y.SetSize(n_loc);
+    if constexpr (kComplex)
+    {
+      double *yr = y.Real().HostWrite(), *yi = y.Imag().HostWrite();
+      for (int i = 0; i < n_loc; i++)
+      {
+        yr[i] = loc[i].real() / scale;
+        yi[i] = loc[i].imag() / scale;
+      }
+    }
+    else
+    {
+      double *yr = y.HostWrite();
+      for (int i = 0; i < n_loc; i++)
+      {
+        yr[i] = loc[i] / scale;
+      }
+    }
+  }
+  rhs = {};
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::SolveInternal(const std::vector<const VecType *> &X,
+                                         const std::vector<VecType *> &Y)
+{
+  MFEM_VERIFY(!reduced, "MumpsSchurSolver: a Reduce is pending its Expand!");
   const int n = static_cast<int>(X.size());
   constexpr int B = 32;
   for (int c0 = 0; c0 < n; c0 += B)
   {
     const int nb = std::min(B, n - c0);
-    if (rank == 0)
-    {
-      rhs.assign(static_cast<std::size_t>(n_glob) * nb, 0.0);
-    }
-    for (int k = 0; k < nb; k++)
-    {
-      const mfem::Vector &x = *X[c0 + k];
-      x.HostRead();
-      MPI_Gatherv(x.GetData(), n_loc, MPI_DOUBLE,
-                  rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
-                  row_cnt.data(), row_disp.data(), MPI_DOUBLE, 0, comm);
-    }
-    if (rank == 0)
-    {
-      id.rhs = rhs.data();
-      id.nrhs = nb;
-      id.lrhs = static_cast<MUMPS_INT>(n_glob);
-    }
+    Gather({X.begin() + c0, X.begin() + c0 + nb});
     if (active)
     {
+      id.icntl[25] = 0;  // ICNTL(26): the internal problem (Schur variables held at 0)
       id.job = 3;
-      dmumps_c(&id);
+      Call();
     }
     Check("solve");
-    if (rank == 0 && scale != 1.0)
-    {
-      for (auto &v : rhs)
-      {
-        v /= scale;  // (A / s)^-1 b = s A^-1 b
-      }
-    }
-    for (int k = 0; k < nb; k++)
-    {
-      mfem::Vector &y = *Y[c0 + k];
-      y.SetSize(n_loc);
-      MPI_Scatterv(rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
-                   row_cnt.data(), row_disp.data(), MPI_DOUBLE, y.HostWrite(), n_loc,
-                   MPI_DOUBLE, 0, comm);
-    }
+    Scatter({Y.begin() + c0, Y.begin() + c0 + nb});
   }
 }
 
-void MumpsSchurSolver::Check(const char *phase) const
+template <typename T>
+void MumpsSchurSolverT<T>::Reduce(const std::vector<const VecType *> &B,
+                                  std::vector<T> &red)
+{
+  // The forward elimination is kept for Expand (MUMPS's RHSINTR), so the whole batch is
+  // condensed in one solve. The condensation is independent of the scaling of A.
+  MFEM_VERIFY(n_schur > 0 && !reduced, "MumpsSchurSolver: invalid Reduce!");
+  const int nb = static_cast<int>(B.size());
+  Gather(B);
+  if (rank == 0)
+  {
+    redrhs.assign(static_cast<std::size_t>(n_schur) * std::max(nb, 1), T(0.0));
+    id.redrhs = Entries(redrhs.data());
+    id.lredrhs = n_schur;
+  }
+  if (active)
+  {
+    id.icntl[25] = 1;  // ICNTL(26): condensation onto the Schur variables
+    id.job = 3;
+    Call();
+  }
+  Check("condensation");
+  rhs = {};
+  if (rank == 0)
+  {
+    red.swap(redrhs);
+    red.resize(static_cast<std::size_t>(n_schur) * nb);
+  }
+  reduced = nb;
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<VecType *> &X)
+{
+  MFEM_VERIFY(reduced && static_cast<int>(X.size()) == reduced,
+              "MumpsSchurSolver: Expand must follow Reduce of the same batch!");
+  const int nb = reduced;
+  if (rank == 0)
+  {
+    // The Schur part of the solution of the scaled system (A / s) x = b is s u_S.
+    redrhs.resize(static_cast<std::size_t>(n_schur) * nb);
+    for (std::size_t q = 0; q < redrhs.size(); q++)
+    {
+      redrhs[q] = u[q] * scale;
+    }
+    id.redrhs = Entries(redrhs.data());
+    id.lredrhs = n_schur;
+    rhs.assign(static_cast<std::size_t>(n_glob) * nb, T(0.0));
+    id.rhs = Entries(rhs.data());
+    id.nrhs = nb;
+    id.lrhs = static_cast<MUMPS_INT>(n_glob);
+  }
+  if (active)
+  {
+    id.icntl[25] = 2;  // ICNTL(26): expansion from the Schur part of the solution
+    id.job = 3;
+    Call();
+  }
+  Check("expansion");
+  redrhs = {};
+  reduced = 0;
+  Scatter(X);
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::Check(const char *phase) const
 {
   // INFOG is global (identical on the ranks taking part); serially, rank 0 has it.
   int info[2] = {id.infog[0], id.infog[1]};
@@ -340,6 +536,9 @@ void MumpsSchurSolver::Check(const char *phase) const
   MFEM_VERIFY(info[0] >= 0, "MUMPS " << phase << " failed: INFOG(1) = " << info[0]
                                      << ", INFOG(2) = " << info[1]);
 }
+
+template class MumpsSchurSolverT<double>;
+template class MumpsSchurSolverT<std::complex<double>>;
 
 }  // namespace palace
 

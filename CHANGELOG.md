@@ -118,6 +118,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).
     [PR 918](https://github.com/awslabs/palace/pull/918).
+  - Builds with MUMPS now also need its complex double precision library (ZMUMPS), used by
+    driven substructuring; the superbuild and the Spack recipe build it.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 ## [0.18.1] - 2026-09-21
 

@@ -23,7 +23,8 @@ namespace palace
 {
 
 #if !defined(MFEM_USE_MUMPS)
-class MumpsSchurSolver
+template <typename T>
+class MumpsSchurSolverT
 {
 };
 #endif
@@ -32,7 +33,7 @@ namespace
 {
 
 // BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization of these
-// symmetric indefinite operators is several times faster than its full-rank one even
+// complex symmetric operators is several times faster than its full-rank one even
 // without compression, at no loss of accuracy.
 constexpr double kBlrTol = 1.0e-14;
 
@@ -161,10 +162,10 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
 
 DrivenSubstructure::~DrivenSubstructure() = default;
 
-std::unique_ptr<mfem::HypreParMatrix>
-DrivenSubstructure::BlockOperator(double omega, const std::vector<int> &attrs,
-                                  const ComplexOperator *K, const ComplexOperator *C,
-                                  const ComplexOperator *M, const mfem::Array<int> &pinned)
+DrivenSubstructure::Parts
+DrivenSubstructure::SideOperator(double omega, const std::vector<int> &attrs,
+                                 const ComplexOperator *K, const ComplexOperator *C,
+                                 const ComplexOperator *M, const mfem::Array<int> &pinned)
 {
   // K + iω C - ω² M + A2(ω): real part Kr - ω Ci - ω² Mr + A2r, imaginary part
   // Ki + ω Cr - ω² Mi + A2i.
@@ -174,72 +175,35 @@ DrivenSubstructure::BlockOperator(double omega, const std::vector<int> &attrs,
     A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   }
   const double w2 = omega * omega;
-  auto Ar = Sum({{1.0, Part(K, false)},
-                 {-omega, Part(C, true)},
-                 {-w2, Part(M, false)},
-                 {1.0, Part(A2.get(), false)}});
-  auto Ai = Sum({{1.0, Part(K, true)},
-                 {omega, Part(C, false)},
-                 {-w2, Part(M, true)},
-                 {1.0, Part(A2.get(), true)}});
-  MFEM_VERIFY(Ar, "Missing real part of a substructure operator!");
-  if (!Ai)
-  {
-    // A lossless side: a zero imaginary part with the pattern of the real one.
-    Ai = std::make_unique<mfem::HypreParMatrix>(*Ar);
-    *Ai = 0.0;
-  }
+  Parts A;
+  A.real = Sum({{1.0, Part(K, false)},
+                {-omega, Part(C, true)},
+                {-w2, Part(M, false)},
+                {1.0, Part(A2.get(), false)}});
+  A.imag = Sum({{1.0, Part(K, true)},
+                {omega, Part(C, false)},
+                {-w2, Part(M, true)},
+                {1.0, Part(A2.get(), true)}});
+  MFEM_VERIFY(A.real, "Missing real part of a substructure operator!");
   // Pin the given DOFs. A side-restricted operator stores no entries on the DOFs no element
   // of its side touches, so the unit diagonal is added rather than set.
-  Ar->EliminateBC(pinned, Operator::DIAG_ZERO);
-  Ai->EliminateBC(pinned, Operator::DIAG_ZERO);
+  A.real->EliminateBC(pinned, Operator::DIAG_ZERO);
+  if (A.imag)
   {
-    const auto &fes = space_op.GetNDSpace().Get();
-    mfem::SparseMatrix diag(fes.GetTrueVSize());
-    for (int i : pinned)
-    {
-      diag.Set(i, i, 1.0);
-    }
-    diag.Finalize();
-    mfem::HypreParMatrix I(
-        fes.GetComm(), fes.GlobalTrueVSize(),
-        const_cast<mfem::ParFiniteElementSpace &>(fes).GetTrueDofOffsets(), &diag);
-    Ar.reset(mfem::Add(1.0, *Ar, 1.0, I));
+    A.imag->EliminateBC(pinned, Operator::DIAG_ZERO);
   }
-  mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-  mfem::Array2D<double> coeffs(2, 2);
-  blocks(0, 0) = Ar.get();
-  blocks(0, 1) = Ai.get();
-  blocks(1, 0) = Ai.get();
-  blocks(1, 1) = Ar.get();
-  coeffs(0, 0) = coeffs(0, 1) = coeffs(1, 0) = 1.0;
-  coeffs(1, 1) = -1.0;
-  return std::unique_ptr<mfem::HypreParMatrix>(
-      mfem::HypreParMatrixFromBlocks(blocks, &coeffs));
-}
-
-std::vector<std::complex<double>>
-DrivenSubstructure::ComplexSchur(const MumpsSchurSolver &schur) const
-{
-  // The Schur complement of [[Ar, Ai], [Ai, -Ar]] is [[Sr, Si], [Si, -Sr]].
-  std::vector<std::complex<double>> X;
-#if defined(MFEM_USE_MUMPS)
-  if (Mpi::Root(space_op.GetComm()))
+  const auto &fes = space_op.GetNDSpace().Get();
+  mfem::SparseMatrix diag(fes.GetTrueVSize());
+  for (int i : pinned)
   {
-    const int nG = InterfaceSize();
-    const auto &SB = schur.Schur();
-    const std::size_t ld = 2 * static_cast<std::size_t>(nG);
-    X.resize(static_cast<std::size_t>(nG) * nG);
-    for (int b = 0; b < nG; b++)
-    {
-      for (int a = 0; a < nG; a++)
-      {
-        X[static_cast<std::size_t>(b) * nG + a] = {SB[b * ld + a], SB[(nG + b) * ld + a]};
-      }
-    }
+    diag.Set(i, i, 1.0);
   }
-#endif
-  return X;
+  diag.Finalize();
+  mfem::HypreParMatrix I(fes.GetComm(), fes.GlobalTrueVSize(),
+                         const_cast<mfem::ParFiniteElementSpace &>(fes).GetTrueDofOffsets(),
+                         &diag);
+  A.real.reset(mfem::Add(1.0, *A.real, 1.0, I));
+  return A;
 }
 
 void DrivenSubstructure::Condense(double omega)
@@ -249,43 +213,34 @@ void DrivenSubstructure::Condense(double omega)
 #else
   MPI_Comm comm = space_op.GetComm();
   const int nG = InterfaceSize();
-  env_op =
-      BlockOperator(omega, env_attrs, K_env.get(), C_env.get(), M_env.get(), other_env);
-  region_op = BlockOperator(omega, region_attrs, K_region.get(), C_region.get(),
-                            M_region.get(), other_region);
+  env_op = SideOperator(omega, env_attrs, K_env.get(), C_env.get(), M_env.get(), other_env);
+  region_op = SideOperator(omega, region_attrs, K_region.get(), C_region.get(),
+                           M_region.get(), other_region);
   if (!env_schur)
   {
-    // Schur variables of the real forms: the real, then the imaginary interface parts.
-    // Their local rows are the local real rows, then the local imaginary rows.
-    const auto &fes = space_op.GetNDSpace().Get();
-    const HYPRE_BigInt tstart = fes.GetMyTDofOffset(), bstart = env_op->GetRowStarts()[0];
-    const int nt = fes.GetTrueVSize();
-    schur_vars.assign(2 * nG, -1);
-    for (int g = 0; g < nG; g++)
-    {
-      const HYPRE_BigInt i = gamma_tdofs[g] - tstart;  // local only on its owner
-      if (i >= 0 && i < nt)
-      {
-        schur_vars[g] = bstart + i;
-        schur_vars[nG + g] = bstart + nt + i;
-      }
-    }
-    MPI_Allreduce(MPI_IN_PLACE, schur_vars.data(), 2 * nG, HYPRE_MPI_BIG_INT, MPI_MAX,
-                  comm);
-    env_schur = std::make_unique<MumpsSchurSolver>(*env_op, schur_vars, kBlrTol, false,
-                                                   true, false);
-    region_schur = std::make_unique<MumpsSchurSolver>(*region_op, schur_vars, kBlrTol,
-                                                      false, true, false);
+    using Solver = MumpsSchurSolverT<std::complex<double>>;
+    env_schur = std::make_unique<Solver>(*env_op.real, gamma_tdofs, kBlrTol, false, true,
+                                         false, env_op.imag.get());
+    region_schur = std::make_unique<Solver>(*region_op.real, gamma_tdofs, kBlrTol, false,
+                                            true, false, region_op.imag.get());
   }
   else
   {
-    env_schur->Refactor(*env_op);
-    region_schur->Refactor(*region_op);
+    env_schur->Refactor(*env_op.real, env_op.imag.get());
+    region_schur->Refactor(*region_op.real, region_op.imag.get());
   }
 
+  // MUMPS keeps its own copy of the entries.
+  env_op = {};
+  region_op = {};
   // The interface system S_R + S_E, factored on rank 0 (complex symmetric).
-  S = ComplexSchur(*env_schur);
-  T = ComplexSchur(*region_schur);
+  if (Mpi::Root(comm))
+  {
+    S = env_schur->Schur();
+    T = region_schur->Schur();
+    S.resize(static_cast<std::size_t>(nG) * nG);
+    T.resize(static_cast<std::size_t>(nG) * nG);
+  }
   if (Mpi::Root(comm))
   {
     for (std::size_t k = 0; k < T.size(); k++)
@@ -313,116 +268,69 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
   MFEM_VERIFY(env_schur && region_schur, "Condense must be called before Solve!");
   MPI_Comm comm = space_op.GetComm();
   const int n = static_cast<int>(rhs.size()), nt = space_op.GetNDSpace().GetTrueVSize();
-  const int nG = InterfaceSize(), nloc = gamma_cnt[Mpi::Rank(comm)];
-  // Vectors of the real forms [Re(x); -Im(x)] act as x; right-hand sides are
-  // [Re(b); Im(b)]. Local layout: the real rows, then the imaginary rows.
-  auto rhs_block = [&](const ComplexVector &b, const std::vector<char> &mask)
+  const int nG = InterfaceSize();
+  auto masked = [&](const ComplexVector &b, const std::vector<char> &mask, bool gamma)
   {
-    mfem::Vector y(2 * nt);
+    ComplexVector y(nt);
     const double *br = b.Real().HostRead(), *bi = b.Imag().HostRead();
+    double *yr = y.Real().HostWrite(), *yi = y.Imag().HostWrite();
     for (int i = 0; i < nt; i++)
     {
-      y(i) = mask[i] ? br[i] : 0.0;
-      y(nt + i) = mask[i] ? bi[i] : 0.0;
+      const bool keep = mask[i] || (gamma && is_gamma[i]);
+      yr[i] = keep ? br[i] : 0.0;
+      yi[i] = keep ? bi[i] : 0.0;
     }
     return y;
   };
-  auto solve = [](MumpsSchurSolver &lu, std::vector<mfem::Vector> &x)
-  {
-    std::vector<const mfem::Vector *> X(x.size());
-    std::vector<mfem::Vector *> Y(x.size());
-    for (std::size_t k = 0; k < x.size(); k++)
-    {
-      X[k] = Y[k] = &x[k];
-    }
-    lu.SolveInternal(X, Y);
-  };
-  mfem::Vector t(2 * nt);
-  auto subtract_rows = [&](const mfem::HypreParMatrix &A, const mfem::Vector &x,
-                           const std::vector<char> &mask, mfem::Vector &y)
-  {
-    A.Mult(x, t);
-    for (int i = 0; i < nt; i++)
-    {
-      if (mask[i])
-      {
-        y(i) -= t(i);
-        y(nt + i) -= t(nt + i);
-      }
-    }
-  };
 
-  // Interior solves with the interface held at zero: environment and region sources.
-  std::vector<mfem::Vector> w(n), y(n), r(n);
+  // Condensation of the sources onto Γ: the environment's with the interface loads b_Γ,
+  // b_Γ - A_ΓE A_EE^-1 b_E, and the region's, -A_ΓR A_RR^-1 b_R.
+  std::vector<ComplexVector> w(n), y(n);
+  std::vector<const ComplexVector *> W(n), Y(n);
   for (int k = 0; k < n; k++)
   {
-    w[k] = rhs_block(*rhs[k], is_env_int);
-    y[k] = rhs_block(*rhs[k], is_region_int);
+    w[k] = masked(*rhs[k], is_env_int, true);
+    y[k] = masked(*rhs[k], is_region_int, false);
+    W[k] = &w[k];
+    Y[k] = &y[k];
   }
-  solve(*env_schur, w);
-  solve(*region_schur, y);
-
-  // Interface right-hand sides b_Γ - A_ΓE w - A_ΓR y, gathered on rank 0 (complex).
-  std::vector<std::complex<double>> rG(Mpi::Root(comm) ? static_cast<std::size_t>(nG) * n
-                                                       : 0),
-      mine(nloc);
-  for (int k = 0; k < n; k++)
-  {
-    r[k] = rhs_block(*rhs[k], is_gamma);
-    subtract_rows(*env_op, w[k], is_gamma, r[k]);
-    subtract_rows(*region_op, y[k], is_gamma, r[k]);
-    for (int i = 0, g = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        mine[g++] = {r[k](i), r[k](nt + i)};
-      }
-    }
-    MPI_Gatherv(mine.data(), nloc, MPI_C_DOUBLE_COMPLEX,
-                Mpi::Root(comm) ? rG.data() + static_cast<std::size_t>(k) * nG : nullptr,
-                gamma_cnt.data(), gamma_disp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
-  }
+  std::vector<std::complex<double>> rG, rR;
+  env_schur->Reduce(W, rG);
+  region_schur->Reduce(Y, rR);
   if (Mpi::Root(comm) && nG > 0)
   {
+    for (std::size_t q = 0; q < rG.size(); q++)
+    {
+      rG[q] += rR[q];
+    }
     int info = 0;
     zsytrs_("L", &nG, &n, T.data(), &nG, T_piv.data(), rG.data(), &nG, &info);
     MFEM_VERIFY(info == 0, "Solve of the interface system failed: info = " << info);
   }
 
-  // The interface solution in real form, then both interiors: A_II^-1 (b_I - A_IΓ u_Γ).
+  // Both interiors from the interface solution, A_II^-1 (b_I - A_IΓ u_Γ).
+  std::vector<ComplexVector *> Wo(n), Yo(n);
   for (int k = 0; k < n; k++)
   {
-    MPI_Scatterv(Mpi::Root(comm) ? rG.data() + static_cast<std::size_t>(k) * nG : nullptr,
-                 gamma_cnt.data(), gamma_disp.data(), MPI_C_DOUBLE_COMPLEX, mine.data(),
-                 nloc, MPI_C_DOUBLE_COMPLEX, 0, comm);
-    r[k] = 0.0;
-    for (int i = 0, g = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        r[k](i) = mine[g].real();
-        r[k](nt + i) = -mine[g].imag();
-        g++;
-      }
-    }
-    w[k] = rhs_block(*rhs[k], is_env_int);
-    y[k] = rhs_block(*rhs[k], is_region_int);
-    subtract_rows(*env_op, r[k], is_env_int, w[k]);
-    subtract_rows(*region_op, r[k], is_region_int, y[k]);
+    Wo[k] = &w[k];
+    Yo[k] = &y[k];
   }
-  solve(*env_schur, w);
-  solve(*region_schur, y);
+  env_schur->Expand(rG, Wo);
+  region_schur->Expand(rG, Yo);
   u.resize(n);
   for (int k = 0; k < n; k++)
   {
     u[k].SetSize(nt);
     u[k].UseDevice(true);
     double *ur = u[k].Real().HostWrite(), *ui = u[k].Imag().HostWrite();
+    const double *wr = w[k].Real().HostRead(), *wi = w[k].Imag().HostRead();
+    const double *yr = y[k].Real().HostRead(), *yi = y[k].Imag().HostRead();
     for (int i = 0; i < nt; i++)
     {
-      const mfem::Vector &x = is_env_int[i] ? w[k] : (is_region_int[i] ? y[k] : r[k]);
-      ur[i] = x(i);
-      ui[i] = -x(nt + i);
+      // The interface values come out of either expansion; the Dirichlet DOFs are 0.
+      const bool region = is_region_int[i];
+      ur[i] = (is_env_int[i] || is_gamma[i]) ? wr[i] : (region ? yr[i] : 0.0);
+      ui[i] = (is_env_int[i] || is_gamma[i]) ? wi[i] : (region ? yi[i] : 0.0);
     }
   }
 #endif
