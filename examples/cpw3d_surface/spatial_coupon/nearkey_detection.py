@@ -38,6 +38,9 @@ WIDTH_QUANTUM_OVER_R = signature_library.LENGTH_QUANTUM_OVER_R
 # matcher resolves it; decisions 303 / 317), not a near key of this rule.
 QUANTUM_NEAR_MATCH_MAX = signature_library.CLUSTER_QUANTUM_NEAR_MATCH_MAX_QUANTA + signature_library.CLUSTER_QUANTUM_INCLUSIVE_MARGIN
 PORTION_ATTRIBUTES = ("Conductor", "Gap", "Interfaces", "Law")
+# decision 431 (1)(b): the one BuildGateOverride kind DEFAULT reuse admits on a donor - the decision-311
+# cut-end anisotropy at box-face cut ends, superseded by the merged cut-end gate rule (decisions 313 / 316)
+ADMITTED_OVERRIDE = {"Gate": "semantic-corner-and-endpoint-anisotropy", "Kind": "CutNeighborhoods", "SupersededBy": 316}
 CONTEXT_ATTRIBUTES = ("Conductor", "Gap", "Chain", "Interfaces", "Law")
 
 
@@ -166,8 +169,31 @@ def correspondence(exact_entries, donor_entries, attributes, tolerance):
     return indices, "GeometricNearestMidpoint"
 
 
+def donor_override_record(model):
+    """DonorBuildGateOverride {Gate, Approval, Kind, SupersededBy, Path, SHA256, DefaultAdmitted} or None
+    (decision 431 (1)(b)); a build-override mesh path without a record is a record of its own kind
+    (DefaultAdmitted false, fail closed)."""
+    override = model.get("BuildGateOverride")
+    mesh_path = str((model.get("CouponMesh") or {}).get("Path", ""))
+    if not override:
+        if "build-override" in mesh_path:
+            return {"Gate": None, "Approval": None, "Kind": "UnrecordedBuildOverrideMeshPath", "SupersededBy": None, "Path": mesh_path,
+                    "SHA256": None, "DefaultAdmitted": False,
+                    "Rule": "decision 431: a build-override mesh path without a BuildGateOverride record refuses default reuse (fail closed)"}
+        return None
+    kind = (override.get("Band") or {}).get("Kind")
+    admitted = override.get("Gate") == ADMITTED_OVERRIDE["Gate"] and kind == ADMITTED_OVERRIDE["Kind"]
+    return {"Gate": override.get("Gate"), "Approval": override.get("Approval"), "Kind": kind,
+            "SupersededBy": ADMITTED_OVERRIDE["SupersededBy"] if admitted else None, "Path": override.get("Path"),
+            "SHA256": override.get("SHA256"), "DefaultAdmitted": bool(admitted),
+            "Rule": "decision 431 (1)(b): DEFAULT reuse admits a donor whose only BuildGateOverride is the decision-311 cut-end kind "
+                    "(semantic-corner-and-endpoint-anisotropy at box-face cut ends, superseded by the merged cut-end gate rule of "
+                    "decisions 313 / 316) and refuses an override on any other gate"}
+
+
 def donor_status(model):
-    """DESIGN 1.2 item 8: (admissible for default, admissible for fallback, reasons)."""
+    """DESIGN 1.2 item 8 (+ decision 431 (1)(b) on the BuildGateOverride): (admissible for default,
+    admissible for fallback, reasons, the override record)."""
     reasons = []
     if model.get("QualificationStatus") != "Qualified":
         reasons.append(f"donor QualificationStatus {model.get('QualificationStatus')!r} is not Qualified")
@@ -177,8 +203,8 @@ def donor_status(model):
         reasons.append("donor is itself a reused model (no chaining)")
     if model.get("Topology") not in (None, "SpatialEdgeCluster"):
         reasons.append(f"donor Topology {model.get('Topology')!r}")
-    override = bool(model.get("BuildGateOverride")) or "build-override" in str((model.get("CouponMesh") or {}).get("Path", ""))
-    return not reasons and not override, not reasons, reasons, override
+    override = donor_override_record(model)
+    return not reasons and (override is None or override["DefaultAdmitted"]), not reasons, reasons, override
 
 
 def analyse_pair(exact_signature, donor_model, *, rule, radius, exact_interfaces=None, exact_boundary_condition=None):
@@ -336,7 +362,8 @@ def analyse_pair(exact_signature, donor_model, *, rule, radius, exact_interfaces
     record["Qualifies"] = not refusals
     record["DefaultAdmissible"] = record["Qualifies"] and default_ok
     if record["Qualifies"] and not default_ok:
-        record["DefaultRefusal"] = "donor built under a BuildGateOverride: fallback only (DESIGN 1.2 item 8)"
+        record["DefaultRefusal"] = (f"donor built under a BuildGateOverride of kind {override['Kind']}: fallback only (DESIGN 1.2 item 8; "
+                                    f"decision 431 (1)(b))")
     return record
 
 
