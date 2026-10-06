@@ -1929,10 +1929,13 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         circle's tangent, 0.14-0.71 deg off the nearest signature segment - were rejected by the
         1e-6 cosine floor (RMSWidth 0 -> resolvability 0).  Two generic rules: a component of
         fewer than three vertices is degenerate (recorded, never counted); a line-like band on
-        a tagged arc sidewall following the circle's tangent within the facet turn of the arc's
-        own signature chords is a feature band.  A genuine diagonal keeps failing: a collinear
-        three-vertex line of short edges off every feature, on the circle but turned by two
-        facet turns, outside the arc's sweep, or on an arc without signature chords."""
+        a tagged arc sidewall whose FULL direction follows the circle's horizontal tangent within
+        max(the mesh facet turn 2 asin(threshold / 2R), the band's own subtended angle) is a
+        feature band (decision 433: the full direction, the mesh-facet tolerance).  A genuine
+        diagonal keeps failing: a collinear three-vertex line of short edges off every feature,
+        on the circle but turned by 4 deg or by two chord turns, climbing the sidewall at 45 or
+        60 deg (a sloped / helical diagonal), outside the arc's sweep, or on an arc without
+        signature chords."""
         R, overetch, centre = 3.0, 0.05, np.array([-6.9, 4.17])
         theta_start, sweep = -90.0, 90.0                       # clockwise from -90 deg: theta in [-90, 0]
         chords = 18                                            # the loop end's R = 3 arcs: 5-deg chords
@@ -1945,16 +1948,18 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             {"Arc": {"ArcId": 7, "Centre": centre.tolist(), "Radius": R, "Orientation": -1.0, "Part": 1, "Parts": 1,
                      "ThetaStartDegrees": 0.0, "SweepDegrees": sweep, "Sign": 1}, "Length": R * math.radians(sweep)}]}}
 
-        def facet_mesh(vertices_on_line, direction_angle=0.0, pivot_theta=math.radians(-0.24), apex_height=0.02, label=6001):
+        def facet_mesh(vertices_on_line, direction_angle=0.0, pivot_theta=math.radians(-0.24), apex_height=0.02, label=6001,
+                       elevation=0.0):
             # A tiny coplanar vertical facet: `vertices_on_line` collinear vertices 25 nm apart
-            # at z = 0.05 (the shared short edges) with one apex below and one above on the same
+            # from z = 0.05 (the shared short edges) with one apex below and one above on the same
             # vertical plane; the line starts on the circle at `pivot_theta`, along the tangent
-            # turned by `direction_angle`; plus a coarse 50-nm grid on z = 0 setting the median.
+            # turned by `direction_angle` in plan view and climbing the sidewall at `elevation`;
+            # plus a coarse 50-nm grid on z = 0 setting the median.
             start = circle(pivot_theta) + np.array([0., 0., 0.05])
             tangent = np.array([math.sin(pivot_theta), -math.cos(pivot_theta), 0.])   # clockwise tangent
             q = np.array([[math.cos(direction_angle), -math.sin(direction_angle), 0.],
                           [math.sin(direction_angle), math.cos(direction_angle), 0.], [0., 0., 1.]])
-            axis = q @ tangent
+            axis = math.cos(elevation) * (q @ tangent) + math.sin(elevation) * np.array([0., 0., 1.])
             line = [start + k * 0.025 * axis for k in range(vertices_on_line)]
             middle = (line[0] + line[-1]) / 2
             points = line + [middle - np.array([0., 0., apex_height]), middle + np.array([0., 0., apex_height])]
@@ -1975,18 +1980,32 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
                                cell_data={"gmsh:physical": [np.asarray(labels, int)]})
 
         identity = np.eye(4)
-        arcs = _census_arc_sidewalls(census, signature, overetch, identity)
+        arcs = _census_arc_sidewalls(census, signature, overetch, 90.0, identity)
+        # MINOR-1 (decision 433): the lateral envelope is of the order of the etch depth - the
+        # Overetch for a vertical sidewall, the slanted sidewall's excursion when larger.
         self.assertEqual(arcs[1], overetch)
+        self.assertAlmostEqual(_census_arc_sidewalls(census, signature, overetch, 45.0, identity)[1], overetch, places=12)
+        self.assertAlmostEqual(_census_arc_sidewalls(census, signature, overetch, 30.0, identity)[1],
+                               overetch / math.tan(math.radians(30.0)), places=12)
         self.assertEqual([(arc["ArcId"], arc["Chords"]) for arc in arcs[0]], [(7, chords)])
-        self.assertAlmostEqual(arcs[0][0]["FacetTurn"], turn, places=12)
+        self.assertAlmostEqual(arcs[0][0]["ChordTurn"], turn, places=12)
         self.assertAlmostEqual(arcs[0][0]["Sagitta"], R * (1 - math.cos(turn / 2)), places=12)
-        self.assertIsNone(_census_arc_sidewalls({"PrismTubes": {"Tubes": [{"Length": 1.0}]}}, signature, overetch, identity))
-        self.assertIsNone(_census_arc_sidewalls(None, signature, overetch, identity))
+        self.assertIsNone(_census_arc_sidewalls({"PrismTubes": {"Tubes": [{"Length": 1.0}]}}, signature, overetch, 90.0, identity))
+        self.assertIsNone(_census_arc_sidewalls(None, signature, overetch, 90.0, identity))
         with self.assertRaisesRegex(ValueError, "Overetch"):
-            _census_arc_sidewalls(census, signature, None, identity)
+            _census_arc_sidewalls(census, signature, None, 90.0, identity)
+        with self.assertRaisesRegex(ValueError, "SidewallAngle"):
+            _census_arc_sidewalls(census, signature, overetch, None, identity)
+        with self.assertRaisesRegex(ValueError, "SidewallAngle"):
+            _census_arc_sidewalls(census, signature, overetch, 0.0, identity)
         with self.assertRaisesRegex(ValueError, "arc row lacks"):
             _census_arc_sidewalls({"PrismTubes": {"Tubes": [{"Arc": {"ArcId": 1, "Centre": [0., 0.]}}]}}, signature,
-                                  overetch, identity)
+                                  overetch, 90.0, identity)
+        # The direction tolerance: the mesh facet turn on R = 3 at the 30-nm threshold is
+        # 0.573 deg; a 3-vertex band (span 50 nm) subtends 0.955 deg.
+        mesh_facet_turn = 2 * math.asin(0.03 / (2 * R)); band_angle_3 = 2 * math.asin(0.05 / (2 * R))
+        self.assertAlmostEqual(math.degrees(mesh_facet_turn), 0.573, places=3)
+        self.assertAlmostEqual(math.degrees(band_angle_3), 0.955, places=3)
         # (1) The loop-end component: one 25-nm edge (two vertices) on the arc facet.  Degenerate
         # -> not counted even without the arc records; with them also an arc sidewall band.
         two = facet_mesh(2)
@@ -2001,18 +2020,25 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         self.assertEqual(plain["GlobalDiagonalBands"], 0)
         self.assertEqual(plain["DegenerateComponents"], 1)
         self.assertIsNone(plain["ArcSidewallBands"]["Arcs"]); self.assertEqual(plain["ArcSidewallBands"]["Count"], 0)
+        self.assertIsNone(plain["ArcSidewallBands"]["LateralEnvelope"])
         self.assertIn("decision 410", plain["FeatureSegments"]["DegenerateComponent"])
         with_arcs = _global_diagonal_bands(two, signature, .025, arc_sidewalls=arcs)
         component = next(item for item in with_arcs["LongShortEdgeComponents"] if item["Attribute"] == 6001)
         self.assertTrue(component["AlignedWithArcSidewall"]); self.assertTrue(component["AlignedWithFeature"])
         self.assertEqual(component["ArcSidewall"]["ArcId"], 7); self.assertEqual(component["ArcSidewall"]["Chords"], chords)
         # The facet runs along the tangent at its start: half its own 0.48-deg angle off the
-        # tangent at its centroid, far inside the 5-deg facet turn.
-        self.assertAlmostEqual(math.degrees(component["ArcSidewall"]["AngleToTangent"]), 0.24, delta=0.01)
-        self.assertAlmostEqual(math.degrees(component["ArcSidewall"]["FacetTurn"]), 5.0, places=9)
+        # tangent at its centroid, inside the 0.573-deg mesh facet turn (the larger of the two
+        # tolerance terms for a one-edge band); the signature chord turn (5 deg) is recorded only.
+        arc = component["ArcSidewall"]
+        self.assertAlmostEqual(math.degrees(arc["AngleToTangent"]), 0.24, delta=0.01)
+        self.assertAlmostEqual(math.degrees(arc["ChordTurn"]), 5.0, places=9)
+        self.assertAlmostEqual(arc["MeshFacetTurn"], mesh_facet_turn, places=12)
+        self.assertAlmostEqual(math.degrees(arc["BandSubtendedAngle"]), 0.477, places=2)   # one 25-nm edge on R = 3
+        self.assertEqual(arc["DirectionTolerance"], arc["MeshFacetTurn"])
+        self.assertEqual(arc["LateralEnvelope"], overetch)
         self.assertEqual(with_arcs["ArcSidewallBands"]["Count"], 1)
         self.assertEqual(with_arcs["ArcSidewallBands"]["Arcs"][0]["ArcId"], 7)
-        self.assertEqual(with_arcs["ArcSidewallBands"]["Overetch"], overetch)
+        self.assertEqual(with_arcs["ArcSidewallBands"]["LateralEnvelope"], overetch)
         self.assertEqual(with_arcs["GlobalDiagonalBands"], 0)
         # (2) Fail-closed: a collinear THREE-vertex line of short edges (RMSWidth exactly 0, the
         # cosine floor) 1 um off the circle at 30 deg to every feature is a genuine diagonal.
@@ -2023,26 +2049,43 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         self.assertEqual(component["Vertices"], 3); self.assertFalse(component["Degenerate"])
         self.assertLess(component["RMSWidth"], 1e-12); self.assertFalse(component["AlignedWithFeature"])
         self.assertEqual(diagonal["GlobalDiagonalBands"], 1); self.assertEqual(diagonal["DegenerateComponents"], 0)
-        # (3) The same three-vertex line ON the arc along its tangent is an arc sidewall band ...
+        # (3) The same three-vertex line ON the arc along its tangent is an arc sidewall band
+        # (0.477 deg off the centroid tangent, inside its own 0.955-deg subtended angle) ...
         on_arc = facet_mesh(3, apex_height=0.035)
         accepted = _global_diagonal_bands(on_arc, signature, .025, arc_sidewalls=arcs)
         component = next(item for item in accepted["LongShortEdgeComponents"] if item["Attribute"] == 6001)
         self.assertEqual(component["Vertices"], 3); self.assertTrue(component["AlignedWithArcSidewall"])
+        self.assertAlmostEqual(math.degrees(component["ArcSidewall"]["AngleToTangent"]), 0.477, places=2)
+        self.assertAlmostEqual(component["ArcSidewall"]["DirectionTolerance"], band_angle_3, places=12)
         self.assertEqual(accepted["GlobalDiagonalBands"], 0)
         self.assertEqual(_global_diagonal_bands(on_arc, signature, .025)["GlobalDiagonalBands"], 1)   # no arc records
-        # ... turned by two facet turns it is not (a diagonal on the sidewall), ...
-        turned = _global_diagonal_bands(facet_mesh(3, direction_angle=2 * turn, apex_height=0.035), signature, .025,
-                                        arc_sidewalls=arcs)
-        self.assertFalse(next(item for item in turned["LongShortEdgeComponents"] if item["Attribute"] == 6001)["AlignedWithArcSidewall"])
-        self.assertEqual(turned["GlobalDiagonalBands"], 1)
+        # ... turned by two chord turns (10 deg) or by 4 deg - inside the former 5-deg chord-turn
+        # tolerance, outside the mesh-facet one (MINOR-2) - it is not (a diagonal on the sidewall), ...
+        for direction_angle in (2 * turn, math.radians(4.0)):
+            turned = _global_diagonal_bands(facet_mesh(3, direction_angle=direction_angle, apex_height=0.035), signature, .025,
+                                            arc_sidewalls=arcs)
+            component = next(item for item in turned["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+            self.assertFalse(component["AlignedWithArcSidewall"]); self.assertFalse(component["Degenerate"])
+            self.assertEqual(turned["GlobalDiagonalBands"], 1, direction_angle)
+        # ... a SLOPED band climbing the sidewall at 45 or 60 deg - tangential in plan view, a
+        # helical diagonal in 3D - is not (decision 433 MAJOR-1: the full direction is judged), ...
+        for elevation in (math.radians(45.0), math.radians(60.0)):
+            sloped_mesh = facet_mesh(3, apex_height=0.035, elevation=elevation)
+            sloped = _global_diagonal_bands(sloped_mesh, signature, .025, arc_sidewalls=arcs)
+            component = next(item for item in sloped["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+            self.assertEqual(component["Vertices"], 3); self.assertTrue(component["LineLike"])
+            self.assertFalse(component["AlignedWithArcSidewall"]); self.assertFalse(component["AlignedWithFeature"])
+            self.assertEqual(sloped["GlobalDiagonalBands"], 1, elevation)
+            self.assertIsNone(_arc_sidewall_alignment(sloped_mesh.points[:3], sloped_mesh.points[2] - sloped_mesh.points[0],
+                                                      arcs, sloped["ShortEdgeThreshold"]))
         # ... outside the arc's sweep (theta = +30 deg on the same circle) it is not, ...
         outside = _global_diagonal_bands(facet_mesh(3, pivot_theta=math.radians(30.0), apex_height=0.035), signature, .025,
                                          arc_sidewalls=arcs)
         self.assertEqual(outside["GlobalDiagonalBands"], 1)
         # ... and an arc without signature chords (FacetTurn 0) accepts nothing.
-        no_chords = _census_arc_sidewalls(census, signature[-1:], overetch, identity)
-        self.assertEqual((no_chords[0][0]["Chords"], no_chords[0][0]["FacetTurn"]), (0, 0.0))
-        self.assertIsNone(_arc_sidewall_alignment(on_arc.points[:3], on_arc.points[2] - on_arc.points[0], no_chords))
+        no_chords = _census_arc_sidewalls(census, signature[-1:], overetch, 90.0, identity)
+        self.assertEqual((no_chords[0][0]["Chords"], no_chords[0][0]["ChordTurn"]), (0, 0.0))
+        self.assertIsNone(_arc_sidewall_alignment(on_arc.points[:3], on_arc.points[2] - on_arc.points[0], no_chords, .03))
         self.assertEqual(_global_diagonal_bands(on_arc, signature, .025, arc_sidewalls=no_chords)["GlobalDiagonalBands"], 1)
         # (4) Rotation covariance (the rotate-z-0.63 placement): the mesh, the signature and the
         # placement matrix rotated together give the same verdicts and arc records.
@@ -2050,8 +2093,8 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         rotation = np.eye(4)
         rotation[:2, :2] = [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]]
         rotated_signature = [[(rotation @ np.array(p + [1.0]))[:3].tolist() for p in segment] for segment in signature]
-        rotated_arcs = _census_arc_sidewalls(census, signature, overetch, rotation)
-        for mesh, expected in ((two, 0), (on_arc, 0), (far, 1)):
+        rotated_arcs = _census_arc_sidewalls(census, signature, overetch, 90.0, rotation)
+        for mesh, expected in ((two, 0), (on_arc, 0), (far, 1), (facet_mesh(3, apex_height=0.035, elevation=math.radians(45.0)), 1)):
             rotated = meshio.Mesh((np.column_stack((mesh.points, np.ones(len(mesh.points)))) @ rotation.T)[:, :3],
                                   mesh.cells, cell_data=mesh.cell_data)
             report = _global_diagonal_bands(rotated, rotated_signature, .025, arc_sidewalls=rotated_arcs)
@@ -3106,6 +3149,17 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                 verification_time_bound({"Gates": {"MaximumSeconds": 0, "MaximumElements": 6000000}}, case, audits)
             with self.assertRaisesRegex(ValueError, "MaximumElements"):
                 verification_time_bound({"Gates": {"MaximumSeconds": 3600, "MaximumElements": 6.0e6}}, case, audits)
+            # Decision 433 MINOR-3: the command line validates the manifest BEFORE reading its
+            # Gates for the bound - a malformed manifest fails with the validator's message.
+            malformed = audits / "malformed-manifest.json"
+            malformed.write_text(json.dumps({"Version": 1, "Cases": []}))
+            result = subprocess.run([sys.executable, str(HERE / "verify_canonical_case_entries.py"), str(malformed),
+                                     str(audits), str(audits / "never-written.json"), case["Id"]],
+                                    capture_output=True, text=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Unsupported generality-suite manifest", result.stderr)
+            self.assertNotIn("KeyError", result.stderr)
+            self.assertFalse((audits / "never-written.json").exists())
 
     def test_gmsh_only_negatives_fail_closed(self):
         from general_mesh_audit_producer import TUBE_DESIGN_GATE

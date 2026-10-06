@@ -223,26 +223,35 @@ DEGENERATE_COMPONENT_RULE = (
 # A band on the sidewall of a TAGGED arc side (block (b): the metal / trench wall is the
 # cylinder about the arc centre; the mesh facets follow the true circle at the surface
 # size while the signature records the arc as chords) is aligned with the arc when its
-# direction is within the FACET TURN of the arc's own chord discretisation - the angle a
-# signature chord of that arc subtends, 2 asin(chord / 2 Radius) - of the circle's tangent
-# at the band: a chord deviates from the tangent by half its turn at each end, so a
-# sidewall facet is never farther than one turn from the nearest chord.  Membership is
-# geometric in the build (SourceLocal) frame: every band vertex within Overetch + the
-# chord sagitta of the arc circle in plan view and inside the sweep of one tube part (one
-# turn of angular slack).  A band on any planar support, or on the cylinder but not
-# tangential, is judged as before.  Supervisor decision 410.
+# FULL build-frame direction is within the direction tolerance of the circle's HORIZONTAL
+# tangent at the band centroid: the tolerance is the larger of the MESH facet turn
+# 2 asin(ShortEdgeThreshold / 2 Radius) (a facet of the surface size on the cylinder) and the
+# band's own subtended angle 2 asin(Span / 2 Radius) (a band following the circle over its
+# span deviates from the centroid tangent by at most half of it).  A sloped (helical) band
+# on the cylinder has its elevation as the angle and is rejected (decision 433 MAJOR-1).
+# Membership is geometric in the build (SourceLocal) frame: every band vertex within the
+# LATERAL ENVELOPE + the chord sagitta of the arc circle in plan view - the envelope is of the
+# order of the etch depth, Overetch for a vertical sidewall and the slanted sidewall's
+# lateral excursion Overetch / tan(SidewallAngle) when larger - and inside the sweep of one
+# tube part (one signature chord turn of angular slack, the chord discretisation's own
+# resolution of the arc ends).  A band on any planar support, or on the cylinder but not
+# tangential, is judged as before.  Supervisor decisions 410 / 433.
 ARC_SIDEWALL_RULE = (
     "a line-like band whose every vertex lies, in the build frame's plan view, within "
-    "Overetch + the chord sagitta Radius x (1 - cos(FacetTurn / 2)) of a tagged arc's circle "
-    "and inside the angular sweep of one of its tube parts (one FacetTurn of slack), and "
-    "whose direction is within FacetTurn of the circle's tangent at the band centroid, is "
-    "aligned with that arc sidewall (AlignedWithArcSidewall, a feature band); FacetTurn = "
-    "the largest angle 2 asin(chord / 2 Radius) subtended by the signature chords of that "
-    "arc (both chord ends on the circle within ARC_CHORD_MATCH_TOLERANCE x Radius, chord "
-    "midpoint inside the sweep); an arc without signature chords accepts no band; needs "
+    "LateralEnvelope + the chord sagitta Radius x (1 - cos(ChordTurn / 2)) of a tagged arc's "
+    "circle (LateralEnvelope = a lateral envelope of the order of the etch depth: the process "
+    "Overetch, or the slanted sidewall's lateral excursion Overetch / tan(SidewallAngle) when "
+    "larger) and inside the angular sweep of one of its tube parts (one ChordTurn of slack), "
+    "and whose FULL build-frame direction is within DirectionTolerance = max(MeshFacetTurn = "
+    "2 asin(ShortEdgeThreshold / 2 Radius), BandSubtendedAngle = 2 asin(Span / 2 Radius)) of "
+    "the circle's horizontal tangent at the band centroid (a sloped band is rejected by its "
+    "elevation), is aligned with that arc sidewall (AlignedWithArcSidewall, a feature band); "
+    "ChordTurn = the largest angle 2 asin(chord / 2 Radius) subtended by the signature chords "
+    "of that arc (both chord ends on the circle within ARC_CHORD_MATCH_TOLERANCE x Radius, "
+    "chord midpoint inside the sweep); an arc without signature chords accepts no band; needs "
     "the Gmsh-only census PrismTubes.Tubes[].Arc rows (ArcId, Centre, Radius, "
-    "ThetaStartDegrees, SweepDegrees, Orientation) and the process Overetch (supervisor "
-    "decision 410)")
+    "ThetaStartDegrees, SweepDegrees, Orientation), the process Overetch and SidewallAngle "
+    "(supervisor decisions 410 / 433)")
 # Chord ends are the plan-view boundary's vertices quantised to its 1e-9 R grid.
 ARC_CHORD_MATCH_TOLERANCE = 1.0e-6
 
@@ -253,13 +262,14 @@ def _plan_view_angle_travel(angles, start, orientation):
     return (orientation * (np.asarray(angles, dtype=float) - start)) % (2.0 * math.pi)
 
 
-def _census_arc_sidewalls(census, signature_segments, overetch, matrix):
+def _census_arc_sidewalls(census, signature_segments, overetch, sidewall_angle, matrix):
     """The tagged arc sidewalls of a Gmsh-only census for ARC_SIDEWALL_RULE: per arc
     (ArcId) its circle (Centre, Radius), the angular intervals of its tube parts
-    (ThetaStart, Sweep, Orientation), its signature chord count and FacetTurn, with the
-    process `overetch` and the inverse of the audit placement `matrix` (mesh frame ->
-    build frame); None without a census, arc rows or a finite non-negative overetch.
-    `signature_segments` are the build-frame signature segments (N x 2 x 3)."""
+    (ThetaStart, Sweep, Orientation), its signature chord count, ChordTurn and Sagitta, with
+    the LateralEnvelope from the process `overetch` and `sidewall_angle` (degrees) and the
+    inverse of the audit placement `matrix` (mesh frame -> build frame); None without a
+    census or arc rows; ValueError without a finite non-negative overetch or a sidewall angle
+    in (0, 90].  `signature_segments` are the build-frame signature segments (N x 2 x 3)."""
     tubes = (census or {}).get("PrismTubes") if isinstance(census, dict) else None
     rows = tubes.get("Tubes") if isinstance(tubes, dict) else None
     arc_rows = [row["Arc"] for row in rows if isinstance(row, dict) and isinstance(row.get("Arc"), dict)] \
@@ -269,6 +279,12 @@ def _census_arc_sidewalls(census, signature_segments, overetch, matrix):
     if not isinstance(overetch, (int, float)) or isinstance(overetch, bool) or not (
             math.isfinite(overetch) and overetch >= 0.0):
         raise ValueError("The arc sidewall rule needs a finite non-negative process Overetch")
+    if not isinstance(sidewall_angle, (int, float)) or isinstance(sidewall_angle, bool) or not (
+            math.isfinite(sidewall_angle) and 0.0 < sidewall_angle <= 90.0):
+        raise ValueError("The arc sidewall rule needs a process SidewallAngle in (0, 90] degrees")
+    # The lateral excursion of a sidewall of the etch depth: 0 for a vertical wall, Overetch /
+    # tan(SidewallAngle) for a slanted one; the envelope is never below the etch depth itself.
+    lateral_envelope = max(float(overetch), float(overetch) / math.tan(math.radians(sidewall_angle)))
     segments = np.asarray(signature_segments, dtype=float).reshape(-1, 2, 3)
     arcs = {}
     for arc in arc_rows:
@@ -305,32 +321,37 @@ def _census_arc_sidewalls(census, signature_segments, overetch, matrix):
             chord = float(np.linalg.norm(ends[1] - ends[0]))
             turns.append(2.0 * math.asin(min(1.0, chord / (2.0 * radius))))
         record["Chords"] = len(turns)
-        record["FacetTurn"] = max(turns) if turns else 0.0
-        record["Sagitta"] = radius * (1.0 - math.cos(0.5 * record["FacetTurn"]))
+        record["ChordTurn"] = max(turns) if turns else 0.0
+        record["Sagitta"] = radius * (1.0 - math.cos(0.5 * record["ChordTurn"]))
     inverse = np.linalg.inv(np.asarray(matrix, dtype=float).reshape(4, 4))
-    return [arcs[key] for key in sorted(arcs)], float(overetch), inverse
+    return [arcs[key] for key in sorted(arcs)], lateral_envelope, inverse
 
 
-def _arc_sidewall_alignment(points, direction, arc_sidewalls):
+def _arc_sidewall_alignment(points, direction, arc_sidewalls, threshold):
     """ARC_SIDEWALL_RULE for one line-like band given its vertices and principal
-    direction (mesh frame): the record {ArcId, Chords, FacetTurn, AngleToTangent,
-    MaximumRadialDeviation} of the tagged arc whose sidewall carries the band and whose
-    tangent the band follows within the arc's facet turn, else None."""
+    direction (mesh frame) and the audit's ShortEdgeThreshold: the record {ArcId, Radius,
+    Chords, ChordTurn, MeshFacetTurn, BandSubtendedAngle, DirectionTolerance, AngleToTangent,
+    MaximumRadialDeviation, LateralEnvelope} of the tagged arc whose sidewall carries the
+    band and whose horizontal tangent the band's full direction follows within the
+    direction tolerance, else None."""
     if arc_sidewalls is None:
         return None
-    arcs, overetch, inverse = arc_sidewalls
+    arcs, lateral_envelope, inverse = arc_sidewalls
     points = np.asarray(points, dtype=float).reshape(-1, 3)
-    plan = (np.column_stack((points, np.ones(len(points)))) @ inverse.T)[:, :2]
-    build_direction = (inverse[:3, :3] @ np.asarray(direction, dtype=float))[:2]
+    build_points = (np.column_stack((points, np.ones(len(points)))) @ inverse.T)[:, :3]
+    plan = build_points[:, :2]
+    build_direction = inverse[:3, :3] @ np.asarray(direction, dtype=float)
+    build_direction = build_direction / max(np.linalg.norm(build_direction), 1e-300)
+    span = float(np.ptp(build_points @ build_direction)) if len(build_points) else 0.0
     for arc in arcs:
-        if arc["FacetTurn"] <= 0.0:
+        if arc["ChordTurn"] <= 0.0:
             continue
         offsets = plan - np.asarray(arc["Centre"])
         radial = np.abs(np.linalg.norm(offsets, axis=1) - arc["Radius"])
-        if np.any(radial > overetch + arc["Sagitta"]):
+        if np.any(radial > lateral_envelope + arc["Sagitta"]):
             continue
         angles = np.arctan2(offsets[:, 1], offsets[:, 0])
-        slack = arc["FacetTurn"]
+        slack = arc["ChordTurn"]
         inside = False
         for part in arc["Parts"]:
             travel = _plan_view_angle_travel(angles, part["ThetaStart"], part["Orientation"])
@@ -340,13 +361,19 @@ def _arc_sidewall_alignment(points, direction, arc_sidewalls):
         if not inside:
             continue
         centroid = offsets.mean(axis=0)
-        tangent = np.array([-centroid[1], centroid[0]]) / np.linalg.norm(centroid)
-        cosine = abs(float(np.dot(build_direction, tangent))) / max(np.linalg.norm(build_direction), 1e-300)
-        angle = _alignment_angle(cosine)
-        if angle <= arc["FacetTurn"]:
+        tangent = np.array([-centroid[1], centroid[0], 0.0]) / np.linalg.norm(centroid)
+        # The FULL build-frame direction against the horizontal tangent: a band climbing the
+        # sidewall reads its elevation as the angle (decision 433 MAJOR-1).
+        angle = _alignment_angle(abs(float(np.dot(build_direction, tangent))))
+        mesh_facet_turn = 2.0 * math.asin(min(1.0, float(threshold) / (2.0 * arc["Radius"])))
+        band_angle = 2.0 * math.asin(min(1.0, span / (2.0 * arc["Radius"])))
+        tolerance = max(mesh_facet_turn, band_angle)
+        if angle <= tolerance:
             return {"ArcId": arc["ArcId"], "Radius": arc["Radius"], "Chords": arc["Chords"],
-                    "FacetTurn": arc["FacetTurn"], "AngleToTangent": angle,
-                    "MaximumRadialDeviation": float(radial.max())}
+                    "ChordTurn": arc["ChordTurn"], "MeshFacetTurn": mesh_facet_turn,
+                    "BandSubtendedAngle": band_angle, "DirectionTolerance": tolerance,
+                    "AngleToTangent": angle, "MaximumRadialDeviation": float(radial.max()),
+                    "LateralEnvelope": lateral_envelope}
     return None
 
 
@@ -509,7 +536,8 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             basis_aligned = bool(len(basis_edges)) and _on_basis_edge(
                 direction, (points[first], points[last]), basis_edges, 2.0 * threshold,
                 resolvability, width)
-            arc_sidewall = _arc_sidewall_alignment(points, direction, arc_sidewalls) if line_like else None
+            arc_sidewall = (_arc_sidewall_alignment(points, direction, arc_sidewalls, threshold)
+                            if line_like else None)
             feature_aligned = (aligned or footprint_aligned or junction_aligned or basis_aligned or
                                arc_sidewall is not None)
             degenerate = len(component) < DEGENERATE_COMPONENT_VERTICES
@@ -580,9 +608,9 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             "ArcSidewallBands": {
                 "Count": len(arc_bands), "Bands": arc_bands,
                 "Arcs": (None if arc_sidewalls is None else
-                         [{key: arc[key] for key in ("ArcId", "Centre", "Radius", "Chords", "FacetTurn", "Sagitta")}
+                         [{key: arc[key] for key in ("ArcId", "Centre", "Radius", "Chords", "ChordTurn", "Sagitta")}
                           for arc in arc_sidewalls[0]]),
-                "Overetch": None if arc_sidewalls is None else arc_sidewalls[1],
+                "LateralEnvelope": None if arc_sidewalls is None else arc_sidewalls[1],
                 "Rule": ARC_SIDEWALL_RULE},
             "ContinuationBoundaryBands": {
                 "Count": len(continuation_bands), "Bands": continuation_bands,
@@ -1385,7 +1413,8 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
                   transformed_recipe["NormalSize"], transformed_footprint,
                   transformed_junction, transformed_basis,
                   coupon_box=_census_coupon_box(census, matrix),
-                  arc_sidewalls=_census_arc_sidewalls(census, segments, process.get("Overetch"), matrix)),
+                  arc_sidewalls=_census_arc_sidewalls(census, segments, process.get("Overetch"),
+                                                      process.get("SidewallAngle"), matrix)),
                   "FootprintSegmentProvenance": footprint_provenance,
                   "TraceBasisEdgeProvenance": basis_provenance},
               "MeshQuality": {**_volume_quality(mesh, layer_spans, layer_reach),

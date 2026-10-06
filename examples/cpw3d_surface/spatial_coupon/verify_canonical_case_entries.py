@@ -154,7 +154,8 @@ VERIFICATION_TIME_BOUND_RULE = (
     "variant without readable evidence contributes 0 and fails on its own): the manifest's stage "
     "bound per MaximumElements elements, scaled to the elements this verification reads, never "
     "below one stage bound; --timeout-seconds overrides it (recorded as Explicit); the bound, its "
-    "terms and the elapsed seconds are recorded in the report (supervisor decision 410)")
+    "terms and the elapsed seconds are recorded in the report; the manifest is validated before "
+    "its gates are read (supervisor decisions 410 / 433)")
 
 
 def verification_time_bound(manifest, case, audit_root, explicit_seconds=None):
@@ -377,7 +378,12 @@ def main():
     args = parser.parse_args()
     if args.output.exists():
         raise ValueError("verification output must be fresh")
-    manifest = json.loads(Path(args.manifest).read_text())
+    manifest_path = Path(args.manifest).resolve()
+    manifest = json.loads(manifest_path.read_text())
+    # The manifest is validated before its Gates are read for the bound (decision 433 MINOR-3:
+    # a malformed manifest fails with the validator's message); verify_case validates it again
+    # on its own, so the report's independence of this preamble is kept.
+    validate_manifest(manifest, manifest_path)
     time_bound = verification_time_bound(manifest, manifest_case(manifest, args.case_id), args.audit_root,
                                          args.timeout_seconds)
     seconds = time_bound["Seconds"]
