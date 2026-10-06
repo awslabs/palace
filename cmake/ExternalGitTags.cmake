@@ -34,7 +34,7 @@ set(EXTERN_BUTTERFLYPACK_GIT_BRANCH
   "Git branch for external ButterflyPACK build"
 )
 set(EXTERN_BUTTERFLYPACK_GIT_TAG
-  "v5.0.0" CACHE STRING
+  "v4.1.0" CACHE STRING
   "Git tag for external ButterflyPACK build"
 )
 
