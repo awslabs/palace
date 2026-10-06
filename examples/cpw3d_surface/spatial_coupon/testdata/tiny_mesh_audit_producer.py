@@ -299,6 +299,16 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
                    "DisplacementBoundOverNormal": ratio_bound, "LayerRequiredReach": None,
                    "RequiredTetrahedra": 1, "CornerAspectsBefore": [1.0 for _ in corners],
                    "CornerAspectsAfter": [1.0 for _ in corners], "CornerMoves": [0 for _ in corners],
+                   # Design round 2 F5-A: the per-corner verdict records (every fixture corner
+                   # is exactly perpendicular: Legacy, the vertex-frame measure).
+                   "InvariantCorners": 0, "CornerShapeGate": None, "InvariantCornerTarget": 3.8,
+                   "CornerMeasures": [{"Point": corner, "Kind": "Legacy",
+                                       "Measure": "VertexFrameCondition", "Before": 1.0,
+                                       "After": 1.0, "Target": .95 * maximum_aspect,
+                                       "Gate": maximum_aspect, "Moves": 0, "Sides": None,
+                                       "BridgingSlivers": {"Before": 0, "After": 0,
+                                                           "AboveGateAfter": 0},
+                                       "Passed": True} for corner in corners],
                    "RequiredMinimumScaledJacobianBefore": 1.0,
                    "RequiredMinimumScaledJacobianAfter": 1.0,
                    "RequiredCellsBelowTargetBefore": 0, "RequiredCellsBelowTargetAfter": 0,
@@ -333,6 +343,12 @@ def corner_census(output, contract_path, radius, isotropic_size, etch_boundary=N
             quality["CornerSize"] = tubes["corner_size"]
     output.write_text(json.dumps({
         "Version": 1, "Frame": "SourceLocal", "SemanticCorners": corners,
+        "SemanticCornerKinds": ["Legacy" for _ in corners],
+        "InvariantCorners": {"Points": [], "CornerShapeGate": None, "Target": 3.8},
+        # Design round 2 SEAM: no convex thin tip in the fixtures (no bisector, no seam).
+        "TipBisectors": {"Count": 0, "Curves": [], "UnrefinedTips": 0, "MinimumOpeningDegrees": None},
+        "ThinSheetSeams": {"Count": 0, "Edges": [], "SheetSurfaces": 0, "SheetFaces": 0,
+                           "FreeBoundaryVertices": 0, "UnrefinedCrackSeams": None},
         "SemanticContract": str(contract_path),
         "SemanticContractSHA256": hashlib.sha256(contract_path.read_bytes()).hexdigest(),
         "CornerIsotropyRadius": radius, "IsotropicSize": isotropic_size, **tube_records,

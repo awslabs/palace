@@ -451,10 +451,15 @@ class RigidProducerIntegrationTest(unittest.TestCase):
             absent = json.loads((SOURCE / "semantic-contract.json").read_text())
             absent["SemanticCorners"] = [[0.5, 0.5, 0.0]]
             path = root / "absent-semantic.json"; path.write_text(json.dumps(absent))
+            # With a classified plan-view boundary the round-2 corner-kind predicate
+            # (semantic_corner_kinds, decision 363) reads the corner's two boundary sides
+            # before the CAD is built, so a corner absent from the geometry fails closed
+            # there (0 coincident boundary vertices); the CAD coincidence check ("absent
+            # from the seed CAD") remains the legacy path's message.
             self.produce(root, "absent", corner_isotropy=[
                 "--semantic-contract", str(path), "--corner-isotropy-radius", "0.4",
                 "--corner-census", str(root / "absent-census.json")],
-                expect_failure="absent from the seed CAD")
+                expect_failure="matches 0 plan-view boundary vertices of its plane")
 
     def test_trace_basis_sizes_the_cut_surface_and_is_recorded_and_covariant(self):
         """The bound trace basis (TraceBasisSizeRatio 4 keeps this coarse seed fast) sizes
