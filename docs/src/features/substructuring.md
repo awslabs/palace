@@ -324,5 +324,6 @@ The sweep resolves the resonance of resonator 6 near 18.29 GHz in the transmissi
 ports of the middle feedline (`port-S.csv`), and the runs agree to the tolerance of the regular
 simulation's linear solver. The redesign moves the resonance to 18.255 GHz, as a regular
 simulation of the redesigned device does. Each online frequency factors only the region: on a
-192-core node, an online sweep is about 2.5 times faster than a regular one. The mesh has about
-1.7 million unknowns, so the runs are best on a cluster node.
+192-core node, an online sweep is about 7 times faster than a regular one at the example's
+linear solver tolerance, 5 times at Palace's default. The mesh has about 1.7 million unknowns,
+so the runs are best on a cluster node.
