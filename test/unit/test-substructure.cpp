@@ -139,7 +139,7 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
   {
     CHECK(blocks > 0);  // face DOFs whose basis is not a signed permutation of the other's
   }
-  const auto b = map.Dual(b_s.data());
+  const auto b = map.DualRows(b_s, 1);
   const auto M = map.DualMatrix(M_s);
   double db = 0.0, mb = 0.0, dM = 0.0, mM = 0.0;
   for (std::size_t i = 0; i < b.size(); i++)

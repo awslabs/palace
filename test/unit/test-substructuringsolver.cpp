@@ -7,6 +7,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -69,9 +70,36 @@ std::unique_ptr<mfem::ParMesh> MakeSplitCube(int nx)
 // 1) and environment (attr 2). Tets + a curved interface exercise the DOF maps and
 // interface identification on a more realistic mesh than the structured hex half-space
 // split, while keeping the x=0 / x=1 terminal-face convention (bdr attr 1 / 2, sides 3).
-std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx)
+// With reorder, the same tetrahedra come in another element and vertex order (so other face
+// orientations, as another partition gives).
+std::unique_ptr<mfem::ParMesh> MakeWavyTetSplit(int nx, bool reorder = false)
 {
   mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(nx, nx, nx, mfem::Element::TETRAHEDRON);
+  if (reorder)
+  {
+    const int nv = serial.GetNV(), step = 7;
+    MFEM_VERIFY(std::gcd(nv, step) == 1, "Reordering needs nv coprime with the step!");
+    std::vector<int> inv(nv);
+    mfem::Mesh perm(3, nv, serial.GetNE(), serial.GetNBE());
+    for (int v = 0; v < nv; v++)
+    {
+      perm.AddVertex(serial.GetVertex((v * step) % nv));
+      inv[(v * step) % nv] = v;
+    }
+    // Reversed element order, and even vertex permutations (which keep the orientation).
+    for (int e = serial.GetNE() - 1; e >= 0; e--)
+    {
+      const int *ev = serial.GetElement(e)->GetVertices();
+      perm.AddTet(inv[ev[1]], inv[ev[2]], inv[ev[0]], inv[ev[3]]);
+    }
+    for (int b = 0; b < serial.GetNBE(); b++)
+    {
+      const int *bv = serial.GetBdrElement(b)->GetVertices();
+      perm.AddBdrTriangle(inv[bv[1]], inv[bv[2]], inv[bv[0]]);
+    }
+    perm.FinalizeTetMesh(1, 0, true);
+    serial = std::move(perm);
+  }
   auto iface = [](double y, double z)
   { return 0.5 + 0.15 * std::sin(M_PI * y) * std::sin(M_PI * z); };
   for (int e = 0; e < serial.GetNE(); e++)
@@ -918,6 +946,175 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   d -= u_full;
   const double un = std::sqrt(mfem::InnerProduct(Mpi::World(), u_full, u_full));
   CHECK(std::sqrt(mfem::InnerProduct(Mpi::World(), d, d)) <= 1.0e-8 * un);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver magnetostatic energies across face orientations",
+                 "[substructure][Serial][Parallel]")
+{
+  // A model saved on tetrahedra, reused online on the same tetrahedra in another element
+  // and vertex order: other face orientations (as another partition gives), so second-order
+  // Nédélec face DOFs on Gamma have another basis, not a signed permutation of the saved
+  // one. The lifts are the same fields on both meshes, projected on all DOFs so that they
+  // reach Gamma (and their fingerprints see it); the online energies need no environment
+  // solve and equal the offline ones.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const std::string model_path = (temp_dir / "substruct_mag_orient_model.bin").string();
+  auto make_config = [order, &model_path](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  const std::vector<int> ids = {1, 2};
+  auto lifts = [order, &ids](Mesh &mesh)
+  {
+    mfem::ND_FECollection fec(order, 3);
+    mfem::ParFiniteElementSpace fes(&mesh.Get(), &fec);
+    std::vector<Vector> x;
+    for (int id : ids)
+    {
+      mfem::VectorFunctionCoefficient f(3,
+                                        [id](const mfem::Vector &p, mfem::Vector &v)
+                                        {
+                                          v.SetSize(3);
+                                          const double k = 3.0 * id;
+                                          v(0) = std::sin(k * p(1)) * p(2);
+                                          v(1) = std::cos(k * p(2)) * p(0);
+                                          v(2) = std::sin(k * p(0) + p(1));
+                                        });
+      mfem::ParGridFunction gf(&fes);
+      gf.ProjectCoefficient(f);
+      Vector t(fes.GetTrueVSize());
+      gf.GetTrueDofs(t);
+      x.push_back(std::move(t));
+    }
+    return x;
+  };
+
+  IoData iodata_off = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  const mfem::DenseMatrix E_off = off.EnergyMatrix(ids, lifts(*mesh_off.back()));
+
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4, true)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const mfem::DenseMatrix E_on = on.EnergyMatrix(ids, lifts(*mesh_on.back()));
+  CHECK_FALSE(on.EnvironmentFactored());
+  double d = 0.0, m = 0.0;
+  for (int i = 0; i < 2; i++)
+  {
+    for (int j = 0; j < 2; j++)
+    {
+      d = std::max(d, std::abs(E_on(i, j) - E_off(i, j)));
+      m = std::max(m, std::abs(E_off(i, j)));
+    }
+  }
+  CAPTURE(d, m);
+  CHECK(d <= 1.0e-9 * m);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver surface-current energies across face orientations",
+                 "[substructure][Serial][Parallel]")
+{
+  // As above, for a surface-current excitation: J_s = cos(pi y) e_x on the side walls of
+  // the wavy tetrahedral split, across the interface, closing through the x = 0 and x = 1
+  // PEC walls. Its environment part lies on boundary face DOFs, whose basis changes with
+  // the face orientation; the online energy needs no environment solve and equals the
+  // offline one.
+  const int order = GENERATE(1, 2);
+  CAPTURE(order);
+  const std::string model_path = (temp_dir / "substruct_current_orient_model.bin").string();
+  auto make_config = [order, &model_path](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", {1, 2}}}},
+          {"SurfaceCurrent", {{{"Index", 1}, {"Attributes", {3}}, {"Direction", "+X"}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"Mode", mode},
+            {"SaveModel", model_path}}}}}};
+    return IoData(config, false);
+  };
+  auto current = [order](Mesh &mesh)
+  {
+    auto &pmesh = mesh.Get();
+    mfem::ND_FECollection fec(order, 3);
+    mfem::ParFiniteElementSpace pfes(&pmesh, &fec);
+    mfem::Array<int> pec_marker(pmesh.bdr_attributes.Max()), pec_tdofs,
+        wall_marker(pmesh.bdr_attributes.Max());
+    pec_marker = 0;
+    pec_marker[0] = pec_marker[1] = 1;
+    pfes.GetEssentialTrueDofs(pec_marker, pec_tdofs);
+    wall_marker = 0;
+    wall_marker[2] = 1;
+    mfem::VectorFunctionCoefficient c(3,
+                                      [](const mfem::Vector &x, mfem::Vector &v)
+                                      {
+                                        v.SetSize(3);
+                                        v = 0.0;
+                                        v(0) = std::cos(M_PI * x(1));
+                                      });
+    mfem::ParLinearForm f(&pfes);
+    f.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(c), wall_marker);
+    f.Assemble();
+    Vector J(pfes.GetTrueVSize());
+    f.ParallelAssemble(J);
+    for (int i : pec_tdofs)
+    {
+      J(i) = 0.0;
+    }
+    return std::vector<Vector>{J};
+  };
+
+  IoData iodata_off = make_config("Offline");
+  std::vector<std::unique_ptr<Mesh>> mesh_off;
+  mesh_off.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
+  SubstructuringSolver off(iodata_off, mesh_off);
+  off.CondenseEnvironment();
+  const mfem::DenseMatrix E_off = off.CurrentEnergyMatrix({1}, current(*mesh_off.back()));
+
+  IoData iodata_on = make_config("Online");
+  std::vector<std::unique_ptr<Mesh>> mesh_on;
+  mesh_on.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4, true)));
+  SubstructuringSolver on(iodata_on, mesh_on);
+  on.CondenseEnvironment();
+  const mfem::DenseMatrix E_on = on.CurrentEnergyMatrix({1}, current(*mesh_on.back()));
+  CHECK_FALSE(on.EnvironmentFactored());
+  CAPTURE(E_on(0, 0), E_off(0, 0));
+  CHECK(std::abs(E_on(0, 0) - E_off(0, 0)) <= 1.0e-9 * std::abs(E_off(0, 0)));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

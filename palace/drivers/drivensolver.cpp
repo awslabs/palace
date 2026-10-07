@@ -422,6 +422,8 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
         // The saved record on the current interface (dual quantities: x_cur = M^-T x).
         DrivenSubstructureModel::Record rec;
         std::vector<std::complex<double>> S, g;
+        auto dual = [&](const std::complex<double> *x)
+        { return gamma_map.DualRows(std::vector<std::complex<double>>(x, x + nG), 1); };
         if (root)
         {
           rec = model.ReadRecord(model_path, record[omega_i]);
@@ -431,8 +433,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
           {
             if (ex_col[k] >= 0)
             {
-              const auto gk =
-                  gamma_map.Dual(rec.g.data() + static_cast<std::size_t>(ex_col[k]) * nG);
+              const auto gk = dual(rec.g.data() + static_cast<std::size_t>(ex_col[k]) * nG);
               std::copy(gk.begin(), gk.end(),
                         g.begin() + static_cast<std::ptrdiff_t>(k) * nG);
             }
@@ -440,7 +441,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
           std::vector<std::complex<double>> h;
           for (int j = 0; j < np; j++)
           {
-            const auto hj = gamma_map.Dual(rec.h.data() + static_cast<std::size_t>(j) * nG);
+            const auto hj = dual(rec.h.data() + static_cast<std::size_t>(j) * nG);
             h.insert(h.end(), hj.begin(), hj.end());
           }
           rec.h = std::move(h);
