@@ -8707,30 +8707,46 @@ double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 
   return Norm(Subtract(q, Add(a, Scale(t, ab))));
 }
 
-// The recorded pre-image of the cell on its own segment (Provenance::own_cell, decision
-// 537) follows a clip: the kept offsets [kept_lo, kept_hi] of the cell [c0, c1] map
-// linearly onto the recorded segment interval (the pre-image is affine in the cell offset).
+// The own-edge point of a translational patch at the cell offset c (mesh units): the
+// recorded pre-image on the own segment (Provenance::own_cell, decision 537) mapped
+// linearly from the cell [c0, c1] (the pre-image is affine in the cell offset); without the
+// record (a legacy placement) the frame reconstruction origin + EdgeOffset AxisU + c AxisW,
+// which leaves a pair's / stack's member edge wherever AxisW follows the partner's chord.
+std::array<double, 3> OwnEdgePointAt(const ResponsePatchData &patch, double c)
+{
+  const auto &provenance = patch.provenance;
+  const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+  if (provenance.has_own_cell && c1 > c0)
+  {
+    const double fraction = (c - c0) / (c1 - c0);
+    std::array<double, 3> point{};
+    for (int d = 0; d < 3; d++)
+    {
+      point[d] = provenance.own_cell[0][d] +
+                 fraction * (provenance.own_cell[1][d] - provenance.own_cell[0][d]);
+    }
+    return point;
+  }
+  std::array<double, 3> point = patch.origin;
+  for (int d = 0; d < 3; d++)
+  {
+    point[d] += provenance.edge_offset * patch.axis_u[d] + c * patch.axis_w[d];
+  }
+  return point;
+}
+
+// The recorded pre-image follows a clip: the kept offsets [kept_lo, kept_hi] of the cell
+// map onto the recorded segment interval by the same affine rule.
 void ClipOwnCell(ResponsePatchData &patch, double kept_lo, double kept_hi)
 {
   auto &provenance = patch.provenance;
-  if (!provenance.has_own_cell)
+  if (!provenance.has_own_cell || patch.longitudinal_cell[1] <= patch.longitudinal_cell[0])
   {
     return;
   }
-  const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
-  if (c1 <= c0)
-  {
-    return;
-  }
-  const auto a = provenance.own_cell[0], b = provenance.own_cell[1];
-  for (int k = 0; k < 2; k++)
-  {
-    const double fraction = ((k == 0 ? kept_lo : kept_hi) - c0) / (c1 - c0);
-    for (int d = 0; d < 3; d++)
-    {
-      provenance.own_cell[k][d] = a[d] + fraction * (b[d] - a[d]);
-    }
-  }
+  const std::array<std::array<double, 3>, 2> clipped = {OwnEdgePointAt(patch, kept_lo),
+                                                        OwnEdgePointAt(patch, kept_hi)};
+  provenance.own_cell = clipped;
 }
 
 // Clip the longitudinal cell of a translational patch to the kept interval [kept_lo,
@@ -15345,7 +15361,9 @@ struct DomainResponseMatrices
 // last write time and the reading parameters (decision 538: the operator is rebuilt every
 // AMR cycle and read every model's files again - on the 316-edge loop-end coupon 460 MB
 // of surface tables per rank per cycle; the parsed matrices are identical by construction,
-// so the cache changes no output). A rewritten file (another size or time) is read anew.
+// so the cache changes no output). A rewritten file (another size or time) is read anew; a
+// same-size rewrite within the file system's time stamp granularity during one process is
+// not detected (the library's matrix files are immutable records; decision 545 MINOR-5).
 struct ResponseMatrixFileKey
 {
   std::string path;
@@ -17585,16 +17603,11 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       cell.stretch = key.second;
       cell.cell_length = cell_length;
       cell.owned_length = owned_length;
-      // The own-edge point at a cell offset (the cell line shifted by the edge offset).
-      auto OwnEdgePoint = [&](double c)
-      {
-        std::array<double, 3> point = patch.origin;
-        for (int d = 0; d < 3; d++)
-        {
-          point[d] += patch.provenance.edge_offset * patch.axis_u[d] + c * patch.axis_w[d];
-        }
-        return point;
-      };
+      // The own-edge point at a cell offset: the recorded pre-image on the own segment
+      // (decision 545 MAJOR-1: the parts attributed to a DomainBoundary spatial coupon are
+      // its raw claims, mapped like the cell itself), the frame reconstruction only without
+      // the record.
+      auto OwnEdgePoint = [&](double c) { return OwnEdgePointAt(patch, c); };
       if (inside.size() == 1)
       {
         cell.owners.push_back(supports[inside.front().support].patch);

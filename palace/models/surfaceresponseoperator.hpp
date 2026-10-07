@@ -1185,6 +1185,15 @@ void ClipLongitudinalCell(
     config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch, double kept_lo,
     double kept_hi);
 
+// The own-edge point of a translational patch at the cell offset c: the recorded pre-image
+// on the own segment (Provenance::own_cell) mapped linearly from the cell, the frame
+// reconstruction origin + EdgeOffset AxisU + c AxisW without the record (decisions 537 /
+// 545: the raw claims of a DomainBoundary cell and the parts of a cell attributed to a
+// DomainBoundary spatial coupon are built from it).
+std::array<double, 3>
+OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch,
+               double c);
+
 DomainBoundaryPortions CollectDomainBoundaryPortions(
     const DomainBoundaryExclusions &exclusions,
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>

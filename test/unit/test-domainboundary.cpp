@@ -23,8 +23,12 @@
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/materialoperator.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -1384,7 +1388,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       json stack = isolated;
       stack["Name"] = "stack-4edge-0.125";
       stack["Topology"] = "ParallelEdgeCluster";
-      stack["EdgeOffsetTolerance"] = 1.0e-6;
+      // 2e-3 (1e-2 R): the bent stack of the decision-545 section tilts its chords by up
+      // to 0.13 rad, so the sides' perpendicular offsets read 0.125 cos(theta) = 0.1240.
+      stack["EdgeOffsetTolerance"] = 2.0e-3;
       stack["Edges"] = {{{"Offset", 0.0}, {"GapDirection", -1}, {"Conductor", 1}},
                         {{"Offset", 0.125}, {"GapDirection", 1}, {"Conductor", 1}},
                         {{"Offset", 0.25}, {"GapDirection", -1}, {"Conductor", 2}},
@@ -2514,9 +2520,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       INFO("stack raw portions " << stack_raw_portions << ", length " << stack_raw_length);
       // On this fixture the stack's member edges are exactly parallel and its sides end
       // together, so the frame reconstruction of record coincides with the pre-image (the
-      // defect needs a skewed frame: the synthetic case "Domain-boundary raw claim of a
-      // pair / stack cell" below reproduces it); here the dry run's first-side cells
-      // confirm the two readings agree on a parallel stack.
+      // defect needs a skewed frame: the S-bent-stack section next reproduces it end to
+      // end, the synthetic case "Domain-boundary raw claim of a pair / stack cell" below at
+      // the production skew); here the dry run's first-side cells confirm the two readings
+      // agree on a parallel stack.
       const auto rows = ReadDryRun(temp.temp_dir / "mirror-pad-stack-half-dryrun" /
                                    "surface-response-patches.csv");
       double worst_frame_offset = 0.0;
@@ -2586,6 +2593,206 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                       .dump(2)
                << "\n";
       }
+    }
+  }
+
+  // Decision 545 MAJOR-2: the defect of record end to end. A BENT four-edge stack (the C2 /
+  // C3 / S1b class: a CPW stack meandering through sub-noise joints, its sides' chords
+  // staggered): t(x) with the slopes 0.13 / 0.10 / 0.07 / 0 on the quarter runs (kinks of
+  // 0.03 rad at x = 0.25 and 0.5, 0.07 at x = 0.75; one chain per edge, windowed bend
+  // radius 17.9 R). With its images at both walls the stack is a bent stack (no mirror
+  // placement: Unmerged at both planes), so EVERY cell of the matched stack (x in [0.275,
+  // 1]; the steeper piece next to x = 0 reads as Missing bent clusters, raw uncovered) is
+  // the configuration's own, DomainBoundary raw. The stack bends TOWARD its first side
+  // (slopes decreasing), so a first-side sample just past a joint has its far foot on the
+  // LAST side's PREVIOUS chord (the perpendicular foot onto it is nearer than onto the own
+  // chord's partner): AxisW follows that chord, skewed from the own segment by the kink.
+  // The frame reconstruction of record (origin + c AxisW, EdgeOffset 0 on the first side)
+  // then puts the cell's midpoint ON its segment (|c_mid| ~ 0.005 x 0.03 = 1.5e-4 < 1e-3
+  // R = 2e-4) and its ends OFF it (0.036 x 0.03 = 1.1e-3 > 2e-4): exactly the acceptance
+  // UncoveredEdgeIntervals (surfacepostoperator.cpp) refuses with "lies within the
+  // tolerance of a perimeter segment at its midpoint but not at its ends" - the J2 abort.
+  // (The first Gauss point after the x = 0.5 joint: the foot's shift 0.375 x 0.10 = 0.037
+  // exceeds its 0.026 from the joint; at x = 0.75 the previous slope 0.07 shifts the foot
+  // by 0.026, clamped at the joint, no stagger.) The solve passes with the pre-image
+  // claims; the OLD claims (the placement's frames from the dry run of the SAME case, the
+  // formula of record) are then handed to the real postprocessor
+  // (SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies on the fixture mesh) and
+  // refused with that message; the new claims (the solve's RawPortions) are accepted.
+  SECTION("S-bent-stack (decision 545): a bent four-edge stack oblique at the plane - the "
+          "frame claims of record abort the postprocessor, the pre-image claims pass")
+  {
+    const std::vector<PadRectangle> pads = {
+        {0.0, 0.5, 1.0, 1.0}, {0.0, 1.5, 1.0, 1.625}, {0.0, 1.75, 1.0, 1.875}};
+    const PadBend bend = {0.13, 0.13, 0.10, 0.10, 0.07, 0.07, 0.0, 0.0};
+    const std::string name = "mirror-pad-bent-stack-half";
+    const Energies half = Run(name, 0.0, false, "Natural", pads, 16, bend, 2);
+    // The claims, read from the case's records on every rank (the postprocessor call below
+    // is collective): the dry run's placement (frames and cells) and the solve's manifest
+    // (the identification segments, the DomainBoundary patches and raw portions).
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> frame_claims, record_claims;
+    double worst_frame_offset = 0.0, worst_frame_midpoint = 0.0, worst_record_offset = 0.0;
+    int stack_raw_portions = 0, skewed_cells = 0;
+    {
+      std::ifstream metadata_input(temp.temp_dir / name / "palace.json");
+      REQUIRE(metadata_input);
+      const json metadata = json::parse(metadata_input);
+      const json &exclusions =
+          metadata.at("SurfaceResponse").at("Diagnostics").at("DomainBoundaryExclusions");
+      std::ifstream manifest_input(temp.temp_dir / (name + "-dryrun") /
+                                   "requirements.json");
+      REQUIRE(manifest_input);
+      const json manifest = json::parse(manifest_input);
+      const json &segments = manifest.at("Identification").at("Segments");
+      const auto rows =
+          ReadDryRun(temp.temp_dir / (name + "-dryrun") / "surface-response-patches.csv");
+      auto Off = [&](int segment, const std::array<double, 3> &q)
+      {
+        const auto &key = segments.at(static_cast<std::size_t>(segment)).at("Key");
+        std::array<double, 3> a = key[0], b = key[1];
+        double ab2 = 0.0, t = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+          t += (q[d] - a[d]) * (b[d] - a[d]);
+        }
+        t = std::clamp(t / ab2, 0.0, 1.0);
+        double off2 = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          const double r = q[d] - (a[d] + t * (b[d] - a[d]));
+          off2 += r * r;
+        }
+        return std::sqrt(off2);
+      };
+      for (const auto &portion : exclusions.at("RawPortions").at("Portions"))
+      {
+        if (portion.at("Type") != "parallel-edge cluster")
+        {
+          continue;
+        }
+        const int segment = portion.at("Segment").get<int>();
+        REQUIRE(segment >= 0);
+        const std::array<double, 3> p0 = portion.at("P0"), p1 = portion.at("P1");
+        worst_record_offset =
+            std::max({worst_record_offset, Off(segment, p0), Off(segment, p1)});
+        record_claims.push_back({p0, p1, "parallel-edge cluster", portion.at("Feature")});
+        stack_raw_portions++;
+      }
+      for (const auto &patch : exclusions.at("Patches"))
+      {
+        if (patch.at("Topology") != "parallel-edge cluster")
+        {
+          continue;
+        }
+        const std::size_t index = patch.at("Patch").get<std::size_t>();
+        const auto row = std::find_if(rows.begin(), rows.end(),
+                                      [&](const DryRunRow &r) { return r.patch == index; });
+        REQUIRE(row != rows.end());
+        const int segment = patch.at("Segment").get<int>();
+        if (Off(segment, row->origin) > 1.0e-9)
+        {
+          continue;  // another side (EdgeOffset != 0): its frame claim needs the offset
+        }
+        std::array<double, 3> p0{}, p1{}, midpoint{};
+        for (int d = 0; d < 3; d++)
+        {
+          p0[d] = row->origin[d] + row->strip[0] * row->axis_w[d];
+          p1[d] = row->origin[d] + row->strip[1] * row->axis_w[d];
+          midpoint[d] = 0.5 * (p0[d] + p1[d]);
+        }
+        const double off = std::max(Off(segment, p0), Off(segment, p1));
+        worst_frame_offset = std::max(worst_frame_offset, off);
+        if (off > 1.0e-3 * R)
+        {
+          skewed_cells++;
+          worst_frame_midpoint = std::max(worst_frame_midpoint, Off(segment, midpoint));
+        }
+        frame_claims.push_back({p0, p1, "parallel-edge cluster", patch.at("Feature")});
+      }
+    }
+    INFO("stack raw portions " << stack_raw_portions << ", first-side frame claims "
+                               << frame_claims.size() << " of which skewed beyond 1e-3 R: "
+                               << skewed_cells << " (worst ends " << worst_frame_offset
+                               << ", their midpoints at most " << worst_frame_midpoint
+                               << "); record claims at most " << worst_record_offset
+                               << " off their segments");
+    // The solve passed the postprocessor's acceptance with the pre-image claims (the
+    // identity holds on its raw-kept DomainBoundary term); every record claim on its
+    // segment; the frame claims of the first side skewed beyond the tolerance with their
+    // midpoints inside it (the J2 configuration).
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(half);
+      CHECK(half.domain_boundary_ft > 0.0);
+    }
+    CHECK(stack_raw_portions > 0);
+    CHECK(worst_record_offset <= 1.0e-9);
+    CHECK(skewed_cells > 0);
+    CHECK(worst_frame_offset > 1.0e-3 * R);
+    CHECK(worst_frame_midpoint <= 1.0e-3 * R);
+    // The real postprocessor on the fixture mesh (the pad's interface 4 with its edge
+    // distance R, a smooth nonzero field): the frame claims of record are REFUSED by
+    // UncoveredEdgeIntervals, the pre-image claims accepted.
+    {
+      mfem::Mesh serial = MakeSerialMirrorPadMesh(0.0, false, pads, 16, bend);
+      Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
+      mfem::H1_FECollection h1(1, 3);
+      mfem::ND_FECollection nd(1, 3);
+      FiniteElementSpace h1_space(mesh, &h1), nd_space(mesh, &nd);
+      config::MaterialData material;
+      material.attributes = {1};
+      config::PeriodicBoundaryData periodic;
+      MaterialOperator materials({material}, periodic, ProblemType::ELECTROSTATIC, mesh);
+      GridFunction field(nd_space, false);
+      mfem::VectorFunctionCoefficient coefficient(3,
+                                                  [](const mfem::Vector &x, mfem::Vector &E)
+                                                  {
+                                                    E.SetSize(3);
+                                                    E = 0.0;
+                                                    E(1) = 1.0 + 0.5 * x(0) + 0.25 * x(2);
+                                                  });
+      field.Real().ProjectCoefficient(coefficient);
+      config::InterfaceDielectricData data;
+      data.attributes = {9};
+      data.type = InterfaceDielectric::MA;
+      data.t = 0.002;
+      data.epsilon_r = 4.0;
+      data.edge_attributes = {9};
+      data.edge_distances = {R};
+      config::BoundaryPostData postpro;
+      postpro.dielectric.emplace(4, data);
+      SurfacePostOperator surf_post_op(postpro, ProblemType::ELECTROSTATIC, materials,
+                                       h1_space, nd_space);
+      CHECK_THROWS_WITH(
+          surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, frame_claims),
+          Catch::Matchers::ContainsSubstring(
+              "lies within the tolerance of a perimeter segment at its midpoint but not "
+              "at its ends"));
+      const auto accepted = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+          {4}, field, nullptr, record_claims);
+      REQUIRE(accepted.size() == 1);
+      CHECK(accepted.at(4).energy > 0.0);
+      CHECK(accepted.at(4).by_type.count("parallel-edge cluster") == 1);
+    }
+    if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR");
+        debug_dir && Mpi::Root(Mpi::World()))
+    {
+      std::ofstream record(fs::path(debug_dir) / "symmetry-bent-stack.json");
+      record << json{{"Case", "bent-stack"},
+                     {"StackRawPortions", stack_raw_portions},
+                     {"FirstSideFrameClaims", frame_claims.size()},
+                     {"SkewedCells", skewed_cells},
+                     {"WorstFrameOffset", worst_frame_offset},
+                     {"WorstFrameMidpoint", worst_frame_midpoint},
+                     {"WorstRecordOffset", worst_record_offset},
+                     {"Tolerance", 1.0e-3 * R},
+                     {"HalfDomainBoundary", half.domain_boundary_ft},
+                     {"Ft", half.corrected[0]},
+                     {"Reasons",
+                      half.diagnostics.at("DomainBoundaryExclusions").at("Reasons")}}
+                    .dump(2)
+             << "\n";
     }
   }
 
@@ -2767,6 +2974,84 @@ TEST_CASE("Domain-boundary raw claim of a pair / stack cell lies on its own segm
     CHECK(both.portions.size() == 1);
     CHECK(both.duplicate_patches == 1);
     CHECK_THAT(both.length, WithinRel(portions.length, 1.0e-12));
+  }
+
+  SECTION(
+      "the part of a cell attributed to a spatial coupon maps like the cell (decision 545 "
+      "MAJOR-1): OwnEdgePointAt on the record vs the frame")
+  {
+    // ApplyContinuationOwnership attributes the owned part [removed_lo, removed_hi] of a
+    // cell to its owning spatial coupon through OwnEdgePointAt; a DomainBoundary coupon
+    // keeps those parts raw (CollectDomainBoundaryPortions). Without the record the frame
+    // reconstruction leaves the segment by the skew; with it the points lie on the segment
+    // and agree with the clip of the same offsets.
+    const double removed_lo = cell[0], removed_hi = cell[0] + 0.5;
+    patch.provenance.has_own_cell = false;
+    const auto frame_lo = OwnEdgePointAt(patch, removed_lo);
+    const auto frame_hi = OwnEdgePointAt(patch, removed_hi);
+    CHECK(Off(frame_lo) > tolerance);
+    CHECK_THAT(Off(frame_lo), WithinRel(0.9 * std::sin(skew), 1.0e-9));
+    CHECK(Off(frame_hi) > tolerance);
+    patch.provenance.has_own_cell = true;
+    const auto record_lo = OwnEdgePointAt(patch, removed_lo);
+    const auto record_hi = OwnEdgePointAt(patch, removed_hi);
+    CHECK(Off(record_lo) <= 1.0e-12);
+    CHECK(Off(record_hi) <= 1.0e-12);
+    // The attributed part's arc length is the offsets' length over the projection.
+    double length2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length2 += (record_hi[d] - record_lo[d]) * (record_hi[d] - record_lo[d]);
+    }
+    CHECK_THAT(std::sqrt(length2), WithinRel(0.5 / projection, 1.0e-12));
+    // The same affine rule as the clip: clipping the cell to [removed_lo, removed_hi]
+    // records exactly these two points.
+    auto clipped = patch;
+    ClipLongitudinalCell(clipped, removed_lo, removed_hi);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(clipped.provenance.own_cell[0][d], WithinAbs(record_lo[d], 1.0e-12));
+      CHECK_THAT(clipped.provenance.own_cell[1][d], WithinAbs(record_hi[d], 1.0e-12));
+    }
+  }
+
+  SECTION(
+      "the part of a cell attributed to a spatial coupon maps like the cell (decision 545 "
+      "MAJOR-1): OwnEdgePointAt on the record vs the frame")
+  {
+    // ApplyContinuationOwnership attributes the owned part [removed_lo, removed_hi] of a
+    // cell to its owning spatial coupon through OwnEdgePointAt; a DomainBoundary coupon
+    // keeps those parts raw (CollectDomainBoundaryPortions). Without the record the frame
+    // reconstruction leaves the segment by the skew; with it the points lie on the segment
+    // and agree with the clip of the same offsets.
+    const double removed_lo = cell[0], removed_hi = cell[0] + 0.5;
+    patch.provenance.has_own_cell = false;
+    const auto frame_lo = OwnEdgePointAt(patch, removed_lo);
+    const auto frame_hi = OwnEdgePointAt(patch, removed_hi);
+    CHECK(Off(frame_lo) > tolerance);
+    CHECK_THAT(Off(frame_lo), WithinRel(0.9 * std::sin(skew), 1.0e-9));
+    CHECK(Off(frame_hi) > tolerance);
+    patch.provenance.has_own_cell = true;
+    const auto record_lo = OwnEdgePointAt(patch, removed_lo);
+    const auto record_hi = OwnEdgePointAt(patch, removed_hi);
+    CHECK(Off(record_lo) <= 1.0e-12);
+    CHECK(Off(record_hi) <= 1.0e-12);
+    // The attributed part's arc length is the offsets' length over the projection.
+    double length2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length2 += (record_hi[d] - record_lo[d]) * (record_hi[d] - record_lo[d]);
+    }
+    CHECK_THAT(std::sqrt(length2), WithinRel(0.5 / projection, 1.0e-12));
+    // The same affine rule as the clip: clipping the cell to [removed_lo, removed_hi]
+    // records exactly these two points.
+    auto clipped = patch;
+    ClipLongitudinalCell(clipped, removed_lo, removed_hi);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(clipped.provenance.own_cell[0][d], WithinAbs(record_lo[d], 1.0e-12));
+      CHECK_THAT(clipped.provenance.own_cell[1][d], WithinAbs(record_hi[d], 1.0e-12));
+    }
   }
 
   SECTION("a cell whose segment runs against AxisW: the record follows the cell's offsets")
