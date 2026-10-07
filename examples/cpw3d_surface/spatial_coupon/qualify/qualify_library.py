@@ -63,7 +63,10 @@ Per passed coupon of the build record:
     job of the control + local-edge stages is planned on the Fixed node count, and at the
     fetch the stored reducer CSVs are copied byte-identically into this run's results
     (splice_reused_main) so the gate, the records and the library read the main stage exactly
-    as a fetched one; the main stage's cost is carried for information, not counted;
+    as a fetched one; the main stage's cost is carried for information, not counted.
+    USAGE RESTRICTION (decision 500, job_split.CONTROLS_ONLY_USAGE_RESTRICTION): no qualification
+    record of record from this mode until the modernised end-to-end test (the batch-1 S3p / S2p
+    replay against the decision-479 records) passes;
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
     nothing contacted); otherwise up to --max-jobs of the run's jobs are queued / running
     at once (each qsub under the user job cap, recorded and counted at submission): a
@@ -808,6 +811,7 @@ def load_reused_main(reuse_root, case_id, *, identity_sha256, run_config, trace_
             "StoredControls": (stored.get("Controls") or {}).get("Indices"),
             "StoredMainStageCost": (stored.get("Cost") or {}).get("MainStage"),
             "StoredJobNodeHours": (stored.get("Cost") or {}).get("JobNodeHours"),
+            "UsageRestriction": job_split.CONTROLS_ONLY_USAGE_RESTRICTION,
             "Rule": job_split.CONTROLS_ONLY_RULE}
 
 
@@ -1744,7 +1748,7 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         if record.get("ReusedMain"):
             model["ControlsOnlyRequalification"] = {
                 key: record["ReusedMain"][key] for key in ("Root", "Record", "MainPrefix", "Reducer", "StoredVerdict", "StoredControls",
-                                                             "ReusedStages", "SolvedStages", "Rule")}
+                                                             "ReusedStages", "SolvedStages", "UsageRestriction", "Rule")}
             model["ControlsOnlyRequalification"]["Controls"] = (record.get("Controls") or {}).get("Indices")
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
         if (record.get("Nodes") or {}).get("MultiNode"):

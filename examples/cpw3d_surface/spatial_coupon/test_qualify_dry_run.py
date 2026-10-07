@@ -418,6 +418,10 @@ class ReusedMainTest(unittest.TestCase):
         self.assertEqual((reused["StoredMainStageCost"], reused["StoredJobNodeHours"]), ({"NodeHours": 1.2}, 2.3))
         self.assertEqual(reused["Record"]["ToolCommit"], "7b95205da0")
         self.assertEqual(reused["Rule"], job_split.CONTROLS_ONLY_RULE)
+        # Decision 500: the mode carries its usage restriction until the modernised e2e test passes.
+        self.assertEqual(reused["UsageRestriction"], job_split.CONTROLS_ONLY_USAGE_RESTRICTION)
+        self.assertIn("decision 500", reused["UsageRestriction"])
+        self.assertIn("NO qualification record of record", reused["Rule"])
         # The splice: byte-identical copies in this run's results, re-hashed; the stored root untouched.
         results = self.tmp / "new" / "results"
         splice = qualify_library.splice_reused_main(results, reused)
