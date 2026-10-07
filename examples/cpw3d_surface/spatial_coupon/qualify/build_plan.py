@@ -68,10 +68,12 @@ FROZEN_BINARY_RULE = ("the frozen palace-archive-estimate-<sha256>.bin under the
 
 
 GIB = 1024 ** 3
-# Decision 466: the sentence every multi-node plan's Purpose and the library record of a
-# multi-node-qualified coupon carry (measured on the pair-5 fab coupon at 1 vs 2 nodes).
-MULTI_NODE_REDUCTION_NOTE = ("multi-node reduction: near-edge interface energies reproduce a one-node reduction to <= 4e-6 of the "
-                             "interface's largest entry (partition dependence, decision 466)")
+# Decisions 466 / 468: the sentence every multi-node plan's Purpose and the library record of a
+# multi-node-qualified coupon carry (measured on the pair-5 fab coupon at 1 vs 2 nodes on the
+# library's column Q_ij (J) of the whole-interface group: interface 4 7.1e-6 of its largest
+# entry, the MA per-Type sum 2.8e-6; decision 468 corrected the 466 figures taken on Q_total_ij).
+MULTI_NODE_REDUCTION_NOTE = ("multi-node reduction: near-edge interface energies reproduce a one-node reduction to <= 8e-6 of the "
+                             "interface's largest entry, per-Type sums <= 3e-6 (partition dependence, decisions 466 / 468)")
 
 
 def largest_node_gib(profile):
@@ -222,6 +224,7 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
                                 "FitsOneJob": estimate["FitsOneJob"], "Decision": estimate["Decision"]}}
     if int(nodes) > 1:
         plan.update(multi_node_fields(profile, nodes, instance))
+        plan["Purpose"] = f"{purpose}; {MULTI_NODE_REDUCTION_NOTE}"
     return plan
 
 

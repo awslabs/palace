@@ -33,7 +33,9 @@ LOOP_END_COUNTS = {"Vertices": 2162767, "Edges": 12359558, "TriangleFaces": 1737
 LOOP_END_SOURCES = 846
 # A NodeScaling calibration of the shape fit_node_scaling.py writes (synthetic values: the
 # measured block of cost-model.json is the record of truth; these exercise the arithmetic).
-NODE_SCALING = {"MeasuredNodes": 2,
+# MeasuredNodes 8 so the arithmetic tests exercise every node count of the cap (the credit cap
+# of decision 468 (4) has its own test).
+NODE_SCALING = {"MeasuredNodes": 8,
                 "Memory": {"Worker": {"ReplicatedFraction": 0.20}, "Reducer": {"ReplicatedFraction": 0.10},
                            "LocalEdge": {"ReplicatedFraction": 0.20}},
                 "Time": {"WorkerPerSource": {"Exponent": 0.8}, "WorkerNonSource": {"Exponent": 0.3},
@@ -295,8 +297,65 @@ class NodePlanTest(unittest.TestCase):
         same_scaled = estimate_stages.scale_to_nodes(estimate, same_assignment, self.model, self.wide)
         whole = build_plan.build_plan(**{**common, "estimate": same_scaled}, nodes=nodes["Main"])
         self.assertEqual((whole["Nodes"], whole["Ranks"]), (nodes["Main"], 192 * nodes["Main"]))
+        self.assertEqual(whole["Purpose"], f"test; {build_plan.MULTI_NODE_REDUCTION_NOTE}")   # decision 468 (2): the single-job path too
+        self.assertIn("<= 8e-6 of the interface's largest entry, per-Type sums <= 3e-6", build_plan.MULTI_NODE_REDUCTION_NOTE)
+        self.assertIn("decisions 466 / 468", build_plan.MULTI_NODE_REDUCTION_NOTE)
         self.assertEqual(whole["Instance"]["PerNodeUsedGiBEstimate"],
                          max(estimate_stages.stage_per_node_used_gib(stage) for stage in same_scaled["Stages"].values()))
+
+
+class SpeedupCreditTest(unittest.TestCase):
+    """Decision 468 (4): beyond the largest MEASURED node count the time estimate takes no further
+    speedup (the caps stay conservative); the memory model keeps the replicated-fraction law."""
+
+    def test_time_credit_stops_at_the_measured_node_count(self):
+        model = {**estimate_stages.load_cost_model(estimate_stages.DEVICE_COST_MODEL),
+                 "NodeScaling": {**json.loads(json.dumps(NODE_SCALING)), "MeasuredNodes": 2}}
+        self.assertEqual([estimate_stages.speedup_nodes(model, n) for n in (1, 2, 3, 4, 8)], [1, 2, 2, 2, 2])
+        two = estimate_stages.scaled_seconds(model, "WorkerPerSource", 100.0, 2)
+        self.assertAlmostEqual(two, 100.0 / 2 ** 0.8)
+        self.assertEqual(estimate_stages.scaled_seconds(model, "WorkerPerSource", 100.0, 4), two)
+        # Memory still divides by the real node count.
+        self.assertAlmostEqual(estimate_stages.per_node_used_gib(model, "Reducer", 1000.0, 4), 1000.0 * (0.1 + 0.9 / 4))
+        self.assertLess(estimate_stages.per_node_used_gib(model, "Reducer", 1000.0, 4), estimate_stages.per_node_used_gib(model, "Reducer", 1000.0, 2))
+        stage = {"Order": 4, "Sources": 10, "NodeUsedGiBEstimateWorker": 100.0, "NodeUsedGiBEstimateReducer": 100.0, "WorkerPalacePeakGBEstimate": 90.0,
+                 "ReducerPalacePeakGBEstimate": 90.0, "WorkerNonSourceSecondsEstimate": 100.0, "ReducerSecondsEstimate": 300.0,
+                 "ReducerSecondsEstimateParts": {"Setup": 100.0, "Evaluation": 100.0, "Gram": 100.0},
+                 "ByPCGFactor": {"1.0": {"MeanPCGIterations": 10, "PerSourceSecondsEstimate": 50.0, "WorkerSecondsEstimate": 600.0, "StageSecondsEstimate": 900.0}}}
+        at_four = estimate_stages.scale_stage_to_nodes(model, stage, 4)
+        at_two = estimate_stages.scale_stage_to_nodes(model, stage, 2)
+        self.assertEqual(at_four["SpeedupNodes"], 2)
+        self.assertEqual(at_four["ByPCGFactor"]["1.0"]["StageSecondsEstimate"], at_two["ByPCGFactor"]["1.0"]["StageSecondsEstimate"])
+        self.assertLess(at_four["PerNodeUsedGiBEstimateReducer"], at_two["PerNodeUsedGiBEstimateReducer"])
+        # The committed model measured 2 nodes: a 4-node stage is credited 2 nodes of speedup.
+        committed = estimate_stages.load_cost_model()
+        self.assertEqual(committed["NodeScaling"]["MeasuredNodes"], 2)
+        self.assertEqual(estimate_stages.speedup_nodes(committed, 4), 2)
+
+
+class JobNodeHoursTest(unittest.TestCase):
+    """Decision 468 (3): the coupon's node-hours sum every job at ITS node count; every stage is
+    charged the nodes of the job that ran it."""
+
+    def test_per_job_node_hours_and_stage_nodes(self):
+        import summarize_cost
+        jobs = [{"Name": "worker-1", "Nodes": 2, "StageNames": ["c-p5-control-worker", "c-p5-control-reducer", "c-p4-local-edge"]},
+                {"Name": "worker-2", "Nodes": 4, "StageNames": ["c-p4-worker-block2"]},
+                {"Name": "reducer", "Nodes": 4, "StageNames": ["c-p4-reducer"]}]
+        statuses = {"worker-1": {"TotalSeconds": 3600.0}, "worker-2": {"TotalSeconds": 1800.0}, "reducer": {"TotalSeconds": 900.0}}
+        per_job, total = summarize_cost.job_node_hours(statuses, jobs, 1)
+        self.assertEqual(per_job, {"worker-1": 2.0, "worker-2": 2.0, "reducer": 1.0})
+        self.assertEqual(total, 5.0)   # not 4 x (3600 + 1800 + 900) / 3600 = 7
+        nodes = summarize_cost.stage_nodes(jobs, 1)
+        self.assertEqual(nodes["c-p4-worker"], 4)   # the merged block worker takes its blocks' job count
+        self.assertEqual((nodes["c-p5-control-worker"], nodes["c-p4-local-edge"], nodes["c-p4-reducer"]), (2, 2, 4))
+        # One-node jobs without a Nodes key take the default.
+        per_job, total = summarize_cost.job_node_hours({"single": {"TotalSeconds": 7200.0}}, [{"Name": "single", "StageNames": []}], 1)
+        self.assertEqual((per_job, total), ({"single": 2.0}, 2.0))
+        # summarize charges the stages per their job's nodes.
+        status = {"TotalSeconds": 6300.0, "Stages": [{"Name": "c-p4-local-edge", "State": "complete", "WallSeconds": 360.0, "Parsed": {}}]}
+        summary = summarize_cost.summarize(status, full_sources=10, nodes=4, nodes_by_stage=nodes)
+        self.assertEqual(summary["Stages"]["c-p4-local-edge"]["NodeHours"], 0.2)   # 360 s x 2 nodes
 
 
 class RunnerMultiNodeTest(unittest.TestCase):
@@ -554,12 +613,16 @@ class LoopEndUnderMeasuredModelTest(unittest.TestCase):
         split = job_split.plan_split(indices=list(range(1, LOOP_END_SOURCES + 1)), layout=self.layout, estimate=scaled, policy=policy,
                                      model=self.model, profile=self.profile, nodes=nodes)
         self.assertTrue(split["Fits"])
-        self.assertEqual((split["N"], split["ControlsJob"]), (8, "separate"))
-        self.assertEqual([len(block) for block in split["Blocks"]], [0, 121, 121, 121, 121, 121, 121, 120])
-        self.assertEqual([job["Nodes"] for job in split["Jobs"]], [2, 4, 4, 4, 4, 4, 4, 4, 4])
+        # Decision 468 (4): the 4-node stages are credited the measured 2-node speedup only (the
+        # 4-node runs of the loop end are the measurement that extends the model).
+        self.assertEqual(scaled["Stages"]["p4-846"]["SpeedupNodes"], 2)
+        self.assertEqual((split["N"], split["ControlsJob"]), (10, "separate"))
+        self.assertEqual([len(block) for block in split["Blocks"]], [0] + [94] * 9)
+        self.assertEqual([job["Nodes"] for job in split["Jobs"]], [2] + [4] * 10)
         worst = split["WorstPCGFactor"]
-        self.assertLess(split["CriticalPathEstimateSeconds"][worst], 3 * 3600)
-        self.assertAlmostEqual(split["NodeSecondsEstimate"][worst] / 3600, 45.0, delta=1.0)
+        self.assertAlmostEqual(split["CriticalPathEstimateSeconds"][worst] / 60, 192.0, delta=1.0)
+        self.assertAlmostEqual(split["NodeSecondsEstimate"][worst] / 3600, 78.9, delta=0.5)
+        self.assertAlmostEqual(split["NodeSecondsEstimate"]["1.0"] / 3600, 57.0, delta=1.5)
         # The profile cap binds: at MaximumNodesPerJob 3 the main stage fails closed.
         tight = estimate_stages.estimate(LOOP_END_COUNTS, [("p4-846", 4, LOOP_END_SOURCES)], model=self.model,
                                          profile={**self.profile, "MaximumNodesPerJob": 3})

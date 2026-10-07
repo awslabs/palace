@@ -11,6 +11,10 @@ traces pinned, caps from the dense-twin cost model - on the minimum node count w
 per-node peak fits an instance's admission guard (estimate_stages NodeScaling, the ordinary
 stage's LocalEdge kind), with the job script of build_plan (select = N, hostfile mpirun).
 
+The first live run of this planner is the loop end's fab p5 twin (decision 468 (6)): it is a
+MEASUREMENT whose per-node peaks and scaling are recorded back into the models before any
+further dense twin is planned on more nodes than measured.
+
 The dense-twin cost model (dense-twin-model.json, `calibrate`): per order the LARGEST
 measured Palace peak per million H1 and the solve seconds per million H1 per trace / the
 non-solve seconds per million H1 of the measured dense-twin runs (the pair-5 fab / thin twins
@@ -162,7 +166,7 @@ def plan_dense_twins(*, dense_dir, runs, counts, binary_sha256, remote_root, job
     plan = {"Version": build_plan.PLAN_VERSION, "Case": case_id or traces_record.get("Model"), "Job": "dense-twins", "JobKind": "dense-twin",
             "Purpose": (f"decision 457 (4): the (F) dense twins {list(runs)} of {dense_dir} as ONE Palace job on {job_nodes} node(s) "
                         f"({instance['Type']}); {STAGE_RULE}"),
-            "Ranks": profile["Ranks"], "DeadlineSeconds": min(profile["DeadlineSeconds"], walltime - 900),
+            "Ranks": profile["Ranks"], "DeadlineSeconds": min(profile["DeadlineSeconds"], walltime - (profile["WalltimeSeconds"] - profile["DeadlineSeconds"])),
             "DeadlineMarginSeconds": profile["DeadlineMarginSeconds"],
             "Instance": instance, "MinimumMemAvailableBytes": instance["MinimumMemAvailableBytes"],
             "Binary": f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}", "BinarySHA256": binary_sha256,

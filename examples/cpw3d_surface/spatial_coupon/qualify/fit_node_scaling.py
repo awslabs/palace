@@ -92,11 +92,11 @@ def exponent(speedup):
     return math.log2(speedup) if speedup > 0 else None
 
 
-PALACE_GB_PER_GIB = 1.0737   # the cost model's PalaceGBPerGiB (Palace prints GB as 1e9 bytes)
-
-
 def fit(one_node_statuses, two_node_status, *, ordinary_one_node_log=None, ordinary_two_node_stage=None,
-        palace_gb_per_gib=PALACE_GB_PER_GIB):
+        palace_gb_per_gib=None):
+    """`palace_gb_per_gib` = the cost model's PalaceGBPerGiB (read from cost-model.json when None)."""
+    if palace_gb_per_gib is None:
+        palace_gb_per_gib = float(json.loads((HERE / "cost-model.json").read_text())["PalaceGBPerGiB"])
     one = stage_index(one_node_statuses)
     two = stage_index([two_node_status])
     nodes_two = int(two_node_status.get("Nodes") and len(two_node_status["Nodes"]) or 2)

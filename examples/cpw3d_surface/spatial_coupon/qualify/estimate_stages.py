@@ -257,7 +257,8 @@ NODE_SCALING_RULE = ("cost-model NodeScaling (measured at 1 and 2 nodes on one s
                      "GiB at N nodes = the one-node figure x (ReplicatedFraction + (1 - ReplicatedFraction) / N) per stage kind "
                      "(Worker / Reducer / LocalEdge); every time part scales as T(1) / N^Exponent with the exponent = log2 of the "
                      "measured 1 -> 2 node speedup of that part (WorkerPerSource, WorkerNonSource, ReducerSetup, ReducerReduction, "
-                     "LocalEdge), never above 1; a stage fits N nodes when its largest per-node figure is <= MemoryFitFraction x "
+                     "LocalEdge), never above 1, and N credited only up to the largest MEASURED node count (MeasuredNodes; decision "
+                     "468 (4): no further speedup beyond it until a run at that count is recorded); a stage fits N nodes when its largest per-node figure is <= MemoryFitFraction x "
                      "MemoryGiB of an instance x (1 - PerNodeGuardMargin) (decision 463; the admission guard MinimumMemAvailableBytes "
                      "is checked on every node); NodesRequired is "
                      "the minimum such N in 2..MaximumNodesPerJob (1 when the one-node rules of record admit the stage); a stage "
@@ -309,8 +310,19 @@ def time_exponent(model, part):
     return min(float(scaling["Time"][part]["Exponent"]), 1.0)
 
 
+def speedup_nodes(model, nodes):
+    """The node count the time scaling is credited for (decision 468 (4)): never above the
+    largest MEASURED node count of the NodeScaling calibration - beyond it no further speedup
+    is taken until a run at that count is recorded, so the caps stay conservative (the memory
+    model keeps the replicated-fraction law; the live per-node guard is the backstop)."""
+    scaling = model.get("NodeScaling") or {}
+    measured = int(scaling.get("MeasuredNodes", 1))
+    return min(int(nodes), max(measured, 1))
+
+
 def scaled_seconds(model, part, seconds_one, nodes):
-    return float(seconds_one) if int(nodes) == 1 else float(seconds_one) / float(nodes) ** time_exponent(model, part)
+    credited = speedup_nodes(model, nodes)
+    return float(seconds_one) if credited == 1 else float(seconds_one) / float(credited) ** time_exponent(model, part)
 
 
 def select_instance_for_nodes(profile, per_node_gib, nodes, margin=DEFAULT_PER_NODE_GUARD_MARGIN):
@@ -405,6 +417,7 @@ def scale_stage_to_nodes(model, stage, nodes):
     if nodes == 1:
         return scaled
     scaled["OneNode"] = {key: stage[key] for key in stage if key not in ("NodePlan",)}
+    scaled["SpeedupNodes"] = speedup_nodes(model, nodes)
     if "NodeUsedGiBEstimateWorker" in stage:
         parts = stage["ReducerSecondsEstimateParts"]
         setup = scaled_seconds(model, "ReducerSetup", parts["Setup"], nodes)

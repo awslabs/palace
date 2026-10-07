@@ -1002,7 +1002,11 @@ def refit_measured(qualification_paths, *, previous_path, previous_kept, referen
         "PreflightSeconds": (f"{MEASURED_PREFLIGHT_SECONDS}: the measured preflight (mesh + trace digests, node checks) is "
                              f"{round(max(job['ActualSeconds'] - sum(stage['WallSeconds'] for stage in job['Stages']) for m in measurements for job in m['Jobs'].values() if job.get('ActualSeconds') and job['Stages']), 1)} s "
                              f"at most on 4.7-9 M-element coupons; previous {previous['PreflightSeconds']}"),
-        "MeasuredOverheads": statistics(overheads)}
+        "MeasuredOverheads": statistics(overheads),
+        "CapMargin": ("decision 468 (5): the CapCheck minimum margin (new cap / measured wall) is the CAP's margin - CapSeconds = 2 x the "
+                      "estimate at the largest PCG factor - not the estimate's: the per-stage SafetyFactor is the largest in-sample residual, "
+                      "so at the stage that sets it the estimate at the largest PCG factor is only ~(largest factor) x the measured wall and "
+                      "the job-fit check rests on PreflightAndMarginFactor + PreflightSeconds")}
     model["ReducerEvaluationFractionRule"] = (previous["ReducerEvaluationFractionRule"].split(" KEPT by")[0]
                                              + f" KEPT by the {label} refit: one block size ({block_size}) cannot separate the "
                                              "evaluation and Gram parts")

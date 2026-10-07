@@ -151,7 +151,29 @@ def _memory_bytes(text):
     return float(text)
 
 
-def summarize(status, *, full_sources, nodes, block_size=DEFAULT_BLOCK_SIZE):
+def job_node_hours(statuses, jobs, default_nodes=1):
+    """Per job its runner total x ITS node count (decision 468 (3)): {job name: node-hours}
+    and the coupon's sum; `jobs` = the driver's job records (Name, Nodes), `statuses` = job
+    name -> run_stages status."""
+    per_job = {job["Name"]: (statuses[job["Name"]].get("TotalSeconds") or 0.0) * job.get("Nodes", default_nodes) / 3600.0 for job in jobs}
+    return per_job, sum(per_job.values())
+
+
+def stage_nodes(jobs, default_nodes=1):
+    """Stage name -> the node count of the job that ran it (a merged block worker
+    <prefix>-worker takes its blocks' job count)."""
+    nodes_by_stage = {name: job.get("Nodes", default_nodes) for job in jobs for name in job["StageNames"]}
+    for job in jobs:
+        for name in job["StageNames"]:
+            if "-worker-block" in name:
+                nodes_by_stage[name.split("-worker-block")[0] + "-worker"] = job.get("Nodes", default_nodes)
+    return nodes_by_stage
+
+
+def summarize(status, *, full_sources, nodes, block_size=DEFAULT_BLOCK_SIZE, nodes_by_stage=None):
+    """`nodes_by_stage` = stage name -> the node count of the job that ran it (a multi-node
+    coupon, decision 468 (3)); `nodes` is the default for stages not in it."""
+    nodes_by_stage = nodes_by_stage or {}
     stages = {stage["Name"]: stage for stage in status["Stages"]}
     summary = {"PBSJobID": status.get("PBSJobID"), "Host": status.get("Host"), "StartUTC": status.get("StartUTC"),
                "EndUTC": status.get("EndUTC"), "JobTotalSeconds": status.get("TotalSeconds"), "Nodes": nodes,
@@ -162,13 +184,14 @@ def summarize(status, *, full_sources, nodes, block_size=DEFAULT_BLOCK_SIZE):
         summary["JobTotalSecondsRule"] = "the sum of the split jobs' runner totals (node seconds); per job under Jobs"
     for prefix in sorted({name[:-len("-worker")] for name in stages if name.endswith("-worker")}):
         if all(stages.get(f"{prefix}-{kind}", {}).get("State") == "complete" for kind in ("worker", "reducer")):
-            summary["Stages"][prefix] = stage_cost(stages, prefix, full_sources=full_sources, nodes=nodes, block_size=block_size)
+            summary["Stages"][prefix] = stage_cost(stages, prefix, full_sources=full_sources,
+                                                   nodes=nodes_by_stage.get(f"{prefix}-worker", nodes), block_size=block_size)
         else:
             summary["Stages"][prefix] = {"State": {kind: stages.get(f"{prefix}-{kind}", {}).get("State") for kind in ("worker", "reducer")}}
     for name, stage in stages.items():
         if not name.endswith(("-worker", "-reducer")):
             summary["Stages"][name] = {"State": stage.get("State"), "WallSeconds": stage.get("WallSeconds"),
-                                       "NodeHours": (stage.get("WallSeconds") or 0.0) * nodes / 3600.0,
+                                       "NodeHours": (stage.get("WallSeconds") or 0.0) * nodes_by_stage.get(name, nodes) / 3600.0,
                                        "H1": stage.get("Parsed", {}).get("H1"), "PCG": stage.get("Parsed", {}).get("PCG"),
                                        "PalacePeakTotal": stage.get("Parsed", {}).get("PalacePeakMemory", {}).get("Total")}
     return summary

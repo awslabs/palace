@@ -1053,8 +1053,12 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         job["Name"]: json.loads((results / "main" / Path(job["RemoteDirectory"]).relative_to(record["Remote"]["Case"] + "/main")
                                  / "status.json").read_text()) for job in jobs}
     status = statuses["single"] if len(jobs) == 1 and jobs[0]["Kind"] == "single" else summarize_cost.merge_split_statuses(statuses, jobs)
-    main_job_nodes = max(job.get("Nodes", profile["Nodes"]) for job in jobs)
-    cost = summarize_cost.summarize(status, full_sources=len(context["sources"]), nodes=main_job_nodes)
+    # Node-hours per job at ITS node count (decision 468 (3)): the coupon's JobNodeHours is the
+    # sum over the jobs, every stage charged the nodes of the job that ran it.
+    nodes_by_stage = summarize_cost.stage_nodes(jobs, profile["Nodes"])
+    per_job_node_hours, job_node_hours = summarize_cost.job_node_hours(statuses, jobs, profile["Nodes"])
+    cost = summarize_cost.summarize(status, full_sources=len(context["sources"]), nodes=max(nodes_by_stage.values()),
+                                    nodes_by_stage=nodes_by_stage)
     worst = record["Split"]["WorstPCGFactor"]
     cost["Jobs"] = {job["Name"]: {"Kind": job["Kind"], "Block": job["Block"], "SourceCount": len(job["Sources"]),
                                   "PBSJobID": (job.get("Submission") or {}).get("Job"),
@@ -1064,10 +1068,12 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                                   "ActualOverEstimate": ((statuses[job["Name"]].get("TotalSeconds") or 0.0) / job["Estimate"][worst]
                                                          if job["Estimate"][worst] else None),
                                   "Nodes": job.get("Nodes", profile["Nodes"]), "Ranks": job.get("Ranks", profile["Ranks"]),
-                                  "NodeHours": (statuses[job["Name"]].get("TotalSeconds") or 0.0) * job.get("Nodes", profile["Nodes"]) / 3600.0,
+                                  "NodeHours": per_job_node_hours[job["Name"]],
                                   "StartUTC": statuses[job["Name"]].get("StartUTC"), "EndUTC": statuses[job["Name"]].get("EndUTC"),
                                   "Host": statuses[job["Name"]].get("Host")}
                     for job in jobs}
+    cost["JobNodeHours"] = job_node_hours
+    cost["JobNodeHoursRule"] = "the sum over the coupon's jobs of their runner total x their own node count (decision 468 (3))"
     submitted = [job["SubmittedAt"] for job in jobs if job.get("SubmittedAt")]
     cost["CriticalPathSeconds"] = (record["FetchedAt"] - min(submitted)) if submitted and record.get("FetchedAt") else None
     cost["CriticalPathRule"] = ("first submission of the coupon's jobs to its fetch (a split coupon: the worker jobs in "

@@ -40,7 +40,8 @@
       "Median": 1.0004134534509037,
       "Mean": 1.001791100902681,
       "Max": 1.0070019896737499
-    }
+    },
+    "CapMargin": "decision 468 (5): the CapCheck minimum margin (new cap / measured wall) is the CAP's margin - CapSeconds = 2 x the estimate at the largest PCG factor - not the estimate's: the per-stage SafetyFactor is the largest in-sample residual, so at the stage that sets it the estimate at the largest PCG factor is only ~(largest factor) x the measured wall and the job-fit check rests on PreflightAndMarginFactor + PreflightSeconds"
   },
   "ReducerPeakStreaming": {
     "Executable": [
