@@ -50,6 +50,9 @@ struct UncoveredSpatialSupportClip
   int segment = -1;
   std::size_t spatial_patch = 0;
   double length = 0.0;  // removed from the portion by this box
+  // The removed piece's ends (mesh units): the F-DB-a footprint of the box's coupon when
+  // that coupon is a DomainBoundary exclusion (DESIGN 2.1).
+  std::array<double, 3> p0{}, p1{};
 };
 struct UncoveredSpatialSupportClipping
 {
@@ -59,6 +62,22 @@ struct UncoveredSpatialSupportClipping
   int split_portions = 0;    // portions whose kept part is two pieces (a box crossed)
   double removed_length = 0.0;
   std::map<int, double> removed_by_feature;  // feature id -> removed length
+};
+
+// F-DB-a (decisions 442 / 454, DESIGN 2.1): the raw claims of the DomainBoundary-excluded
+// patches as perimeter portions (see CollectDomainBoundaryPortions).
+struct DomainBoundaryPortions
+{
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      portions;
+  // Per portion (parallel): the excluded patches it came from (ascending; two for a
+  // deduplicated first-order split cell).
+  std::vector<std::vector<std::size_t>> patches;
+  // Per portion (parallel): a translational own-edge interval (a geometric cell).
+  std::vector<bool> translational;
+  int geometric_cells = 0;    // translational own-edge intervals, split patches once
+  int duplicate_patches = 0;  // excluded patches folded into an existing interval
+  double length = 0.0;        // mesh units, over all portions
 };
 
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
@@ -403,6 +422,8 @@ private:
   // The placement's clip of those portions by the matched clusters' support boxes
   // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
+  // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
+  DomainBoundaryPortions domain_boundary_portions;
   long long int candidate_query_count = 0;
   long long int fallback_query_count = 0;
   long long int point_send_peer_count = 0;
@@ -627,6 +648,19 @@ public:
   {
     return uncovered_spatial_support_clipping;
   }
+  // The raw claims of the DomainBoundary-excluded patches (F-DB-a, decisions 442 / 454;
+  // empty when nothing is excluded): kept in the corrected interface energies like the
+  // uncovered requirements and reported as the DomainBoundary share.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetDomainBoundaryPortions() const
+  {
+    return domain_boundary_portions.portions;
+  }
+  const DomainBoundaryPortions &GetDomainBoundaryPortionRecord() const
+  {
+    return domain_boundary_portions;
+  }
 
   int GetBasisSize() const { return global_basis_size; }
   int GetPatchCount() const { return global_patch_count; }
@@ -833,6 +867,10 @@ struct ContinuationOwnership
     double owned_length = 0.0;  // removed from the cell (once, whatever the owner count)
     std::vector<std::size_t> owners;  // spatial patches, ascending
     std::vector<double> attributed;   // owned length per owner (midpoint rule)
+    // The owned part attributed to each owner as an own-edge sub-segment (the cell line
+    // shifted by the provenance edge offset; mesh units, parallel to `owners`): the F-DB-a
+    // footprint of an owner that is a DomainBoundary exclusion (DESIGN 2.1).
+    std::vector<std::array<std::array<double, 3>, 2>> attributed_intervals;
   };
   std::vector<Cell> cells;  // in patch order
   // Owned length per (feature, stretch, spatial patch) and per spatial patch.
@@ -1028,6 +1066,33 @@ nlohmann::json DescribeDomainBoundaryExclusions(
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     double coordinate_scale);
 std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnostics);
+
+// F-DB-a (decisions 442 / 454, DESIGN 2.1): NEVER DROP. The raw claim of every
+// DomainBoundary-excluded patch as perimeter portions whose within-R raw energy the
+// electrostatic driver keeps in the corrected interface energies exactly as the uncovered
+// requirements' (decision 394 F2), reported per type as the DomainBoundary share. The claim
+// of a translational cell is its OWN-EDGE interval (the clipped cell shifted by the
+// provenance edge offset along AxisU: a pair's two sides and a stack's n sides are n
+// intervals); the co-located first-order split patches of one cell (model weights summing
+// to 1) map to ONE interval, deduplicated within the signature tolerance and counted once.
+// The claim of a vertex coupon is its provenance raw_claims (the arms' R windows and a
+// trimmed second arm's [R, s)); the claim of a spatial cluster coupon is its claims plus
+// the parts its box removed from others: the continuation-owned cell parts attributed to it
+// and the uncovered portions clipped by its box. Overlaps are excluded by construction (a
+// DB cell is a kept part outside every matched box; a vertex claim ends where the arm cells
+// start). Portions in mesh units; `types` names each portion's type (the model topology).
+DomainBoundaryPortions CollectDomainBoundaryPortions(
+    const DomainBoundaryExclusions &exclusions,
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius);
+
+// The Diagnostics entry of the raw portions (count, geometric cells, duplicates, length,
+// per type and per feature, the portion list; mesh units scaled by coordinate_scale).
+nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &portions,
+                                              double coordinate_scale);
 
 }  // namespace palace
 

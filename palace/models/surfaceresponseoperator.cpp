@@ -8841,6 +8841,67 @@ std::array<double, 2> LongitudinalCellOffsets(const std::array<double, 2> &unit_
   return {std::min(begin, end), std::max(begin, end)};
 }
 
+// The within-R raw footprint of every vertex coupon (corner / junction / endpoint patch) as
+// perimeter sub-segments (F-DB-a, DESIGN 2.1): the feature's claimed portions (R along each
+// arm, as the identification cut them) and, for a corner trimmed by ApplyCornerArmTrim, the
+// second arm's [R, s) that the arm cells lost to the coupon. Kept in the patch provenance
+// so that a DomainBoundary-excluded vertex coupon keeps exactly this region's raw energy.
+void FillVertexRawClaims(
+    const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
+    const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims, double R)
+{
+  constexpr double pi = 3.14159265358979323846;
+  std::map<int, const IdentifiedFeature *> features;
+  for (const auto &feature : identification.features)
+  {
+    features.emplace(feature.id, &feature);
+  }
+  for (auto &patch : patches)
+  {
+    auto &provenance = patch.provenance;
+    const bool vertex_patch = provenance.coupon_depth == 0.0 && provenance.claims.empty() &&
+                              provenance.stretch < 0 && !provenance.has_support_box;
+    if (!vertex_patch)
+    {
+      continue;
+    }
+    provenance.raw_claims.clear();
+    const auto feature_it = features.find(provenance.feature);
+    if (feature_it == features.end())
+    {
+      continue;
+    }
+    const auto &feature = *feature_it->second;
+    for (const auto &portion : feature.portions)
+    {
+      if (portion.s1 <= portion.s0)
+      {
+        continue;
+      }
+      const auto &segment = identification.segments[portion.segment];
+      auto SegmentPoint = [&](double s)
+      {
+        const double fraction = segment.length > 0.0 ? s / segment.length : 0.0;
+        return Add(segment.key[0],
+                   Scale(fraction, Subtract(segment.key[1], segment.key[0])));
+      };
+      provenance.raw_claims.push_back({static_cast<int>(portion.segment),
+                                       SegmentPoint(portion.s0), SegmentPoint(portion.s1)});
+    }
+    const auto trim = std::find_if(trims.begin(), trims.end(), [&](const auto &record)
+                                   { return record.feature == feature.id; });
+    if (trim != trims.end() && trim->trimmed_length > 0.0)
+    {
+      const double theta = trim->angle_degrees * pi / 180.0;
+      const Point3D arm = Normalize(Add(Scale(std::cos(theta), feature.axes[0]),
+                                        Scale(std::sin(theta), feature.axes[1])));
+      provenance.raw_claims.push_back(
+          {-1, Add(feature.origin, Scale(R, arm)),
+           Add(feature.origin, Scale(trim->exit_distance_over_radius * R, arm))});
+    }
+  }
+}
+
 FeaturePatchSummary BuildFeaturePatches(
     const ProcessLibrary &library, const IdentificationResult &identification,
     const std::vector<EdgeSegment3D> &framed_segments,
@@ -9727,6 +9788,9 @@ FeaturePatchSummary BuildFeaturePatches(
   // square.
   result.corner_arm_trims =
       ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R);
+  // The within-R raw footprint of every vertex coupon (F-DB-a, DESIGN 2.1): the feature's
+  // claimed portions and a trimmed corner's second-arm stretch [R, s).
+  FillVertexRawClaims(identification, result.patches, result.corner_arm_trims, R);
   return summary;
 }
 
@@ -15523,6 +15587,12 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
     {
       claims.push_back({{"Segment", claim.segment}, {"P0", claim.p0}, {"P1", claim.p1}});
     }
+    nlohmann::json raw_claims = nlohmann::json::array();
+    for (const auto &claim : patch.provenance.raw_claims)
+    {
+      raw_claims.push_back(
+          {{"Segment", claim.segment}, {"P0", claim.p0}, {"P1", claim.p1}});
+    }
     nlohmann::json support_box = nullptr;
     if (patch.provenance.has_support_box)
     {
@@ -15545,7 +15615,8 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"Segment", patch.provenance.segment},
                        {"Stretch", patch.provenance.stretch},
                        {"EdgeOffset", patch.provenance.edge_offset},
-                       {"Claims", claims}});
+                       {"Claims", claims},
+                       {"RawClaims", raw_claims}});
   }
   if (path.has_parent_path())
   {
@@ -15554,7 +15625,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 10},
+  nlohmann::json cache = {{"Version", 11},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -15630,7 +15701,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 10,
+      data.value("Version", 0) == 11,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
           << " (version 10 carries the feature, mesh segment, chain stretch and own-edge "
@@ -15757,6 +15828,11 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     for (const auto &claim : entry.at("Claims"))
     {
       patch.provenance.claims.push_back(
+          {claim.at("Segment"), claim.at("P0"), claim.at("P1")});
+    }
+    for (const auto &claim : entry.value("RawClaims", nlohmann::json::array()))
+    {
+      patch.provenance.raw_claims.push_back(
           {claim.at("Segment"), claim.at("P0"), claim.at("P1")});
     }
     if (const auto box = entry.find("SupportBox"); box != entry.end() && !box->is_null())
@@ -16031,6 +16107,12 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         patches.matching_radius, {});
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
+    // F-DB-a (decisions 442 / 454): the excluded patches' raw claims, never dropped; the
+    // preflight records what the operator will keep.
+    diagnostics["DomainBoundaryExclusions"]["RawPortions"] = DescribeDomainBoundaryPortions(
+        CollectDomainBoundaryPortions(exclusions, patches.patches, patches, ownership,
+                                      uncovered_clipping, patches.matching_radius),
+        coordinate_scale);
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).
     diagnostics["CornerArmTrim"]["ExcludedCoupons"] = DescribeCornerArmTrimExcludedCoupons(
         patches.corner_arm_trims, patches,
@@ -16815,10 +16897,22 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       cell.stretch = key.second;
       cell.cell_length = cell_length;
       cell.owned_length = owned_length;
+      // The own-edge point at a cell offset (the cell line shifted by the edge offset).
+      auto OwnEdgePoint = [&](double c)
+      {
+        std::array<double, 3> point = patch.origin;
+        for (int d = 0; d < 3; d++)
+        {
+          point[d] += patch.provenance.edge_offset * patch.axis_u[d] + c * patch.axis_w[d];
+        }
+        return point;
+      };
       if (inside.size() == 1)
       {
         cell.owners.push_back(supports[inside.front().support].patch);
         cell.attributed.push_back(owned_length);
+        cell.attributed_intervals.push_back(
+            {OwnEdgePoint(removed_lo), OwnEdgePoint(removed_lo + owned_length)});
       }
       else
       {
@@ -16836,14 +16930,18 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
         }
         cuts.push_back(removed_hi);
         std::vector<double> share(inside.size(), 0.0);
+        std::vector<std::array<double, 2>> share_interval(inside.size(), {0.0, 0.0});
         for (std::size_t i = 0; i < claim_ends.size(); i++)
         {
           share[claim_ends[i].second] = std::max(0.0, cuts[i + 1] - cuts[i]);
+          share_interval[claim_ends[i].second] = {cuts[i], std::max(cuts[i], cuts[i + 1])};
         }
         for (std::size_t i = 0; i < inside.size(); i++)
         {
           cell.owners.push_back(supports[inside[i].support].patch);
           cell.attributed.push_back(share[i]);
+          cell.attributed_intervals.push_back(
+              {OwnEdgePoint(share_interval[i][0]), OwnEdgePoint(share_interval[i][1])});
         }
         ownership.shared_cells++;
         ownership.shared_length += owned_length;
@@ -17010,6 +17108,8 @@ UncoveredSpatialSupportClipping ClipUncoveredPortionsBySpatialSupport(
       clip.segment = portion.segment;
       clip.spatial_patch = spatial_patch;
       clip.length = interval[1] - interval[0];
+      clip.p0 = Add(portion.p0, Scale(interval[0], direction));
+      clip.p1 = Add(portion.p0, Scale(interval[1], direction));
       clipping.clips.push_back(std::move(clip));
       if (!removed.empty() && interval[0] <= removed.back()[1] + 1.0e-12 * scale)
       {
@@ -18150,6 +18250,175 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
       diagnostics["TestedPatches"].get<long long int>(),
       diagnostics["TestedPoints"].get<long long int>(),
       diagnostics["WallTime"].get<double>(), lines);
+}
+
+DomainBoundaryPortions CollectDomainBoundaryPortions(
+    const DomainBoundaryExclusions &exclusions,
+    const std::vector<ResponsePatchData> &patches, const ResponseCorrectionData &config,
+    const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius)
+{
+  DomainBoundaryPortions result;
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  auto SameInterval = [&](const ResponseCorrectionData::UncoveredPortionData &a,
+                          const Point3D &p0, const Point3D &p1)
+  {
+    return (Norm(Subtract(a.p0, p0)) <= tolerance &&
+            Norm(Subtract(a.p1, p1)) <= tolerance) ||
+           (Norm(Subtract(a.p0, p1)) <= tolerance && Norm(Subtract(a.p1, p0)) <= tolerance);
+  };
+  auto Append = [&](std::size_t patch_idx, int feature, const std::string &topology,
+                    int segment, const Point3D &p0, const Point3D &p1, bool translational)
+  {
+    const double length = Norm(Subtract(p1, p0));
+    if (length <= tolerance)
+    {
+      return;
+    }
+    for (std::size_t i = 0; i < result.portions.size(); i++)
+    {
+      if (result.portions[i].feature == feature && SameInterval(result.portions[i], p0, p1))
+      {
+        // A co-located first-order split patch (isolated-edge + curvature blend) of the
+        // same cell: one interval, counted once.
+        result.patches[i].push_back(patch_idx);
+        result.duplicate_patches++;
+        return;
+      }
+    }
+    result.portions.push_back({feature, topology, segment, p0, p1});
+    result.patches.push_back({patch_idx});
+    result.translational.push_back(translational);
+    result.length += length;
+    if (translational)
+    {
+      result.geometric_cells++;
+    }
+  };
+  for (const auto &exclusion : exclusions.patches)
+  {
+    const auto &patch = patches[exclusion.patch];
+    const auto &provenance = patch.provenance;
+    const std::string &topology = models.at(patch.model)->topology;
+    const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+    if (provenance.coupon_depth > 0.0 && c1 > c0)
+    {
+      // A translational cell: its own-edge interval.
+      std::array<Point3D, 2> ends;
+      for (int k = 0; k < 2; k++)
+      {
+        ends[k] = patch.origin;
+        for (int d = 0; d < 3; d++)
+        {
+          ends[k][d] += provenance.edge_offset * patch.axis_u[d] +
+                        (k == 0 ? c0 : c1) * patch.axis_w[d];
+        }
+      }
+      Append(exclusion.patch, provenance.feature, topology, provenance.segment, ends[0],
+             ends[1], true);
+      continue;
+    }
+    if (!provenance.claims.empty() || provenance.has_support_box)
+    {
+      // A spatial cluster coupon: its claims, the continuation-owned cell parts attributed
+      // to it and the uncovered portions clipped by its box.
+      for (const auto &claim : provenance.claims)
+      {
+        Append(exclusion.patch, provenance.feature, topology, claim.segment, claim.p0,
+               claim.p1, false);
+      }
+      for (const auto &cell : ownership.cells)
+      {
+        for (std::size_t i = 0; i < cell.owners.size(); i++)
+        {
+          if (cell.owners[i] == exclusion.patch && i < cell.attributed_intervals.size())
+          {
+            Append(exclusion.patch, provenance.feature, topology, -1,
+                   cell.attributed_intervals[i][0], cell.attributed_intervals[i][1], false);
+          }
+        }
+      }
+      for (const auto &clip : uncovered_clipping.clips)
+      {
+        if (clip.spatial_patch == exclusion.patch)
+        {
+          Append(exclusion.patch, provenance.feature, topology, clip.segment, clip.p0,
+                 clip.p1, false);
+        }
+      }
+      continue;
+    }
+    // A vertex coupon: its recorded raw footprint.
+    for (const auto &claim : provenance.raw_claims)
+    {
+      Append(exclusion.patch, provenance.feature, topology, claim.segment, claim.p0,
+             claim.p1, false);
+    }
+  }
+  return result;
+}
+
+nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &portions,
+                                              double coordinate_scale)
+{
+  nlohmann::json entries = nlohmann::json::array();
+  std::map<std::string, std::pair<int, double>> by_type;
+  std::map<int, std::pair<int, double>> by_feature;
+  for (std::size_t i = 0; i < portions.portions.size(); i++)
+  {
+    const auto &portion = portions.portions[i];
+    const double length = Norm(Subtract(portion.p1, portion.p0)) * coordinate_scale;
+    by_type[portion.topology].first++;
+    by_type[portion.topology].second += length;
+    by_feature[portion.feature].first++;
+    by_feature[portion.feature].second += length;
+    entries.push_back({{"Patches", portions.patches[i]},
+                       {"Feature", portion.feature},
+                       {"Type", portion.topology},
+                       {"Segment", portion.segment},
+                       {"P0",
+                        {portion.p0[0] * coordinate_scale, portion.p0[1] * coordinate_scale,
+                         portion.p0[2] * coordinate_scale}},
+                       {"P1",
+                        {portion.p1[0] * coordinate_scale, portion.p1[1] * coordinate_scale,
+                         portion.p1[2] * coordinate_scale}},
+                       {"Length", length}});
+  }
+  nlohmann::json types = nlohmann::json::object();
+  for (const auto &[type, count_length] : by_type)
+  {
+    types[type] = {{"Portions", count_length.first}, {"Length", count_length.second}};
+  }
+  nlohmann::json features = nlohmann::json::array();
+  for (const auto &[feature, count_length] : by_feature)
+  {
+    features.push_back({{"Feature", feature},
+                        {"Portions", count_length.first},
+                        {"Length", count_length.second}});
+  }
+  return {{"Count", static_cast<int>(portions.portions.size())},
+          {"GeometricCells", portions.geometric_cells},
+          {"DuplicatePatches", portions.duplicate_patches},
+          {"Length", portions.length * coordinate_scale},
+          {"ByType", std::move(types)},
+          {"ByFeature", std::move(features)},
+          {"Portions", std::move(entries)},
+          {"Rule",
+           "F-DB-a (decisions 442 / 454; DESIGN 2.1): a DomainBoundary-excluded patch is "
+           "never dropped. Its raw claim - a translational cell's own-edge interval (the "
+           "co-located first-order split patches of one cell counted once), a vertex "
+           "coupon's arm windows (R along each arm; a trimmed corner's second arm up to "
+           "s), a spatial cluster's claims plus the cell parts and uncovered portions its "
+           "box removed from others - keeps the device's raw within-R energy in every "
+           "corrected interface energy (fixed trace / fixed flux on the raw field, "
+           "self-consistent on the corrected field), reported per type in "
+           "surface-response-domain-boundary-energy.csv as the DomainBoundary share: ft "
+           "= E_out + models + uncovered + domainboundary"}};
 }
 
 void SurfaceResponseOperator::ConfigureConductorConsistencyProbes(ResponseModel &model)
@@ -19421,14 +19690,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // continuation ownership clips the placed cells of every stretch continuing a
     // cluster's claims at that cluster's box face (the accepted transmon library: 112.4 um
     // of isolated-edge and strip cells on the continuations of its five coupons).
+    const ContinuationOwnership ownership = ApplyContinuationOwnership(
+        placed_patches, boxes, dimension,
+        kSignatureParameterToleranceOverRadius * config->matching_radius,
+        config->matching_radius);
     {
       const auto records = FindTranslationalStretchInsideSpatialSupport(
           placed_patches, boxes, dimension,
           kSignatureParameterToleranceOverRadius * config->matching_radius);
-      const auto ownership = ApplyContinuationOwnership(
-          placed_patches, boxes, dimension,
-          kSignatureParameterToleranceOverRadius * config->matching_radius,
-          config->matching_radius);
       for (const auto &cell : ownership.cells)
       {
         if (placed_patches[cell.patch].weight <= 0.0)
@@ -19479,6 +19748,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
       ownership_diagnostics["DomainBoundaryExclusions"] =
           DescribeDomainBoundaryExclusions(exclusions, *config, coordinate_scale);
+      // F-DB-a (decisions 442 / 454): the excluded patches' raw claims are kept in the
+      // corrected interface energies (GetDomainBoundaryPortions), never dropped.
+      domain_boundary_portions = CollectDomainBoundaryPortions(
+          exclusions, placed_patches, *config, ownership,
+          uncovered_spatial_support_clipping, config->matching_radius);
+      ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
+          DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
       Mpi::Print(
           fespace.GetComm(),
           " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
@@ -19488,6 +19764,16 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         Mpi::Print(fespace.GetComm(), "{}",
                    DescribeDomainBoundaryExclusionSummary(
                        ownership_diagnostics["DomainBoundaryExclusions"]));
+        Mpi::Warning(fespace.GetComm(),
+                     "DomainBoundary raw claims kept (F-DB-a, decisions 442 / 454): {:d} "
+                     "portion(s) ({:d} geometric cells, {:d} split patches folded), {:.6e} "
+                     "mesh units keep their raw within-R surface energy in the corrected "
+                     "interface energies (reported per type in "
+                     "surface-response-domain-boundary-energy.csv)!\n",
+                     static_cast<int>(domain_boundary_portions.portions.size()),
+                     domain_boundary_portions.geometric_cells,
+                     domain_boundary_portions.duplicate_patches,
+                     domain_boundary_portions.length * coordinate_scale);
       }
     }
     // The trimmed corners whose vertex coupon is not applied (decision 399 MINOR-7).

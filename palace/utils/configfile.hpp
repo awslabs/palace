@@ -1119,6 +1119,14 @@ public:
       std::array<double, 4> support_box{};
       bool has_support_box = false;
       std::vector<std::array<double, 4>> chain;
+      // The within-R raw footprint of a VERTEX coupon (corner / junction / endpoint:
+      // coupon_depth 0, no claims, no support box) as perimeter sub-segments: the feature's
+      // claimed portions (R along each arm) and, for a corner whose second arm was trimmed
+      // (decision 394 F1), that arm's [R, s) — the stretch the arm cells lost to the
+      // coupon. Empty for every other patch. The F-DB-a accounting (decisions 442 / 454,
+      // DESIGN 2.1) keeps the raw within-R energy of these portions when the coupon is a
+      // DomainBoundary exclusion (closing the decision-399 MINOR-7 known limit).
+      std::vector<Claim> raw_claims;
     };
     Provenance provenance;
   };

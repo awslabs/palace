@@ -45,6 +45,12 @@ namespace palace
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 using namespace Catch::Matchers;
+using test::ColumnByHeader;
+using test::LoadCsv;
+using test::ReadFile;
+using test::ReadTextCsv;
+using test::RunElectrostatic;
+using test::TextCsv;
 
 namespace
 {
@@ -286,86 +292,6 @@ PortionQuadratureSums(const std::vector<DryRunRow> &rows)
           std::round(row.s1 * 1.0e9) / 1.0e9}] += row.quadrature_weight * row.model_weight;
   }
   return sums;
-}
-
-std::string ReadFile(const fs::path &path)
-{
-  std::ifstream input(path, std::ios::binary);
-  REQUIRE(input);
-  return std::string(std::istreambuf_iterator<char>(input), {});
-}
-
-Table LoadCsv(const fs::path &path)
-{
-  TableWithCSVFile wrapped(path.string(), /*load_existing_file=*/true);
-  return std::move(wrapped.table);
-}
-
-const Column &ColumnByHeader(const Table &table, const std::string &header)
-{
-  for (auto it = table.cbegin(); it != table.cend(); ++it)
-  {
-    if (it->header_text == header)
-    {
-      return *it;
-    }
-  }
-  FAIL("No column \"" << header << "\"");
-  return *table.cbegin();
-}
-
-// The plain text table of surface-response-uncovered-energy.csv: header fields and rows.
-struct TextCsv
-{
-  std::vector<std::string> header;
-  std::vector<std::vector<std::string>> rows;
-  std::size_t Column(const std::string &name) const
-  {
-    const auto it = std::find(header.begin(), header.end(), name);
-    REQUIRE(it != header.end());
-    return static_cast<std::size_t>(it - header.begin());
-  }
-};
-
-TextCsv ReadTextCsv(const fs::path &path)
-{
-  std::ifstream input(path);
-  REQUIRE(input);
-  TextCsv csv;
-  std::string line;
-  std::getline(input, line);
-  std::stringstream header(line);
-  std::string field;
-  while (std::getline(header, field, ','))
-  {
-    csv.header.push_back(field);
-  }
-  while (std::getline(input, line))
-  {
-    if (line.empty())
-    {
-      continue;
-    }
-    std::vector<std::string> fields;
-    std::stringstream stream(line);
-    while (std::getline(stream, field, ','))
-    {
-      fields.push_back(field);
-    }
-    REQUIRE(fields.size() == csv.header.size());
-    csv.rows.push_back(fields);
-  }
-  return csv;
-}
-
-void RunElectrostatic(json config)
-{
-  IoData iodata(std::move(config), /*print=*/false);
-  MPI_Comm comm = Mpi::World();
-  MakeOutputFolder(iodata, comm);
-  const int omp_threads = utils::ConfigureOmp();
-  BlockTimer::Reset();
-  palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
 }
 
 }  // namespace

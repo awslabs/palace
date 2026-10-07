@@ -10,11 +10,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -49,7 +51,7 @@ namespace
 // 0.25], y in [0.25, 0.375], z in [0.25, 0.375]) is removed: a cavity between the knots
 // of the left edge's cross-sections (x = 0.05 and 0.45 at y = 0.3) that its mortar
 // samples along the ring segment between them enter.
-std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
+mfem::Mesh MakeSerialObliqueCutLeadMesh(double shear, bool notch)
 {
   constexpr int n = 8;
   constexpr double h = 1.0 / n;
@@ -178,6 +180,12 @@ std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
     double *point = serial.GetVertex(vertex);
     point[2] += shear * (point[1] - 0.5);
   }
+  return serial;
+}
+
+std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
+{
+  mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, notch);
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
@@ -648,6 +656,377 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       std::vector<ResponsePatchData> patches = {Patch({0.5, 0.5, 0.5}, 1)};
       CHECK_THROWS_WITH(Find(patches),
                         ContainsSubstring("leaves no applied surface-response patch"));
+    }
+  }
+#endif
+}
+
+// F-DB-a (decisions 442 / 454; DESIGN 2.1): a DomainBoundary-excluded patch is NEVER
+// dropped. Its raw claim — here the own-edge interval of each excluded cell, the two
+// cut-touching cells [0, 0.0625] and [0.0625, 0.125] of both long edges of the sheared lead
+// — keeps the device's raw within-R energy in the corrected interface energies (fixed trace
+// / fixed flux on the raw field, self-consistent on the corrected field), reported per type
+// in surface-response-domain-boundary-energy.csv as the DomainBoundary share. On the
+// out-of-plane-sheared cut (a non-vertical truncation face: the Unsupported class of the
+// mirror rule, so F-DB-a is the whole correction) with the isolated-edge library alone
+// (corners Missing -> uncovered) the within-R raw energy is partitioned EXACTLY by the
+// nearest perimeter foot into the DomainBoundary claims, the uncovered corner windows and
+// the applied cells (decision 366 Region entries on the same quadrature: the long edges'
+// [0.125, 0.3] and the cap's [0.45, 0.55]): ft = E_out + models + uncovered +
+// domainboundary to 1e-10, DB + uncovered = within-R - applied cells to 1e-9, the
+// DomainBoundary and uncovered portions pairwise disjoint; with the full library (corners
+// matched, nothing uncovered) ft = E_out + models + domainboundary and the raw outputs are
+// byte-identical.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic DomainBoundary claims keep their raw energy (F-DB-a)",
+                 "[electrostaticsolver][surfaceresponseoperator][domainboundary][3d]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double shear = 0.45;
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "domain-boundary-lead.mesh";
+  const auto basis_path = temp.temp_dir / "domain-boundary-basis-points.csv";
+  const auto full_library_path = temp.temp_dir / "fabrication-process-db-full.json";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-db-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, false);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-db-full";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    {
+      std::ofstream output(full_library_path);
+      output << library.dump(2) << "\n";
+    }
+    json edges = library;
+    edges["Name"] = "unit-test-process-db-edges";
+    edges["Models"] = json::array();
+    for (const auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        edges["Models"].push_back(model);
+      }
+    }
+    REQUIRE(edges["Models"].size() == 1);
+    std::ofstream output(edge_library_path);
+    output << edges.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  // The applied cells as decision-366 Region entries (half-open along, transverse <= R):
+  // the long edges beyond the two excluded cells, [0.125, 0.3] (the corner window begins
+  // at 0.5 - R), and the cap between the corner windows.
+  auto &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+  const json target = dielectric[0];
+  int index = 5;
+  for (const std::array<double, 6> &segment :
+       {std::array<double, 6>{0.25, 0.5, 0.125, 0.25, 0.5, 0.5 - R},
+        std::array<double, 6>{0.25 + R, 0.5, 0.5, 0.75 - R, 0.5, 0.5},
+        std::array<double, 6>{0.75, 0.5, 0.125, 0.75, 0.5, 0.5 - R}})
+  {
+    json cell = target;
+    cell["Index"] = index++;
+    cell.erase("AutomaticEdges");
+    cell.erase("EdgeDistances");
+    cell.erase("EdgeFrameNormal");
+    cell["Region"] = {
+        {"Segments", {segment}}, {"Distance", R}, {"Normal", {0.0, 1.0, 0.0}}};
+    dielectric.push_back(cell);
+  }
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["CorrectionMode"] = "Both";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  const fs::path full_dir = temp.temp_dir / "db-full";
+  const fs::path edges_dir = temp.temp_dir / "db-edges";
+  config["Problem"]["Output"] = full_dir.string();
+  correction["Library"] = full_library_path.string();
+  correction["UnmatchedPolicy"] = "Error";
+  test::RunElectrostatic(config);
+  config["Problem"]["Output"] = edges_dir.string();
+  correction["Library"] = edge_library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  test::RunElectrostatic(config);
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+
+  auto ModelEnergySum = [&](const fs::path &dir, int evaluation)
+  {
+    const Table models = test::LoadCsv(dir / "surface-response-model-energy.csv");
+    const Column &eval = test::ColumnByHeader(models, "evaluation");
+    const Column &energy = test::ColumnByHeader(models, "fabricated surface energy[4] (J)");
+    double sum = 0.0;
+    for (std::size_t i = 0; i < eval.data.size(); i++)
+    {
+      if (static_cast<int>(std::lround(eval.data[i])) == evaluation)
+      {
+        sum += energy.data[i];
+      }
+    }
+    return sum;
+  };
+  auto OutsideEnergy = [&](const fs::path &dir)
+  {
+    const Table edge = test::LoadCsv(dir / "surface-Q-edge.csv");
+    const Column &outside = test::ColumnByHeader(edge, "E_out (J)");
+    REQUIRE(outside.data.size() == 1);
+    return outside.data[0];
+  };
+  auto RawEnergy = [&](const fs::path &dir, int interface_index)
+  {
+    const Table surface = test::LoadCsv(dir / "surface-Q.csv");
+    const Table domain = test::LoadCsv(dir / "domain-E.csv");
+    const Column &participation =
+        test::ColumnByHeader(surface, fmt::format("p_surf[{}]", interface_index));
+    const Column &energy = test::ColumnByHeader(domain, "E_elec (J)");
+    REQUIRE(participation.data.size() == 1);
+    REQUIRE(energy.data.size() == 1);
+    return participation.data[0] * energy.data[0];
+  };
+  // The per-type energy table of a run keyed by (evaluation, type).
+  struct TypeTable
+  {
+    std::map<std::pair<int, std::string>, std::vector<std::string>> rows;
+    std::size_t portions = 0, length = 0, energy = 0, share = 0, extra = 0;
+  };
+  auto ReadTypeTable =
+      [&](const fs::path &path, const std::string &label, const std::string &extra)
+  {
+    const test::TextCsv csv = test::ReadTextCsv(path);
+    TypeTable table;
+    const std::size_t type = csv.Column("type"), evaluation = csv.Column("evaluation");
+    table.portions = csv.Column("portions");
+    table.length = csv.Column("length (m)");
+    table.extra = csv.Column(extra);
+    table.energy = csv.Column(label + " raw energy[4] (J)");
+    table.share = csv.Column(label + " share[4]");
+    for (const auto &row : csv.rows)
+    {
+      table.rows[{std::stoi(row[evaluation]), row[type]}] = row;
+    }
+    return table;
+  };
+  auto CorrectedEnergies = [&](const fs::path &dir)
+  {
+    const Table corrected = test::LoadCsv(dir / "surface-Q-corrected.csv");
+    REQUIRE(corrected.n_rows() == 1);
+    return std::array<double, 3>{
+        test::ColumnByHeader(corrected, "E_surf postprocessed fixed-trace[4] (J)").data[0],
+        test::ColumnByHeader(corrected, "E_surf postprocessed fixed-flux[4] (J)").data[0],
+        test::ColumnByHeader(corrected, "E_surf corrected[4] (J)").data[0]};
+  };
+  // The segments of a record's portion list as (P0, P1) pairs.
+  using Segment = std::array<std::array<double, 3>, 2>;
+  auto Portions = [](const json &list)
+  {
+    std::vector<Segment> segments;
+    for (const auto &entry : list)
+    {
+      segments.push_back({entry["P0"].get<std::array<double, 3>>(),
+                          entry["P1"].get<std::array<double, 3>>()});
+    }
+    return segments;
+  };
+  // The overlap length of two collinear segments (0 when not collinear or disjoint).
+  auto Overlap = [](const Segment &a, const Segment &b)
+  {
+    std::array<double, 3> direction{};
+    double length = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      direction[d] = a[1][d] - a[0][d];
+      length += direction[d] * direction[d];
+    }
+    length = std::sqrt(length);
+    for (int d = 0; d < 3; d++)
+    {
+      direction[d] /= length;
+    }
+    auto Along = [&](const std::array<double, 3> &p, double &transverse)
+    {
+      double along = 0.0;
+      std::array<double, 3> r{};
+      for (int d = 0; d < 3; d++)
+      {
+        r[d] = p[d] - a[0][d];
+        along += r[d] * direction[d];
+      }
+      transverse = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        transverse += std::pow(r[d] - along * direction[d], 2);
+      }
+      transverse = std::sqrt(transverse);
+      return along;
+    };
+    double t0 = 0.0, t1 = 0.0;
+    const double b0 = Along(b[0], t0), b1 = Along(b[1], t1);
+    if (t0 > 1.0e-9 || t1 > 1.0e-9)
+    {
+      return 0.0;
+    }
+    return std::max(0.0,
+                    std::min(length, std::max(b0, b1)) - std::max(0.0, std::min(b0, b1)));
+  };
+
+  // Full library: nothing uncovered, four DomainBoundary cells kept; ft = E_out + models +
+  // domainboundary (the identity closes only because the hole is filled).
+  REQUIRE(fs::is_regular_file(full_dir / "surface-response-domain-boundary-energy.csv"));
+  CHECK_FALSE(fs::exists(full_dir / "surface-response-uncovered-energy.csv"));
+  {
+    const TypeTable db =
+        ReadTypeTable(full_dir / "surface-response-domain-boundary-energy.csv",
+                      "domainboundary", "geometric cells");
+    // One source x 3 evaluations x (the "isolated edge" model topology + Total).
+    REQUIRE(db.rows.size() == 6);
+    REQUIRE(db.rows.count({0, "isolated edge"}) == 1);
+    const auto &row = db.rows.at({0, "isolated edge"});
+    CHECK(std::stoi(row[db.portions]) == 4);
+    CHECK(std::stoi(row[db.extra]) == 4);
+    CHECK_THAT(std::stod(row[db.length]), WithinAbs(4.0 * 0.0625, 1.0e-9));
+    const double db_ft = std::stod(db.rows.at({0, "Total"})[db.energy]);
+    CHECK(db_ft > 0.0);
+    CHECK(std::stod(row[db.energy]) == db_ft);
+    CHECK(std::stod(db.rows.at({1, "Total"})[db.energy]) == db_ft);
+    const auto energies = CorrectedEnergies(full_dir);
+    const double outside = OutsideEnergy(full_dir);
+    CHECK_THAT(energies[0],
+               WithinRel(outside + ModelEnergySum(full_dir, 0) + db_ft, 1.0e-10));
+    CHECK_THAT(energies[1],
+               WithinRel(outside + ModelEnergySum(full_dir, 1) + db_ft, 1.0e-10));
+    CHECK_THAT(std::stod(db.rows.at({0, "Total"})[db.share]),
+               WithinRel(db_ft / energies[0], 1.0e-9));
+    const double db_sc = std::stod(db.rows.at({2, "Total"})[db.energy]);
+    REQUIRE(std::isfinite(energies[2]));
+    // The corrected field of this tiny fixture is weaker near the cut: the same order,
+    // not the same value.
+    CHECK(db_sc > 0.0);
+    CHECK(db_sc != db_ft);
+    CHECK(db_sc < 2.0 * db_ft);
+    CHECK_THAT(std::stod(db.rows.at({2, "Total"})[db.share]),
+               WithinRel(db_sc / energies[2], 1.0e-9));
+    std::ifstream metadata_input(full_dir / "palace.json");
+    REQUIRE(metadata_input);
+    const auto metadata = json::parse(metadata_input);
+    const auto &record =
+        metadata.at("SurfaceResponse").at("Diagnostics").at("DomainBoundaryExclusions");
+    CHECK(record.at("Count").get<int>() == 4);
+    const auto &raw = record.at("RawPortions");
+    CHECK(raw.at("Count").get<int>() == 4);
+    CHECK(raw.at("GeometricCells").get<int>() == 4);
+    CHECK(raw.at("DuplicatePatches").get<int>() == 0);
+    CHECK_THAT(raw.at("Length").get<double>(), WithinAbs(0.25, 1.0e-9));
+    CHECK(raw.at("ByType").at("isolated edge").at("Portions").get<int>() == 4);
+    // Every portion lies on a long edge's line (x = 0.25 or 0.75, y = 0.5) within
+    // [0, 0.125] of the cut, each of length 0.0625, pairwise disjoint.
+    const auto portions = Portions(raw.at("Portions"));
+    for (const auto &portion : portions)
+    {
+      for (const auto &end : portion)
+      {
+        CHECK((std::abs(end[0] - 0.25) < 1.0e-9 || std::abs(end[0] - 0.75) < 1.0e-9));
+        CHECK_THAT(end[1], WithinAbs(0.5, 1.0e-9));
+        CHECK(end[2] >= -1.0e-9);
+        CHECK(end[2] <= 0.125 + 1.0e-9);
+      }
+      CHECK_THAT(std::abs(portion[1][2] - portion[0][2]), WithinAbs(0.0625, 1.0e-9));
+    }
+    for (std::size_t i = 0; i < portions.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < portions.size(); j++)
+      {
+        CHECK(Overlap(portions[i], portions[j]) <= 1.0e-9);
+      }
+    }
+  }
+
+  // Edge-only library: the raw outputs are byte-identical to the full run (the same raw
+  // solve); the corner windows are uncovered, the four cells DomainBoundary, and the
+  // nearest-foot partition of the within-R raw energy is exact: within - applied cells =
+  // uncovered + domainboundary, the two portion sets disjoint.
+  for (const char *file : {"terminal-C.csv", "terminal-V.csv", "domain-E.csv",
+                           "surface-Q.csv", "surface-Q-edge.csv"})
+  {
+    INFO(file);
+    CHECK(test::ReadFile(full_dir / file) == test::ReadFile(edges_dir / file));
+  }
+  REQUIRE(fs::is_regular_file(edges_dir / "surface-response-uncovered-energy.csv"));
+  REQUIRE(fs::is_regular_file(edges_dir / "surface-response-domain-boundary-energy.csv"));
+  {
+    const TypeTable uncovered =
+        ReadTypeTable(edges_dir / "surface-response-uncovered-energy.csv", "uncovered",
+                      "clipped by spatial support (m)");
+    const TypeTable db =
+        ReadTypeTable(edges_dir / "surface-response-domain-boundary-energy.csv",
+                      "domainboundary", "geometric cells");
+    const double uncovered_ft =
+        std::stod(uncovered.rows.at({0, "Total"})[uncovered.energy]);
+    const double db_ft = std::stod(db.rows.at({0, "Total"})[db.energy]);
+    CHECK(uncovered_ft > 0.0);
+    CHECK(db_ft > 0.0);
+    CHECK_THAT(std::stod(db.rows.at({0, "Total"})[db.length]), WithinAbs(0.25, 1.0e-9));
+    const auto energies = CorrectedEnergies(edges_dir);
+    const double outside = OutsideEnergy(edges_dir);
+    CHECK_THAT(
+        energies[0],
+        WithinRel(outside + ModelEnergySum(edges_dir, 0) + uncovered_ft + db_ft, 1.0e-10));
+    CHECK_THAT(
+        energies[1],
+        WithinRel(outside + ModelEnergySum(edges_dir, 1) + uncovered_ft + db_ft, 1.0e-10));
+    const double within = RawEnergy(edges_dir, 4) - outside;
+    const double cells =
+        RawEnergy(edges_dir, 5) + RawEnergy(edges_dir, 6) + RawEnergy(edges_dir, 7);
+    CHECK(within > cells + uncovered_ft);
+    CHECK_THAT(uncovered_ft + db_ft, WithinRel(within - cells, 1.0e-9));
+    std::ifstream metadata_input(edges_dir / "palace.json");
+    REQUIRE(metadata_input);
+    const auto metadata = json::parse(metadata_input);
+    const auto &diagnostics = metadata.at("SurfaceResponse").at("Diagnostics");
+    const auto db_portions = Portions(
+        diagnostics.at("DomainBoundaryExclusions").at("RawPortions").at("Portions"));
+    const auto uncovered_portions = Portions(diagnostics.at("Uncovered").at("Portions"));
+    REQUIRE(db_portions.size() == 4);
+    REQUIRE(uncovered_portions.size() == 8);
+    for (const auto &a : db_portions)
+    {
+      for (const auto &b : uncovered_portions)
+      {
+        CHECK(Overlap(a, b) <= 1.0e-9);
+      }
     }
   }
 #endif
