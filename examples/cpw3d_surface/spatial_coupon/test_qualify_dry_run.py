@@ -200,19 +200,20 @@ class RemoteFailClosedTest(unittest.TestCase):
                     "StartUTC": "2026-10-05T09:25:05Z", "State": "complete", "TotalSeconds": 3816.0,
                     "Stages": [{"Name": "spatial-2-edge-252cfb0e368d-p4-worker", "State": "complete", "Parsed": {}}]}
 
-    def fake_remote(self, files):
+    def fake_remote(self, files, reachable=True):
         remote_side = qualify_library.remote_side
-        saved = {name: getattr(remote_side, name) for name in ("read_json", "fetch", "path_exists", "upload", "upload_file", "qstat_history")}
+        saved = {name: getattr(remote_side, name) for name in ("read_json_reachable", "fetch", "path_exists", "upload", "upload_file",
+                                                               "qstat_history")}
         calls = []
 
-        def read_json(host, path):
+        def read_json_reachable(host, path):
             calls.append(("read", path))
-            return files.get(path)
+            return (True, files.get(path)) if reachable else (False, None)
 
         def fetch(host, remote_directory, local_directory):
             calls.append(("fetch", remote_directory))
             raise AssertionError("fetched after a failed exit check")
-        remote_side.read_json, remote_side.fetch = read_json, fetch
+        remote_side.read_json_reachable, remote_side.fetch = read_json_reachable, fetch
         self.addCleanup(lambda: [setattr(remote_side, name, fake) for name, fake in saved.items()])
         return calls
 
@@ -251,8 +252,23 @@ class RemoteFailClosedTest(unittest.TestCase):
         self.fake_remote({})
         check = remote_side.job_exit("h", directory, job_id)
         self.assertFalse(check["OK"])
+        self.assertTrue(check["Reachable"])
         self.assertEqual(len(check["Reasons"]), 2)
         self.assertIn("no pbs-status.json", check["Reasons"][0])
+        # A lost connection is a TRANSPORT failure, not a dead job (decision 495 (3)): not OK, Reachable
+        # False, the reason names --resume; the driver stops the coupon as Transport, not JobExit.
+        calls = self.fake_remote({f"{directory}/pbs-status.json": {"ExitCode": 0, "JobID": job_id}}, reachable=False)
+        check = remote_side.job_exit("h", directory, job_id)
+        self.assertEqual((check["OK"], check["Reachable"]), (False, False))
+        self.assertEqual(len(check["Reasons"]), 1)
+        self.assertIn("transport failure", check["Reasons"][0])
+        self.assertIn("--resume", check["Reasons"][0])
+        self.assertNotIn("EXIT trap", check["Reasons"][0])
+        self.assertEqual([kind for kind, _ in calls], ["read"])   # the status read is not attempted after the first round trip did not answer
+        with self.assertRaises(qualify_library.CaseStop) as stop:
+            qualify_library.check_job_exit(record, job, remote={"Host": "h"})
+        self.assertEqual(stop.exception.record["Kind"], "Transport")
+        self.assertFalse(job["ExitCheck"]["Reachable"])
         # A clean exit of the submitted job with its own status.json passes.
         self.fake_remote({f"{directory}/pbs-status.json": {"ExitCode": 0, "JobID": job_id, "UTC": "2026-10-07T04:19:00Z"},
                           f"{directory}/status.json": {**self.STALE_STATUS, "PBSJobID": job_id}})
@@ -314,6 +330,15 @@ class RemoteFailClosedTest(unittest.TestCase):
         remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
         with self.assertRaisesRegex(RuntimeError, "no answer"):
             remote_side.path_exists("h", remote_case)
+        # The marker-based JSON reader (decision 495 (3)): silence -> (False, None); an absent file -> (True, None); content -> parsed.
+        self.assertEqual(remote_side.read_json_reachable("h", "/r/x.json"), (False, None))
+        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.READ_MARKER + "\n", stderr="")
+        self.assertEqual(remote_side.read_json_reachable("h", "/r/x.json"), (True, None))
+        self.assertIsNone(remote_side.read_json("h", "/r/x.json"))
+        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout='{"ExitCode": 0}\n' + remote_side.READ_MARKER + "\n", stderr="")
+        self.assertEqual(remote_side.read_json_reachable("h", "/r/x.json"), (True, {"ExitCode": 0}))
+        self.assertEqual(remote_side.read_json("h", "/r/x.json"), {"ExitCode": 0})
+        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
         with self.assertRaises(qualify_library.CaseStop) as stop:
             qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={})
         self.assertEqual(stop.exception.record["Kind"], "RemoteCase")
@@ -448,6 +473,28 @@ class ReusedMainTest(unittest.TestCase):
         self.load()
         (self.root / self.CASE / "main" / "jobs" / "worker-1" / "plan.json").write_text(json.dumps({"PinnedSHA256": {}}))
         stop("0 pinned")
+
+    def test_prepare_case_never_writes_the_shared_args(self):
+        """Decision 495 (1), MAJOR-1 of the review: prepare_case once wrote args.control_amplitudes (the one Namespace
+        shared by every coupon of the run), so in a multi-coupon controls-only run every later coupon took the
+        FIRST coupon's reducer as its prior main stage.  The prior main stage is a local value now; no attribute
+        of `args` is assigned anywhere in qualify_library (the AST is the guard; the two-case dry run
+        test_controls_only_two_cases_take_their_own_reducers is the behavioural one)."""
+        import ast
+        tree = ast.parse(Path(qualify_library.__file__).read_text())
+        writes = []
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                for leaf in ast.walk(target):
+                    if isinstance(leaf, ast.Attribute) and isinstance(leaf.value, ast.Name) and leaf.value.id == "args":
+                        writes.append((leaf.lineno, ast.unparse(leaf)))
+        self.assertEqual(writes, [])
+        source = Path(qualify_library.__file__).read_text()
+        self.assertNotIn("args.control_amplitudes =", source)
+        self.assertIn("control_amplitudes = args.control_amplitudes", source)
 
     def test_controls_only_and_reuse_main_go_together(self):
         parser = argparse.ArgumentParser()
@@ -1748,6 +1795,79 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(gate_record["Verdict"], gates.VERDICT_PENDING)
         self.assertEqual(record_["Status"], "pending-qualification")
         self.assertIsNone(record_["Cost"]["ReferenceNodeHours"])
+
+    def test_controls_only_two_cases_take_their_own_reducers(self):
+        """Decision 495 (1): TWO cases in ONE stored root (a --reference none dry run of the four-edge and the
+        three-edge cases, completed with their campaigns' recorded reducer CSVs): ONE controls-only run of both
+        takes EACH coupon's own reducer as its prior main stage (ControlAmplitudes.PriorMainStage =
+        ReusedMain.Reducer.Directory) - the first coupon's reducer leaks into no other coupon; the shared args
+        Namespace is never written (the in-process prepare_case sequence of run_qualify)."""
+        cases = {"four-edge-9d2cb9bbb3fe": "four-edge-physics-11", "three-edge-419576fdab24": "gallery-physics-06b"}
+        prefixes = {"four-edge-9d2cb9bbb3fe": "va", "three-edge-419576fdab24": "g06b"}   # the campaigns' recorded stage prefixes
+        stored = self.tmp / "stored-two"
+        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
+                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, *[token for case_id in cases for token in ("--case", case_id)],
+                   "--root", str(stored), "--dry-run"]
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record_path = stored / "library-qualification.json"
+        record = json.loads(record_path.read_text())
+        self.assertEqual([case["Status"] for case in record["Cases"]], ["planned", "planned"])
+        own = {}
+        for case, campaign in zip(record["Cases"], (ASSESSMENT / cases[c] for c in cases)):
+            case_id = case["Case"]
+            reducer = stored / case_id / "results" / "main" / f"{case_id}-p4" / "reducer"
+            reducer.mkdir(parents=True)
+            digests = {}
+            for name in qualify_library.REUSED_MAIN_CSVS:
+                shutil.copyfile(campaign / "results" / "main" / f"{prefixes[case_id]}-p4" / "reducer" / name, reducer / name)
+                digests[name] = sha256(reducer / name)
+            case["ResultDigests"] = {f"main/{case_id}-p4/reducer/{name}": {"Local": digest, "Remote": digest, "OK": True}
+                                     for name, digest in digests.items()}
+            case["Jobs"][0]["Submission"] = {"Job": f"{case_id}.fake"}
+            case["Qualification"] = {"Verdict": "Failed", "UnjudgedTypes": []}
+            case["Cost"] = {"MainStage": {"NodeHours": 1.0}, "JobNodeHours": 1.5}
+            own[case_id] = str(reducer)
+        record_path.write_text(json.dumps(record, indent=2))
+        self.assertNotEqual(own["four-edge-9d2cb9bbb3fe"], own["three-edge-419576fdab24"])
+        # One controls-only run of both coupons.
+        root = self.tmp / "controls-only-two"
+        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
+                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, *[token for case_id in cases for token in ("--case", case_id)],
+                   "--controls", "p3,p5", "--controls-only", "--reuse-main", str(stored), "--root", str(root), "--dry-run"]
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        planned = {case["Case"]: case for case in json.loads((root / "library-qualification.json").read_text())["Cases"]}
+        for case_id in cases:
+            case = planned[case_id]
+            self.assertEqual(case["Status"], "planned", case.get("StoppedBy"))
+            self.assertEqual(case["ControlAmplitudes"]["PriorMainStage"], own[case_id], case_id)
+            self.assertEqual(case["ReusedMain"]["Reducer"]["Directory"], own[case_id])
+            self.assertEqual(case["ReusedMain"]["Case"], case_id)
+            self.assertIn("decision 474 (A)", case["Controls"]["Rule"])
+            self.assertEqual(len(case["Controls"]["Indices"]), 8)
+        self.assertNotEqual(planned["four-edge-9d2cb9bbb3fe"]["Controls"]["Indices"], planned["three-edge-419576fdab24"]["Controls"]["Indices"])
+        # The same two coupons through ONE prepare_case sequence sharing ONE args Namespace: args untouched.
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        args = parser.parse_args(["--build-record", str(self.build_record), "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256,
+                                  "--controls", "p3,p5", "--controls-only", "--reuse-main", str(stored), "--root", str(root / "shared"), "--dry-run"])
+        build = json.loads(self.build_record.read_text())
+        manifest = json.loads(MANIFEST.read_text())
+        manifest["Path"] = str(MANIFEST)
+        profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
+        cost_model = estimate_stages.load_cost_model(args.cost_model)
+        table, digest = gates.load_gates(args.gates)
+        (root / "shared").mkdir(parents=True, exist_ok=True)
+        before = dict(vars(args))
+        priors = {}
+        for case_id in cases:
+            case_record = next(item for item in build["Cases"] if item["Case"] == case_id)
+            planned_record, _ = qualify_library.prepare_case(case_record, manifest_path=MANIFEST, manifest=manifest, args=args, root=root / "shared",
+                                                             remote=None, profile=profile, cost_model=cost_model, gates=table, gates_digest=digest)
+            priors[case_id] = planned_record["ControlAmplitudes"]["PriorMainStage"]
+            self.assertEqual(dict(vars(args)), before)
+        self.assertEqual(priors, own)
 
     def test_controls_only_reuses_the_stored_main_stage_and_plans_the_control_job(self):
         """--controls-only --reuse-main (decisions 474 (A) / 479 / 485 (c)) on a stored run synthesized from a

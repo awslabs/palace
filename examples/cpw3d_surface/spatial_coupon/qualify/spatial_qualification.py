@@ -772,11 +772,14 @@ IDENTITY_PARTITION_RULE = ("decisions 482 / 487 (d): the identity twin (the fabr
                            "not supplied); the identity residual <= 1e-6 remains the gate in both cases")
 
 
-def identity_partition_record(identity_plan, *, model, run_name, run_config):
+def identity_partition_record(identity_plan, *, model, run_name, run_config, executed_status=None):
     """The (F) record's IdentityPartition from the dense twin plan (dense_twin_plan.plan_dense_twins
     with --qualify-record) and the library model's MultiNodeReduction (IDENTITY_PARTITION_RULE):
     `identity_plan` = the parsed plan or None; `run_name` / `run_config` = the identity run of the
-    dense-traces manifest (the plan must hold that run's stage)."""
+    dense-traces manifest (the plan must hold that run's stage); `executed_status` = the twin
+    job's run_stages status.json when present (decision 495 (4)): the EXECUTED node count (its
+    Nodes host list; one node without it) must be the planned one and the run's stage complete,
+    recorded under Executed."""
     reduction = model.get("MultiNodeReduction") or {}
     reducer_nodes = int(reduction.get("Nodes", 1))
     reducer_ranks = reduction.get("Ranks")
@@ -803,10 +806,23 @@ def identity_partition_record(identity_plan, *, model, run_name, run_config):
         mismatch.append(f"ranks: twin {twin_ranks}, the model's reducer {reducer_ranks}")
     if mismatch:
         raise SpatialQualificationError("the identity twin's partition differs from the reducer's (" + "; ".join(mismatch) + "): fail closed")
+    executed = None
+    if executed_status is not None:
+        hosts = list(executed_status.get("Nodes") or ([executed_status["Host"]] if executed_status.get("Host") else []))
+        executed_nodes = max(len(hosts), 1)
+        stage = next((item for item in executed_status.get("Stages", []) if item.get("Name") == f"{run_name}-dense"), None)
+        if stage is None or stage.get("State") != "complete":
+            raise SpatialQualificationError(f"the identity twin's status.json carries no complete stage {run_name}-dense "
+                                            f"({None if stage is None else stage.get('State')}): fail closed")
+        if executed_nodes != twin_nodes:
+            raise SpatialQualificationError(f"the identity twin EXECUTED on {executed_nodes} node(s) {hosts}, its plan says {twin_nodes}: "
+                                            "fail closed")
+        executed = {"Nodes": executed_nodes, "Hosts": hosts, "PBSJobID": executed_status.get("PBSJobID"), "State": executed_status.get("State"),
+                    "StageState": stage.get("State"), "WallSeconds": stage.get("WallSeconds")}
     return {"Supplied": True, "Run": run_name, "Nodes": twin_nodes, "Ranks": twin_ranks, "ReducerNodes": reducer_nodes,
             "ReducerRanks": reducer_ranks if reducer_ranks is not None else planned_reducer.get("Ranks"),
             "ReducerJob": planned_reducer.get("PBSJobID"), "Plan": identity_plan.get("Case"), "MatchesReducer": True,
-            "Rule": IDENTITY_PARTITION_RULE}
+            "Executed": executed, "Rule": IDENTITY_PARTITION_RULE}
 
 
 def command_evaluate(args):
@@ -857,9 +873,16 @@ def command_evaluate(args):
     model = [m for m in library["Models"] if m["Name"] == manifest["Model"]][0]
     qualification = model.get("Qualification") or {}
     identity_run = f"fabricated-p{args.library_order}"
+    executed_status = None
+    if args.identity_plan:
+        status_path = Path(args.identity_status) if args.identity_status else Path(args.identity_plan).parent / "status.json"
+        if status_path.is_file():
+            executed_status = json.loads(status_path.read_text())
+        elif args.identity_status:
+            raise SpatialQualificationError(f"--identity-status {status_path} does not exist")
     identity_partition = identity_partition_record(
         json.loads(Path(args.identity_plan).read_text()) if args.identity_plan else None, model=model, run_name=identity_run,
-        run_config=manifest["Configs"][identity_run])
+        run_config=manifest["Configs"][identity_run], executed_status=executed_status)
     record = evaluate(traces, gate=gate, current_status=model.get("QualificationStatus", STATUS_PENDING),
                       reference_boxes=reference_boxes, device_boxes=device_boxes,
                       unjudged_types=qualification.get("UnjudgedTypes") or [],
@@ -908,6 +931,9 @@ def add_arguments(parser):
                                                           "--qualify-record): its IdentityPartition is recorded and checked against "
                                                           "the model's MultiNodeReduction; mandatory for a multi-node reducer "
                                                           "(decisions 482 / 487 (d))")
+    evaluate_parser.add_argument("--identity-status", help="status.json of the executed identity twin job (default: the sibling of "
+                                                            "--identity-plan when present): its executed node count must be the planned "
+                                                            "one, recorded under IdentityPartition.Executed (decision 495 (4))")
     evaluate_parser.add_argument("--output", required=True, help="spatial-qualification.json")
     evaluate_parser.add_argument("--dry-run", action="store_true")
     evaluate_parser.set_defaults(func=command_evaluate)

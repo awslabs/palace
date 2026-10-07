@@ -561,6 +561,47 @@ class CommandEvaluateTest(unittest.TestCase):
         self.assertEqual(self.run_evaluate("--identity-plan", plan(4, 768)), 0)
         self.assertEqual(json.loads(self.record.read_text())["IdentityPartition"]["ReducerRanks"], 768)
 
+    def test_identity_record_reads_the_executed_twin(self):
+        """Decision 495 (4): when the identity twin job's status.json is present (the sibling of the plan, or
+        --identity-status) its EXECUTED node count (the runner's Nodes host list) must be the planned one and
+        the run's stage complete; the executed partition is recorded; a 1-node execution of a 4-node plan (the
+        decision-482 reading) or an incomplete stage fails closed."""
+        qualification = {"Verdict": "PendingQualification", "Record": "q.json", "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []}
+        self.write_library({"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Ranks": 768, "Note": "n"}})
+        job_dir = self.tmp / "le-dense" / "fabricated-p4"
+        job_dir.mkdir(parents=True)
+        plan = job_dir / "plan.json"
+        plan.write_text(json.dumps({"Case": self.MODEL, "Stages": [{"Name": "fabricated-p4-dense", "Config": str(self.tmp / "fabricated-p4" / "config.json")}],
+                                    "IdentityPartition": {"Run": "fabricated-p4", "Nodes": 4, "Ranks": 768, "MatchesReducer": True,
+                                                          "Reducer": {"Nodes": 4, "Ranks": 768, "Job": "reducer", "PBSJobID": "57910.h"}}}))
+        hosts = ["ip-10-0-0-1", "ip-10-0-0-2", "ip-10-0-0-3", "ip-10-0-0-4"]
+        status = {"Version": 2, "PBSJobID": "58043.h", "Host": hosts[0], "Nodes": hosts, "State": "complete",
+                  "Stages": [{"Name": "fabricated-p4-dense", "State": "complete", "WallSeconds": 1234.5}]}
+        # No status next to the plan: the plan alone (Executed None).
+        self.assertEqual(self.run_evaluate("--identity-plan", str(plan)), 0)
+        self.assertIsNone(json.loads(self.record.read_text())["IdentityPartition"]["Executed"])
+        # The sibling status.json of a 4-node execution: recorded.
+        (job_dir / "status.json").write_text(json.dumps(status))
+        self.write_library({"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Ranks": 768, "Note": "n"}})
+        self.assertEqual(self.run_evaluate("--identity-plan", str(plan)), 0)
+        executed = json.loads(self.record.read_text())["IdentityPartition"]["Executed"]
+        self.assertEqual((executed["Nodes"], executed["Hosts"], executed["PBSJobID"], executed["StageState"], executed["WallSeconds"]),
+                         (4, hosts, "58043.h", "complete", 1234.5))
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual(model["SpatialQualification"]["IdentityPartition"]["Executed"]["Nodes"], 4)
+        # A 1-node execution (the runner writes no Nodes list, Host only) of the 4-node plan: fail closed.
+        one_node = self.tmp / "status-1node.json"
+        one_node.write_text(json.dumps({**status, "Nodes": None, "PBSJobID": "58012.h"}))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "EXECUTED on 1 node"):
+            self.run_evaluate("--identity-plan", str(plan), "--identity-status", str(one_node))
+        # An incomplete / absent stage, and a named status that does not exist: fail closed.
+        incomplete = self.tmp / "status-incomplete.json"
+        incomplete.write_text(json.dumps({**status, "State": "incomplete", "Stages": [{"Name": "fabricated-p4-dense", "State": "timed-out"}]}))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "no complete stage"):
+            self.run_evaluate("--identity-plan", str(plan), "--identity-status", str(incomplete))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "does not exist"):
+            self.run_evaluate("--identity-plan", str(plan), "--identity-status", str(self.tmp / "missing.json"))
+
 
 class EvaluationTest(unittest.TestCase):
     """evaluate_trace / evaluate on consistent synthetic energies: a trace whose energies obey

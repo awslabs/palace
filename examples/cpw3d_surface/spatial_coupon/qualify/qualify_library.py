@@ -401,14 +401,17 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     interface_types = {int(index): name for index, name in inputs["Interfaces"].items()}
     interfaces = inputs["InterfaceTypes"]
     reused_main = None
+    # The prior main stage of the amplitude-informed control choice (decision 474 (A)): the
+    # command line's, else - under --controls-only - THIS coupon's own reused reducer.  A local
+    # value: `args` is shared by every coupon of the run and is never written (decision 495 (1)).
+    control_amplitudes = args.control_amplitudes
     if controls_only:
         reused_main = load_reused_main(Path(reuse_root), case_id, identity_sha256=identity["SHA256"], run_config=run_config,
                                        trace_digests={source["Name"]: source["SHA256"] for source in inputs["Sources"]},
                                        main_prefix=f"{prefix}-p{physics_run['Order']}")
         record["ReusedMain"] = reused_main
-        if args.control_amplitudes is None and not args.control_source:
-            # Decision 474 (A): the amplitude-informed choice reads the stored main reducer.
-            args.control_amplitudes = Path(reused_main["Reducer"]["Directory"])
+        if control_amplitudes is None:
+            control_amplitudes = Path(reused_main["Reducer"]["Directory"])
     reference = None
     reference_interface_types = None
     if args.reference is not None:
@@ -466,19 +469,19 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
         floor_ratio = gate_evaluation.amplitude_floor_ratio(gates["Gates"]["PSequenceControls"]["AmplitudeFloor"]["Fraction"])
         judged = [name for name in (p_sequence.SHARP_GATED_OBSERVABLES if inputs.get("RadialShells") else p_sequence.GATED_OBSERVABLES)
                   if name != "E"]
-        if args.control_amplitudes:
+        if control_amplitudes:
             # Decision 474 (A): a prior main stage of the same case ranks every class's members
             # by the amplitude floor; without one the first-pass choice is unchanged.
             shell_map = ma_tail.shell_map_of(inputs["RadialShells"]) if inputs.get("RadialShells") else None
             amplitudes = p_sequence.coupon_amplitudes(p_sequence.observables(
-                args.control_amplitudes, interface_types,
-                ma_tail.tails(args.control_amplitudes, shell_map, interface_types) if shell_map else None))
+                control_amplitudes, interface_types,
+                ma_tail.tails(control_amplitudes, shell_map, interface_types) if shell_map else None))
             chosen = classify_sources.choose_controls_record(classes, args.control_count, free, amplitudes, floor_ratio, judged)
             controls = chosen["Controls"]
             control_rule = (f"{args.control_count} by class (classify_sources.choose_controls: one per class in priority order, "
                             f"cycling, the lowest-index member above the amplitude floor for every judged Type from the prior "
-                            f"main stage {args.control_amplitudes}; decision 474 (A))")
-            record["ControlAmplitudes"] = {"PriorMainStage": str(args.control_amplitudes), **{key: chosen[key] for key in
+                            f"main stage {control_amplitudes}; decision 474 (A))")
+            record["ControlAmplitudes"] = {"PriorMainStage": str(control_amplitudes), **{key: chosen[key] for key in
                                                                                              ("FloorRatio", "Observables", "BelowFloorClasses")}}
         else:
             controls = classify_sources.choose_controls(classes, args.control_count, free)
@@ -1041,6 +1044,11 @@ def check_job_exit(record, job, *, remote):
     job_id = job["Submission"]["Job"]
     exit_check = remote_side.job_exit(remote["Host"], job["RemoteDirectory"], job_id)
     job["ExitCheck"] = {**exit_check, "UTC": remote_side.utc()}
+    if not exit_check.get("Reachable", True):
+        # A transport failure is recorded as such (Transport, like a failed fetch), never as the
+        # job's verdict; the job's results stay on the remote for --resume (decision 495 (3)).
+        raise CaseStop("Transport", f"{job['Name']} job {job_id}: {'; '.join(exit_check['Reasons'])}: nothing fetched",
+                       Job=job["Name"], Submission=job["Submission"], ExitCheck=exit_check)
     if not exit_check["OK"]:
         raise CaseStop("JobExit", f"{job['Name']} job {job_id}: {'; '.join(exit_check['Reasons'])}: nothing fetched",
                        Job=job["Name"], Submission=job["Submission"], ExitCheck=exit_check)
