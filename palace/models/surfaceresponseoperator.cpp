@@ -20143,6 +20143,19 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
     }
   }
+  // A real-arm cell wholly before its virtual corner's s_half (boundary-cut DESIGN 2.2.3,
+  // ApplyMirrorArmTrim) likewise.
+  for (const auto &trim : config->mirror_arm_trims)
+  {
+    for (const auto &[patch, removed] : trim.cells)
+    {
+      (void)removed;
+      if (placed_patches[patch].weight <= 0.0)
+      {
+        spatially_owned_patches.insert(patch);
+      }
+    }
+  }
   // The consistent mortar (decision 404 D1): the constrained metal-band vertices of every
   // translational model's surface-mortar hat basis and the rule that produced them.
   ownership_diagnostics["ConsistentMortar"] = DescribeConsistentMortar(*config);
@@ -21244,6 +21257,17 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   {
     std::set<std::size_t> wholly_trimmed;
     for (const auto &trim : config.corner_arm_trims)
+    {
+      for (const auto &[patch, removed] : trim.cells)
+      {
+        (void)removed;
+        if (config.patches[patch].weight <= 0.0)
+        {
+          wholly_trimmed.insert(patch);
+        }
+      }
+    }
+    for (const auto &trim : config.mirror_arm_trims)
     {
       for (const auto &[patch, removed] : trim.cells)
       {
