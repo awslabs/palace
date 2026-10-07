@@ -1468,6 +1468,8 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         if record.get("BuildGateOverride"):
             model["BuildGateOverride"] = record["BuildGateOverride"]
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
+        if (record.get("Nodes") or {}).get("MultiNode"):
+            model["MultiNodeReduction"] = {"Nodes": record["Nodes"]["Main"], "Note": build_plan.MULTI_NODE_REDUCTION_NOTE}
         model["SourceProcessLibrary"] = {"Path": str(library_path), "SHA256": sha256(library_path)}
         tail = context.get("ma_tail")
         order_block = (tail or {}).get("Orders", {}).get(f"p{main['Order']}")

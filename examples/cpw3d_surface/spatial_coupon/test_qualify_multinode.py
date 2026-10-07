@@ -273,6 +273,8 @@ class NodePlanTest(unittest.TestCase):
         for plan in plans.values():
             self.assertEqual(plan["Version"], build_plan.PLAN_VERSION)
             self.assertEqual(plan["PBSDsh"], self.profile["PBSDsh"])
+            self.assertTrue(plan["Purpose"].endswith(build_plan.MULTI_NODE_REDUCTION_NOTE))   # decision 466
+            self.assertEqual(plan["MultiNodeReductionNote"], build_plan.MULTI_NODE_REDUCTION_NOTE)
         script = build_plan.render_job_script(profile=self.wide, remote_root="/r", remote_case_root="/r/case", runner="/r/run/run_stages.py",
                                               job_name="j", walltime_seconds=21600, instance_type=reducer["Instance"]["Type"],
                                               job_directory="/r/case/main/jobs/reducer", nodes=reducer["Nodes"])
@@ -281,8 +283,9 @@ class NodePlanTest(unittest.TestCase):
         self.assertIn("#PBS -l efa_support=True,subnet_id=subnet-0c98d793bbcebb39a\n", script)
         # A one-node job plan has none of the multi-node keys and the one-node select line.
         one = build_plan.build_job_plan(job_name="w", split_job={**record["Jobs"][1], "Nodes": 1}, **{**common, "estimate": estimate})
-        for key in ("Nodes", "RanksPerNode", "MPIExecArguments", "NodeGuard", "PBSDsh", "MultiNodeRule"):
+        for key in ("Nodes", "RanksPerNode", "MPIExecArguments", "NodeGuard", "PBSDsh", "MultiNodeRule", "MultiNodeReductionNote"):
             self.assertNotIn(key, one)
+        self.assertEqual(one["Purpose"], "test")
         self.assertEqual(one["Ranks"], 192)
         one_script = build_plan.render_job_script(profile=self.profile, remote_root="/r", remote_case_root="/r/case", runner="/r/run/run_stages.py",
                                                   job_name="j", walltime_seconds=21600, instance_type="m8g.48xlarge")

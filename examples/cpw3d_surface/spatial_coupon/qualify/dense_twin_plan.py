@@ -177,6 +177,7 @@ def plan_dense_twins(*, dense_dir, runs, counts, binary_sha256, remote_root, job
             "UnpinnedInputs": missing}
     if job_nodes > 1:
         plan.update(build_plan.multi_node_fields(profile, job_nodes, instance))
+        plan["Purpose"] = f"{plan['Purpose']}; {build_plan.MULTI_NODE_REDUCTION_NOTE}"
     script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=job_dir,
                                           runner=f"{job_dir}/run_stages.py", job_name=f"{profile['JobNamePrefix']}-dense-{(case_id or 'twins')}"[:64],
                                           walltime_seconds=walltime, instance_type=instance["Type"], job_directory=job_dir, nodes=job_nodes)

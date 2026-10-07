@@ -68,6 +68,10 @@ FROZEN_BINARY_RULE = ("the frozen palace-archive-estimate-<sha256>.bin under the
 
 
 GIB = 1024 ** 3
+# Decision 466: the sentence every multi-node plan's Purpose and the library record of a
+# multi-node-qualified coupon carry (measured on the pair-5 fab coupon at 1 vs 2 nodes).
+MULTI_NODE_REDUCTION_NOTE = ("multi-node reduction: near-edge interface energies reproduce a one-node reduction to <= 4e-6 of the "
+                             "interface's largest entry (partition dependence, decision 466)")
 
 
 def largest_node_gib(profile):
@@ -106,7 +110,7 @@ def multi_node_fields(profile, nodes, instance):
     ranks_per_node = int(profile["RanksPerNode"])
     arguments = [argument.format(ranks_per_node=ranks_per_node) for argument in profile["MultiNodeMPIExecArguments"]]
     return {"Nodes": nodes, "RanksPerNode": ranks_per_node, "Ranks": nodes * ranks_per_node, "MPIExecArguments": arguments,
-            "PBSDsh": profile.get("PBSDsh"),
+            "PBSDsh": profile.get("PBSDsh"), "MultiNodeReductionNote": MULTI_NODE_REDUCTION_NOTE,
             "NodeGuard": {"MinimumMemAvailableBytes": instance["MinimumMemAvailableBytes"], "Nodes": nodes,
                           "Rule": ("the runner checks MemAvailable >= MinimumMemAvailableBytes and the absence of conflicting "
                                    "native processes on EVERY node of PBS_NODEFILE before the first stage, and samples every "
@@ -306,6 +310,7 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                                 "Fits": split_job["Fits"]}}
     if nodes > 1:
         plan.update(multi_node_fields(profile, nodes, instance))
+        plan["Purpose"] = f"{purpose}; {MULTI_NODE_REDUCTION_NOTE}"
     return plan
 
 
