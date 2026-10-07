@@ -1351,10 +1351,14 @@ def validate_tube_rings_per_side(tubes, rows, command):
         smallest_bound = min(smallest_bound, bound)
         smallest_rings = min(smallest_rings, rings)
     tubes_per_side = _count(section.get("TubesPerSide"), "Tubes per side")
-    if (minimum_rings != smallest_rings or reduced_count * tubes_per_side != len(reduced) or
-            abs(facing_bound - smallest_bound) > 1e-12 * transverse):
-        raise ValueError("Prism tube section MinimumRings / ReducedSides / FacingBound do not follow the rows")
     width = section.get("MetalFacingWidth")
+    # Section.FacingBound is the coupon's smallest per-side bound min(TransverseBound, w / 2) over
+    # EVERY tubed side (a bound below the transverse bound need not reduce a side: the ring law
+    # steps, and a measurement cap may already hold the count).
+    expected_bound = transverse if width is None else min(transverse, 0.5 * _census_number(section, "MetalFacingWidth", "Tube section"))
+    if (minimum_rings != smallest_rings or reduced_count * tubes_per_side != len(reduced) or
+            abs(facing_bound - expected_bound) > 1e-12 * transverse or smallest_bound < expected_bound * (1.0 - 1e-12)):
+        raise ValueError("Prism tube section MinimumRings / ReducedSides / FacingBound do not follow the rows")
     if width is not None and any(row["FacingWidth"] < width * (1.0 - 1e-12) for row in reduced):
         raise ValueError("Prism tube row facing width lies below the section's MetalFacingWidth")
     if reduced and width is None:

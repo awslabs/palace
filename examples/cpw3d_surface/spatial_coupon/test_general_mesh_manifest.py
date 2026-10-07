@@ -3416,12 +3416,21 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumRings", coupon_rings), "MinimumRings / ReducedSides / FacingBound")
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("ReducedSides", 2), "MinimumRings / ReducedSides / FacingBound")
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("FacingBound", transverse), "MinimumRings / ReducedSides / FacingBound")
+            # An unreduced coupon whose smallest facing width lies below 2 x the transverse bound (the
+            # law steps; or a measurement cap already holds the count) records FacingBound = w / 2.
+            narrow_unreduced = per_side(copy.deepcopy(census), reduce=False)
+            narrow_unreduced["PrismTubes"]["Section"]["MetalFacingWidth"] = 1.5 * transverse
+            narrow_unreduced["PrismTubes"]["Section"]["FacingBound"] = 0.75 * transverse
+            self.assertIs(validate_gmsh_build_census(per_side_report, narrow_unreduced, semantic), narrow_unreduced)
+            narrow_unreduced["PrismTubes"]["Section"]["FacingBound"] = transverse
+            with self.assertRaisesRegex(ValueError, "MinimumRings / ReducedSides / FacingBound"):
+                validate_gmsh_build_census(per_side_report, narrow_unreduced, semantic)
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
                            "MinimumQualifiedRings differs from the build command")
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", 2.0 * facing_width),
-                           "below the section's MetalFacingWidth")
+                           "below the section's MetalFacingWidth|MinimumRings / ReducedSides / FacingBound")
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", None),
-                           "the section records none")
+                           "the section records none|MinimumRings / ReducedSides / FacingBound")
             rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("RingsPerSideRule"), "per-side ring rule")
             rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("MinimumRings"), "without the section's per-side record")
             # The command's range binds: a reduced row below it, or no range at all, fails closed.

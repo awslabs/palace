@@ -152,7 +152,7 @@
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "8d0261184749272eb82d05ed6b22c49cfab34fc55dd513e5fa66c339a2b2e1a0"
+      "SHA256": "a6b9222b16cab84202ed81cb58c123be6598fc1aa9c974408e9442ec38cae573"
     },
     {
       "Name": "canonical_mesh_build.py",
