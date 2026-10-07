@@ -1104,6 +1104,9 @@ struct DomainBoundaryExclusions
   long long int tested_points = 0;
   long long int reflected_points = 0;  // outside points reflected into the mesh
   double wall_time = 0.0;              // of the containment test, seconds
+  // Cumulative phase stamps of the test (seconds since its start: points, locator, find,
+  // reduce, reflect, distances), printed with PALACE_RESPONSE_SETUP_TIMING (decision 538).
+  std::map<std::string, double> phase_times;
 };
 // `mirror_planes` (empty: no mirror, every cut-crossing patch is DomainBoundary) and the
 // band (mesh units) classify the outside points: a point beyond a Natural plane within the

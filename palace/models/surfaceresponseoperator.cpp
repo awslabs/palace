@@ -9546,6 +9546,12 @@ FeaturePatchSummary BuildFeaturePatches(
             model_weight * side_factor * (fp.b - fp.a) * ip.weight / term.coupon_depth;
         patch.longitudinal_cell = LongitudinalCellOffsets(
             quadrature_cells[q], fp.a, fp.b, t, fp.segment->tangent, patch.axis_w);
+        // The cell's pre-image on the side's own segment (its F-DB-a raw claim, decision
+        // 537): the segment points at the quadrature cell's arc-length ends.
+        patch.provenance.own_cell = {
+            Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][0]),
+            Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][1])};
+        patch.provenance.has_own_cell = true;
         patch.provenance.segment = static_cast<int>(fp.geometry_index);
         patch.provenance.s0 = fp.s0;
         patch.provenance.s1 = fp.s1;
@@ -16065,6 +16071,9 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"Segment", patch.provenance.segment},
                        {"Stretch", patch.provenance.stretch},
                        {"EdgeOffset", patch.provenance.edge_offset},
+                       {"OwnCell", patch.provenance.has_own_cell
+                                       ? nlohmann::json(patch.provenance.own_cell)
+                                       : nlohmann::json(nullptr)},
                        {"Claims", claims},
                        {"RawClaims", raw_claims}});
   }
@@ -16075,7 +16084,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 13},
+  nlohmann::json cache = {{"Version", 14},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -16198,11 +16207,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 13,
+      data.value("Version", 0) == 14,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 13 carries the feature, mesh segment, chain stretch and own-edge "
-             "offset of every patch, the claims, support box and chain of every spatial "
+          << " (version 14 carries the feature, mesh segment, chain stretch, own-edge "
+             "offset and own-cell pre-image (decision 537) of every patch, the claims, "
+             "support box and chain of every spatial "
              "cluster patch, the raw claims of every vertex coupon (F-DB-a, decisions 442 "
              "/ 454), the matching radius for the continuation and vertex ownership, the "
              "quantum near-match records of the matching pass, the corner-arm trim records "
@@ -16362,6 +16372,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     patch.provenance.segment = entry.at("Segment");
     patch.provenance.stretch = entry.at("Stretch");
     patch.provenance.edge_offset = entry.at("EdgeOffset");
+    if (const auto own_cell = entry.find("OwnCell");
+        own_cell != entry.end() && !own_cell->is_null())
+    {
+      patch.provenance.own_cell = own_cell->get<std::array<std::array<double, 3>, 2>>();
+      patch.provenance.has_own_cell = true;
+    }
     for (const auto &claim : entry.at("Claims"))
     {
       patch.provenance.claims.push_back(
@@ -18688,7 +18704,14 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
 
   // Every rank locates every point in its local mesh with the operator's locator and its
   // tolerances; the found flags are OR-reduced, so the decision is the partition's union.
+  // Phase times (decision 538 diagnosis): recorded in the result, printed by the caller.
+  auto Elapsed = [&]()
+  {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  };
+  result.phase_times["points"] = Elapsed();
   ElementPointLocator locator(mesh, dimension);
+  result.phase_times["locator"] = Elapsed();
   double locator_scale = 0.0;
   for (int d = 0; d < dimension; d++)
   {
@@ -18713,10 +18736,12 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       }
     }
   }
+  result.phase_times["find"] = Elapsed();
   if (!found.empty())
   {
     Mpi::GlobalMax(static_cast<int>(found.size()), found.data(), comm);
   }
+  result.phase_times["reduce"] = Elapsed();
   // Mirror (boundary-cut DESIGN 2.2.3): every outside point beyond a Natural plane within
   // the band is reflected into the domain (canonical plane order) and located again; its
   // found flag is OR-reduced like the original's (the same arithmetic on every rank).
@@ -18793,6 +18818,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
     }
   }
+  result.phase_times["reflect"] = Elapsed();
   // The distance of every outside point to the nearest element box, over the ranks.
   std::vector<std::size_t> outside;
   for (std::size_t i = 0; i < points.size(); i++)
@@ -18811,6 +18837,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   {
     Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
   }
+  result.phase_times["distances"] = Elapsed();
 
   std::size_t k = 0;
   for (std::size_t c = 0; c < candidates.size(); c++)
@@ -19324,15 +19351,26 @@ DomainBoundaryPortions CollectDomainBoundaryPortions(
     const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
     if (provenance.coupon_depth > 0.0 && c1 > c0)
     {
-      // A translational cell: its own-edge interval.
+      // A translational cell: its own-edge interval = the cell's recorded pre-image on the
+      // side's own segment (decision 537, DESIGN ERRATA-8; every features-path patch). The
+      // frame reconstruction origin + EdgeOffset AxisU + cell AxisW (kept for a legacy
+      // patch without the record) leaves a pair's / stack's member edge wherever the sides
+      // are not exactly parallel: AxisW follows the partner side's chord.
       std::array<Point3D, 2> ends;
-      for (int k = 0; k < 2; k++)
+      if (provenance.has_own_cell)
       {
-        ends[k] = patch.origin;
-        for (int d = 0; d < 3; d++)
+        ends = provenance.own_cell;
+      }
+      else
+      {
+        for (int k = 0; k < 2; k++)
         {
-          ends[k][d] += provenance.edge_offset * patch.axis_u[d] +
-                        (k == 0 ? c0 : c1) * patch.axis_w[d];
+          ends[k] = patch.origin;
+          for (int d = 0; d < 3; d++)
+          {
+            ends[k][d] += provenance.edge_offset * patch.axis_u[d] +
+                          (k == 0 ? c0 : c1) * patch.axis_w[d];
+          }
         }
       }
       Append(exclusion.patch, provenance.feature, topology, provenance.segment, ends[0],
@@ -19860,6 +19898,20 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     basis_size(0)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
+  // Setup phase stamps (decision 538 diagnosis): printed only with
+  // PALACE_RESPONSE_SETUP_TIMING set, so the default log is byte-identical.
+  const bool setup_timing = std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr;
+  const auto setup_start = std::chrono::steady_clock::now();
+  auto SetupStamp = [&](const char *phase)
+  {
+    if (setup_timing)
+    {
+      Mpi::Print(
+          fespace.GetComm(), " Response setup phase: {} at {:.3f} s\n", phase,
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - setup_start)
+              .count());
+    }
+  };
   const auto &request = iodata.solver.electrostatic.response_correction;
   MFEM_VERIFY(request, "Missing electrostatic surface response correction configuration!");
   const int dimension = fespace.Dimension();
@@ -19941,6 +19993,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   MFEM_VERIFY(!config->models.empty() && !config->patches.empty(),
               "Surface response correction requires at least one model and patch!");
+  SetupStamp("geometry");
 
 #if defined(MFEM_USE_GSLIB)
   std::unordered_map<int, int> model_indices;
@@ -20502,6 +20555,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   // The consistent mortar (decision 404 D1): the constrained metal-band vertices of every
   // translational model's surface-mortar hat basis and the rule that produced them.
+  SetupStamp("model matrices and mortars");
   ownership_diagnostics["ConsistentMortar"] = DescribeConsistentMortar(*config);
   if (config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR &&
       ownership_diagnostics["ConsistentMortar"]["WithInsertedBandVertices"].get<int>() > 0)
@@ -20810,6 +20864,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           fespace.GetComm(),
           " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
           exclusions.tested_patches, exclusions.tested_points, exclusions.wall_time);
+      if (setup_timing)
+      {
+        for (const auto &[phase, seconds] : exclusions.phase_times)
+        {
+          Mpi::Print(fespace.GetComm(), "  containment phase {} at {:.3f} s\n", phase,
+                     seconds);
+        }
+      }
       if (!exclusions.patches.empty())
       {
         Mpi::Print(fespace.GetComm(), "{}",
@@ -20849,6 +20911,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
   }
 
+  SetupStamp("ownership and domain-boundary classification");
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
   int point_count = 0;
@@ -21086,6 +21149,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
     }
   }
+  SetupStamp("mortar resolution probe");
   int point = 0;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -21322,10 +21386,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
   }
 
+  SetupStamp("trace quadrature and overlap check");
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
     ConfigurePointCommunication(point_locator, xyz, dimension);
   }
+  SetupStamp("point communication");
 
   Mpi::Print(
       "\nConfigured surface response correction:\n"
