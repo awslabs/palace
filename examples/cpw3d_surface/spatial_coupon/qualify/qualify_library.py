@@ -706,9 +706,27 @@ def job_policy_of(args, physics_run, profile):
         raise CaseStop("JobPolicy", str(error))
 
 
-def upload_case(record, context, *, remote, profile):
-    """Mesh, traces (every DataFile) and the main/ directory to the remote case root."""
+REMOTE_CASE_RULE = ("decision 485 (b): the remote case directory <root>/<run>/<case> must not exist before the coupon's upload - "
+                    "a pre-existing one (another run of the same case id under a shared root) holds another run's status.json "
+                    "and outputs, and its mkdir tmp kills the job script in 1 s; the coupon stops (RemoteCase) unless "
+                    "--adopt-remote-case says so explicitly (recorded), and every job's exit is checked before any fetch")
+
+
+def upload_case(record, context, *, remote, profile, adopt_remote_case=False):
+    """Mesh, traces (every DataFile) and the main/ directory to the remote case root.  The
+    remote case directory must be absent (REMOTE_CASE_RULE); a pre-existing one is adopted
+    only under `adopt_remote_case` (recorded), else the coupon stops."""
     case_root = Path(record["Root"])
+    remote_case = record["Remote"]["Case"]
+    try:
+        existed = remote_side.path_exists(remote["Host"], remote_case)
+    except RuntimeError as error:
+        raise CaseStop("RemoteCase", f"the existence of the remote case directory {remote_case} could not be established: {error}",
+                       Rule=REMOTE_CASE_RULE)
+    if existed and not adopt_remote_case:
+        raise CaseStop("RemoteCase", f"the remote case directory {remote_case} already exists (another run of {record['Case']} "
+                                     f"under this root): not uploaded; pass --adopt-remote-case to upload into it knowingly, "
+                                     f"or use a fresh --remote root / run name", Rule=REMOTE_CASE_RULE)
     staging = case_root / "upload"
     if staging.exists():
         shutil.rmtree(staging)
@@ -718,10 +736,11 @@ def upload_case(record, context, *, remote, profile):
     for source in context["sources"]:
         shutil.copyfile(source["Path"], staging / "inputs" / "traces" / source["Name"])
     shutil.copytree(case_root / "main", staging / "main")
-    commands = [remote_side.upload(remote["Host"], staging, record["Remote"]["Case"]),
+    commands = [remote_side.upload(remote["Host"], staging, remote_case),
                 remote_side.upload_file(remote["Host"], HERE / "run_stages.py", record["Remote"]["Run"] + "/run_stages.py")]
     shutil.rmtree(staging)
-    return {"Commands": commands, "UTC": remote_side.utc()}
+    return {"Commands": commands, "UTC": remote_side.utc(), "RemoteCaseExisted": existed,
+            "AdoptedRemoteCase": bool(existed and adopt_remote_case), "Rule": REMOTE_CASE_RULE}
 
 
 def wait(seconds, slice_seconds=10):
@@ -777,12 +796,12 @@ def resume_submissions(record, context, plans_before):
     return adopted
 
 
-def submit_job(record, context, job, *, remote, profile, log):
+def submit_job(record, context, job, *, remote, profile, log, adopt_remote_case=False):
     """Step 5a: upload the coupon (once, before its first job) and qsub one job under the
     user job cap (recorded per job)."""
     remote_case = record["Remote"]["Case"]
     if not record.get("Upload"):
-        record["Upload"] = upload_case(record, context, remote=remote, profile=profile)
+        record["Upload"] = upload_case(record, context, remote=remote, profile=profile, adopt_remote_case=adopt_remote_case)
     try:
         submission = remote_side.submit(remote["Host"], profile["PBSBin"], f"{job['RemoteDirectory']}/job.pbs",
                                         job["RemoteDirectory"], job_cap=profile["UserJobCap"])
@@ -838,13 +857,27 @@ def status_failures(status):
     return incomplete, nonconvergence
 
 
+def check_job_exit(record, job, *, remote):
+    """A job that left the queue: its exit record and status.json must be its own and clean
+    (remote.job_exit, JOB_EXIT_RULE) before anything of it is read as a result; recorded on the
+    job; a failing check stops the coupon (fail closed, nothing fetched)."""
+    job_id = job["Submission"]["Job"]
+    exit_check = remote_side.job_exit(remote["Host"], job["RemoteDirectory"], job_id)
+    job["ExitCheck"] = {**exit_check, "UTC": remote_side.utc()}
+    if not exit_check["OK"]:
+        raise CaseStop("JobExit", f"{job['Name']} job {job_id}: {'; '.join(exit_check['Reasons'])}: nothing fetched",
+                       Job=job["Name"], Submission=job["Submission"], ExitCheck=exit_check)
+    return exit_check
+
+
 def complete_worker_job(record, context, job, *, remote, profile):
-    """A worker job of a split coupon left the queue: its status.json (read now, read-only)
-    must be complete - every stage complete, no PCG non-convergence - else the coupon
-    stops (fail closed; the coupon's other jobs are left to finish on their own and are
-    recorded)."""
-    status = remote_side.read_json(remote["Host"], f"{job['RemoteDirectory']}/status.json")
+    """A worker job of a split coupon left the queue: its exit record must be clean
+    (check_job_exit) and its status.json (read now, read-only) complete - every stage
+    complete, no PCG non-convergence - else the coupon stops (fail closed; the coupon's other
+    jobs are left to finish on their own and are recorded)."""
     job["FinishedAt"] = time.time()
+    check_job_exit(record, job, remote=remote)
+    status = remote_side.read_json(remote["Host"], f"{job['RemoteDirectory']}/status.json")
     if status is None:
         raise CaseStop("Stages", f"{job['Name']} job {job['Submission']['Job']} left the queue without a status.json "
                                  f"({job['RemoteDirectory']})", Job=job["Name"], Submission=job["Submission"])
@@ -883,12 +916,16 @@ def verify_archive_union(record, context, *, remote, profile):
 
 
 def finish_case(record, context, *, remote, profile):
-    """Step 5b after the coupon's last job left the queue: fetch (never the archives),
-    hash-verify every CSV against the remote, validate every matrix, delete the remote
-    archives (recorded).  Returns the local results directory (results/main)."""
+    """Step 5b after the coupon's last job left the queue: check every job's exit record
+    (check_job_exit, before anything is fetched), fetch (never the archives), hash-verify
+    every CSV against the remote, validate every matrix, delete the remote archives
+    (recorded).  Returns the local results directory (results/main)."""
     case_root = Path(record["Root"])
     remote_case = record["Remote"]["Case"]
     jobs = context["jobs"]
+    for job in jobs:
+        if job.get("ExitCheck") is None or not job["ExitCheck"]["OK"]:
+            check_job_exit(record, job, remote=remote)
     results = case_root / "results"
     results.mkdir(exist_ok=True)
     try:
@@ -911,6 +948,10 @@ def finish_case(record, context, *, remote, profile):
         if not status_path.is_file():
             raise CaseStop("Fetch", f"no status.json fetched for {job['Name']} ({status_path})", Submission=job.get("Submission"))
         status = json.loads(status_path.read_text())
+        if status.get("PBSJobID") != job["Submission"]["Job"]:
+            raise CaseStop("JobExit", f"the fetched status.json of {job['Name']} was written by job {status.get('PBSJobID')!r}, not "
+                                      f"by the submitted {job['Submission']['Job']!r}", Submission=job.get("Submission"),
+                           StatusPath=str(status_path), Rule=remote_side.JOB_EXIT_RULE)
         incomplete, nonconvergence = status_failures(status)
         if status["State"] != "complete" or incomplete or nonconvergence:
             raise CaseStop("Stages", f"{job['Name']}: runner state {status['State']}: incomplete {incomplete}, PCG non-convergence "
@@ -1794,7 +1835,8 @@ def run_qualify(args, *, log=log_line):
                     verify_archive_union(record, context, remote=remote, profile=profile)
                     log(f"{record['Case']}: archive union complete "
                         f"{[(k, v['Found']) for k, v in record['ArchiveUnion']['Stages'].items()]}")
-                submit_job(record, context, job, remote=remote, profile=profile, log=log)
+                submit_job(record, context, job, remote=remote, profile=profile, log=log,
+                           adopt_remote_case=getattr(args, "adopt_remote_case", False))
             except CaseStop as exception:
                 stop(record, None, exception)
                 # A qsub that went through before the stop is a job of this run (counted).
@@ -1919,6 +1961,9 @@ def add_arguments(parser):
     parser.add_argument("--resume", action="store_true", help="adopt the job ids a previous driver of this --root recorded "
                                                                "(<case>/submission.json, plan byte-identical) instead of "
                                                                "submitting again; monitor / fetch / analyze from there")
+    parser.add_argument("--adopt-remote-case", action="store_true",
+                        help="upload into a PRE-EXISTING remote case directory knowingly (recorded); without it a coupon whose "
+                             "remote case directory exists stops before any upload (REMOTE_CASE_RULE, decision 485 (b))")
     parser.add_argument("--monitor-interval", type=int, default=DEFAULT_MONITOR_INTERVAL, help="seconds between read-only polls")
     parser.add_argument("--monitor-polls", type=int, default=DEFAULT_MONITOR_POLLS)
     parser.add_argument("--cluster-profile", type=Path, default=HERE / "cluster-profile.json")

@@ -172,7 +172,8 @@ class MonitorTransportFailureTest(unittest.TestCase):
             raise subprocess.CalledProcessError(255, ["rsync", remote_directory, str(local_directory)])
         tmp = Path(tempfile.mkdtemp(prefix="qualify-fetch-stop-"))
         record = {"Case": "c", "Root": str(tmp), "Remote": {"Case": "/r/case"}, "Submission": {"Job": "1.h"}}
-        context = {"jobs": [{"Name": "single", "Kind": "single", "RemoteDirectory": "/r/case/main", "Submission": {"Job": "1.h"}}]}
+        context = {"jobs": [{"Name": "single", "Kind": "single", "RemoteDirectory": "/r/case/main", "Submission": {"Job": "1.h"},
+                             "ExitCheck": {"OK": True, "Reasons": []}}]}
         try:
             remote_side.fetch = failing_fetch
             with self.assertRaises(qualify_library.CaseStop) as stop:
@@ -184,6 +185,143 @@ class MonitorTransportFailureTest(unittest.TestCase):
         self.assertIn("--resume", stop.exception.record["Message"])
         self.assertEqual(stop.exception.record["Command"][0], "rsync")
         self.assertNotIn("Fetch", record)
+
+
+class RemoteFailClosedTest(unittest.TestCase):
+    """Decision 485 (b), the b-batch1 O1 attempt 1 (PBS 57745 / 57749) reproduced: the shared remote root
+    still held fab-/thin-spatial-2-edge-252cfb0e368d from an Oct-5 run; the job script died in 1 s at
+    `mkdir "$D/tmp"` (pbs-status.json ExitCode 1), and the driver fetched the Oct-5 status.json (PBSJobID
+    56380) as the job's results.  Now a pre-existing remote case directory stops the coupon before any
+    upload unless --adopt-remote-case, and every job's exit record + status.json job id are checked before
+    anything is fetched."""
+
+    SUBMISSION = {"Job": "57745.ip-192-168-54-24.us-west-2.compute.internal", "UTC": "2026-10-07T03:11:13Z"}
+    STALE_STATUS = {"Version": 2, "Case": "spatial-2-edge-252cfb0e368d", "PBSJobID": "56380.ip-192-168-54-24.us-west-2.compute.internal",
+                    "StartUTC": "2026-10-05T09:25:05Z", "State": "complete", "TotalSeconds": 3816.0,
+                    "Stages": [{"Name": "spatial-2-edge-252cfb0e368d-p4-worker", "State": "complete", "Parsed": {}}]}
+
+    def fake_remote(self, files):
+        remote_side = qualify_library.remote_side
+        saved = {name: getattr(remote_side, name) for name in ("read_json", "fetch", "path_exists", "upload", "upload_file", "qstat_history")}
+        calls = []
+
+        def read_json(host, path):
+            calls.append(("read", path))
+            return files.get(path)
+
+        def fetch(host, remote_directory, local_directory):
+            calls.append(("fetch", remote_directory))
+            raise AssertionError("fetched after a failed exit check")
+        remote_side.read_json, remote_side.fetch = read_json, fetch
+        self.addCleanup(lambda: [setattr(remote_side, name, fake) for name, fake in saved.items()])
+        return calls
+
+    def test_job_exit_record_and_status_job_id_are_checked_before_the_fetch(self):
+        remote_side = qualify_library.remote_side
+        directory = "/r/fab-spatial-2-edge-252cfb0e368d/spatial-2-edge-252cfb0e368d/main"
+        job_id = self.SUBMISSION["Job"]
+        # The reproduced failure: the trap's exit record reads 1 and the status.json is another job's.
+        calls = self.fake_remote({f"{directory}/pbs-status.json": {"ExitCode": 1, "JobID": job_id, "UTC": "2026-10-07T03:14:11Z"},
+                                  f"{directory}/status.json": self.STALE_STATUS})
+        check = remote_side.job_exit("h", directory, job_id)
+        self.assertFalse(check["OK"])
+        self.assertEqual(len(check["Reasons"]), 2)
+        self.assertIn("ExitCode 1", check["Reasons"][0])
+        self.assertIn("56380", check["Reasons"][1])
+        self.assertEqual(check["Rule"], remote_side.JOB_EXIT_RULE)
+        tmp = Path(tempfile.mkdtemp(prefix="qualify-exit-stop-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        record = {"Case": "spatial-2-edge-252cfb0e368d", "Root": str(tmp), "Remote": {"Case": directory.rsplit("/", 1)[0]},
+                  "Submission": dict(self.SUBMISSION)}
+        job = {"Name": "single", "Kind": "single", "RemoteDirectory": directory, "Submission": dict(self.SUBMISSION)}
+        with self.assertRaises(qualify_library.CaseStop) as stop:
+            qualify_library.finish_case(record, {"jobs": [job]}, remote={"Host": "h"}, profile={"PBSBin": "/pbs"})
+        self.assertEqual(stop.exception.record["Kind"], "JobExit")
+        self.assertIn("nothing fetched", stop.exception.record["Message"])
+        self.assertEqual(stop.exception.record["ExitCheck"]["StatusPBSJobID"], self.STALE_STATUS["PBSJobID"])
+        self.assertFalse(job["ExitCheck"]["OK"])
+        self.assertEqual([kind for kind, _ in calls], ["read", "read", "read", "read"])   # never "fetch"
+        self.assertNotIn("Fetch", record)
+        # A worker job of a split coupon is checked the same way before its status is read.
+        worker = {"Name": "worker-1", "Kind": "worker", "RemoteDirectory": directory, "Submission": dict(self.SUBMISSION)}
+        with self.assertRaises(qualify_library.CaseStop) as stop:
+            qualify_library.complete_worker_job(record, {"jobs": [worker]}, worker, remote={"Host": "h"}, profile={})
+        self.assertEqual(stop.exception.record["Kind"], "JobExit")
+        # No exit record at all (the trap never ran) and a missing status.json: both named.
+        self.fake_remote({})
+        check = remote_side.job_exit("h", directory, job_id)
+        self.assertFalse(check["OK"])
+        self.assertEqual(len(check["Reasons"]), 2)
+        self.assertIn("no pbs-status.json", check["Reasons"][0])
+        # A clean exit of the submitted job with its own status.json passes.
+        self.fake_remote({f"{directory}/pbs-status.json": {"ExitCode": 0, "JobID": job_id, "UTC": "2026-10-07T04:19:00Z"},
+                          f"{directory}/status.json": {**self.STALE_STATUS, "PBSJobID": job_id}})
+        check = remote_side.job_exit("h", directory, job_id)
+        self.assertTrue(check["OK"])
+        self.assertEqual(check["ExitRecord"]["ExitCode"], 0)
+        self.assertEqual(qualify_library.check_job_exit(record, job, remote={"Host": "h"})["OK"], True)
+        self.assertTrue(job["ExitCheck"]["OK"])
+        # The fetched status.json must also be the submitted job's (the post-fetch side of the check).
+        results = tmp / "results" / "main"
+        results.mkdir(parents=True)
+        (results / "status.json").write_text(json.dumps(self.STALE_STATUS))
+        remote_side.fetch = lambda host, remote_directory, local_directory: ["rsync", "fake"]
+        remote_side.qstat_history = lambda host, pbs_bin, job_id: "Exit_status = 0"
+        with self.assertRaises(qualify_library.CaseStop) as stop:
+            qualify_library.finish_case(record, {"jobs": [job]}, remote={"Host": "h"}, profile={"PBSBin": "/pbs"})
+        self.assertEqual(stop.exception.record["Kind"], "JobExit")
+        self.assertIn("56380", stop.exception.record["Message"])
+
+    def test_pre_existing_remote_case_directory_is_refused_unless_adopted(self):
+        remote_side = qualify_library.remote_side
+        tmp = Path(tempfile.mkdtemp(prefix="qualify-remote-case-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "main").mkdir()
+        (tmp / "main" / "plan.json").write_text("{}")
+        mesh, trace = tmp / "identity.msh", tmp / "basis-0001.csv"
+        mesh.write_text("mesh\n")
+        trace.write_text("trace\n")
+        remote_case = "/r/fab-spatial-2-edge-252cfb0e368d/spatial-2-edge-252cfb0e368d"
+        record = {"Case": "spatial-2-edge-252cfb0e368d", "Root": str(tmp),
+                  "Remote": {"Case": remote_case, "Run": remote_case.rsplit("/", 1)[0], "Mesh": f"{remote_case}/mesh/identity-0.msh"}}
+        context = {"identity": {"Path": str(mesh)}, "sources": [{"Path": str(trace), "Name": "basis-0001.csv"}]}
+        uploads = []
+        saved = {name: getattr(remote_side, name) for name in ("ssh", "upload", "upload_file")}
+        self.addCleanup(lambda: [setattr(remote_side, name, fake) for name, fake in saved.items()])
+        remote_side.upload = lambda host, local, remote: uploads.append(("upload", remote)) or ["rsync", remote]
+        remote_side.upload_file = lambda host, local, remote: uploads.append(("file", remote)) or ["rsync", remote]
+        # The shared root still holds the Oct-5 case directory: refused before any upload.
+        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.EXISTS_MARKER + "\n", stderr="")
+        self.assertTrue(remote_side.path_exists("h", remote_case))
+        with self.assertRaises(qualify_library.CaseStop) as stop:
+            qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={})
+        self.assertEqual(stop.exception.record["Kind"], "RemoteCase")
+        self.assertIn("--adopt-remote-case", stop.exception.record["Message"])
+        self.assertEqual(stop.exception.record["Rule"], qualify_library.REMOTE_CASE_RULE)
+        self.assertEqual(uploads, [])
+        self.assertFalse((tmp / "upload").exists())
+        # Adopted explicitly: uploaded, the adoption recorded.
+        upload = qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={}, adopt_remote_case=True)
+        self.assertEqual((upload["RemoteCaseExisted"], upload["AdoptedRemoteCase"]), (True, True))
+        self.assertEqual([kind for kind, _ in uploads], ["upload", "file"])
+        # A fresh case directory uploads as before, nothing adopted.
+        uploads.clear()
+        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 0, stdout=remote_side.ABSENT_MARKER + "\n", stderr="")
+        upload = qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={})
+        self.assertEqual((upload["RemoteCaseExisted"], upload["AdoptedRemoteCase"]), (False, False))
+        self.assertEqual(len(uploads), 2)
+        # A lost connection is no answer: the coupon stops (never "absent" from silence).
+        remote_side.ssh = lambda host, command, check=True: subprocess.CompletedProcess(["ssh"], 255, stdout="", stderr="timed out")
+        with self.assertRaisesRegex(RuntimeError, "no answer"):
+            remote_side.path_exists("h", remote_case)
+        with self.assertRaises(qualify_library.CaseStop) as stop:
+            qualify_library.upload_case(record, context, remote={"Host": "h"}, profile={})
+        self.assertEqual(stop.exception.record["Kind"], "RemoteCase")
+        # The dry run never asks (parse: the flag exists and defaults off).
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        self.assertFalse(parser.parse_args(["--build-record", "b", "--reference", "none", "--dry-run"]).adopt_remote_case)
+        self.assertTrue(parser.parse_args(["--build-record", "b", "--reference", "none", "--adopt-remote-case"]).adopt_remote_case)
 
 
 class JobSplitTest(unittest.TestCase):
@@ -887,7 +1025,7 @@ class QualifyDryRunTest(unittest.TestCase):
         finish_after = {"four-edge-9d2cb9bbb3fe": 2, "three-edge-419576fdab24": 1}
         polls = {}
 
-        def fake_upload(record, context, *, remote, profile):
+        def fake_upload(record, context, *, remote, profile, adopt_remote_case=False):
             events.append(("upload", record["Case"]))
             return {"Commands": [], "UTC": "fake"}
 
@@ -896,6 +1034,10 @@ class QualifyDryRunTest(unittest.TestCase):
             events.append(("submit", case))
             return {"Job": f"{len(events)}.fake", "UTC": qualify_library.remote_side.utc(), "UserJobsBefore": 0, "JobCap": job_cap,
                     "Command": "qsub"}
+
+        def fake_job_exit(host, remote_job_directory, job_id):
+            events.append(("exit-check", Path(remote_job_directory).parts[-2]))
+            return {"OK": True, "Reasons": [], "ExitRecord": {"ExitCode": 0, "JobID": job_id}, "StatusPBSJobID": job_id}
 
         def fake_poll(host, pbs_bin, job_id, status_path):
             case = Path(status_path).parts[-3]
@@ -908,6 +1050,10 @@ class QualifyDryRunTest(unittest.TestCase):
             case = Path(remote_directory).parts[-2]
             events.append(("fetch", case))
             shutil.copytree(ASSESSMENT / CASES[case]["Campaign"] / "results" / "main", local_directory, dirs_exist_ok=True)
+            # The replayed status.json is stamped with this run's job id (the recorded one would read as stale).
+            status_path = Path(local_directory) / "status.json"
+            submission = json.loads((Path(local_directory).parents[1] / "submission.json").read_text())
+            status_path.write_text(json.dumps({**json.loads(status_path.read_text()), "PBSJobID": submission["Job"]}))
             return ["rsync", "fake"]
 
         def fake_remote_sha256(host, paths):
@@ -926,7 +1072,7 @@ class QualifyDryRunTest(unittest.TestCase):
             return {"Archives": list(archives), "SizesBeforeDeletion": "0", "DeletedUTC": "fake", "Remaining": ""}
 
         fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
-                 "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F"}
+                 "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F", "job_exit": fake_job_exit}
         saved = {name: getattr(qualify_library.remote_side, name) for name in fakes}
         saved_upload = qualify_library.upload_case
         controls = {case_id: spec["Controls"] for case_id, spec in CASES.items()}
@@ -1051,9 +1197,13 @@ class QualifyDryRunTest(unittest.TestCase):
             return dict(recorded, Stages=selected, PBSJobID=f"{name}.fake",
                         TotalSeconds=sum(stage["WallSeconds"] for stage in selected) + 60.0)
 
-        def fake_upload(record, context, *, remote, profile):
+        def fake_upload(record, context, *, remote, profile, adopt_remote_case=False):
             events.append(("upload", record["Case"]))
             return {"Commands": [], "UTC": "fake"}
+
+        def fake_job_exit(host, remote_job_directory, job_id):
+            events.append(("exit-check", Path(remote_job_directory).name))
+            return {"OK": True, "Reasons": [], "ExitRecord": {"ExitCode": 0, "JobID": job_id}, "StatusPBSJobID": job_id}
 
         def fake_submit(host, pbs_bin, script, cwd, *, job_cap, user=None):
             events.append(("submit", Path(cwd).name))
@@ -1089,7 +1239,7 @@ class QualifyDryRunTest(unittest.TestCase):
 
         fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
                  "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F",
-                 "read_json": fake_read_json, "count_archive_potentials": fake_count}
+                 "read_json": fake_read_json, "count_archive_potentials": fake_count, "job_exit": fake_job_exit}
         saved = {name: getattr(qualify_library.remote_side, name) for name in fakes}
         saved_upload, saved_prepare = qualify_library.upload_case, qualify_library.prepare_case
 
