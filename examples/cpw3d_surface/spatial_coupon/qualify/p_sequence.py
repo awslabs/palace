@@ -31,6 +31,45 @@ SHARP_OBSERVABLES = ["Q_MA_tail", "Q_MA_sharp", "p_MA_sharp"]
 GATED_OBSERVABLES = ("E", "p_MA", "p_MS", "p_SA")
 # The p-sequence gate of a radial-shell run evaluates p_MA_sharp in place of p_MA (decision 61a).
 SHARP_GATED_OBSERVABLES = ("E", "p_MA_sharp", "p_MS", "p_SA")
+# The Type amplitudes the amplitude floor of the p-sequence gate reads (decisions 472 (c) /
+# 474): the numerator Q_X of every participation observable p_X, over every source of the
+# main stage.
+AMPLITUDE_OBSERVABLES = ("Q_MA", "Q_MS", "Q_SA", "Q_MA_sharp")
+
+
+def amplitude_observable(name):
+    """The Type amplitude (numerator) of a participation observable: p_SA -> Q_SA,
+    p_MA_sharp -> Q_MA_sharp; None for E (always judged, no floor)."""
+    return f"Q_{name[len('p_'):]}" if name.startswith("p_") else None
+
+
+def floor_numerators(name):
+    """The Type amplitudes a participation observable must be below the floor of, ALL of them,
+    to be exempt: [Q_X]; for p_MA_sharp both Q_MA_sharp and the raw Q_MA (decision 477 (4): the
+    sharp quantity is a per-source extrapolation, the Cauchy-Schwarz derivation holds for the
+    Gram diagonal Q_MA); [] for E."""
+    numerator = amplitude_observable(name)
+    if numerator is None:
+        return []
+    return [numerator, "Q_MA"] if numerator == "Q_MA_sharp" else [numerator]
+
+
+def coupon_amplitudes(main_observables):
+    """Per Type amplitude the floor is referred to, from the main stage's observables of
+    EVERY source (`observables(main_dir, ...)`): {Q_X: {"Maximum": the coupon's largest
+    diagonal Q_X,jj, "MaximumSource": j, "Sources": n, "Values": {j: Q_X,jj}}} - the Gram
+    matrix of a Type is PSD, so its largest entry is a diagonal: the Type energy of the unit
+    trace on the strongest hat."""
+    out = {}
+    for name in AMPLITUDE_OBSERVABLES:
+        values = {int(i): float(record[name]) for i, record in main_observables.items()
+                 if name in record and math.isfinite(record[name])}
+        if not values:
+            continue
+        strongest = max(values, key=values.get)
+        out[name] = {"Maximum": values[strongest], "MaximumSource": strongest, "Sources": len(values),
+                     "Values": {str(i): values[i] for i in sorted(values)}}
+    return out
 
 
 def rows(path):
@@ -145,6 +184,17 @@ def p_sequence(runs, controls, interface_types, reference_interface_types=None, 
     return summary
 
 
+def p_sequence_with_amplitudes(runs, controls, interface_types, reference_interface_types=None, ma_tails=None,
+                               reference_ma_side=None):
+    """`p_sequence` plus the coupon amplitudes of the main stage (every source): the
+    (summary, amplitudes) the amplitude floor of gates.evaluate_p_sequence needs."""
+    ma_tails = ma_tails or {}
+    summary = p_sequence(runs, controls, interface_types, reference_interface_types, ma_tails=ma_tails,
+                         reference_ma_side=reference_ma_side)
+    amplitudes = coupon_amplitudes(observables(runs["main"], interface_types, ma_tails.get("main")))
+    return summary, amplitudes
+
+
 def markdown_report(summary, orders, title):
     labels = {key: f"p{orders[key]}" for key in orders}
     lines = [f"# {title}", "",
@@ -178,12 +228,13 @@ def markdown_report(summary, orders, title):
 
 def write_p_sequence(runs, orders, controls, out_md, out_json, *, title, interface_types, reference_interface_types=None,
                      ma_tails=None, reference_ma_side=None):
-    summary = p_sequence(runs, controls, interface_types, reference_interface_types, ma_tails=ma_tails,
-                         reference_ma_side=reference_ma_side)
+    summary, amplitudes = p_sequence_with_amplitudes(runs, controls, interface_types, reference_interface_types,
+                                                     ma_tails=ma_tails, reference_ma_side=reference_ma_side)
     Path(out_md).write_text(markdown_report(summary, orders, title))
     Path(out_json).write_text(json.dumps({"Orders": orders, "Controls": list(controls),
-                                          "Sources": {str(i): record for i, record in summary.items()}}, indent=2) + "\n")
-    return summary
+                                          "Sources": {str(i): record for i, record in summary.items()},
+                                          "CouponAmplitudes": amplitudes}, indent=2) + "\n")
+    return summary, amplitudes
 
 
 def main(argv=None):

@@ -35,8 +35,12 @@ import json
 import math
 from pathlib import Path
 import statistics
+import sys
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from p_sequence import floor_numerators  # noqa: E402
+
 GATES_FILE = HERE / "qualification-gates.json"
 
 
@@ -123,13 +127,75 @@ def classify_all(locations, zero_trace, terminals=(), *, thresholds=(NARROW_WIDT
     return classes
 
 
-def choose_controls(classes, count, free):
+def amplitude_numerators(amplitudes, observables):
+    """The Type amplitudes the judged participation observables are floored on and the coupon
+    amplitudes carry (p_sequence.floor_numerators: p_SA -> Q_SA; p_MA_sharp -> Q_MA_sharp and
+    the raw Q_MA, decision 477 (4))."""
+    return sorted({numerator for name in observables for numerator in floor_numerators(name) if numerator in amplitudes})
+
+
+def amplitude_ratios(i, amplitudes, numerators):
+    """Source i's Type amplitudes over the coupon maxima (p_sequence.coupon_amplitudes); None
+    for a zero Type maximum (never inf in a record)."""
+    return {name: (amplitudes[name]["Values"].get(str(i), 0.0) / amplitudes[name]["Maximum"]
+                   if amplitudes[name]["Maximum"] > 0.0 else None) for name in numerators}
+
+
+def source_above_floor(i, amplitudes, floor_ratio, observables):
+    """Source i is judged on every `observables` Type at the gated order: for each observable
+    ANY of its floor numerators the coupon carries is at or above floor_ratio x the coupon
+    maximum (the dual MA_sharp condition exempts only below both; a zero Type maximum never
+    exempts; an observable with no carried numerator is not tested)."""
+    for name in observables:
+        carried = [numerator for numerator in floor_numerators(name) if numerator in amplitudes]
+        if carried and not any(amplitudes[n]["Maximum"] <= 0.0
+                               or amplitudes[n]["Values"].get(str(i), 0.0) >= floor_ratio * amplitudes[n]["Maximum"] for n in carried):
+            return False
+    return True
+
+
+def class_members(classes, free):
+    """{class: free members sorted by index} over CLASS_ORDER without the zero-trace class."""
+    return {name: [i for i in sorted(free) if classes.get(i, (None,))[0] == name]
+            for name in CLASS_ORDER if name != CLASS_ZERO_TRACE}
+
+
+def rank_members_by_floor(members, amplitudes, floor_ratio, observables):
+    """Per class the members with every judged Type amplitude at or above floor_ratio x the
+    coupon maximum first (lowest index first within each group), then the others; and the
+    classes with NO such member ({class: {Members, Chosen, ChosenRatios, Reason}}): the
+    amplitude-informed control choice of decision 474 (A)."""
+    if floor_ratio is None:
+        raise ValueError("ranking the class members by the amplitude floor needs the floor ratio of the gate table")
+    numerators = amplitude_numerators(amplitudes, observables)
+    ranked, below_floor_classes = {}, {}
+    for name, indices in members.items():
+        above = [i for i in indices if source_above_floor(i, amplitudes, floor_ratio, observables)]
+        ranked[name] = above + [i for i in indices if i not in above]
+        if indices and not above:
+            below_floor_classes[name] = {"Members": len(indices), "Chosen": indices[0],
+                                         "ChosenRatios": amplitude_ratios(indices[0], amplitudes, numerators),
+                                         "Reason": f"no member of the class has every Type amplitude {numerators} at or above "
+                                                   f"{floor_ratio:.4e} x the coupon maximum: the lowest index is kept and its "
+                                                   f"below-floor Types will be recorded BelowAmplitudeFloor, not judged"}
+    return ranked, below_floor_classes
+
+
+def choose_controls(classes, count, free, amplitudes=None, floor_ratio=None, observables=()):
     """`count` control sources by class: cycle over the classes in CLASS_ORDER (free
     sources only, the zero-trace class excluded), taking the lowest-index member of each
     class not yet chosen, until `count` sources are chosen (every class represented
-    before any class contributes a second source); sorted by index."""
-    members = {name: [i for i in sorted(free) if classes.get(i, (None,))[0] == name]
-               for name in CLASS_ORDER if name != CLASS_ZERO_TRACE}
+    before any class contributes a second source); sorted by index.
+
+    With `amplitudes` (p_sequence.coupon_amplitudes of a prior main stage of the same
+    case), `floor_ratio` (gates.amplitude_floor_ratio) and the judged participation
+    `observables`, each class's members are ranked by rank_members_by_floor, so the
+    class's control is judged on every Type whenever such a member exists; a class with
+    none keeps its lowest-index member (choose_controls_record lists them; decision 474
+    (A)).  Without amplitudes the choice is the unchanged first-pass choice."""
+    members = class_members(classes, free)
+    if amplitudes is not None:
+        members, _ = rank_members_by_floor(members, amplitudes, floor_ratio, observables)
     chosen = []
     while len(chosen) < count and any(members.values()):
         for name in CLASS_ORDER:
@@ -138,6 +204,14 @@ def choose_controls(classes, count, free):
     if len(chosen) < count:
         raise ValueError(f"only {len(chosen)} free sources for {count} controls")
     return sorted(chosen)
+
+
+def choose_controls_record(classes, count, free, amplitudes, floor_ratio, observables):
+    """choose_controls with amplitudes plus its record: {Controls, FloorRatio, Observables,
+    BelowFloorClasses} (the driver's ControlAmplitudes block)."""
+    _, below_floor_classes = rank_members_by_floor(class_members(classes, free), amplitudes, floor_ratio, observables)
+    return {"Controls": choose_controls(classes, count, free, amplitudes, floor_ratio, observables), "FloorRatio": floor_ratio,
+            "Observables": amplitude_numerators(amplitudes, observables), "BelowFloorClasses": below_floor_classes}
 
 
 def class_statistics(classes, comparison):
