@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <vector>
 #include <mfem.hpp>
@@ -900,16 +901,17 @@ struct SubstructuringSolver::Impl
   // the environment sources, the interface loads g and energy couplings h (Gamma rows), the
   // constants c and the works B_ij = b^E_i^T W_j. Only sources with an environment part
   // have modes.
-  static constexpr int kSourceModesMagic = 0x32435253;  // "SRC2"
+  static constexpr int kSourceModesMagic = 0x33435253;  // "SRC3"
   std::vector<int> src_ids;
   std::vector<double> src_fp, SG_rows, SH_rows, SC, SB;
   bool src_ready = false, src_saved = false;
-  mfem::Vector src_fp_field;
 
   // Environment source b^E = M_sheet^E a + J|_E (J on the environment interior; its
-  // interface entries load the region), zero on the Dirichlet DOFs, and its fingerprint
-  // (|b^E|^2, r^T b^E) with r a fixed field. fp[0] = 0: no environment part. Collective.
-  mfem::Vector EnvSource(const Source &src, std::array<double, 2> &fp)
+  // interface entries load the region), zero on the Dirichlet DOFs, and its fingerprint,
+  // independent of the partition (which changes the basis of some Nédélec DOFs): whether
+  // b^E is nonzero (fp[0] = 0: no environment part), and r_k^T b^E for two fixed fields
+  // r_k. Collective.
+  mfem::Vector EnvSource(const Source &src, std::array<double, 3> &fp)
   {
     mfem::Vector b(nt);
     b = 0.0;
@@ -931,13 +933,12 @@ struct SubstructuringSolver::Impl
     {
       b(dbc_tdofs[d]) = 0.0;
     }
-    if (src_fp_field.Size() != nt)
-    {
-      src_fp_field = FingerprintField(0);
-    }
-    double loc[2] = {b * b, src_fp_field * b}, glob[2];
-    MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
-    fp = {glob[0], glob[1]};
+    double loc[3] = {b.Normlinf(), CachedFingerprintField(0) * b,
+                     CachedFingerprintField(1) * b},
+           glob[3];
+    MPI_Allreduce(loc, glob, 1, MPI_DOUBLE, MPI_MAX, parent_fes.GetComm());
+    MPI_Allreduce(loc + 1, glob + 1, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
+    fp = {glob[0] > 0.0 ? 1.0 : 0.0, glob[1], glob[2]};
     return b;
   }
 
@@ -986,10 +987,10 @@ struct SubstructuringSolver::Impl
     std::vector<mfem::Vector *> Y(K);
     for (int k = 0; k < K; k++)
     {
-      std::array<double, 2> fp;
+      std::array<double, 3> fp;
       b[k] = EnvSource(src[k], fp);
-      src_fp[2 * k] = fp[0];
-      src_fp[2 * k + 1] = fp[1];
+      src_fp[2 * k] = fp[1];
+      src_fp[2 * k + 1] = fp[2];
       W[k] = 0.0;
       X[k] = &b[k];
       Y[k] = &W[k];
@@ -1089,7 +1090,7 @@ struct SubstructuringSolver::Impl
     bool ok = true;
     for (std::size_t j = 0; j < ids.size(); j++)
     {
-      std::array<double, 2> fp;
+      std::array<double, 3> fp;
       (void)EnvSource(src[j], fp);  // collective: always evaluated
       if (fp[0] == 0.0)
       {
@@ -1108,11 +1109,13 @@ struct SubstructuringSolver::Impl
         ok = false;
         continue;
       }
+      // Relative to the larger pairing (either may vanish, up to rounding).
+      const double scale =
+          std::max({std::abs(fp[1]), std::abs(fp[2]), std::abs(src_fp[2 * col[j]]),
+                    std::abs(src_fp[2 * col[j] + 1])});
       for (int q = 0; q < 2; q++)
       {
-        const double ref = src_fp[2 * col[j] + q];
-        if (std::abs(fp[q] - ref) >
-            1.0e-9 * std::max(std::abs(ref), std::abs(fp[q])) + 1e-300)
+        if (std::abs(fp[1 + q] - src_fp[2 * col[j] + q]) > 1.0e-9 * scale + 1e-300)
         {
           ok = false;
         }
@@ -1315,21 +1318,16 @@ struct SubstructuringSolver::Impl
   // Whether the energy operator differs from the solve operator (magnetostatics).
   bool EnergyDiffers() const { return magnetostatic; }
 
-  // Partition-invariant fingerprint of a lift's environment side: (x^T A_env x,
-  // |(A_env x)|_Gamma|_2). Collective.
+  // Fingerprint of a lift's environment side (t = A_env x), independent of the partition
+  // (which changes the basis of some Nédélec DOFs): the energies x^T A_env x and
+  // (x + r)^T A_env (x + r) for a fixed field r. Collective.
   std::array<double, 2> LiftFingerprint(const mfem::Vector &x, const mfem::Vector &t) const
   {
-    double loc[2] = {x * t, 0.0};
-    for (int i = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        loc[1] += t(i) * t(i);
-      }
-    }
-    double glob[2];
+    const mfem::Vector &r = CachedFingerprintField(0);
+    const double rAr = EnvironmentFingerprint()[2];  // r^T A_env r
+    double loc[2] = {x * t, r * t}, glob[2];
     MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
-    return {glob[0], std::sqrt(glob[1])};
+    return {glob[0], glob[0] + 2.0 * glob[1] + rAr};
   }
 
   // Modes (see the members) of the lifts x_k from batched environment solves: K solves,
@@ -1555,7 +1553,7 @@ struct SubstructuringSolver::Impl
   // KxK], and [kSourceModesMagic][K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B
   // KxK].
   static constexpr int kSKenMagic = 0x4e454b53;   // "SKEN"
-  static constexpr int kModesMagic = 0x32444f4d;  // "MOD2"
+  static constexpr int kModesMagic = 0x33444f4d;  // "MOD3"
   static constexpr int kEnvFpMagic = 0x33564e45;  // "ENV3"
   // Fingerprint of the environment: global counts of the environment-closure DOFs and of
   // the Dirichlet DOFs of environment elements, and the energies r^T A_env r of three fixed
@@ -1564,9 +1562,9 @@ struct SubstructuringSolver::Impl
   // changes with the environment mesh, materials, order, physics or Dirichlet boundaries.
   // Computed element by element (no assembled A_env). Collective.
   // Fixed projected polynomial field k of the fingerprints.
-  mfem::Vector FingerprintField(int k)
+  mfem::Vector FingerprintField(int k) const
   {
-    mfem::ParGridFunction gf(&parent_fes);
+    mfem::ParGridFunction gf(const_cast<mfem::ParFiniteElementSpace *>(&parent_fes));
     if (magnetostatic)
     {
       mfem::VectorFunctionCoefficient c(3,
@@ -1599,24 +1597,43 @@ struct SubstructuringSolver::Impl
     return r;
   }
 
-  std::array<double, 5> EnvironmentFingerprint()
+  std::array<double, 5> EnvironmentFingerprint() const
   {
+    // The environment does not change within a run: computed once.
+    if (env_fp)
+    {
+      return *env_fp;
+    }
     double loc[2] = {0.0, static_cast<double>(env_dbc_local)};
     for (int i = 0; i < nt; i++)
     {
       loc[0] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
     }
-    const std::vector<mfem::Vector> r = {FingerprintField(0), FingerprintField(1),
-                                         FingerprintField(2)};
-    const std::vector<mfem::Vector> Ar = EnvApply({&r[0], &r[1], &r[2]});
+    const mfem::Vector r2 = FingerprintField(2);
+    const std::vector<const mfem::Vector *> r = {&CachedFingerprintField(0),
+                                                 &CachedFingerprintField(1), &r2};
+    const std::vector<mfem::Vector> Ar = EnvApply(r);
     double glob[5] = {0.0, 0.0, 0.0, 0.0, 0.0};
     MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, parent_fes.GetComm());
     for (int k = 0; k < 3; k++)
     {
-      glob[2 + k] = mfem::InnerProduct(parent_fes.GetComm(), r[k], Ar[k]);
+      glob[2 + k] = mfem::InnerProduct(parent_fes.GetComm(), *r[k], Ar[k]);
     }
-    return {glob[0], glob[1], glob[2], glob[3], glob[4]};
+    env_fp = {glob[0], glob[1], glob[2], glob[3], glob[4]};
+    return *env_fp;
   }
+  mutable std::optional<std::array<double, 5>> env_fp;
+
+  // The fixed fields 0 and 1 of the fingerprints, cached.
+  const mfem::Vector &CachedFingerprintField(int k) const
+  {
+    if (fp_fields[k].Size() != nt)
+    {
+      fp_fields[k] = FingerprintField(k);
+    }
+    return fp_fields[k];
+  }
+  mutable std::array<mfem::Vector, 2> fp_fields;
 
   // Environment fingerprint of a loaded model.
   std::array<double, 5> saved_env_fp = {0.0, 0.0, 0.0, 0.0, 0.0};
@@ -1688,12 +1705,11 @@ struct SubstructuringSolver::Impl
     modes_saved = true;
   }
 
-  // Load the sections at byte offset `pos` (collective). Interface rows are re-ordered onto
-  // the online numbering like S_E: row g <- saved row perm[g] times sgn[g] (S^K columns
-  // likewise). Reading stops at the first unknown section; a later mode section supersedes
+  // Load the sections at byte offset `pos` (collective). Interface rows are mapped onto the
+  // online interface like S_E (dual quantities: x_cur = M^-T x_saved, rows and S^K
+  // columns). Reading stops at the first unknown section; a later mode section supersedes
   // an earlier one, and modes absent here are recomputed on demand.
-  void LoadSections(const std::string &path, std::streamoff pos,
-                    const std::vector<int> &perm, const std::vector<double> &sgn)
+  void LoadSections(const std::string &path, std::streamoff pos, const SignatureMap &map)
   {
     MPI_Comm comm = parent_fes.GetComm();
     const bool root = (Mpi::Rank(comm) == 0);
@@ -1711,15 +1727,7 @@ struct SubstructuringSolver::Impl
       {
         std::vector<double> off(static_cast<std::size_t>(nG) * K);
         f.read(reinterpret_cast<char *>(off.data()), sizeof(double) * off.size());
-        full.assign(off.size(), 0.0);
-        for (int g = 0; g < nG; g++)
-        {
-          for (int k = 0; k < K; k++)
-          {
-            full[static_cast<std::size_t>(g) * K + k] =
-                sgn[g] * off[static_cast<std::size_t>(perm[g]) * K + k];
-          }
-        }
+        full = map.DualRows(off, K);
       }
     };
     while (true)
@@ -1747,15 +1755,7 @@ struct SubstructuringSolver::Impl
         {
           std::vector<double> off(static_cast<std::size_t>(nG) * nG);
           f.read(reinterpret_cast<char *>(off.data()), sizeof(double) * off.size());
-          full.assign(off.size(), 0.0);
-          for (int a = 0; a < nG; a++)
-          {
-            for (int b = 0; b < nG; b++)
-            {
-              full[static_cast<std::size_t>(a) * nG + b] =
-                  sgn[a] * sgn[b] * off[static_cast<std::size_t>(perm[a]) * nG + perm[b]];
-            }
-          }
+          full = map.DualMatrix(off);
         }
         ScatterRows(full, nG, SK_rows);
         have_sk = true;
@@ -2702,49 +2702,51 @@ void SubstructuringSolver::CondenseEnvironment()
       f.seekg(static_cast<std::streamoff>(2 * sizeof(int) + sizeof(double) * nG * file_w));
       f.read(reinterpret_cast<char *>(S_full.data()), sizeof(double) * nG * nG);
     }
-    // Signature match: online interface index g is saved index perm[g] with orientation
-    // sgn[g] (+1 for H1, +/-1 for H(curl)), and S_on[i][j] = sgn_i sgn_j
-    // S_off[perm_i][perm_j].
-    std::vector<int> perm(nG);
-    std::iota(perm.begin(), perm.end(), 0);  // identity unless re-ordered by signature
-    std::vector<double> sgn(nG, 1.0);
-    if (file_w > 0)
+    // Signature match: the saved interface DOFs on the current ones (dual quantities, S_E
+    // and the sections' interface rows, transform as x_cur = M^-T x_saved). H1: online
+    // interface index g is saved index perm[g]. H(curl): signed matches, and blocks for the
+    // DOFs whose basis depends on the face orientation (second-order face DOFs on
+    // tetrahedra).
+    SignatureMap map;
+    if (sig_type == 2)
+    {
+      map = MatchSignatureBasis(gamma_sig(), saved_sig, file_w);
+    }
+    else
+    {
+      // Identity (no signatures saved), or H1 by the DOF coordinates.
+      map.rows.resize(nG);
+      for (int g = 0; g < nG; g++)
+      {
+        map.rows[g] = {{g, 1.0}};
+      }
+    }
+    if (sig_type == 1)
     {
       const std::vector<double> cur = gamma_sig();
-      const bool signed_match = (sig_type == 2);
+      std::vector<int> perm(nG);
       double worst = 0.0;
       for (int g = 0; g < nG; g++)
       {
         int best = 0;
-        double bs = 1.0, bd = 1e300;
+        double bd = 1e300;
         for (int s = 0; s < nG; s++)
         {
-          double dp = 0.0, dm = 0.0;
+          double dp = 0.0;
           for (int d = 0; d < file_w; d++)
           {
             const double a = cur[static_cast<std::size_t>(g) * file_w + d];
             const double b = saved_sig[static_cast<std::size_t>(s) * file_w + d];
             dp += (a - b) * (a - b);
-            if (signed_match)
-            {
-              dm += (a + b) * (a + b);
-            }
           }
           if (dp < bd)
           {
             bd = dp;
             best = s;
-            bs = 1.0;
-          }
-          if (signed_match && dm < bd)
-          {
-            bd = dm;
-            best = s;
-            bs = -1.0;
           }
         }
         perm[g] = best;
-        sgn[g] = bs;
+        map.rows[g] = {{best, 1.0}};
         worst = std::max(worst, bd);
       }
       std::vector<char> used(nG, 0);
@@ -2762,15 +2764,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     if (rank == 0 && file_w > 0)
     {
-      const std::vector<double> S_off = S_full;
-      for (int i = 0; i < nG; i++)
-      {
-        for (int j = 0; j < nG; j++)
-        {
-          S_full[static_cast<std::size_t>(i) * nG + j] =
-              sgn[i] * sgn[j] * S_off[static_cast<std::size_t>(perm[i]) * nG + perm[j]];
-        }
-      }
+      S_full = map.DualMatrix(S_full);
     }
     impl->ScatterRows(S_full, nG, impl->S_rows);
     loaded = true;
@@ -2779,7 +2773,7 @@ void SubstructuringSolver::CondenseEnvironment()
         static_cast<std::streamoff>(2 * sizeof(int)) +
         static_cast<std::streamoff>(sizeof(double)) * nG * file_w +
         static_cast<std::streamoff>(sizeof(double)) * nG * nG;
-    impl->LoadSections(model_path, sections_pos, perm, sgn);
+    impl->LoadSections(model_path, sections_pos, map);
     impl->CheckEnvFingerprint();
   }
   // MUMPS Schur materialization when available and the environment fits a direct
@@ -3715,7 +3709,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   if (nf > 0)
   {
     std::vector<mfem::Vector> bE(nf);
-    std::array<double, 2> fp;
+    std::array<double, 3> fp;
     for (int k = 0; k < nf; k++)
     {
       bE[k] = impl->EnvSource(src[k], fp);
