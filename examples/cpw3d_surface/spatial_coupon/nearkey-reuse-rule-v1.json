@@ -1,0 +1,200 @@
+{
+ "RuleVersion": "nearkey-reuse-rule-v1",
+ "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+ "SPDX-License-Identifier": "Apache-2.0",
+ "Design": {
+  "Document": "coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-reuse-design/DESIGN.md (v2)",
+  "SHA256": "e9c10d84af99b9ecb5cb29c840ec0f6a3a16ea8f249993e458b5b15ec4351f50",
+  "Decisions": [
+   420,
+   422,
+   426,
+   427,
+   428
+  ],
+  "SHA256Note": "the sha256 of DESIGN v2 as confirmed (decision 427) and ruled on (decision 428); ERRATUM 1 (decision 431) was appended afterwards without rewording",
+  "Erratum1": {
+   "Decision": 431,
+   "SHA256": "48731a31723d8178a3eecc7fe4f44b40ed7ef73ea0867ebd87bd278c25b15468",
+   "Rule": "item 1.2 (8): DEFAULT admits a donor whose only BuildGateOverride is the decision-311 cut-end kind (semantic-corner-and-endpoint-anisotropy, Band.Kind CutNeighborhoods; SupersededBy 316), refuses any other gate / kind and an unrecorded build-override mesh path; the donor pool is the library of record v3-b1"
+  },
+  "Erratum2": {
+   "Decision": 438,
+   "SHA256": "9ed2f4fad557be6e3003211a15c6f1858293a5f2061fb88c3879b29717184e7d",
+   "Rule": "section 4.4's MA_sharp tail sentence vs the 2.6 form the budget applies (+0.006 / +0.012 / +0.019 points on S3p / S4 / C3); the decision-438 fail-closed checks (assemble per model, donor (F) record required + sha, key assertion, STOP record class, Default refuses a rule override, DefaultActivation.RecordSHA256 verified)"
+  }
+ },
+ "CalibrationRecord": {
+  "Path": "coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-reuse-design/evidence/calibration.json",
+  "SHA256": "977d48b7696a9833af79b1e8435169ff630308739c04f8462f53c42982a6ecbb"
+ },
+ "Predictor": {
+  "Form": "central r_T = -a_T W; bound |r|_T = (1 + rho_T) a_T |W| + b_T S + phi_T + 2 max_X T2e_X; W = (w_donor - w_exact) / w_exact of the narrowest claim strip, S = SUM_p |l_p,D - l_p,E| / L_claims,E; DEFAULT regime for |W| <= WDefaultMax, beyond it max(the Fallback form, the Default form at WDefaultMax)",
+  "Types": [
+   "SA",
+   "MS",
+   "MA"
+  ],
+  "WDefaultMax": 0.025,
+  "Coefficients": {
+   "SA": {
+    "Default": {
+     "a": 0.23518436199919043,
+     "rho": 0.15,
+     "b": 0.09334826114734897,
+     "phi": 1.898183563771317e-05
+    },
+    "Fallback": {
+     "a": 0.20633832281144326,
+     "rho": 0.1,
+     "b": 0.09334826114734897,
+     "phi": 0.0002129556757609277
+    }
+   },
+   "MS": {
+    "Default": {
+     "a": 0.11495735071087233,
+     "rho": 0.3,
+     "b": 0.0037395286567021473,
+     "phi": 7.228228449897857e-05
+    },
+    "Fallback": {
+     "a": 0.1314380538861105,
+     "rho": 0.1,
+     "b": 0.0037395286567021473,
+     "phi": 0.00042135340262742285
+    }
+   },
+   "MA": {
+    "Default": {
+     "a": 0.28064645791900017,
+     "rho": 0.25,
+     "b": 0.16025792185160578,
+     "phi": 0.0028821951397587408
+    },
+    "Fallback": {
+     "a": 0.20884768502662437,
+     "rho": 0.15,
+     "b": 0.16025792185160578,
+     "phi": 0.002581798570384542
+    }
+   }
+  },
+  "MASharp": {
+   "Form": "Bound_MA_sharp = Bound_MA x (1 + t_donor) + TailDifferenceBound (t_donor = the donor's per-coupon shell tail SUM MA_sharp / SUM MA_raw - 1; DESIGN 2.6; over-counts by (1 + t_donor) ~ 1.02, conservative)",
+   "TailDifferenceBound": 0.00013512593462183808,
+   "TailDifferenceBoundRule": "max |t_donor - t_exact| over the six calibrated pairs' published shell records (evidence/ma-tail.json Bound_dt_sum)"
+  }
+ },
+ "Policy": {
+  "Option": "A",
+  "DefaultBound": {
+   "SA": 0.005,
+   "MS": 0.005,
+   "MA_sharp": 0.01
+  },
+  "FallbackMaxBound": 0.035,
+  "Domain": {
+   "WMax": 0.113,
+   "WDefaultMax": 0.025,
+   "SMax": 0.0075,
+   "ShiftMaxOverR": 0.05,
+   "BoxShiftMaxOverR": 0.015,
+   "KnotShiftMaxOverR": 0.055,
+   "OrphanKnotsMax": 2,
+   "GapScalingTolerance": 0.005,
+   "Rule": "the calibrated domain (DESIGN 1.2 items 4-7, 4.2): |W| <= 11.3 % (the measured maximum, C2 11.28 %), S <= 0.75 % (C1 0.738 %), claim / context vertex shifts <= 0.05 R, box faces <= 0.015 R, matched donor knots <= 0.055 R after the transplant, orphan knots <= 2 in both directions and modes, the facing gap scaling with the lead within GapScalingTolerance"
+  },
+  "Gates": {
+   "T1": 1e-12,
+   "T2Default": 0.001,
+   "T2eMax": 0.002,
+   "T3Information": 0.001,
+   "T4": 1e-12,
+   "T5PSD": 1e-09,
+   "T5Symmetry": 1e-12
+  },
+  "DefaultActive": true,
+  "DefaultActivation": {
+   "ValidationPair": "pair-5",
+   "RecordPath": "nearkey-default-activation-pair5.json",
+   "RecordSHA256": "cdc8c059901357564fc5ba724f26013741aac269f45aac5d2572569eb0654606",
+   "Decision": 459,
+   "UserDecision": 428,
+   "ActivationRuling": 460,
+   "Verdict": "PASS",
+   "Variant": "S1p box-1 Signature, junction lead 0.208 -> 0.204 um (W +1.9605 %, S 0.0658 %), model spatialedgecluster_edgecount-19_a16c6d025c0d, donor spatialedgecluster_edgecount-19_dcfd1e0fe3fa",
+   "Measured_r_pct": {
+    "SA": -0.4234,
+    "MS": -0.1999,
+    "MA_sharp": -0.4646
+   },
+   "Bound_pct": {
+    "SA": 0.551,
+    "MS": 0.301,
+    "MA_sharp": 1.007
+   },
+   "EvidenceRecord": "coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/records/default-activation-pair5.json (byte-identical to the shipped copy; the lane REPORT.md, PLAN snapshot, transplant record, (F) record and the Q_exact model files are sha-pinned inside it)",
+   "ActivatedUTC": "2026-10-07"
+  },
+  "DefaultActivationRule": "DESIGN v2 section 3 / decisions 428 / 438 (5): the DEFAULT mode is active only after validation pair 5 (an independent in-domain pair at |W| ~ 2 %) has read inside its bound; until then every qualifying reuse is FALLBACK-only. Activation = a DefaultActivation {ValidationPair, RecordPath, RecordSHA256, Decision} record written here by a reviewed amendment that also records the new rule-file sha in SUPERVISOR-DECISIONS; RecordPath must be readable and re-hash to RecordSHA256 (nearkey_predictor.default_active, fail closed); only this shipped, test-pinned rule file activates default reuse (a --nearkey-rule override is refused in Default mode). A relative RecordPath resolves against the rule file's own directory (the record is shipped beside the rule file as a sha-pinned code input, decision 460); an absolute path is read as given. ACTIVATED by decision 459 (validation pair 5 PASS: r inside the bound of record on every Type with the right sign on SA / MS).",
+  "DonorBuildGateOverride": {
+   "DefaultAdmittedKind": {
+    "Gate": "semantic-corner-and-endpoint-anisotropy",
+    "BandKind": "CutNeighborhoods",
+    "SupersededBy": 316
+   },
+   "Rule": "decision 431 (1)(b)"
+  }
+ },
+ "AdmissibleStructureKeys": [
+  {
+   "StructureKey": "2d27be59ff1b0774e86fe766572cda6cecd58c3c9dd14865b201909b51c32caa",
+   "Family": "S1p box 1 (19 edges)",
+   "CalibratedModels": [
+    "S1p box 1 c1979774f1f3",
+    "B2 d7a22d38cefe",
+    "B3 5d3d8ac62dd1"
+   ],
+   "TopologyKeysWithVertices": [
+    "4a6beb9ec29e80f512c855de9625ae97113a01c83356dfa53b136ce514e857f3"
+   ]
+  },
+  {
+   "StructureKey": "52c670f3cfe5f26bca6e6f957a7a781e91dc40a6d6b356b438f1e0e20d75337b",
+   "Family": "S1p box 3 (19 edges)",
+   "CalibratedModels": [
+    "S1p box 3 9f11f35e955e",
+    "B4 3be4f2eab5e1",
+    "B5 c313d191558f"
+   ],
+   "TopologyKeysWithVertices": [
+    "2e47b7305638bb619e8a12ad5b3b95a10982c9e7e5576de2d51b40c399296431"
+   ]
+  },
+  {
+   "StructureKey": "4682966a36a26319b9253d07c149406ab6aa88963d4b4aba17037710524dc869",
+   "Family": "C2 19-edge",
+   "CalibratedModels": [
+    "C2 19-edge 24ce6826a15c",
+    "C1 71d711e915bd"
+   ],
+   "TopologyKeysWithVertices": [
+    "b4941dcbde79e23cb1b141c7e6a8f0b00233abe861054a3fc1bdfd3b410a7374"
+   ]
+  },
+  {
+   "StructureKey": "d44841a19b9546cf5d93a20b5e81680a305f9b4b2ce187c403b8a71464343ea8",
+   "Family": "C2 20-edge (two Vertices variants)",
+   "CalibratedModels": [
+    "C2 20-edge 3d077d2793f3",
+    "C2 d49b3a49c501"
+   ],
+   "TopologyKeysWithVertices": [
+    "118a33cbc43db13e8c0bbecb49eb03c98459c6ca8be797a0794402f2ba66639d",
+    "f512fc521beaea6d7703dbccef7e0b7cc9605ac0fe9092317e6ea02a9f28e346"
+   ]
+  }
+ ],
+ "StructureKeyRule": "sha256 of the canonical JSON (sort_keys, compact separators) of the runtime topology key (signature_library.split_cluster_parameters, every Portions / Context / Box / Vertices number nulled, entry order preserved) with the Vertices member removed"
+}

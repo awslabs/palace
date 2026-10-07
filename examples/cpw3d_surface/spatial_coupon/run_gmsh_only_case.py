@@ -54,9 +54,15 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from estimate_build_cost import gate as estimate_gate  # noqa: E402
 from general_mesh_manifest import (FABRICATED_CASE_KEY, THIN_RECIPE_KEY, case_gates, case_kind,  # noqa: E402
-                                   thin_build_options)
+                                   minimum_qualified_rings, thin_build_options)
 from mesh_stage_contract import scope_guard_in_text  # noqa: E402
+from verify_canonical_case_entries import verification_time_bound  # noqa: E402
 BUILD_SUMMARY = "build-summary.json"
+# The per-entry verification runs under its own element-scaled whole-run bound
+# (verify_canonical_case_entries.VERIFICATION_TIME_BOUND_RULE, decision 410); the
+# run_bounded_mesher watchdog around it gets the same bound plus this grace so the
+# verifier's own alarm fires first and its report of an exceeded bound is written.
+VERIFICATION_WATCHDOG_GRACE_SECONDS = 60
 TRACE_BASIS = {"BasisContract": ("source-basis-contract", "--trace-basis-contract"),
                "TraceVertices": ("source-trace-vertices", "--trace-vertices"),
                "TraceTriangles": ("source-trace-triangles", "--trace-triangles"),
@@ -199,9 +205,9 @@ def main():
             "Stage": stage, "ReturnCode": return_code, "ScopeGuard": scope_guard,
             "Message": message}, indent=2) + "\n")
 
-    def launch(name, *command, memory_gib=memory, check=True):
+    def launch(name, *command, memory_gib=memory, check=True, stage_seconds=seconds):
         with open(root / f"{name}.launch.stdout", "w") as out, open(root / f"{name}.launch.stderr", "w") as err:
-            result = subprocess.run([python, str(tools["run_bounded_mesher.py"]), "--seconds", seconds,
+            result = subprocess.run([python, str(tools["run_bounded_mesher.py"]), "--seconds", stage_seconds,
                                      "--memory-gib", memory_gib, *command], env=env, stdout=out, stderr=err)
         if check and result.returncode != 0:
             log = root / f"{name}.log"
@@ -287,7 +293,15 @@ def main():
                "--maximum-corner-aspect", number(judged["MaximumCornerAspect"]),
                "--minimum-scaled-jacobian", number(judged["MinimumScaledJacobian"]),
                "--maximum-jacobian-condition", number(judged["MaximumJacobianCondition"]),
-               "--maximum-quality-displacement-over-normal", "0.75"]
+               "--maximum-quality-displacement-over-normal", "0.75",
+               # Design round 2 F5-A: the invariant-corner verdict bound, only when the
+               # manifest carries it (every rectilinear manifest's command is unchanged).
+               *(["--corner-shape-gate", number(judged["CornerShapeGate"])]
+                 if judged.get("CornerShapeGate") is not None else []),
+               # Design round 2 F6: the case kind's qualified ring-count minimum, only when the
+               # manifest carries the range (a manifest without it builds no reduced side).
+               *(["--minimum-qualified-rings", str(minimum_qualified_rings(manifest, case))]
+                 if minimum_qualified_rings(manifest, case) is not None else [])]
         if args.labels_only:
             # The same mesher command as the gmsh-build stage plus the labels-only output:
             # the label set comes from the production code path on the production options.
@@ -371,10 +385,15 @@ def main():
                             *[token for kind in AUDIT_KINDS for token in ("--audit-record", f"{kind}={root}/{variant}-{kind}.json")]],
                            env=env, stdout=out, stderr=err)
     (root / "audits.done").touch()
+    time_bound = verification_time_bound(manifest, case, root / "audits")
+    print(f"verification time bound {time_bound['Seconds']} s (scale {time_bound['Scale']:.3f} of "
+          f"MaximumSeconds {time_bound['MaximumSeconds']}: {time_bound['TotalElements']} entry elements over "
+          f"MaximumElements {time_bound['MaximumElements']})", flush=True)
     code = launch("per-entry-verification", "--log", f"{root}/per-entry-verification.audit.log",
                   "--artifact", f"{root}/per-entry-verification.json", "--",
                   python, str(tools["verify_canonical_case_entries.py"]), str(manifest_path), f"{root}/audits",
-                  f"{root}/per-entry-verification.json", args.case_id, memory_gib=args.audit_memory_gib, check=False)
+                  f"{root}/per-entry-verification.json", args.case_id, memory_gib=args.audit_memory_gib, check=False,
+                  stage_seconds=str(time_bound["Seconds"] + VERIFICATION_WATCHDOG_GRACE_SECONDS))
     print(f"verification rc={code}", flush=True)
     write_summary("built" if code == 0 else "failed", stage="per-entry-verification", return_code=code,
                   message=None if code == 0 else "per-entry verification failed")

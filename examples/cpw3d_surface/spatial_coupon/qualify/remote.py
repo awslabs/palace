@@ -149,15 +149,87 @@ def remote_sha256(host, remote_paths):
     return digests
 
 
-def read_json(host, remote_path):
-    """The parsed content of a remote JSON file (None when absent or unparsable)."""
-    result = ssh(host, f"cat '{remote_path}' 2>/dev/null", check=False)
-    if not result.stdout.strip():
-        return None
+READ_MARKER = "---READ-OK---"
+
+
+def read_json_reachable(host, remote_path):
+    """(reachable, content) of a remote JSON file: `reachable` is whether the ssh round trip
+    itself answered (READ_MARKER came back); `content` is the parsed file, None when absent /
+    unparsable / unreachable.  The caller tells a transport failure (not reachable) from an
+    absent file (decision 495 (3))."""
+    result = ssh(host, f"cat '{remote_path}' 2>/dev/null; echo {READ_MARKER}", check=False)
+    if READ_MARKER not in result.stdout:
+        return False, None
+    text = result.stdout.replace(READ_MARKER, "").strip()
+    if not text:
+        return True, None
     try:
-        return json.loads(result.stdout)
+        return True, json.loads(text)
     except json.JSONDecodeError:
-        return None
+        return True, None
+
+
+def read_json(host, remote_path):
+    """The parsed content of a remote JSON file (None when absent, unparsable or unreachable)."""
+    return read_json_reachable(host, remote_path)[1]
+
+
+EXISTS_MARKER = "---EXISTS---"
+ABSENT_MARKER = "---ABSENT---"
+
+
+def path_exists(host, remote_path):
+    """Whether `remote_path` exists on the host (a read-only test).  A round trip that returns
+    neither marker (a lost connection) raises: the caller must fail closed, never read
+    "absent" from silence (decision 485 (b))."""
+    result = ssh(host, f"if [ -e '{remote_path}' ]; then echo {EXISTS_MARKER}; else echo {ABSENT_MARKER}; fi", check=False)
+    if EXISTS_MARKER in result.stdout:
+        return True
+    if ABSENT_MARKER in result.stdout:
+        return False
+    raise RuntimeError(f"the existence test of {remote_path} on {host} returned no answer (ssh rc {result.returncode}: "
+                       f"{result.stderr.strip()[:200]!r})")
+
+
+JOB_EXIT_RECORD = "pbs-status.json"
+JOB_EXIT_RULE = ("decision 485 (b): before any fetch the job's own exit record <job dir>/pbs-status.json (the job script's EXIT "
+                 "trap: ExitCode, JobID = PBS_JOBID) must exist with ExitCode 0 and the submitted job id, and the runner's "
+                 "status.json must carry that job id as PBSJobID - a job that died before the runner (b-batch1 O1 attempt 1: "
+                 "mkdir tmp 'File exists', Exit_status 1 in 1 s) left an older run's status.json in the shared case directory "
+                 "and the driver fetched it as the job's results")
+
+
+def job_exit(host, remote_job_directory, job_id):
+    """The exit check of one finished job (JOB_EXIT_RULE): {OK, Reachable, Reasons, ExitRecord,
+    StatusPBSJobID}; OK only when pbs-status.json reads ExitCode 0 for `job_id` and status.json
+    names `job_id`.  A round trip that did not answer is Reachable False (not OK, with a
+    transport reason): a lost connection says nothing about the job - the caller retries
+    (--resume) instead of blaming the job (decision 495 (3))."""
+    reachable, exit_record = read_json_reachable(host, f"{remote_job_directory}/{JOB_EXIT_RECORD}")
+    if reachable:
+        reachable, status = read_json_reachable(host, f"{remote_job_directory}/status.json")
+    else:
+        status = None
+    if not reachable:
+        return {"OK": False, "Reachable": False,
+                "Reasons": [f"the job directory {remote_job_directory} could not be read on {host} (the ssh round trip did not answer): "
+                            "a transport failure, not a verdict on the job - the job's exit stays unchecked; run again with --resume"],
+                "ExitRecord": None, "StatusPBSJobID": None, "Rule": JOB_EXIT_RULE}
+    reasons = []
+    if exit_record is None:
+        reasons.append(f"no {JOB_EXIT_RECORD} in {remote_job_directory} (the job script's EXIT trap did not run)")
+    else:
+        if exit_record.get("JobID") != job_id:
+            reasons.append(f"{JOB_EXIT_RECORD} names job {exit_record.get('JobID')!r}, the submission {job_id!r}")
+        if exit_record.get("ExitCode") != 0:
+            reasons.append(f"{JOB_EXIT_RECORD} reads ExitCode {exit_record.get('ExitCode')!r}")
+    if status is None:
+        reasons.append(f"no status.json in {remote_job_directory}")
+    elif status.get("PBSJobID") != job_id:
+        reasons.append(f"status.json was written by job {status.get('PBSJobID')!r} (started {status.get('StartUTC')}), not by "
+                       f"the submitted {job_id!r}: a stale run in a pre-existing case directory")
+    return {"OK": not reasons, "Reachable": True, "Reasons": reasons, "ExitRecord": exit_record,
+            "StatusPBSJobID": status.get("PBSJobID") if status else None, "Rule": JOB_EXIT_RULE}
 
 
 def count_archive_potentials(host, archive_directory):

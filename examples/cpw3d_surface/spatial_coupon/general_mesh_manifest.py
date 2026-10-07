@@ -19,7 +19,7 @@ from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELI
                                  PLACEMENT_STAGE_ORDER, STAGE_TOOLS, TRACE_BASIS_RATIO_OPTION,
                                  canonical_stage_order, pipeline_of, scope_classes_of_case_inputs,
                                  stage_order, unsupported_scope_classes, validate_stage_dag)
-from semantic_mesh_contract import (REQUIRED_ROLES, load_semantic_contract,
+from semantic_mesh_contract import (REQUIRED_ROLES, invariant_corners, load_semantic_contract,
                                     validate_feature_topology)
 
 
@@ -324,6 +324,10 @@ CASE_KINDS = ("fabricated", "thin")
 FABRICATED_CASE_KEY = "FabricatedCase"
 THIN_RECIPE_KEY = "ThinRecipe"
 THIN_RECIPE_OPTIONS = ("--edge-size", "--corner-size")
+# Mesher design round 2 F6 2.3 (decision 437 (2)): a MEASUREMENT-ONLY thin recipe may cap the
+# coupon's ring count (the all-rings sensitivity twin: --maximum-rings, a positive integer); the
+# production manifest never carries it, the census records Section.RingsCap.
+THIN_RECIPE_MEASUREMENT_OPTIONS = ("--maximum-rings",)
 
 
 def case_kind(case):
@@ -342,8 +346,13 @@ def validate_thin_recipe(recipe):
     if block is None:
         return None
     options = block.get("BuildCommandOptions") if isinstance(block, dict) else None
-    if (not isinstance(options, dict) or sorted(options) != sorted(THIN_RECIPE_OPTIONS) or
+    measurement = [option for option in (options or {}) if option in THIN_RECIPE_MEASUREMENT_OPTIONS]
+    if (not isinstance(options, dict) or
+            sorted(option for option in options if option not in THIN_RECIPE_MEASUREMENT_OPTIONS) != sorted(THIN_RECIPE_OPTIONS) or
             any(not _finite_number(options[option], positive=True) for option in THIN_RECIPE_OPTIONS) or
+            any(isinstance(options[option], bool) or not isinstance(options[option], int) or options[option] < 1
+                for option in measurement) or
+            (measurement and not block.get("MeasurementOnly")) or
             options["--edge-size"] != options["--corner-size"] or
             not _finite_number(block.get("Cutoff"), positive=True) or block["Cutoff"] != options["--edge-size"] or
             any(not isinstance(block.get(key), str) or not block[key] for key in ("Rule", "Provenance"))):
@@ -620,6 +629,89 @@ EDGE_LAYER_QUALITY_RULE_GATE = "EdgeLayerQualityRule"
 EDGE_LAYER_QUALITY_RULE_OPTION = "--edge-layer-maximum-aspect"
 
 
+# Mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363): the verdict bound of
+# the INVARIANT (non-perpendicular) semantic corners, kappa_reg <= CornerShapeGate =
+# min(E_pop, CORNER_SHAPE_GATE_CAP), E_pop the kappa_reg envelope of the corner-incident
+# seed cells of the 90-degree corners of the (F)-Qualified coupons (measured from the stored
+# canonical meshes BEFORE any round-2 build, recorded as a distribution); the cap binds when
+# E_pop exceeds it (FIX-UPS F.1: the identified fab flat-kink slivers read 5.28-6.16).
+# Legacy (exactly perpendicular) corners keep MaximumCornerAspect bitwise. Optional: a
+# manifest whose coupons are all rectilinear needs no gate; a build with an invariant
+# corner fails closed without it.
+CORNER_SHAPE_GATE = "CornerShapeGate"
+CORNER_SHAPE_GATE_PROVENANCE = "CornerShapeGateProvenance"
+CORNER_SHAPE_GATE_CAP = 5.0
+
+
+# Mesher design round 2 F6 (supervisor decisions 347 / 349 / 437 / 443): the qualified
+# ring-count RANGE per coupon kind - the smallest tube ring count validated by (F) for
+# fabricated and for thin coupons. A side whose facing bound min(TransverseBound,
+# FacingWidth / 2) leaves fewer rings than the kind's minimum fails closed at
+# ScopeGuard[UnqualifiedRingCount] until an (F) case extends the range (the mesher's
+# --minimum-qualified-rings; run_gmsh_only_case passes the case kind's value). Optional:
+# a manifest without it builds no reduced side (the mesher fails closed on one).
+MINIMUM_QUALIFIED_RINGS = "MinimumQualifiedRings"
+MINIMUM_QUALIFIED_RINGS_PROVENANCE = "MinimumQualifiedRingsProvenance"
+MINIMUM_QUALIFIED_RINGS_KINDS = {"fabricated": "Fabricated", "thin": "Thin"}
+
+
+def validate_minimum_qualified_rings(manifest):
+    """Gates.MinimumQualifiedRings (if present) maps Fabricated / Thin to positive integers,
+    each with a provenance record Gates.MinimumQualifiedRingsProvenance {Rule, Fabricated
+    {Cases, Record}, Thin {Cases, Record}} naming the (F) cases behind the number. Returns
+    the mapping or None."""
+    gates = manifest.get("Gates", {})
+    rings = gates.get(MINIMUM_QUALIFIED_RINGS)
+    if rings is None:
+        if MINIMUM_QUALIFIED_RINGS_PROVENANCE in gates:
+            raise ValueError("MinimumQualifiedRingsProvenance recorded without MinimumQualifiedRings")
+        return None
+    provenance = gates.get(MINIMUM_QUALIFIED_RINGS_PROVENANCE)
+    if (not isinstance(rings, dict) or set(rings) != set(MINIMUM_QUALIFIED_RINGS_KINDS.values()) or
+            any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in rings.values()) or
+            not isinstance(provenance, dict) or
+            not isinstance(provenance.get("Rule"), str) or "UnqualifiedRingCount" not in provenance["Rule"] or
+            any(not isinstance(provenance.get(name), dict) or
+                not isinstance(provenance[name].get("Cases"), str) or not provenance[name]["Cases"].strip() or
+                not isinstance(provenance[name].get("Record"), str) or not provenance[name]["Record"].strip()
+                for name in MINIMUM_QUALIFIED_RINGS_KINDS.values())):
+        raise ValueError("MinimumQualifiedRings must map Fabricated / Thin to positive integers with a recorded "
+                         "provenance (Rule, per kind the (F) Cases and Record)")
+    return rings
+
+
+def minimum_qualified_rings(manifest, case):
+    """The case kind's qualified ring-count minimum, or None without the gate."""
+    rings = validate_minimum_qualified_rings(manifest)
+    return None if rings is None else rings[MINIMUM_QUALIFIED_RINGS_KINDS[case_kind(case)]]
+
+
+def validate_corner_shape_gate(manifest):
+    """Gates.CornerShapeGate (if present) is a finite number in (1, CORNER_SHAPE_GATE_CAP]
+    equal to min(PopulationEnvelope, Cap) of its provenance record
+    Gates.CornerShapeGateProvenance {Rule, PopulationEnvelope, Cap, Population,
+    PopulationRecord} (the E_pop measurement of record). Returns the gate or None."""
+    gates = manifest.get("Gates", {})
+    gate = gates.get(CORNER_SHAPE_GATE)
+    if gate is None:
+        if CORNER_SHAPE_GATE_PROVENANCE in gates:
+            raise ValueError("CornerShapeGateProvenance recorded without a CornerShapeGate")
+        return None
+    provenance = gates.get(CORNER_SHAPE_GATE_PROVENANCE)
+    if (not _finite_number(gate, positive=True) or not 1.0 < gate <= CORNER_SHAPE_GATE_CAP or
+            not isinstance(provenance, dict) or
+            not _finite_number(provenance.get("PopulationEnvelope"), positive=True) or
+            provenance.get("Cap") != CORNER_SHAPE_GATE_CAP or
+            gate != min(provenance["PopulationEnvelope"], CORNER_SHAPE_GATE_CAP) or
+            not isinstance(provenance.get("Rule"), str) or "kappa_reg" not in provenance["Rule"] or
+            not isinstance(provenance.get("Population"), str) or not provenance["Population"].strip() or
+            not isinstance(provenance.get("PopulationRecord"), str) or
+            not provenance["PopulationRecord"].strip()):
+        raise ValueError("CornerShapeGate must be min(PopulationEnvelope, 5.0) of a recorded "
+                         "E_pop provenance (Rule, PopulationEnvelope, Cap, Population, PopulationRecord)")
+    return gate
+
+
 def validate_edge_layer_quality_rule_gate(manifest):
     """Gates.EdgeLayerQualityRule (if present) is a labeled calibration-only rule:
     a finite MaximumEdgeAspect > 1, a ScaledJacobianRoundoffFloor in (0,
@@ -831,6 +923,8 @@ def validate_manifest(manifest, manifest_path, *, check_available_files=True):
     if any(not _finite_number(gates.get(name), nonnegative=True) for name in required_gates):
         raise ValueError("Manifest has missing or invalid mesh gates")
     validate_edge_layer_quality_rule_gate(manifest)
+    validate_corner_shape_gate(manifest)
+    validate_minimum_qualified_rings(manifest)
     validate_production_recipe(manifest)
     repository = (manifest_path.parent / manifest["RepositoryRoot"]).resolve()
     tools = manifest.get("Tools")
@@ -1377,7 +1471,8 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
     if not _same_points(expected_corners, evidence.get("ActualSemanticCorners"),
                         float(gates["CornerTolerance"])):
         failures.append("semantic-corners")
-    def neighborhood_failure(name, expected, maximum=None, minimum=None):
+    def neighborhood_failure(name, expected, maximum=None, minimum=None, invariant=(),
+                             invariant_maximum=None):
         values = evidence.get(name)
         if not isinstance(values, list) or len(values) != len(expected):
             return True
@@ -1386,14 +1481,37 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
         if not _same_points(expected, [item.get("Point") for item in values],
                             float(gates["CornerTolerance"])):
             return True
-        aspects = [item.get("MaximumAspect") for item in values]
-        return (any(not _finite_number(value, positive=True) for value in aspects) or
-                (maximum is not None and any(value > maximum for value in aspects)) or
-                (minimum is not None and any(value < minimum for value in aspects)))
+        # Design round 2 F5-A: an invariant corner's row carries Measure RegularCondition
+        # (kappa_reg) and is judged by CornerShapeGate; every other row is the legacy
+        # vertex-frame measure under `maximum`. The row kinds must match the contract's
+        # invariant corners exactly and the gate must exist where a row needs it.
+        tolerance = float(gates["CornerTolerance"])
+        for item in values:
+            regular = any(
+                isinstance(item.get("Point"), list) and len(item["Point"]) == 3 and
+                math.dist([float(v) for v in item["Point"]], [float(v) for v in point]) <= tolerance
+                for point in invariant)
+            measure = item.get("Measure")
+            if regular != (measure == "RegularCondition") or (measure is not None and
+                                                              measure != "RegularCondition"):
+                return True
+            value = item.get("MaximumAspect")
+            if not _finite_number(value, positive=True):
+                return True
+            if regular:
+                if invariant_maximum is None or value > invariant_maximum:
+                    return True
+            elif ((maximum is not None and value > maximum) or
+                  (minimum is not None and value < minimum)):
+                return True
+        return False
     topology = contract["FeatureTopology"]
     subdivisions = _transform_points(topology["CADSubdivisionEndpoints"], binding["Transform"])
     if (neighborhood_failure("CornerNeighborhoods", expected_corners,
-                             maximum=gates["MaximumCornerAspect"]) or
+                             maximum=gates["MaximumCornerAspect"],
+                             invariant=_transform_points(invariant_corners(contract),
+                                                         binding["Transform"]),
+                             invariant_maximum=gates.get(CORNER_SHAPE_GATE)) or
             neighborhood_failure("SubdivisionNeighborhoods", subdivisions,
                                  minimum=gates["MinimumNoncornerAspect"]) or
             cut_neighborhood_failure(evidence, contract, binding, gates)):

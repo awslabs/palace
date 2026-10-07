@@ -125,6 +125,36 @@ class ProcessLibraryWriterTest(unittest.TestCase):
         self.assertFalse(model["LibraryQualified"])
         self.assertEqual(model["MA"]["MA_sharp"], None)
         self.assertEqual(qualify_library.preflight_process_library(library)["Models"][0]["ThinMatrix"], model["ThinMatrix"])
+        # Decisions 485 / 487 (a): the driver seeds the (F) status from its verdict.
+        self.assertEqual(model["QualificationStatus"], "PendingQualification")
+        self.assertEqual(model["QualificationStatusRule"], qualify_library.QUALIFICATION_STATUS_RULE)
+        self.assertNotIn("MultiNodeReduction", model)
+
+    def test_failed_verdict_seeds_a_failed_qualification_status(self):
+        """The reproduced b-batch1 interim case (decision 485 MAJOR-1): the control-Failed S3p / S2p models
+        carried Verdict Failed and no QualificationStatus, so the (F) path seeded PendingQualification and
+        lifted them.  The writer now stamps Failed next to the verdict; Passed / PendingQualification
+        stamp PendingQualification (the (F) input); the multi-node reducer's partition is recorded."""
+        root = self.tmp / "root"
+        failed = self.case("case-f", "spatialedgecluster_edgecount-8_e7f44561bbf0", thin=True, root=root)
+        failed[0]["Qualification"]["Verdict"] = "Failed"
+        failed[0]["Qualification"]["UnjudgedTypes"] = []
+        passed = self.case("case-p", "model_p", thin=True, root=root)
+        passed[0]["Qualification"]["Verdict"] = "Passed"
+        passed[0]["Nodes"] = {"MultiNode": True, "Main": 4, "Fixed": 2}
+        passed[0]["Jobs"] = [{"Name": "worker-1", "Kind": "worker", "Nodes": 2, "Ranks": 384},
+                             {"Name": "reducer", "Kind": "reducer", "Nodes": 4, "Ranks": 768}]
+        models = {model["Name"]: model for model in self.write([failed, passed], root)["Models"]}
+        model = models["spatialedgecluster_edgecount-8_e7f44561bbf0"]
+        self.assertEqual((model["Qualification"]["Verdict"], model["QualificationStatus"], model["LibraryQualified"]),
+                         ("Failed", "Failed", False))
+        model = models["model_p"]
+        self.assertEqual((model["Qualification"]["Verdict"], model["QualificationStatus"], model["LibraryQualified"]),
+                         ("Passed", "PendingQualification", True))
+        self.assertEqual(model["MultiNodeReduction"]["Nodes"], 4)
+        self.assertEqual(model["MultiNodeReduction"]["Ranks"], 768)
+        with self.assertRaisesRegex(ValueError, "unknown qualify verdict"):
+            qualify_library.qualification_status_of_verdict("Qualified")
 
     def test_missing_thin_matrices_are_null_and_not_loadable_with_a_preflight_variant(self):
         root = self.tmp / "root"

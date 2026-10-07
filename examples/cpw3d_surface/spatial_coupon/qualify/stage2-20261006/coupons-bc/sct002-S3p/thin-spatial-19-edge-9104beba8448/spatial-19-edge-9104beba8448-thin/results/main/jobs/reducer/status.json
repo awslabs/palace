@@ -1,0 +1,2129 @@
+{
+  "Version": 2,
+  "Plan": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/main/jobs/reducer/plan.json",
+  "Case": "spatial-19-edge-9104beba8448-thin",
+  "PBSJobID": "56564.ip-192-168-54-24.us-west-2.compute.internal",
+  "Host": "ip-192-168-34-50",
+  "StartUTC": "2026-10-05T20:51:20Z",
+  "State": "complete",
+  "Stages": [
+    {
+      "Name": "spatial-19-edge-9104beba8448-thin-p4-reducer",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/main/spatial-19-edge-9104beba8448-thin-p4/reducer.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/main/spatial-19-edge-9104beba8448-thin-p4/archive",
+        "PALACE_RESPONSE_REDUCE_ONLY": "1",
+        "PALACE_RESPONSE_BLOCK_SIZE": "48"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "900",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/main/jobs/reducer/spatial-19-edge-9104beba8448-thin-p4-reducer.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_REDUCE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_BLOCK_SIZE",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/main/spatial-19-edge-9104beba8448-thin-p4/reducer.json"
+      ],
+      "CapSeconds": 900,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/main/jobs/reducer/spatial-19-edge-9104beba8448-thin-p4-reducer.log",
+      "StartUTC": "2026-10-05T20:51:22Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 228.740412518,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 3117436928,
+      "NodePeakUsedBytesSampled": 300024909824,
+      "Parsed": {
+        "Elements": 4314892,
+        "Iterations": [],
+        "PCG": [],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [
+          [
+            1,
+            223
+          ],
+          [
+            2,
+            223
+          ],
+          [
+            3,
+            223
+          ],
+          [
+            4,
+            223
+          ],
+          [
+            5,
+            223
+          ],
+          [
+            6,
+            223
+          ],
+          [
+            7,
+            223
+          ],
+          [
+            8,
+            223
+          ],
+          [
+            9,
+            223
+          ],
+          [
+            10,
+            223
+          ],
+          [
+            11,
+            223
+          ],
+          [
+            12,
+            223
+          ],
+          [
+            13,
+            223
+          ],
+          [
+            14,
+            223
+          ],
+          [
+            15,
+            223
+          ],
+          [
+            16,
+            223
+          ],
+          [
+            17,
+            223
+          ],
+          [
+            18,
+            223
+          ],
+          [
+            19,
+            223
+          ],
+          [
+            20,
+            223
+          ],
+          [
+            21,
+            223
+          ],
+          [
+            22,
+            223
+          ],
+          [
+            23,
+            223
+          ],
+          [
+            24,
+            223
+          ],
+          [
+            25,
+            223
+          ],
+          [
+            26,
+            223
+          ],
+          [
+            27,
+            223
+          ],
+          [
+            28,
+            223
+          ],
+          [
+            29,
+            223
+          ],
+          [
+            30,
+            223
+          ],
+          [
+            31,
+            223
+          ],
+          [
+            32,
+            223
+          ],
+          [
+            33,
+            223
+          ],
+          [
+            34,
+            223
+          ],
+          [
+            35,
+            223
+          ],
+          [
+            36,
+            223
+          ],
+          [
+            37,
+            223
+          ],
+          [
+            38,
+            223
+          ],
+          [
+            39,
+            223
+          ],
+          [
+            40,
+            223
+          ],
+          [
+            41,
+            223
+          ],
+          [
+            42,
+            223
+          ],
+          [
+            43,
+            223
+          ],
+          [
+            44,
+            223
+          ],
+          [
+            45,
+            223
+          ],
+          [
+            46,
+            223
+          ],
+          [
+            47,
+            223
+          ],
+          [
+            48,
+            223
+          ],
+          [
+            49,
+            223
+          ],
+          [
+            50,
+            223
+          ],
+          [
+            51,
+            223
+          ],
+          [
+            52,
+            223
+          ],
+          [
+            53,
+            223
+          ],
+          [
+            54,
+            223
+          ],
+          [
+            55,
+            223
+          ],
+          [
+            56,
+            223
+          ],
+          [
+            57,
+            223
+          ],
+          [
+            58,
+            223
+          ],
+          [
+            59,
+            223
+          ],
+          [
+            60,
+            223
+          ],
+          [
+            61,
+            223
+          ],
+          [
+            62,
+            223
+          ],
+          [
+            63,
+            223
+          ],
+          [
+            64,
+            223
+          ],
+          [
+            65,
+            223
+          ],
+          [
+            66,
+            223
+          ],
+          [
+            67,
+            223
+          ],
+          [
+            68,
+            223
+          ],
+          [
+            69,
+            223
+          ],
+          [
+            70,
+            223
+          ],
+          [
+            71,
+            223
+          ],
+          [
+            72,
+            223
+          ],
+          [
+            73,
+            223
+          ],
+          [
+            74,
+            223
+          ],
+          [
+            75,
+            223
+          ],
+          [
+            76,
+            223
+          ],
+          [
+            77,
+            223
+          ],
+          [
+            78,
+            223
+          ],
+          [
+            79,
+            223
+          ],
+          [
+            80,
+            223
+          ],
+          [
+            81,
+            223
+          ],
+          [
+            82,
+            223
+          ],
+          [
+            83,
+            223
+          ],
+          [
+            84,
+            223
+          ],
+          [
+            85,
+            223
+          ],
+          [
+            86,
+            223
+          ],
+          [
+            87,
+            223
+          ],
+          [
+            88,
+            223
+          ],
+          [
+            89,
+            223
+          ],
+          [
+            90,
+            223
+          ],
+          [
+            91,
+            223
+          ],
+          [
+            92,
+            223
+          ],
+          [
+            93,
+            223
+          ],
+          [
+            94,
+            223
+          ],
+          [
+            95,
+            223
+          ],
+          [
+            96,
+            223
+          ],
+          [
+            97,
+            223
+          ],
+          [
+            98,
+            223
+          ],
+          [
+            99,
+            223
+          ],
+          [
+            100,
+            223
+          ],
+          [
+            101,
+            223
+          ],
+          [
+            102,
+            223
+          ],
+          [
+            103,
+            223
+          ],
+          [
+            104,
+            223
+          ],
+          [
+            105,
+            223
+          ],
+          [
+            106,
+            223
+          ],
+          [
+            107,
+            223
+          ],
+          [
+            108,
+            223
+          ],
+          [
+            109,
+            223
+          ],
+          [
+            110,
+            223
+          ],
+          [
+            111,
+            223
+          ],
+          [
+            112,
+            223
+          ],
+          [
+            113,
+            223
+          ],
+          [
+            114,
+            223
+          ],
+          [
+            115,
+            223
+          ],
+          [
+            116,
+            223
+          ],
+          [
+            117,
+            223
+          ],
+          [
+            118,
+            223
+          ],
+          [
+            119,
+            223
+          ],
+          [
+            120,
+            223
+          ],
+          [
+            121,
+            223
+          ],
+          [
+            122,
+            223
+          ],
+          [
+            123,
+            223
+          ],
+          [
+            124,
+            223
+          ],
+          [
+            125,
+            223
+          ],
+          [
+            126,
+            223
+          ],
+          [
+            127,
+            223
+          ],
+          [
+            128,
+            223
+          ],
+          [
+            129,
+            223
+          ],
+          [
+            130,
+            223
+          ],
+          [
+            131,
+            223
+          ],
+          [
+            132,
+            223
+          ],
+          [
+            133,
+            223
+          ],
+          [
+            134,
+            223
+          ],
+          [
+            135,
+            223
+          ],
+          [
+            136,
+            223
+          ],
+          [
+            137,
+            223
+          ],
+          [
+            138,
+            223
+          ],
+          [
+            139,
+            223
+          ],
+          [
+            140,
+            223
+          ],
+          [
+            141,
+            223
+          ],
+          [
+            142,
+            223
+          ],
+          [
+            143,
+            223
+          ],
+          [
+            144,
+            223
+          ],
+          [
+            145,
+            223
+          ],
+          [
+            146,
+            223
+          ],
+          [
+            147,
+            223
+          ],
+          [
+            148,
+            223
+          ],
+          [
+            149,
+            223
+          ],
+          [
+            150,
+            223
+          ],
+          [
+            151,
+            223
+          ],
+          [
+            152,
+            223
+          ],
+          [
+            153,
+            223
+          ],
+          [
+            154,
+            223
+          ],
+          [
+            155,
+            223
+          ],
+          [
+            156,
+            223
+          ],
+          [
+            157,
+            223
+          ],
+          [
+            158,
+            223
+          ],
+          [
+            159,
+            223
+          ],
+          [
+            160,
+            223
+          ],
+          [
+            161,
+            223
+          ],
+          [
+            162,
+            223
+          ],
+          [
+            163,
+            223
+          ],
+          [
+            164,
+            223
+          ],
+          [
+            165,
+            223
+          ],
+          [
+            166,
+            223
+          ],
+          [
+            167,
+            223
+          ],
+          [
+            168,
+            223
+          ],
+          [
+            169,
+            223
+          ],
+          [
+            170,
+            223
+          ],
+          [
+            171,
+            223
+          ],
+          [
+            172,
+            223
+          ],
+          [
+            173,
+            223
+          ],
+          [
+            174,
+            223
+          ],
+          [
+            175,
+            223
+          ],
+          [
+            176,
+            223
+          ],
+          [
+            177,
+            223
+          ],
+          [
+            178,
+            223
+          ],
+          [
+            179,
+            223
+          ],
+          [
+            180,
+            223
+          ],
+          [
+            181,
+            223
+          ],
+          [
+            182,
+            223
+          ],
+          [
+            183,
+            223
+          ],
+          [
+            184,
+            223
+          ],
+          [
+            185,
+            223
+          ],
+          [
+            186,
+            223
+          ],
+          [
+            187,
+            223
+          ],
+          [
+            188,
+            223
+          ],
+          [
+            189,
+            223
+          ],
+          [
+            190,
+            223
+          ],
+          [
+            191,
+            223
+          ],
+          [
+            192,
+            223
+          ],
+          [
+            193,
+            223
+          ],
+          [
+            194,
+            223
+          ],
+          [
+            195,
+            223
+          ],
+          [
+            196,
+            223
+          ],
+          [
+            197,
+            223
+          ],
+          [
+            198,
+            223
+          ],
+          [
+            199,
+            223
+          ],
+          [
+            200,
+            223
+          ],
+          [
+            201,
+            223
+          ],
+          [
+            202,
+            223
+          ],
+          [
+            203,
+            223
+          ],
+          [
+            204,
+            223
+          ],
+          [
+            205,
+            223
+          ],
+          [
+            206,
+            223
+          ],
+          [
+            207,
+            223
+          ],
+          [
+            208,
+            223
+          ],
+          [
+            209,
+            223
+          ],
+          [
+            210,
+            223
+          ],
+          [
+            211,
+            223
+          ],
+          [
+            212,
+            223
+          ],
+          [
+            213,
+            223
+          ],
+          [
+            214,
+            223
+          ],
+          [
+            215,
+            223
+          ],
+          [
+            216,
+            223
+          ],
+          [
+            217,
+            223
+          ],
+          [
+            218,
+            223
+          ],
+          [
+            219,
+            223
+          ],
+          [
+            220,
+            223
+          ],
+          [
+            221,
+            223
+          ],
+          [
+            222,
+            223
+          ],
+          [
+            223,
+            223
+          ]
+        ],
+        "ReductionSamples": {
+          "Sources": 223,
+          "Interfaces": 3,
+          "PerRankMin": 208,
+          "PerRankMax": 84787,
+          "Total": 6144013
+        },
+        "PalacePeakMemory": {
+          "Min": "227.1G",
+          "Max": "227.1G",
+          "Avg": "227.1G",
+          "Total": "227.1G"
+        },
+        "PalaceTotalSeconds": 224.739,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   3.609      40.049      39.848\n  Mesh Preprocessing            22.744      59.165      22.938\nOperator Construction            1.853       2.237       2.072\n  Surface Post Setup             0.849       0.918       0.909\n  Archive Reduction              0.929       1.958       1.661\n    Archive Read                 7.188      90.044      45.383\n    Sample Evaluation            2.804      85.967      46.284\n    Gram Assembly               13.013      13.349      13.109\n    Domain Gram                 11.947      19.286      13.802\nDisk IO                         36.447      36.492      36.466\n--------------------------------------------------------------\nTotal                          224.723     224.739     224.731",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  349.0M      349.0M      349.0M\n  Mesh Preprocessing              3.8G        3.8G        4.1G\nOperator Construction            37.0G       37.0G       41.1G\n  Surface Post Setup             18.0G       18.0G       59.1G\n  Archive Reduction              31.1G       31.1G       90.2G\n    Archive Read                103.8G      103.8G      193.9G\n    Sample Evaluation           986.1M      986.1M      194.9G\n    Gram Assembly               309.0M      309.0M      195.2G\n    Domain Gram                  18.2G       18.2G      213.4G\nDisk IO                           1.9G        1.9G      215.3G\n--------------------------------------------------------------\nTotal                           224.8G      224.8G      224.8G"
+      },
+      "EndUTC": "2026-10-05T20:55:10Z",
+      "State": "complete"
+    }
+  ],
+  "Preflight": {
+    "MemTotalBytes": 1594651291648,
+    "MemAvailableBytes": 1541884076032,
+    "MinimumMemAvailableBytes": 989560464998,
+    "Instance": {
+      "Type": "r8g.48xlarge",
+      "vCPUs": 192,
+      "MemoryGiB": 1536,
+      "NodeGiB": 1485.13,
+      "EstimatedPalacePeakGB": 564.2663578325933,
+      "EstimatedPalacePeakGiB": 525.5344675724999,
+      "MemoryFitFraction": 0.6,
+      "Fits": true,
+      "MinimumMemAvailableBytes": 989560464998,
+      "Candidates": [
+        "m8g.48xlarge",
+        "r8g.48xlarge"
+      ],
+      "Rule": "a job runs on the first instance of Instances whose MemoryFitFraction x MemoryGiB holds the job's largest estimated Palace peak (the stage estimates' GB / the cost model's PalaceGBPerGiB): m8g.48xlarge (768 GiB, 192 Graviton4 vCPUs) is the default, r8g.48xlarge (1,536 GiB) the fallback for an estimated peak above 0.6 x 768 = 460.8 GiB (the device library's largest estimate is 338 GB, 7f03's p5 control; measured node peaks <= ~240 GiB; the streaming reducer ~34 GB); c8g.48xlarge (384 GiB) is deliberately absent - not safe for the p5 control stages of the largest coupons (USER decision 2026-09-22). The plan records the chosen instance (Instance) and its admission guard MinimumMemAvailableBytes = MemoryFitFraction x MemoryGiB, checked by run_stages before the first stage; the job script's #PBS -l instance_type is the chosen type"
+    },
+    "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+    "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+    "Pinned": {
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/mesh/identity-3c2c23b07a29.msh": {
+        "Expected": "3c2c23b07a292406f2c0d7f633bd5d6964a473fe888d12197cb4d2514b44fd58",
+        "Actual": "3c2c23b07a292406f2c0d7f633bd5d6964a473fe888d12197cb4d2514b44fd58",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/main/spatial-19-edge-9104beba8448-thin-p4/reducer.json": {
+        "Expected": "70f233d9ff0096561f1f583ba7c3e2c6630ae9ee5b021197df4003182ef69525",
+        "Actual": "70f233d9ff0096561f1f583ba7c3e2c6630ae9ee5b021197df4003182ef69525",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0001.csv": {
+        "Expected": "213ed3e95874bcf53c4b16e46ee50a73c0de2edd455204738ef99fd346d012d9",
+        "Actual": "213ed3e95874bcf53c4b16e46ee50a73c0de2edd455204738ef99fd346d012d9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0002.csv": {
+        "Expected": "d47e0654eb2effe43f8c8e4513a261af692f268d7c9cb0ae3a38f3f047a69250",
+        "Actual": "d47e0654eb2effe43f8c8e4513a261af692f268d7c9cb0ae3a38f3f047a69250",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0003.csv": {
+        "Expected": "9ca5c3318692c1726ef5545f1226560e2a309b95be720741269ae3248f647803",
+        "Actual": "9ca5c3318692c1726ef5545f1226560e2a309b95be720741269ae3248f647803",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0004.csv": {
+        "Expected": "083b4e0e79b5b10b20e403e05f77b5344d500f660946535a225334a5cb01f1c2",
+        "Actual": "083b4e0e79b5b10b20e403e05f77b5344d500f660946535a225334a5cb01f1c2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0005.csv": {
+        "Expected": "6249d6dd28346d0e82772b90c930d0ee26c08d88fd2cd76080c5eef0bf47cbcd",
+        "Actual": "6249d6dd28346d0e82772b90c930d0ee26c08d88fd2cd76080c5eef0bf47cbcd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0006.csv": {
+        "Expected": "26e1023054d6c6021677b9b4116524eff9c2f61ef5458fed991accb251edb644",
+        "Actual": "26e1023054d6c6021677b9b4116524eff9c2f61ef5458fed991accb251edb644",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0007.csv": {
+        "Expected": "09982513c7f615e6bfca1178098558b24616908f2030a0f5c8c61e062fc559c9",
+        "Actual": "09982513c7f615e6bfca1178098558b24616908f2030a0f5c8c61e062fc559c9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0008.csv": {
+        "Expected": "bd637e00b7e9d27d4abec0f72e7df76efb4e69f075e901db1b20aaa1b48a27e1",
+        "Actual": "bd637e00b7e9d27d4abec0f72e7df76efb4e69f075e901db1b20aaa1b48a27e1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0009.csv": {
+        "Expected": "75f86a0c639a17ad470ecbbfa7aa5c9b99fc8d03e7ec5ba4941fc8ae361b093c",
+        "Actual": "75f86a0c639a17ad470ecbbfa7aa5c9b99fc8d03e7ec5ba4941fc8ae361b093c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0010.csv": {
+        "Expected": "4bad972b9ad38682c935f8deb322f39138b3346802b137ef4a39c093e2ba9523",
+        "Actual": "4bad972b9ad38682c935f8deb322f39138b3346802b137ef4a39c093e2ba9523",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0011.csv": {
+        "Expected": "6be0b94ee56b39c06781e88573203fbe632f89db04057f309793b096923a766a",
+        "Actual": "6be0b94ee56b39c06781e88573203fbe632f89db04057f309793b096923a766a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0012.csv": {
+        "Expected": "de2cad4258d33d002a227513e24e5388d8f8deec9e0cad442d2a515a80ade699",
+        "Actual": "de2cad4258d33d002a227513e24e5388d8f8deec9e0cad442d2a515a80ade699",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0013.csv": {
+        "Expected": "e550f9935a61edcd2849d0b351176b64cb2859e3645e934d482d3e70fa1003e1",
+        "Actual": "e550f9935a61edcd2849d0b351176b64cb2859e3645e934d482d3e70fa1003e1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0014.csv": {
+        "Expected": "1ebf5fc6b0fd60035f197922af76b820e3b4d327f01adacd3f36d9db7b4e601a",
+        "Actual": "1ebf5fc6b0fd60035f197922af76b820e3b4d327f01adacd3f36d9db7b4e601a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0015.csv": {
+        "Expected": "212cf45fbbae97713cc4d19a43151796b04d66b0b5409c964da207d9c9a5616c",
+        "Actual": "212cf45fbbae97713cc4d19a43151796b04d66b0b5409c964da207d9c9a5616c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0016.csv": {
+        "Expected": "90c4850d1e24167f77c9acb76d3f6a7e67487d923a873c37363a4ed06edccc5b",
+        "Actual": "90c4850d1e24167f77c9acb76d3f6a7e67487d923a873c37363a4ed06edccc5b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0017.csv": {
+        "Expected": "dbb80b25860aaedb74cea379d34079e21c448a8d6595cac0441bd707d3af540a",
+        "Actual": "dbb80b25860aaedb74cea379d34079e21c448a8d6595cac0441bd707d3af540a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0018.csv": {
+        "Expected": "2e014b6950a39de0b025163e995bd91fd29fb06eabbd82b7a9c29f787b0db4d8",
+        "Actual": "2e014b6950a39de0b025163e995bd91fd29fb06eabbd82b7a9c29f787b0db4d8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0019.csv": {
+        "Expected": "c38f70a12178dd4406d88ec94a89926176741ced44b524e800a9d292484ff9bf",
+        "Actual": "c38f70a12178dd4406d88ec94a89926176741ced44b524e800a9d292484ff9bf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0020.csv": {
+        "Expected": "bf2d2e1033d8f667558ef412d4c635035c884f77031f782944e70c359dfe5b74",
+        "Actual": "bf2d2e1033d8f667558ef412d4c635035c884f77031f782944e70c359dfe5b74",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0021.csv": {
+        "Expected": "d22702450a610e0c0e3a055571e34825d5aa0371db236b2e4a9cbcba8b471407",
+        "Actual": "d22702450a610e0c0e3a055571e34825d5aa0371db236b2e4a9cbcba8b471407",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0022.csv": {
+        "Expected": "2b6f602ace48e1f87cd1367bb0cb455f5f7af3b4d2302bcec44a8012ce25c6c7",
+        "Actual": "2b6f602ace48e1f87cd1367bb0cb455f5f7af3b4d2302bcec44a8012ce25c6c7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0023.csv": {
+        "Expected": "ace595f30d143d5343de3d65ff4decb0188052224ca56c2dfebc6896c0857524",
+        "Actual": "ace595f30d143d5343de3d65ff4decb0188052224ca56c2dfebc6896c0857524",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0024.csv": {
+        "Expected": "5f91fb12d45857d6f75dc6cf3c24f3fb1f0d90f4443f680ca4e557f7ab2ee6e0",
+        "Actual": "5f91fb12d45857d6f75dc6cf3c24f3fb1f0d90f4443f680ca4e557f7ab2ee6e0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0025.csv": {
+        "Expected": "2b036d39587f08740deaf0f6efe166ca2de43f3e04481e44d2fc03299d8ec7dc",
+        "Actual": "2b036d39587f08740deaf0f6efe166ca2de43f3e04481e44d2fc03299d8ec7dc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0026.csv": {
+        "Expected": "20e3741728b1b8ff8e86c80414262d90da106182bc879a2d839adba1b405080d",
+        "Actual": "20e3741728b1b8ff8e86c80414262d90da106182bc879a2d839adba1b405080d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0027.csv": {
+        "Expected": "3b314064d7e1d2282e536ac6efb03b192b378e3527ab13de12e37109b5c85194",
+        "Actual": "3b314064d7e1d2282e536ac6efb03b192b378e3527ab13de12e37109b5c85194",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0028.csv": {
+        "Expected": "63240158117ac4e21136e53165da220e2fa485556d90bd0e92de0c2ce4fea8c6",
+        "Actual": "63240158117ac4e21136e53165da220e2fa485556d90bd0e92de0c2ce4fea8c6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0029.csv": {
+        "Expected": "23ba6f35d81ccd3b79c325d0f869a55dbb9cfc8d90e49c88fb8904520343a119",
+        "Actual": "23ba6f35d81ccd3b79c325d0f869a55dbb9cfc8d90e49c88fb8904520343a119",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0030.csv": {
+        "Expected": "4d15744ef5a18ff07f7d6df8ccfd2e2ac4f2587250789c0abb30272d4eb427f5",
+        "Actual": "4d15744ef5a18ff07f7d6df8ccfd2e2ac4f2587250789c0abb30272d4eb427f5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0031.csv": {
+        "Expected": "649f0df3a93c128e04126e98ef8974b9f17e1a9bd6d490c060192a97f6b6019e",
+        "Actual": "649f0df3a93c128e04126e98ef8974b9f17e1a9bd6d490c060192a97f6b6019e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0032.csv": {
+        "Expected": "57d8d83aef839e008a43e85d8189d25f8e03cadce8d87583edb59df6286895d3",
+        "Actual": "57d8d83aef839e008a43e85d8189d25f8e03cadce8d87583edb59df6286895d3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0033.csv": {
+        "Expected": "46d8a2f442cb2cd3b37fbf92820e39a389e494c110b8179a931badab089c293c",
+        "Actual": "46d8a2f442cb2cd3b37fbf92820e39a389e494c110b8179a931badab089c293c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0034.csv": {
+        "Expected": "7cb7cb00a459623898d16e521abdfac63bd49921aeae2e5f641d0198086317f1",
+        "Actual": "7cb7cb00a459623898d16e521abdfac63bd49921aeae2e5f641d0198086317f1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0035.csv": {
+        "Expected": "221cb2226a8e20ea37674de57be86386a4266681d9dd92a01c7fb2b41f7de373",
+        "Actual": "221cb2226a8e20ea37674de57be86386a4266681d9dd92a01c7fb2b41f7de373",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0036.csv": {
+        "Expected": "3abfaf699f5b915c936870f3cc63446e89ccd1b1d975ecc406cde5193b15ce30",
+        "Actual": "3abfaf699f5b915c936870f3cc63446e89ccd1b1d975ecc406cde5193b15ce30",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0037.csv": {
+        "Expected": "344083370fb04b4c3f0e6e5a471a545f674bd804eab6f1b822c5684453733b30",
+        "Actual": "344083370fb04b4c3f0e6e5a471a545f674bd804eab6f1b822c5684453733b30",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0038.csv": {
+        "Expected": "320bdba3200b402a617e6dee627ca2a301f303809b7719b50a4cc9fa8d2606c6",
+        "Actual": "320bdba3200b402a617e6dee627ca2a301f303809b7719b50a4cc9fa8d2606c6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0039.csv": {
+        "Expected": "b91acd5143473089345694087bdbfec4bd341d1cfaceb8a07c125d709bdc9dda",
+        "Actual": "b91acd5143473089345694087bdbfec4bd341d1cfaceb8a07c125d709bdc9dda",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0040.csv": {
+        "Expected": "c77b56d03f5062cdd2ebe24ceffe32ec2be38b576ac5f8f7143323a7e40535ab",
+        "Actual": "c77b56d03f5062cdd2ebe24ceffe32ec2be38b576ac5f8f7143323a7e40535ab",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0041.csv": {
+        "Expected": "f9052f8f618d7b2001a49df4964eefefc435477f5c38bf997e1b4a8fa1763473",
+        "Actual": "f9052f8f618d7b2001a49df4964eefefc435477f5c38bf997e1b4a8fa1763473",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0042.csv": {
+        "Expected": "e9ff60396b8545349f52e9e5cb8aadde3bac83e7aa959bab9fec8c389f4e7429",
+        "Actual": "e9ff60396b8545349f52e9e5cb8aadde3bac83e7aa959bab9fec8c389f4e7429",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0043.csv": {
+        "Expected": "cf66c3758dc438870e092fc4646ca6e861f561fa5a55e662d2d62f080d480bc0",
+        "Actual": "cf66c3758dc438870e092fc4646ca6e861f561fa5a55e662d2d62f080d480bc0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0044.csv": {
+        "Expected": "5803b720818166cee97836b439f50a5fc3d0f24be7bdc01c4627be77987160b9",
+        "Actual": "5803b720818166cee97836b439f50a5fc3d0f24be7bdc01c4627be77987160b9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0045.csv": {
+        "Expected": "496f94700cc91841e45f75e70a3503fdb680e9f2fdeafee686d11370bc928027",
+        "Actual": "496f94700cc91841e45f75e70a3503fdb680e9f2fdeafee686d11370bc928027",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0046.csv": {
+        "Expected": "a273c9bcfb3b469708354e1fa2d3ee7df565022a3c964e7e0f6c05d11d89f61d",
+        "Actual": "a273c9bcfb3b469708354e1fa2d3ee7df565022a3c964e7e0f6c05d11d89f61d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0047.csv": {
+        "Expected": "fd63679d3c556f483e56cefaf82f5d428dc1641e591915511ff40107d0fe9e25",
+        "Actual": "fd63679d3c556f483e56cefaf82f5d428dc1641e591915511ff40107d0fe9e25",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0048.csv": {
+        "Expected": "31a6e263f513707b8cacce127e82b902573183e78f5238b3d276702a835dc347",
+        "Actual": "31a6e263f513707b8cacce127e82b902573183e78f5238b3d276702a835dc347",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0049.csv": {
+        "Expected": "8a7030556d6bdbd267cd0abd5fb91cb853f3916dd308a924d0a5446fd414c8d7",
+        "Actual": "8a7030556d6bdbd267cd0abd5fb91cb853f3916dd308a924d0a5446fd414c8d7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0050.csv": {
+        "Expected": "7076c9804c46b01e01573207eec370c6ffab17394d26d71252d32d38fdef23b4",
+        "Actual": "7076c9804c46b01e01573207eec370c6ffab17394d26d71252d32d38fdef23b4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0051.csv": {
+        "Expected": "3ff3885bfd5577becacafa0f0c3b4518639db8d680a852765de67c9d052c3d96",
+        "Actual": "3ff3885bfd5577becacafa0f0c3b4518639db8d680a852765de67c9d052c3d96",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0052.csv": {
+        "Expected": "cd3adbc0fdf1a3ddb214d99d652b8db44143e9421f6e87eb3f9feab94b05c268",
+        "Actual": "cd3adbc0fdf1a3ddb214d99d652b8db44143e9421f6e87eb3f9feab94b05c268",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0053.csv": {
+        "Expected": "606611e2a345418bc10ce9924c151b37fc66d18ccf28d1f626cbddc5de84d778",
+        "Actual": "606611e2a345418bc10ce9924c151b37fc66d18ccf28d1f626cbddc5de84d778",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0054.csv": {
+        "Expected": "ff8f148326486148146c639a1caa0e419e99b840cd35ff7d977520cc9907ed25",
+        "Actual": "ff8f148326486148146c639a1caa0e419e99b840cd35ff7d977520cc9907ed25",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0055.csv": {
+        "Expected": "f0cffba783705e55b07b8819efe517a95bacbdb16ff5c279c122088729dc20de",
+        "Actual": "f0cffba783705e55b07b8819efe517a95bacbdb16ff5c279c122088729dc20de",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0056.csv": {
+        "Expected": "1a08ed4178d9f8f0535ed080e8f07b74bdd05015edb91185d1760625baf83222",
+        "Actual": "1a08ed4178d9f8f0535ed080e8f07b74bdd05015edb91185d1760625baf83222",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0057.csv": {
+        "Expected": "41c60eae5d11063187630f36e36fed5c3eed6e23282d4592498b1997d4ea2880",
+        "Actual": "41c60eae5d11063187630f36e36fed5c3eed6e23282d4592498b1997d4ea2880",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0058.csv": {
+        "Expected": "cfe10e8360404cd3ed07ff9bd4c0b54b793132742292faabed750b974c72e4c9",
+        "Actual": "cfe10e8360404cd3ed07ff9bd4c0b54b793132742292faabed750b974c72e4c9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0059.csv": {
+        "Expected": "b874b064d39fc979e4bbc699b7b27f1281388e75b54c1e47c700e2d56526c4e6",
+        "Actual": "b874b064d39fc979e4bbc699b7b27f1281388e75b54c1e47c700e2d56526c4e6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0060.csv": {
+        "Expected": "2c49dcb7800a3cc17d26182b5a5f556e12750397e734eb87f7479dfa2ad73729",
+        "Actual": "2c49dcb7800a3cc17d26182b5a5f556e12750397e734eb87f7479dfa2ad73729",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0061.csv": {
+        "Expected": "2a7ef86bde5814c291dc07dd6e1370bef4e6df84e7adf53cacc34fa9d0e401b8",
+        "Actual": "2a7ef86bde5814c291dc07dd6e1370bef4e6df84e7adf53cacc34fa9d0e401b8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0062.csv": {
+        "Expected": "f761af2ce86ce4fad0fad035ca7ce4a937c7a3c5400c7f8538aeb7177ec290d0",
+        "Actual": "f761af2ce86ce4fad0fad035ca7ce4a937c7a3c5400c7f8538aeb7177ec290d0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0063.csv": {
+        "Expected": "4e3fc1cbfdebe0fd497fb377d70acb550e50d84819c6909cff0d0872f8130c2a",
+        "Actual": "4e3fc1cbfdebe0fd497fb377d70acb550e50d84819c6909cff0d0872f8130c2a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0064.csv": {
+        "Expected": "392e0483a4d09f3b0639244fbe5a1980f63fa8eb630d86adb1d3a911bc7a2e38",
+        "Actual": "392e0483a4d09f3b0639244fbe5a1980f63fa8eb630d86adb1d3a911bc7a2e38",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0065.csv": {
+        "Expected": "996210c925e8ad749e466b8ca4ff0bc93af1dc4531382a75a5431040f019edce",
+        "Actual": "996210c925e8ad749e466b8ca4ff0bc93af1dc4531382a75a5431040f019edce",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0066.csv": {
+        "Expected": "ace3ec7cc70d25fe1512959b36ad399ee02cc8bafb9b81ef1d9d75c8111592d1",
+        "Actual": "ace3ec7cc70d25fe1512959b36ad399ee02cc8bafb9b81ef1d9d75c8111592d1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0067.csv": {
+        "Expected": "b1cab44aeceafd014ae35a045d32325fed5f9d966f0538bfbefbaf971e78c816",
+        "Actual": "b1cab44aeceafd014ae35a045d32325fed5f9d966f0538bfbefbaf971e78c816",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0068.csv": {
+        "Expected": "b14a7e1dec715e20a63807d8aa90e8093b795e8b919be4ddbccc761eeba91b67",
+        "Actual": "b14a7e1dec715e20a63807d8aa90e8093b795e8b919be4ddbccc761eeba91b67",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0069.csv": {
+        "Expected": "4e65692bd04affa2fef0969b4e3650991e52ae6c59df96cc8aa90ca83a1672e1",
+        "Actual": "4e65692bd04affa2fef0969b4e3650991e52ae6c59df96cc8aa90ca83a1672e1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0070.csv": {
+        "Expected": "27012d3a367f8f72605e692cfb3b8af1ff5cec43294365a22cf1e983e5138625",
+        "Actual": "27012d3a367f8f72605e692cfb3b8af1ff5cec43294365a22cf1e983e5138625",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0071.csv": {
+        "Expected": "22686717741985b1b0ab08d80a54b1093fc854cd3e8b556d08b8d34f5256e536",
+        "Actual": "22686717741985b1b0ab08d80a54b1093fc854cd3e8b556d08b8d34f5256e536",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0072.csv": {
+        "Expected": "ee7f242da094826fa2d50129beec8019ae0f75dd33d64095895517746983aaf8",
+        "Actual": "ee7f242da094826fa2d50129beec8019ae0f75dd33d64095895517746983aaf8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0073.csv": {
+        "Expected": "8a5ed5b7dcdf70736f0e719253e2876dabc2d9434567ca20331a944c7b3f13a0",
+        "Actual": "8a5ed5b7dcdf70736f0e719253e2876dabc2d9434567ca20331a944c7b3f13a0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0074.csv": {
+        "Expected": "7350838b7014745e6bb6d0514264ba93877a98518f6d55449f36c11efc036353",
+        "Actual": "7350838b7014745e6bb6d0514264ba93877a98518f6d55449f36c11efc036353",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0075.csv": {
+        "Expected": "543d32bc39de69d05807d86f238aab0275465b7b373f17221b45f8da35ff88f0",
+        "Actual": "543d32bc39de69d05807d86f238aab0275465b7b373f17221b45f8da35ff88f0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0076.csv": {
+        "Expected": "54406713910ba27f4a62d51c918f3ea9799798fdca883def916878a96ec1d061",
+        "Actual": "54406713910ba27f4a62d51c918f3ea9799798fdca883def916878a96ec1d061",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0077.csv": {
+        "Expected": "831100319e7f80ed513aa5fc678c26ba2be263e8995c35d1a39317fc8769c29e",
+        "Actual": "831100319e7f80ed513aa5fc678c26ba2be263e8995c35d1a39317fc8769c29e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0078.csv": {
+        "Expected": "cff7b03e92d9e5aa9536e4ccf0b1d619252c9205f089b62cc286253d4d265572",
+        "Actual": "cff7b03e92d9e5aa9536e4ccf0b1d619252c9205f089b62cc286253d4d265572",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0079.csv": {
+        "Expected": "3a666998210a47644de94fe610eff580f4b00fe49585e7ed43e1efbd0936091d",
+        "Actual": "3a666998210a47644de94fe610eff580f4b00fe49585e7ed43e1efbd0936091d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0080.csv": {
+        "Expected": "a6fed36da4eb88a81d4e5603e139c10c883959ab97b49f3519ded6f010591bf8",
+        "Actual": "a6fed36da4eb88a81d4e5603e139c10c883959ab97b49f3519ded6f010591bf8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0081.csv": {
+        "Expected": "5813c797aa1f242a25bfddc41641729d54a48d7995f07b8522539c05231446b1",
+        "Actual": "5813c797aa1f242a25bfddc41641729d54a48d7995f07b8522539c05231446b1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0082.csv": {
+        "Expected": "37c34c3bf924083b6c5681d00d2a410f3b15a92a515297e4d8d35690db186a82",
+        "Actual": "37c34c3bf924083b6c5681d00d2a410f3b15a92a515297e4d8d35690db186a82",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0083.csv": {
+        "Expected": "5c0d9166ae89fe9fa444cbcad5df64d78ebcb648cc9665d31f8285b973cdb940",
+        "Actual": "5c0d9166ae89fe9fa444cbcad5df64d78ebcb648cc9665d31f8285b973cdb940",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0084.csv": {
+        "Expected": "3dcabd04e9680af45d08d4008a2cf9419b81253687ea56f77d27ff5f3fae52f3",
+        "Actual": "3dcabd04e9680af45d08d4008a2cf9419b81253687ea56f77d27ff5f3fae52f3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0085.csv": {
+        "Expected": "d6cc868efcdf2f06b7b40f59c09a53ec6793e2b7b4a9d318b4419e4fcdd1280f",
+        "Actual": "d6cc868efcdf2f06b7b40f59c09a53ec6793e2b7b4a9d318b4419e4fcdd1280f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0086.csv": {
+        "Expected": "17cc58ae93f45bfc8ef1d14a4001d8ca90df328fc52e706625c8acd4d47b1048",
+        "Actual": "17cc58ae93f45bfc8ef1d14a4001d8ca90df328fc52e706625c8acd4d47b1048",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0087.csv": {
+        "Expected": "c7a6683e2ae0ff833fa3174f613c009115b1b8c95557c9edfebd7a75febee6ef",
+        "Actual": "c7a6683e2ae0ff833fa3174f613c009115b1b8c95557c9edfebd7a75febee6ef",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0088.csv": {
+        "Expected": "1a7d81aae1b1723a993440b52e48c72094940905a730a0c5d70e2913fd2fc656",
+        "Actual": "1a7d81aae1b1723a993440b52e48c72094940905a730a0c5d70e2913fd2fc656",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0089.csv": {
+        "Expected": "2407357836a1c615f66279b529cb89ec91a9fd04bf2ec215bf0bb88244e9fd9b",
+        "Actual": "2407357836a1c615f66279b529cb89ec91a9fd04bf2ec215bf0bb88244e9fd9b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0090.csv": {
+        "Expected": "c40644347cea7d0d927ee3e9271cf2500db91bd1c56a0f885e4c1a9737cb3f06",
+        "Actual": "c40644347cea7d0d927ee3e9271cf2500db91bd1c56a0f885e4c1a9737cb3f06",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0091.csv": {
+        "Expected": "99903d0cbe128cff199a07206b248408be866d7e31a11109d95138c6899dcea7",
+        "Actual": "99903d0cbe128cff199a07206b248408be866d7e31a11109d95138c6899dcea7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0092.csv": {
+        "Expected": "b0a6443c70cfb92b86a134d847eda2ff1af8fe8cb00fcc6b74a85a691545fb7f",
+        "Actual": "b0a6443c70cfb92b86a134d847eda2ff1af8fe8cb00fcc6b74a85a691545fb7f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0093.csv": {
+        "Expected": "9e5e3d4764d3237976a35965921e4c0d7dfd2d63bbb6a9c4df0f701bf3fbac18",
+        "Actual": "9e5e3d4764d3237976a35965921e4c0d7dfd2d63bbb6a9c4df0f701bf3fbac18",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0094.csv": {
+        "Expected": "5093ff9723d7e2423dfafcc4a34488331aa0fe93479a4129c571637caf0fbfbd",
+        "Actual": "5093ff9723d7e2423dfafcc4a34488331aa0fe93479a4129c571637caf0fbfbd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0095.csv": {
+        "Expected": "3c6103607e0ba2fb216999d592e1ca1c6d27d2e64d2501265b17b2d2c184553a",
+        "Actual": "3c6103607e0ba2fb216999d592e1ca1c6d27d2e64d2501265b17b2d2c184553a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0096.csv": {
+        "Expected": "ac530488289576a85e214673d6bc01d1ff8b3cc1d63df72981600516b222e3c1",
+        "Actual": "ac530488289576a85e214673d6bc01d1ff8b3cc1d63df72981600516b222e3c1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0097.csv": {
+        "Expected": "827132e3c8c55c02c7d92e9419ccfac254c917aef445fb27b45ca128b98e37ce",
+        "Actual": "827132e3c8c55c02c7d92e9419ccfac254c917aef445fb27b45ca128b98e37ce",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0098.csv": {
+        "Expected": "1e79d5c1433487b4b88dfe299b4aa928637b92b4b41932abfac7dfff86799a32",
+        "Actual": "1e79d5c1433487b4b88dfe299b4aa928637b92b4b41932abfac7dfff86799a32",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0099.csv": {
+        "Expected": "421dbe326037cfa16008a3c648028305f910e8f4ffba01a9c9a673aa3d2a299e",
+        "Actual": "421dbe326037cfa16008a3c648028305f910e8f4ffba01a9c9a673aa3d2a299e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0100.csv": {
+        "Expected": "84e2eebc4a206205d0804365182a0598daea062339ae528c183d245e4a6eba47",
+        "Actual": "84e2eebc4a206205d0804365182a0598daea062339ae528c183d245e4a6eba47",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0101.csv": {
+        "Expected": "a7abba130308950392329bc915def85040268662a7ae35aa0ab8f0d4ccdcdb92",
+        "Actual": "a7abba130308950392329bc915def85040268662a7ae35aa0ab8f0d4ccdcdb92",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0102.csv": {
+        "Expected": "1fc094dce2403e75918ca5f1c2991bc4f03dadcd340238126f89df7ab6c09e7d",
+        "Actual": "1fc094dce2403e75918ca5f1c2991bc4f03dadcd340238126f89df7ab6c09e7d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0103.csv": {
+        "Expected": "a33dafc87e611bf99ad182db2cbdf935b9da27d1a40df58634c055b251588234",
+        "Actual": "a33dafc87e611bf99ad182db2cbdf935b9da27d1a40df58634c055b251588234",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0104.csv": {
+        "Expected": "6371e4de32aca89549d67a34bd7585082f64fde43b14f420652d765d73c2fdd0",
+        "Actual": "6371e4de32aca89549d67a34bd7585082f64fde43b14f420652d765d73c2fdd0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0105.csv": {
+        "Expected": "d997e6b1e5f3d3fe96317584bdd607c9fde3889f90ceda52ee3864ce399aaca5",
+        "Actual": "d997e6b1e5f3d3fe96317584bdd607c9fde3889f90ceda52ee3864ce399aaca5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0106.csv": {
+        "Expected": "34c3d6ca29a2f002993b835823aea8d3c9c7b051db6eb152267be2c846d3a052",
+        "Actual": "34c3d6ca29a2f002993b835823aea8d3c9c7b051db6eb152267be2c846d3a052",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0107.csv": {
+        "Expected": "c97ce9569e33edc2e6d1cc031f07b9243c9c34c49cd688e0ec8d70259f5b1540",
+        "Actual": "c97ce9569e33edc2e6d1cc031f07b9243c9c34c49cd688e0ec8d70259f5b1540",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0108.csv": {
+        "Expected": "e426713ec569fad91d4c2091f2152c693df38ac5c9c22975e364906c89fe9b6d",
+        "Actual": "e426713ec569fad91d4c2091f2152c693df38ac5c9c22975e364906c89fe9b6d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0109.csv": {
+        "Expected": "dd5d18024d15db2b014647a5fdf09e9171ca02b69d530acfa0c24b8db1eb8733",
+        "Actual": "dd5d18024d15db2b014647a5fdf09e9171ca02b69d530acfa0c24b8db1eb8733",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0110.csv": {
+        "Expected": "a14869e6b99c89fb8d6257000adf13e5e16fec86800c05de480501e53c5d700f",
+        "Actual": "a14869e6b99c89fb8d6257000adf13e5e16fec86800c05de480501e53c5d700f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0111.csv": {
+        "Expected": "0b169f39c43d92e9a8c844b74685d1edb6ee1720fc3875742252303ee4d1b27b",
+        "Actual": "0b169f39c43d92e9a8c844b74685d1edb6ee1720fc3875742252303ee4d1b27b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0112.csv": {
+        "Expected": "1e892d06964f48b7c800dae9e8e452c3364cf5c45b98ea3ab1907de7b3f9cb0c",
+        "Actual": "1e892d06964f48b7c800dae9e8e452c3364cf5c45b98ea3ab1907de7b3f9cb0c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0113.csv": {
+        "Expected": "198136e390bc101d63f57cf7c0a70509e7ba06042e9499b51eb68260f6d112b4",
+        "Actual": "198136e390bc101d63f57cf7c0a70509e7ba06042e9499b51eb68260f6d112b4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0114.csv": {
+        "Expected": "9e635192965889904d281aa62aff7c8964eb3e9c7d7c5625f647f6ece0163e62",
+        "Actual": "9e635192965889904d281aa62aff7c8964eb3e9c7d7c5625f647f6ece0163e62",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0115.csv": {
+        "Expected": "aa51cdf6c723210718f6f2bc804ac362ef61b61784e610704e37e3e8ad8e717e",
+        "Actual": "aa51cdf6c723210718f6f2bc804ac362ef61b61784e610704e37e3e8ad8e717e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0116.csv": {
+        "Expected": "923b49979685cd60a97c53880add55e104feb0eae69fc00ac83768560e4080cb",
+        "Actual": "923b49979685cd60a97c53880add55e104feb0eae69fc00ac83768560e4080cb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0117.csv": {
+        "Expected": "573b854db40fff803de764d3a072bece4212f5edeba9a4e69e6eb214e17e84b2",
+        "Actual": "573b854db40fff803de764d3a072bece4212f5edeba9a4e69e6eb214e17e84b2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0118.csv": {
+        "Expected": "0256efcf4963a04befbc4bf1195c2fdab7bebfb5ffad5069b93c1cdf5ea1ae56",
+        "Actual": "0256efcf4963a04befbc4bf1195c2fdab7bebfb5ffad5069b93c1cdf5ea1ae56",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0119.csv": {
+        "Expected": "a786ae6da0a8bbe0463ee204cc6c9c79dbc91baa3cc0e82bc78baf96bde7a0b4",
+        "Actual": "a786ae6da0a8bbe0463ee204cc6c9c79dbc91baa3cc0e82bc78baf96bde7a0b4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0120.csv": {
+        "Expected": "b6e9056fd854ce46de2f652607d8398b2133b5072214b39446cc60296be258d0",
+        "Actual": "b6e9056fd854ce46de2f652607d8398b2133b5072214b39446cc60296be258d0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0121.csv": {
+        "Expected": "77d12ad718d064d4808153371fbe07fd3737b59b567586d4ad3375847727dd62",
+        "Actual": "77d12ad718d064d4808153371fbe07fd3737b59b567586d4ad3375847727dd62",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0122.csv": {
+        "Expected": "44177e747dfc21153afbb00a3d1b0c193a644633302f88d862c6d7eb758ebe16",
+        "Actual": "44177e747dfc21153afbb00a3d1b0c193a644633302f88d862c6d7eb758ebe16",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0123.csv": {
+        "Expected": "ad2c624f9952a81939b9b922b78ba56ab488a65b9fb02ce6b00d6a13aa4ec6c2",
+        "Actual": "ad2c624f9952a81939b9b922b78ba56ab488a65b9fb02ce6b00d6a13aa4ec6c2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0124.csv": {
+        "Expected": "466ded0fb428d45f2d8c51e4314a85aa34f20e328fe2ce889048308430508083",
+        "Actual": "466ded0fb428d45f2d8c51e4314a85aa34f20e328fe2ce889048308430508083",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0125.csv": {
+        "Expected": "0e2e912e6d44623e68350f2ef8a3b0ca8987fe3feb54c1953ef6ad3b65e1a9d1",
+        "Actual": "0e2e912e6d44623e68350f2ef8a3b0ca8987fe3feb54c1953ef6ad3b65e1a9d1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0126.csv": {
+        "Expected": "0074b6e2fc6089323968cd463c2ae7dfd8338412fa29aab7596b64f27578ba8d",
+        "Actual": "0074b6e2fc6089323968cd463c2ae7dfd8338412fa29aab7596b64f27578ba8d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0127.csv": {
+        "Expected": "6e0665ccead61a69307a5ac08e2edef8a959ea9ffc338fc75a55267e8f58fc21",
+        "Actual": "6e0665ccead61a69307a5ac08e2edef8a959ea9ffc338fc75a55267e8f58fc21",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0128.csv": {
+        "Expected": "b12155503b65874fdbf28dfe6aceacd1ef7e133f04f0694e3047ab9ea183df35",
+        "Actual": "b12155503b65874fdbf28dfe6aceacd1ef7e133f04f0694e3047ab9ea183df35",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0129.csv": {
+        "Expected": "1bdede8d80ae8db4e89e4c8ead02b03834cfbaddcc3f5641b84252fba187318b",
+        "Actual": "1bdede8d80ae8db4e89e4c8ead02b03834cfbaddcc3f5641b84252fba187318b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0130.csv": {
+        "Expected": "3c7d7ed69d213d5773620f5e220702dbf414e4dd8ec6cb6483f9a909402fdcc4",
+        "Actual": "3c7d7ed69d213d5773620f5e220702dbf414e4dd8ec6cb6483f9a909402fdcc4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0131.csv": {
+        "Expected": "40946bf38c65f5181a6d5de1198a3421f1a43f49578aafce33781d52b3789c77",
+        "Actual": "40946bf38c65f5181a6d5de1198a3421f1a43f49578aafce33781d52b3789c77",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0132.csv": {
+        "Expected": "c498fb7520ca535f3a7acc948c31b34d1d319e4254f72279e5d2134911874d8b",
+        "Actual": "c498fb7520ca535f3a7acc948c31b34d1d319e4254f72279e5d2134911874d8b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0133.csv": {
+        "Expected": "d0d38c1410da17aa426b5935f501b36cbf6ab136904dbfdd2998743884c3d998",
+        "Actual": "d0d38c1410da17aa426b5935f501b36cbf6ab136904dbfdd2998743884c3d998",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0134.csv": {
+        "Expected": "5bc124a9a2c53fa6b9c387726264b07f46fdda26a8d2aadc796113646e75a462",
+        "Actual": "5bc124a9a2c53fa6b9c387726264b07f46fdda26a8d2aadc796113646e75a462",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0135.csv": {
+        "Expected": "586407b9eb28a54a010f75eb9cb57fdeb9c6dca648698f5d09983512c0787644",
+        "Actual": "586407b9eb28a54a010f75eb9cb57fdeb9c6dca648698f5d09983512c0787644",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0136.csv": {
+        "Expected": "699e480815723962cbf13b4a9d5728afa2a7d4625263b028221f93e574ebe0d1",
+        "Actual": "699e480815723962cbf13b4a9d5728afa2a7d4625263b028221f93e574ebe0d1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0137.csv": {
+        "Expected": "7eed830dec646d7ec30f3ae5220132bcb1997576873ca8bdb7555baa7783a429",
+        "Actual": "7eed830dec646d7ec30f3ae5220132bcb1997576873ca8bdb7555baa7783a429",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0138.csv": {
+        "Expected": "f36a9911e67d47c7f19725ed0053d8a345b69d4af07acce032b22622a694ffee",
+        "Actual": "f36a9911e67d47c7f19725ed0053d8a345b69d4af07acce032b22622a694ffee",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0139.csv": {
+        "Expected": "ba1c35656959d6d659e210f5b6ec768103b25b64e1429667c5284299a7395a8d",
+        "Actual": "ba1c35656959d6d659e210f5b6ec768103b25b64e1429667c5284299a7395a8d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0140.csv": {
+        "Expected": "d3b4237f5cfdec873a34bf7ad478221613a36a62e24e4f94ef8135916963454d",
+        "Actual": "d3b4237f5cfdec873a34bf7ad478221613a36a62e24e4f94ef8135916963454d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0141.csv": {
+        "Expected": "d5af81be449ecec0359022a7f91bbeb507bc47a4d4ef0da90b8c8a267ed3b7ed",
+        "Actual": "d5af81be449ecec0359022a7f91bbeb507bc47a4d4ef0da90b8c8a267ed3b7ed",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0142.csv": {
+        "Expected": "c3c3f6a726aa38abc34359b3facc0451039feb99f0b519b680373748006a531e",
+        "Actual": "c3c3f6a726aa38abc34359b3facc0451039feb99f0b519b680373748006a531e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0143.csv": {
+        "Expected": "a29b2147a895b9c6caccbd67a0dc48f014793a0d94bb8853edd76b2d5f1cd118",
+        "Actual": "a29b2147a895b9c6caccbd67a0dc48f014793a0d94bb8853edd76b2d5f1cd118",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0144.csv": {
+        "Expected": "107e1dea75ccc9f2fa3f725efb9dc1b15ac9910850b998cfba3da356fed3238b",
+        "Actual": "107e1dea75ccc9f2fa3f725efb9dc1b15ac9910850b998cfba3da356fed3238b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0145.csv": {
+        "Expected": "f4c23426d16ac28ec877df80b582f7d538e52bd2cef23d38835191bd749dc8b8",
+        "Actual": "f4c23426d16ac28ec877df80b582f7d538e52bd2cef23d38835191bd749dc8b8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0146.csv": {
+        "Expected": "fca182180cd05aa7ef79136b5568d5dace5287944919eceb80b9130b7cc409d2",
+        "Actual": "fca182180cd05aa7ef79136b5568d5dace5287944919eceb80b9130b7cc409d2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0147.csv": {
+        "Expected": "fd63172f082c3608bf638f8b4cd44a634509f40d13b49e646fb1cab87077f5fb",
+        "Actual": "fd63172f082c3608bf638f8b4cd44a634509f40d13b49e646fb1cab87077f5fb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0148.csv": {
+        "Expected": "f239c1ebc77edacb65f06df481aded05db99746644b277e6b3ae184a3acf6295",
+        "Actual": "f239c1ebc77edacb65f06df481aded05db99746644b277e6b3ae184a3acf6295",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0149.csv": {
+        "Expected": "f18e4219dacd1d63c176f7b64e4b313c0f051b62891fbf7a32f1952e2809b8d9",
+        "Actual": "f18e4219dacd1d63c176f7b64e4b313c0f051b62891fbf7a32f1952e2809b8d9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0150.csv": {
+        "Expected": "926a18b4c30a5b06412757ca482ec2dee22220bbcd9cb438e5caa1a3d5ddf964",
+        "Actual": "926a18b4c30a5b06412757ca482ec2dee22220bbcd9cb438e5caa1a3d5ddf964",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0151.csv": {
+        "Expected": "a516766da3fab919bd65e8b843ad350c9f908e72510185ebf82c1533c00ef33c",
+        "Actual": "a516766da3fab919bd65e8b843ad350c9f908e72510185ebf82c1533c00ef33c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0152.csv": {
+        "Expected": "1cee6ac4741f5a5aba363abcadf04084030b45957f5c7fdfee34330aa720cfc9",
+        "Actual": "1cee6ac4741f5a5aba363abcadf04084030b45957f5c7fdfee34330aa720cfc9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0153.csv": {
+        "Expected": "87780878936ff21a589b17500b9d1e744f010f0689906725f5e753d255fc0dc1",
+        "Actual": "87780878936ff21a589b17500b9d1e744f010f0689906725f5e753d255fc0dc1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0154.csv": {
+        "Expected": "c95d3132bb168ce0d35943bd58978d32436bf30bdd2385c514a8f7fd5e67d472",
+        "Actual": "c95d3132bb168ce0d35943bd58978d32436bf30bdd2385c514a8f7fd5e67d472",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0155.csv": {
+        "Expected": "f5a2e98879f50e5761e1bc03e490b97bc18b10b8b32ec170f9bc0930a8afa435",
+        "Actual": "f5a2e98879f50e5761e1bc03e490b97bc18b10b8b32ec170f9bc0930a8afa435",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0156.csv": {
+        "Expected": "f66b82ac8488b7e591827916eb313531dbaca767bbd0610438fdfdbea1750c9e",
+        "Actual": "f66b82ac8488b7e591827916eb313531dbaca767bbd0610438fdfdbea1750c9e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0157.csv": {
+        "Expected": "f5f28147b94a72be5b024ea8582ccce1c1dd9cb5388710438192fe27387cffb3",
+        "Actual": "f5f28147b94a72be5b024ea8582ccce1c1dd9cb5388710438192fe27387cffb3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0158.csv": {
+        "Expected": "a6981539acb2f84f3cff7f0321a488144f63af5674c7802c16cb9d61380299ee",
+        "Actual": "a6981539acb2f84f3cff7f0321a488144f63af5674c7802c16cb9d61380299ee",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0159.csv": {
+        "Expected": "0b6f36d0f00a1c92fec41df78bed0dfc212de435b9f21f6663e7e2ae1e8a0284",
+        "Actual": "0b6f36d0f00a1c92fec41df78bed0dfc212de435b9f21f6663e7e2ae1e8a0284",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0160.csv": {
+        "Expected": "8b14db694b3139d1f0392e1538d95338bc14d79af4888bdf54b934ec9a460a2a",
+        "Actual": "8b14db694b3139d1f0392e1538d95338bc14d79af4888bdf54b934ec9a460a2a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0161.csv": {
+        "Expected": "62bdb27930d5e3697d4c5322b2e7249c29b2a17a7a54ac3b75aeccf3d7e39c41",
+        "Actual": "62bdb27930d5e3697d4c5322b2e7249c29b2a17a7a54ac3b75aeccf3d7e39c41",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0162.csv": {
+        "Expected": "0df6d4b039364e7459ace3978c5591cb1e837e08d632793cad50018970546009",
+        "Actual": "0df6d4b039364e7459ace3978c5591cb1e837e08d632793cad50018970546009",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0163.csv": {
+        "Expected": "c734a5757a2cb85a750760aa8be27d7d6341ccb8eee9a347588d52f1fd9eee66",
+        "Actual": "c734a5757a2cb85a750760aa8be27d7d6341ccb8eee9a347588d52f1fd9eee66",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0164.csv": {
+        "Expected": "6c13f0fd0a3c402f13c9b200da5a2b49907a67e88f58d2bdc9c153654a693150",
+        "Actual": "6c13f0fd0a3c402f13c9b200da5a2b49907a67e88f58d2bdc9c153654a693150",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0165.csv": {
+        "Expected": "f179271c4043dcf13d3f281de97134678249f11b2e78c2642a4f571ececc4fef",
+        "Actual": "f179271c4043dcf13d3f281de97134678249f11b2e78c2642a4f571ececc4fef",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0166.csv": {
+        "Expected": "5a73f68872fe5bc54e5d46e9a582c145978a1e4ccf211ea7769d1615bc933b53",
+        "Actual": "5a73f68872fe5bc54e5d46e9a582c145978a1e4ccf211ea7769d1615bc933b53",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0167.csv": {
+        "Expected": "4b1d8a011cf02146d29d9c6a1e923bf214186ae98dc64773e13e78a1c115a6ab",
+        "Actual": "4b1d8a011cf02146d29d9c6a1e923bf214186ae98dc64773e13e78a1c115a6ab",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0168.csv": {
+        "Expected": "db3ba42597bcac64ad557ac6a6ad1ba8eb92729392467547260e54d5cd730ac5",
+        "Actual": "db3ba42597bcac64ad557ac6a6ad1ba8eb92729392467547260e54d5cd730ac5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0169.csv": {
+        "Expected": "80d40d9ddcaa705499397e16a2f3bd2ce0c3d4c3baf018538bb2cea835985e14",
+        "Actual": "80d40d9ddcaa705499397e16a2f3bd2ce0c3d4c3baf018538bb2cea835985e14",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0170.csv": {
+        "Expected": "eceb47974e3d6ae775f028a0cb01b922fd6652b3987f90fde2a378971bf0647d",
+        "Actual": "eceb47974e3d6ae775f028a0cb01b922fd6652b3987f90fde2a378971bf0647d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0171.csv": {
+        "Expected": "f102eb896a152ff8a708ce1048ba94216807785a66ddb7cf9c9ab95f9754fd99",
+        "Actual": "f102eb896a152ff8a708ce1048ba94216807785a66ddb7cf9c9ab95f9754fd99",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0172.csv": {
+        "Expected": "9d672d138a310837d89d0fbee965a6b1eebfb3857b4f10dbf89460d9ef0ce539",
+        "Actual": "9d672d138a310837d89d0fbee965a6b1eebfb3857b4f10dbf89460d9ef0ce539",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0173.csv": {
+        "Expected": "7db932e4e2bf735dbc7e3994c841e20f09eb18b70101b2dd670294078ca20810",
+        "Actual": "7db932e4e2bf735dbc7e3994c841e20f09eb18b70101b2dd670294078ca20810",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0174.csv": {
+        "Expected": "f3112e5c40bbb3dbd31af1c6ac7db77ec25cbba1bb504dc0296a5b317a74261b",
+        "Actual": "f3112e5c40bbb3dbd31af1c6ac7db77ec25cbba1bb504dc0296a5b317a74261b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0175.csv": {
+        "Expected": "840eeae2644323bb18a632d413b68a909e0f9cc424dd2b00a278b15ae55cd8c3",
+        "Actual": "840eeae2644323bb18a632d413b68a909e0f9cc424dd2b00a278b15ae55cd8c3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0176.csv": {
+        "Expected": "3f1bcc144b7b1f9568a21d8dc2eda3bb3e1c6fc8160a52fdad6249de0c7cb3c8",
+        "Actual": "3f1bcc144b7b1f9568a21d8dc2eda3bb3e1c6fc8160a52fdad6249de0c7cb3c8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0177.csv": {
+        "Expected": "d23486f2d8f1406e16801fab10b6aee845a8562e9d8cfbc9235c431d1442fd80",
+        "Actual": "d23486f2d8f1406e16801fab10b6aee845a8562e9d8cfbc9235c431d1442fd80",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0178.csv": {
+        "Expected": "c56d6bb512f41a4735c931dde67c7b6719c394c63d0fce140f067d68774c530c",
+        "Actual": "c56d6bb512f41a4735c931dde67c7b6719c394c63d0fce140f067d68774c530c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0179.csv": {
+        "Expected": "c7943654f30e21c9ffa621114534f1143a1c40ff62da674e6cc977543dd620bc",
+        "Actual": "c7943654f30e21c9ffa621114534f1143a1c40ff62da674e6cc977543dd620bc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0180.csv": {
+        "Expected": "dd773784440955f448567d47c8d0954804cd4a029c09aa2619d4f235da22dc2a",
+        "Actual": "dd773784440955f448567d47c8d0954804cd4a029c09aa2619d4f235da22dc2a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0181.csv": {
+        "Expected": "7c0bec57204a860d26adacb4b2ea94be79f242211b2332a77b084b677e000654",
+        "Actual": "7c0bec57204a860d26adacb4b2ea94be79f242211b2332a77b084b677e000654",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0182.csv": {
+        "Expected": "2404712c9f1e6d9991311b20abffbb2f1679767f2d402ebe55c709534d06406b",
+        "Actual": "2404712c9f1e6d9991311b20abffbb2f1679767f2d402ebe55c709534d06406b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0183.csv": {
+        "Expected": "93d6b05c6b3bba8f8c078b6fcaa7c297f03deda0628d459314fad638cf2fe2bb",
+        "Actual": "93d6b05c6b3bba8f8c078b6fcaa7c297f03deda0628d459314fad638cf2fe2bb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0184.csv": {
+        "Expected": "3bdeeeaf580206b2b6b613b14991e602898787bee25d5699d489c95f70ec8419",
+        "Actual": "3bdeeeaf580206b2b6b613b14991e602898787bee25d5699d489c95f70ec8419",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0185.csv": {
+        "Expected": "b8be78058ae3559b22addc054401a905932b350d377c4578a937858c23fdc425",
+        "Actual": "b8be78058ae3559b22addc054401a905932b350d377c4578a937858c23fdc425",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0186.csv": {
+        "Expected": "c593f8c02f912343309bc3efb5003d02eed5312a20e96a378a3ae8621a524c1b",
+        "Actual": "c593f8c02f912343309bc3efb5003d02eed5312a20e96a378a3ae8621a524c1b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0187.csv": {
+        "Expected": "d1615ba523c57b1542c3a15a2ffcedf6eef8a5e28d3891d94d7337038bbd1955",
+        "Actual": "d1615ba523c57b1542c3a15a2ffcedf6eef8a5e28d3891d94d7337038bbd1955",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0188.csv": {
+        "Expected": "e14685d054f641e135a48e786a490d17f5a7f1e69b9aaf3ddff566db5de4a899",
+        "Actual": "e14685d054f641e135a48e786a490d17f5a7f1e69b9aaf3ddff566db5de4a899",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0189.csv": {
+        "Expected": "90f5f09f696f0ba520102b32e182cbc3e8959333698e7e91251cc65734364ace",
+        "Actual": "90f5f09f696f0ba520102b32e182cbc3e8959333698e7e91251cc65734364ace",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0190.csv": {
+        "Expected": "1f2502d1204aacc1fd9e203a53379291acc479befba9ed0acc46bef3e4942dba",
+        "Actual": "1f2502d1204aacc1fd9e203a53379291acc479befba9ed0acc46bef3e4942dba",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0191.csv": {
+        "Expected": "4f9da69fe639bd6ac2afa81a52c5495f9f6e124670602599eac2bfdd3cc056a2",
+        "Actual": "4f9da69fe639bd6ac2afa81a52c5495f9f6e124670602599eac2bfdd3cc056a2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0192.csv": {
+        "Expected": "19bcdc1aafeace5e0e86f180b4c13f5984463e0d75ca2d3d2468408baa612bb5",
+        "Actual": "19bcdc1aafeace5e0e86f180b4c13f5984463e0d75ca2d3d2468408baa612bb5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0193.csv": {
+        "Expected": "5d39f683fb63b9dc27c8b8106c07763938d2222f58f351da0d513d87b2d14adb",
+        "Actual": "5d39f683fb63b9dc27c8b8106c07763938d2222f58f351da0d513d87b2d14adb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0194.csv": {
+        "Expected": "564ff47e9a13735ed947cf1d1ba3bc79f9a4b2c4de4c1700b58149061a5646b0",
+        "Actual": "564ff47e9a13735ed947cf1d1ba3bc79f9a4b2c4de4c1700b58149061a5646b0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0195.csv": {
+        "Expected": "acf20969baf7eaeab41b83b78874477e98203122644e9842e54149c91ac38719",
+        "Actual": "acf20969baf7eaeab41b83b78874477e98203122644e9842e54149c91ac38719",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0196.csv": {
+        "Expected": "7b4b305f0b96bdfe21fe883fcfe22f8e71d060d25e2ebf2a85e4b1f7e79cd8e6",
+        "Actual": "7b4b305f0b96bdfe21fe883fcfe22f8e71d060d25e2ebf2a85e4b1f7e79cd8e6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0197.csv": {
+        "Expected": "482ff3781ca279f3172b0f8487ce36cd45212cd376730ce6c9ad0406cd3051e1",
+        "Actual": "482ff3781ca279f3172b0f8487ce36cd45212cd376730ce6c9ad0406cd3051e1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0198.csv": {
+        "Expected": "d14d49cb29bc9fa4e31f9cc0ad0d7420408967961938e06cae2f5183d95291f2",
+        "Actual": "d14d49cb29bc9fa4e31f9cc0ad0d7420408967961938e06cae2f5183d95291f2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0199.csv": {
+        "Expected": "dd3a444e0613969bc5d14ae7183f566425227317f2136d17b7769832652dd7b9",
+        "Actual": "dd3a444e0613969bc5d14ae7183f566425227317f2136d17b7769832652dd7b9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0200.csv": {
+        "Expected": "a6994e4ea9d945d2607016be760005aa67310d7c1efee85628c2fa6292c438c4",
+        "Actual": "a6994e4ea9d945d2607016be760005aa67310d7c1efee85628c2fa6292c438c4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0201.csv": {
+        "Expected": "77cbd0365d12ac8a008b32aa9692ec8629c12dad386f5521dbfc6da4dabed1fa",
+        "Actual": "77cbd0365d12ac8a008b32aa9692ec8629c12dad386f5521dbfc6da4dabed1fa",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0202.csv": {
+        "Expected": "e5ccb29612d37c1112fab36a21191617a94b0d9314f57146b944faae43758b3d",
+        "Actual": "e5ccb29612d37c1112fab36a21191617a94b0d9314f57146b944faae43758b3d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0203.csv": {
+        "Expected": "7be1f909e1ea9485539c8a8e9ff975b110227a44948100c193764dad47e4cea5",
+        "Actual": "7be1f909e1ea9485539c8a8e9ff975b110227a44948100c193764dad47e4cea5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0204.csv": {
+        "Expected": "fe2534fec26f57df01a2d4227b91806224f1e4ad989d6a2c5dacd296ce07481a",
+        "Actual": "fe2534fec26f57df01a2d4227b91806224f1e4ad989d6a2c5dacd296ce07481a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0205.csv": {
+        "Expected": "1be1a769b17602fe251a1fcd2cba49f5fc7cf54f240e84cda73ae01771e1b0b0",
+        "Actual": "1be1a769b17602fe251a1fcd2cba49f5fc7cf54f240e84cda73ae01771e1b0b0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0206.csv": {
+        "Expected": "189a3ae00b879c08bd6b7427fa6f67c65f312945060cbe80f99f324089dc8ab3",
+        "Actual": "189a3ae00b879c08bd6b7427fa6f67c65f312945060cbe80f99f324089dc8ab3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0207.csv": {
+        "Expected": "f68c567989562f825b6bb7000a4a46bad867e964f2238142cee229422babc750",
+        "Actual": "f68c567989562f825b6bb7000a4a46bad867e964f2238142cee229422babc750",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0208.csv": {
+        "Expected": "a7717c99f228c7d57d973837ac59a562000fcd2acdebc85754a4221dee287266",
+        "Actual": "a7717c99f228c7d57d973837ac59a562000fcd2acdebc85754a4221dee287266",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0209.csv": {
+        "Expected": "ae0d45737c4e20d7fb6b80ada4a1ad4d09b7fedc6948222aafbeadc9b19f51f9",
+        "Actual": "ae0d45737c4e20d7fb6b80ada4a1ad4d09b7fedc6948222aafbeadc9b19f51f9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0210.csv": {
+        "Expected": "e6c2b0d032b96f777ca28eafcdc240ba090f6df42ae238f01055b540d43dc5cc",
+        "Actual": "e6c2b0d032b96f777ca28eafcdc240ba090f6df42ae238f01055b540d43dc5cc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0211.csv": {
+        "Expected": "c1b2d07161e98c6105c19a935126253f0c327d0e2f77d726bfd6b2b6e59176b7",
+        "Actual": "c1b2d07161e98c6105c19a935126253f0c327d0e2f77d726bfd6b2b6e59176b7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0212.csv": {
+        "Expected": "c5f42f3e036d6a0af0cdc32f0dd0ef02fcb6d618ce042d1be11dd124ebc38c50",
+        "Actual": "c5f42f3e036d6a0af0cdc32f0dd0ef02fcb6d618ce042d1be11dd124ebc38c50",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0213.csv": {
+        "Expected": "b52738689735468794725ea7df4cd98a9a0175a05b47fd966ad2737133db7028",
+        "Actual": "b52738689735468794725ea7df4cd98a9a0175a05b47fd966ad2737133db7028",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0214.csv": {
+        "Expected": "a03e76f734e1e2cfc2fb3c9c657fedf1dcfbb6117186602e8c8ebd0ebf6a99a3",
+        "Actual": "a03e76f734e1e2cfc2fb3c9c657fedf1dcfbb6117186602e8c8ebd0ebf6a99a3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0215.csv": {
+        "Expected": "c9f300f52134de5637f659bc27e15673edfc8758924936d65a1f26355905c446",
+        "Actual": "c9f300f52134de5637f659bc27e15673edfc8758924936d65a1f26355905c446",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0216.csv": {
+        "Expected": "734e766df59275f4802d287b6f76f3cb3eb3349137ce946a7a336add4b833805",
+        "Actual": "734e766df59275f4802d287b6f76f3cb3eb3349137ce946a7a336add4b833805",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0217.csv": {
+        "Expected": "42dab425ece580c88dc95de9832085982f5e6207681fb548ab5ff89a867a18cf",
+        "Actual": "42dab425ece580c88dc95de9832085982f5e6207681fb548ab5ff89a867a18cf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0218.csv": {
+        "Expected": "dc0268c90542ab997c4ede02738f211ec60878fe86d1064856d3e0e1affb1e43",
+        "Actual": "dc0268c90542ab997c4ede02738f211ec60878fe86d1064856d3e0e1affb1e43",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0219.csv": {
+        "Expected": "496816a09910c659eb51a434e260b6d1cde353eac72c6133c83b9a17e4a06b0e",
+        "Actual": "496816a09910c659eb51a434e260b6d1cde353eac72c6133c83b9a17e4a06b0e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0220.csv": {
+        "Expected": "3b86a9a448f0bf5fc231dabea6bc9453ace7ed35d9f1bff6b250668ce095f8e4",
+        "Actual": "3b86a9a448f0bf5fc231dabea6bc9453ace7ed35d9f1bff6b250668ce095f8e4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0221.csv": {
+        "Expected": "8d026113e1f365369f851d1d2f24ef16bb631c772e0813ea3560d50b2e3e6fcf",
+        "Actual": "8d026113e1f365369f851d1d2f24ef16bb631c772e0813ea3560d50b2e3e6fcf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/basis-0222.csv": {
+        "Expected": "86845109fe0004bfc50334ad08f7ed2f96cc0d35802500ff6d2f1378407df7b4",
+        "Actual": "86845109fe0004bfc50334ad08f7ed2f96cc0d35802500ff6d2f1378407df7b4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9104beba8448/spatial-19-edge-9104beba8448-thin/inputs/traces/conductor-2.csv": {
+        "Expected": "8de77ad20bb791c57d6b9e297870f0945e30f5cb7bfa8c803ab73d6171d461f4",
+        "Actual": "8de77ad20bb791c57d6b9e297870f0945e30f5cb7bfa8c803ab73d6171d461f4",
+        "OK": true
+      }
+    },
+    "UTC": "2026-10-05T20:51:21Z",
+    "StageBinaries": {}
+  },
+  "EndUTC": "2026-10-05T20:55:10Z",
+  "TotalSeconds": 229.99812481700002,
+  "StagePeakUsedBytesSampled": {
+    "spatial-19-edge-9104beba8448-thin-p4-reducer": 300024909824
+  }
+}

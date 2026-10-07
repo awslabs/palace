@@ -233,7 +233,10 @@ function build_finger_coupon(
     width;
     fabricated=true,
     stem="finger",
-    overetch=0.05
+    overetch=0.05,
+    minimum_qualified_rings=1,
+    edge_size=0.01,
+    maximum_rings=0
 )
     inputs = write_finger_inputs(directory, width)
     mesh = joinpath(directory, "coupon-$stem.msh")
@@ -258,15 +261,19 @@ function build_finger_coupon(
         semantic_contract=inputs.semantic,
         corner_isotropy_radius=0.1,
         corner_census=census,
-        edge_size=0.01,
+        edge_size=edge_size,
         edge_growth_ratio=2.0,
-        corner_size=0.01,
+        corner_size=edge_size,
         prism_tubes=true,
         far_growth=0.5,
         maximum_corner_aspect=4.0,
         minimum_scaled_jacobian=0.01,
         maximum_jacobian_condition=1000.0,
-        quality_displacement_over_normal=0.75
+        quality_displacement_over_normal=0.75,
+        # Design round 2 F6: the qualified ring-count range of these synthetic sizes (the
+        # finger's long sides take 1 ring under their facing bound w / 2 below w = 0.1).
+        minimum_qualified_rings=minimum_qualified_rings,
+        maximum_rings=maximum_rings
     )
     return parse_json(read(census, String)), mesh, inputs
 end
@@ -370,7 +377,7 @@ untubed_tip(census, inputs) = [
     end
 end
 
-@testset "NarrowMetal (decision 347): tubed sides facing each other across a metal strip narrower than 2 x the envelope" begin
+@testset "F6 (design round 2, decisions 347 / 349 / 437 / 443): facing widths per side, the per-side ring bound, the qualified range" begin
     lower = [-1.0, -1.0]
     upper = [3.0, 1.0]
     clearance(angle) = 0.03 / tan(0.5 * angle) + max(0.02, 1.25 * 0.01 / sin(0.5 * angle))
@@ -409,12 +416,14 @@ end
             corner_radius=0.1
         )
     end
-    @test metal_facing_width(finger(0.07), 0.03, 1.0e-9) ≈ 0.07
-    message = guard_message(() -> metal_facing_width(finger(0.07), 0.04, 1.0e-9))
-    @test occursin("ScopeGuard[NarrowMetal]", message) &&
-          occursin("0.07", message) &&
-          occursin("0.04", message)
-    @test metal_facing_width(finger(0.09), 0.04, 1.0e-9) ≈ 0.09
+    # Per side: the two long sides read the finger width, every other side faces nothing.
+    widths, pairs = metal_facing_widths(finger(0.07), 1.0e-9)
+    @test length(widths) == 5 &&
+          count(isfinite, widths) == 2 &&
+          all(w -> w ≈ 0.07, filter(isfinite, widths))
+    @test length(pairs) == 1 && pairs[1].width ≈ 0.07 && pairs[1].sides == (2, 4)
+    @test metal_facing_width(finger(0.07), 1.0e-9) ≈ 0.07
+    @test metal_facing_width(finger(0.09), 1.0e-9) ≈ 0.09
     # Two 0.2 fingers separated by a 0.05 dielectric slot: the slot sides face each other
     # across DIELECTRIC (their outward normals point at each other) and are not a metal
     # strip; the fingers' own widths (0.2) are the facing metal widths.
@@ -448,21 +457,179 @@ end
     # (the 0.05 slot root between its two concave corners is an untubed short side)
     @test length(two) == 9 && count(segment.untubed for segment in two) == 1
     @test two[5].untubed && two[5].span ≈ slot
-    @test metal_facing_width(two, 0.04, 1.0e-9) ≈ 0.2
+    @test metal_facing_width(two, 1.0e-9) ≈ 0.2
     # An untubed side faces nothing: the 0.09 finger's tip is untubed, its long sides keep
     # the 0.09 facing width; a side list without a facing pair reads Inf.
-    @test metal_facing_width(finger(0.09)[[1, 5]], 0.04, 1.0e-9) == Inf
-    @test "NarrowMetal" in [guard[1] for guard in RECIPE_SCOPE_GUARDS]
-    # The full thin build of a 0.07 finger at these sizes (sheet tube R 0.03 + h_pyr 0.01 =
-    # 0.04 envelope: 2 x 0.04 > 0.07) stops at the guard before any CAD tube is built; the
-    # 0.09 finger of the testset above builds.
+    @test metal_facing_width(finger(0.09)[[1, 5]], 1.0e-9) == Inf
+    @test "UnqualifiedRingCount" in [guard[1] for guard in RECIPE_SCOPE_GUARDS]
+    @test !("NarrowMetal" in [guard[1] for guard in RECIPE_SCOPE_GUARDS])
+    # The per-side ring law (ratio 2): at EdgeSize 0.005 the thin process bound 0.1 gives 3 rings
+    # (r_3 + h_3 = 0.055), the fabricated bound 0.05 gives 2 (0.025); a facing bound w / 2 in
+    # [0.025, 0.055) leaves 2 rings - the production analogue (thin 5 -> 4 on a 121-nm finger,
+    # fabricated 7 unchanged) - below 0.01 none.
+    @test tube_ring_count(0.005, 2.0, 0.1) == 3 && tube_ring_count(0.005, 2.0, 0.05) == 2
+    @test tube_ring_count(0.005, 2.0, 0.5 * 0.08) == 2 &&
+          tube_ring_count(0.005, 2.0, 0.5 * 0.12) == 3
+    @test occursin(
+        "NarrowTransverseBound",
+        guard_message(() -> tube_ring_count(0.005, 2.0, 0.5 * 0.015; context="w 0.015"))
+    )
+    @test occursin(
+        "w 0.015",
+        guard_message(() -> tube_ring_count(0.005, 2.0, 0.5 * 0.015; context="w 0.015"))
+    )
     mktempdir() do directory
-        message = guard_message(
-            () -> build_finger_coupon(directory, 0.07; fabricated=false, stem="narrow")
+        # The full THIN build of a 0.08 finger at EdgeSize 0.005: its two long sides take 2-ring
+        # tubes (R 0.015, h_K 0.01, h_pyr 0.005; facing bound 0.04) under a qualified range
+        # admitting 2 rings, their corner clearances follow their own tube (0.015 + max(0.01,
+        # 1.25 x 0.005 / sin 45) = 0.025 at the 90-degree corners, against the coupon's 0.055),
+        # the tip side (facing nothing: 3 rings, clearances 0.055) stays untubed, every gate
+        # passes; the records.
+        census, mesh, inputs = build_finger_coupon(
+            directory,
+            0.08;
+            fabricated=false,
+            stem="narrow",
+            minimum_qualified_rings=2,
+            edge_size=0.005
         )
-        @test occursin("ScopeGuard[NarrowMetal]", message)
-        @test occursin("across 0.07 of metal", message)
-        envelope = match(r"tube envelope ([0-9.e-]+)", message)
-        @test envelope !== nothing && parse(Float64, envelope[1]) ≈ 0.04
+        tubes = census["PrismTubes"]
+        section = tubes["Section"]
+        @test section["Rings"] == 3 &&
+              section["MinimumRings"] == 2 &&
+              section["ReducedSides"] == 2
+        @test section["FacingBound"] ≈ 0.04 && section["MetalFacingWidth"] ≈ 0.08
+        @test section["MinimumQualifiedRings"] == 2
+        @test occursin("per SIDE", section["RingRule"]) &&
+              occursin("UnqualifiedRingCount", section["RingsPerSideRule"])
+        reduced = [row for row in tubes["Tubes"] if haskey(row, "Rings")]
+        @test length(reduced) == 2 && all(row["Rings"] == 2 for row in reduced)
+        @test all(row["FacingWidth"] ≈ 0.08 && row["FacingBound"] ≈ 0.04 for row in reduced)
+        @test all(abs(abs(row["Origin"][2]) - 0.04) <= 1.0e-9 for row in reduced)
+        @test all(row["Start"] ≈ 0.025 && row["End"] ≈ 2.0 - 0.025 for row in reduced)
+        @test all(!haskey(row, "Rings") for row in tubes["Tubes"] if !(row in reduced))
+        @test length(untubed_tip(census, inputs)) == 1 &&
+              untubed_tip(census, inputs)[1]["Clearances"] ≈ [0.055, 0.055]
+        @test tubes["TubeCount"] == 4
+        @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        @test tubes["Quality"]["Prism"]["PositiveOrientation"] &&
+              tubes["Quality"]["Pyramid"]["PositiveOrientation"]
+        # The prisms per tube follow each tube's OWN ring count: Layers x 12 sheet sectors x
+        # (2 K - 1) (the inner triangle plus two per outer ring); the pyramids Layers x 12.
+        sheet_sectors = length(section["Sheet"]["Angles"]) - 1
+        @test tubes["Prisms"] == sum(
+            row["Layers"] * sheet_sectors * (2 * get(row, "Rings", section["Rings"]) - 1)
+            for row in tubes["Tubes"]
+        )
+        @test tubes["Pyramids"] ==
+              sum(row["Layers"] * sheet_sectors for row in tubes["Tubes"])
+        # The same finger under the range validated today (3 thin rings): fail closed at the
+        # guard with the side, its count, the facing width and the range.
+        message = guard_message(
+            () -> build_finger_coupon(
+                directory,
+                0.08;
+                fabricated=false,
+                stem="unqualified",
+                minimum_qualified_rings=3,
+                edge_size=0.005
+            )
+        )
+        @test occursin("ScopeGuard[UnqualifiedRingCount]", message) &&
+              occursin("takes 2 rings", message) &&
+              occursin("facing width 0.08", message) &&
+              occursin("validated by (F) for this coupon kind, 3", message)
+        # Without a qualified range a reduced side fails closed.
+        message = guard_message(
+            () -> build_finger_coupon(
+                directory,
+                0.08;
+                fabricated=false,
+                stem="norange",
+                minimum_qualified_rings=0,
+                edge_size=0.005
+            )
+        )
+        @test occursin("--minimum-qualified-rings", message) &&
+              occursin("takes 2 rings", message)
+        # The FABRICATED twin: its process bound 0.05 gives 2 rings (r_2 + h_2 = 0.025 <= 0.04 =
+        # the facing bound), so nothing is reduced - as the production fabricated tubes on the
+        # 121-nm fingers (47.75 <= 60.5 nm) - and the range 3 does not fire on an unreduced side.
+        fab, _, _ = build_finger_coupon(
+            directory,
+            0.08;
+            fabricated=true,
+            stem="narrowfab",
+            minimum_qualified_rings=3,
+            edge_size=0.005
+        )
+        @test fab["PrismTubes"]["Section"]["Rings"] == 2 &&
+              fab["PrismTubes"]["Section"]["ReducedSides"] == 0
+        @test all(!haskey(row, "Rings") for row in fab["PrismTubes"]["Tubes"])
+        @test fab["PrismTubes"]["Section"]["FacingBound"] ≈ 0.04 &&
+              fab["PrismTubes"]["Section"]["MetalFacingWidth"] ≈ 0.08
+        @test fab["PrismTubes"]["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        # A fabricated finger narrower than 2 (r_2 + h_2) = 0.05 reduces its fabricated tubes too
+        # (top and bottom of both long sides: 4 reduced tubes at 1 ring) and stops under the
+        # range 2 - the fabricated stop path.
+        narrow_fab = guard_message(
+            () -> build_finger_coupon(
+                directory,
+                0.045;
+                fabricated=true,
+                stem="narrowfab045",
+                minimum_qualified_rings=2,
+                edge_size=0.005
+            )
+        )
+        @test occursin("ScopeGuard[UnqualifiedRingCount]", narrow_fab) &&
+              occursin("takes 1 rings", narrow_fab)
+        # A thin finger wider than 2 (r_3 + h_3) = 0.11 keeps the coupon's 3 rings on every side,
+        # bitwise with the pre-F6 mesher (no Rings record, ReducedSides 0).
+        wide, _, _ = build_finger_coupon(
+            directory,
+            0.12;
+            fabricated=false,
+            stem="wide",
+            minimum_qualified_rings=3,
+            edge_size=0.005
+        )
+        @test wide["PrismTubes"]["Section"]["ReducedSides"] == 0 &&
+              wide["PrismTubes"]["Section"]["MinimumRings"] == 3 &&
+              all(!haskey(row, "Rings") for row in wide["PrismTubes"]["Tubes"])
+        @test wide["PrismTubes"]["Section"]["FacingBound"] ≈ 0.06 &&
+              wide["PrismTubes"]["Section"]["MetalFacingWidth"] ≈ 0.12
+        @test wide["PrismTubes"]["Section"]["RingsCap"] === nothing
+        # The measurement-only ring cap (F6 2.3, the all-rings sensitivity twin): --maximum-rings 2
+        # gives a 0.2 finger 2 rings on EVERY side (Rings 2, nothing reduced, RingsCap recorded; the
+        # 0.12 finger under the cap meets the decision-353 lottery at a legacy corner at these sizes);
+        # a cap at or above the law's count is a no-op but recorded.
+        capped, _, _ = build_finger_coupon(
+            directory,
+            0.2;
+            fabricated=false,
+            stem="capped",
+            minimum_qualified_rings=2,
+            edge_size=0.005,
+            maximum_rings=2
+        )
+        @test capped["PrismTubes"]["Section"]["Rings"] == 2 &&
+              capped["PrismTubes"]["Section"]["RingsCap"] == 2
+        @test capped["PrismTubes"]["Section"]["ReducedSides"] == 0 &&
+              length(capped["PrismTubes"]["Section"]["RingSizes"]) == 2
+        @test all(!haskey(row, "Rings") for row in capped["PrismTubes"]["Tubes"])
+        @test capped["PrismTubes"]["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >=
+              0.01
+        uncapped, _, _ = build_finger_coupon(
+            directory,
+            0.12;
+            fabricated=false,
+            stem="uncapped",
+            minimum_qualified_rings=3,
+            edge_size=0.005,
+            maximum_rings=5
+        )
+        @test uncapped["PrismTubes"]["Section"]["Rings"] == 3 &&
+              uncapped["PrismTubes"]["Section"]["RingsCap"] == 5
     end
 end

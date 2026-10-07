@@ -44,6 +44,14 @@ struct IdentificationSegment
   // A segment excluded before identification (no target interface, ...) carries its class
   // and reason and takes no part in the geometry.
   std::optional<std::pair<std::string, std::string>> exclusion;
+
+  // Mirror band (boundary-cut DESIGN 2.2.2; decisions 442 / 454): an IMAGE segment is the
+  // reflection of the real segment `image_of` through the listed mirror planes (indices
+  // into the plane list, ascending); -1 / empty for a real segment. Image segments take
+  // part in the identification like real ones (the features formed with the images are
+  // the mirrored geometry's) but are never placed, never counted as perimeter.
+  int image_of = -1;
+  std::vector<int> mirror_planes;
 };
 
 struct IdentificationVertex
@@ -54,6 +62,11 @@ struct IdentificationVertex
   bool on_truncation_boundary = false;
   // The vertex ends a port-bordering segment (a Port exclusion): a cut, never a feature.
   bool on_port_boundary = false;
+  // Mirror band: the vertex ends an image chain where the band ends (ImageBandCut: a cut,
+  // never a feature, like TruncationCut), or is a real truncation vertex JOINED to its
+  // image chain on a mirror plane (MirrorJoint: an interior joint of the extended chain).
+  bool image_band_cut = false;
+  bool mirror_joint = false;
 };
 
 // A metal face of the whole model (deduplicated, replicated): the metal off a segment's own
@@ -198,6 +211,13 @@ struct IdentifiedFeature
   // Manifest Features[].Match.BlendEigenvalues / Features[].Match.InterpolationFallback.
   nlohmann::json blend_eigenvalues;
   nlohmann::json interpolation_fallback;
+  // Mirror record (boundary-cut DESIGN 2.2.2; null unless the feature touches an image
+  // across a natural truncation plane): {Planes[], RealLength, ImageLength, Status:
+  // "Continued" (the band joined the chain to its image and formed no new feature: every
+  // portion real and unchanged) | "Modelled" | "Missing" (a mirror-formed feature without /
+  // with a library model) | "ImageOnly" (never placed, never counted)}. Manifest
+  // Features[].Mirror.
+  nlohmann::json mirror;
 };
 
 struct IdentifiedSegment
@@ -268,6 +288,9 @@ struct IdentificationResult
   double perimeter_length = 0.0;
   double assigned_length = 0.0;
   double excluded_length = 0.0;
+  // Mirror band (boundary-cut DESIGN 2.2.2): the segments [real_segments, size) are IMAGE
+  // segments (never placed, never counted, listed apart in the manifest); 0 = none.
+  std::size_t real_segments = 0;
   std::string geometry_digest;
   // Claims of one priority by different features overlapping on a run (resolved by feature
   // id): the rules never produce one; reported under Diagnostics and gated by the audit.

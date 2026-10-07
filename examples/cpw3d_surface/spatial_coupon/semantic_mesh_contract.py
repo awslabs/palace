@@ -158,6 +158,80 @@ BOX_FACE_CUT_END_RULE = ("supervisor decision 320: a Physical vertex whose incom
                          "the legacy rectilinear convention keeps it a corner bitwise")
 
 
+# The plan-view boundary's coordinate quantum per unit coupon radius: the generator
+# (generate_spatial_response.plan_view_boundary_loops) snaps every loop vertex to the
+# 1e-9 R grid and writes the float k x 1e-9 R, so the quantum count k of a coordinate is
+# recovered exactly by the generator's rounding (plan_view_quantum_count) and the
+# invariant-corner predicate is integer arithmetic on those counts.
+PLAN_VIEW_QUANTUM_OVER_RADIUS = 1.0e-9
+
+
+def plan_view_quantum(radius):
+    """The plan-view coordinate quantum 1e-9 R of a coupon of radius R (the mesher computes
+    the same product from its --radius)."""
+    return PLAN_VIEW_QUANTUM_OVER_RADIUS * radius
+
+
+def plan_view_quantum_count(value, quantum):
+    """The integer count of `quantum` nearest to a plan-view coordinate (the generator's
+    rounding: half away from zero); exact for every generated coordinate, whose float
+    k x quantum lies within 1e-6 quanta of k."""
+    scaled = value / quantum
+    return math.floor(scaled + 0.5) if scaled >= 0.0 else math.ceil(scaled - 0.5)
+
+
+def quantised_side_dot(previous_point, point, following_point, quantum):
+    """The dot product (an exact integer, in quanta squared) of the two plan-view boundary
+    sides meeting at `point`, each pointing away from it, on the quantum counts of the
+    three vertices."""
+    p = (plan_view_quantum_count(point[0], quantum), plan_view_quantum_count(point[1], quantum))
+    a = (plan_view_quantum_count(previous_point[0], quantum) - p[0],
+         plan_view_quantum_count(previous_point[1], quantum) - p[1])
+    b = (plan_view_quantum_count(following_point[0], quantum) - p[0],
+         plan_view_quantum_count(following_point[1], quantum) - p[1])
+    return a[0] * b[0] + a[1] * b[1]
+
+
+def invariant_corner(previous_point, point, following_point, quantum):
+    """Whether a semantic corner is INVARIANT (mesher design round 2 F5-A, supervisor
+    decisions 351 / 358 / 363 / 416): the two plan-view boundary sides meeting at it are not
+    exactly perpendicular.  Exact integer arithmetic on the quantum counts of the quantised
+    coordinates (quantised_side_dot; `quantum` = plan_view_quantum(R)): the dot product of
+    the two side vectors (pointing away from the corner) is exactly 0 at every rectilinear
+    corner, at the theta-0 box vertex of decision 320 (its metal side perpendicular to the
+    box side) and at every rigidly ROTATED perpendicular corner whatever its rotation; such
+    a LEGACY corner keeps the vertex-0 corner measure, MaximumCornerAspect and the 3.8
+    target bitwise.  (A floating-point dot product of the float side vectors is exact only
+    for axis-aligned sides: the loop end's rotated corner read -1.776e-15, decision 416.)
+    An invariant corner is optimized on and judged by kappa_reg (the condition number of
+    the affine map from the regular tetrahedron, order-invariant), descended to the fixed
+    goal 3.8 and judged against the manifest's CornerShapeGate = min(E_pop, 5.0); a
+    BridgingSliver candidate (a corner-incident cell whose four vertices all lie on the
+    kink's two sidewalls, at least one strictly on each, in a wedge of obtuse opening)
+    still above the gate after the descent triggers the corner-local reconnection pass
+    (supervisor decision 365: the measure is the verdict, the predicate the trigger); the
+    mesher (mesh_spatial_coupon.semantic_corner_kinds) evaluates the same predicate on the
+    same quantum and fails closed on a contract disagreeing with it."""
+    return quantised_side_dot(previous_point, point, following_point, quantum) != 0
+
+
+INVARIANT_CORNER_RULE = ("mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363 / 365 / 416): a "
+                         "semantic corner whose two plan-view boundary sides have a non-zero dot product in "
+                         "exact integer arithmetic on their quantum counts (every coordinate divided by the "
+                         "plan-view quantum 1e-9 R and rounded to the generator's integer; every rectilinear "
+                         "corner, the theta-0 box vertex and every rigidly rotated perpendicular corner read "
+                         "exactly 0 and stay LEGACY, bitwise) is INVARIANT: its corner-incident seed cells "
+                         "are optimized on and judged by kappa_reg, the condition number of the affine map "
+                         "from the regular tetrahedron (order-invariant), descended to the fixed goal 3.8 "
+                         "and judged against the manifest CornerShapeGate = min(E_pop, 5.0) (E_pop the kappa_reg "
+                         "envelope of the (F)-qualified 90-degree corners); a BridgingSliver candidate (a "
+                         "corner-incident cell whose four vertices all lie on the kink's two sidewalls, at least "
+                         "one strictly on each, in a wedge of obtuse opening) still above the gate after the "
+                         "descent triggers the corner-local reconnection pass (supervisor decision 365: the "
+                         "measure is the verdict, the predicate the trigger); the mesher evaluates the same "
+                         "predicate on the same quantum and a disagreeing contract fails closed")
+
+
 def boundary_arc_tags(rows):
     """Per plan-view boundary row (file order) the arc tag of its OUTGOING side ({ArcId, ArcCx,
     ArcCy, ArcR, ArcSign} or None) and the joint record of its vertex ((turn or None, smooth)
@@ -200,29 +274,36 @@ def arc_vertex_class(arcs, index):
     return "Joint"
 
 
-def boundary_semantic_corners(rows):
-    """Semantic corners and box-face cut ends of plan-view boundary rows (Loop / Vertex /
-    Class / X / Y / Plane, file order): the Physical vertices that are not box-face cut
-    ends (box_face_cut_end), each at its Plane height, in file order, and the excluded
-    cut ends likewise.  Arc vertices (the ARC columns, design A1 (4)): an ArcInterior vertex
-    and a smooth ArcJoint are never corners (ARC_VERTEX_RULE); a kinked ArcJoint is a corner
-    like a Physical vertex (boundary_arc_vertices lists the excluded arc vertices)."""
-    corners, cut_ends, _ = _boundary_vertex_classes(rows)
-    return corners, cut_ends
+def boundary_semantic_corners(rows, quantum):
+    """Semantic corners, box-face cut ends and invariant corners of plan-view boundary rows
+    (Loop / Vertex / Class / X / Y / Plane, file order): the Physical vertices that are not
+    box-face cut ends (box_face_cut_end), each at its Plane height, in file order, the
+    excluded cut ends likewise, and the corners among them whose sides are not exactly
+    perpendicular (invariant_corner on the plan-view `quantum` = plan_view_quantum(R)).
+    Arc vertices (the ARC columns, design A1 (4)): an ArcInterior vertex and a smooth
+    ArcJoint are never corners (ARC_VERTEX_RULE); a kinked ArcJoint is a corner like a
+    Physical vertex (boundary_arc_vertices lists the excluded arc vertices)."""
+    corners, cut_ends, corner_sides, _ = _boundary_vertex_classes(rows)
+    invariant = [corner for corner, (previous_point, point, following_point) in zip(corners, corner_sides)
+                 if invariant_corner(previous_point, point, following_point, quantum)]
+    return corners, cut_ends, invariant
 
 
 def boundary_arc_vertices(rows):
     """The arc vertices boundary_semantic_corners excludes: {"Interior": [...], "SmoothJoints":
     [...]} at their Plane heights (file order); both empty on a boundary without arcs."""
-    return _boundary_vertex_classes(rows)[2]
+    return _boundary_vertex_classes(rows)[3]
 
 
 def _boundary_vertex_classes(rows):
+    """(corners, cut_ends, corner_sides, arc_vertices): the corners' loop neighbours
+    (previous, point, following plan-view points) in `corner_sides`, one per corner."""
     loops = {}
     for row, arc, joint in zip(rows, *boundary_arc_tags(rows)):
         loops.setdefault(row["Loop"], []).append((row, arc, joint))
     corners = []
     cut_ends = []
+    corner_sides = []
     arc_vertices = {"Interior": [], "SmoothJoints": []}
     for loop in loops.values():
         points = [(float(row["X"]), float(row["Y"])) for row, _, _ in loop]
@@ -245,7 +326,28 @@ def _boundary_vertex_classes(rows):
                 cut_ends.append(point)
             else:
                 corners.append(point)
-    return corners, cut_ends, arc_vertices
+                corner_sides.append((points[index - 1], points[index], points[(index + 1) % n]))
+    return corners, cut_ends, corner_sides, arc_vertices
+
+
+def invariant_corners(contract):
+    """The contract's recorded invariant corners (Derivation.InvariantCorners.Points; an
+    empty list when the record is absent: every corner legacy)."""
+    derivation = contract.get("Derivation") if isinstance(contract, dict) else None
+    record = derivation.get("InvariantCorners") if isinstance(derivation, dict) else None
+    if record is None:
+        return []
+    points = record.get("Points") if isinstance(record, dict) else None
+    if (not isinstance(points, list) or
+            any(not isinstance(point, list) or len(point) != 3 or
+                any(not isinstance(value, (int, float)) or not math.isfinite(value) for value in point)
+                for point in points)):
+        raise ValueError("Derivation.InvariantCorners.Points must contain finite 3D points")
+    corners = contract.get("SemanticCorners", [])
+    if any(all(np.linalg.norm(np.asarray(point) - np.asarray(corner)) > 1e-9 for corner in corners)
+           for point in points):
+        raise ValueError("Derivation.InvariantCorners.Points must be semantic corners of the contract")
+    return points
 
 
 def derive_feature_topology(signature_path, boundary_path, semantic_corners, tolerance=1e-9):

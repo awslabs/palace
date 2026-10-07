@@ -5,9 +5,11 @@
 #define PALACE_TEST_SURFACERESPONSE_FIXTURES_HPP
 
 #include "fixtures.hpp"
+#include "utils/tablecsv.hpp"
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -275,10 +277,13 @@ struct SurfaceResponseFiles
 
   // Meshes.
   static mfem::Mesh MakeAutomatic2DMesh();
+  // normal_elements: the element count across the plane normal y (4: planes at 0.25,
+  // 0.5, 0.75; 16: a plane every 0.0625, so a trace with kinks at multiples of 0.0625
+  // above and below the metal is a Q1 function).
   static std::unique_ptr<mfem::ParMesh>
   MakeIslandMesh(bool rounded = false, bool tetrahedral = false, bool aperture = false,
                  bool neighboring_island = false, bool second_layer = false,
-                 bool high_order_rounded = false);
+                 bool high_order_rounded = false, int normal_elements = 4);
   static std::unique_ptr<mfem::ParMesh> MakeTouchingIslandMesh();
   static std::unique_ptr<mfem::ParMesh> MakeOffsetCornerPairMesh();
   // The SA edge segments of interface `interface` (with their length and vertex types).
@@ -299,6 +304,22 @@ struct SurfaceResponseFiles
                         const std::vector<std::vector<std::string>> &patch_rows,
                         const json &model_edges, double tolerance);
 };
+
+// Shared helpers of the electrostatic surface-response tests: a whole electrostatic run of
+// a config (output folder created), the raw text of a file, a numeric CSV table and one of
+// its columns by header, and the plain text table of the per-type energy CSVs
+// (surface-response-uncovered-energy.csv, surface-response-domain-boundary-energy.csv).
+void RunElectrostatic(json config);
+std::string ReadFile(const std::filesystem::path &path);
+Table LoadCsv(const std::filesystem::path &path);
+const Column &ColumnByHeader(const Table &table, const std::string &header);
+struct TextCsv
+{
+  std::vector<std::string> header;
+  std::vector<std::vector<std::string>> rows;
+  std::size_t Column(const std::string &name) const;
+};
+TextCsv ReadTextCsv(const std::filesystem::path &path);
 
 }  // namespace palace::test
 

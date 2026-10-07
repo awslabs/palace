@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceresponsemirror.hpp"
 #include "utils/configfile.hpp"
 
 namespace palace
@@ -36,6 +37,49 @@ class MaterialOperator;
 class SpaceOperator;
 struct IdentifiedFeature;
 struct IdentificationResult;
+
+// The placement's clip of the uncovered requirements (decision 394 F2) by the matched
+// spatial clusters' support boxes (decision 399 MAJOR-1): the part of an uncovered portion
+// strictly inside a matched cluster's box (the same bounds and strict-interior test the
+// continuation ownership clips the translational cells with, CellInsideBox) is removed —
+// the coupon models its whole box, so that raw within-R energy would be counted twice.
+// One record per (portion, box); lengths in patch units.
+struct UncoveredSpatialSupportClip
+{
+  int feature = -1;
+  std::string topology;
+  int segment = -1;
+  std::size_t spatial_patch = 0;
+  double length = 0.0;  // removed from the portion by this box
+  // The removed piece's ends (mesh units): the F-DB-a footprint of the box's coupon when
+  // that coupon is a DomainBoundary exclusion (DESIGN 2.1).
+  std::array<double, 3> p0{}, p1{};
+};
+struct UncoveredSpatialSupportClipping
+{
+  std::vector<UncoveredSpatialSupportClip> clips;  // in portion order, then box order
+  int clipped_portions = 0;  // portions that lost a part (wholly removed ones included)
+  int removed_portions = 0;  // portions wholly inside the boxes (nothing kept)
+  int split_portions = 0;    // portions whose kept part is two pieces (a box crossed)
+  double removed_length = 0.0;
+  std::map<int, double> removed_by_feature;  // feature id -> removed length
+};
+
+// F-DB-a (decisions 442 / 454, DESIGN 2.1): the raw claims of the DomainBoundary-excluded
+// patches as perimeter portions (see CollectDomainBoundaryPortions).
+struct DomainBoundaryPortions
+{
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      portions;
+  // Per portion (parallel): the excluded patches it came from (ascending; two for a
+  // deduplicated first-order split cell).
+  std::vector<std::vector<std::size_t>> patches;
+  // Per portion (parallel): a translational own-edge interval (a geometric cell).
+  std::vector<bool> translational;
+  int geometric_cells = 0;    // translational own-edge intervals, split patches once
+  int duplicate_patches = 0;  // excluded patches folded into an existing interval
+  double length = 0.0;        // mesh units, over all portions
+};
 
 // Mesh-independent automatic coupon layout. A solver retains this across AMR iterations;
 // finite-element point interpolation is still rebuilt for every refined mesh.
@@ -261,7 +305,18 @@ private:
     int interior_trace_count = 0;
     bool surface_mortar = false;
     bool spatial_mortar = false;
+    // Translational surface mortar: the hat segments between consecutive contour vertices.
+    // A segment end >= contour_size is a constrained metal-band vertex
+    // consistent_mortar_vertices[end - contour_size] (decision 404 D1): no basis
+    // coefficient, no load, so the adjacent free hat ramps to zero there; the band between
+    // two such vertices carries no segment.
     std::vector<MortarSegment> mortar_segments;
+    std::vector<std::array<double, 3>> consistent_mortar_vertices;
+    std::string consistent_mortar_rule;
+    // A translational mortar whose hat basis has constrained vertices (inserted band
+    // vertices or band knots listed as ZeroTraceIndices): the free hats do not sum to one
+    // beside them, so the projection removes the reference through the hats' integrals.
+    bool constrained_translational_mortar = false;
     std::vector<MortarVertex> mortar_vertices;
     std::vector<MortarTriangle> mortar_triangles;
     mfem::DenseMatrix mortar_mass_inverse;
@@ -360,6 +415,23 @@ private:
   // The ownership records of the translational stretches inside the spatial supports
   // (decision 236), reported under Diagnostics with the statistics.
   nlohmann::json ownership_diagnostics;
+  // The uncovered requirements (decision 394 F2): the portions of the unmatched features
+  // as perimeter sub-segments in mesh coordinates, whose raw within-R surface energy the
+  // electrostatic driver keeps in the corrected interface energies.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+      uncovered_portions;
+  // The placement's clip of those portions by the matched clusters' support boxes
+  // (decision 399 MAJOR-1); uncovered_portions holds the clipped portions.
+  UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
+  // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
+  DomainBoundaryPortions domain_boundary_portions;
+  // The Natural mirror planes and band (mesh units) of the mirror-point evaluation
+  // (F-DB-c; DESIGN 2.2.3); empty / 0 without the mirror.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
+      mirror_planes;
+  double mirror_band = 0.0;
+  double mirror_tolerance = 0.0;
+  long long int mirrored_point_count = 0;
   long long int candidate_query_count = 0;
   long long int fallback_query_count = 0;
   long long int point_send_peer_count = 0;
@@ -539,7 +611,14 @@ public:
   // three-dimensional spatial response patch. The result is ordered by global patch
   // index and replicated on all ranks.
   std::vector<PatchTrace> GetSpatialPatchTraces(const Vector &x) const;
+  // The same for every applied patch (translational patches included; their coefficients
+  // are the surface-mortar projection or the collocated values of the trace coupling).
+  std::vector<PatchTrace> GetPatchTraces(const Vector &x) const;
 
+private:
+  std::vector<PatchTrace> GatherPatchTraces(const Vector &x, bool spatial_only) const;
+
+public:
   // Conductor-consistency gate (decision 277 (A)), solve time only: measure every applied
   // spatial surface-mortar patch on the potential x of excitation `source`
   // (ConductorConsistencyRecord), exclude the patches whose max_ratio exceeds
@@ -564,6 +643,32 @@ public:
 
   bool HasSurfaceResponse() const;
   std::set<int> GetTargetInterfaces() const;
+  // The uncovered requirements (decision 394 F2; empty when every feature is matched).
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetUncoveredPortions() const
+  {
+    return uncovered_portions;
+  }
+  // The parts of the uncovered requirements removed inside the matched clusters' support
+  // boxes at placement (decision 399 MAJOR-1; GetUncoveredPortions holds the remainder).
+  const UncoveredSpatialSupportClipping &GetUncoveredSpatialSupportClipping() const
+  {
+    return uncovered_spatial_support_clipping;
+  }
+  // The raw claims of the DomainBoundary-excluded patches (F-DB-a, decisions 442 / 454;
+  // empty when nothing is excluded): kept in the corrected interface energies like the
+  // uncovered requirements and reported as the DomainBoundary share.
+  const std::vector<
+      config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
+  GetDomainBoundaryPortions() const
+  {
+    return domain_boundary_portions.portions;
+  }
+  const DomainBoundaryPortions &GetDomainBoundaryPortionRecord() const
+  {
+    return domain_boundary_portions;
+  }
 
   int GetBasisSize() const { return global_basis_size; }
   int GetPatchCount() const { return global_patch_count; }
@@ -770,6 +875,10 @@ struct ContinuationOwnership
     double owned_length = 0.0;  // removed from the cell (once, whatever the owner count)
     std::vector<std::size_t> owners;  // spatial patches, ascending
     std::vector<double> attributed;   // owned length per owner (midpoint rule)
+    // The owned part attributed to each owner as an own-edge sub-segment (the cell line
+    // shifted by the provenance edge offset; mesh units, parallel to `owners`): the F-DB-a
+    // footprint of an owner that is a DomainBoundary exclusion (DESIGN 2.1).
+    std::vector<std::array<std::array<double, 3>, 2>> attributed_intervals;
   };
   std::vector<Cell> cells;  // in patch order
   // Owned length per (feature, stretch, spatial patch) and per spatial patch.
@@ -811,6 +920,21 @@ ContinuationOwnership ApplyContinuationOwnership(
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
     const std::vector<SpatialSupportBounds> &supports, int dimension,
     double continuation_tolerance, double matching_radius);
+
+// Clip the uncovered requirements' portions by the matched spatial clusters' support boxes
+// (decision 399 MAJOR-1): for every support with claims (a matched SpatialEdgeCluster; a
+// vertex coupon's support has none) the part of every portion strictly inside the
+// support's bounds — the interval the continuation ownership's CellInsideBox finds on a
+// translational cell, the same bounds and the same 1e-12 x max(1, length) tolerance — is
+// removed; the kept part (nothing, one piece, or two pieces when the portion crosses the
+// box) replaces the portion in place, in portion order. Without such a support the
+// portions are left untouched (bitwise). Called at placement on a copy of the
+// configuration's portions (the boxes need the models' basis points), never on the cache.
+UncoveredSpatialSupportClipping ClipUncoveredPortionsBySpatialSupport(
+    std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        &portions,
+    const std::vector<SpatialSupportBounds> &supports, int dimension);
 
 // Coupon-vs-coupon margin overlap (decision 244): two spatial cluster supports whose boxes
 // overlap in their interiors are recorded, not aborted, when the overlap is MARGINS ONLY —
@@ -856,6 +980,46 @@ nlohmann::json DescribeSpatialSupportMarginOverlaps(
 std::string DescribeSpatialSupportMarginOverlapWarning(const nlohmann::json &diagnostics);
 std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnostics);
 
+// The Diagnostics entry of the consistent translational mortar (decision 404 D1): per
+// model the constrained metal-band vertices of its surface-mortar hat basis and the rule
+// that produced them (canonical coupon frame, the library's length unit).
+nlohmann::json DescribeConsistentMortar(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config);
+// The Diagnostics entries of the corner-arm trim (decision 394 F1) and of the uncovered
+// requirements (decision 394 F2) of a response configuration (lengths and coordinates in
+// mesh units); both empty-but-complete when nothing was trimmed / nothing is uncovered.
+nlohmann::json DescribeCornerArmTrims(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+// The Diagnostics entry of the mirror arm trim (boundary-cut DESIGN 2.2.3): the virtual
+// corners placed at weight 1 / 2 and the real-arm cells beginning at s_half.
+nlohmann::json DescribeMirrorArmTrims(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorArmTrimData> &trims,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+// The trimmed corners whose vertex coupon the placement does not apply (decision 399
+// MINOR-7): excluded_reason names the exclusion of a patch index (nullopt: applied). Their
+// second arm's [R, s) is then modelled by nothing (a recorded KNOWN LIMIT).
+nlohmann::json DescribeCornerArmTrimExcludedCoupons(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const std::function<std::optional<std::string>(std::size_t patch_idx)> &excluded_reason,
+    double coordinate_scale);
+// The uncovered entry describes the placed (clipped) portions and, under
+// ClippedBySpatialSupport, the parts removed inside the matched clusters' boxes (decision
+// 399 MAJOR-1; nullptr when the portions were not placed against boxes, e.g. a 2D request).
+nlohmann::json DescribeUncoveredPortions(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData>
+        &portions,
+    const UncoveredSpatialSupportClipping *clipping,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+
 // Domain-boundary exclusion (decision 258): a coupon's trace coupling is undefined beyond
 // the device domain, which a placed coupon reaches wherever a metal edge meets an
 // artificial domain cut (a window cut, a chip outline) within ~R |sin theta| of it (theta
@@ -891,14 +1055,67 @@ struct DomainBoundaryExclusion
   int outside_points = 0;
   std::array<double, 3> nearest_outside_point{};
   double nearest_distance = 0.0;
+  // Why the patch is DomainBoundary rather than Mirrored (boundary-cut DESIGN 2.2.5;
+  // Diagnostics.DomainBoundary.Reasons): MirrorOff (no mirror: the band is 0 - Mirror
+  // "Off" or a Maxwell build), UnmergedTopology (its own footprint overlaps a real portion
+  // of a mirror-formed configuration without a mirror placement, read as a Missing feature:
+  // decision 481), NonMirroringPlane (an outside point lies beyond an Unsupported /
+  // NonPlanar plane), BeyondBand (beyond a Natural plane by more
+  // than the band), ReflectionNotLocated (reflected into the domain but not located: a
+  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane).
+  std::string reason;
+  // Reason UnmergedTopology (decision 481): the unmerged configuration whose REAL portion
+  // the patch's own footprint overlaps (index into MirrorBand.UnmergedFeatures), that
+  // portion (mesh units) and its distance from the patch origin (0 for an own cell).
+  int unmerged_topology = -1;
+  std::array<double, 3> unmerged_p0{}, unmerged_p1{};
+  bool unmerged_image = false;
+  double unmerged_distance = 0.0;
+  bool unmerged_own = false;  // the patch's own footprint overlaps a real portion
+};
+// Information only (decision 481): a patch whose coupon support reaches
+// a portion, real or image, of an unmerged mirror-formed configuration, with the nearest
+// such portion's distance from the patch origin (mesh units). The patch keeps its
+// classification.
+struct DomainBoundaryUnmergedReach
+{
+  std::size_t patch = 0;
+  int topology = -1;
+  double distance = 0.0;
+  bool image = false;
+};
+// A patch classified Mirrored (boundary-cut DESIGN 2.2.3; decisions 442 / 454): every one
+// of its placed points outside the mesh reflects through the Natural mirror planes it lies
+// beyond (canonical order, within the band) into the mesh, so its trace is taken by even
+// extension (mirror-point evaluation in ConfigurePointCommunication) and the patch stays
+// applied with its weight.
+struct DomainBoundaryMirrored
+{
+  std::size_t patch = 0;
+  int tested_points = 0;
+  int outside_points = 0;  // all reflected into the mesh
 };
 struct DomainBoundaryExclusions
 {
-  std::vector<DomainBoundaryExclusion> patches;  // ascending patch index
+  std::vector<DomainBoundaryExclusion> patches;             // ascending patch index
+  std::vector<DomainBoundaryMirrored> mirrored;             // ascending patch index
+  std::vector<DomainBoundaryUnmergedReach> unmerged_reach;  // ascending patch index
   long long int tested_patches = 0;
   long long int tested_points = 0;
-  double wall_time = 0.0;  // of the containment test, seconds
+  long long int reflected_points = 0;  // outside points reflected into the mesh
+  double wall_time = 0.0;              // of the containment test, seconds
 };
+// `mirror_planes` (empty: no mirror, every cut-crossing patch is DomainBoundary) and the
+// band (mesh units) classify the outside points: a point beyond a Natural plane within the
+// band is reflected and located again (the found flags of the reflections OR-reduced like
+// the originals); a patch whose every outside point is located after reflection is
+// Mirrored, any other patch with an outside point is DomainBoundary (weight 0). A
+// metal-edge reference outside the mesh whose reflection is located is a cut-adjacent
+// coupon (decision 314's follow-up), never the misplaced-coupon abort. A patch whose own
+// footprint overlaps a REAL portion of an unmerged mirror-formed configuration
+// (`unmerged_portions`) is DomainBoundary whatever its points' containment (decision 481:
+// the configuration is read as a Missing feature); the coupon supports' reach into the
+// configurations (real or image portions) is recorded as information.
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
@@ -906,7 +1123,30 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         &basis_points,
     const std::function<bool(int model_idx)> &spatial_basis,
     const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
-    double matching_radius, const std::set<std::size_t> &skipped);
+    double matching_radius, const std::set<std::size_t> &skipped,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
+        &mirror_planes = {},
+    double mirror_band = 0.0,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
+        &unmerged_portions = {});
+
+// The mirror planes of a response configuration as the mirror module's planes.
+std::vector<MirrorPlane> MirrorPlanesOf(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData> &planes);
+
+// Reflect every point outside the mesh's Natural mirror planes into the domain (the even
+// extension of the trace; boundary-cut DESIGN 2.2.3): returns the number of reflected
+// points; a point beyond a plane that does not mirror or beyond the band is left in place
+// (the locator then fails closed naming the patch).
+int ReflectPointsIntoDomain(
+    mfem::Vector &xyz, int dimension,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
+        &mirror_planes,
+    double mirror_band, double tolerance);
 
 // The Diagnostics entry of the exclusions (per patch: feature, model, cell and portion
 // with their lengths, outside-point count, the nearest outside point; totals: the CELL
@@ -917,6 +1157,33 @@ nlohmann::json DescribeDomainBoundaryExclusions(
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     double coordinate_scale);
 std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnostics);
+
+// F-DB-a (decisions 442 / 454, DESIGN 2.1): NEVER DROP. The raw claim of every
+// DomainBoundary-excluded patch as perimeter portions whose within-R raw energy the
+// electrostatic driver keeps in the corrected interface energies exactly as the uncovered
+// requirements' (decision 394 F2), reported per type as the DomainBoundary share. The claim
+// of a translational cell is its OWN-EDGE interval (the clipped cell shifted by the
+// provenance edge offset along AxisU: a pair's two sides and a stack's n sides are n
+// intervals); the co-located first-order split patches of one cell (model weights summing
+// to 1) map to ONE interval, deduplicated within the signature tolerance and counted once.
+// The claim of a vertex coupon is its provenance raw_claims (the arms' R windows and a
+// trimmed second arm's [R, s)); the claim of a spatial cluster coupon is its claims plus
+// the parts its box removed from others: the continuation-owned cell parts attributed to it
+// and the uncovered portions clipped by its box. Overlaps are excluded by construction (a
+// DB cell is a kept part outside every matched box; a vertex claim ends where the arm cells
+// start). Portions in mesh units; `types` names each portion's type (the model topology).
+DomainBoundaryPortions CollectDomainBoundaryPortions(
+    const DomainBoundaryExclusions &exclusions,
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    const ContinuationOwnership &ownership,
+    const UncoveredSpatialSupportClipping &uncovered_clipping, double matching_radius);
+
+// The Diagnostics entry of the raw portions (count, geometric cells, duplicates, length,
+// per type and per feature, the portion list; mesh units scaled by coordinate_scale).
+nlohmann::json DescribeDomainBoundaryPortions(const DomainBoundaryPortions &portions,
+                                              double coordinate_scale);
 
 }  // namespace palace
 

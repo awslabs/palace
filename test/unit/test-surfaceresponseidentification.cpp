@@ -21,6 +21,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "models/surfaceresponseidentification.hpp"
+#include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/metaledge.hpp"
 
@@ -5343,4 +5344,756 @@ TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
              WithinAbs(0.2, 1.0e-12));
   CHECK_THAT(SegmentDistance({0.5, 0.2, 0.0}, a, b), WithinAbs(0.2, 1.0e-12));
   CHECK_THAT(SegmentDistance({1.5, 0.0, 0.0}, a, b), WithinAbs(0.5, 1.0e-12));
+}
+
+// Boundary-cut DESIGN 2.2 (decisions 442 / 454 / 455; F-DB-c): the mirror-band extension of
+// the identification input across a planar natural vertical truncation plane and the merge
+// of the extended run onto the unextended one. The window wall is the plane x = 0 (outward
+// normal +x; the device occupies x <= 0), R = 2, band 3 R.
+TEST_CASE("SurfaceResponseIdentificationMirrorBand",
+          "[surfaceresponseidentification][mirror][Serial]")
+{
+  const double R = 2.0;
+  std::vector<MirrorPlane> planes(1);
+  planes[0].attribute = 7;
+  planes[0].normal = {1.0, 0.0, 0.0};
+  planes[0].offset = 0.0;
+  planes[0].faces = 1;
+  planes[0].status = "Natural";
+  // A synthetic plane acts everywhere (its faces span the whole plan view).
+  auto Unbounded = [](MirrorPlane &plane)
+  {
+    plane.box_min = {-1.0e9, -1.0e9, -1.0e9};
+    plane.box_max = {1.0e9, 1.0e9, 1.0e9};
+  };
+  Unbounded(planes[0]);
+  auto Serialise = [](const IdentificationResult &result)
+  {
+    // The real features' Ids, types, keys and portions (segment, s0, s1, side), in order.
+    nlohmann::json list = nlohmann::json::array();
+    for (const auto &feature : result.features)
+    {
+      nlohmann::json portions = nlohmann::json::array();
+      for (const auto &portion : feature.portions)
+      {
+        if (portion.segment < result.real_segments || result.real_segments == 0)
+        {
+          portions.push_back({portion.segment, std::round(portion.s0 * 1.0e9) * 1.0e-9,
+                              std::round(portion.s1 * 1.0e9) * 1.0e-9, portion.side});
+        }
+      }
+      list.push_back({{"Id", feature.id},
+                      {"Type", feature.type},
+                      {"Key", feature.signature_key},
+                      {"Portions", portions}});
+    }
+    return list.dump();
+  };
+  auto RealVertexTypes = [](const IdentificationResult &result)
+  {
+    std::map<std::string, int> types;
+    for (const auto &vertex : result.vertices)
+    {
+      types[vertex.type]++;
+    }
+    return types;
+  };
+
+  SECTION("a straight edge ending on the plane at 90 degrees: Continued, byte-identical")
+  {
+    // The lead [-20, 0] x [-3, 3] cut by the wall at x = 0 (edge index 1 is the cut).
+    LoopSpec lead{Rectangle(-20.0, -3.0, 0.0, 3.0), 0, 1.0};
+    lead.truncation_edges = {1};
+    const auto input = MakeInput({lead}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    // Every physical segment with a point within 3 R = 6 of the wall is imaged once: the
+    // long edges' segments with an end at x >= -6 (7 per edge), no double images (one
+    // plane).
+    CHECK(extension.real_segments == input.segments.size());
+    CHECK(extension.image_segments == 14);
+    CHECK(extension.input.segments.size() == input.segments.size() + 14);
+    // The two cut vertices (0, +-3) are joined straight: REGULAR, off the truncation
+    // boundary, the image chain continues the real chain's id.
+    REQUIRE(extension.joined_vertices.size() == 2);
+    for (std::size_t i = 0; i < 2; i++)
+    {
+      const auto &vertex = extension.input.vertices[extension.joined_vertices[i]];
+      CHECK(extension.joined_straight[i]);
+      CHECK(vertex.mirror_joint);
+      CHECK_FALSE(vertex.on_truncation_boundary);
+      CHECK(*vertex.physical_type == MetalEdgeVertexType::REGULAR);
+      CHECK(extension.joined_planes[i] == std::vector<int>{0});
+    }
+    // The image chains end at band cuts (the images of the vertices at x = -7).
+    CHECK(extension.band_cut_vertices.size() == 2);
+    for (const std::size_t v : extension.band_cut_vertices)
+    {
+      const auto &vertex = extension.input.vertices[v];
+      CHECK(vertex.image_band_cut);
+      CHECK(vertex.on_truncation_boundary);
+      CHECK_THAT(vertex.coordinate[0], WithinAbs(7.0, 1.0e-12));
+    }
+    for (std::size_t s = extension.real_segments; s < extension.input.segments.size(); s++)
+    {
+      const auto &image = extension.input.segments[s];
+      CHECK(image.image_of >= 0);
+      CHECK(image.mirror_planes == std::vector<int>{0});
+      const auto &source = input.segments[static_cast<std::size_t>(image.image_of)];
+      CHECK_THAT(image.p0[0], WithinAbs(-source.p0[0], 1.0e-12));
+      CHECK_THAT(image.p0[1], WithinAbs(source.p0[1], 1.0e-12));
+      CHECK_THAT(image.gap_direction[0], WithinAbs(-source.gap_direction[0], 1.0e-12));
+      CHECK_THAT(image.gap_direction[1], WithinAbs(source.gap_direction[1], 1.0e-12));
+      CHECK(image.process_normal == source.process_normal);
+      CHECK(image.chain == source.chain);  // straight joint: the same chain
+    }
+    // Pure function: the same input twice gives the same extension.
+    const auto again = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    CHECK(again.input.segments.size() == extension.input.segments.size());
+    CHECK(again.joined_vertices == extension.joined_vertices);
+    // The extended identification continues the two long edges through the plane and forms
+    // no new feature; the merge returns the real run verbatim with Continued records.
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    CHECK(summary.mirror_formed_features == 0);
+    CHECK(summary.continued_features == 2);
+    CHECK(Serialise(merged) == Serialise(real));
+    CHECK(merged.features.size() == real.features.size());
+    int continued = 0;
+    for (const auto &feature : merged.features)
+    {
+      if (!feature.mirror.is_null())
+      {
+        CHECK(feature.mirror.at("Status") == "Continued");
+        CHECK(feature.type == "IsolatedEdge");
+        continued++;
+      }
+    }
+    CHECK(continued == 2);
+    // The joint vertices: TruncationCut in the real run, MirrorJoint in the merged one;
+    // the cut edge's interior vertices stay TruncationCut, every other type unchanged.
+    auto real_types = RealVertexTypes(real), merged_types = RealVertexTypes(merged);
+    CHECK(real_types["TruncationCut"] == 2 + 5);
+    CHECK(merged_types["TruncationCut"] == 5);
+    CHECK(merged_types["MirrorJoint"] == 2);
+    real_types.erase("TruncationCut");
+    merged_types.erase("TruncationCut");
+    merged_types.erase("MirrorJoint");
+    CHECK(real_types == merged_types);
+    // The manifest of the merged run carries the Mirror records and no image perimeter.
+    const auto manifest = merged.ToJson(1.0);
+    CHECK(manifest.at("Totals") == real.ToJson(1.0).at("Totals"));
+    CHECK(manifest.at("Segments").size() == real.ToJson(1.0).at("Segments").size());
+    CHECK(manifest.contains("ImageSegments"));
+    CHECK(manifest.at("ImageSegments").size() == 14);
+  }
+
+  SECTION("a straight edge at 90 degrees - 1e-6 rad (the S1 / S4 stack regime)")
+  {
+    // The long edges tilted by 1e-6 rad: a sub-noise, non-collinear joint.
+    const double tilt = 1.0e-6;
+    LoopSpec lead{
+        {{-20.0, -3.0 - 20.0 * tilt}, {0.0, -3.0}, {0.0, 3.0}, {-20.0, 3.0 - 20.0 * tilt}},
+        0,
+        1.0};
+    lead.truncation_edges = {1};
+    const auto input = MakeInput({lead}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    REQUIRE(extension.joined_vertices.size() == 2);
+    CHECK(extension.joined_straight[0]);
+    CHECK(extension.joined_straight[1]);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    CHECK(summary.mirror_formed_features == 0);
+    CHECK(summary.continued_features == 2);
+    CHECK(Serialise(merged) == Serialise(real));
+  }
+
+  SECTION("a lead meeting the plane at 45 degrees: virtual 90-degree corners")
+  {
+    // The strip between the parallel edges of direction (1, 1) / sqrt 2, width 6 (> 2R),
+    // cut by the wall: the lower edge meets the wall with the acute wedge on the gap side
+    // (a CONCAVE 90 with its image), the upper edge with the acute wedge on the metal
+    // side (a CONVEX 90).
+    const double L = 20.0, w = 6.0 * std::sqrt(2.0);
+    LoopSpec lead{{{-L, -L}, {0.0, 0.0}, {0.0, w}, {-L, -L + w}}, 0, 1.0};
+    lead.truncation_edges = {1};
+    const auto input = MakeInput({lead}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    REQUIRE(extension.joined_vertices.size() == 2);
+    CHECK_FALSE(extension.joined_straight[0]);
+    CHECK_FALSE(extension.joined_straight[1]);
+    for (const std::size_t v : extension.joined_vertices)
+    {
+      CHECK(*extension.input.vertices[v].physical_type == MetalEdgeVertexType::CORNER);
+    }
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    CHECK(summary.mirror_formed_features == 2);
+    std::map<std::string, int> formed;
+    for (const auto &feature : merged.features)
+    {
+      if (feature.mirror.is_null())
+      {
+        continue;
+      }
+      CHECK(feature.mirror.at("Status") == "MirrorFormed");
+      formed[feature.type]++;
+      CHECK_THAT(feature.signature.at("AngleDegrees").get<double>(),
+                 WithinAbs(90.0, 1.0e-6));
+      // The vertex lies ON the plane; the Id is numbered after every real feature.
+      CHECK_THAT(feature.origin[0], WithinAbs(0.0, 1.0e-9));
+      REQUIRE(feature.vertices.size() == 1);
+      CHECK(feature.vertices[0] < extension.real_vertices);
+      // Half the window on real segments, half on image segments.
+      double real_length = 0.0, image_length = 0.0;
+      for (const auto &portion : feature.portions)
+      {
+        (portion.segment < merged.real_segments ? real_length : image_length) +=
+            portion.s1 - portion.s0;
+      }
+      CHECK_THAT(real_length, WithinAbs(R, 1.0e-9));
+      CHECK_THAT(image_length, WithinAbs(R, 1.0e-9));
+      CHECK_THAT(feature.length, WithinAbs(R, 1.0e-9));
+      CHECK(HalfCornerArmStart(90.0, R) == R);
+    }
+    CHECK(formed["ConvexCorner"] == 1);
+    CHECK(formed["ConcaveCorner"] == 1);
+    // The real long edges lost exactly R at the plane end to the virtual corners; every
+    // other real feature (the far cap and its two corners) is unchanged.
+    std::map<int, const IdentifiedFeature *> real_by_id, merged_by_id;
+    for (const auto &feature : real.features)
+    {
+      real_by_id.emplace(feature.id, &feature);
+    }
+    for (const auto &feature : merged.features)
+    {
+      merged_by_id.emplace(feature.id, &feature);
+    }
+    int clipped = 0;
+    for (const auto &[id, feature] : real_by_id)
+    {
+      REQUIRE(merged_by_id.count(id) == 1);
+      const auto &after = *merged_by_id.at(id);
+      CHECK(after.type == feature->type);
+      if (std::abs(after.length - feature->length) > 1.0e-9)
+      {
+        CHECK(feature->type == "IsolatedEdge");
+        CHECK_THAT(feature->length - after.length, WithinAbs(R, 1.0e-9));
+        clipped++;
+      }
+    }
+    CHECK(clipped == 2);
+    // The joint vertices are the virtual corners' vertices in the merged record.
+    auto types = RealVertexTypes(merged);
+    CHECK(types["TruncationCut"] == RealVertexTypes(real)["TruncationCut"] - 2);
+    CHECK(types["ConvexCorner"] == 3);  // the two far corners + the virtual one
+    CHECK(types["ConcaveCorner"] == 1);
+    CHECK(merged.ToJson(1.0).contains("ImageSegments"));
+  }
+
+  SECTION("an edge parallel to the plane at d < R: a same-conductor gap of 2 d")
+  {
+    // The pad [-20, -1] x [-10, 10]: its right edge at d = 1 from the wall with the gap
+    // toward the cut (no truncation edge: the pad does not touch the wall).
+    const auto input = MakeInput({{Rectangle(-20.0, -10.0, -1.0, 10.0), 0, 1.0}}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    CHECK(extension.joined_vertices.empty());
+    CHECK(extension.image_segments > 0);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    CHECK(summary.mirror_formed_features >= 1);
+    bool gap = false;
+    for (const auto &feature : merged.features)
+    {
+      if (!feature.mirror.is_null() && feature.type == "SameConductorGap")
+      {
+        gap = true;
+        CHECK_THAT(feature.signature.at("SeparationOverR").get<double>(),
+                   WithinAbs(1.0, 1.0e-6));
+        // The real side only counts: half the portions are images.
+        double real_length = 0.0, image_length = 0.0;
+        for (const auto &portion : feature.portions)
+        {
+          (portion.segment < merged.real_segments ? real_length : image_length) +=
+              portion.s1 - portion.s0;
+        }
+        CHECK(real_length > 0.0);
+        CHECK_THAT(image_length, WithinAbs(real_length, 1.0e-9));
+      }
+    }
+    CHECK(gap);
+  }
+
+  SECTION("an edge parallel at d >= R forms nothing; a feature beyond 2 R is untouched")
+  {
+    const auto input = MakeInput({{Rectangle(-20.0, -10.0, -2.5, 10.0), 0, 1.0}}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    CHECK(extension.image_segments > 0);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    CHECK(summary.mirror_formed_features == 0);
+    CHECK(summary.continued_features == 0);
+    CHECK(Serialise(merged) == Serialise(real));
+  }
+
+  SECTION("non-mirroring planes extend nothing; reflections compose in canonical order")
+  {
+    auto unsupported = planes;
+    unsupported[0].status = "Unsupported";
+    LoopSpec lead{Rectangle(-20.0, -3.0, 0.0, 3.0), 0, 1.0};
+    lead.truncation_edges = {1};
+    const auto input = MakeInput({lead}, R);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, unsupported);
+    CHECK(extension.image_segments == 0);
+    CHECK(extension.input.segments.size() == input.segments.size());
+    // Two planes (a box corner at x = 0, y = 0): a point beyond both reflects through both.
+    std::vector<MirrorPlane> two = planes;
+    two.push_back(planes[0]);
+    two[1].normal = {0.0, 1.0, 0.0};
+    const auto corner = ReflectIntoDomain({0.5, 0.3, 0.0}, two, 3.0 * R, 1.0e-3 * R);
+    REQUIRE(corner.has_value());
+    CHECK(corner->planes == std::vector<int>{0, 1});
+    CHECK_THAT(corner->point[0], WithinAbs(-0.5, 1.0e-12));
+    CHECK_THAT(corner->point[1], WithinAbs(-0.3, 1.0e-12));
+    const auto inside = ReflectIntoDomain({-0.5, -0.3, 0.0}, two, 3.0 * R, 1.0e-3 * R);
+    REQUIRE(inside.has_value());
+    CHECK(inside->planes.empty());
+    CHECK_FALSE(ReflectIntoDomain({7.0, 0.0, 0.0}, two, 3.0 * R, 1.0e-3 * R).has_value());
+    CHECK_FALSE(
+        ReflectIntoDomain({0.5, 0.0, 0.0}, unsupported, 3.0 * R, 1.0e-3 * R).has_value());
+    // s_half: R at 90 degrees, (R + 1.1547 R) / 2 at 60 / 120 degrees.
+    CHECK_THAT(HalfCornerArmStart(90.0, R), WithinAbs(R, 1.0e-12));
+    CHECK_THAT(HalfCornerArmStart(60.0, R),
+               WithinAbs(0.5 * (R + R / std::cos(30.0 * M_PI / 180.0)), 1.0e-12));
+    CHECK_THAT(HalfCornerArmStart(120.0, R),
+               WithinAbs(HalfCornerArmStart(60.0, R), 1.0e-12));
+  }
+}
+
+TEST_CASE("SurfaceResponseIdentificationMirrorBandTwoWalls",
+          "[surfaceresponseidentification][mirror][Serial]")
+{
+  // The symmetry fixture's plan view: a pad between two parallel walls leaning at 45
+  // degrees (direction (1, 1)): the wall A through (0, 0) with outward normal (1, -1) /
+  // sqrt 2 (the pad on its left) and the wall B through (-1, 0) with outward normal (-1, 1)
+  // / sqrt 2. The pad's edges along x at y = 0 and y = 0.5 meet both walls at 45 degrees:
+  // four virtual 90-degree corners, convex / concave alternating (the top edge convex at A,
+  // concave at B; the bottom edge concave at A, convex at B).
+  const double R = 0.2;
+  const double r = 1.0 / std::sqrt(2.0);
+  std::vector<MirrorPlane> planes(2);
+  auto Unbounded = [](MirrorPlane &plane)
+  {
+    plane.box_min = {-1.0e9, -1.0e9, -1.0e9};
+    plane.box_max = {1.0e9, 1.0e9, 1.0e9};
+  };
+  planes[0].normal = {r, -r, 0.0};
+  planes[0].offset = 0.0;
+  planes[0].status = "Natural";
+  planes[1].normal = {-r, r, 0.0};
+  planes[1].offset = r;  // through (-1, 0): -r x + r y = r
+  planes[1].status = "Natural";
+  Unbounded(planes[0]);
+  Unbounded(planes[1]);
+  // CCW pad: bottom edge from B to A at y = 0, then up along A, top edge back, down along
+  // B.
+  LoopSpec pad{{{-1.0, 0.0}, {0.0, 0.0}, {0.5, 0.5}, {-0.5, 0.5}}, 0, 0.125};
+  pad.truncation_edges = {1, 3};
+  const auto input = MakeInput({pad}, R);
+  const auto real = IdentifyMetalPerimeter(input);
+  const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+  REQUIRE(extension.joined_vertices.size() == 4);
+  for (std::size_t i = 0; i < 4; i++)
+  {
+    CHECK_FALSE(extension.joined_straight[i]);
+  }
+  const auto extended = IdentifyMetalPerimeter(extension.input);
+  IdentificationResult merged;
+  const auto summary = MergeMirrorIdentification(real, extended, extension, planes, merged);
+  std::map<std::string, int> formed;
+  for (const auto &feature : merged.features)
+  {
+    if (!feature.mirror.is_null())
+    {
+      INFO(feature.type << " at (" << feature.origin[0] << ", " << feature.origin[1]
+                        << ")");
+      formed[feature.type]++;
+      CHECK_THAT(feature.signature.at("AngleDegrees").get<double>(),
+                 WithinAbs(90.0, 1.0e-6));
+    }
+  }
+  CHECK(summary.mirror_formed_features == 4);
+  CHECK(formed["ConvexCorner"] == 2);
+  CHECK(formed["ConcaveCorner"] == 2);
+
+  // The FULL symmetry fixture's plan view (the chevron: the pad and its reflection across
+  // the wall x = z through the apex corners at (0.75, 0.75) / (1.25, 1.25)), cut by the
+  // wall x - z = -1 and its image x - z = 1: the same four virtual corners, two per wall.
+  std::vector<MirrorPlane> chevron_planes(2);
+  chevron_planes[0].normal = {-r, r, 0.0};
+  chevron_planes[0].offset = r;
+  chevron_planes[0].status = "Natural";
+  chevron_planes[1].normal = {r, -r, 0.0};
+  chevron_planes[1].offset = r;
+  chevron_planes[1].status = "Natural";
+  Unbounded(chevron_planes[0]);
+  Unbounded(chevron_planes[1]);
+  LoopSpec chevron{{{-0.25, 0.75},
+                    {0.75, 0.75},
+                    {0.75, -0.25},
+                    {1.25, 0.25},
+                    {1.25, 1.25},
+                    {0.25, 1.25}},
+                   0,
+                   0.125};
+  chevron.truncation_edges = {2, 5};
+  const auto chevron_input = MakeInput({chevron}, R);
+  const auto chevron_real = IdentifyMetalPerimeter(chevron_input);
+  const auto chevron_extension =
+      ExtendIdentificationInputAcrossMirrorPlanes(chevron_input, chevron_planes);
+  REQUIRE(chevron_extension.joined_vertices.size() == 4);
+  const auto chevron_extended = IdentifyMetalPerimeter(chevron_extension.input);
+  IdentificationResult chevron_merged;
+  const auto chevron_summary = MergeMirrorIdentification(
+      chevron_real, chevron_extended, chevron_extension, chevron_planes, chevron_merged);
+  std::map<std::string, int> chevron_formed, chevron_real_corners;
+  for (const auto &feature : chevron_merged.features)
+  {
+    if (!feature.mirror.is_null())
+    {
+      INFO(feature.type << " at (" << feature.origin[0] << ", " << feature.origin[1]
+                        << ")");
+      chevron_formed[feature.type]++;
+    }
+    else if (feature.type == "ConvexCorner" || feature.type == "ConcaveCorner")
+    {
+      chevron_real_corners[feature.type]++;
+    }
+  }
+  INFO(chevron_summary.unmerged_features.dump());
+  CHECK(chevron_summary.mirror_formed_features == 4);
+  CHECK(chevron_formed["ConvexCorner"] == 2);
+  CHECK(chevron_formed["ConcaveCorner"] == 2);
+  CHECK(chevron_real_corners["ConvexCorner"] == 1);
+  CHECK(chevron_real_corners["ConcaveCorner"] == 1);
+}
+
+TEST_CASE("SurfaceResponseIdentificationMirrorBandChains",
+          "[surfaceresponseidentification][mirror][chains][Serial]")
+{
+  // Decision 512 (boundary-cut CHAINS lane; DESIGN ERRATA-7): the rerun-2 J1 finding on
+  // S5 / S7 / C1 - a real IsolatedEdge chain with curved sub-portions (BendRadiusOverR
+  // set) meeting one plane at a STRAIGHT joint while a virtual corner at ANOTHER plane
+  // clips its far end by R; the extended run's chain feature then had real portions
+  // differing from the unextended run's, the exact-portions Continued test refused it and
+  // the whole chain became an Unmerged IsolatedEdge whose own cells (rule 481) went
+  // DomainBoundary raw (S5: 1163.5 um).
+  const double R = 2.0;
+  auto Unbounded = [](MirrorPlane &plane)
+  {
+    plane.box_min = {-1.0e9, -1.0e9, -1.0e9};
+    plane.box_max = {1.0e9, 1.0e9, 1.0e9};
+  };
+  // Wall A: x = 0 (outward normal +x); the lead lies at x < 0.
+  MirrorPlane wall_a;
+  wall_a.attribute = 7;
+  wall_a.normal = {1.0, 0.0, 0.0};
+  wall_a.offset = 0.0;
+  wall_a.faces = 1;
+  wall_a.status = "Natural";
+  Unbounded(wall_a);
+  auto FeatureById = [](const IdentificationResult &result, int id)
+  {
+    const auto it = std::find_if(result.features.begin(), result.features.end(),
+                                 [&](const IdentifiedFeature &f) { return f.id == id; });
+    REQUIRE(it != result.features.end());
+    return &*it;
+  };
+  auto RealLength = [](const IdentificationResult &result, const IdentifiedFeature &f)
+  {
+    double length = 0.0;
+    for (const auto &portion : f.portions)
+    {
+      if (result.real_segments == 0 || portion.segment < result.real_segments)
+      {
+        length += portion.s1 - portion.s0;
+      }
+    }
+    return length;
+  };
+
+  SECTION("S5 class: a bent chain straight at one plane, a virtual corner at the other, is "
+          "Continued (the far-end clip is the corner's)")
+  {
+    // Wall B: the line x - y = -20, outward normal (-1, 1) / sqrt 2 (the lead lies on the
+    // side x - y > -20).
+    MirrorPlane wall_b;
+    wall_b.attribute = 8;
+    wall_b.normal = {-1.0 / std::sqrt(2.0), 1.0 / std::sqrt(2.0), 0.0};
+    wall_b.offset = 20.0 / std::sqrt(2.0);
+    wall_b.faces = 1;
+    wall_b.status = "Natural";
+    Unbounded(wall_b);
+    const std::vector<MirrorPlane> planes = {wall_a, wall_b};
+    // CCW lead: the bottom edge from wall B at (-23, -3) to wall A at (0, -3) with two
+    // sub-noise kinks (turn 0.075 rad on 8-long pieces: implied sagitta 0.075 < 0.05 R =
+    // 0.1, REGULAR; windowed bend radius ~53 R >= 10 R: an IsolatedEdge WITH
+    // BendRadiusOverR and PortionTurns, the S5 class), the cut at x = 0, the top edge back
+    // to wall B at (-17, 3) with the same kinks, the cut on wall B. Both long edges meet
+    // wall A at 90 degrees (straight joints) and wall B at 45 degrees (virtual 90-degree
+    // corners: convex at the top edge, concave at the bottom, clipping R off the real arm).
+    LoopSpec lead{{{-23.0, -3.0},
+                   {-15.0, -3.3},
+                   {-7.0, -3.0},
+                   {0.0, -3.0},
+                   {0.0, 3.0},
+                   {-7.0, 3.0},
+                   {-12.0, 3.3},
+                   {-17.0, 3.0}},
+                  0,
+                  1.0};
+    lead.truncation_edges = {3, 7};
+    const auto input = MakeInput({lead}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    std::vector<int> isolated_ids;
+    for (const auto &feature : real.features)
+    {
+      if (feature.type == "IsolatedEdge")
+      {
+        isolated_ids.push_back(feature.id);
+        // The S5 class: curved sub-portions on a straight-like chain.
+        REQUIRE(feature.bend_radius_over_R.has_value());
+        CHECK(*feature.bend_radius_over_R >= kStraightBendRadiusOverRadius);
+        double total_turn = 0.0;
+        for (const auto &portion : feature.portions)
+        {
+          total_turn += std::abs(portion.turn);
+        }
+        CHECK(total_turn > 0.0);
+      }
+    }
+    REQUIRE(isolated_ids.size() == 2);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    REQUIRE(extension.joined_vertices.size() == 4);
+    int straight = 0;
+    for (std::size_t i = 0; i < 4; i++)
+    {
+      const bool on_a = extension.joined_planes[i] == std::vector<int>{0};
+      CHECK(extension.joined_straight[i] == on_a);
+      straight += extension.joined_straight[i] ? 1 : 0;
+    }
+    CHECK(straight == 2);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    INFO(summary.unmerged_features.dump());
+    // Continued at wall A on both chains; the two virtual corners at wall B; NO unmerged
+    // configuration and no touched real feature (the J1 defect: an Unmerged IsolatedEdge
+    // whose RealFeatures spanned the whole chain).
+    CHECK(summary.continued_features == 2);
+    CHECK(summary.mirror_formed_features == 2);
+    CHECK(summary.unmerged_features.empty());
+    CHECK(summary.touched_feature_ids.empty());
+    for (const int id : isolated_ids)
+    {
+      const auto *before = FeatureById(real, id);
+      const auto *after = FeatureById(merged, id);
+      REQUIRE(!after->mirror.is_null());
+      CHECK(after->mirror.at("Status") == "Continued");
+      CHECK(after->mirror.at("Planes") == std::vector<int>{0});
+      // The real arm lost its virtual corner's arm claim s = R / max(|cos|, |sin|) (the
+      // kinked edge meets wall B a few degrees off 45: s slightly above R) at the wall-B
+      // end to the formed feature's clip, nothing at wall A; the reading is otherwise the
+      // unextended one.
+      CHECK(before->length - after->length > 0.95 * R);
+      CHECK(before->length - after->length < 1.3 * R);
+      CHECK_THAT(RealLength(merged, *after), WithinAbs(after->length, 1.0e-9));
+      CHECK(after->bend_radius_over_R == before->bend_radius_over_R);
+    }
+    std::map<std::string, int> formed;
+    for (const auto &feature : merged.features)
+    {
+      if (!feature.mirror.is_null() && feature.mirror.at("Status") == "MirrorFormed")
+      {
+        formed[feature.type]++;
+        CHECK_THAT(feature.signature.at("AngleDegrees").get<double>(),
+                   WithinAbs(90.0, 10.0));
+        CHECK(feature.mirror.at("Planes") == std::vector<int>{1});
+      }
+    }
+    CHECK(formed["ConvexCorner"] == 1);
+    CHECK(formed["ConcaveCorner"] == 1);
+    // The Rule text of the record names decision 512.
+    const auto band = DescribeMirrorBand(planes, extension, summary, merged, 3.0, 1.0);
+    CHECK_THAT(band.at("Rule").get<std::string>(), ContainsSubstring("512"));
+    CHECK(band.at("UnmergedFeatures").empty());
+    CHECK(band.at("ContinuedFeatures").get<int>() == 2);
+  }
+
+  SECTION("S2p class: a curved chain perpendicular at the plane - the unmerged joined bend "
+          "owns only the real sliver it re-classifies (decision 512 (c))")
+  {
+    // The bottom edge: a straight run then a circular arc of radius rho = 20 / 3 R = 13.33
+    // (kappa = 0.15 / R, in the curved regime) ending at the wall x = 0 with tangent (1,
+    // 0): its centre (0, -3 - rho) lies ON the plane, so the image continues the SAME
+    // circle and the extended run reads one CurvedEdge over the joined bend. The unextended
+    // run's windowed curvature is clipped at the chain end: it drops below 1 / (10 R) over
+    // the last W / 2 - W / (2 kappa 10 R) = R / 2 - R / 3 = R / 6 = 0.333 before the wall,
+    // which the unextended run reads as the IsolatedEdge's sliver and the extended run as
+    // the CurvedEdge's. That sliver is the only part the two runs identify differently.
+    const std::vector<MirrorPlane> planes = {wall_a};
+    const double rho = 40.0 / 3.0;  // 20 / 3 R
+    const double y_wall = -3.0;
+    const Point2 centre = {0.0, y_wall - rho};
+    std::vector<Point2> points;
+    // The far cut edge (truncation, no plane there) and the straight run tangent to the
+    // arc at its start (120 degrees from the centre: tangent (cos 30, sin 30)).
+    const double theta0 = 120.0 * M_PI / 180.0;
+    const Point2 arc_start = {centre[0] + rho * std::cos(theta0),
+                              centre[1] + rho * std::sin(theta0)};
+    const Point2 tangent0 = {std::cos(30.0 * M_PI / 180.0), std::sin(30.0 * M_PI / 180.0)};
+    const double straight_length = 12.0;
+    const Point2 far_bottom = {arc_start[0] - straight_length * tangent0[0],
+                               arc_start[1] - straight_length * tangent0[1]};
+    points.push_back(far_bottom);
+    // The arc as 14 chords of ~0.5 (turn 0.0375 rad each: REGULAR joints).
+    const int chords = 14;
+    for (int k = 0; k <= chords; k++)
+    {
+      const double theta = theta0 + (90.0 * M_PI / 180.0 - theta0) * k / chords;
+      points.push_back(
+          {centre[0] + rho * std::cos(theta), centre[1] + rho * std::sin(theta)});
+    }
+    REQUIRE_THAT(points.back()[0], WithinAbs(0.0, 1.0e-12));
+    REQUIRE_THAT(points.back()[1], WithinAbs(y_wall, 1.0e-12));
+    points.push_back({0.0, 3.0});
+    points.push_back({far_bottom[0], 3.0});
+    LoopSpec lead{points, 0, 0.5};
+    const std::size_t cut_a = points.size() - 3;  // (0, -3) -> (0, 3)
+    const std::size_t far_cut = points.size() - 1;
+    lead.truncation_edges = {cut_a, far_cut};
+    const auto input = MakeInput({lead}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const IdentifiedFeature *real_curved = nullptr, *real_bottom = nullptr;
+    for (const auto &feature : real.features)
+    {
+      if (feature.type == "CurvedEdge")
+      {
+        REQUIRE(real_curved == nullptr);
+        real_curved = &feature;
+      }
+      else if (feature.type == "IsolatedEdge")
+      {
+        // The bottom chain's IsolatedEdge ends with a sliver on the last chord before the
+        // wall (its last portion ends at the cut vertex (0, -3)).
+        for (const auto &portion : feature.portions)
+        {
+          const auto &segment = real.segments[portion.segment];
+          if (std::abs(segment.key[1][0]) < 1.0e-9 &&
+              std::abs(segment.key[1][1] - y_wall) < 1.0e-9 &&
+              std::abs(portion.s1 - segment.length) < 1.0e-9)
+          {
+            real_bottom = &feature;
+          }
+        }
+      }
+    }
+    REQUIRE(real_curved != nullptr);
+    REQUIRE(real_bottom != nullptr);
+    INFO("real curved key " << real_curved->signature_key);
+    CHECK_THAT(real_curved->signature.at("RadiusOverR").get<double>(),
+               WithinAbs(rho / R, 1.0e-3));
+    // The sliver: the IsolatedEdge's length on the arc's chords (beyond the arc start).
+    double sliver = 0.0;
+    for (const auto &portion : real_bottom->portions)
+    {
+      const auto &segment = real.segments[portion.segment];
+      if (segment.key[0][0] > arc_start[0] + 1.0e-9)
+      {
+        sliver += portion.s1 - portion.s0;
+      }
+    }
+    INFO("real sliver " << sliver);
+    CHECK(sliver > 0.1 * R);
+    CHECK(sliver < 0.5 * R);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    REQUIRE(extension.joined_vertices.size() == 2);
+    CHECK(extension.joined_straight[0]);
+    CHECK(extension.joined_straight[1]);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    INFO(summary.unmerged_features.dump(1));
+    // The two chains' IsolatedEdges are Continued (the bottom one on its straight run: its
+    // real portions are a subset of the unextended feature's with the same classification);
+    // the joined bend is ONE unmerged CurvedEdge (no mirror placement) whose real portions
+    // are identical to the unextended CurvedEdge's except the sliver.
+    CHECK(summary.continued_features == 2);
+    CHECK(summary.mirror_formed_features == 0);
+    REQUIRE(summary.unmerged_features.size() == 1);
+    const auto &unmerged = summary.unmerged_features[0];
+    CHECK(unmerged.at("Type") == "CurvedEdge");
+    CHECK(unmerged.at("Key") == real_curved->signature_key);
+    CHECK_THAT(unmerged.at("IdenticalRealLength").get<double>(),
+               WithinAbs(real_curved->length, 1.0e-6));
+    CHECK_THAT(unmerged.at("DifferingRealLength").get<double>(), WithinAbs(sliver, 1.0e-6));
+    CHECK(unmerged.at("RealFeatures") == std::vector<int>{real_bottom->id});
+    double identical = 0.0, differing = 0.0, images = 0.0;
+    for (const auto &portion : unmerged.at("Portions"))
+    {
+      if (portion.at("Image").get<bool>())
+      {
+        images += portion.at("Length").get<double>();
+        CHECK(!portion.contains("Identical"));
+        continue;
+      }
+      if (portion.at("Identical").get<bool>())
+      {
+        identical += portion.at("Length").get<double>();
+        CHECK(portion.at("RealFeature").get<int>() == real_curved->id);
+      }
+      else
+      {
+        differing += portion.at("Length").get<double>();
+        CHECK(portion.at("Differs") == "Type");
+        CHECK(portion.at("RealFeature").get<int>() == real_bottom->id);
+      }
+    }
+    CHECK_THAT(identical, WithinAbs(real_curved->length, 1.0e-6));
+    CHECK_THAT(differing, WithinAbs(sliver, 1.0e-6));
+    CHECK(images > 0.0);
+    // The records: the unextended CurvedEdge is untouched (its cells keep their model); the
+    // bottom IsolatedEdge is touched on the sliver AND continued on its straight run.
+    CHECK(summary.touched_feature_ids == std::vector<int>{real_bottom->id});
+    CHECK(FeatureById(merged, real_curved->id)->mirror.is_null());
+    const auto &bottom_mirror = FeatureById(merged, real_bottom->id)->mirror;
+    REQUIRE(!bottom_mirror.is_null());
+    CHECK(bottom_mirror.at("Status") == "Unmerged");
+    CHECK(bottom_mirror.at("UnmergedType") == "CurvedEdge");
+    CHECK(bottom_mirror.contains("ContinuedRealLength"));
+    // The merged reading of every real feature is the unextended one (nothing clipped: no
+    // formed feature).
+    for (const auto &feature : real.features)
+    {
+      CHECK_THAT(FeatureById(merged, feature.id)->length,
+                 WithinAbs(feature.length, 1.0e-9));
+    }
+  }
 }

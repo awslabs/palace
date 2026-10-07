@@ -59,6 +59,29 @@
     "MaximumCornerAspect": 4.0,
     "MinimumNoncornerAspect": 1.5,
     "MaximumProtectedMeasureError": 1e-08,
+    "CornerShapeGate": 5.0,
+    "CornerShapeGateProvenance": {
+      "Rule": "mesher design round 2 F5-A (supervisor decisions 351 / 358 / 363 / 365): the verdict bound of the INVARIANT (non-perpendicular) semantic corners is kappa_reg <= CornerShapeGate = min(PopulationEnvelope, Cap), kappa_reg the condition number of the affine map from the regular tetrahedron (order-invariant) over the corner-incident seed cells; the optimizer goal at invariant corners is the constant 3.8; legacy (exactly perpendicular) corners keep MaximumCornerAspect and the vertex-frame measure bitwise",
+      "PopulationEnvelope": 6.298809047539122,
+      "Cap": 5.0,
+      "Population": "E_pop: the kappa_reg envelope of the corner-incident seed cells of the 500 (all exactly perpendicular) semantic corners of the 18 stored gmsh-build.msh of the (F)-Qualified coupons - the 7 group-A pairs (decision 322: C2 19 / 20-edge d67abe58c1cf / 9ef3555507eb, S1b 19 / 19 / 35-edge fa8b8709e234 / 2fb07e6f93a5 / da5ddc0466ba, C1 18 / 36-edge 836268084cff / c90e419ed62e) and the 2 S1p v3 pairs (decision 340: 39ab2ffd68ec / c5952e69af66) - measured read-only on 2026-10-05 before any round-2 build: envelope 6.2988 (S1p 39ab2ffd68ec thin, corner 7, kappa_v0 3.31, eta 0.36), per-corner-maximum p50 3.498 / p99 5.295, 14 of 500 corners and 17 of 6799 cells above 5.0; the cap binds (FIX-UPS F.1: the identified fab flat-kink slivers read 5.28-6.16; per-case-overridden and PendingQualification coupons excluded, F.6); E_pop is NOT re-derived when more coupons qualify",
+      "PopulationRecord": "coupon-accuracy-assessment-20260913/mesher-design-round2-20261005/seed-impl/cluster/epop-summary.txt (+ epop/*.json per build with the mesh sha256, epop_corner_census.jl)"
+    },
+    "MinimumQualifiedRings": {
+      "Fabricated": 7,
+      "Thin": 4
+    },
+    "MinimumQualifiedRingsProvenance": {
+      "Rule": "mesher design round 2 F6 (supervisor decisions 347 / 349 / 437 / 443): every tubed metal side's ring count is the largest K with r_K + h_K <= min(TransverseBound, FacingWidth / 2) (its facing width across the metal; RingsPerSideRule); a side whose count falls below the kind's MinimumQualifiedRings - the smallest ring count validated by (F) for that coupon kind - fails closed at ScopeGuard[UnqualifiedRingCount] until an (F) case extends the range (the qualified-range mechanism per kind, decision 443; the NarrowMetal guard of decision 347 is retired into the per-side bound); the mesher reads the case kind's value as --minimum-qualified-rings (run_gmsh_only_case)",
+      "Fabricated": {
+        "Cases": "every (F)-Qualified fabricated coupon carries the process count 7 (EdgeSize 0.25 nm, ratio 2, bound min(Overetch 0.05, MetalThickness / 2, CornerIsotropyRadius 0.1): r_7 + h_7 = 47.75 nm): the 8 group-A pairs (C2 19 / 20-edge d67abe58c1cf / 9ef3555507eb, S2p 3-edge 2c54db92028f, S1b 19 / 19 / 35-edge fa8b8709e234 / 2fb07e6f93a5 / da5ddc0466ba, C1 18 / 36-edge 836268084cff / c90e419ed62e) and the S1p v3 pairs (39ab2ffd68ec / c5952e69af66); no fabricated tube with fewer rings has been (F)-validated (the 121-nm fingers of the family-6 cases keep 7: 47.75 <= 60.5 nm)",
+        "Record": "coupon-accuracy-assessment-20260913/stage2-20261004/coupons-a/REPORT.md (the group-A (F) records), device-plan-coupons-20260913/r2 (S1p v3); the per-side rule: mesher-design-round2-20261005/DESIGN.md section 2.2 + ERRATA E2"
+      },
+      "Thin": {
+        "Cases": "every (F)-Qualified thin coupon through round 2 carried the process count 5 (EdgeSize 2 nm, ratio 2, bound CornerIsotropyRadius 0.1: r_5 + h_5 = 94 nm): the 8 group-A pairs and the S1p v3 pairs; round 2b (decision 437 (2) / 443, prediction B15) extended the range to 4 with the two family-6 S2p pairs built under the per-side ring bound and (F)-Qualified at the group-A bar: c83be8376d3a (spatial-19-edge-49399c997700-thin: 7 sides at 4 rings facing across 121 nm, 5 elsewhere; (F) closure <= 0.0104, domain twin-consistency <= 6.5e-5, identity, gate Count 0 at p3 / p4 / p5) and 9f6184a5de53 (spatial-19-edge-d36494106cb3-thin: 2 context finger sides at 4 rings; closure <= 0.0089, twin <= 1.6e-5); the all-4-ring c83 thin variant differs from the per-side twin by 4.6e-5 (energy-weighted) / 1.12e-3 (worst basis function) on the domain diagonal and <= 0.45 % on the MS / MA surface matrices",
+        "Record": "coupon-accuracy-assessment-20260913/mesher-design-round2-20261005/round2b-impl/REPORT.md section 2 + b15/f-qualification/<case>/spatial-qualification.json (the (F) records, PBS 57758-57761), b15/sensitivity/sensitivity-compare.txt; the per-side rule: mesher-design-round2-20261005/DESIGN.md section 2.2 + ERRATA E2; the fabricated range stays 7 (no (F) case with fewer fabricated rings)"
+      }
+    },
     "EdgeLayerQualityRule": {
       "MaximumEdgeAspect": 100.0,
       "ScaledJacobianRoundoffFloor": 1e-12,
@@ -90,12 +113,12 @@
     {
       "Name": "general_mesh_manifest.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_manifest.py",
-      "SHA256": "10006556e3fbe3e08707ae7d9457963fc907fba351dabb7fe673165f551a176b"
+      "SHA256": "e895192057ccc9ef20cf860102dbe4f43fe85d4fcd52a197a7740d166c132c3d"
     },
     {
       "Name": "verify_canonical_case_entries.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/verify_canonical_case_entries.py",
-      "SHA256": "8a24cf35667c965e6759bf5889499be0a6d028a447fdcde1e53c3f6d788f8ad5"
+      "SHA256": "86adf589b1c985eb124ab50c838c3293b730caa16f17fab43d68007215541980"
     },
     {
       "Name": "normalize_general_mesh_evidence.py",
@@ -105,7 +128,7 @@
     {
       "Name": "semantic_mesh_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/semantic_mesh_contract.py",
-      "SHA256": "ccc5bbe813faabe879fb4ac12660f3cac73c63778e50a16ee9f4fa7885bf0bfd"
+      "SHA256": "246a82fedb608710e22323f586210c7f5882a47cea7f3cd8b09f6b21d3f831c8"
     },
     {
       "Name": "trace_basis.py",
@@ -145,12 +168,12 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "2d6d9816e023a68004247568a7192913d52600dbb11bc9430f5fb444bbe756a3"
+      "SHA256": "63b1ec810588fa841c1d2af733b2dbf4da035aeaec0c1366b6384cba29e9fb9d"
     },
     {
       "Name": "mesh_stage_contract.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/mesh_stage_contract.py",
-      "SHA256": "d7a8301013ae10bd3a7d30455fb8443019ae7c800413a298ea633dc3c69a459b"
+      "SHA256": "a6b9222b16cab84202ed81cb58c123be6598fc1aa9c974408e9442ec38cae573"
     },
     {
       "Name": "canonical_mesh_build.py",
@@ -200,7 +223,7 @@
     },
     "seed-generation": {
       "runtime": "d7c7bb87e9dab38f6606e4cae96f41413a9f6c9ae64706deb9e0ab6dac88006f",
-      "mesher": "f65c704ab71e47a2a835d651688e5c1d022fa1ed06a453de2df5247fe6008874"
+      "mesher": "775aa3d0fb26b0a1fdd81722564866349b8b4a6571e9025b581bdd26128d2f34"
     },
     "metric-preparation": {
       "runtime": "2cbb3ee843d8abcf93ed35bb9102391f18eefccb03d47908547bd8db67bc395c",

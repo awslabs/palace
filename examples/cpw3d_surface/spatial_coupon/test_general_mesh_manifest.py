@@ -22,6 +22,8 @@ from audit_edge_metric_mesh import analyze
 from general_mesh_audit_producer import (KINDS, VARIANT_AUDITS_KIND,
                                          CONTINUATION_BAND_FEATURE_CLEARANCE_OVER_RADIUS,
                                          CONTINUATION_BAND_SIDE_OVER_RADIUS,
+                                         DEGENERATE_COMPONENT_VERTICES,
+                                         _arc_sidewall_alignment, _census_arc_sidewalls,
                                          _census_coupon_box,
                                          _footprint_boundary_comparison,
                                          _footprint_boundary_distance,
@@ -36,7 +38,7 @@ from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT
                                     LAYER_ADJACENT_BAND_RULE)
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, audit_manifest_evidence, case_gates,
-                                   element_cap_override, layer_covered_band, run_manifest, sha256,
+                                   case_kind, element_cap_override, layer_covered_band, run_manifest, sha256,
                                    validate_case_element_cap_override, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
@@ -1921,6 +1923,230 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             _census_coupon_box({"CouponBox": {"Lower": upper.tolist(), "Upper": lower.tolist(), "Radius": R}}, identity)
         self.assertIsNone(_census_coupon_box(None, identity))
 
+    def test_diagonal_detector_degenerate_components_and_tagged_arc_sidewalls(self):
+        """Supervisor decision 410 (the loop-end fab 1b26671c9080): 44 two-vertex components -
+        one 25-nm edge each on a tiny coplanar facet of a tagged arc sidewall, direction = the
+        circle's tangent, 0.14-0.71 deg off the nearest signature segment - were rejected by the
+        1e-6 cosine floor (RMSWidth 0 -> resolvability 0).  Two generic rules: a component of
+        fewer than three vertices is degenerate (recorded, never counted); a line-like band on
+        a tagged arc sidewall whose FULL direction follows the circle's horizontal tangent within
+        the MESH facet turn 2 asin(threshold / 2R) alone is a feature band (decision 433: the full
+        direction; decision 445: the mesh facet turn only, no term growing with the band's span).
+        A genuine diagonal keeps failing: a collinear three-vertex line of short edges off every
+        feature, on the circle but turned by 4 deg or by two chord turns, climbing the sidewall
+        at 45 or 60 deg (a sloped / helical diagonal), a LONG 21-vertex band climbing at 9 deg, a
+        45-deg band on a short-radius (0.5 um) arc, outside the arc's sweep, or on an arc without
+        signature chords."""
+        R, overetch, centre = 3.0, 0.05, np.array([-6.9, 4.17])
+        theta_start, sweep = -90.0, 90.0                       # clockwise from -90 deg: theta in [-90, 0]
+        chords = 18                                            # the loop end's R = 3 arcs: 5-deg chords
+        turn = math.radians(sweep / chords)
+        circle = lambda theta: np.array([*(centre + R * np.array([math.cos(theta), math.sin(theta)])), 0.0])
+        signature = [[circle(math.radians(theta_start + k * sweep / chords)).tolist(),
+                      circle(math.radians(theta_start + (k + 1) * sweep / chords)).tolist()] for k in range(chords)]
+        signature.append([[-3.9, 4.17, 0.], [-3.9, 10.0, 0.]])    # the straight side tangent at theta = 0
+        census = {"PrismTubes": {"Tubes": [
+            {"Arc": {"ArcId": 7, "Centre": centre.tolist(), "Radius": R, "Orientation": -1.0, "Part": 1, "Parts": 1,
+                     "ThetaStartDegrees": 0.0, "SweepDegrees": sweep, "Sign": 1}, "Length": R * math.radians(sweep)}]}}
+
+        def facet_mesh(vertices_on_line, direction_angle=0.0, pivot_theta=math.radians(-0.24), apex_height=0.02, label=6001,
+                       elevation=0.0, circle=circle, centred=False):
+            # A tiny coplanar vertical facet: `vertices_on_line` collinear vertices 25 nm apart
+            # from z = 0.05 (the shared short edges) with one apex below and one above on the same
+            # vertical plane; the line starts (or, `centred`, is centred) on the circle at
+            # `pivot_theta`, along the tangent turned by `direction_angle` in plan view and
+            # climbing the sidewall at `elevation`; plus a coarse 50-nm grid on z = 0 setting the
+            # median.
+            start = circle(pivot_theta) + np.array([0., 0., 0.05])
+            tangent = np.array([math.sin(pivot_theta), -math.cos(pivot_theta), 0.])   # clockwise tangent
+            q = np.array([[math.cos(direction_angle), -math.sin(direction_angle), 0.],
+                          [math.sin(direction_angle), math.cos(direction_angle), 0.], [0., 0., 1.]])
+            axis = math.cos(elevation) * (q @ tangent) + math.sin(elevation) * np.array([0., 0., 1.])
+            offset = (vertices_on_line - 1) / 2 if centred else 0.0
+            line = [start + (k - offset) * 0.025 * axis for k in range(vertices_on_line)]
+            middle = (line[0] + line[-1]) / 2
+            points = line + [middle - np.array([0., 0., apex_height]), middle + np.array([0., 0., apex_height])]
+            below, above = vertices_on_line, vertices_on_line + 1
+            triangles = [[k, k + 1, below] for k in range(vertices_on_line - 1)] + \
+                        [[k, above, k + 1] for k in range(vertices_on_line - 1)]
+            labels = [label] * len(triangles)
+            base = len(points)
+            columns = 21
+            points += [np.array([index * .05 - 2.0, transverse * .05 + 10.0, 0.])
+                       for transverse in range(3) for index in range(columns)]
+            for row in range(2):
+                for index in range(columns - 1):
+                    first = base + row * columns + index; last = first + columns
+                    triangles.extend([[first, first + 1, last + 1], [first, last + 1, last]])
+            labels += [3000] * (len(triangles) - len(labels))
+            return meshio.Mesh(np.asarray(points), [("triangle", np.asarray(triangles))],
+                               cell_data={"gmsh:physical": [np.asarray(labels, int)]})
+
+        identity = np.eye(4)
+        arcs = _census_arc_sidewalls(census, signature, overetch, 90.0, identity)
+        # MINOR-1 (decision 433): the lateral envelope is of the order of the etch depth - the
+        # Overetch for a vertical sidewall, the slanted sidewall's excursion when larger.
+        self.assertEqual(arcs[1], overetch)
+        self.assertAlmostEqual(_census_arc_sidewalls(census, signature, overetch, 45.0, identity)[1], overetch, places=12)
+        self.assertAlmostEqual(_census_arc_sidewalls(census, signature, overetch, 30.0, identity)[1],
+                               overetch / math.tan(math.radians(30.0)), places=12)
+        self.assertEqual([(arc["ArcId"], arc["Chords"]) for arc in arcs[0]], [(7, chords)])
+        self.assertAlmostEqual(arcs[0][0]["ChordTurn"], turn, places=12)
+        self.assertAlmostEqual(arcs[0][0]["Sagitta"], R * (1 - math.cos(turn / 2)), places=12)
+        self.assertIsNone(_census_arc_sidewalls({"PrismTubes": {"Tubes": [{"Length": 1.0}]}}, signature, overetch, 90.0, identity))
+        self.assertIsNone(_census_arc_sidewalls(None, signature, overetch, 90.0, identity))
+        with self.assertRaisesRegex(ValueError, "Overetch"):
+            _census_arc_sidewalls(census, signature, None, 90.0, identity)
+        with self.assertRaisesRegex(ValueError, "SidewallAngle"):
+            _census_arc_sidewalls(census, signature, overetch, None, identity)
+        with self.assertRaisesRegex(ValueError, "SidewallAngle"):
+            _census_arc_sidewalls(census, signature, overetch, 0.0, identity)
+        with self.assertRaisesRegex(ValueError, "arc row lacks"):
+            _census_arc_sidewalls({"PrismTubes": {"Tubes": [{"Arc": {"ArcId": 1, "Centre": [0., 0.]}}]}}, signature,
+                                  overetch, 90.0, identity)
+        # The direction tolerance is the mesh facet turn alone: on R = 3 at the 30-nm threshold
+        # 0.573 deg (decision 445; a 3-vertex band's own 0.955-deg subtended angle is recorded,
+        # never a tolerance term).
+        mesh_facet_turn = 2 * math.asin(0.03 / (2 * R)); band_angle_3 = 2 * math.asin(0.05 / (2 * R))
+        self.assertAlmostEqual(math.degrees(mesh_facet_turn), 0.573, places=3)
+        self.assertAlmostEqual(math.degrees(band_angle_3), 0.955, places=3)
+        # (1) The loop-end component: one 25-nm edge (two vertices) on the arc facet.  Degenerate
+        # -> not counted even without the arc records; with them also an arc sidewall band.
+        two = facet_mesh(2)
+        plain = _global_diagonal_bands(two, signature, .025)
+        self.assertAlmostEqual(plain["ShortEdgeThreshold"], .03, places=12)
+        component = next(item for item in plain["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertEqual(component["Vertices"], 2); self.assertLess(component["Vertices"], DEGENERATE_COMPONENT_VERTICES)
+        self.assertTrue(component["Degenerate"]); self.assertTrue(component["LineLike"])
+        self.assertFalse(component["AlignedWithFeature"]); self.assertFalse(component["AlignedWithArcSidewall"])
+        self.assertAlmostEqual(math.degrees(component["AlignmentAngles"]["Signature"]), 0.24, delta=0.02)
+        self.assertLess(component["DirectionResolvability"], 1e-12)      # the 1e-6 cosine floor alone
+        self.assertEqual(plain["GlobalDiagonalBands"], 0)
+        self.assertEqual(plain["DegenerateComponents"], 1)
+        self.assertIsNone(plain["ArcSidewallBands"]["Arcs"]); self.assertEqual(plain["ArcSidewallBands"]["Count"], 0)
+        self.assertIsNone(plain["ArcSidewallBands"]["LateralEnvelope"])
+        self.assertIn("decision 410", plain["FeatureSegments"]["DegenerateComponent"])
+        with_arcs = _global_diagonal_bands(two, signature, .025, arc_sidewalls=arcs)
+        component = next(item for item in with_arcs["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertTrue(component["AlignedWithArcSidewall"]); self.assertTrue(component["AlignedWithFeature"])
+        self.assertEqual(component["ArcSidewall"]["ArcId"], 7); self.assertEqual(component["ArcSidewall"]["Chords"], chords)
+        # The facet runs along the tangent at its start: half its own 0.48-deg angle off the
+        # tangent at its centroid, inside the 0.573-deg mesh facet turn; the signature chord
+        # turn (5 deg) and the band's subtended angle are recorded only.
+        arc = component["ArcSidewall"]
+        self.assertAlmostEqual(math.degrees(arc["AngleToTangent"]), 0.24, delta=0.01)
+        self.assertAlmostEqual(math.degrees(arc["ChordTurn"]), 5.0, places=9)
+        self.assertAlmostEqual(arc["MeshFacetTurn"], mesh_facet_turn, places=12)
+        self.assertAlmostEqual(math.degrees(arc["BandSubtendedAngle"]), 0.477, places=2)   # one 25-nm edge on R = 3
+        self.assertEqual(arc["DirectionTolerance"], arc["MeshFacetTurn"])
+        self.assertEqual(arc["LateralEnvelope"], overetch)
+        self.assertEqual(with_arcs["ArcSidewallBands"]["Count"], 1)
+        self.assertEqual(with_arcs["ArcSidewallBands"]["Arcs"][0]["ArcId"], 7)
+        self.assertEqual(with_arcs["ArcSidewallBands"]["LateralEnvelope"], overetch)
+        self.assertEqual(with_arcs["GlobalDiagonalBands"], 0)
+        # (2) Fail-closed: a collinear THREE-vertex line of short edges (RMSWidth exactly 0, the
+        # cosine floor) 1 um off the circle at 30 deg to every feature is a genuine diagonal.
+        far = facet_mesh(3, direction_angle=math.radians(30.0), pivot_theta=math.radians(-45.0), apex_height=0.035)
+        far.points[:5] += np.array([1.0, 0., 0.]) * np.array([[1.0]] * 5)
+        diagonal = _global_diagonal_bands(far, signature, .025, arc_sidewalls=arcs)
+        component = next(item for item in diagonal["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertEqual(component["Vertices"], 3); self.assertFalse(component["Degenerate"])
+        self.assertLess(component["RMSWidth"], 1e-12); self.assertFalse(component["AlignedWithFeature"])
+        self.assertEqual(diagonal["GlobalDiagonalBands"], 1); self.assertEqual(diagonal["DegenerateComponents"], 0)
+        # (3) The same three-vertex line ON the arc along its tangent is an arc sidewall band
+        # (pivoted at its start: 0.477 deg off the centroid tangent, inside the 0.573-deg mesh
+        # facet turn; its own subtended angle 0.955 deg is recorded, not the tolerance) ...
+        on_arc = facet_mesh(3, apex_height=0.035)
+        accepted = _global_diagonal_bands(on_arc, signature, .025, arc_sidewalls=arcs)
+        component = next(item for item in accepted["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertEqual(component["Vertices"], 3); self.assertTrue(component["AlignedWithArcSidewall"])
+        self.assertAlmostEqual(math.degrees(component["ArcSidewall"]["AngleToTangent"]), 0.477, places=2)
+        self.assertAlmostEqual(component["ArcSidewall"]["DirectionTolerance"], mesh_facet_turn, places=12)
+        self.assertAlmostEqual(component["ArcSidewall"]["BandSubtendedAngle"], band_angle_3, places=12)
+        self.assertEqual(accepted["GlobalDiagonalBands"], 0)
+        self.assertEqual(_global_diagonal_bands(on_arc, signature, .025)["GlobalDiagonalBands"], 1)   # no arc records
+        # ... turned by two chord turns (10 deg) or by 4 deg - inside the former 5-deg chord-turn
+        # tolerance, outside the mesh-facet one (MINOR-2) - it is not (a diagonal on the sidewall), ...
+        for direction_angle in (2 * turn, math.radians(4.0)):
+            turned = _global_diagonal_bands(facet_mesh(3, direction_angle=direction_angle, apex_height=0.035), signature, .025,
+                                            arc_sidewalls=arcs)
+            component = next(item for item in turned["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+            self.assertFalse(component["AlignedWithArcSidewall"]); self.assertFalse(component["Degenerate"])
+            self.assertEqual(turned["GlobalDiagonalBands"], 1, direction_angle)
+        # ... a SLOPED band climbing the sidewall at 45 or 60 deg - tangential in plan view, a
+        # helical diagonal in 3D - is not (decision 433 MAJOR-1: the full direction is judged), ...
+        for elevation in (math.radians(45.0), math.radians(60.0)):
+            sloped_mesh = facet_mesh(3, apex_height=0.035, elevation=elevation)
+            sloped = _global_diagonal_bands(sloped_mesh, signature, .025, arc_sidewalls=arcs)
+            component = next(item for item in sloped["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+            self.assertEqual(component["Vertices"], 3); self.assertTrue(component["LineLike"])
+            self.assertFalse(component["AlignedWithArcSidewall"]); self.assertFalse(component["AlignedWithFeature"])
+            self.assertEqual(sloped["GlobalDiagonalBands"], 1, elevation)
+            self.assertIsNone(_arc_sidewall_alignment(sloped_mesh.points[:3], sloped_mesh.points[2] - sloped_mesh.points[0],
+                                                      arcs, sloped["ShortEdgeThreshold"]))
+        # ... a LONG band (21 vertices, 0.5 um, centred on the circle) climbing at 9 deg is not
+        # either: its own subtended angle (9.6 deg) would have admitted it, the mesh facet turn
+        # (0.573 deg) does not (decision 445) - while the same long band horizontal (a chord:
+        # parallel to the centroid tangent) is still aligned, ...
+        long_sloped_mesh = facet_mesh(21, apex_height=0.3, elevation=math.radians(9.0), centred=True)
+        long_sloped = _global_diagonal_bands(long_sloped_mesh, signature, .025, arc_sidewalls=arcs)
+        component = next(item for item in long_sloped["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertEqual(component["Vertices"], 21); self.assertTrue(component["LineLike"])
+        self.assertFalse(component["AlignedWithArcSidewall"]); self.assertFalse(component["AlignedWithFeature"])
+        self.assertEqual(long_sloped["GlobalDiagonalBands"], 1)
+        self.assertGreater(2 * math.asin(0.5 / (2 * R)), math.radians(9.0))     # the dropped term would have accepted it
+        long_flat = _global_diagonal_bands(facet_mesh(21, apex_height=0.3, centred=True), signature, .025, arc_sidewalls=arcs)
+        component = next(item for item in long_flat["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertTrue(component["AlignedWithArcSidewall"]); self.assertEqual(long_flat["GlobalDiagonalBands"], 0)
+        self.assertAlmostEqual(component["ArcSidewall"]["DirectionTolerance"], mesh_facet_turn, places=12)
+        self.assertLess(component["ArcSidewall"]["AngleToTangent"], 1e-6)                # a chord: centroid-parallel
+        # ... and on a SHORT-radius arc (R = 0.5 um: mesh facet turn 3.44 deg) a 45-deg band is
+        # not (its 5.7-deg subtended angle would not have been either, but the former rule's
+        # longer bands were), while the start-pivoted horizontal control (atan(25 nm / 0.5 um) =
+        # 2.86 deg off the centroid tangent, inside 3.44) is aligned.
+        R_short, centre_short = 0.5, np.array([2.0, -3.0])
+        circle_short = lambda theta: np.array([*(centre_short + R_short * np.array([math.cos(theta), math.sin(theta)])), 0.0])
+        signature_short = [[circle_short(math.radians(theta_start + k * sweep / chords)).tolist(),
+                            circle_short(math.radians(theta_start + (k + 1) * sweep / chords)).tolist()] for k in range(chords)]
+        census_short = {"PrismTubes": {"Tubes": [
+            {"Arc": {"ArcId": 3, "Centre": centre_short.tolist(), "Radius": R_short, "Orientation": -1.0, "Part": 1, "Parts": 1,
+                     "ThetaStartDegrees": 0.0, "SweepDegrees": sweep, "Sign": 1}, "Length": R_short * math.radians(sweep)}]}}
+        arcs_short = _census_arc_sidewalls(census_short, signature_short, overetch, 90.0, identity)
+        self.assertAlmostEqual(math.degrees(2 * math.asin(0.03 / (2 * R_short))), 3.44, places=2)
+        short_sloped = _global_diagonal_bands(facet_mesh(3, apex_height=0.035, elevation=math.radians(45.0), circle=circle_short),
+                                              signature_short, .025, arc_sidewalls=arcs_short)
+        component = next(item for item in short_sloped["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertFalse(component["AlignedWithArcSidewall"]); self.assertEqual(short_sloped["GlobalDiagonalBands"], 1)
+        short_flat = _global_diagonal_bands(facet_mesh(3, apex_height=0.035, circle=circle_short), signature_short, .025,
+                                            arc_sidewalls=arcs_short)
+        component = next(item for item in short_flat["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+        self.assertTrue(component["AlignedWithArcSidewall"]); self.assertEqual(short_flat["GlobalDiagonalBands"], 0)
+        self.assertEqual(component["ArcSidewall"]["ArcId"], 3)
+        self.assertAlmostEqual(math.degrees(component["ArcSidewall"]["AngleToTangent"]), 2.86, places=2)
+        # ... outside the arc's sweep (theta = +30 deg on the same circle) it is not, ...
+        outside = _global_diagonal_bands(facet_mesh(3, pivot_theta=math.radians(30.0), apex_height=0.035), signature, .025,
+                                         arc_sidewalls=arcs)
+        self.assertEqual(outside["GlobalDiagonalBands"], 1)
+        # ... and an arc without signature chords (ChordTurn 0) accepts nothing.
+        no_chords = _census_arc_sidewalls(census, signature[-1:], overetch, 90.0, identity)
+        self.assertEqual((no_chords[0][0]["Chords"], no_chords[0][0]["ChordTurn"]), (0, 0.0))
+        self.assertIsNone(_arc_sidewall_alignment(on_arc.points[:3], on_arc.points[2] - on_arc.points[0], no_chords, .03))
+        self.assertEqual(_global_diagonal_bands(on_arc, signature, .025, arc_sidewalls=no_chords)["GlobalDiagonalBands"], 1)
+        # (4) Rotation covariance (the rotate-z-0.63 placement): the mesh, the signature and the
+        # placement matrix rotated together give the same verdicts and arc records.
+        angle = 0.63
+        rotation = np.eye(4)
+        rotation[:2, :2] = [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]]
+        rotated_signature = [[(rotation @ np.array(p + [1.0]))[:3].tolist() for p in segment] for segment in signature]
+        rotated_arcs = _census_arc_sidewalls(census, signature, overetch, 90.0, rotation)
+        for mesh, expected in ((two, 0), (on_arc, 0), (far, 1), (facet_mesh(3, apex_height=0.035, elevation=math.radians(45.0)), 1)):
+            rotated = meshio.Mesh((np.column_stack((mesh.points, np.ones(len(mesh.points)))) @ rotation.T)[:, :3],
+                                  mesh.cells, cell_data=mesh.cell_data)
+            report = _global_diagonal_bands(rotated, rotated_signature, .025, arc_sidewalls=rotated_arcs)
+            self.assertEqual(report["GlobalDiagonalBands"], expected)
+            component = next(item for item in report["LongShortEdgeComponents"] if item["Attribute"] == 6001)
+            self.assertEqual(component["AlignedWithArcSidewall"], expected == 0)
+
     def test_diagonal_detector_alignment_within_the_band_resolvability(self):
         # Supervisor decision 36: a band's direction is resolvable only to RMSWidth /
         # Span, so alignment with a feature segment is judged within that ratio (the
@@ -2227,6 +2453,92 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         wrong["VolumeMaterials"][1]["Material"] = "substrate"
         with self.assertRaises(ValueError):
             analyze(read_mesh(mesh), wrong, require_material_names=True)
+
+    def test_corner_shape_gate_is_the_capped_population_envelope_with_its_provenance(self):
+        # Mesher design round 2 F5-A (decisions 351 / 358 / 363 / 365): the invariant-corner
+        # verdict bound CornerShapeGate = min(E_pop, 5.0) with the E_pop measurement of record
+        # as its provenance; the cap binds on the measured population (6.2988 > 5.0).
+        from general_mesh_manifest import (CORNER_SHAPE_GATE, CORNER_SHAPE_GATE_CAP,
+                                           CORNER_SHAPE_GATE_PROVENANCE, validate_corner_shape_gate)
+        production = json.loads((HERE / "geometry-independence-suite.json").read_text())
+        self.assertEqual(validate_corner_shape_gate(production), 5.0)
+        provenance = production["Gates"][CORNER_SHAPE_GATE_PROVENANCE]
+        self.assertGreater(provenance["PopulationEnvelope"], CORNER_SHAPE_GATE_CAP)
+        self.assertEqual(provenance["Cap"], CORNER_SHAPE_GATE_CAP)
+        self.assertIn("epop-summary.txt", provenance["PopulationRecord"])
+        for name in ("geometry-independence-calibration-ma.json", "geometry-independence-calibration-sizing.json"):
+            calibration = json.loads((HERE / name).read_text())
+            self.assertEqual(calibration["Gates"][CORNER_SHAPE_GATE], 5.0)
+            self.assertEqual(calibration["Gates"][CORNER_SHAPE_GATE_PROVENANCE], provenance)
+        # Without the gate (every rectilinear manifest) nothing is required; a gate without
+        # its provenance, off min(E_pop, cap), or above the cap fails closed.
+        ungated = copy.deepcopy(production)
+        del ungated["Gates"][CORNER_SHAPE_GATE]; del ungated["Gates"][CORNER_SHAPE_GATE_PROVENANCE]
+        self.assertIsNone(validate_corner_shape_gate(ungated))
+        def rejected(mutate, message):
+            broken = copy.deepcopy(production)
+            mutate(broken["Gates"])
+            with self.assertRaisesRegex(ValueError, message):
+                validate_corner_shape_gate(broken)
+        rejected(lambda g: g.pop(CORNER_SHAPE_GATE_PROVENANCE), "recorded E_pop provenance")
+        rejected(lambda g: g.pop(CORNER_SHAPE_GATE), "Provenance recorded without")
+        rejected(lambda g: g.__setitem__(CORNER_SHAPE_GATE, 4.5), "min\\(PopulationEnvelope, 5.0\\)")
+        rejected(lambda g: g[CORNER_SHAPE_GATE_PROVENANCE].__setitem__("PopulationEnvelope", 4.6),
+                 "min\\(PopulationEnvelope, 5.0\\)")
+        rejected(lambda g: g[CORNER_SHAPE_GATE_PROVENANCE].__setitem__("Cap", 6.0), "recorded E_pop provenance")
+        rejected(lambda g: g[CORNER_SHAPE_GATE_PROVENANCE].__setitem__("PopulationRecord", ""),
+                 "recorded E_pop provenance")
+        # A population envelope below the cap IS the gate.
+        lowered = copy.deepcopy(production)
+        lowered["Gates"][CORNER_SHAPE_GATE] = 4.6
+        lowered["Gates"][CORNER_SHAPE_GATE_PROVENANCE]["PopulationEnvelope"] = 4.6
+        self.assertEqual(validate_corner_shape_gate(lowered), 4.6)
+        # case_gates carries the gate to the build command (run_gmsh_only_case --corner-shape-gate).
+        self.assertEqual(case_gates(production, production["Cases"][0])[CORNER_SHAPE_GATE], 5.0)
+
+    def test_minimum_qualified_rings_is_the_per_kind_range_with_its_provenance(self):
+        # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): the qualified ring-count
+        # range per coupon kind - Fabricated 7 (every (F)-Qualified fabricated tube: the process
+        # count) / Thin 4 (the round-2b family-6 pairs, (F)-Qualified with 4-ring thin tubes on
+        # their 121-nm finger sides; prediction B15) on the production manifest, each with the (F)
+        # cases behind it; a case reads its kind's value (run_gmsh_only_case --minimum-qualified-rings).
+        from general_mesh_manifest import (MINIMUM_QUALIFIED_RINGS, MINIMUM_QUALIFIED_RINGS_PROVENANCE,
+                                           minimum_qualified_rings, validate_minimum_qualified_rings)
+        production = json.loads((HERE / "geometry-independence-suite.json").read_text())
+        self.assertEqual(validate_minimum_qualified_rings(production), {"Fabricated": 7, "Thin": 4})
+        provenance = production["Gates"][MINIMUM_QUALIFIED_RINGS_PROVENANCE]
+        self.assertIn("UnqualifiedRingCount", provenance["Rule"])
+        self.assertIn("d67abe58c1cf", provenance["Fabricated"]["Cases"])
+        self.assertIn("c83be8376d3a", provenance["Thin"]["Cases"])
+        fabricated = next(c for c in production["Cases"] if case_kind(c) == "fabricated")
+        thin = next(c for c in production["Cases"] if case_kind(c) == "thin")
+        self.assertEqual(minimum_qualified_rings(production, fabricated), 7)
+        self.assertEqual(minimum_qualified_rings(production, thin), 4)
+        # Without the gate nothing is required (a manifest without it builds no reduced side);
+        # a gate without its provenance, a missing kind, a non-integer, or an empty case list
+        # fails closed.
+        ungated = copy.deepcopy(production)
+        del ungated["Gates"][MINIMUM_QUALIFIED_RINGS]; del ungated["Gates"][MINIMUM_QUALIFIED_RINGS_PROVENANCE]
+        self.assertIsNone(validate_minimum_qualified_rings(ungated))
+        self.assertIsNone(minimum_qualified_rings(ungated, thin))
+        def rejected(mutate, message):
+            broken = copy.deepcopy(production)
+            mutate(broken["Gates"])
+            with self.assertRaisesRegex(ValueError, message):
+                validate_minimum_qualified_rings(broken)
+        rejected(lambda g: g.pop(MINIMUM_QUALIFIED_RINGS_PROVENANCE), "recorded provenance")
+        rejected(lambda g: g.pop(MINIMUM_QUALIFIED_RINGS), "Provenance recorded without")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].pop("Thin"), "Fabricated / Thin")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", 4.5), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", 0), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", True), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS_PROVENANCE]["Thin"].__setitem__("Cases", ""), "recorded provenance")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS_PROVENANCE].__setitem__("Rule", "no guard named"), "recorded provenance")
+        # The whole-manifest validation carries the check.
+        broken = copy.deepcopy(production)
+        broken["Gates"][MINIMUM_QUALIFIED_RINGS]["Thin"] = 0
+        with self.assertRaisesRegex(ValueError, "positive integers"):
+            validate_manifest(broken, HERE / "geometry-independence-suite.json", check_available_files=False)
 
     def test_calibration_manifest_gate_relaxation_never_reaches_production(self):
         # Supervisor decision 22: the MA/MS calibration manifest, and only it, carries
@@ -2900,9 +3212,85 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                              ["canonical-source-validation", "gmsh-build", "canonical-gmsh-publication",
                               "proper-rigid-publication"])
             # Independent per-entry verification of the Gmsh-only case.
-            from verify_canonical_case_entries import verify_case
+            from verify_canonical_case_entries import verify_case, verification_time_bound
             report = verify_case(manifest_path, audits, "six-edge-supplemental")
             self.assertTrue(report["Passed"], report["Failures"])
+            self.assertIsNone(report["TimeBound"])
+            # The command line binds the element-scaled whole-run time bound (decision 410) and
+            # records it with the elapsed seconds; the tiny fixture sits at the one-stage floor.
+            manifest = json.loads(manifest_path.read_text())
+            case = next(item for item in manifest["Cases"] if item["Id"] == "six-edge-supplemental")
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual(bound["Seconds"], manifest["Gates"]["MaximumSeconds"]); self.assertEqual(bound["Scale"], 1.0)
+            self.assertEqual(set(bound["EntryElements"]), {variant["Id"] for variant in case["Variants"]})
+            self.assertTrue(all(isinstance(count, int) and count > 0 for count in bound["EntryElements"].values()))
+            output = root / "six-edge-supplemental-verification.json"
+            result = subprocess.run([sys.executable, str(HERE / "verify_canonical_case_entries.py"), str(manifest_path),
+                                     str(audits), str(output), "six-edge-supplemental"],
+                                    capture_output=True, text=True, timeout=600)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('"TimeBound"', result.stdout.splitlines()[0])
+            recorded = json.loads(output.read_text())["TimeBound"]
+            self.assertTrue(json.loads(output.read_text())["Passed"])
+            self.assertEqual({key: recorded[key] for key in bound}, bound)
+            self.assertLess(recorded["ElapsedSeconds"], recorded["Seconds"])
+            self.assertIn("decisions 410 / 433", recorded["Rule"])
+
+    def test_verification_time_bound_scales_with_the_entries_element_count(self):
+        """Decision 410: the verifier's whole-run bound is the manifest stage bound per
+        MaximumElements elements scaled to the elements the verification reads (the sum of the
+        entries' audited element counts), never below one stage bound; an explicit
+        --timeout-seconds is recorded; a variant without readable evidence contributes nothing."""
+        from verify_canonical_case_entries import VERIFICATION_TIME_BOUND_RULE, verification_time_bound
+        manifest = {"Gates": {"MaximumSeconds": 3600, "MaximumElements": 6000000}}
+        case = {"Id": "spatial-38-edge-f0461584cccf", "Variants": [{"Id": "identity"}, {"Id": "rotate-z-0.63"}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            audits = Path(temporary)
+            def evidence(variant, elements):
+                (audits / f"{case['Id']}--{variant}.json").write_text(json.dumps({"Resources": {"Elements": elements}}))
+            # The gallery scale: two 100 k-element entries stay at the one-stage floor.
+            evidence("identity", 100000); evidence("rotate-z-0.63", 100000)
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual((bound["Seconds"], bound["Scale"], bound["TotalElements"]), (3600, 1.0, 200000))
+            self.assertEqual(bound["EntryElements"], {"identity": 100000, "rotate-z-0.63": 100000})
+            self.assertIsNone(bound["Explicit"]); self.assertEqual(bound["Rule"], VERIFICATION_TIME_BOUND_RULE)
+            # The loop-end fab (PBS 57005): two 9,095,033-element entries -> 3.03 stage bounds =
+            # 10,915 s (the former fixed 1800 s was exceeded at 1801 s).
+            evidence("identity", 9095033); evidence("rotate-z-0.63", 9095033)
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual(bound["TotalElements"], 18190066)
+            self.assertAlmostEqual(bound["Scale"], 18190066 / 6000000)
+            self.assertEqual(bound["Seconds"], math.ceil(3600 * 18190066 / 6000000)); self.assertEqual(bound["Seconds"], 10915)
+            self.assertEqual(bound["ScaledSeconds"], bound["Seconds"])
+            # A placement whose evidence is unreadable or lacks the count contributes nothing (it
+            # fails on its own); the other entry still scales the bound.
+            (audits / f"{case['Id']}--rotate-z-0.63.json").unlink()
+            bound = verification_time_bound(manifest, case, audits)
+            self.assertEqual(bound["EntryElements"], {"identity": 9095033, "rotate-z-0.63": None})
+            self.assertEqual(bound["Seconds"], math.ceil(3600 * 9095033 / 6000000))
+            (audits / f"{case['Id']}--rotate-z-0.63.json").write_text(json.dumps({"Resources": {"Elements": 1.5}}))
+            self.assertIsNone(verification_time_bound(manifest, case, audits)["EntryElements"]["rotate-z-0.63"])
+            # An explicit bound replaces the scaled one and is recorded as such.
+            explicit = verification_time_bound(manifest, case, audits, 1800)
+            self.assertEqual((explicit["Seconds"], explicit["Explicit"]), (1800, 1800))
+            self.assertEqual(explicit["ScaledSeconds"], math.ceil(3600 * 9095033 / 6000000))
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                verification_time_bound(manifest, case, audits, 0)
+            with self.assertRaisesRegex(ValueError, "MaximumSeconds"):
+                verification_time_bound({"Gates": {"MaximumSeconds": 0, "MaximumElements": 6000000}}, case, audits)
+            with self.assertRaisesRegex(ValueError, "MaximumElements"):
+                verification_time_bound({"Gates": {"MaximumSeconds": 3600, "MaximumElements": 6.0e6}}, case, audits)
+            # Decision 433 MINOR-3: the command line validates the manifest BEFORE reading its
+            # Gates for the bound - a malformed manifest fails with the validator's message.
+            malformed = audits / "malformed-manifest.json"
+            malformed.write_text(json.dumps({"Version": 1, "Cases": []}))
+            result = subprocess.run([sys.executable, str(HERE / "verify_canonical_case_entries.py"), str(malformed),
+                                     str(audits), str(audits / "never-written.json"), case["Id"]],
+                                    capture_output=True, text=True, timeout=120)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Unsupported generality-suite manifest", result.stderr)
+            self.assertNotIn("KeyError", result.stderr)
+            self.assertFalse((audits / "never-written.json").exists())
 
     def test_gmsh_only_negatives_fail_closed(self):
         from general_mesh_audit_producer import TUBE_DESIGN_GATE
@@ -3146,6 +3534,233 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected_face_end(lambda c: c["PrismTubes"].__setitem__("FaceEndSpacingMaximum", 0.0), "face-end summary")
             rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"].append(
                                   dict(c["PrismTubes"]["Tubes"][0]["FaceEnds"][0])), "two face ends at one end")
+            # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face-end record carrying its
+            # Regime is judged against the end-spacing cap recomputed from the section's rings and
+            # rays and the command's Jacobian-condition ceiling (lc_cap = 0.95 x ceiling x the smallest
+            # planar singular value of the prism frames; the production fab section reads 80.572 nm at
+            # 1000): regime I below 4 h_pyr |tan theta| <= lc_cap with the A2 (4) formulas, regime II
+            # above with lc_end = lc_cap and the apex-rule layer count; every record binds EndSpacing <=
+            # lc_cap, the cap and apex fields and the apex inequality; a round-2b mesher's record without
+            # a Regime fails closed.
+            from mesh_stage_contract import (FACE_END_CONDITION_MARGIN, ROUND2_MESHER, face_end_spacing_cap,
+                                             section_frame_singular_values, section_prism_condition)
+            production_radii = [0.00025 * (2.0**k - 1.0) for k in range(1, 8)]
+            production_rays = [-90.0 + 30.0 * j for j in range(10)]
+            self.assertAlmostEqual(face_end_spacing_cap(production_radii, production_rays, 1000.0),
+                                   0.08057212272716054, delta=1e-15)
+            self.assertAlmostEqual(section_prism_condition(production_radii, production_rays, 0.04998265841897798),
+                                   589.3294590097332, delta=1e-6)
+            self.assertAlmostEqual(min(s2 for _, s2 in section_frame_singular_values(production_radii, production_rays)),
+                                   0.33925104306172854 * 0.00025, delta=1e-18)
+            with self.assertRaisesRegex(ValueError, "spacing-dominated"):
+                face_end_spacing_cap(production_radii, production_rays, 1.5)
+            with self.assertRaisesRegex(ValueError, "Jacobian-condition ceiling"):
+                face_end_spacing_cap(production_radii, production_rays, 0.0)
+            ceiling = float(report["Command"][report["Command"].index("--maximum-jacobian-condition") + 1])
+            ring_radii = [sum(section["RingSizes"][:k + 1]) for k in range(len(section["RingSizes"]))]
+            rays = [-90.0 + 30.0 * j for j in range(10)]
+            cap = face_end_spacing_cap(ring_radii, rays, ceiling)
+            self.assertAlmostEqual(cap, FACE_END_CONDITION_MARGIN * ceiling *
+                                   min(s2 for _, s2 in section_frame_singular_values(ring_radii, rays)))
+            def regime_record(theta, regime):
+                slope = _math.tan(_math.radians(theta))
+                apex = 2.0 * section["PyramidHeight"] * slope
+                if regime == "I":
+                    lc = max(tubes["TangentialSize"], 4.0 * section["PyramidHeight"] * slope)
+                    layers = max(1, _math.ceil(2.0 * r_env * slope / lc * (1.0 - 1e-9)))
+                else:
+                    lc = cap
+                    layers = max(_math.ceil(r_env * slope / (cap - apex)),
+                                 max(1, _math.ceil(2.0 * r_env * slope / cap * (1.0 - 1e-9))))
+                shear = r_env * slope
+                return lc, layers, {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": layers,
+                                    "EndSpacing": lc, "EnvelopeShear": shear,
+                                    "LayerThicknessRange": [lc - shear / layers, lc + shear / layers],
+                                    "OverLength": shear + tubes["TangentialSize"], "Kappa": [-slope, 0.0],
+                                    "Regime": regime, "EndSpacingCap": cap, "ApexThickness": apex}
+            # The two regimes of the fixture section: the boundary 4 h_pyr |tan theta| = cap.
+            boundary = _math.degrees(_math.atan(cap / (4.0 * section["PyramidHeight"])))
+            ceiling_theta = _math.degrees(_math.atan(cap / (2.0 * section["PyramidHeight"])))
+            self.assertLess(boundary, ceiling_theta)
+            def face_ended_2b(c, theta, regime):
+                lc, layers, record = regime_record(theta, regime)
+                face_ended(c)
+                c["PrismTubes"]["Section"]["RingRadii"] = ring_radii
+                c["PrismTubes"]["Section"]["Top"] = {"Angles": rays, "Materials": [2] * 9}
+                c["PrismTubes"]["Section"]["FaceEndSpacingCap"] = cap
+                c["PrismTubes"]["Section"]["FaceEndSpacingCapRule"] = "fixture cap rule"
+                row = c["PrismTubes"]["Tubes"][0]
+                row["FaceEnds"] = [record]
+                row["Spacing"] = max(lc, row["LayerThickness"]["P50"])
+                row["LayerThickness"]["Maximum"] = row["Spacing"]
+                row["LayerThickness"]["AtEnd"] = lc
+                row["LayerThickness"]["FaceEndBlocks"] = {"End": {"Layers": layers, "Thicknesses": [lc] * layers,
+                                                                   "NeighbourRatio": max(lc, row["LayerThickness"]["P50"]) /
+                                                                   min(lc, row["LayerThickness"]["P50"])}}
+                c["PrismTubes"]["FaceEndSpacingMaximum"] = lc
+                c["PrismTubes"]["LayerThickness"]["Maximum"] = max(census["PrismTubes"]["LayerThickness"]["Maximum"], lc)
+                c["PrismTubes"]["SpacingMaximum"] = c["PrismTubes"]["LayerThickness"]["Maximum"]
+                c["PrismTubes"]["FaceEnds"]["EndBlockLayers"] = layers
+                return c
+            regime_one = face_ended_2b(copy.deepcopy(census), 0.5 * boundary, "I")
+            self.assertIs(validate_gmsh_build_census(report, regime_one, semantic), regime_one)
+            steep = 0.5 * (boundary + ceiling_theta)
+            regime_two = face_ended_2b(copy.deepcopy(census), steep, "II")
+            self.assertIs(validate_gmsh_build_census(report, regime_two, semantic), regime_two)
+            record_two = regime_two["PrismTubes"]["Tubes"][0]["FaceEnds"][0]
+            self.assertEqual(record_two["EndSpacing"], cap)
+            self.assertGreaterEqual(record_two["LayerThicknessRange"][0], record_two["ApexThickness"])
+            def rejected_2b(theta, regime, mutate, message, target="census"):
+                broken = face_ended_2b(copy.deepcopy(census), theta, regime)
+                broken_report = copy.deepcopy(report)
+                mutate(broken if target == "census" else broken_report)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(broken_report, broken, semantic)
+            rejected_2b(steep, "I", lambda c: None, "regime does not follow")
+            rejected_2b(0.5 * boundary, "II", lambda c: None, "regime does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Regime", "III"),
+                        "regime is unknown")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("FaceEndSpacingCap", 1.01 * cap),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].pop("FaceEndSpacingCapRule"),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("EndSpacingCap", 0.99 * cap),
+                        "cap or apex thickness")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("ApexThickness", 0.0),
+                        "cap or apex thickness")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Layers", 1),
+                        "face-end rule|apex rule")
+            # lc_end <= max(lc_cap, TangentialSize): the fixture's TangentialSize exceeds its cap (gate 100
+            # on a 1-nm ring; never a production size), so the bound reads the tangential size here.
+            over_cap = 1.001 * max(cap, tubes["TangentialSize"])
+            rejected_2b(steep, "II", lambda c: (c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("EndSpacing", over_cap),
+                                              c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
+                                                  "LayerThicknessRange", [over_cap, over_cap])),
+                        "exceeds the end-spacing cap")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
+                            "LayerThicknessRange", [0.5 * c["PrismTubes"]["Tubes"][0]["FaceEnds"][0]["ApexThickness"], cap]),
+                        "apex rule")
+            rejected_2b(ceiling_theta + 0.5, "II", lambda c: None, "validity ceiling")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("RingRadii", [ring_radii[0]]),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].pop("Top"), "Top / Sheet rays")
+            rejected_2b(steep, "II", lambda r: r["Command"].__delitem__(slice(r["Command"].index("--maximum-jacobian-condition"),
+                                                                               r["Command"].index("--maximum-jacobian-condition") + 2)),
+                        "without the command's Jacobian-condition ceiling|--maximum-jacobian-condition", target="report")
+            # A cap recorded on a coupon without a face end fails closed.
+            no_face_end = copy.deepcopy(census)
+            no_face_end["PrismTubes"]["Section"]["FaceEndSpacingCap"] = cap
+            with self.assertRaisesRegex(ValueError, "spacing cap without a face end"):
+                validate_gmsh_build_census(report, no_face_end, semantic)
+            # A pre-F2b record (no Regime) from the round-2b mesher beside this module fails closed;
+            # from another mesher it is judged by the regime-I formulas alone (the block above).
+            from_round2b = copy.deepcopy(report)
+            from_round2b["Tools"]["mesher"]["SHA256"] = sha256(ROUND2_MESHER)
+            with self.assertRaisesRegex(ValueError, "round-2b mesher lacks its Regime"):
+                validate_gmsh_build_census(from_round2b, face_ended(copy.deepcopy(census)), semantic)
+            # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): a tube row reduced by its
+            # facing width records Rings / FacingWidth / FacingBound; the section records
+            # MinimumRings / ReducedSides / FacingBound / MinimumQualifiedRings and the per-side
+            # rule; the validator recomputes the largest K with r_K + h_K <= min(TransverseBound,
+            # FacingWidth / 2), binds the command's --minimum-qualified-rings and the section
+            # aggregates; a census without the per-side record (pre-F6) passes with no reduced row.
+            from mesh_stage_contract import GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, ring_count_within
+            inner, growth = tubes["InnerSize"], tubes["GrowthRatio"]
+            coupon_rings = section["Rings"]
+            self.assertEqual(ring_count_within(0.00025, 2.0, 0.05), 7)      # the production fabricated tube
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.1), 5)         # the production thin tube
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.0605), 4)      # the 121-nm finger's thin sides
+            self.assertEqual(ring_count_within(0.00025, 2.0, 0.0605), 7)    # its fabricated sides fit
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.003), 0)
+            # r_K + h_K of the fixture section in the mesher's own arithmetic (tube_ring_count: radius =
+            # inner (ratio^K - 1) / (ratio - 1), size = inner ratio^(K - 1))
+            transverse = inner * (growth**coupon_rings - 1.0) / (growth - 1.0) + inner * growth**(coupon_rings - 1)
+            reduced_rings = coupon_rings - 1
+            # A facing width whose half lies between r_{K-1} + h_{K-1} and r_K + h_K reduces the side by one ring.
+            facing_width = 2.0 * 0.5 * (inner * (growth**reduced_rings - 1.0) / (growth - 1.0) + inner * growth**(reduced_rings - 1) + transverse)
+            facing_bound = min(transverse, 0.5 * facing_width)
+            self.assertEqual(ring_count_within(inner, growth, facing_bound), reduced_rings)
+            per_side_report = copy.deepcopy(report)
+            per_side_report["Command"] += [GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, str(reduced_rings)]
+            def per_side(c, *, minimum=reduced_rings, reduce=True):
+                sec = c["PrismTubes"]["Section"]
+                sec["TransverseBound"] = transverse
+                sec["RingsPerSideRule"] = "fixture: ... ScopeGuard[UnqualifiedRingCount] ..."
+                sec["MinimumQualifiedRings"] = minimum
+                sec["MetalFacingWidth"] = facing_width if reduce else None
+                sec["MinimumRings"] = reduced_rings if reduce else coupon_rings
+                sec["ReducedSides"] = 1 if reduce else 0
+                sec["FacingBound"] = facing_bound if reduce else transverse
+                if reduce:
+                    for k in range(sec["TubesPerSide"]):
+                        row = c["PrismTubes"]["Tubes"][k]
+                        row.update({"Rings": reduced_rings, "FacingWidth": facing_width, "FacingBound": facing_bound})
+                return c
+            self.assertEqual(len(census["PrismTubes"]["Tubes"]) % section["TubesPerSide"], 0)
+            accepted = per_side(copy.deepcopy(census))
+            self.assertIs(validate_gmsh_build_census(per_side_report, accepted, semantic), accepted)
+            unreduced = per_side(copy.deepcopy(census), reduce=False)
+            self.assertIs(validate_gmsh_build_census(per_side_report, unreduced, semantic), unreduced)
+            # The pre-F6 census (no per-side record) with the command's range passes as well.
+            pre_f6 = copy.deepcopy(census)
+            self.assertIs(validate_gmsh_build_census(per_side_report, pre_f6, semantic), pre_f6)
+            def rejected_rings(mutate, message, target_report=per_side_report):
+                broken = per_side(copy.deepcopy(census))
+                mutate(broken)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(target_report, broken, semantic)
+            rejected_rings(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Rings", coupon_rings), "outside \[MinimumQualifiedRings")
+            rejected_rings(lambda c: [row.__setitem__("Rings", reduced_rings - 1) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "outside \[MinimumQualifiedRings|do not follow the largest K")
+            rejected_rings(lambda c: [row.__setitem__("FacingWidth", 4.0 * facing_width) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "do not follow the largest K")
+            rejected_rings(lambda c: [row.__setitem__("FacingBound", 0.9 * facing_bound) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "do not follow the largest K")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumRings", coupon_rings), "MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("ReducedSides", 2), "MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("FacingBound", transverse), "MinimumRings / ReducedSides / FacingBound")
+            # An unreduced coupon whose smallest facing width lies below 2 x the transverse bound (the
+            # law steps; or a measurement cap already holds the count) records FacingBound = w / 2.
+            narrow_unreduced = per_side(copy.deepcopy(census), reduce=False)
+            narrow_unreduced["PrismTubes"]["Section"]["MetalFacingWidth"] = 1.5 * transverse
+            narrow_unreduced["PrismTubes"]["Section"]["FacingBound"] = 0.75 * transverse
+            self.assertIs(validate_gmsh_build_census(per_side_report, narrow_unreduced, semantic), narrow_unreduced)
+            narrow_unreduced["PrismTubes"]["Section"]["FacingBound"] = transverse
+            with self.assertRaisesRegex(ValueError, "MinimumRings / ReducedSides / FacingBound"):
+                validate_gmsh_build_census(per_side_report, narrow_unreduced, semantic)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
+                           "MinimumQualifiedRings differs from the build command")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", 2.0 * facing_width),
+                           "below the section's MetalFacingWidth|MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", None),
+                           "the section records none|MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("RingsPerSideRule"), "per-side ring rule")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("MinimumRings"), "without the section's per-side record")
+            # The command's range binds: a reduced row below it, or no range at all, fails closed.
+            above = copy.deepcopy(per_side_report)
+            above["Command"][-1] = str(reduced_rings + 1)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
+                           "outside \\[MinimumQualifiedRings", target_report=above)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", None),
+                           "without a qualified ring-count range|MinimumQualifiedRings differs", target_report=report)
+            # The measurement-only ring cap (F6 2.3): Section.RingsCap must equal the command's
+            # --maximum-rings (both absent in production); with a TransverseBound recorded, Rings ==
+            # min(the law's count, the cap).
+            capped_report = copy.deepcopy(report)
+            capped_report["Command"] += ["--maximum-rings", str(coupon_rings)]
+            capped = copy.deepcopy(census)
+            capped["PrismTubes"]["Section"]["RingsCap"] = coupon_rings
+            self.assertIs(validate_gmsh_build_census(capped_report, capped, semantic), capped)
+            with self.assertRaisesRegex(ValueError, "RingsCap differs"):
+                validate_gmsh_build_census(report, copy.deepcopy(capped), semantic)
+            with self.assertRaisesRegex(ValueError, "RingsCap differs"):
+                validate_gmsh_build_census(capped_report, copy.deepcopy(census), semantic)
+            lawful = copy.deepcopy(census)
+            lawful["PrismTubes"]["Section"]["TransverseBound"] = transverse
+            self.assertIs(validate_gmsh_build_census(report, lawful, semantic), lawful)
+            lawful["PrismTubes"]["Section"]["TransverseBound"] = 0.5 * transverse
+            with self.assertRaisesRegex(ValueError, "do not follow the transverse bound"):
+                validate_gmsh_build_census(report, lawful, semantic)
             # A census recorded before the face-end rule (no summary, no face end) still passes:
             # the fixture producer's census is one.
             self.assertNotIn("FaceEnds", census["PrismTubes"])
@@ -3189,8 +3804,107 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
                      "rings do not follow")
             rejected(lambda c: c["PrismTubes"]["CapRegions"].__setitem__("MinimumScaledJacobian", 1e-3),
                      "cap regions fail")
+            # Design round 2 F5-A (decisions 363 / 365): the per-corner verdict records judge
+            # each corner by its kind - a legacy corner by MaximumCornerAspect, an invariant one
+            # by the command's --corner-shape-gate - and bind the contract's invariant corners.
             rejected(lambda c: c["SeedQualityOptimization"]["CornerAspectsAfter"].__setitem__(0, 10.0),
-                     "gated corner balls")
+                     "After differs from CornerAspectsAfter")
+            def corner_value(c, value):
+                c["SeedQualityOptimization"]["CornerAspectsAfter"][0] = value
+                c["SeedQualityOptimization"]["CornerMeasures"][0]["After"] = value
+            rejected(lambda c: corner_value(c, 4.5), "Legacy corner .* fails its gate")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].__setitem__("Kind", "Invariant"),
+                     "unknown kind or measure")
+            def invariant_row(c):
+                row = c["SeedQualityOptimization"]["CornerMeasures"][0]
+                row.update({"Kind": "Invariant", "Measure": "RegularCondition", "Target": 3.8, "Gate": 5.0})
+            rejected(invariant_row, "judged without --corner-shape-gate")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"].pop(),
+                     "one CornerMeasures row per semantic corner")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0]["BridgingSlivers"].__setitem__(
+                         "AboveGateAfter", 1), "bridging-sliver cells above the gate remain")
+            rejected(lambda c: c["SeedQualityOptimization"]["CornerMeasures"][0].__setitem__("Target", 3.7),
+                     "gate / target differ from the Legacy rule")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__("InvariantCorners", 1),
+                     "InvariantCorners count differs")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__("CornerShapeGate", 5.0),
+                     "CornerShapeGate differs from the build command")
+            rejected(lambda c: c["SemanticCornerKinds"].__setitem__(0, "Invariant"),
+                     "SemanticCornerKinds differ")
+            # A command carrying --corner-shape-gate without an invariant corner is consistent
+            # when the optimization record carries the same gate; an invariant row judged by it
+            # needs the contract's Derivation.InvariantCorners to list the corner.
+            gated_report = copy.deepcopy(report)
+            gated_report["Command"] += ["--corner-shape-gate", "5.0"]
+            gated = copy.deepcopy(census)
+            gated["SeedQualityOptimization"]["CornerShapeGate"] = 5.0
+            self.assertIs(validate_gmsh_build_census(gated_report, gated, semantic), gated)
+            invariant_census = copy.deepcopy(gated)
+            invariant_row(invariant_census)
+            invariant_census["SeedQualityOptimization"]["InvariantCorners"] = 1
+            invariant_census["SemanticCornerKinds"][0] = "Invariant"
+            with self.assertRaisesRegex(ValueError, "differ from the contract's Derivation.InvariantCorners"):
+                validate_gmsh_build_census(gated_report, invariant_census, semantic)
+            invariant_semantic = copy.deepcopy(semantic)
+            invariant_semantic["Derivation"] = {"InvariantCorners": {"Rule": "kappa_reg",
+                                                                     "Points": [semantic["SemanticCorners"][0]]}}
+            self.assertIs(validate_gmsh_build_census(gated_report, invariant_census, invariant_semantic),
+                          invariant_census)
+            invariant_census["SeedQualityOptimization"]["CornerMeasures"][0]["After"] = 5.5
+            invariant_census["SeedQualityOptimization"]["CornerAspectsAfter"][0] = 5.5
+            with self.assertRaisesRegex(ValueError, "Invariant corner .* fails its gate"):
+                validate_gmsh_build_census(gated_report, invariant_census, invariant_semantic)
+            # Decision 392 MINOR-6 (the 4.1 / 4.2 convention): a census declaring NONE of the
+            # round-2 records is a PRE-RULE census - judged by the pre-rule corner rule (every
+            # CornerAspectsAfter <= MaximumCornerAspect) and bound to its declared tool (the
+            # fixture report's mesher is not the round-2 mesher); a pre-rule census from the
+            # round-2 mesher, one judged by --corner-shape-gate, one facing a contract invariant
+            # corner, or one above the corner bound fails closed; a ROUND-2 census lacking any
+            # record fails closed.
+            from mesh_stage_contract import (ROUND2_CENSUS_RECORDS, ROUND2_MESHER,
+                                             ROUND2_OPTIMIZATION_RECORDS, census_rule_round,
+                                             validate_thin_sheet_seams)
+            self.assertEqual(census_rule_round(census, census["SeedQualityOptimization"]), "round-2")
+            pre_rule = copy.deepcopy(census)
+            for name in ROUND2_CENSUS_RECORDS:
+                pre_rule.pop(name, None)
+            for name in ROUND2_OPTIMIZATION_RECORDS:
+                pre_rule["SeedQualityOptimization"].pop(name, None)
+            self.assertEqual(census_rule_round(pre_rule, pre_rule["SeedQualityOptimization"]), "pre-rule")
+            self.assertNotEqual(report["Tools"]["mesher"]["SHA256"], sha256(ROUND2_MESHER))
+            self.assertIs(validate_gmsh_build_census(report, pre_rule, semantic), pre_rule)
+            def rejected_pre_rule(mutate, message, report_used=report, semantic_used=semantic):
+                broken_report, broken = copy.deepcopy(report_used), copy.deepcopy(pre_rule)
+                mutate(broken, broken_report)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(broken_report, broken, semantic_used)
+            rejected_pre_rule(lambda c, r: c["SeedQualityOptimization"]["CornerAspectsAfter"].__setitem__(0, 10.0),
+                              "Pre-rule build census corner aspects exceed MaximumCornerAspect")
+            rejected_pre_rule(lambda c, r: r["Tools"]["mesher"].__setitem__("SHA256", sha256(ROUND2_MESHER)),
+                              "from the round-2 mesher lacks the round-2 records")
+            rejected_pre_rule(lambda c, r: r.pop("Tools"), "needs the build report's mesher digest")
+            rejected_pre_rule(lambda c, r: None, "cannot be judged by --corner-shape-gate",
+                              report_used=gated_report)
+            rejected_pre_rule(lambda c, r: None, "cannot judge the contract's invariant corners",
+                              semantic_used=invariant_semantic)
+            # One round-2 record declared makes the census a round-2 census: every record required.
+            for name in ("CornerMeasures", "InvariantCorners", "CornerShapeGate", "InvariantCornerTarget"):
+                partial = copy.deepcopy(pre_rule)
+                partial["SeedQualityOptimization"][name] = census["SeedQualityOptimization"][name]
+                self.assertEqual(census_rule_round(partial, partial["SeedQualityOptimization"]), "round-2")
+                with self.assertRaises(ValueError):
+                    validate_gmsh_build_census(report, partial, semantic)
+            rejected(lambda c: c["SeedQualityOptimization"].pop("CornerMeasures"),
+                     "one CornerMeasures row per semantic corner")
+            rejected(lambda c: c.pop("SemanticCornerKinds"), "SemanticCornerKinds differ")
+            # The seam census by rule round: a round-2 thin census lacking ThinSheetSeams fails
+            # closed, a pre-rule thin census carries none and is accepted as such.
+            with self.assertRaisesRegex(ValueError, "lacks the ThinSheetSeams record"):
+                validate_thin_sheet_seams({}, "thin")
+            self.assertIsNone(validate_thin_sheet_seams({}, "thin", "pre-rule"))
+            self.assertIsNone(validate_thin_sheet_seams(census, "thin"))
+            with self.assertRaisesRegex(ValueError, "Unknown census rule round"):
+                validate_thin_sheet_seams(census, "thin", "round-3")
             rejected(lambda c: c.__setitem__("EdgeLayer", {"EdgeSize": .004}), "tetrahedral edge layer")
             rejected(lambda c: c["JunctionCurves"].__setitem__("CurvedCurves", 1), "straight junction")
             rejected(lambda c: c["CornerGrading"].__setitem__("CornerSize", .002),

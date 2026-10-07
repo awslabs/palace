@@ -18,6 +18,7 @@
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "models/strattonchu.hpp"
+#include "models/surfaceresponseidentification.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/geodata.hpp"
@@ -207,6 +208,139 @@ public:
     const double distance = std::sqrt(edge_distance_tree.DistanceSquared(point));
     return EdgeDistanceWindowWeight(distance, distance_min, distance_max, smoothing) *
            coefficient.Eval(T, ip);
+  }
+};
+
+// The uncovered intervals of one interface's edge-distance tree (decision 394 F2): per tree
+// segment, the closed foot-parameter intervals [a, b] (from the segment's first end) of the
+// uncovered portions lying on it, each with its type index into `types`.
+struct UncoveredEdgeIntervals
+{
+  struct Interval
+  {
+    double a = 0.0, b = 0.0;
+    int type = -1;
+  };
+  std::map<std::size_t, std::vector<Interval>> by_segment;
+  std::vector<std::string> types;
+
+  UncoveredEdgeIntervals(
+      const EdgeDistanceTree &tree,
+      const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions,
+      double tolerance)
+  {
+    for (const auto &portion : portions)
+    {
+      mfem::Vector midpoint(3), p0(3), p1(3);
+      for (int d = 0; d < 3; d++)
+      {
+        p0(d) = portion.p0[d];
+        p1(d) = portion.p1[d];
+        midpoint(d) = 0.5 * (portion.p0[d] + portion.p1[d]);
+      }
+      const auto nearest = tree.Nearest(midpoint);
+      if (std::sqrt(nearest.distance_squared) > tolerance)
+      {
+        continue;  // not on this interface's perimeter (another plane)
+      }
+      const auto &segment = tree.GetSegment(nearest.segment);
+      mfem::Vector origin(3), chord(3);
+      for (int d = 0; d < 3; d++)
+      {
+        origin(d) = segment.p0[d];
+        chord(d) = segment.p1[d] - segment.p0[d];
+      }
+      const double length2 = chord * chord;
+      MFEM_VERIFY(length2 > 0.0, "An edge-distance tree segment has zero length!");
+      const double length = std::sqrt(length2);
+      auto Foot = [&](const mfem::Vector &q)
+      {
+        mfem::Vector r(q);
+        r -= origin;
+        const double t = (r * chord) / length2;
+        mfem::Vector residual(r);
+        residual.Add(-t, chord);
+        return std::make_pair(std::clamp(t, 0.0, 1.0) * length, residual.Norml2());
+      };
+      const auto [a0, off0] = Foot(p0);
+      const auto [a1, off1] = Foot(p1);
+      MFEM_VERIFY(off0 <= tolerance && off1 <= tolerance,
+                  "An uncovered perimeter portion of feature "
+                      << portion.feature << " (" << portion.type
+                      << ") lies within the tolerance of a perimeter segment at its "
+                         "midpoint but not at its ends (ends "
+                      << off0 << " / " << off1
+                      << " off the segment): the identification's perimeter differs from "
+                         "the postprocessing perimeter!");
+      auto type = std::find(types.begin(), types.end(), portion.type);
+      if (type == types.end())
+      {
+        types.push_back(portion.type);
+        type = std::prev(types.end());
+      }
+      by_segment[nearest.segment].push_back(
+          {std::min(a0, a1), std::max(a0, a1), static_cast<int>(type - types.begin())});
+    }
+  }
+};
+
+// The within-R energy density of the quadrature points whose nearest perimeter point lies
+// on an uncovered portion of the given type (every type when `type` < 0): the complement
+// of EdgeDistanceCoefficient's outside window times the coefficient, restricted by the
+// foot test above.
+class UncoveredEdgeCoefficient : public mfem::Coefficient
+{
+private:
+  mfem::Coefficient &coefficient;
+  const EdgeDistanceTree &edge_distance_tree;
+  const UncoveredEdgeIntervals &intervals;
+  const double radius;
+  const double smoothing;
+  const int type;
+
+public:
+  UncoveredEdgeCoefficient(mfem::Coefficient &coefficient,
+                           const EdgeDistanceTree &edge_distance_tree,
+                           const UncoveredEdgeIntervals &intervals, double radius,
+                           double smoothing, int type)
+    : coefficient(coefficient), edge_distance_tree(edge_distance_tree),
+      intervals(intervals), radius(radius), smoothing(smoothing), type(type)
+  {
+  }
+
+  double Eval(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip) override
+  {
+    mfem::Vector point(T.GetSpaceDim());
+    T.Transform(ip, point);
+    const auto nearest = edge_distance_tree.Nearest(point);
+    const double within = 1.0 - EdgeDistanceOutsideWeight(
+                                    std::sqrt(nearest.distance_squared), radius, smoothing);
+    if (within <= 0.0)
+    {
+      return 0.0;
+    }
+    const auto it = intervals.by_segment.find(nearest.segment);
+    if (it == intervals.by_segment.end())
+    {
+      return 0.0;
+    }
+    const auto &segment = edge_distance_tree.GetSegment(nearest.segment);
+    double length2 = 0.0, projection = 0.0;
+    for (int d = 0; d < point.Size(); d++)
+    {
+      const double chord = segment.p1[d] - segment.p0[d];
+      length2 += chord * chord;
+      projection += (point(d) - segment.p0[d]) * chord;
+    }
+    const double foot = std::clamp(projection / length2, 0.0, 1.0) * std::sqrt(length2);
+    for (const auto &interval : it->second)
+    {
+      if (foot >= interval.a && foot <= interval.b && (type < 0 || interval.type == type))
+      {
+        return within * coefficient.Eval(T, ip);
+      }
+    }
+    return 0.0;
   }
 };
 
@@ -753,6 +887,62 @@ SurfacePostOperator::GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFu
   {
     energies.push_back(
         {data.edge_distances[i], local_energy[2 * i], local_energy[2 * i + 1]});
+  }
+  return energies;
+}
+
+std::map<int, SurfacePostOperator::UncoveredEdgeEnergy>
+SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies(
+    const std::set<int> &indices, const GridFunction &E, const GridFunction *D,
+    const std::vector<UncoveredPerimeterPortion> &portions) const
+{
+  const auto &mesh = *h1_fespace.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  std::map<int, UncoveredEdgeEnergy> energies;
+  std::vector<double> local_energies;
+  std::vector<std::pair<int, std::string>> entries;  // (interface, type) per local energy
+  for (const int idx : indices)
+  {
+    auto it = eps_surfs.find(idx);
+    MFEM_VERIFY(it != eps_surfs.end(),
+                "Unknown interface dielectric postprocessing index requested!");
+    const auto &data = it->second;
+    MFEM_VERIFY(!data.edge_distances.empty() && data.edge_distance_tree,
+                "Uncovered-requirement energies require a matching edge distance!");
+    energies.emplace(idx, UncoveredEdgeEnergy{});
+    if (portions.empty())
+    {
+      continue;
+    }
+    const double radius = data.edge_distances.back();
+    const UncoveredEdgeIntervals intervals(*data.edge_distance_tree, portions,
+                                           kSignatureParameterToleranceOverRadius * radius);
+    if (intervals.types.empty())
+    {
+      continue;
+    }
+    const auto attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    auto coefficient = data.GetCoefficient(E, D, mat_op);
+    for (std::size_t type = 0; type < intervals.types.size(); type++)
+    {
+      UncoveredEdgeCoefficient uncovered(*coefficient, *data.edge_distance_tree, intervals,
+                                         radius, data.edge_distance_smoothing,
+                                         static_cast<int>(type));
+      local_energies.push_back(
+          GetLocalSurfaceIntegral(uncovered, attr_marker, data.ownership_quadrature_order));
+      entries.emplace_back(idx, intervals.types[type]);
+    }
+  }
+  if (!local_energies.empty())
+  {
+    Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
+                   E.GetComm());
+  }
+  for (std::size_t i = 0; i < entries.size(); i++)
+  {
+    auto &energy = energies.at(entries[i].first);
+    energy.by_type[entries[i].second] += local_energies[i];
+    energy.energy += local_energies[i];
   }
   return energies;
 }

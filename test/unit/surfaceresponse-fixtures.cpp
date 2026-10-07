@@ -6,18 +6,25 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
 #include <sstream>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "driver.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metaledge.hpp"
+#include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
+#include "utils/tablecsv.hpp"
+#include "utils/timer.hpp"
 
 namespace palace::test
 {
@@ -1182,17 +1189,17 @@ mfem::Mesh SurfaceResponseFiles::MakeAutomatic2DMesh()
 std::unique_ptr<mfem::ParMesh>
 SurfaceResponseFiles::MakeIslandMesh(bool rounded, bool tetrahedral, bool aperture,
                                      bool neighboring_island, bool second_layer,
-                                     bool high_order_rounded)
+                                     bool high_order_rounded, int normal_elements)
 {
   const double in_plane_extent = aperture || neighboring_island ? 2.0 : 1.0;
   const double center = 0.5 * in_plane_extent;
   const double half_width = 0.25;
   const int in_plane_elements =
       (rounded && !high_order_rounded ? 16 : 8) * (aperture || neighboring_island ? 2 : 1);
-  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(in_plane_elements, 4, in_plane_elements,
-                                                  tetrahedral ? mfem::Element::TETRAHEDRON
-                                                              : mfem::Element::HEXAHEDRON,
-                                                  in_plane_extent, 1.0, in_plane_extent);
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(
+      in_plane_elements, normal_elements, in_plane_elements,
+      tetrahedral ? mfem::Element::TETRAHEDRON : mfem::Element::HEXAHEDRON, in_plane_extent,
+      1.0, in_plane_extent);
   for (int face = 0; face < serial.GetNumFaces(); face++)
   {
     int element1, element2;
@@ -1725,6 +1732,82 @@ GeometryCacheEnvGuard::~GeometryCacheEnvGuard()
 void GeometryCacheEnvGuard::DisableWrite()
 {
   unsetenv("PALACE_RESPONSE_GEOMETRY_CACHE_WRITE");
+}
+
+namespace fs = std::filesystem;
+
+std::string ReadFile(const fs::path &path)
+{
+  std::ifstream input(path, std::ios::binary);
+  REQUIRE(input);
+  return std::string(std::istreambuf_iterator<char>(input), {});
+}
+
+Table LoadCsv(const fs::path &path)
+{
+  TableWithCSVFile wrapped(path.string(), /*load_existing_file=*/true);
+  return std::move(wrapped.table);
+}
+
+const Column &ColumnByHeader(const Table &table, const std::string &header)
+{
+  for (auto it = table.cbegin(); it != table.cend(); ++it)
+  {
+    if (it->header_text == header)
+    {
+      return *it;
+    }
+  }
+  FAIL("No column \"" << header << "\"");
+  return *table.cbegin();
+}
+
+std::size_t TextCsv::Column(const std::string &name) const
+{
+  const auto it = std::find(header.begin(), header.end(), name);
+  REQUIRE(it != header.end());
+  return static_cast<std::size_t>(it - header.begin());
+}
+
+TextCsv ReadTextCsv(const fs::path &path)
+{
+  std::ifstream input(path);
+  REQUIRE(input);
+  TextCsv csv;
+  std::string line;
+  std::getline(input, line);
+  std::stringstream header(line);
+  std::string field;
+  while (std::getline(header, field, ','))
+  {
+    csv.header.push_back(field);
+  }
+  while (std::getline(input, line))
+  {
+    if (line.empty())
+    {
+      continue;
+    }
+    std::vector<std::string> fields;
+    std::stringstream stream(line);
+    while (std::getline(stream, field, ','))
+    {
+      fields.push_back(field);
+    }
+    REQUIRE(fields.size() == csv.header.size());
+    csv.rows.push_back(fields);
+  }
+  return csv;
+}
+
+void RunElectrostatic(json config)
+{
+  IoData iodata(std::move(config), /*print=*/false);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  const int omp_threads = utils::ConfigureOmp();
+  BlockTimer::Reset();
+  palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
 }
 
 }  // namespace palace::test

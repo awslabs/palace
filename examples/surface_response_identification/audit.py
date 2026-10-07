@@ -564,6 +564,16 @@ def patch_gates(identification, patches, radius):
     owned_by_patch = {}
     for cell in identification.get("Diagnostics", {}).get("ContinuationOwnership", {}).get("OwnedCells", []):
         owned_by_patch[cell["Patch"]] = float(cell["OwnedLength"])
+    # Corner-arm trim (decision 394 F1): the second arm's cells of a non-perpendicular
+    # corner begin where the arm exits the coupon's matching square; the removed length per
+    # patch (Diagnostics.CornerArmTrim.Cells, mesh units) leaves the portion like an owned
+    # length does.
+    for cell in identification.get("Diagnostics", {}).get("CornerArmTrim", {}).get("Cells", []):
+        owned_by_patch[cell["Patch"]] = owned_by_patch.get(cell["Patch"], 0.0) + float(cell["RemovedLength"])
+    # Mirror arm trim (boundary-cut DESIGN 2.2.3): a virtual corner's real-arm cells begin at
+    # s_half; the removed part leaves the portion's quadrature sum like the F1 trim.
+    for cell in identification.get("Diagnostics", {}).get("MirrorArmTrim", {}).get("Cells", []):
+        owned_by_patch[cell["Patch"]] = owned_by_patch.get(cell["Patch"], 0.0) + float(cell["RemovedLength"])
     # Domain-boundary exclusions (decision 258): the excluded patch keeps its cell and
     # quadrature weight (its portion stays tiled) and is written with Weight 0; the record
     # lists it with its cell length.
@@ -618,9 +628,13 @@ def patch_gates(identification, patches, radius):
             model_weight = sum(r["ModelWeight"] for r in rows)
             if abs(model_weight - 1.0) > 1.0e-9:
                 weight_defects.append({"Feature": feature_id, "Defect": "model weights do not sum to 1", "Sum": model_weight})
+            # A virtual (mirror-formed) corner on a natural truncation plane carries half the
+            # model weight (HalfByMirror, boundary-cut DESIGN 2.2.3): the half-energy identity.
+            half_by_mirror = feature.get("Mirror", {}).get("Status") in ("Modelled", "Missing")
             for r in rows:
-                if abs(r["Weight"] - r["ModelWeight"]) > 1.0e-12 or r["CouponDepth"] != 0.0:
-                    weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "vertex weight is not the model weight", "Weight": r["Weight"], "ModelWeight": r["ModelWeight"]})
+                expected_vertex = r["ModelWeight"] * (0.5 if half_by_mirror else 1.0)
+                if abs(r["Weight"] - expected_vertex) > 1.0e-12 or r["CouponDepth"] != 0.0:
+                    weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "vertex weight is not the model weight" + (" / 2 (HalfByMirror)" if half_by_mirror else ""), "Weight": r["Weight"], "ModelWeight": r["ModelWeight"]})
         else:
             coverage_defects.append({"Feature": feature_id, "Type": feature["Type"], "Defect": "type without a patch construction"})
     matched_length = sum(float(features[f]["Length"]) for f in matched)
@@ -632,11 +646,30 @@ def patch_gates(identification, patches, radius):
             {"Defects": len(coverage_defects), "Examples": coverage_defects[:10], "CoveredLength": covered_length, "MatchedLength": matched_length, "AssignedLength": assigned_length, "CoveredFractionOfAssigned": covered_length / assigned_length if assigned_length else None, "Basis": "every portion of a matched longitudinal feature is one quadrature interval; a vertex / cluster feature is one patch"},
         )
     )
-    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2)); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster"}))
+    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2), plus Diagnostics.CornerArmTrim.Cells, decision 394 F1); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster"}))
+    # The mirror band (boundary-cut DESIGN 2.2; decisions 442 / 454): the planes, the images,
+    # the features continued through a plane and the mirror-formed ones, listed apart from
+    # the library gaps so the coupon lane can decide per key (decision 315 class) whether a
+    # window-cut-created geometry is built.
+    band = identification.get("Diagnostics", {}).get("MirrorBand", {})
+    exclusions = identification.get("Diagnostics", {}).get("DomainBoundaryExclusions", {})
+    mirror_summary = {
+        "Planes": [{"Attribute": p.get("Attribute"), "Status": p.get("Status"), "Faces": p.get("Faces")} for p in band.get("Planes", [])],
+        "ImageSegments": band.get("ImageSegments", 0),
+        "ContinuedFeatures": band.get("ContinuedFeatures", 0),
+        "MirrorFormedFeatures": band.get("MirrorFormedFeatures", []),
+        "UnmergedFeatures": [{k: v for k, v in u.items() if k != "Key"} for u in band.get("UnmergedFeatures", [])],
+        "MirroredPatches": exclusions.get("Mirrored", {}).get("Count", 0),
+        "MirroredPoints": exclusions.get("Mirrored", {}).get("Points", 0),
+        "HalfVertices": exclusions.get("Mirrored", {}).get("HalfVertices", 0),
+        "DomainBoundaryPatches": exclusions.get("Count", 0),
+        "DomainBoundaryRawPortionLength": exclusions.get("RawPortions", {}).get("Length", 0.0),
+    }
     summary = {
         "Patches": len(patches),
         "PatchesByTopology": dict(Counter(r["Topology"] for r in patches)),
         "PatchedFeatures": len(patched),
+        "MirrorBand": mirror_summary,
         "MatchedFeatures": len(matched),
         "CoveredLength": covered_length,
         "MatchedLength": matched_length,
@@ -849,8 +882,17 @@ def run_audit(args):
                 interval = e.get("Interval") if isinstance(e, dict) else None
                 if interval and len(interval) == 2:
                     cluster_interval_length += (float(interval[1]) - float(interval[0])) * int(r["Count"])
+    # Missing keys formed with a mirror image (boundary-cut DESIGN 2.2.2, MirrorFormed: true):
+    # listed apart so the discovery can decide per key whether a window-cut-created
+    # geometry is built (decision 315 class; decision 454 routing).
+    mirror_formed_missing = [
+        {"Topology": r["Topology"], "Hash": r.get("Hash"), "Instances": r.get("Instances"), "TotalEdgeLength": r.get("TotalEdgeLength"), "Geometry": r.get("Geometry")}
+        for r in manifest["Requirements"]
+        if r.get("MirrorFormed") and r.get("Status") == "Missing"
+    ]
     gap = {
         "Unit": manifest.get("LengthUnit", "mesh"),
+        "MirrorFormedMissingKeys": mirror_formed_missing,
         "ClusterIntervalLength": cluster_interval_length,
         "ClusterIntervalMeaning": "sum of the cluster records' edge intervals (the coupon description clipped to the matching ball), not an assignment of perimeter segments",
         "TotalTargetedLength": length,
