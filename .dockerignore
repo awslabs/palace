@@ -1,9 +1,8 @@
 # Spack checkout
 spack
 
-# Host links to builtin recipes (spack/spack#51505); the image creates its own
+# Host link to the builtin MFEM recipe (spack/spack#51505); the image creates its own
 spack_repo/local/packages/mfem
-spack_repo/local/packages/libceed
 
 # Build artifacts
 build*

@@ -193,6 +193,4 @@ runs:
         # Workaround for https://github.com/spack/spack/issues/51505.
         # -f so a runner that did not fully clean spack_repo/local/packages from
         # a prior job does not abort here on an existing link.
-        for pkg in mfem libceed; do
-          ln -sf "$(spack location --repo builtin)"/packages/$pkg "$PALACE_DIR"/spack_repo/local/packages/
-        done
+        ln -sf "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/

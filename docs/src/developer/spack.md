@@ -252,21 +252,19 @@ There's currently a known issue in Spack that affects packages using patches
 when they come from non-builtin repositories (see the [bug
 report](https://github.com/spack/spack/issues/51505)). Since *Palace* uses
 patches, you'll run into this problem. The workaround is straightforward but a
-bit inelegant: you need to add a copy of the packages *Palace* patches (MFEM and
-libCEED) to your local repository as well.
+bit inelegant: you need to add a copy of the MFEM package to your local
+repository as well.
 
-Rather than maintaining duplicate copies of these recipes, you can create
-symbolic links from Spack's built-in packages to your local repository:
+Rather than maintaining a duplicate copy of the MFEM recipe, you can create a
+symbolic link from Spack's built-in MFEM package to your local repository:
 
 ```sh
-for pkg in mfem libceed; do
-  ln -s "$(spack location --repo builtin)"/packages/$pkg ~/repos/palace/spack_repo/local/packages/
-done
+ln -s "$(spack location --repo builtin)"/packages/mfem ~/repos/palace/spack_repo/local/packages/
 ```
 
-This uses Spack's `location` subcommand to find where the built-in repository
-lives, then creates symlinks to the package directories. To verify that the
-symlinks were created correctly, run:
+This command uses Spack's `location` subcommand to find where the built-in
+repository lives, then creates a symlink to the MFEM package directory. To
+verify that the symlink was created correctly, run:
 
 ```sh
 spack info local.mfem | head -n 4
