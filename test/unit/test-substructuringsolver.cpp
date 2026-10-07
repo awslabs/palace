@@ -2417,16 +2417,24 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel]")
 {
-  // S_E(ω) from the partial factorization of the real form of the environment operator
-  // against a dense condensation of the same operator, and the substructured solve against
-  // the full system: PEC in the region, a lumped port in the environment, a second-order
-  // absorbing boundary on both sides, an impedance sheet crossing Γ, a lossy dielectric
-  // region and a conducting environment. A second frequency reuses the analyses.
-  // Hex meshes with an impedance sheet, and tet meshes with a non-planar interface (where
-  // second-order Nédélec face DOFs shared between ranks combine with signs).
+  // S_E(ω) from the partial factorization of the environment operator against a dense
+  // condensation of the same operator, and the substructured solve against the full
+  // system: PEC in the region, a lumped port in the environment, a second-order absorbing
+  // boundary on both sides, an impedance sheet crossing Γ, a lossy dielectric region and a
+  // conducting environment. A second frequency reuses the analyses. Hex meshes with an
+  // impedance sheet, conforming and nonconforming (hanging nodes on Γ and on the sheet from
+  // either side), and tet meshes with a non-planar interface (where second-order Nédélec
+  // face DOFs shared between ranks combine with signs).
+  enum class MeshKind
+  {
+    HEX,
+    NC_HEX,
+    TET
+  };
+  const auto kind = GENERATE(MeshKind::HEX, MeshKind::NC_HEX, MeshKind::TET);
   const int order = GENERATE(1, 2);
-  const bool tet = GENERATE(false, true);
-  CAPTURE(order, tet);
+  const bool tet = (kind == MeshKind::TET);
+  CAPTURE(order, static_cast<int>(kind));
   json config = {
       {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
       {"Model", {{"Mesh", "test.msh"}}},
@@ -2456,8 +2464,11 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   RegionDesign design;
   design.sheet = true;
   std::vector<std::unique_ptr<Mesh>> mesh;
-  mesh.push_back(
-      std::make_unique<Mesh>(tet ? MakeWavyTetSplit(3) : MakeGradedSplit(2, 3, 2, design)));
+  mesh.push_back(std::make_unique<Mesh>(tet ? MakeWavyTetSplit(3)
+                                        : (kind == MeshKind::NC_HEX)
+                                            ? MakeRefinedGradedSplit(2, 3, 2, design)
+                                            : MakeGradedSplit(2, 3, 2, design)));
+  REQUIRE(mesh.back()->Get().Nonconforming() == (kind == MeshKind::NC_HEX));
   SpaceOperator space_op(iodata, mesh);
   const auto &fes = space_op.GetNDSpace().Get();
   MPI_Comm comm = fes.GetComm();
