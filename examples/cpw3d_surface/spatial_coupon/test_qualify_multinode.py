@@ -363,3 +363,123 @@ class ReplayStoredPlansTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DenseTwinPlanTest(unittest.TestCase):
+    """Decision 457 (4): the (F) dense twins as one run_stages plan on the minimum node count
+    (dense_twin_plan on the committed dense-twin model; the pair-5 twins reproduce themselves)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import dense_twin_plan
+        cls.dense_twin_plan = dense_twin_plan
+        cls.model = model_with_scaling(estimate_stages.COST_MODEL)
+        cls.dense_model = json.loads(dense_twin_plan.DENSE_TWIN_MODEL.read_text())
+        cls.profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
+
+    def test_dense_twin_model_reproduces_the_measured_pair5_twins(self):
+        self.assertEqual(sorted(self.dense_model["Orders"]), ["p4", "p5"])
+        for name, run in self.dense_model["Runs"].items():
+            rates = self.dense_model["Orders"][f"p{run['Order']}"]
+            self.assertGreaterEqual(rates["PalaceGBPerMillionH1"] * run["H1"] / 1e6, run["PalacePeakGB"] - 1e-6, name)
+            self.assertGreaterEqual((rates["NonSolveSecondsPerMillionH1"] + rates["SolveSecondsPerMillionH1PerTrace"] * run["Traces"]) * run["H1"] / 1e6,
+                                    run["PalaceTotalSeconds"] - 1e-6, name)
+            self.assertEqual(run["Traces"], 5)
+        self.assertEqual(self.dense_model["Executable"], "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88")
+
+    def test_plan_puts_the_runs_on_the_minimum_node_count_and_pins_the_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mesh = root / "identity.msh"
+            mesh.write_text("mesh\n")
+            configs = {}
+            for name, order in (("fabricated-p4", 4), ("fabricated-p5", 5)):
+                traces = []
+                for k in range(5):
+                    trace = root / f"trace-{k}.csv"
+                    trace.write_text(f"{k}\n")
+                    traces.append({"Index": 100 + k, "DataFile": str(trace)})
+                config = {"Problem": {"Type": "Electrostatic", "Output": str(root / name / "postpro")}, "Model": {"Mesh": str(mesh)},
+                          "Solver": {"Order": order}, "Boundaries": {"PrescribedPotential": traces}}
+                (root / name).mkdir()
+                (root / name / "config.json").write_text(json.dumps(config))
+                configs[name] = str(root / name / "config.json")
+            (root / "dense-traces.json").write_text(json.dumps({"Version": 1, "Model": "le", "Configs": configs, "Traces": []}))
+            plan, script = self.dense_twin_plan.plan_dense_twins(
+                dense_dir=root, runs=["fabricated-p4", "fabricated-p5"], counts=LOOP_END_COUNTS, binary_sha256="0" * 64,
+                remote_root="/r", job_dir="/r/dense", model=self.model, dense_model=self.dense_model, profile={**self.profile, "MaximumNodesPerJob": 8},
+                case_id="le")
+        runs = plan["Estimate"]["Runs"]
+        # The loop-end fab p4 twin (887 GB Palace) fits one node; the p5 twin (1,702 GB) does not:
+        # the job runs on the p5 twin's node count, every run scaled to it.
+        self.assertEqual(runs["fabricated-p4"]["NodePlan"]["NodesRequired"], 1)
+        self.assertGreater(runs["fabricated-p5"]["NodePlan"]["NodesRequired"], 1)
+        self.assertEqual(plan["Nodes"], runs["fabricated-p5"]["NodePlan"]["NodesRequired"])
+        self.assertEqual(plan["Ranks"], 192 * plan["Nodes"])
+        self.assertEqual(plan["Instance"]["Nodes"], plan["Nodes"])
+        self.assertLessEqual(plan["Estimate"]["PerNodeUsedGiB"], 0.6 * plan["Instance"]["MemoryGiB"])
+        self.assertEqual([stage["Name"] for stage in plan["Stages"]], ["fabricated-p4-dense", "fabricated-p5-dense"])
+        for stage in plan["Stages"]:
+            self.assertEqual(stage["Environment"], {})   # an ordinary Palace run
+            self.assertGreaterEqual(stage["CapSeconds"], stage["MinimumSeconds"])
+        self.assertEqual(len(plan["PinnedSHA256"]), 2 + 1 + 5)   # two configs, the mesh, the five shared traces
+        self.assertEqual(plan["UnpinnedInputs"], [])
+        self.assertIn(f"#PBS -l select={plan['Nodes']}:ncpus=192:mpiprocs=192\n", script)
+        self.assertIn("D=/r/dense\n", script)
+        with self.assertRaisesRegex(ValueError, "below"):
+            self.dense_twin_plan.plan_dense_twins(dense_dir=root, runs=["fabricated-p5"], counts=LOOP_END_COUNTS, binary_sha256="0" * 64,
+                                                  remote_root="/r", job_dir="/r/dense", model=self.model, dense_model=self.dense_model,
+                                                  profile={**self.profile, "MaximumNodesPerJob": 8}, nodes=1)
+        with self.assertRaisesRegex(ValueError, "no measured order"):
+            self.dense_twin_plan.estimate_run(self.model, self.dense_model, LOOP_END_COUNTS, 3, 5, profile=self.profile)
+
+
+class FitNodeScalingTest(unittest.TestCase):
+    """fit_node_scaling: the replicated fraction and the time exponents from a one-node status
+    set and a two-node runner status (synthetic figures with a known answer)."""
+
+    def test_fractions_and_exponents(self):
+        import fit_node_scaling
+        gib = 2**30
+        timing = [{"Index": i, "Iterations": 20, "SolveSeconds": 30.0, "TotalSeconds": 40.0} for i in range(10)]
+        report = ("Elapsed Time Report (s)           Min.        Max.        Avg.\n"
+                  "==============================================================\n"
+                  "Initialization                   1.0       1.0       {init}\n"
+                  "  Archive Reduction              1.0       1.0       {red}\n"
+                  "--------------------------------------------------------------\n"
+                  "Total                           {tot}     {tot}     {tot}\n")
+        one = {"PBSJobID": "1.h", "Stages": [
+            {"Name": "c-p4-worker-block1", "State": "complete", "WallSeconds": 500.0, "NodePeakUsedBytesSampled": 200 * gib,
+             "Parsed": {"SourceTiming": timing, "PalacePeakMemory": {"Total": "150G", "Max": "150G"}}},
+            {"Name": "c-p4-reducer", "State": "complete", "WallSeconds": 100.0, "NodePeakUsedBytesSampled": 300 * gib,
+             "Parsed": {"ElapsedTimeReport": report.format(init=40.0, red=60.0, tot=100.0), "PalacePeakMemory": {"Total": "250G", "Max": "250G"}}}]}
+        two_timing = [{**t, "TotalSeconds": 25.0, "SolveSeconds": 18.0} for t in timing]
+        two = {"PBSJobID": "2.h", "Nodes": ["h1", "h2"], "Stages": [
+            {"Name": "c-p4-worker-block1", "State": "complete", "WallSeconds": 330.0,
+             "NodePeakUsedBytesSampled": 120 * gib, "NodePeakUsedBytesSampledPerNode": {"h1": 120 * gib, "h2": 110 * gib},
+             "Parsed": {"SourceTiming": two_timing, "PalacePeakMemory": {"Total": "160G", "Max": "80G"}}},
+            {"Name": "c-p4-reducer", "State": "complete", "WallSeconds": 70.0,
+             "NodePeakUsedBytesSampled": 165 * gib, "NodePeakUsedBytesSampledPerNode": {"h1": 160 * gib, "h2": 165 * gib},
+             "Parsed": {"ElapsedTimeReport": report.format(init=35.0, red=35.0, tot=70.0), "PalacePeakMemory": {"Total": "260G", "Max": "130G"}}}]}
+        block = fit_node_scaling.fit([one], two)
+        # Worker: 120 of 200 GiB per node -> r = 2 x 0.6 - 1 = 0.2; reducer 165 of 300 -> 0.1.
+        self.assertAlmostEqual(block["Memory"]["Worker"]["ReplicatedFraction"], 0.2)
+        self.assertAlmostEqual(block["Memory"]["Reducer"]["ReplicatedFraction"], 0.1)
+        self.assertEqual(block["Memory"]["LocalEdge"]["ReplicatedFraction"], 0.2)   # carried from Worker without an ordinary stage
+        self.assertIn("carried", block["Memory"]["LocalEdge"]["Rule"])
+        # Per-source 40 -> 25 s: speedup 1.6; non-source 100 -> 80 s: 1.25; reducer setup 40 -> 35, reduction 60 -> 35.
+        self.assertAlmostEqual(block["Time"]["WorkerPerSource"]["Speedup"], 1.6)
+        self.assertAlmostEqual(block["Time"]["WorkerPerSource"]["Exponent"], 0.678, places=3)
+        self.assertAlmostEqual(block["Time"]["WorkerNonSource"]["Speedup"], 1.25)
+        self.assertAlmostEqual(block["Time"]["ReducerSetup"]["Speedup"], 40.0 / 35.0, places=3)
+        self.assertAlmostEqual(block["Time"]["ReducerReduction"]["Speedup"], 60.0 / 35.0, places=3)
+        self.assertEqual(block["Time"]["LocalEdge"], {"Speedup": 1.0, "Exponent": 0.0, "Rule": "not measured: no speedup assumed"})
+        self.assertEqual(block["MeasuredNodes"], 2)
+        # Better than even division is planned as even (r clamped at 0); the raw value is kept.
+        clamped = fit_node_scaling.replicated_fraction(200 * gib, 90 * gib)
+        self.assertEqual(clamped["ReplicatedFraction"], 0.0)
+        self.assertLess(clamped["Raw"], 0.0)
+        # The block drives estimate_stages: per-node figures and scaled times follow the rules.
+        model = {**estimate_stages.load_cost_model(estimate_stages.DEVICE_COST_MODEL), "NodeScaling": block}
+        self.assertAlmostEqual(estimate_stages.per_node_used_gib(model, "Reducer", 1000.0, 4), 1000.0 * (0.1 + 0.9 / 4))
+        self.assertAlmostEqual(estimate_stages.scaled_seconds(model, "WorkerPerSource", 100.0, 2), 100.0 / 1.6, places=1)   # the exponent is recorded to 4 decimals
