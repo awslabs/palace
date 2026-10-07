@@ -3437,6 +3437,55 @@ refit 7f03 still does not fit one 6 h job (22,681 s at 2.0x + margin) and the sp
 recorded N = 6 (blocks 0 / 45 x 5). Tests: `test_refit_cost_model` (RecordedRefitTest on the committed
 records), `JobSplitTest` refit-model statement.
 
+## Multi-node qualification (decisions 456 / 457 / 458)
+
+**Why.** The loop-end fab coupon 1b26671c9080 (846 sources, 129.7 M H1 at p4) does not fit the one-node
+recipe: its p4 Gram reducer keeps every archived potential resident (N x H1 x 8 bytes, rank-local by
+construction in `PostprocessArchivedResponseMatrix`) and the device cost model (`cost-model-device-20260922.json`)
+put it at 2,988 GiB node used against the 1,485 GiB r8g node; the time gate failed at the same model's ~3x
+pessimism. Long-cluster coupons are what arbitrary geometries produce, so the scalable recipe is a generality
+item (decision 456 (b)).
+
+**Planning (`estimate_stages.plan_nodes` / `scale_to_nodes`, `job_split.plan_split(nodes=...)`,
+`build_plan.multi_node_fields`, `qualify_library.node_assignment`).** Every stage keeps the one-node rules of
+record when they admit it (NodesRequired 1); otherwise NodesRequired is the minimum N in 2..`MaximumNodesPerJob`
+(cluster profile; 4 = the 768-rank runs of record) whose estimated PER-NODE node-used peak fits an instance's
+admission guard `MemoryFitFraction x MemoryGiB` (instances in profile order per N: m8g x 2, r8g x 2, m8g x 3, ...),
+with per-node = one-node x (ReplicatedFraction + (1 - ReplicatedFraction) / N) from the cost model's `NodeScaling`
+calibration (measured at 1 vs 2 nodes on the stored pair-5 fab coupon, `fit_node_scaling.py`); above the cap the
+coupon fails closed. The node count is a per-STAGE property shared by a stage's worker blocks and reducer (the
+archive is per rank), so the main stages take the largest count any of them requires and the control / local-edge
+group its own; when the two differ the fixed group is a separate job (`ControlsJob` "separate", `NodesRequired`
+recorded). Every time part scales as T(1) / N^exponent with the measured 1 -> 2 node speedups (capped at 1). The
+job plans carry `Nodes`, `RanksPerNode`, `Ranks` = N x 192, `MPIExecArguments` (`--hostfile $PBS_NODEFILE --map-by
+ppr:192:node`, the recipe of the stage-1 references and the decision-69 runs), `NodeGuard`, `PBSDsh`; the job
+script selects `select=N:ncpus=192:mpiprocs=192` on the EFA subnet. `run_stages.py` verifies the node count,
+checks the conflicting processes and `MemAvailable >= MinimumMemAvailableBytes` on EVERY node (pbsdsh by task
+slot index - PBS 23.06 `-n` counts slots, not vnodes, and routes task output to the job's stdout, so commands
+write files on the shared job directory and the landed hostname is verified; ssh fallback), samples every node's
+memory (`--node-sampler`) and records per-stage per-node peaks. A coupon whose every stage fits one node is
+planned byte-identically to the recorded campaigns: `replay_plans.py` rebuilds the plans of record of a stored run
+under the kept model and compares them byte for byte (`test_qualify_multinode.ReplayStoredPlansTest`).
+
+**Cost model Version 3 (`refit_cost_model.refit_measured`, `qualify/cost-model.json`; records
+`qualify/stage2-20261006/`, 30 coupons / 90 jobs / 183 stages of coupons-a, coupons-bc and pair 5).** The mean
+rates fit the measured walls within a few percent; the previous ~3x pessimism was the policy (2.0x PCG x 1.35
+margin), not the rates: the coupon-MEAN PCG spread is <= 1.21x the model mean and the runner overhead <= 0.7 %
+of the stage walls. Version 3 = mean rates + a per-stage `SafetyFactor` from the residuals (the largest measured
+wall / mean-rate estimate at the coupon's own PCG count; estimate_stages multiplies the stage's times by it),
+memory peaks the largest scaled measurement, the reducer node-used line refit on the 60 measured reducers
+(66.0 + (1.243 + 0.01177 x sources) x H1 / 1e6 GiB, safety 1.164 - the per-source term is the 8 bytes per DOF
+per source of the resident potentials), `PCGFactors` [1.0, 1.3, 1.5], margin 1.10, preflight 60 s (`PolicyRule`
+states the measurements). `CapCheck`: no measured stage of record above its new cap (minimum margin 2.07); the
+pessimism of both models is stated (`SelfCheck.Pessimism`: this model 1.71-2.02x, the device model 2.91-3.47x).
+The device model is kept byte for byte and bound under `Previous`; `estimate_stages.DEVICE_COST_MODEL` names it
+for the tests of the stage-2 plans of record.
+
+**Dense twins (`dense_twin_plan.py`, `dense-twin-model.json`).** The (F) dense held-out traces of a coupon as one
+`run_stages` plan (one ordinary stage per run, configs / mesh / traces pinned, caps from the dense-twin model
+calibrated on the pair-5 fab / thin p4 / p5 twins) on the minimum node count of the `LocalEdge` kind, with the
+job script of `build_plan` - the fab p5 dense twin of the loop end (1,702 GB Palace) is a multi-node job.
+
 ## Preflight
 
 ```sh
