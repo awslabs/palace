@@ -298,10 +298,34 @@ class NodePlanTest(unittest.TestCase):
         whole = build_plan.build_plan(**{**common, "estimate": same_scaled}, nodes=nodes["Main"])
         self.assertEqual((whole["Nodes"], whole["Ranks"]), (nodes["Main"], 192 * nodes["Main"]))
         self.assertEqual(whole["Purpose"], f"test; {build_plan.MULTI_NODE_REDUCTION_NOTE}")   # decision 468 (2): the single-job path too
-        self.assertIn("<= 8e-6 of the interface's largest entry, per-Type sums <= 3e-6", build_plan.MULTI_NODE_REDUCTION_NOTE)
-        self.assertIn("decisions 466 / 468", build_plan.MULTI_NODE_REDUCTION_NOTE)
+        self.assertIn("<= 8e-6 per interface of the column maximum, per-Type <= 6e-6", build_plan.MULTI_NODE_REDUCTION_NOTE)
+        self.assertIn("up to 4 nodes; decisions 466 / 468 / 482", build_plan.MULTI_NODE_REDUCTION_NOTE)
         self.assertEqual(whole["Instance"]["PerNodeUsedGiBEstimate"],
                          max(estimate_stages.stage_per_node_used_gib(stage) for stage in same_scaled["Stages"].values()))
+
+    def test_multi_node_reduction_note_is_the_measured_floor(self):
+        """Decision 490: the note carries the MEASURED cross-partition floor of record - the pair-5 2-node
+        figures (decisions 466 / 468) and the loop end's MS 5.3e-6 per Type at 4 vs 1 nodes (decision 482,
+        cross-partition-floor.json) - as a bound above every measurement, with its provenance; the former
+        "per-Type sums <= 3e-6" sat below the 4-node measurement."""
+        measurements = build_plan.MULTI_NODE_REDUCTION_MEASUREMENTS
+        self.assertEqual([item["Nodes"] for item in measurements], [2, 4])
+        self.assertEqual(build_plan.MULTI_NODE_REDUCTION_MAX_NODES, 4)
+        per_type = max(item["PerType"] for item in measurements)
+        per_interface = max(item["PerInterfaceOfColumnMaximum"] for item in measurements if item["PerInterfaceOfColumnMaximum"] is not None)
+        self.assertAlmostEqual(per_type, 5.3e-6)
+        self.assertAlmostEqual(per_interface, 7.1e-6)
+        self.assertLessEqual(per_type, 6e-6)
+        self.assertLessEqual(per_interface, 8e-6)
+        self.assertGreater(per_type, 3e-6)   # the superseded per-Type figure
+        self.assertNotIn("3e-6", build_plan.MULTI_NODE_REDUCTION_NOTE)
+        for item in measurements:
+            self.assertTrue(item["Coupon"] and item["Quantity"] and item["Decisions"])
+        floor = LOOP_END_F / "cross-partition-floor.json"
+        if floor.is_file():
+            recorded = json.loads(floor.read_text())["MaxAbsPerType"]
+            self.assertAlmostEqual(max(recorded.values()), measurements[1]["PerType"], delta=5e-8)
+            self.assertLessEqual(max(recorded.values()), 6e-6)
 
 
 class SpeedupCreditTest(unittest.TestCase):

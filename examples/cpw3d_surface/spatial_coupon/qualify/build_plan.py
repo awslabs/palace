@@ -68,12 +68,24 @@ FROZEN_BINARY_RULE = ("the frozen palace-archive-estimate-<sha256>.bin under the
 
 
 GIB = 1024 ** 3
-# Decisions 466 / 468: the sentence every multi-node plan's Purpose and the library record of a
-# multi-node-qualified coupon carry (measured on the pair-5 fab coupon at 1 vs 2 nodes on the
-# library's column Q_ij (J) of the whole-interface group: interface 4 7.1e-6 of its largest
-# entry, the MA per-Type sum 2.8e-6; decision 468 corrected the 466 figures taken on Q_total_ij).
-MULTI_NODE_REDUCTION_NOTE = ("multi-node reduction: near-edge interface energies reproduce a one-node reduction to <= 8e-6 of the "
-                             "interface's largest entry, per-Type sums <= 3e-6 (partition dependence, decisions 466 / 468)")
+# Decisions 466 / 468 / 482 / 490: the sentence every multi-node plan's Purpose and the library
+# record of a multi-node-qualified coupon carry, the MEASURED cross-partition floor of record:
+# the pair-5 fab coupon at 1 vs 2 nodes on the library's column Q_ij (J) of the whole-interface
+# group (interface 4 7.1e-6 of its largest entry, the MA per-Type sum 2.8e-6; decision 468
+# corrected the 466 figures taken on Q_total_ij) and the loop-end fab coupon at 4 vs 1 nodes
+# (the (F) identity twin's per-Type within-R energies: MS 5.3e-6, MA 3.1e-6, SA 1.1e-7, Domain 0;
+# cross-partition-floor.json of decision 482).  The bound is the largest measured figure per
+# quantity up to the largest measured node count; MULTI_NODE_REDUCTION_MEASUREMENTS is its provenance.
+MULTI_NODE_REDUCTION_MEASUREMENTS = (
+    {"Nodes": 2, "Coupon": "pair-5 fab (spatial-3-edge, PBS 57713 vs the 1-node run of record)", "Quantity": "column Q_ij (J) of the "
+     "whole-interface group", "PerInterfaceOfColumnMaximum": 7.1e-6, "PerType": 2.8e-6, "Decisions": "466 / 468"},
+    {"Nodes": 4, "Coupon": "loop-end fab spatial-38-edge-f0461584cccf (the (F) identity twin PBS 58012 at 1 node vs 58043 at 4 nodes)",
+     "Quantity": "per-Type within-R energies of the dense traces", "PerInterfaceOfColumnMaximum": None,
+     "PerType": 5.3e-6, "Decisions": "482"})
+MULTI_NODE_REDUCTION_MAX_NODES = max(item["Nodes"] for item in MULTI_NODE_REDUCTION_MEASUREMENTS)
+MULTI_NODE_REDUCTION_NOTE = ("multi-node reduction: near-edge interface energies reproduce a one-node reduction to <= 8e-6 per interface "
+                             "of the column maximum, per-Type <= 6e-6 (the measured partition dependence up to "
+                             f"{MULTI_NODE_REDUCTION_MAX_NODES} nodes; decisions 466 / 468 / 482)")
 
 
 def largest_node_gib(profile):
