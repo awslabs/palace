@@ -34,6 +34,7 @@
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
+#include "models/surfaceresponsemirror.hpp"
 #include "utils/communication.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/enum_string.hpp"
@@ -7711,6 +7712,22 @@ LibrarySignatureKeys(const ProcessLibrary &library,
 // (non-planar, non-manifold, undetermined process side, cross-layer zones) also remove
 // those segments from the legacy classification. The manifest records are written only
 // when a requirements sink is given (preflight).
+// Mirror band (boundary-cut DESIGN 2.2; decisions 442 / 454): the truncation planes fitted
+// on the mesh, the extension of the input across the Natural ones and the merged result are
+// returned through `mirror` (planes, extension, MirrorBand record); `framed_segments` gains
+// the frames of the image segments (the real frames reflected) so that the matching pass
+// and the placement can frame image portions.
+struct MirrorBandResult
+{
+  std::vector<MirrorPlane> planes;
+  MirrorExtension extension;
+  nlohmann::json record;
+  bool extended = false;
+  // The frames of the image segments (geometry_index = the image segment index): the real
+  // frames reflected, for the matching pass and the pair placement; never perimeter.
+  std::vector<EdgeSegment3D> image_frames;
+};
+
 IdentificationResult RunGeometryIdentification(
     MPI_Comm comm, const MetalEdgeGeometry &geometry,
     const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
@@ -7718,7 +7735,9 @@ IdentificationResult RunGeometryIdentification(
     AutomaticResponseRequirements *requirements, bool frame_normal_configured,
     const std::vector<ResponseCorrectionData::SpanCapAllowanceData> &span_cap_allowances,
     std::map<int, FeatureCurvatureMatch> *curved_matches = nullptr,
-    std::map<int, FeatureCornerMatch> *corner_matches = nullptr)
+    std::map<int, FeatureCornerMatch> *corner_matches = nullptr,
+    const mfem::ParMesh *mesh = nullptr, const ResponseCorrectionData *request = nullptr,
+    MirrorBandResult *mirror = nullptr)
 {
   const bool root = Mpi::Root(comm);
   // A one-sided edge whose face is not parallel to the process plane (the area-weighted
@@ -7836,10 +7855,41 @@ IdentificationResult RunGeometryIdentification(
     input.vertices[v].on_truncation_boundary = geometry.vertices[v].on_truncation_boundary;
     input.vertices[v].on_port_boundary = geometry.vertices[v].on_port_boundary;
   }
+  // Mirror band (boundary-cut DESIGN 2.2): the truncation planes of the simulation-cut
+  // attributes (collective; identical on every rank) and the extension of the input across
+  // the Natural ones (a pure function of (input, planes): every rank computes the same).
+  MirrorBandResult local_mirror;
+  MirrorBandResult &mirror_band = mirror ? *mirror : local_mirror;
+  const bool mirror_enabled = mesh && request &&
+                              request->domain_boundary_mirror ==
+                                  ResponseCorrectionData::DomainBoundaryMirror::NATURAL;
+  if (mesh)
+  {
+    std::set<int> truncation_attributes;
+    for (const auto &segment : geometry.segments)
+    {
+      if (segment.type == MetalEdgeSegmentType::TRUNCATION)
+      {
+        truncation_attributes.insert(segment.truncation_attributes.begin(),
+                                     segment.truncation_attributes.end());
+      }
+    }
+    mirror_band.planes = FitTruncationPlanes(
+        *mesh, truncation_attributes, geometry.layer_normal, library.matching_radius);
+  }
+  const double band_over_radius =
+      request ? request->domain_boundary_band_over_radius : kMirrorBandOverRadius;
+  if (mirror_enabled)
+  {
+    mirror_band.extension = ExtendIdentificationInputAcrossMirrorPlanes(
+        input, mirror_band.planes, band_over_radius);
+    mirror_band.extended = mirror_band.extension.image_segments > 0;
+  }
   // The identification runs on the root only (the global metal faces exist there alone;
   // decision 82 infrastructure) and the result is broadcast: every rank builds the same
   // patches from the same feature list, no rank replicates the identification state.
   IdentificationResult result;
+  MirrorMergeSummary mirror_summary;
   {
     std::string buffer;
     if (root)
@@ -7855,6 +7905,26 @@ IdentificationResult RunGeometryIdentification(
       // Stage counts, wall times and progress of the identification.
       input.log = [](const std::string &line) { Mpi::Print("{}", line); };
       result = IdentifyMetalPerimeter(input);
+      if (mirror_band.extended)
+      {
+        // The extended run (the real faces reflected into the band on the root) merged
+        // onto the unextended one: real Ids / portions / order wherever no new feature
+        // formed (DESIGN 2.2.2 (a)-(c)).
+        auto extension = ExtendIdentificationInputAcrossMirrorPlanes(
+            input, mirror_band.planes, band_over_radius);
+        extension.input.log = input.log;
+        const IdentificationResult extended = IdentifyMetalPerimeter(extension.input);
+        IdentificationResult merged;
+        mirror_summary = MergeMirrorIdentification(result, extended, extension,
+                                                   mirror_band.planes, merged);
+        result = std::move(merged);
+        Mpi::Print(
+            "Mirror band (boundary-cut DESIGN 2.2): {:d} image segments on {:d} "
+            "plane(s); {:d} feature(s) continued, {:d} mirror-formed, {:d} image-only\n",
+            extension.image_segments, static_cast<int>(mirror_band.planes.size()),
+            mirror_summary.continued_features, mirror_summary.mirror_formed_features,
+            mirror_summary.image_only_features);
+      }
       input.faces.clear();
       input.faces.shrink_to_fit();
       buffer = SerializeIdentificationResult(result);
@@ -7869,6 +7939,60 @@ IdentificationResult RunGeometryIdentification(
     if (!root)
     {
       result = DeserializeIdentificationResult(buffer);
+    }
+    int counts[3] = {mirror_summary.continued_features,
+                     mirror_summary.mirror_formed_features,
+                     mirror_summary.image_only_features};
+    Mpi::Broadcast(3, counts, 0, comm);
+    mirror_summary.continued_features = counts[0];
+    mirror_summary.mirror_formed_features = counts[1];
+    mirror_summary.image_only_features = counts[2];
+    {
+      std::string unmerged = root ? mirror_summary.unmerged_features.dump() : std::string();
+      std::int64_t unmerged_size = static_cast<std::int64_t>(unmerged.size());
+      Mpi::Broadcast(1, &unmerged_size, 0, comm);
+      if (!root)
+      {
+        unmerged.resize(static_cast<std::size_t>(unmerged_size));
+      }
+      Mpi::BroadcastLarge(unmerged_size, unmerged.data(), 0, comm);
+      mirror_summary.unmerged_features = nlohmann::json::parse(unmerged);
+    }
+  }
+  // The frames of the image segments (the real frames reflected: gap direction reflected,
+  // process normal unchanged), appended after the real ones so that image portions can be
+  // framed by the matching pass and the pair / stack placement (never placed themselves).
+  if (mirror_band.extended)
+  {
+    const auto &extension = mirror_band.extension;
+    std::map<std::size_t, const EdgeSegment3D *> real_frames;
+    for (const auto &segment : framed_segments)
+    {
+      real_frames.emplace(segment.geometry_index, &segment);
+    }
+    std::vector<EdgeSegment3D> &image_frames = mirror_band.image_frames;
+    image_frames.clear();
+    for (std::size_t s = extension.real_segments; s < extension.input.segments.size(); s++)
+    {
+      const auto &image = extension.input.segments[s];
+      const auto source = real_frames.find(static_cast<std::size_t>(image.image_of));
+      if (source == real_frames.end())
+      {
+        continue;
+      }
+      EdgeSegment3D frame = *source->second;
+      frame.geometry_index = s;
+      frame.p0 = image.p0;
+      frame.p1 = image.p1;
+      frame.tangent = Normalize(Subtract(image.p1, image.p0));
+      frame.axis_u = image.gap_direction;
+      frame.axis_v = image.process_normal;
+      frame.length = Norm(Subtract(image.p1, image.p0));
+      image_frames.push_back(std::move(frame));
+    }
+    for (const auto &segment : image_frames)
+    {
+      framed.emplace(segment.geometry_index, &segment);
     }
   }
 
@@ -8076,6 +8200,42 @@ IdentificationResult RunGeometryIdentification(
       }
     }
   }
+  // Mirror-formed features (DESIGN 2.2.2 / 2.2.5): Status Modelled when the library has the
+  // model, Missing otherwise (its real portions then keep their raw energy as uncovered
+  // requirements, flagged MirrorFormed); the placement knows how to halve a virtual corner
+  // and to place a pair's real side only, every other mirror-formed topology (a bent stack,
+  // a two-vertex cluster, a curved pair with its image) fails closed to Missing.
+  for (auto &feature : result.features)
+  {
+    if (feature.mirror.is_null() || feature.mirror.value("Status", "") == "Continued")
+    {
+      continue;
+    }
+    const bool placeable =
+        feature.type == "ConvexCorner" || feature.type == "ConcaveCorner" ||
+        feature.type == "SameConductorGap" || feature.type == "DifferentConductorGap" ||
+        feature.type == "SameConductorStrip";
+    if (feature.matched_model && !placeable)
+    {
+      feature.matched_model.reset();
+      feature.match_deviation.reset();
+      feature.match_note = "mirror-formed " + feature.type +
+                           ": no mirror placement for this topology (fail closed to the "
+                           "raw energy, boundary-cut DESIGN 2.2.5)";
+      if (curved_matches)
+      {
+        curved_matches->erase(feature.id);
+      }
+      if (corner_matches)
+      {
+        corner_matches->erase(feature.id);
+      }
+    }
+    feature.mirror["Status"] = feature.matched_model ? "Modelled" : "Missing";
+  }
+  mirror_band.record = DescribeMirrorBand(
+      mirror_band.planes, mirror_band.extension, mirror_summary, result, band_over_radius,
+      requirements ? requirements->CoordinateScale() : 1.0);
   if (!requirements || !root)
   {
     return result;  // the manifest is built and written on the root
@@ -8178,6 +8338,7 @@ IdentificationResult RunGeometryIdentification(
     std::set<std::string> notes;        // matching notes (family refusals)
     nlohmann::json legacy_contract;     // the alias record (USER decision 283) + Features
     nlohmann::json span_cap_allowance;  // SpatialSupport.SpanCapAllowance (block (b) A4)
+    bool mirror_formed = false;         // a key formed with a mirror image (DESIGN 2.2.2)
   };
   struct GroupBase
   {
@@ -8187,12 +8348,16 @@ IdentificationResult RunGeometryIdentification(
     std::vector<std::string> order;
   };
   std::map<std::string, GroupBase> bases;
+  // The segments of the input the features refer to (the extended input's when the mirror
+  // band added image segments).
+  const auto &feature_segments =
+      mirror_band.extended ? mirror_band.extension.input.segments : input.segments;
   for (const auto &feature : result.features)
   {
     std::set<std::map<InterfaceDielectric, int>> target_maps;
     for (const auto &portion : feature.portions)
     {
-      target_maps.insert(input.segments[portion.segment].targets);
+      target_maps.insert(feature_segments[portion.segment].targets);
     }
     nlohmann::json interfaces = nlohmann::json::array();
     int slot = 0;
@@ -8212,13 +8377,21 @@ IdentificationResult RunGeometryIdentification(
     if (!feature.portions.empty() && !feature.signature.contains("Law"))
     {
       law = nlohmann::json::parse(
-          input.segments[feature.portions.front().segment].boundary_law);
+          feature_segments[feature.portions.front().segment].boundary_law);
     }
     const bool per_segment = feature.type != "ConvexCorner" &&
                              feature.type != "ConcaveCorner" &&
                              feature.type != "Junction" && feature.type != "Endpoint" &&
                              feature.type != "SpatialEdgeCluster";
-    const int count = per_segment ? static_cast<int>(feature.portions.size()) : 1;
+    int real_portions = 0;
+    for (const auto &portion : feature.portions)
+    {
+      real_portions +=
+          portion.segment < mirror_band.extension.real_segments || !mirror_band.extended
+              ? 1
+              : 0;
+    }
+    const int count = per_segment ? real_portions : 1;
     const std::string base_key = feature.type + "|" + interfaces.dump() + "|" + law.dump() +
                                  "|" +
                                  SplitSignatureParameters(feature.signature).topology_key;
@@ -8246,6 +8419,9 @@ IdentificationResult RunGeometryIdentification(
     instance->second.features++;
     instance->second.length += feature.length;
     instance->second.exact = instance->second.exact && feature.exact_parameters;
+    instance->second.mirror_formed =
+        instance->second.mirror_formed ||
+        (!feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued");
     if (feature.matched_model)
     {
       instance->second.models.insert(*feature.matched_model);
@@ -8324,11 +8500,12 @@ IdentificationResult RunGeometryIdentification(
       std::set<std::string> models, notes;
       nlohmann::json curvature_family, corner_family, span_cap_allowance;
       nlohmann::json legacy_contract = nlohmann::json::array();
-      bool exact = true;
+      bool exact = true, mirror_formed = false;
       for (const std::size_t i : members)
       {
         const Instance &instance = base.instances.at(base.order[i]);
         signatures.push_back(instance.signature);
+        mirror_formed = mirror_formed || instance.mirror_formed;
         if (span_cap_allowance.is_null() && !instance.span_cap_allowance.is_null())
         {
           span_cap_allowance = instance.span_cap_allowance;
@@ -8392,6 +8569,13 @@ IdentificationResult RunGeometryIdentification(
       if (!near_keys.empty())
       {
         record["NearKeys"] = near_keys;
+      }
+      if (mirror_formed)
+      {
+        // A key formed with a mirror image across a natural truncation plane (boundary-cut
+        // DESIGN 2.2.2): exported so that the discovery lists it, built only by explicit
+        // decision (decision 315 class).
+        record["MirrorFormed"] = true;
       }
       if (!span_cap_allowance.is_null())
       {
@@ -8561,6 +8745,10 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
         !feature.matched_model || patched_corners.find(feature.id) == patched_corners.end())
     {
       continue;
+    }
+    if (!feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued")
+    {
+      continue;  // a virtual corner: ApplyMirrorArmTrim (s_half on the real arm)
     }
     MFEM_VERIFY(feature.signature.contains("AngleDegrees"),
                 "Corner feature " << feature.id << " carries no AngleDegrees!");
@@ -8841,6 +9029,142 @@ std::array<double, 2> LongitudinalCellOffsets(const std::array<double, 2> &unit_
   return {std::min(begin, end), std::max(begin, end)};
 }
 
+// Mirror arm trim (boundary-cut DESIGN 2.2.3). A virtual corner — a mirror-formed corner
+// whose vertex lies on a natural truncation plane — is placed with weight 1 / 2
+// (HalfByMirror). By the half-energy identity the half coupon integrates E(real [0, R]) +
+// E(real [0, s]) over two = E(real [0, s_half]) up to the second-order term (E[R, s_half] -
+// E[s_half, s]) / 2 (exactly zero at 90 degrees, where s = R), so the REAL arm's
+// translational cells begin at s_half = (R + s) / 2 (the F1 mechanism: a cell's part before
+// s_half removed, the kept part re-expressed at its midpoint). One record per virtual
+// corner, lengths in patch units.
+std::vector<ResponseCorrectionData::MirrorArmTrimData>
+ApplyMirrorArmTrim(const IdentificationResult &identification,
+                   std::vector<ResponsePatchData> &patches, double R)
+{
+  std::vector<ResponseCorrectionData::MirrorArmTrimData> records;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  constexpr double pi = 3.14159265358979323846;
+  const std::size_t real_segments = identification.real_segments > 0
+                                        ? identification.real_segments
+                                        : identification.segments.size();
+  std::map<int, std::size_t> vertex_patches;
+  for (std::size_t p = 0; p < patches.size(); p++)
+  {
+    const auto &patch = patches[p];
+    if (patch.provenance.coupon_depth == 0.0 && patch.provenance.claims.empty() &&
+        patch.provenance.stretch < 0 && !patch.provenance.has_support_box &&
+        patch.weight > 0.0)
+    {
+      vertex_patches.emplace(patch.provenance.feature, p);
+    }
+  }
+  for (const auto &feature : identification.features)
+  {
+    if ((feature.type != "ConvexCorner" && feature.type != "ConcaveCorner") ||
+        !feature.matched_model || feature.mirror.is_null() ||
+        feature.mirror.value("Status", "") == "Continued" ||
+        vertex_patches.find(feature.id) == vertex_patches.end())
+    {
+      continue;
+    }
+    MFEM_VERIFY(feature.signature.contains("AngleDegrees"),
+                "Corner feature " << feature.id << " carries no AngleDegrees!");
+    const double angle_degrees = feature.signature.at("AngleDegrees").get<double>();
+    const double theta = angle_degrees * pi / 180.0;
+    const double exit_over_radius =
+        1.0 / std::max(std::abs(std::cos(theta)), std::abs(std::sin(theta)));
+    const double s_half = HalfCornerArmStart(angle_degrees, R);
+    const Point3D &vertex = feature.origin;
+    const Point3D &n = feature.axes[2];
+    // The real arm: the direction from the vertex along a real portion of the feature.
+    std::optional<Point3D> arm;
+    for (const auto &portion : feature.portions)
+    {
+      if (portion.segment >= real_segments)
+      {
+        continue;
+      }
+      const auto &segment = identification.segments[portion.segment];
+      const Point3D far =
+          Distance(segment.key[0], vertex) > Distance(segment.key[1], vertex)
+              ? segment.key[0]
+              : segment.key[1];
+      arm = Normalize(Subtract(far, vertex));
+      break;
+    }
+    if (!arm)
+    {
+      continue;
+    }
+    auto Along = [&](const Point3D &point) -> std::optional<double>
+    {
+      const Point3D r = Subtract(point, vertex);
+      const double w = Dot(r, n);
+      const double a = Dot(r, *arm);
+      const Point3D transverse = Subtract(r, Add(Scale(a, *arm), Scale(w, n)));
+      if (std::abs(w) > tolerance || Norm(transverse) > tolerance)
+      {
+        return std::nullopt;
+      }
+      return a;
+    };
+    ResponseCorrectionData::MirrorArmTrimData record;
+    record.feature = feature.id;
+    record.topology = feature.type;
+    record.angle_degrees = angle_degrees;
+    record.exit_distance_over_radius = exit_over_radius;
+    record.half_start_over_radius = s_half / R;
+    record.trimmed_length = s_half - R;
+    record.vertex_patch = vertex_patches.at(feature.id);
+    record.arm = *arm;
+    for (std::size_t p = 0; p < patches.size(); p++)
+    {
+      auto &patch = patches[p];
+      const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+      if (patch.provenance.coupon_depth <= 0.0 || patch.weight <= 0.0 || c1 <= c0)
+      {
+        continue;
+      }
+      std::array<std::optional<double>, 2> along;
+      for (int k = 0; k < 2; k++)
+      {
+        Point3D end = patch.origin;
+        for (int d = 0; d < 3; d++)
+        {
+          end[d] += patch.provenance.edge_offset * patch.axis_u[d] +
+                    (k == 0 ? c0 : c1) * patch.axis_w[d];
+        }
+        along[k] = Along(end);
+      }
+      if (!along[0] || !along[1])
+      {
+        continue;
+      }
+      const double a0 = *along[0], a1 = *along[1];
+      const double a_lo = std::min(a0, a1), a_hi = std::max(a0, a1);
+      const double scale = std::max(1.0, c1 - c0);
+      if (a_hi <= tolerance || a_lo >= s_half - 1.0e-12 * scale)
+      {
+        continue;
+      }
+      const double removed = std::min(a_hi, s_half) - std::max(a_lo, 0.0);
+      if (removed <= 1.0e-12 * scale)
+      {
+        continue;
+      }
+      const double slope = (a1 - a0) / (c1 - c0);
+      const double c_cut = c0 + (s_half - a0) / slope;
+      const double kept_lo = slope > 0.0 ? std::max(c0, c_cut) : c0;
+      const double kept_hi = slope > 0.0 ? c1 : std::min(c1, c_cut);
+      ClipLongitudinalCell(patch, a_hi > s_half ? kept_lo : 0.0,
+                           a_hi > s_half ? kept_hi : 0.0);
+      record.cells.emplace_back(p, removed);
+    }
+    records.push_back(std::move(record));
+  }
+  return records;
+}
+
 // The within-R raw footprint of every vertex coupon (corner / junction / endpoint patch) as
 // perimeter sub-segments (F-DB-a, DESIGN 2.1): the feature's claimed portions (R along each
 // arm, as the identification cut them) and, for a corner trimmed by ApplyCornerArmTrim, the
@@ -8848,7 +9172,8 @@ std::array<double, 2> LongitudinalCellOffsets(const std::array<double, 2> &unit_
 // so that a DomainBoundary-excluded vertex coupon keeps exactly this region's raw energy.
 void FillVertexRawClaims(
     const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
-    const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims, double R)
+    const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
+    const std::vector<ResponseCorrectionData::MirrorArmTrimData> &mirror_trims, double R)
 {
   constexpr double pi = 3.14159265358979323846;
   std::map<int, const IdentifiedFeature *> features;
@@ -8872,11 +9197,14 @@ void FillVertexRawClaims(
       continue;
     }
     const auto &feature = *feature_it->second;
+    const std::size_t real_segments = identification.real_segments > 0
+                                          ? identification.real_segments
+                                          : identification.segments.size();
     for (const auto &portion : feature.portions)
     {
-      if (portion.s1 <= portion.s0)
+      if (portion.s1 <= portion.s0 || portion.segment >= real_segments)
       {
-        continue;
+        continue;  // image perimeter is never counted
       }
       const auto &segment = identification.segments[portion.segment];
       auto SegmentPoint = [&](double s)
@@ -8899,6 +9227,17 @@ void FillVertexRawClaims(
           {-1, Add(feature.origin, Scale(R, arm)),
            Add(feature.origin, Scale(trim->exit_distance_over_radius * R, arm))});
     }
+    // A virtual corner: the real arm's [R, s_half) that its cells begin after.
+    const auto mirror_trim =
+        std::find_if(mirror_trims.begin(), mirror_trims.end(),
+                     [&](const auto &record) { return record.feature == feature.id; });
+    if (mirror_trim != mirror_trims.end() && mirror_trim->trimmed_length > 0.0)
+    {
+      provenance.raw_claims.push_back(
+          {-1, Add(feature.origin, Scale(R, mirror_trim->arm)),
+           Add(feature.origin,
+               Scale(mirror_trim->half_start_over_radius * R, mirror_trim->arm))});
+    }
   }
 }
 
@@ -8908,7 +9247,8 @@ FeaturePatchSummary BuildFeaturePatches(
     const mfem::IntegrationRule &quadrature, const AutomaticResponseRequirements &describer,
     AutomaticResponseDiagnostics *diagnostics, ResponseCorrectionData &result,
     const std::map<int, FeatureCurvatureMatch> &curved_matches = {},
-    const std::map<int, FeatureCornerMatch> &corner_matches = {})
+    const std::map<int, FeatureCornerMatch> &corner_matches = {},
+    const std::vector<EdgeSegment3D> &image_segments = {})
 {
   FeaturePatchSummary summary;
   const double R = library.matching_radius;
@@ -8916,6 +9256,10 @@ FeaturePatchSummary BuildFeaturePatches(
   for (const auto &segment : framed_segments)
   {
     framed.emplace(segment.geometry_index, &segment);
+  }
+  for (const auto &segment : image_segments)
+  {
+    framed.emplace(segment.geometry_index, &segment);  // mirror images (never placed)
   }
   std::map<std::string, std::size_t> model_by_name;
   for (std::size_t i = 0; i < library.models.size(); i++)
@@ -8934,7 +9278,15 @@ FeaturePatchSummary BuildFeaturePatches(
     int side = 0;
     double turn = 0.0;  // signed windowed turn toward the metal (radians)
     int stretch = -1;   // the chain stretch of the portion (IdentifiedPortion::stretch)
+    bool image =
+        false;  // a mirror-band image portion: frames a pair's other side, never placed
   };
+  // Mirror band (boundary-cut DESIGN 2.2.2): the segments from real_segments on are images.
+  const std::size_t real_segments = identification.real_segments > 0
+                                        ? identification.real_segments
+                                        : identification.segments.size();
+  auto IsImage = [&](const IdentifiedPortion &portion)
+  { return portion.segment >= real_segments; };
   auto Frame = [&](const IdentifiedPortion &portion)
   {
     const auto it = framed.find(portion.segment);
@@ -8943,6 +9295,7 @@ FeaturePatchSummary BuildFeaturePatches(
     const EdgeSegment3D &segment = *it->second;
     const bool forward = identification.segments[portion.segment].key[0] == segment.p0;
     FramedPortion fp;
+    fp.image = IsImage(portion);
     fp.segment = &segment;
     fp.a =
         std::clamp(forward ? portion.s0 : segment.length - portion.s1, 0.0, segment.length);
@@ -9249,7 +9602,7 @@ FeaturePatchSummary BuildFeaturePatches(
     double feature_length = 0.0;
     for (const auto &portion : feature.portions)
     {
-      feature_length += portion.s1 - portion.s0;
+      feature_length += IsImage(portion) ? 0.0 : portion.s1 - portion.s0;
     }
     const bool vertex_feature = feature.type == "ConvexCorner" ||
                                 feature.type == "ConcaveCorner" ||
@@ -9270,6 +9623,10 @@ FeaturePatchSummary BuildFeaturePatches(
       {
         for (const auto &portion : feature.portions)
         {
+          if (IsImage(portion))
+          {
+            continue;
+          }
           const double length = portion.s1 - portion.s0;
           diagnostics->matched_corner_neighborhood_length += length;
           for (const auto &[type, target] : framed.at(portion.segment)->targets)
@@ -9329,7 +9686,7 @@ FeaturePatchSummary BuildFeaturePatches(
       portions.push_back(Frame(portion));
       target_maps.insert(portions.back().segment->targets);
       all_pec = all_pec && IsPec(*portions.back().segment);
-      if (diagnostics)
+      if (diagnostics && !portions.back().image)
       {
         const double length = portion.s1 - portion.s0;
         diagnostics->matched_length += length;
@@ -9371,6 +9728,10 @@ FeaturePatchSummary BuildFeaturePatches(
     {
       for (const auto &fp : portions)
       {
+        if (fp.image)
+        {
+          continue;  // never placed
+        }
         const EdgeSegment3D &segment = *fp.segment;
         const auto split = straight_like_bend
                                ? SplitOf(fp, first_order_nodes, targets_by_slot, true,
@@ -9465,6 +9826,10 @@ FeaturePatchSummary BuildFeaturePatches(
         const auto &other = *ordered[1 - k].second;
         for (const auto &fp : side)
         {
+          if (fp.image)
+          {
+            continue;  // a mirror image side: the real side's cells carry the real half
+          }
           const auto split = straight_like_bend
                                  ? SplitOf(fp, first_order_nodes, targets_by_slot, k == 0,
                                            strip, separation, model_index)
@@ -9624,7 +9989,13 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.axis_v = Scale(sigma, Normalize(Cross(n, patch.axis_u)));
       }
       patch.conductor_references = model.conductor_references;
-      patch.weight = 1.0;
+      // A virtual (mirror-formed) corner on a natural truncation plane: the coupon's
+      // square content is E(real [0, R]) + E(real [0, s]) by the half-energy identity, so
+      // the real half is the coupon at weight 1 / 2 (HalfByMirror; the sc response scales
+      // with it) with the real arm's cells from s_half (ApplyMirrorArmTrim).
+      const bool half_by_mirror =
+          !feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued";
+      patch.weight = half_by_mirror ? 0.5 : 1.0;
       patch.maxwell_reference_is_pec = all_pec;
       const std::array<Point3D, 3> axes = {patch.axis_u, patch.axis_v, patch.axis_w};
       for (const auto &reference : patch.conductor_references)
@@ -9766,6 +10137,10 @@ FeaturePatchSummary BuildFeaturePatches(
     }
     for (const auto &portion : feature.portions)
     {
+      if (IsImage(portion))
+      {
+        continue;  // image perimeter is never counted
+      }
       const auto &segment = identification.segments[portion.segment];
       auto SegmentPoint = [&](double s)
       {
@@ -9777,9 +10152,14 @@ FeaturePatchSummary BuildFeaturePatches(
       {
         continue;
       }
+      // A Missing mirror-formed feature's real portions are the DomainBoundary fallback of
+      // the mirror rule (F-DB-a): flagged in the type so the tabulation attributes them.
+      const bool mirror_formed =
+          !feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued";
       result.uncovered_portions.push_back(
-          {feature.id, feature.type, static_cast<int>(portion.segment),
-           SegmentPoint(portion.s0), SegmentPoint(portion.s1)});
+          {feature.id, mirror_formed ? feature.type + ":MirrorFormed" : feature.type,
+           static_cast<int>(portion.segment), SegmentPoint(portion.s0),
+           SegmentPoint(portion.s1)});
     }
   }
 
@@ -9788,9 +10168,13 @@ FeaturePatchSummary BuildFeaturePatches(
   // square.
   result.corner_arm_trims =
       ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R);
+  // Mirror arm trim (boundary-cut DESIGN 2.2.3): the real arm's cells of every virtual
+  // corner begin at s_half = (R + s) / 2.
+  result.mirror_arm_trims = ApplyMirrorArmTrim(identification, result.patches, R);
   // The within-R raw footprint of every vertex coupon (F-DB-a, DESIGN 2.1): the feature's
   // claimed portions and a trimmed corner's second-arm stretch [R, s).
-  FillVertexRawClaims(identification, result.patches, result.corner_arm_trims, R);
+  FillVertexRawClaims(identification, result.patches, result.corner_arm_trims,
+                      result.mirror_arm_trims, R);
   return summary;
 }
 
@@ -10818,12 +11202,29 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                   { return entry.second.edge_frame_normal.has_value(); });
   std::map<int, FeatureCurvatureMatch> curved_matches;
   std::map<int, FeatureCornerMatch> corner_matches;
+  MirrorBandResult mirror_band;
   const auto identification = RunGeometryIdentification(
       mesh.GetComm(), geometry, global_segments, library,
       requirements ? *requirements : law_describer, requirements, frame_normal_configured,
-      request.span_cap_allowances, &curved_matches, &corner_matches);
+      request.span_cap_allowances, &curved_matches, &corner_matches, &mesh,
+      maxwell ? nullptr : &request, &mirror_band);
   GeometryStageLine("identified and matched: " +
                     std::to_string(identification.features.size()) + " features");
+  // The mirror band in the operator record and the geometry cache (DESIGN 3.1).
+  result.mirror_planes.clear();
+  for (const auto &plane : mirror_band.planes)
+  {
+    result.mirror_planes.push_back(
+        {plane.attribute, plane.normal, plane.offset, plane.status});
+  }
+  result.mirror_band = mirror_band.record.dump();
+  // No mirror in Maxwell runs and under Mirror = "Off" (band 0: every cut-crossing patch
+  // is a DomainBoundary exclusion whose raw claim is kept, F-DB-a).
+  result.mirror_band_over_radius =
+      !maxwell && request.domain_boundary_mirror ==
+                      ResponseCorrectionData::DomainBoundaryMirror::NATURAL
+          ? request.domain_boundary_band_over_radius
+          : 0.0;
   if (request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
   {
     // Features-driven construction (default): the identification's feature list is the
@@ -10842,10 +11243,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         }
       }
     }
-    const auto summary =
-        BuildFeaturePatches(library, identification, global_segments, quadrature,
-                            requirements ? *requirements : law_describer, diagnostics,
-                            result, curved_matches, corner_matches);
+    const auto summary = BuildFeaturePatches(
+        library, identification, global_segments, quadrature,
+        requirements ? *requirements : law_describer, diagnostics, result, curved_matches,
+        corner_matches, mirror_band.image_frames);
     GeometryStageLine("patches built: " + std::to_string(result.patches.size()));
     // Legacy-contract aliases resolved by the matching pass (USER decision 283): one record
     // per alias with the features it served, carried into the operator record and the
@@ -15660,6 +16061,38 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                            {"P1", portion.p1}});
     }
     cache["UncoveredPortions"] = std::move(uncovered);
+    // Mirror band (boundary-cut DESIGN 2.2): the planes, the record and the virtual-corner
+    // trims.
+    nlohmann::json planes = nlohmann::json::array();
+    for (const auto &plane : config.mirror_planes)
+    {
+      planes.push_back({{"Attribute", plane.attribute},
+                        {"Normal", plane.normal},
+                        {"Offset", plane.offset},
+                        {"Status", plane.status}});
+    }
+    cache["MirrorPlanes"] = std::move(planes);
+    cache["MirrorBand"] = config.mirror_band;
+    cache["MirrorBandOverR"] = config.mirror_band_over_radius;
+    nlohmann::json mirror_trims = nlohmann::json::array();
+    for (const auto &trim : config.mirror_arm_trims)
+    {
+      nlohmann::json cells = nlohmann::json::array();
+      for (const auto &[patch, removed] : trim.cells)
+      {
+        cells.push_back({{"Patch", patch}, {"RemovedLength", removed}});
+      }
+      mirror_trims.push_back({{"Feature", trim.feature},
+                              {"Topology", trim.topology},
+                              {"AngleDegrees", trim.angle_degrees},
+                              {"ExitDistanceOverR", trim.exit_distance_over_radius},
+                              {"HalfStartOverR", trim.half_start_over_radius},
+                              {"TrimmedLength", trim.trimmed_length},
+                              {"VertexPatch", trim.vertex_patch},
+                              {"Arm", trim.arm},
+                              {"Cells", std::move(cells)}});
+    }
+    cache["MirrorArmTrims"] = std::move(mirror_trims);
   }
   if (!config.quantum_near_match.empty())
   {
@@ -15746,6 +16179,32 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     portion.p0 = entry.at("P0");
     portion.p1 = entry.at("P1");
     result.uncovered_portions.push_back(std::move(portion));
+  }
+  for (const auto &entry : data.value("MirrorPlanes", nlohmann::json::array()))
+  {
+    result.mirror_planes.push_back(
+        {entry.at("Attribute").get<int>(), entry.at("Normal").get<std::array<double, 3>>(),
+         entry.at("Offset").get<double>(), entry.at("Status").get<std::string>()});
+  }
+  result.mirror_band = data.value("MirrorBand", std::string{});
+  result.mirror_band_over_radius = data.value("MirrorBandOverR", 0.0);
+  for (const auto &entry : data.value("MirrorArmTrims", nlohmann::json::array()))
+  {
+    ResponseCorrectionData::MirrorArmTrimData trim;
+    trim.feature = entry.at("Feature");
+    trim.topology = entry.at("Topology");
+    trim.angle_degrees = entry.at("AngleDegrees");
+    trim.exit_distance_over_radius = entry.at("ExitDistanceOverR");
+    trim.half_start_over_radius = entry.at("HalfStartOverR");
+    trim.trimmed_length = entry.at("TrimmedLength");
+    trim.vertex_patch = entry.at("VertexPatch");
+    trim.arm = entry.at("Arm");
+    for (const auto &cell : entry.at("Cells"))
+    {
+      trim.cells.emplace_back(cell.at("Patch").get<std::size_t>(),
+                              cell.at("RemovedLength").get<double>());
+    }
+    result.mirror_arm_trims.push_back(std::move(trim));
   }
   for (const auto &entry : data.at("Models"))
   {
@@ -16104,7 +16563,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         const_cast<mfem::ParMesh &>(parallel_mesh), patches.patches, BasisPoints,
         [&](int model_idx) { return spatial_basis.at(model_idx); },
         [&](int model_idx) { return model_names.at(model_idx); }, coordinate_scale,
-        patches.matching_radius, {});
+        patches.matching_radius, {}, patches.mirror_planes,
+        patches.mirror_band_over_radius * patches.matching_radius);
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
     // F-DB-a (decisions 442 / 454): the excluded patches' raw claims, never dropped; the
@@ -16150,7 +16610,16 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         {"Patches", exclusion_diagnostics["Count"]},
         {"Features", exclusion_diagnostics["Features"]},
         {"CellLength", exclusion_diagnostics["CellLength"]},
-        {"PortionLength", exclusion_diagnostics["PortionLength"]}};
+        {"PortionLength", exclusion_diagnostics["PortionLength"]},
+        {"RawPortionLength", exclusion_diagnostics["RawPortions"]["Length"]},
+        {"Mirrored", exclusion_diagnostics["Mirrored"]["Count"]},
+        {"MirroredCellLength", exclusion_diagnostics["Mirrored"]["CellLength"]}};
+    // The mirror band (boundary-cut DESIGN 2.2.2): the planes, the images, the joints, the
+    // mirror-formed features.
+    if (!patches.mirror_band.empty())
+    {
+      diagnostics["MirrorBand"] = nlohmann::json::parse(patches.mirror_band);
+    }
     // Legacy-contract aliases (USER decision 283) in the inventory: the features matched
     // through an explicit alias (Status Exact, the legacy coupon applied), their claimed
     // length and the aliases.
@@ -17945,13 +18414,71 @@ nlohmann::json DescribeUncoveredPortions(
        "coordinates in mesh units"}};
 }
 
+std::vector<MirrorPlane>
+MirrorPlanesOf(const std::vector<ResponseCorrectionData::MirrorPlaneData> &planes)
+{
+  std::vector<MirrorPlane> result;
+  for (const auto &plane : planes)
+  {
+    MirrorPlane entry;
+    entry.attribute = plane.attribute;
+    entry.normal = plane.normal;
+    entry.offset = plane.offset;
+    entry.status = plane.status;
+    result.push_back(entry);
+  }
+  return result;
+}
+
+int ReflectPointsIntoDomain(
+    mfem::Vector &xyz, int dimension,
+    const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
+    double mirror_band, double tolerance)
+{
+  if (mirror_planes.empty() || mirror_band <= 0.0)
+  {
+    return 0;
+  }
+  const auto planes = MirrorPlanesOf(mirror_planes);
+  const int count = xyz.Size() / dimension;
+  int reflected = 0;
+  for (int i = 0; i < count; i++)
+  {
+    Point3D point{};
+    for (int d = 0; d < dimension; d++)
+    {
+      point[d] = xyz(d * count + i);  // the operator's component-major layout
+    }
+    bool outside = false;
+    for (const auto &plane : planes)
+    {
+      outside = outside || plane.Inside(point) < -tolerance;
+    }
+    if (!outside)
+    {
+      continue;
+    }
+    if (const auto image = ReflectIntoDomain(point, planes, mirror_band, tolerance))
+    {
+      for (int d = 0; d < dimension; d++)
+      {
+        xyz(d * count + i) = image->point[d];
+      }
+      reflected++;
+    }
+  }
+  return reflected;
+}
+
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh, std::vector<ResponsePatchData> &patches,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
         &basis_points,
     const std::function<bool(int model_idx)> &spatial_basis,
     const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
-    double matching_radius, const std::set<std::size_t> &skipped)
+    double matching_radius, const std::set<std::size_t> &skipped,
+    const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
+    double mirror_band)
 {
   const auto start = std::chrono::steady_clock::now();
   const int dimension = mesh.Dimension();
@@ -18057,8 +18584,36 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   {
     Mpi::GlobalMax(static_cast<int>(found.size()), found.data(), comm);
   }
+  // Mirror (boundary-cut DESIGN 2.2.3): every outside point beyond a Natural plane within
+  // the band is reflected into the domain (canonical plane order) and located again; its
+  // found flag is OR-reduced like the original's (the same arithmetic on every rank).
+  std::vector<unsigned char> reflected(points.size(), 0);
+  if (!mirror_planes.empty() && mirror_band > 0.0)
+  {
+    const auto planes = MirrorPlanesOf(mirror_planes);
+    const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+    std::vector<int> element_candidates;
+    int element;
+    mfem::IntegrationPoint reference;
+    for (std::size_t i = 0; i < points.size(); i++)
+    {
+      if (found[i])
+      {
+        continue;
+      }
+      const auto image = ReflectIntoDomain(points[i], planes, mirror_band, tolerance);
+      if (image && !image->planes.empty() &&
+          locator.Find(image->point, box_tolerance, element, reference, element_candidates))
+      {
+        reflected[i] = 1;
+      }
+    }
+    Mpi::GlobalMax(static_cast<int>(reflected.size()), reflected.data(), comm);
+  }
   // Fail closed on a metal-edge reference outside the mesh (the found flags are identical
-  // on every rank after the reduction, so every rank aborts together).
+  // on every rank after the reduction, so every rank aborts together); a reference whose
+  // reflection is located is a cut-adjacent coupon (decision 314's follow-up), judged
+  // below like any other point.
   auto DescribeMisplacedPatch = [&](std::size_t c, std::size_t point, const char *reason)
   {
     const auto &patch = patches[candidates[c]];
@@ -18073,7 +18628,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   for (std::size_t c = 0; c < candidates.size(); c++)
   {
     const std::size_t reference = origin_references[c];
-    if (reference != no_reference && !found[reference])
+    if (reference != no_reference && !found[reference] && !reflected[reference])
     {
       MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
     }
@@ -18117,8 +18672,22 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     }
     if (exclusion.outside_points > 0)
     {
+      // Every outside point reflected into the mesh: Mirrored (applied, its samples taken
+      // by even extension); else DomainBoundary.
+      int reflected_count = 0;
+      for (std::size_t i = begin; i < end; i++)
+      {
+        reflected_count += (!found[i] && reflected[i]) ? 1 : 0;
+      }
+      if (reflected_count == exclusion.outside_points)
+      {
+        result.mirrored.push_back(
+            {exclusion.patch, exclusion.tested_points, exclusion.outside_points});
+        result.reflected_points += reflected_count;
+        continue;
+      }
       // No tested point inside: not a cut through the coupon but a coupon off the mesh.
-      if (exclusion.outside_points == exclusion.tested_points)
+      if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
       {
         MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
       }
@@ -18193,6 +18762,40 @@ nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &
                         {"Patches", count_length.first},
                         {"CellLength", count_length.second}});
   }
+  // Mirrored patches (boundary-cut DESIGN 2.2.3): applied, their outside points evaluated
+  // at their reflections.
+  nlohmann::json mirrored_entries = nlohmann::json::array();
+  std::set<int> mirrored_features;
+  double mirrored_cell_length = 0.0;
+  int half_vertices = 0;
+  for (const auto &mirrored : exclusions.mirrored)
+  {
+    const auto &patch = config.patches[mirrored.patch];
+    const double cell =
+        (patch.longitudinal_cell[1] - patch.longitudinal_cell[0]) * coordinate_scale;
+    mirrored_cell_length += cell;
+    mirrored_features.insert(patch.provenance.feature);
+    if (patch.provenance.coupon_depth == 0.0 && patch.weight == 0.5)
+    {
+      half_vertices++;
+    }
+    mirrored_entries.push_back({{"Patch", mirrored.patch},
+                                {"Feature", patch.provenance.feature},
+                                {"Model", models.at(patch.model)->name},
+                                {"Topology", models.at(patch.model)->topology},
+                                {"Weight", patch.weight},
+                                {"CellLength", cell},
+                                {"TestedPoints", mirrored.tested_points},
+                                {"OutsidePoints", mirrored.outside_points}});
+  }
+  nlohmann::json planes = nlohmann::json::array();
+  for (const auto &plane : config.mirror_planes)
+  {
+    planes.push_back({{"Attribute", plane.attribute},
+                      {"Normal", plane.normal},
+                      {"Offset", plane.offset * coordinate_scale},
+                      {"Status", plane.status}});
+  }
   return {
       {"Count", static_cast<int>(exclusions.patches.size())},
       {"Features", static_cast<int>(by_feature.size())},
@@ -18204,6 +18807,16 @@ nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &
       {"CellEndInsetOverRadius", kSignatureParameterToleranceOverRadius},
       {"ByFeature", std::move(features)},
       {"Patches", std::move(entries)},
+      {"Mirrored",
+       {{"Count", static_cast<int>(exclusions.mirrored.size())},
+        {"Features", static_cast<int>(mirrored_features.size())},
+        {"CellLength", mirrored_cell_length},
+        {"Points", exclusions.reflected_points},
+        {"HalfVertices", half_vertices},
+        {"ArmTrims", static_cast<int>(config.mirror_arm_trims.size())},
+        {"Patches", std::move(mirrored_entries)}}},
+      {"Planes", std::move(planes)},
+      {"MirrorBandOverR", config.mirror_band_over_radius},
       {"Rule",
        "decision 258 (2026-10-02): a library-placed patch any of whose placed coupon "
        "points "
@@ -19591,6 +20204,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     ownership_diagnostics["CornerArmTrim"] =
         DescribeCornerArmTrims(config->corner_arm_trims, *config, coordinate_scale);
     uncovered_portions = config->uncovered_portions;
+    mirror_planes = config->mirror_planes;
+    mirror_band = config->mirror_band_over_radius * config->matching_radius;
+    mirror_tolerance = kSignatureParameterToleranceOverRadius * config->matching_radius;
     uncovered_spatial_support_clipping =
         ClipUncoveredPortionsBySpatialSupport(uncovered_portions, boxes, dimension);
     ownership_diagnostics["Uncovered"] = DescribeUncoveredPortions(
@@ -19740,7 +20356,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           { return &basis_points[model_indices.at(model_idx)]; },
           [&](int model_idx) { return models[model_indices.at(model_idx)].spatial_basis; },
           [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
-          coordinate_scale, config->matching_radius, spatially_owned_patches);
+          coordinate_scale, config->matching_radius, spatially_owned_patches,
+          config->mirror_planes, config->mirror_band_over_radius * config->matching_radius);
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);
@@ -19755,6 +20372,21 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           uncovered_spatial_support_clipping, config->matching_radius);
       ownership_diagnostics["DomainBoundaryExclusions"]["RawPortions"] =
           DescribeDomainBoundaryPortions(domain_boundary_portions, coordinate_scale);
+      if (!config->mirror_band.empty())
+      {
+        ownership_diagnostics["MirrorBand"] = nlohmann::json::parse(config->mirror_band);
+      }
+      if (!exclusions.mirrored.empty())
+      {
+        Mpi::Print(fespace.GetComm(),
+                   " Mirrored patches (boundary-cut DESIGN 2.2.3): {:d} patch(es) on {:d} "
+                   "feature(s) with {:d} placed point(s) beyond a natural truncation plane "
+                   "applied with their reflections\n",
+                   static_cast<int>(exclusions.mirrored.size()),
+                   ownership_diagnostics["DomainBoundaryExclusions"]["Mirrored"]["Features"]
+                       .get<int>(),
+                   exclusions.reflected_points);
+      }
       Mpi::Print(
           fespace.GetComm(),
           " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
@@ -20391,6 +21023,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     }
   }
   const auto &config = *config_ptr;
+  // The mirror planes for the fail-closed check of the Maxwell line samples (no mirror in
+  // Maxwell runs; boundary-cut DESIGN 2.2.3).
+  mirror_planes = config.mirror_planes;
+  mirror_band = config.mirror_band_over_radius * config.matching_radius;
+  mirror_tolerance = kSignatureParameterToleranceOverRadius * config.matching_radius;
   const auto &diagnostics = *diagnostics_ptr;
   matching_radius = diagnostics.matching_radius;
   minimum_wave_speed = diagnostics.minimum_wave_speed;
@@ -21259,17 +21896,52 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
 }
 
 void SurfaceResponseOperator::ConfigurePointCommunication(
-    DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
+    DistributedPointLocator &locator, const mfem::Vector &xyz_in, int dimension,
     const std::vector<std::array<double, 3>> *weighted_tangents)
 {
   MFEM_VERIFY(dimension == 2 || dimension == 3,
               "Surface response points require dimension two or three!");
-  MFEM_VERIFY(xyz.Size() % dimension == 0,
+  MFEM_VERIFY(xyz_in.Size() % dimension == 0,
               "Invalid surface-response point-coordinate array!");
-  point_query_count = xyz.Size() / dimension;
+  point_query_count = xyz_in.Size() / dimension;
   MFEM_VERIFY(!weighted_tangents ||
                   static_cast<int>(weighted_tangents->size()) == point_query_count,
               "Invalid surface-response point-tangent array!");
+  // Mirror-point evaluation (boundary-cut DESIGN 2.2.3): a sample point beyond a Natural
+  // truncation plane within the band is evaluated at its reflection (the even extension of
+  // the potential: V(p) = V(sigma p)). The Maxwell line integrals carry tangents whose
+  // normal component a reflection would flip: that path fails closed on any such point.
+  mfem::Vector xyz(xyz_in);
+  if (!mirror_planes.empty() && mirror_band > 0.0)
+  {
+    if (weighted_tangents)
+    {
+      mfem::Vector probe(xyz);
+      const int outside = ReflectPointsIntoDomain(probe, dimension, mirror_planes,
+                                                  mirror_band, mirror_tolerance);
+      MFEM_VERIFY(outside == 0,
+                  "Surface-response Maxwell line integrals have "
+                      << outside
+                      << " sample point(s) beyond a natural truncation plane: the mirror "
+                         "(even-extension) evaluation is defined for the electrostatic "
+                         "trace only (a reflected tangent flips its normal component); set "
+                         "ResponseCorrection.DomainBoundary.Mirror = \"Off\" for Maxwell "
+                         "runs (boundary-cut DESIGN 2.2.3, decision 451 MINOR-2)!");
+    }
+    else
+    {
+      mirrored_point_count = ReflectPointsIntoDomain(xyz, dimension, mirror_planes,
+                                                     mirror_band, mirror_tolerance);
+      if (mirrored_point_count > 0)
+      {
+        Mpi::Print(fespace.GetComm(),
+                   " Mirror-point evaluation (boundary-cut DESIGN 2.2.3): {:d} of {:d} "
+                   "surface-response sample points beyond a natural truncation plane are "
+                   "evaluated at their reflection\n",
+                   mirrored_point_count, point_query_count);
+      }
+    }
+  }
 
   const int size = Mpi::Size(fespace.GetComm());
   auto SetOffsets = [](const std::vector<int> &counts, std::vector<int> &offsets)

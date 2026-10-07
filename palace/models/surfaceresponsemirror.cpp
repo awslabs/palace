@@ -800,52 +800,32 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
       summary.continued_features++;
       continue;
     }
+    // Only the topologies the placement knows how to halve take part in the merge (a
+    // virtual corner, a pair / strip with its image side); a mirror-formed stack, cluster
+    // or curved pair has no mirror placement (DESIGN 2.2.5): the real features it would
+    // replace stay as the unextended run read them (their cut-crossing cells are classified
+    // Mirrored or DomainBoundary) and the formed key is recorded for the discovery.
+    const bool mergeable =
+        feature.type == "ConvexCorner" || feature.type == "ConcaveCorner" ||
+        feature.type == "SameConductorGap" || feature.type == "DifferentConductorGap" ||
+        feature.type == "SameConductorStrip";
+    if (!mergeable)
+    {
+      summary.unmerged_features.push_back({{"Feature", feature.id},
+                                           {"Type", feature.type},
+                                           {"Key", feature.signature_key},
+                                           {"RealLength", real_length},
+                                           {"ImageLength", image_length},
+                                           {"Planes", PlanesOfFeature(feature)},
+                                           {"Status", "Unmerged"}});
+      continue;
+    }
     formed.push_back({&feature, PlanesOfFeature(feature), real_length, image_length});
   }
   for (const auto &[index, record] : continued)
   {
     merged.features[index].mirror = record;
   }
-  // The joint vertices take the extended run's reading (the virtual corner's vertex entry,
-  // MirrorJoint); the feature reference is remapped to the merged Id.
-  auto UpdateJointVertices = [&](const std::map<int, int> &extended_to_merged)
-  {
-    for (const std::size_t v : extension.joined_vertices)
-    {
-      const auto extended_entry =
-          std::find_if(extended.vertices.begin(), extended.vertices.end(),
-                       [&](const IdentifiedVertex &entry) { return entry.vertex == v; });
-      auto merged_entry =
-          std::find_if(merged.vertices.begin(), merged.vertices.end(),
-                       [&](const IdentifiedVertex &entry) { return entry.vertex == v; });
-      if (extended_entry == extended.vertices.end())
-      {
-        if (merged_entry != merged.vertices.end())
-        {
-          merged.vertices.erase(merged_entry);
-        }
-        continue;
-      }
-      IdentifiedVertex entry = *extended_entry;
-      if (entry.feature >= 0)
-      {
-        const auto remapped = extended_to_merged.find(entry.feature);
-        entry.feature = remapped != extended_to_merged.end() ? remapped->second : -1;
-      }
-      if (merged_entry != merged.vertices.end())
-      {
-        *merged_entry = entry;
-      }
-      else
-      {
-        merged.vertices.push_back(entry);
-      }
-    }
-
-    std::sort(merged.vertices.begin(), merged.vertices.end(),
-              [](const IdentifiedVertex &a, const IdentifiedVertex &b)
-              { return a.vertex < b.vertex; });
-  };
   if (formed.empty())
   {
     UpdateJointVertices({});
@@ -1022,6 +1002,7 @@ nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,
           {"ContinuedFeatures", summary.continued_features},
           {"ImageOnlyFeatures", summary.image_only_features},
           {"MirrorFormedFeatures", std::move(formed)},
+          {"UnmergedFeatures", summary.unmerged_features},
           {"Rule",
            "boundary-cut DESIGN 2.2 (decisions 442 / 454): the metal perimeter within "
            "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "

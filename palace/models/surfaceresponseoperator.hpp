@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceresponsemirror.hpp"
 #include "utils/configfile.hpp"
 
 namespace palace
@@ -424,6 +425,13 @@ private:
   UncoveredSpatialSupportClipping uncovered_spatial_support_clipping;
   // The raw claims of the DomainBoundary-excluded patches (F-DB-a; DESIGN 2.1).
   DomainBoundaryPortions domain_boundary_portions;
+  // The Natural mirror planes and band (mesh units) of the mirror-point evaluation
+  // (F-DB-c; DESIGN 2.2.3); empty / 0 without the mirror.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
+      mirror_planes;
+  double mirror_band = 0.0;
+  double mirror_tolerance = 0.0;
+  long long int mirrored_point_count = 0;
   long long int candidate_query_count = 0;
   long long int fallback_query_count = 0;
   long long int point_send_peer_count = 0;
@@ -1041,13 +1049,33 @@ struct DomainBoundaryExclusion
   std::array<double, 3> nearest_outside_point{};
   double nearest_distance = 0.0;
 };
+// A patch classified Mirrored (boundary-cut DESIGN 2.2.3; decisions 442 / 454): every one
+// of its placed points outside the mesh reflects through the Natural mirror planes it lies
+// beyond (canonical order, within the band) into the mesh, so its trace is taken by even
+// extension (mirror-point evaluation in ConfigurePointCommunication) and the patch stays
+// applied with its weight.
+struct DomainBoundaryMirrored
+{
+  std::size_t patch = 0;
+  int tested_points = 0;
+  int outside_points = 0;  // all reflected into the mesh
+};
 struct DomainBoundaryExclusions
 {
   std::vector<DomainBoundaryExclusion> patches;  // ascending patch index
+  std::vector<DomainBoundaryMirrored> mirrored;  // ascending patch index
   long long int tested_patches = 0;
   long long int tested_points = 0;
-  double wall_time = 0.0;  // of the containment test, seconds
+  long long int reflected_points = 0;  // outside points reflected into the mesh
+  double wall_time = 0.0;              // of the containment test, seconds
 };
+// `mirror_planes` (empty: no mirror, every cut-crossing patch is DomainBoundary) and the
+// band (mesh units) classify the outside points: a point beyond a Natural plane within the
+// band is reflected and located again (the found flags of the reflections OR-reduced like
+// the originals); a patch whose every outside point is located after reflection is
+// Mirrored, any other patch with an outside point is DomainBoundary (weight 0). A
+// metal-edge reference outside the mesh whose reflection is located is a cut-adjacent
+// coupon (decision 314's follow-up), never the misplaced-coupon abort.
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
@@ -1055,7 +1083,27 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         &basis_points,
     const std::function<bool(int model_idx)> &spatial_basis,
     const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
-    double matching_radius, const std::set<std::size_t> &skipped);
+    double matching_radius, const std::set<std::size_t> &skipped,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
+        &mirror_planes = {},
+    double mirror_band = 0.0);
+
+// The mirror planes of a response configuration as the mirror module's planes.
+std::vector<MirrorPlane> MirrorPlanesOf(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData> &planes);
+
+// Reflect every point outside the mesh's Natural mirror planes into the domain (the even
+// extension of the trace; boundary-cut DESIGN 2.2.3): returns the number of reflected
+// points; a point beyond a plane that does not mirror or beyond the band is left in place
+// (the locator then fails closed naming the patch).
+int ReflectPointsIntoDomain(
+    mfem::Vector &xyz, int dimension,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
+        &mirror_planes,
+    double mirror_band, double tolerance);
 
 // The Diagnostics entry of the exclusions (per patch: feature, model, cell and portion
 // with their lengths, outside-point count, the nearest outside point; totals: the CELL

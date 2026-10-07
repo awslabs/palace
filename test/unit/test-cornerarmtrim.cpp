@@ -356,6 +356,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
   correction["Library"] = library_path.string();
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  // The lead reaches the wall x = 1 obliquely: under the mirror rule (boundary-cut DESIGN
+  // 2.2) that meeting is a virtual corner; this test is about the F1 trim of the REAL
+  // corner alone, so the mirror is off (its own tests: [mirror], test-domainboundary.cpp).
+  correction["DomainBoundary"] = {{"Mirror", "Off"}};
   IoData iodata(config, false);
   iodata.boundaries.cracked_attributes.insert(9);
   const auto manifest_path = temp.temp_dir / "surface-response-requirements-trim.json";

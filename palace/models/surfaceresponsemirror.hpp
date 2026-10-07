@@ -157,6 +157,10 @@ struct MirrorMergeSummary
   int mirror_formed_features = 0;
   int image_only_features = 0;
   std::vector<int> mirror_formed_ids;  // feature ids in the merged result
+  // Mirror-formed features of a topology without a mirror placement (stacks, clusters,
+  // curved pairs): not merged, recorded {Feature, Type, Key, RealLength, ImageLength,
+  // Planes, Status "Unmerged"} for the discovery.
+  nlohmann::json unmerged_features = nlohmann::json::array();
 };
 MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
                                              const IdentificationResult &extended,

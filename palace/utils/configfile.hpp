@@ -1388,6 +1388,39 @@ public:
     };
     std::vector<QuantumNearMatchData> quantum_near_match;
 
+    // Mirror band (boundary-cut DESIGN 2.2; decisions 442 / 454): the truncation planes of
+    // the device (n . x = c, n outward; Status Natural mirrors, Unsupported / NonPlanar do
+    // not) and the Identification.Diagnostics.MirrorBand record (JSON text); carried into
+    // the operator record and the geometry cache. The classification of the placed
+    // patches (Applied / Mirrored / DomainBoundary) and the mirror-point evaluation of the
+    // trace samples read the planes.
+    struct MirrorPlaneData
+    {
+      int attribute = 0;
+      std::array<double, 3> normal{};
+      double offset = 0.0;
+      std::string status;
+    };
+    std::vector<MirrorPlaneData> mirror_planes;
+    std::string mirror_band;
+    double mirror_band_over_radius = 0.0;
+    // The virtual (mirror-formed) corners placed with weight 1 / 2 (HalfByMirror) and the
+    // start s_half of their real arm's cells (MirrorArmTrim), patch units; one record per
+    // corner (DESIGN 2.2.3).
+    struct MirrorArmTrimData
+    {
+      int feature = -1;
+      std::string topology;
+      double angle_degrees = 0.0;
+      double exit_distance_over_radius = 1.0;
+      double half_start_over_radius = 1.0;
+      double trimmed_length = 0.0;
+      std::size_t vertex_patch = 0;
+      std::array<double, 3> arm{};  // the real arm's unit direction from the vertex
+      std::vector<std::pair<std::size_t, double>> cells;  // (patch, removed length)
+    };
+    std::vector<MirrorArmTrimData> mirror_arm_trims;
+
     // Corner-arm trim (decision 394, F1): at a matched corner whose arms are not
     // perpendicular, the coupon's matching square |u|, |v| <= R (u = the first arm)
     // contains the second arm up to s = R / max(|cos theta|, |sin theta|) from the vertex,
