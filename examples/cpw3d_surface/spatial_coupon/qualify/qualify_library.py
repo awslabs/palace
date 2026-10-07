@@ -43,7 +43,16 @@ Per passed coupon of the build record:
     split (<= --max-jobs, the user job cap, the source count) does not fit the walltime
     or the Palace peak exceeds the node fraction; one plan.json per job with
     estimate-derived caps and pinned SHA-256 of the mesh, its configs and every trace;
-    job.pbs from the cluster profile;
+    job.pbs from the cluster profile.  A stage that does not fit one node (decision 457)
+    runs on the minimum node count whose estimated per-node peak fits an instance's
+    admission guard (estimate_stages.plan_nodes; the main stages share one count - their
+    worker blocks and reducer must run at one rank count, the archive is per rank - and
+    the control / local-edge group another, alone in job 1 when the counts differ); the
+    estimate is scaled to those counts (the measured NodeScaling speedups), the job
+    plans carry Nodes / Ranks / the hostfile mpirun arguments / the per-node guard and
+    the job scripts select N nodes; above the profile's MaximumNodesPerJob the coupon
+    fails closed; a coupon whose every stage fits one node is planned byte-identically
+    to the recorded campaigns;
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
     nothing contacted); otherwise up to --max-jobs of the run's jobs are queued / running
     at once (each qsub under the user job cap, recorded and counted at submission): a

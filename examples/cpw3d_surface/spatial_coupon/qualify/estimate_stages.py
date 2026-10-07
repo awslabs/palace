@@ -15,9 +15,17 @@ part: the fraction ReducerEvaluationFraction of the measured pair seconds is the
 read + evaluation work (N x ceil(N / b) source evaluations at block size b, decision 62(1):
 the measured rates ran at MeasuredBlockSize), the remainder the Gram work scaled with the
 number of source pairs.  The decision is fail-closed: the job
-fits when the 2x-PCG total with the preflight and margin factor is below the walltime
+fits when the worst-PCG total with the preflight and margin factor is below the walltime
 and the largest Palace peak plus the runner's headroom stays under NodeFitFraction of
-the node.
+the node.  A Version-3 model (refit_cost_model.refit_measured) carries per-stage
+SafetyFactor figures the times are multiplied by.
+
+Multi-node stages (decision 457): plan_nodes attaches to every stage the minimum node
+count whose estimated per-node node-used peak fits an instance's admission guard
+(the model's NodeScaling calibration: a replicated fraction + the distributed remainder
+/ N), 1 when the one-node rules of record admit the stage, None (fail closed) above the
+profile's MaximumNodesPerJob; scale_to_nodes divides every time part by N^exponent (the
+measured 1 -> 2 node speedups) for the node assignment the driver chose.
 
 usage: estimate_stages.py --entity-counts JSON --stage ORDER:SOURCES ... [--local-edge ORDER:SOURCES]
        [--reducer-block-size B] [--cost-model PATH] [--cluster-profile PATH] [--out PATH]
