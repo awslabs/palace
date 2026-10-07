@@ -168,6 +168,8 @@ jobs:
     # out of the index. The workflow-level group is keyed on github.ref and so
     # does not serialize across branches/PRs; this group deliberately omits it.
     # cancel-in-progress: false queues the newer writer instead of clobbering.
+    # ghcr-cleanup.yml joins this group (as `<package>-buildcache-index`) so it
+    # never deletes versions mid-refresh; keep the name and settings in sync.
     concurrency:
       group: palace-1.2-buildcache-index
       cancel-in-progress: false

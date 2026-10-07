@@ -71,6 +71,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Column ... not found in table`, because reloaded CSV tables kept stale column-name
     indices.
     [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed the sign of the London penetration depth term for the out-of-plane field component
+    in `"BoundaryMode"` simulations and wave ports.
+    [PR 1025](https://github.com/awslabs/palace/pull/1025).
+  - Fixed issues affecting non-cracked 2D nonconformal meshes, and the wave ports of
+    non-cracked 3D nonconformal meshes, where the edges on the unrefined side were not
+    constrained.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed boundary mode simulations extracting their cross-section from a nonconformal 3D
+    mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
+    conditions of the cross-section.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
   - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux error
     estimators on processes without elements of a submesh.
     [PR 1022](https://github.com/awslabs/palace/pull/1022).

@@ -119,6 +119,8 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository
       )
     runs-on: ubuntu-latest
+    # ghcr-cleanup.yml joins this group (as `<package>-buildcache-index`) so it
+    # never deletes versions mid-refresh; keep the name and settings in sync.
     concurrency:
       group: palace-develop-buildcache-index
       cancel-in-progress: false
