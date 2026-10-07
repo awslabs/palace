@@ -105,6 +105,29 @@ public:
 namespace
 {
 
+// Essential true DoFs of a port finite element space for the given boundary attribute
+// marker. The interior boundary edges added to the port submesh by
+// mesh::AddSubMeshInternalBoundaryElements (where an uncracked PEC sheet crosses the port,
+// for example) are boundary elements of the submesh but not of its nonconforming mesh, so
+// MFEM does not mark the master edge on the unrefined side of such an edge refined on one
+// side only, which has no boundary element. A true DoF is essential if an essential L-DoF
+// depends on it through the prolongation, which includes these masters (on any rank).
+void GetEssentialTrueDofs(const mfem::ParFiniteElementSpace &fespace,
+                          const mfem::Array<int> &dbc_marker,
+                          mfem::Array<int> &dbc_tdof_list)
+{
+  if (!fespace.Nonconforming())
+  {
+    fespace.GetEssentialTrueDofs(dbc_marker, dbc_tdof_list);
+    return;
+  }
+  mfem::Array<int> ess_ldofs, ess_tdofs(fespace.GetTrueVSize());
+  fespace.GetEssentialVDofs(dbc_marker, ess_ldofs);
+  fespace.Dof_TrueDof_Matrix()->BooleanMultTranspose(1, ess_ldofs.HostRead(), 0,
+                                                     ess_tdofs.HostWrite());
+  mfem::FiniteElementSpace::MarkerToList(ess_tdofs, dbc_tdof_list);
+}
+
 void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &port_nd_fespace,
                           mfem::ParFiniteElementSpace &port_h1_fespace,
                           const mfem::Array<int> &dbc_attr,
@@ -120,8 +143,8 @@ void GetEssentialTrueDofs(mfem::ParFiniteElementSpace &port_nd_fespace,
       std::max(mesh::GetMaxBdrAttribute(port_mesh), dbc_attr.Size() ? dbc_attr.Max() : 0);
   mfem::Array<int> dbc_marker;
   mesh::AttrToMarker(max_bdr_attr, dbc_attr, dbc_marker);
-  port_nd_fespace.GetEssentialTrueDofs(dbc_marker, port_nd_dbc_tdof_list);
-  port_h1_fespace.GetEssentialTrueDofs(dbc_marker, port_h1_dbc_tdof_list);
+  GetEssentialTrueDofs(port_nd_fespace, dbc_marker, port_nd_dbc_tdof_list);
+  GetEssentialTrueDofs(port_h1_fespace, dbc_marker, port_h1_dbc_tdof_list);
 }
 
 void GetInitialSpace(const mfem::ParFiniteElementSpace &nd_fespace,

@@ -171,6 +171,14 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
       }
     }
 
+    // The boundary elements of the submesh of a nonconforming mesh, including those added
+    // or relabelled above, are not in its mfem::NCMesh, and would be lost when the mesh is
+    // distributed.
+    if (extracted->Nonconforming())
+    {
+      extracted = mesh::RebuildNonconformingMesh(*extracted);
+    }
+
     smesh = std::move(extracted);
     Mpi::Print(" Surface normal = ({:+.3e}, {:+.3e}, {:+.3e})\n", frame.normal(0),
                frame.normal(1), frame.normal(2));

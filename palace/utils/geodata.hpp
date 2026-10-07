@@ -305,6 +305,14 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
 mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
                                 mfem::Vector &e1, mfem::Vector &e2);
 
+// Copy a serial 2D nonconforming mesh to a new mesh with the same elements, boundary
+// elements and hanging vertices, whose nonconforming structure is rebuilt from them (the
+// leaf elements become the root elements). MFEM keeps the boundary of a nonconforming mesh
+// in its mfem::NCMesh, which is used to print or distribute it, and does not update it for
+// boundary elements added to the mfem::Mesh or for their attributes. The nonconforming
+// mesh of a SubMesh of a nonconforming mesh has no boundary at all.
+std::unique_ptr<mfem::Mesh> RebuildNonconformingMesh(const mfem::Mesh &mesh);
+
 // Project a 3D point to 2D local coordinates using a previously computed tangent frame.
 inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,
                                   const mfem::Vector &e1, const mfem::Vector &e2)
