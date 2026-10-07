@@ -31,6 +31,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacepostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponseidentification.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponsemirror.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceresponseoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/timeoperator.cpp

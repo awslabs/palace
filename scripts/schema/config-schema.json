@@ -3389,6 +3389,26 @@
               "description": "Write `surface-response-patch-energy.csv`: the domain correction and fabricated interface energies of EVERY applied patch (model, feature, longitudinal cell, weight, origin) for each source and evaluation, the per-patch rows of `surface-response-model-energy.csv`. Electrostatic only; every other output is unchanged.",
               "default": false
             },
+            "DomainBoundary": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The rule for coupons whose placed points leave the device mesh through a domain cut (decisions 442 / 454): the raw within-R energy of an excluded (DomainBoundary) patch is always kept in the corrected interface energies (F-DB-a, no switch); `Mirror` selects the mirror-extended identification across the planar natural vertical truncation planes (F-DB-c).",
+              "properties": {
+                "Mirror": {
+                  "type": "string",
+                  "enum": ["Natural", "Off"],
+                  "description": "`Natural` (default): the perimeter within `BandOverR` x R of every planar natural vertical truncation plane is reflected into the identification, the features formed with the images are modelled with the trace by even extension (mirror-point evaluation) and the real half integrated; `Off`: no mirror, every cut-crossing patch is a DomainBoundary exclusion whose raw claim is kept.",
+                  "default": "Natural"
+                },
+                "BandOverR": {
+                  "type": "number",
+                  "minimum": 2,
+                  "maximum": 10,
+                  "description": "Width of the mirror band in matching radii (the 2R interaction reach plus a margin).",
+                  "default": 3.0
+                }
+              }
+            },
             "FabricatedMatrix": {
               "type": "string",
               "description": "Path to the fabricated coupon `domain-response-matrix.csv` file."
