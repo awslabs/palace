@@ -100,15 +100,16 @@ def unique_hosts(nodefile_text):
     return hosts
 
 
-def remote_shell(plan, host):
+def remote_shell(plan, host, index):
     """The command prefix running a program on another node of the job: the plan's PBSDsh
-    (pbsdsh -h HOST --) when the executable exists, else ssh in batch mode."""
+    (`pbsdsh -n INDEX --`, the node's index in PBS_NODEFILE order: PBS 23 pbsdsh has no
+    host option) when the executable exists, else ssh in batch mode to the host."""
     pbsdsh = plan.get("PBSDsh")
     if pbsdsh and Path(pbsdsh).exists():
-        return [pbsdsh, "-h", host, "--"]
+        return [pbsdsh, "-n", str(index), "--"]
     found = shutil_which("pbsdsh")
     if found:
-        return [found, "-h", host, "--"]
+        return [found, "-n", str(index), "--"]
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host]
 
 
@@ -120,13 +121,17 @@ def shutil_which(name):
     return None
 
 
-def remote_node_preflight(plan, host):
-    """/proc/meminfo and the process table of another node (its admission and conflict checks)."""
-    command = remote_shell(plan, host) + ["/bin/sh", "-c", "cat /proc/meminfo; echo ---PS---; ps -eo pid=,comm="]
+def remote_node_preflight(plan, host, index):
+    """/proc/meminfo and the process table of another node (its admission and conflict
+    checks); the node shell must land on `host` (its hostname is checked)."""
+    command = remote_shell(plan, host, index) + ["/bin/sh", "-c", "hostname; echo ---MEM---; cat /proc/meminfo; echo ---PS---; ps -eo pid=,comm="]
     result = subprocess.run(command, text=True, capture_output=True, timeout=120)
     if result.returncode != 0 or "---PS---" not in result.stdout:
-        raise SystemExit(f"Node preflight failed on {host}: rc {result.returncode} {result.stderr.strip()[:400]}")
-    meminfo_text, _, processes = result.stdout.partition("---PS---")
+        raise SystemExit(f"Node preflight failed on {host} (index {index}): rc {result.returncode} {result.stderr.strip()[:400]}")
+    reported, _, rest = result.stdout.partition("---MEM---")
+    if normalize_host(reported.strip()) != host:
+        raise SystemExit(f"Node shell index {index} landed on {reported.strip()!r}, expected {host}")
+    meminfo_text, _, processes = rest.partition("---PS---")
     values = {}
     for line in meminfo_text.splitlines():
         if ":" in line:
@@ -237,7 +242,7 @@ def main(argv):
         preflight["Nodes"] = {status["Host"]: {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
                                                "Conflicts": [], "Role": "runner"}}
         for host in other_hosts:
-            values, remote_processes = remote_node_preflight(plan, host)
+            values, remote_processes = remote_node_preflight(plan, host, ordered_hosts.index(host))
             remote_conflicts = conflicting_processes(remote_processes)
             preflight["Nodes"][host] = {"MemTotalBytes": values["MemTotal"], "MemAvailableBytes": values["MemAvailable"],
                                         "Conflicts": remote_conflicts, "Role": "node"}
@@ -303,8 +308,8 @@ def main(argv):
         for host in other_hosts:
             csv_path = base / f"memory-samples-{host}.csv"
             node_sample_paths.append(csv_path)
-            command = remote_shell(plan, host) + ["/usr/bin/env", "python3", str(Path(__file__).resolve()), "--node-sampler",
-                                                  str(csv_path), str(stop_file)]
+            command = remote_shell(plan, host, ordered_hosts.index(host)) + ["/usr/bin/env", "python3", str(Path(__file__).resolve()),
+                                                                            "--node-sampler", str(csv_path), str(stop_file)]
             node_samplers.append(subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=(base / f"node-sampler-{host}.err").open("w")))
 
     completed = set()

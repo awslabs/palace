@@ -302,14 +302,15 @@ class RunnerMultiNodeTest(unittest.TestCase):
         saved = os.environ.get("PATH")
         os.environ["PATH"] = "/nonexistent-dir"
         try:
-            self.assertEqual(run_stages.remote_shell(plan, "h2")[:3], ["ssh", "-o", "BatchMode=yes"])
+            self.assertEqual(run_stages.remote_shell(plan, "h2", 1)[:3], ["ssh", "-o", "BatchMode=yes"])
         finally:
             os.environ["PATH"] = saved
         with tempfile.TemporaryDirectory() as tmp:
             pbsdsh = Path(tmp) / "pbsdsh"
             pbsdsh.write_text("#!/bin/sh\n")
             pbsdsh.chmod(0o755)
-            self.assertEqual(run_stages.remote_shell({"PBSDsh": str(pbsdsh)}, "h2"), [str(pbsdsh), "-h", "h2", "--"])
+            # PBS 23 pbsdsh addresses nodes by their index in PBS_NODEFILE order (no host option).
+            self.assertEqual(run_stages.remote_shell({"PBSDsh": str(pbsdsh)}, "h2", 1), [str(pbsdsh), "-n", "1", "--"])
             samples = Path(tmp) / "memory-samples-h2.csv"
             samples.write_text("unix,host,used_bytes\n100,h2,5\n110,h2,9\n130,h2,7\n")
             self.assertEqual(run_stages.per_node_peaks([samples], 105, 120), {"h2": 9})
