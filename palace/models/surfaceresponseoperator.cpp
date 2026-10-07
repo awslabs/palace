@@ -15306,14 +15306,58 @@ struct DomainResponseMatrices
   mfem::DenseMatrix fixed_flux_defect;
 };
 
+// The parsed response matrix files of this process, keyed by the file's path, size and
+// last write time and the reading parameters (decision 538: the operator is rebuilt every
+// AMR cycle and read every model's files again - on the 316-edge loop-end coupon 460 MB
+// of surface tables per rank per cycle; the parsed matrices are identical by construction,
+// so the cache changes no output). A rewritten file (another size or time) is read anew.
+struct ResponseMatrixFileKey
+{
+  std::string path;
+  std::uintmax_t size = 0;
+  std::filesystem::file_time_type::rep time = 0;
+  int expected_size = 0;
+  double within_radius = -1.0;  // the within-R selection, -1 for whole-box
+  bool operator<(const ResponseMatrixFileKey &other) const
+  {
+    return std::tie(path, size, time, expected_size, within_radius) <
+           std::tie(other.path, other.size, other.time, other.expected_size,
+                    other.within_radius);
+  }
+};
+
+ResponseMatrixFileKey MakeResponseMatrixFileKey(const std::string &path, int expected_size,
+                                                std::optional<double> within_radius)
+{
+  ResponseMatrixFileKey key;
+  key.path = path;
+  std::error_code error;
+  key.size = std::filesystem::file_size(path, error);
+  if (error)
+  {
+    key.size = 0;
+  }
+  const auto time = std::filesystem::last_write_time(path, error);
+  key.time = error ? 0 : time.time_since_epoch().count();
+  key.expected_size = expected_size;
+  key.within_radius = within_radius.value_or(-1.0);
+  return key;
+}
+
 // Read one domain response matrix file as a dense matrix of the expected size.
 mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
 {
+  static std::map<ResponseMatrixFileKey, mfem::DenseMatrix> cache;
+  const auto key = MakeResponseMatrixFileKey(path, expected_size, std::nullopt);
+  if (const auto it = cache.find(key); it != cache.end())
+  {
+    return it->second;
+  }
   auto [size, entries] = ReadDomainResponseMatrix(path);
   MFEM_VERIFY(size == expected_size,
               "Response matrix \"" << path
                                    << "\" and basis point file have inconsistent sizes!");
-  return BuildDenseMatrix(entries, expected_size, path);
+  return cache.emplace(key, BuildDenseMatrix(entries, expected_size, path)).first->second;
 }
 
 // A model's domain response matrix: the file itself, or for an interpolated model (config
@@ -15427,8 +15471,8 @@ DomainResponseMatrices BuildDomainResponseMatrices(
 // units) instead: adding Q_total counted the box energy outside R twice (lane J, decision
 // 112(a)).
 std::map<int, mfem::DenseMatrix>
-ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
-                            std::optional<double> within_radius = std::nullopt)
+ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
+                                    std::optional<double> within_radius)
 {
   const Table table = ReadTable(path);
   const auto &interface_col = FindColumn(table, "interface", path);
@@ -15508,7 +15552,19 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
                   << *within_radius << " m: a spatial (3D box) response model adds its "
                   << "energy within R of its edges (Q_ij), not the whole-box Q_total!");
 
-  std::map<int, std::vector<MatrixEntry>> entries;
+  // The per-interface sum over the coupon edges, accumulated per (i, j) in the order of
+  // the unique keys (interface, edge, i, j): the first edge's value, then each further
+  // edge's added in edge order - the same floating-point sequence as a search for the
+  // (i, j) entry would follow, so the matrices are bitwise those of the earlier linear
+  // search, which cost O(entries x unique keys) and dominated the setup of a 316-edge
+  // coupon (decision 538: 363 s per AMR cycle on the loop-end model).
+  struct InterfaceSum
+  {
+    std::vector<double> sum;
+    std::vector<bool> seen;
+    std::vector<MatrixEntry> entries;  // (i, j) in first-appearance order
+  };
+  std::map<int, InterfaceSum> sums;
   std::map<std::pair<int, int>, std::vector<bool>> have;
   for (const auto &[key, value] : unique)
   {
@@ -15521,21 +15577,36 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
     edge_have[i * expected_size + j] = true;
     edge_have[j * expected_size + i] = true;
 
-    auto &interface_entries = entries[interface];
-    const int basis_row = i;
-    const int basis_col = j;
-    auto it = std::find_if(
-        interface_entries.begin(), interface_entries.end(),
-        [basis_row, basis_col](const auto &entry)
-        { return std::get<0>(entry) == basis_row && std::get<1>(entry) == basis_col; });
-    if (it == interface_entries.end())
+    auto &interface_sum = sums[interface];
+    if (interface_sum.sum.empty())
     {
-      interface_entries.emplace_back(i, j, value);
+      interface_sum.sum.assign(static_cast<std::size_t>(expected_size) * expected_size,
+                               0.0);
+      interface_sum.seen.assign(static_cast<std::size_t>(expected_size) * expected_size,
+                                false);
+    }
+    const std::size_t index = static_cast<std::size_t>(i) * expected_size + j;
+    if (!interface_sum.seen[index])
+    {
+      interface_sum.seen[index] = true;
+      interface_sum.sum[index] = value;
+      interface_sum.entries.emplace_back(i, j, 0.0);
     }
     else
     {
-      std::get<2>(*it) += value;
+      interface_sum.sum[index] += value;
     }
+  }
+  std::map<int, std::vector<MatrixEntry>> entries;
+  for (auto &[interface, interface_sum] : sums)
+  {
+    for (auto &entry : interface_sum.entries)
+    {
+      std::get<2>(entry) =
+          interface_sum.sum[static_cast<std::size_t>(std::get<0>(entry)) * expected_size +
+                            std::get<1>(entry)];
+    }
+    entries.emplace(interface, std::move(interface_sum.entries));
   }
   for (const auto &[key, edge_have] : have)
   {
@@ -15550,6 +15621,22 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
     matrices.emplace(interface, BuildDenseMatrix(interface_entries, expected_size, path));
   }
   return matrices;
+}
+
+// The cached reading (ResponseMatrixFileKey: the same file, size, time and parameters).
+const std::map<int, mfem::DenseMatrix> &
+ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
+                            std::optional<double> within_radius = std::nullopt)
+{
+  static std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> cache;
+  const auto key = MakeResponseMatrixFileKey(path, expected_size, within_radius);
+  if (const auto it = cache.find(key); it != cache.end())
+  {
+    return it->second;
+  }
+  return cache
+      .emplace(key, ReadSurfaceResponseMatricesFromFile(path, expected_size, within_radius))
+      .first->second;
 }
 
 // A model's per-coupon-interface surface response matrices: the file itself, or for an
@@ -15568,11 +15655,11 @@ std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
   std::set<int> interfaces;
   for (const auto &source : config.blend)
   {
-    auto matrices = ReadSurfaceResponseMatrices(
+    const auto &matrices = ReadSurfaceResponseMatrices(
         fabricated ? source.fabricated_surface_matrix : source.thin_surface_matrix,
         expected_size, within_radius);
     std::set<int> source_interfaces;
-    for (auto &[interface, matrix] : matrices)
+    for (const auto &[interface, matrix] : matrices)
     {
       source_interfaces.insert(interface);
       auto [it, inserted] = result.emplace(interface, mfem::DenseMatrix(expected_size));
