@@ -1,0 +1,218 @@
+{
+  "Version": 2,
+  "Plan": "/data/home/simlap/coupon_accuracy_assessment_20260913/multinode-20261007/pair5-fab-p5-dense-2n/main/plan.json",
+  "Case": "spatial-19-edge-9fd03b1b7378",
+  "PBSJobID": "57721.ip-192-168-54-24.us-west-2.compute.internal",
+  "Host": "ip-192-168-58-163",
+  "StartUTC": "2026-10-07T02:01:13Z",
+  "State": "complete",
+  "Stages": [
+    {
+      "Name": "fabricated-p5-dense",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/multinode-20261007/pair5-fab-p5-dense-2n/main/fabricated-p5/config.json",
+      "Environment": {},
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "5400",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/multinode-20261007/pair5-fab-p5-dense-2n/main/fabricated-p5-dense.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "--hostfile",
+        "/opt/soca/soca-green1/schedulers/default/pbs/var/spool/pbs/aux/57721.ip-192-168-54-24.us-west-2.compute.internal",
+        "--map-by",
+        "ppr:192:node",
+        "-n",
+        "384",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/multinode-20261007/pair5-fab-p5-dense-2n/main/fabricated-p5/config.json"
+      ],
+      "CapSeconds": 5400,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/multinode-20261007/pair5-fab-p5-dense-2n/main/fabricated-p5-dense.log",
+      "StartUTC": "2026-10-07T02:01:13Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88.bin",
+      "BinarySHA256": "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88",
+      "ReturnCode": 0,
+      "WallSeconds": 918.3957388179999,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 3311706112,
+      "NodePeakUsedBytesSampled": 494540349440,
+      "Parsed": {
+        "Order": 5,
+        "H1": 125247120,
+        "ND": 436796590,
+        "RT": 500752960,
+        "Elements": 4722858,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 5,
+            "Index": 1,
+            "ElapsedAtStart": 2.05e-07
+          },
+          {
+            "Step": 2,
+            "Of": 5,
+            "Index": 2,
+            "ElapsedAtStart": 188.0
+          },
+          {
+            "Step": 3,
+            "Of": 5,
+            "Index": 3,
+            "ElapsedAtStart": 317.0
+          },
+          {
+            "Step": 4,
+            "Of": 5,
+            "Index": 4,
+            "ElapsedAtStart": 457.0
+          },
+          {
+            "Step": 5,
+            "Of": 5,
+            "Index": 5,
+            "ElapsedAtStart": 593.0
+          }
+        ],
+        "PCG": [
+          48,
+          32,
+          35,
+          34,
+          33
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "414.0G",
+          "Max": "428.5G",
+          "Avg": "421.3G",
+          "Total": "842.6G"
+        },
+        "PalaceTotalSeconds": 912.725,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   4.092      25.977      25.907\n  Mesh Preprocessing            25.910      47.780      25.972\nOperator Construction            5.626       7.615       6.778\n  Surface Post Setup             1.033       1.287       1.098\nLinear Solve                    19.539      42.596      26.757\n  Setup                         19.417      19.677      19.607\n  Preconditioner               625.558     652.595     643.418\n  Coarse Solve                   1.677       7.739       3.647\nEstimation                       0.875       1.511       1.063\n  Construction                  69.825      70.776      70.571\n  Solve                         16.085      16.142      16.137\nPostprocessing                  32.140      32.351      32.246\nDisk IO                         36.479      36.525      36.497\n--------------------------------------------------------------\nTotal                          912.450     912.725     912.589",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  502.5M      961.5M      961.5M\n  Mesh Preprocessing              2.7G        4.2G        5.1G\nOperator Construction            62.6G      122.7G      127.8G\n  Surface Post Setup              2.4G        4.6G      132.4G\nLinear Solve                      0.0K        0.0K      132.4G\n  Setup                          96.8G      189.6G      322.0G\n  Preconditioner                 45.0M       51.0M      322.0G\n  Coarse Solve                    0.0K        0.0K      322.0G\nEstimation                       27.1G       53.2G      375.2G\n  Construction                  166.2G      325.1G      700.3G\n  Solve                          41.9G       82.0G      782.4G\nPostprocessing                   16.8G       33.3G      815.7G\nDisk IO                           2.4G        3.4G      819.1G\n--------------------------------------------------------------\nTotal                           426.3G      838.1G      838.1G"
+      },
+      "EndUTC": "2026-10-07T02:16:32Z",
+      "NodePeakUsedBytesSampledPerNode": {
+        "ip-192-168-44-52": 494540349440,
+        "ip-192-168-58-163": 479077539840
+      },
+      "Nodes": 2,
+      "State": "complete"
+    }
+  ],
+  "Nodes": [
+    "ip-192-168-58-163",
+    "ip-192-168-44-52"
+  ],
+  "Preflight": {
+    "MemTotalBytes": 797242064896,
+    "MemAvailableBytes": 746825224192,
+    "MinimumMemAvailableBytes": 494780232499,
+    "Instance": {
+      "Type": "m8g.48xlarge",
+      "vCPUs": 192,
+      "MemoryGiB": 768,
+      "NodeGiB": 742.49,
+      "Nodes": 2,
+      "MemoryFitFraction": 0.6,
+      "Fits": true,
+      "MinimumMemAvailableBytes": 494780232499,
+      "Candidates": [
+        "m8g.48xlarge",
+        "r8g.48xlarge"
+      ],
+      "Rule": "decision-457 measurement: the stored one-node run of record rerun at 2 x m8g.48xlarge (384 ranks)",
+      "OneNodeRunOfRecord": {
+        "p4": "PBS 57461 / 57462 (workers, m8g) + 57538 (reducer, r8g; Palace 264 G, node used 300 GiB)",
+        "p5-dense": "PBS 57629 (r8g; Palace 798.9 G total, 28 min 05 s wall)"
+      }
+    },
+    "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88.bin",
+    "BinarySHA256": "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88",
+    "Pinned": {
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378/mesh/identity-80fbf357c519.msh": {
+        "Expected": "80fbf357c5199658eaaf3fa355ecd182b29a0e1c549d87862bab138ebeeab5e5",
+        "Actual": "80fbf357c5199658eaaf3fa355ecd182b29a0e1c549d87862bab138ebeeab5e5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/multinode-20261007/pair5-fab-p5-dense-2n/main/fabricated-p5/config.json": {
+        "Expected": "bb3702a8e1aa107e39a2abfd4180187b75ab73aa2adca0881b24c58a06befbcf",
+        "Actual": "bb3702a8e1aa107e39a2abfd4180187b75ab73aa2adca0881b24c58a06befbcf",
+        "OK": true
+      },
+      "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/f-qualification/spatial-19-edge-9fd03b1b7378/dense/traces/state-2.csv": {
+        "Expected": "98697185a1f6b690827036a44c344f397b5d47047a9e82da18a88565d7a1f6cf",
+        "Actual": "98697185a1f6b690827036a44c344f397b5d47047a9e82da18a88565d7a1f6cf",
+        "OK": true
+      },
+      "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/f-qualification/spatial-19-edge-9fd03b1b7378/dense/traces/line-charge-x0.csv": {
+        "Expected": "3b66f4cee152431119b959b27bee4e04a15f57ac3172fc19e003b872f49ce9eb",
+        "Actual": "3b66f4cee152431119b959b27bee4e04a15f57ac3172fc19e003b872f49ce9eb",
+        "OK": true
+      },
+      "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/f-qualification/spatial-19-edge-9fd03b1b7378/dense/traces/line-charge-x1.csv": {
+        "Expected": "a3acebd3f508db3233634c63aa1c7a77e613f986ad4e8349d8314a94ddcbe4f8",
+        "Actual": "a3acebd3f508db3233634c63aa1c7a77e613f986ad4e8349d8314a94ddcbe4f8",
+        "OK": true
+      },
+      "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/f-qualification/spatial-19-edge-9fd03b1b7378/dense/traces/line-charge-y0.csv": {
+        "Expected": "3e59a3005cf7e98508ade597e364f8b9008524517f94b46288650e502e275268",
+        "Actual": "3e59a3005cf7e98508ade597e364f8b9008524517f94b46288650e502e275268",
+        "OK": true
+      },
+      "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/f-qualification/spatial-19-edge-9fd03b1b7378/dense/traces/line-charge-y1.csv": {
+        "Expected": "b85146fed7943a369f0401ad5a8666b5cf0e92d6ca91e2d982abf188ae9916ee",
+        "Actual": "b85146fed7943a369f0401ad5a8666b5cf0e92d6ca91e2d982abf188ae9916ee",
+        "OK": true
+      }
+    },
+    "UTC": "2026-10-07T02:01:13Z",
+    "Nodes": {
+      "ip-192-168-58-163": {
+        "MemTotalBytes": 797242064896,
+        "MemAvailableBytes": 746825224192,
+        "Conflicts": [],
+        "Role": "runner"
+      },
+      "ip-192-168-44-52": {
+        "MemTotalBytes": 797242068992,
+        "MemAvailableBytes": 746803261440,
+        "Conflicts": [],
+        "Role": "node"
+      }
+    },
+    "NodeShell": {
+      "PBSDsh": "/opt/pbs/bin/pbsdsh",
+      "SlotIndex": {
+        "ip-192-168-58-163": 0,
+        "ip-192-168-44-52": 192
+      }
+    },
+    "NodeGuard": {
+      "MinimumMemAvailableBytes": 494780232499,
+      "Nodes": 2,
+      "Rule": "the runner checks MemAvailable >= MinimumMemAvailableBytes and the absence of conflicting native processes on EVERY node of PBS_NODEFILE before the first stage, and samples every node's memory (decision 457)"
+    },
+    "StageBinaries": {}
+  },
+  "EndUTC": "2026-10-07T02:16:34Z",
+  "TotalSeconds": 921.763213186,
+  "StagePeakUsedBytesSampled": {
+    "fabricated-p5-dense": 479077539840
+  },
+  "StagePeakUsedBytesSampledPerNode": {
+    "fabricated-p5-dense": {
+      "ip-192-168-44-52": 494540349440,
+      "ip-192-168-58-163": 479077539840
+    }
+  }
+}

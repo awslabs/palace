@@ -43,7 +43,16 @@ Per passed coupon of the build record:
     split (<= --max-jobs, the user job cap, the source count) does not fit the walltime
     or the Palace peak exceeds the node fraction; one plan.json per job with
     estimate-derived caps and pinned SHA-256 of the mesh, its configs and every trace;
-    job.pbs from the cluster profile;
+    job.pbs from the cluster profile.  A stage that does not fit one node (decision 457)
+    runs on the minimum node count whose estimated per-node peak fits an instance's
+    admission guard (estimate_stages.plan_nodes; the main stages share one count - their
+    worker blocks and reducer must run at one rank count, the archive is per rank - and
+    the control / local-edge group another, alone in job 1 when the counts differ); the
+    estimate is scaled to those counts (the measured NodeScaling speedups), the job
+    plans carry Nodes / Ranks / the hostfile mpirun arguments / the per-node guard and
+    the job scripts select N nodes; above the profile's MaximumNodesPerJob the coupon
+    fails closed; a coupon whose every stage fits one node is planned byte-identically
+    to the recorded campaigns;
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
     nothing contacted); otherwise up to --max-jobs of the run's jobs are queued / running
     at once (each qsub under the user job cap, recorded and counted at submission): a
@@ -460,9 +469,24 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     estimate["EntityCountsOrigin"] = counts_origin
     estimate["ReducerBlockSizeOrigin"] = reducer_block_size["Origin"]
     policy = job_policy_of(args, physics_run, profile)
+    # Decision 457: a stage that does not fit one node runs on the minimum node count whose
+    # per-node peak fits an instance's admission guard (estimate_stages.plan_nodes); the main
+    # stages share one count (their worker blocks and reducer: the archive is per rank), the
+    # control / local-edge group another; the estimate is then scaled to those counts.  A stage
+    # above MaximumNodesPerJob fails closed.  A coupon whose every stage fits one node is
+    # planned exactly as before.
+    node_plan = estimate["Nodes"]
+    if not node_plan["Fits"]:
+        raise CaseStop("Estimate", node_plan["Decision"], Nodes=node_plan)
+    nodes, assignment = node_assignment(node_plan, layout)
+    if nodes is not None:
+        try:
+            estimate = estimate_stages.scale_to_nodes(estimate, assignment, cost_model, profile)
+        except ValueError as error:
+            raise CaseStop("Estimate", str(error), Nodes=node_plan)
     try:
         split = job_split.plan_split(indices=indices, layout=layout, estimate=estimate, policy=policy, model=cost_model,
-                                     profile=profile)
+                                     profile=profile, nodes=nodes)
     except ValueError as error:
         raise CaseStop("JobPolicy", str(error), Policy=policy)
     estimate["Split"] = split
@@ -477,14 +501,20 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                          "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"],
                          "ReducerBlockSize": estimate["ReducerBlockSize"],
                          "MainStageNodeHoursEstimate": {
-                             factor: value["StageSecondsEstimate"] * profile["Nodes"] / 3600.0
+                             factor: value["StageSecondsEstimate"] * (nodes["Main"] if nodes else profile["Nodes"]) / 3600.0
                              for factor, value in estimate["Stages"][layout[0]["EstimateKey"]]["ByPCGFactor"].items()}}
+    record["Nodes"] = {"MultiNode": bool(nodes), "Main": nodes["Main"] if nodes else profile["Nodes"],
+                       "Fixed": nodes["Fixed"] if nodes else profile["Nodes"], "Required": node_plan["Required"],
+                       "MaximumNodesPerJob": node_plan["MaximumNodesPerJob"], "Decision": estimate["Nodes"]["Decision"],
+                       "Rule": estimate_stages.NODE_SCALING_RULE}
     record["Split"] = {key: split[key] for key in ("N", "Fits", "Decision", "ControlsJob", "LargestSplit", "Candidates",
                                                     "CriticalPathEstimateSeconds", "NodeSecondsEstimate", "WorstPCGFactor")}
     record["Split"]["Blocks"] = [len(block) for block in split["Blocks"]] if split["Blocks"] else None
     record["Split"]["Rule"] = job_split.SPLIT_RULE
-    fits_memory = (estimate["MaxPalacePeakGBEstimate"] / cost_model["PalaceGBPerGiB"] + 60
-                   < cost_model["NodeFitFraction"] * build_plan.largest_node_gib(profile))
+    # The one-node memory gate of record; a multi-node coupon's memory fit is the per-node
+    # choice of its node counts (every stage's NodePlan).
+    fits_memory = nodes is not None or (estimate["MaxPalacePeakGBEstimate"] / cost_model["PalaceGBPerGiB"] + 60
+                                        < cost_model["NodeFitFraction"] * build_plan.largest_node_gib(profile))
     if not fits_memory:
         raise CaseStop("Estimate", estimate["Decision"], Estimate=record["Estimate"])
     if not split["Fits"]:
@@ -532,17 +562,20 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                      mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
                                      stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
                                      profile=profile, binary=binary, binary_sha256=frozen_binary["SHA256"], mpiexec=mpiexec,
-                                     purpose=purpose, factors=factors, reducer_block_size=reducer_block_size["Value"])
+                                     purpose=purpose, factors=factors, reducer_block_size=reducer_block_size["Value"],
+                                     nodes=split["Jobs"][0].get("Nodes", 1))
         write_json(case_root / "main" / "plan.json", plan)
         job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
                                                   runner=f"{remote_run}/run_stages.py",
                                                   job_name=f"{profile['JobNamePrefix']}-{case_id}"[:64],
-                                                  walltime_seconds=profile["WalltimeSeconds"], instance_type=plan["Instance"]["Type"])
+                                                  walltime_seconds=profile["WalltimeSeconds"], instance_type=plan["Instance"]["Type"],
+                                                  nodes=plan.get("Nodes", 1))
         (case_root / "main" / "job.pbs").write_text(job_script)
         jobs.append({"Name": "single", "Kind": "single", "Block": 1, "Sources": indices, "Requires": [], "Instance": plan["Instance"]["Type"],
                      "Directory": str(case_root / "main"), "RemoteDirectory": f"{remote_case}/main",
                      "SubmissionRecord": str(case_root / "submission.json"), "StageNames": [stage["Name"] for stage in plan["Stages"]],
-                     "Estimate": split["Jobs"][0]["SecondsEstimateWithPreflightAndMargin"], "Plan": str(case_root / "main" / "plan.json")})
+                     "Estimate": split["Jobs"][0]["SecondsEstimateWithPreflightAndMargin"], "Plan": str(case_root / "main" / "plan.json"),
+                     "Nodes": plan.get("Nodes", profile["Nodes"]), "Ranks": plan["Ranks"]})
     else:
         for split_job in split["Jobs"]:
             name = split_job["Name"]
@@ -560,7 +593,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                                       runner=f"{remote_run}/run_stages.py",
                                                       job_name=f"{profile['JobNamePrefix']}-{case_id}-{name}"[:64],
                                                       walltime_seconds=profile["WalltimeSeconds"], instance_type=plan["Instance"]["Type"],
-                                                      job_directory=remote_directory)
+                                                      job_directory=remote_directory, nodes=plan.get("Nodes", 1))
             (directory_ / "job.pbs").write_text(job_script)
             jobs.append({"Name": name, "Kind": split_job["Kind"], "Block": split_job["Block"], "Sources": split_job["Sources"],
                          "Instance": plan["Instance"]["Type"],
@@ -568,7 +601,8 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                                       if split_job["Kind"] == "reducer" else []),
                          "Directory": str(directory_), "RemoteDirectory": remote_directory,
                          "SubmissionRecord": str(case_root / f"submission-{name}.json"), "StageNames": plan["StageNames"],
-                         "Estimate": split_job["SecondsEstimateWithPreflightAndMargin"], "Plan": str(directory_ / "plan.json")})
+                         "Estimate": split_job["SecondsEstimateWithPreflightAndMargin"], "Plan": str(directory_ / "plan.json"),
+                         "Nodes": plan.get("Nodes", profile["Nodes"]), "Ranks": plan["Ranks"]})
     record["Plan"] = {"Path": jobs[0]["Plan"] if split["N"] == 1 else str(case_root / "main" / "jobs"),
                       "Pins": len(plan["PinnedSHA256"]),
                       "StageNames": [name for job in jobs for name in job["StageNames"]],
@@ -588,6 +622,19 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                     "radial_shells": inputs.get("RadialShells"),
                     "reference_edge_size": (getattr(args, "reference_edge_size_nm", None) / 1000.0
                                             if getattr(args, "reference_edge_size_nm", None) else None)}
+
+
+def node_assignment(node_plan, layout):
+    """The node counts of a multi-node coupon (decision 457): the main stages share the
+    largest count any of them requires (their worker blocks and reducer must run at one
+    rank count: the archive is per rank), the control + local-edge group likewise; returns
+    ({"Main", "Fixed"}, {estimate key: nodes}) or (None, None) for a one-node coupon."""
+    if not node_plan["MultiNode"]:
+        return None, None
+    main_nodes = max(node_plan["Required"][item["EstimateKey"]] for item in layout if item["Role"] == "main")
+    fixed_nodes = max(node_plan["Required"][item["EstimateKey"]] for item in layout if item["Role"] != "main")
+    assignment = {item["EstimateKey"]: main_nodes if item["Role"] == "main" else fixed_nodes for item in layout}
+    return {"Main": main_nodes, "Fixed": fixed_nodes}, assignment
 
 
 def reducer_block_size_of(args, physics_run):
@@ -789,13 +836,20 @@ def verify_archive_union(record, context, *, remote, profile):
     """Every worker job completed: the archive directory of every main stage holds one
     potential file per (source, rank) - the union the reducer job reduces (recorded)."""
     union = {}
-    expected = len(context["sources"]) * profile["Ranks"]
+    # One potential file per (source, rank) at the main stage's rank count (a multi-node
+    # coupon: Nodes x RanksPerNode, the same for every worker block and the reducer).
+    main_ranks = {job.get("Ranks", profile["Ranks"]) for job in context["jobs"] if job["Kind"] in ("worker", "single") and job["Sources"]}
+    if len(main_ranks) != 1:
+        raise CaseStop("ArchiveUnion", f"the main-stage worker jobs ran at different rank counts {sorted(main_ranks)}: the archive "
+                                       "union is not reducible")
+    expected = len(context["sources"]) * main_ranks.pop()
     for item in context["layout"]:
         if item["Role"] != "main":
             continue
         directory = f"{record['Remote']['Case']}/main/{item['Prefix']}/archive"
         found = remote_side.count_archive_potentials(remote["Host"], directory)
         union[item["Prefix"]] = {"Directory": directory, "Expected": expected, "Found": found, "OK": found == expected,
+                                 "Ranks": expected // len(context["sources"]),
                                  "Rule": "sources x ranks files source-*-rank-*-V.bin (one potential per source and rank)"}
     record["ArchiveUnion"] = {"UTC": remote_side.utc(), "Stages": union}
     write_json(Path(record["Root"]) / "archive-union.json", record["ArchiveUnion"])
@@ -999,7 +1053,12 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         job["Name"]: json.loads((results / "main" / Path(job["RemoteDirectory"]).relative_to(record["Remote"]["Case"] + "/main")
                                  / "status.json").read_text()) for job in jobs}
     status = statuses["single"] if len(jobs) == 1 and jobs[0]["Kind"] == "single" else summarize_cost.merge_split_statuses(statuses, jobs)
-    cost = summarize_cost.summarize(status, full_sources=len(context["sources"]), nodes=profile["Nodes"])
+    # Node-hours per job at ITS node count (decision 468 (3)): the coupon's JobNodeHours is the
+    # sum over the jobs, every stage charged the nodes of the job that ran it.
+    nodes_by_stage = summarize_cost.stage_nodes(jobs, profile["Nodes"])
+    per_job_node_hours, job_node_hours = summarize_cost.job_node_hours(statuses, jobs, profile["Nodes"])
+    cost = summarize_cost.summarize(status, full_sources=len(context["sources"]), nodes=max(nodes_by_stage.values()),
+                                    nodes_by_stage=nodes_by_stage)
     worst = record["Split"]["WorstPCGFactor"]
     cost["Jobs"] = {job["Name"]: {"Kind": job["Kind"], "Block": job["Block"], "SourceCount": len(job["Sources"]),
                                   "PBSJobID": (job.get("Submission") or {}).get("Job"),
@@ -1008,10 +1067,13 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                                   "ActualSeconds": statuses[job["Name"]].get("TotalSeconds"),
                                   "ActualOverEstimate": ((statuses[job["Name"]].get("TotalSeconds") or 0.0) / job["Estimate"][worst]
                                                          if job["Estimate"][worst] else None),
-                                  "NodeHours": (statuses[job["Name"]].get("TotalSeconds") or 0.0) * profile["Nodes"] / 3600.0,
+                                  "Nodes": job.get("Nodes", profile["Nodes"]), "Ranks": job.get("Ranks", profile["Ranks"]),
+                                  "NodeHours": per_job_node_hours[job["Name"]],
                                   "StartUTC": statuses[job["Name"]].get("StartUTC"), "EndUTC": statuses[job["Name"]].get("EndUTC"),
                                   "Host": statuses[job["Name"]].get("Host")}
                     for job in jobs}
+    cost["JobNodeHours"] = job_node_hours
+    cost["JobNodeHoursRule"] = "the sum over the coupon's jobs of their runner total x their own node count (decision 468 (3))"
     submitted = [job["SubmittedAt"] for job in jobs if job.get("SubmittedAt")]
     cost["CriticalPathSeconds"] = (record["FetchedAt"] - min(submitted)) if submitted and record.get("FetchedAt") else None
     cost["CriticalPathRule"] = ("first submission of the coupon's jobs to its fetch (a split coupon: the worker jobs in "
@@ -1412,6 +1474,8 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         if record.get("BuildGateOverride"):
             model["BuildGateOverride"] = record["BuildGateOverride"]
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
+        if (record.get("Nodes") or {}).get("MultiNode"):
+            model["MultiNodeReduction"] = {"Nodes": record["Nodes"]["Main"], "Note": build_plan.MULTI_NODE_REDUCTION_NOTE}
         model["SourceProcessLibrary"] = {"Path": str(library_path), "SHA256": sha256(library_path)}
         tail = context.get("ma_tail")
         order_block = (tail or {}).get("Orders", {}).get(f"p{main['Order']}")

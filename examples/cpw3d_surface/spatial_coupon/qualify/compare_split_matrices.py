@@ -15,7 +15,11 @@ largest absolute difference of a column relative to the column's largest entry (
 reported - a near-zero cross term may differ by more at the same absolute roundoff).
 The CSVs print 12 significant digits, so equal values are bit-for-bit equal as text.
 
-usage: compare_split_matrices.py DIR_A DIR_B [--tolerance REL] [--out PATH]
+The same comparison serves the ordinary-run postprocessing of two (F) dense-twin runs
+(--postpro: domain-E.csv / surface-Q.csv keyed by the excitation index i, surface-Q-edge.csv
+by i, exc, interface) - the 1-vs-2-node acceptance of decision 458.
+
+usage: compare_split_matrices.py DIR_A DIR_B [--tolerance REL] [--postpro] [--out PATH]
 """
 import argparse
 import csv
@@ -25,6 +29,8 @@ from pathlib import Path
 
 MATRICES = {"domain": ("domain-response-matrix.csv", ("basis_i", "basis_j")),
             "surface": ("surface-response-matrix.csv", ("interface", "edge", "basis_i", "basis_j"))}
+POSTPRO = {"domain-E": ("domain-E.csv", ("i",)), "surface-Q": ("surface-Q.csv", ("i",)),
+           "surface-Q-edge": ("surface-Q-edge.csv", ("i", "exc", "interface"))}
 DEFAULT_RELATIVE_TOLERANCE = 1e-9
 
 
@@ -73,11 +79,12 @@ def compare_matrix(path_a, path_b, keys, tolerance):
                 max_rel = relative
                 worst = {"Key": key_of(header_a, row, keys), "A": a, "B": b}
         per_source = {}
+        source_key = "basis_i" if "basis_i" in keys else keys[0]
         for row in rows_a:
             other = by_key_b[key_of(header_a, row, keys)]
             a, b = float(row[index]), float(other[index])
             relative = abs(a - b) / max(abs(a), abs(b)) if max(abs(a), abs(b)) > 0.0 else 0.0
-            source = key_of(header_a, row, keys)[keys.index("basis_i")]
+            source = key_of(header_a, row, keys)[keys.index(source_key)]
             per_source[source] = max(per_source.get(source, 0.0), relative)
         columns[name] = {"Entries": len(rows_a), "ExactText": exact, "MaxAbsoluteDifference": max_abs,
                          "MaxRelativeDifference": max_rel, "MaxRelativeToLargestEntry": (max_abs / scale if scale > 0.0 else 0.0),
@@ -88,11 +95,11 @@ def compare_matrix(path_a, path_b, keys, tolerance):
             "WithinTolerance": all(column["WithinTolerance"] for column in columns.values())}
 
 
-def compare(directory_a, directory_b, *, tolerance=DEFAULT_RELATIVE_TOLERANCE):
+def compare(directory_a, directory_b, *, tolerance=DEFAULT_RELATIVE_TOLERANCE, files=MATRICES):
     record = {"Tolerance": tolerance, "Rule": ("rows matched by key columns, every numeric column compared; equal when "
                                                 "the largest relative entry difference is within the tolerance"),
               "Matrices": {}}
-    for kind, (name, keys) in MATRICES.items():
+    for kind, (name, keys) in files.items():
         record["Matrices"][kind] = compare_matrix(Path(directory_a) / name, Path(directory_b) / name, keys, tolerance)
     record["Equal"] = all(matrix["WithinTolerance"] for matrix in record["Matrices"].values())
     record["MaxRelativeDifference"] = max(column["MaxRelativeDifference"] for matrix in record["Matrices"].values()
@@ -109,9 +116,10 @@ def main(argv=None):
     parser.add_argument("directory_a", type=Path)
     parser.add_argument("directory_b", type=Path)
     parser.add_argument("--tolerance", type=float, default=DEFAULT_RELATIVE_TOLERANCE)
+    parser.add_argument("--postpro", action="store_true", help="compare the ordinary-run postprocessing CSVs (POSTPRO) instead of the reducer matrices")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
-    record = compare(args.directory_a, args.directory_b, tolerance=args.tolerance)
+    record = compare(args.directory_a, args.directory_b, tolerance=args.tolerance, files=POSTPRO if args.postpro else MATRICES)
     if args.out:
         args.out.write_text(json.dumps(record, indent=2) + "\n")
     for kind, matrix in record["Matrices"].items():

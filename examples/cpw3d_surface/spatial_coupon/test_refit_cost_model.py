@@ -1,9 +1,13 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""qualify/refit_cost_model.py: the committed cost model is the refit of the recorded
-2026-09-22 device library qualification (decision 64a), conservative on every stage of
-every coupon of that run, with the previous (physics-11, b28 at b = 6) model kept and
-bound by digest; the parsers of Palace's reports."""
+"""qualify/refit_cost_model.py: the kept device model (cost-model-device-20260922.json) is
+the refit of the recorded 2026-09-22 device library qualification (decision 64a),
+conservative on every stage of every coupon of that run, with the previous (physics-11,
+b28 at b = 6) model kept and bound by digest; the committed cost-model.json is the
+decision-457 (2) / 458 measured refit of the 30 stage-2 coupons (qualify/stage2-20261006:
+mean rates with per-stage safety factors from the residuals, the reducer node-used line
+refit, the measured policy factors, the old-vs-new cap table), with the device model kept
+and bound by digest; the parsers of Palace's reports."""
 import json
 from pathlib import Path
 import sys
@@ -16,7 +20,9 @@ import estimate_stages  # noqa: E402
 import refit_cost_model  # noqa: E402
 
 RECORDS = HERE / "qualify" / "device-library-20260922"
+STAGE2_RECORDS = HERE / "qualify" / "stage2-20261006"
 PREVIOUS_SHA256 = "22ee226d91c081f9b9275b020e7f68220941f27b32829245d54344da8e8f5ee9"   # the model PBS 47080-47106 were planned with
+DEVICE_SHA256 = "f695da1b0aad66322a2c081e3ca0e3e46d94649b6741b47cab2e1a10996a91a0"     # the model every stage-2 qualify run planned with
 
 
 class ReportParsersTest(unittest.TestCase):
@@ -63,8 +69,8 @@ class RecordedRefitTest(unittest.TestCase):
         # library-device-thin-01's node-used peaks) is carried, not refit: the committed model
         # is the refit of the recorded run with that block carried.
         cls.model, cls.record = refit_cost_model.refit(RECORDS / "library-qualification.json", previous_path=cls.previous,
-                                                       previous_kept=cls.previous, streaming_path=estimate_stages.COST_MODEL)
-        cls.committed = json.loads(estimate_stages.COST_MODEL.read_text())
+                                                       previous_kept=cls.previous, streaming_path=estimate_stages.DEVICE_COST_MODEL)
+        cls.committed = json.loads(estimate_stages.DEVICE_COST_MODEL.read_text())
 
     def test_previous_model_is_kept_byte_for_byte(self):
         self.assertEqual(refit_cost_model.sha256(self.previous), PREVIOUS_SHA256)
@@ -74,6 +80,7 @@ class RecordedRefitTest(unittest.TestCase):
         self.assertEqual((previous["MeasuredBlockSize"], previous["Stages"]["p4"]["Sources"]), (6, 80))
 
     def test_committed_model_is_the_refit_of_the_recorded_run(self):
+        self.assertEqual(refit_cost_model.sha256(estimate_stages.DEVICE_COST_MODEL), DEVICE_SHA256)
         self.assertEqual(self.committed, self.model)
         # Without a streaming source the physics-11 previous model yields a model without the
         # block (the pre-streaming reducer peak term), otherwise identical.
@@ -168,6 +175,121 @@ class RecordedRefitTest(unittest.TestCase):
         for case, coupon in self.model["Provenance"]["Coupons"].items():
             ratio = local["H1"] / coupon["LocalEdge"]["H1"]
             self.assertGreaterEqual(local["PalaceTotalSeconds"], coupon["LocalEdge"]["WallSeconds"] * ratio - 1e-9, case)
+
+
+@unittest.skipUnless(STAGE2_RECORDS.is_dir(), "the stage-2 qualify records are not present")
+class MeasuredRefitTest(unittest.TestCase):
+    """Decision 457 (2) / 458: the committed cost-model.json is refit_measured of the 30
+    stage-2 coupons (coupons-a, coupons-bc, pair 5; 90 jobs), with the device model kept."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.runs = sorted(STAGE2_RECORDS.glob("**/library-qualification.json"))
+        cls.model, cls.record = refit_cost_model.refit_measured(
+            cls.runs, previous_path=estimate_stages.DEVICE_COST_MODEL, previous_kept=estimate_stages.DEVICE_COST_MODEL,
+            label="stage-2 2026-10-05/06 (coupons-a, coupons-bc, pair 5)", node_scaling_path=STAGE2_RECORDS / "node-scaling.json")
+        cls.committed = json.loads(estimate_stages.COST_MODEL.read_text())
+
+    def test_committed_model_is_the_measured_refit_with_the_device_model_kept(self):
+        self.assertEqual(len(self.runs), 30)
+        self.assertEqual(self.committed, self.model)
+        self.assertEqual(self.committed["Version"], 3)
+        self.assertEqual(self.committed["Previous"]["Path"], estimate_stages.DEVICE_COST_MODEL.name)
+        self.assertEqual(self.committed["Previous"]["SHA256"], DEVICE_SHA256)
+        self.assertEqual(len(self.committed["Provenance"]["Coupons"]), 30)
+        self.assertEqual(len(self.committed["Provenance"]["Runs"]), 30)
+        self.assertEqual(sorted(self.committed["Provenance"]["FrozenExecutables"]),
+                         ["8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+                          "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88"])
+        self.assertEqual(sorted(self.committed["Stages"]), ["p3", "p4", "p5"])
+        estimate_stages.load_cost_model(estimate_stages.COST_MODEL)   # the closed-form check of the reference mesh
+
+    def test_mean_rates_with_per_stage_safety_factors_cover_every_measured_stage(self):
+        for order, stage in self.committed["Stages"].items():
+            for kind in ("Worker", "Reducer"):
+                self.assertGreaterEqual(stage["SafetyFactor"][kind], 1.0, (order, kind))
+                self.assertLessEqual(stage["Residuals"][kind]["Max"], stage["SafetyFactor"][kind] + 1e-9, (order, kind))
+                self.assertLess(stage["SafetyFactor"][kind], 1.6, (order, kind))   # the measured spread, not a constant
+            # The mean rate sits inside the measured spread (not the largest, as the device refit).
+            set_by = self.committed["Provenance"]["SetBy"][order]["SecondsPerPCGIteration"]
+            self.assertEqual(set_by["Rule"], "mean")
+            self.assertLess(set_by["Value"], set_by["Largest"][0])
+            self.assertGreater(set_by["Value"], set_by["Statistics"]["Min"])
+        local = self.committed["LocalEdge"]
+        self.assertGreaterEqual(local["SafetyFactor"]["LocalEdge"], local["Residuals"]["LocalEdge"]["Max"] - 1e-9)
+        self.assertTrue(self.committed["SelfCheck"]["ConservativeAtOwnPCG"])
+        # estimate_stages applies the factors: a stage of the reference mesh at the reference
+        # source count costs the mean rates x the safety factor.
+        counts = self.committed["MeasuredMesh"]["EntityCounts"]
+        p4 = self.committed["Stages"]["p4"]
+        stage = estimate_stages.estimate_stage(self.committed, 4, p4["Sources"], counts, 48)
+        self.assertAlmostEqual(stage["ByPCGFactor"]["1.0"]["WorkerSecondsEstimate"],
+                               (p4["WorkerNonSourceSeconds"] + p4["Sources"] * p4["MeanPerSourceSeconds"]) * p4["SafetyFactor"]["Worker"], places=6)
+        self.assertAlmostEqual(stage["ReducerSecondsEstimate"], p4["ReducerPalaceSeconds"] * p4["SafetyFactor"]["Reducer"], places=6)
+        self.assertEqual(stage["SafetyFactor"], p4["SafetyFactor"])
+        # Memory stays the largest scaled measurement (fail-closed).
+        for name in ("WorkerPalacePeakGB", "ReducerPalacePeakGB"):
+            self.assertEqual(self.committed["Provenance"]["SetBy"]["p4"][name]["Rule"], "largest")
+
+    def test_reducer_node_used_line_is_refit_with_a_residual_safety_factor(self):
+        streaming = self.committed["ReducerPeakStreaming"]
+        self.assertEqual(len(streaming["Measured"]), 60)   # 30 coupons x (p3 + p4 + p5) reducers
+        self.assertGreaterEqual(streaming["SafetyFactor"], streaming["Residuals"]["Max"] - 1e-9)
+        self.assertLess(streaming["SafetyFactor"], 1.5)   # the previous constant
+        for row in streaming["Measured"]:
+            estimate_gib = estimate_stages.streaming_reducer_peak_gb(self.committed, row["H1"], row["Sources"]) / self.committed["PalaceGBPerGiB"]
+            self.assertGreaterEqual(estimate_gib, row["NodeUsedGiB"] - 1e-6, row["Label"])
+        # The per-source term is the resident archived potentials: ~8 bytes per H1 DOF per source
+        # (0.0075 GiB per million H1 per source) within a factor of two.
+        self.assertGreater(streaming["NodeUsedGiBPerMillionH1PerSource"], 0.005)
+        self.assertLess(streaming["NodeUsedGiBPerMillionH1PerSource"], 0.015)
+        self.assertEqual(streaming["Previous"]["SafetyFactor"], 1.5)
+
+    def test_no_measured_stage_of_record_exceeds_its_new_cap_and_the_pessimism_is_stated(self):
+        caps = self.record["CapCheck"]
+        self.assertEqual(caps["StagesBelowNewCap"], [])
+        self.assertGreaterEqual(caps["MinimumMarginNewCapOverWall"], 1.0)
+        self.assertEqual(caps["MarginStatistics"]["Count"], len(caps["Rows"]))
+        self.assertTrue(all(row["CapOfRecordSeconds"] for row in caps["Rows"]))   # every stored stage has its cap of record
+        self.assertEqual(self.committed["SelfCheck"]["CapCheck"]["MinimumMarginNewCapOverWall"], caps["MinimumMarginNewCapOverWall"])
+        pessimism = self.committed["SelfCheck"]["Pessimism"]
+        self.assertLess(pessimism["ThisModel"]["Max"], pessimism["PreviousModel"]["Min"])
+        self.assertGreater(pessimism["ThisModel"]["Min"], 1.0)
+        # The measured policy: the largest PCG factor covers the largest measured coupon-mean
+        # ratio with headroom; the margin covers the measured runner overhead.
+        self.assertEqual(self.committed["PCGFactors"], [1.0, 1.3, 1.5])
+        self.assertEqual((self.committed["PreflightAndMarginFactor"], self.committed["PreflightSeconds"]), (1.10, 60))
+        self.assertLess(self.committed["PolicyRule"]["MeasuredOverheads"]["Max"], 1.10)
+        self.assertIn("previous [1.0, 1.5, 2.0]", self.committed["PolicyRule"]["PCGFactors"])
+
+
+    def test_node_scaling_is_the_measured_1_vs_2_node_calibration(self):
+        """Decisions 457 (3) / 463 / 466: the NodeScaling block is fit_node_scaling on the pair-5 one-node
+        statuses of record and the two 2-node runs (PBS 57720 p4 blocks + reducer, 57721 p5 dense twin)."""
+        import fit_node_scaling
+        records = STAGE2_RECORDS / "multinode-20261007"
+        pair5 = STAGE2_RECORDS / "nearkey-validation-pair5" / "fab-spatial-19-edge-9fd03b1b7378" / "spatial-19-edge-9fd03b1b7378" / "results" / "main" / "jobs"
+        one = [json.loads((pair5 / job / "status.json").read_text()) for job in ("worker-1", "worker-2", "reducer")]
+        p4 = json.loads((records / "pair5-fab-p4-2n-status.json").read_text())
+        dense = json.loads((records / "pair5-fab-p5-dense-2n-status.json").read_text())
+        merged = {**p4, "Stages": p4["Stages"] + dense["Stages"]}
+        block = fit_node_scaling.fit(one, merged, ordinary_one_node_log=records / "pair5-fab-p5-dense-1n-palace.log",
+                                     ordinary_two_node_stage="fabricated-p5-dense")
+        scaling = self.committed["NodeScaling"]
+        self.assertEqual(scaling["Memory"], block["Memory"])
+        self.assertEqual(scaling["Time"], block["Time"])
+        self.assertEqual(scaling["MeasuredNodes"], 2)
+        # The reducer DISTRIBUTES (decision 457 (3)): 299.6 GiB at one node -> 183.9 GiB per node at two.
+        self.assertAlmostEqual(scaling["Memory"]["Reducer"]["ReplicatedFraction"], 0.2278, places=3)
+        self.assertAlmostEqual(scaling["Memory"]["Worker"]["ReplicatedFraction"], 0.3821, places=3)
+        self.assertAlmostEqual(scaling["Memory"]["LocalEdge"]["ReplicatedFraction"], 0.1406, places=3)
+        self.assertAlmostEqual(scaling["Time"]["WorkerPerSource"]["Exponent"], 0.8989, places=3)
+        self.assertAlmostEqual(scaling["Time"]["ReducerReduction"]["Exponent"], 0.8233, places=3)
+        self.assertLess(scaling["Time"]["ReducerSetup"]["Exponent"], 0.0)   # the setup does not speed up: kept as measured
+        self.assertEqual(scaling["PerNodeGuardMargin"], 0.10)   # decision 463
+        self.assertEqual(scaling["Source"]["SHA256"], refit_cost_model.sha256(STAGE2_RECORDS / "node-scaling.json"))
+        self.assertEqual(estimate_stages.per_node_guard_margin(self.committed), 0.10)
+        self.assertAlmostEqual(estimate_stages.per_node_used_gib(self.committed, "Reducer", 299.6, 2), 299.6 * (0.2278 + 0.7722 / 2), places=1)
 
 
 if __name__ == "__main__":

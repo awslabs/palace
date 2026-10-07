@@ -1,0 +1,2852 @@
+{
+  "Version": 2,
+  "Plan": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/jobs/worker-1/plan.json",
+  "Case": "spatial-19-edge-533e843f9931-thin",
+  "PBSJobID": "56546.ip-192-168-54-24.us-west-2.compute.internal",
+  "Host": "ip-192-168-36-133",
+  "StartUTC": "2026-10-05T20:03:04Z",
+  "State": "complete",
+  "Stages": [
+    {
+      "Name": "spatial-19-edge-533e843f9931-thin-p4-worker-block1",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/spatial-19-edge-533e843f9931-thin-p4/worker-block1.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/spatial-19-edge-533e843f9931-thin-p4/archive",
+        "PALACE_RESPONSE_ARCHIVE_ONLY": "1",
+        "PALACE_RESPONSE_SOURCE_TIMING": "1"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "15000",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/jobs/worker-1/spatial-19-edge-533e843f9931-thin-p4-worker-block1.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_SOURCE_TIMING",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/spatial-19-edge-533e843f9931-thin-p4/worker-block1.json"
+      ],
+      "CapSeconds": 15000,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/jobs/worker-1/spatial-19-edge-533e843f9931-thin-p4-worker-block1.log",
+      "StartUTC": "2026-10-05T20:03:05Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 2745.6491269959997,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 3099168768,
+      "NodePeakUsedBytesSampled": 204338405376,
+      "Parsed": {
+        "Order": 4,
+        "H1": 53011285,
+        "ND": 195550004,
+        "RT": 234312960,
+        "Elements": 4313864,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 104,
+            "Index": 1,
+            "ElapsedAtStart": 1.74e-07
+          },
+          {
+            "Step": 2,
+            "Of": 104,
+            "Index": 2,
+            "ElapsedAtStart": 24.9
+          },
+          {
+            "Step": 3,
+            "Of": 104,
+            "Index": 3,
+            "ElapsedAtStart": 46.8
+          },
+          {
+            "Step": 4,
+            "Of": 104,
+            "Index": 4,
+            "ElapsedAtStart": 71.6
+          },
+          {
+            "Step": 5,
+            "Of": 104,
+            "Index": 5,
+            "ElapsedAtStart": 93.4
+          },
+          {
+            "Step": 6,
+            "Of": 104,
+            "Index": 6,
+            "ElapsedAtStart": 114.0
+          },
+          {
+            "Step": 7,
+            "Of": 104,
+            "Index": 7,
+            "ElapsedAtStart": 137.0
+          },
+          {
+            "Step": 8,
+            "Of": 104,
+            "Index": 8,
+            "ElapsedAtStart": 164.0
+          },
+          {
+            "Step": 9,
+            "Of": 104,
+            "Index": 9,
+            "ElapsedAtStart": 194.0
+          },
+          {
+            "Step": 10,
+            "Of": 104,
+            "Index": 10,
+            "ElapsedAtStart": 223.0
+          },
+          {
+            "Step": 11,
+            "Of": 104,
+            "Index": 11,
+            "ElapsedAtStart": 247.0
+          },
+          {
+            "Step": 12,
+            "Of": 104,
+            "Index": 12,
+            "ElapsedAtStart": 277.0
+          },
+          {
+            "Step": 13,
+            "Of": 104,
+            "Index": 13,
+            "ElapsedAtStart": 307.0
+          },
+          {
+            "Step": 14,
+            "Of": 104,
+            "Index": 14,
+            "ElapsedAtStart": 337.0
+          },
+          {
+            "Step": 15,
+            "Of": 104,
+            "Index": 15,
+            "ElapsedAtStart": 369.0
+          },
+          {
+            "Step": 16,
+            "Of": 104,
+            "Index": 16,
+            "ElapsedAtStart": 399.0
+          },
+          {
+            "Step": 17,
+            "Of": 104,
+            "Index": 17,
+            "ElapsedAtStart": 421.0
+          },
+          {
+            "Step": 18,
+            "Of": 104,
+            "Index": 18,
+            "ElapsedAtStart": 446.0
+          },
+          {
+            "Step": 19,
+            "Of": 104,
+            "Index": 19,
+            "ElapsedAtStart": 466.0
+          },
+          {
+            "Step": 20,
+            "Of": 104,
+            "Index": 20,
+            "ElapsedAtStart": 492.0
+          },
+          {
+            "Step": 21,
+            "Of": 104,
+            "Index": 21,
+            "ElapsedAtStart": 512.0
+          },
+          {
+            "Step": 22,
+            "Of": 104,
+            "Index": 22,
+            "ElapsedAtStart": 537.0
+          },
+          {
+            "Step": 23,
+            "Of": 104,
+            "Index": 23,
+            "ElapsedAtStart": 556.0
+          },
+          {
+            "Step": 24,
+            "Of": 104,
+            "Index": 24,
+            "ElapsedAtStart": 581.0
+          },
+          {
+            "Step": 25,
+            "Of": 104,
+            "Index": 25,
+            "ElapsedAtStart": 613.0
+          },
+          {
+            "Step": 26,
+            "Of": 104,
+            "Index": 26,
+            "ElapsedAtStart": 643.0
+          },
+          {
+            "Step": 27,
+            "Of": 104,
+            "Index": 27,
+            "ElapsedAtStart": 675.0
+          },
+          {
+            "Step": 28,
+            "Of": 104,
+            "Index": 28,
+            "ElapsedAtStart": 707.0
+          },
+          {
+            "Step": 29,
+            "Of": 104,
+            "Index": 29,
+            "ElapsedAtStart": 739.0
+          },
+          {
+            "Step": 30,
+            "Of": 104,
+            "Index": 30,
+            "ElapsedAtStart": 773.0
+          },
+          {
+            "Step": 31,
+            "Of": 104,
+            "Index": 31,
+            "ElapsedAtStart": 805.0
+          },
+          {
+            "Step": 32,
+            "Of": 104,
+            "Index": 32,
+            "ElapsedAtStart": 828.0
+          },
+          {
+            "Step": 33,
+            "Of": 104,
+            "Index": 33,
+            "ElapsedAtStart": 848.0
+          },
+          {
+            "Step": 34,
+            "Of": 104,
+            "Index": 34,
+            "ElapsedAtStart": 869.0
+          },
+          {
+            "Step": 35,
+            "Of": 104,
+            "Index": 35,
+            "ElapsedAtStart": 889.0
+          },
+          {
+            "Step": 36,
+            "Of": 104,
+            "Index": 36,
+            "ElapsedAtStart": 908.0
+          },
+          {
+            "Step": 37,
+            "Of": 104,
+            "Index": 37,
+            "ElapsedAtStart": 927.0
+          },
+          {
+            "Step": 38,
+            "Of": 104,
+            "Index": 38,
+            "ElapsedAtStart": 951.0
+          },
+          {
+            "Step": 39,
+            "Of": 104,
+            "Index": 39,
+            "ElapsedAtStart": 984.0
+          },
+          {
+            "Step": 40,
+            "Of": 104,
+            "Index": 40,
+            "ElapsedAtStart": 1010.0
+          },
+          {
+            "Step": 41,
+            "Of": 104,
+            "Index": 41,
+            "ElapsedAtStart": 1040.0
+          },
+          {
+            "Step": 42,
+            "Of": 104,
+            "Index": 42,
+            "ElapsedAtStart": 1060.0
+          },
+          {
+            "Step": 43,
+            "Of": 104,
+            "Index": 43,
+            "ElapsedAtStart": 1090.0
+          },
+          {
+            "Step": 44,
+            "Of": 104,
+            "Index": 44,
+            "ElapsedAtStart": 1120.0
+          },
+          {
+            "Step": 45,
+            "Of": 104,
+            "Index": 45,
+            "ElapsedAtStart": 1150.0
+          },
+          {
+            "Step": 46,
+            "Of": 104,
+            "Index": 46,
+            "ElapsedAtStart": 1200.0
+          },
+          {
+            "Step": 47,
+            "Of": 104,
+            "Index": 47,
+            "ElapsedAtStart": 1220.0
+          },
+          {
+            "Step": 48,
+            "Of": 104,
+            "Index": 48,
+            "ElapsedAtStart": 1240.0
+          },
+          {
+            "Step": 49,
+            "Of": 104,
+            "Index": 49,
+            "ElapsedAtStart": 1260.0
+          },
+          {
+            "Step": 50,
+            "Of": 104,
+            "Index": 50,
+            "ElapsedAtStart": 1280.0
+          },
+          {
+            "Step": 51,
+            "Of": 104,
+            "Index": 51,
+            "ElapsedAtStart": 1300.0
+          },
+          {
+            "Step": 52,
+            "Of": 104,
+            "Index": 52,
+            "ElapsedAtStart": 1320.0
+          },
+          {
+            "Step": 53,
+            "Of": 104,
+            "Index": 53,
+            "ElapsedAtStart": 1340.0
+          },
+          {
+            "Step": 54,
+            "Of": 104,
+            "Index": 54,
+            "ElapsedAtStart": 1360.0
+          },
+          {
+            "Step": 55,
+            "Of": 104,
+            "Index": 55,
+            "ElapsedAtStart": 1390.0
+          },
+          {
+            "Step": 56,
+            "Of": 104,
+            "Index": 56,
+            "ElapsedAtStart": 1430.0
+          },
+          {
+            "Step": 57,
+            "Of": 104,
+            "Index": 57,
+            "ElapsedAtStart": 1470.0
+          },
+          {
+            "Step": 58,
+            "Of": 104,
+            "Index": 58,
+            "ElapsedAtStart": 1500.0
+          },
+          {
+            "Step": 59,
+            "Of": 104,
+            "Index": 59,
+            "ElapsedAtStart": 1540.0
+          },
+          {
+            "Step": 60,
+            "Of": 104,
+            "Index": 60,
+            "ElapsedAtStart": 1580.0
+          },
+          {
+            "Step": 61,
+            "Of": 104,
+            "Index": 61,
+            "ElapsedAtStart": 1610.0
+          },
+          {
+            "Step": 62,
+            "Of": 104,
+            "Index": 62,
+            "ElapsedAtStart": 1640.0
+          },
+          {
+            "Step": 63,
+            "Of": 104,
+            "Index": 63,
+            "ElapsedAtStart": 1660.0
+          },
+          {
+            "Step": 64,
+            "Of": 104,
+            "Index": 64,
+            "ElapsedAtStart": 1680.0
+          },
+          {
+            "Step": 65,
+            "Of": 104,
+            "Index": 65,
+            "ElapsedAtStart": 1700.0
+          },
+          {
+            "Step": 66,
+            "Of": 104,
+            "Index": 66,
+            "ElapsedAtStart": 1720.0
+          },
+          {
+            "Step": 67,
+            "Of": 104,
+            "Index": 67,
+            "ElapsedAtStart": 1750.0
+          },
+          {
+            "Step": 68,
+            "Of": 104,
+            "Index": 68,
+            "ElapsedAtStart": 1780.0
+          },
+          {
+            "Step": 69,
+            "Of": 104,
+            "Index": 69,
+            "ElapsedAtStart": 1810.0
+          },
+          {
+            "Step": 70,
+            "Of": 104,
+            "Index": 70,
+            "ElapsedAtStart": 1830.0
+          },
+          {
+            "Step": 71,
+            "Of": 104,
+            "Index": 71,
+            "ElapsedAtStart": 1860.0
+          },
+          {
+            "Step": 72,
+            "Of": 104,
+            "Index": 72,
+            "ElapsedAtStart": 1880.0
+          },
+          {
+            "Step": 73,
+            "Of": 104,
+            "Index": 73,
+            "ElapsedAtStart": 1900.0
+          },
+          {
+            "Step": 74,
+            "Of": 104,
+            "Index": 74,
+            "ElapsedAtStart": 1920.0
+          },
+          {
+            "Step": 75,
+            "Of": 104,
+            "Index": 75,
+            "ElapsedAtStart": 1950.0
+          },
+          {
+            "Step": 76,
+            "Of": 104,
+            "Index": 76,
+            "ElapsedAtStart": 1980.0
+          },
+          {
+            "Step": 77,
+            "Of": 104,
+            "Index": 77,
+            "ElapsedAtStart": 2000.0
+          },
+          {
+            "Step": 78,
+            "Of": 104,
+            "Index": 78,
+            "ElapsedAtStart": 2020.0
+          },
+          {
+            "Step": 79,
+            "Of": 104,
+            "Index": 79,
+            "ElapsedAtStart": 2040.0
+          },
+          {
+            "Step": 80,
+            "Of": 104,
+            "Index": 80,
+            "ElapsedAtStart": 2060.0
+          },
+          {
+            "Step": 81,
+            "Of": 104,
+            "Index": 81,
+            "ElapsedAtStart": 2080.0
+          },
+          {
+            "Step": 82,
+            "Of": 104,
+            "Index": 82,
+            "ElapsedAtStart": 2100.0
+          },
+          {
+            "Step": 83,
+            "Of": 104,
+            "Index": 83,
+            "ElapsedAtStart": 2120.0
+          },
+          {
+            "Step": 84,
+            "Of": 104,
+            "Index": 84,
+            "ElapsedAtStart": 2140.0
+          },
+          {
+            "Step": 85,
+            "Of": 104,
+            "Index": 85,
+            "ElapsedAtStart": 2160.0
+          },
+          {
+            "Step": 86,
+            "Of": 104,
+            "Index": 86,
+            "ElapsedAtStart": 2190.0
+          },
+          {
+            "Step": 87,
+            "Of": 104,
+            "Index": 87,
+            "ElapsedAtStart": 2210.0
+          },
+          {
+            "Step": 88,
+            "Of": 104,
+            "Index": 88,
+            "ElapsedAtStart": 2230.0
+          },
+          {
+            "Step": 89,
+            "Of": 104,
+            "Index": 89,
+            "ElapsedAtStart": 2260.0
+          },
+          {
+            "Step": 90,
+            "Of": 104,
+            "Index": 90,
+            "ElapsedAtStart": 2280.0
+          },
+          {
+            "Step": 91,
+            "Of": 104,
+            "Index": 91,
+            "ElapsedAtStart": 2310.0
+          },
+          {
+            "Step": 92,
+            "Of": 104,
+            "Index": 92,
+            "ElapsedAtStart": 2340.0
+          },
+          {
+            "Step": 93,
+            "Of": 104,
+            "Index": 93,
+            "ElapsedAtStart": 2360.0
+          },
+          {
+            "Step": 94,
+            "Of": 104,
+            "Index": 94,
+            "ElapsedAtStart": 2380.0
+          },
+          {
+            "Step": 95,
+            "Of": 104,
+            "Index": 95,
+            "ElapsedAtStart": 2400.0
+          },
+          {
+            "Step": 96,
+            "Of": 104,
+            "Index": 96,
+            "ElapsedAtStart": 2420.0
+          },
+          {
+            "Step": 97,
+            "Of": 104,
+            "Index": 97,
+            "ElapsedAtStart": 2440.0
+          },
+          {
+            "Step": 98,
+            "Of": 104,
+            "Index": 98,
+            "ElapsedAtStart": 2460.0
+          },
+          {
+            "Step": 99,
+            "Of": 104,
+            "Index": 99,
+            "ElapsedAtStart": 2480.0
+          },
+          {
+            "Step": 100,
+            "Of": 104,
+            "Index": 100,
+            "ElapsedAtStart": 2500.0
+          },
+          {
+            "Step": 101,
+            "Of": 104,
+            "Index": 101,
+            "ElapsedAtStart": 2520.0
+          },
+          {
+            "Step": 102,
+            "Of": 104,
+            "Index": 102,
+            "ElapsedAtStart": 2550.0
+          },
+          {
+            "Step": 103,
+            "Of": 104,
+            "Index": 103,
+            "ElapsedAtStart": 2570.0
+          },
+          {
+            "Step": 104,
+            "Of": 104,
+            "Index": 104,
+            "ElapsedAtStart": 2600.0
+          }
+        ],
+        "PCG": [
+          15,
+          13,
+          15,
+          13,
+          12,
+          14,
+          16,
+          19,
+          18,
+          14,
+          19,
+          19,
+          18,
+          20,
+          19,
+          13,
+          15,
+          12,
+          15,
+          12,
+          15,
+          11,
+          15,
+          20,
+          19,
+          20,
+          20,
+          20,
+          21,
+          20,
+          14,
+          12,
+          12,
+          12,
+          11,
+          11,
+          14,
+          21,
+          18,
+          15,
+          16,
+          17,
+          15,
+          24,
+          28,
+          15,
+          11,
+          11,
+          12,
+          11,
+          11,
+          11,
+          12,
+          21,
+          21,
+          28,
+          22,
+          23,
+          28,
+          19,
+          15,
+          11,
+          12,
+          12,
+          12,
+          21,
+          17,
+          19,
+          15,
+          12,
+          15,
+          13,
+          13,
+          17,
+          15,
+          15,
+          12,
+          11,
+          12,
+          11,
+          11,
+          12,
+          12,
+          15,
+          15,
+          12,
+          15,
+          16,
+          14,
+          16,
+          15,
+          12,
+          12,
+          12,
+          12,
+          11,
+          13,
+          11,
+          12,
+          15,
+          16,
+          15,
+          15,
+          15
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [
+          {
+            "Index": 1,
+            "Iterations": 15,
+            "SolveSeconds": 24.32725566,
+            "TotalSeconds": 24.88125371
+          },
+          {
+            "Index": 2,
+            "Iterations": 13,
+            "SolveSeconds": 21.38534405,
+            "TotalSeconds": 21.88922927
+          },
+          {
+            "Index": 3,
+            "Iterations": 15,
+            "SolveSeconds": 24.27528165,
+            "TotalSeconds": 24.78262202
+          },
+          {
+            "Index": 4,
+            "Iterations": 13,
+            "SolveSeconds": 21.44136734,
+            "TotalSeconds": 21.89192611
+          },
+          {
+            "Index": 5,
+            "Iterations": 12,
+            "SolveSeconds": 20.01653877,
+            "TotalSeconds": 20.48309069
+          },
+          {
+            "Index": 6,
+            "Iterations": 14,
+            "SolveSeconds": 22.87215906,
+            "TotalSeconds": 23.36632339
+          },
+          {
+            "Index": 7,
+            "Iterations": 16,
+            "SolveSeconds": 25.79205783,
+            "TotalSeconds": 26.29605745
+          },
+          {
+            "Index": 8,
+            "Iterations": 19,
+            "SolveSeconds": 30.0092509,
+            "TotalSeconds": 30.47614589
+          },
+          {
+            "Index": 9,
+            "Iterations": 18,
+            "SolveSeconds": 28.62162187,
+            "TotalSeconds": 29.10145546
+          },
+          {
+            "Index": 10,
+            "Iterations": 14,
+            "SolveSeconds": 22.88344501,
+            "TotalSeconds": 23.33518771
+          },
+          {
+            "Index": 11,
+            "Iterations": 19,
+            "SolveSeconds": 30.01217423,
+            "TotalSeconds": 30.45933565
+          },
+          {
+            "Index": 12,
+            "Iterations": 19,
+            "SolveSeconds": 30.06631431,
+            "TotalSeconds": 30.51927892
+          },
+          {
+            "Index": 13,
+            "Iterations": 18,
+            "SolveSeconds": 28.57813851,
+            "TotalSeconds": 29.08561913
+          },
+          {
+            "Index": 14,
+            "Iterations": 20,
+            "SolveSeconds": 31.49198784,
+            "TotalSeconds": 32.01473987
+          },
+          {
+            "Index": 15,
+            "Iterations": 19,
+            "SolveSeconds": 30.02929853,
+            "TotalSeconds": 30.54582648
+          },
+          {
+            "Index": 16,
+            "Iterations": 13,
+            "SolveSeconds": 21.45242569,
+            "TotalSeconds": 21.97705853
+          },
+          {
+            "Index": 17,
+            "Iterations": 15,
+            "SolveSeconds": 24.33095756,
+            "TotalSeconds": 24.82330897
+          },
+          {
+            "Index": 18,
+            "Iterations": 12,
+            "SolveSeconds": 20.00652056,
+            "TotalSeconds": 20.52097215
+          },
+          {
+            "Index": 19,
+            "Iterations": 15,
+            "SolveSeconds": 24.67558145,
+            "TotalSeconds": 25.18296094
+          },
+          {
+            "Index": 20,
+            "Iterations": 12,
+            "SolveSeconds": 19.99282912,
+            "TotalSeconds": 20.47893657
+          },
+          {
+            "Index": 21,
+            "Iterations": 15,
+            "SolveSeconds": 24.32443697,
+            "TotalSeconds": 24.77826005
+          },
+          {
+            "Index": 22,
+            "Iterations": 11,
+            "SolveSeconds": 18.61758861,
+            "TotalSeconds": 19.08356382
+          },
+          {
+            "Index": 23,
+            "Iterations": 15,
+            "SolveSeconds": 24.29419909,
+            "TotalSeconds": 24.77305004
+          },
+          {
+            "Index": 24,
+            "Iterations": 20,
+            "SolveSeconds": 31.56745199,
+            "TotalSeconds": 32.02061644
+          },
+          {
+            "Index": 25,
+            "Iterations": 19,
+            "SolveSeconds": 30.01413761,
+            "TotalSeconds": 30.46068467
+          },
+          {
+            "Index": 26,
+            "Iterations": 20,
+            "SolveSeconds": 31.51026006,
+            "TotalSeconds": 31.94360521
+          },
+          {
+            "Index": 27,
+            "Iterations": 20,
+            "SolveSeconds": 31.54998257,
+            "TotalSeconds": 31.96352397
+          },
+          {
+            "Index": 28,
+            "Iterations": 20,
+            "SolveSeconds": 31.6205692,
+            "TotalSeconds": 32.05308462
+          },
+          {
+            "Index": 29,
+            "Iterations": 21,
+            "SolveSeconds": 32.89061316,
+            "TotalSeconds": 33.34295413
+          },
+          {
+            "Index": 30,
+            "Iterations": 20,
+            "SolveSeconds": 31.65985106,
+            "TotalSeconds": 32.11285337
+          },
+          {
+            "Index": 31,
+            "Iterations": 14,
+            "SolveSeconds": 22.85633295,
+            "TotalSeconds": 23.27426678
+          },
+          {
+            "Index": 32,
+            "Iterations": 12,
+            "SolveSeconds": 20.00934139,
+            "TotalSeconds": 20.42536536
+          },
+          {
+            "Index": 33,
+            "Iterations": 12,
+            "SolveSeconds": 20.17300089,
+            "TotalSeconds": 20.58303018
+          },
+          {
+            "Index": 34,
+            "Iterations": 12,
+            "SolveSeconds": 19.98162319,
+            "TotalSeconds": 20.4209774
+          },
+          {
+            "Index": 35,
+            "Iterations": 11,
+            "SolveSeconds": 18.56078237,
+            "TotalSeconds": 19.02078316
+          },
+          {
+            "Index": 36,
+            "Iterations": 11,
+            "SolveSeconds": 18.63360225,
+            "TotalSeconds": 19.05088557
+          },
+          {
+            "Index": 37,
+            "Iterations": 14,
+            "SolveSeconds": 22.86836467,
+            "TotalSeconds": 23.3107767
+          },
+          {
+            "Index": 38,
+            "Iterations": 21,
+            "SolveSeconds": 32.91082216,
+            "TotalSeconds": 33.33595429
+          },
+          {
+            "Index": 39,
+            "Iterations": 18,
+            "SolveSeconds": 28.73973065,
+            "TotalSeconds": 29.14778461
+          },
+          {
+            "Index": 40,
+            "Iterations": 15,
+            "SolveSeconds": 24.29639112,
+            "TotalSeconds": 24.76273467
+          },
+          {
+            "Index": 41,
+            "Iterations": 16,
+            "SolveSeconds": 25.87353506,
+            "TotalSeconds": 26.29380311
+          },
+          {
+            "Index": 42,
+            "Iterations": 17,
+            "SolveSeconds": 27.14655962,
+            "TotalSeconds": 27.5702782
+          },
+          {
+            "Index": 43,
+            "Iterations": 15,
+            "SolveSeconds": 24.43778444,
+            "TotalSeconds": 24.86292881
+          },
+          {
+            "Index": 44,
+            "Iterations": 24,
+            "SolveSeconds": 37.21219485,
+            "TotalSeconds": 37.62251406
+          },
+          {
+            "Index": 45,
+            "Iterations": 28,
+            "SolveSeconds": 43.03330076,
+            "TotalSeconds": 43.44501278
+          },
+          {
+            "Index": 46,
+            "Iterations": 15,
+            "SolveSeconds": 24.27657556,
+            "TotalSeconds": 24.68453546
+          },
+          {
+            "Index": 47,
+            "Iterations": 11,
+            "SolveSeconds": 18.68807899,
+            "TotalSeconds": 19.09029107
+          },
+          {
+            "Index": 48,
+            "Iterations": 11,
+            "SolveSeconds": 18.565731,
+            "TotalSeconds": 18.98359985
+          },
+          {
+            "Index": 49,
+            "Iterations": 12,
+            "SolveSeconds": 19.95552164,
+            "TotalSeconds": 20.36049902
+          },
+          {
+            "Index": 50,
+            "Iterations": 11,
+            "SolveSeconds": 18.5924672,
+            "TotalSeconds": 19.01183632
+          },
+          {
+            "Index": 51,
+            "Iterations": 11,
+            "SolveSeconds": 18.61803333,
+            "TotalSeconds": 19.03104468
+          },
+          {
+            "Index": 52,
+            "Iterations": 11,
+            "SolveSeconds": 18.67120197,
+            "TotalSeconds": 19.09033906
+          },
+          {
+            "Index": 53,
+            "Iterations": 12,
+            "SolveSeconds": 20.03724299,
+            "TotalSeconds": 20.44711224
+          },
+          {
+            "Index": 54,
+            "Iterations": 21,
+            "SolveSeconds": 32.9459694,
+            "TotalSeconds": 33.3586569
+          },
+          {
+            "Index": 55,
+            "Iterations": 21,
+            "SolveSeconds": 32.92329448,
+            "TotalSeconds": 33.33440424
+          },
+          {
+            "Index": 56,
+            "Iterations": 28,
+            "SolveSeconds": 43.02056646,
+            "TotalSeconds": 43.43509063
+          },
+          {
+            "Index": 57,
+            "Iterations": 22,
+            "SolveSeconds": 34.33993743,
+            "TotalSeconds": 34.76481872
+          },
+          {
+            "Index": 58,
+            "Iterations": 23,
+            "SolveSeconds": 35.77303265,
+            "TotalSeconds": 36.18712336
+          },
+          {
+            "Index": 59,
+            "Iterations": 28,
+            "SolveSeconds": 42.95050446,
+            "TotalSeconds": 43.36074539
+          },
+          {
+            "Index": 60,
+            "Iterations": 19,
+            "SolveSeconds": 30.03980766,
+            "TotalSeconds": 30.45097317
+          },
+          {
+            "Index": 61,
+            "Iterations": 15,
+            "SolveSeconds": 24.36339651,
+            "TotalSeconds": 24.78973787
+          },
+          {
+            "Index": 62,
+            "Iterations": 11,
+            "SolveSeconds": 18.55715875,
+            "TotalSeconds": 18.97043314
+          },
+          {
+            "Index": 63,
+            "Iterations": 12,
+            "SolveSeconds": 19.99757436,
+            "TotalSeconds": 20.42158192
+          },
+          {
+            "Index": 64,
+            "Iterations": 12,
+            "SolveSeconds": 20.20805471,
+            "TotalSeconds": 20.63928945
+          },
+          {
+            "Index": 65,
+            "Iterations": 12,
+            "SolveSeconds": 20.0302393,
+            "TotalSeconds": 20.51687986
+          },
+          {
+            "Index": 66,
+            "Iterations": 21,
+            "SolveSeconds": 32.99692141,
+            "TotalSeconds": 33.41374664
+          },
+          {
+            "Index": 67,
+            "Iterations": 17,
+            "SolveSeconds": 27.21140977,
+            "TotalSeconds": 27.61832636
+          },
+          {
+            "Index": 68,
+            "Iterations": 19,
+            "SolveSeconds": 30.02184385,
+            "TotalSeconds": 30.44044695
+          },
+          {
+            "Index": 69,
+            "Iterations": 15,
+            "SolveSeconds": 24.35325074,
+            "TotalSeconds": 24.76728711
+          },
+          {
+            "Index": 70,
+            "Iterations": 12,
+            "SolveSeconds": 20.05346666,
+            "TotalSeconds": 20.45752461
+          },
+          {
+            "Index": 71,
+            "Iterations": 15,
+            "SolveSeconds": 24.31155461,
+            "TotalSeconds": 24.72025717
+          },
+          {
+            "Index": 72,
+            "Iterations": 13,
+            "SolveSeconds": 21.48355501,
+            "TotalSeconds": 21.88896904
+          },
+          {
+            "Index": 73,
+            "Iterations": 13,
+            "SolveSeconds": 21.47993902,
+            "TotalSeconds": 21.88974598
+          },
+          {
+            "Index": 74,
+            "Iterations": 17,
+            "SolveSeconds": 27.17101877,
+            "TotalSeconds": 27.5763899
+          },
+          {
+            "Index": 75,
+            "Iterations": 15,
+            "SolveSeconds": 24.46814255,
+            "TotalSeconds": 24.87485416
+          },
+          {
+            "Index": 76,
+            "Iterations": 15,
+            "SolveSeconds": 24.28966398,
+            "TotalSeconds": 24.69697715
+          },
+          {
+            "Index": 77,
+            "Iterations": 12,
+            "SolveSeconds": 20.13842574,
+            "TotalSeconds": 20.54787881
+          },
+          {
+            "Index": 78,
+            "Iterations": 11,
+            "SolveSeconds": 18.60255882,
+            "TotalSeconds": 19.01512573
+          },
+          {
+            "Index": 79,
+            "Iterations": 12,
+            "SolveSeconds": 20.00461362,
+            "TotalSeconds": 20.41463735
+          },
+          {
+            "Index": 80,
+            "Iterations": 11,
+            "SolveSeconds": 18.59750596,
+            "TotalSeconds": 19.01628816
+          },
+          {
+            "Index": 81,
+            "Iterations": 11,
+            "SolveSeconds": 18.60115641,
+            "TotalSeconds": 19.01754877
+          },
+          {
+            "Index": 82,
+            "Iterations": 12,
+            "SolveSeconds": 20.00301323,
+            "TotalSeconds": 20.41974446
+          },
+          {
+            "Index": 83,
+            "Iterations": 12,
+            "SolveSeconds": 20.02676778,
+            "TotalSeconds": 20.44279292
+          },
+          {
+            "Index": 84,
+            "Iterations": 15,
+            "SolveSeconds": 24.32516926,
+            "TotalSeconds": 24.73068066
+          },
+          {
+            "Index": 85,
+            "Iterations": 15,
+            "SolveSeconds": 24.32452886,
+            "TotalSeconds": 24.73334461
+          },
+          {
+            "Index": 86,
+            "Iterations": 12,
+            "SolveSeconds": 20.09645429,
+            "TotalSeconds": 20.50739843
+          },
+          {
+            "Index": 87,
+            "Iterations": 15,
+            "SolveSeconds": 24.32030783,
+            "TotalSeconds": 24.74248151
+          },
+          {
+            "Index": 88,
+            "Iterations": 16,
+            "SolveSeconds": 25.75527396,
+            "TotalSeconds": 26.17639046
+          },
+          {
+            "Index": 89,
+            "Iterations": 14,
+            "SolveSeconds": 22.89011196,
+            "TotalSeconds": 23.30167913
+          },
+          {
+            "Index": 90,
+            "Iterations": 16,
+            "SolveSeconds": 25.78496483,
+            "TotalSeconds": 26.21419131
+          },
+          {
+            "Index": 91,
+            "Iterations": 15,
+            "SolveSeconds": 24.39366581,
+            "TotalSeconds": 24.8210367
+          },
+          {
+            "Index": 92,
+            "Iterations": 12,
+            "SolveSeconds": 20.02395,
+            "TotalSeconds": 20.43659113
+          },
+          {
+            "Index": 93,
+            "Iterations": 12,
+            "SolveSeconds": 19.98310627,
+            "TotalSeconds": 20.38924422
+          },
+          {
+            "Index": 94,
+            "Iterations": 12,
+            "SolveSeconds": 19.99980072,
+            "TotalSeconds": 20.41049313
+          },
+          {
+            "Index": 95,
+            "Iterations": 12,
+            "SolveSeconds": 19.96881515,
+            "TotalSeconds": 20.38246487
+          },
+          {
+            "Index": 96,
+            "Iterations": 11,
+            "SolveSeconds": 18.57845803,
+            "TotalSeconds": 18.99386061
+          },
+          {
+            "Index": 97,
+            "Iterations": 13,
+            "SolveSeconds": 21.46038442,
+            "TotalSeconds": 21.86783883
+          },
+          {
+            "Index": 98,
+            "Iterations": 11,
+            "SolveSeconds": 18.56935991,
+            "TotalSeconds": 18.97950608
+          },
+          {
+            "Index": 99,
+            "Iterations": 12,
+            "SolveSeconds": 19.98812896,
+            "TotalSeconds": 20.40644939
+          },
+          {
+            "Index": 100,
+            "Iterations": 15,
+            "SolveSeconds": 24.47553902,
+            "TotalSeconds": 24.88697583
+          },
+          {
+            "Index": 101,
+            "Iterations": 16,
+            "SolveSeconds": 25.73389158,
+            "TotalSeconds": 26.14572188
+          },
+          {
+            "Index": 102,
+            "Iterations": 15,
+            "SolveSeconds": 24.29598143,
+            "TotalSeconds": 24.70324466
+          },
+          {
+            "Index": 103,
+            "Iterations": 15,
+            "SolveSeconds": 24.41806411,
+            "TotalSeconds": 24.83124851
+          },
+          {
+            "Index": 104,
+            "Iterations": 15,
+            "SolveSeconds": 24.28531402,
+            "TotalSeconds": 24.69776796
+          }
+        ],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "157.2G",
+          "Max": "157.2G",
+          "Avg": "157.2G",
+          "Total": "157.2G"
+        },
+        "PalaceTotalSeconds": 2741.955,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   3.641      39.970      39.768\n  Mesh Preprocessing            22.645      58.955      22.839\nOperator Construction           33.529      34.720      34.641\n  Surface Post Setup             0.833       1.056       0.888\nLinear Solve                   103.732     166.574     134.358\n  Setup                         14.321      14.513      14.479\n  Preconditioner              2397.433    2468.640    2434.062\n  Coarse Solve                   4.243      16.159       8.624\nPostprocessing                  13.389      13.401      13.395\nDisk IO                         36.588      36.644      36.601\n--------------------------------------------------------------\nTotal                         2741.937    2741.955    2741.947",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  309.8M      309.8M      309.8M\n  Mesh Preprocessing              3.7G        3.7G        4.0G\nOperator Construction            54.9G       54.9G       58.9G\n  Surface Post Setup              3.8G        3.8G       62.6G\nLinear Solve                      0.0K        0.0K       62.6G\n  Setup                          72.2G       72.2G      134.8G\n  Preconditioner                213.3M      213.3M      135.0G\n  Coarse Solve                    2.9G        2.9G      137.9G\nPostprocessing                    5.6G        5.6G      143.5G\nDisk IO                           2.0G        2.0G      145.5G\n--------------------------------------------------------------\nTotal                           154.9G      154.9G      154.9G"
+      },
+      "EndUTC": "2026-10-05T20:48:51Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-19-edge-533e843f9931-thin-p4-local-edge",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/spatial-19-edge-533e843f9931-thin-p4-local-edge/config.json",
+      "Environment": {},
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "2100",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/jobs/worker-1/spatial-19-edge-533e843f9931-thin-p4-local-edge.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/spatial-19-edge-533e843f9931-thin-p4-local-edge/config.json"
+      ],
+      "CapSeconds": 2100,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/jobs/worker-1/spatial-19-edge-533e843f9931-thin-p4-local-edge.log",
+      "StartUTC": "2026-10-05T20:48:51Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 528.9065497880001,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 3100049408,
+      "NodePeakUsedBytesSampled": 456670298112,
+      "Parsed": {
+        "Order": 4,
+        "H1": 53011285,
+        "ND": 195550004,
+        "RT": 234312960,
+        "Elements": 4313864,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 8,
+            "Index": 1,
+            "ElapsedAtStart": 2.3e-07
+          },
+          {
+            "Step": 2,
+            "Of": 8,
+            "Index": 2,
+            "ElapsedAtStart": 44.6
+          },
+          {
+            "Step": 3,
+            "Of": 8,
+            "Index": 3,
+            "ElapsedAtStart": 84.2
+          },
+          {
+            "Step": 4,
+            "Of": 8,
+            "Index": 8,
+            "ElapsedAtStart": 127.0
+          },
+          {
+            "Step": 5,
+            "Of": 8,
+            "Index": 14,
+            "ElapsedAtStart": 175.0
+          },
+          {
+            "Step": 6,
+            "Of": 8,
+            "Index": 31,
+            "ElapsedAtStart": 225.0
+          },
+          {
+            "Step": 7,
+            "Of": 8,
+            "Index": 38,
+            "ElapsedAtStart": 267.0
+          },
+          {
+            "Step": 8,
+            "Of": 8,
+            "Index": 69,
+            "ElapsedAtStart": 319.0
+          }
+        ],
+        "PCG": [
+          15,
+          13,
+          15,
+          19,
+          20,
+          14,
+          21,
+          15
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [
+          [
+            1,
+            36
+          ],
+          [
+            2,
+            36
+          ],
+          [
+            3,
+            36
+          ],
+          [
+            4,
+            36
+          ],
+          [
+            5,
+            36
+          ],
+          [
+            6,
+            36
+          ],
+          [
+            7,
+            36
+          ],
+          [
+            8,
+            36
+          ],
+          [
+            9,
+            36
+          ],
+          [
+            10,
+            36
+          ],
+          [
+            11,
+            36
+          ],
+          [
+            12,
+            36
+          ],
+          [
+            13,
+            36
+          ],
+          [
+            14,
+            36
+          ],
+          [
+            15,
+            36
+          ],
+          [
+            16,
+            36
+          ],
+          [
+            17,
+            36
+          ],
+          [
+            18,
+            36
+          ],
+          [
+            19,
+            36
+          ],
+          [
+            20,
+            36
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            22,
+            36
+          ],
+          [
+            23,
+            36
+          ],
+          [
+            24,
+            36
+          ],
+          [
+            25,
+            36
+          ],
+          [
+            26,
+            36
+          ],
+          [
+            27,
+            36
+          ],
+          [
+            28,
+            36
+          ],
+          [
+            29,
+            36
+          ],
+          [
+            30,
+            36
+          ],
+          [
+            31,
+            36
+          ],
+          [
+            32,
+            36
+          ],
+          [
+            33,
+            36
+          ],
+          [
+            34,
+            36
+          ],
+          [
+            35,
+            36
+          ],
+          [
+            36,
+            36
+          ]
+        ],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "393.2G",
+          "Max": "393.2G",
+          "Avg": "393.2G",
+          "Total": "393.2G"
+        },
+        "PalaceTotalSeconds": 526.21,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   3.631      39.939      39.738\n  Mesh Preprocessing            22.751      59.048      22.946\nOperator Construction            4.962       7.390       6.657\n  Surface Post Setup             0.813       1.025       0.867\nLinear Solve                     8.567      14.311      11.258\n  Setup                         14.350      14.540      14.499\n  Preconditioner               197.016     203.627     200.559\n  Coarse Solve                   0.430       1.375       0.845\nEstimation                       1.047       1.317       1.157\n  Construction                  36.687      37.493      37.373\n  Solve                         12.320      16.685      16.658\nPostprocessing                 135.040     139.432     135.088\nDisk IO                         36.242      36.276      36.258\n--------------------------------------------------------------\nTotal                          526.197     526.210     526.203",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  326.7M      326.7M      326.7M\n  Mesh Preprocessing              3.7G        3.7G        4.0G\nOperator Construction            57.4G       57.4G       61.4G\n  Surface Post Setup              3.8G        3.8G       65.2G\nLinear Solve                      0.0K        0.0K       65.2G\n  Setup                          72.2G       72.2G      137.3G\n  Preconditioner                  3.0M        3.0M      137.3G\n  Coarse Solve                   19.5M       19.5M      137.4G\nEstimation                       26.2G       26.2G      163.6G\n  Construction                  132.8G      132.8G      296.4G\n  Solve                          37.5G       37.5G      333.9G\nPostprocessing                   45.4G       45.4G      379.3G\nDisk IO                           2.1G        2.1G      381.5G\n--------------------------------------------------------------\nTotal                           390.9G      390.9G      390.9G"
+      },
+      "EndUTC": "2026-10-05T20:57:40Z",
+      "State": "complete"
+    }
+  ],
+  "Preflight": {
+    "MemTotalBytes": 797242064896,
+    "MemAvailableBytes": 746373001216,
+    "MinimumMemAvailableBytes": 494780232499,
+    "Instance": {
+      "Type": "m8g.48xlarge",
+      "vCPUs": 192,
+      "MemoryGiB": 768,
+      "NodeGiB": 742.49,
+      "EstimatedPalacePeakGB": 440.92701936449976,
+      "EstimatedPalacePeakGiB": 410.66128282062004,
+      "MemoryFitFraction": 0.6,
+      "Fits": true,
+      "MinimumMemAvailableBytes": 494780232499,
+      "Candidates": [
+        "m8g.48xlarge",
+        "r8g.48xlarge"
+      ],
+      "Rule": "a job runs on the first instance of Instances whose MemoryFitFraction x MemoryGiB holds the job's largest estimated Palace peak (the stage estimates' GB / the cost model's PalaceGBPerGiB): m8g.48xlarge (768 GiB, 192 Graviton4 vCPUs) is the default, r8g.48xlarge (1,536 GiB) the fallback for an estimated peak above 0.6 x 768 = 460.8 GiB (the device library's largest estimate is 338 GB, 7f03's p5 control; measured node peaks <= ~240 GiB; the streaming reducer ~34 GB); c8g.48xlarge (384 GiB) is deliberately absent - not safe for the p5 control stages of the largest coupons (USER decision 2026-09-22). The plan records the chosen instance (Instance) and its admission guard MinimumMemAvailableBytes = MemoryFitFraction x MemoryGiB, checked by run_stages before the first stage; the job script's #PBS -l instance_type is the chosen type"
+    },
+    "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+    "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+    "Pinned": {
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/mesh/identity-437b5a136b97.msh": {
+        "Expected": "437b5a136b97427ff056985febbe42baf79ce1aef42b9a601f67792d03ffa3fa",
+        "Actual": "437b5a136b97427ff056985febbe42baf79ce1aef42b9a601f67792d03ffa3fa",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/spatial-19-edge-533e843f9931-thin-p4/worker-block1.json": {
+        "Expected": "4050b89f9a0148f677c4229e0c7ed7eac47245b463e255c80320c7130e5597dd",
+        "Actual": "4050b89f9a0148f677c4229e0c7ed7eac47245b463e255c80320c7130e5597dd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/main/spatial-19-edge-533e843f9931-thin-p4-local-edge/config.json": {
+        "Expected": "83d2c29f784313aab543c2da393f50a6d035fa8b82ce0881f5c416fa28508dfd",
+        "Actual": "83d2c29f784313aab543c2da393f50a6d035fa8b82ce0881f5c416fa28508dfd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0001.csv": {
+        "Expected": "0bb40c18414680d95bd2af41a0d7a74b3bf623100614237972119c5ea65d1b07",
+        "Actual": "0bb40c18414680d95bd2af41a0d7a74b3bf623100614237972119c5ea65d1b07",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0002.csv": {
+        "Expected": "e8936c0e148314005b4a74aedbc2930abf291c5c3f533e6acf3a3fdca5b62145",
+        "Actual": "e8936c0e148314005b4a74aedbc2930abf291c5c3f533e6acf3a3fdca5b62145",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0003.csv": {
+        "Expected": "b678ad5d5e6d5c0e4833531bbf13651ad1ae8e6f3b4a2fe2eda4413237bcda35",
+        "Actual": "b678ad5d5e6d5c0e4833531bbf13651ad1ae8e6f3b4a2fe2eda4413237bcda35",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0004.csv": {
+        "Expected": "2b916c6f63da673d51dccb7a90b52798ffe1af8c858f7f33f2a8ff63c4a23931",
+        "Actual": "2b916c6f63da673d51dccb7a90b52798ffe1af8c858f7f33f2a8ff63c4a23931",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0005.csv": {
+        "Expected": "7e3a2c14f8dd54ef047bc20e0c7e638d8fa346826e65308d5cc909ef575613b3",
+        "Actual": "7e3a2c14f8dd54ef047bc20e0c7e638d8fa346826e65308d5cc909ef575613b3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0006.csv": {
+        "Expected": "ed110e8fca85361d76390373af11a63a177f11fec5adea20370fd6cf59ada9dc",
+        "Actual": "ed110e8fca85361d76390373af11a63a177f11fec5adea20370fd6cf59ada9dc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0007.csv": {
+        "Expected": "911cf02281bd242415968d6bded42adb5730855712fbaf8ccd9bedc305af94cf",
+        "Actual": "911cf02281bd242415968d6bded42adb5730855712fbaf8ccd9bedc305af94cf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0008.csv": {
+        "Expected": "bd021b2df17444e277eb94ac26179a2738369e70822e4e887572e62044f4c281",
+        "Actual": "bd021b2df17444e277eb94ac26179a2738369e70822e4e887572e62044f4c281",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0009.csv": {
+        "Expected": "1724d1fa992720b4872ce2fd41afe87a825812f59feb0596f4cf8b82fda9a817",
+        "Actual": "1724d1fa992720b4872ce2fd41afe87a825812f59feb0596f4cf8b82fda9a817",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0010.csv": {
+        "Expected": "94d755fd7c4461e3277959c77b0e26f8236fc8f7b2f06005c5e3e3a6d203e10f",
+        "Actual": "94d755fd7c4461e3277959c77b0e26f8236fc8f7b2f06005c5e3e3a6d203e10f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0011.csv": {
+        "Expected": "b7ab7249836804d3b3372ba7492f04f1e43f3a69c2d3a6823a20271cb886fb02",
+        "Actual": "b7ab7249836804d3b3372ba7492f04f1e43f3a69c2d3a6823a20271cb886fb02",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0012.csv": {
+        "Expected": "270b1a9e89fb5e0e11e9c1da035b3888cf6ac431cb4ef3c18c45658995729378",
+        "Actual": "270b1a9e89fb5e0e11e9c1da035b3888cf6ac431cb4ef3c18c45658995729378",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0013.csv": {
+        "Expected": "fd6d4d17d2adc7c318a646801e888ff0b40a0bac0466e6da206ef7017d9b2189",
+        "Actual": "fd6d4d17d2adc7c318a646801e888ff0b40a0bac0466e6da206ef7017d9b2189",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0014.csv": {
+        "Expected": "df3de5f15d3350b0cfb7b8bff62888d0cf535a52ff2a6da06e50cee02532bb8e",
+        "Actual": "df3de5f15d3350b0cfb7b8bff62888d0cf535a52ff2a6da06e50cee02532bb8e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0015.csv": {
+        "Expected": "3430304e34640e9082ec845412e6c8d68a4af23541b4c61c6f0a341d25c75bb9",
+        "Actual": "3430304e34640e9082ec845412e6c8d68a4af23541b4c61c6f0a341d25c75bb9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0016.csv": {
+        "Expected": "2942b27cd74d0f644d72613b8b3a5cf02f405b945b23e75942cef63084045266",
+        "Actual": "2942b27cd74d0f644d72613b8b3a5cf02f405b945b23e75942cef63084045266",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0017.csv": {
+        "Expected": "7e1faadaa897e9ef51729edd7ed2f330bc8b9e8289d3cb93aba049b976955fe0",
+        "Actual": "7e1faadaa897e9ef51729edd7ed2f330bc8b9e8289d3cb93aba049b976955fe0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0018.csv": {
+        "Expected": "9f32c5160281e86fc81de143428b84a061c76857a0eb11ae874eeb80c9f03b46",
+        "Actual": "9f32c5160281e86fc81de143428b84a061c76857a0eb11ae874eeb80c9f03b46",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0019.csv": {
+        "Expected": "209e40920f9285b54d2bb22efc689041646e5ba37b5ebedfec71a78571a73997",
+        "Actual": "209e40920f9285b54d2bb22efc689041646e5ba37b5ebedfec71a78571a73997",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0020.csv": {
+        "Expected": "b401094673d1f46151d32d9cdfce8d1bde7b5920df99d4fe00fcde2d00cfe22d",
+        "Actual": "b401094673d1f46151d32d9cdfce8d1bde7b5920df99d4fe00fcde2d00cfe22d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0021.csv": {
+        "Expected": "381f6f7ade19072d18f406c536bf41a2d9c89faf258886dc14854b11177f25ad",
+        "Actual": "381f6f7ade19072d18f406c536bf41a2d9c89faf258886dc14854b11177f25ad",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0022.csv": {
+        "Expected": "6776f30e94baa94f5abda81ea425e9a3988b78b96f4bf132f779a7bf653d364a",
+        "Actual": "6776f30e94baa94f5abda81ea425e9a3988b78b96f4bf132f779a7bf653d364a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0023.csv": {
+        "Expected": "98af155dc6675b615f40f7f63db98cd1278f01270a35b47c63acdd51dbc47bbf",
+        "Actual": "98af155dc6675b615f40f7f63db98cd1278f01270a35b47c63acdd51dbc47bbf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0024.csv": {
+        "Expected": "4a705eb04897cb92bf10e73ea6b89c83b3e1aff6b992050795e552fb0aa863e2",
+        "Actual": "4a705eb04897cb92bf10e73ea6b89c83b3e1aff6b992050795e552fb0aa863e2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0025.csv": {
+        "Expected": "05aa957bd0db0589418607fde7629fa0b2b70e6fb07ea92f24c750c692c5630f",
+        "Actual": "05aa957bd0db0589418607fde7629fa0b2b70e6fb07ea92f24c750c692c5630f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0026.csv": {
+        "Expected": "a696d8f71e52bed68a900f9896cf07e42267d26b973fae035ddaa8128b7976af",
+        "Actual": "a696d8f71e52bed68a900f9896cf07e42267d26b973fae035ddaa8128b7976af",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0027.csv": {
+        "Expected": "d25eb436fea56db1b53f4451f3757d69faf58d56ee2753c1989b1162acd99d54",
+        "Actual": "d25eb436fea56db1b53f4451f3757d69faf58d56ee2753c1989b1162acd99d54",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0028.csv": {
+        "Expected": "c5d2773278daf6f4e0a3ef5f814116fda9d7460af6f72d2543e7463b3875d746",
+        "Actual": "c5d2773278daf6f4e0a3ef5f814116fda9d7460af6f72d2543e7463b3875d746",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0029.csv": {
+        "Expected": "21a2ff517cd7492f625fbdecc75e030b780b8c26bec6ec5e87927032b77bbad6",
+        "Actual": "21a2ff517cd7492f625fbdecc75e030b780b8c26bec6ec5e87927032b77bbad6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0030.csv": {
+        "Expected": "a818f334b5676fc598d1728f8ffa0385ef1c1e33072a9343b638e8fe663cfd60",
+        "Actual": "a818f334b5676fc598d1728f8ffa0385ef1c1e33072a9343b638e8fe663cfd60",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0031.csv": {
+        "Expected": "81efd87f01501dd12fadd8ac1600818e0d01e438ae0a4b84cec5f634d8d880bf",
+        "Actual": "81efd87f01501dd12fadd8ac1600818e0d01e438ae0a4b84cec5f634d8d880bf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0032.csv": {
+        "Expected": "6ee8513040ae393542801b84773b8324c8e55f69efef7951fd188921384b5789",
+        "Actual": "6ee8513040ae393542801b84773b8324c8e55f69efef7951fd188921384b5789",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0033.csv": {
+        "Expected": "50353558d8e0e9682b2ae888dcdbe186d3b21669b0290665ff5f42253346a3b5",
+        "Actual": "50353558d8e0e9682b2ae888dcdbe186d3b21669b0290665ff5f42253346a3b5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0034.csv": {
+        "Expected": "0968f5a4dedb1ddaac853647200d09c45fac75c345aede99787b1066a338d02c",
+        "Actual": "0968f5a4dedb1ddaac853647200d09c45fac75c345aede99787b1066a338d02c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0035.csv": {
+        "Expected": "fe669fc946df8eddd3411f8ae46571bb619f551bdc3838ea84dcd6620d06120c",
+        "Actual": "fe669fc946df8eddd3411f8ae46571bb619f551bdc3838ea84dcd6620d06120c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0036.csv": {
+        "Expected": "f2b5f38bcdc0dce934313631da616cc221476e74135bde353a36641fd036f4cc",
+        "Actual": "f2b5f38bcdc0dce934313631da616cc221476e74135bde353a36641fd036f4cc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0037.csv": {
+        "Expected": "f5ee7453ca7cce9bd4e7fed5df11e83eca0e1928cb07a57d5863cfa1ddc9e00a",
+        "Actual": "f5ee7453ca7cce9bd4e7fed5df11e83eca0e1928cb07a57d5863cfa1ddc9e00a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0038.csv": {
+        "Expected": "bdfac64ca94f7c110c9408ca7336089a023c0002ced843eea4919ec2ce1ca1a1",
+        "Actual": "bdfac64ca94f7c110c9408ca7336089a023c0002ced843eea4919ec2ce1ca1a1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0039.csv": {
+        "Expected": "4f6948c455e938f300d1b17814b4511e2fcea737beec6dc5f90324f1516a9919",
+        "Actual": "4f6948c455e938f300d1b17814b4511e2fcea737beec6dc5f90324f1516a9919",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0040.csv": {
+        "Expected": "1fcc93a6633fd2875aca17b6b58d2cc1ee8f0ada055acbc6cdb9641fef0be8a2",
+        "Actual": "1fcc93a6633fd2875aca17b6b58d2cc1ee8f0ada055acbc6cdb9641fef0be8a2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0041.csv": {
+        "Expected": "279d047712f0e437c88b00878da48888b6e13c64e19f382a49a1b20e4274dc3d",
+        "Actual": "279d047712f0e437c88b00878da48888b6e13c64e19f382a49a1b20e4274dc3d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0042.csv": {
+        "Expected": "91e12aae554dd951de1e9cee1a0b62eb8313fdc4ee25e60b44bec8b8c48a231c",
+        "Actual": "91e12aae554dd951de1e9cee1a0b62eb8313fdc4ee25e60b44bec8b8c48a231c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0043.csv": {
+        "Expected": "a53d2ed18b865f62c9248fe012f1afc414c946ec3e8737989d7007cbc89908eb",
+        "Actual": "a53d2ed18b865f62c9248fe012f1afc414c946ec3e8737989d7007cbc89908eb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0044.csv": {
+        "Expected": "9846657f20e38a3c5f7b75584e05e7924814689ec5da160e26333fcbd3014fe3",
+        "Actual": "9846657f20e38a3c5f7b75584e05e7924814689ec5da160e26333fcbd3014fe3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0045.csv": {
+        "Expected": "bd3fa386b77ddb6ea8e9d987aa03058ad94025dab6b25c480a5e0b1926ff365a",
+        "Actual": "bd3fa386b77ddb6ea8e9d987aa03058ad94025dab6b25c480a5e0b1926ff365a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0046.csv": {
+        "Expected": "7e4443f8c2267ea03d8062da5818746d57d9d8649c2602a076bce120865a2fd2",
+        "Actual": "7e4443f8c2267ea03d8062da5818746d57d9d8649c2602a076bce120865a2fd2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0047.csv": {
+        "Expected": "8a525d4254cafb38ed1e99c3bb0c8d353448e2174ee15be8f6b2b4d08085e56a",
+        "Actual": "8a525d4254cafb38ed1e99c3bb0c8d353448e2174ee15be8f6b2b4d08085e56a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0048.csv": {
+        "Expected": "aa2957f06ea89ecd57731c9316b01945af74478f511aeda286f5b091c4b55ada",
+        "Actual": "aa2957f06ea89ecd57731c9316b01945af74478f511aeda286f5b091c4b55ada",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0049.csv": {
+        "Expected": "481c054cb724e41cb6f5d0f61f231480f58fdf73d4a3ed5b058d31c9773ac5b7",
+        "Actual": "481c054cb724e41cb6f5d0f61f231480f58fdf73d4a3ed5b058d31c9773ac5b7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0050.csv": {
+        "Expected": "6acfd50d9327c829fd989e86964f3075ce5d0ffefe8a17407e46562c4d790051",
+        "Actual": "6acfd50d9327c829fd989e86964f3075ce5d0ffefe8a17407e46562c4d790051",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0051.csv": {
+        "Expected": "24ad584e62003d833dab3074797c1b5a76c617e4d711789f5d0be414bcb3a9a5",
+        "Actual": "24ad584e62003d833dab3074797c1b5a76c617e4d711789f5d0be414bcb3a9a5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0052.csv": {
+        "Expected": "228c2606576cafcdfac1d4eaaf59b9c671e64a752e1571df4f0b78213fa8f391",
+        "Actual": "228c2606576cafcdfac1d4eaaf59b9c671e64a752e1571df4f0b78213fa8f391",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0053.csv": {
+        "Expected": "4b7688bb76af93894d78299106c16250cd82e666110aad59356cc1c7771eb2c7",
+        "Actual": "4b7688bb76af93894d78299106c16250cd82e666110aad59356cc1c7771eb2c7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0054.csv": {
+        "Expected": "71c64c845a458f2fee5292a705506f6b962a07cf6c556c98bf6f10341c600cd2",
+        "Actual": "71c64c845a458f2fee5292a705506f6b962a07cf6c556c98bf6f10341c600cd2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0055.csv": {
+        "Expected": "ebbfa9a2aae052a129803eda5b57fb77ffcee6c52b35e005a4bbc76d1949d8ef",
+        "Actual": "ebbfa9a2aae052a129803eda5b57fb77ffcee6c52b35e005a4bbc76d1949d8ef",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0056.csv": {
+        "Expected": "feb0c1b4da17a2b7183f51c90fe662199abede337724a34877563c1f829066bd",
+        "Actual": "feb0c1b4da17a2b7183f51c90fe662199abede337724a34877563c1f829066bd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0057.csv": {
+        "Expected": "fbd7898c17348f990207dc1df860b3c14df4ac9b09e4e61d4318ffc23a729102",
+        "Actual": "fbd7898c17348f990207dc1df860b3c14df4ac9b09e4e61d4318ffc23a729102",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0058.csv": {
+        "Expected": "a0b31e6f21a12b23b26a4cc03fdb4c6a963cae8b17dd8b9aec1272df6cad7f54",
+        "Actual": "a0b31e6f21a12b23b26a4cc03fdb4c6a963cae8b17dd8b9aec1272df6cad7f54",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0059.csv": {
+        "Expected": "8ce7df73eb1656754159ce3b073279f4c73162a3da4ac0a47adc93af0be1759b",
+        "Actual": "8ce7df73eb1656754159ce3b073279f4c73162a3da4ac0a47adc93af0be1759b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0060.csv": {
+        "Expected": "7a20827fb8102b429ba8476815a1f48bb2f9104c5949a8d6126da16c01f4b333",
+        "Actual": "7a20827fb8102b429ba8476815a1f48bb2f9104c5949a8d6126da16c01f4b333",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0061.csv": {
+        "Expected": "0ad6703ebfee2f5c9ece73976534ee34dad9c21c812477edc9a5d9732153cc7d",
+        "Actual": "0ad6703ebfee2f5c9ece73976534ee34dad9c21c812477edc9a5d9732153cc7d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0062.csv": {
+        "Expected": "b38ddec335cfcfbd687a9c6471ce1e2e0bd45ffddd1bfad995f2702573ca38e5",
+        "Actual": "b38ddec335cfcfbd687a9c6471ce1e2e0bd45ffddd1bfad995f2702573ca38e5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0063.csv": {
+        "Expected": "e4d374fbba8a900bed7d19009269dd6de9c86037d0fedb3ab86812ecf4b8187a",
+        "Actual": "e4d374fbba8a900bed7d19009269dd6de9c86037d0fedb3ab86812ecf4b8187a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0064.csv": {
+        "Expected": "fa017f951cb5e0b35b5fbae1404a805913ee208d7330883a5d7eaf2df69ac56b",
+        "Actual": "fa017f951cb5e0b35b5fbae1404a805913ee208d7330883a5d7eaf2df69ac56b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0065.csv": {
+        "Expected": "d79b0ba71a5a96abba6672a056a5ceeb4bcf2b7a08aa2757f60aa27ea8d8b69b",
+        "Actual": "d79b0ba71a5a96abba6672a056a5ceeb4bcf2b7a08aa2757f60aa27ea8d8b69b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0066.csv": {
+        "Expected": "d1b7e443cd38c73c7cb0c68793d0d6c3ff0e05b3cd46d3451d25022f0b13e532",
+        "Actual": "d1b7e443cd38c73c7cb0c68793d0d6c3ff0e05b3cd46d3451d25022f0b13e532",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0067.csv": {
+        "Expected": "e91e47cb42676940f8e7a88e0718f0ad7e61eca77c51e2a1e9f2299237c96061",
+        "Actual": "e91e47cb42676940f8e7a88e0718f0ad7e61eca77c51e2a1e9f2299237c96061",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0068.csv": {
+        "Expected": "f42854e1b9220a2013429a0a7b9865417e658e5af6d4fb8b9a171429630f2572",
+        "Actual": "f42854e1b9220a2013429a0a7b9865417e658e5af6d4fb8b9a171429630f2572",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0069.csv": {
+        "Expected": "beeb163f519c6071e8966051def449794ab6ce147ab2ecb769746a90f2c67cc3",
+        "Actual": "beeb163f519c6071e8966051def449794ab6ce147ab2ecb769746a90f2c67cc3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0070.csv": {
+        "Expected": "cbcd47d332e0c64761300d15bbbfceb261a6102847a7321ee9604f2d33cfba4f",
+        "Actual": "cbcd47d332e0c64761300d15bbbfceb261a6102847a7321ee9604f2d33cfba4f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0071.csv": {
+        "Expected": "ff28450e8bdf88c100078f004267285185ec19987a2a30f1b3696e96da179083",
+        "Actual": "ff28450e8bdf88c100078f004267285185ec19987a2a30f1b3696e96da179083",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0072.csv": {
+        "Expected": "9990264da6b55970da76343c2330c568aa39fa6b688acbc21b9b9f55d0524a34",
+        "Actual": "9990264da6b55970da76343c2330c568aa39fa6b688acbc21b9b9f55d0524a34",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0073.csv": {
+        "Expected": "e117fa1d8f4102f78d01ebe4351f3d44558ebddb4067ca31c25c587f40167ded",
+        "Actual": "e117fa1d8f4102f78d01ebe4351f3d44558ebddb4067ca31c25c587f40167ded",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0074.csv": {
+        "Expected": "e37efdf804898860e20ebceb9537a6f2948d821ab7388e10ae72288113dc7bce",
+        "Actual": "e37efdf804898860e20ebceb9537a6f2948d821ab7388e10ae72288113dc7bce",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0075.csv": {
+        "Expected": "08ad3be9b5d8e07a047ecd83d792707da4928d38b29037367cf40a7d28d95688",
+        "Actual": "08ad3be9b5d8e07a047ecd83d792707da4928d38b29037367cf40a7d28d95688",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0076.csv": {
+        "Expected": "2c9d4078832b2b1e37be53496476c0c922020b02ef14dd558a29190d707da366",
+        "Actual": "2c9d4078832b2b1e37be53496476c0c922020b02ef14dd558a29190d707da366",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0077.csv": {
+        "Expected": "8a9f4b72f71451566b026ca34f4ba9900288615d86de0a59c1c512c00bdee21f",
+        "Actual": "8a9f4b72f71451566b026ca34f4ba9900288615d86de0a59c1c512c00bdee21f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0078.csv": {
+        "Expected": "45a258b53e9a0503832c9be33f487faa362ea32078310ca2fbd7ca666c07aeea",
+        "Actual": "45a258b53e9a0503832c9be33f487faa362ea32078310ca2fbd7ca666c07aeea",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0079.csv": {
+        "Expected": "4d293c1ca5ff0e24f3e8163b0f0ceeed69fecb6e7f1c3d8350abf66e7794ff17",
+        "Actual": "4d293c1ca5ff0e24f3e8163b0f0ceeed69fecb6e7f1c3d8350abf66e7794ff17",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0080.csv": {
+        "Expected": "e4493ecaea54c283600a7e6c641da593eb93a99d19263cd50079200f387e8019",
+        "Actual": "e4493ecaea54c283600a7e6c641da593eb93a99d19263cd50079200f387e8019",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0081.csv": {
+        "Expected": "c988dc86d066308661134dd774e95e57da2422924b16569a7804fa5a4dec7d59",
+        "Actual": "c988dc86d066308661134dd774e95e57da2422924b16569a7804fa5a4dec7d59",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0082.csv": {
+        "Expected": "51f80a76b04eef2c31ffc5c15365b6c2944975b30b21467f3d41e639ae7f1abf",
+        "Actual": "51f80a76b04eef2c31ffc5c15365b6c2944975b30b21467f3d41e639ae7f1abf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0083.csv": {
+        "Expected": "1cf01be73e97f4cda15091d1b4e41803be68d1c404d4d43ec1b02a440cc0c1ef",
+        "Actual": "1cf01be73e97f4cda15091d1b4e41803be68d1c404d4d43ec1b02a440cc0c1ef",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0084.csv": {
+        "Expected": "1de6cf848b5c5e294005aa9a60cf84a840c3443c4b8d77ad2d0fb3e4947c42e9",
+        "Actual": "1de6cf848b5c5e294005aa9a60cf84a840c3443c4b8d77ad2d0fb3e4947c42e9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0085.csv": {
+        "Expected": "06e86ce29dc554a8e48766c85cb70fe42587db701cfa8cf79ee7a36104b5b5f6",
+        "Actual": "06e86ce29dc554a8e48766c85cb70fe42587db701cfa8cf79ee7a36104b5b5f6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0086.csv": {
+        "Expected": "094f0d88727927e994b23b9830346a55eb54738f3c3c0916b2181018fcd5f9e0",
+        "Actual": "094f0d88727927e994b23b9830346a55eb54738f3c3c0916b2181018fcd5f9e0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0087.csv": {
+        "Expected": "a69d6328a42f429d86f419732149df79f925e655462edef06f1b3de710962260",
+        "Actual": "a69d6328a42f429d86f419732149df79f925e655462edef06f1b3de710962260",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0088.csv": {
+        "Expected": "afb267bc2f9dd76be622788b5db86011e0409cdf8b9bc011d96962f4834be5b1",
+        "Actual": "afb267bc2f9dd76be622788b5db86011e0409cdf8b9bc011d96962f4834be5b1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0089.csv": {
+        "Expected": "a3727a6df13bfafb8eed1cd059c8fc2bcf778671db2e70b6b1b33305d8056edc",
+        "Actual": "a3727a6df13bfafb8eed1cd059c8fc2bcf778671db2e70b6b1b33305d8056edc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0090.csv": {
+        "Expected": "c647488f74e091c978f8a24cc00d7a0e641cf8cfa7cc468ca5e672387a416329",
+        "Actual": "c647488f74e091c978f8a24cc00d7a0e641cf8cfa7cc468ca5e672387a416329",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0091.csv": {
+        "Expected": "db6d6ed1cfe858dd4898e293353bb1e3705bea066d43bbd668a270b617d147c7",
+        "Actual": "db6d6ed1cfe858dd4898e293353bb1e3705bea066d43bbd668a270b617d147c7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0092.csv": {
+        "Expected": "43bdc9e182ba33f070ec77a65fb34b70429249eb56af3fa59eed572afdab8368",
+        "Actual": "43bdc9e182ba33f070ec77a65fb34b70429249eb56af3fa59eed572afdab8368",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0093.csv": {
+        "Expected": "b8c1871f09456a9b882b196c9257e66acd2eeb5c5e809bbf818cd9944818877f",
+        "Actual": "b8c1871f09456a9b882b196c9257e66acd2eeb5c5e809bbf818cd9944818877f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0094.csv": {
+        "Expected": "b71b981835aa7de802a9d3fb3be48ddba38f63fb0af9dbe7073a8c70d4d12d43",
+        "Actual": "b71b981835aa7de802a9d3fb3be48ddba38f63fb0af9dbe7073a8c70d4d12d43",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0095.csv": {
+        "Expected": "ea53a1e321c97bd6bca350a8fac1e67107d8fcc0c4b4e2276febc3967ea136b2",
+        "Actual": "ea53a1e321c97bd6bca350a8fac1e67107d8fcc0c4b4e2276febc3967ea136b2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0096.csv": {
+        "Expected": "610f630bb8e2b42ee7e3e81a56cf9d6264449bfd2691c8b7c17d5a27afd6f6ca",
+        "Actual": "610f630bb8e2b42ee7e3e81a56cf9d6264449bfd2691c8b7c17d5a27afd6f6ca",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0097.csv": {
+        "Expected": "99c0e140697c26dbfbec6c34d5fdc3f326f88691ca737327a413fcacc8b6e8c9",
+        "Actual": "99c0e140697c26dbfbec6c34d5fdc3f326f88691ca737327a413fcacc8b6e8c9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0098.csv": {
+        "Expected": "3e1490996a77e4714f195337136cf95a69a2a57f376b22fd975907c2f289842c",
+        "Actual": "3e1490996a77e4714f195337136cf95a69a2a57f376b22fd975907c2f289842c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0099.csv": {
+        "Expected": "da8e001c5169e82212f37dff9bf319821d46156c19f2cab59792a91b3e238cc4",
+        "Actual": "da8e001c5169e82212f37dff9bf319821d46156c19f2cab59792a91b3e238cc4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0100.csv": {
+        "Expected": "b56d34496e7377e620f69aac7182d41c085d9823081eb28ba7904385d0813844",
+        "Actual": "b56d34496e7377e620f69aac7182d41c085d9823081eb28ba7904385d0813844",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0101.csv": {
+        "Expected": "023a0e0a3d27bb4957163f9e5cde553fcbb50f474d45384f18cc0eb4153f51cb",
+        "Actual": "023a0e0a3d27bb4957163f9e5cde553fcbb50f474d45384f18cc0eb4153f51cb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0102.csv": {
+        "Expected": "d4cd0988d3dca338181510886ba3edb18b4952aa28a31fc8123f4b730e1b3da3",
+        "Actual": "d4cd0988d3dca338181510886ba3edb18b4952aa28a31fc8123f4b730e1b3da3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0103.csv": {
+        "Expected": "5398d846a9ed6aacca0feaace7c42b5a4d85c715e0ba8ee623781a0c04d2e888",
+        "Actual": "5398d846a9ed6aacca0feaace7c42b5a4d85c715e0ba8ee623781a0c04d2e888",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0104.csv": {
+        "Expected": "976f8c53942fab10a7cc52a1fc3542f87e0a5979f4a046e56a15b74a072eb238",
+        "Actual": "976f8c53942fab10a7cc52a1fc3542f87e0a5979f4a046e56a15b74a072eb238",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0105.csv": {
+        "Expected": "2247bde585e73b9f1940e69ce22a4ee13342ee50145edee16389aa2d8c041bb9",
+        "Actual": "2247bde585e73b9f1940e69ce22a4ee13342ee50145edee16389aa2d8c041bb9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0106.csv": {
+        "Expected": "4d3fc7bbeb20fc6294113b1d4a352f403f0fd641fc9a9468eb0105b931b8891c",
+        "Actual": "4d3fc7bbeb20fc6294113b1d4a352f403f0fd641fc9a9468eb0105b931b8891c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0107.csv": {
+        "Expected": "5a5422bdbba699dc36f61aaa658fa0412b5e6ef724ff805229b186345b68ca4e",
+        "Actual": "5a5422bdbba699dc36f61aaa658fa0412b5e6ef724ff805229b186345b68ca4e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0108.csv": {
+        "Expected": "bb4b8ff3b866ed2078cf8ac743aea4150e0d16ec4a6e438d612cb97f389df9c8",
+        "Actual": "bb4b8ff3b866ed2078cf8ac743aea4150e0d16ec4a6e438d612cb97f389df9c8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0109.csv": {
+        "Expected": "6a326831894dbdd85a33d41b2b9cd58576554b386924ee0732dba74ede5f869d",
+        "Actual": "6a326831894dbdd85a33d41b2b9cd58576554b386924ee0732dba74ede5f869d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0110.csv": {
+        "Expected": "038b73a94414283c0d53101527c739144a48db148e9f1098951d9de772027895",
+        "Actual": "038b73a94414283c0d53101527c739144a48db148e9f1098951d9de772027895",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0111.csv": {
+        "Expected": "bfccbe261e7fe3c6ec75f387d40974eb09bfbfcf98ca8ca988a1b0d57fa2006b",
+        "Actual": "bfccbe261e7fe3c6ec75f387d40974eb09bfbfcf98ca8ca988a1b0d57fa2006b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0112.csv": {
+        "Expected": "ed6ebaf4eab2d741c2d58f3a1a6551f27c11f1ecb92ae99a1a0e76677e3c4cd3",
+        "Actual": "ed6ebaf4eab2d741c2d58f3a1a6551f27c11f1ecb92ae99a1a0e76677e3c4cd3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0113.csv": {
+        "Expected": "4faa3cadf6a35753a0266484b6cd9aaddad9a3fa04efc62bbe46877d091c6b04",
+        "Actual": "4faa3cadf6a35753a0266484b6cd9aaddad9a3fa04efc62bbe46877d091c6b04",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0114.csv": {
+        "Expected": "8c291454516b581796fbec91a327606b9e948f7d75a9b4011b648af6d9eba98f",
+        "Actual": "8c291454516b581796fbec91a327606b9e948f7d75a9b4011b648af6d9eba98f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0115.csv": {
+        "Expected": "bdfaface1bf7dc6c638091352c0401e01d12a8fd7a5b9bd5e9514bbef3755269",
+        "Actual": "bdfaface1bf7dc6c638091352c0401e01d12a8fd7a5b9bd5e9514bbef3755269",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0116.csv": {
+        "Expected": "a7358b62549eee0cc16004ca50ba78f58af6008329d896a61a21b327ce360c98",
+        "Actual": "a7358b62549eee0cc16004ca50ba78f58af6008329d896a61a21b327ce360c98",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0117.csv": {
+        "Expected": "8a4e2f652d2763540c17066beb5c0c65790862237b1a378a12730ccd0ca37eef",
+        "Actual": "8a4e2f652d2763540c17066beb5c0c65790862237b1a378a12730ccd0ca37eef",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0118.csv": {
+        "Expected": "d1fbd666e1b587b595833e4216db6d2c9e70ed92325ebc335e85c3525c6f544a",
+        "Actual": "d1fbd666e1b587b595833e4216db6d2c9e70ed92325ebc335e85c3525c6f544a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0119.csv": {
+        "Expected": "bb5ea20f8bad787c8951584989631df9686ddce115055bbf1e732c907cb4fabd",
+        "Actual": "bb5ea20f8bad787c8951584989631df9686ddce115055bbf1e732c907cb4fabd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0120.csv": {
+        "Expected": "2825c3941d9653567f0994bfbe1577787b1ae01686002560c57d0159c6b1d3ed",
+        "Actual": "2825c3941d9653567f0994bfbe1577787b1ae01686002560c57d0159c6b1d3ed",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0121.csv": {
+        "Expected": "e9380020d755466d3c057fc72998d160d22ca3b5ae39320c2af92f468651a4ee",
+        "Actual": "e9380020d755466d3c057fc72998d160d22ca3b5ae39320c2af92f468651a4ee",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0122.csv": {
+        "Expected": "c506fd4654a4de1ac62c3cd83c5d74dcd833d138d762a3689c7264cb08606020",
+        "Actual": "c506fd4654a4de1ac62c3cd83c5d74dcd833d138d762a3689c7264cb08606020",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0123.csv": {
+        "Expected": "14a62f8c66a4d9b7f27b2601417cc7ae771e67ee7d2d8408f5ca3a7f37bfee11",
+        "Actual": "14a62f8c66a4d9b7f27b2601417cc7ae771e67ee7d2d8408f5ca3a7f37bfee11",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0124.csv": {
+        "Expected": "b5f824b5fe538e6226a79d79ac92deee01173411cfc26b07cb752e2ffb144de2",
+        "Actual": "b5f824b5fe538e6226a79d79ac92deee01173411cfc26b07cb752e2ffb144de2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0125.csv": {
+        "Expected": "1a06cf51473b4a543fa23ab167a5b82e2594135be6cc2f696c6415a1007d0659",
+        "Actual": "1a06cf51473b4a543fa23ab167a5b82e2594135be6cc2f696c6415a1007d0659",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0126.csv": {
+        "Expected": "4e47e3883323f1d652c10363bb7d7308c19f40d6e38288580fadf4261b2e3b0d",
+        "Actual": "4e47e3883323f1d652c10363bb7d7308c19f40d6e38288580fadf4261b2e3b0d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0127.csv": {
+        "Expected": "195d97aeadf9d522de79c28fce7bd2e61760681ddce123950020d2c65b16a373",
+        "Actual": "195d97aeadf9d522de79c28fce7bd2e61760681ddce123950020d2c65b16a373",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0128.csv": {
+        "Expected": "bfdc69aa4d9047403c637f72fbf83c0d1cb196df8564afe15e943dc4daad0d90",
+        "Actual": "bfdc69aa4d9047403c637f72fbf83c0d1cb196df8564afe15e943dc4daad0d90",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0129.csv": {
+        "Expected": "67c7b912ffd19a505a3707191bd7088a50dc9d853ec512763a2b52a36a495875",
+        "Actual": "67c7b912ffd19a505a3707191bd7088a50dc9d853ec512763a2b52a36a495875",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0130.csv": {
+        "Expected": "4b553da360b576f9e99bf1d180233494ab66ea507577561b8de4641ad7712514",
+        "Actual": "4b553da360b576f9e99bf1d180233494ab66ea507577561b8de4641ad7712514",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0131.csv": {
+        "Expected": "78842eeb8c417ea51ab2c840ca9908434883324af7e69ed001106ac447b9b3a6",
+        "Actual": "78842eeb8c417ea51ab2c840ca9908434883324af7e69ed001106ac447b9b3a6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0132.csv": {
+        "Expected": "8399764f74d7f4b62d1f462bf09a9ec7c46b1ed9971fd21a1c230311215df013",
+        "Actual": "8399764f74d7f4b62d1f462bf09a9ec7c46b1ed9971fd21a1c230311215df013",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0133.csv": {
+        "Expected": "9f23adabd66a34f3c5edf0e036b96d4764e6559ac51a554521f8399c1e27ecd3",
+        "Actual": "9f23adabd66a34f3c5edf0e036b96d4764e6559ac51a554521f8399c1e27ecd3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0134.csv": {
+        "Expected": "38f899d26fda0d781ed40acf1bdafa47130c3175b42bd4fc1be9bd38b314b9e5",
+        "Actual": "38f899d26fda0d781ed40acf1bdafa47130c3175b42bd4fc1be9bd38b314b9e5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0135.csv": {
+        "Expected": "4f27c37a1a8f5877239e265a0e5dacd61c32a322ec7bee37deec5cb162f12992",
+        "Actual": "4f27c37a1a8f5877239e265a0e5dacd61c32a322ec7bee37deec5cb162f12992",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0136.csv": {
+        "Expected": "a05f5fbbdbfbf3a371d769f3a43ef1134beb770193bdc289e4a56a9c44720d33",
+        "Actual": "a05f5fbbdbfbf3a371d769f3a43ef1134beb770193bdc289e4a56a9c44720d33",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0137.csv": {
+        "Expected": "0e9808c3535b9025f1ca222646457ed3e19dfbf29597237684884e1b13d40903",
+        "Actual": "0e9808c3535b9025f1ca222646457ed3e19dfbf29597237684884e1b13d40903",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0138.csv": {
+        "Expected": "839c10a940f4f4a93d34934ac11b43b9bedd850aa4755fa1840fe320699199d4",
+        "Actual": "839c10a940f4f4a93d34934ac11b43b9bedd850aa4755fa1840fe320699199d4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0139.csv": {
+        "Expected": "ea7c8e28ac676c532bfaec78a91c7245777ad9dc8f805bcb24bf5319cd89b074",
+        "Actual": "ea7c8e28ac676c532bfaec78a91c7245777ad9dc8f805bcb24bf5319cd89b074",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0140.csv": {
+        "Expected": "8f6b4c08bd339b415db9d3252f11eeb3836f4f9e35e441a1cb41893899a31c39",
+        "Actual": "8f6b4c08bd339b415db9d3252f11eeb3836f4f9e35e441a1cb41893899a31c39",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0141.csv": {
+        "Expected": "b433c15db1978c20ce480a9ec4d4bdb96b8352123c041cc36bf96498be08ecbc",
+        "Actual": "b433c15db1978c20ce480a9ec4d4bdb96b8352123c041cc36bf96498be08ecbc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0142.csv": {
+        "Expected": "a11febcbb225e27873512762b3604c7998321cd27fb6e0c74865e9315efb137c",
+        "Actual": "a11febcbb225e27873512762b3604c7998321cd27fb6e0c74865e9315efb137c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0143.csv": {
+        "Expected": "0ef5bef784e18689516e098eebced30540667ef743e75589ec5a387a3bdb69b4",
+        "Actual": "0ef5bef784e18689516e098eebced30540667ef743e75589ec5a387a3bdb69b4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0144.csv": {
+        "Expected": "3a0ee7569fbb6ee2dacee5805f241ba127abd69cb5b7c4db6c8f7517d462e9c2",
+        "Actual": "3a0ee7569fbb6ee2dacee5805f241ba127abd69cb5b7c4db6c8f7517d462e9c2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0145.csv": {
+        "Expected": "92c9c4583b00f5dda7a0b06967274663c99e49df5e35ddcb28cbf64b0a38dd21",
+        "Actual": "92c9c4583b00f5dda7a0b06967274663c99e49df5e35ddcb28cbf64b0a38dd21",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0146.csv": {
+        "Expected": "7a3db23436ed6d5d76f094b830772679943c187cfad05e555672d94de7a6d4f3",
+        "Actual": "7a3db23436ed6d5d76f094b830772679943c187cfad05e555672d94de7a6d4f3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0147.csv": {
+        "Expected": "b0c53303e8ce5e4c64a041e7cc6b06a43fda07ed3fe50fec11316ae1410ff2b1",
+        "Actual": "b0c53303e8ce5e4c64a041e7cc6b06a43fda07ed3fe50fec11316ae1410ff2b1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0148.csv": {
+        "Expected": "94da0a365bc99dfeb1318b22a6b804054b0be1e25fcb39dfe57bb6df76fa660d",
+        "Actual": "94da0a365bc99dfeb1318b22a6b804054b0be1e25fcb39dfe57bb6df76fa660d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0149.csv": {
+        "Expected": "1d6e4fe0f3e4dc470a6aa7b6bb20db5daa80bf5ce38311881c86324e00ac93e5",
+        "Actual": "1d6e4fe0f3e4dc470a6aa7b6bb20db5daa80bf5ce38311881c86324e00ac93e5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0150.csv": {
+        "Expected": "41dda0e09b5b01e0751d681f02b243e198cba9cd5d7319c2e9b03d66192968c3",
+        "Actual": "41dda0e09b5b01e0751d681f02b243e198cba9cd5d7319c2e9b03d66192968c3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0151.csv": {
+        "Expected": "788403c0f6c858d43306f1ffec3c51c1430b538b05434775f153f34556532ba7",
+        "Actual": "788403c0f6c858d43306f1ffec3c51c1430b538b05434775f153f34556532ba7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0152.csv": {
+        "Expected": "81d759d048655849a6ea035ba2cacd320484a3dde37e08534a7bb4424df676e6",
+        "Actual": "81d759d048655849a6ea035ba2cacd320484a3dde37e08534a7bb4424df676e6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0153.csv": {
+        "Expected": "5339532c72830d08f1d4993618a28078b0b4beca7c781a3b3e7cab784b09fdd3",
+        "Actual": "5339532c72830d08f1d4993618a28078b0b4beca7c781a3b3e7cab784b09fdd3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0154.csv": {
+        "Expected": "28c4fd72f13dcd9021daf68a36950a61f5ccf01857801396ce170a23476153aa",
+        "Actual": "28c4fd72f13dcd9021daf68a36950a61f5ccf01857801396ce170a23476153aa",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0155.csv": {
+        "Expected": "e14031f858da91125b573712578737378e158170c4fde62f6146ae36a91cae1e",
+        "Actual": "e14031f858da91125b573712578737378e158170c4fde62f6146ae36a91cae1e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0156.csv": {
+        "Expected": "9a63d86ff878a0564fb820948f9199681f7889589ab8bdfc5fea0bfc549698d6",
+        "Actual": "9a63d86ff878a0564fb820948f9199681f7889589ab8bdfc5fea0bfc549698d6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0157.csv": {
+        "Expected": "7a9fe5a4c82ccdad8bba8775927c7bd0c949d21a2da11608de804baedaf211b8",
+        "Actual": "7a9fe5a4c82ccdad8bba8775927c7bd0c949d21a2da11608de804baedaf211b8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0158.csv": {
+        "Expected": "f1e03e9b78e46a81953d8d4e3790e4067a8aaaae8591e5a07db54bf88474ee5c",
+        "Actual": "f1e03e9b78e46a81953d8d4e3790e4067a8aaaae8591e5a07db54bf88474ee5c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0159.csv": {
+        "Expected": "c84521c9321d78591eb3af5b24ff3fb3464df21163ece7690021d9e817a45979",
+        "Actual": "c84521c9321d78591eb3af5b24ff3fb3464df21163ece7690021d9e817a45979",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0160.csv": {
+        "Expected": "a60dbdbb2c386887abba01a2454e02675f8d2cfe9b81b21b297cdd208c188bf9",
+        "Actual": "a60dbdbb2c386887abba01a2454e02675f8d2cfe9b81b21b297cdd208c188bf9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0161.csv": {
+        "Expected": "73f3b20f24514916954fce47ac88d9a00c1e8bfb4bab25212f076b91e9892062",
+        "Actual": "73f3b20f24514916954fce47ac88d9a00c1e8bfb4bab25212f076b91e9892062",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0162.csv": {
+        "Expected": "1317e5c6c91522d2e80658ff06fa6ba191409b6549920febf0917e00e0bc1b15",
+        "Actual": "1317e5c6c91522d2e80658ff06fa6ba191409b6549920febf0917e00e0bc1b15",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0163.csv": {
+        "Expected": "68142e14ed3063fe88917d165932c913dda9d5ae205b94ff363f4c9c1c1a0e9d",
+        "Actual": "68142e14ed3063fe88917d165932c913dda9d5ae205b94ff363f4c9c1c1a0e9d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0164.csv": {
+        "Expected": "7cb83348e0e51d114a602353b56a6d43732fe98f54a49ceb4c4674ecd0babbae",
+        "Actual": "7cb83348e0e51d114a602353b56a6d43732fe98f54a49ceb4c4674ecd0babbae",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0165.csv": {
+        "Expected": "2e61cc7f11265614360ec64829038a37a2e1fd03c68e9d0a0f0cbd97c1ed857e",
+        "Actual": "2e61cc7f11265614360ec64829038a37a2e1fd03c68e9d0a0f0cbd97c1ed857e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0166.csv": {
+        "Expected": "b3ceeb6faea8f04cee7209ed2926386d3cb4711670f50646accc9543ccfd1798",
+        "Actual": "b3ceeb6faea8f04cee7209ed2926386d3cb4711670f50646accc9543ccfd1798",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0167.csv": {
+        "Expected": "190c72a85f18235db3c94fee972ee5fa2e6c59778b4d0d3f2920620924af5e7e",
+        "Actual": "190c72a85f18235db3c94fee972ee5fa2e6c59778b4d0d3f2920620924af5e7e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0168.csv": {
+        "Expected": "f50b7ac673dff5c0809917fd2866ebdd34ce6853f53a64e5529ee412f736b6dc",
+        "Actual": "f50b7ac673dff5c0809917fd2866ebdd34ce6853f53a64e5529ee412f736b6dc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0169.csv": {
+        "Expected": "1ceb88c1bdf0548a80e16063cc0a88d3903fa137f940220ff29c6bc874bff94c",
+        "Actual": "1ceb88c1bdf0548a80e16063cc0a88d3903fa137f940220ff29c6bc874bff94c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0170.csv": {
+        "Expected": "fd20a9ee475749faff95a3171c68fcc52e35612107032b2d9305abbbe4b1dc71",
+        "Actual": "fd20a9ee475749faff95a3171c68fcc52e35612107032b2d9305abbbe4b1dc71",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0171.csv": {
+        "Expected": "151547947d8c08486fdaaefd09ffc002cbfe3f9fafec3baa3b7afc62e0200210",
+        "Actual": "151547947d8c08486fdaaefd09ffc002cbfe3f9fafec3baa3b7afc62e0200210",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0172.csv": {
+        "Expected": "1352dda367739fc7b406df7f024b453802ef660112b8d1bbeef69392fce3bd83",
+        "Actual": "1352dda367739fc7b406df7f024b453802ef660112b8d1bbeef69392fce3bd83",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0173.csv": {
+        "Expected": "c093941fdab52aa5afab4518bf72d2b08b74c0e2d026192c83d0dfa625881059",
+        "Actual": "c093941fdab52aa5afab4518bf72d2b08b74c0e2d026192c83d0dfa625881059",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0174.csv": {
+        "Expected": "d8f22966dea8a1ac4c9ca02a58c271b4eb8d28419a44ebdec4d47d26baa0b098",
+        "Actual": "d8f22966dea8a1ac4c9ca02a58c271b4eb8d28419a44ebdec4d47d26baa0b098",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0175.csv": {
+        "Expected": "93faa22b48468bb52fb8c38d534b6b9f7fbeb76241216c3eb244bd54e9524afd",
+        "Actual": "93faa22b48468bb52fb8c38d534b6b9f7fbeb76241216c3eb244bd54e9524afd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0176.csv": {
+        "Expected": "c2334ddf368336f740f3a3d7dc2c2cea91b55c33ab3a09c56fd58efa01377b74",
+        "Actual": "c2334ddf368336f740f3a3d7dc2c2cea91b55c33ab3a09c56fd58efa01377b74",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0177.csv": {
+        "Expected": "1885714b7a58fbbf20072928c37c30e7343ddab24493265c4300ae7197ac0cf8",
+        "Actual": "1885714b7a58fbbf20072928c37c30e7343ddab24493265c4300ae7197ac0cf8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0178.csv": {
+        "Expected": "a72f36c1fa747829d37dbe0c3444d0630ee3676fee8cd0f7b824c03a5d1d45b3",
+        "Actual": "a72f36c1fa747829d37dbe0c3444d0630ee3676fee8cd0f7b824c03a5d1d45b3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0179.csv": {
+        "Expected": "f68b6bcc8392526f8ad463547b32ac0fa880082de0dd010adc29a02642dbe5dd",
+        "Actual": "f68b6bcc8392526f8ad463547b32ac0fa880082de0dd010adc29a02642dbe5dd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0180.csv": {
+        "Expected": "9fa8da9004ce4f439d414091dc961abff068e0fddf61a20fcb6b26fe309511a7",
+        "Actual": "9fa8da9004ce4f439d414091dc961abff068e0fddf61a20fcb6b26fe309511a7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0181.csv": {
+        "Expected": "f3b9cdf93fb08c69474fd521487d29080c8fd5af9df47e275390beda8e00498b",
+        "Actual": "f3b9cdf93fb08c69474fd521487d29080c8fd5af9df47e275390beda8e00498b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0182.csv": {
+        "Expected": "e93bc651d930d033857ae1dbbca8439bc4c468eb8f08a2c576e7c5aec903c843",
+        "Actual": "e93bc651d930d033857ae1dbbca8439bc4c468eb8f08a2c576e7c5aec903c843",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0183.csv": {
+        "Expected": "3fda7d745cb7e4aa9a10305840e96852c35daef327ba2f9ebe9c10f85a25667e",
+        "Actual": "3fda7d745cb7e4aa9a10305840e96852c35daef327ba2f9ebe9c10f85a25667e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0184.csv": {
+        "Expected": "45da8ec20913701332a4ea7db4e83294efa3c01ca8d7cb9a6af3884a84c8e8af",
+        "Actual": "45da8ec20913701332a4ea7db4e83294efa3c01ca8d7cb9a6af3884a84c8e8af",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0185.csv": {
+        "Expected": "8c16ebfc6c1f1a37dea25fe3faac6adcab62fd05f685d642665effc6b816f413",
+        "Actual": "8c16ebfc6c1f1a37dea25fe3faac6adcab62fd05f685d642665effc6b816f413",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0186.csv": {
+        "Expected": "abcbb96bcfc9e4ba8ded740434fbd5f2f91a81f5185afe709496ee51de529961",
+        "Actual": "abcbb96bcfc9e4ba8ded740434fbd5f2f91a81f5185afe709496ee51de529961",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0187.csv": {
+        "Expected": "ab41488d834e91234b3aef7795f1609edd1c1c58573de4307a7a8965506b53bc",
+        "Actual": "ab41488d834e91234b3aef7795f1609edd1c1c58573de4307a7a8965506b53bc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0188.csv": {
+        "Expected": "6b35efff54d48926c73d84be386a2ef6ee83f577de73f2379ba429f7359ba580",
+        "Actual": "6b35efff54d48926c73d84be386a2ef6ee83f577de73f2379ba429f7359ba580",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0189.csv": {
+        "Expected": "5b5fb349c9f09ea91ac8f1ba0ac5b51cd379707ba588682faa4c29d7849d0d79",
+        "Actual": "5b5fb349c9f09ea91ac8f1ba0ac5b51cd379707ba588682faa4c29d7849d0d79",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0190.csv": {
+        "Expected": "4c5bb730f1078975d962abab3ff54e32be9e37561106794ff7c46236966eecb5",
+        "Actual": "4c5bb730f1078975d962abab3ff54e32be9e37561106794ff7c46236966eecb5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0191.csv": {
+        "Expected": "105c935a787c9215bd69af7e1e8a02c4de460b278142409eb4770d00d90fb215",
+        "Actual": "105c935a787c9215bd69af7e1e8a02c4de460b278142409eb4770d00d90fb215",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0192.csv": {
+        "Expected": "b2f5bf2da41e40549346979a15b44962756cd6ce7b1debcb0da56fe383d346dc",
+        "Actual": "b2f5bf2da41e40549346979a15b44962756cd6ce7b1debcb0da56fe383d346dc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0193.csv": {
+        "Expected": "779fb5343b6655c6f0b4d2cfd20c9b925e0eeb972bbf2df175fbef40a86f2042",
+        "Actual": "779fb5343b6655c6f0b4d2cfd20c9b925e0eeb972bbf2df175fbef40a86f2042",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0194.csv": {
+        "Expected": "6ebf6424727be5cacd00b05dbd57e71a8b341118f03e6f8ae041958049ac54bf",
+        "Actual": "6ebf6424727be5cacd00b05dbd57e71a8b341118f03e6f8ae041958049ac54bf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0195.csv": {
+        "Expected": "3f41bca64e07235a7a6b32018965bc794670da6bf36ad91dfa2cdb6bd577633f",
+        "Actual": "3f41bca64e07235a7a6b32018965bc794670da6bf36ad91dfa2cdb6bd577633f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0196.csv": {
+        "Expected": "93e6381b389c1d1197924db4b49a3b0f53221b2bb9ef2743ded81ef2d3aef644",
+        "Actual": "93e6381b389c1d1197924db4b49a3b0f53221b2bb9ef2743ded81ef2d3aef644",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0197.csv": {
+        "Expected": "a07ed739b5d686c53e6d494fa668fb2d2e9352201cac58182dc5ed5039a66155",
+        "Actual": "a07ed739b5d686c53e6d494fa668fb2d2e9352201cac58182dc5ed5039a66155",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0198.csv": {
+        "Expected": "8e11e97f7e42a29de6e983dcd88a3238ea5ea02d5902c7166b0ddfb2c0c7ed7d",
+        "Actual": "8e11e97f7e42a29de6e983dcd88a3238ea5ea02d5902c7166b0ddfb2c0c7ed7d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0199.csv": {
+        "Expected": "522ca1711f8dd8338ef6cc447ff473fa00ed6166fb6b3d76ee387eee49e7ca76",
+        "Actual": "522ca1711f8dd8338ef6cc447ff473fa00ed6166fb6b3d76ee387eee49e7ca76",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0200.csv": {
+        "Expected": "c6fbc1f490bd8381b2382e69697b14f67ebf0f29a23da101d5d3062db04a5379",
+        "Actual": "c6fbc1f490bd8381b2382e69697b14f67ebf0f29a23da101d5d3062db04a5379",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0201.csv": {
+        "Expected": "3ff50d9e9aa28e07c84f2293ef06dc4b522eea701e1e5cfeebe84c259fa6d036",
+        "Actual": "3ff50d9e9aa28e07c84f2293ef06dc4b522eea701e1e5cfeebe84c259fa6d036",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0202.csv": {
+        "Expected": "997c640655aa6d0109c7527b923fee449cdd5d5783044f135fbe8a855540aafd",
+        "Actual": "997c640655aa6d0109c7527b923fee449cdd5d5783044f135fbe8a855540aafd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0203.csv": {
+        "Expected": "cca723eeb8f76f2d9b8b71fac33ff5c28c085ab66ee69e4d13c062fc8d6b4a9d",
+        "Actual": "cca723eeb8f76f2d9b8b71fac33ff5c28c085ab66ee69e4d13c062fc8d6b4a9d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0204.csv": {
+        "Expected": "661814270233fefaa495d7988a2e561d95bcaa7b14e98b10f320b92922f34466",
+        "Actual": "661814270233fefaa495d7988a2e561d95bcaa7b14e98b10f320b92922f34466",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0205.csv": {
+        "Expected": "66a5f57088857edaade22268f0609c0575f98b9c1336f821e7f7aafbc751a1bb",
+        "Actual": "66a5f57088857edaade22268f0609c0575f98b9c1336f821e7f7aafbc751a1bb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0206.csv": {
+        "Expected": "aa83d668321211636e7c86b9f459ad77753a50cb84a5a8a2602641688a9b8461",
+        "Actual": "aa83d668321211636e7c86b9f459ad77753a50cb84a5a8a2602641688a9b8461",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0207.csv": {
+        "Expected": "010f3de12150e19b1f4c8b69f1d5b830d90c7f893d82be0f33fae14eeca1773b",
+        "Actual": "010f3de12150e19b1f4c8b69f1d5b830d90c7f893d82be0f33fae14eeca1773b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0208.csv": {
+        "Expected": "273c446dcee006092ee32416629c590cfb9d6ac34b954b638be298a820e364ca",
+        "Actual": "273c446dcee006092ee32416629c590cfb9d6ac34b954b638be298a820e364ca",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0209.csv": {
+        "Expected": "e6deade711cfe732e1b88c62f288f4fb4d9eaec75887c753a98bf6869b03a603",
+        "Actual": "e6deade711cfe732e1b88c62f288f4fb4d9eaec75887c753a98bf6869b03a603",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0210.csv": {
+        "Expected": "c7e5a3f66966f39fd8de6db929073a1ffe6b76bea7e7ce454479fa3658e6b0e5",
+        "Actual": "c7e5a3f66966f39fd8de6db929073a1ffe6b76bea7e7ce454479fa3658e6b0e5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0211.csv": {
+        "Expected": "b97b4097e279c631236cce57eab98efc27c966c5cea6e68121aeb6348ce64b00",
+        "Actual": "b97b4097e279c631236cce57eab98efc27c966c5cea6e68121aeb6348ce64b00",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0212.csv": {
+        "Expected": "c5b3c1cfe7c5ffb50f4201017e7782d6b90bf36028f3118e1c5ee82dbb20c134",
+        "Actual": "c5b3c1cfe7c5ffb50f4201017e7782d6b90bf36028f3118e1c5ee82dbb20c134",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0213.csv": {
+        "Expected": "a1b3c161c7dac1bb25c71caa7157248efa66ca367efcc7ad1122dff7c83207b3",
+        "Actual": "a1b3c161c7dac1bb25c71caa7157248efa66ca367efcc7ad1122dff7c83207b3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0214.csv": {
+        "Expected": "aabc702aeb096c63fff7b4406a9890ba0d68cc6e0883b26fb3fd939ec605a65b",
+        "Actual": "aabc702aeb096c63fff7b4406a9890ba0d68cc6e0883b26fb3fd939ec605a65b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0215.csv": {
+        "Expected": "b681c35dd3ba6c4d01e47a71f323bc72430f5763a5899685c0d2f3c725b0d73f",
+        "Actual": "b681c35dd3ba6c4d01e47a71f323bc72430f5763a5899685c0d2f3c725b0d73f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0216.csv": {
+        "Expected": "740d267168f341593e578e4a1796083c6bfd52a91bceeda490df117d8c8da099",
+        "Actual": "740d267168f341593e578e4a1796083c6bfd52a91bceeda490df117d8c8da099",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0217.csv": {
+        "Expected": "d6a918fedb21119ea20795f71c95b5cf6b1a0d52549a9275d5c0b37ec7fa6a02",
+        "Actual": "d6a918fedb21119ea20795f71c95b5cf6b1a0d52549a9275d5c0b37ec7fa6a02",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0218.csv": {
+        "Expected": "ff2493a5e1cb4b3f2c96bf4b8c6b0c32554aec98f24fddb3ed4873fc7524a16b",
+        "Actual": "ff2493a5e1cb4b3f2c96bf4b8c6b0c32554aec98f24fddb3ed4873fc7524a16b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0219.csv": {
+        "Expected": "eb8b1a55c12812491a38937e76ed6606fc60945db164028a5ed3626ac26b9e78",
+        "Actual": "eb8b1a55c12812491a38937e76ed6606fc60945db164028a5ed3626ac26b9e78",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0220.csv": {
+        "Expected": "e40590f8ad13234b9bea296a31429e52ebb7c4c7f8ea48afa5e8f52419c49bcf",
+        "Actual": "e40590f8ad13234b9bea296a31429e52ebb7c4c7f8ea48afa5e8f52419c49bcf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0221.csv": {
+        "Expected": "9c538ab3fac8762dd6ae8c24f4c55d5ed15dff388506c4cfbb9581d577f9491e",
+        "Actual": "9c538ab3fac8762dd6ae8c24f4c55d5ed15dff388506c4cfbb9581d577f9491e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/basis-0222.csv": {
+        "Expected": "6afac0662e6a3cd36d52bda2d68a7d1cbd9634d0e0e642f77d82b756da81eedd",
+        "Actual": "6afac0662e6a3cd36d52bda2d68a7d1cbd9634d0e0e642f77d82b756da81eedd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-533e843f9931/spatial-19-edge-533e843f9931-thin/inputs/traces/conductor-2.csv": {
+        "Expected": "91619a39869527a5d1c5beb42f511a3dd2a2a314470672df7569489c1ad5391d",
+        "Actual": "91619a39869527a5d1c5beb42f511a3dd2a2a314470672df7569489c1ad5391d",
+        "OK": true
+      }
+    },
+    "UTC": "2026-10-05T20:03:04Z",
+    "StageBinaries": {}
+  },
+  "EndUTC": "2026-10-05T20:57:40Z",
+  "TotalSeconds": 3276.325198303,
+  "StagePeakUsedBytesSampled": {
+    "spatial-19-edge-533e843f9931-thin-p4-worker-block1": 204338405376,
+    "spatial-19-edge-533e843f9931-thin-p4-local-edge": 456670298112
+  }
+}
