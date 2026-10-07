@@ -216,13 +216,19 @@ def below_amplitude_floor(name, by_observable, amplitudes, ratio):
 
 
 def below_floor_aggregate(amplitude, ratio):
-    """Information per Type: the coupon sources below the floor and the bound
+    """Information per Type: the coupon sources below the floor, the bound
     (1 + sum_i sqrt(Q_ii / Q_max))^2 - 1 on their COLLECTIVE contribution to the Type
-    energy of any normalised trace reaching Q_max (the triangle inequality summed)."""
+    energy of any normalised trace reaching Q_max (the triangle inequality summed: every
+    below-floor response coherent and wholly in error - the loosest reading) and the
+    fraction of the Type's diagonal sum they carry (DiagonalSumFraction = sum_below Q_ii /
+    sum_all Q_ii: the incoherent reading)."""
     maximum = amplitude["Maximum"]
-    below = [i for i, value in amplitude["Values"].items() if maximum and value < ratio * maximum]
-    total = sum(math.sqrt(max(amplitude["Values"][i], 0.0) / maximum) for i in below) if maximum else math.inf
-    return {"Sources": len(below), "Indices": [int(i) for i in below], "Bound": (1.0 + total) ** 2 - 1.0}
+    values = amplitude["Values"]
+    below = [i for i, value in values.items() if maximum and value < ratio * maximum]
+    total = sum(math.sqrt(max(values[i], 0.0) / maximum) for i in below) if maximum else math.inf
+    diagonal_sum = sum(values.values())
+    return {"Sources": len(below), "Indices": [int(i) for i in below], "Bound": (1.0 + total) ** 2 - 1.0,
+            "DiagonalSumFraction": (sum(values[i] for i in below) / diagonal_sum) if diagonal_sum else math.inf}
 
 
 def not_applicable(gate, interface, interfaces):

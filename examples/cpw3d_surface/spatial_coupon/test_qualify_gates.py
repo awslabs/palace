@@ -439,6 +439,7 @@ class AmplitudeFloorTest(unittest.TestCase):
         aggregate = controls["AmplitudeFloor"]["BelowFloorAggregate"]["Q_SA"]
         self.assertEqual(aggregate["Indices"], [31])
         self.assertLess(aggregate["Bound"], 0.001)
+        self.assertAlmostEqual(aggregate["DiagonalSumFraction"], 2e-25 / (2e-18 * (1 + 38 * 0.5) + 2e-25))
         self.assertEqual(controls["AmplitudeFloor"]["BelowFloorAggregate"]["Q_MS"]["Sources"], 0)
 
     def test_control_above_the_floor_is_judged_and_fails_as_today(self):
