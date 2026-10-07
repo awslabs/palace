@@ -110,7 +110,9 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
 // order (plane index ascending; the composition for a box edge / corner), as long as the
 // point lies within `band` of every plane it crosses. Returns the image and the planes
 // used, or nullopt when the point is beyond the band of a plane or lies beyond a plane that
-// does not mirror; a point inside every plane is returned unchanged with no reflection.
+// does not mirror; a point inside every plane is returned unchanged with no reflection. Any
+// point STRICTLY beyond a plane (within its faces' projection, `tolerance`) is reflected: a
+// sample a roundoff beyond a cut face is outside the mesh for the locator.
 struct ReflectedPoint
 {
   std::array<double, 3> point{};

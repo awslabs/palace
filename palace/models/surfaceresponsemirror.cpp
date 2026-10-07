@@ -306,7 +306,10 @@ std::optional<ReflectedPoint> ReflectIntoDomain(const Point3D &p,
   for (std::size_t k = 0; k < planes.size(); k++)
   {
     const double inside = planes[k].Inside(result.point);
-    if (inside >= -tolerance || !planes[k].NearFaces(result.point, tolerance))
+    // Any point strictly beyond the plane is reflected (a sample a roundoff beyond a cut
+    // face is outside the mesh for the locator; its reflection lands the same roundoff
+    // inside): the tolerance bounds only the face test.
+    if (inside >= 0.0 || !planes[k].NearFaces(result.point, tolerance))
     {
       continue;  // inside, or beyond the infinite plane but off its faces
     }

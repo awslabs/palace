@@ -18511,8 +18511,7 @@ int ReflectPointsIntoDomain(
     bool outside = false;
     for (const auto &plane : planes)
     {
-      outside = outside ||
-                (plane.Inside(point) < -tolerance && plane.NearFaces(point, tolerance));
+      outside = outside || (plane.Inside(point) < 0.0 && plane.NearFaces(point, tolerance));
     }
     if (!outside)
     {
