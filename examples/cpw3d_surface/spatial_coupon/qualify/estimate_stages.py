@@ -36,8 +36,13 @@ from build_plan import DEFAULT_REDUCER_BLOCK_SIZE, GIB, largest_node_gib  # noqa
 COST_MODEL = HERE / "cost-model.json"
 # The model every qualify run up to the decision-64a refit used (four-edge-physics-11 V-a,
 # b28 executable, reducer block size 6): kept for the recorded estimates it produced;
-# refit_cost_model.py binds it by digest under the current model's Previous.
+# refit_cost_model.py binds it by digest under the device model's Previous.
 PREVIOUS_COST_MODEL = HERE / "cost-model-physics11-b28.json"
+# The decision-64a device-library refit (2026-09-22, the largest-rate rule) every qualify run
+# of stage 2 planned with (groups A / B / C, pair 5): kept for the plans of record it produced
+# (the bitwise proof of decision 458 replays them under it) and bound by digest under the
+# current model's Previous.
+DEVICE_COST_MODEL = HERE / "cost-model-device-20260922.json"
 CLUSTER_PROFILE = HERE / "cluster-profile.json"
 
 
@@ -88,9 +93,20 @@ def streaming_reducer_peak_gb(model, h1, sources):
     return streaming["SafetyFactor"] * model["PalaceGBPerGiB"] * node_used_gib
 
 
+def safety_factor(measured, kind):
+    """The per-stage time safety factor of a Version-3 model (refit_cost_model.refit_measured:
+    the largest measured wall / mean-rate estimate at the coupon's own PCG count over the
+    measured runs; `kind` Worker / Reducer / LocalEdge); 1 for a model without one."""
+    factors = measured.get("SafetyFactor")
+    if factors is None:
+        return 1.0
+    return float(factors[kind]) if isinstance(factors, dict) else float(factors)
+
+
 def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLOCK_SIZE):
     """One worker + reducer stage at `order` on `sources` sources, the reducer at
-    PALACE_RESPONSE_BLOCK_SIZE `block_size`."""
+    PALACE_RESPONSE_BLOCK_SIZE `block_size`; the times carry the model's per-stage safety
+    factors (Version 3) when present."""
     measured = model["Stages"].get(f"p{order}")
     if measured is None:
         raise ValueError(f"the cost model has no measured stage at order {order} (orders {sorted(model['Stages'])})")
@@ -102,11 +118,12 @@ def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLO
     evaluations = source_evaluations(sources, block_size)
     measured_evaluations = source_evaluations(measured["Sources"], model["MeasuredBlockSize"])
     evaluation_fraction = model["ReducerEvaluationFraction"]
-    solve = measured["SecondsPerPCGIteration"] * measured["MeanPCGIterations"] * ratio
-    other = (measured["MeanPerSourceSeconds"] - measured["SecondsPerPCGIteration"] * measured["MeanPCGIterations"]) * ratio
-    reducer_setup = (measured["ReducerPalaceSeconds"] - measured["ReducerPairSeconds"]) * ratio
-    reducer_evaluation = measured["ReducerPairSeconds"] * ratio * evaluation_fraction * evaluations / measured_evaluations
-    reducer_gram = measured["ReducerPairSeconds"] * ratio * (1.0 - evaluation_fraction) * pairs / measured_pairs
+    worker_safety, reducer_safety = safety_factor(measured, "Worker"), safety_factor(measured, "Reducer")
+    solve = measured["SecondsPerPCGIteration"] * measured["MeanPCGIterations"] * ratio * worker_safety
+    other = (measured["MeanPerSourceSeconds"] - measured["SecondsPerPCGIteration"] * measured["MeanPCGIterations"]) * ratio * worker_safety
+    reducer_setup = (measured["ReducerPalaceSeconds"] - measured["ReducerPairSeconds"]) * ratio * reducer_safety
+    reducer_evaluation = measured["ReducerPairSeconds"] * ratio * evaluation_fraction * evaluations / measured_evaluations * reducer_safety
+    reducer_gram = measured["ReducerPairSeconds"] * ratio * (1.0 - evaluation_fraction) * pairs / measured_pairs * reducer_safety
     reducer = reducer_setup + reducer_evaluation + reducer_gram
     gb_per_gib = model["PalaceGBPerGiB"]
     h1 = h1_dofs_from_counts(counts, order)
@@ -122,7 +139,8 @@ def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLO
              "ReducerBlockPairs": block_pairs(sources, block_size), "ReducerSourceEvaluations": evaluations,
              "ReducerSecondsEstimate": reducer,
              "ReducerSecondsEstimateParts": {"Setup": reducer_setup, "Evaluation": reducer_evaluation, "Gram": reducer_gram},
-             "WorkerNonSourceSecondsEstimate": measured["WorkerNonSourceSeconds"] * ratio,
+             "SafetyFactor": {"Worker": worker_safety, "Reducer": reducer_safety},
+             "WorkerNonSourceSecondsEstimate": measured["WorkerNonSourceSeconds"] * ratio * worker_safety,
              "WorkerPalacePeakGBEstimate": measured["WorkerPalacePeakGB"] * ratio,
              "ReducerPalacePeakGBEstimate": reducer_peak,
              "ReducerPalacePeakGBEstimatePrevious": previous_reducer_peak,
@@ -138,7 +156,7 @@ def estimate_stage(model, order, sources, counts, block_size=DEFAULT_REDUCER_BLO
                                            measured["ReducerNodeUsedGiB"] - measured["ReducerPalacePeakGB"] / gb_per_gib
                                            + stage["ReducerPalacePeakGBEstimate"] / gb_per_gib)
     for factor in model["PCGFactors"]:
-        worker = measured["WorkerNonSourceSeconds"] * ratio + sources * (other + solve * factor)
+        worker = stage["WorkerNonSourceSecondsEstimate"] + sources * (other + solve * factor)
         stage["ByPCGFactor"][f"{factor:.1f}"] = {"MeanPCGIterations": measured["MeanPCGIterations"] * factor,
                                                  "PerSourceSecondsEstimate": other + solve * factor,
                                                  "WorkerSecondsEstimate": worker,
@@ -160,9 +178,11 @@ def estimate_local_edge(model, order, sources, counts):
     # The measured solve time scales with the number of controls; the setup / estimator
     # part is taken as fixed (identical to the measurement at its control count).
     per_source = sources / measured["Sources"]
+    safety = safety_factor(measured, "LocalEdge")
+    stage["SafetyFactor"] = safety
     for factor in model["PCGFactors"]:
         stage["ByPCGFactor"][f"{factor:.1f}"] = {
-            "StageSecondsEstimate": (measured["NonSolveSeconds"] + measured["LinearSolveSeconds"] * factor * per_source) * ratio}
+            "StageSecondsEstimate": (measured["NonSolveSeconds"] + measured["LinearSolveSeconds"] * factor * per_source) * ratio * safety}
     return stage
 
 

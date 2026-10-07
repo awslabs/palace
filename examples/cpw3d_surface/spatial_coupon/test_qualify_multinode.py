@@ -41,16 +41,21 @@ NODE_SCALING = {"MeasuredNodes": 2,
                          "LocalEdge": {"Exponent": 0.0}}}
 
 
-def model_with_scaling(path=estimate_stages.COST_MODEL):
+def model_with_scaling(path=estimate_stages.DEVICE_COST_MODEL):
     return {**estimate_stages.load_cost_model(path), "NodeScaling": json.loads(json.dumps(NODE_SCALING))}
 
 
 class NodePlanTest(unittest.TestCase):
+    """The node planning arithmetic on the decision-64a device model (DEVICE_COST_MODEL: the
+    model the loop end's one-node refusal of record was made with, reducer 2,988 GiB node used
+    for 846 sources x 129.7 M H1) with a synthetic NodeScaling block."""
+
     @classmethod
     def setUpClass(cls):
         cls.profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         cls.model = model_with_scaling()
-        cls.plain = estimate_stages.load_cost_model()
+        cls.plain = estimate_stages.load_cost_model(estimate_stages.DEVICE_COST_MODEL)
+        cls.worst = f"{max(cls.plain['PCGFactors']):.1f}"
         cls.layout = qualify_library.stage_layout("le", [4], [3, 5], LOOP_END_SOURCES, 8)
         cls.stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in cls.layout if item["Kind"] == "response"]
         local = next(item for item in cls.layout if item["Kind"] == "local-edge")
@@ -178,7 +183,7 @@ class NodePlanTest(unittest.TestCase):
         self.assertLessEqual(estimate_stages.stage_per_node_used_gib(main_scaled), 0.6 * main_scaled["Instance"]["MemoryGiB"])
         # The local-edge stage scales with the LocalEdge exponent (0: no speedup assumed).
         local, local_scaled = estimate["Stages"]["local-edge-p4-8"], scaled["Stages"]["local-edge-p4-8"]
-        self.assertEqual(local_scaled["ByPCGFactor"]["2.0"]["StageSecondsEstimate"], local["ByPCGFactor"]["2.0"]["StageSecondsEstimate"])
+        self.assertEqual(local_scaled["ByPCGFactor"][self.worst]["StageSecondsEstimate"], local["ByPCGFactor"][self.worst]["StageSecondsEstimate"])
         self.assertLess(local_scaled["PerNodeUsedGiBEstimate"], local["NodeUsedGiBEstimate"])
         # Job totals are recomputed from the scaled stages; the Decision names the nodes.
         self.assertAlmostEqual(scaled["JobSecondsEstimateByPCGFactor"]["1.0"],
@@ -245,7 +250,8 @@ class NodePlanTest(unittest.TestCase):
                    "le-p4-local-edge": {"config.json": "e" * 64}}
         common = dict(case_id="le", remote_case_root="/r/case", mesh={"Remote": "/r/case/mesh/m.msh", "SHA256": "m" * 64, "Local": "/l/m.msh"},
                       stage_layout=self.layout, estimate=scaled, config_digests=digests, trace_pins={}, profile=self.wide,
-                      binary="/r/b.bin", binary_sha256="0" * 64, mpiexec="/r/mpiexec_bound.sh", purpose="test", factors=["1.0", "1.5", "2.0"])
+                      binary="/r/b.bin", binary_sha256="0" * 64, mpiexec="/r/mpiexec_bound.sh", purpose="test",
+                      factors=[f"{factor:.1f}" for factor in self.plain["PCGFactors"]])
         plans = {job["Name"]: build_plan.build_job_plan(job_name=job["Name"], split_job=job, **common) for job in record["Jobs"]}
         reducer = plans["reducer"]
         self.assertEqual(reducer["Nodes"], nodes["Main"])
