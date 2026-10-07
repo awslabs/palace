@@ -7,6 +7,7 @@ Palace-output readers and the twin class map, the dense trace family, the resolu
 gate, the reference box hook and the status transitions."""
 import json
 import math
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -156,6 +157,7 @@ class PalaceOutputReadersTest(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="spatial-qualification-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.classes = {1: "SA", 2: "MS", 3: "MA"}
         postpro = self.tmp / "postpro"
         postpro.mkdir()
@@ -416,6 +418,7 @@ class CommandEvaluateTest(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="spatial-qualification-evaluate-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         fab_p4 = {cls: sq.quadratic_form(self.Q_FAB[cls], self.TRACE) for cls in self.Q_FAB}
         thin_p4 = {cls: sq.quadratic_form(self.Q_THIN[cls], self.TRACE) for cls in self.Q_THIN}
         energies = {"fabricated-p4": fab_p4, "thin-p4": thin_p4,
