@@ -4,7 +4,7 @@
 """Complete and validate box-boundary traces without dropping retained nodes."""
 import collections
 import numpy as np
-from generate_spatial_response import cap_ring, connect_rings, rectangle_perimeter_coordinate
+from generate_spatial_response import _cross3, _norm3, cap_ring, connect_rings, rectangle_perimeter_coordinate
 
 
 def complete_box_trace(retained_points):
@@ -65,7 +65,9 @@ def validate_box_trace(points, triangles, bounds=None):
         if len(set(triangle)) != 3 or min(triangle) < 0 or max(triangle) >= len(points):
             raise ValueError("Invalid trace triangle connectivity")
         xyz = points[triangle]
-        area = np.linalg.norm(np.cross(xyz[1]-xyz[0], xyz[2]-xyz[0]))/2
+        # Scalar cross / norm (round-3 class (10) MINOR-3): the summed face areas are WRITTEN into the basis
+        # contract (MaximumRelativeFaceAreaDifference); BLAS norm would contract the sum into an FMA on macOS.
+        area = _norm3(_cross3(xyz[1]-xyz[0], xyz[2]-xyz[0]))/2
         if not area > 0:
             raise ValueError("Zero-area trace triangle")
         faces = [(d,side) for d in range(3) for side in (0,1)
