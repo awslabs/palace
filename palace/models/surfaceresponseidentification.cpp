@@ -14865,12 +14865,15 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "to a face has an arm partly outside the box); their signatures are unchanged"},
         {"Comparison", "strict less on the quantized grid"},
         {"MirrorRule",
-         "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 481): the perimeter within "
+         "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 481 / 512): the perimeter within "
          "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "
          "into "
          "the identification input and the result merged onto the unextended run; a "
          "straight joint (collinear within the direction quantum or a sub-noise turn) "
-         "continues its chain (Mirror Status Continued: the real feature verbatim), an "
+         "continues its chain (Mirror Status Continued: the real feature verbatim, "
+         "whenever every real portion of the extended chain is identified identically - "
+         "type, key, side, turn within the joint noise rule - whatever the split of the "
+         "portions and whether the real chain extends further), an "
          "oblique meeting is a corner of 2 theta, a parallel edge at d < R a strip / gap "
          "of "
          "2 d (Modelled: placed on the real half - a vertex coupon ON the plane at weight "
@@ -14880,8 +14883,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "kept raw as <Type>:MirrorFormed uncovered portions); a mirror-formed stack, "
          "cluster or curved pair has no mirror placement (Unmerged) and is read exactly "
          "as a real Missing feature (decision 481): its OWN cells - the patches whose "
-         "own-edge footprint overlaps one of its REAL portions - are DomainBoundary with "
-         "their raw claims (Reason UnmergedTopology), neighbouring cells keep their "
+         "own-edge footprint overlaps one of its REAL portions whose identification "
+         "DIFFERS between the unextended and the extended run (decision 512 (c)) - are "
+         "DomainBoundary with their raw claims (Reason UnmergedTopology), identically "
+         "identified cells and neighbouring cells keep their "
          "Applied / Mirrored classification, the coupon supports' reach into the "
          "configuration is recorded as information (UnmergedSupportReach); image "
          "perimeter is never placed or counted"}}},
