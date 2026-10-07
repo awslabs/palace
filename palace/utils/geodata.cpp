@@ -1913,6 +1913,215 @@ mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
   return normal;
 }
 
+std::unique_ptr<mfem::Mesh> RebuildNonconformingMesh(const mfem::Mesh &orig)
+{
+  MFEM_VERIFY(orig.Nonconforming() && orig.Dimension() == 2 &&
+                  !dynamic_cast<const mfem::ParMesh *>(&orig),
+              "RebuildNonconformingMesh requires a serial 2D nonconforming mesh!");
+  const int sdim = orig.SpaceDimension();
+  auto mesh =
+      std::make_unique<mfem::Mesh>(2, orig.GetNV(), orig.GetNE(), orig.GetNBE(), sdim);
+
+  // Vertex coordinates from the nodes: the vertex coordinates of a nonconforming SubMesh
+  // do not follow its vertex numbering.
+  for (int i = 0; i < orig.GetNV(); i++)
+  {
+    double x[3] = {0.0, 0.0, 0.0};
+    orig.GetNode(i, x);
+    mesh->AddVertex(x);
+  }
+  for (int i = 0; i < orig.GetNE(); i++)
+  {
+    mesh->AddElement(orig.GetElement(i)->Duplicate(mesh.get()));
+  }
+  for (int i = 0; i < orig.GetNBE(); i++)
+  {
+    mesh->AddBdrElement(orig.GetBdrElement(i)->Duplicate(mesh.get()));
+  }
+
+  // MFEM keeps the attribute of a boundary edge refined on one side on its master edge
+  // (which has no boundary element), and passes it on to the children of the master when
+  // the elements on its unrefined side are refined. Add the missing boundary elements of
+  // the master and slave edges of a master with a boundary element on any of them: the
+  // nonconforming mesh keeps their attributes, but only the boundary elements of the
+  // slaves.
+  auto &edge_list = orig.ncmesh->GetEdgeList();
+  mfem::Array<int> v;
+  {
+    std::unordered_map<int, int> edge_attr;
+    for (int i = 0; i < orig.GetNBE(); i++)
+    {
+      edge_attr[orig.GetBdrElementFaceIndex(i)] = orig.GetBdrAttribute(i);
+    }
+    for (const auto &master : edge_list.masters)
+    {
+      int attr = 0;
+      auto Visit = [&](int edge)
+      {
+        auto it = edge_attr.find(edge);
+        if (it != edge_attr.end())
+        {
+          MFEM_VERIFY(attr == 0 || attr == it->second,
+                      "Different boundary attributes on the edges of a nonconforming "
+                      "master edge!");
+          attr = it->second;
+        }
+      };
+      Visit(master.index);
+      for (int s = master.slaves_begin; s < master.slaves_end; s++)
+      {
+        Visit(edge_list.slaves[s].index);
+      }
+      if (attr == 0)
+      {
+        continue;
+      }
+      auto Add = [&](int edge)
+      {
+        if (edge_attr.count(edge) == 0)
+        {
+          orig.GetEdgeVertices(edge, v);
+          mesh->AddBdrSegment(v[0], v[1], attr);
+        }
+      };
+      Add(master.index);
+      for (int s = master.slaves_begin; s < master.slaves_end; s++)
+      {
+        Add(edge_list.slaves[s].index);
+      }
+    }
+  }
+
+  // The hanging vertices are the vertices of the slaves of a master edge in its interior.
+  // Their positions along the master edge follow from the reference coordinates of the
+  // slaves (exact dyadic numbers), starting from the endpoints of the master in the
+  // orientation for which they are consistent. A vertex at k / 2^l (k odd) bisects the
+  // edge between the vertices at (k - 1) / 2^l and (k + 1) / 2^l.
+  constexpr int max_level = 30;
+  constexpr double tol = 1.0e-12;
+  const auto &point_matrices = edge_list.point_matrices[mfem::Geometry::SEGMENT];
+  std::vector<std::array<int, 4>> parents;  // Level, vertex, parent vertices
+  for (const auto &master : edge_list.masters)
+  {
+    orig.GetEdgeVertices(master.index, v);
+    const int a = v[0], b = v[1];
+    std::unordered_map<int, double> pos;
+    bool consistent = false;
+    for (int orientation = 0; orientation < 2 && !consistent; orientation++)
+    {
+      pos = {{a, orientation ? 1.0 : 0.0}, {b, orientation ? 0.0 : 1.0}};
+      consistent = true;
+      for (bool changed = true; changed && consistent;)
+      {
+        changed = false;
+        for (int s = master.slaves_begin; s < master.slaves_end && consistent; s++)
+        {
+          const auto &slave = edge_list.slaves[s];
+          const auto &pm = *point_matrices[slave.matrix];
+          orig.GetEdgeVertices(slave.index, v);
+          auto it0 = pos.find(v[0]), it1 = pos.find(v[1]);
+          if (it0 == pos.end() && it1 == pos.end())
+          {
+            continue;
+          }
+          const int known = (it0 != pos.end()) ? 0 : 1;
+          const double t = (known == 0) ? it0->second : it1->second;
+          const double t_other = (std::abs(t - pm(0, 0)) < tol)   ? pm(0, 1)
+                                 : (std::abs(t - pm(0, 1)) < tol) ? pm(0, 0)
+                                                                  : -1.0;
+          if (t_other < 0.0)
+          {
+            consistent = false;
+          }
+          else if (it0 == pos.end() || it1 == pos.end())
+          {
+            pos[v[1 - known]] = t_other;
+            changed = true;
+          }
+          else if (std::abs(pos[v[1 - known]] - t_other) >= tol)
+          {
+            consistent = false;
+          }
+        }
+      }
+    }
+    MFEM_VERIFY(consistent, "Inconsistent slave edges of a nonconforming master edge!");
+
+    std::unordered_map<long long, int> vertex_at;
+    for (const auto &[i, t] : pos)
+    {
+      vertex_at[std::llround(t * (1 << max_level))] = i;
+    }
+    for (const auto &[i, t] : pos)
+    {
+      if (i == a || i == b)
+      {
+        continue;
+      }
+      const long long k = std::llround(t * (1 << max_level));
+      MFEM_VERIFY(std::abs(t * (1 << max_level) - k) < 1.0e-6 && k > 0,
+                  "Nonconforming master edge is not bisected!");
+      int level = max_level;
+      for (long long j = k; j % 2 == 0; j /= 2)
+      {
+        level--;
+      }
+      const long long dk = 1LL << (max_level - level);
+      auto p1 = vertex_at.find(k - dk), p2 = vertex_at.find(k + dk);
+      MFEM_VERIFY(p1 != vertex_at.end() && p2 != vertex_at.end(),
+                  "Missing parent vertex for a hanging vertex of a nonconforming mesh!");
+      parents.push_back({level, i, p1->second, p2->second});
+    }
+  }
+  std::sort(parents.begin(), parents.end());
+  for (const auto &[level, i, p1, p2] : parents)
+  {
+    mesh->AddVertexParents(i, p1, p2);
+  }
+
+  // The nonconforming mesh is built from the elements, boundary elements and hanging
+  // vertices. It keeps the order of the elements and of their vertices, so the nodes can be
+  // copied element by element.
+  mesh->FinalizeTopology();
+  mesh->Finalize();
+  if (const auto *nodes = orig.GetNodes())
+  {
+    const auto &fes = *nodes->FESpace();
+    mesh->SetCurvature(fes.GetMaxElementOrder(), fes.IsDGSpace(), sdim, fes.GetOrdering());
+    auto &new_nodes = *mesh->GetNodes();
+    mfem::Array<int> vdofs, new_vdofs;
+    mfem::Vector vals;
+    for (int i = 0; i < orig.GetNE(); i++)
+    {
+      fes.GetElementVDofs(i, vdofs);
+      new_nodes.FESpace()->GetElementVDofs(i, new_vdofs);
+      nodes->GetSubVector(vdofs, vals);
+      new_nodes.SetSubVector(new_vdofs, vals);
+    }
+  }
+  MFEM_VERIFY(mesh->GetNE() == orig.GetNE(),
+              "Unexpected number of elements after rebuilding a nonconforming mesh!");
+  for (int i = 0; i < orig.GetNE(); i++)
+  {
+    mfem::Array<int> ov, nv;
+    orig.GetElementVertices(i, ov);
+    mesh->GetElementVertices(i, nv);
+    MFEM_VERIFY(ov.Size() == nv.Size(),
+                "Unexpected element after rebuilding a nonconforming mesh!");
+    for (int j = 0; j < ov.Size(); j++)
+    {
+      double xo[3] = {0.0, 0.0, 0.0}, xn[3] = {0.0, 0.0, 0.0};
+      orig.GetNode(ov[j], xo);
+      mesh->GetNode(nv[j], xn);
+      MFEM_VERIFY(std::abs(xo[0] - xn[0]) + std::abs(xo[1] - xn[1]) +
+                          std::abs(xo[2] - xn[2]) <=
+                      1.0e-12 * (1.0 + std::abs(xo[0]) + std::abs(xo[1]) + std::abs(xo[2])),
+                  "Unexpected element vertices after rebuilding a nonconforming mesh!");
+    }
+  }
+  return mesh;
+}
+
 // Explicit instantiations for the submesh helpers. Serial (mfem::SubMesh) is used by
 // BoundaryModeSolver on the pre-partition mesh; parallel (mfem::ParSubMesh) by WavePort
 // after partitioning.

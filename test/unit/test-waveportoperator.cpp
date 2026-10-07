@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <complex>
 #include <fstream>
 #include <memory>
@@ -610,4 +611,227 @@ TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]"
       CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-7));
     }
   }
+}
+
+// The traces of cpw_wave_uniform are interior PEC sheets crossing the wave ports when the
+// mesh is not cracked. Refining the elements next to the ports on one side of the trace
+// plane makes the port submeshes nonconforming, with master edges on the unrefined side of
+// the trace lines which have no boundary elements: the port DoFs on the PEC segments must
+// be essential (masters included), and no others.
+TEST_CASE("WavePortOperator-InteriorPECOnNonconformingPorts",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  json setup = LoadCpwWaveConfig();
+  setup["Model"]["CrackInternalBoundaryElements"] = false;
+  IoData iodata(setup, /*print=*/false);
+
+  std::vector<std::unique_ptr<Mesh>> mesh_io;
+  {
+    auto smesh = mesh::Load(iodata, comm);
+    if (smesh)
+    {
+      // Plane of the interior PEC boundary elements (coordinate axis and value).
+      const auto &pec = iodata.boundaries.pec.attributes;
+      mfem::Vector lo(3), hi(3);
+      lo = mfem::infinity();
+      hi = -mfem::infinity();
+      for (int be = 0; be < smesh->GetNBE(); be++)
+      {
+        int e1, e2;
+        smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+        if (e2 < 0 ||
+            std::find(pec.begin(), pec.end(), smesh->GetBdrAttribute(be)) == pec.end())
+        {
+          continue;
+        }
+        mfem::Array<int> v;
+        smesh->GetBdrElementVertices(be, v);
+        for (int i : v)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            lo(d) = std::min(lo(d), smesh->GetVertex(i)[d]);
+            hi(d) = std::max(hi(d), smesh->GetVertex(i)[d]);
+          }
+        }
+      }
+      int axis = -1;
+      for (int d = 0; d < 3; d++)
+      {
+        if (hi(d) - lo(d) < 1.0e-9 * (1.0 + std::abs(lo(d))))
+        {
+          axis = d;
+        }
+      }
+      REQUIRE(axis >= 0);
+
+      // Refine the elements next to the wave ports on one side of the trace plane.
+      std::vector<int> port_attrs;
+      for (const auto &[idx, data] : iodata.boundaries.waveport)
+      {
+        port_attrs.insert(port_attrs.end(), data.attributes.begin(), data.attributes.end());
+      }
+      smesh->EnsureNCMesh(true);
+      mfem::Array<int> marked;
+      mfem::Vector c(3);
+      for (int be = 0; be < smesh->GetNBE(); be++)
+      {
+        if (std::find(port_attrs.begin(), port_attrs.end(), smesh->GetBdrAttribute(be)) ==
+            port_attrs.end())
+        {
+          continue;
+        }
+        int e1, e2;
+        smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+        smesh->GetElementCenter(e1, c);
+        if (c(axis) > lo(axis))
+        {
+          marked.Append(e1);
+        }
+      }
+      marked.Sort();
+      marked.Unique();
+      smesh->GeneralRefinement(marked, 1, 0);
+    }
+    if (iodata.model.Lc <= 0.0)
+    {
+      iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+    }
+    iodata.NondimensionalizeInputs(smesh);
+    mesh_io.push_back(
+        std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), comm)));
+  }
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+
+  // Numbers of checked true DoFs on the Dirichlet segments and off them, and on master
+  // edges.
+  int counts[3] = {0, 0, 0};
+  for (const auto &[idx, data] : wp_op)
+  {
+    const auto &nd_fes = data.GetNDSpace().Get();
+    const auto &h1_fes = data.GetH1Space().Get();
+    const auto &port_mesh = *nd_fes.GetParMesh();
+    REQUIRE(port_mesh.Nonconforming());
+    const int nd_size = nd_fes.GetTrueVSize();
+    std::vector<bool> nd_dbc(nd_size, false), h1_dbc(h1_fes.GetTrueVSize(), false);
+    for (auto t : data.GetDbcTDofList())
+    {
+      if (t < nd_size)
+      {
+        nd_dbc[t] = true;
+      }
+      else
+      {
+        h1_dbc[t - nd_size] = true;
+      }
+    }
+
+    // Segments of the Dirichlet boundary elements of the port submesh (PEC, AuxPEC and the
+    // other wave ports, as in the WavePortOperator constructor), gathered from all ranks.
+    // Coordinates are taken from the mesh nodes: the vertex coordinates of nonconforming
+    // submeshes do not follow their vertex numbering.
+    std::vector<int> dbc(iodata.boundaries.pec.attributes.begin(),
+                         iodata.boundaries.pec.attributes.end());
+    dbc.insert(dbc.end(), iodata.boundaries.auxpec.attributes.begin(),
+               iodata.boundaries.auxpec.attributes.end());
+    for (const auto &[other_idx, other_data] : iodata.boundaries.waveport)
+    {
+      if (other_idx != idx && other_data.active)
+      {
+        dbc.insert(dbc.end(), other_data.attributes.begin(), other_data.attributes.end());
+      }
+    }
+    const int sdim = port_mesh.SpaceDimension();
+    std::vector<double> segs;
+    for (int be = 0; be < port_mesh.GetNBE(); be++)
+    {
+      if (std::find(dbc.begin(), dbc.end(), port_mesh.GetBdrAttribute(be)) == dbc.end())
+      {
+        continue;
+      }
+      mfem::Array<int> v;
+      port_mesh.GetBdrElementVertices(be, v);
+      for (int i : v)
+      {
+        double x[3];
+        port_mesh.GetNode(i, x);
+        segs.insert(segs.end(), x, x + sdim);
+      }
+    }
+    int nloc = static_cast<int>(segs.size()), nproc = Mpi::Size(comm);
+    std::vector<int> sizes(nproc), displs(nproc, 0);
+    MPI_Allgather(&nloc, 1, MPI_INT, sizes.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nproc; r++)
+    {
+      displs[r] = displs[r - 1] + sizes[r - 1];
+    }
+    std::vector<double> all_segs(displs.back() + sizes.back());
+    MPI_Allgatherv(segs.data(), nloc, MPI_DOUBLE, all_segs.data(), sizes.data(),
+                   displs.data(), MPI_DOUBLE, comm);
+    auto OnDbc = [&](const double *x)
+    {
+      for (std::size_t k = 0; k < all_segs.size(); k += 2 * sdim)
+      {
+        const double *a = &all_segs[k], *b = &all_segs[k + sdim];
+        double ab2 = 0.0, ax_ab = 0.0, ax2 = 0.0;
+        for (int d = 0; d < sdim; d++)
+        {
+          ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+          ax_ab += (x[d] - a[d]) * (b[d] - a[d]);
+          ax2 += (x[d] - a[d]) * (x[d] - a[d]);
+        }
+        const double t = ax_ab / ab2;
+        if (t > -1.0e-9 && t < 1.0 + 1.0e-9 && ax2 - t * t * ab2 < 1.0e-12 * ab2)
+        {
+          return true;
+        }
+      }
+      return false;
+    };
+    auto Check = [&](const mfem::ParFiniteElementSpace &fes, const std::vector<bool> &ess,
+                     const mfem::Array<int> &dofs, bool on_dbc, bool master)
+    {
+      for (auto d : dofs)
+      {
+        const int t = fes.GetLocalTDofNumber((d >= 0) ? d : -1 - d);
+        if (t < 0)
+        {
+          continue;
+        }
+        CHECK(ess[t] == on_dbc);
+        counts[on_dbc ? 0 : 1]++;
+        counts[2] += (on_dbc && master);
+      }
+    };
+    const auto &edge_list = port_mesh.ncmesh->GetEdgeList();
+    mfem::Array<int> v, dofs;
+    mfem::Vector mid(sdim), x0(sdim), x1(sdim);
+    for (int e = 0; e < port_mesh.GetNEdges(); e++)
+    {
+      port_mesh.GetEdgeVertices(e, v);
+      port_mesh.GetNode(v[0], x0.GetData());
+      port_mesh.GetNode(v[1], x1.GetData());
+      add(0.5, x0, 0.5, x1, mid);
+      const bool on_dbc = OnDbc(mid.GetData());
+      const bool master =
+          edge_list.GetMeshIdAndType(e).type == mfem::NCMesh::NCList::MeshIdType::MASTER;
+      nd_fes.GetEdgeInteriorDofs(e, dofs);
+      Check(nd_fes, nd_dbc, dofs, on_dbc, master);
+      h1_fes.GetEdgeInteriorDofs(e, dofs);
+      Check(h1_fes, h1_dbc, dofs, on_dbc, master);
+    }
+    for (int i = 0; i < port_mesh.GetNV(); i++)
+    {
+      h1_fes.GetVertexDofs(i, dofs);
+      port_mesh.GetNode(i, x0.GetData());
+      Check(h1_fes, h1_dbc, dofs, OnDbc(x0.GetData()), false);
+    }
+  }
+  Mpi::GlobalSum(3, counts, comm);
+  CHECK(counts[0] > 0);
+  CHECK(counts[1] > 0);
+  CHECK(counts[2] > 0);
 }
