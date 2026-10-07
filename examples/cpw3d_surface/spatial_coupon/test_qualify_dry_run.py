@@ -10,7 +10,14 @@ of the recorded results through the same records gives the recorded verdicts
 (gallery-10: the reference order p5 added as a main stage and gated, p_SA not
 applicable); --reference none plans the coupon on its own inputs; the concurrent job
 scheduler against a fake remote replaying the recorded trees; the per-coupon fail-closed
-stops.  Needs a local identity mesh of each case and the assessment tree."""
+stops.  Needs a local identity mesh of each case and the assessment tree.
+
+The fixture is shell-aware (decision 500 (4)): every identity mesh the current mesher publishes
+carries the decision-61a per-ring MA shells, so the synthetic build record binds the root's
+RadialShells census (the identity receipt's, the census file beside the mesh); the byte-identity
+tests compare the BASE (pre-shell-expansion) stage configs with the stored pre-shell campaign
+configs and the shell expansion separately against the decision-61a rule.  The result /
+scheduler / controls-only replays run on shell-era stored roots of (b) batch 1 (Batch1ReplayTest)."""
 import argparse
 import glob
 import json
@@ -25,6 +32,7 @@ import unittest
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "qualify"))
+import build_configs  # noqa: E402
 import build_plan  # noqa: E402
 import case_inputs  # noqa: E402
 import compare_split_matrices  # noqa: E402
@@ -33,8 +41,8 @@ import gates  # noqa: E402
 import job_split  # noqa: E402
 import qualify_library  # noqa: E402
 import summarize_cost  # noqa: E402
-from mixed_mesh import h1_dofs_from_counts  # noqa: E402
-from run_gmsh_only_matrix import sha256  # noqa: E402
+from mixed_mesh import SHELL_LABEL_STRIDE, h1_dofs_from_counts  # noqa: E402
+from run_gmsh_only_matrix import radial_shells_record, sha256  # noqa: E402
 
 ASSESSMENT = Path(os.environ.get("COUPON_ASSESSMENT_ROOT", HERE.parents[3] / "coupon-accuracy-assessment-20260913"))
 # A read-only mirror of graded_v2 inputs the assessment tree does not hold (the ten-edge input 09).
@@ -63,15 +71,41 @@ GALLERY_10 = {"Case": "two-edge-8dd4bc70f183", "Campaign": "gallery-physics-10",
               "Controls": [1, 7, 21, 25, 26, 35, 43, 78], "Sources": 78}
 
 
+SHELL_CENSUS_NAME = "identity.msh.radial-shells.json"
+
+
 def local_identity_mesh(case_id):
     """The newest local Gmsh-only root of the case with an identity mesh (None when absent)."""
     roots = sorted(glob.glob(f"/tmp/coupon-gmsh-only-{case_id}-*/identity.msh"), key=os.path.getmtime)
     return Path(roots[-1]) if roots else None
 
 
+def shell_census_binding(mesh):
+    """The build record's RadialShells binding of a local identity mesh (decision 61a): the root's
+    identity receipt (run_gmsh_only_matrix.radial_shells_record) with Shells.Path re-pointed to the
+    census file beside the mesh, which must carry the receipt's SHA256 and bind this mesh.  None
+    when the root carries no receipt / census (a root rebuilt without its records)."""
+    root = Path(mesh).parent
+    binding = radial_shells_record(root)
+    census_path = root / SHELL_CENSUS_NAME
+    if binding is None or not census_path.is_file():
+        return None
+    if sha256(census_path) != binding["Shells"]["SHA256"]:
+        raise AssertionError(f"{census_path} is not the census the identity receipt binds ({binding['Shells']['SHA256']})")
+    census = json.loads(census_path.read_text())
+    if census["Mesh"]["SHA256"] != sha256(mesh):
+        raise AssertionError(f"{census_path} binds mesh {census['Mesh']['SHA256']}, not {mesh}")
+    return {**binding, "Shells": {"Path": str(census_path), "SHA256": binding["Shells"]["SHA256"]}}
+
+
 def available():
-    return all(local_identity_mesh(case_id) is not None and (ASSESSMENT / spec["Campaign"] / "results" / "main" / "status.json").is_file()
-               for case_id, spec in CASES.items())
+    return all(local_identity_mesh(case_id) is not None and shell_census_binding(local_identity_mesh(case_id)) is not None
+               and (ASSESSMENT / spec["Campaign"] / "main" / "plan.json").is_file() for case_id, spec in CASES.items())
+
+
+def snapshot(directory):
+    """mtime of every file of a stored directory (a recorded campaign, a stored qualify root)."""
+    return {path: path.stat().st_mtime_ns for path in Path(directory).rglob("*") if path.is_file()}
 
 
 def strip_paths(value):
@@ -1008,8 +1042,12 @@ class JobSplitTest(unittest.TestCase):
         self.assertEqual({name: job["NodeHours"] for name, job in summary["Jobs"].items()}, {"worker-1": 0.5, "worker-2": 2400 / 3600, "reducer": 1200 / 3600})
 
 
-@unittest.skipUnless(available(), "local identity meshes and the assessment campaigns are needed")
+@unittest.skipUnless(available(), "local identity meshes with their radial-shell census and the assessment campaigns are needed")
 class QualifyDryRunTest(unittest.TestCase):
+    """The gallery cases on their local identity meshes: the one-node plans against the stored pre-shell
+    campaigns (base configs byte-identical, the shell expansion by the decision-61a rule), the control
+    choice, the fail-closed stops and the derived-config identity."""
+
     @classmethod
     def setUpClass(cls):
         cls.tmp = Path(tempfile.mkdtemp(prefix="coupon-qualify-test-"))
@@ -1019,6 +1057,7 @@ class QualifyDryRunTest(unittest.TestCase):
             counts = estimate_stages.entity_counts_of_mesh(mesh)
             cases.append({"Case": case_id, "Status": "built", "Passed": True, "CanonicalBuildId": None,
                           "Variants": {"identity": {"Path": str(mesh), "SHA256": sha256(mesh)}},
+                          "RadialShells": shell_census_binding(mesh),
                           "Elements": {"Tetrahedron": counts["Tetrahedra"], "Prism": counts["Prisms"],
                                        "Pyramid": counts["Pyramids"],
                                        "Total": counts["Tetrahedra"] + counts["Prisms"] + counts["Pyramids"]},
@@ -1064,19 +1103,47 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(case["Controls"]["Indices"], spec["Controls"])
         self.assertTrue(case["Estimate"]["FitsOneJob"])
         self.assertTrue(case["Mesh"]["Verified"])
-        # Configs equal the recorded ones apart from paths (mesh, output, trace directory).
+        # The mesh carries the decision-61a shells: the record binds the census, the run inputs expand
+        # the base config (parent labels, the reference comparison view) into one MA entry per shell.
+        census = json.loads(Path(case["Mesh"]["RadialShells"]["Shells"]["Path"]).read_text())
+        self.assertEqual((case["Mesh"]["RadialShells"]["Binding"], case["Mesh"]["RadialShells"]["ShellCount"]), ("RadialShells", 15))
+        self.assertEqual(census["Mesh"]["SHA256"], case["Mesh"]["SHA256"])
+        base_config = json.loads((root / case_id / "inputs" / "base-run-config.json").read_text())
+        run_config = json.loads((root / case_id / "inputs" / "run-config.json").read_text())
+        self.assertEqual(case["Inputs"]["BaseConfigSHA256"], sha256(root / case_id / "inputs" / "base-run-config.json"))
+        self.assertEqual(case["Reference"]["ConfigEqualsDerived"]["ComparedConfig"],
+                         "the base config (parent labels) of the radial-shell relabel")
+        self.assert_shell_expansion_follows_decision_61a(base_config, run_config, census, case["Inputs"]["RadialShells"])
+        # The BASE stage configs (derived from the base run config exactly as the driver derives the
+        # stage configs from the run config) equal the stored pre-shell campaign's apart from paths;
+        # the written (shell-expanded) stage configs are the base stage configs expanded by the rule.
+        plan = json.loads((root / case_id / "main" / "plan.json").read_text())
+        remote_case, remote_mesh, remote_traces = case["Remote"]["Case"], plan["MeshRemote"], f"{case['Remote']['Case']}/inputs/traces"
+        indices = case["Sources"]["Indices"]
         for stage in spec["Stages"]:
-            names = ("config.json",) if stage.endswith("local-edge") else ("worker.json", "reducer.json")
-            for name in names:
+            order = int(stage.rsplit("-p", 1)[1].split("-")[0])
+            subset = indices if stage == spec["Stages"][0] else spec["Controls"]
+            if stage.endswith("local-edge"):
+                config, _ = build_configs.derive(base_config, remote_mesh, f"{remote_case}/main/{stage}", subset, remote_traces,
+                                                 order=order, save_local_edge_energy=True)
+                config["Problem"]["Output"] = f"{remote_case}/main/{stage}/output"
+                base_stages = {"config.json": config}
+            else:
+                worker, reducer = build_configs.derive(base_config, remote_mesh, f"{remote_case}/main/{stage}", subset, remote_traces,
+                                                       order=order)
+                base_stages = {"worker.json": worker, "reducer.json": reducer}
+            for name, base_stage in base_stages.items():
                 recorded = strip_paths(json.loads((campaign / "main" / stage / name).read_text()))
-                generated = strip_paths(json.loads((root / case_id / "main" / stage / name).read_text()))
-                self.assertEqual(generated, recorded, f"{stage}/{name}")
+                self.assertEqual(strip_paths(base_stage), recorded, f"{stage}/{name}: base stage config vs the stored campaign")
+                generated = json.loads((root / case_id / "main" / stage / name).read_text())
+                expanded, _ = case_inputs.expand_radial_shells(base_stage, census)
+                self.assertEqual(generated, expanded, f"{stage}/{name}: the written stage config vs the expanded base stage config")
+                self.assertNotEqual(generated, base_stage)
         # The plan equals the recorded one in stages (names, config file, environment,
         # dependencies, order) and pins the same files: every trace name of the recorded plan
         # (the traces are regenerated from the case's basis - their digests are the run's
         # own, recorded under Inputs.Sources); the mesh pin is the build record's.
         recorded_plan = json.loads((campaign / "main" / "plan.json").read_text())
-        plan = json.loads((root / case_id / "main" / "plan.json").read_text())
 
         def stage_view(stage):
             environment = {key: (Path(value).name if key == "PALACE_RESPONSE_ARCHIVE_DIR" else value)
@@ -1115,6 +1182,53 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(record["Library"]["CouponsPlanned"], 1)
         return root, record
 
+    def assert_shell_expansion_follows_decision_61a(self, base_config, run_config, census, shell_record):
+        """Decision 61a: the run config is the base config with every attribute list naming a parent MA
+        label naming its shell labels (10000 x ordinal + parent; ordinal 1 far, 1 + k / 1 + K + k the top /
+        bottom ring k), and the one MA Dielectric entry replaced by one entry per shell ordinal (fresh
+        indices after the base maximum, the same Type / layer / edge settings); every other field is
+        untouched; the recorded shell map names every shell entry with its ring radii."""
+        rings = len(census["RingRadii"])
+        parents = sorted({int(shell["Parent"]) for shell in census["Shells"]})
+        self.assertEqual(len(census["Shells"]), (1 + 2 * rings) * len(parents))
+        self.assertEqual(census["LabelStride"], SHELL_LABEL_STRIDE)
+        for shell in census["Shells"]:
+            self.assertEqual(int(shell["Label"]), SHELL_LABEL_STRIDE * int(shell["Ordinal"]) + int(shell["Parent"]))
+        base_entries = base_config["Boundaries"]["Postprocessing"]["Dielectric"]
+        run_entries = run_config["Boundaries"]["Postprocessing"]["Dielectric"]
+        ma_entries = [entry for entry in base_entries if entry["Type"] == "MA"]
+        self.assertEqual(len(ma_entries), 1)
+        self.assertEqual(sorted(int(a) for a in ma_entries[0]["Attributes"]), parents)
+        others = [entry for entry in base_entries if entry["Type"] != "MA"]
+        self.assertEqual([entry for entry in run_entries if entry["Type"] != "MA"], others)
+        shells = [entry for entry in run_entries if entry["Type"] == "MA"]
+        self.assertEqual(len(shells), 1 + 2 * rings)
+        next_index = max(int(entry["Index"]) for entry in base_entries) + 1
+        self.assertEqual([int(entry["Index"]) for entry in shells], list(range(next_index, next_index + len(shells))))
+        for ordinal, entry in enumerate(shells, start=1):
+            self.assertEqual(sorted(entry["Attributes"]), sorted(SHELL_LABEL_STRIDE * ordinal + parent for parent in parents))
+            self.assertEqual({key: value for key, value in entry.items() if key not in ("Index", "Attributes")},
+                             {key: value for key, value in ma_entries[0].items() if key not in ("Index", "Attributes")})
+            recorded = shell_record["Interfaces"][str(entry["Index"])]
+            self.assertEqual((recorded["Type"], recorded["Ordinal"], recorded["BaseIndex"]), ("MA", ordinal, int(ma_entries[0]["Index"])))
+            if ordinal == 1:
+                self.assertEqual(recorded["Kind"], "far")
+            else:
+                ring = (ordinal - 2) % rings + 1
+                self.assertEqual((recorded["Kind"], recorded["Ring"]), ("top" if ordinal <= 1 + rings else "bottom", ring))
+                self.assertEqual(recorded["OuterRadius"], census["RingRadii"][ring - 1])
+        self.assertEqual(shell_record["RingRadii"], census["RingRadii"])
+        # Ground names the shells in place of the parents; nothing outside Boundaries changes.
+        self.assertEqual([a for a in run_config["Boundaries"]["Ground"]["Attributes"] if int(a) < SHELL_LABEL_STRIDE],
+                         [a for a in base_config["Boundaries"]["Ground"]["Attributes"] if int(a) not in parents])
+        self.assertEqual(sorted(a for a in run_config["Boundaries"]["Ground"]["Attributes"] if int(a) >= SHELL_LABEL_STRIDE),
+                         sorted(int(shell["Label"]) for shell in census["Shells"]))
+        self.assertEqual({key: value for key, value in run_config.items() if key != "Boundaries"},
+                         {key: value for key, value in base_config.items() if key != "Boundaries"})
+        expanded, shell_map = case_inputs.expand_radial_shells(base_config, census)
+        self.assertEqual(expanded, run_config)
+        self.assertEqual({str(index): value for index, value in shell_map.items()}, shell_record["Interfaces"])
+
     def test_four_edge_reproduces_physics_11(self):
         self.check_against_campaign("four-edge-9d2cb9bbb3fe")
 
@@ -1136,67 +1250,10 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(case["StagePrefix"], "three-edge-419576fdab24")
         self.assertEqual(case["Plan"]["StageNames"][0], "three-edge-419576fdab24-p4-worker")
 
-    def analysis_context(self, case_id, reference, controls=None):
-        spec = CASES[case_id]
-        build = json.loads(self.build_record.read_text())
-        manifest = json.loads(MANIFEST.read_text())
-        manifest["Path"] = str(MANIFEST)
-        args = argparse.Namespace(reference=reference, control_source=controls or spec["Controls"], control_count=8,
-                                  stage_prefix=spec["Prefix"], orders=[], controls=[3, 5], frozen_binary_sha256=BINARY_SHA256,
-                                  max_jobs=2, job_policy=None, fixed_jobs=None, reducer_block_size=None)
-        profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
-        model = estimate_stages.load_cost_model()
-        table, digest = gates.load_gates()
-        root = self.tmp / f"analysis-{spec['Prefix']}-{Path(str(reference)).name if reference is not None else 'none'}"
-        root.mkdir(exist_ok=True)
-        case = next(item for item in build["Cases"] if item["Case"] == case_id)
-        record, context = qualify_library.prepare_case(case, manifest_path=MANIFEST, manifest=manifest, args=args, root=root,
-                                                       remote={"Host": "h", "Root": "/r"}, profile=profile, cost_model=model,
-                                                       gates=table, gates_digest=digest)
-        return record, context, root, table, digest, profile, manifest
-
-    @staticmethod
-    def snapshot(campaign):
-        """mtime of every file of the recorded campaign (results, reference, main, ...)."""
-        return {path: path.stat().st_mtime_ns for path in Path(campaign).rglob("*") if path.is_file()}
-
-    def assert_campaign_untouched(self, campaign, before):
-        self.assertEqual(self.snapshot(campaign), before, "the recorded campaign directory must stay read only")
-
-    def test_analysis_of_the_recorded_results_reproduces_the_verdicts(self):
-        for case_id, spec in CASES.items():
-            campaign = ASSESSMENT / spec["Campaign"]
-            before = self.snapshot(campaign)
-            record, context, root, table, digest, profile, manifest = self.analysis_context(case_id, campaign / "reference")
-            gate_record = qualify_library.analyze_case(record, context, campaign / "results", gates=table, gates_digest=digest,
-                                                       profile=profile)
-            self.assert_campaign_untouched(campaign, before)
-            self.assertEqual(Path(record["Cost"]["Path"]), root / case_id / "cost-summary.json")
-            self.assertTrue((root / case_id / "cost-summary.json").is_file())
-            self.assertEqual(gate_record["Verdict"], gates.VERDICT_PASSED, gate_record["Reason"])
-            self.assertEqual(record["Status"], "qualified")
-            self.assertEqual(record["Qualification"]["ReferenceAnchor"], "vs p4 anchor")
-            self.assertAlmostEqual(record["Cost"]["MainStage"]["NodeHours"],
-                                   0.508 if case_id.startswith("four") else 0.974, places=3)
-            self.assertLess(record["Cost"]["MainStageOverReference"], 0.3)
-            recorded_plan = json.loads((campaign / "main" / "plan.json").read_text())
-            if recorded_plan["MeshSHA256"] == record["Mesh"]["SHA256"]:
-                # Same mesh as the campaign: the Palace-printed H1 equals the closed-form estimate.
-                self.assertEqual(record["Cost"]["MainStage"]["H1"], record["Estimate"]["H1ByOrder"]["p4"])
-            comparison = root / case_id / "comparison"
-            for name in ("source-classes.csv", "class-statistics.md", "ma-ms-offsets.json", "p-sequence-controls.json",
-                         "key-sources.md", f"{spec['Prefix']}-p4-vs-reference.json"):
-                self.assertTrue((comparison / name).is_file(), name)
-            library = qualify_library.process_library_entries([record], {case_id: context}, manifest_path=MANIFEST,
-                                                              manifest=manifest, root=root)
-            self.assertEqual(len(library["Models"]), 1)
-            self.assertTrue(library["Models"][0]["LibraryQualified"])
-            self.assertEqual(library["Models"][0]["Qualification"]["Verdict"], gates.VERDICT_PASSED)
-            self.assertEqual(library["Models"][0]["CouponMesh"]["SHA256"], record["Mesh"]["SHA256"])
-
     @unittest.skipUnless(local_identity_mesh(GALLERY_10["Case"]) is not None
                          and (ASSESSMENT / GALLERY_10["Campaign"] / "results" / "main" / "status.json").is_file(),
-                         "the two-edge mesh and the gallery-10 campaign are needed")
+                         "the two-edge mesh and the gallery-10 campaign are needed (no local two-edge root was rebuilt; the stored "
+                         "gallery-10 results predate the decision-61a shells, so its analysis half needs a shell-era record too)")
     def test_recorded_gallery_10_is_gated_at_the_reference_order_without_sa(self):
         """gallery-physics-10 (reference at p5; MA / MS only): --orders p4 runs p4 AND p5 as main
         stages, the p5 (same-order) comparison is gated and reproduces RESULTS.md (E 78/78,
@@ -1207,7 +1264,7 @@ class QualifyDryRunTest(unittest.TestCase):
         counts = estimate_stages.entity_counts_of_mesh(mesh)
         build = json.loads(self.build_record.read_text())
         build["Cases"] = [{"Case": spec["Case"], "Status": "built", "Passed": True, "CanonicalBuildId": None,
-                           "Variants": {"identity": {"Path": str(mesh), "SHA256": sha256(mesh)}},
+                           "Variants": {"identity": {"Path": str(mesh), "SHA256": sha256(mesh)}}, "RadialShells": shell_census_binding(mesh),
                            "Elements": {"Tetrahedron": counts["Tetrahedra"], "Prism": counts["Prisms"], "Pyramid": counts["Pyramids"],
                                         "Total": counts["Tetrahedra"] + counts["Prisms"] + counts["Pyramids"]},
                            "H1": {"Order": 4, "DOFs": h1_dofs_from_counts(counts, 4), "EntityCounts": counts},
@@ -1223,7 +1280,7 @@ class QualifyDryRunTest(unittest.TestCase):
         manifest["Path"] = str(MANIFEST)
         root = self.tmp / "analysis-g10"
         root.mkdir(exist_ok=True)
-        before = self.snapshot(campaign)
+        before = snapshot(campaign)
         record, context = qualify_library.prepare_case(build["Cases"][0], manifest_path=MANIFEST, manifest=manifest, args=args,
                                                        root=root, remote={"Host": "h", "Root": "/r"}, profile=profile,
                                                        cost_model=model, gates=table, gates_digest=digest)
@@ -1237,7 +1294,7 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(record["Plan"]["StageNames"], [stage["Name"] for stage in recorded_plan["Stages"]])
         gate_record = qualify_library.analyze_case(record, context, campaign / "results", gates=table, gates_digest=digest,
                                                    profile=profile)
-        self.assert_campaign_untouched(campaign, before)
+        self.assertEqual(snapshot(campaign), before, "the recorded campaign directory must stay read only")
         self.assertEqual(gate_record["Verdict"], gates.VERDICT_FAILED)
         self.assertEqual(gate_record["Reason"], "failing gates ['p_MA'] (p_SA not applicable)")
         self.assertEqual(gate_record["GatedOrder"], 5)
@@ -1260,386 +1317,6 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(record["Cost"]["MainStage"]["H1"], 7915021)
         self.assertEqual(record["Status"], "failed")
         library = qualify_library.process_library_entries([record], {spec["Case"]: context}, manifest_path=MANIFEST,
-                                                          manifest=manifest, root=root)
-        self.assertFalse(library["Models"][0]["LibraryQualified"])
-
-    def test_jobs_run_concurrently_up_to_max_jobs(self):
-        """Two planned coupons, --max-jobs 2, a fake remote that replays the recorded trees: both
-        jobs are submitted before either is polled done, every active job is polled each
-        round, each coupon is fetched / verified / analyzed when its job leaves the queue,
-        and the totals carry the measured critical path and the job count."""
-        events = []
-        finish_after = {"four-edge-9d2cb9bbb3fe": 2, "three-edge-419576fdab24": 1}
-        polls = {}
-
-        def fake_upload(record, context, *, remote, profile, adopt_remote_case=False):
-            events.append(("upload", record["Case"]))
-            return {"Commands": [], "UTC": "fake"}
-
-        def fake_submit(host, pbs_bin, script, cwd, *, job_cap, user=None):
-            case = Path(cwd).parts[-2]
-            events.append(("submit", case))
-            return {"Job": f"{len(events)}.fake", "UTC": qualify_library.remote_side.utc(), "UserJobsBefore": 0, "JobCap": job_cap,
-                    "Command": "qsub"}
-
-        def fake_job_exit(host, remote_job_directory, job_id):
-            events.append(("exit-check", Path(remote_job_directory).parts[-2]))
-            return {"OK": True, "Reasons": [], "ExitRecord": {"ExitCode": 0, "JobID": job_id}, "StatusPBSJobID": job_id}
-
-        def fake_poll(host, pbs_bin, job_id, status_path):
-            case = Path(status_path).parts[-3]
-            polls[case] = polls.get(case, 0) + 1
-            events.append(("poll", case))
-            state = "F" if polls[case] >= finish_after[case] else "R"
-            return {"UTC": "fake", "JobState": state, "QStat": "", "Status": None}
-
-        def fake_fetch(host, remote_directory, local_directory):
-            case = Path(remote_directory).parts[-2]
-            events.append(("fetch", case))
-            shutil.copytree(ASSESSMENT / CASES[case]["Campaign"] / "results" / "main", local_directory, dirs_exist_ok=True)
-            # The replayed status.json is stamped with this run's job id (the recorded one would read as stale).
-            status_path = Path(local_directory) / "status.json"
-            submission = json.loads((Path(local_directory).parents[1] / "submission.json").read_text())
-            status_path.write_text(json.dumps({**json.loads(status_path.read_text()), "PBSJobID": submission["Job"]}))
-            return ["rsync", "fake"]
-
-        def fake_remote_sha256(host, paths):
-            digests = {}
-            for path in paths:
-                case = Path(path).parts[-4] if "reducer" in path else Path(path).parts[-5]
-                for candidate in ("four-edge-9d2cb9bbb3fe", "three-edge-419576fdab24"):
-                    if candidate in path:
-                        case = candidate
-                local = self.tmp / "concurrent" / case / "results" / "main" / path.split("/main/", 1)[1]
-                digests[path] = sha256(local)
-            return digests
-
-        def fake_delete(host, archives):
-            events.append(("delete", Path(archives[0]).parts[-4]))
-            return {"Archives": list(archives), "SizesBeforeDeletion": "0", "DeletedUTC": "fake", "Remaining": ""}
-
-        fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
-                 "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F", "job_exit": fake_job_exit}
-        saved = {name: getattr(qualify_library.remote_side, name) for name in fakes}
-        saved_upload = qualify_library.upload_case
-        controls = {case_id: spec["Controls"] for case_id, spec in CASES.items()}
-        saved_prepare = qualify_library.prepare_case
-
-        def prepare_with_recorded_controls(case_record, **kwargs):
-            spec = CASES[case_record["Case"]]
-            kwargs["args"].control_source = spec["Controls"]
-            kwargs["args"].stage_prefix = spec["Prefix"]
-            return saved_prepare(case_record, **kwargs)
-
-        try:
-            for name, fake in fakes.items():
-                setattr(qualify_library.remote_side, name, fake)
-            qualify_library.upload_case = fake_upload
-            qualify_library.prepare_case = prepare_with_recorded_controls
-            args = argparse.Namespace(build_record=self.build_record, reference=None, remote="h:/r", orders=[], controls=[3, 5],
-                                      control_count=8, control_source=None, max_jobs=2, frozen_binary_sha256=BINARY_SHA256,
-                                      stage_prefix=None, case=None, root=self.tmp / "concurrent", dry_run=False, resume=False,
-                                      monitor_interval=0, monitor_polls=10, cluster_profile=HERE / "qualify" / "cluster-profile.json",
-                                      cost_model=estimate_stages.COST_MODEL, gates=gates.GATES_FILE, job_policy=None, fixed_jobs=None,
-                                      merge_into=None, reducer_block_size=None)
-            # Each coupon binds its own reference campaign: a directory holding both inputs trees.
-            reference = self.tmp / "both-references"
-            if not reference.exists():
-                reference.mkdir()
-                for spec in CASES.values():
-                    for entry in (ASSESSMENT / spec["Campaign"] / "reference").iterdir():
-                        if entry.name.startswith(("inputs-", "case-")):
-                            os.symlink(entry, reference / entry.name)
-            args.reference = reference
-            record = qualify_library.run_qualify(args, log=lambda message: None)
-            # --resume on the same root adopts the recorded job ids: no upload, no qsub, the
-            # plans are re-derived byte-identical, both coupons are polled / fetched / analyzed again.
-            first_events = list(events)
-            events.clear()
-            polls.clear()
-            args.resume = True
-            resumed = qualify_library.run_qualify(args, log=lambda message: None)
-        finally:
-            for name, fake in saved.items():
-                setattr(qualify_library.remote_side, name, fake)
-            qualify_library.upload_case = saved_upload
-            qualify_library.prepare_case = saved_prepare
-        del controls
-        events, resumed_events = first_events, events
-        kinds = [kind for kind, _ in events]
-        self.assertEqual(kinds[:4], ["upload", "submit", "upload", "submit"], events)
-        first_fetch = kinds.index("fetch")
-        self.assertEqual(kinds.count("submit"), 2)
-        self.assertLess(kinds.index("submit", kinds.index("submit") + 1), first_fetch, "both jobs queued before any fetch")
-        # Round 1 polls both (three-edge done -> fetched); round 2 polls the four-edge job alone.
-        self.assertEqual([case for kind, case in events if kind == "poll"],
-                         ["four-edge-9d2cb9bbb3fe", "three-edge-419576fdab24", "four-edge-9d2cb9bbb3fe"])
-        self.assertEqual([case for kind, case in events if kind == "fetch"], ["three-edge-419576fdab24", "four-edge-9d2cb9bbb3fe"])
-        self.assertEqual([case for kind, case in events if kind == "delete"], ["three-edge-419576fdab24", "four-edge-9d2cb9bbb3fe"])
-        totals = record["Library"]
-        self.assertEqual(totals["JobsSubmitted"], 2)
-        self.assertEqual(totals["MaxJobs"], 2)
-        self.assertEqual(totals["CouponsQualified"], 2)
-        self.assertIsNotNone(totals["CriticalPathSeconds"])
-        self.assertGreaterEqual(totals["CriticalPathSeconds"], 0.0)
-        self.assertEqual(set(totals["JobWallSeconds"]), set(CASES))
-        self.assertAlmostEqual(totals["NodeHours"], sum(case["Cost"]["JobNodeHours"] for case in record["Cases"]))
-        for case in record["Cases"]:
-            self.assertEqual(case["Status"], "qualified", case.get("StoppedBy"))
-            self.assertEqual(case["Qualification"]["Verdict"], gates.VERDICT_PASSED)
-            self.assertEqual(case["Monitor"]["LastJobState"], "F")
-            self.assertTrue(all(entry["OK"] for entry in case["ResultDigests"].values()))
-            self.assertIn("ArchiveDeletion", case)
-            # A coupon that fits one job is one job (N = 1, the recorded campaigns' layout).
-            self.assertEqual((case["Split"]["N"], case["JobPolicy"]["Mode"], case["Split"]["ControlsJob"]), (1, "frugal", "worker-1"))
-            self.assertEqual([job["Kind"] for job in case["Jobs"]], ["single"])
-            self.assertEqual(case["Cost"]["Split"]["N"], 1)
-            self.assertEqual(case["Cost"]["Jobs"]["single"]["ActualSeconds"], case["Cost"]["JobTotalSeconds"])
-            self.assertIsNotNone(case["Cost"]["CriticalPathSeconds"])
-        self.assertEqual({case: split["N"] for case, split in totals["Splits"].items()}, {case: 1 for case in CASES})
-        self.assertTrue((self.tmp / "concurrent" / "process-library.json").is_file())
-        resumed_kinds = [kind for kind, _ in resumed_events]
-        self.assertNotIn("upload", resumed_kinds)
-        self.assertNotIn("submit", resumed_kinds)
-        self.assertEqual(resumed_kinds.count("fetch"), 2)
-        self.assertEqual(resumed["Library"]["JobsSubmitted"], 2)
-        self.assertEqual(resumed["Library"]["CouponsQualified"], 2)
-        for case in resumed["Cases"]:
-            self.assertTrue(case["Monitor"]["Resumed"])
-            self.assertTrue(case["Upload"]["Resumed"])
-            self.assertEqual(case["Submission"], json.loads((self.tmp / "concurrent" / case["Case"] / "submission.json").read_text()))
-        self.assertIsNotNone(resumed["Library"]["CriticalPathSeconds"])
-
-    def test_split_coupon_runs_worker_jobs_then_the_reducer_job(self):
-        """--job-policy fixed --fixed-jobs 2 on the four-edge coupon against a fake remote: both
-        worker jobs are submitted at once, each is completed from its own status.json when it
-        leaves the queue, the archive union is counted before the one reducer job is submitted,
-        the coupon is fetched / verified / analyzed after the reducer job, the merged cost reads
-        the split as one main stage (per-source timings in block order) and records every job."""
-        case_id = "four-edge-9d2cb9bbb3fe"
-        spec = CASES[case_id]
-        recorded = json.loads((ASSESSMENT / spec["Campaign"] / "results" / "main" / "status.json").read_text())
-        events = []
-        holder = {}
-
-        def job_status(name):
-            blocks = holder["context"]["split"]["Blocks"]
-            stages = {stage["Name"]: stage for stage in recorded["Stages"]}
-            worker = stages[f"{spec['Prefix']}-p4-worker"]
-
-            def block_stage(k):
-                block = set(blocks[k - 1])
-                timings = [t for t in worker["Parsed"]["SourceTiming"] if t["Index"] in block]
-                positions = [i for i, t in enumerate(worker["Parsed"]["SourceTiming"]) if t["Index"] in block]
-                parsed = dict(worker["Parsed"], SourceTiming=timings, PCG=[worker["Parsed"]["PCG"][i] for i in positions],
-                              PalaceTotalSeconds=worker["Parsed"]["PalaceTotalSeconds"] * len(block) / 80)
-                return dict(worker, Name=f"{spec['Prefix']}-p4-worker-block{k}", Parsed=parsed,
-                            WallSeconds=worker["WallSeconds"] * len(block) / 80)
-            if name == "worker-1":
-                selected = [block_stage(1)] + [stages[n] for n in stages if "control" in n or n.endswith("local-edge")]
-            elif name == "worker-2":
-                selected = [block_stage(2)]
-            else:
-                selected = [stages[f"{spec['Prefix']}-p4-reducer"]]
-            return dict(recorded, Stages=selected, PBSJobID=f"{name}.fake",
-                        TotalSeconds=sum(stage["WallSeconds"] for stage in selected) + 60.0)
-
-        def fake_upload(record, context, *, remote, profile, adopt_remote_case=False):
-            events.append(("upload", record["Case"]))
-            return {"Commands": [], "UTC": "fake"}
-
-        def fake_job_exit(host, remote_job_directory, job_id):
-            events.append(("exit-check", Path(remote_job_directory).name))
-            return {"OK": True, "Reasons": [], "ExitRecord": {"ExitCode": 0, "JobID": job_id}, "StatusPBSJobID": job_id}
-
-        def fake_submit(host, pbs_bin, script, cwd, *, job_cap, user=None):
-            events.append(("submit", Path(cwd).name))
-            return {"Job": f"{Path(cwd).name}.fake", "UTC": qualify_library.remote_side.utc(), "UserJobsBefore": 0, "JobCap": job_cap,
-                    "Command": "qsub"}
-
-        def fake_poll(host, pbs_bin, job_id, status_path):
-            events.append(("poll", Path(status_path).parts[-2]))
-            return {"UTC": "fake", "JobState": "F", "QStat": "", "Status": None, "Reachable": True}
-
-        def fake_read_json(host, path):
-            events.append(("status", Path(path).parts[-2]))
-            return job_status(Path(path).parts[-2])
-
-        def fake_count(host, directory):
-            events.append(("archive-count", Path(directory).parts[-2]))
-            return 80 * 192
-
-        def fake_fetch(host, remote_directory, local_directory):
-            events.append(("fetch", Path(remote_directory).parts[-2]))
-            shutil.copytree(ASSESSMENT / spec["Campaign"] / "results" / "main", local_directory, dirs_exist_ok=True)
-            for name in ("worker-1", "worker-2", "reducer"):
-                (Path(local_directory) / "jobs" / name).mkdir(parents=True, exist_ok=True)
-                (Path(local_directory) / "jobs" / name / "status.json").write_text(json.dumps(job_status(name)))
-            return ["rsync", "fake"]
-
-        def fake_remote_sha256(host, paths):
-            return {path: sha256(self.tmp / "split" / case_id / "results" / "main" / path.split("/main/", 1)[1]) for path in paths}
-
-        def fake_delete(host, archives):
-            events.append(("delete", tuple(Path(a).parts[-2] for a in archives)))
-            return {"Archives": list(archives), "SizesBeforeDeletion": "0", "DeletedUTC": "fake", "Remaining": ""}
-
-        fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
-                 "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F",
-                 "read_json": fake_read_json, "count_archive_potentials": fake_count, "job_exit": fake_job_exit}
-        saved = {name: getattr(qualify_library.remote_side, name) for name in fakes}
-        saved_upload, saved_prepare = qualify_library.upload_case, qualify_library.prepare_case
-
-        def prepare_with_recorded_controls(case_record, **kwargs):
-            kwargs["args"].control_source = spec["Controls"]
-            kwargs["args"].stage_prefix = spec["Prefix"]
-            record, context = saved_prepare(case_record, **kwargs)
-            holder["record"], holder["context"] = record, context
-            return record, context
-        try:
-            for name, fake in fakes.items():
-                setattr(qualify_library.remote_side, name, fake)
-            qualify_library.upload_case = fake_upload
-            qualify_library.prepare_case = prepare_with_recorded_controls
-            manifest = json.loads(MANIFEST.read_text())
-            case_library = qualify_library.source_directory(MANIFEST, manifest, qualify_library.manifest_case(manifest, case_id)) \
-                / qualify_library.manifest_case(manifest, case_id)["Source"]["Files"]["ProcessLibrary"]["Name"]
-            model_name = json.loads(case_library.read_text())["Models"][0]["Name"]
-            # A previous run's kept model: the same source model under another name, its
-            # fabricated matrices recorded absolute (the campaign's reducer), no thin matrices.
-            other = dict(json.loads(case_library.read_text())["Models"][0])
-            reducer = ASSESSMENT / spec["Campaign"] / "results" / "main" / f"{spec['Prefix']}-p4" / "reducer"
-            other.update({"Name": "other-coupon", "LibraryQualified": False,
-                          "FabricatedMatrix": str(reducer / "domain-response-matrix.csv"),
-                          "FabricatedSurfaceMatrix": str(reducer / "surface-response-matrix.csv"),
-                          "Qualification": {"Verdict": "PendingQualification", "Record": "/tmp/previous/other/qualification.json"},
-                          "SourceProcessLibrary": {"Path": str(case_library), "SHA256": sha256(case_library)}})
-            previous_library = self.tmp / "previous-process-library.json"
-            previous_library.write_text(json.dumps({"Version": 1, "Root": "/tmp/previous", "Models": [
-                other, {"Name": model_name, "LibraryQualified": False, "Stale": True}]}))
-            args = argparse.Namespace(build_record=self.build_record, reference=ASSESSMENT / spec["Campaign"] / "reference", remote="h:/r",
-                                      orders=[], controls=[3, 5], control_count=8, control_source=None, max_jobs=2,
-                                      frozen_binary_sha256=BINARY_SHA256, stage_prefix=None, case=[case_id], root=self.tmp / "split",
-                                      dry_run=False, resume=False, monitor_interval=0, monitor_polls=10,
-                                      cluster_profile=HERE / "qualify" / "cluster-profile.json", cost_model=estimate_stages.COST_MODEL,
-                                      gates=gates.GATES_FILE, job_policy="fixed", fixed_jobs=2, merge_into=previous_library,
-                                      reducer_block_size=None)
-            record = qualify_library.run_qualify(args, log=lambda message: None)
-        finally:
-            for name, fake in saved.items():
-                setattr(qualify_library.remote_side, name, fake)
-            qualify_library.upload_case = saved_upload
-            qualify_library.prepare_case = saved_prepare
-        case = record["Cases"][0]
-        self.assertEqual(case["Status"], "qualified", case.get("StoppedBy"))
-        self.assertEqual((case["Split"]["N"], case["JobPolicy"]["Mode"], case["JobPolicy"]["FixedJobs"]), (2, "fixed", 2))
-        blocks = holder["context"]["split"]["Blocks"]
-        self.assertEqual(case["Split"]["Blocks"], [len(blocks[0]), len(blocks[1])])
-        self.assertEqual(blocks[0] + blocks[1], list(range(1, 81)))
-        kinds = [kind for kind, _ in events]
-        self.assertEqual(events[:3], [("upload", case_id), ("submit", "worker-1"), ("submit", "worker-2")])
-        self.assertLess(kinds.index("poll"), kinds.index("archive-count"))
-        self.assertEqual([name for kind, name in events if kind == "status"], ["worker-1", "worker-2"])
-        self.assertEqual(events.index(("archive-count", f"{spec['Prefix']}-p4")) + 1, events.index(("submit", "reducer")))
-        self.assertLess(events.index(("submit", "reducer")), events.index(("fetch", case_id)))
-        self.assertEqual([name for kind, name in events if kind == "submit"], ["worker-1", "worker-2", "reducer"])
-        self.assertEqual(kinds.count("fetch"), 1)
-        self.assertEqual(kinds.count("delete"), 1)
-        self.assertEqual(case["ArchiveUnion"]["Stages"][f"{spec['Prefix']}-p4"]["OK"], True)
-        self.assertEqual(case["ArchiveUnion"]["Stages"][f"{spec['Prefix']}-p4"]["Expected"], 80 * 192)
-        self.assertEqual([job["Name"] for job in case["Jobs"]], ["worker-1", "worker-2", "reducer"])
-        self.assertEqual(case["Jobs"][2]["Requires"], ["worker-1", "worker-2"])
-        for job in case["Jobs"]:
-            self.assertEqual(job["Submission"]["Job"], f"{job['Name']}.fake")
-            self.assertTrue(Path(job["SubmissionRecord"]).is_file())
-            self.assertEqual(job["Monitor"]["LastJobState"], "F")
-        self.assertEqual(case["Jobs"][0]["Status"]["State"], "complete")
-        self.assertEqual(case["Jobs"][0]["StageNames"][1:], [f"{spec['Prefix']}-p5-control-worker", f"{spec['Prefix']}-p5-control-reducer",
-                                                              f"{spec['Prefix']}-p3-control-worker", f"{spec['Prefix']}-p3-control-reducer",
-                                                              f"{spec['Prefix']}-p4-local-edge"])
-        # Verdict and gate values from the same reducer matrices as the single-job record.
-        self.assertEqual(case["Qualification"]["Verdict"], gates.VERDICT_PASSED)
-        cost = case["Cost"]
-        self.assertEqual(cost["Split"], {**cost["Split"], "N": 2, "Policy": "fixed", "ControlsJob": "worker-1"})
-        self.assertEqual(set(cost["Jobs"]), {"worker-1", "worker-2", "reducer"})
-        for name, job in cost["Jobs"].items():
-            self.assertAlmostEqual(job["ActualSeconds"], job_status(name)["TotalSeconds"])
-            self.assertGreater(job["EstimateSecondsWithPreflightAndMargin"], 0.0)
-            self.assertEqual(job["PBSJobID"], f"{name}.fake")
-        self.assertAlmostEqual(cost["JobTotalSeconds"], sum(job["ActualSeconds"] for job in cost["Jobs"].values()))
-        self.assertAlmostEqual(cost["JobNodeHours"], cost["JobTotalSeconds"] / 3600.0)
-        self.assertIsNotNone(cost["CriticalPathSeconds"])
-        summary = json.loads((self.tmp / "split" / case_id / "cost-summary.json").read_text())
-        main = summary["Stages"][f"{spec['Prefix']}-p4"]
-        self.assertEqual(main["Sources"], list(range(1, 81)))
-        self.assertEqual(len(main["PCGIterations"]), 80)
-        recorded_main = {stage["Name"]: stage for stage in recorded["Stages"]}
-        self.assertAlmostEqual(main["WorkerWallSeconds"], recorded_main[f"{spec['Prefix']}-p4-worker"]["WallSeconds"])
-        self.assertAlmostEqual(main["ReducerWallSeconds"], recorded_main[f"{spec['Prefix']}-p4-reducer"]["WallSeconds"])
-        self.assertTrue((self.tmp / "split" / case_id / "results" / "main" / "jobs" / "reducer" / "status.json").is_file())
-        self.assertTrue((self.tmp / "split" / case_id / "archive-union.json").is_file())
-        totals = record["Library"]
-        self.assertEqual(totals["JobsSubmitted"], 3)
-        self.assertEqual(totals["Splits"][case_id]["N"], 2)
-        self.assertEqual(totals["JobPolicy"]["Mode"], "fixed")
-        self.assertAlmostEqual(totals["NodeHours"], cost["JobNodeHours"])
-        # --merge-into: the previous library's other model kept first, the same Name replaced by this run's, provenance recorded.
-        merged = json.loads((self.tmp / "split" / "process-library.json").read_text())
-        self.assertEqual([model["Name"] for model in merged["Models"]], ["other-coupon", model_name])
-        self.assertEqual(merged["Version"], 3)
-        self.assertEqual(merged["Models"][0]["FabricatedMatrix"], "models/other-coupon/fabricated-domain-response-matrix.csv")
-        self.assertIsNone(merged["Models"][0]["ThinMatrix"])
-        self.assertEqual(merged["Loadable"]["NotLoadable"], ["other-coupon", model_name])
-        preflight = json.loads((self.tmp / "split" / "process-library-preflight.json").read_text())
-        self.assertTrue(preflight["PreflightOnly"])
-        self.assertEqual(preflight["Models"][1]["ThinMatrix"], f"models/{qualify_library.model_slug(model_name)}/thin-domain-response-matrix.csv")
-        self.assertNotIn("Stale", merged["Models"][1])
-        self.assertEqual(merged["Models"][1]["CouponMesh"]["SHA256"], case["Mesh"]["SHA256"])
-        self.assertEqual((merged["MergedFrom"]["Kept"], merged["MergedFrom"]["Replaced"]), (["other-coupon"], [model_name]))
-        self.assertEqual(merged["MergedFrom"]["SHA256"], sha256(previous_library))
-        self.assertIn("Stale", json.loads(previous_library.read_text())["Models"][1])   # the previous file is not modified
-        # --resume of the split coupon: the three recorded submissions are adopted (the plans
-        # are byte-identical; the identity check reads both sides in one order - the 2026-09-21
-        # split acceptance resume stopped with 'plans differ' on identical plans: glob order
-        # reducer / worker-1 / worker-2 against job order worker-1 / worker-2 / reducer).
-        try:
-            for name, fake in fakes.items():
-                setattr(qualify_library.remote_side, name, fake)
-            qualify_library.upload_case = fake_upload
-            qualify_library.prepare_case = prepare_with_recorded_controls
-            args.resume = True
-            del events[:]
-            resumed = qualify_library.run_qualify(args, log=lambda message: None)
-        finally:
-            for name, fake in saved.items():
-                setattr(qualify_library.remote_side, name, fake)
-            qualify_library.upload_case = saved_upload
-            qualify_library.prepare_case = saved_prepare
-        resumed_case = resumed["Cases"][0]
-        self.assertIsNone(resumed_case.get("StoppedBy"), resumed_case.get("StoppedBy"))
-        self.assertEqual(resumed_case["Status"], "qualified")
-        self.assertEqual([kind for kind, _ in events if kind in ("upload", "submit")], [])
-        self.assertEqual([job["Monitor"]["Resumed"] for job in resumed_case["Jobs"]], [True, True, True])
-        self.assertEqual([job["Submission"]["Job"] for job in resumed_case["Jobs"]], ["worker-1.fake", "worker-2.fake", "reducer.fake"])
-
-    def test_without_reference_matrices_the_verdict_is_pending(self):
-        case_id = "four-edge-9d2cb9bbb3fe"
-        campaign = ASSESSMENT / CASES[case_id]["Campaign"]
-        inputs_only = self.tmp / "inputs-only-campaign"
-        if not inputs_only.exists():
-            inputs_only.mkdir()
-            os.symlink(campaign / "reference" / "inputs-07", inputs_only / "inputs-07")
-        record, context, root, table, digest, profile, manifest = self.analysis_context(case_id, inputs_only)
-        self.assertIsNone(record["Reference"]["Results"])
-        before = self.snapshot(campaign)
-        gate_record = qualify_library.analyze_case(record, context, campaign / "results", gates=table, gates_digest=digest,
-                                                   profile=profile)
-        self.assert_campaign_untouched(campaign, before)
-        self.assertEqual(gate_record["Verdict"], gates.VERDICT_PENDING)
-        self.assertEqual(set(gate_record["Gates"]), {"PSequenceControls"})
-        self.assertEqual(record["Status"], "pending-qualification")
-        self.assertIsNone(record["Cost"]["ReferenceNodeHours"])
-        library = qualify_library.process_library_entries([record], {case_id: context}, manifest_path=MANIFEST,
                                                           manifest=manifest, root=root)
         self.assertFalse(library["Models"][0]["LibraryQualified"])
 
@@ -1720,30 +1397,41 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertIn("Permittivity", str(case["StoppedBy"]["Differences"]))
 
     def test_run_config_derived_from_the_case_equals_every_gallery_reference(self):
-        """Decision 52: for all five gallery cases the config derived from the case's own
-        sources (process library, trace basis, mesh $PhysicalNames, recipe PhysicsRun)
-        equals the config the graded_v2 reference ran apart from Model.Mesh, Problem.Output
-        and the DataFile directory; Solver.Order / Linear.Tol are the recipe's (the
-        references at p5 / Tol 1e-8 - gallery 10 and the ten-edge - differ there only)."""
+        """Decision 52: for every gallery case with a local identity mesh the BASE config derived
+        from the case's own sources (process library, trace basis, mesh $PhysicalNames, recipe
+        PhysicsRun; the parent MA labels of the mesh's decision-61a shell census) equals the
+        config the graded_v2 reference ran apart from Model.Mesh, Problem.Output and the
+        DataFile directory; Solver.Order / Linear.Tol are the recipe's (the references at p5 /
+        Tol 1e-8 - gallery 10 and the ten-edge - differ there only); the run config is the base
+        expanded by the census.  The two cases of CASES are required; the others are checked
+        when their mesh and reference config are present (named in the output otherwise)."""
         manifest = json.loads(MANIFEST.read_text())
         manifest["Path"] = str(MANIFEST)
         physics_run = case_inputs.physics_run_parameters(manifest)
         self.assertEqual((physics_run["Order"], physics_run["LinearTol"]), (4, 1e-10))
-        checked = []
+        checked, unchecked = [], []
         for case_id, reference_path in GALLERY_REFERENCE_CONFIGS.items():
             mesh = local_identity_mesh(case_id)
             if mesh is None or not reference_path.is_file():
+                unchecked.append(case_id)
                 continue
             case = next(item for item in manifest["Cases"] if item["Id"] == case_id)
             directory = qualify_library.source_directory(MANIFEST, manifest, case)
             out = self.tmp / "derived" / case_id
-            config, record = case_inputs.derive(case, directory, mesh_path=mesh, physics_run=physics_run, out_dir=out)
+            census_binding = shell_census_binding(mesh)
+            self.assertIsNotNone(census_binding, f"{mesh} carries no radial-shell census beside it")
+            census = json.loads(Path(census_binding["Shells"]["Path"]).read_text())
+            run_config, record = case_inputs.derive(case, directory, mesh_path=mesh, physics_run=physics_run, out_dir=out,
+                                                    radial_shells=census)
+            config = record["BaseConfig"]
+            self.assertEqual(case_inputs.expand_radial_shells(config, census)[0], run_config)
             reference = json.loads(reference_path.read_text())
             self.assertEqual(case_inputs.config_differences(config, reference, ignore_solver=("Order", "Linear.Tol")), [], case_id)
             self.assertEqual(config["Solver"]["Order"], 4)
             self.assertEqual(config["Solver"]["Linear"]["Tol"], 1e-10)
             self.assertEqual(len(config["Boundaries"]["PrescribedPotential"]), len(reference["Boundaries"]["PrescribedPotential"]))
-            self.assertEqual(record["Interfaces"], case_inputs.interface_types(reference))
+            self.assertEqual(record["BaseInterfaces"], case_inputs.interface_types(reference))
+            self.assertEqual(len(record["Interfaces"]), len(record["BaseInterfaces"]) - 1 + census_binding["ShellCount"])
             self.assertTrue(record["AttributeCheck"]["Passed"])
             # Every regenerated trace has the reference trace's name; the digests differ from the
             # producer's files by the canonical-frame round trip only (FrameFitResidual, recorded).
@@ -1764,9 +1452,9 @@ class QualifyDryRunTest(unittest.TestCase):
                         self.assertEqual((a[3], a[4]), (b[3], b[4]))     # V and triangle columns identical
                         self.assertTrue(all(abs(float(x) - float(y)) <= 1e-13 for x, y in zip(a[:3], b[:3])), (source["Name"], a, b))
             checked.append(case_id)
-        self.assertGreaterEqual(len(checked), 4, checked)
-        if len(checked) < 5:
-            self.skipTest(f"derived-config equality proven for {checked}; the others lack a local mesh or reference config")
+        self.assertTrue(set(CASES) <= set(checked), checked)
+        if unchecked:
+            print(f"derived-config equality proven for {checked}; {unchecked} lack a local mesh or reference config", file=sys.stderr)
 
     def test_reference_none_plans_the_coupon_on_its_own_inputs(self):
         case_id = "four-edge-9d2cb9bbb3fe"
@@ -1789,160 +1477,651 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(worker["Solver"]["Linear"]["Tol"], 1e-10)
         self.assertEqual(worker["Solver"]["Order"], 4)
         self.assertEqual(worker["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeFrameNormal"], [0.0, 0.0, 1.0])
-        # The analysis without a reference: the recorded results give PendingQualification.
-        campaign = ASSESSMENT / CASES[case_id]["Campaign"]
-        record_, context, root_, table, digest, profile, manifest = self.analysis_context(case_id, None)
-        before = self.snapshot(campaign)
-        gate_record = qualify_library.analyze_case(record_, context, campaign / "results", gates=table, gates_digest=digest,
-                                                   profile=profile)
-        self.assert_campaign_untouched(campaign, before)
-        self.assertEqual(gate_record["Verdict"], gates.VERDICT_PENDING)
-        self.assertEqual(record_["Status"], "pending-qualification")
-        self.assertIsNone(record_["Cost"]["ReferenceNodeHours"])
+        # The run config carries the shells: the base MA entry and 15 shell entries (the analysis of a
+        # --reference none run on stored results is Batch1ReplayTest's S4 replay).
+        self.assertEqual([entry["Type"] for entry in worker["Boundaries"]["Postprocessing"]["Dielectric"]].count("MA"), 15)
+        self.assertEqual(case["Inputs"]["RadialShells"]["RingRadii"], json.loads(Path(case["Mesh"]["RadialShells"]["Shells"]["Path"]).read_text())["RingRadii"])
 
-    def test_controls_only_two_cases_take_their_own_reducers(self):
-        """Decision 495 (1): TWO cases in ONE stored root (a --reference none dry run of the four-edge and the
-        three-edge cases, completed with their campaigns' recorded reducer CSVs): ONE controls-only run of both
-        takes EACH coupon's own reducer as its prior main stage (ControlAmplitudes.PriorMainStage =
-        ReusedMain.Reducer.Directory) - the first coupon's reducer leaks into no other coupon; the shared args
-        Namespace is never written (the in-process prepare_case sequence of run_qualify)."""
-        cases = {"four-edge-9d2cb9bbb3fe": "four-edge-physics-11", "three-edge-419576fdab24": "gallery-physics-06b"}
-        prefixes = {"four-edge-9d2cb9bbb3fe": "va", "three-edge-419576fdab24": "g06b"}   # the campaigns' recorded stage prefixes
-        stored = self.tmp / "stored-two"
-        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
-                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, *[token for case_id in cases for token in ("--case", case_id)],
-                   "--root", str(stored), "--dry-run"]
-        result = subprocess.run(command, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        record_path = stored / "library-qualification.json"
-        record = json.loads(record_path.read_text())
-        self.assertEqual([case["Status"] for case in record["Cases"]], ["planned", "planned"])
-        own = {}
-        for case, campaign in zip(record["Cases"], (ASSESSMENT / cases[c] for c in cases)):
-            case_id = case["Case"]
-            reducer = stored / case_id / "results" / "main" / f"{case_id}-p4" / "reducer"
-            reducer.mkdir(parents=True)
-            digests = {}
-            for name in qualify_library.REUSED_MAIN_CSVS:
-                shutil.copyfile(campaign / "results" / "main" / f"{prefixes[case_id]}-p4" / "reducer" / name, reducer / name)
-                digests[name] = sha256(reducer / name)
-            case["ResultDigests"] = {f"main/{case_id}-p4/reducer/{name}": {"Local": digest, "Remote": digest, "OK": True}
-                                     for name, digest in digests.items()}
-            case["Jobs"][0]["Submission"] = {"Job": f"{case_id}.fake"}
-            case["Qualification"] = {"Verdict": "Failed", "UnjudgedTypes": []}
-            case["Cost"] = {"MainStage": {"NodeHours": 1.0}, "JobNodeHours": 1.5}
-            own[case_id] = str(reducer)
-        record_path.write_text(json.dumps(record, indent=2))
-        self.assertNotEqual(own["four-edge-9d2cb9bbb3fe"], own["three-edge-419576fdab24"])
-        # One controls-only run of both coupons.
-        root = self.tmp / "controls-only-two"
-        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
-                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, *[token for case_id in cases for token in ("--case", case_id)],
-                   "--controls", "p3,p5", "--controls-only", "--reuse-main", str(stored), "--root", str(root), "--dry-run"]
-        result = subprocess.run(command, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        planned = {case["Case"]: case for case in json.loads((root / "library-qualification.json").read_text())["Cases"]}
-        for case_id in cases:
-            case = planned[case_id]
-            self.assertEqual(case["Status"], "planned", case.get("StoppedBy"))
-            self.assertEqual(case["ControlAmplitudes"]["PriorMainStage"], own[case_id], case_id)
-            self.assertEqual(case["ReusedMain"]["Reducer"]["Directory"], own[case_id])
-            self.assertEqual(case["ReusedMain"]["Case"], case_id)
-            self.assertIn("decision 474 (A)", case["Controls"]["Rule"])
-            self.assertEqual(len(case["Controls"]["Indices"]), 8)
-        self.assertNotEqual(planned["four-edge-9d2cb9bbb3fe"]["Controls"]["Indices"], planned["three-edge-419576fdab24"]["Controls"]["Indices"])
-        # The same two coupons through ONE prepare_case sequence sharing ONE args Namespace: args untouched.
+
+
+# The shell-era replay inputs (decisions 500 (4) / 508): the (b) batch-1 stored roots of record (S4 one node, S3p /
+# S2p split + re-qualified) with their identity meshes and reducer CSVs copied from the cluster lane directory,
+# every file sha256-identical on both ends (never committed; the stored records keep their cluster paths, which the
+# fixture relocates in its own copies - nothing under the root is written).
+BATCH1 = Path(os.environ.get("COUPON_BATCH1_REPLAY_ROOT", "/tmp/tools-followups2-inputs/b-batch1"))
+BATCH1_CLUSTER_LANE = "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/curved-clusters-20261005/b-batch1"
+BATCH1_BINARY_SHA256 = "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88"
+BATCH1_WINDOWS = {
+    "sct002-S4": {"Case": "spatial-3-edge-7391dde39d93", "Sources": 148, "Controls": [1, 2, 3, 4, 5, 25, 26, 75]},
+    "sct002-S3p": {"Case": "spatial-8-edge-05c322f6cda8", "Sources": 258, "Controls": [1, 2, 3, 8, 10, 31, 32, 108],
+                   "RequalifiedControls": [1, 2, 3, 15, 18, 32, 48, 108], "Model": "spatialedgecluster_edgecount-8_e7f44561bbf0"},
+    "sct002-S2p": {"Case": "spatial-8-edge-818f8956d075", "Sources": 252, "Controls": [1, 2, 3, 7, 20, 31, 32, 93],
+                   "RequalifiedControls": [1, 2, 3, 7, 20, 32, 33, 93], "Model": "spatialedgecluster_edgecount-8_d19e77e8fe71"},
+}
+# The decision-479 control sets of record of the two 8-edge re-qualifications.
+BATCH1_REQUALIFICATION_CONTROLS = BATCH1 / "records" / "eight-edge-requalification-controls.json"
+
+
+def batch1_stored_root(window, kind="fab"):
+    """The stored qualify root of a window (qualify/<W>/fab-<case> or thin-<case>)."""
+    case = BATCH1_WINDOWS[window]["Case"]
+    return BATCH1 / "qualify" / window / f"{kind}-{case}"
+
+
+def batch1_available():
+    needed = [BATCH1_REQUALIFICATION_CONTROLS]
+    for window, spec in BATCH1_WINDOWS.items():
+        case = spec["Case"]
+        needed += [BATCH1 / "registration" / window / "manifest-main.json",
+                   BATCH1 / "registration" / window / "build" / "library-build.json",
+                   BATCH1 / "registration" / window / "build" / case / "identity.msh",
+                   batch1_stored_root(window) / "library-qualification.json",
+                   batch1_stored_root(window) / case / "results" / "main" / f"{case}-p4" / "reducer" / "surface-response-matrix.csv"]
+        if "RequalifiedControls" in spec:
+            needed += [BATCH1 / "requalify" / window / "library-qualification.json",
+                       BATCH1 / "requalify" / window / case / "results" / "main" / f"{case}-p5-control" / "reducer" / "surface-response-matrix.csv",
+                       batch1_stored_root(window, "thin") / f"{case}-thin" / "results" / "main" / f"{case}-thin-p4" / "reducer" / "surface-response-matrix.csv",
+                       BATCH1 / "f-qualification" / case / "spatial-qualification-requal.json",
+                       BATCH1 / "f-qualification" / case / "dense" / "dense-traces.json",
+                       BATCH1 / "preflight" / window / "c0-p4" / "postpro" / "palace.json",
+                       BATCH1 / "library" / f"b1-requal-interim-{window.split('-')[1]}" / "process-library.json"]
+    needed.append(BATCH1 / "registration" / "sct002-S4" / "build" / f"{BATCH1_WINDOWS['sct002-S4']['Case']}-thin" / "identity.msh")
+    return all(path.is_file() for path in needed)
+
+
+def relocated(text):
+    return text.replace(BATCH1_CLUSTER_LANE, str(BATCH1))
+
+
+def assert_numbers_reproduced(test, stored, actual, path="", *, ignore=(), rel=1e-12):
+    """Every value of a stored record is reproduced by the actual one: floats to `rel`, everything
+    else equal; keys only in the actual record are allowed (the tool's newer fields); the paths in
+    `ignore` (dotted) are not compared (host-specific paths, UTC stamps)."""
+    if path in ignore:
+        return
+    if isinstance(stored, dict):
+        test.assertIsInstance(actual, dict, path)
+        for key, value in stored.items():
+            test.assertIn(key, actual, f"{path}.{key}")
+            assert_numbers_reproduced(test, value, actual[key], f"{path}.{key}" if path else key, ignore=ignore, rel=rel)
+    elif isinstance(stored, list):
+        test.assertEqual(len(stored), len(actual), path)
+        for index, (left, right) in enumerate(zip(stored, actual)):
+            assert_numbers_reproduced(test, left, right, f"{path}[{index}]", ignore=ignore, rel=rel)
+    elif isinstance(stored, float) and isinstance(actual, (int, float)) and not isinstance(actual, bool):
+        test.assertTrue(abs(stored - actual) <= rel * max(abs(stored), abs(actual), 1e-300) or stored == actual, f"{path}: {stored} != {actual}")
+    else:
+        test.assertEqual(stored, actual, path)
+
+
+@unittest.skipUnless(batch1_available(), f"the (b) batch-1 replay inputs under {BATCH1} are needed (decision 508)")
+class Batch1ReplayTest(unittest.TestCase):
+    """The shell-era replays on the (b) batch-1 stored roots: the analysis of the stored S4 results
+    reproduces its record, the concurrent scheduler against a fake remote replaying S4 fab + thin,
+    the split-coupon run replaying the S3p 3-job root, and the controls-only re-qualification of
+    S3p / S2p (decisions 474 (A) / 479 / 485 (c)) end to end against the records of record.  The
+    stored roots are read only (mtimes snapshotted); the driver runs its real paths (the mesh
+    hashed, the identity checks, the control choice, the analysis, the (F) evaluate)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="coupon-batch1-replay-"))
+        cls.build_records = {}
+        for window in BATCH1_WINDOWS:
+            local = cls.tmp / window
+            local.mkdir()
+            manifest = local / "manifest-main.json"
+            manifest.write_text(relocated((BATCH1 / "registration" / window / "manifest-main.json").read_text()))
+            build = json.loads(relocated((BATCH1 / "registration" / window / "build" / "library-build.json").read_text()))
+            build["Library"]["Manifest"] = {"Path": str(manifest), "SHA256": sha256(manifest)}
+            (local / "library-build.json").write_text(json.dumps(build, indent=2))
+            cls.build_records[window] = local / "library-build.json"
+        cls.before = snapshot(BATCH1)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, True)
+
+    def tearDown(self):
+        self.assertEqual(snapshot(BATCH1), self.before, "the stored batch-1 roots must stay read only")
+
+    def args(self, window, root, *cases, extra=()):
         parser = argparse.ArgumentParser()
         qualify_library.add_arguments(parser)
-        args = parser.parse_args(["--build-record", str(self.build_record), "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256,
-                                  "--controls", "p3,p5", "--controls-only", "--reuse-main", str(stored), "--root", str(root / "shared"), "--dry-run"])
-        build = json.loads(self.build_record.read_text())
-        manifest = json.loads(MANIFEST.read_text())
-        manifest["Path"] = str(MANIFEST)
-        profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
+        tokens = ["--build-record", str(self.build_records[window]), "--reference", "none", "--remote", "h:/r", "--max-jobs", "2",
+                  "--job-policy", "frugal", "--frozen-binary-sha256", BATCH1_BINARY_SHA256, "--root", str(root), "--monitor-interval", "0",
+                  "--monitor-polls", "10", *[token for case in cases for token in ("--case", case)], *extra]
+        return parser.parse_args(tokens)
+
+    def build_case(self, window, case_id):
+        return next(item for item in json.loads(self.build_records[window].read_text())["Cases"] if item["Case"] == case_id)
+
+    def prepare(self, window, case_id, root, *, extra=()):
+        args = self.args(window, root, case_id, extra=extra)
+        build = json.loads(self.build_records[window].read_text())
+        manifest = json.loads(Path(build["Library"]["Manifest"]["Path"]).read_text())
+        manifest["Path"] = build["Library"]["Manifest"]["Path"]
+        profile = json.loads(Path(args.cluster_profile).read_text())
+        table, digest = gates.load_gates(args.gates)
+        root.mkdir(parents=True, exist_ok=True)
+        record, context = qualify_library.prepare_case(self.build_case(window, case_id), manifest_path=Path(manifest["Path"]),
+                                                       manifest=manifest, args=args, root=root, remote={"Host": "h", "Root": "/r"},
+                                                       profile=profile, cost_model=estimate_stages.load_cost_model(args.cost_model),
+                                                       gates=table, gates_digest=digest)
+        return record, context, table, digest, profile
+
+    def assert_plan_reproduces_stored(self, record, stored_case, stored_plans, *, stage_configs):
+        """The plan of this run equals the stored run's: controls, stage names, every regenerated trace
+        digest = the stored plan's pin, the stage configs apart from the remote paths, the mesh."""
+        self.assertEqual(record["Controls"]["Indices"], stored_case["Controls"]["Indices"])
+        self.assertEqual(record["Plan"]["StageNames"], stored_case["Plan"]["StageNames"])
+        self.assertEqual(record["Mesh"]["SHA256"], stored_case["Mesh"]["SHA256"])
+        self.assertEqual(record["Sources"]["Count"], stored_case["Sources"]["Count"])
+        self.assertEqual(record["Inputs"]["RadialShells"]["Interfaces"], stored_case["Inputs"]["RadialShells"]["Interfaces"])
+        stored_pins = {}
+        for plan in stored_plans:
+            stored_pins.update({Path(key).name: value for key, value in plan["PinnedSHA256"].items() if "/inputs/traces/" in key})
+        regenerated = {source["Name"]: source["SHA256"] for source in record["Inputs"]["Sources"]}
+        self.assertEqual(len(stored_pins), stored_case["Sources"]["Count"])
+        self.assertEqual(regenerated, stored_pins)
+        for stage, names in stage_configs.items():
+            for name in names:
+                generated = strip_paths(json.loads((Path(record["Root"]) / "main" / stage / name).read_text()))
+                stored = strip_paths(json.loads((Path(stored_case["Root"].replace(BATCH1_CLUSTER_LANE, str(BATCH1))) / "main" / stage / name)
+                                                .read_text()))
+                self.assertEqual(generated, stored, f"{stage}/{name}")
+
+    def replay_remote(self, results_of, events, *, archive_count=None):
+        """A fake remote replaying the stored results of each case: submit / poll / exit check / fetch
+        (the stored results/main copied, every status.json stamped with this run's job id) / digests /
+        archive deletion; `results_of` = case id -> stored results/main directory."""
+        remote_side = qualify_library.remote_side
+
+        def job_id_of(directory):
+            return f"{Path(directory).name}.fake"
+
+        def fake_submit(host, pbs_bin, script, cwd, *, job_cap, user=None):
+            events.append(("submit", Path(cwd).name))
+            return {"Job": job_id_of(cwd), "UTC": remote_side.utc(), "UserJobsBefore": 0, "JobCap": job_cap, "Command": "qsub"}
+
+        def fake_job_exit(host, remote_job_directory, job_id):
+            events.append(("exit-check", Path(remote_job_directory).name))
+            return {"OK": True, "Reasons": [], "ExitRecord": {"ExitCode": 0, "JobID": job_id}, "StatusPBSJobID": job_id}
+
+        def fake_poll(host, pbs_bin, job_id, status_path):
+            events.append(("poll", Path(status_path).parts[-2]))
+            return {"UTC": "fake", "JobState": "F", "QStat": "", "Status": None, "Reachable": True}
+
+        def stamped(path, job_directory):
+            status = json.loads(Path(path).read_text())
+            return {**status, "PBSJobID": job_id_of(job_directory)}
+
+        def fake_read_json(host, path):
+            case = Path(path).parts[-5] if Path(path).parts[-3] == "jobs" else Path(path).parts[-3]
+            events.append(("status", Path(path).parts[-2]))
+            relative = Path(path).relative_to(Path(path).parents[2]) if Path(path).parts[-3] == "jobs" else Path(path).name
+            return stamped(results_of[case] / relative, Path(path).parent)
+
+        def fake_fetch(host, remote_directory, local_directory):
+            case = Path(remote_directory).parts[-2]
+            events.append(("fetch", case))
+            local = Path(local_directory)
+            shutil.copytree(results_of[case], local, dirs_exist_ok=True)
+            for status_path in [local / "status.json"] + sorted(local.glob("jobs/*/status.json")):
+                if status_path.is_file():
+                    status_path.write_text(json.dumps(stamped(status_path, status_path.parent)))
+            return ["rsync", "fake"]
+
+        def fake_remote_sha256(host, paths):
+            digests = {}
+            for path in paths:
+                case = next(case for case in results_of if f"/{case}/main/" in path)
+                digests[path] = sha256(Path(self.run_root) / case / "results" / "main" / path.split("/main/", 1)[1])
+            return digests
+
+        def fake_delete(host, archives):
+            events.append(("delete", tuple(Path(a).parts[-2] for a in archives)))
+            return {"Archives": list(archives), "SizesBeforeDeletion": "0", "DeletedUTC": "fake", "Remaining": ""}
+
+        def fake_count(host, directory):
+            events.append(("archive-count", Path(directory).parts[-2]))
+            return archive_count
+
+        def fake_upload(record, context, *, remote, profile, adopt_remote_case=False):
+            events.append(("upload", record["Case"]))
+            return {"Commands": [], "UTC": "fake"}
+        fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
+                 "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F", "job_exit": fake_job_exit,
+                 "read_json": fake_read_json, "count_archive_potentials": fake_count}
+        saved = {name: getattr(remote_side, name) for name in fakes}
+        saved_upload = qualify_library.upload_case
+        for name, fake in fakes.items():
+            setattr(remote_side, name, fake)
+        qualify_library.upload_case = fake_upload
+
+        def restore():
+            for name, fake in saved.items():
+                setattr(remote_side, name, fake)
+            qualify_library.upload_case = saved_upload
+        self.addCleanup(restore)
+        return restore
+
+    def test_analysis_of_the_recorded_results_reproduces_the_verdicts(self):
+        """The S4 fab coupon (one node, 148 sources, --reference none): prepare_case on the stored build
+        record reproduces the stored plan (controls by class, stage names, every trace pin, the stage
+        configs, the shell map), and analyze_case on the stored results reproduces the stored record:
+        the verdict (PendingQualification: controls passed, no reference), every p-sequence step of every
+        control, the MA_sharp tail summary and the main-stage cost, the stored root untouched."""
+        window, spec = "sct002-S4", BATCH1_WINDOWS["sct002-S4"]
+        case_id = spec["Case"]
+        stored_root = batch1_stored_root(window)
+        stored_case = json.loads((stored_root / "library-qualification.json").read_text())["Cases"][0]
+        self.assertEqual(stored_case["Controls"]["Indices"], spec["Controls"])
+        record, context, table, digest, profile = self.prepare(window, case_id, self.tmp / "s4-analysis")
+        self.assertEqual(record["Mesh"]["RadialShells"]["Binding"], "RadialShells")
+        self.assertEqual(record["Mesh"]["RadialShells"]["ShellCount"], 15)
+        self.assertEqual((record["Split"]["N"], record["JobPolicy"]["Mode"]), (1, "frugal"))
+        self.assertEqual((record["ReducerBlockSize"]["Value"], record["ReducerBlockSize"]["Origin"]), (48, "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize"))
+        self.assert_plan_reproduces_stored(record, stored_case, [json.loads((stored_root / case_id / "main" / "plan.json").read_text())],
+                                           stage_configs={f"{case_id}-p4": ("worker.json", "reducer.json"),
+                                                          f"{case_id}-p5-control": ("worker.json", "reducer.json"),
+                                                          f"{case_id}-p3-control": ("worker.json", "reducer.json"),
+                                                          f"{case_id}-p4-local-edge": ("config.json",)})
+        gate_record = qualify_library.analyze_case(record, context, stored_root / case_id / "results", gates=table, gates_digest=digest,
+                                                   profile=profile)
+        stored_gate = json.loads((stored_root / case_id / "qualification.json").read_text())
+        self.assertEqual(gate_record["Verdict"], stored_gate["Verdict"])
+        self.assertEqual(gate_record["Verdict"], gates.VERDICT_PENDING)
+        self.assertEqual(gate_record["GatesPassed"], stored_gate["GatesPassed"])
+        self.assertEqual(gate_record["Reason"], stored_gate["Reason"])
+        self.assertEqual(gate_record["Interfaces"], stored_gate["Interfaces"])
+        # Every p-step of every control to the stored digit; the stored run (gate table V5, before the
+        # amplitude floor) judged every observable, the gate of record leaves a below-floor Type of a
+        # control unjudged (decision 474 (A): Passed None, BelowAmplitudeFloor recorded) - never the other way.
+        below_floor = self.assert_p_steps_reproduced(stored_gate, gate_record)
+        judged = gate_record["Gates"]["PSequenceControls"]["JudgedControls"]
+        self.assertEqual(judged["E"], 8)
+        self.assertEqual({name: 8 - sum(1 for _, observable in below_floor if observable == name) for name in judged}, judged)
+        self.assertEqual(gate_record["Gates"]["PSequenceControls"]["UnjudgedTypes"], [])
+        self.assertEqual(record["Status"], "pending-qualification")
+        self.assertIsNone(record["Cost"]["ReferenceNodeHours"])
+        assert_numbers_reproduced(self, stored_case["Cost"]["MainStage"], record["Cost"]["MainStage"], "Cost.MainStage")
+        self.assertAlmostEqual(record["Cost"]["MainStage"]["NodeHours"], 0.59996, places=5)
+        # The MA_sharp tail (ma_tail.py unchanged since the stored run): the fitted estimators agree to the
+        # libm level of the two hosts (the stored record was computed on the cluster login node; the Fit2-4
+        # deficit quartiles differ at 3e-11 relative), the ring sums and raw / sharp participations exactly.
+        stored_tail = json.loads((stored_root / case_id / "comparison" / "ma-tail.json").read_text())
+        tail = json.loads((Path(record["Root"]) / "comparison" / "ma-tail.json").read_text())
+        assert_numbers_reproduced(self, stored_tail["Orders"]["p4"]["Summary"], tail["Orders"]["p4"]["Summary"], "MATail.p4.Summary", rel=1e-9)
+        assert_numbers_reproduced(self, stored_tail["Orders"]["p4"]["PerSource"], tail["Orders"]["p4"]["PerSource"], "MATail.p4.PerSource", rel=1e-9)
+        for index, per_source in stored_tail["Orders"]["p4"]["PerSource"].items():
+            self.assertEqual(per_source["Q_MA_raw"], tail["Orders"]["p4"]["PerSource"][index]["Q_MA_raw"], index)
+        self.assertEqual(stored_tail["RingRadii"], tail["RingRadii"])
+        manifest_path = self.build_records[window].parent / "manifest-main.json"
+        library = qualify_library.process_library_entries([record], {case_id: context}, manifest_path=manifest_path,
+                                                          manifest=json.loads(manifest_path.read_text()) | {"Path": str(manifest_path)},
+                                                          root=Path(record["Root"]).parent)
+        self.assertEqual(len(library["Models"]), 1)
+        self.assertFalse(library["Models"][0]["LibraryQualified"])
+        self.assertEqual(library["Models"][0]["Qualification"]["Verdict"], gates.VERDICT_PENDING)
+        self.assertEqual(library["Models"][0]["CouponMesh"]["SHA256"], stored_case["Mesh"]["SHA256"])
+
+    def assert_p_steps_reproduced(self, stored_gate, gate_record):
+        """StepToHigherOrder / StepFromLowerOrder / Bound of every control observable equal the stored
+        ones; Passed equal unless the gate of record left it unjudged below the amplitude floor; returns
+        the (control, observable) pairs left unjudged."""
+        below_floor = set()
+        for control, observables in stored_gate["Gates"]["PSequenceControls"]["Controls"].items():
+            for name, stored_step in observables.items():
+                step = gate_record["Gates"]["PSequenceControls"]["Controls"][control][name]
+                assert_numbers_reproduced(self, {key: stored_step[key] for key in ("StepToHigherOrder", "StepFromLowerOrder", "Bound")},
+                                          step, f"control {control} {name}")
+                if step["Passed"] is None:
+                    self.assertFalse(step["Judged"], (control, name))
+                    self.assertIn("BelowAmplitudeFloor", step, (control, name))
+                    below_floor.add((control, name))
+                else:
+                    self.assertEqual(step["Passed"], stored_step["Passed"], (control, name))
+        return below_floor
+
+    def test_without_reference_matrices_the_verdict_is_pending(self):
+        """--reference none (the batch-1 device coupons have no reference campaign): the S4 record carries the
+        rule, the reference cost is None and the verdict can only be PendingQualification or Failed - the
+        stored S4 fab run (controls passed) reads PendingQualification, the stored S4 thin run (--controls "",
+        no p-sequence control) Failed; both reproduced from the stored results."""
+        window, spec = "sct002-S4", BATCH1_WINDOWS["sct002-S4"]
+        for kind, expected in (("fab", gates.VERDICT_PENDING), ("thin", gates.VERDICT_FAILED)):
+            case_id = spec["Case"] if kind == "fab" else f"{spec['Case']}-thin"
+            stored_root = batch1_stored_root(window, kind)
+            stored_case = json.loads((stored_root / "library-qualification.json").read_text())["Cases"][0]
+            record, context, table, digest, profile = self.prepare(window, case_id, self.tmp / f"s4-{kind}-none",
+                                                                   extra=() if kind == "fab" else ("--controls", ""))
+            self.assertIn("--reference none", record["Reference"]["Rule"])
+            self.assertEqual(record["Kind"], "fabricated" if kind == "fab" else "thin")
+            self.assertEqual(record["Orders"]["Controls"], ["p3", "p5"] if kind == "fab" else [])
+            gate_record = qualify_library.analyze_case(record, context, stored_root / case_id / "results", gates=table, gates_digest=digest,
+                                                       profile=profile)
+            self.assertEqual((gate_record["Verdict"], stored_case["Qualification"]["Verdict"]), (expected, expected), kind)
+            self.assertEqual(set(gate_record["Gates"]), {"PSequenceControls"})
+            self.assertEqual(record["Status"], "pending-qualification" if kind == "fab" else "failed")
+            self.assertIsNone(record["Cost"]["ReferenceNodeHours"])
+            self.assertEqual(record["Qualification"]["Reason"], stored_case["Qualification"]["Reason"])
+
+    def test_jobs_run_concurrently_up_to_max_jobs(self):
+        """Two planned coupons (the S4 fab and its thin twin, one job each), --max-jobs 2, a fake remote
+        replaying the stored results: both jobs are submitted before either is polled done, each coupon is
+        fetched / verified / analyzed when its job leaves the queue, the fab reads PendingQualification and
+        the thin Failed as recorded, the thin response is attached to the fab model, and --resume re-derives
+        the plans byte-identical and adopts the recorded submissions (no upload, no qsub)."""
+        window, spec = "sct002-S4", BATCH1_WINDOWS["sct002-S4"]
+        fab, thin = spec["Case"], f"{spec['Case']}-thin"
+        events = []
+        self.run_root = self.tmp / "s4-concurrent"
+        results_of = {fab: batch1_stored_root(window, "fab") / fab / "results" / "main",
+                      thin: batch1_stored_root(window, "thin") / thin / "results" / "main"}
+        self.replay_remote(results_of, events)
+        saved_prepare = qualify_library.prepare_case
+
+        def prepare_with_the_recorded_controls(case_record, **kwargs):
+            # The stored thin twin ran --controls "" (decision 290); the one shared Namespace is the test's.
+            kwargs["args"].controls = [] if case_record["Case"] == thin else [3, 5]
+            return saved_prepare(case_record, **kwargs)
+        qualify_library.prepare_case = prepare_with_the_recorded_controls
+        self.addCleanup(setattr, qualify_library, "prepare_case", saved_prepare)
+        args = self.args(window, self.run_root, fab, thin)
+        record = qualify_library.run_qualify(args, log=lambda message: None)
+        first_events = list(events)
+        events.clear()
+        args.resume = True
+        resumed = qualify_library.run_qualify(args, log=lambda message: None)
+        kinds = [kind for kind, _ in first_events]
+        self.assertEqual(kinds[:4], ["upload", "submit", "upload", "submit"], first_events)
+        self.assertLess(kinds.index("submit", kinds.index("submit") + 1), kinds.index("fetch"), "both jobs queued before any fetch")
+        self.assertEqual([case for kind, case in first_events if kind == "fetch"], [fab, thin])
+        totals = record["Library"]
+        self.assertEqual((totals["JobsSubmitted"], totals["MaxJobs"], totals["CouponsPending"], totals["CouponsFailed"]), (2, 2, 1, 1))
+        self.assertEqual(set(totals["JobWallSeconds"]), {fab, thin})
+        by_case = {case["Case"]: case for case in record["Cases"]}
+        stored = {case_id: json.loads((batch1_stored_root(window, kind) / "library-qualification.json").read_text())["Cases"][0]
+                  for case_id, kind in ((fab, "fab"), (thin, "thin"))}
+        for case_id, case in by_case.items():
+            self.assertEqual(case["Status"], stored[case_id]["Status"], case.get("StoppedBy"))
+            self.assertEqual(case["Qualification"]["Verdict"], stored[case_id]["Qualification"]["Verdict"])
+            self.assertEqual(case["Monitor"]["LastJobState"], "F")
+            self.assertTrue(all(entry["OK"] for entry in case["ResultDigests"].values()))
+            self.assertEqual((case["Split"]["N"], case["JobPolicy"]["Mode"]), (1, "frugal"))
+            self.assertEqual([job["Kind"] for job in case["Jobs"]], ["single"])
+            self.assertAlmostEqual(case["Cost"]["JobTotalSeconds"], stored[case_id]["Cost"]["JobTotalSeconds"])
+            self.assertEqual(case["Mesh"]["SHA256"], stored[case_id]["Mesh"]["SHA256"])
+        self.assertEqual(by_case[fab]["Controls"]["Indices"], spec["Controls"])
+        library = json.loads((self.run_root / "process-library.json").read_text())
+        self.assertEqual(len(library["Models"]), 1)
+        model = library["Models"][0]
+        self.assertEqual(model["QualificationStatus"], "PendingQualification")
+        self.assertTrue(model["ThinMatrix"] and model["FabricatedMatrix"])
+        self.assertEqual(model["CouponMesh"]["SHA256"], stored[fab]["Mesh"]["SHA256"])
+        resumed_kinds = [kind for kind, _ in events]
+        self.assertNotIn("upload", resumed_kinds)
+        self.assertNotIn("submit", resumed_kinds)
+        self.assertEqual(resumed_kinds.count("fetch"), 2)
+        for case in resumed["Cases"]:
+            self.assertTrue(case["Monitor"]["Resumed"])
+            self.assertEqual(case["Submission"], json.loads((self.run_root / case["Case"] / "submission.json").read_text()))
+
+    def test_split_coupon_runs_worker_jobs_then_the_reducer_job(self):
+        """The S3p first pass replayed: --job-policy frugal splits the 258 sources into 2 worker jobs ([94, 164]
+        under the cost model of record; the first pass split [101, 157] under cost model V2) + the reducer job; both workers are submitted at once, each completed from its own stored
+        status.json, the archive union counted before the reducer job, the coupon fetched / verified / analyzed
+        after the reducer job; the first-pass controls [1, 2, 3, 8, 10, 31, 32, 108] and the stored plans' trace
+        pins are reproduced; the gate reads the stored matrices under the gate table of record (the decision-474
+        amplitude floor: a Type with no judged control is Unjudged, the lift of the first pass's Failed verdict is
+        the decision-479 re-qualification's business)."""
+        window, spec = "sct002-S3p", BATCH1_WINDOWS["sct002-S3p"]
+        case_id = spec["Case"]
+        stored_root = batch1_stored_root(window)
+        stored_case = json.loads((stored_root / "library-qualification.json").read_text())["Cases"][0]
+        events = []
+        self.run_root = self.tmp / "s3p-split"
+        self.replay_remote({case_id: stored_root / case_id / "results" / "main"}, events, archive_count=spec["Sources"] * 192)
+        args = self.args(window, self.run_root, case_id)
+        record = qualify_library.run_qualify(args, log=lambda message: None)
+        case = record["Cases"][0]
+        self.assertIsNone(case.get("StoppedBy"), case.get("StoppedBy"))
+        # The split of record under the cost model of record (V3, decision 457 (2)): [94, 164] = the
+        # decision-479 re-qualification's own record of the stored plan; the first pass ran cost model V2
+        # (f695da1b...) and split [101, 157] - the stored per-block statuses merge to the same stage totals.
+        requal_case = json.loads((BATCH1 / "requalify" / window / "library-qualification.json").read_text())["Cases"][0]
+        self.assertEqual((case["Split"]["N"], case["JobPolicy"]["Mode"], case["Split"]["Blocks"]), (2, "frugal", requal_case["Split"]["Blocks"]))
+        self.assertEqual((case["Split"]["Blocks"], stored_case["Split"]["Blocks"]), ([94, 164], [101, 157]))
+        self.assertEqual(case["Controls"]["Indices"], spec["Controls"])
+        self.assertEqual(case["Plan"]["StageNames"], stored_case["Plan"]["StageNames"])
+        stored_plans = [json.loads(path.read_text()) for path in sorted((stored_root / case_id / "main" / "jobs").glob("*/plan.json"))]
+        self.assert_plan_reproduces_stored(case, stored_case, stored_plans, stage_configs={
+            f"{case_id}-p4": ("reducer.json",), f"{case_id}-p5-control": ("worker.json", "reducer.json"),
+            f"{case_id}-p3-control": ("worker.json", "reducer.json"), f"{case_id}-p4-local-edge": ("config.json",)})
+        blocks = [json.loads((Path(case["Root"]) / "main" / f"{case_id}-p4" / f"worker-block{k}.json").read_text()) for k in (1, 2)]
+        self.assertEqual([entry["Index"] for block in blocks for entry in block["Boundaries"]["PrescribedPotential"]], list(range(1, spec["Sources"] + 1)))
+        kinds = [kind for kind, _ in events]
+        self.assertEqual(events[:3], [("upload", case_id), ("submit", "worker-1"), ("submit", "worker-2")])
+        self.assertLess(kinds.index("poll"), kinds.index("archive-count"))
+        self.assertEqual([name for kind, name in events if kind == "status"], ["worker-1", "worker-2"])
+        self.assertEqual(events.index(("archive-count", f"{case_id}-p4")) + 1, events.index(("submit", "reducer")))
+        self.assertLess(events.index(("submit", "reducer")), events.index(("fetch", case_id)))
+        self.assertEqual(kinds.count("fetch"), 1)
+        self.assertEqual([job["Name"] for job in case["Jobs"]], ["worker-1", "worker-2", "reducer"])
+        self.assertEqual(case["Jobs"][2]["Requires"], ["worker-1", "worker-2"])
+        self.assertEqual(case["ArchiveUnion"]["Stages"][f"{case_id}-p4"]["Expected"], spec["Sources"] * 192)
+        for job, stored_job in zip(case["Jobs"], stored_case["Jobs"]):
+            self.assertEqual(job["Monitor"]["LastJobState"], "F")
+            self.assertEqual(job["StageNames"], stored_job["StageNames"])
+        assert_numbers_reproduced(self, stored_case["Cost"]["MainStage"], case["Cost"]["MainStage"], "Cost.MainStage")
+        self.assertAlmostEqual(case["Cost"]["JobTotalSeconds"], stored_case["Cost"]["JobTotalSeconds"])
+        self.assertEqual(record["Library"]["JobsSubmitted"], 3)
+        # The stored first pass (gate table V5, before the amplitude floor) read Failed on below-floor controls;
+        # the gate of record judges only above-floor Types: the verdict is Failed or PendingQualification with
+        # the below-floor Types recorded, never Passed / Qualified (decisions 474 / 477 (1)).
+        self.assertIn(case["Qualification"]["Verdict"], (gates.VERDICT_FAILED, gates.VERDICT_PENDING))
+        self.assertEqual(stored_case["Qualification"]["Verdict"], gates.VERDICT_FAILED)
+        gate_record = json.loads((self.run_root / case_id / "qualification.json").read_text())
+        stored_gate = json.loads((stored_root / case_id / "qualification.json").read_text())
+        for control, observables in stored_gate["Gates"]["PSequenceControls"]["Controls"].items():
+            for name, stored_step in observables.items():
+                step = gate_record["Gates"]["PSequenceControls"]["Controls"][control][name]
+                assert_numbers_reproduced(self, {key: stored_step[key] for key in ("StepToHigherOrder", "StepFromLowerOrder", "Bound")},
+                                          step, f"control {control} {name}")
+        library = json.loads((self.run_root / "process-library.json").read_text())
+        self.assertFalse(library["Models"][0]["LibraryQualified"])
+        self.assertEqual(library["Models"][0]["QualificationStatus"], "Failed" if case["Qualification"]["Verdict"] == gates.VERDICT_FAILED
+                         else "PendingQualification")
+        # --resume adopts the three recorded submissions (plans byte-identical).
+        del events[:]
+        args.resume = True
+        resumed = qualify_library.run_qualify(args, log=lambda message: None)
+        resumed_case = resumed["Cases"][0]
+        self.assertIsNone(resumed_case.get("StoppedBy"), resumed_case.get("StoppedBy"))
+        self.assertEqual([kind for kind, _ in events if kind in ("upload", "submit")], [])
+        self.assertEqual([job["Submission"]["Job"] for job in resumed_case["Jobs"]], ["worker-1.fake", "worker-2.fake", "reducer.fake"])
+
+    def merged_stored_root(self, windows):
+        """ONE stored root holding the first-pass runs of several windows (their records concatenated, the
+        case directories symlinked read-only): the decision-495 (1) two-cases fixture."""
+        merged = self.tmp / ("stored-" + "-".join(windows))
+        if merged.exists():
+            return merged
+        merged.mkdir()
+        records = [json.loads((batch1_stored_root(window) / "library-qualification.json").read_text()) for window in windows]
+        for window in windows:
+            case_id = BATCH1_WINDOWS[window]["Case"]
+            os.symlink(batch1_stored_root(window) / case_id, merged / case_id)
+        (merged / "library-qualification.json").write_text(json.dumps({**records[0], "Cases": [case for record in records for case in record["Cases"]]}))
+        return merged
+
+    def controls_only_args(self, window, root, case_id, reuse_root, build_record=None):
+        args = self.args(window, root, case_id, extra=("--controls", "p3,p5", "--controls-only", "--reuse-main", str(reuse_root)))
+        if build_record is not None:
+            args.build_record = build_record
+        return args
+
+    def test_controls_only_two_cases_take_their_own_reducers(self):
+        """Decision 495 (1): the S3p and S2p first-pass runs in ONE stored root, ONE controls-only run of both
+        (one build record holding both cases): each coupon's PriorMainStage is its OWN stored reducer, the
+        control sets are the decision-479 sets of record, and the shared args Namespace is never written."""
+        windows = ("sct002-S3p", "sct002-S2p")
+        stored = self.merged_stored_root(windows)
+        # One build record of both cases (the two windows' records, the same manifest recipe).
+        builds = [json.loads(self.build_records[window].read_text()) for window in windows]
+        both = self.tmp / "both-build.json"
+        both.write_text(json.dumps({**builds[0], "Cases": [case for build in builds for case in build["Cases"] if case["Case"] in
+                                                           {BATCH1_WINDOWS[w]["Case"] for w in windows}]}))
+        root = self.tmp / "controls-only-two"
+        root.mkdir()
+        cases = [BATCH1_WINDOWS[window]["Case"] for window in windows]
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        args = parser.parse_args(["--build-record", str(both), "--reference", "none", "--frozen-binary-sha256", BATCH1_BINARY_SHA256,
+                                  "--controls", "p3,p5", "--controls-only", "--reuse-main", str(stored), "--root", str(root), "--dry-run",
+                                  "--job-policy", "frugal", *[token for case in cases for token in ("--case", case)]])
+        manifests = {window: json.loads(Path(self.build_records[window].parent / "manifest-main.json").read_text())
+                     | {"Path": str(self.build_records[window].parent / "manifest-main.json")} for window in windows}
+        profile = json.loads(Path(args.cluster_profile).read_text())
         cost_model = estimate_stages.load_cost_model(args.cost_model)
         table, digest = gates.load_gates(args.gates)
-        (root / "shared").mkdir(parents=True, exist_ok=True)
         before = dict(vars(args))
-        priors = {}
-        for case_id in cases:
-            case_record = next(item for item in build["Cases"] if item["Case"] == case_id)
-            planned_record, _ = qualify_library.prepare_case(case_record, manifest_path=MANIFEST, manifest=manifest, args=args, root=root / "shared",
-                                                             remote=None, profile=profile, cost_model=cost_model, gates=table, gates_digest=digest)
-            priors[case_id] = planned_record["ControlAmplitudes"]["PriorMainStage"]
+        priors, controls = {}, {}
+        for window in windows:
+            case_id = BATCH1_WINDOWS[window]["Case"]
+            # Each case's sources live under its own window's registration: its own manifest copy.
+            record, _ = qualify_library.prepare_case(self.build_case(window, case_id), manifest_path=Path(manifests[window]["Path"]),
+                                                     manifest=manifests[window], args=args, root=root, remote=None, profile=profile,
+                                                     cost_model=cost_model, gates=table, gates_digest=digest)
             self.assertEqual(dict(vars(args)), before)
-        self.assertEqual(priors, own)
+            priors[case_id] = record["ControlAmplitudes"]["PriorMainStage"]
+            controls[case_id] = record["Controls"]["Indices"]
+            self.assertEqual(record["ReusedMain"]["Reducer"]["Directory"], priors[case_id])
+            self.assertEqual(record["ReusedMain"]["Case"], case_id)
+            self.assertEqual(record["ReusedMain"]["StoredControls"], BATCH1_WINDOWS[window]["Controls"])
+            self.assertEqual(record["ReusedMain"]["StoredVerdict"], gates.VERDICT_FAILED)
+            self.assertIn("decision 474 (A)", record["Controls"]["Rule"])
+        self.assertEqual(priors, {BATCH1_WINDOWS[window]["Case"]: str(stored / BATCH1_WINDOWS[window]["Case"] / "results" / "main"
+                                                                        / f"{BATCH1_WINDOWS[window]['Case']}-p4" / "reducer") for window in windows})
+        self.assertEqual(controls, {BATCH1_WINDOWS[window]["Case"]: BATCH1_WINDOWS[window]["RequalifiedControls"] for window in windows})
 
     def test_controls_only_reuses_the_stored_main_stage_and_plans_the_control_job(self):
-        """--controls-only --reuse-main (decisions 474 (A) / 479 / 485 (c)) on a stored run synthesized from a
-        --reference none dry run of the four-edge case with the recorded physics-11 reducer CSVs: the
-        identity checks pass (the same mesh, config and traces), the controls are the amplitude-informed
-        choice from the stored reducer, one controls-only job of the fixed stages is planned, and the
-        reused main stage is recorded with the stored reducer's digests and partition."""
-        case_id = "four-edge-9d2cb9bbb3fe"
-        campaign = ASSESSMENT / CASES[case_id]["Campaign"]
-        stored = self.tmp / "stored-run"
-        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
-                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, "--case", case_id, "--stage-prefix", "va",
-                   "--root", str(stored), "--dry-run"]
-        result = subprocess.run(command, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        # The stored run: its planned record completed by hand with the recorded reducer CSVs, their digests
-        # and a single job (what an analyzed run records).
-        record_path = stored / "library-qualification.json"
-        record = json.loads(record_path.read_text())
+        """Decisions 474 (A) / 479 / 485 (c) / 500 (3): the controls-only re-qualification of the two 8-edge
+        coupons S3p and S2p replayed END TO END from the stored inputs (no solve) - --controls-only --reuse-main
+        on the stored first-pass root reproduces the decision-479 control sets [1, 2, 3, 15, 18, 32, 48, 108] /
+        [1, 2, 3, 7, 20, 32, 33, 93] and the job plan of record (stages, caps, ranks, the trace pins and the
+        configs the job ran); the controls-only job's stored results, fetched through the fake remote and the
+        stored reducer spliced in, give the re-qualification verdict of record (PendingQualification: every judged
+        control passed) with every p-sequence step to the stored digit; and the (F) evaluate on this run's main
+        reducer with the stored dense traces reproduces the -requal (F) record to the printed digit."""
+        controls_of_record = json.loads(BATCH1_REQUALIFICATION_CONTROLS.read_text())
+        for window in ("sct002-S3p", "sct002-S2p"):
+            with self.subTest(window=window):
+                self.replay_requalification(window, controls_of_record[f"fab-{BATCH1_WINDOWS[window]['Case']}"])
+
+    def replay_requalification(self, window, controls_record):
+        spec = BATCH1_WINDOWS[window]
+        case_id = spec["Case"]
+        stored_root = batch1_stored_root(window)
+        requalify_root = BATCH1 / "requalify" / window
+        requal_case = json.loads((requalify_root / "library-qualification.json").read_text())["Cases"][0]
+        self.assertEqual(controls_record["AmplitudeInformedControls"], spec["RequalifiedControls"])
+        self.assertEqual(controls_record["RecordedControls"], spec["Controls"])
+        self.assertEqual(requal_case["Controls"]["Indices"], spec["RequalifiedControls"])
+        events = []
+        self.run_root = self.tmp / f"{window}-requalify"
+        self.replay_remote({case_id: requalify_root / case_id / "results" / "main"}, events)
+        args = self.controls_only_args(window, self.run_root, case_id, stored_root)
+        record = qualify_library.run_qualify(args, log=lambda message: None)
         case = record["Cases"][0]
-        reducer = stored / case_id / "results" / "main" / "va-p4" / "reducer"
-        reducer.mkdir(parents=True)
-        digests = {}
-        for name in qualify_library.REUSED_MAIN_CSVS:
-            shutil.copyfile(campaign / "results" / "main" / "va-p4" / "reducer" / name, reducer / name)
-            digests[name] = sha256(reducer / name)
-        case["ResultDigests"] = {f"main/va-p4/reducer/{name}": {"Local": digest, "Remote": digest, "OK": True} for name, digest in digests.items()}
-        case["Jobs"][0]["Submission"] = {"Job": "1.fake"}
-        case["Qualification"] = {"Verdict": "Failed", "UnjudgedTypes": []}
-        case["Cost"] = {"MainStage": {"NodeHours": 1.0}, "JobNodeHours": 1.5}
-        record_path.write_text(json.dumps(record, indent=2))
-        root = self.tmp / "controls-only"
-        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
-                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, "--case", case_id, "--stage-prefix", "va",
-                   "--controls", "p3,p5", "--controls-only", "--reuse-main", str(stored), "--root", str(root), "--dry-run"]
+        self.assertIsNone(case.get("StoppedBy"), case.get("StoppedBy"))
+        # (1) the decision-479 control set and the amplitude-informed rule from the stored reducer.
+        self.assertEqual(case["Controls"]["Indices"], spec["RequalifiedControls"])
+        self.assertEqual(case["ControlAmplitudes"]["PriorMainStage"], str(stored_root / case_id / "results" / "main" / f"{case_id}-p4" / "reducer"))
+        assert_numbers_reproduced(self, {key: requal_case["ControlAmplitudes"][key] for key in ("FloorRatio", "Observables", "BelowFloorClasses")},
+                                  case["ControlAmplitudes"], "ControlAmplitudes")
+        reused = case["ReusedMain"]
+        self.assertEqual((reused["Case"], reused["MainPrefix"], reused["StoredControls"], reused["StoredVerdict"]),
+                         (case_id, f"{case_id}-p4", spec["Controls"], gates.VERDICT_FAILED))
+        self.assertEqual(reused["Traces"], {"Count": spec["Sources"], "PinnedByStoredPlans": spec["Sources"], "Identical": True})
+        self.assertEqual((reused["Reducer"]["Job"], reused["Reducer"]["Nodes"]), ("reducer", 1))
+        # (2) the job plan of record: one controls-only job of the fixed stages; stages / caps / ranks identical
+        # to the stored requalification plan, every pin in common identical (the stored plan - the lane script's -
+        # pinned the p4 reducer.json it never ran instead of the 5 configs the job runs; the instance is the
+        # driver's choice by the fixed stages' estimated peak: both recorded in the qualify-tools lane REPORT).
+        self.assertEqual([(job["Name"], job["Kind"], job["Sources"]) for job in case["Jobs"]], [("controls-only", "controls-only", [])])
+        plan = json.loads(Path(case["Jobs"][0]["Plan"]).read_text())
+        stored_plan = json.loads((requalify_root / case_id / "main" / "jobs" / "controls-only" / "plan.json").read_text())
+        self.assertEqual(plan["JobKind"], stored_plan["JobKind"])
+
+        def stage_view(stage):
+            environment = {key: (Path(value).name if key == "PALACE_RESPONSE_ARCHIVE_DIR" else value) for key, value in stage["Environment"].items()}
+            return (stage["Name"], Path(stage["Config"]).name, environment, stage["Requires"], stage["CapSeconds"], stage["MinimumSeconds"])
+        self.assertEqual([stage_view(s) for s in plan["Stages"]], [stage_view(s) for s in stored_plan["Stages"]])
+        self.assertEqual((plan["Ranks"], plan["BinarySHA256"], plan["MeshSHA256"]), (stored_plan["Ranks"], stored_plan["BinarySHA256"], stored_plan["MeshSHA256"]))
+        pins = {key.split(f"/{case_id}/", 1)[1]: value for key, value in plan["PinnedSHA256"].items()}
+        stored_pins = {key.split(f"/{case_id}/", 1)[1]: value for key, value in stored_plan["PinnedSHA256"].items()}
+        common = set(pins) & set(stored_pins)
+        self.assertEqual(len(common), spec["Sources"] + 1)       # every trace + the mesh
+        self.assertEqual({key: pins[key] for key in common}, {key: stored_pins[key] for key in common})
+        self.assertEqual(set(pins) - set(stored_pins), {f"main/{case_id}-p3-control/worker.json", f"main/{case_id}-p3-control/reducer.json",
+                                                         f"main/{case_id}-p5-control/worker.json", f"main/{case_id}-p5-control/reducer.json",
+                                                         f"main/{case_id}-p4-local-edge/config.json"})
+        self.assertEqual(set(stored_pins) - set(pins), {f"main/{case_id}-p4/reducer.json"})
+        for stage, names in {f"{case_id}-p5-control": ("worker.json", "reducer.json"), f"{case_id}-p3-control": ("worker.json", "reducer.json"),
+                             f"{case_id}-p4-local-edge": ("config.json",)}.items():
+            for name in names:
+                generated = strip_paths(json.loads((Path(case["Root"]) / "main" / stage / name).read_text()))
+                stored = strip_paths(json.loads((requalify_root / case_id / "main" / stage / name).read_text()))
+                self.assertEqual(generated, stored, f"{stage}/{name}")
+        # (3) the stored controls-only results through the real fetch / splice / analysis path: the verdict of record.
+        self.assertEqual([kind for kind, _ in events if kind in ("upload", "submit", "fetch")], ["upload", "submit", "fetch"])
+        self.assertEqual(case["ReusedMain"]["Splice"]["SHA256"], reused["Reducer"]["SHA256"])
+        self.assertEqual(case["Status"], requal_case["Status"])
+        self.assertEqual(case["Qualification"]["Verdict"], requal_case["Qualification"]["Verdict"])
+        self.assertEqual(case["Qualification"]["Verdict"], gates.VERDICT_PENDING)
+        self.assertEqual(case["Qualification"]["GatesPassed"], {"PSequenceControls": True})
+        gate_record = json.loads((self.run_root / case_id / "qualification.json").read_text())
+        stored_gate = json.loads((requalify_root / case_id / "qualification.json").read_text())
+        assert_numbers_reproduced(self, stored_gate["Gates"]["PSequenceControls"]["Controls"], gate_record["Gates"]["PSequenceControls"]["Controls"],
+                                  "PSequenceControls.Controls")
+        self.assertEqual(gate_record["Verdict"], stored_gate["Verdict"])
+        self.assertEqual(case["Cost"]["ReusedMainStage"]["Cost"], reused["StoredMainStageCost"])
+        self.assertLess(case["Cost"]["JobNodeHours"], reused["StoredJobNodeHours"])
+        library = json.loads((self.run_root / "process-library.json").read_text())
+        model = library["Models"][0]
+        self.assertEqual((model["Name"], model["QualificationStatus"]), (spec["Model"], "PendingQualification"))
+        self.assertEqual(model["ControlsOnlyRequalification"]["Controls"], spec["RequalifiedControls"])
+        # (4) the (F) evaluate (decision 477 / 485 (a)) on THIS run's main reducer (the spliced stored one) with the
+        # stored dense traces, thin matrices, gate solves and the requalification library: the -requal (F) record.
+        f_root = BATCH1 / "f-qualification" / case_id
+        stored_f = json.loads((f_root / "spatial-qualification-requal.json").read_text())
+        output = self.run_root / "spatial-qualification-requal.json"
+        # The stored dense-traces manifest and the twin configs it names carry the lane's cluster paths:
+        # relocated copies under this run's root (the stored twin outputs are read where they are).
+        manifest = json.loads(relocated((f_root / "dense" / "dense-traces.json").read_text()))
+        for name, config_path in manifest["Configs"].items():
+            local_config = self.run_root / "dense" / name / "config.json"
+            local_config.parent.mkdir(parents=True, exist_ok=True)
+            local_config.write_text(relocated(Path(config_path).read_text()))
+            manifest["Configs"][name] = str(local_config)
+        dense_traces = self.run_root / "dense-traces.json"
+        dense_traces.write_text(json.dumps(manifest, indent=2))
+        command = [sys.executable, str(HERE / "coupon_library.py"), "spatial-qualify", "evaluate", "--dense-traces", str(dense_traces),
+                   "--fabricated-matrices", str(self.run_root / case_id / "results" / "main" / f"{case_id}-p4" / "reducer"),
+                   "--thin-matrices", str(batch1_stored_root(window, "thin") / f"{case_id}-thin" / "results" / "main" / f"{case_id}-thin-p4" / "reducer"),
+                   *[token for order in (3, 4, 5) for token in ("--gate", str(BATCH1 / "preflight" / window / f"c0-p{order}" / "postpro" / "palace.json"))],
+                   "--library", str(BATCH1 / "library" / f"b1-requal-interim-{window.split('-')[1]}" / "process-library.json"),
+                   "--output", str(output), "--dry-run"]
         result = subprocess.run(command, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        planned = json.loads((root / "library-qualification.json").read_text())["Cases"][0]
-        self.assertEqual(planned["Status"], "planned", planned.get("StoppedBy"))
-        reused = planned["ReusedMain"]
-        self.assertEqual((reused["Root"], reused["MainPrefix"], reused["Case"]), (str(stored), "va-p4", case_id))
-        self.assertEqual(reused["Reducer"]["SHA256"], digests)
-        self.assertEqual((reused["Reducer"]["Job"], reused["Reducer"]["PBSJobID"], reused["Reducer"]["Nodes"]), ("single", "1.fake", 1))
-        self.assertEqual(reused["Traces"], {"Count": 80, "PinnedByStoredPlans": 80, "Identical": True})
-        self.assertEqual(reused["StoredVerdict"], "Failed")
-        self.assertEqual(reused["ReusedStages"], ["va-p4"])
-        self.assertEqual(reused["SolvedStages"], ["va-p5-control", "va-p3-control", "va-p4-local-edge"])
-        self.assertEqual(planned["ControlAmplitudes"]["PriorMainStage"], str(reducer))
-        self.assertIn("decision 474 (A)", planned["Controls"]["Rule"])
-        self.assertEqual(len(planned["Controls"]["Indices"]), 8)
-        self.assertEqual((planned["Split"]["N"], planned["Split"]["ControlsJob"], planned["Split"]["Blocks"]), (1, "controls-only", [0]))
-        self.assertEqual([(job["Name"], job["Kind"], job["Sources"]) for job in planned["Jobs"]], [("controls-only", "controls-only", [])])
-        plan = json.loads(Path(planned["Jobs"][0]["Plan"]).read_text())
-        self.assertEqual(plan["JobKind"], "controls-only")
-        self.assertEqual(plan["StageNames"], ["va-p5-control-worker", "va-p5-control-reducer", "va-p3-control-worker", "va-p3-control-reducer",
-                                              "va-p4-local-edge"])
-        self.assertEqual(plan["ReusedMain"]["Reducer"]["SHA256"], digests)
-        self.assertNotIn(f"{planned['Remote']['Case']}/main/va-p4/worker.json", plan["PinnedSHA256"])
-        self.assertEqual(sum(1 for path in plan["PinnedSHA256"] if "/inputs/traces/" in path), 80)
-        self.assertTrue((root / case_id / "main" / "jobs" / "controls-only" / "job.pbs").is_file())
-        self.assertEqual(planned["Nodes"]["MainOrigin"], "the stored run's reducer job (--reuse-main)")
-        # A stored run of another mesh is refused (ReuseMain, the coupon stops before any plan).
-        record["Cases"][0]["Mesh"]["SHA256"] = "0" * 64
-        record_path.write_text(json.dumps(record, indent=2))
-        other = self.tmp / "controls-only-other-mesh"
-        command[command.index(str(root))] = str(other)
-        result = subprocess.run(command, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        stopped = json.loads((other / "library-qualification.json").read_text())["Cases"][0]
-        self.assertEqual((stopped["Status"], stopped["StoppedBy"]["Kind"]), ("failed", "ReuseMain"))
-        self.assertIn("not the same coupon mesh", stopped["StoppedBy"]["Message"])
+        evaluated = json.loads(output.read_text())
+        self.assertEqual(evaluated["Status"], stored_f["Status"])
+        self.assertEqual(evaluated["Status"], "Qualified")
+        assert_numbers_reproduced(self, stored_f, evaluated, rel=0.0, ignore=("Gate.Solves[0].Source", "Gate.Solves[1].Source", "Gate.Solves[2].Source",
+                                                                              "PreviousStatus", "Rule", "UnjudgedTypesRule"))
+        self.assertEqual(evaluated["ControlVerdict"], gates.VERDICT_PENDING)
 
 
 if __name__ == "__main__":

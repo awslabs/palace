@@ -1130,7 +1130,8 @@ def finish_case(record, context, *, remote, profile):
         suffix = "" if job["Kind"] == "single" else f"-{job['Name']}"
         (results / f"qstat-xf{suffix}.txt").write_text(record["Fetch"]["QStatHistory"][job["Name"]])
     if len(jobs) == 1:
-        record["Fetch"]["QStatHistory"] = record["Fetch"]["QStatHistory"]["single"]
+        # One job: the single job of an unsplit coupon or the controls-only job (CONTROLS_ONLY_RULE).
+        record["Fetch"]["QStatHistory"] = record["Fetch"]["QStatHistory"][jobs[0]["Name"]]
     statuses = {}
     for job in jobs:
         status_path = results / "main" / Path(job["RemoteDirectory"]).relative_to(f"{remote_case}/main") / "status.json"
