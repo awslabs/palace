@@ -3512,7 +3512,8 @@ recorded). Every time part scales as T(1) / N^exponent with the measured 1 -> 2 
 the largest MEASURED node count (`NodeScaling.MeasuredNodes` = 2; decision 468 (4): no further speedup beyond it until a run at that
 count is recorded, so the caps of a 4-node stage are those of 2 nodes; memory keeps the replicated-fraction law with the live per-node
 guard as the backstop; the first 4-node runs - the loop end - are measurements recorded back into the model). The
-job plans carry `Nodes`, `RanksPerNode`, `Ranks` = N x 192, `MPIExecArguments` (`--hostfile $PBS_NODEFILE --map-by ppr:192:node`, the recipe of the stage-1 references and the decision-69 runs), `NodeGuard`, `PBSDsh`; the job
+job plans carry `Nodes`, `RanksPerNode`, `Ranks` = N x 192, `MPIExecArguments` (`--hostfile $PBS_NODEFILE --map-by
+ppr:192:node`, the recipe of the stage-1 references and the decision-69 runs), `NodeGuard`, `PBSDsh`; the job
 script selects `select=N:ncpus=192:mpiprocs=192` on the EFA subnet. `run_stages.py` verifies the node count,
 checks the conflicting processes and `MemAvailable >= MinimumMemAvailableBytes` on EVERY node (pbsdsh by task
 slot index - PBS 23.06 `-n` counts slots, not vnodes, and routes task output to the job's stdout, so commands
