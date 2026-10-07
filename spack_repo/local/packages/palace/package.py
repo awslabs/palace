@@ -376,7 +376,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8",
             when="@0.15:0.17",
         )
-        depends_on("libceed@1:", when="@0.18:")
+        depends_on("libceed@1", when="@0.18:")
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
