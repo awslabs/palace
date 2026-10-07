@@ -6,10 +6,12 @@ domain corner and validation pair 5), the MA_sharp form and the Option-A policy 
 (B2 / B4 / B5 Default with the SHIPPED rule since validation pair 5 (decision 459), B3 / C1 / C2 Fallback-only,
 Option B B4 only, |W| 15 % refused, DefaultActive false -> fallback-only, fail closed on every missing record);
 the rule file's and the shipped activation record's BYTE sha256 are pinned (decision 440 MINOR-A / 460)."""
+import atexit
 import copy
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -60,19 +62,30 @@ COMBOS = {
 STOP = {"Path": "registration/stop-record.json", "SHA256": "0" * 64}
 
 
-ACTIVATION_DIR = Path(tempfile.mkdtemp(prefix="nearkey-activation-"))
-PAIR5_RECORD = ACTIVATION_DIR / "pair-5-record.json"
-PAIR5_RECORD.write_text(json.dumps({"ValidationPair": "pair-5", "r_pre": {"SA": -0.0046, "MS": -0.0022, "MA": -0.0055},
-                                    "InsideBound": True}))
-PAIR5_SHA = hashlib.sha256(PAIR5_RECORD.read_bytes()).hexdigest()
+_ACTIVATION_FIXTURE = {}
+
+
+def activation_fixture():
+    """The synthetic DefaultActivation record of these tests (also imported by test_nearkey_reuse): written
+    once per process under a temporary directory that is removed at interpreter exit - a module-level
+    mkdtemp leaked one nearkey-activation-* directory per run.  {Directory, Record, SHA256}."""
+    if not _ACTIVATION_FIXTURE:
+        directory = Path(tempfile.mkdtemp(prefix="nearkey-activation-"))
+        atexit.register(shutil.rmtree, directory, True)
+        record = directory / "pair-5-record.json"
+        record.write_text(json.dumps({"ValidationPair": "pair-5", "r_pre": {"SA": -0.0046, "MS": -0.0022, "MA": -0.0055},
+                                      "InsideBound": True}))
+        _ACTIVATION_FIXTURE.update(Directory=directory, Record=record, SHA256=hashlib.sha256(record.read_bytes()).hexdigest())
+    return _ACTIVATION_FIXTURE
 
 
 def activated(rule, record_path=None, record_sha=None):
     """The rule with a synthetic DefaultActivation record (a readable validation-pair record that re-hashes to RecordSHA256)."""
     active = copy.deepcopy(rule)
     active["Policy"]["DefaultActive"] = True
-    active["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordPath": str(record_path or PAIR5_RECORD),
-                                             "RecordSHA256": record_sha or PAIR5_SHA, "Decision": "synthetic (test)"}
+    fixture = activation_fixture()
+    active["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordPath": str(record_path or fixture["Record"]),
+                                             "RecordSHA256": record_sha or fixture["SHA256"], "Decision": "synthetic (test)"}
     return active
 
 
@@ -344,7 +357,8 @@ class Policy(unittest.TestCase):
         rule loaded from another directory looks there and fails closed when the record is absent); absolute paths are read as given."""
         shipped = self.rule
         self.assertEqual(predictor.activation_record_path(shipped, shipped["Policy"]["DefaultActivation"]), SHIPPED_RECORD)
-        self.assertEqual(predictor.activation_record_path(shipped, {"RecordPath": str(PAIR5_RECORD)}), PAIR5_RECORD)
+        self.assertEqual(predictor.activation_record_path(shipped, {"RecordPath": str(activation_fixture()["Record"])}),
+                         activation_fixture()["Record"])
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "rule.json"
             path.write_text(json.dumps({k: v for k, v in shipped.items() if not k.startswith("_")}))
@@ -365,7 +379,7 @@ class Policy(unittest.TestCase):
             predictor.default_active(tampered)
         self.assertIn("default reuse stays inactive", str(context.exception))
         other_file = copy.deepcopy(self.rule)
-        other_file["Policy"]["DefaultActivation"]["RecordPath"] = str(PAIR5_RECORD)   # readable, re-hashes to another sha
+        other_file["Policy"]["DefaultActivation"]["RecordPath"] = str(activation_fixture()["Record"])   # readable, re-hashes to another sha
         with self.assertRaises(predictor.NearKeyRuleError):
             predictor.default_active(other_file)
         missing = copy.deepcopy(self.rule)
@@ -402,16 +416,16 @@ class Policy(unittest.TestCase):
         # path or a sha mismatch fails closed
         partial = copy.deepcopy(inactive)
         partial["Policy"]["DefaultActive"] = True
-        partial["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordSHA256": PAIR5_SHA}
+        partial["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordSHA256": activation_fixture()["SHA256"]}
         with self.assertRaises(predictor.NearKeyRuleError):
             predictor.default_active(partial)
         with self.assertRaises(predictor.NearKeyRuleError):
-            predictor.default_active(activated(inactive, record_path=ACTIVATION_DIR / "missing.json"))
+            predictor.default_active(activated(inactive, record_path=activation_fixture()["Directory"] / "missing.json"))
         with self.assertRaises(predictor.NearKeyRuleError):
             predictor.default_active(activated(inactive, record_sha="0" * 64))
         active, activation = predictor.default_active(self.active)
         self.assertTrue(active)
-        self.assertEqual(activation["RecordSHA256"], PAIR5_SHA)
+        self.assertEqual(activation["RecordSHA256"], activation_fixture()["SHA256"])
 
     def test_only_the_shipped_rule_file_is_the_shipped_rule(self):
         self.assertTrue(predictor.is_shipped_rule(self.rule))

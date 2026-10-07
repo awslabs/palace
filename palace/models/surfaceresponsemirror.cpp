@@ -749,6 +749,96 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
   };
   std::vector<Formed> formed;
   std::map<std::size_t, nlohmann::json> continued;  // real feature index -> record
+  // Whether a REAL portion of a feature of the extended run is identified IDENTICALLY by
+  // the unextended run (decision 512 (b) / (c), DESIGN ERRATA-7), piece by piece: the
+  // portion is cut at the boundaries of the real portions covering it; a piece is identical
+  // when its covering real feature has the same type, signature key and side and the turn
+  // agrees within the joint noise rule (the turn difference over the piece, read as a joint
+  // on a piece of that length, implies a sagitta below kJointNoiseSagittaOverRadius x R;
+  // both turns are read at their portions' mean density); a part covered by no real portion
+  // differs ("Uncovered"). The split of the portions does not matter (a re-split at the
+  // plane, a far end clipped by a virtual corner at another plane). Pieces shorter than the
+  // signature tolerance are dropped.
+  const double noise_sagitta = kJointNoiseSagittaOverRadius * R;
+  struct IdentityPiece
+  {
+    double s0 = 0.0, s1 = 0.0;
+    bool identical = false;
+    std::string reason;  // "" when identical, else "Uncovered" / "Type" / "Side" / "Turn"
+    int real_feature = -1;  // index into merged.features, -1 when uncovered
+  };
+  auto IdentityOf = [&](const IdentifiedFeature &feature, const IdentifiedPortion &portion)
+  {
+    std::vector<IdentityPiece> pieces;
+    const double length = std::max(0.0, portion.s1 - portion.s0);
+    const auto it = real_features_on_segment.find(portion.segment);
+    if (it != real_features_on_segment.end())
+    {
+      for (const std::size_t i : it->second)
+      {
+        const auto &candidate = merged.features[i];
+        for (const auto &other : candidate.portions)
+        {
+          if (other.segment != portion.segment)
+          {
+            continue;
+          }
+          IdentityPiece piece;
+          piece.s0 = std::max(portion.s0, other.s0);
+          piece.s1 = std::min(portion.s1, other.s1);
+          if (piece.s1 - piece.s0 <= tolerance)
+          {
+            continue;
+          }
+          piece.real_feature = static_cast<int>(i);
+          if (candidate.type != feature.type ||
+              candidate.signature_key != feature.signature_key)
+          {
+            piece.reason = "Type";
+          }
+          else if (other.side != portion.side)
+          {
+            piece.reason = "Side";
+          }
+          else
+          {
+            const double other_length = std::max(0.0, other.s1 - other.s0);
+            const double density = length > 0.0 ? portion.turn / length : 0.0;
+            const double other_density =
+                other_length > 0.0 ? other.turn / other_length : 0.0;
+            const double overlap = piece.s1 - piece.s0;
+            const double turn_difference = std::abs(density - other_density) * overlap;
+            if (!JointIsNoise(turn_difference, overlap, noise_sagitta))
+            {
+              piece.reason = "Turn";
+            }
+          }
+          piece.identical = piece.reason.empty();
+          pieces.push_back(piece);
+        }
+      }
+    }
+    std::sort(pieces.begin(), pieces.end(),
+              [](const IdentityPiece &a, const IdentityPiece &b) { return a.s0 < b.s0; });
+    // The parts of the portion no real portion covers.
+    std::vector<IdentityPiece> covered = std::move(pieces);
+    pieces.clear();
+    double cursor = portion.s0;
+    for (const auto &piece : covered)
+    {
+      if (piece.s0 > cursor + tolerance)
+      {
+        pieces.push_back({cursor, piece.s0, false, "Uncovered", -1});
+      }
+      pieces.push_back(piece);
+      cursor = std::max(cursor, piece.s1);
+    }
+    if (portion.s1 > cursor + tolerance)
+    {
+      pieces.push_back({cursor, portion.s1, false, "Uncovered", -1});
+    }
+    return pieces;
+  };
   for (const auto &feature : extended.features)
   {
     bool touches_image = false;
@@ -783,68 +873,61 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
       summary.image_only_features++;
       continue;
     }
-    // The real features whose portions it overlaps.
+    // The real features whose portions it overlaps, and whether every real portion is
+    // identified identically by one of them (piece by piece).
     std::set<std::size_t> overlapping;
+    std::vector<std::vector<IdentityPiece>> identities;
+    bool all_identical = true;
     for (const auto &portion : feature.portions)
     {
       if (IsImage(portion))
       {
+        identities.emplace_back();
         continue;
       }
-      const auto it = real_features_on_segment.find(portion.segment);
-      if (it == real_features_on_segment.end())
+      identities.push_back(IdentityOf(feature, portion));
+      for (const auto &piece : identities.back())
       {
-        continue;
-      }
-      for (const std::size_t i : it->second)
-      {
-        for (const auto &other : merged.features[i].portions)
+        if (piece.real_feature >= 0)
         {
-          if (other.segment == portion.segment &&
-              Overlap({portion.s0, portion.s1}, {other.s0, other.s1}) > tolerance)
-          {
-            overlapping.insert(i);
-          }
+          overlapping.insert(static_cast<std::size_t>(piece.real_feature));
         }
+        all_identical = all_identical && piece.identical;
       }
     }
-    bool is_continued = false;
-    if (overlapping.size() == 1)
-    {
-      const auto &candidate = merged.features[*overlapping.begin()];
-      if (candidate.type == feature.type &&
-          candidate.signature_key == feature.signature_key)
-      {
-        // The real portions must be exactly the candidate's.
-        std::vector<std::tuple<std::size_t, double, double>> a, b;
-        for (const auto &portion : feature.portions)
-        {
-          if (!IsImage(portion))
-          {
-            a.emplace_back(portion.segment, portion.s0, portion.s1);
-          }
-        }
-        for (const auto &portion : candidate.portions)
-        {
-          b.emplace_back(portion.segment, portion.s0, portion.s1);
-        }
-        std::sort(a.begin(), a.end());
-        std::sort(b.begin(), b.end());
-        is_continued = a.size() == b.size();
-        for (std::size_t i = 0; is_continued && i < a.size(); i++)
-        {
-          is_continued = std::get<0>(a[i]) == std::get<0>(b[i]) &&
-                         std::abs(std::get<1>(a[i]) - std::get<1>(b[i])) <= tolerance &&
-                         std::abs(std::get<2>(a[i]) - std::get<2>(b[i])) <= tolerance;
-        }
-      }
-    }
+    // Continued (decision 512 (b)): the extended run reads every real portion of this
+    // feature exactly as the unextended run reads it, on ONE real feature - whatever the
+    // split of the portions and whether that real feature extends further (a far end
+    // clipped by a virtual corner at another plane is clipped by the formed-feature step
+    // below; a far end taken by an unmerged configuration is that configuration's own
+    // cells): the real feature keeps the unextended reading verbatim.
+    const bool is_continued = overlapping.size() == 1 && all_identical;
     if (is_continued)
     {
-      continued[*overlapping.begin()] = {{"Planes", PlanesOfFeature(feature)},
-                                         {"RealLength", real_length},
-                                         {"ImageLength", image_length},
-                                         {"Status", "Continued"}};
+      auto &record = continued[*overlapping.begin()];
+      if (record.is_null())
+      {
+        record = {{"Planes", PlanesOfFeature(feature)},
+                  {"RealLength", real_length},
+                  {"ImageLength", image_length},
+                  {"Status", "Continued"}};
+      }
+      else
+      {
+        // A chain continued through two planes (a straight joint at each end).
+        std::set<int> used;
+        for (const auto &k : record.at("Planes"))
+        {
+          used.insert(k.get<int>());
+        }
+        for (const int k : PlanesOfFeature(feature))
+        {
+          used.insert(k);
+        }
+        record["Planes"] = std::vector<int>(used.begin(), used.end());
+        record["RealLength"] = record.at("RealLength").get<double>() + real_length;
+        record["ImageLength"] = record.at("ImageLength").get<double>() + image_length;
+      }
       summary.continued_features++;
       continue;
     }
@@ -860,13 +943,36 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
         feature.type == "SameConductorStrip";
     if (!mergeable)
     {
-      // The real features the unmerged configuration touches (portions overlapped, or a
-      // real vertex of the configuration) are recorded with Status "Unmerged" (a record,
-      // not a block); the configuration's portions, real and image, are recorded in world
-      // coordinates (mesh units) so that the operator can read it as a Missing feature
-      // (decision 481): its own cells DomainBoundary, raw kept, never applied with a
-      // single-sided model.
-      std::set<std::size_t> touched = overlapping;
+      // The real features the unmerged configuration touches (a portion whose
+      // identification DIFFERS overlapped, or a real vertex of the configuration) are
+      // recorded with Status "Unmerged" (a record, not a block); the configuration's
+      // portions, real and image, are recorded in world coordinates (mesh units), every
+      // real portion flagged Identical when the unextended run identifies it exactly as the
+      // extended run does, so that the operator can read it as a Missing feature (decision
+      // 481): its own cells - those on DIFFERING real portions - DomainBoundary, raw kept,
+      // never applied with a single-sided model; the identically identified cells keep
+      // their models (decision 512 (c): the half = full / 2 identity holds for them, and an
+      // unmerged chain never sends its far cells raw).
+      std::set<std::size_t> touched;
+      double identical_length = 0.0, differing_length = 0.0;
+      for (std::size_t p = 0; p < feature.portions.size(); p++)
+      {
+        for (const auto &piece : identities[p])
+        {
+          if (piece.identical)
+          {
+            identical_length += piece.s1 - piece.s0;
+          }
+          else
+          {
+            differing_length += piece.s1 - piece.s0;
+            if (piece.real_feature >= 0)
+            {
+              touched.insert(static_cast<std::size_t>(piece.real_feature));
+            }
+          }
+        }
+      }
       for (std::size_t i = 0; i < merged.features.size(); i++)
       {
         for (const std::size_t v : merged.features[i].vertices)
@@ -893,8 +999,12 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
                            {"UnmergedType", feature.type}};
         }
       }
+      // The world portions: image portions whole; real portions piece by piece (cut at the
+      // real portions' boundaries), each flagged Identical / Differs (and the real feature
+      // identifying it), so that the operator's own-cell test reads the differing pieces
+      // only.
       nlohmann::json world_portions = nlohmann::json::array();
-      for (const auto &portion : feature.portions)
+      auto WorldPortion = [&](const IdentifiedPortion &portion, double s0, double s1)
       {
         const auto &segment = extended.segments[portion.segment];
         std::array<double, 3> p0{}, p1{};
@@ -904,22 +1014,44 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
               segment.length > 0.0
                   ? (segment.key[1][d] - segment.key[0][d]) / segment.length
                   : 0.0;
-          p0[d] = segment.key[0][d] + direction * portion.s0;
-          p1[d] = segment.key[0][d] + direction * portion.s1;
+          p0[d] = segment.key[0][d] + direction * s0;
+          p1[d] = segment.key[0][d] + direction * s1;
         }
-        world_portions.push_back({{"Segment", portion.segment},
-                                  {"S0", portion.s0},
-                                  {"S1", portion.s1},
-                                  {"Image", IsImage(portion)},
-                                  {"P0", p0},
-                                  {"P1", p1},
-                                  {"Length", portion.s1 - portion.s0}});
+        return nlohmann::json{{"Segment", portion.segment}, {"S0", s0}, {"S1", s1},
+                              {"Image", IsImage(portion)},  {"P0", p0}, {"P1", p1},
+                              {"Length", s1 - s0}};
+      };
+      for (std::size_t p = 0; p < feature.portions.size(); p++)
+      {
+        const auto &portion = feature.portions[p];
+        if (IsImage(portion))
+        {
+          world_portions.push_back(WorldPortion(portion, portion.s0, portion.s1));
+          continue;
+        }
+        for (const auto &piece : identities[p])
+        {
+          nlohmann::json entry = WorldPortion(portion, piece.s0, piece.s1);
+          entry["Identical"] = piece.identical;
+          if (!piece.identical)
+          {
+            entry["Differs"] = piece.reason;
+          }
+          if (piece.real_feature >= 0)
+          {
+            entry["RealFeature"] =
+                merged.features[static_cast<std::size_t>(piece.real_feature)].id;
+          }
+          world_portions.push_back(std::move(entry));
+        }
       }
       summary.unmerged_features.push_back({{"Feature", feature.id},
                                            {"Type", feature.type},
                                            {"Key", feature.signature_key},
                                            {"RealLength", real_length},
                                            {"ImageLength", image_length},
+                                           {"IdenticalRealLength", identical_length},
+                                           {"DifferingRealLength", differing_length},
                                            {"Planes", PlanesOfFeature(feature)},
                                            {"RealFeatures", real_ids},
                                            {"Portions", world_portions},
@@ -930,9 +1062,17 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
   }
   for (const auto &[index, record] : continued)
   {
-    if (merged.features[index].mirror.is_null())
+    auto &target = merged.features[index];
+    if (target.mirror.is_null())
     {
-      merged.features[index].mirror = record;
+      target.mirror = record;
+    }
+    else
+    {
+      // Continued through one plane and touched by an unmerged configuration elsewhere
+      // (its differing portions): the Unmerged record stands, the continued part noted.
+      target.mirror["ContinuedRealLength"] = record.at("RealLength");
+      target.mirror["ContinuedPlanes"] = record.at("Planes");
     }
   }
   std::sort(summary.touched_feature_ids.begin(), summary.touched_feature_ids.end());
@@ -1164,22 +1304,28 @@ nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,
           {"UnmergedFeatures", summary.unmerged_features},
           {"TouchedRealFeatures", summary.touched_feature_ids},
           {"Rule",
-           "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 481): the metal perimeter within "
-           "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "
-           "into the identification input (image segments joined to the real chain at the "
-           "truncation vertex on the plane; a straight joint - collinear within the "
-           "direction quantum or a sub-noise turn - continues the chain, an oblique one "
-           "is a corner of 2 theta, a parallel edge at d < R a strip / gap of 2 d); the "
-           "result is merged onto the unextended run so that real features keep their "
-           "Ids, portions and order wherever no new feature formed (Mirror Status "
-           "Continued); a mirror-formed feature is placed on its real half only (a "
+           "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 481 / 512): the metal perimeter "
+           "within BandOverR x R of every planar NATURAL vertical truncation plane is "
+           "reflected into the identification input (image segments joined to the real "
+           "chain at the truncation vertex on the plane; a straight joint - collinear "
+           "within the direction quantum or a sub-noise turn - continues the chain, an "
+           "oblique one is a corner of 2 theta, a parallel edge at d < R a strip / gap of "
+           "2 d); the result is merged onto the unextended run so that real features keep "
+           "their Ids, portions and order wherever no new feature formed (Mirror Status "
+           "Continued: every real portion of the extended chain identified identically - "
+           "type, key, side, turn within the joint noise rule - whatever the split of the "
+           "portions and whether the real chain extends further); a mirror-formed feature "
+           "is placed on its real half only (a "
            "vertex coupon on the plane with weight 1 / 2 and the real arm's cells from "
            "s_half = (R + s) / 2; a pair's real side with its side factor) with the trace "
            "taken by even extension (mirror-point evaluation); Missing / out-of-range "
            "mirror-formed features and non-mirroring planes fall back to F-DB-a; a "
            "mirror-formed stack, cluster or curved pair (no mirror placement: Unmerged) is "
-           "read as a real Missing feature (decision 481) - its own cells DomainBoundary "
-           "with their raw claims, its neighbours' cells Applied / Mirrored as read"}};
+           "read as a real Missing feature (decision 481) - its own cells, those on its "
+           "real portions whose identification DIFFERS between the unextended and the "
+           "extended run (decision 512 (c)), DomainBoundary with their raw claims; the "
+           "identically identified cells and its neighbours' cells Applied / Mirrored as "
+           "read"}};
 }
 
 }  // namespace palace
