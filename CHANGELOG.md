@@ -45,7 +45,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     boundaries and materials on either side, and an online sweep at saved frequencies solves a
     redesigned region against the saved environment. Adds substructuring examples in
     `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of flux
-    loops, on separate rings and on one plate). SchemaVer 2-2-0.
+    loops, on separate rings and on one plate, and a driven 3 x 4 grid of CPW resonators).
+    SchemaVer 2-2-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes

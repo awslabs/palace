@@ -298,3 +298,31 @@ julia --project -e 'include("flux_sheet.jl"); generate_flux_sheet()'
 palace flux_sheet_offline.json
 palace flux_sheet_online.json
 ```
+
+## [Example: CPW resonator grid](@id substructuring-cpw-example)
+
+The script
+[`examples/substructuring/cpw_resonator_grid.jl`](https://github.com/awslabs/palace/blob/main/examples/substructuring/cpw_resonator_grid.jl)
+generates the mesh of a ``3 \times 4`` grid of open-ended CPW resonators with DeviceLayout.jl:
+the resonators of each row are coupled to a shared feedline with a lumped port at each end. The
+script
+[`examples/substructuring/cpw_resonator_grid_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/cpw_resonator_grid_substructuring.py)
+assigns the elements in a box around resonator 6, in the middle row, about 8% of the mesh, to the
+region. The middle feedline crosses the interface, and all ports are in the environment:
+
+```bash
+cd examples/substructuring
+julia --project -e 'include("cpw_resonator_grid.jl"); generate_cpw_resonator_grid()'
+python3 cpw_resonator_grid_substructuring.py
+palace cpw_resonator_grid.json           # regular sweep, for comparison
+palace cpw_resonator_grid_offline.json   # condense the environment, save the model
+palace cpw_resonator_grid_online.json    # reuse the model: only the region is solved
+palace cpw_resonator_grid_redesign.json  # region substrate permittivity 0.4% higher
+```
+
+The sweep resolves the resonance of resonator 6 near 18.29 GHz in the transmission between the
+ports of the middle feedline (`port-S.csv`), and the runs agree to the tolerance of the regular
+simulation's linear solver. The redesign moves the resonance to 18.255 GHz, as a regular
+simulation of the redesigned device does. Each online frequency factors only the region: on a
+192-core node, an online sweep is about 2.5 times faster than a regular one. The mesh has about
+1.7 million unknowns, so the runs are best on a cluster node.
