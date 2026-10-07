@@ -36,8 +36,9 @@ nearkey_reuse.py) offers every spatial coupon's generated basis to the near-key 
 registration: a qualifying library donor gives a REUSED model (status ReusedResponse, written
 under ROOT/device/reused/, recorded in library-build.json Device.NearKeyReuse; added to a
 library by `nearkey_reuse.py assemble`) and the coupon is neither registered nor built;
-`default` is refused until the rule file carries the DefaultActivation record (validation pair
-5); `fallback` needs the approval text and the exact key's STOP record per requirement.
+`default` is active since decision 459 (the rule file's DefaultActivation record = validation
+pair 5, shipped beside the rule file; refused when that record is not readable / does not re-hash);
+`fallback` needs the approval text and the exact key's STOP record per requirement.
 `build --register` registers the given source directories as manifest cases (register_case.py:
 source SHA256s, the automated two-pass contract derivation, idempotent by content; the
 footprint declaration is mandatory and applies to every directory registered by the

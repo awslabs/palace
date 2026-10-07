@@ -3,8 +3,9 @@
 """nearkey_predictor: the RuleVersion v1 predictor reproduces the DESIGN v2 per-pair bounds (the six
 measured pairs, the four consistency combinations, the tabulated bounds at |W| = 1.0-2.5 %, the
 domain corner and validation pair 5), the MA_sharp form and the Option-A policy decisions
-(B2 / B4 / B5 Default once activated, B3 / C1 / C2 Fallback-only, Option B B4 only, |W| 15 %
-refused, DefaultActive false -> fallback-only, fail closed on every missing record)."""
+(B2 / B4 / B5 Default with the SHIPPED rule since validation pair 5 (decision 459), B3 / C1 / C2 Fallback-only,
+Option B B4 only, |W| 15 % refused, DefaultActive false -> fallback-only, fail closed on every missing record);
+the rule file's and the shipped activation record's BYTE sha256 are pinned (decision 440 MINOR-A / 460)."""
 import copy
 import hashlib
 import json
@@ -18,6 +19,13 @@ sys.path.insert(0, str(HERE))
 import nearkey_predictor as predictor  # noqa: E402
 
 EVIDENCE = Path("/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-reuse-design/evidence")
+# decision 459 / 460: the validation-pair-5 DefaultActivation record of the evidence tree and its byte-identical copy shipped beside
+# the rule file (the rule's RecordPath); both sha256s and the rule file's own BYTE sha256 are pinned here (decision 440 MINOR-A)
+PAIR5_EVIDENCE_RECORD = Path("/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/records/"
+                             "default-activation-pair5.json")
+SHIPPED_RECORD = HERE / "nearkey-default-activation-pair5.json"
+SHIPPED_RECORD_SHA256 = "cdc8c059901357564fc5ba724f26013741aac269f45aac5d2572569eb0654606"
+RULE_FILE_SHA256 = "7d40555bd2dee115840072f6a11376e6538a27980eee598ac0554bb3d83bfdac"
 # DESIGN v2 section 2.2 / evidence calibration.json Data + transplant-fidelity-energy.json (2 x max_X T2e_X is the
 # transplant term) + ma-tail.json (the donor's shell tail): the recorded inputs of the six measured pairs.
 PAIRS = {
@@ -68,13 +76,34 @@ def activated(rule, record_path=None, record_sha=None):
     return active
 
 
+def deactivated(rule):
+    """The rule as it shipped before decision 459 (DefaultActive false, no DefaultActivation record): the fallback-only state."""
+    inactive = copy.deepcopy(rule)
+    inactive["Policy"]["DefaultActive"] = False
+    inactive["Policy"]["DefaultActivation"] = None
+    return inactive
+
+
 class RuleFile(unittest.TestCase):
     def test_rule_pins_design_v2(self):
         rule = predictor.load_rule()
         self.assertEqual(rule["Design"]["SHA256"], "e9c10d84af99b9ecb5cb29c840ec0f6a3a16ea8f249993e458b5b15ec4351f50")
         self.assertEqual(rule["Policy"]["Option"], "A")
         self.assertEqual(rule["Policy"]["DefaultBound"], {"SA": 0.005, "MS": 0.005, "MA_sharp": 0.010})
-        self.assertFalse(rule["Policy"]["DefaultActive"])
+        self.assertEqual(rule["Policy"]["FallbackMaxBound"], 0.035)
+        self.assertEqual(rule["Policy"]["Domain"]["WDefaultMax"], 0.025)
+        # decision 459: DEFAULT reuse is ACTIVE by the validation-pair-5 record (the policy limits unchanged: Option A)
+        self.assertTrue(rule["Policy"]["DefaultActive"])
+        activation = rule["Policy"]["DefaultActivation"]
+        self.assertEqual(activation["ValidationPair"], "pair-5")
+        self.assertEqual(activation["RecordPath"], "nearkey-default-activation-pair5.json")
+        self.assertEqual(activation["RecordSHA256"], SHIPPED_RECORD_SHA256)
+        self.assertEqual((activation["Decision"], activation["UserDecision"], activation["Verdict"]), (459, 428, "PASS"))
+        self.assertEqual(activation["Bound_pct"], {"SA": 0.551, "MS": 0.301, "MA_sharp": 1.007})
+        for T, r in activation["Measured_r_pct"].items():
+            self.assertLess(abs(r), activation["Bound_pct"][T], T)
+        self.assertLess(activation["Measured_r_pct"]["SA"], 0)
+        self.assertLess(activation["Measured_r_pct"]["MS"], 0)
         keys = sorted(k[:16] for k in predictor.admissible_structure_keys(rule))
         self.assertEqual(keys, ["2d27be59ff1b0774", "4682966a36a26319", "52c670f3cfe5f26b", "d44841a19b9546cf"])
         c = rule["Predictor"]["Coefficients"]
@@ -89,6 +118,35 @@ class RuleFile(unittest.TestCase):
             self.assertAlmostEqual(c[T]["Fallback"]["b"], b, places=3)
             self.assertAlmostEqual(100 * c[T]["Default"]["phi"], phi_def, places=3)
             self.assertAlmostEqual(100 * c[T]["Fallback"]["phi"], phi_full, places=3)
+
+    def test_rule_file_byte_sha256_is_pinned(self):
+        """Decision 440 MINOR-A / 459: the shipped rule file's BYTE sha256 (= RuleFileSHA256 on every prediction and library header)."""
+        self.assertEqual(hashlib.sha256(predictor.RULE_FILE.read_bytes()).hexdigest(), RULE_FILE_SHA256)
+        self.assertEqual(predictor.load_rule()["_sha256"], RULE_FILE_SHA256)
+
+    def test_shipped_activation_record_is_pinned(self):
+        """Decision 460: the activation record shipped beside the rule file re-hashes to the rule's RecordSHA256 and names pair 5 PASS."""
+        self.assertEqual(hashlib.sha256(SHIPPED_RECORD.read_bytes()).hexdigest(), SHIPPED_RECORD_SHA256)
+        record = json.loads(SHIPPED_RECORD.read_text())
+        self.assertEqual((record["Record"], record["ValidationPair"], record["Verdict"]), ("DefaultActivation", "pair-5", "PASS"))
+        self.assertEqual(record["RuleVersion"], predictor.RULE_VERSION)
+        for T, bound in (("SA", 0.551), ("MS", 0.301), ("MA_sharp", 1.007)):
+            scored = record["Scoring"]["PerType"][T]
+            self.assertEqual(scored["Bound_pct"], bound)
+            self.assertTrue(scored["InsideBound"])
+            self.assertLess(abs(scored["r_pct"]), bound)
+        self.assertTrue(record["Scoring"]["PerType"]["SA"]["SignRight"])
+        self.assertTrue(record["Scoring"]["PerType"]["MS"]["SignRight"])
+        self.assertEqual(len(record["Records"]["QExactModelFiles"]["Files"]), 7)
+        active, activation = predictor.default_active(predictor.load_rule())
+        self.assertTrue(active)
+        self.assertEqual(activation["RecordSHA256"], SHIPPED_RECORD_SHA256)
+        self.assertEqual(predictor.activation_record_path(predictor.load_rule(), activation), SHIPPED_RECORD)
+
+    @unittest.skipUnless(PAIR5_EVIDENCE_RECORD.is_file(), "the validation-pair-5 evidence tree is not mounted")
+    def test_shipped_activation_record_equals_the_evidence_record(self):
+        self.assertEqual(SHIPPED_RECORD.read_bytes(), PAIR5_EVIDENCE_RECORD.read_bytes())
+        self.assertEqual(hashlib.sha256(PAIR5_EVIDENCE_RECORD.read_bytes()).hexdigest(), SHIPPED_RECORD_SHA256)
 
     @unittest.skipUnless((EVIDENCE / "calibration.json").is_file(), "the design evidence tree is not mounted")
     def test_rule_matches_calibration_record(self):
@@ -261,6 +319,67 @@ class Policy(unittest.TestCase):
             self.assertTrue(decision["Allowed"], (pair, decision["Reasons"]))
             self.assertEqual(decision["Mode"], "Fallback")
 
+    def test_shipped_rule_allows_default_reuse_of_b4_b2_b5_and_refuses_b3_c1_c2(self):
+        """Decision 459 / DESIGN v2 section 3 with the SHIPPED rule (no synthetic record): B4 / B2 / B5 are Default reuses now, B3 (T2
+        failed, SA bound 0.568 > 0.5 %), C1 and C2 (|W| > 2.5 %) stay refused in Default and remain Fallback-only."""
+        shipped = self.rule
+        self.assertTrue(predictor.is_shipped_rule(shipped))
+        for pair in ("B4", "B2", "B5"):
+            decision = self.decide(shipped, pair, "default")
+            self.assertTrue(decision["Allowed"], (pair, decision["Reasons"]))
+            self.assertEqual(decision["Mode"], "Default")
+            self.assertEqual(decision["DefaultActivation"], shipped["Policy"]["DefaultActivation"])
+            self.assertEqual(decision["DefaultActivation"]["Decision"], 459)
+        for pair, reason in (("B3", "BoundAbovePolicyLimit: SA"), ("B3", "T2TraceGateFailed"), ("C1", "OutsideDefaultRegime"),
+                             ("C2", "OutsideDefaultRegime")):
+            decision = self.decide(shipped, pair, "default")
+            self.assertFalse(decision["Allowed"], pair)
+            self.assertEqual(decision["Mode"], "None")
+            self.assertTrue(any(r.startswith(reason) for r in decision["Reasons"]), (pair, reason, decision["Reasons"]))
+            self.assertFalse(any(r.startswith("DefaultNotActive") for r in decision["Reasons"]), decision["Reasons"])
+            self.assertTrue(self.decide(shipped, pair, "fallback", stop_record=STOP, approval="x")["Allowed"], pair)
+
+    def test_relative_record_path_resolves_against_the_rule_file_directory(self):
+        """Decision 460: a relative RecordPath is read beside the rule file that carries it (the shipped copy for the shipped rule; a
+        rule loaded from another directory looks there and fails closed when the record is absent); absolute paths are read as given."""
+        shipped = self.rule
+        self.assertEqual(predictor.activation_record_path(shipped, shipped["Policy"]["DefaultActivation"]), SHIPPED_RECORD)
+        self.assertEqual(predictor.activation_record_path(shipped, {"RecordPath": str(PAIR5_RECORD)}), PAIR5_RECORD)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rule.json"
+            path.write_text(json.dumps({k: v for k, v in shipped.items() if not k.startswith("_")}))
+            elsewhere = predictor.load_rule(path)
+            self.assertEqual(predictor.activation_record_path(elsewhere, elsewhere["Policy"]["DefaultActivation"]),
+                             (Path(tmp) / "nearkey-default-activation-pair5.json").resolve())
+            with self.assertRaises(predictor.NearKeyRuleError):
+                predictor.default_active(elsewhere)
+            (Path(tmp) / "nearkey-default-activation-pair5.json").write_bytes(SHIPPED_RECORD.read_bytes())
+            self.assertTrue(predictor.default_active(elsewhere)[0])
+
+    def test_shipped_record_mismatch_still_fails_closed(self):
+        """Decision 438 (5) on the SHIPPED rule: a RecordSHA256 that does not re-hash, a RecordPath to another file or a missing file
+        keeps default reuse inactive (NearKeyRuleError), and so does the flag without a record."""
+        tampered = copy.deepcopy(self.rule)
+        tampered["Policy"]["DefaultActivation"]["RecordSHA256"] = "0" * 64
+        with self.assertRaises(predictor.NearKeyRuleError) as context:
+            predictor.default_active(tampered)
+        self.assertIn("default reuse stays inactive", str(context.exception))
+        other_file = copy.deepcopy(self.rule)
+        other_file["Policy"]["DefaultActivation"]["RecordPath"] = str(PAIR5_RECORD)   # readable, re-hashes to another sha
+        with self.assertRaises(predictor.NearKeyRuleError):
+            predictor.default_active(other_file)
+        missing = copy.deepcopy(self.rule)
+        missing["Policy"]["DefaultActivation"]["RecordPath"] = "nearkey-default-activation-pair6.json"
+        with self.assertRaises(predictor.NearKeyRuleError):
+            predictor.default_active(missing)
+        for broken in (tampered, other_file, missing):
+            with self.assertRaises(predictor.NearKeyRuleError):
+                self.decide(broken, "B4", "default")
+        # the information-only shape used by the non-Default evaluations (decision 460 (B))
+        refused = predictor.refused_decision(self.rule, "default", "DefaultNotActive: record unreadable (test)")
+        self.assertEqual((refused["Mode"], refused["Allowed"], refused["Reasons"]), ("None", False, ["DefaultNotActive: record unreadable (test)"]))
+        self.assertEqual(refused["PolicyLimit"]["Default"], self.rule["Policy"]["DefaultBound"])
+
     def test_option_b_admits_b4_only(self):
         strict = copy.deepcopy(self.active)
         strict["Policy"]["DefaultBound"]["MA_sharp"] = 0.005
@@ -268,27 +387,28 @@ class Policy(unittest.TestCase):
         self.assertEqual(admitted, ["B4"])
 
     def test_default_inactive_until_a_default_activation_record_exists(self):
+        inactive = deactivated(self.rule)   # the rule as shipped before decision 459
         for pair in ("B4", "B2", "B5"):
-            decision = self.decide(self.rule, pair, "default")
+            decision = self.decide(inactive, pair, "default")
             self.assertFalse(decision["Allowed"])
             self.assertEqual(decision["Mode"], "None")
             self.assertTrue(any(r.startswith("DefaultNotActive") for r in decision["Reasons"]), decision["Reasons"])
-            self.assertTrue(self.decide(self.rule, pair, "fallback", stop_record=STOP, approval="x")["Allowed"])
-        flag_only = copy.deepcopy(self.rule)
+            self.assertTrue(self.decide(inactive, pair, "fallback", stop_record=STOP, approval="x")["Allowed"])
+        flag_only = copy.deepcopy(inactive)
         flag_only["Policy"]["DefaultActive"] = True   # no record: fail closed
         with self.assertRaises(predictor.NearKeyRuleError):
             self.decide(flag_only, "B4", "default")
         # decision 438 (5): the activation record is verified against the validation-pair record: a missing path, an unreadable
         # path or a sha mismatch fails closed
-        partial = copy.deepcopy(self.rule)
+        partial = copy.deepcopy(inactive)
         partial["Policy"]["DefaultActive"] = True
         partial["Policy"]["DefaultActivation"] = {"ValidationPair": "pair-5", "RecordSHA256": PAIR5_SHA}
         with self.assertRaises(predictor.NearKeyRuleError):
             predictor.default_active(partial)
         with self.assertRaises(predictor.NearKeyRuleError):
-            predictor.default_active(activated(self.rule, record_path=ACTIVATION_DIR / "missing.json"))
+            predictor.default_active(activated(inactive, record_path=ACTIVATION_DIR / "missing.json"))
         with self.assertRaises(predictor.NearKeyRuleError):
-            predictor.default_active(activated(self.rule, record_sha="0" * 64))
+            predictor.default_active(activated(inactive, record_sha="0" * 64))
         active, activation = predictor.default_active(self.active)
         self.assertTrue(active)
         self.assertEqual(activation["RecordSHA256"], PAIR5_SHA)
