@@ -216,7 +216,232 @@ def estimate(counts, stages, *, local_edge=None, model=None, profile=None, block
                        if out["FitsOneJob"] else
                        f"does NOT fit one job of {walltime / 3600:.0f} h at {worst}x PCG ({job / 60:.0f} min; largest Palace peak "
                        f"{peak_gb:.0f} GB of {node_gib:.0f} GiB): fail closed, not submitted")
+    plan_nodes(out, model, profile)
     return out
+
+
+# ---------------------------------------------------------------------------------------
+# Multi-node stages (decision 457): the node count of a stage is the minimum N whose
+# estimated per-node node-used peak fits an instance's admission guard; a stage that fits
+# one node under the one-node rules of record keeps them (its figures are untouched).
+# ---------------------------------------------------------------------------------------
+NODE_SCALING_RULE = ("cost-model NodeScaling (measured at 1 and 2 nodes on one stored coupon, decision 457): per-node node-used "
+                     "GiB at N nodes = the one-node figure x (ReplicatedFraction + (1 - ReplicatedFraction) / N) per stage kind "
+                     "(Worker / Reducer / LocalEdge); every time part scales as T(1) / N^Exponent with the exponent = log2 of the "
+                     "measured 1 -> 2 node speedup of that part (WorkerPerSource, WorkerNonSource, ReducerSetup, ReducerReduction, "
+                     "LocalEdge), never above 1; a stage fits N nodes when its largest per-node figure is <= MemoryFitFraction x "
+                     "MemoryGiB of an instance (the admission guard MinimumMemAvailableBytes checked on every node); NodesRequired is "
+                     "the minimum such N in 2..MaximumNodesPerJob (1 when the one-node rules of record admit the stage); a stage "
+                     "above MaximumNodesPerJob fails closed")
+ONE_NODE_HEADROOM_GIB = 60
+MEMORY_KINDS = {"Worker": "Worker", "Reducer": "Reducer", "LocalEdge": "LocalEdge"}
+
+
+def one_node_fits(model, profile, node_used_gib, palace_peak_gb):
+    """The one-node rules of record for one stage: the node-used estimate under NodeFitFraction
+    of the largest node (estimate's FitsNode) and the Palace peak plus the runner's headroom
+    under the same bound (estimate's FitsOneJob memory term)."""
+    bound = model["NodeFitFraction"] * largest_node_gib(profile)
+    return bool(node_used_gib < bound and palace_peak_gb / model["PalaceGBPerGiB"] + ONE_NODE_HEADROOM_GIB < bound)
+
+
+def replicated_fraction(model, kind):
+    scaling = model.get("NodeScaling")
+    if scaling is None:
+        raise ValueError("the cost model carries no NodeScaling calibration: a stage that does not fit one node cannot be planned")
+    return float(scaling["Memory"][MEMORY_KINDS[kind]]["ReplicatedFraction"])
+
+
+def per_node_used_gib(model, kind, node_used_one, nodes):
+    """The per-node node-used GiB of a `kind` (Worker / Reducer / LocalEdge) stage at `nodes`
+    nodes from its one-node figure (NODE_SCALING_RULE)."""
+    nodes = int(nodes)
+    if nodes < 1:
+        raise ValueError(f"the node count must be >= 1, not {nodes}")
+    if nodes == 1:
+        return float(node_used_one)
+    fraction = replicated_fraction(model, kind)
+    return float(node_used_one) * (fraction + (1.0 - fraction) / nodes)
+
+
+def time_exponent(model, part):
+    scaling = model.get("NodeScaling")
+    if scaling is None:
+        raise ValueError("the cost model carries no NodeScaling calibration: a stage that does not fit one node cannot be planned")
+    return min(float(scaling["Time"][part]["Exponent"]), 1.0)
+
+
+def scaled_seconds(model, part, seconds_one, nodes):
+    return float(seconds_one) if int(nodes) == 1 else float(seconds_one) / float(nodes) ** time_exponent(model, part)
+
+
+def select_instance_for_nodes(profile, per_node_gib, nodes):
+    """The first instance of Instances whose admission guard (MemoryFitFraction x MemoryGiB)
+    holds `per_node_gib` (the largest estimated per-node node-used GiB of the stages a job
+    runs at `nodes` nodes); None when no instance holds it."""
+    fraction = float(profile["MemoryFitFraction"])
+    for item in profile["Instances"]:
+        guard_gib = fraction * item["MemoryGiB"]
+        if per_node_gib <= guard_gib:
+            return {"Type": item["Type"], "vCPUs": item["vCPUs"], "MemoryGiB": item["MemoryGiB"], "NodeGiB": item["NodeGiB"],
+                    "Nodes": int(nodes), "PerNodeUsedGiBEstimate": float(per_node_gib), "MemoryFitFraction": fraction, "Fits": True,
+                    "MinimumMemAvailableBytes": int(fraction * item["MemoryGiB"] * GIB),
+                    "Candidates": [entry["Type"] for entry in profile["Instances"]], "Rule": profile["MultiNodeRule"]}
+    return None
+
+
+def stage_memory_kinds(stage):
+    """(kind, node-used GiB, Palace peak GB) of every executable of a stage record."""
+    if "NodeUsedGiBEstimateWorker" in stage:
+        return [("Worker", stage["NodeUsedGiBEstimateWorker"], stage["WorkerPalacePeakGBEstimate"]),
+                ("Reducer", stage["NodeUsedGiBEstimateReducer"], stage["ReducerPalacePeakGBEstimate"])]
+    return [("LocalEdge", stage["NodeUsedGiBEstimate"], stage["PalacePeakGBEstimate"])]
+
+
+def nodes_required(model, profile, stage):
+    """The node plan of one stage record: {NodesRequired, OneNodeFits, Instance (at NodesRequired),
+    PerNodeUsedGiB (by N), MaximumNodesPerJob}; NodesRequired None when even MaximumNodesPerJob
+    nodes do not hold the stage (or the model has no NodeScaling calibration: Reason)."""
+    kinds = stage_memory_kinds(stage)
+    maximum = int(profile.get("MaximumNodesPerJob", 1))
+    record = {"OneNodeFits": all(one_node_fits(model, profile, used, peak) for _, used, peak in kinds),
+              "MaximumNodesPerJob": maximum, "PerNodeUsedGiB": {}, "Rule": NODE_SCALING_RULE}
+    if record["OneNodeFits"]:
+        record.update(NodesRequired=1, Instance=None)
+        return record
+    try:
+        for nodes in range(2, maximum + 1):
+            per_node = {kind: per_node_used_gib(model, kind, used, nodes) for kind, used, _ in kinds}
+            record["PerNodeUsedGiB"][str(nodes)] = per_node
+            instance = select_instance_for_nodes(profile, max(per_node.values()), nodes)
+            if instance is not None:
+                record.update(NodesRequired=nodes, Instance=instance)
+                return record
+    except ValueError as error:
+        record.update(NodesRequired=None, Instance=None, Reason=str(error))
+        return record
+    largest = max((per_node_used_gib(model, kind, used, maximum) for kind, used, _ in kinds), default=0.0)
+    record.update(NodesRequired=None, Instance=None,
+                  Reason=(f"the per-node node-used estimate at MaximumNodesPerJob = {maximum} nodes ({largest:.0f} GiB) exceeds every "
+                          f"instance's admission guard ({[round(profile['MemoryFitFraction'] * item['MemoryGiB']) for item in profile['Instances']]} GiB)"))
+    return record
+
+
+def plan_nodes(estimate, model, profile):
+    """Attach the node plan to an estimate record: every stage's NodePlan (nodes_required) and
+    the summary Nodes = {MaximumNodesPerJob, Required: {stage: N}, MultiNode: any N > 1, Fits:
+    every stage holds <= MaximumNodesPerJob nodes, Decision}; a coupon whose every stage fits one
+    node is reported as such and its figures are untouched."""
+    required = {}
+    for name, stage in estimate["Stages"].items():
+        stage["NodePlan"] = nodes_required(model, profile, stage)
+        required[name] = stage["NodePlan"]["NodesRequired"]
+    fits = all(nodes is not None for nodes in required.values())
+    multi = fits and any(nodes > 1 for nodes in required.values())
+    if not fits:
+        failed = {name: estimate["Stages"][name]["NodePlan"].get("Reason") for name, nodes in required.items() if nodes is None}
+        decision = (f"does NOT fit {profile.get('MaximumNodesPerJob', 1)} nodes (MaximumNodesPerJob): {failed}: fail closed, not submitted")
+    elif multi:
+        decision = ("multi-node stages (decision 457): nodes required per stage " + ", ".join(
+            f"{name} {nodes}" + (f" ({estimate['Stages'][name]['NodePlan']['Instance']['Type']}, per node "
+                                 f"{estimate['Stages'][name]['NodePlan']['Instance']['PerNodeUsedGiBEstimate']:.0f} GiB)" if nodes > 1 else "")
+            for name, nodes in required.items()))
+    else:
+        decision = "every stage fits one node under the one-node rules of record"
+    estimate["Nodes"] = {"MaximumNodesPerJob": int(profile.get("MaximumNodesPerJob", 1)), "Required": required, "MultiNode": multi,
+                         "Fits": fits, "Decision": decision, "Rule": NODE_SCALING_RULE}
+    return estimate["Nodes"]
+
+
+def scale_stage_to_nodes(model, stage, nodes):
+    """A copy of a stage record at `nodes` nodes: every time part divided by N^Exponent of its
+    NodeScaling part, the per-node memory figures added (PerNodeUsedGiBEstimate*,
+    PerNodePalacePeakGB*), the one-node figures kept under OneNode; `nodes` = 1 returns a copy."""
+    nodes = int(nodes)
+    scaled = json.loads(json.dumps(stage))
+    scaled["Nodes"] = nodes
+    if nodes == 1:
+        return scaled
+    scaled["OneNode"] = {key: stage[key] for key in stage if key not in ("NodePlan",)}
+    if "NodeUsedGiBEstimateWorker" in stage:
+        parts = stage["ReducerSecondsEstimateParts"]
+        setup = scaled_seconds(model, "ReducerSetup", parts["Setup"], nodes)
+        evaluation = scaled_seconds(model, "ReducerReduction", parts["Evaluation"], nodes)
+        gram = scaled_seconds(model, "ReducerReduction", parts["Gram"], nodes)
+        scaled["ReducerSecondsEstimateParts"] = {"Setup": setup, "Evaluation": evaluation, "Gram": gram}
+        scaled["ReducerSecondsEstimate"] = setup + evaluation + gram
+        scaled["WorkerNonSourceSecondsEstimate"] = scaled_seconds(model, "WorkerNonSource", stage["WorkerNonSourceSecondsEstimate"], nodes)
+        sources = stage["Sources"]
+        for factor, figures in stage["ByPCGFactor"].items():
+            per_source = scaled_seconds(model, "WorkerPerSource", figures["PerSourceSecondsEstimate"], nodes)
+            worker = scaled["WorkerNonSourceSecondsEstimate"] + sources * per_source
+            scaled["ByPCGFactor"][factor] = {"MeanPCGIterations": figures["MeanPCGIterations"], "PerSourceSecondsEstimate": per_source,
+                                             "WorkerSecondsEstimate": worker, "StageSecondsEstimate": worker + scaled["ReducerSecondsEstimate"]}
+        for kind, suffix in (("Worker", "Worker"), ("Reducer", "Reducer")):
+            factor = replicated_fraction(model, kind) + (1.0 - replicated_fraction(model, kind)) / nodes
+            scaled[f"PerNodeUsedGiBEstimate{suffix}"] = per_node_used_gib(model, kind, stage[f"NodeUsedGiBEstimate{suffix}"], nodes)
+            scaled[f"PerNodePalacePeakGBEstimate{suffix}"] = stage[f"{suffix}PalacePeakGBEstimate"] * factor
+    else:
+        for factor, figures in stage["ByPCGFactor"].items():
+            scaled["ByPCGFactor"][factor] = {"StageSecondsEstimate": scaled_seconds(model, "LocalEdge", figures["StageSecondsEstimate"], nodes)}
+        factor = replicated_fraction(model, "LocalEdge") + (1.0 - replicated_fraction(model, "LocalEdge")) / nodes
+        scaled["PerNodeUsedGiBEstimate"] = per_node_used_gib(model, "LocalEdge", stage["NodeUsedGiBEstimate"], nodes)
+        scaled["PerNodePalacePeakGBEstimate"] = stage["PalacePeakGBEstimate"] * factor
+    return scaled
+
+
+def stage_per_node_used_gib(stage):
+    """The largest per-node node-used GiB a (scaled) stage record carries (the one-node figure
+    of an unscaled stage)."""
+    if "NodeUsedGiBEstimateWorker" in stage:
+        return max(stage.get("PerNodeUsedGiBEstimateWorker", stage["NodeUsedGiBEstimateWorker"]),
+                   stage.get("PerNodeUsedGiBEstimateReducer", stage["NodeUsedGiBEstimateReducer"]))
+    return stage.get("PerNodeUsedGiBEstimate", stage["NodeUsedGiBEstimate"])
+
+
+def scale_to_nodes(estimate, assignment, model, profile):
+    """The estimate record of a multi-node coupon: `assignment` = stage name -> nodes (the
+    main stages share one count, the control / local-edge group another: build_plan /
+    job_split read them per job); every stage scaled by scale_stage_to_nodes, the job totals
+    recomputed, FitsOneJob = the time term alone (the memory term is the per-node fit the
+    assignment was chosen for), the Decision stating the nodes per stage."""
+    scaled = json.loads(json.dumps(estimate))
+    factors = [f"{factor:.1f}" for factor in model["PCGFactors"]]
+    totals = {factor: 0.0 for factor in factors}
+    walltime = profile["WalltimeSeconds"]
+    for name, stage in estimate["Stages"].items():
+        nodes = int(assignment[name])
+        if stage["NodePlan"]["NodesRequired"] is None or nodes < stage["NodePlan"]["NodesRequired"]:
+            raise ValueError(f"stage {name} needs {stage['NodePlan']['NodesRequired']} nodes, assigned {nodes}")
+        if nodes > int(profile["MaximumNodesPerJob"]):
+            raise ValueError(f"stage {name} assigned {nodes} nodes above MaximumNodesPerJob {profile['MaximumNodesPerJob']}")
+        record = scale_stage_to_nodes(model, stage, nodes)
+        instance = select_instance_for_nodes(profile, stage_per_node_used_gib(record), nodes) if nodes > 1 else None
+        if nodes > 1 and instance is None:
+            raise ValueError(f"stage {name} at {nodes} nodes fits no instance's admission guard")
+        record["Instance"] = instance
+        for factor in factors:
+            totals[factor] += record["ByPCGFactor"][factor]["StageSecondsEstimate"]
+        scaled["Stages"][name] = record
+    scaled["JobSecondsEstimateByPCGFactor"] = dict(totals)
+    scaled["JobSecondsEstimateWithPreflightAndMargin"] = {
+        factor: total * model["PreflightAndMarginFactor"] + model["PreflightSeconds"] for factor, total in totals.items()}
+    worst = max(factors, key=float)
+    job = scaled["JobSecondsEstimateWithPreflightAndMargin"][worst]
+    scaled["FitsOneJob"] = bool(job < walltime)
+    scaled["Nodes"]["Assigned"] = {name: int(nodes) for name, nodes in assignment.items()}
+    scaled["Nodes"]["NodeSecondsEstimateByPCGFactor"] = {
+        factor: sum(scaled["Stages"][name]["ByPCGFactor"][factor]["StageSecondsEstimate"] * int(assignment[name]) for name in scaled["Stages"])
+        for factor in factors}
+    per_stage = ", ".join(f"{name} on {int(assignment[name])} node(s)"
+                          + (f" ({scaled['Stages'][name]['Instance']['Type']}, per node "
+                             f"{scaled['Stages'][name]['Instance']['PerNodeUsedGiBEstimate']:.0f} GiB)" if int(assignment[name]) > 1 else "")
+                          for name in scaled["Stages"])
+    scaled["Decision"] = (f"multi-node coupon (decision 457): {per_stage}; runner total {totals[factors[0]] / 60:.0f} min at the measured "
+                          f"PCG counts, {totals[worst] / 60:.0f} min at {worst}x (+{100 * (model['PreflightAndMarginFactor'] - 1):.0f}% and "
+                          f"preflight: {job / 60:.0f} min) in one job of {walltime / 3600:.0f} h: "
+                          + ("fits" if scaled["FitsOneJob"] else "does NOT fit one job (the job split decides)"))
+    return scaled
 
 
 def parse_stage(text):

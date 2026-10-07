@@ -13,7 +13,16 @@ Writes <plan-dir>/status.json (stage states, parsed Palace log: H1 / ND / RT cou
 PCG iterations, per-source timings, peak memory, elapsed-time report).  Runs on the
 compute node only (stdlib only, no repository imports).
 
+A multi-node plan (decision 457: Nodes > 1, Ranks = Nodes x RanksPerNode, MPIExecArguments,
+NodeGuard) runs on every node of PBS_NODEFILE: the preflight verifies the node count,
+checks the conflicting processes and MemAvailable >= the admission guard on EVERY node
+(pbsdsh, ssh as the fallback), a memory sampler runs on every node (this script in
+--node-sampler mode) and every stage records its per-node sampled peaks; the launch adds
+the plan's MPI arguments (the hostfile, RanksPerNode ranks per node).  A one-node plan
+runs exactly as before.
+
 usage: run_stages.py PLAN.json
+       run_stages.py --node-sampler CSV STOPFILE   (the per-node sampler, launched by the runner)
 """
 import hashlib
 import ipaddress
@@ -66,6 +75,86 @@ def normalize_host(entry):
         return socket.gethostbyaddr(str(ipaddress.ip_address(entry)))[0].split(".")[0]
     except ValueError:
         return entry.split(".")[0]
+
+
+def node_sampler(csv_path, stop_path, interval=5.0):
+    """The per-node memory sampler (every node of a multi-node job): node-wide used bytes
+    every `interval` seconds into `csv_path` until `stop_path` exists."""
+    with Path(csv_path).open("w") as stream:
+        stream.write("unix,host,used_bytes\n")
+        host = socket.gethostname().split(".")[0]
+        while not Path(stop_path).exists():
+            values = meminfo()
+            stream.write(f"{time.time():.0f},{host},{values['MemTotal'] - values['MemAvailable']}\n")
+            stream.flush()
+            time.sleep(interval)
+
+
+def unique_hosts(nodefile_text):
+    """The job's hosts in PBS_NODEFILE order (one entry per rank slot; duplicates dropped)."""
+    hosts = []
+    for entry in nodefile_text.split():
+        host = normalize_host(entry)
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def remote_shell(plan, host):
+    """The command prefix running a program on another node of the job: the plan's PBSDsh
+    (pbsdsh -h HOST --) when the executable exists, else ssh in batch mode."""
+    pbsdsh = plan.get("PBSDsh")
+    if pbsdsh and Path(pbsdsh).exists():
+        return [pbsdsh, "-h", host, "--"]
+    found = shutil_which("pbsdsh")
+    if found:
+        return [found, "-h", host, "--"]
+    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host]
+
+
+def shutil_which(name):
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(directory) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def remote_node_preflight(plan, host):
+    """/proc/meminfo and the process table of another node (its admission and conflict checks)."""
+    command = remote_shell(plan, host) + ["/bin/sh", "-c", "cat /proc/meminfo; echo ---PS---; ps -eo pid=,comm="]
+    result = subprocess.run(command, text=True, capture_output=True, timeout=120)
+    if result.returncode != 0 or "---PS---" not in result.stdout:
+        raise SystemExit(f"Node preflight failed on {host}: rc {result.returncode} {result.stderr.strip()[:400]}")
+    meminfo_text, _, processes = result.stdout.partition("---PS---")
+    values = {}
+    for line in meminfo_text.splitlines():
+        if ":" in line:
+            key, rest = line.split(":", 1)
+            values[key.strip()] = int(rest.split()[0]) * 1024
+    return values, processes
+
+
+def conflicting_processes(processes_text):
+    return [line for line in processes_text.splitlines() if line.split()
+            and (line.split()[-1].startswith(("palace", "bridge-")) or line.split()[-1] in ("mpirun", "mpiexec", "prterun", "prted"))]
+
+
+def per_node_peaks(sample_paths, start_epoch, end_epoch):
+    """host -> the largest sampled used bytes between the two epochs (the per-node peaks of a
+    stage, read from the node samplers' CSVs)."""
+    peaks = {}
+    for path in sample_paths:
+        if not Path(path).exists():
+            continue
+        for line in Path(path).read_text().splitlines()[1:]:
+            parts = line.split(",")
+            if len(parts) != 3:
+                continue
+            stamp, host, used = int(parts[0]), parts[1], int(parts[2])
+            if start_epoch <= stamp <= end_epoch:
+                peaks[host] = max(peaks.get(host, 0), used)
+    return peaks
 
 
 def parse_log(text):
@@ -128,19 +217,34 @@ def main(argv):
         tmp.write_text(json.dumps(status, indent=2) + "\n")
         tmp.replace(status_path)
 
-    # Preflight: node identity, conflicting processes, executable and pinned hashes, admission.
-    hosts = {normalize_host(x) for x in Path(os.environ["PBS_NODEFILE"]).read_text().split() if x.strip()}
-    if len(hosts) != 1 or status["Host"] not in hosts:
-        raise SystemExit(f"PBS node identity mismatch actual={status['Host']} allocated={hosts}")
+    # Preflight: node identity, conflicting processes, executable and pinned hashes, admission
+    # (a multi-node plan: every node of PBS_NODEFILE, decision 457).
+    nodes = int(plan.get("Nodes", 1))
+    ordered_hosts = unique_hosts(Path(os.environ["PBS_NODEFILE"]).read_text())
+    hosts = set(ordered_hosts)
+    if len(hosts) != nodes or status["Host"] not in hosts:
+        raise SystemExit(f"PBS node identity mismatch actual={status['Host']} allocated={sorted(hosts)} plan nodes={nodes}")
     processes = subprocess.check_output(["ps", "-eo", "pid=,comm="], text=True)
-    conflicts = [line for line in processes.splitlines()
-                 if line.split()[-1].startswith(("palace", "bridge-")) or line.split()[-1] in ("mpirun", "mpiexec", "prterun", "prted")]
+    conflicts = conflicting_processes(processes)
     if conflicts:
         raise SystemExit("Conflicting native processes: " + repr(conflicts))
     memory0 = meminfo()
     preflight = {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
                  "MinimumMemAvailableBytes": plan["MinimumMemAvailableBytes"], "Instance": plan.get("Instance"),
                  "Binary": str(binary), "BinarySHA256": sha(binary), "Pinned": {}, "UTC": time.strftime("%FT%TZ", time.gmtime())}
+    other_hosts = [host for host in ordered_hosts if host != status["Host"]]
+    if nodes > 1:
+        preflight["Nodes"] = {status["Host"]: {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
+                                               "Conflicts": [], "Role": "runner"}}
+        for host in other_hosts:
+            values, remote_processes = remote_node_preflight(plan, host)
+            remote_conflicts = conflicting_processes(remote_processes)
+            preflight["Nodes"][host] = {"MemTotalBytes": values["MemTotal"], "MemAvailableBytes": values["MemAvailable"],
+                                        "Conflicts": remote_conflicts, "Role": "node"}
+            if remote_conflicts:
+                raise SystemExit(f"Conflicting native processes on {host}: " + repr(remote_conflicts))
+        preflight["NodeGuard"] = plan.get("NodeGuard")
+        status["Nodes"] = ordered_hosts
     if preflight["BinarySHA256"] != binary_sha256:
         raise SystemExit("Executable hash mismatch: " + preflight["BinarySHA256"])
     # A stage may name its own frozen executable (an executable comparison on one archive,
@@ -160,6 +264,10 @@ def main(argv):
     if memory0["MemAvailable"] < plan["MinimumMemAvailableBytes"]:
         raise SystemExit(f"Admission failed: MemAvailable={memory0['MemAvailable']} < the plan's MinimumMemAvailableBytes "
                          f"{plan['MinimumMemAvailableBytes']} ({(plan.get('Instance') or {}).get('Type')})")
+    for host, node in (preflight.get("Nodes") or {}).items():
+        if node["MemAvailableBytes"] < plan["MinimumMemAvailableBytes"]:
+            raise SystemExit(f"Admission failed on {host}: MemAvailable={node['MemAvailableBytes']} < the plan's "
+                             f"MinimumMemAvailableBytes {plan['MinimumMemAvailableBytes']} (checked per node x {nodes} nodes)")
     for stage in plan["Stages"]:
         output = Path(json.loads(Path(stage["Config"]).read_text())["Problem"]["Output"])
         if output.exists():
@@ -185,6 +293,19 @@ def main(argv):
                 stop_sampling.wait(5.0)
 
     threading.Thread(target=sampler, daemon=True).start()
+    # The other nodes' samplers (this script in --node-sampler mode through the node shell),
+    # stopped by the stop file at the end; their CSVs give every stage's per-node peaks.
+    node_samplers, node_sample_paths = [], []
+    stop_file = base / "node-sampler.stop"
+    if nodes > 1:
+        if stop_file.exists():
+            stop_file.unlink()
+        for host in other_hosts:
+            csv_path = base / f"memory-samples-{host}.csv"
+            node_sample_paths.append(csv_path)
+            command = remote_shell(plan, host) + ["/usr/bin/env", "python3", str(Path(__file__).resolve()), "--node-sampler",
+                                                  str(csv_path), str(stop_file)]
+            node_samplers.append(subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=(base / f"node-sampler-{host}.err").open("w")))
 
     completed = set()
     for stage in plan["Stages"]:
@@ -211,12 +332,14 @@ def main(argv):
         log = base / f"{name}.log"
         timefile = base / f"{name}.time"
         stage_binary = Path(stage["Binary"]) if stage.get("Binary") else binary
+        node_arguments = [os.path.expandvars(argument) for argument in plan.get("MPIExecArguments", [])]
         command = ["timeout", "-k", "30", str(int(cap)), "/usr/bin/time", "-v", "-o", str(timefile),
-                   str(mpiexec), *exports, "-n", str(plan["Ranks"]), str(stage_binary), stage["Config"]]
+                   str(mpiexec), *node_arguments, *exports, "-n", str(plan["Ranks"]), str(stage_binary), stage["Config"]]
         record.update(Command=command, CapSeconds=cap, Log=str(log), StartUTC=time.strftime("%FT%TZ", time.gmtime()),
                       Binary=str(stage_binary), BinarySHA256=stage.get("BinarySHA256") or binary_sha256)
         current_stage[0] = name
         started = time.monotonic()
+        started_epoch = time.time()
         with log.open("w") as stream:
             process = subprocess.Popen(command, env=environment, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
             try:
@@ -232,6 +355,12 @@ def main(argv):
                       MaxSingleProcessRSSBytes=int(match.group(1)) * 1024 if match else None,
                       NodePeakUsedBytesSampled=stage_peaks.get(name), Parsed=parsed,
                       EndUTC=time.strftime("%FT%TZ", time.gmtime()))
+        if nodes > 1:
+            peaks = per_node_peaks(node_sample_paths, int(started_epoch), int(time.time()) + 1)
+            peaks[status["Host"]] = stage_peaks.get(name, 0)
+            record["NodePeakUsedBytesSampledPerNode"] = peaks
+            record["NodePeakUsedBytesSampled"] = max(peaks.values()) if peaks else stage_peaks.get(name)
+            record["Nodes"] = nodes
         ok = code == 0 and not parsed["Nonconvergence"]
         record["State"] = "complete" if ok else ("timed-out" if code == 124 else "failed")
         if ok:
@@ -242,9 +371,19 @@ def main(argv):
 
     stop_sampling.set()
     time.sleep(0.2)
+    if node_samplers:
+        stop_file.write_text(time.strftime("%FT%TZ", time.gmtime()) + "\n")
+        for process in node_samplers:
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
     status.update(State="complete" if all(s["State"] == "complete" for s in status["Stages"]) else "incomplete",
                   EndUTC=time.strftime("%FT%TZ", time.gmtime()), TotalSeconds=time.monotonic() - job_start,
                   StagePeakUsedBytesSampled=stage_peaks)
+    if nodes > 1:
+        status["StagePeakUsedBytesSampledPerNode"] = {record["Name"]: record.get("NodePeakUsedBytesSampledPerNode")
+                                                      for record in status["Stages"] if record.get("NodePeakUsedBytesSampledPerNode")}
     save()
     print(json.dumps({key: value for key, value in status.items() if key != "Stages"}, indent=2))
     for record in status["Stages"]:
@@ -254,4 +393,7 @@ def main(argv):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == "--node-sampler":
+        node_sampler(sys.argv[2], sys.argv[3])
+        sys.exit(0)
     sys.exit(main(sys.argv))

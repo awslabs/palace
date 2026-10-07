@@ -14,6 +14,14 @@ stage's estimate at the largest PCG factor, rounded up to CAP_ROUNDING_SECONDS a
 bounded by the deadline; MinimumSeconds = the estimate at the measured PCG counts,
 rounded up (a stage is not started with less time than its 1x estimate).  The
 reducer's cap covers the reducer estimate alone (the worker has its own).
+
+Multi-node jobs (decision 457): a job whose stages run on `nodes` > 1 nodes carries
+Nodes, RanksPerNode, Ranks = Nodes x RanksPerNode, the MPI launch arguments of the
+cluster profile (the PBS hostfile, RanksPerNode ranks per node), the instance chosen by
+the largest estimated PER-NODE node-used peak of its stages (estimate_stages.
+select_instance_for_nodes) and the admission guard the runner checks on EVERY node;
+its job script selects Nodes chunks.  A one-node job's plan and script are byte-identical
+to the recorded campaigns' (no multi-node key is written).
 """
 import math
 
@@ -85,6 +93,42 @@ def select_instance(profile, peak_gb, gb_per_gib):
             "Candidates": [item["Type"] for item in instances], "Rule": profile["InstanceRule"]}
 
 
+def multi_node_fields(profile, nodes, instance):
+    """The plan fields of a multi-node job (decision 457): the node count, the ranks, the MPI
+    launch arguments (MultiNodeMPIExecArguments with RanksPerNode substituted; the runner
+    expands $PBS_NODEFILE) and the per-node admission guard."""
+    nodes = int(nodes)
+    if nodes < 2:
+        raise ValueError(f"multi-node fields need nodes >= 2, not {nodes}")
+    maximum = int(profile["MaximumNodesPerJob"])
+    if nodes > maximum:
+        raise ValueError(f"{nodes} nodes exceed the cluster profile's MaximumNodesPerJob {maximum}: fail closed")
+    ranks_per_node = int(profile["RanksPerNode"])
+    arguments = [argument.format(ranks_per_node=ranks_per_node) for argument in profile["MultiNodeMPIExecArguments"]]
+    return {"Nodes": nodes, "RanksPerNode": ranks_per_node, "Ranks": nodes * ranks_per_node, "MPIExecArguments": arguments,
+            "PBSDsh": profile.get("PBSDsh"),
+            "NodeGuard": {"MinimumMemAvailableBytes": instance["MinimumMemAvailableBytes"], "Nodes": nodes,
+                          "Rule": ("the runner checks MemAvailable >= MinimumMemAvailableBytes and the absence of conflicting "
+                                   "native processes on EVERY node of PBS_NODEFILE before the first stage, and samples every "
+                                   "node's memory (decision 457)")},
+            "MultiNodeRule": profile["MultiNodeRule"]}
+
+
+def job_instance(profile, estimate, stage_keys, nodes, peak_gb, gb_per_gib):
+    """The instance of a job: the one-node rule (select_instance by the Palace peak) at one
+    node; at `nodes` > 1 the first instance whose admission guard holds the largest
+    estimated per-node node-used peak of the stages `stage_keys` (the scaled estimate)."""
+    if int(nodes) <= 1:
+        return select_instance(profile, peak_gb, gb_per_gib)
+    from estimate_stages import select_instance_for_nodes, stage_per_node_used_gib
+    per_node = max(stage_per_node_used_gib(estimate["Stages"][key]) for key in stage_keys)
+    instance = select_instance_for_nodes(profile, per_node, nodes)
+    if instance is None:
+        raise ValueError(f"no instance's admission guard holds {per_node:.0f} GiB per node at {nodes} nodes: fail closed")
+    instance["EstimatedPalacePeakGB"] = float(peak_gb)
+    return instance
+
+
 def reducer_environment(block_size):
     block_size = int(block_size)
     if block_size < 1:
@@ -131,11 +175,13 @@ def ordinary_stage(remote_case_root, prefix, cap, minimum):
 
 
 def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, config_digests, trace_pins,
-               profile, binary, binary_sha256, mpiexec, purpose, factors, reducer_block_size=DEFAULT_REDUCER_BLOCK_SIZE):
+               profile, binary, binary_sha256, mpiexec, purpose, factors, reducer_block_size=DEFAULT_REDUCER_BLOCK_SIZE,
+               nodes=1):
     """The plan dict.  `stage_layout` = [{"Prefix", "Kind": "response" | "local-edge",
     "Order", "Sources", "EstimateKey"}, ...] in run order; `config_digests` = stage
     prefix -> {file name -> sha256}; `trace_pins` = remote trace path -> sha256;
-    `reducer_block_size` = PALACE_RESPONSE_BLOCK_SIZE of every reducer stage."""
+    `reducer_block_size` = PALACE_RESPONSE_BLOCK_SIZE of every reducer stage; `nodes` = the
+    node count every stage runs on (> 1: a multi-node job on the node-scaled estimate)."""
     pinned = {mesh["Remote"]: mesh["SHA256"]}
     for prefix, digests in config_digests.items():
         for name, digest in digests.items():
@@ -152,8 +198,9 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
         else:
             cap, minimum = stage_caps(est, "local-edge", factors, deadline)
             stages.append(ordinary_stage(remote_case_root, item["Prefix"], cap, minimum))
-    instance = select_instance(profile, estimate["MaxPalacePeakGBEstimate"], estimate["CostModel"]["PalaceGBPerGiB"])
-    return {"Version": PLAN_VERSION, "Case": case_id, "Purpose": purpose,
+    instance = job_instance(profile, estimate, [item["EstimateKey"] for item in stage_layout], nodes,
+                            estimate["MaxPalacePeakGBEstimate"], estimate["CostModel"]["PalaceGBPerGiB"])
+    plan = {"Version": PLAN_VERSION, "Case": case_id, "Purpose": purpose,
             "Ranks": profile["Ranks"], "DeadlineSeconds": profile["DeadlineSeconds"],
             "DeadlineMarginSeconds": profile["DeadlineMarginSeconds"],
             "Instance": instance, "MinimumMemAvailableBytes": instance["MinimumMemAvailableBytes"],
@@ -168,6 +215,9 @@ def build_plan(*, case_id, remote_case_root, mesh, stage_layout, estimate, confi
                                 "JobSecondsEstimateWithPreflightAndMargin": estimate["JobSecondsEstimateWithPreflightAndMargin"],
                                 "MaxPalacePeakGBEstimate": estimate["MaxPalacePeakGBEstimate"],
                                 "FitsOneJob": estimate["FitsOneJob"], "Decision": estimate["Decision"]}}
+    if int(nodes) > 1:
+        plan.update(multi_node_fields(profile, nodes, instance))
+    return plan
 
 
 def block_stage(remote_case_root, prefix, block, cap, minimum):
@@ -194,9 +244,12 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
     of job_split.plan_split (Kind worker: the main-stage worker of its block - job 1 also
     the control stages and the local-edge stage; Kind reducer: the main-stage reducers,
     Requires empty - the driver submits it after every worker job completed and the
-    archive union is counted).  Pins: the mesh, the configs of the stages this job runs
-    and every trace (the reducer config names them all)."""
+    archive union is counted; Nodes: the job's node count of a multi-node coupon, the
+    estimate then being the node-scaled one).  Pins: the mesh, the configs of the stages
+    this job runs and every trace (the reducer config names them all)."""
     kind, block = split_job["Kind"], split_job["Block"]
+    nodes = int(split_job.get("Nodes", 1))
+    stage_keys = []
     stage_names = []
     deadline = profile["DeadlineSeconds"] - profile["DeadlineMarginSeconds"]
     stages = []
@@ -209,6 +262,7 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                 cap, minimum = stage_caps(block_estimate(est, len(split_job["Sources"]), factors), "worker", factors, deadline)
                 stages.append(block_stage(remote_case_root, item["Prefix"], block, cap, minimum))
                 peak_gb = max(peak_gb, est["WorkerPalacePeakGBEstimate"])
+                stage_keys.append(item["EstimateKey"])
                 pinned[f"{remote_case_root}/main/{item['Prefix']}/worker-block{block}.json"] = config_digests[item["Prefix"]][f"worker-block{block}.json"]
             elif kind == "reducer":
                 cap, minimum = stage_caps(est, "reducer", factors, deadline)
@@ -216,8 +270,10 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                 reducer["Requires"] = []
                 stages.append(reducer)
                 peak_gb = max(peak_gb, est["ReducerPalacePeakGBEstimate"])
+                stage_keys.append(item["EstimateKey"])
                 pinned[f"{remote_case_root}/main/{item['Prefix']}/reducer.json"] = config_digests[item["Prefix"]]["reducer.json"]
         elif kind == "worker" and block == 1:
+            stage_keys.append(item["EstimateKey"])
             for name, digest in config_digests[item["Prefix"]].items():
                 pinned[f"{remote_case_root}/main/{item['Prefix']}/{name}"] = digest
             if item["Kind"] == "response":
@@ -231,8 +287,8 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                 peak_gb = max(peak_gb, est["PalacePeakGBEstimate"])
     pinned.update(trace_pins)
     stage_names = [item["Name"] for item in stages]
-    instance = select_instance(profile, peak_gb, estimate["CostModel"]["PalaceGBPerGiB"])
-    return {"Version": PLAN_VERSION, "Case": case_id, "Job": job_name, "JobKind": kind, "Block": block,
+    instance = job_instance(profile, estimate, stage_keys, nodes, peak_gb, estimate["CostModel"]["PalaceGBPerGiB"])
+    plan = {"Version": PLAN_VERSION, "Case": case_id, "Job": job_name, "JobKind": kind, "Block": block,
             "BlockSources": split_job["Sources"] if kind == "worker" else None, "Purpose": purpose,
             "Ranks": profile["Ranks"], "DeadlineSeconds": profile["DeadlineSeconds"],
             "DeadlineMarginSeconds": profile["DeadlineMarginSeconds"],
@@ -247,11 +303,25 @@ def build_job_plan(*, case_id, job_name, remote_case_root, mesh, stage_layout, s
                         f"block's source count"),
             "EstimateSummary": {"JobSecondsEstimateWithPreflightAndMargin": split_job["SecondsEstimateWithPreflightAndMargin"],
                                 "Fits": split_job["Fits"]}}
+    if nodes > 1:
+        plan.update(multi_node_fields(profile, nodes, instance))
+    return plan
+
+
+def select_resources(profile, nodes):
+    """The PBS select line: the profile's one-node SelectResources at one node, else
+    select=<nodes>:SelectResourcesPerNode (fail closed above MaximumNodesPerJob)."""
+    nodes = int(nodes)
+    if nodes <= 1:
+        return profile["SelectResources"]
+    if nodes > int(profile["MaximumNodesPerJob"]):
+        raise ValueError(f"{nodes} nodes exceed the cluster profile's MaximumNodesPerJob {profile['MaximumNodesPerJob']}: fail closed")
+    return f"select={nodes}:{profile['SelectResourcesPerNode']}"
 
 
 def render_job_script(*, profile, remote_root, remote_case_root, runner, job_name, walltime_seconds, instance_type,
-                      job_directory=None):
-    """The PBS job script of one coupon job (one exclusive node of `instance_type`, the
+                      job_directory=None, nodes=1):
+    """The PBS job script of one coupon job (`nodes` exclusive nodes of `instance_type`, the
     plan's chosen instance; the runner reads the plan of `job_directory`, default
     <case>/main - the single job of a coupon)."""
     if instance_type not in {item["Type"] for item in profile["Instances"]}:
@@ -267,7 +337,7 @@ def render_job_script(*, profile, remote_root, remote_case_root, runner, job_nam
              f"#PBS -q {profile['Queue']}",
              f"#PBS -P {profile['Project']}",
              "#PBS -r n",
-             f"#PBS -l {profile['SelectResources']}",
+             f"#PBS -l {select_resources(profile, nodes)}",
              f"#PBS -l {profile['PlaceResources']}",
              f"#PBS -l instance_type={instance_type}",
              f"#PBS -l {profile['ExtraResources']}",
