@@ -503,7 +503,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                 "Module": {"Path": str(FLOAT_SERIALISATION_MODULE.relative_to(HERE.parents[2])),
                            "SHA256": sha256(FLOAT_SERIALISATION_MODULE)},
                 "Statement": "every float written into a content-hashed source is produced by CPython scalar float "
-                             "arithmetic (+ - x / sqrt, int, math.hypot) on serialised inputs and by deterministic_math's "
+                             "arithmetic (+ - x / sqrt, int, math.hypot; squares by multiplication, no ** / pow / log10) on "
+                             "serialised inputs and by deterministic_math's "
                              "correctly rounded sin / cos / tan / atan2 / acos on the arc paths; numpy arrays carry data on "
                              "that path but do no BLAS arithmetic on it; the frame rotation is applied with scalar arithmetic "
                              "(round-3 class (10), decisions 492 / 493 / 510); a straight coupon reaches no transcendental "

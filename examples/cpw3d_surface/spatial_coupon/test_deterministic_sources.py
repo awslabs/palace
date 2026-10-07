@@ -222,12 +222,57 @@ class ScalarRuleTest(unittest.TestCase):
                 points = rng.uniform(-10.0, 10.0, (4, 3))
                 np.testing.assert_array_equal(gsr.canonical_points(points, frame), points @ frame)
 
-    def test_sequential_mean_equals_numpy_for_short_vectors(self):
+    def test_sequential_mean_is_the_scalar_rule_and_equals_numpy_below_its_block(self):
+        """_scalar_mean is the left-to-right sum / n on every platform; numpy's mean agrees for n <= 7
+        (its pairwise summation starts its 8-accumulator block at n = 8), i.e. for the facet
+        triangles (n = 3) and the continuation segment pairs (n = 2) of every coupon."""
         rng = np.random.default_rng(3)
-        for n in (2, 3, 4, 7):
+        for n in (2, 3, 4, 7, 8, 13):
             for _ in range(300):
                 values = rng.uniform(-1.0, 1.0, n)
-                self.assertEqual(gsr._scalar_mean(values), float(np.mean(values)))
+                total = 0.0
+                for value in values:
+                    total += float(value)
+                self.assertEqual(gsr._scalar_mean(values), total / n)
+                if n <= 7:
+                    self.assertEqual(gsr._scalar_mean(values), float(np.mean(values)))
+
+    def test_squares_on_the_hashed_path_are_products_not_pow(self):
+        """MINOR-1 (decision 516): `x ** 2` is libm pow on CPython floats and numpy scalars and differs
+        from x * x in ~0.1 % of arguments with platform-dependent mismatch sets; the hashed-path
+        sites use multiplication (csg.plan_view_faces split parameter, gsr.delaunay_flip_cap in_circle)
+        and matching_support_points derives its decimal exponent without log10 / pow."""
+        import inspect
+        for function in (csg.plan_view_faces, gsr.delaunay_flip_cap, gsr.matching_support_points):
+            code = "\n".join(line.split("#")[0] for line in inspect.getsource(function).splitlines())
+            self.assertNotIn("**", code, function.__name__)
+            self.assertNotIn("log10", code, function.__name__)
+        # The exact decimal exponent equals floor(log10) for every double, incl. the quantisation
+        # tolerances of the radii of record and exact powers of ten.
+        import decimal
+        for tolerance in (1.9e-10, 1.0e-10, 2.0e-10, 5.0e-10, 64.0 * np.finfo(float).eps, 0.5, 1.0, 10.0, 123.456):
+            self.assertEqual(decimal.Decimal(tolerance).adjusted(), math.floor(math.log10(tolerance)), tolerance)
+            exponent = decimal.Decimal(tolerance).adjusted()
+            self.assertEqual(float(f"1e{exponent}"), float(decimal.Decimal(10) ** exponent))
+        rng = np.random.default_rng(11)
+        mismatches = sum(1 for x in rng.uniform(0.1, 10.0, 20000) if float(x) ** 2 != float(x) * float(x))
+        self.assertGreaterEqual(mismatches, 0)   # measured ~0.1 % per platform: the reason for the rule
+
+    def test_box_trace_face_area_difference_is_scalar(self):
+        """MINOR-3 (decision 516): validate_box_trace's summed face areas (basis-contract.json
+        MaximumRelativeFaceAreaDifference, a WRITTEN float) use the scalar _cross3 / _norm3, and equal the
+        former BLAS value on face-exact triangles (one nonzero cross component)."""
+        import inspect
+        import box_trace
+        source = inspect.getsource(box_trace.validate_box_trace)
+        self.assertNotIn("np.linalg.norm", source)
+        self.assertNotIn("np.cross", source)
+        self.assertIn("_norm3(_cross3(", source)
+        rng = np.random.default_rng(5)
+        for _ in range(500):
+            a, b = rng.uniform(-3.0, 3.0, 3), rng.uniform(-3.0, 3.0, 3)
+            a[2] = b[2] = 0.0   # a triangle on a z-face: the cross has one nonzero component
+            self.assertEqual(gsr._norm3(gsr._cross3(a, b)), float(np.linalg.norm(np.cross(a, b))))
 
     def test_provenance_names_the_float_serialisation_rule(self):
         self.assertEqual(deterministic_math.FLOAT_SERIALISATION_RULE, "deterministic-trig-v1")

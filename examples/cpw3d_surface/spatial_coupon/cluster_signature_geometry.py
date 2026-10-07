@@ -793,7 +793,7 @@ def plan_view_faces(segments, box, radius):
         split = [0.0, 1.0]
         for p in points:
             offset = p - a
-            t = _dot2(offset, direction) / length ** 2
+            t = _dot2(offset, direction) / (length * length)   # a product, not a power: CPython's float power is libm pow
             if tolerance / length < t < 1.0 - tolerance / length:
                 distance = abs(direction[0] * offset[1] - direction[1] * offset[0]) / length
                 if distance <= tolerance:

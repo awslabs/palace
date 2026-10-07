@@ -6,6 +6,7 @@
 """Generate response inputs for endpoint, junction, and spatial-edge coupons."""
 
 import argparse
+import decimal
 import json
 import math
 from pathlib import Path
@@ -91,8 +92,9 @@ def _rows_dot(rows, vector):
 
 
 def _scalar_mean(values):
-    """The sequential mean sum(values) / n: bitwise numpy's mean for n <= 8 (its pairwise
-    summation is sequential below the first block), the facet triangles and segment pairs."""
+    """The sequential mean sum(values) / n (the scalar rule): bitwise numpy's mean for n <= 7
+    (its pairwise summation is sequential below its first 8-term block; the facet triangles
+    and segment pairs of every coupon have n = 3 and n = 2)."""
     total = 0.0
     for value in values:
         total += float(value)
@@ -513,12 +515,14 @@ def matching_support_points(
     tolerance = max(
         1.0e-10 * radius, 64.0 * np.finfo(float).eps
     )
-    exponent = math.floor(math.log10(tolerance))
+    # floor(log10 tolerance) as the exact decimal exponent of the double (no libm log10) and the
+    # power of ten as a correctly rounded literal (no libm pow): round-3 B0 MINOR-1, the scalar rule.
+    exponent = decimal.Decimal(tolerance).adjusted()
     decimals = max(0, -exponent)
     support = np.asarray(
         [[round(float(value), decimals) for value in point] for point in support]
     )
-    support[np.abs(support) < 0.5 * 10.0**exponent] = 0.0
+    support[np.abs(support) < 0.5 * float(f"1e{exponent}")] = 0.0
     return support.tolist()
 
 
@@ -727,8 +731,9 @@ def delaunay_flip_cap(triangles, points, start):
         return (xy[b, 0] - xy[a, 0]) * (xy[c, 1] - xy[a, 1]) - (xy[b, 1] - xy[a, 1]) * (xy[c, 0] - xy[a, 0])
 
     def in_circle(a, b, c, d):
+        # Squares by multiplication, not by the power operator: a numpy-scalar power is libm pow (round-3 B0 MINOR-1).
         rows = [[xy[v, 0] - xy[d, 0], xy[v, 1] - xy[d, 1],
-                 (xy[v, 0] - xy[d, 0]) ** 2 + (xy[v, 1] - xy[d, 1]) ** 2] for v in (a, b, c)]
+                 (xy[v, 0] - xy[d, 0]) * (xy[v, 0] - xy[d, 0]) + (xy[v, 1] - xy[d, 1]) * (xy[v, 1] - xy[d, 1])] for v in (a, b, c)]
         area = orient(a, b, c)
         return np.linalg.det(np.array(rows)) * np.sign(area) > 1.0e-12 * area * area
 

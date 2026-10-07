@@ -29,8 +29,10 @@ are returned directly.
 
 THE SCALAR-ARITHMETIC RULE (G.10.3) that this module is one half of: every float written into
 a content-hashed source is produced by CPython scalar float arithmetic (+ - x / sqrt, int,
-``math.hypot``: CPython's own correctly scaled implementation since 3.10, no libm) on
-serialised inputs, and by this module for the transcendental functions; numpy arrays carry
+``math.hypot``: CPython's own correctly scaled implementation since 3.10, no libm; squares
+by multiplication, never the ``**`` operator or ``math.pow`` / ``log10``, which are libm and differ
+between platforms in ~0.1 % of arguments) on serialised inputs, and by this module for the
+transcendental functions; numpy arrays carry
 data on that path but do no arithmetic on it (numpy's 2-vector ``dot`` / ``linalg.norm`` go
 through BLAS: Accelerate contracts a0 b0 + a1 b1 into an FMA, OpenBLAS does not — the probe
 of impl-B0/tools/probe_numpy_scalar_agreement.py); the frame rotation is applied with scalar
