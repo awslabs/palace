@@ -54,8 +54,7 @@ MPI_Datatype MpiType()
 }  // namespace
 
 void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
-                          const mfem::Array<int> &diag_rows, std::vector<MUMPS_INT> &irn,
-                          std::vector<MUMPS_INT> &jcn,
+                          std::vector<MUMPS_INT> &irn, std::vector<MUMPS_INT> &jcn,
                           std::vector<std::vector<double>> &vals, std::vector<int> &row_ptr)
 {
   const mfem::HypreParMatrix *A0 = nullptr;
@@ -73,11 +72,6 @@ void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
   MFEM_VERIFY(A0, "LowerTrianglePattern needs a matrix!");
   const int n = A0->Height();
   const HYPRE_BigInt row0 = A0->GetRowStarts()[0];
-  std::vector<char> unit(n, 0);
-  for (int i : diag_rows)
-  {
-    unit[i] = 1;
-  }
   // Two passes over the rows (count, then fill) to allocate the pattern exactly.
   std::vector<std::pair<HYPRE_BigInt, int>> row;  // (column, matrix)
   std::vector<double> rv;
@@ -96,11 +90,6 @@ void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
                             rv.push_back(a);
                           });
       }
-    }
-    if (unit[i])
-    {
-      row.emplace_back(row0 + i, -1);
-      rv.push_back(0.0);
     }
   };
   std::vector<int> perm;
@@ -151,10 +140,7 @@ void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
         irn[pos] = static_cast<MUMPS_INT>(row0 + i + 1);
         jcn[pos] = static_cast<MUMPS_INT>(j + 1);
       }
-      if (p >= 0)
-      {
-        vals[p][pos] += rv[perm[q]];
-      }
+      vals[p][pos] += rv[perm[q]];
     }
   }
 }
@@ -211,7 +197,7 @@ typename MumpsSchurSolverT<T>::Coo LowerTriangle(const mfem::HypreParMatrix &A)
   typename MumpsSchurSolverT<T>::Coo coo;
   std::vector<std::vector<double>> vals;
   std::vector<int> row_ptr;
-  LowerTrianglePattern({&A}, mfem::Array<int>(), coo.irn, coo.jcn, vals, row_ptr);
+  LowerTrianglePattern({&A}, coo.irn, coo.jcn, vals, row_ptr);
   if constexpr (std::is_same_v<T, double>)
   {
     coo.val = std::move(vals[0]);
@@ -240,11 +226,13 @@ MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int 
                                         Coo &&A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
                                         double blr_tol, bool serial, bool refactor,
-                                        bool spd)
+                                        bool spd, std::vector<int> rows)
   : comm(comm), serial(serial), refactor(refactor), spd(spd), n_glob(n_glob), n_loc(n_loc),
-    n_schur(static_cast<int>(schur_vars.size())), irn(std::move(A.irn)),
-    jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
+    n_schur(static_cast<int>(schur_vars.size())), rows(std::move(rows)),
+    irn(std::move(A.irn)), jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
 {
+  MFEM_VERIFY(this->rows.empty() || static_cast<int>(this->rows.size()) == n_loc,
+              "MumpsSchurSolver: wrong number of parent rows!");
   Init(schur_vars);
 }
 
@@ -496,13 +484,17 @@ void MumpsSchurSolverT<T>::Gather(const std::vector<const VecType *> &X)
       const double *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
       for (int i = 0; i < n_loc; i++)
       {
-        loc[i] = {xr[i], xi[i]};
+        const int r = rows.empty() ? i : rows[i];
+        loc[i] = {xr[r], xi[r]};
       }
     }
     else
     {
       const double *xr = x.HostRead();
-      std::copy(xr, xr + n_loc, loc.begin());
+      for (int i = 0; i < n_loc; i++)
+      {
+        loc[i] = xr[rows.empty() ? i : rows[i]];
+      }
     }
     MPI_Gatherv(loc.data(), n_loc, MpiType<T>(),
                 rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
@@ -527,22 +519,30 @@ void MumpsSchurSolverT<T>::Scatter(const std::vector<VecType *> &Y)
                  row_cnt.data(), row_disp.data(), MpiType<T>(), loc.data(), n_loc,
                  MpiType<T>(), 0, comm);
     VecType &y = *Y[k];
-    y.SetSize(n_loc);
+    if (rows.empty())
+    {
+      y.SetSize(n_loc);
+    }
+    else
+    {
+      y = 0.0;
+    }
     if constexpr (kComplex)
     {
-      double *yr = y.Real().HostWrite(), *yi = y.Imag().HostWrite();
+      double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
       for (int i = 0; i < n_loc; i++)
       {
-        yr[i] = loc[i].real() / scale;
-        yi[i] = loc[i].imag() / scale;
+        const int r = rows.empty() ? i : rows[i];
+        yr[r] = loc[i].real() / scale;
+        yi[r] = loc[i].imag() / scale;
       }
     }
     else
     {
-      double *yr = y.HostWrite();
+      double *yr = y.HostReadWrite();
       for (int i = 0; i < n_loc; i++)
       {
-        yr[i] = loc[i] / scale;
+        yr[rows.empty() ? i : rows[i]] = loc[i] / scale;
       }
     }
   }

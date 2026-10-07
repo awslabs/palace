@@ -160,11 +160,19 @@ private:
     std::vector<int> attrs;
     // Local true DOFs pinned in the side's operator: outside its interior and Γ.
     mfem::Array<int> pinned;
-    std::vector<int> row_ptr, unit;
+    // The factored system, on the side's interior and Γ: its local true DOFs (the local
+    // rows), global size, and its indices of the interface DOFs.
+    std::vector<int> rows;
+    HYPRE_BigInt n_sys = 0;
+    std::vector<HYPRE_BigInt> gamma_sys;
+    // Lower-triangle pattern of the local rows (row_ptr over the local true DOFs, global
+    // columns jcn, 1-based), with the entries of the parts on it.
+    std::vector<int> row_ptr, jcn;
     std::vector<std::vector<double>> parts;  // Kr, Ki, Cr, Ci, Mr, Mi (empty if absent)
     bool extra = false;                      // A2(ω) is present
-    // The local entries (1-based COO) at the first frequency, until factored.
-    std::vector<int> irn, jcn;
+    // The local entries (1-based COO in the system's indices) at the first frequency,
+    // until factored.
+    std::vector<int> irn_sys, jcn_sys;
     std::vector<std::complex<double>> val;
     std::unique_ptr<MumpsSchurSolverT<std::complex<double>>> schur;
   };
@@ -187,10 +195,10 @@ private:
   // Factor a side (set up at ω), or refactor it at another frequency.
   void Factor(Side &side, double omega);
 
-  // The entries of a side at ω on its pattern (columns jcn), given its A2(ω).
+  // The entries of a side at ω on its pattern, given its A2(ω).
   void Fill(const Side &side, double omega,
             const std::vector<std::unique_ptr<mfem::HypreParMatrix>> &extra,
-            const std::vector<int> &jcn, std::vector<std::complex<double>> &val) const;
+            std::vector<std::complex<double>> &val) const;
 };
 
 }  // namespace palace

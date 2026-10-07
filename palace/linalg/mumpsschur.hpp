@@ -20,12 +20,11 @@ namespace palace
 
 // Lower-triangle COO pattern (1-based global indices, one entry per position, columns
 // ascending in each row) of the local rows of the union of the given symmetric matrices
-// (same row distribution; null ones skipped) and the diagonal of the given local rows. The
-// entries of each matrix in pattern order are returned in vals (empty for a null one), and
-// the first pattern entry of each local row in row_ptr (n_loc + 1).
+// (same row distribution; null ones skipped). The entries of each matrix in pattern order
+// are returned in vals (empty for a null one), and the first pattern entry of each local
+// row in row_ptr (n_loc + 1).
 void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
-                          const mfem::Array<int> &diag_rows, std::vector<MUMPS_INT> &irn,
-                          std::vector<MUMPS_INT> &jcn,
+                          std::vector<MUMPS_INT> &irn, std::vector<MUMPS_INT> &jcn,
                           std::vector<std::vector<double>> &vals,
                           std::vector<int> &row_ptr);
 
@@ -38,13 +37,13 @@ void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
                   std::vector<std::complex<double>> &val);
 
 // MUMPS partial factorization with a Schur complement: factors the symmetric parent-space
-// operator A (rows/cols outside the eliminated subsystem set to identity) with the given
-// Schur variables left unfactored, returning the dense Schur complement on rank 0 -- for
-// the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from one partial factorization instead of
-// |Gamma| back-solves. The same factorization then solves the internal problem (A_EE, the
-// Schur variables fixed at 0), which serves every other environment solve. T = double
-// (DMUMPS) for a real symmetric A, std::complex<double> (ZMUMPS) for a complex symmetric
-// A = Ar + i Ai.
+// operator A (rows/cols outside the eliminated subsystem set to identity), or the
+// subsystem alone, with the given Schur variables left unfactored, returning the dense
+// Schur complement on rank 0 -- for the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from
+// one partial factorization instead of |Gamma| back-solves. The same factorization then
+// solves the internal problem (A_EE, the Schur variables fixed at 0), which serves every
+// other environment solve. T = double (DMUMPS) for a real symmetric A, std::complex<double>
+// (ZMUMPS) for a complex symmetric A = Ar + i Ai.
 template <typename T>
 class MumpsSchurSolverT
 {
@@ -73,17 +72,19 @@ public:
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     bool serial = false, bool refactor = false, bool spd = true);
 
-  // From the local lower-triangle entries of A (n_loc local rows, in rank order).
+  // From the local lower-triangle entries of A (n_loc local rows, in rank order). With
+  // rows, the vectors of the solves are of a larger (parent) space: rows[i] is the local
+  // index of local row i in them (the other entries of a solution are 0).
   MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    bool serial = false, bool refactor = false, bool spd = true);
+                    bool serial = false, bool refactor = false, bool spd = true,
+                    std::vector<int> rows = {});
 
   ~MumpsSchurSolverT();
 
   // With refactor: the entries of the next Refactor in the order of the input (to be
-  // overwritten), and their columns.
+  // overwritten).
   std::vector<T> &Values() { return val; }
-  const std::vector<MUMPS_INT> &Columns() const { return jcn; }
 
   // Factor the entries in Values() with the sparsity pattern of the analysis (collective).
   void Refactor();
@@ -133,7 +134,7 @@ private:
   bool active = true;  // this rank takes part in the factorization
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
-  std::vector<int> row_cnt, row_disp;
+  std::vector<int> row_cnt, row_disp, rows;
   std::vector<MUMPS_INT> irn, jcn, listvar;
   std::vector<T> val, schur, rhs, redrhs;
   int reduced = 0;  // right-hand sides of the last Reduce, pending Expand

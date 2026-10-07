@@ -152,6 +152,74 @@ DrivenSubstructure::ExtraParts(const Side &side, double omega)
 namespace
 {
 
+// For each global column (1-based) of cols, the value of sys at that true DOF on its owner:
+// a request to each owner for its distinct columns.
+std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
+                                      const std::vector<HYPRE_BigInt> &sys,
+                                      const std::vector<int> &cols)
+{
+  const int nranks = Mpi::Size(comm);
+  const HYPRE_BigInt tend = tstart + static_cast<HYPRE_BigInt>(sys.size());
+  std::vector<HYPRE_BigInt> starts(nranks);
+  MPI_Allgather(&tstart, 1, HYPRE_MPI_BIG_INT, starts.data(), 1, HYPRE_MPI_BIG_INT, comm);
+  auto owner = [&](HYPRE_BigInt j)
+  {
+    return static_cast<int>(std::upper_bound(starts.begin(), starts.end(), j) -
+                            starts.begin()) -
+           1;
+  };
+  std::vector<std::vector<HYPRE_BigInt>> req(nranks);
+  for (int c : cols)
+  {
+    const HYPRE_BigInt j = c - 1;
+    if (j < tstart || j >= tend)
+    {
+      req[owner(j)].push_back(j);
+    }
+  }
+  std::vector<int> scnt(nranks), sdisp(nranks, 0), rcnt(nranks), rdisp(nranks, 0);
+  std::vector<HYPRE_BigInt> sbuf;
+  for (int r = 0; r < nranks; r++)
+  {
+    std::sort(req[r].begin(), req[r].end());
+    req[r].erase(std::unique(req[r].begin(), req[r].end()), req[r].end());
+    scnt[r] = static_cast<int>(req[r].size());
+    sdisp[r] = static_cast<int>(sbuf.size());
+    sbuf.insert(sbuf.end(), req[r].begin(), req[r].end());
+  }
+  MPI_Alltoall(scnt.data(), 1, MPI_INT, rcnt.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nranks; r++)
+  {
+    rdisp[r] = rdisp[r - 1] + rcnt[r - 1];
+  }
+  std::vector<HYPRE_BigInt> rbuf(rdisp[nranks - 1] + rcnt[nranks - 1]);
+  MPI_Alltoallv(sbuf.data(), scnt.data(), sdisp.data(), HYPRE_MPI_BIG_INT, rbuf.data(),
+                rcnt.data(), rdisp.data(), HYPRE_MPI_BIG_INT, comm);
+  for (auto &j : rbuf)
+  {
+    j = sys[j - tstart];
+  }
+  std::vector<HYPRE_BigInt> ans(sbuf.size());
+  MPI_Alltoallv(rbuf.data(), rcnt.data(), rdisp.data(), HYPRE_MPI_BIG_INT, ans.data(),
+                scnt.data(), sdisp.data(), HYPRE_MPI_BIG_INT, comm);
+  std::vector<HYPRE_BigInt> v(cols.size());
+  for (std::size_t q = 0; q < cols.size(); q++)
+  {
+    const HYPRE_BigInt j = cols[q] - 1;
+    if (j >= tstart && j < tend)
+    {
+      v[q] = sys[j - tstart];
+    }
+    else
+    {
+      const int r = owner(j);
+      v[q] = ans[sdisp[r] +
+                 (std::lower_bound(req[r].begin(), req[r].end(), j) - req[r].begin())];
+    }
+  }
+  return v;
+}
+
 // A(ω) = K + iω C - ω² M + A2(ω): the coefficients of the parts Kr, Ki, Cr, Ci, Mr, Mi, and
 // of A2r, A2i.
 std::array<std::complex<double>, 8> Coefficients(double omega)
@@ -166,12 +234,50 @@ void DrivenSubstructure::Setup(Side &side, double omega)
 {
 #if defined(MFEM_USE_MUMPS)
   static_assert(std::is_same_v<MUMPS_INT, int>, "MUMPS_INT must be a 32-bit int!");
+  // The factored system is the side's interior and Γ, numbered by rank: the pinned DOFs
+  // would be identity rows, and MUMPS's per-rank workspace grows with the system size.
+  const auto &fes = space_op.GetNDSpace().Get();
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize();
+  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
+  std::vector<HYPRE_BigInt> sys(nt, 0);
+  for (int i : side.pinned)
+  {
+    sys[i] = -1;
+  }
+  side.rows.clear();
+  for (int i = 0; i < nt; i++)
+  {
+    if (sys[i] == 0)
+    {
+      side.rows.push_back(i);
+    }
+  }
+  HYPRE_BigInt nloc = static_cast<HYPRE_BigInt>(side.rows.size()), off = 0;
+  MPI_Exscan(&nloc, &off, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
+  off = Mpi::Root(comm) ? 0 : off;
+  MPI_Allreduce(&nloc, &side.n_sys, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
+  for (std::size_t q = 0; q < side.rows.size(); q++)
+  {
+    sys[side.rows[q]] = off + static_cast<HYPRE_BigInt>(q);
+  }
+  std::vector<HYPRE_BigInt> mine;
+  for (int i = 0; i < nt; i++)
+  {
+    if (is_gamma[i])
+    {
+      mine.push_back(sys[i]);
+    }
+  }
+  side.gamma_sys.resize(gamma_tdofs.size());
+  MPI_Allgatherv(mine.data(), static_cast<int>(mine.size()), HYPRE_MPI_BIG_INT,
+                 side.gamma_sys.data(), gamma_cnt.data(), gamma_disp.data(),
+                 HYPRE_MPI_BIG_INT, comm);
+
   // The frequency-independent parts, assembled once and one at a time: the pattern of the
-  // stiffness matrix (with the diagonal of the pinned DOFs: a side-restricted operator
-  // stores no entries on the DOFs no element of its side touches), which contains those
-  // of the other parts, coupling DOFs of elements of the side.
+  // stiffness matrix on the system, which contains those of the other parts, coupling DOFs
+  // of elements of the side.
   side.parts.assign(6, {});
-  HYPRE_BigInt row0 = 0;
   for (int op = 0; op < 3; op++)
   {
     std::unique_ptr<ComplexOperator> A;
@@ -194,38 +300,49 @@ void DrivenSubstructure::Setup(Side &side, double omega)
       auto &part = side.parts[2 * op + p];
       if (op == 0 && p == 0)
       {
+        // The pattern without the (zero) entries of pinned rows and columns.
+        std::vector<int> irn, jcn, row_ptr;
         std::vector<std::vector<double>> vals;
-        LowerTrianglePattern({X.get()}, side.pinned, side.irn, side.jcn, vals,
-                             side.row_ptr);
-        part = std::move(vals[0]);
-        row0 = X->GetRowStarts()[0];
+        LowerTrianglePattern({X.get()}, irn, jcn, vals, row_ptr);
+        const auto col_sys = OwnerValues(comm, tstart, sys, jcn);
+        side.row_ptr.assign(nt + 1, 0);
+        side.jcn.clear();
+        side.irn_sys.clear();
+        side.jcn_sys.clear();
+        part.clear();
+        for (int i = 0; i < nt; i++)
+        {
+          for (int q = row_ptr[i]; sys[i] >= 0 && q < row_ptr[i + 1]; q++)
+          {
+            if (col_sys[q] >= 0)
+            {
+              side.jcn.push_back(jcn[q]);
+              side.irn_sys.push_back(static_cast<int>(sys[i] + 1));
+              side.jcn_sys.push_back(static_cast<int>(col_sys[q] + 1));
+              part.push_back(vals[0][q]);
+            }
+          }
+          side.row_ptr[i + 1] = static_cast<int>(side.jcn.size());
+        }
       }
       else
       {
-        part.assign(side.irn.size(), 0.0);
+        part.assign(side.jcn.size(), 0.0);
         AddToPattern(*X, 1.0, side.row_ptr, side.jcn, part);
       }
     }
   }
-  side.unit.clear();
-  for (int i : side.pinned)
-  {
-    const auto first = side.jcn.begin() + side.row_ptr[i],
-               last = side.jcn.begin() + side.row_ptr[i + 1];
-    side.unit.push_back(static_cast<int>(
-        std::lower_bound(first, last, static_cast<int>(row0 + i + 1)) - side.jcn.begin()));
-  }
-  side.val.resize(side.irn.size());
+  side.val.resize(side.jcn.size());
   auto extra = ExtraParts(side, omega);
   side.extra = extra[0] || extra[1];
-  Fill(side, omega, extra, side.jcn, side.val);
+  Fill(side, omega, extra, side.val);
 #endif
 }
 
 void DrivenSubstructure::Fill(
     const Side &side, double omega,
     const std::vector<std::unique_ptr<mfem::HypreParMatrix>> &extra,
-    const std::vector<int> &jcn, std::vector<std::complex<double>> &val) const
+    std::vector<std::complex<double>> &val) const
 {
 #if defined(MFEM_USE_MUMPS)
   const auto coef = Coefficients(omega);
@@ -237,15 +354,11 @@ void DrivenSubstructure::Fill(
       val[q] += coef[p] * side.parts[p][q];
     }
   }
-  for (int q : side.unit)
-  {
-    val[q] += 1.0;
-  }
   for (int p = 0; p < 2; p++)
   {
     if (extra[p])
     {
-      AddToPattern(*extra[p], coef[6 + p], side.row_ptr, jcn, val);
+      AddToPattern(*extra[p], coef[6 + p], side.row_ptr, side.jcn, val);
     }
   }
 #endif
@@ -257,14 +370,13 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   using Solver = MumpsSchurSolverT<std::complex<double>>;
   if (!side.schur)
   {
-    const auto &fes = space_op.GetNDSpace().Get();
-    Solver::Coo coo{std::move(side.irn), std::move(side.jcn), std::move(side.val)};
-    side.irn = {};
-    side.jcn = {};
+    Solver::Coo coo{std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)};
+    side.irn_sys = {};
+    side.jcn_sys = {};
     side.val = {};
-    side.schur =
-        std::make_unique<Solver>(fes.GetComm(), fes.GlobalTrueVSize(), fes.GetTrueVSize(),
-                                 std::move(coo), gamma_tdofs, kBlrTol, false, true, false);
+    side.schur = std::make_unique<Solver>(
+        space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
+        side.gamma_sys, kBlrTol, false, true, false, side.rows);
     return;
   }
 
@@ -272,7 +384,7 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   auto extra = ExtraParts(side, omega);
   MFEM_VERIFY(side.extra == (extra[0] || extra[1]),
               "The frequency-dependent part of a substructure operator changed!");
-  Fill(side, omega, extra, side.schur->Columns(), side.schur->Values());
+  Fill(side, omega, extra, side.schur->Values());
   side.schur->Refactor();
 #endif
 }
