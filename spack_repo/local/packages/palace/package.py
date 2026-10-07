@@ -367,10 +367,8 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("libxsmm+shared")
 
     with when("@0.14:"):
-        # libCEED had no release between 0.12.0 and 1.0.0, so 0.14-0.18 pin develop commits.
-        # The 0.14-0.17 pins match cmake/ExternalGitTags.cmake; 0.18 uses the libCEED main
-        # merge of the same change (the superbuild commit predates libCEED's libxsmm 2.0
-        # requirement).
+        # libCEED had no release between 0.12.0 and 1.0.0, so 0.14-0.17 pin develop commits
+        # matching cmake/ExternalGitTags.cmake.
         depends_on(
             "libceed@develop commit=204f3be0a8a44f14c6b90cf1319bc5c5bd195020", when="@0.14"
         )
@@ -378,24 +376,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             "libceed@develop commit=95bd1e908b16e04a70015e3a9a7fddec5e9c3fc8",
             when="@0.15:0.17",
         )
-        depends_on(
-            "libceed@develop commit=d6367d2d6a0cca608a0b8e21d79b83c50a49a19a", when="@0.18"
-        )
+        depends_on("libceed@1:", when="@0.18:")
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
         depends_on("libceed~shared", when="~shared")
-
-    # Kept off a `with` block so the Palace `when=` is not folded into the patch condition.
-    depends_on(
-        "libceed@1:",
-        when="@0.19:",
-        patches=[
-            # libCEED 1.0.0 skips libxsmm.pc when MKLROOT is set and misses include/libxsmm
-            # https://github.com/Sbozzolo/libCEED/commit/ea2e0e87f4e160f618bc366c178c1631165b1faf
-            patch("libceed_xsmm_mkl.diff", when="@1.0.0 +libxsmm"),
-        ],
-    )
 
     with when("+sundials @0.14:"):
         depends_on("sundials+mpi+lapack~examples~examples-install")
