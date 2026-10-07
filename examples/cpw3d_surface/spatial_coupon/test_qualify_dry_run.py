@@ -324,6 +324,148 @@ class RemoteFailClosedTest(unittest.TestCase):
         self.assertTrue(parser.parse_args(["--build-record", "b", "--reference", "none", "--adopt-remote-case"]).adopt_remote_case)
 
 
+class ReusedMainTest(unittest.TestCase):
+    """--controls-only --reuse-main ROOT (decisions 474 (A) / 479 / 485 (c)): the stored run's main stage is
+    reused only when this run's inputs are identical to it - the identity mesh digest, the run config apart
+    from the remote paths, every regenerated trace against the stored plan's pins, and the stored reducer
+    CSVs at the digests the stored run verified against its remote; every mismatch fails closed, the stored
+    root is never written, and the splice copies the CSVs byte-identically (re-hashed)."""
+
+    CASE = "spatial-8-edge-05c322f6cda8"
+    PREFIX = "spatial-8-edge-05c322f6cda8-p4"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="qualify-reuse-main-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.root = self.tmp / f"fab-{self.CASE}"
+        case_root = self.root / self.CASE
+        self.config = {"Problem": {"Type": "Electrostatic", "Output": "/old/root/main"}, "Model": {"Mesh": "/old/root/mesh/identity-cdb48405d063.msh"},
+                       "Solver": {"Order": 4, "Linear": {"Tol": 1e-10}},
+                       "Boundaries": {"PrescribedPotential": [{"Index": k, "DataFile": f"/old/root/inputs/traces/basis-{k:04d}.csv"} for k in (1, 2, 3)]}}
+        (case_root / "inputs").mkdir(parents=True)
+        (case_root / "inputs" / "run-config.json").write_text(json.dumps(self.config, indent=2) + "\n")
+        self.traces = {f"basis-{k:04d}.csv": f"{k:064x}" for k in (1, 2, 3)}
+        (case_root / "main" / "jobs" / "worker-1").mkdir(parents=True)
+        (case_root / "main" / "jobs" / "worker-1" / "plan.json").write_text(json.dumps(
+            {"PinnedSHA256": {**{f"/old/root/inputs/traces/{name}": digest for name, digest in self.traces.items()},
+                              "/old/root/mesh/identity-cdb48405d063.msh": "c" * 64}}))
+        reducer = case_root / "results" / "main" / self.PREFIX / "reducer"
+        reducer.mkdir(parents=True)
+        (reducer / "domain-response-matrix.csv").write_text("basis_i,basis_j,Q_ij (J)\n1,1,1.5\n")
+        (reducer / "surface-response-matrix.csv").write_text("interface,edge,R (m),basis_i,basis_j,Q_ij (J)\n2,0,2e-6,1,1,0.5\n")
+        digests = {name: sha256(reducer / name) for name in qualify_library.REUSED_MAIN_CSVS}
+        self.stored = {"Case": self.CASE, "Status": "failed", "StoppedBy": None,
+                       "Mesh": {"Local": "/old/identity.msh", "SHA256": "c" * 64, "Verified": True},
+                       "Inputs": {"ConfigSHA256": sha256(case_root / "inputs" / "run-config.json")},
+                       "Stages": [{"Prefix": self.PREFIX, "Role": "main", "Order": 4}, {"Prefix": f"{self.CASE}-p5-control", "Role": "control", "Order": 5}],
+                       "Controls": {"Indices": [1, 2, 3, 8, 10, 31, 32, 108]},
+                       "Jobs": [{"Name": "worker-1", "Kind": "worker", "Nodes": 1, "Ranks": 192, "Submission": {"Job": "57756.h"}},
+                                {"Name": "reducer", "Kind": "reducer", "Nodes": 1, "Ranks": 192, "Submission": {"Job": "57843.h"}}],
+                       "Nodes": {"MultiNode": False, "Main": 1, "Fixed": 1},
+                       "ResultDigests": {f"main/{self.PREFIX}/reducer/{name}": {"Local": digest, "Remote": digest, "OK": True}
+                                         for name, digest in digests.items()},
+                       "Qualification": {"Verdict": "Failed", "UnjudgedTypes": []},
+                       "Cost": {"MainStage": {"NodeHours": 1.2}, "JobNodeHours": 2.3}}
+        (self.root / "library-qualification.json").write_text(json.dumps({"Version": 1, "ToolCommit": "7b95205da0", "Gates": {"SHA256": "g" * 64},
+                                                                          "Cases": [self.stored]}))
+        self.derived = json.loads(json.dumps(self.config))
+        self.derived["Model"]["Mesh"] = "/new/root/mesh/identity-cdb48405d063.msh"
+        self.derived["Problem"]["Output"] = "/new/root/main"
+        for entry in self.derived["Boundaries"]["PrescribedPotential"]:
+            entry["DataFile"] = entry["DataFile"].replace("/old/root", "/new/root")
+
+    def load(self, **overrides):
+        kwargs = dict(identity_sha256="c" * 64, run_config=self.derived, trace_digests=dict(self.traces), main_prefix=self.PREFIX)
+        kwargs.update(overrides)
+        return qualify_library.load_reused_main(self.root, self.CASE, **kwargs)
+
+    def test_identical_inputs_reuse_the_stored_main_stage(self):
+        before = {path: path.stat().st_mtime_ns for path in self.root.rglob("*") if path.is_file()}
+        reused = self.load()
+        self.assertEqual((reused["Case"], reused["MainPrefix"], reused["Root"]), (self.CASE, self.PREFIX, str(self.root)))
+        self.assertTrue(reused["Mesh"]["Identical"] and reused["Traces"]["Identical"] and reused["Reducer"]["VerifiedAgainstStoredRecord"])
+        self.assertEqual(reused["Traces"], {"Count": 3, "PinnedByStoredPlans": 3, "Identical": True})
+        self.assertEqual(reused["RunConfig"]["IdenticalApartFrom"], list(case_inputs.PATH_FIELDS))
+        self.assertEqual((reused["Reducer"]["Job"], reused["Reducer"]["PBSJobID"], reused["Reducer"]["Nodes"], reused["Reducer"]["Ranks"]),
+                         ("reducer", "57843.h", 1, 192))
+        self.assertEqual(sorted(reused["Reducer"]["SHA256"]), sorted(qualify_library.REUSED_MAIN_CSVS))
+        self.assertEqual((reused["StoredVerdict"], reused["StoredControls"]), ("Failed", [1, 2, 3, 8, 10, 31, 32, 108]))
+        self.assertEqual((reused["StoredMainStageCost"], reused["StoredJobNodeHours"]), ({"NodeHours": 1.2}, 2.3))
+        self.assertEqual(reused["Record"]["ToolCommit"], "7b95205da0")
+        self.assertEqual(reused["Rule"], job_split.CONTROLS_ONLY_RULE)
+        # The splice: byte-identical copies in this run's results, re-hashed; the stored root untouched.
+        results = self.tmp / "new" / "results"
+        splice = qualify_library.splice_reused_main(results, reused)
+        self.assertEqual(splice["SHA256"], reused["Reducer"]["SHA256"])
+        for name in qualify_library.REUSED_MAIN_CSVS:
+            self.assertEqual((results / "main" / self.PREFIX / "reducer" / name).read_bytes(),
+                             (Path(reused["Reducer"]["Directory"]) / name).read_bytes())
+        self.assertEqual({path: path.stat().st_mtime_ns for path in self.root.rglob("*") if path.is_file()}, before)
+        self.assertEqual(qualify_library.reducer_ranks_of({"ReusedMain": reused, "Jobs": []}), 192)
+
+    def test_every_identity_mismatch_fails_closed(self):
+        def stop(message, **overrides):
+            with self.assertRaises(qualify_library.CaseStop) as context:
+                self.load(**overrides)
+            self.assertEqual(context.exception.record["Kind"], "ReuseMain")
+            self.assertIn(message, context.exception.record["Message"])
+        stop("not the same coupon mesh", identity_sha256="d" * 64)
+        other_order = json.loads(json.dumps(self.derived))
+        other_order["Solver"]["Order"] = 5
+        stop("differs from the stored run's", run_config=other_order)
+        other_trace = dict(self.traces)
+        other_trace["basis-0002.csv"] = "e" * 64
+        stop("1 of 3 regenerated traces differ", trace_digests=other_trace)
+        stop("are not this run's", main_prefix="other-p4")
+        with self.assertRaises(qualify_library.CaseStop) as context:
+            qualify_library.load_reused_main(self.root, "spatial-8-edge-818f8956d075", identity_sha256="c" * 64, run_config=self.derived,
+                                             trace_digests=self.traces, main_prefix=self.PREFIX)
+        self.assertIn("holds no case", context.exception.record["Message"])
+        with self.assertRaises(qualify_library.CaseStop) as context:
+            qualify_library.load_reused_main(self.tmp, self.CASE, identity_sha256="c" * 64, run_config=self.derived,
+                                             trace_digests=self.traces, main_prefix=self.PREFIX)
+        self.assertIn("holds no library-qualification.json", context.exception.record["Message"])
+        # A rewritten stored reducer CSV (the decision-475 process rule's failure mode) is not reusable ...
+        reducer = self.root / self.CASE / "results" / "main" / self.PREFIX / "reducer"
+        original = (reducer / "domain-response-matrix.csv").read_text()
+        (reducer / "domain-response-matrix.csv").write_text(original + "1,2,0.1\n")
+        stop("is not the one the stored run fetched and verified")
+        (reducer / "domain-response-matrix.csv").write_text(original)
+        self.load()
+        # ... as is a rewritten stored run config, a stored run that never reached its analysis, or one
+        # whose plans pin no traces.
+        config_path = self.root / self.CASE / "inputs" / "run-config.json"
+        config_path.write_text(json.dumps(self.config))
+        stop("the stored root was rewritten")
+        config_path.write_text(json.dumps(self.config, indent=2) + "\n")
+        record_path = self.root / "library-qualification.json"
+        record = json.loads(record_path.read_text())
+        record["Cases"][0]["Qualification"] = None
+        record_path.write_text(json.dumps(record))
+        stop("was not analyzed")
+        record["Cases"][0]["Qualification"] = {"Verdict": "Failed"}
+        record_path.write_text(json.dumps(record))
+        self.load()
+        (self.root / self.CASE / "main" / "jobs" / "worker-1" / "plan.json").write_text(json.dumps({"PinnedSHA256": {}}))
+        stop("0 pinned")
+
+    def test_controls_only_and_reuse_main_go_together(self):
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        args = parser.parse_args(["--build-record", "b", "--reference", "none", "--controls-only", "--reuse-main", str(self.root)])
+        self.assertTrue(args.controls_only)
+        self.assertEqual(args.reuse_main, self.root)
+        build = self.tmp / "library-build.json"
+        build.write_text(json.dumps({"Cases": [], "Library": {"Commit": "x", "Manifest": {"Path": str(MANIFEST), "SHA256": sha256(MANIFEST)}}}))
+        for extra in (["--controls-only"], ["--reuse-main", str(self.root)]):
+            args = parser.parse_args(["--build-record", str(build), "--reference", "none", "--dry-run", "--root", str(self.tmp / "run"), *extra])
+            with self.assertRaisesRegex(ValueError, "go together"):
+                qualify_library.run_qualify(args, log=lambda message: None)
+        with self.assertRaisesRegex(ValueError, "go together"):
+            qualify_library.prepare_case({"Case": "c"}, manifest_path=MANIFEST, manifest={}, args=argparse.Namespace(controls_only=True, reuse_main=None),
+                                         root=self.tmp, remote=None, profile={}, cost_model={}, gates={}, gates_digest="")
+
+
 class JobSplitTest(unittest.TestCase):
     """The per-coupon source split policy (decision 61b) on the recorded device coupon
     spatial-3-edge-5d3b5e644745 (225 sources, H1 42.7M at p4: 29,272 s single-job estimate
@@ -456,6 +598,60 @@ class JobSplitTest(unittest.TestCase):
         self.assertFalse(short["Fits"])
         self.assertIn("even the maximal split N = 4", short["Decision"])
         self.assertIn("fail closed", short["Decision"])
+
+    def test_controls_only_plans_one_job_of_the_fixed_stages_alone(self):
+        """Decisions 474 (A) / 479 / 485 (c): the controls-only re-qualification is ONE job of the control +
+        local-edge stages (no source block, no reducer) whose estimate is the separate job 1's of a split, on
+        the Fixed node count; its plan (build_job_plan) pins the mesh, every trace and the fixed stages'
+        configs only - the b-batch1 lane script's controls-only plan, now the driver's."""
+        policy = job_split.normalize_policy("frugal", max_jobs=4, walltime_seconds=self.profile["WalltimeSeconds"], user_job_cap=40)
+        record = job_split.plan_split(indices=self.indices, layout=self.layout, estimate=self.estimate_default, policy=policy,
+                                      model=self.model_refit, profile=self.profile, controls_only=True)
+        self.assertTrue(record["ControlsOnly"])
+        self.assertEqual(record["Rule"], job_split.CONTROLS_ONLY_RULE)
+        self.assertEqual((record["N"], record["Blocks"], record["ControlsJob"]), (1, [[]], "controls-only"))
+        self.assertEqual([job["Kind"] for job in record["Jobs"]], ["controls-only"])
+        job = record["Jobs"][0]
+        self.assertEqual((job["Name"], job["Sources"], job["Block"]), ("controls-only", [], 1))
+        self.assertTrue(job["Fits"] and record["Fits"])
+        self.assertIn("controls-only: ONE job", record["Decision"])
+        self.assertIn("the main stages are reused", record["Decision"])
+        # The same seconds as a separate job 1 of a split that leaves it no block (8 sources in 4 jobs).
+        layout = qualify_library.stage_layout("c", [4], [3, 5], 8, 8)
+        stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in layout if item["Kind"] == "response"]
+        local = next(item for item in layout if item["Kind"] == "local-edge")
+        estimate = estimate_stages.estimate(self.counts, stages, model=self.model_refit, profile=self.profile,
+                                            local_edge=(local["EstimateKey"], local["Order"], local["Sources"]))
+        fixed = job_split.normalize_policy("fixed", max_jobs=4, walltime_seconds=self.profile["WalltimeSeconds"], fixed_jobs=4)
+        split = job_split.plan_split(indices=list(range(1, 9)), layout=layout, estimate=estimate, policy=fixed, model=self.model_refit,
+                                     profile=self.profile)
+        controls = job_split.plan_split(indices=list(range(1, 9)), layout=layout, estimate=estimate, policy=policy, model=self.model_refit,
+                                        profile=self.profile, controls_only=True)
+        self.assertEqual(split["ControlsJob"], "separate")
+        self.assertEqual(controls["Jobs"][0]["SecondsEstimateWithPreflightAndMargin"], split["Jobs"][0]["SecondsEstimateWithPreflightAndMargin"])
+        self.assertNotIn("Nodes", controls["Jobs"][0])
+        multi = job_split.plan_split(indices=list(range(1, 9)), layout=layout, estimate=estimate, policy=policy, model=self.model_refit,
+                                     profile=self.profile, controls_only=True, nodes={"Main": 4, "Fixed": 2})
+        self.assertEqual(multi["Jobs"][0]["Nodes"], 2)
+        self.assertEqual(multi["NodeSecondsEstimate"]["2.0"], 2 * multi["Jobs"][0]["SecondsEstimateWithPreflightAndMargin"]["2.0"])
+        # The plan of the controls-only job: the fixed stages only, their configs + the mesh + every trace pinned.
+        digests = {"c-p4": {"worker-block1.json": "a" * 64, "reducer.json": "b" * 64},
+                   "c-p5-control": {"worker.json": "c" * 64, "reducer.json": "d" * 64},
+                   "c-p3-control": {"worker.json": "e" * 64, "reducer.json": "f" * 64},
+                   "c-p4-local-edge": {"config.json": "0" * 64}}
+        pins = {f"/r/case/inputs/traces/basis-{k:04d}.csv": f"{k:064x}" for k in range(1, 9)}
+        plan = build_plan.build_job_plan(case_id="c", job_name="controls-only", remote_case_root="/r/case",
+                                         mesh={"Remote": "/r/case/mesh/m.msh", "SHA256": "9" * 64, "Local": "/l/m.msh"}, stage_layout=layout,
+                                         split_job={**controls["Jobs"][0], "Kind": "worker"}, estimate=estimate, config_digests=digests,
+                                         trace_pins=pins, profile=self.profile, binary="/r/p.bin", binary_sha256="1" * 64, mpiexec="/r/mpi",
+                                         purpose="t", factors=["1.0", "1.5", "2.0"])
+        self.assertEqual(plan["StageNames"], ["c-p5-control-worker", "c-p5-control-reducer", "c-p3-control-worker", "c-p3-control-reducer",
+                                              "c-p4-local-edge"])
+        self.assertEqual(plan["BlockSources"], [])
+        self.assertEqual(sorted(plan["PinnedSHA256"]), sorted(list(pins) + ["/r/case/mesh/m.msh", "/r/case/main/c-p5-control/worker.json",
+                                                                              "/r/case/main/c-p5-control/reducer.json", "/r/case/main/c-p3-control/worker.json",
+                                                                              "/r/case/main/c-p3-control/reducer.json", "/r/case/main/c-p4-local-edge/config.json"]))
+        self.assertNotIn("/r/case/main/c-p4/reducer.json", plan["PinnedSHA256"])
 
     def test_controls_take_a_separate_first_job_when_they_leave_no_room(self):
         # 8 sources split in 4: the controls + local-edge alone outweigh a 2-source block, so
@@ -1552,6 +1748,77 @@ class QualifyDryRunTest(unittest.TestCase):
         self.assertEqual(gate_record["Verdict"], gates.VERDICT_PENDING)
         self.assertEqual(record_["Status"], "pending-qualification")
         self.assertIsNone(record_["Cost"]["ReferenceNodeHours"])
+
+    def test_controls_only_reuses_the_stored_main_stage_and_plans_the_control_job(self):
+        """--controls-only --reuse-main (decisions 474 (A) / 479 / 485 (c)) on a stored run synthesized from a
+        --reference none dry run of the four-edge case with the recorded physics-11 reducer CSVs: the
+        identity checks pass (the same mesh, config and traces), the controls are the amplitude-informed
+        choice from the stored reducer, one controls-only job of the fixed stages is planned, and the
+        reused main stage is recorded with the stored reducer's digests and partition."""
+        case_id = "four-edge-9d2cb9bbb3fe"
+        campaign = ASSESSMENT / CASES[case_id]["Campaign"]
+        stored = self.tmp / "stored-run"
+        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
+                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, "--case", case_id, "--stage-prefix", "va",
+                   "--root", str(stored), "--dry-run"]
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The stored run: its planned record completed by hand with the recorded reducer CSVs, their digests
+        # and a single job (what an analyzed run records).
+        record_path = stored / "library-qualification.json"
+        record = json.loads(record_path.read_text())
+        case = record["Cases"][0]
+        reducer = stored / case_id / "results" / "main" / "va-p4" / "reducer"
+        reducer.mkdir(parents=True)
+        digests = {}
+        for name in qualify_library.REUSED_MAIN_CSVS:
+            shutil.copyfile(campaign / "results" / "main" / "va-p4" / "reducer" / name, reducer / name)
+            digests[name] = sha256(reducer / name)
+        case["ResultDigests"] = {f"main/va-p4/reducer/{name}": {"Local": digest, "Remote": digest, "OK": True} for name, digest in digests.items()}
+        case["Jobs"][0]["Submission"] = {"Job": "1.fake"}
+        case["Qualification"] = {"Verdict": "Failed", "UnjudgedTypes": []}
+        case["Cost"] = {"MainStage": {"NodeHours": 1.0}, "JobNodeHours": 1.5}
+        record_path.write_text(json.dumps(record, indent=2))
+        root = self.tmp / "controls-only"
+        command = [sys.executable, str(HERE / "coupon_library.py"), "qualify", "--build-record", str(self.build_record),
+                   "--reference", "none", "--frozen-binary-sha256", BINARY_SHA256, "--case", case_id, "--stage-prefix", "va",
+                   "--controls", "p3,p5", "--controls-only", "--reuse-main", str(stored), "--root", str(root), "--dry-run"]
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        planned = json.loads((root / "library-qualification.json").read_text())["Cases"][0]
+        self.assertEqual(planned["Status"], "planned", planned.get("StoppedBy"))
+        reused = planned["ReusedMain"]
+        self.assertEqual((reused["Root"], reused["MainPrefix"], reused["Case"]), (str(stored), "va-p4", case_id))
+        self.assertEqual(reused["Reducer"]["SHA256"], digests)
+        self.assertEqual((reused["Reducer"]["Job"], reused["Reducer"]["PBSJobID"], reused["Reducer"]["Nodes"]), ("single", "1.fake", 1))
+        self.assertEqual(reused["Traces"], {"Count": 80, "PinnedByStoredPlans": 80, "Identical": True})
+        self.assertEqual(reused["StoredVerdict"], "Failed")
+        self.assertEqual(reused["ReusedStages"], ["va-p4"])
+        self.assertEqual(reused["SolvedStages"], ["va-p5-control", "va-p3-control", "va-p4-local-edge"])
+        self.assertEqual(planned["ControlAmplitudes"]["PriorMainStage"], str(reducer))
+        self.assertIn("decision 474 (A)", planned["Controls"]["Rule"])
+        self.assertEqual(len(planned["Controls"]["Indices"]), 8)
+        self.assertEqual((planned["Split"]["N"], planned["Split"]["ControlsJob"], planned["Split"]["Blocks"]), (1, "controls-only", [0]))
+        self.assertEqual([(job["Name"], job["Kind"], job["Sources"]) for job in planned["Jobs"]], [("controls-only", "controls-only", [])])
+        plan = json.loads(Path(planned["Jobs"][0]["Plan"]).read_text())
+        self.assertEqual(plan["JobKind"], "controls-only")
+        self.assertEqual(plan["StageNames"], ["va-p5-control-worker", "va-p5-control-reducer", "va-p3-control-worker", "va-p3-control-reducer",
+                                              "va-p4-local-edge"])
+        self.assertEqual(plan["ReusedMain"]["Reducer"]["SHA256"], digests)
+        self.assertNotIn(f"{planned['Remote']['Case']}/main/va-p4/worker.json", plan["PinnedSHA256"])
+        self.assertEqual(sum(1 for path in plan["PinnedSHA256"] if "/inputs/traces/" in path), 80)
+        self.assertTrue((root / case_id / "main" / "jobs" / "controls-only" / "job.pbs").is_file())
+        self.assertEqual(planned["Nodes"]["MainOrigin"], "the stored run's reducer job (--reuse-main)")
+        # A stored run of another mesh is refused (ReuseMain, the coupon stops before any plan).
+        record["Cases"][0]["Mesh"]["SHA256"] = "0" * 64
+        record_path.write_text(json.dumps(record, indent=2))
+        other = self.tmp / "controls-only-other-mesh"
+        command[command.index(str(root))] = str(other)
+        result = subprocess.run(command, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        stopped = json.loads((other / "library-qualification.json").read_text())["Cases"][0]
+        self.assertEqual((stopped["Status"], stopped["StoppedBy"]["Kind"]), ("failed", "ReuseMain"))
+        self.assertIn("not the same coupon mesh", stopped["StoppedBy"]["Message"])
 
 
 if __name__ == "__main__":

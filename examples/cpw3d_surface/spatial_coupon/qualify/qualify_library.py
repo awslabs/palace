@@ -53,6 +53,17 @@ Per passed coupon of the build record:
     the job scripts select N nodes; above the profile's MaximumNodesPerJob the coupon
     fails closed; a coupon whose every stage fits one node is planned byte-identically
     to the recorded campaigns;
+ 4'. --controls-only --reuse-main ROOT (decisions 474 (A) / 477 (3) / 479 / 485 (c), the
+    controls-only re-qualification; job_split.CONTROLS_ONLY_RULE): the main stage is REUSED
+    from the stored qualify run under ROOT - load_reused_main checks the identity mesh digest,
+    the run config (apart from the remote paths), every regenerated trace against the stored
+    plan's pins and the stored reducer CSVs against the digests the stored run verified, and
+    records the stored reducer's partition / verdict / controls (ReusedMain) - the controls are
+    the amplitude-informed choice from that reducer (--control-amplitudes defaults to it), ONE
+    job of the control + local-edge stages is planned on the Fixed node count, and at the
+    fetch the stored reducer CSVs are copied byte-identically into this run's results
+    (splice_reused_main) so the gate, the records and the library read the main stage exactly
+    as a fetched one; the main stage's cost is carried for information, not counted;
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
     nothing contacted); otherwise up to --max-jobs of the run's jobs are queued / running
     at once (each qsub under the user job cap, recorded and counted at submission): a
@@ -287,8 +298,16 @@ def build_gate_override_for(case_record, overrides):
 
 
 def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, profile, cost_model, gates, gates_digest):
-    """Steps 1-4 of one coupon: the per-case record with the plan written locally."""
+    """Steps 1-4 of one coupon: the per-case record with the plan written locally.  Under
+    --controls-only --reuse-main ROOT (CONTROLS_ONLY_RULE) the main stages are reused from the
+    stored run under ROOT (load_reused_main: identity checked) and one controls-only job is
+    planned."""
     case_id = case_record["Case"]
+    controls_only = bool(getattr(args, "controls_only", False))
+    reuse_root = getattr(args, "reuse_main", None)
+    if controls_only != (reuse_root is not None):
+        raise ValueError("--controls-only and --reuse-main ROOT go together: the controls-only job reuses the stored run's main "
+                         "stage, and a stored run is reused only for a controls-only job")
     case_root = root / case_id
     case_root.mkdir(parents=True, exist_ok=True)
     record = {"Case": case_id, "Status": None, "StoppedBy": None, "BuildStatus": case_record["Status"],
@@ -381,6 +400,15 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                         "ConfigSHA256": sha256(case_root / "inputs" / "run-config.json")}
     interface_types = {int(index): name for index, name in inputs["Interfaces"].items()}
     interfaces = inputs["InterfaceTypes"]
+    reused_main = None
+    if controls_only:
+        reused_main = load_reused_main(Path(reuse_root), case_id, identity_sha256=identity["SHA256"], run_config=run_config,
+                                       trace_digests={source["Name"]: source["SHA256"] for source in inputs["Sources"]},
+                                       main_prefix=f"{prefix}-p{physics_run['Order']}")
+        record["ReusedMain"] = reused_main
+        if args.control_amplitudes is None and not args.control_source:
+            # Decision 474 (A): the amplitude-informed choice reads the stored main reducer.
+            args.control_amplitudes = Path(reused_main["Reducer"]["Directory"])
     reference = None
     reference_interface_types = None
     if args.reference is not None:
@@ -465,6 +493,9 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                           "Classes": {str(i): classes[i][0] for i in controls if i in classes}}
     # 3. stage layout, remote layout, configs.
     main_orders = main_orders_of(physics_run["Order"], args.orders, reference_order)
+    if controls_only and len(main_orders) != 1:
+        raise CaseStop("ControlsOnly", f"a controls-only job reuses the stored main stage at the recipe order p{physics_run['Order']} "
+                                       f"alone; --orders / a reference order asked for {main_orders}")
     control_orders = list(args.controls)
     record["Orders"] = {"Main": [f"p{order}" for order in main_orders], "Controls": [f"p{order}" for order in control_orders],
                         "RecipeOrder": f"p{physics_run['Order']}", "RecipeLinearTol": physics_run["LinearTol"],
@@ -473,6 +504,10 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     layout = stage_layout(prefix, main_orders, control_orders, len(indices), len(controls))
     record["StagePrefix"] = prefix
     record["Stages"] = layout
+    if reused_main is not None:
+        reused_main["ControlOrders"] = [f"p{order}" for order in control_orders]
+        reused_main["SolvedStages"] = [item["Prefix"] for item in layout if item["Role"] != "main"]
+        reused_main["ReusedStages"] = [item["Prefix"] for item in layout if item["Role"] == "main"]
     # 4. estimate (the single-job view, then the split under the job policy: fail closed
     # only when even the maximal split does not fit - decision 61b).
     counts = (case_record.get("H1") or {}).get("EntityCounts")
@@ -510,7 +545,7 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
             raise CaseStop("Estimate", str(error), Nodes=node_plan)
     try:
         split = job_split.plan_split(indices=indices, layout=layout, estimate=estimate, policy=policy, model=cost_model,
-                                     profile=profile, nodes=nodes)
+                                     profile=profile, nodes=nodes, controls_only=controls_only)
     except ValueError as error:
         raise CaseStop("JobPolicy", str(error), Policy=policy)
     estimate["Split"] = split
@@ -531,6 +566,11 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                        "Fixed": nodes["Fixed"] if nodes else profile["Nodes"], "Required": node_plan["Required"],
                        "MaximumNodesPerJob": node_plan["MaximumNodesPerJob"], "Decision": estimate["Nodes"]["Decision"],
                        "Rule": estimate_stages.NODE_SCALING_RULE}
+    if reused_main is not None:
+        # The main stage of record is the stored reducer's: its partition is the one the library's
+        # MultiNodeReduction and the (F) identity twin take (decisions 482 / 487 (d)).
+        record["Nodes"].update({"MultiNode": reused_main["Reducer"]["Nodes"] > 1, "Main": reused_main["Reducer"]["Nodes"],
+                                "MainOrigin": "the stored run's reducer job (--reuse-main)"})
     record["Split"] = {key: split[key] for key in ("N", "Fits", "Decision", "ControlsJob", "LargestSplit", "Candidates",
                                                     "CriticalPathEstimateSeconds", "NodeSecondsEstimate", "WorstPCGFactor")}
     record["Split"]["Blocks"] = [len(block) for block in split["Blocks"]] if split["Blocks"] else None
@@ -581,7 +621,33 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                + f"; stages {[item['Prefix'] for item in layout]}; controls {controls} ({control_rule}); {estimate['Decision']}")
     factors = [f"{factor:.1f}" for factor in cost_model["PCGFactors"]]
     jobs = []
-    if split["N"] == 1:
+    if controls_only:
+        split_job = split["Jobs"][0]
+        name = split_job["Name"]
+        directory_ = case_root / "main" / "jobs" / name
+        remote_directory = f"{remote_case}/main/jobs/{name}"
+        plan = build_plan.build_job_plan(case_id=case_id, job_name=name, remote_case_root=remote_case,
+                                         mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
+                                         stage_layout=layout, split_job={**split_job, "Kind": "worker"}, estimate=estimate,
+                                         config_digests=config_digests, trace_pins=trace_pins, profile=profile, binary=binary,
+                                         binary_sha256=frozen_binary["SHA256"], mpiexec=mpiexec,
+                                         purpose=f"{purpose}; {split['Decision']}; {job_split.CONTROLS_ONLY_RULE}", factors=factors,
+                                         reducer_block_size=reducer_block_size["Value"])
+        plan["JobKind"] = job_split.CONTROLS_ONLY_JOB
+        plan["ReusedMain"] = {key: reused_main[key] for key in ("Root", "Record", "MainPrefix", "Reducer", "ReusedStages", "SolvedStages")}
+        write_json(directory_ / "plan.json", plan)
+        job_script = build_plan.render_job_script(profile=profile, remote_root=remote_root, remote_case_root=remote_case,
+                                                  runner=f"{remote_run}/run_stages.py",
+                                                  job_name=f"{profile['JobNamePrefix']}-{case_id}-{name}"[:64],
+                                                  walltime_seconds=profile["WalltimeSeconds"], instance_type=plan["Instance"]["Type"],
+                                                  job_directory=remote_directory, nodes=plan.get("Nodes", 1))
+        (directory_ / "job.pbs").write_text(job_script)
+        jobs.append({"Name": name, "Kind": split_job["Kind"], "Block": split_job["Block"], "Sources": [], "Requires": [],
+                     "Instance": plan["Instance"]["Type"], "Directory": str(directory_), "RemoteDirectory": remote_directory,
+                     "SubmissionRecord": str(case_root / f"submission-{name}.json"), "StageNames": plan["StageNames"],
+                     "Estimate": split_job["SecondsEstimateWithPreflightAndMargin"], "Plan": str(directory_ / "plan.json"),
+                     "Nodes": plan.get("Nodes", profile["Nodes"]), "Ranks": plan["Ranks"]})
+    elif split["N"] == 1:
         plan = build_plan.build_plan(case_id=case_id, remote_case_root=remote_case,
                                      mesh={"Remote": remote_mesh, "SHA256": identity["SHA256"], "Local": identity["Path"]},
                                      stage_layout=layout, estimate=estimate, config_digests=config_digests, trace_pins=trace_pins,
@@ -643,9 +709,120 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                     "layout": layout, "reference": reference, "reference_order": reference_order, "interfaces": interfaces,
                     "interface_types": interface_types, "reference_interface_types": reference_interface_types,
                     "controls": controls, "zero_trace": zero_trace, "identity": identity,
-                    "radial_shells": inputs.get("RadialShells"),
+                    "radial_shells": inputs.get("RadialShells"), "reused_main": reused_main,
                     "reference_edge_size": (getattr(args, "reference_edge_size_nm", None) / 1000.0
                                             if getattr(args, "reference_edge_size_nm", None) else None)}
+
+
+REUSED_MAIN_CSVS = ("domain-response-matrix.csv", "surface-response-matrix.csv")
+
+
+def stored_plan_trace_pins(stored_case_root):
+    """{trace file name: sha256} pinned by the stored run's plan(s) (<case>/main/plan.json or
+    <case>/main/jobs/*/plan.json) under .../inputs/traces/."""
+    pins = {}
+    for plan_path in sorted(list(stored_case_root.glob("main/plan.json")) + list(stored_case_root.glob("main/jobs/*/plan.json")), key=str):
+        for path, digest in json.loads(plan_path.read_text()).get("PinnedSHA256", {}).items():
+            if "/inputs/traces/" in path:
+                pins[path.rsplit("/", 1)[1]] = digest
+    return pins
+
+
+def load_reused_main(reuse_root, case_id, *, identity_sha256, run_config, trace_digests, main_prefix):
+    """The stored qualify run under `reuse_root` (its library-qualification.json + <case>/) whose
+    main stage a controls-only job reuses (CONTROLS_ONLY_RULE), checked for identity with this
+    run's inputs - the identity mesh digest, the run config apart from the remote paths, every
+    regenerated trace digest against the stored plan's pins, the stored reducer CSVs against the
+    digests the stored run verified against its remote - and recorded with the stored reducer's
+    partition, verdict and controls.  Every check fails closed (CaseStop ReuseMain).  The stored
+    files are read at their root-relative places (the record's absolute paths may be another
+    host's); nothing under `reuse_root` is written."""
+    reuse_root = Path(reuse_root)
+    record_path = reuse_root / LIBRARY_QUALIFICATION_RECORD
+    if not record_path.is_file():
+        raise CaseStop("ReuseMain", f"--reuse-main {reuse_root} holds no {LIBRARY_QUALIFICATION_RECORD}")
+    stored_record = json.loads(record_path.read_text())
+    stored = next((item for item in stored_record.get("Cases", []) if item.get("Case") == case_id), None)
+    if stored is None:
+        raise CaseStop("ReuseMain", f"{record_path} holds no case {case_id}")
+    if stored.get("Qualification") is None or not stored.get("Stages"):
+        raise CaseStop("ReuseMain", f"the stored run of {case_id} was not analyzed (status {stored.get('Status')}, stopped by "
+                                    f"{(stored.get('StoppedBy') or {}).get('Kind')}): its main stage cannot be reused")
+    stored_main = [item for item in stored["Stages"] if item["Role"] == "main"]
+    if [item["Prefix"] for item in stored_main] != [main_prefix]:
+        raise CaseStop("ReuseMain", f"the stored run's main stages {[item['Prefix'] for item in stored_main]} are not this run's "
+                                    f"{main_prefix} (the stage prefix and the recipe order must agree)")
+    stored_case_root = reuse_root / case_id
+    if (stored.get("Mesh") or {}).get("SHA256") != identity_sha256 or not (stored.get("Mesh") or {}).get("Verified"):
+        raise CaseStop("ReuseMain", f"the stored run solved identity mesh {(stored.get('Mesh') or {}).get('SHA256')}, this build record's is "
+                                    f"{identity_sha256}: not the same coupon mesh")
+    stored_config_path = stored_case_root / "inputs" / "run-config.json"
+    if not stored_config_path.is_file():
+        raise CaseStop("ReuseMain", f"the stored run config {stored_config_path} is missing")
+    stored_config_sha256 = sha256(stored_config_path)
+    if stored_config_sha256 != (stored.get("Inputs") or {}).get("ConfigSHA256"):
+        raise CaseStop("ReuseMain", f"the stored run config {stored_config_path} ({stored_config_sha256[:12]}...) is not the one its record "
+                                    f"pinned ({(stored.get('Inputs') or {}).get('ConfigSHA256', '')[:12]}...): the stored root was rewritten")
+    differences = case_inputs.config_differences(run_config, json.loads(stored_config_path.read_text()), ignore_solver=())
+    if differences:
+        raise CaseStop("ReuseMain", f"the run config derived now differs from the stored run's outside the remote paths: {differences[:12]}",
+                       Differences=differences)
+    stored_pins = stored_plan_trace_pins(stored_case_root)
+    trace_mismatch = {name: (digest, stored_pins.get(name)) for name, digest in trace_digests.items() if stored_pins.get(name) != digest}
+    if not stored_pins or trace_mismatch:
+        raise CaseStop("ReuseMain", f"{len(trace_mismatch)} of {len(trace_digests)} regenerated traces differ from the stored plan's pins "
+                                    f"({len(stored_pins)} pinned): {sorted(trace_mismatch)[:8]}")
+    reducer_directory = stored_case_root / "results" / "main" / main_prefix / "reducer"
+    digests = {}
+    for name in REUSED_MAIN_CSVS:
+        path = reducer_directory / name
+        if not path.is_file():
+            raise CaseStop("ReuseMain", f"the stored reducer CSV {path} is missing")
+        recorded = (stored.get("ResultDigests") or {}).get(f"main/{main_prefix}/reducer/{name}") or {}
+        actual = sha256(path)
+        if not recorded.get("OK") or recorded.get("Local") != actual or recorded.get("Remote") != actual:
+            raise CaseStop("ReuseMain", f"the stored reducer CSV {path} ({actual[:12]}...) is not the one the stored run fetched and verified "
+                                        f"({recorded}): not reusable")
+        digests[name] = actual
+    jobs = stored.get("Jobs") or []
+    reducer_job = next((job for job in jobs if job.get("Kind") in ("reducer", "single")), None)
+    if reducer_job is None:
+        raise CaseStop("ReuseMain", f"the stored run of {case_id} records no reducer / single job: its partition is unknown")
+    return {"Root": str(reuse_root), "Record": {"Path": str(record_path), "SHA256": sha256(record_path),
+                                               "ToolCommit": stored_record.get("ToolCommit"),
+                                               "GatesSHA256": (stored_record.get("Gates") or {}).get("SHA256")},
+            "Case": case_id, "MainPrefix": main_prefix,
+            "Mesh": {"SHA256": identity_sha256, "Identical": True},
+            "RunConfig": {"Stored": str(stored_config_path), "StoredSHA256": stored_config_sha256,
+                          "IdenticalApartFrom": list(case_inputs.PATH_FIELDS)},
+            "Traces": {"Count": len(trace_digests), "PinnedByStoredPlans": len(stored_pins), "Identical": True},
+            "Reducer": {"Directory": str(reducer_directory), "SHA256": digests, "VerifiedAgainstStoredRecord": True,
+                        "Job": reducer_job["Name"], "PBSJobID": (reducer_job.get("Submission") or {}).get("Job"),
+                        "Nodes": int(reducer_job.get("Nodes", 1)), "Ranks": reducer_job.get("Ranks")},
+            "StoredJobs": [{"Name": job["Name"], "Kind": job["Kind"], "Nodes": job.get("Nodes", 1), "Ranks": job.get("Ranks"),
+                            "PBSJobID": (job.get("Submission") or {}).get("Job")} for job in jobs],
+            "StoredNodes": stored.get("Nodes"), "StoredVerdict": stored["Qualification"]["Verdict"],
+            "StoredControls": (stored.get("Controls") or {}).get("Indices"),
+            "StoredMainStageCost": (stored.get("Cost") or {}).get("MainStage"),
+            "StoredJobNodeHours": (stored.get("Cost") or {}).get("JobNodeHours"),
+            "Rule": job_split.CONTROLS_ONLY_RULE}
+
+
+def splice_reused_main(results, reused_main):
+    """Copy the stored reducer CSVs into this run's results/main/<main prefix>/reducer/ (after the
+    fetched CSVs were verified against the remote; the copies are re-hashed) - the analysis then
+    reads the main stage exactly as a fetched one; returns the splice record."""
+    destination = Path(results) / "main" / reused_main["MainPrefix"] / "reducer"
+    destination.mkdir(parents=True, exist_ok=True)
+    copied = {}
+    for name, expected in reused_main["Reducer"]["SHA256"].items():
+        shutil.copyfile(Path(reused_main["Reducer"]["Directory"]) / name, destination / name)
+        actual = sha256(destination / name)
+        if actual != expected:
+            raise CaseStop("ReuseMain", f"the reused {name} changed between the identity check and the copy ({actual} != {expected})")
+        copied[name] = actual
+    return {"Directory": str(destination), "SHA256": copied, "From": reused_main["Reducer"]["Directory"], "UTC": remote_side.utc(),
+            "Rule": "the stored reducer CSVs copied byte-identically (re-hashed) into this run's results; the stored root is not written"}
 
 
 def node_assignment(node_plan, layout):
@@ -973,6 +1150,9 @@ def finish_case(record, context, *, remote, profile):
     write_json(case_root / "result-csv-sha256.json", verification)
     if mismatches:
         raise CaseStop("Verification", f"fetched CSVs differ from the remote digests: {mismatches}")
+    reused_main = context.get("reused_main")
+    if reused_main is not None:
+        record["ReusedMain"]["Splice"] = splice_reused_main(results, reused_main)
     matrices = {}
     for item in context["layout"]:
         if item["Kind"] != "response":
@@ -987,7 +1167,8 @@ def finish_case(record, context, *, remote, profile):
     record["MatrixValidation"] = {prefix: {kind: {"Rows": value["Rows"], "BasisSize": value["BasisSize"]}
                                            for kind, value in kinds.items()} for prefix, kinds in matrices.items()}
     write_json(case_root / "matrix-validation.json", matrices)
-    archives = [f"{remote_case}/main/{item['Prefix']}/archive" for item in context["layout"] if item["Kind"] == "response"]
+    archives = [f"{remote_case}/main/{item['Prefix']}/archive" for item in context["layout"]
+                if item["Kind"] == "response" and (reused_main is None or item["Role"] != "main")]
     record["ArchiveDeletion"] = remote_side.delete_archives(remote["Host"], archives)
     write_json(case_root / "remote-archive-deletion.json", record["ArchiveDeletion"])
     context["statuses"] = statuses
@@ -1138,6 +1319,12 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                     for job in jobs}
     cost["JobNodeHours"] = job_node_hours
     cost["JobNodeHoursRule"] = "the sum over the coupon's jobs of their runner total x their own node count (decision 468 (3))"
+    if context.get("reused_main") is not None:
+        cost["ReusedMainStage"] = {"Cost": context["reused_main"]["StoredMainStageCost"],
+                                   "StoredJobNodeHours": context["reused_main"]["StoredJobNodeHours"],
+                                   "Reducer": context["reused_main"]["Reducer"],
+                                   "Rule": ("controls-only (CONTROLS_ONLY_RULE): the main stage was not solved by this run; its stored cost "
+                                            "is carried for information and NOT counted in this run's JobNodeHours")}
     submitted = [job["SubmittedAt"] for job in jobs if job.get("SubmittedAt")]
     cost["CriticalPathSeconds"] = (record["FetchedAt"] - min(submitted)) if submitted and record.get("FetchedAt") else None
     cost["CriticalPathRule"] = ("first submission of the coupon's jobs to its fetch (a split coupon: the worker jobs in "
@@ -1185,6 +1372,7 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
                       "Jobs": cost["Jobs"], "Split": cost["Split"], "CriticalPathSeconds": cost["CriticalPathSeconds"],
                       "CriticalPathRule": cost["CriticalPathRule"],
                       "ReferenceNodeHours": reference_cost,
+                      "ReusedMainStage": cost.get("ReusedMainStage"),
                       "MainStageOverReference": (main_cost.get("NodeHours") / reference_cost
                                                  if reference_cost and main_cost.get("NodeHours") else None),
                       "Path": str(case_root / "cost-summary.json")}
@@ -1545,6 +1733,11 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
         model["QualificationStatusRule"] = QUALIFICATION_STATUS_RULE
         if record.get("BuildGateOverride"):
             model["BuildGateOverride"] = record["BuildGateOverride"]
+        if record.get("ReusedMain"):
+            model["ControlsOnlyRequalification"] = {
+                key: record["ReusedMain"][key] for key in ("Root", "Record", "MainPrefix", "Reducer", "StoredVerdict", "StoredControls",
+                                                             "ReusedStages", "SolvedStages", "Rule")}
+            model["ControlsOnlyRequalification"]["Controls"] = (record.get("Controls") or {}).get("Indices")
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
         if (record.get("Nodes") or {}).get("MultiNode"):
             model["MultiNodeReduction"] = {"Nodes": record["Nodes"]["Main"], "Ranks": reducer_ranks_of(record),
@@ -1653,8 +1846,10 @@ def qualification_status_of_verdict(verdict):
 
 def reducer_ranks_of(record):
     """The rank count of the job that reduced the main stage (the reducer job of a split
-    coupon, the single job otherwise): the partition the (F) identity twin must take
-    (decisions 482 / 487 (d))."""
+    coupon, the single job otherwise; the stored reducer of a controls-only run): the
+    partition the (F) identity twin must take (decisions 482 / 487 (d))."""
+    if record.get("ReusedMain"):
+        return record["ReusedMain"]["Reducer"].get("Ranks")
     jobs = record.get("Jobs") or []
     reducer = next((job for job in jobs if job["Kind"] in ("reducer", "single")), None)
     return reducer.get("Ranks") if reducer else None
@@ -1729,6 +1924,9 @@ def run_qualify(args, *, log=log_line):
         raise ValueError("--remote HOST:ROOT is required unless --dry-run")
     if args.max_jobs > profile["UserJobCap"]:
         raise ValueError(f"--max-jobs {args.max_jobs} exceeds the cluster profile's user job cap {profile['UserJobCap']}")
+    if bool(getattr(args, "controls_only", False)) != (getattr(args, "reuse_main", None) is not None):
+        raise ValueError("--controls-only and --reuse-main ROOT go together: the controls-only job reuses the stored run's main "
+                         "stage, and a stored run is reused only for a controls-only job")
     root = Path(args.root) if args.root else Path(
         f"/tmp/coupon-library-qualify-{build['Library']['Commit']}-{time.strftime('%Y%m%d-%H%M%S')}")
     root.mkdir(parents=True, exist_ok=True)
@@ -1964,6 +2162,13 @@ def add_arguments(parser):
     parser.add_argument("--adopt-remote-case", action="store_true",
                         help="upload into a PRE-EXISTING remote case directory knowingly (recorded); without it a coupon whose "
                              "remote case directory exists stops before any upload (REMOTE_CASE_RULE, decision 485 (b))")
+    parser.add_argument("--controls-only", action="store_true",
+                        help="solve ONLY the --controls stages (+ the local-edge stage) in one job and reuse the main stage of the "
+                             "stored run named by --reuse-main (its reducer CSVs byte-identical at their recorded digests; the same "
+                             "mesh, run config and traces); the controls are the decision-474 amplitude-informed choice from the "
+                             "stored reducer unless --control-source names them (job_split.CONTROLS_ONLY_RULE)")
+    parser.add_argument("--reuse-main", type=Path, default=None, metavar="ROOT",
+                        help="the stored qualify run root (library-qualification.json + <case>/) whose main stage --controls-only reuses")
     parser.add_argument("--monitor-interval", type=int, default=DEFAULT_MONITOR_INTERVAL, help="seconds between read-only polls")
     parser.add_argument("--monitor-polls", type=int, default=DEFAULT_MONITOR_POLLS)
     parser.add_argument("--cluster-profile", type=Path, default=HERE / "cluster-profile.json")
