@@ -52,6 +52,14 @@ struct DrivenSubstructureModel
   // Number of complete records in the file.
   int NumRecords(const std::string &path) const;
 
+  // Whether fingerprints agree, to a relative tolerance. The environment's (two counts,
+  // then complex quadratic forms) entry by entry. A source's (a nonzero flag, then complex
+  // pairings with the fingerprint fields, kSourceFp entries) relative to its largest
+  // pairing: a pairing can vanish up to rounding, which depends on the partition (for a
+  // source in a plane where a fingerprint field is normal to it).
+  static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
+  static bool SameSource(const double *a, const double *b);
+
 private:
   std::size_t HeaderBytes() const;
   std::size_t RecordBytes() const;

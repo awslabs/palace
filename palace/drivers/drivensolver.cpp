@@ -190,29 +190,6 @@ int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10)
   return -1;
 }
 
-// Fingerprints match: the first nreal entries relative to themselves, then complex values
-// (pairs of entries) relative to their magnitude (a real or imaginary part can be zero).
-bool SameFingerprint(const std::vector<double> &a, const std::vector<double> &b, int nreal,
-                     double tol = 1.0e-10)
-{
-  if (a.size() != b.size() || (a.size() - nreal) % 2 != 0)
-  {
-    return false;
-  }
-  for (std::size_t q = 0; q < a.size(); q++)
-  {
-    const bool complex = (q >= static_cast<std::size_t>(nreal));
-    const std::complex<double> za(a[q], complex ? a[q + 1] : 0.0),
-        zb(b[q], complex ? b[q + 1] : 0.0);
-    if (std::abs(za - zb) > tol * std::max(std::abs(za), std::abs(zb)))
-    {
-      return false;
-    }
-    q += complex;
-  }
-  return true;
-}
-
 }  // namespace
 
 ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
@@ -345,7 +322,8 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
     gamma_map = MatchSignatureBasis(
         TrueDofSignatures(space_op.GetNDSpace().Get(), ds.InterfaceIndex(), nG),
         model.signatures, model.sig_w);
-    MFEM_VERIFY(SameFingerprint(ds.EnvironmentFingerprint(model.omega[0]), model.env_fp, 2),
+    MFEM_VERIFY(DrivenSubstructureModel::SameEnvironment(
+                    ds.EnvironmentFingerprint(model.omega[0]), model.env_fp),
                 "The environment differs from the one the saved substructuring model was "
                 "condensed from (environment mesh, materials, boundary conditions, "
                 "order or problem type changed): rerun in \"Offline\" mode to "
@@ -375,11 +353,8 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
       for (std::size_t e = 0; e < model.excitations.size(); e++)
       {
         if (model.excitations[e] == ex_idx[k] &&
-            SameFingerprint(
-                fp,
-                {model.exc_fp.begin() + DrivenSubstructureModel::kSourceFp * e,
-                 model.exc_fp.begin() + DrivenSubstructureModel::kSourceFp * (e + 1)},
-                1))
+            DrivenSubstructureModel::SameSource(
+                fp.data(), model.exc_fp.data() + DrivenSubstructureModel::kSourceFp * e))
         {
           col = static_cast<int>(e);
         }

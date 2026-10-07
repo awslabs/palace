@@ -663,6 +663,43 @@ void ReadVec(std::ifstream &f, std::vector<T> &v, std::size_t n)
 
 }  // namespace
 
+bool DrivenSubstructureModel::SameEnvironment(const std::vector<double> &a,
+                                              const std::vector<double> &b)
+{
+  constexpr double tol = 1.0e-10;
+  if (a.size() != b.size() || a.size() < 2 || a.size() % 2 != 0)
+  {
+    return false;
+  }
+  for (std::size_t q = 0; q < a.size(); q += (q < 2) ? 1 : 2)
+  {
+    const std::complex<double> za(a[q], (q < 2) ? 0.0 : a[q + 1]),
+        zb(b[q], (q < 2) ? 0.0 : b[q + 1]);
+    if (std::abs(za - zb) > tol * std::max(std::abs(za), std::abs(zb)))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool DrivenSubstructureModel::SameSource(const double *a, const double *b)
+{
+  constexpr double tol = 1.0e-10;
+  if (a[0] != b[0])
+  {
+    return false;
+  }
+  double scale = 0.0, diff = 0.0;
+  for (int q = 1; q < kSourceFp; q += 2)
+  {
+    const std::complex<double> za(a[q], a[q + 1]), zb(b[q], b[q + 1]);
+    scale = std::max({scale, std::abs(za), std::abs(zb)});
+    diff = std::max(diff, std::abs(za - zb));
+  }
+  return diff <= tol * scale;
+}
+
 std::size_t DrivenSubstructureModel::HeaderBytes() const
 {
   return sizeof(int) * 8 + sizeof(double) * signatures.size() +

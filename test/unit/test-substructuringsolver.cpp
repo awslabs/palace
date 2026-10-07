@@ -2413,6 +2413,52 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
   }
 }
 
+TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")
+{
+  // Source fingerprints of a lumped port of the CPW resonator grid example (in the plane
+  // z = 0, along x), saved on 192 processes and recomputed on 8: the pairing with the first
+  // fingerprint field (z, x, y) vanishes, up to rounding that differs between partitions.
+  using Model = DrivenSubstructureModel;
+  const std::vector<double> online = {1.0,
+                                      0.0,
+                                      -5.2511761922216104e-16,
+                                      0.0,
+                                      9.2812996599596332e-04,
+                                      0.0,
+                                      -1.9606511512972598e-03},
+                            saved = {1.0,
+                                     0.0,
+                                     -4.8624843274134622e-16,
+                                     0.0,
+                                     9.2812996599596874e-04,
+                                     0.0,
+                                     -1.9606511512972719e-03},
+                            other = {1.0,
+                                     0.0,
+                                     -1.2238455583072405e-15,
+                                     0.0,
+                                     9.2812996599578388e-04,
+                                     0.0,
+                                     1.9606511512968894e-03};  // the port at the other end
+  REQUIRE(online.size() == static_cast<std::size_t>(Model::kSourceFp));
+  CHECK(Model::SameSource(online.data(), saved.data()));
+  CHECK_FALSE(Model::SameSource(online.data(), other.data()));
+  auto no_env = online;
+  no_env[0] = 0.0;
+  CHECK_FALSE(Model::SameSource(no_env.data(), saved.data()));
+
+  // Environment fingerprints: counts, then quadratic forms with a vanishing imaginary part.
+  const std::vector<double> env = {100.0, 20.0, 3.0, 0.0, -2.0, 1.0e-3, 5.0, 0.0};
+  auto env2 = env;
+  env2[2] *= 1.0 + 1.0e-13;
+  CHECK(Model::SameEnvironment(env, env2));
+  env2[6] *= 1.0 + 1.0e-6;
+  CHECK_FALSE(Model::SameEnvironment(env, env2));
+  env2 = env;
+  env2[1] += 1.0;
+  CHECK_FALSE(Model::SameEnvironment(env, env2));
+}
+
 #if defined(MFEM_USE_MUMPS)
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel]")
