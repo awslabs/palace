@@ -26,6 +26,15 @@ import json
 import os
 import sys
 
+# Round-3 class (10) (decisions 492 / 493 / 510): the arc chording below feeds the content-hashed
+# coupon sources, so its trigonometry is the correctly rounded deterministic_math (platform-
+# independent by definition), not libm. Imported both as a package module and as a plain
+# module on sys.path (the two ways this module is loaded).
+try:
+    from . import deterministic_math
+except ImportError:
+    import deterministic_math
+
 # Feature types the library cannot model (an UnclassifiedParallelPair is an exclusion
 # described as a feature so that the partition stays exact).
 UNMODELLED_TYPES = ("UnclassifiedParallelPair", "CurvedUnclassifiedParallelPair")
@@ -316,7 +325,11 @@ def cluster_plan_view_edges(signature, radius, step_degrees=CLUSTER_ARC_CHORD_ST
     circle (equal ends) is chorded over 2 pi. With ``include_context`` the ``Context`` entries of
     a contract-v3 signature (the device plan clipped to the ``Box``: the continuation chains,
     ``Chain`` true, and the foreign edges) follow the claims in the same encoding, each carrying
-    ``"Context": True`` and its ``Chain`` flag (``Portion`` indexes the Context list)."""
+    ``"Context": True`` and its ``Chain`` flag (``Portion`` indexes the Context list).
+
+    Every float of the result is produced by CPython scalar arithmetic on the serialised
+    coordinates and by deterministic_math's correctly rounded atan2 / cos / sin (round-3 class
+    (10)): a straight portion involves no trigonometry and is returned bitwise as before."""
     import math
     edges = []
     entries = [(index, portion, False) for index, portion in enumerate(signature["Portions"])]
@@ -334,7 +347,7 @@ def cluster_plan_view_edges(signature, radius, step_degrees=CLUSTER_ARC_CHORD_ST
         arc = [float(v) * radius for v in portion["Arc"]]
         c, m = (arc[0], arc[1]), (arc[2], arc[3])
         r = math.hypot(a[0] - c[0], a[1] - c[1])
-        angle = lambda q: math.atan2(q[1] - c[1], q[0] - c[0])
+        angle = lambda q: deterministic_math.atan2(q[1] - c[1], q[0] - c[0])
         ta, tb, tm = angle(a), angle(b), angle(m)
         closed = math.hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * max(r, 1.0)
         if closed:
@@ -351,10 +364,11 @@ def cluster_plan_view_edges(signature, radius, step_degrees=CLUSTER_ARC_CHORD_ST
         sign = int(portion["GapRadial"])
         for k in range(n):
             t0, t1 = ta + sweep * k / n, ta + sweep * (k + 1) / n
-            q0 = (c[0] + r * math.cos(t0), c[1] + r * math.sin(t0))
-            q1 = (c[0] + r * math.cos(t1), c[1] + r * math.sin(t1))
+            q0 = (c[0] + r * deterministic_math.cos(t0), c[1] + r * deterministic_math.sin(t0))
+            q1 = (c[0] + r * deterministic_math.cos(t1), c[1] + r * deterministic_math.sin(t1))
             tmid = 0.5 * (t0 + t1)
-            edges.append(dict(common, P0=q0, P1=q1, Gap=(sign * math.cos(tmid), sign * math.sin(tmid)), Chord=k, Chords=n))
+            edges.append(dict(common, P0=q0, P1=q1, Gap=(sign * deterministic_math.cos(tmid), sign * deterministic_math.sin(tmid)),
+                              Chord=k, Chords=n))
     return edges
 
 

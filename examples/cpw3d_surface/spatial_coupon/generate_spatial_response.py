@@ -9,10 +9,16 @@ import argparse
 import json
 import math
 from pathlib import Path
+import sys
 
 import numpy as np
 
 from trace_basis import NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE
+
+_IDENTIFICATION = str(Path(__file__).resolve().parents[2] / "surface_response_identification")
+if _IDENTIFICATION not in sys.path:
+    sys.path.insert(0, _IDENTIFICATION)
+import deterministic_math  # noqa: E402
 
 
 INTERFACE_DEFAULTS = {
@@ -30,11 +36,74 @@ def load_json(path):
         raise ValueError(f"Invalid JSON in {path}: {error}") from error
 
 
+# Round-3 class (10), the scalar-arithmetic rule (decisions 492 / 493 / 510; DESIGN-part-G
+# G.10.3): every float written into a content-hashed source (mesh-signature.csv, the mask and
+# boundary CSVs, the trace basis, process-library.json, basis-contract.json) is produced by
+# CPython scalar float arithmetic on serialised inputs and by deterministic_math for the
+# transcendental functions; numpy arrays carry data on that path (elementwise + - x / are
+# IEEE, correctly rounded) but the frame rotation, the 2- / 3-vector dot products and norms
+# are scalar: numpy's go through BLAS, where Accelerate contracts the sums into FMAs and
+# OpenBLAS does not (impl-B0 probe), so a0 b0 + a1 b1 (+ a2 b2) below is the Linux value, the
+# bytes of every registration of record. Decision-only array arithmetic (point-in-mask tests,
+# conductor labels, cap hat placement: tolerance-guarded comparisons) stays vectorised.
+def _dot3(a, b):
+    """a . b of two 3-vectors by scalar arithmetic ((a0 b0 + a1 b1) + a2 b2)."""
+    return (float(a[0]) * float(b[0]) + float(a[1]) * float(b[1])) + float(a[2]) * float(b[2])
+
+
+def _norm3(v):
+    return math.sqrt(_dot3(v, v))
+
+
+def _cross3(a, b):
+    return np.asarray([float(a[1]) * float(b[2]) - float(a[2]) * float(b[1]),
+                       float(a[2]) * float(b[0]) - float(a[0]) * float(b[2]),
+                       float(a[0]) * float(b[1]) - float(a[1]) * float(b[0])])
+
+
+def _dot2(a, b):
+    return float(a[0]) * float(b[0]) + float(a[1]) * float(b[1])
+
+
+def _norm2(v):
+    return math.sqrt(_dot2(v, v))
+
+
+def apply_frame(frame, point):
+    """frame @ point (3 x 3 times 3) by scalar arithmetic, row sums left to right: bitwise the
+    matmul for the identity / signed-permutation frames of every coupon built so far."""
+    return np.asarray([_dot3(frame[i], point) for i in range(3)])
+
+
+def canonical_points(local_points, frame):
+    """local_points @ frame (N x 3 times 3 x 3) by scalar arithmetic, one row at a time."""
+    frame = np.asarray(frame, dtype=float)
+    columns = [frame[:, j] for j in range(3)]
+    return np.asarray([[_dot3(point, column) for column in columns] for point in np.asarray(local_points, dtype=float)]
+                      ).reshape(-1, 3)
+
+
+def _rows_dot(rows, vector):
+    """rows @ vector (N x 2 times 2) as elementwise ufuncs (rows[:, 0] v0 + rows[:, 1] v1): the
+    same two roundings per row as the scalar rule, no BLAS (the vectorised decision paths)."""
+    rows = np.asarray(rows, dtype=float)
+    return rows[:, 0] * float(vector[0]) + rows[:, 1] * float(vector[1])
+
+
+def _scalar_mean(values):
+    """The sequential mean sum(values) / n: bitwise numpy's mean for n <= 8 (its pairwise
+    summation is sequential below the first block), the facet triangles and segment pairs."""
+    total = 0.0
+    for value in values:
+        total += float(value)
+    return total / len(values)
+
+
 def unit(values, name):
     vector = np.asarray(values, dtype=float)
     if vector.shape != (3,) or not np.all(np.isfinite(vector)):
         raise ValueError(f"{name} must be a finite three-vector")
-    norm = np.linalg.norm(vector)
+    norm = _norm3(vector)
     if not math.isclose(norm, 1.0, rel_tol=0.0, abs_tol=1.0e-9):
         raise ValueError(f"{name} must be a unit vector")
     return vector / norm
@@ -124,7 +193,7 @@ def frame_from_geometry(topology, geometry):
         raise ValueError(f"{topology} has no complete edge geometry")
     normal = unit(entries[0]["ProcessNormal"], "ProcessNormal")
     gap = unit(entries[0]["GapDirection"], "GapDirection")
-    if abs(np.dot(normal, gap)) > 1.0e-9:
+    if abs(_dot3(normal, gap)) > 1.0e-9:
         raise ValueError("ProcessNormal and GapDirection must be orthogonal")
     if geometry.get("SupportBox") is not None:
         # A device-plan coupon (spatial-support contract v3, decision 282): built in its
@@ -137,8 +206,8 @@ def frame_from_geometry(topology, geometry):
         return np.identity(3)
     # Local z is the fabrication normal. Local x/y form a right-handed process plane.
     axis_x = gap
-    axis_y = np.cross(normal, gap)
-    axis_y /= np.linalg.norm(axis_y)
+    axis_y = _cross3(normal, gap)
+    axis_y /= _norm3(axis_y)
     return np.vstack((axis_x, axis_y, normal))
 
 
@@ -156,14 +225,14 @@ def normalize_geometry(coupon, radius, span_cap_over_r=None):
         point = np.asarray(entry.get("Point", [0.0, 0.0, 0.0]), dtype=float)
         gap = unit(entry["GapDirection"], f"edge {index + 1} GapDirection")
         normal = unit(entry["ProcessNormal"], f"edge {index + 1} ProcessNormal")
-        if abs(np.dot(gap, normal)) > 1.0e-9:
+        if abs(_dot3(gap, normal)) > 1.0e-9:
             raise ValueError(f"edge {index + 1} has a nonorthogonal frame")
         if topology == "SpatialEdgeCluster":
-            tangent = np.cross(gap, normal)
+            tangent = _cross3(gap, normal)
         else:
             tangent = unit(entry["Direction"], f"arm {index + 1} Direction")
-            expected = np.cross(gap, normal)
-            if abs(abs(np.dot(tangent, expected)) - 1.0) > 1.0e-9:
+            expected = _cross3(gap, normal)
+            if abs(abs(_dot3(tangent, expected)) - 1.0) > 1.0e-9:
                 raise ValueError(f"arm {index + 1} direction is inconsistent")
         interval = [float(value) for value in entry["Interval"]]
         if (
@@ -174,10 +243,10 @@ def normalize_geometry(coupon, radius, span_cap_over_r=None):
             or interval[0] >= interval[1]
         ):
             raise ValueError(f"edge {index + 1} has an invalid Interval")
-        local_point = frame @ point
-        local_gap = frame @ gap
-        local_normal = frame @ normal
-        local_tangent = frame @ tangent
+        local_point = apply_frame(frame, point)
+        local_gap = apply_frame(frame, gap)
+        local_normal = apply_frame(frame, normal)
+        local_tangent = apply_frame(frame, tangent)
         if (
             abs(local_gap[2]) > 1.0e-8
             or abs(local_tangent[2]) > 1.0e-8
@@ -233,7 +302,7 @@ def normalize_geometry(coupon, radius, span_cap_over_r=None):
     if span_cap_over_r <= 0.0:
         raise ValueError("the matching-support span cap must be positive")
     claim_radius = 0.5 * span_cap_over_r * radius
-    if any(np.linalg.norm(edge["Point"]) > claim_radius for edge in edges if not edge.get("Context")):
+    if any(_norm3(edge["Point"]) > claim_radius for edge in edges if not edge.get("Context")):
         raise ValueError("Spatial coupon geometry is too large for its matching radius")
 
     facets = []
@@ -248,7 +317,7 @@ def normalize_geometry(coupon, radius, span_cap_over_r=None):
             or not np.all(np.isfinite(points))
         ):
             raise ValueError(f"plan-view facet {index + 1} is invalid")
-        local = (frame @ points.T).T
+        local = np.asarray([apply_frame(frame, point) for point in points])
         if np.ptp(local[:, 2]) > 1.0e-8 * radius:
             raise ValueError(
                 f"plan-view facet {index + 1} is not on a process plane"
@@ -256,7 +325,7 @@ def normalize_geometry(coupon, radius, span_cap_over_r=None):
         facets.append(
             {
                 "Conductor": conductor,
-                "Plane": float(np.mean(local[:, 2])),
+                "Plane": _scalar_mean(local[:, 2]),
                 "Points": local[:, :2].tolist(),
             }
         )
@@ -511,7 +580,7 @@ def matching_perimeter_coordinates(
     # corners. Omitting a corner makes side triangles cut through the volume.
     corners = (0.0, width, width + height, 2.0 * width + height)
     coordinates.extend(corners)
-    pullback = metal_thickness / math.tan(math.radians(sidewall_angle))
+    pullback = metal_thickness / deterministic_math.tan(math.radians(sidewall_angle))
     for facet in facets:
         for point in facet["Points"]:
             if (
@@ -615,14 +684,14 @@ def cap_ring(triangles, points, offset, size, reverse):
             # leave a whole collinear chain with no incident cap triangles.
             # Its nodal hats would then jump between side and cap faces.
             diagonal = points[following, :2] - points[previous, :2]
-            diagonal_squared = float(diagonal @ diagonal)
+            diagonal_squared = _dot2(diagonal, diagonal)
             skipped_vertex = False
             for other in remaining:
                 if other in (previous, current, following):
                     continue
                 relative = points[other, :2] - points[previous, :2]
                 cross = diagonal[0] * relative[1] - diagonal[1] * relative[0]
-                projection = float(relative @ diagonal)
+                projection = _dot2(relative, diagonal)
                 if (abs(cross) <= area_tolerance and
                         -area_tolerance <= projection <= diagonal_squared + area_tolerance):
                     skipped_vertex = True
@@ -700,7 +769,7 @@ def claimed_plan_view_distance(points_xy, edges):
         tangent = np.asarray(edge["Tangent"])[:2]
         begin, end = edge["Interval"]
         delta = points_xy - point
-        longitudinal = np.clip(delta @ tangent, begin, end)
+        longitudinal = np.clip(_rows_dot(delta, tangent), begin, end)
         foot = point + longitudinal[:, None] * tangent
         distance = np.minimum(distance, np.linalg.norm(points_xy - foot, axis=1))
     return distance
@@ -803,8 +872,8 @@ def cap_triangulation_report(points, triangles):
     minimum, needles = math.inf, 0
     for triangle in triangles:
         a, b, c = (points[v] for v in triangle)
-        lengths = (np.linalg.norm(b - a), np.linalg.norm(c - b), np.linalg.norm(a - c))
-        altitude = np.linalg.norm(np.cross(b - a, c - a)) / max(lengths)
+        lengths = (_norm3(b - a), _norm3(c - b), _norm3(a - c))
+        altitude = _norm3(_cross3(b - a, c - a)) / max(lengths)
         minimum = min(minimum, altitude)
         needles += altitude < NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE * min(lengths)
     return {"MinimumAltitude": float(minimum), "NeedleTriangles": int(needles),
@@ -884,10 +953,10 @@ def points_in_polygon(points, polygon, tolerance):
         edge = current - previous
         relative = points - previous
         cross = edge[0] * relative[:, 1] - edge[1] * relative[:, 0]
-        projection = relative @ edge
-        edge_norm_squared = edge @ edge
+        projection = _rows_dot(relative, edge)
+        edge_norm_squared = _dot2(edge, edge)
         boundary |= (
-            (np.abs(cross) <= tolerance * max(np.linalg.norm(edge), 1.0))
+            (np.abs(cross) <= tolerance * max(_norm2(edge), 1.0))
             & (projection >= -tolerance)
             & (projection <= edge_norm_squared + tolerance)
         )
@@ -939,10 +1008,10 @@ def outline_distance(points, facets, conductor, plane, tolerance):
         previous = polygon[-1]
         for current in polygon:
             edge = current - previous
-            length_squared = float(edge @ edge)
+            length_squared = _dot2(edge, edge)
             relative = points - previous
             if length_squared > 0.0:
-                along = np.clip((relative @ edge) / length_squared, 0.0, 1.0)
+                along = np.clip(_rows_dot(relative, edge) / length_squared, 0.0, 1.0)
                 closest = previous + along[:, np.newaxis] * edge
             else:
                 closest = np.broadcast_to(previous, points.shape)
@@ -1035,7 +1104,7 @@ def conductor_at_points(
     facets,
 ):
     labels = np.zeros(len(points), dtype=int)
-    pullback = metal_thickness / math.tan(math.radians(sidewall_angle))
+    pullback = metal_thickness / deterministic_math.tan(math.radians(sidewall_angle))
     width = 3.0 * radius
     tolerance = 1.0e-10 * radius
     outline_tolerance = CONDUCTOR_LABEL_TOLERANCE_OVER_R * radius
@@ -1078,8 +1147,8 @@ def conductor_at_points(
         )
         shift = pullback * np.clip(height / metal_thickness, 0.0, 1.0)
         delta = points - point
-        longitudinal = delta @ tangent
-        transverse = delta @ gap
+        longitudinal = (delta[:, 0] * tangent[0] + delta[:, 1] * tangent[1]) + delta[:, 2] * tangent[2]
+        transverse = (delta[:, 0] * gap[0] + delta[:, 1] * gap[1]) + delta[:, 2] * gap[2]
         begin, end = extended_interval(edge, radius)
         active = (
             active_height
@@ -1212,10 +1281,6 @@ def open_paths(contour_groups, labels, active, conductor_count):
     if assigned != ring_active or ring_active != list(range(1, len(ring_active) + 1)):
         raise ValueError("Open contour paths do not partition the active ring trace")
     return result
-
-
-def canonical_points(local_points, frame):
-    return local_points @ frame
 
 
 def dielectric(
@@ -1786,7 +1851,7 @@ def reference_points(coupon, edges, facets, frame, radius):
                 break
         if local is None:
             raise ValueError(f"Unable to place conductor {conductor} reference in mask")
-        references.append((local @ frame).tolist())
+        references.append(canonical_points(local[np.newaxis, :], frame)[0].tolist())
     return references
 
 
@@ -1862,7 +1927,7 @@ def classified_continuation_segments(geometry, frame, radius):
                     "Plan-view continuation segment "
                     f"{index} for conductor {conductor} is invalid"
                 )
-            local = (frame @ (tolerance * points).T).T
+            local = np.asarray([apply_frame(frame, point) for point in tolerance * points])
             if abs(local[0, 2] - local[1, 2]) > tolerance:
                 raise ValueError(
                     "Plan-view continuation segment is not on one process plane"
@@ -1870,7 +1935,7 @@ def classified_continuation_segments(geometry, frame, radius):
             result.append(
                 {
                     "Conductor": conductor,
-                    "Plane": float(np.mean(local[:, 2])),
+                    "Plane": _scalar_mean(local[:, 2]),
                     "Points": local[:, :2],
                 }
             )
@@ -1985,7 +2050,7 @@ def plan_view_boundary_loops(
             points = np.asarray(ring, dtype=float) * tolerance
             delta = points[1] - points[0]
             normal = np.asarray((-delta[1], delta[0]))
-            normal /= np.linalg.norm(normal)
+            normal /= _norm2(normal)
             midpoint = 0.5 * (points[0] + points[1])
             probe = max(32.0 * tolerance, 1.0e-7 * radius)
             left_inside = points_in_plan_view_mask(
@@ -2011,7 +2076,7 @@ def plan_view_boundary_loops(
             def on_segment(point, segment):
                 begin, end = segment
                 direction = end - begin
-                length = np.linalg.norm(direction)
+                length = _norm2(direction)
                 if length <= tolerance:
                     return False
                 offset = point - begin
@@ -2019,7 +2084,7 @@ def plan_view_boundary_loops(
                     direction[0] * offset[1]
                     - direction[1] * offset[0]
                 ) / length
-                coordinate = np.dot(offset, direction) / length
+                coordinate = _dot2(offset, direction) / length
                 return (
                     distance <= 4.0 * tolerance
                     and -4.0 * tolerance
@@ -2132,7 +2197,7 @@ def reconcile_mask_with_boundary(facets, loops, radius):
                     distance = abs(direction[0] * offset[1] - direction[1] * offset[0]) / math.sqrt(length2)
                     if distance > JUNCTION_TANGENT_ANGLE * math.sqrt(length2):
                         continue
-                    t = (np.dot(np.asarray(point[:2]) - a, b - a)) / np.dot(b - a, b - a)
+                    t = _dot2(np.asarray(point[:2]) - a, b - a) / _dot2(b - a, b - a)
                     target = a + t * (b - a)
                     moved.append(([float(point[0]), float(point[1])], target.tolist()))
                     facet["Points"][index] = [float(target[0]), float(target[1])]
@@ -2183,9 +2248,15 @@ def tag_arc_boundary_loops(loops, coupon, frame, radius):
             vertex_index.setdefault(key(point), []).append((loop_index, i))
         loop["Arcs"] = [None] * len(loop["Points"])
         loop["Joints"] = [None] * len(loop["Points"])
+    def rotate(point):
+        # The 2 x 2 rotation by scalar arithmetic (the scalar rule; the identity for every
+        # SupportBox coupon).
+        return np.asarray([float(rotation[0, 0]) * float(point[0]) + float(rotation[0, 1]) * float(point[1]),
+                           float(rotation[1, 0]) * float(point[0]) + float(rotation[1, 1]) * float(point[1])])
+
     for arc in arcs:
-        local = [rotation @ np.asarray(v, dtype=float) for v in arc["Vertices"]]
-        centre = rotation @ np.asarray(arc["Centre"], dtype=float)
+        local = [rotate(v) for v in arc["Vertices"]]
+        centre = rotate(arc["Centre"])
         tag = {"ArcId": arc["ArcId"], "ArcCx": float(centre[0]), "ArcCy": float(centre[1]),
                "ArcR": float(arc["Radius"]), "ArcSign": int(arc["Sign"])}
         n = len(local) - 1
@@ -2272,7 +2343,7 @@ def write_basis_contract(
 
     active = np.asarray(active, dtype=int)
     canonical = canonical_points(points, frame)
-    residual = float(np.max(np.abs(canonical @ frame.T - points)))
+    residual = float(np.max(np.abs(canonical_points(canonical, np.asarray(frame).T) - points)))
     geometry = validate_box_trace(points, triangles)
     geometry.update(
         {
