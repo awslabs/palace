@@ -1164,7 +1164,7 @@ nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,
           {"UnmergedFeatures", summary.unmerged_features},
           {"TouchedRealFeatures", summary.touched_feature_ids},
           {"Rule",
-           "boundary-cut DESIGN 2.2 (decisions 442 / 454): the metal perimeter within "
+           "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 481): the metal perimeter within "
            "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "
            "into the identification input (image segments joined to the real chain at the "
            "truncation vertex on the plane; a straight joint - collinear within the "

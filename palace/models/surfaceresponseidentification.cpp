@@ -14865,7 +14865,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "to a face has an arm partly outside the box); their signatures are unchanged"},
         {"Comparison", "strict less on the quantized grid"},
         {"MirrorRule",
-         "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 473): the perimeter within "
+         "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 481): the perimeter within "
          "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "
          "into "
          "the identification input and the result merged onto the unextended run; a "
