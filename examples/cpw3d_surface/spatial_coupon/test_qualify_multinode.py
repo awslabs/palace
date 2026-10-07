@@ -518,3 +518,46 @@ class FitNodeScalingTest(unittest.TestCase):
         model = {**estimate_stages.load_cost_model(estimate_stages.DEVICE_COST_MODEL), "NodeScaling": block}
         self.assertAlmostEqual(estimate_stages.per_node_used_gib(model, "Reducer", 1000.0, 4), 1000.0 * (0.1 + 0.9 / 4))
         self.assertAlmostEqual(estimate_stages.scaled_seconds(model, "WorkerPerSource", 100.0, 2), 100.0 / 1.6, places=1)   # the exponent is recorded to 4 decimals
+
+
+class LoopEndUnderMeasuredModelTest(unittest.TestCase):
+    """The acceptance example of decision 457: the loop-end fab coupon 1b26671c9080 under the committed
+    Version-3 model with the measured NodeScaling (the cluster dry run of record
+    `stage2-20261004/qualify-multinode/evidence/loopend-dryrun/v3-nodescaling-speed10/` planned the same)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.model = estimate_stages.load_cost_model()
+        cls.profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
+        cls.layout = qualify_library.stage_layout("le", [4], [3, 5], LOOP_END_SOURCES, 8)
+        stages = [(item["EstimateKey"], item["Order"], item["Sources"]) for item in cls.layout if item["Kind"] == "response"]
+        local = next(item for item in cls.layout if item["Kind"] == "local-edge")
+        cls.estimate = estimate_stages.estimate(LOOP_END_COUNTS, stages, local_edge=(local["EstimateKey"], local["Order"], local["Sources"]),
+                                                model=cls.model, profile=cls.profile)
+
+    def test_loop_end_plans_the_main_stage_on_four_r8g_nodes_and_the_fixed_group_on_two(self):
+        self.assertIn("NodeScaling", self.model)
+        required = self.estimate["Nodes"]["Required"]
+        self.assertEqual(required, {"p4-846": 4, "p5-control-8": 1, "p3-control-8": 1, "local-edge-p4-8": 2})
+        main = self.estimate["Stages"]["p4-846"]
+        self.assertEqual(main["NodePlan"]["Instance"]["Type"], "r8g.48xlarge")
+        self.assertLessEqual(main["NodePlan"]["Instance"]["PerNodeUsedGiBEstimate"], 0.9 * 0.6 * 1536)
+        self.assertGreater(max(main["NodePlan"]["PerNodeUsedGiB"]["3"].values()), 0.9 * 0.6 * 1536)   # 3 nodes do not hold the reducer
+        self.assertAlmostEqual(main["NodeUsedGiBEstimateReducer"], 1769.0, delta=5.0)   # the refit reducer line x 1.164 (was 2,988 GiB)
+        nodes, assignment = qualify_library.node_assignment(self.estimate["Nodes"], self.layout)
+        self.assertEqual(nodes, {"Main": 4, "Fixed": 2})
+        scaled = estimate_stages.scale_to_nodes(self.estimate, assignment, self.model, self.profile)
+        policy = job_split.normalize_policy("speed", max_jobs=10, walltime_seconds=self.profile["WalltimeSeconds"], user_job_cap=40)
+        split = job_split.plan_split(indices=list(range(1, LOOP_END_SOURCES + 1)), layout=self.layout, estimate=scaled, policy=policy,
+                                     model=self.model, profile=self.profile, nodes=nodes)
+        self.assertTrue(split["Fits"])
+        self.assertEqual((split["N"], split["ControlsJob"]), (8, "separate"))
+        self.assertEqual([len(block) for block in split["Blocks"]], [0, 121, 121, 121, 121, 121, 121, 120])
+        self.assertEqual([job["Nodes"] for job in split["Jobs"]], [2, 4, 4, 4, 4, 4, 4, 4, 4])
+        worst = split["WorstPCGFactor"]
+        self.assertLess(split["CriticalPathEstimateSeconds"][worst], 3 * 3600)
+        self.assertAlmostEqual(split["NodeSecondsEstimate"][worst] / 3600, 45.0, delta=1.0)
+        # The profile cap binds: at MaximumNodesPerJob 3 the main stage fails closed.
+        tight = estimate_stages.estimate(LOOP_END_COUNTS, [("p4-846", 4, LOOP_END_SOURCES)], model=self.model,
+                                         profile={**self.profile, "MaximumNodesPerJob": 3})
+        self.assertFalse(tight["Nodes"]["Fits"])
