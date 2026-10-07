@@ -100,19 +100,6 @@ def unique_hosts(nodefile_text):
     return hosts
 
 
-def remote_shell(plan, host, index):
-    """The command prefix running a program on another node of the job: the plan's PBSDsh
-    (`pbsdsh -n INDEX --`, the node's index in PBS_NODEFILE order: PBS 23 pbsdsh has no
-    host option) when the executable exists, else ssh in batch mode to the host."""
-    pbsdsh = plan.get("PBSDsh")
-    if pbsdsh and Path(pbsdsh).exists():
-        return [pbsdsh, "-n", str(index), "--"]
-    found = shutil_which("pbsdsh")
-    if found:
-        return [found, "-n", str(index), "--"]
-    return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host]
-
-
 def shutil_which(name):
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         candidate = Path(directory) / name
@@ -121,22 +108,82 @@ def shutil_which(name):
     return None
 
 
-def remote_node_preflight(plan, host, index):
+class NodeShell:
+    """Runs programs on the other nodes of the job.  pbsdsh (PBS 23: `-n <vnode index>`, the
+    task's output routed to the JOB's stdout, no capture option) with the vnode index of every
+    host discovered by one pbsdsh pass over all vnodes (the tasks' PBS_NODENUM + hostname
+    appended to a map file); the output of a command is read back from a file on the shared
+    job directory.  ssh in batch mode is the fallback when no pbsdsh exists."""
+
+    def __init__(self, plan, base, hosts):
+        pbsdsh = plan.get("PBSDsh")
+        self.pbsdsh = pbsdsh if pbsdsh and Path(pbsdsh).exists() else shutil_which("pbsdsh")
+        self.base = Path(base)
+        self.hosts = list(hosts)
+        self.index = {}
+        if self.pbsdsh:
+            self.index = self.discover()
+
+    def discover(self):
+        map_path = self.base / "node-map.txt"
+        if map_path.exists():
+            map_path.unlink()
+        command = [self.pbsdsh, "--", "/bin/sh", "-c", f'echo "$PBS_NODENUM $(hostname)" >> "{map_path}"']
+        result = subprocess.run(command, text=True, capture_output=True, timeout=300)
+        if result.returncode != 0 or not map_path.exists():
+            raise SystemExit(f"pbsdsh node discovery failed: rc {result.returncode} {result.stderr.strip()[:400]}")
+        index = {}
+        for line in map_path.read_text().splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0].isdigit():
+                host = normalize_host(parts[1])
+                index[host] = min(index.get(host, int(parts[0])), int(parts[0]))
+        missing = [host for host in self.hosts if host not in index]
+        if missing:
+            raise SystemExit(f"pbsdsh node discovery found no vnode for {missing} (map {index})")
+        return index
+
+    def prefix(self, host):
+        if self.pbsdsh:
+            return [self.pbsdsh, "-n", str(self.index[host]), "--"]
+        return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", host]
+
+    def run(self, host, script, output_path, timeout=300):
+        """Run `script` (a /bin/sh command line) on `host`; its stdout + stderr land in
+        `output_path` (through the shared file system); returns the output text."""
+        output_path = Path(output_path)
+        if output_path.exists():
+            output_path.unlink()
+        command = self.prefix(host) + ["/bin/sh", "-c", f'({script}) > "{output_path}" 2>&1']
+        result = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+        if result.returncode != 0 or not output_path.exists():
+            raise SystemExit(f"node shell failed on {host}: rc {result.returncode} {result.stderr.strip()[:400]}")
+        return output_path.read_text()
+
+    def spawn(self, host, script, log_path):
+        """Start `script` on `host` in the background (its output into `log_path`)."""
+        command = self.prefix(host) + ["/bin/sh", "-c", f'({script}) > "{log_path}" 2>&1']
+        return subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def remote_node_preflight(shell, host, base):
     """/proc/meminfo and the process table of another node (its admission and conflict
     checks); the node shell must land on `host` (its hostname is checked)."""
-    command = remote_shell(plan, host, index) + ["/bin/sh", "-c", "hostname; echo ---MEM---; cat /proc/meminfo; echo ---PS---; ps -eo pid=,comm="]
-    result = subprocess.run(command, text=True, capture_output=True, timeout=120)
-    if result.returncode != 0 or "---PS---" not in result.stdout:
-        raise SystemExit(f"Node preflight failed on {host} (index {index}): rc {result.returncode} {result.stderr.strip()[:400]}")
-    reported, _, rest = result.stdout.partition("---MEM---")
+    text = shell.run(host, "hostname; echo ---MEM---; cat /proc/meminfo; echo ---PS---; ps -eo pid=,comm=",
+                     Path(base) / f"node-preflight-{host}.txt")
+    if "---PS---" not in text:
+        raise SystemExit(f"Node preflight on {host} returned no process table: {text[:400]!r}")
+    reported, _, rest = text.partition("---MEM---")
     if normalize_host(reported.strip()) != host:
-        raise SystemExit(f"Node shell index {index} landed on {reported.strip()!r}, expected {host}")
+        raise SystemExit(f"Node shell for {host} landed on {reported.strip()!r}")
     meminfo_text, _, processes = rest.partition("---PS---")
     values = {}
     for line in meminfo_text.splitlines():
-        if ":" in line:
-            key, rest = line.split(":", 1)
-            values[key.strip()] = int(rest.split()[0]) * 1024
+        key, _, rest_ = line.partition(":")
+        if rest_.split() and rest_.split()[0].isdigit():
+            values[key.strip()] = int(rest_.split()[0]) * 1024
+    if "MemTotal" not in values or "MemAvailable" not in values:
+        raise SystemExit(f"Node preflight on {host} returned no MemTotal / MemAvailable: {meminfo_text[:400]!r}")
     return values, processes
 
 
@@ -238,11 +285,14 @@ def main(argv):
                  "MinimumMemAvailableBytes": plan["MinimumMemAvailableBytes"], "Instance": plan.get("Instance"),
                  "Binary": str(binary), "BinarySHA256": sha(binary), "Pinned": {}, "UTC": time.strftime("%FT%TZ", time.gmtime())}
     other_hosts = [host for host in ordered_hosts if host != status["Host"]]
+    node_shell = None
     if nodes > 1:
+        node_shell = NodeShell(plan, base, other_hosts)
         preflight["Nodes"] = {status["Host"]: {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
                                                "Conflicts": [], "Role": "runner"}}
+        preflight["NodeShell"] = {"PBSDsh": node_shell.pbsdsh, "VnodeIndex": node_shell.index}
         for host in other_hosts:
-            values, remote_processes = remote_node_preflight(plan, host, ordered_hosts.index(host))
+            values, remote_processes = remote_node_preflight(node_shell, host, base)
             remote_conflicts = conflicting_processes(remote_processes)
             preflight["Nodes"][host] = {"MemTotalBytes": values["MemTotal"], "MemAvailableBytes": values["MemAvailable"],
                                         "Conflicts": remote_conflicts, "Role": "node"}
@@ -308,9 +358,8 @@ def main(argv):
         for host in other_hosts:
             csv_path = base / f"memory-samples-{host}.csv"
             node_sample_paths.append(csv_path)
-            command = remote_shell(plan, host, ordered_hosts.index(host)) + ["/usr/bin/env", "python3", str(Path(__file__).resolve()),
-                                                                            "--node-sampler", str(csv_path), str(stop_file)]
-            node_samplers.append(subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=(base / f"node-sampler-{host}.err").open("w")))
+            script = f'/usr/bin/env python3 "{Path(__file__).resolve()}" --node-sampler "{csv_path}" "{stop_file}"'
+            node_samplers.append(node_shell.spawn(host, script, base / f"node-sampler-{host}.log"))
 
     completed = set()
     for stage in plan["Stages"]:

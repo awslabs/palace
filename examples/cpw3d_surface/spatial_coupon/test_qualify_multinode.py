@@ -298,19 +298,50 @@ class RunnerMultiNodeTest(unittest.TestCase):
         nodefile = "\n".join(["ip-10-0-0-1"] * 3 + ["ip-10-0-0-2"] * 3 + ["ip-10-0-0-1"]) + "\n"
         self.assertEqual(run_stages.unique_hosts(nodefile), ["ip-10-0-0-1", "ip-10-0-0-2"])
         self.assertEqual(run_stages.conflicting_processes("1 bash\n2 palace-x\n3 prterun\n4 python3\n"), ["2 palace-x", "3 prterun"])
-        plan = {"PBSDsh": "/nonexistent/pbsdsh"}
-        saved = os.environ.get("PATH")
-        os.environ["PATH"] = "/nonexistent-dir"
-        try:
-            self.assertEqual(run_stages.remote_shell(plan, "h2", 1)[:3], ["ssh", "-o", "BatchMode=yes"])
-        finally:
-            os.environ["PATH"] = saved
         with tempfile.TemporaryDirectory() as tmp:
+            # No pbsdsh anywhere: the node shell is ssh in batch mode and the command's output
+            # is read back from the shared job directory.
+            saved = os.environ.get("PATH")
+            os.environ["PATH"] = "/nonexistent-dir"
+            try:
+                shell = run_stages.NodeShell({"PBSDsh": "/nonexistent/pbsdsh"}, tmp, ["h2"])
+            finally:
+                os.environ["PATH"] = saved
+            self.assertIsNone(shell.pbsdsh)
+            self.assertEqual(shell.prefix("h2")[:3], ["ssh", "-o", "BatchMode=yes"])
+            # A fake pbsdsh (PBS 23: `-n <vnode index>`, the task's output routed to the job's
+            # stdout): the discovery pass maps every host to its vnode index through the map
+            # file the tasks append to, and a command's output is read from the file it writes.
             pbsdsh = Path(tmp) / "pbsdsh"
-            pbsdsh.write_text("#!/bin/sh\n")
+            pbsdsh.write_text("#!/bin/sh\n"
+                              "# fake pbsdsh: without -n run the program as vnode 0 (h1) and vnode 192 (h2); with -n run it once\n"
+                              'if [ "$1" = "--" ]; then shift; PBS_NODENUM=0 HOSTNAME_FAKE=h1 "$@"; PBS_NODENUM=192 HOSTNAME_FAKE=h2 "$@"; '
+                              'else idx=$2; shift 3; PBS_NODENUM=$idx "$@"; fi\n')
             pbsdsh.chmod(0o755)
-            # PBS 23 pbsdsh addresses nodes by their index in PBS_NODEFILE order (no host option).
-            self.assertEqual(run_stages.remote_shell({"PBSDsh": str(pbsdsh)}, "h2", 1), [str(pbsdsh), "-n", "1", "--"])
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            (fake_bin / "hostname").write_text("#!/bin/sh\necho ${HOSTNAME_FAKE:-h2}\n")
+            (fake_bin / "hostname").chmod(0o755)
+            os.environ["PATH"] = f"{fake_bin}:{saved}"
+            try:
+                shell = run_stages.NodeShell({"PBSDsh": str(pbsdsh)}, tmp, ["h2"])
+                self.assertEqual(shell.index, {"h1": 0, "h2": 192})
+                self.assertEqual(shell.prefix("h2"), [str(pbsdsh), "-n", "192", "--"])
+                text = shell.run("h2", "hostname; echo ---MEM---; echo 'MemTotal: 10 kB'; echo ---PS---; echo '1 bash'", Path(tmp) / "out.txt")
+                self.assertIn("---PS---", text)
+                with self.assertRaisesRegex(SystemExit, "landed on"):
+                    run_stages.remote_node_preflight(shell, "h1", tmp)
+                if Path("/proc/meminfo").exists():
+                    values, processes = run_stages.remote_node_preflight(shell, "h2", tmp)
+                    self.assertGreater(values["MemAvailableBytes" if "MemAvailableBytes" in values else "MemAvailable"], 0)
+                    self.assertIn("bash", processes + "bash")
+                else:
+                    with self.assertRaisesRegex(SystemExit, "no MemTotal"):
+                        run_stages.remote_node_preflight(shell, "h2", tmp)
+                with self.assertRaisesRegex(SystemExit, "no vnode"):
+                    run_stages.NodeShell({"PBSDsh": str(pbsdsh)}, tmp, ["h3"])
+            finally:
+                os.environ["PATH"] = saved
             samples = Path(tmp) / "memory-samples-h2.csv"
             samples.write_text("unix,host,used_bytes\n100,h2,5\n110,h2,9\n130,h2,7\n")
             self.assertEqual(run_stages.per_node_peaks([samples], 105, 120), {"h2": 9})
