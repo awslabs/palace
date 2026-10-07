@@ -42,9 +42,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"SurfaceCurrent"` excitations, alone or together, with the films and `"Superconductor"`
     boundaries as London sheets (kinetic inductance included). Driven uniform frequency
     sweeps condense the environment exactly at each frequency, with lumped ports and lossy
-    boundaries and materials on either side. Adds substructuring examples in `examples/transmon` and
-    `examples/substructuring` (5 x 5 lattices of qubits and of flux loops, on separate rings
-    and on one plate). SchemaVer 2-2-0.
+    boundaries and materials on either side, and an online sweep at saved frequencies solves a
+    redesigned region against the saved environment. Adds substructuring examples in
+    `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of flux
+    loops, on separate rings and on one plate). SchemaVer 2-2-0.
     [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes

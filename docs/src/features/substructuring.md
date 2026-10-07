@@ -158,14 +158,30 @@ factorization of the environment gives ``\bm{S}_E(\omega)``, and the region is f
 it once for all excitations. Lumped ports, impedance, absorbing and conductivity boundaries, and
 lossy materials may lie in the region, in the environment, or on both sides; the outputs are
 those of a regular simulation (port S-parameters, voltages and currents, and domain energies).
-The cost per frequency is that of a direct solve of the whole problem plus the dense interface
-block, so this exact form pays off with many excitations; saving the environment for
-redesigns is planned.
+
+With `"SaveModel"`, an offline sweep also saves, per frequency, ``\bm{S}_E(\omega)``, the
+condensation of the environment's sources onto the interface, and the condensed voltages of the
+environment's lumped ports. An `"Online"` sweep at saved frequencies (any subset of them, matched
+by value) then factors only the region, which may be redesigned (materials, re-meshing) and run
+on a different number of processes, as long as the environment, its excitations and the
+interface are unchanged. The online field is known in the region and on the interface only:
+
+  - S-parameters, voltages and currents of all lumped ports, and the energies of lumped
+    elements, are those of a regular simulation;
+  - domain energies are written for the `"Domains"/"Postprocessing"/"Energy"` entries inside
+    the region, without the total energies and participation ratios (and the power of the
+    environment's lumped ports, in `port-Z.csv`, is not available).
+
+A saved model needs the lumped ports away from the interface, since their excitation and
+voltage would then depend on both sides.
 
 !!! note
 
     Driven substructuring needs MUMPS. Adaptive sweeps, wave ports, Floquet ports, periodic
-    boundaries, saved models, field output (`"Save"`) and restarts are not supported yet.
+    boundaries, field output (`"Save"`) and restarts are not supported yet, nor, online,
+    surface flux, interface dielectric, far-field and probe postprocessing. The model holds one
+    dense ``|\Gamma| \times |\Gamma|`` matrix per frequency (16 bytes per entry of its lower
+    triangle).
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

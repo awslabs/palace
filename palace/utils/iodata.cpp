@@ -746,8 +746,14 @@ void IoData::CheckConfiguration()
                       boundaries.periodic.boundary_pairs.empty(),
                   "Driven substructuring does not support wave ports, Floquet ports or "
                   "periodic boundaries!");
-      MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE && sub.save_model.empty(),
-                  "Driven substructuring does not save or load a model yet!");
+      // Online, the field is known in the region and on Γ only.
+      MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE ||
+                      (boundaries.postpro.flux.empty() &&
+                       boundaries.postpro.dielectric.empty() &&
+                       boundaries.postpro.farfield.attributes.empty() &&
+                       domains.postpro.probe.empty()),
+                  "Online driven substructuring does not compute surface flux, interface "
+                  "dielectric, far-field or probe postprocessing yet!");
       MFEM_VERIFY(solver.driven.save_indices.empty() && solver.driven.restart == 1,
                   "Driven substructuring does not write fields or restart a sweep yet!");
 #if !defined(MFEM_USE_MUMPS)

@@ -2579,71 +2579,12 @@ void SubstructuringSolver::CondenseEnvironment()
   impl->S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
 
   // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
-  // current interface after re-meshing or re-partitioning the region. H1: DOF coordinates.
-  // H(curl): the moments dof(e_b) and dof(x_a e_b), which identify an edge DOF up to an
-  // orientation flip (a flip negates all of them).
-  const int sdim = impl->parent.Dimension();
-  const int sig_w = impl->magnetostatic ? 12 : 3;
+  // current interface after re-meshing or re-partitioning the region.
+  const int sig_w = SignatureWidth(impl->parent_fes);
+  MFEM_VERIFY(sig_w == (impl->magnetostatic ? 12 : 3),
+              "Unexpected finite element space for the interface signatures!");
   auto gamma_sig = [&]()
-  {
-    std::vector<double> loc(static_cast<std::size_t>(nG) * sig_w, 0.0),
-        glob(static_cast<std::size_t>(nG) * sig_w, 0.0);
-    mfem::ParGridFunction gf(&impl->parent_fes);
-    Vector td(impl->nt);
-    auto stamp = [&](int slot, mfem::Coefficient *sc, mfem::VectorCoefficient *vc)
-    {
-      if (sc)
-      {
-        gf.ProjectCoefficient(*sc);
-      }
-      else
-      {
-        gf.ProjectCoefficient(*vc);
-      }
-      gf.GetTrueDofs(td);
-      for (int i = 0; i < impl->nt; i++)
-      {
-        if (impl->is_gamma[i])
-        {
-          loc[static_cast<std::size_t>(impl->gamma_global[i]) * sig_w + slot] = td(i);
-        }
-      }
-    };
-    if (!impl->magnetostatic)
-    {
-      for (int d = 0; d < sdim; d++)
-      {
-        mfem::FunctionCoefficient xc([d](const mfem::Vector &x) { return x(d); });
-        stamp(d, &xc, nullptr);
-      }
-    }
-    else
-    {
-      for (int b = 0; b < 3; b++)
-      {
-        mfem::Vector e(3);
-        e = 0.0;
-        e(b) = 1.0;
-        mfem::VectorConstantCoefficient ec(e);
-        stamp(b, nullptr, &ec);
-      }
-      for (int a = 0; a < 3; a++)
-      {
-        for (int b = 0; b < 3; b++)
-        {
-          mfem::VectorFunctionCoefficient xc(3,
-                                             [a, b](const mfem::Vector &x, mfem::Vector &v)
-                                             {
-                                               v = 0.0;
-                                               v(b) = x(a);
-                                             });
-          stamp(3 + a * 3 + b, nullptr, &xc);
-        }
-      }
-    }
-    MPI_Allreduce(loc.data(), glob.data(), nG * sig_w, MPI_DOUBLE, MPI_SUM, comm);
-    return glob;
-  };
+  { return TrueDofSignatures(impl->parent_fes, impl->gamma_global, nG); };
 
   // Online with a saved model: load S_E (and the model's sections); otherwise materialize
   // S_E, and save it when a path is set.
@@ -2710,55 +2651,7 @@ void SubstructuringSolver::CondenseEnvironment()
     std::vector<double> sgn(nG, 1.0);
     if (file_w > 0)
     {
-      const std::vector<double> cur = gamma_sig();
-      const bool signed_match = (sig_type == 2);
-      double worst = 0.0;
-      for (int g = 0; g < nG; g++)
-      {
-        int best = 0;
-        double bs = 1.0, bd = 1e300;
-        for (int s = 0; s < nG; s++)
-        {
-          double dp = 0.0, dm = 0.0;
-          for (int d = 0; d < file_w; d++)
-          {
-            const double a = cur[static_cast<std::size_t>(g) * file_w + d];
-            const double b = saved_sig[static_cast<std::size_t>(s) * file_w + d];
-            dp += (a - b) * (a - b);
-            if (signed_match)
-            {
-              dm += (a + b) * (a + b);
-            }
-          }
-          if (dp < bd)
-          {
-            bd = dp;
-            best = s;
-            bs = 1.0;
-          }
-          if (signed_match && dm < bd)
-          {
-            bd = dm;
-            best = s;
-            bs = -1.0;
-          }
-        }
-        perm[g] = best;
-        sgn[g] = bs;
-        worst = std::max(worst, bd);
-      }
-      std::vector<char> used(nG, 0);
-      bool bijective = true;
-      for (int g = 0; g < nG; g++)
-      {
-        bijective = bijective && !used[perm[g]];
-        used[perm[g]] = 1;
-      }
-      double gworst = 0.0;
-      MPI_Allreduce(&worst, &gworst, 1, MPI_DOUBLE, MPI_MAX, comm);
-      MFEM_VERIFY(bijective && std::sqrt(gworst) < 1e-8,
-                  "Online interface DOFs do not match the saved model (max mismatch "
-                      << std::sqrt(gworst) << "); the interface Gamma must be identical.");
+      MatchSignatures(gamma_sig(), saved_sig, file_w, sig_type == 2, perm, sgn);
     }
     if (rank == 0 && file_w > 0)
     {

@@ -1147,6 +1147,23 @@ TEST_CASE("substructuring_driven", "[Serial][Parallel][Regression]")
   palace::test::RunRegressionCase("substructuring_driven", "driven.json", "lumped", opts);
 }
 
+// Online driven substructuring: an offline sweep saves the environment model, and an online
+// sweep at two of its frequencies solves a redesigned region (permittivity 4 -> 5) against
+// it. Environment-port voltages come from the model; the region's energy is written, the
+// environment's (and the totals) are not. The references are a regular simulation of the
+// redesigned configuration, in the online run's columns.
+TEST_CASE("substructuring_driven_online", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online.json", "online",
+                                  opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and

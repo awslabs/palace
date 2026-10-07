@@ -2399,6 +2399,11 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     return S;
   };
 
+  // Online, with the region only: given S_E and the environment's source condensation
+  // (offline), the region and interface solution must be the offline one.
+  DrivenSubstructure ds_online(space_op, {1}, {2}, true);
+  REQUIRE(ds_online.InterfaceSize() == nG);
+
   for (const double omega : {1.3, 0.7})
   {
     CAPTURE(omega);
@@ -2425,17 +2430,104 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       CHECK(asym <= 1.0e-10 * m);
     }
 
-    // Substructured solves for the port excitation (an environment source) and a random
-    // right-hand side (sources on both sides): residuals of the full system.
-    std::vector<ComplexVector> b(2, ComplexVector(nt)), u;
+    // Substructured solves for the port excitation (an environment source) and random
+    // right-hand sides (sources on both sides; the third has the second's environment
+    // part): residuals of the full system.
+    std::vector<ComplexVector> b(3, ComplexVector(nt)), u;
     space_op.GetExcitationVector(1, omega, b[0]);
     b[1].Real().Randomize(3 + Mpi::Rank(comm));
     b[1].Imag().Randomize(5 + Mpi::Rank(comm));
+    b[2].Real().Randomize(7 + Mpi::Rank(comm));
+    b[2].Imag().Randomize(11 + Mpi::Rank(comm));
+    for (int i = 0; i < nt; i++)
+    {
+      if (!ds.RegionInterior()[i])
+      {
+        b[2].Real()(i) = b[1].Real()(i);
+        b[2].Imag()(i) = b[1].Imag()(i);
+      }
+    }
     for (int d : space_op.GetNDDbcTDofLists().back())
     {
-      b[1].Real()(d) = b[1].Imag()(d) = 0.0;
+      b[1].Real()(d) = b[1].Imag()(d) = b[2].Real()(d) = b[2].Imag()(d) = 0.0;
     }
-    ds.Solve({&b[0], &b[1]}, u);
+    ds.Solve({&b[0], &b[1], &b[2]}, u);
+    const auto g_env = ds.EnvironmentSourceCondensation();
+    const auto u_gamma = ds.InterfaceSolution();
+
+    // A condensed environment functional (as for the environment's port voltages):
+    // l^T u_k = c + h^T u_Γ,k with c fixed by the environment sources, so the value for the
+    // third right-hand side follows from the second's.
+    {
+      ComplexVector l(nt);
+      l.Real().Randomize(13 + Mpi::Rank(comm));
+      l.Imag() = 0.0;
+      for (int i = 0; i < nt; i++)
+      {
+        if (!ds.EnvironmentInterior()[i])
+        {
+          l.Real()(i) = 0.0;
+        }
+      }
+      const auto h = ds.CondenseEnvironment({&l});
+      std::complex<double> V[2];
+      for (int k = 0; k < 2; k++)
+      {
+        double v[2] = {mfem::InnerProduct(l.Real(), u[k + 1].Real()),
+                       mfem::InnerProduct(l.Real(), u[k + 1].Imag())};
+        Mpi::GlobalSum(2, v, comm);
+        V[k] = {v[0], v[1]};
+      }
+      if (root)
+      {
+        std::complex<double> hu[2] = {0.0, 0.0};
+        for (int k = 0; k < 2; k++)
+        {
+          for (int a = 0; a < nG; a++)
+          {
+            hu[k] += h[a] * u_gamma[static_cast<std::size_t>(k + 1) * nG + a];
+          }
+        }
+        const double dv = std::abs(V[1] - (V[0] - hu[0] + hu[1]));
+        CAPTURE(dv, std::abs(V[1]));
+        CHECK(dv <= 1.0e-10 * std::abs(V[1]));
+      }
+    }
+
+    // Online: the region and interface values of the offline solution, 0 in the
+    // environment interior.
+    {
+      std::vector<std::complex<double>> S_env;
+      if (root)
+      {
+        S_env = ds.Schur();
+      }
+      ds_online.Condense(omega, std::move(S_env));
+      std::vector<ComplexVector> u_online;
+      ds_online.Solve({&b[0], &b[1], &b[2]}, u_online, &g_env);
+      for (int k = 0; k < 3; k++)
+      {
+        double dmax[2] = {0.0, 0.0};
+        for (int i = 0; i < nt; i++)
+        {
+          const std::complex<double> x(u_online[k].Real()(i), u_online[k].Imag()(i)),
+              y(u[k].Real()(i), u[k].Imag()(i));
+          if (ds.EnvironmentInterior()[i])
+          {
+            dmax[1] = std::max(dmax[1], std::abs(x));
+          }
+          else
+          {
+            dmax[0] = std::max(dmax[0], std::abs(x - y));
+          }
+        }
+        Mpi::GlobalMax(2, dmax, comm);
+        const double unorm = linalg::Norml2(comm, u[k]);
+        CAPTURE(k, dmax[0], dmax[1], unorm);
+        CHECK(dmax[0] <= 1.0e-10 * unorm);
+        CHECK(dmax[1] == 0.0);
+      }
+    }
     auto K1 = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
     auto C1 = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
     auto M1 = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
@@ -2443,7 +2535,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     auto A_full = space_op.GetSystemMatrix(
         std::complex<double>(1.0, 0.0), std::complex<double>(0.0, omega),
         std::complex<double>(-omega * omega, 0.0), K1.get(), C1.get(), M1.get(), A21.get());
-    for (int k = 0; k < 2; k++)
+    for (int k = 0; k < 3; k++)
     {
       ComplexVector r(nt);
       A_full->Mult(u[k], r);

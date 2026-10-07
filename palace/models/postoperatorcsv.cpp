@@ -530,6 +530,7 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_post_op)
 {
   domain_E = TableWithCSVFile(post_dir / "domain-E.csv", reload_table);
+  domain_partial = dom_post_op.partial;
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols =
@@ -540,8 +541,11 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
   {
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
 
-    t.insert(fmt::format("Ee_{}", ex_idx), fmt::format("E_elec{} (J)", ex_label), ex_idx);
-    t.insert(fmt::format("Em_{}", ex_idx), fmt::format("E_mag{} (J)", ex_label), ex_idx);
+    if (!domain_partial)
+    {
+      t.insert(fmt::format("Ee_{}", ex_idx), fmt::format("E_elec{} (J)", ex_label), ex_idx);
+      t.insert(fmt::format("Em_{}", ex_idx), fmt::format("E_mag{} (J)", ex_label), ex_idx);
+    }
     t.insert(fmt::format("Ec_{}", ex_idx), fmt::format("E_cap{} (J)", ex_label), ex_idx);
     t.insert(fmt::format("Ei_{}", ex_idx), fmt::format("E_ind{} (J)", ex_label), ex_idx);
 
@@ -549,12 +553,18 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
     {
       t.insert(fmt::format("Ee_{}_{}", idx, ex_idx),
                fmt::format("E_elec[{}]{} (J)", idx, ex_label), ex_idx);
-      t.insert(fmt::format("pe_{}_{}", idx, ex_idx),
-               fmt::format("p_elec[{}]{}", idx, ex_label), ex_idx);
+      if (!domain_partial)
+      {
+        t.insert(fmt::format("pe_{}_{}", idx, ex_idx),
+                 fmt::format("p_elec[{}]{}", idx, ex_label), ex_idx);
+      }
       t.insert(fmt::format("Em_{}_{}", idx, ex_idx),
                fmt::format("E_mag[{}]{} (J)", idx, ex_label), ex_idx);
-      t.insert(fmt::format("pm_{}_{}", idx, ex_idx),
-               fmt::format("p_mag[{}]{}", idx, ex_label), ex_idx);
+      if (!domain_partial)
+      {
+        t.insert(fmt::format("pm_{}_{}", idx, ex_idx),
+                 fmt::format("p_mag[{}]{}", idx, ex_label), ex_idx);
+      }
     }
   }
   MoveTableValidateReload(*domain_E, std::move(t));
@@ -572,10 +582,13 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
   }
 
   CheckAppendIndex(domain_E->table["idx"], row_idx_v, row_i);
-  domain_E->table[fmt::format("Ee_{}", m_ex_idx)]
-      << measurement_cache.domain_E_field_energy_all;
-  domain_E->table[fmt::format("Em_{}", m_ex_idx)]
-      << measurement_cache.domain_H_field_energy_all;
+  if (!domain_partial)
+  {
+    domain_E->table[fmt::format("Ee_{}", m_ex_idx)]
+        << measurement_cache.domain_E_field_energy_all;
+    domain_E->table[fmt::format("Em_{}", m_ex_idx)]
+        << measurement_cache.domain_H_field_energy_all;
+  }
   domain_E->table[fmt::format("Ec_{}", m_ex_idx)]
       << measurement_cache.lumped_port_capacitor_energy;
   domain_E->table[fmt::format("Ei_{}", m_ex_idx)]
@@ -583,14 +596,20 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
   for (const auto &data : measurement_cache.domain_E_field_energy_i)
   {
     domain_E->table[fmt::format("Ee_{}_{}", data.idx, m_ex_idx)] << data.energy;
-    domain_E->table[fmt::format("pe_{}_{}", data.idx, m_ex_idx)]
-        << data.participation_ratio;
+    if (!domain_partial)
+    {
+      domain_E->table[fmt::format("pe_{}_{}", data.idx, m_ex_idx)]
+          << data.participation_ratio;
+    }
   }
   for (const auto &data : measurement_cache.domain_H_field_energy_i)
   {
     domain_E->table[fmt::format("Em_{}_{}", data.idx, m_ex_idx)] << data.energy;
-    domain_E->table[fmt::format("pm_{}_{}", data.idx, m_ex_idx)]
-        << data.participation_ratio;
+    if (!domain_partial)
+    {
+      domain_E->table[fmt::format("pm_{}_{}", data.idx, m_ex_idx)]
+          << data.participation_ratio;
+    }
   }
   WriteTable(*domain_E);
 }

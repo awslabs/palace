@@ -1,0 +1,20 @@
+{
+  "Problem": { "Type": "Driven", "Output": "postpro/online" },
+  "Model": { "Mesh": "mesh/sheet_square.msh", "L0": 1.0e-6 },
+  "Domains": { "Materials": [
+    { "Attributes": [1], "Permittivity": 5.0, "LossTan": 1.0e-3 },
+    { "Attributes": [2], "Permittivity": 2.0 } ],
+    "Postprocessing": { "Energy": [
+      { "Index": 1, "Attributes": [1] },
+      { "Index": 2, "Attributes": [2] } ] } },
+  "Boundaries": {
+    "PEC": { "Attributes": [2,3,4,5,6,7,8] },
+    "LumpedPort": [
+      { "Index": 1, "R": 50.0, "Attributes": [9], "Direction": "+X", "Excitation": 1 },
+      { "Index": 2, "R": 50.0, "Attributes": [10], "Direction": "+X", "Excitation": 2 } ] },
+  "Solver": { "Order": 1, "Device": "CPU",
+    "Driven": { "MinFreq": 2000.0, "MaxFreq": 3000.0, "FreqStep": 1000.0 },
+    "Linear": { "Type": "MUMPS", "KSPType": "GMRES", "Tol": 1e-12, "MaxIts": 100 },
+    "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
+      "Mode": "Online", "SaveModel": "environment_model.bin" } }
+}

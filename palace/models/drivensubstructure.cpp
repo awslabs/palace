@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <fstream>
 #include <utility>
 #include "fem/substructure.hpp"
 #include "linalg/mumpsschur.hpp"
@@ -50,8 +51,9 @@ std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool i
 
 DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
-                                       const std::vector<int> &environment_attributes)
-  : space_op(space_op)
+                                       const std::vector<int> &environment_attributes,
+                                       bool online)
+  : space_op(space_op), online(online)
 {
   env.attrs = environment_attributes;
   region.attrs = region_attributes;
@@ -275,13 +277,32 @@ void DrivenSubstructure::Factor(Side &side, double omega)
 #endif
 }
 
+MPI_Comm DrivenSubstructure::GetComm() const
+{
+  return space_op.GetComm();
+}
+
+std::vector<int> DrivenSubstructure::InterfaceIndex() const
+{
+  const int nt = static_cast<int>(is_gamma.size());
+  std::vector<int> index(nt, -1);
+  const int off = gamma_disp[Mpi::Rank(space_op.GetComm())];
+  for (int i = 0, g = 0; i < nt; i++)
+  {
+    if (is_gamma[i])
+    {
+      index[i] = off + g++;
+    }
+  }
+  return index;
+}
+
 void DrivenSubstructure::Condense(double omega)
 {
+  MFEM_VERIFY(!online, "An online substructure is condensed with a given S_E!");
 #if !defined(MFEM_USE_MUMPS)
   MFEM_ABORT("Driven substructuring requires MUMPS!");
 #else
-  MPI_Comm comm = space_op.GetComm();
-  const int nG = InterfaceSize();
   if (!env.schur)
   {
     // Both patterns first, so that the assembled operators are released before the
@@ -291,17 +312,45 @@ void DrivenSubstructure::Condense(double omega)
   }
   Factor(env, omega);
   Factor(region, omega);
-
-  // The interface system S_R + S_E, factored on rank 0 (complex symmetric).
-  if (Mpi::Root(comm))
+  if (Mpi::Root(space_op.GetComm()))
   {
     S = env.schur->Schur();
-    T = region.schur->Schur();
-    S.resize(static_cast<std::size_t>(nG) * nG);
-    T.resize(static_cast<std::size_t>(nG) * nG);
+    S.resize(static_cast<std::size_t>(InterfaceSize()) * InterfaceSize());
   }
-  if (Mpi::Root(comm))
+  FactorInterface();
+#endif
+}
+
+void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>> &&S_env)
+{
+  MFEM_VERIFY(online, "An offline substructure condenses its own environment!");
+#if !defined(MFEM_USE_MUMPS)
+  MFEM_ABORT("Driven substructuring requires MUMPS!");
+#else
+  if (!region.schur)
   {
+    Setup(region, omega);
+  }
+  Factor(region, omega);
+  if (Mpi::Root(space_op.GetComm()))
+  {
+    MFEM_VERIFY(S_env.size() == static_cast<std::size_t>(InterfaceSize()) * InterfaceSize(),
+                "Wrong size of a given S_E!");
+    S = std::move(S_env);
+  }
+  FactorInterface();
+#endif
+}
+
+void DrivenSubstructure::FactorInterface()
+{
+  // The interface system S_R + S_E, factored on rank 0 (complex symmetric).
+#if defined(MFEM_USE_MUMPS)
+  if (Mpi::Root(space_op.GetComm()))
+  {
+    const int nG = InterfaceSize();
+    T = region.schur->Schur();
+    T.resize(static_cast<std::size_t>(nG) * nG);
     for (std::size_t k = 0; k < T.size(); k++)
     {
       T[k] += S[k];
@@ -318,81 +367,429 @@ void DrivenSubstructure::Condense(double omega)
 #endif
 }
 
+namespace
+{
+
+// b on the masked local true DOFs (and on Γ with gamma), 0 elsewhere.
+ComplexVector Masked(const ComplexVector &b, const std::vector<char> &mask,
+                     const std::vector<char> *gamma = nullptr)
+{
+  const int nt = static_cast<int>(mask.size());
+  ComplexVector y(nt);
+  const double *br = b.Real().HostRead(), *bi = b.Imag().HostRead();
+  double *yr = y.Real().HostWrite(), *yi = y.Imag().HostWrite();
+  for (int i = 0; i < nt; i++)
+  {
+    const bool keep = mask[i] || (gamma && (*gamma)[i]);
+    yr[i] = keep ? br[i] : 0.0;
+    yi[i] = keep ? bi[i] : 0.0;
+  }
+  return y;
+}
+
+}  // namespace
+
 void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
-                               std::vector<ComplexVector> &u)
+                               std::vector<ComplexVector> &u,
+                               const std::vector<std::complex<double>> *g_env)
 {
 #if !defined(MFEM_USE_MUMPS)
   MFEM_ABORT("Driven substructuring requires MUMPS!");
 #else
-  MFEM_VERIFY(env.schur && region.schur, "Condense must be called before Solve!");
+  MFEM_VERIFY(region.schur && (online || env.schur),
+              "Condense must be called before Solve!");
+  MFEM_VERIFY(online == (g_env != nullptr),
+              "The environment's source condensation is given online only!");
   MPI_Comm comm = space_op.GetComm();
   const int n = static_cast<int>(rhs.size()), nt = space_op.GetNDSpace().GetTrueVSize();
   const int nG = InterfaceSize();
-  auto masked = [&](const ComplexVector &b, const std::vector<char> &mask, bool gamma)
-  {
-    ComplexVector y(nt);
-    const double *br = b.Real().HostRead(), *bi = b.Imag().HostRead();
-    double *yr = y.Real().HostWrite(), *yi = y.Imag().HostWrite();
-    for (int i = 0; i < nt; i++)
-    {
-      const bool keep = mask[i] || (gamma && is_gamma[i]);
-      yr[i] = keep ? br[i] : 0.0;
-      yi[i] = keep ? bi[i] : 0.0;
-    }
-    return y;
-  };
 
   // Condensation of the sources onto Γ: the environment's with the interface loads b_Γ,
-  // b_Γ - A_ΓE A_EE^-1 b_E, and the region's, -A_ΓR A_RR^-1 b_R.
-  std::vector<ComplexVector> w(n), y(n);
-  std::vector<const ComplexVector *> W(n), Y(n);
+  // b_Γ - A_ΓE A_EE^-1 b_E (offline, or given online), and the region's, -A_ΓR A_RR^-1 b_R.
+  std::vector<ComplexVector> w(online ? 0 : n), y(n);
+  std::vector<const ComplexVector *> W(w.size()), Y(n);
   for (int k = 0; k < n; k++)
   {
-    w[k] = masked(*rhs[k], is_env_int, true);
-    y[k] = masked(*rhs[k], is_region_int, false);
-    W[k] = &w[k];
+    if (!online)
+    {
+      w[k] = Masked(*rhs[k], is_env_int, &is_gamma);
+      W[k] = &w[k];
+    }
+    y[k] = Masked(*rhs[k], is_region_int);
     Y[k] = &y[k];
   }
-  std::vector<std::complex<double>> rG, rR;
-  env.schur->Reduce(W, rG);
-  region.schur->Reduce(Y, rR);
-  if (Mpi::Root(comm) && nG > 0)
+  std::vector<std::complex<double>> rR;
+  if (!online)
   {
-    for (std::size_t q = 0; q < rG.size(); q++)
+    env.schur->Reduce(W, g_last);
+  }
+  else if (Mpi::Root(comm))
+  {
+    MFEM_VERIFY(g_env->size() == static_cast<std::size_t>(nG) * n,
+                "Wrong size of the environment's source condensation!");
+    g_last = *g_env;
+  }
+  region.schur->Reduce(Y, rR);
+  if (Mpi::Root(comm))
+  {
+    u_last = g_last;
+    for (std::size_t q = 0; q < u_last.size(); q++)
     {
-      rG[q] += rR[q];
+      u_last[q] += rR[q];
     }
-    int info = 0;
-    zsytrs_("L", &nG, &n, T.data(), &nG, T_piv.data(), rG.data(), &nG, &info);
-    MFEM_VERIFY(info == 0, "Solve of the interface system failed: info = " << info);
+    if (nG > 0)
+    {
+      int info = 0;
+      zsytrs_("L", &nG, &n, T.data(), &nG, T_piv.data(), u_last.data(), &nG, &info);
+      MFEM_VERIFY(info == 0, "Solve of the interface system failed: info = " << info);
+    }
   }
 
-  // Both interiors from the interface solution, A_II^-1 (b_I - A_IΓ u_Γ).
-  std::vector<ComplexVector *> Wo(n), Yo(n);
+  // The interiors from the interface solution, A_II^-1 (b_I - A_IΓ u_Γ) (the interface
+  // values come out of either expansion; the Dirichlet DOFs are 0).
+  std::vector<ComplexVector *> Wo(w.size()), Yo(n);
   for (int k = 0; k < n; k++)
   {
-    Wo[k] = &w[k];
+    if (!online)
+    {
+      Wo[k] = &w[k];
+    }
     Yo[k] = &y[k];
   }
-  env.schur->Expand(rG, Wo);
-  region.schur->Expand(rG, Yo);
+  if (!online)
+  {
+    env.schur->Expand(u_last, Wo);
+  }
+  region.schur->Expand(u_last, Yo);
   u.resize(n);
   for (int k = 0; k < n; k++)
   {
     u[k].SetSize(nt);
     u[k].UseDevice(true);
     double *ur = u[k].Real().HostWrite(), *ui = u[k].Imag().HostWrite();
-    const double *wr = w[k].Real().HostRead(), *wi = w[k].Imag().HostRead();
     const double *yr = y[k].Real().HostRead(), *yi = y[k].Imag().HostRead();
+    const double *wr = online ? nullptr : w[k].Real().HostRead();
+    const double *wi = online ? nullptr : w[k].Imag().HostRead();
     for (int i = 0; i < nt; i++)
     {
-      // The interface values come out of either expansion; the Dirichlet DOFs are 0.
-      const bool region = is_region_int[i];
-      ur[i] = (is_env_int[i] || is_gamma[i]) ? wr[i] : (region ? yr[i] : 0.0);
-      ui[i] = (is_env_int[i] || is_gamma[i]) ? wi[i] : (region ? yi[i] : 0.0);
+      const bool from_region = is_region_int[i] || (online && is_gamma[i]);
+      const bool from_env = !online && (is_env_int[i] || is_gamma[i]);
+      ur[i] = from_region ? yr[i] : (from_env ? wr[i] : 0.0);
+      ui[i] = from_region ? yi[i] : (from_env ? wi[i] : 0.0);
     }
   }
 #endif
+}
+
+std::vector<std::complex<double>>
+DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *> &b)
+{
+  MFEM_VERIFY(!online && env.schur, "CondenseEnvironment needs the environment factor!");
+  std::vector<std::complex<double>> red;
+#if defined(MFEM_USE_MUMPS)
+  std::vector<ComplexVector> x(b.size());
+  std::vector<const ComplexVector *> X(b.size());
+  std::vector<ComplexVector *> Xo(b.size());
+  for (std::size_t k = 0; k < b.size(); k++)
+  {
+    x[k] = Masked(*b[k], is_env_int, &is_gamma);
+    X[k] = &x[k];
+    Xo[k] = &x[k];
+  }
+  env.schur->Reduce(X, red);
+  // The reduction is paired with an expansion (here of a zero interface solution).
+  std::vector<std::complex<double>> zero(Mpi::Root(space_op.GetComm()) ? red.size() : 0,
+                                         0.0);
+  env.schur->Expand(zero, Xo);
+#endif
+  return red;
+}
+
+std::vector<char>
+DrivenSubstructure::BoundaryTrueDofs(const std::vector<int> &bdr_attributes) const
+{
+  // Mark the local DOFs of the boundary elements, then the true DOFs they reach (|P|^T: a
+  // true DOF shared between ranks is marked on its owner).
+  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(space_op.GetNDSpace().Get());
+  const auto &mesh = *fes.GetParMesh();
+  mfem::Vector lmark(fes.GetVSize()), tmark(fes.GetTrueVSize());
+  lmark = 0.0;
+  mfem::Array<int> dofs;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    if (std::ranges::find(bdr_attributes, mesh.GetBdrAttribute(be)) != bdr_attributes.end())
+    {
+      fes.GetBdrElementDofs(be, dofs);
+      for (int d : dofs)
+      {
+        lmark(d >= 0 ? d : -1 - d) = 1.0;
+      }
+    }
+  }
+  fes.Dof_TrueDof_Matrix()->AbsMultTranspose(1.0, lmark, 0.0, tmark);
+  std::vector<char> mark(fes.GetTrueVSize(), 0);
+  for (int i = 0; i < fes.GetTrueVSize(); i++)
+  {
+    mark[i] = tmark(i) > 0.0;
+  }
+  return mark;
+}
+
+namespace
+{
+
+// Fixed polynomial fields of the fingerprints (true DOFs).
+Vector FingerprintField(const mfem::ParFiniteElementSpace &fespace, int k)
+{
+  auto &fes = const_cast<mfem::ParFiniteElementSpace &>(fespace);
+  mfem::ParGridFunction gf(&fes);
+  mfem::VectorFunctionCoefficient c(
+      3,
+      [k](const mfem::Vector &x, mfem::Vector &v)
+      {
+        const double X = x(0), Y = x(1), Z = x(2);
+        const double f[3][3] = {{Z, X, Y}, {Y * Y, Z * Z, X * X}, {X * Y, Y * Z, Z * X}};
+        v.SetSize(3);
+        for (int d = 0; d < 3; d++)
+        {
+          v(d) = f[k][d];
+        }
+      });
+  gf.ProjectCoefficient(c);
+  Vector r(fes.GetTrueVSize());
+  gf.GetTrueDofs(r);
+  return r;
+}
+
+}  // namespace
+
+std::vector<double> DrivenSubstructure::EnvironmentFingerprint(double omega) const
+{
+  const auto &fes = space_op.GetNDSpace().Get();
+  MPI_Comm comm = space_op.GetComm();
+  const int nt = fes.GetTrueVSize();
+  double counts[2] = {0.0, 0.0};
+  for (int i = 0; i < nt; i++)
+  {
+    counts[0] += is_env_int[i];
+    counts[1] += is_gamma[i];
+  }
+  Mpi::GlobalSum(2, counts, comm);
+  std::vector<double> fp = {counts[0], counts[1]};
+  // A_E(ω) r = (K + iω C - ω² M + A2(ω)) r, partially assembled on the environment.
+  std::unique_ptr<ComplexOperator> K, C, M, A2;
+  {
+    SpaceOperator::AssemblyRestriction restriction(space_op, env.attrs);
+    K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
+  }
+  ComplexVector r(nt), y(nt);
+  r.UseDevice(true);
+  y.UseDevice(true);
+  for (int k = 0; k < 3; k++)
+  {
+    r.Real() = FingerprintField(fes, k);
+    r.Imag() = 0.0;
+    y = 0.0;
+    K->AddMult(r, y, 1.0);
+    if (C)
+    {
+      C->AddMult(r, y, std::complex<double>(0.0, omega));
+    }
+    if (M)
+    {
+      M->AddMult(r, y, -omega * omega);
+    }
+    if (A2)
+    {
+      A2->AddMult(r, y, 1.0);
+    }
+    double v[2] = {mfem::InnerProduct(r.Real(), y.Real()),
+                   mfem::InnerProduct(r.Real(), y.Imag())};
+    Mpi::GlobalSum(2, v, comm);
+    fp.push_back(v[0]);
+    fp.push_back(v[1]);
+  }
+  return fp;
+}
+
+std::vector<double> DrivenSubstructure::SourceFingerprint(const ComplexVector &b) const
+{
+  const auto &fes = space_op.GetNDSpace().Get();
+  const double *br = b.Real().HostRead(), *bi = b.Imag().HostRead();
+  double v[7] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+  for (int i = 0; i < fes.GetTrueVSize(); i++)
+  {
+    v[0] = std::max(v[0], (is_env_int[i] && (br[i] != 0.0 || bi[i] != 0.0)) ? 1.0 : 0.0);
+  }
+  for (int k = 0; k < 3; k++)
+  {
+    const Vector r = FingerprintField(fes, k);
+    const double *rr = r.HostRead();
+    for (int i = 0; i < fes.GetTrueVSize(); i++)
+    {
+      if (is_env_int[i])
+      {
+        v[1 + 2 * k] += rr[i] * br[i];
+        v[2 + 2 * k] += rr[i] * bi[i];
+      }
+    }
+  }
+  Mpi::GlobalMax(1, v, space_op.GetComm());
+  Mpi::GlobalSum(6, v + 1, space_op.GetComm());
+  return {v, v + 7};
+}
+
+namespace
+{
+
+constexpr int kDrivenModelMagic = 0x31565244;  // "DRV1"
+
+template <typename T>
+void WriteVec(std::ofstream &f, const std::vector<T> &v)
+{
+  f.write(reinterpret_cast<const char *>(v.data()),
+          static_cast<std::streamsize>(sizeof(T) * v.size()));
+}
+
+template <typename T>
+void ReadVec(std::ifstream &f, std::vector<T> &v, std::size_t n)
+{
+  v.resize(n);
+  f.read(reinterpret_cast<char *>(v.data()), static_cast<std::streamsize>(sizeof(T) * n));
+}
+
+}  // namespace
+
+std::size_t DrivenSubstructureModel::HeaderBytes() const
+{
+  return sizeof(int) * 8 + sizeof(double) * signatures.size() +
+         sizeof(double) * env_fp.size() + sizeof(int) * excitations.size() +
+         sizeof(double) * exc_fp.size() + sizeof(int) * ports.size() +
+         sizeof(double) * omega.size();
+}
+
+std::size_t DrivenSubstructureModel::RecordBytes() const
+{
+  const std::size_t n = nG, ne = excitations.size(), np = ports.size();
+  return sizeof(std::complex<double>) * (n * (n + 1) / 2 + n * ne + n * np + np * ne);
+}
+
+void DrivenSubstructureModel::WriteHeader(const std::string &path) const
+{
+  std::ofstream f(path, std::ios::binary | std::ios::trunc);
+  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
+  const int head[8] = {kDrivenModelMagic,
+                       1,
+                       nG,
+                       sig_w,
+                       static_cast<int>(env_fp.size()),
+                       static_cast<int>(excitations.size()),
+                       static_cast<int>(ports.size()),
+                       static_cast<int>(omega.size())};
+  f.write(reinterpret_cast<const char *>(head), sizeof(head));
+  WriteVec(f, signatures);
+  WriteVec(f, env_fp);
+  WriteVec(f, excitations);
+  WriteVec(f, exc_fp);
+  WriteVec(f, ports);
+  WriteVec(f, omega);
+}
+
+void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
+{
+  // S_E is symmetric: its lower triangle, by columns.
+  std::vector<std::complex<double>> lower;
+  lower.reserve(static_cast<std::size_t>(nG) * (nG + 1) / 2);
+  for (int j = 0; j < nG; j++)
+  {
+    for (int i = j; i < nG; i++)
+    {
+      lower.push_back(r.S[static_cast<std::size_t>(j) * nG + i]);
+    }
+  }
+  std::ofstream f(path, std::ios::binary | std::ios::app);
+  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
+  WriteVec(f, lower);
+  WriteVec(f, r.g);
+  WriteVec(f, r.h);
+  WriteVec(f, r.c);
+}
+
+void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
+{
+  int head[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  std::ifstream f;
+  if (Mpi::Root(comm))
+  {
+    f.open(path, std::ios::binary);
+    if (f.good())
+    {
+      f.read(reinterpret_cast<char *>(head), sizeof(head));
+    }
+  }
+  Mpi::Broadcast(8, head, 0, comm);
+  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] == 1,
+              "Cannot read the driven substructuring model \""
+                  << path << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
+  nG = head[2];
+  sig_w = head[3];
+  auto read = [&](auto &v, std::size_t n)
+  {
+    if (Mpi::Root(comm))
+    {
+      ReadVec(f, v, n);
+    }
+    else
+    {
+      v.resize(n);
+    }
+    Mpi::Broadcast(static_cast<int>(n), v.data(), 0, comm);
+  };
+  read(signatures, static_cast<std::size_t>(nG) * sig_w);
+  read(env_fp, head[4]);
+  read(excitations, head[5]);
+  read(exc_fp, kSourceFp * static_cast<std::size_t>(head[5]));
+  read(ports, head[6]);
+  read(omega, head[7]);
+}
+
+int DrivenSubstructureModel::NumRecords(const std::string &path) const
+{
+  std::ifstream f(path, std::ios::binary | std::ios::ate);
+  if (!f.good())
+  {
+    return 0;
+  }
+  const auto size = static_cast<std::size_t>(f.tellg());
+  return (size < HeaderBytes()) ? 0
+                                : static_cast<int>((size - HeaderBytes()) / RecordBytes());
+}
+
+DrivenSubstructureModel::Record DrivenSubstructureModel::ReadRecord(const std::string &path,
+                                                                    int j) const
+{
+  std::ifstream f(path, std::ios::binary);
+  f.seekg(static_cast<std::streamoff>(HeaderBytes() + RecordBytes() * j));
+  std::vector<std::complex<double>> lower;
+  Record r;
+  const std::size_t n = nG, ne = excitations.size(), np = ports.size();
+  ReadVec(f, lower, n * (n + 1) / 2);
+  ReadVec(f, r.g, n * ne);
+  ReadVec(f, r.h, n * np);
+  ReadVec(f, r.c, np * ne);
+  MFEM_VERIFY(f.good(), "Truncated substructuring model \"" << path << "\"!");
+  r.S.resize(n * n);
+  for (std::size_t c = 0, q = 0; c < n; c++)
+  {
+    for (std::size_t i = c; i < n; i++, q++)
+    {
+      r.S[c * n + i] = r.S[i * n + c] = lower[q];
+    }
+  }
+  return r;
 }
 
 }  // namespace palace

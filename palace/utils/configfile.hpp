@@ -291,6 +291,10 @@ public:
   std::map<int, DomainEnergyData> energy = {};
   std::map<int, ProbeData> probe = {};
 
+  // Set by solvers whose field is known on part of the domain only (online substructuring,
+  // not read from the configuration file): no total energies or participation ratios.
+  bool partial = false;
+
   DomainPostData() = default;
   DomainPostData(const json &postpro);
 };

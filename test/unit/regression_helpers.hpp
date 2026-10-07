@@ -80,6 +80,9 @@ struct RegressionOptions
   // Custom per-file checks keyed by relative path under postpro/ (e.g.
   // "farfield-rE.csv", "iteration1/port-S.csv").
   std::unordered_map<std::string, CustomCheck> custom_checks;
+  // A configuration of the same case run first in the same staging directory, without
+  // comparison (e.g. an offline run writing the model an online run reads).
+  std::string setup_config;
 };
 
 // End-to-end case runner. Calls palace::Run on every rank; rank 0

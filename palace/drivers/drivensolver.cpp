@@ -12,6 +12,7 @@
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "fem/substructure.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
 #include "linalg/ksp.hpp"
@@ -81,17 +82,158 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           space_op.GlobalTrueVSize()};
 }
 
+namespace
+{
+
+// The lumped ports on the environment side, and an abort for ports touching Γ (their
+// excitation and voltage would depend on both sides).
+std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
+                                  std::map<int, std::vector<char>> &port_dofs)
+{
+  std::vector<int> env_ports;
+  for (const auto &[idx, data] : iodata.boundaries.lumpedport)
+  {
+    std::vector<int> attrs;
+    for (const auto &elem : data.elements)
+    {
+      attrs.insert(attrs.end(), elem.attributes.begin(), elem.attributes.end());
+    }
+    auto mark = ds.BoundaryTrueDofs(attrs);
+    double n[3] = {0.0, 0.0, 0.0};  // environment interior, interface, region interior
+    for (std::size_t i = 0; i < mark.size(); i++)
+    {
+      n[0] += mark[i] && ds.EnvironmentInterior()[i];
+      n[1] += mark[i] && ds.Interface()[i];
+      n[2] += mark[i] && ds.RegionInterior()[i];
+    }
+    Mpi::GlobalSum(3, n, ds.GetComm());
+    MFEM_VERIFY(n[1] == 0.0 && (n[0] == 0.0 || n[2] == 0.0),
+                "Lumped port " << idx
+                               << " touches the substructuring interface: a saved driven "
+                                  "model needs the lumped ports away from it!");
+    if (n[0] > 0.0)
+    {
+      env_ports.push_back(idx);
+      port_dofs[idx] = std::move(mark);
+    }
+  }
+  return env_ports;
+}
+
+// The voltage functional of a lumped port as a true-DOF vector l (V = l^T E), evaluated
+// with the port's own voltage postprocessing on the unit vectors of the true DOFs it
+// touches.
+ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx,
+                                const std::vector<char> &mark)
+{
+  auto &nd = space_op.GetNDSpace();
+  const auto &fes = nd.Get();
+  MPI_Comm comm = space_op.GetComm();
+  const int nt = fes.GetTrueVSize();
+  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
+  std::vector<HYPRE_BigInt> mine, all;
+  for (int i = 0; i < nt; i++)
+  {
+    if (mark[i])
+    {
+      mine.push_back(tstart + i);
+    }
+  }
+  {
+    const int nranks = Mpi::Size(comm);
+    int nloc = static_cast<int>(mine.size());
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    all.resize(disp[nranks - 1] + cnt[nranks - 1]);
+    MPI_Allgatherv(mine.data(), nloc, HYPRE_MPI_BIG_INT, all.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+  }
+  const auto &port = space_op.GetLumpedPortOp().GetPort(idx);
+  GridFunction E(nd, true);
+  E.Imag() = 0.0;
+  Vector e(nt);
+  ComplexVector l(nt);
+  l = 0.0;
+  for (HYPRE_BigInt q : all)
+  {
+    const HYPRE_BigInt i = q - tstart;
+    const bool own = (i >= 0 && i < nt);
+    e = 0.0;
+    if (own)
+    {
+      e(static_cast<int>(i)) = 1.0;
+    }
+    E.Real().SetFromTrueDofs(e);
+    const std::complex<double> V = port.GetVoltage(E);
+    if (own)
+    {
+      l.Real()(static_cast<int>(i)) = V.real();
+    }
+  }
+  return l;
+}
+
+// The index of each value of x in y (relative tolerance tol), -1 if none.
+int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10)
+{
+  for (std::size_t j = 0; j < y.size(); j++)
+  {
+    if (std::abs(y[j] - x) <= tol * std::max(std::abs(x), std::abs(y[j])))
+    {
+      return static_cast<int>(j);
+    }
+  }
+  return -1;
+}
+
+// Fingerprints match: the first nreal entries relative to themselves, then complex values
+// (pairs of entries) relative to their magnitude (a real or imaginary part can be zero).
+bool SameFingerprint(const std::vector<double> &a, const std::vector<double> &b, int nreal,
+                     double tol = 1.0e-10)
+{
+  if (a.size() != b.size() || (a.size() - nreal) % 2 != 0)
+  {
+    return false;
+  }
+  for (std::size_t q = 0; q < a.size(); q++)
+  {
+    const bool complex = (q >= static_cast<std::size_t>(nreal));
+    const std::complex<double> za(a[q], complex ? a[q + 1] : 0.0),
+        zb(b[q], complex ? b[q + 1] : 0.0);
+    if (std::abs(za - zb) > tol * std::max(std::abs(za), std::abs(zb)))
+    {
+      return false;
+    }
+    q += complex;
+  }
+  return true;
+}
+
+}  // namespace
+
 ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
 {
   // Exact per-frequency substructuring: at each frequency, condense the environment and
   // factor the region against it once, then solve all excitations (so the frequency loop
-  // is the outer one).
+  // is the outer one). With a saved model, an offline sweep saves S_E(ω) and the
+  // environment's source and port data per frequency, and an online sweep (at saved
+  // frequencies) factors the region only.
   const auto &port_excitations = space_op.GetPortExcitations();
   const auto &omega_sample = iodata.solver.driven.sample_f;
   const auto &sub = *iodata.solver.substructuring;
-  PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op);
-  DrivenSubstructure ds(space_op, sub.region_attributes, sub.environment_attributes);
-  Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", ds.InterfaceSize());
+  const bool online = (sub.mode == SubstructuringMode::ONLINE);
+  const std::string &model_path = sub.save_model;
+  const bool save = !online && !model_path.empty();
+  MPI_Comm comm = space_op.GetComm();
+  const bool root = Mpi::Root(comm);
+  DrivenSubstructure ds(space_op, sub.region_attributes, sub.environment_attributes,
+                        online);
+  const int nG = ds.InterfaceSize();
+  Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   const auto &Curl = space_op.GetCurlMatrix();
   std::vector<int> ex_idx;
   for (const auto &[idx, spec] : port_excitations)
@@ -101,6 +243,157 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
   const int n = static_cast<int>(ex_idx.size());
   std::vector<ComplexVector> rhs(n, ComplexVector(Curl.Width())), E;
   std::vector<const ComplexVector *> rhs_ptr(n);
+  for (int k = 0; k < n; k++)
+  {
+    rhs[k].UseDevice(true);
+    rhs_ptr[k] = &rhs[k];
+  }
+
+  // The lumped ports of the environment (for a saved model).
+  std::map<int, std::vector<char>> port_dofs;
+  std::vector<int> env_ports;
+  if (save || online)
+  {
+    env_ports = EnvironmentPorts(iodata, ds, port_dofs);
+  }
+
+  // Online, the field is known in the region (and on Γ) only: energies of region domains,
+  // without totals or participation ratios, and the environment's port voltages from the
+  // model (without their power).
+  config::DomainData domains = iodata.domains;
+  if (online)
+  {
+    domains.postpro.partial = true;
+    std::vector<int> skipped;
+    for (auto it = domains.postpro.energy.begin(); it != domains.postpro.energy.end();)
+    {
+      const bool region =
+          std::ranges::all_of(it->second.attributes,
+                              [&](int a)
+                              {
+                                return std::ranges::find(sub.region_attributes, a) !=
+                                       sub.region_attributes.end();
+                              });
+      if (!region)
+      {
+        skipped.push_back(it->first);
+        it = domains.postpro.energy.erase(it);
+      }
+      else
+      {
+        ++it;
+      }
+    }
+    Mpi::Warning("Online driven substructuring writes no total energies or participation "
+                 "ratios{}{}!\n",
+                 skipped.empty() ? std::string()
+                                 : fmt::format(", no energies of the domain postprocessing "
+                                               "outside the region ({})",
+                                               fmt::join(skipped, ", ")),
+                 env_ports.empty() ? std::string()
+                                   : fmt::format(", and no power of the environment's "
+                                                 "lumped ports ({})",
+                                                 fmt::join(env_ports, ", ")));
+  }
+  PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
+                                            iodata.boundaries, iodata.units, space_op);
+
+  // The model: header and environment ports.
+  DrivenSubstructureModel model;
+  std::vector<ComplexVector> port_l;
+  SignatureMap gamma_map;           // online: the saved interface on the current one
+  std::vector<int> record, ex_col;  // online: frequency records, model columns
+  if (save)
+  {
+    model.nG = nG;
+    model.sig_w = SignatureWidth(space_op.GetNDSpace().Get());
+    model.signatures =
+        TrueDofSignatures(space_op.GetNDSpace().Get(), ds.InterfaceIndex(), nG);
+    model.env_fp = ds.EnvironmentFingerprint(omega_sample[0]);
+    for (int k = 0; k < n; k++)
+    {
+      space_op.GetExcitationVector(ex_idx[k], omega_sample[0], rhs[k]);
+      const auto fp = ds.SourceFingerprint(rhs[k]);
+      if (fp[0] != 0.0)
+      {
+        model.excitations.push_back(ex_idx[k]);
+        model.exc_fp.insert(model.exc_fp.end(), fp.begin(), fp.end());
+      }
+    }
+    model.ports = env_ports;
+    model.omega = omega_sample;
+    for (int p : env_ports)
+    {
+      port_l.push_back(VoltageFunctional(space_op, p, port_dofs.at(p)));
+    }
+    if (root)
+    {
+      model.WriteHeader(model_path);
+    }
+    Mpi::Print(" Saving the substructuring model to {} ({:d} frequencies, {:d} "
+               "excitations with environment sources, {:d} environment ports)\n",
+               model_path, omega_sample.size(), model.excitations.size(), env_ports.size());
+  }
+  else if (online)
+  {
+    model.ReadHeader(model_path, comm);
+    MFEM_VERIFY(model.nG == nG,
+                "Saved substructuring model interface size ("
+                    << model.nG << ") does not match this run (" << nG
+                    << "); the interface (Gamma) must be identical between the offline and "
+                       "online runs.");
+    gamma_map = MatchSignatureBasis(
+        TrueDofSignatures(space_op.GetNDSpace().Get(), ds.InterfaceIndex(), nG),
+        model.signatures, model.sig_w);
+    MFEM_VERIFY(SameFingerprint(ds.EnvironmentFingerprint(model.omega[0]), model.env_fp, 2),
+                "The environment differs from the one the saved substructuring model was "
+                "condensed from (environment mesh, materials, boundary conditions, "
+                "order or problem type changed): rerun in \"Offline\" mode to "
+                "condense it again!");
+    MFEM_VERIFY(env_ports == model.ports,
+                "The environment's lumped ports differ from those of the saved "
+                "substructuring model!");
+    int nrec = root ? model.NumRecords(model_path) : 0;
+    Mpi::Broadcast(1, &nrec, 0, comm);
+    for (double omega : omega_sample)
+    {
+      const int j = FindValue(model.omega, omega);
+      MFEM_VERIFY(
+          j >= 0 && j < nrec,
+          "Frequency " << iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
+                              (2 * std::numbers::pi)
+                       << " GHz is not in the saved substructuring model: online driven "
+                          "substructuring runs at saved frequencies only!");
+      record.push_back(j);
+    }
+    // The model columns of the excitations with environment sources (-1: none).
+    for (int k = 0; k < n; k++)
+    {
+      space_op.GetExcitationVector(ex_idx[k], model.omega[0], rhs[k]);
+      const auto fp = ds.SourceFingerprint(rhs[k]);
+      int col = -1;
+      for (std::size_t e = 0; e < model.excitations.size(); e++)
+      {
+        if (model.excitations[e] == ex_idx[k] &&
+            SameFingerprint(
+                fp,
+                {model.exc_fp.begin() + DrivenSubstructureModel::kSourceFp * e,
+                 model.exc_fp.begin() + DrivenSubstructureModel::kSourceFp * (e + 1)},
+                1))
+        {
+          col = static_cast<int>(e);
+        }
+      }
+      MFEM_VERIFY(fp[0] == 0.0 || col >= 0,
+                  "Excitation " << ex_idx[k]
+                                << " has environment sources that differ from the saved "
+                                   "substructuring model!");
+      ex_col.push_back(col);
+    }
+  }
+  const int np = static_cast<int>(env_ports.size()),
+            ne = static_cast<int>(model.excitations.size());
+
   ComplexVector B(Curl.Height());
   B.UseDevice(true);
   auto t0 = Timer::Now();
@@ -112,16 +405,117 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
                iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) /
                    (2 * std::numbers::pi),
                Timer::Duration(Timer::Now() - t0).count());
+    std::vector<std::complex<double>> V(static_cast<std::size_t>(np) * n);  // port voltages
     {
       BlockTimer bt(Timer::KSP);
-      ds.Condense(omega);
       for (int k = 0; k < n; k++)
       {
-        rhs[k].UseDevice(true);
         space_op.GetExcitationVector(ex_idx[k], omega, rhs[k]);
-        rhs_ptr[k] = &rhs[k];
       }
-      ds.Solve(rhs_ptr, E);
+      if (!online)
+      {
+        ds.Condense(omega);
+        ds.Solve(rhs_ptr, E);
+      }
+      else
+      {
+        // The saved record on the current interface (dual quantities: x_cur = M^-T x).
+        DrivenSubstructureModel::Record rec;
+        std::vector<std::complex<double>> S, g;
+        if (root)
+        {
+          rec = model.ReadRecord(model_path, record[omega_i]);
+          S = gamma_map.DualMatrix(rec.S);
+          g.assign(static_cast<std::size_t>(nG) * n, 0.0);
+          for (int k = 0; k < n; k++)
+          {
+            if (ex_col[k] >= 0)
+            {
+              const auto gk =
+                  gamma_map.Dual(rec.g.data() + static_cast<std::size_t>(ex_col[k]) * nG);
+              std::copy(gk.begin(), gk.end(),
+                        g.begin() + static_cast<std::ptrdiff_t>(k) * nG);
+            }
+          }
+          std::vector<std::complex<double>> h;
+          for (int j = 0; j < np; j++)
+          {
+            const auto hj = gamma_map.Dual(rec.h.data() + static_cast<std::size_t>(j) * nG);
+            h.insert(h.end(), hj.begin(), hj.end());
+          }
+          rec.h = std::move(h);
+        }
+        ds.Condense(omega, std::move(S));
+        ds.Solve(rhs_ptr, E, &g);
+        // The environment's port voltages, V_jk = c_jk + h_j^T u_Γ,k.
+        if (root)
+        {
+          const auto &uG = ds.InterfaceSolution();
+          for (int k = 0; k < n; k++)
+          {
+            for (int j = 0; j < np; j++)
+            {
+              std::complex<double> v =
+                  (ex_col[k] >= 0) ? rec.c[static_cast<std::size_t>(ex_col[k]) * np + j]
+                                   : 0.0;
+              for (int a = 0; a < nG; a++)
+              {
+                v += rec.h[static_cast<std::size_t>(j) * nG + a] *
+                     uG[static_cast<std::size_t>(k) * nG + a];
+              }
+              V[static_cast<std::size_t>(k) * np + j] = v;
+            }
+          }
+        }
+        Mpi::Broadcast(static_cast<int>(V.size()), V.data(), 0, comm);
+      }
+      if (save)
+      {
+        // The record of this frequency: the condensed voltage functionals of the
+        // environment's ports, h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
+        std::vector<const ComplexVector *> L(np);
+        for (int j = 0; j < np; j++)
+        {
+          L[j] = &port_l[j];
+        }
+        DrivenSubstructureModel::Record rec;
+        rec.h = ds.CondenseEnvironment(L);
+        std::vector<std::complex<double>> lu(static_cast<std::size_t>(np) * n);
+        for (int k = 0; k < n; k++)
+        {
+          for (int j = 0; j < np; j++)
+          {
+            lu[static_cast<std::size_t>(k) * np + j] = {
+                mfem::InnerProduct(port_l[j].Real(), E[k].Real()),
+                mfem::InnerProduct(port_l[j].Real(), E[k].Imag())};
+          }
+        }
+        Mpi::GlobalSum(static_cast<int>(lu.size()), lu.data(), comm);
+        if (root)
+        {
+          rec.S = ds.Schur();
+          const auto &gl = ds.EnvironmentSourceCondensation();
+          const auto &uG = ds.InterfaceSolution();
+          for (int e = 0; e < ne; e++)
+          {
+            const int k = static_cast<int>(std::ranges::find(ex_idx, model.excitations[e]) -
+                                           ex_idx.begin());
+            rec.g.insert(rec.g.end(), gl.begin() + static_cast<std::ptrdiff_t>(k) * nG,
+                         gl.begin() + static_cast<std::ptrdiff_t>(k + 1) * nG);
+            for (int j = 0; j < np; j++)
+            {
+              std::complex<double> c = lu[static_cast<std::size_t>(k) * np + j];
+              for (int a = 0; a < nG; a++)
+              {
+                c -= rec.h[static_cast<std::size_t>(j) * nG + a] *
+                     uG[static_cast<std::size_t>(k) * nG + a];
+              }
+              rec.c.push_back(c);
+            }
+          }
+          model.AppendRecord(model_path, rec);
+        }
+      }
     }
     for (int k = 0; k < n; k++)
     {
@@ -130,6 +524,15 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op) const
       Curl.Mult(E[k].Real(), B.Real());
       Curl.Mult(E[k].Imag(), B.Imag());
       B *= -1.0 / (1i * omega);
+      if (online)
+      {
+        std::map<int, std::complex<double>> Vk;
+        for (int j = 0; j < np; j++)
+        {
+          Vk[env_ports[j]] = V[static_cast<std::size_t>(k) * np + j];
+        }
+        post_op.SetLumpedPortVoltages(std::move(Vk));
+      }
       post_op.MeasureAndPrintAll(ex_idx[k], int(omega_i), E[k], B, omega);
     }
   }

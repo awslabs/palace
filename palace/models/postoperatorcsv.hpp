@@ -291,6 +291,7 @@ protected:
 
   // Base (all solvers).
   std::optional<TableWithCSVFile> domain_E;
+  bool domain_partial = false;  // no total energies or participation ratios
   void InitializeDomainE(const DomainPostOperator &dom_post_op);
   void PrintDomainE();
 

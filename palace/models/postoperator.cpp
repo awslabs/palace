@@ -1584,6 +1584,10 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 
   // Log Domain Energy.
+  if (dom_post_op.partial)
+  {
+    return;
+  }
   const auto domain_E = units.Dimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_E_field_energy_all);
   const auto domain_H = units.Dimensionalize<Units::ValueType::ENERGY>(
@@ -1621,6 +1625,11 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
       auto &vi = measurement_cache.lumped_port_vi[idx];
       vi.P = port_powers.at(idx);
       vi.V = port_voltages.at(idx);
+      if (auto it = lumped_port_voltages.find(idx); it != lumped_port_voltages.end())
+      {
+        vi.V = it->second;
+        vi.P = 0.0;
+      }
       if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN)
       {
         // Compute current from the port impedance, separate contributions for R, L, C
