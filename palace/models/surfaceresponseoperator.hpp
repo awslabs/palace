@@ -993,6 +993,19 @@ nlohmann::json DescribeCornerArmTrims(
         config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     double coordinate_scale);
+// The Diagnostics entry of the corner-arm extension (decision 511 O2 (i); fillet-basis
+// design section 7.1): the matched corners whose claim ends beyond the square exit on an
+// arm (rounded corners), the cells extended back to the exit and any unhosted stretch;
+// empty-but-complete when nothing was extended. The one-line summary and the warning on an
+// unhosted stretch read that entry.
+nlohmann::json DescribeCornerArmExtensions(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmExtensionData>
+        &extensions,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+std::string DescribeCornerArmExtensionSummary(const nlohmann::json &diagnostics);
+std::string DescribeCornerArmExtensionUnhostedWarning(const nlohmann::json &diagnostics);
 // The Diagnostics entry of the mirror arm trim (boundary-cut DESIGN 2.2.3): the virtual
 // corners placed at weight 1 / 2 and the real-arm cells beginning at s_half.
 nlohmann::json DescribeMirrorArmTrims(

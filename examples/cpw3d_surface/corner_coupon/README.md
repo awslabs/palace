@@ -69,9 +69,12 @@ with the matching surface. Pass
 from the defaults. Each prescribed
 potential is stored as a triangulated `x,y,z,V,triangle` surface trace.
 
-`--trace-basis all-rings-follow-metal` (the planner's default on SHARP corners since the
-corner-basis refinement of 2026-09-30, USER decision 161 — a rounded corner keeps
-`legacy`, the refined rule being qualified on sharp corners only; `--ring-size 16`) builds the REFINED
+`--trace-basis all-rings-follow-metal` (the planner's default on every corner since the
+corner-basis refinement of 2026-09-30, USER decision 161, extended to rounded corners by
+decision 511 — the box basis does not depend on `--corner-radius`: the fillet lies inside the
+matching box and the arms are straight where they cross it, so a rounded corner's basis files
+are byte-identical to the sharp corner's at the same angle; `CornerRadius` enters the coupon
+geometry and the model record only; `--ring-size 16`) builds the REFINED
 trace basis rule `TraceBasisRule` / `REFINED_RULE` (`RingLayout`
 `AllRingsFollowMetal`): every ring of the box — the outer rings at the standard
 levels plus `MetalThickness + OveretchDepth` and `MetalThickness + 4 OveretchDepth`,

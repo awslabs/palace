@@ -649,11 +649,17 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                 coupon, args, process_parameters(), Path("unused")
             )
 
-    def test_corner_refined_trace_basis_default_is_sharp_only(self):
-        # The planner's refined default (all-rings-follow-metal) applies to SHARP corners only:
-        # a rounded corner keeps the legacy rule (the refined rule is qualified on sharp
-        # corners only and the runtime's load-time rule check skips rounded ones), and an
-        # explicit refined request on a rounded corner fails closed.
+    def test_corner_refined_trace_basis_default_on_sharp_and_rounded_corners(self):
+        # The planner's refined default (all-rings-follow-metal) applies to EVERY corner,
+        # sharp or rounded (decision 511, fillet-basis design 2026-10-07): the box trace basis
+        # is independent of CornerRadius (the fillet lies inside the matching box; a rounded
+        # corner's basis files are byte-identical to the sharp corner's at the same angle),
+        # and the legacy MetalRingsOnly rule it replaces fails the held-out self-check on
+        # every 90-degree corner (S7's rounded corners, decision 310). Until decision 511 this
+        # test pinned the opposite policy (a rounded corner forced onto the legacy rule, a
+        # refined request on it refused): that guard was a qualification scope, not a
+        # geometric constraint, and is lifted. An explicit legacy request stays honoured on
+        # either kind of corner.
         def generator_command(coupon, args):
             calls = []
 
@@ -722,31 +728,36 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             },
         )
         rounded = generator_command(corner("rounded-90", 0.5), arguments())
-        self.assertEqual(rounded[:2], ("legacy", "8"))
-        self.assertEqual(
-            rounded[2],
-            {"RingSize": 8, "TraceBasis": "legacy", "TraceResolvability": resolvability},
-        )
+        self.assertEqual(rounded[:2], ("all-rings-follow-metal", "16"))
+        self.assertEqual(rounded[2], sharp[2])
         # The CLI default (None) resolves the same way; an explicit legacy request is honoured
-        # on a sharp corner; an explicit refined request on a rounded corner is refused.
+        # on a sharp and on a rounded corner; an explicit refined request on a rounded corner
+        # is the default.
         self.assertEqual(
             generator_command(
                 corner("rounded-90", 0.5), arguments(corner_trace_basis=None)
             )[0],
-            "legacy",
+            "all-rings-follow-metal",
         )
+        for identifier, radius in (("sharp-90", 0.0), ("rounded-90", 0.5)):
+            legacy = generator_command(
+                corner(identifier, radius), arguments(corner_trace_basis="legacy")
+            )
+            self.assertEqual(legacy[:2], ("legacy", "8"))
+            self.assertEqual(
+                legacy[2],
+                {"RingSize": 8, "TraceBasis": "legacy", "TraceResolvability": resolvability},
+            )
         self.assertEqual(
             generator_command(
-                corner("sharp-90", 0.0), arguments(corner_trace_basis="legacy")
-            )[:2],
-            ("legacy", "8"),
-        )
-        with self.assertRaisesRegex(ValueError, "qualified on sharp corners only"):
-            PREPARE.build_corner(
                 corner("rounded-90", 0.5),
                 arguments(corner_trace_basis="all-rings-follow-metal"),
-                process_parameters(),
-                Path("unused"),
+            )[:2],
+            ("all-rings-follow-metal", "16"),
+        )
+        with self.assertRaisesRegex(ValueError, "unknown corner trace basis rule"):
+            PREPARE.corner_trace_basis(
+                "rounded-90", 0.5, SimpleNamespace(corner_trace_basis="fillet-knots")
             )
 
     def test_corner_mesh_refinement_scales_only_fine_size(self):
