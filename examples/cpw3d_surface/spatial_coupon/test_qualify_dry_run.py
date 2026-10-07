@@ -452,10 +452,14 @@ class ReusedMainTest(unittest.TestCase):
         self.assertEqual((reused["StoredMainStageCost"], reused["StoredJobNodeHours"]), ({"NodeHours": 1.2}, 2.3))
         self.assertEqual(reused["Record"]["ToolCommit"], "7b95205da0")
         self.assertEqual(reused["Rule"], job_split.CONTROLS_ONLY_RULE)
-        # Decision 500: the mode carries its usage restriction until the modernised e2e test passes.
-        self.assertEqual(reused["UsageRestriction"], job_split.CONTROLS_ONLY_USAGE_RESTRICTION)
-        self.assertIn("decision 500", reused["UsageRestriction"])
-        self.assertIn("NO qualification record of record", reused["Rule"])
+        # Decision 513 (1): the decision-500 (3) usage restriction is recorded as LIFTED (after the S3p / S2p e2e),
+        # in the record and in the rule; the restriction wording is gone.
+        self.assertEqual(reused["Usage"], job_split.CONTROLS_ONLY_USAGE_RECORD)
+        self.assertEqual((reused["Usage"]["Restriction"], reused["Usage"]["LiftedBy"]), ("decision 500 (3)", "decision 513 (1)"))
+        self.assertIn("LIFTED by decision 513", reused["Rule"])
+        self.assertNotIn("USAGE RESTRICTION", reused["Rule"])
+        self.assertNotIn("UsageRestriction", reused)
+        self.assertFalse(hasattr(job_split, "CONTROLS_ONLY_USAGE_RESTRICTION"))
         # The splice: byte-identical copies in this run's results, re-hashed; the stored root untouched.
         results = self.tmp / "new" / "results"
         splice = qualify_library.splice_reused_main(results, reused)
@@ -1404,7 +1408,8 @@ class QualifyDryRunTest(unittest.TestCase):
         DataFile directory; Solver.Order / Linear.Tol are the recipe's (the references at p5 /
         Tol 1e-8 - gallery 10 and the ten-edge - differ there only); the run config is the base
         expanded by the census.  The two cases of CASES are required; the others are checked
-        when their mesh and reference config are present (named in the output otherwise)."""
+        when their mesh and reference config are present (the gap is the explicit skip of
+        test_every_gallery_case_has_a_local_root_and_reference_config)."""
         manifest = json.loads(MANIFEST.read_text())
         manifest["Path"] = str(MANIFEST)
         physics_run = case_inputs.physics_run_parameters(manifest)
@@ -1453,8 +1458,24 @@ class QualifyDryRunTest(unittest.TestCase):
                         self.assertTrue(all(abs(float(x) - float(y)) <= 1e-13 for x, y in zip(a[:3], b[:3])), (source["Name"], a, b))
             checked.append(case_id)
         self.assertTrue(set(CASES) <= set(checked), checked)
+        self.assertEqual(sorted(checked + unchecked), sorted(GALLERY_REFERENCE_CONFIGS))
+
+    def test_every_gallery_case_has_a_local_root_and_reference_config(self):
+        """The coverage marker of the derived-config identity (decision 513 (3)): PASSES only when every one of
+        the five gallery cases has a local identity root with its census and a reference config; otherwise an
+        explicit SKIP naming the unchecked cases (today the two-edge / ten-edge roots: decision 496 rebuilt the
+        four-edge and three-edge roots only), so the gap stays visible in the counts."""
+        unchecked = {}
+        for case_id, reference_path in GALLERY_REFERENCE_CONFIGS.items():
+            mesh = local_identity_mesh(case_id)
+            missing = [name for name, present in (("local identity root", mesh is not None),
+                                                  ("radial-shell census", mesh is not None and shell_census_binding(mesh) is not None),
+                                                  ("reference config", reference_path.is_file())) if not present]
+            if missing:
+                unchecked[case_id] = missing
         if unchecked:
-            print(f"derived-config equality proven for {checked}; {unchecked} lack a local mesh or reference config", file=sys.stderr)
+            self.skipTest(f"derived-config identity unchecked for {unchecked}: the other {len(GALLERY_REFERENCE_CONFIGS) - len(unchecked)} "
+                          f"gallery cases are checked by test_run_config_derived_from_the_case_equals_every_gallery_reference")
 
     def test_reference_none_plans_the_coupon_on_its_own_inputs(self):
         case_id = "four-edge-9d2cb9bbb3fe"
@@ -2093,6 +2114,12 @@ class Batch1ReplayTest(unittest.TestCase):
         model = library["Models"][0]
         self.assertEqual((model["Name"], model["QualificationStatus"]), (spec["Model"], "PendingQualification"))
         self.assertEqual(model["ControlsOnlyRequalification"]["Controls"], spec["RequalifiedControls"])
+        # Decision 513 (1): the record of record and the library model carry the LIFTED usage state, not the restriction.
+        for usage in (case["ReusedMain"]["Usage"], model["ControlsOnlyRequalification"]["Usage"]):
+            self.assertEqual(usage, job_split.CONTROLS_ONLY_USAGE_RECORD)
+            self.assertEqual(usage["LiftedBy"], "decision 513 (1)")
+            self.assertIn("LIFTED by decision 513", usage["Rule"])
+        self.assertNotIn("UsageRestriction", model["ControlsOnlyRequalification"])
         # (4) the (F) evaluate (decision 477 / 485 (a)) on THIS run's main reducer (the spliced stored one) with the
         # stored dense traces, thin matrices, gate solves and the requalification library: the -requal (F) record.
         f_root = BATCH1 / "f-qualification" / case_id

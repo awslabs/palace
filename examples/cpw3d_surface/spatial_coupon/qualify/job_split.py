@@ -45,16 +45,21 @@ SPLIT_RULE = ("N contiguous source blocks as N independent worker jobs at every 
               "is the single job of the recorded campaigns; estimates per job = the cost model at the largest PCG "
               "factor x PreflightAndMarginFactor + PreflightSeconds; a job fits when that is below the walltime")
 CONTROLS_ONLY_JOB = "controls-only"
-CONTROLS_ONLY_USAGE_RESTRICTION = ("USAGE RESTRICTION (decision 500): --controls-only --reuse-main produces NO qualification record of "
-                                   "record until a modernised end-to-end test passes - the replay of the batch-1 S3p / S2p "
-                                   "re-qualification against the decision-479 records (the mesh-gated e2e tests of record fail at "
-                                   "the decision-61a shell census of their fixture, on main as well); its outputs are dry runs / "
-                                   "information until then")
+CONTROLS_ONLY_USAGE = ("USAGE (decision 513 (1)): the decision-500 (3) usage restriction on --controls-only --reuse-main (no "
+                       "qualification record of record until a modernised end-to-end test passes) was LIFTED by decision 513 after the "
+                       "end-to-end replay of the batch-1 S3p / S2p re-qualification against the decision-479 records passed "
+                       "(test_qualify_dry_run.Batch1ReplayTest.test_controls_only_reuses_the_stored_main_stage_and_plans_the_control_job: "
+                       "the control sets, the job plan, the verdict and the (F) records of record reproduced); the mode's outputs are "
+                       "qualification records of record")
+CONTROLS_ONLY_USAGE_RECORD = {"Restriction": "decision 500 (3)", "LiftedBy": "decision 513 (1)",
+                              "LiftedAfter": "the S3p / S2p controls-only end-to-end replay against the decision-479 records",
+                              "Test": "test_qualify_dry_run.Batch1ReplayTest.test_controls_only_reuses_the_stored_main_stage_and_plans_the_control_job",
+                              "Rule": CONTROLS_ONLY_USAGE}
 CONTROLS_ONLY_RULE = ("decisions 474 (A) / 477 (3) / 479 / 485 (c): a controls-only re-qualification solves ONLY the p-sequence "
                       "control stages (and the local-edge stage) of a coupon whose main-order stages are reused byte-identically "
                       "from a stored qualify run (--reuse-main: the same identity mesh, run config and traces, the reducer CSVs at "
                       "their recorded digests); one job of those stages on the Fixed node count, no source block, no reducer; the "
-                      "controls are the amplitude-informed choice from the stored reducer unless named; " + CONTROLS_ONLY_USAGE_RESTRICTION)
+                      "controls are the amplitude-informed choice from the stored reducer unless named; " + CONTROLS_ONLY_USAGE)
 
 
 def normalize_policy(mode, *, max_jobs, walltime_seconds, fixed_jobs=None, user_job_cap=None, origin=None):
