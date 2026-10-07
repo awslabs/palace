@@ -1119,6 +1119,14 @@ public:
       std::array<double, 4> support_box{};
       bool has_support_box = false;
       std::vector<std::array<double, 4>> chain;
+      // The within-R raw footprint of a VERTEX coupon (corner / junction / endpoint:
+      // coupon_depth 0, no claims, no support box) as perimeter sub-segments: the feature's
+      // claimed portions (R along each arm) and, for a corner whose second arm was trimmed
+      // (decision 394 F1), that arm's [R, s) — the stretch the arm cells lost to the
+      // coupon. Empty for every other patch. The F-DB-a accounting (decisions 442 / 454,
+      // DESIGN 2.1) keeps the raw within-R energy of these portions when the coupon is a
+      // DomainBoundary exclusion (closing the decision-399 MINOR-7 known limit).
+      std::vector<Claim> raw_claims;
     };
     Provenance provenance;
   };
@@ -1315,6 +1323,24 @@ public:
     // default so that every existing output is unchanged.
     bool patch_energy = false;
 
+    // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the
+    // mirror-extended identification across the planar NATURAL vertical truncation planes
+    // (window cuts, symmetry planes, natural outlines). Mirror = "Natural" (default): the
+    // metal perimeter within BandOverR x R of every such plane is reflected into the
+    // identification input, the features formed with the images (a 2 theta corner at an
+    // oblique meeting, a 2 d strip / gap at a parallel edge, nothing at a straight
+    // perpendicular meeting) are modelled with the trace taken by even extension
+    // (mirror-point evaluation) and the real half integrated; "Off": no mirror (every
+    // cut-crossing patch is a DomainBoundary exclusion). F-DB-a (the raw claim of an
+    // excluded patch is never dropped) has no switch.
+    enum class DomainBoundaryMirror
+    {
+      NATURAL,
+      OFF
+    };
+    DomainBoundaryMirror domain_boundary_mirror = DomainBoundaryMirror::NATURAL;
+    double domain_boundary_band_over_radius = 3.0;
+
     // Legacy-contract aliases resolved by the matching pass (USER decision 283): a
     // library model used for a contract-3 key the library lists explicitly as its alias
     // (the feature ids, the aliased key, the verified context digest, the recorded
@@ -1361,6 +1387,54 @@ public:
       std::vector<int> features;
     };
     std::vector<QuantumNearMatchData> quantum_near_match;
+
+    // Mirror band (boundary-cut DESIGN 2.2; decisions 442 / 454): the truncation planes of
+    // the device (n . x = c, n outward; Status Natural mirrors, Unsupported / NonPlanar do
+    // not) and the Identification.Diagnostics.MirrorBand record (JSON text); carried into
+    // the operator record and the geometry cache. The classification of the placed
+    // patches (Applied / Mirrored / DomainBoundary) and the mirror-point evaluation of the
+    // trace samples read the planes.
+    struct MirrorPlaneData
+    {
+      int attribute = 0;
+      std::array<double, 3> normal{};
+      double offset = 0.0;
+      std::string status;
+      std::array<double, 3> box_min{}, box_max{};  // the plane's faces' bounding box
+    };
+    std::vector<MirrorPlaneData> mirror_planes;
+    std::string mirror_band;
+    double mirror_band_over_radius = 0.0;
+    // The portions, real and image, of every unmerged mirror-formed configuration (a bent
+    // stack, a two-vertex cluster, a curved pair with its image: no mirror placement),
+    // mesh units: a patch whose own footprint overlaps a REAL one is DomainBoundary (raw
+    // kept), never applied with its own single-sided model - the configuration is read
+    // exactly as a real Missing feature (decision 481).
+    struct UnmergedPortionData
+    {
+      int topology = 0;  // index into MirrorBand.UnmergedFeatures
+      std::array<double, 3> p0{}, p1{};
+      bool image = false;
+      std::size_t segment = 0;    // identification segment (image segments after the real)
+      double s0 = 0.0, s1 = 0.0;  // arc length along it, mesh units
+    };
+    std::vector<UnmergedPortionData> mirror_unmerged_portions;
+    // The virtual (mirror-formed) corners placed with weight 1 / 2 (HalfByMirror) and the
+    // start s_half of their real arm's cells (MirrorArmTrim), patch units; one record per
+    // corner (DESIGN 2.2.3).
+    struct MirrorArmTrimData
+    {
+      int feature = -1;
+      std::string topology;
+      double angle_degrees = 0.0;
+      double exit_distance_over_radius = 1.0;
+      double half_start_over_radius = 1.0;
+      double trimmed_length = 0.0;
+      std::size_t vertex_patch = 0;
+      std::array<double, 3> arm{};  // the real arm's unit direction from the vertex
+      std::vector<std::pair<std::size_t, double>> cells;  // (patch, removed length)
+    };
+    std::vector<MirrorArmTrimData> mirror_arm_trims;
 
     // Corner-arm trim (decision 394, F1): at a matched corner whose arms are not
     // perpendicular, the coupon's matching square |u|, |v| <= R (u = the first arm)

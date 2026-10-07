@@ -10,11 +10,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
 #include <string>
 #include <vector>
+#include <fmt/format.h>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -23,6 +25,7 @@
 #include "fem/mesh.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
+#include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
@@ -49,7 +52,7 @@ namespace
 // 0.25], y in [0.25, 0.375], z in [0.25, 0.375]) is removed: a cavity between the knots
 // of the left edge's cross-sections (x = 0.05 and 0.45 at y = 0.3) that its mortar
 // samples along the ring segment between them enter.
-std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
+mfem::Mesh MakeSerialObliqueCutLeadMesh(double shear, bool notch)
 {
   constexpr int n = 8;
   constexpr double h = 1.0 / n;
@@ -178,7 +181,217 @@ std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
     double *point = serial.GetVertex(vertex);
     point[2] += shear * (point[1] - 0.5);
   }
+  return serial;
+}
+
+std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
+{
+  mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, notch);
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// The M1 symmetry fixture (boundary-cut DESIGN 4.1): a pad on the metal plane y = 0.5 of
+// the box [0, 1] x [0, 1] x [0, 2] meshed 8 x 8 x 8 (h = 0.125 in x, y; 0.25 in z) and
+// sheared IN THE METAL PLANE, x -> x + s (z - 1), so that the wall x = 1 becomes the
+// VERTICAL plane x = 1 + s (z - 1) (a natural cut perpendicular to the metal plane: the
+// window configuration). The pad spans x in [0, 1] (from the wall x = 0 to the wall x = 1:
+// a strip between two parallel cuts, no real corner), z in [0.75, 1.25] before the shear
+// (0.75 > 3 R from the z walls: their images reach nothing): its long edges (along z,
+// tilted to (s, 0, 1)) are parallel to the walls, its short edges (along x) meet each wall
+// at theta = atan(1 / s) (s = 1: 45 degrees; the virtual corners with the images are 2
+// theta = 90 degrees, convex at the top edge (metal in the acute wedge), concave at the
+// bottom edge). The FULL mesh is the half plus its exact reflection across the wall
+// (reflected vertices appended, the wall's vertices shared, hex vertex order mirrored,
+// boundary attributes mapped, the pad faces reflected): the mirror-symmetric full problem
+// whose restriction the half solves.
+// A pad rectangle in unsheared coordinates: {x0, z0, x1, z1}; the metal is the union of the
+// rectangles (an L shape, a slot).
+using PadRectangle = std::array<double, 4>;
+const std::vector<PadRectangle> kDefaultPads = {{0.0, 0.75, 1.0, 1.25}};
+
+mfem::Mesh MakeSerialMirrorPadMesh(double s, bool full,
+                                   const std::vector<PadRectangle> &pads = kDefaultPads,
+                                   int nz = 8)
+{
+  constexpr int n = 8;
+  constexpr double h = 1.0 / n;
+  const double hz = 2.0 / nz;
+  constexpr double z_center = 1.0;
+  constexpr double tolerance = 1.0e-12;
+  // The wall x = 1 + s (z - 1): unit outward normal and offset.
+  const double norm = std::sqrt(1.0 + s * s);
+  const std::array<double, 3> normal = {1.0 / norm, 0.0, -s / norm};
+  const double offset = (1.0 - z_center * s) / norm;
+  auto Reflect = [&](const std::array<double, 3> &p)
+  {
+    const double d = normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - offset;
+    return std::array<double, 3>{p[0] - 2.0 * d * normal[0], p[1] - 2.0 * d * normal[1],
+                                 p[2] - 2.0 * d * normal[2]};
+  };
+  auto OnWall = [&](const std::array<double, 3> &p)
+  {
+    return std::abs(normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - offset) <
+           tolerance;
+  };
+  // Half vertices (sheared) and hexes.
+  std::vector<std::array<double, 3>> vertices;
+  auto Vertex = [](int i, int j, int k) { return i + (n + 1) * (j + (n + 1) * k); };
+  for (int k = 0; k <= nz; k++)
+  {
+    for (int j = 0; j <= n; j++)
+    {
+      for (int i = 0; i <= n; i++)
+      {
+        vertices.push_back({i * h + s * (k * hz - z_center), j * h, k * hz});
+      }
+    }
+  }
+  std::vector<std::array<int, 8>> hexes;
+  for (int k = 0; k < nz; k++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      for (int i = 0; i < n; i++)
+      {
+        hexes.push_back({Vertex(i, j, k), Vertex(i + 1, j, k), Vertex(i + 1, j + 1, k),
+                         Vertex(i, j + 1, k), Vertex(i, j, k + 1), Vertex(i + 1, j, k + 1),
+                         Vertex(i + 1, j + 1, k + 1), Vertex(i, j + 1, k + 1)});
+      }
+    }
+  }
+  const std::size_t half_vertices = vertices.size(), half_hexes = hexes.size();
+  if (full)
+  {
+    // The reflected copy: the wall's vertices are shared, every other vertex reflected; a
+    // reflected hex keeps a positive Jacobian with its first and second vertex pairs
+    // swapped (the mirror of the reference cube's x axis).
+    std::vector<int> image(half_vertices);
+    for (std::size_t v = 0; v < half_vertices; v++)
+    {
+      if (OnWall(vertices[v]))
+      {
+        image[v] = static_cast<int>(v);
+      }
+      else
+      {
+        image[v] = static_cast<int>(vertices.size());
+        vertices.push_back(Reflect(vertices[v]));
+      }
+    }
+    for (std::size_t e = 0; e < half_hexes; e++)
+    {
+      const auto &hex = hexes[e];
+      hexes.push_back({image[hex[1]], image[hex[0]], image[hex[3]], image[hex[2]],
+                       image[hex[5]], image[hex[4]], image[hex[7]], image[hex[6]]});
+    }
+  }
+  mfem::Mesh serial(3, static_cast<int>(vertices.size()), static_cast<int>(hexes.size()), 0,
+                    3);
+  for (const auto &vertex : vertices)
+  {
+    serial.AddVertex(vertex[0], vertex[1], vertex[2]);
+  }
+  for (const auto &hex : hexes)
+  {
+    serial.AddHex(hex.data(), 1);
+  }
+  serial.FinalizeTopology();  // the exterior boundary elements (attribute 1)
+  // The Cartesian attributes of the unsheared half (1 bottom z, 2 front y, 3 right x = the
+  // wall, 4 back y, 5 left x, 6 top z), the image's faces mapped to the same attributes
+  // (the reflection preserves y: the ground y = 1 is one symmetric face); the wall is
+  // interior in the full mesh.
+  auto Unshear = [&](std::array<double, 3> p)
+  {
+    // A point of the image half is mapped back by the reflection first.
+    const double d = normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - offset;
+    if (d > tolerance)
+    {
+      p = Reflect(p);
+    }
+    p[0] -= s * (p[2] - z_center);
+    return p;
+  };
+  for (int be = 0; be < serial.GetNBE(); be++)
+  {
+    mfem::Array<int> face_vertices;
+    serial.GetBdrElementVertices(be, face_vertices);
+    std::array<double, 3> centroid{};
+    for (const int vertex : face_vertices)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        centroid[d] += serial.GetVertex(vertex)[d] / face_vertices.Size();
+      }
+    }
+    const auto u = Unshear(centroid);
+    int attribute = 1;
+    if (std::abs(u[2]) < tolerance)
+    {
+      attribute = 1;
+    }
+    else if (std::abs(u[1]) < tolerance)
+    {
+      attribute = 2;
+    }
+    else if (std::abs(u[0] - 1.0) < tolerance)
+    {
+      attribute = 3;
+    }
+    else if (std::abs(u[1] - 1.0) < tolerance)
+    {
+      attribute = 4;
+    }
+    else if (std::abs(u[0]) < tolerance)
+    {
+      attribute = 5;
+    }
+    else if (std::abs(u[2] - 2.0) < tolerance)
+    {
+      attribute = 6;
+    }
+    serial.SetBdrAttribute(be, attribute);
+  }
+  // The pad: the interior faces on y = 0.5 with (unsheared) x in [0, 1], z in [0.75,
+  // 1.25], on both halves of the full mesh.
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> face_vertices;
+    serial.GetFaceVertices(face, face_vertices);
+    bool on_plane = true;
+    std::array<double, 3> centroid{};
+    for (const int vertex : face_vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < tolerance;
+      for (int d = 0; d < 3; d++)
+      {
+        centroid[d] += point[d] / face_vertices.Size();
+      }
+    }
+    // A face belongs to the pad when its (unsheared) centroid lies in one of the
+    // rectangles.
+    const auto u = Unshear(centroid);
+    bool inside = false;
+    for (const auto &pad : pads)
+    {
+      inside = inside || (u[0] >= pad[0] - tolerance && u[0] <= pad[2] + tolerance &&
+                          u[2] >= pad[1] - tolerance && u[2] <= pad[3] + tolerance);
+    }
+    if (on_plane && inside)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return serial;
 }
 
 // Whether a point (sheared coordinates) lies in the device of MakeObliqueCutLeadMesh.
@@ -651,6 +864,1130 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
 #endif
+}
+
+// F-DB-a (decisions 442 / 454; DESIGN 2.1): a DomainBoundary-excluded patch is NEVER
+// dropped. Its raw claim — here the own-edge interval of each excluded cell, the two
+// cut-touching cells [0, 0.0625] and [0.0625, 0.125] of both long edges of the sheared lead
+// — keeps the device's raw within-R energy in the corrected interface energies (fixed trace
+// / fixed flux on the raw field, self-consistent on the corrected field), reported per type
+// in surface-response-domain-boundary-energy.csv as the DomainBoundary share. On the
+// out-of-plane-sheared cut (a non-vertical truncation face: the Unsupported class of the
+// mirror rule, so F-DB-a is the whole correction) with the isolated-edge library alone
+// (corners Missing -> uncovered) the within-R raw energy is partitioned EXACTLY by the
+// nearest perimeter foot into the DomainBoundary claims, the uncovered corner windows and
+// the applied cells (decision 366 Region entries on the same quadrature: the long edges'
+// [0.125, 0.3] and the cap's [0.45, 0.55]): ft = E_out + models + uncovered +
+// domainboundary to 1e-10, DB + uncovered = within-R - applied cells to 1e-9, the
+// DomainBoundary and uncovered portions pairwise disjoint; with the full library (corners
+// matched, nothing uncovered) ft = E_out + models + domainboundary and the raw outputs are
+// byte-identical.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic DomainBoundary claims keep their raw energy (F-DB-a)",
+                 "[electrostaticsolver][surfaceresponseoperator][domainboundary][3d]"
+                 "[Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double shear = 0.45;
+  constexpr double R = 0.2;
+  const fs::path mesh_path = temp.temp_dir / "domain-boundary-lead.mesh";
+  const auto basis_path = temp.temp_dir / "domain-boundary-basis-points.csv";
+  const auto full_library_path = temp.temp_dir / "fabrication-process-db-full.json";
+  const auto edge_library_path = temp.temp_dir / "fabrication-process-db-edges.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      mfem::Mesh serial = MakeSerialObliqueCutLeadMesh(shear, false);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-db-full";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    {
+      std::ofstream output(full_library_path);
+      output << library.dump(2) << "\n";
+    }
+    json edges = library;
+    edges["Name"] = "unit-test-process-db-edges";
+    edges["Models"] = json::array();
+    for (const auto &model : library["Models"])
+    {
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        edges["Models"].push_back(model);
+      }
+    }
+    REQUIRE(edges["Models"].size() == 1);
+    std::ofstream output(edge_library_path);
+    output << edges.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  json config = IslandConfig();
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  // The applied cells as decision-366 Region entries (half-open along, transverse <= R):
+  // the long edges beyond the two excluded cells, [0.125, 0.3] (the corner window begins
+  // at 0.5 - R), and the cap between the corner windows.
+  auto &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+  const json target = dielectric[0];
+  int index = 5;
+  for (const std::array<double, 6> &segment :
+       {std::array<double, 6>{0.25, 0.5, 0.125, 0.25, 0.5, 0.5 - R},
+        std::array<double, 6>{0.25 + R, 0.5, 0.5, 0.75 - R, 0.5, 0.5},
+        std::array<double, 6>{0.75, 0.5, 0.125, 0.75, 0.5, 0.5 - R}})
+  {
+    json cell = target;
+    cell["Index"] = index++;
+    cell.erase("AutomaticEdges");
+    cell.erase("EdgeDistances");
+    cell.erase("EdgeFrameNormal");
+    cell["Region"] = {
+        {"Segments", {segment}}, {"Distance", R}, {"Normal", {0.0, 1.0, 0.0}}};
+    dielectric.push_back(cell);
+  }
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  correction["CorrectionMode"] = "Both";
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  const fs::path full_dir = temp.temp_dir / "db-full";
+  const fs::path edges_dir = temp.temp_dir / "db-edges";
+  config["Problem"]["Output"] = full_dir.string();
+  correction["Library"] = full_library_path.string();
+  correction["UnmatchedPolicy"] = "Error";
+  test::RunElectrostatic(config);
+  config["Problem"]["Output"] = edges_dir.string();
+  correction["Library"] = edge_library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  test::RunElectrostatic(config);
+  Mpi::Barrier(Mpi::World());
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+
+  auto ModelEnergySum = [&](const fs::path &dir, int evaluation)
+  {
+    const Table models = test::LoadCsv(dir / "surface-response-model-energy.csv");
+    const Column &eval = test::ColumnByHeader(models, "evaluation");
+    const Column &energy = test::ColumnByHeader(models, "fabricated surface energy[4] (J)");
+    double sum = 0.0;
+    for (std::size_t i = 0; i < eval.data.size(); i++)
+    {
+      if (static_cast<int>(std::lround(eval.data[i])) == evaluation)
+      {
+        sum += energy.data[i];
+      }
+    }
+    return sum;
+  };
+  auto OutsideEnergy = [&](const fs::path &dir)
+  {
+    const Table edge = test::LoadCsv(dir / "surface-Q-edge.csv");
+    const Column &outside = test::ColumnByHeader(edge, "E_out (J)");
+    REQUIRE(outside.data.size() == 1);
+    return outside.data[0];
+  };
+  auto RawEnergy = [&](const fs::path &dir, int interface_index)
+  {
+    const Table surface = test::LoadCsv(dir / "surface-Q.csv");
+    const Table domain = test::LoadCsv(dir / "domain-E.csv");
+    const Column &participation =
+        test::ColumnByHeader(surface, fmt::format("p_surf[{}]", interface_index));
+    const Column &energy = test::ColumnByHeader(domain, "E_elec (J)");
+    REQUIRE(participation.data.size() == 1);
+    REQUIRE(energy.data.size() == 1);
+    return participation.data[0] * energy.data[0];
+  };
+  // The per-type energy table of a run keyed by (evaluation, type).
+  struct TypeTable
+  {
+    std::map<std::pair<int, std::string>, std::vector<std::string>> rows;
+    std::size_t portions = 0, length = 0, energy = 0, share = 0, extra = 0;
+  };
+  auto ReadTypeTable =
+      [&](const fs::path &path, const std::string &label, const std::string &extra)
+  {
+    const test::TextCsv csv = test::ReadTextCsv(path);
+    TypeTable table;
+    const std::size_t type = csv.Column("type"), evaluation = csv.Column("evaluation");
+    table.portions = csv.Column("portions");
+    table.length = csv.Column("length (m)");
+    table.extra = csv.Column(extra);
+    table.energy = csv.Column(label + " raw energy[4] (J)");
+    table.share = csv.Column(label + " share[4]");
+    for (const auto &row : csv.rows)
+    {
+      table.rows[{std::stoi(row[evaluation]), row[type]}] = row;
+    }
+    return table;
+  };
+  auto CorrectedEnergies = [&](const fs::path &dir)
+  {
+    const Table corrected = test::LoadCsv(dir / "surface-Q-corrected.csv");
+    REQUIRE(corrected.n_rows() == 1);
+    return std::array<double, 3>{
+        test::ColumnByHeader(corrected, "E_surf postprocessed fixed-trace[4] (J)").data[0],
+        test::ColumnByHeader(corrected, "E_surf postprocessed fixed-flux[4] (J)").data[0],
+        test::ColumnByHeader(corrected, "E_surf corrected[4] (J)").data[0]};
+  };
+  // The segments of a record's portion list as (P0, P1) pairs.
+  using Segment = std::array<std::array<double, 3>, 2>;
+  auto Portions = [](const json &list)
+  {
+    std::vector<Segment> segments;
+    for (const auto &entry : list)
+    {
+      segments.push_back({entry["P0"].get<std::array<double, 3>>(),
+                          entry["P1"].get<std::array<double, 3>>()});
+    }
+    return segments;
+  };
+  // The overlap length of two collinear segments (0 when not collinear or disjoint).
+  auto Overlap = [](const Segment &a, const Segment &b)
+  {
+    std::array<double, 3> direction{};
+    double length = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      direction[d] = a[1][d] - a[0][d];
+      length += direction[d] * direction[d];
+    }
+    length = std::sqrt(length);
+    for (int d = 0; d < 3; d++)
+    {
+      direction[d] /= length;
+    }
+    auto Along = [&](const std::array<double, 3> &p, double &transverse)
+    {
+      double along = 0.0;
+      std::array<double, 3> r{};
+      for (int d = 0; d < 3; d++)
+      {
+        r[d] = p[d] - a[0][d];
+        along += r[d] * direction[d];
+      }
+      transverse = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        transverse += std::pow(r[d] - along * direction[d], 2);
+      }
+      transverse = std::sqrt(transverse);
+      return along;
+    };
+    double t0 = 0.0, t1 = 0.0;
+    const double b0 = Along(b[0], t0), b1 = Along(b[1], t1);
+    if (t0 > 1.0e-9 || t1 > 1.0e-9)
+    {
+      return 0.0;
+    }
+    return std::max(0.0,
+                    std::min(length, std::max(b0, b1)) - std::max(0.0, std::min(b0, b1)));
+  };
+
+  // Full library: nothing uncovered, four DomainBoundary cells kept; ft = E_out + models +
+  // domainboundary (the identity closes only because the hole is filled).
+  REQUIRE(fs::is_regular_file(full_dir / "surface-response-domain-boundary-energy.csv"));
+  CHECK_FALSE(fs::exists(full_dir / "surface-response-uncovered-energy.csv"));
+  {
+    const TypeTable db =
+        ReadTypeTable(full_dir / "surface-response-domain-boundary-energy.csv",
+                      "domainboundary", "geometric cells");
+    // One source x 3 evaluations x (the "isolated edge" model topology + Total).
+    REQUIRE(db.rows.size() == 6);
+    REQUIRE(db.rows.count({0, "isolated edge"}) == 1);
+    const auto &row = db.rows.at({0, "isolated edge"});
+    CHECK(std::stoi(row[db.portions]) == 4);
+    CHECK(std::stoi(row[db.extra]) == 4);
+    CHECK_THAT(std::stod(row[db.length]), WithinAbs(4.0 * 0.0625, 1.0e-9));
+    const double db_ft = std::stod(db.rows.at({0, "Total"})[db.energy]);
+    CHECK(db_ft > 0.0);
+    CHECK(std::stod(row[db.energy]) == db_ft);
+    CHECK(std::stod(db.rows.at({1, "Total"})[db.energy]) == db_ft);
+    const auto energies = CorrectedEnergies(full_dir);
+    const double outside = OutsideEnergy(full_dir);
+    CHECK_THAT(energies[0],
+               WithinRel(outside + ModelEnergySum(full_dir, 0) + db_ft, 1.0e-10));
+    CHECK_THAT(energies[1],
+               WithinRel(outside + ModelEnergySum(full_dir, 1) + db_ft, 1.0e-10));
+    CHECK_THAT(std::stod(db.rows.at({0, "Total"})[db.share]),
+               WithinRel(db_ft / energies[0], 1.0e-9));
+    const double db_sc = std::stod(db.rows.at({2, "Total"})[db.energy]);
+    REQUIRE(std::isfinite(energies[2]));
+    // The corrected field of this tiny fixture is weaker near the cut: the same order,
+    // not the same value.
+    CHECK(db_sc > 0.0);
+    CHECK(db_sc != db_ft);
+    CHECK(db_sc < 2.0 * db_ft);
+    CHECK_THAT(std::stod(db.rows.at({2, "Total"})[db.share]),
+               WithinRel(db_sc / energies[2], 1.0e-9));
+    std::ifstream metadata_input(full_dir / "palace.json");
+    REQUIRE(metadata_input);
+    const auto metadata = json::parse(metadata_input);
+    const auto &record =
+        metadata.at("SurfaceResponse").at("Diagnostics").at("DomainBoundaryExclusions");
+    CHECK(record.at("Count").get<int>() == 4);
+    const auto &raw = record.at("RawPortions");
+    CHECK(raw.at("Count").get<int>() == 4);
+    CHECK(raw.at("GeometricCells").get<int>() == 4);
+    CHECK(raw.at("DuplicatePatches").get<int>() == 0);
+    CHECK_THAT(raw.at("Length").get<double>(), WithinAbs(0.25, 1.0e-9));
+    CHECK(raw.at("ByType").at("isolated edge").at("Portions").get<int>() == 4);
+    // Every portion lies on a long edge's line (x = 0.25 or 0.75, y = 0.5) within
+    // [0, 0.125] of the cut, each of length 0.0625, pairwise disjoint.
+    const auto portions = Portions(raw.at("Portions"));
+    for (const auto &portion : portions)
+    {
+      for (const auto &end : portion)
+      {
+        CHECK((std::abs(end[0] - 0.25) < 1.0e-9 || std::abs(end[0] - 0.75) < 1.0e-9));
+        CHECK_THAT(end[1], WithinAbs(0.5, 1.0e-9));
+        CHECK(end[2] >= -1.0e-9);
+        CHECK(end[2] <= 0.125 + 1.0e-9);
+      }
+      CHECK_THAT(std::abs(portion[1][2] - portion[0][2]), WithinAbs(0.0625, 1.0e-9));
+    }
+    for (std::size_t i = 0; i < portions.size(); i++)
+    {
+      for (std::size_t j = i + 1; j < portions.size(); j++)
+      {
+        CHECK(Overlap(portions[i], portions[j]) <= 1.0e-9);
+      }
+    }
+  }
+
+  // Edge-only library: the raw outputs are byte-identical to the full run (the same raw
+  // solve); the corner windows are uncovered, the four cells DomainBoundary, and the
+  // nearest-foot partition of the within-R raw energy is exact: within - applied cells =
+  // uncovered + domainboundary, the two portion sets disjoint.
+  for (const char *file : {"terminal-C.csv", "terminal-V.csv", "domain-E.csv",
+                           "surface-Q.csv", "surface-Q-edge.csv"})
+  {
+    INFO(file);
+    CHECK(test::ReadFile(full_dir / file) == test::ReadFile(edges_dir / file));
+  }
+  REQUIRE(fs::is_regular_file(edges_dir / "surface-response-uncovered-energy.csv"));
+  REQUIRE(fs::is_regular_file(edges_dir / "surface-response-domain-boundary-energy.csv"));
+  {
+    const TypeTable uncovered =
+        ReadTypeTable(edges_dir / "surface-response-uncovered-energy.csv", "uncovered",
+                      "clipped by spatial support (m)");
+    const TypeTable db =
+        ReadTypeTable(edges_dir / "surface-response-domain-boundary-energy.csv",
+                      "domainboundary", "geometric cells");
+    const double uncovered_ft =
+        std::stod(uncovered.rows.at({0, "Total"})[uncovered.energy]);
+    const double db_ft = std::stod(db.rows.at({0, "Total"})[db.energy]);
+    CHECK(uncovered_ft > 0.0);
+    CHECK(db_ft > 0.0);
+    CHECK_THAT(std::stod(db.rows.at({0, "Total"})[db.length]), WithinAbs(0.25, 1.0e-9));
+    const auto energies = CorrectedEnergies(edges_dir);
+    const double outside = OutsideEnergy(edges_dir);
+    CHECK_THAT(
+        energies[0],
+        WithinRel(outside + ModelEnergySum(edges_dir, 0) + uncovered_ft + db_ft, 1.0e-10));
+    CHECK_THAT(
+        energies[1],
+        WithinRel(outside + ModelEnergySum(edges_dir, 1) + uncovered_ft + db_ft, 1.0e-10));
+    const double within = RawEnergy(edges_dir, 4) - outside;
+    const double cells =
+        RawEnergy(edges_dir, 5) + RawEnergy(edges_dir, 6) + RawEnergy(edges_dir, 7);
+    CHECK(within > cells + uncovered_ft);
+    CHECK_THAT(uncovered_ft + db_ft, WithinRel(within - cells, 1.0e-9));
+    std::ifstream metadata_input(edges_dir / "palace.json");
+    REQUIRE(metadata_input);
+    const auto metadata = json::parse(metadata_input);
+    const auto &diagnostics = metadata.at("SurfaceResponse").at("Diagnostics");
+    const auto db_portions = Portions(
+        diagnostics.at("DomainBoundaryExclusions").at("RawPortions").at("Portions"));
+    const auto uncovered_portions = Portions(diagnostics.at("Uncovered").at("Portions"));
+    REQUIRE(db_portions.size() == 4);
+    REQUIRE(uncovered_portions.size() == 8);
+    for (const auto &a : db_portions)
+    {
+      for (const auto &b : uncovered_portions)
+      {
+        CHECK(Overlap(a, b) <= 1.0e-9);
+      }
+    }
+  }
+#endif
+}
+
+// The SYMMETRY TEST (boundary-cut DESIGN 4.1, M1): for the mirror-symmetric pad solved on
+// the FULL domain (no cut through its features) and on the HALF (the wall as a natural
+// face), the half's corrected energies under F-DB-c equal HALF the full's: raw, E_out,
+// models, uncovered and the per-type terms. S-45 (s = 1): the short edges meet the wall at
+// 45 degrees, the virtual corners are 90 degrees (convex at the top, concave at the bottom:
+// exact fixture models), s = R so s_half = R and the second-order term is exactly zero (a
+// 1e-9-exact case, decision 454 MINOR-4); the pad's real corners at x = 0.5 are 45 / 135
+// degrees (Missing in the fixture library: uncovered on both sides). S-90 (s = 0): the
+// perpendicular meeting forms no feature (Continued) and the half is bitwise the straight
+// continuation. The control with Mirror "Off": every cut-crossing cell is a DomainBoundary
+// exclusion whose raw claim is kept (F-DB-a), the ft identity still closes, and the half
+// under-reads the full by the raw-vs-model difference of those cells (reported).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic mirror symmetry: half with F-DB-c = full / 2",
+                 "[electrostaticsolver][surfaceresponseoperator][domainboundary][mirror]"
+                 "[symmetry][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const auto basis_path = temp.temp_dir / "mirror-pad-basis-points.csv";
+  const auto library_path = temp.temp_dir / "fabrication-process-mirror-pad.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    // The isolated edge, the convex 90 and the concave 90 corner (the concave fixture's
+    // corner relabelled: the test is the symmetry identity, not the coupon physics).
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-mirror-pad";
+    // The identity test needs symmetric PLACEMENT, not coupon physics: the fixture's
+    // isolated / convex-90 models are relabelled into the concave 90, the convex / concave
+    // 120 and 152 corners (the S-60 / S-76 virtual corners: s_half > R, the trim path) and
+    // the same-conductor gap / strip 0.25 (the parallel cases at d = h = 0.125 < R).
+    json convex, isolated;
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+        isolated = model;
+      }
+      if (model["Topology"] == "ConvexCorner")
+      {
+        convex = model;
+      }
+    }
+    REQUIRE(!convex.is_null());
+    REQUIRE(!isolated.is_null());
+    for (const auto &[topology, angle] :
+         std::vector<std::pair<std::string, double>>{{"ConcaveCorner", 90.0},
+                                                     {"ConvexCorner", 120.0},
+                                                     {"ConcaveCorner", 120.0},
+                                                     {"ConvexCorner", 152.0},
+                                                     {"ConcaveCorner", 152.0}})
+    {
+      json corner = convex;
+      corner["Name"] = (topology == "ConvexCorner" ? "convex-corner-" : "concave-corner-") +
+                       std::to_string(static_cast<int>(angle));
+      corner["Topology"] = topology;
+      corner["Angle"] = angle;
+      library["Models"].push_back(corner);
+    }
+    for (const char *topology : {"SameConductorGap", "SameConductorStrip"})
+    {
+      json pair = isolated;
+      pair["Name"] = std::string(topology) + "-0.25";
+      pair["Topology"] = topology;
+      pair["Separation"] = 0.25;
+      pair["SeparationTolerance"] = 1.0e-8;
+      pair["Reference"] = {0.0, 0.0, 0.0};
+      library["Models"].push_back(pair);
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  struct Energies
+  {
+    double raw = 0.0, outside = 0.0;
+    std::array<double, 3> corrected{};  // ft, ff, sc
+    std::array<double, 2> models{};     // evaluation 0, 1
+    double uncovered_ft = 0.0, domain_boundary_ft = 0.0;
+    // Per applied patch (0-based index): its ft SA energy and its cell length (the first
+    // source, evaluation 0), from the PatchEnergy export.
+    std::map<int, std::pair<double, double>> patch_energy;
+    // Per model name: its ft SA energy (evaluation 0), from
+    // surface-response-model-energy.csv and the record's ModelCatalog.
+    std::map<std::string, double> model_energy;
+    json diagnostics;
+    json manifest_summary;
+  };
+  auto Run = [&](const std::string &name, double s, bool full, const std::string &mirror,
+                 const std::vector<PadRectangle> &pads = kDefaultPads, int nz = 8)
+  {
+    const fs::path mesh_path = temp.temp_dir / (name + ".mesh");
+    if (Mpi::Root(Mpi::World()))
+    {
+      mfem::Mesh serial = MakeSerialMirrorPadMesh(s, full, pads, nz);
+      std::ofstream output(mesh_path);
+      // Full precision: the sheared coordinates (s = 1 / tan theta) are irrational, and a
+      // wall written at 6 digits is no longer one plane for the truncation-plane fit.
+      output.precision(17);
+      serial.Print(output);
+    }
+    Mpi::Barrier(Mpi::World());
+    json config = IslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;
+    // The ground is the far face y = 1 (and its image); every other wall is natural. The
+    // pad's short edges meet the walls x = 0 and x = 1 (and, in the full mesh, the image of
+    // x = 0); the walls z = 0 / z = 2 are 0.75 > 3 R from the pad (outside the band).
+    config["Boundaries"]["Ground"]["Attributes"] = {4};
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["TraceCoupling"] = "SurfaceMortar";
+    correction["MortarOversampling"] = 2;
+    correction["CorrectionMode"] = "Both";
+    correction["PatchEnergy"] = true;
+    correction["DomainBoundary"] = {{"Mirror", mirror}};
+    config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 600}};
+    const fs::path dir = temp.temp_dir / name;
+    config["Problem"]["Output"] = dir.string();
+    if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+    {
+      // Evidence export (the lane record): the dry run, mesh, library and config of this
+      // case into the given directory, and its postpro after the run.
+      IoData iodata(config, false);
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      mfem::Mesh serial_debug = MakeSerialMirrorPadMesh(s, full, pads, nz);
+      meshes.push_back(std::make_unique<Mesh>(
+          std::make_unique<mfem::ParMesh>(Mpi::World(), serial_debug)));
+      const fs::path debug = fs::path(debug_dir) / name;
+      fs::create_directories(debug);
+      WriteSurfaceResponseRequirements(iodata, *meshes.front(),
+                                       (debug / "requirements.json").string());
+      if (Mpi::Root(Mpi::World()))
+      {
+        fs::copy_file(mesh_path, debug / "mesh.mesh", fs::copy_options::overwrite_existing);
+        fs::copy_file(library_path, debug / "library.json",
+                      fs::copy_options::overwrite_existing);
+        fs::copy_file(basis_path, debug / "basis.csv",
+                      fs::copy_options::overwrite_existing);
+        json debug_config = config;
+        debug_config["Model"]["Mesh"] = "mesh.mesh";
+        debug_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+            "library.json";
+        debug_config["Problem"]["Output"] = "postpro";
+        std::ofstream output(debug / "config.json");
+        output << debug_config.dump(2) << "\n";
+      }
+    }
+    test::RunElectrostatic(config);
+    Mpi::Barrier(Mpi::World());
+    Energies e;
+    if (!Mpi::Root(Mpi::World()))
+    {
+      return e;
+    }
+    if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+    {
+      fs::copy(dir, fs::path(debug_dir) / name / "postpro",
+               fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    }
+    {
+      const Table surface = test::LoadCsv(dir / "surface-Q.csv");
+      const Table domain = test::LoadCsv(dir / "domain-E.csv");
+      e.raw = test::ColumnByHeader(surface, "p_surf[4]").data[0] *
+              test::ColumnByHeader(domain, "E_elec (J)").data[0];
+      const Table edge = test::LoadCsv(dir / "surface-Q-edge.csv");
+      e.outside = test::ColumnByHeader(edge, "E_out (J)").data[0];
+      const Table corrected = test::LoadCsv(dir / "surface-Q-corrected.csv");
+      e.corrected = {
+          test::ColumnByHeader(corrected, "E_surf postprocessed fixed-trace[4] (J)")
+              .data[0],
+          test::ColumnByHeader(corrected, "E_surf postprocessed fixed-flux[4] (J)").data[0],
+          test::ColumnByHeader(corrected, "E_surf corrected[4] (J)").data[0]};
+      const Table models = test::LoadCsv(dir / "surface-response-model-energy.csv");
+      const Column &eval = test::ColumnByHeader(models, "evaluation");
+      const Column &energy =
+          test::ColumnByHeader(models, "fabricated surface energy[4] (J)");
+      for (std::size_t i = 0; i < eval.data.size(); i++)
+      {
+        const int evaluation = static_cast<int>(std::lround(eval.data[i]));
+        if (evaluation < 2)
+        {
+          e.models[evaluation] += energy.data[i];
+        }
+      }
+      auto TotalRow = [&](const fs::path &path, const std::string &label)
+      {
+        if (!fs::is_regular_file(path))
+        {
+          return 0.0;
+        }
+        const test::TextCsv csv = test::ReadTextCsv(path);
+        const std::size_t type = csv.Column("type"), evaluation = csv.Column("evaluation");
+        const std::size_t energy_column = csv.Column(label + " raw energy[4] (J)");
+        for (const auto &row : csv.rows)
+        {
+          if (row[type] == "Total" && std::stoi(row[evaluation]) == 0)
+          {
+            return std::stod(row[energy_column]);
+          }
+        }
+        return 0.0;
+      };
+      e.uncovered_ft = TotalRow(dir / "surface-response-uncovered-energy.csv", "uncovered");
+      e.domain_boundary_ft =
+          TotalRow(dir / "surface-response-domain-boundary-energy.csv", "domainboundary");
+      {
+        const Table patches = test::LoadCsv(dir / "surface-response-patch-energy.csv");
+        const Column &eval = test::ColumnByHeader(patches, "evaluation");
+        const Column &index = test::ColumnByHeader(patches, "patch");
+        const Column &begin = test::ColumnByHeader(patches, "cell begin (m)");
+        const Column &end = test::ColumnByHeader(patches, "cell end (m)");
+        const Column &energy =
+            test::ColumnByHeader(patches, "fabricated surface energy[4] (J)");
+        for (std::size_t i = 0; i < eval.data.size(); i++)
+        {
+          if (static_cast<int>(std::lround(eval.data[i])) == 0)
+          {
+            e.patch_energy[static_cast<int>(std::lround(index.data[i])) - 1] = {
+                energy.data[i], end.data[i] - begin.data[i]};
+          }
+        }
+      }
+      std::ifstream metadata_input(dir / "palace.json");
+      REQUIRE(metadata_input);
+      const json metadata = json::parse(metadata_input);
+      e.diagnostics = metadata.at("SurfaceResponse").at("Diagnostics");
+      {
+        std::map<int, std::string> names;
+        for (const auto &model : metadata.at("SurfaceResponse").at("ModelCatalog"))
+        {
+          names[model.at("Index").get<int>()] = model.at("Name").get<std::string>();
+        }
+        const Table models = test::LoadCsv(dir / "surface-response-model-energy.csv");
+        const Column &eval = test::ColumnByHeader(models, "evaluation");
+        const Column &index = test::ColumnByHeader(models, "model");
+        const Column &energy =
+            test::ColumnByHeader(models, "fabricated surface energy[4] (J)");
+        for (std::size_t i = 0; i < eval.data.size(); i++)
+        {
+          if (static_cast<int>(std::lround(eval.data[i])) == 0)
+          {
+            e.model_energy[names.at(static_cast<int>(std::lround(index.data[i])))] +=
+                energy.data[i];
+          }
+        }
+      }
+    }
+    return e;
+  };
+  auto CheckIdentity = [&](const Energies &e)
+  {
+    CHECK_THAT(e.corrected[0],
+               WithinRel(e.outside + e.models[0] + e.uncovered_ft + e.domain_boundary_ft,
+                         1.0e-10));
+    CHECK_THAT(e.corrected[1],
+               WithinRel(e.outside + e.models[1] + e.uncovered_ft + e.domain_boundary_ft,
+                         1.0e-10));
+  };
+
+  SECTION("S-45: the virtual 90-degree corners (s_half = R, exact to 1e-9)")
+  {
+    const Energies full = Run("mirror-pad-45-full", 1.0, true, "Natural");
+    const Energies half = Run("mirror-pad-45-half", 1.0, false, "Natural");
+    // The checks run on the root; every rank stays in the section (a return inside a
+    // SECTION would end the test body early on that rank and desynchronise Catch2's
+    // section discovery across the ranks: the next pass then hangs in a collective).
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      // The raw interface energies and E_out: the half is exactly half the full (the
+      // discrete half problem is the restriction of the symmetric full one).
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      // Nothing is a DomainBoundary exclusion in the half: its cut-crossing cells are
+      // Mirrored, the two virtual corners carry weight 1 / 2 and a mirror arm trim.
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Count").get<int>() == 0);
+      CHECK(exclusions.at("Mirrored").at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Mirrored").at("Points").get<int>() > 0);
+      // Four virtual corners (two per wall: convex at the top edge, concave at the bottom).
+      CHECK(exclusions.at("Mirrored").at("HalfVertices").get<int>() == 4);
+      CHECK(exclusions.at("Mirrored").at("ArmTrims").get<int>() == 4);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      INFO(band.dump());
+      REQUIRE(band.at("MirrorFormedFeatures").size() == 4);
+      std::map<std::string, int> formed;
+      for (const auto &entry : band.at("MirrorFormedFeatures"))
+      {
+        formed[entry.at("Type").get<std::string>()]++;
+        CHECK(entry.at("Status") == "Modelled");
+        CHECK_THAT(entry.at("Key").get<std::string>(),
+                   ContainsSubstring("\"AngleDegrees\":90.0"));
+      }
+      CHECK(formed["ConvexCorner"] == 2);
+      CHECK(formed["ConcaveCorner"] == 2);
+      CHECK(half.domain_boundary_ft == 0.0);
+      // The full has no cut through the pad: nothing mirrored, nothing excluded.
+      // The full has no cut through the pad at the (former) wall x = 1; its ends at x = 0
+      // and the image wall are virtual corners on both sides alike.
+      CHECK(full.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
+      CHECK(full.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").size() == 4);
+      // THE IDENTITY: the half's model energies, uncovered energy and corrected energies
+      // are half the full's (the half-energy identity of DESIGN 2.2.4; the s_half term is
+      // zero at 90 degrees).
+      CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.models[1], WithinRel(full.models[1], 1.0e-9));
+      CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
+      // Per model (isolated, convex-corner-90, concave-corner-90): the half's two
+      // half-weight virtual corners at the cut + two at the outer wall against the full's
+      // two real corners + four virtual ones, class by class (the aggregates above could
+      // hide a transfer between classes; patch indices differ between the meshes, so the
+      // comparison is per model, not per patch).
+      REQUIRE(full.model_energy.size() == 3);
+      REQUIRE(half.model_energy.size() == 3);
+      for (const auto &[name, energy] : full.model_energy)
+      {
+        INFO("model " << name);
+        REQUIRE(half.model_energy.count(name) == 1);
+        CHECK_THAT(2.0 * half.model_energy.at(name), WithinRel(energy, 1.0e-9));
+      }
+      // The self-consistent column: the symmetric sc solution's restriction (accepted on
+      // both or unavailable on both). 1e-5, not 1e-9: the sc field is the converged iterate
+      // of the self-consistent solve (its stopping tolerance, not roundoff, sets the two
+      // meshes' agreement); the ft / ff columns above are direct evaluations.
+      if (std::isfinite(full.corrected[2]) && std::isfinite(half.corrected[2]))
+      {
+        CHECK_THAT(2.0 * half.corrected[2], WithinRel(full.corrected[2], 1.0e-5));
+      }
+    }
+  }
+
+  SECTION("S-90: a perpendicular meeting forms nothing (Continued) and is half the full")
+  {
+    const Energies full = Run("mirror-pad-90-full", 0.0, true, "Natural");
+    const Energies half = Run("mirror-pad-90-half", 0.0, false, "Natural");
+    // The checks run on the root; every rank stays in the section (a return inside a
+    // SECTION would end the test body early on that rank and desynchronise Catch2's
+    // section discovery across the ranks: the next pass then hangs in a collective).
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      CHECK(band.at("MirrorFormedFeatures").empty());
+      CHECK(band.at("ContinuedFeatures").get<int>() == 2);  // the two short edges
+      CHECK(half.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
+    }
+  }
+
+  // The oblique cases with s_half > R (decision 473 (2): the trim path and the second-order
+  // term): theta = atan(1 / s) exactly 60 / 76 degrees, virtual corners 120 / 152 degrees
+  // (relabelled exact models), s = R / max(|cos|, |sin|) = 1.1547 R / 1.1326 R, s_half =
+  // 1.0774 R / 1.0663 R. The identity 2 x half - full = sum over the virtual corners of
+  // (E[s_half, s] - E[s_half, R]) on the real arm (DESIGN 2.2.3), bounded by the arm's
+  // energy density at s_half x (s - R) / 2: measured on the half's first kept arm cell (the
+  // MirrorArmTrim record names the trimmed cells) and recorded with the measured residual.
+  auto ObliqueCase = [&](const std::string &label, double theta_degrees)
+  {
+    const double s = 1.0 / std::tan(theta_degrees * M_PI / 180.0);
+    const Energies full = Run("mirror-pad-" + label + "-full", s, true, "Natural");
+    const Energies half = Run("mirror-pad-" + label + "-half", s, false, "Natural");
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      INFO(half.diagnostics.at("MirrorBand").dump());
+      INFO(half.diagnostics.at("MirrorArmTrim").dump());
+      CHECK(exclusions.at("Count").get<int>() == 0);
+      CHECK(exclusions.at("Mirrored").at("HalfVertices").get<int>() == 4);
+      const auto &trims = half.diagnostics.at("MirrorArmTrim");
+      REQUIRE(trims.at("Count").get<int>() == 4);
+      const double angle = 2.0 * theta_degrees;
+      const double exit = R / std::max(std::abs(std::cos(angle * M_PI / 180.0)),
+                                       std::abs(std::sin(angle * M_PI / 180.0)));
+      const double s_half = 0.5 * (R + exit);
+      double bound = 0.0;
+      int trimmed_cells = 0;
+      for (const auto &corner : trims.at("Corners"))
+      {
+        CHECK_THAT(corner.at("AngleDegrees").get<double>(), WithinAbs(angle, 1.0e-6));
+        CHECK_THAT(corner.at("HalfStartOverR").get<double>(),
+                   WithinAbs(s_half / R, 1.0e-9));
+        CHECK_THAT(corner.at("TrimmedLength").get<double>(), WithinAbs(s_half - R, 1.0e-9));
+        CHECK(corner.at("Weight").get<double>() == 0.5);
+        // The real arm's first cell was clipped to begin at s_half (not wholly removed at
+        // this cell size); its energy density bounds the second-order term.
+        REQUIRE(!corner.at("Patches").empty());
+        double density = 0.0;
+        for (const auto &patch : corner.at("Patches"))
+        {
+          const auto it = half.patch_energy.find(patch.get<int>());
+          REQUIRE(it != half.patch_energy.end());
+          CHECK(it->second.second > 0.0);
+          density = std::max(density, it->second.first / it->second.second);
+          trimmed_cells++;
+        }
+        bound += density * (exit - R) / 2.0;
+      }
+      CHECK(trimmed_cells >= 4);
+      const double residual = 2.0 * half.models[0] - full.models[0];
+      INFO("residual 2 x half - full (models, ft) = " << residual << " J; bound " << bound
+                                                      << " J; full " << full.models[0]);
+      if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+      {
+        // The lane record: the measured second-order residual beside its bound.
+        std::ofstream record(fs::path(debug_dir) / ("symmetry-" + label + ".json"));
+        record << json{{"Case", label},
+                       {"ThetaDegrees", theta_degrees},
+                       {"CornerAngleDegrees", angle},
+                       {"ExitOverR", exit / R},
+                       {"HalfStartOverR", s_half / R},
+                       {"FullModels", full.models[0]},
+                       {"TwiceHalfModels", 2.0 * half.models[0]},
+                       {"Residual", residual},
+                       {"ResidualRelative", residual / full.models[0]},
+                       {"Bound", bound},
+                       {"BoundRelative", bound / full.models[0]},
+                       {"FullFt", full.corrected[0]},
+                       {"TwiceHalfFt", 2.0 * half.corrected[0]},
+                       {"FtResidualRelative",
+                        (2.0 * half.corrected[0] - full.corrected[0]) / full.corrected[0]}}
+                      .dump(2)
+               << "\n";
+      }
+      CHECK(std::abs(residual) <= bound + 1.0e-9 * full.models[0]);
+      CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+      CHECK(std::abs(2.0 * half.corrected[0] - full.corrected[0]) <=
+            bound + 1.0e-9 * full.corrected[0]);
+      CHECK(std::abs(2.0 * half.corrected[1] - full.corrected[1]) <=
+            bound + 1.0e-9 * full.corrected[1]);
+    }
+  };
+
+  SECTION("S-60: virtual 120-degree corners, s_half = 1.0774 R (the trim path)")
+  {
+    ObliqueCase("60", 60.0);
+  }
+
+  SECTION("S-76: virtual 152-degree corners, s_half = 1.0663 R")
+  {
+    ObliqueCase("76", 76.0);
+  }
+
+  // The parallel cases (s = 0, the wall x = 1): an edge parallel to the wall at d = h =
+  // 0.125
+  // (< R) with the gap toward the wall (the slot's left edge: same-conductor GAP 2 d = 0.25
+  // with the image) or with metal toward the wall (the L's strip along the wall: same-
+  // conductor STRIP 0.25). The pair is placed on its real side only (side factor 1 / 2; the
+  // image side frames the midline); the full has the real pair. Exact: <= 1e-9.
+  // The pair must be longer than the cluster reach at its ends (2 R each side): a slot /
+  // strip of 1.25 - 1.375 (> 6 R) on the nz = 16 grid (h_z = 0.125), its middle a clean
+  // pair.
+  auto ParallelCase = [&](const std::string &label, const std::vector<PadRectangle> &pads,
+                          const std::string &type)
+  {
+    const Energies full =
+        Run("mirror-pad-" + label + "-full", 0.0, true, "Natural", pads, 16);
+    const Energies half =
+        Run("mirror-pad-" + label + "-half", 0.0, false, "Natural", pads, 16);
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      INFO(band.dump());
+      bool formed = false;
+      for (const auto &entry : band.at("MirrorFormedFeatures"))
+      {
+        if (entry.at("Type") == type)
+        {
+          formed = true;
+          CHECK(entry.at("Status") == "Modelled");
+        }
+      }
+      CHECK(formed);
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      // THE PAIR IDENTITY: the half's real side at its side factor = half the full's pair.
+      const std::string model = type + "-0.25";
+      REQUIRE(half.model_energy.count(model) == 1);
+      REQUIRE(full.model_energy.count(model) == 1);
+      CHECK_THAT(2.0 * half.model_energy.at(model),
+                 WithinRel(full.model_energy.at(model), 1.0e-9));
+      // MISSING-EQUIVALENCE (decision 481): the unmerged mirror-formed cluster at the
+      // pair's end is read as a Missing feature - its OWN cells raw (every DomainBoundary
+      // patch overlaps one of its real portions; none is a pair cell), its NEIGHBOURS
+      // applied: the pair cells whose support reaches the cluster (UnmergedSupportReach,
+      // distance
+      // <= R) keep their model, exactly as next to the full's real Missing cluster - which
+      // is why the pair identity above is exact on both parallel cases.
+      const auto &half_exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      REQUIRE(!half.diagnostics.at("MirrorBand").at("UnmergedFeatures").empty());
+      std::set<int> excluded_patches;
+      for (const auto &patch : half_exclusions.at("Patches"))
+      {
+        excluded_patches.insert(patch.at("Patch").get<int>());
+        CHECK(patch.at("Reason") == "UnmergedTopology");
+        CHECK(patch.at("UnmergedTopology").at("OwnFootprint").get<bool>());
+        CHECK(patch.at("Topology") != "same-conductor gap");
+        CHECK(patch.at("Topology") != "same-conductor strip");
+      }
+      int pair_cells_reaching = 0;
+      for (const auto &reach : half_exclusions.at("UnmergedSupportReach").at("Patches"))
+      {
+        CHECK(reach.at("Distance").get<double>() <= R + 1.0e-9);
+        if (!excluded_patches.count(reach.at("Patch").get<int>()))
+        {
+          pair_cells_reaching++;  // applied although its support reaches the cluster
+        }
+      }
+      CHECK(pair_cells_reaching >= 2);  // one pair cell at each end of the pair
+      const bool clean_ends = half_exclusions.at("Count").get<int>() == 0;
+      if (clean_ends)
+      {
+        // No blocked patch at the pair's ends (the slot: its real clusters at the slot's
+        // mouths are Missing on both meshes - raw uncovered - and the Unmerged
+        // mirror-formed clusters touch them alone): the whole window is exact.
+        CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+        CHECK_THAT(2.0 * half.models[1], WithinRel(full.models[1], 1.0e-9));
+        CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+        CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+        CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
+      }
+      else
+      {
+        // The strip's ends are no symmetric-identity region: the L junction (the half's
+        // real cluster at the bridge; the full's two-corner cluster of the finger root) and
+        // the strip's top against the wall (the top corner 0.125 from the wall with its
+        // image: a two-vertex configuration, Unmerged -> DomainBoundary on the half) are
+        // MISSING configurations whose raw claims differ between the two meshes by
+        // construction - the F-DB-a BRACKET of DESIGN 2.2.5, not the identity. Recorded
+        // (the whole-window residual beside the pair identity above); the Reasons record
+        // names the UnmergedTopology route. Note also the sub-quadrature cells: a
+        // DomainBoundary cell shorter than the quadrature spacing of the interface integral
+        // reads 0 raw energy (the F2 nearest-foot filter is quadrature-resolved; irrelevant
+        // at production cell sizes, recorded here).
+        const double raw_kept = 2.0 * (half.uncovered_ft + half.domain_boundary_ft) +
+                                full.uncovered_ft + full.domain_boundary_ft;
+        const double residual = 2.0 * half.corrected[0] - full.corrected[0];
+        INFO("unmerged ends: residual " << residual << " J; raw kept " << raw_kept);
+        CHECK(half.diagnostics.at("DomainBoundaryExclusions")
+                  .at("Reasons")
+                  .contains("UnmergedTopology"));
+        CHECK(std::abs(residual) < 0.05 * full.corrected[0]);
+        if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+        {
+          std::ofstream record(fs::path(debug_dir) / ("symmetry-" + label + ".json"));
+          record << json{{"Case", label},
+                         {"PairModel", model},
+                         {"FullPair", full.model_energy.at(model)},
+                         {"TwiceHalfPair", 2.0 * half.model_energy.at(model)},
+                         {"FullFt", full.corrected[0]},
+                         {"TwiceHalfFt", 2.0 * half.corrected[0]},
+                         {"Residual", residual},
+                         {"RawKept", raw_kept},
+                         {"HalfDomainBoundary", half.domain_boundary_ft},
+                         {"FullUncovered", full.uncovered_ft}}
+                        .dump(2)
+                 << "\n";
+        }
+      }
+    }
+  };
+
+  SECTION(
+      "S-par-gap: a slot edge parallel to the wall at d = 0.125 (gap 0.25 with the image)")
+  {
+    // The pad z in [0.25, 1.75] with a slot x in [0.875, 1], z in [0.375, 1.625]: three
+    // rectangles.
+    ParallelCase(
+        "par-gap",
+        {{0.0, 0.25, 0.875, 1.75}, {0.875, 0.25, 1.0, 0.375}, {0.875, 1.625, 1.0, 1.75}},
+        "SameConductorGap");
+  }
+
+  SECTION("S-par-strip: a strip along the wall, d = 0.125 (strip 0.25 with the image)")
+  {
+    // An L: the bridge z in [0.25, 0.375] from x = 0 to the wall and the strip x in [0.875,
+    // 1] up to z = 1.75.
+    ParallelCase("par-strip", {{0.0, 0.25, 1.0, 0.375}, {0.875, 0.375, 1.0, 1.75}},
+                 "SameConductorStrip");
+  }
+
+  SECTION("S-corner-box: a pair along one wall meeting the other wall (two planes)")
+  {
+    // The pad x in [0.25, 1], z in [1.0, 1.875] (nz = 16): its top edge runs 0.125 below
+    // the z = 2 wall (a same-conductor GAP 0.25 with the z image, Modelled) and meets the x
+    // = 1 wall perpendicularly (the straight joint continues the pair through the x image);
+    // its top-left corner at (0.25, 1.875) with its z image is a two-vertex configuration
+    // (Unmerged -> DomainBoundary, raw kept) 0.75 > 2 R from the x wall, so it is the SAME
+    // configuration on both sides. Samples of the pair's cells near the box corner lie
+    // beyond the z plane (and are reflected); the composition through both planes is
+    // exercised by the pure-function test. The pair, raw, E_out and DomainBoundary terms
+    // are exact (1e-9); the window to 1e-6 (measured 2.7e-7, recorded).
+    const std::vector<PadRectangle> pads = {{0.25, 1.0, 1.0, 1.875}};
+    const Energies full = Run("mirror-pad-box-full", 0.0, true, "Natural", pads, 16);
+    const Energies half = Run("mirror-pad-box-half", 0.0, false, "Natural", pads, 16);
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      INFO(half.diagnostics.at("MirrorBand").dump());
+      INFO(half.diagnostics.at("DomainBoundaryExclusions").dump());
+      const auto &band = half.diagnostics.at("MirrorBand");
+      bool gap = false;
+      for (const auto &entry : band.at("MirrorFormedFeatures"))
+      {
+        gap = gap ||
+              (entry.at("Type") == "SameConductorGap" && entry.at("Status") == "Modelled");
+      }
+      CHECK(gap);
+      CHECK(!band.at("UnmergedFeatures").empty());
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Reasons").contains("UnmergedTopology"));
+      CHECK(exclusions.at("Mirrored").at("Points").get<int>() > 0);
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      REQUIRE(half.model_energy.count("SameConductorGap-0.25") == 1);
+      REQUIRE(full.model_energy.count("SameConductorGap-0.25") == 1);
+      CHECK_THAT(2.0 * half.model_energy.at("SameConductorGap-0.25"),
+                 WithinRel(full.model_energy.at("SameConductorGap-0.25"), 1.0e-9));
+      CHECK_THAT(2.0 * half.domain_boundary_ft, WithinRel(full.domain_boundary_ft, 1.0e-9));
+      // Measured 2.7e-7 relative (the gap pair, the raw / E_out terms and the
+      // DomainBoundary term are exact to 1e-9; the residual sits in the isolated-edge /
+      // corner cells Mirrored through the z plane on both meshes): recorded, bounded at
+      // 1e-6.
+      CHECK_THAT(
+          2.0 * (half.models[0] + half.uncovered_ft + half.domain_boundary_ft),
+          WithinRel(full.models[0] + full.uncovered_ft + full.domain_boundary_ft, 1.0e-6));
+      CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-6));
+      CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-6));
+      if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+      {
+        std::ofstream record(fs::path(debug_dir) / "symmetry-box.json");
+        record << json{{"Case", "box"},
+                       {"FullFt", full.corrected[0]},
+                       {"TwiceHalfFt", 2.0 * half.corrected[0]},
+                       {"ResidualRelative",
+                        (2.0 * half.corrected[0] - full.corrected[0]) / full.corrected[0]},
+                       {"HalfDomainBoundary", half.domain_boundary_ft},
+                       {"FullDomainBoundary", full.domain_boundary_ft},
+                       {"HalfReasons", exclusions.at("Reasons")}}
+                      .dump(2)
+               << "\n";
+      }
+    }
+  }
+
+  SECTION("S-off (control): Mirror Off keeps the raw claims and the identity, not the half")
+  {
+    const Energies full = Run("mirror-pad-45-full-off", 1.0, true, "Natural");
+    const Energies half = Run("mirror-pad-45-half-off", 1.0, false, "Off");
+    // The checks run on the root; every rank stays in the section (a return inside a
+    // SECTION would end the test body early on that rank and desynchronise Catch2's
+    // section discovery across the ranks: the next pass then hangs in a collective).
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(half);
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Mirrored").at("Count").get<int>() == 0);
+      CHECK(half.domain_boundary_ft > 0.0);
+      CHECK(half.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").empty());
+      // The DomainBoundary term is the raw energy of the cut cells; the half's ft differs
+      // from half the full's by the raw-vs-model difference of those cells (not zero).
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK(std::abs(2.0 * half.corrected[0] - full.corrected[0]) >
+            1.0e-6 * full.corrected[0]);
+    }
+  }
+#endif
+}
+
+// Decision 473 MINOR-9: the truncation planes' constants are the quantised grid's (the key
+// every rank groups the faces on), so they are identical for any rank count and partition;
+// on the sheared pad box (s = 1) they equal the analytic planes to the grid (1e-9 x the
+// coordinate scale 2): x - z = 0 (attribute 3, Natural), -x + z = 1 (5, Natural), z = 0 (1)
+// and z = 2 (6) (vertical to the process normal y: Natural), y = 0 (2) Unsupported. Run at
+// 1 and 2 ranks ([Serial][Parallel]): the same assertions on the same constants.
+TEST_CASE("Truncation planes are deterministic across rank counts",
+          "[surfaceresponsemirror][mirror][mirrorplanes][3d][Serial][Parallel]")
+{
+  mfem::Mesh serial = MakeSerialMirrorPadMesh(1.0, false);
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  const auto planes = FitTruncationPlanes(mesh, {1, 2, 3, 5, 6}, {0.0, 1.0, 0.0}, 0.2);
+  REQUIRE(planes.size() == 5);
+  const double r = 1.0 / std::sqrt(2.0);
+  // The offset quantum: 1e-9 x the coordinate scale (the largest |coordinate| of the
+  // bounding box: 2 here, at z = 2 and x = 1 + s (z - 1) = 2).
+  const double grid = 1.0e-9 * 2.0;
+  std::map<int, const MirrorPlane *> by_attribute;
+  for (const auto &plane : planes)
+  {
+    by_attribute.emplace(plane.attribute, &plane);
+  }
+  auto Expect = [&](int attribute, std::array<double, 3> normal, double offset,
+                    const std::string &status)
+  {
+    REQUIRE(by_attribute.count(attribute) == 1);
+    const auto &plane = *by_attribute.at(attribute);
+    INFO("attribute " << attribute);
+    CHECK(plane.status == status);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(plane.normal[d], WithinAbs(normal[d], 1.0e-9));
+    }
+    CHECK_THAT(plane.offset, WithinAbs(offset, grid));
+    CHECK((plane.faces == 64 || plane.faces == 128));
+  };
+  Expect(3, {r, 0.0, -r}, 0.0, "Natural");
+  Expect(5, {-r, 0.0, r}, r, "Natural");
+  Expect(1, {0.0, 0.0, -1.0}, 0.0, "Natural");
+  Expect(6, {0.0, 0.0, 1.0}, 2.0, "Natural");
+  Expect(2, {0.0, -1.0, 0.0}, 0.0, "Unsupported");
+  // The constants are exact multiples of the grid: a point ON the analytic plane is at
+  // most half a grid step from the fitted one, the same on every rank.
+  for (const auto &plane : planes)
+  {
+    CHECK_THAT(plane.offset, WithinAbs(std::round(plane.offset / grid) * grid, 1.0e-15));
+  }
 }
 
 }  // namespace palace

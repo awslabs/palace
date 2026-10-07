@@ -5,9 +5,11 @@
 #define PALACE_TEST_SURFACERESPONSE_FIXTURES_HPP
 
 #include "fixtures.hpp"
+#include "utils/tablecsv.hpp"
 
 #include <array>
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -302,6 +304,22 @@ struct SurfaceResponseFiles
                         const std::vector<std::vector<std::string>> &patch_rows,
                         const json &model_edges, double tolerance);
 };
+
+// Shared helpers of the electrostatic surface-response tests: a whole electrostatic run of
+// a config (output folder created), the raw text of a file, a numeric CSV table and one of
+// its columns by header, and the plain text table of the per-type energy CSVs
+// (surface-response-uncovered-energy.csv, surface-response-domain-boundary-energy.csv).
+void RunElectrostatic(json config);
+std::string ReadFile(const std::filesystem::path &path);
+Table LoadCsv(const std::filesystem::path &path);
+const Column &ColumnByHeader(const Table &table, const std::string &header);
+struct TextCsv
+{
+  std::vector<std::string> header;
+  std::vector<std::vector<std::string>> rows;
+  std::size_t Column(const std::string &name) const;
+};
+TextCsv ReadTextCsv(const std::filesystem::path &path);
 
 }  // namespace palace::test
 
