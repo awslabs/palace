@@ -851,8 +851,9 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
     // Only the topologies the placement knows how to halve take part in the merge (a
     // virtual corner, a pair / strip with its image side); a mirror-formed stack, cluster
     // or curved pair has no mirror placement (DESIGN 2.2.5): the real features it would
-    // replace stay as the unextended run read them (their cut-crossing cells are classified
-    // Mirrored or DomainBoundary) and the formed key is recorded for the discovery.
+    // replace stay as the unextended run read them, the configuration is read as a real
+    // Missing feature (decision 481: its own cells DomainBoundary with their raw claims,
+    // its neighbours untouched) and the formed key is recorded for the discovery.
     const bool mergeable =
         feature.type == "ConvexCorner" || feature.type == "ConcaveCorner" ||
         feature.type == "SameConductorGap" || feature.type == "DifferentConductorGap" ||
@@ -860,11 +861,11 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
     if (!mergeable)
     {
       // The real features the unmerged configuration touches (portions overlapped, or a
-      // real vertex of the configuration) are recorded with Status "Unmerged"; the cells
-      // whose coupon support intersects any of its portions, real or image, are
-      // DomainBoundary (F-DB-a, raw kept), never Mirrored with their own single-sided
-      // model (decision 473 (1) as ruled by decision 480: support intersection), so the
-      // configuration's portions are recorded in world coordinates (mesh units).
+      // real vertex of the configuration) are recorded with Status "Unmerged" (a record,
+      // not a block); the configuration's portions, real and image, are recorded in world
+      // coordinates (mesh units) so that the operator can read it as a Missing feature
+      // (decision 481): its own cells DomainBoundary, raw kept, never applied with a
+      // single-sided model.
       std::set<std::size_t> touched = overlapping;
       for (std::size_t i = 0; i < merged.features.size(); i++)
       {
@@ -1175,7 +1176,10 @@ nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,
            "vertex coupon on the plane with weight 1 / 2 and the real arm's cells from "
            "s_half = (R + s) / 2; a pair's real side with its side factor) with the trace "
            "taken by even extension (mirror-point evaluation); Missing / out-of-range "
-           "mirror-formed features and non-mirroring planes fall back to F-DB-a"}};
+           "mirror-formed features and non-mirroring planes fall back to F-DB-a; a "
+           "mirror-formed stack, cluster or curved pair (no mirror placement: Unmerged) is "
+           "read as a real Missing feature (decision 481) - its own cells DomainBoundary "
+           "with their raw claims, its neighbours' cells Applied / Mirrored as read"}};
 }
 
 }  // namespace palace

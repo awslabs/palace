@@ -8203,8 +8203,11 @@ IdentificationResult RunGeometryIdentification(
   // Mirror-formed features (DESIGN 2.2.2 / 2.2.5): Status Modelled when the library has the
   // model, Missing otherwise (its real portions then keep their raw energy as uncovered
   // requirements, flagged MirrorFormed); the placement knows how to halve a virtual corner
-  // and to place a pair's real side only, every other mirror-formed topology (a bent stack,
-  // a two-vertex cluster, a curved pair with its image) fails closed to Missing.
+  // and to place a pair's real side only; every other mirror-formed topology (a bent stack,
+  // a two-vertex cluster, a curved pair with its image) is Unmerged - read as a real
+  // Missing feature by the operator (decision 481), its touched real features' Status
+  // "Unmerged" being a record, so they are skipped here - and a placeable one without a
+  // model or off its plane fails closed to Missing.
   for (auto &feature : result.features)
   {
     if (feature.mirror.is_null() || feature.mirror.value("Status", "") == "Continued" ||
@@ -11248,7 +11251,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.mirror_band = mirror_band.record.dump();
   result.mirror_unmerged_portions.clear();
   {
-    // The portions of every unmerged configuration (decision 480; mesh units as recorded).
+    // The portions of every unmerged configuration (decision 481; mesh units as recorded).
     const auto unmerged =
         mirror_band.record.value("UnmergedFeatures", nlohmann::json::array());
     for (std::size_t topology = 0; topology < unmerged.size(); topology++)
@@ -18833,7 +18836,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     // Applied / Mirrored classification as next to any Missing feature. The coupon
     // support's reach into the configuration (u, v in [-R, R]; w over the cell, [-R, R]
     // for a spatial patch; slab clipping against every portion, real or image) is recorded
-    // as INFORMATION only (decision 480's test, withdrawn as a block by 481).
+    // as INFORMATION only (decision 481).
     if (!unmerged_portions.empty())
     {
       const auto &patch = patches[exclusion.patch];

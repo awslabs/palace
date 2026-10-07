@@ -182,9 +182,10 @@ struct MirrorMergeSummary
   // Planes, Status "Unmerged"} for the discovery.
   nlohmann::json unmerged_features = nlohmann::json::array();
   // The real features an unmerged configuration touches (ascending ids; a portion
-  // overlapped or a shared vertex): recorded with Mirror Status "Unmerged". The blocking is
-  // per CELL, by support intersection with the configuration's portions (decision 480):
-  // every unmerged entry carries its world-space portions, real and image.
+  // overlapped or a shared vertex): recorded with Mirror Status "Unmerged" (information).
+  // The configuration is read as a real Missing feature (decision 481): every unmerged
+  // entry carries its world-space portions, real and image, and the operator makes the
+  // cells whose own footprint overlaps a REAL portion DomainBoundary.
   std::vector<int> touched_feature_ids;
 };
 MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,

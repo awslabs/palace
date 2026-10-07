@@ -1409,7 +1409,7 @@ public:
     // stack, a two-vertex cluster, a curved pair with its image: no mirror placement),
     // mesh units: a patch whose own footprint overlaps a REAL one is DomainBoundary (raw
     // kept), never applied with its own single-sided model - the configuration is read
-    // exactly as a real Missing feature (decision 473 (1) as ruled by decisions 480 / 481).
+    // exactly as a real Missing feature (decision 481).
     struct UnmergedPortionData
     {
       int topology = 0;  // index into MirrorBand.UnmergedFeatures

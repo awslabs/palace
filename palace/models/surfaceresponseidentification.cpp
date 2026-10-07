@@ -14878,9 +14878,13 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "/ 2 with the real arm's cells from s_half = (R + s) / 2, a pair's real side with "
          "its side factor - with the trace by even extension; Missing: the real portions "
          "kept raw as <Type>:MirrorFormed uncovered portions); a mirror-formed stack, "
-         "cluster or curved pair is not placed (Unmerged): the real features it touches "
-         "keep their reading and their cut-crossing patches are DomainBoundary (raw kept); "
-         "image perimeter is never placed or counted"}}},
+         "cluster or curved pair has no mirror placement (Unmerged) and is read exactly "
+         "as a real Missing feature (decision 481): its OWN cells - the patches whose "
+         "own-edge footprint overlaps one of its REAL portions - are DomainBoundary with "
+         "their raw claims (Reason UnmergedTopology), neighbouring cells keep their "
+         "Applied / Mirrored classification, the coupon supports' reach into the "
+         "configuration is recorded as information (UnmergedSupportReach); image "
+         "perimeter is never placed or counted"}}},
       {"ReferenceProcessNormal", D(reference_process_normal)},
       {"Features", feature_list},
       {"Segments", segment_list},

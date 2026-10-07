@@ -1057,23 +1057,23 @@ struct DomainBoundaryExclusion
   double nearest_distance = 0.0;
   // Why the patch is DomainBoundary rather than Mirrored (boundary-cut DESIGN 2.2.5;
   // Diagnostics.DomainBoundary.Reasons): MirrorOff (no mirror: the band is 0 - Mirror
-  // "Off" or a Maxwell build), UnmergedTopology (its coupon support intersects a portion of
-  // a mirror-formed configuration without a mirror placement), NonMirroringPlane (an
-  // outside point lies
-  // beyond an Unsupported / NonPlanar plane), BeyondBand (beyond a Natural plane by more
+  // "Off" or a Maxwell build), UnmergedTopology (its own footprint overlaps a real portion
+  // of a mirror-formed configuration without a mirror placement, read as a Missing feature:
+  // decision 481), NonMirroringPlane (an outside point lies beyond an Unsupported /
+  // NonPlanar plane), BeyondBand (beyond a Natural plane by more
   // than the band), ReflectionNotLocated (reflected into the domain but not located: a
   // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane).
   std::string reason;
-  // Reason UnmergedTopology (decision 480): the unmerged configuration whose portion the
-  // patch's coupon support intersects (index into MirrorBand.UnmergedFeatures), that
-  // portion (mesh units, real or image) and its distance from the patch origin.
+  // Reason UnmergedTopology (decision 481): the unmerged configuration whose REAL portion
+  // the patch's own footprint overlaps (index into MirrorBand.UnmergedFeatures), that
+  // portion (mesh units) and its distance from the patch origin (0 for an own cell).
   int unmerged_topology = -1;
   std::array<double, 3> unmerged_p0{}, unmerged_p1{};
   bool unmerged_image = false;
   double unmerged_distance = 0.0;
   bool unmerged_own = false;  // the patch's own footprint overlaps a real portion
 };
-// Information (decision 481, superseding 480's block): a patch whose coupon support reaches
+// Information only (decision 481): a patch whose coupon support reaches
 // a portion, real or image, of an unmerged mirror-formed configuration, with the nearest
 // such portion's distance from the patch origin (mesh units). The patch keeps its
 // classification.

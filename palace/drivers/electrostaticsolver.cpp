@@ -1798,10 +1798,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         portions_total.length += entry.length;
         portions_total.extra += entry.extra;
       }
-      // A plain writer: the type column is text (the table columns are numeric). The
-      // previous adaptive iteration leaves a symlink into its archive folder at this path
-      // (BaseSolver::SaveIteration): remove it first, as TableWithCSVFile does, so that the
-      // file is written at the root and the archived iteration keeps its own.
+      // A plain writer: the type column is text (the table columns are numeric). Both
+      // conditional tables were removed above, unconditionally, before this conditional
+      // write (the previous adaptive iteration's symlink into its archive folder, and any
+      // table of an earlier attempt in the same directory, never survive a solve without
+      // portions; decision 473 (3)).
       std::ofstream output(path);
       MFEM_VERIFY(output, "Unable to open " << path.filename().string() << " for writing!");
       output << "source,evaluation,type,portions,length (m)," << extra_header;
