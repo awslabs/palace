@@ -31,7 +31,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from mixed_mesh import h1_dofs_from_counts, h1_entity_counts  # noqa: E402
-from build_plan import DEFAULT_REDUCER_BLOCK_SIZE, largest_node_gib  # noqa: E402
+from build_plan import DEFAULT_REDUCER_BLOCK_SIZE, GIB, largest_node_gib  # noqa: E402
 
 COST_MODEL = HERE / "cost-model.json"
 # The model every qualify run up to the decision-64a refit used (four-edge-physics-11 V-a,

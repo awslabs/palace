@@ -469,16 +469,12 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
     node_plan = estimate["Nodes"]
     if not node_plan["Fits"]:
         raise CaseStop("Estimate", node_plan["Decision"], Nodes=node_plan)
-    nodes = None
-    if node_plan["MultiNode"]:
-        main_nodes = max(node_plan["Required"][item["EstimateKey"]] for item in layout if item["Role"] == "main")
-        fixed_nodes = max(node_plan["Required"][item["EstimateKey"]] for item in layout if item["Role"] != "main")
-        assignment = {item["EstimateKey"]: main_nodes if item["Role"] == "main" else fixed_nodes for item in layout}
+    nodes, assignment = node_assignment(node_plan, layout)
+    if nodes is not None:
         try:
             estimate = estimate_stages.scale_to_nodes(estimate, assignment, cost_model, profile)
         except ValueError as error:
             raise CaseStop("Estimate", str(error), Nodes=node_plan)
-        nodes = {"Main": main_nodes, "Fixed": fixed_nodes}
     try:
         split = job_split.plan_split(indices=indices, layout=layout, estimate=estimate, policy=policy, model=cost_model,
                                      profile=profile, nodes=nodes)
@@ -617,6 +613,19 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                     "radial_shells": inputs.get("RadialShells"),
                     "reference_edge_size": (getattr(args, "reference_edge_size_nm", None) / 1000.0
                                             if getattr(args, "reference_edge_size_nm", None) else None)}
+
+
+def node_assignment(node_plan, layout):
+    """The node counts of a multi-node coupon (decision 457): the main stages share the
+    largest count any of them requires (their worker blocks and reducer must run at one
+    rank count: the archive is per rank), the control + local-edge group likewise; returns
+    ({"Main", "Fixed"}, {estimate key: nodes}) or (None, None) for a one-node coupon."""
+    if not node_plan["MultiNode"]:
+        return None, None
+    main_nodes = max(node_plan["Required"][item["EstimateKey"]] for item in layout if item["Role"] == "main")
+    fixed_nodes = max(node_plan["Required"][item["EstimateKey"]] for item in layout if item["Role"] != "main")
+    assignment = {item["EstimateKey"]: main_nodes if item["Role"] == "main" else fixed_nodes for item in layout}
+    return {"Main": main_nodes, "Fixed": fixed_nodes}, assignment
 
 
 def reducer_block_size_of(args, physics_run):
