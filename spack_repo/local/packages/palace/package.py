@@ -381,11 +381,21 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on(
             "libceed@develop commit=d6367d2d6a0cca608a0b8e21d79b83c50a49a19a", when="@0.18"
         )
-        depends_on("libceed@1:", when="@0.19:")
         depends_on("libceed+openmp", when="+openmp")
         depends_on("libceed~openmp", when="~openmp")
         depends_on("libceed+shared", when="+shared")
         depends_on("libceed~shared", when="~shared")
+
+    # Kept off a `with` block so the Palace `when=` is not folded into the patch condition.
+    depends_on(
+        "libceed@1:",
+        when="@0.19:",
+        patches=[
+            # libCEED 1.0.0 skips libxsmm.pc when MKLROOT is set and misses include/libxsmm
+            # https://github.com/Sbozzolo/libCEED/commit/ea2e0e87f4e160f618bc366c178c1631165b1faf
+            patch("libceed_xsmm_mkl.diff", when="@1.0.0 +libxsmm"),
+        ],
+    )
 
     with when("+sundials @0.14:"):
         depends_on("sundials+mpi+lapack~examples~examples-install")
