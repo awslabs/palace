@@ -114,9 +114,30 @@
    "T5PSD": 1e-09,
    "T5Symmetry": 1e-12
   },
-  "DefaultActive": false,
-  "DefaultActivation": null,
-  "DefaultActivationRule": "DESIGN v2 section 3 / decisions 428 / 438 (5): the DEFAULT mode is active only after validation pair 5 (an independent in-domain pair at |W| ~ 2 %) has read inside its bound; until then every qualifying reuse is FALLBACK-only. Activation = a DefaultActivation {ValidationPair, RecordPath, RecordSHA256, Decision} record written here by a reviewed amendment that also records the new rule-file sha in SUPERVISOR-DECISIONS; RecordPath must be readable and re-hash to RecordSHA256 (nearkey_predictor.default_active, fail closed); only this shipped, test-pinned rule file activates default reuse (a --nearkey-rule override is refused in Default mode).",
+  "DefaultActive": true,
+  "DefaultActivation": {
+   "ValidationPair": "pair-5",
+   "RecordPath": "nearkey-default-activation-pair5.json",
+   "RecordSHA256": "cdc8c059901357564fc5ba724f26013741aac269f45aac5d2572569eb0654606",
+   "Decision": 459,
+   "UserDecision": 428,
+   "ActivationRuling": 460,
+   "Verdict": "PASS",
+   "Variant": "S1p box-1 Signature, junction lead 0.208 -> 0.204 um (W +1.9605 %, S 0.0658 %), model spatialedgecluster_edgecount-19_a16c6d025c0d, donor spatialedgecluster_edgecount-19_dcfd1e0fe3fa",
+   "Measured_r_pct": {
+    "SA": -0.4234,
+    "MS": -0.1999,
+    "MA_sharp": -0.4646
+   },
+   "Bound_pct": {
+    "SA": 0.551,
+    "MS": 0.301,
+    "MA_sharp": 1.007
+   },
+   "EvidenceRecord": "coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/records/default-activation-pair5.json (byte-identical to the shipped copy; the lane REPORT.md, PLAN snapshot, transplant record, (F) record and the Q_exact model files are sha-pinned inside it)",
+   "ActivatedUTC": "2026-10-07"
+  },
+  "DefaultActivationRule": "DESIGN v2 section 3 / decisions 428 / 438 (5): the DEFAULT mode is active only after validation pair 5 (an independent in-domain pair at |W| ~ 2 %) has read inside its bound; until then every qualifying reuse is FALLBACK-only. Activation = a DefaultActivation {ValidationPair, RecordPath, RecordSHA256, Decision} record written here by a reviewed amendment that also records the new rule-file sha in SUPERVISOR-DECISIONS; RecordPath must be readable and re-hash to RecordSHA256 (nearkey_predictor.default_active, fail closed); only this shipped, test-pinned rule file activates default reuse (a --nearkey-rule override is refused in Default mode). A relative RecordPath resolves against the rule file's own directory (the record is shipped beside the rule file as a sha-pinned code input, decision 460); an absolute path is read as given. ACTIVATED by decision 459 (validation pair 5 PASS: r inside the bound of record on every Type with the right sign on SA / MS).",
   "DonorBuildGateOverride": {
    "DefaultAdmittedKind": {
     "Gate": "semantic-corner-and-endpoint-anisotropy",
