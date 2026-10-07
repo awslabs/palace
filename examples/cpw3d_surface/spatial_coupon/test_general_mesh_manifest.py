@@ -38,7 +38,7 @@ from audit_edge_metric_mesh import (ANISOTROPY_GATE_APPLIED, ANISOTROPY_GATE_NOT
                                     LAYER_ADJACENT_BAND_RULE)
 from general_mesh_manifest import (_physical_comparison_failures,
                                    _validate_source_transformation, audit_manifest_evidence, case_gates,
-                                   element_cap_override, layer_covered_band, run_manifest, sha256,
+                                   case_kind, element_cap_override, layer_covered_band, run_manifest, sha256,
                                    validate_case_element_cap_override, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
@@ -2496,6 +2496,50 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         # case_gates carries the gate to the build command (run_gmsh_only_case --corner-shape-gate).
         self.assertEqual(case_gates(production, production["Cases"][0])[CORNER_SHAPE_GATE], 5.0)
 
+    def test_minimum_qualified_rings_is_the_per_kind_range_with_its_provenance(self):
+        # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): the qualified ring-count
+        # range per coupon kind - Fabricated 7 (every (F)-Qualified fabricated tube: the process
+        # count) / Thin 4 (the round-2b family-6 pairs, (F)-Qualified with 4-ring thin tubes on
+        # their 121-nm finger sides; prediction B15) on the production manifest, each with the (F)
+        # cases behind it; a case reads its kind's value (run_gmsh_only_case --minimum-qualified-rings).
+        from general_mesh_manifest import (MINIMUM_QUALIFIED_RINGS, MINIMUM_QUALIFIED_RINGS_PROVENANCE,
+                                           minimum_qualified_rings, validate_minimum_qualified_rings)
+        production = json.loads((HERE / "geometry-independence-suite.json").read_text())
+        self.assertEqual(validate_minimum_qualified_rings(production), {"Fabricated": 7, "Thin": 4})
+        provenance = production["Gates"][MINIMUM_QUALIFIED_RINGS_PROVENANCE]
+        self.assertIn("UnqualifiedRingCount", provenance["Rule"])
+        self.assertIn("d67abe58c1cf", provenance["Fabricated"]["Cases"])
+        self.assertIn("c83be8376d3a", provenance["Thin"]["Cases"])
+        fabricated = next(c for c in production["Cases"] if case_kind(c) == "fabricated")
+        thin = next(c for c in production["Cases"] if case_kind(c) == "thin")
+        self.assertEqual(minimum_qualified_rings(production, fabricated), 7)
+        self.assertEqual(minimum_qualified_rings(production, thin), 4)
+        # Without the gate nothing is required (a manifest without it builds no reduced side);
+        # a gate without its provenance, a missing kind, a non-integer, or an empty case list
+        # fails closed.
+        ungated = copy.deepcopy(production)
+        del ungated["Gates"][MINIMUM_QUALIFIED_RINGS]; del ungated["Gates"][MINIMUM_QUALIFIED_RINGS_PROVENANCE]
+        self.assertIsNone(validate_minimum_qualified_rings(ungated))
+        self.assertIsNone(minimum_qualified_rings(ungated, thin))
+        def rejected(mutate, message):
+            broken = copy.deepcopy(production)
+            mutate(broken["Gates"])
+            with self.assertRaisesRegex(ValueError, message):
+                validate_minimum_qualified_rings(broken)
+        rejected(lambda g: g.pop(MINIMUM_QUALIFIED_RINGS_PROVENANCE), "recorded provenance")
+        rejected(lambda g: g.pop(MINIMUM_QUALIFIED_RINGS), "Provenance recorded without")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].pop("Thin"), "Fabricated / Thin")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", 4.5), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", 0), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS].__setitem__("Thin", True), "positive integers")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS_PROVENANCE]["Thin"].__setitem__("Cases", ""), "recorded provenance")
+        rejected(lambda g: g[MINIMUM_QUALIFIED_RINGS_PROVENANCE].__setitem__("Rule", "no guard named"), "recorded provenance")
+        # The whole-manifest validation carries the check.
+        broken = copy.deepcopy(production)
+        broken["Gates"][MINIMUM_QUALIFIED_RINGS]["Thin"] = 0
+        with self.assertRaisesRegex(ValueError, "positive integers"):
+            validate_manifest(broken, HERE / "geometry-independence-suite.json", check_available_files=False)
+
     def test_calibration_manifest_gate_relaxation_never_reaches_production(self):
         # Supervisor decision 22: the MA/MS calibration manifest, and only it, carries
         # MinimumAchievedAspect 0.9 (anisotropy-design gate); the production suite keeps
@@ -3490,6 +3534,233 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected_face_end(lambda c: c["PrismTubes"].__setitem__("FaceEndSpacingMaximum", 0.0), "face-end summary")
             rejected_face_end(lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"].append(
                                   dict(c["PrismTubes"]["Tubes"][0]["FaceEnds"][0])), "two face ends at one end")
+            # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face-end record carrying its
+            # Regime is judged against the end-spacing cap recomputed from the section's rings and
+            # rays and the command's Jacobian-condition ceiling (lc_cap = 0.95 x ceiling x the smallest
+            # planar singular value of the prism frames; the production fab section reads 80.572 nm at
+            # 1000): regime I below 4 h_pyr |tan theta| <= lc_cap with the A2 (4) formulas, regime II
+            # above with lc_end = lc_cap and the apex-rule layer count; every record binds EndSpacing <=
+            # lc_cap, the cap and apex fields and the apex inequality; a round-2b mesher's record without
+            # a Regime fails closed.
+            from mesh_stage_contract import (FACE_END_CONDITION_MARGIN, ROUND2_MESHER, face_end_spacing_cap,
+                                             section_frame_singular_values, section_prism_condition)
+            production_radii = [0.00025 * (2.0**k - 1.0) for k in range(1, 8)]
+            production_rays = [-90.0 + 30.0 * j for j in range(10)]
+            self.assertAlmostEqual(face_end_spacing_cap(production_radii, production_rays, 1000.0),
+                                   0.08057212272716054, delta=1e-15)
+            self.assertAlmostEqual(section_prism_condition(production_radii, production_rays, 0.04998265841897798),
+                                   589.3294590097332, delta=1e-6)
+            self.assertAlmostEqual(min(s2 for _, s2 in section_frame_singular_values(production_radii, production_rays)),
+                                   0.33925104306172854 * 0.00025, delta=1e-18)
+            with self.assertRaisesRegex(ValueError, "spacing-dominated"):
+                face_end_spacing_cap(production_radii, production_rays, 1.5)
+            with self.assertRaisesRegex(ValueError, "Jacobian-condition ceiling"):
+                face_end_spacing_cap(production_radii, production_rays, 0.0)
+            ceiling = float(report["Command"][report["Command"].index("--maximum-jacobian-condition") + 1])
+            ring_radii = [sum(section["RingSizes"][:k + 1]) for k in range(len(section["RingSizes"]))]
+            rays = [-90.0 + 30.0 * j for j in range(10)]
+            cap = face_end_spacing_cap(ring_radii, rays, ceiling)
+            self.assertAlmostEqual(cap, FACE_END_CONDITION_MARGIN * ceiling *
+                                   min(s2 for _, s2 in section_frame_singular_values(ring_radii, rays)))
+            def regime_record(theta, regime):
+                slope = _math.tan(_math.radians(theta))
+                apex = 2.0 * section["PyramidHeight"] * slope
+                if regime == "I":
+                    lc = max(tubes["TangentialSize"], 4.0 * section["PyramidHeight"] * slope)
+                    layers = max(1, _math.ceil(2.0 * r_env * slope / lc * (1.0 - 1e-9)))
+                else:
+                    lc = cap
+                    layers = max(_math.ceil(r_env * slope / (cap - apex)),
+                                 max(1, _math.ceil(2.0 * r_env * slope / cap * (1.0 - 1e-9))))
+                shear = r_env * slope
+                return lc, layers, {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": layers,
+                                    "EndSpacing": lc, "EnvelopeShear": shear,
+                                    "LayerThicknessRange": [lc - shear / layers, lc + shear / layers],
+                                    "OverLength": shear + tubes["TangentialSize"], "Kappa": [-slope, 0.0],
+                                    "Regime": regime, "EndSpacingCap": cap, "ApexThickness": apex}
+            # The two regimes of the fixture section: the boundary 4 h_pyr |tan theta| = cap.
+            boundary = _math.degrees(_math.atan(cap / (4.0 * section["PyramidHeight"])))
+            ceiling_theta = _math.degrees(_math.atan(cap / (2.0 * section["PyramidHeight"])))
+            self.assertLess(boundary, ceiling_theta)
+            def face_ended_2b(c, theta, regime):
+                lc, layers, record = regime_record(theta, regime)
+                face_ended(c)
+                c["PrismTubes"]["Section"]["RingRadii"] = ring_radii
+                c["PrismTubes"]["Section"]["Top"] = {"Angles": rays, "Materials": [2] * 9}
+                c["PrismTubes"]["Section"]["FaceEndSpacingCap"] = cap
+                c["PrismTubes"]["Section"]["FaceEndSpacingCapRule"] = "fixture cap rule"
+                row = c["PrismTubes"]["Tubes"][0]
+                row["FaceEnds"] = [record]
+                row["Spacing"] = max(lc, row["LayerThickness"]["P50"])
+                row["LayerThickness"]["Maximum"] = row["Spacing"]
+                row["LayerThickness"]["AtEnd"] = lc
+                row["LayerThickness"]["FaceEndBlocks"] = {"End": {"Layers": layers, "Thicknesses": [lc] * layers,
+                                                                   "NeighbourRatio": max(lc, row["LayerThickness"]["P50"]) /
+                                                                   min(lc, row["LayerThickness"]["P50"])}}
+                c["PrismTubes"]["FaceEndSpacingMaximum"] = lc
+                c["PrismTubes"]["LayerThickness"]["Maximum"] = max(census["PrismTubes"]["LayerThickness"]["Maximum"], lc)
+                c["PrismTubes"]["SpacingMaximum"] = c["PrismTubes"]["LayerThickness"]["Maximum"]
+                c["PrismTubes"]["FaceEnds"]["EndBlockLayers"] = layers
+                return c
+            regime_one = face_ended_2b(copy.deepcopy(census), 0.5 * boundary, "I")
+            self.assertIs(validate_gmsh_build_census(report, regime_one, semantic), regime_one)
+            steep = 0.5 * (boundary + ceiling_theta)
+            regime_two = face_ended_2b(copy.deepcopy(census), steep, "II")
+            self.assertIs(validate_gmsh_build_census(report, regime_two, semantic), regime_two)
+            record_two = regime_two["PrismTubes"]["Tubes"][0]["FaceEnds"][0]
+            self.assertEqual(record_two["EndSpacing"], cap)
+            self.assertGreaterEqual(record_two["LayerThicknessRange"][0], record_two["ApexThickness"])
+            def rejected_2b(theta, regime, mutate, message, target="census"):
+                broken = face_ended_2b(copy.deepcopy(census), theta, regime)
+                broken_report = copy.deepcopy(report)
+                mutate(broken if target == "census" else broken_report)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(broken_report, broken, semantic)
+            rejected_2b(steep, "I", lambda c: None, "regime does not follow")
+            rejected_2b(0.5 * boundary, "II", lambda c: None, "regime does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Regime", "III"),
+                        "regime is unknown")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("FaceEndSpacingCap", 1.01 * cap),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].pop("FaceEndSpacingCapRule"),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("EndSpacingCap", 0.99 * cap),
+                        "cap or apex thickness")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("ApexThickness", 0.0),
+                        "cap or apex thickness")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("Layers", 1),
+                        "face-end rule|apex rule")
+            # lc_end <= max(lc_cap, TangentialSize): the fixture's TangentialSize exceeds its cap (gate 100
+            # on a 1-nm ring; never a production size), so the bound reads the tangential size here.
+            over_cap = 1.001 * max(cap, tubes["TangentialSize"])
+            rejected_2b(steep, "II", lambda c: (c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__("EndSpacing", over_cap),
+                                              c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
+                                                  "LayerThicknessRange", [over_cap, over_cap])),
+                        "exceeds the end-spacing cap")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
+                            "LayerThicknessRange", [0.5 * c["PrismTubes"]["Tubes"][0]["FaceEnds"][0]["ApexThickness"], cap]),
+                        "apex rule")
+            rejected_2b(ceiling_theta + 0.5, "II", lambda c: None, "validity ceiling")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("RingRadii", [ring_radii[0]]),
+                        "FaceEndSpacingCap does not follow")
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].pop("Top"), "Top / Sheet rays")
+            rejected_2b(steep, "II", lambda r: r["Command"].__delitem__(slice(r["Command"].index("--maximum-jacobian-condition"),
+                                                                               r["Command"].index("--maximum-jacobian-condition") + 2)),
+                        "without the command's Jacobian-condition ceiling|--maximum-jacobian-condition", target="report")
+            # A cap recorded on a coupon without a face end fails closed.
+            no_face_end = copy.deepcopy(census)
+            no_face_end["PrismTubes"]["Section"]["FaceEndSpacingCap"] = cap
+            with self.assertRaisesRegex(ValueError, "spacing cap without a face end"):
+                validate_gmsh_build_census(report, no_face_end, semantic)
+            # A pre-F2b record (no Regime) from the round-2b mesher beside this module fails closed;
+            # from another mesher it is judged by the regime-I formulas alone (the block above).
+            from_round2b = copy.deepcopy(report)
+            from_round2b["Tools"]["mesher"]["SHA256"] = sha256(ROUND2_MESHER)
+            with self.assertRaisesRegex(ValueError, "round-2b mesher lacks its Regime"):
+                validate_gmsh_build_census(from_round2b, face_ended(copy.deepcopy(census)), semantic)
+            # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): a tube row reduced by its
+            # facing width records Rings / FacingWidth / FacingBound; the section records
+            # MinimumRings / ReducedSides / FacingBound / MinimumQualifiedRings and the per-side
+            # rule; the validator recomputes the largest K with r_K + h_K <= min(TransverseBound,
+            # FacingWidth / 2), binds the command's --minimum-qualified-rings and the section
+            # aggregates; a census without the per-side record (pre-F6) passes with no reduced row.
+            from mesh_stage_contract import GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, ring_count_within
+            inner, growth = tubes["InnerSize"], tubes["GrowthRatio"]
+            coupon_rings = section["Rings"]
+            self.assertEqual(ring_count_within(0.00025, 2.0, 0.05), 7)      # the production fabricated tube
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.1), 5)         # the production thin tube
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.0605), 4)      # the 121-nm finger's thin sides
+            self.assertEqual(ring_count_within(0.00025, 2.0, 0.0605), 7)    # its fabricated sides fit
+            self.assertEqual(ring_count_within(0.002, 2.0, 0.003), 0)
+            # r_K + h_K of the fixture section in the mesher's own arithmetic (tube_ring_count: radius =
+            # inner (ratio^K - 1) / (ratio - 1), size = inner ratio^(K - 1))
+            transverse = inner * (growth**coupon_rings - 1.0) / (growth - 1.0) + inner * growth**(coupon_rings - 1)
+            reduced_rings = coupon_rings - 1
+            # A facing width whose half lies between r_{K-1} + h_{K-1} and r_K + h_K reduces the side by one ring.
+            facing_width = 2.0 * 0.5 * (inner * (growth**reduced_rings - 1.0) / (growth - 1.0) + inner * growth**(reduced_rings - 1) + transverse)
+            facing_bound = min(transverse, 0.5 * facing_width)
+            self.assertEqual(ring_count_within(inner, growth, facing_bound), reduced_rings)
+            per_side_report = copy.deepcopy(report)
+            per_side_report["Command"] += [GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, str(reduced_rings)]
+            def per_side(c, *, minimum=reduced_rings, reduce=True):
+                sec = c["PrismTubes"]["Section"]
+                sec["TransverseBound"] = transverse
+                sec["RingsPerSideRule"] = "fixture: ... ScopeGuard[UnqualifiedRingCount] ..."
+                sec["MinimumQualifiedRings"] = minimum
+                sec["MetalFacingWidth"] = facing_width if reduce else None
+                sec["MinimumRings"] = reduced_rings if reduce else coupon_rings
+                sec["ReducedSides"] = 1 if reduce else 0
+                sec["FacingBound"] = facing_bound if reduce else transverse
+                if reduce:
+                    for k in range(sec["TubesPerSide"]):
+                        row = c["PrismTubes"]["Tubes"][k]
+                        row.update({"Rings": reduced_rings, "FacingWidth": facing_width, "FacingBound": facing_bound})
+                return c
+            self.assertEqual(len(census["PrismTubes"]["Tubes"]) % section["TubesPerSide"], 0)
+            accepted = per_side(copy.deepcopy(census))
+            self.assertIs(validate_gmsh_build_census(per_side_report, accepted, semantic), accepted)
+            unreduced = per_side(copy.deepcopy(census), reduce=False)
+            self.assertIs(validate_gmsh_build_census(per_side_report, unreduced, semantic), unreduced)
+            # The pre-F6 census (no per-side record) with the command's range passes as well.
+            pre_f6 = copy.deepcopy(census)
+            self.assertIs(validate_gmsh_build_census(per_side_report, pre_f6, semantic), pre_f6)
+            def rejected_rings(mutate, message, target_report=per_side_report):
+                broken = per_side(copy.deepcopy(census))
+                mutate(broken)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(target_report, broken, semantic)
+            rejected_rings(lambda c: c["PrismTubes"]["Tubes"][0].__setitem__("Rings", coupon_rings), "outside \[MinimumQualifiedRings")
+            rejected_rings(lambda c: [row.__setitem__("Rings", reduced_rings - 1) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "outside \[MinimumQualifiedRings|do not follow the largest K")
+            rejected_rings(lambda c: [row.__setitem__("FacingWidth", 4.0 * facing_width) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "do not follow the largest K")
+            rejected_rings(lambda c: [row.__setitem__("FacingBound", 0.9 * facing_bound) for row in c["PrismTubes"]["Tubes"][:section["TubesPerSide"]]],
+                           "do not follow the largest K")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumRings", coupon_rings), "MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("ReducedSides", 2), "MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("FacingBound", transverse), "MinimumRings / ReducedSides / FacingBound")
+            # An unreduced coupon whose smallest facing width lies below 2 x the transverse bound (the
+            # law steps; or a measurement cap already holds the count) records FacingBound = w / 2.
+            narrow_unreduced = per_side(copy.deepcopy(census), reduce=False)
+            narrow_unreduced["PrismTubes"]["Section"]["MetalFacingWidth"] = 1.5 * transverse
+            narrow_unreduced["PrismTubes"]["Section"]["FacingBound"] = 0.75 * transverse
+            self.assertIs(validate_gmsh_build_census(per_side_report, narrow_unreduced, semantic), narrow_unreduced)
+            narrow_unreduced["PrismTubes"]["Section"]["FacingBound"] = transverse
+            with self.assertRaisesRegex(ValueError, "MinimumRings / ReducedSides / FacingBound"):
+                validate_gmsh_build_census(per_side_report, narrow_unreduced, semantic)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
+                           "MinimumQualifiedRings differs from the build command")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", 2.0 * facing_width),
+                           "below the section's MetalFacingWidth|MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MetalFacingWidth", None),
+                           "the section records none|MinimumRings / ReducedSides / FacingBound")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("RingsPerSideRule"), "per-side ring rule")
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].pop("MinimumRings"), "without the section's per-side record")
+            # The command's range binds: a reduced row below it, or no range at all, fails closed.
+            above = copy.deepcopy(per_side_report)
+            above["Command"][-1] = str(reduced_rings + 1)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
+                           "outside \\[MinimumQualifiedRings", target_report=above)
+            rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", None),
+                           "without a qualified ring-count range|MinimumQualifiedRings differs", target_report=report)
+            # The measurement-only ring cap (F6 2.3): Section.RingsCap must equal the command's
+            # --maximum-rings (both absent in production); with a TransverseBound recorded, Rings ==
+            # min(the law's count, the cap).
+            capped_report = copy.deepcopy(report)
+            capped_report["Command"] += ["--maximum-rings", str(coupon_rings)]
+            capped = copy.deepcopy(census)
+            capped["PrismTubes"]["Section"]["RingsCap"] = coupon_rings
+            self.assertIs(validate_gmsh_build_census(capped_report, capped, semantic), capped)
+            with self.assertRaisesRegex(ValueError, "RingsCap differs"):
+                validate_gmsh_build_census(report, copy.deepcopy(capped), semantic)
+            with self.assertRaisesRegex(ValueError, "RingsCap differs"):
+                validate_gmsh_build_census(capped_report, copy.deepcopy(census), semantic)
+            lawful = copy.deepcopy(census)
+            lawful["PrismTubes"]["Section"]["TransverseBound"] = transverse
+            self.assertIs(validate_gmsh_build_census(report, lawful, semantic), lawful)
+            lawful["PrismTubes"]["Section"]["TransverseBound"] = 0.5 * transverse
+            with self.assertRaisesRegex(ValueError, "do not follow the transverse bound"):
+                validate_gmsh_build_census(report, lawful, semantic)
             # A census recorded before the face-end rule (no summary, no face end) still passes:
             # the fixture producer's census is one.
             self.assertNotIn("FaceEnds", census["PrismTubes"])

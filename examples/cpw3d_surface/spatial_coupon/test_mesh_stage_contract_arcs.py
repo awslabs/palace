@@ -10,7 +10,9 @@ from pathlib import Path
 import re
 import unittest
 
-from mesh_stage_contract import (ARC_JOINT_TURN_BOUND_RADIANS, RECIPE_SCOPE_GUARDS, arc_part_count, boundary_arc_runs,
+from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_TILT_BOUND_DEGREES,
+                                 ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS,
+                                 RECIPE_SCOPE_GUARDS, arc_part_count, boundary_arc_runs,
                                  metal_loop_arc_parts, metal_loop_side_points, scope_classes, scope_guard_in_text,
                                  validate_arc_tubes)
 
@@ -172,6 +174,16 @@ class ArcScopeGuardsTest(unittest.TestCase):
         source = (HERE / "mesh_spatial_coupon.jl").read_text()
         bound = re.search(r"const ARC_JOINT_TURN_BOUND = ([0-9.e+-]+)", source).group(1)
         self.assertEqual(float(bound), ARC_JOINT_TURN_BOUND_RADIANS)
+        # Round 2b (decision 437 (3)): the tested ranges that lift the guards, parsed from the mesher.
+        smooth = re.search(r"const ARC_SMOOTH_JOINT_TURN_BOUND = ([0-9.e+-]+)", source).group(1)
+        self.assertEqual(float(smooth), ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
+        corner = re.search(r"const ARC_CORNER_JOINT_TURN_RANGE = \(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\)", source)
+        self.assertEqual(float(corner.group(1)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
+        self.assertAlmostEqual(math.radians(float(corner.group(2))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[1])
+        tilt = re.search(r"const ARC_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
+        self.assertEqual(float(tilt), ARC_FACE_END_TILT_BOUND_DEGREES)
+        self.assertLess(ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
+        self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
 
 
 if __name__ == "__main__":
