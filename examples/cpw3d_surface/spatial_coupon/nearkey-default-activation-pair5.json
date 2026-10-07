@@ -1,0 +1,160 @@
+{
+ "Record": "DefaultActivation",
+ "RuleVersion": "nearkey-reuse-rule-v1",
+ "ValidationPair": "pair-5",
+ "Verdict": "PASS",
+ "WrittenUTC": "2026-10-07T01:20Z",
+ "WrittenBy": "near-key activation lane (supervisor decision 459; branch simlapointe/nearkey-activation)",
+ "Decisions": {
+  "USER_428": "near-key reuse = OPTION A; DEFAULT reuse active only after validation pair 5 reads inside its bound",
+  "Supervisor_432": "pair-5 rulings: the applicable (F), the two tooling probes, the scoring rule",
+  "Supervisor_446": "pair-5 budget: cap 8 -> 11.5 node-h",
+  "Supervisor_459": "VALIDATION PAIR 5 = PASS -> DEFAULT near-key reuse ACTIVATES; this record + the shipped rule file's DefaultActivation block",
+  "ReviewOfRecord": {
+   "Path": "/Users/simlap/bedrock-tests/.pi-home/agent/sessions/--Users-simlap-bedrock-tests--/subagent-artifacts/outputs/f6099a4d-8668-450a-848c-0e11aed9b416/d428/nearkey-validation-pair5-review.md",
+   "SHA256": "5aa9c73e7aec97c97d70e68f1ab53f4d2f14e0209154801858b952e1ec429686",
+   "Verdict": "ACCEPT; BLOCKERS 0; MAJORS 0; MINORs 1-4 (provenance) fixed by the dated note of REPORT.md 2026-10-07 ~01:15 UTC and records/q-exact-model-files-sha256.json"
+  }
+ },
+ "EvidenceRoot": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5",
+ "Variant": {
+  "Model": "spatialedgecluster_edgecount-19_a16c6d025c0d",
+  "Case": "spatial-19-edge-9fd03b1b7378",
+  "Donor": "spatialedgecluster_edgecount-19_dcfd1e0fe3fa (S1p box 1, library of record s2-r1p9-v3-b1, sha 836fd0091c68d2e4b7a715aeaae85a058701aa0706975180d2692571a14dc51b)",
+  "StructureKey": "2d27be59ff1b0774e86fe766572cda6cecd58c3c9dd14865b201909b51c32caa (= the calibrated S1p box-1 key of the rule file)",
+  "W_pct": 1.9605469041054244,
+  "S_pct": 0.06577835886368945,
+  "LeadWidth_um": {
+   "Exact": 0.204,
+   "Donor": 0.208
+  },
+  "TraceBasisIdenticalToDonor": true,
+  "Tooling": "probes (i) / (ii) exactly 0 (donor mesh byte-identical under HEAD's mesher; donor fab p4 matrices byte-identical on palace-d8e613a)"
+ },
+ "Scoring": {
+  "Rule": "PASS iff |r| <= the bound of record on EVERY Type (SA 0.551, MS 0.301, MA_sharp 1.007 %) AND the sign is the central's (negative) on SA and MS (decision 432 (a); DESIGN v2 5.1 item 5 / P-NK2)",
+  "ProxyTrace": "device-patch-273 (the S1p box-1 (F) device trace on the shared knots; fabricated SURFACE matrices, E = t^T Q t)",
+  "PerType": {
+   "SA": {
+    "r_pct": -0.42338386824912755,
+    "Central_pct": -0.461,
+    "Bound_pct": 0.551,
+    "AbsROverBound": 0.768391775406765,
+    "InsideBound": true,
+    "SignRight": true,
+    "BoundAtActualS_pct": 0.5384061139967582
+   },
+   "MS": {
+    "r_pct": -0.19990529976999794,
+    "Central_pct": -0.225,
+    "Bound_pct": 0.301,
+    "AbsROverBound": 0.6641372085381991,
+    "InsideBound": true,
+    "SignRight": true,
+    "BoundAtActualS_pct": 0.30036487559921576
+   },
+   "MA_sharp": {
+    "r_pct": -0.4645579699257829,
+    "Central_pct": -0.55,
+    "Bound_pct": 1.007,
+    "AbsROverBound": 0.4613286692410953,
+    "InsideBound": true,
+    "SignRight": null,
+    "BoundAtActualS_pct": 0.9861863640331678
+   }
+  },
+  "MA_raw_pct_information": -0.46027061951808834,
+  "Tails": {
+   "t_E": 0.022306642353652206,
+   "t_D": 0.022262609816823264,
+   "Difference_DonorMinusExact": -4.4032536828941815e-05,
+   "DESIGNBound": 0.00013512593462183808
+  },
+  "TransplantTerm2T2e_pct": 3.687990777899997e-14,
+  "Result": "3 / 3 inside the bound of record, 2 / 2 signs right (SA, MS) -> DefaultActivation PASS; P-NK2 HOLDS, no falsifier fired",
+  "NodeHours": {
+   "Used": 9.94,
+   "Cap": 11.5,
+   "CapDecision": 446
+  }
+ },
+ "Records": {
+  "Report": {
+   "Path": "REPORT.md",
+   "SHA256": "da9b9d39e7f14c336b5a9f46b914fab8b0d525ec6cf18157fbe0f03586b69f52",
+   "Note": "after the dated note of 2026-10-07 ~01:15 UTC (review MINORs 1-4); scored text unchanged"
+  },
+  "PlanSnapshot": {
+   "Path": "plan/PLAN.snapshot-20261006T190642Z.md",
+   "SHA256": "5a83ae0573a9742d2f1ef13a21db32c6c8a3c2542b6db000fedba19cd6bde12a",
+   "Note": "taken 19:06:42Z, before the first qsub (PBS 57330 ctime 19:10:26Z)"
+  },
+  "Plan": {
+   "Path": "PLAN.md",
+   "SHA256": "620efbc24d788cddf0895f52e93da4a415a6a325b1b7210f254ae911f5465ec0",
+   "Note": "= the snapshot + one blank line + the dated note of decision 446"
+  },
+  "TransplantRecord": {
+   "Path": "evidence/transplant/pair5-transplant-record.json",
+   "SHA256": "86f030f5835753209653536a1f84292a37ea7c8f4d81b2b36c89a7acbec80dfe"
+  },
+  "FQualificationApplicable": {
+   "Path": "f-qualification/spatial-19-edge-9fd03b1b7378/spatial-qualification-applicable.json",
+   "SHA256": "31a073ea52d7413c11326a2b5ee29d1308c358c767372aa85ec840dd6360deab"
+  },
+  "ExactDenseTraces": {
+   "Path": "f-qualification/spatial-19-edge-9fd03b1b7378/dense-traces.json",
+   "SHA256": "d13e805056d577870af10c6f0f13c1af46e25acdb7c1262fa470ddc59bfc4bee"
+  },
+  "DonorDenseTraces": {
+   "Path": "evidence/donor/dense-traces-39ab2ffd68ec.json",
+   "SHA256": "d772b84ffd863abc4661adb2d8f6048c0a5185b98b911590521f153ea24dd6bd"
+  },
+  "ExactLibrary": {
+   "Path": "qualify/thin-process-library.json",
+   "SHA256": "873fe0ab912c7758139e52102a8f8307abc3bf915165b5725f8f66c2ee2a4863",
+   "Note": "the measurement coupon's library (fab + thin matrices, shelled, MA record); never a library of record"
+  },
+  "VariantSignature": {
+   "Path": "variant/signature.json",
+   "SHA256": "3b2294b68fc9b2b6d7524776d5b41d2e35186a908e8e0c68d1a3d8edd1e98bc7"
+  },
+  "VariantRecord": {
+   "Path": "variant/variant-record.json",
+   "SHA256": "515e4106d1e49eac4b267368dab33cc93c0b34d2cc557e3fba352a4a6ebf2d16"
+  },
+  "ProbeIIMatrices": {
+   "Path": "probes/probe-ii-matrices.json",
+   "SHA256": "2fef8c52db47094e1786e22f9dbeaf5ccf5dde757038c85d42e5c58c11edf615"
+  },
+  "PBSJobs": {
+   "Path": "records/pbs-jobs-pair5.txt",
+   "SHA256": "82a735a4b3f1d5ff6cfb5d4772380e7935e0e19cf301b23769a92eedda92f6b5"
+  },
+  "ToolSHA256List": {
+   "Path": "evidence/sha256-tools.txt",
+   "SHA256": "a065095076218e04f3fc7df9ae65d6b5637c1bdc366948d07c759832d45c4897"
+  },
+  "QExactModelFiles": {
+   "Path": "records/q-exact-model-files-sha256.json",
+   "SHA256": "fe56896ea0021c18e7dd1a7d9b1dacbf5af2235e90300e235e9e12ecfddad008",
+   "Files": {
+    "basis-points.csv": "2a5b48f926ccae67f5947efdf015665e3aec272db58a7a986fb8ad5916103e1c",
+    "fabricated-domain-response-matrix.csv": "84ce3fc3d055d13abd3cb03c86130f3b7194bb6345de2442e9e7f593b88b4bf0",
+    "fabricated-surface-response-matrix.csv": "2ec896b92c71940f83c516442e24e68c08a871c685adb47e2cef8242771575a7",
+    "thin-domain-response-matrix.csv": "ee3c26aa9388de0d9e4bb3b502823c6f08286fa4565c244d92e1a11034ad106c",
+    "thin-surface-response-matrix.csv": "1998e4df8703986ebbc55b0440159848a555e4fa4ca1003380e94c4bed576a0e",
+    "trace-triangles.csv": "2c4df741415df94c03efab5d1a5437a8a05594a0ad813876571a5441c275f2f1",
+    "trace-vertices.csv": "c5ab9b7979a9139939dbf46a60392b0e5c2e93dfbab1d936a37e2dc780a49401"
+   },
+   "LocalEqualsCluster": "7 / 7 local = cluster"
+  },
+  "Design": {
+   "Path": "../nearkey-reuse-design/DESIGN.md",
+   "SHA256": "9ed2f4fad557be6e3003211a15c6f1858293a5f2061fb88c3879b29717184e7d",
+   "SHA256OfRecord": "e9c10d84af99b9ecb5cb29c840ec0f6a3a16ea8f249993e458b5b15ec4351f50",
+   "Note": "the text above ERRATUM 1 re-hashes to the sha of record; ERRATA 1 / 2 do not touch 2.4 / 5.1 item 5 / P-NK2"
+  }
+ },
+ "Rule": "nearkey_predictor.default_active: the shipped rule file's Policy.DefaultActivation.RecordPath names this file and RecordSHA256 is its byte sha256; a missing / unreadable / mismatching file fails closed (decision 438 (5))"
+}
