@@ -72,7 +72,8 @@ k < 15 halvings (every production AMR sequence to date <= 8 cycles: >= 12x margi
 
 Statuses: PendingQualification (today's p-sequence controls) -> Qualified ((a) for T1 or T2
 AND the identity AND the gate) -> WindowValidated ((b) places the class inside its marker on
->= 1 window reference); (a) failing -> Failed (never placed).
+>= 1 window reference); (a) failing -> Failed (never placed).  A model whose driver verdict
+(Qualification.Verdict) is Failed is Failed whatever (a) reads (decisions 485 / 487 (a)).
 """
 import argparse
 import csv
@@ -258,15 +259,32 @@ UNJUDGED_TYPES_RULE = ("decisions 474 / 477 (1): a coupon whose p-sequence gate 
                        "controls judges the Type; a failing (a) / identity / gate is still Failed")
 
 
-def qualification_status(current, *, dense_passed, identity_passed, gate_passed, window_validated=False, unjudged_types=()):
+CONTROL_VERDICT_FAILED = "Failed"
+CONTROL_VERDICTS = ("Passed", "PendingQualification", CONTROL_VERDICT_FAILED)
+CONTROL_VERDICT_RULE = ("decisions 485 / 487 (a): the model's Qualification.Verdict is the p-sequence control verdict of the qualify "
+                        "driver (gates.evaluate: Passed / PendingQualification / Failed); a Failed verdict is never lifted by (F): "
+                        "the status is Failed whatever the dense traces, the identity and the gate read (the b-batch1 interim "
+                        "libraries of S3p / S2p read Verdict Failed next to QualificationStatus Qualified because the (F) path "
+                        "seeded the transition from QualificationStatus alone); PendingQualification (the --reference none "
+                        "production verdict) and Passed proceed to the transition")
+
+
+def qualification_status(current, *, dense_passed, identity_passed, gate_passed, window_validated=False, unjudged_types=(),
+                         control_verdict=None):
     """The library status transition: PendingQualification stays until (a) + identity + gate
     pass (Qualified); (b) on >= 1 window reference lifts Qualified to WindowValidated; a failing
     (a) or identity is Failed (never placed: the thin-run guard treats it as Missing); a
     failing gate on a (B) coupon is a mis-keyed library or a placement defect: Failed.
     `unjudged_types` (the model's Qualification.UnjudgedTypes) non-empty refuses the lift: the
-    status stays PendingQualification (UNJUDGED_TYPES_RULE)."""
+    status stays PendingQualification (UNJUDGED_TYPES_RULE).  `control_verdict` (the model's
+    Qualification.Verdict) Failed is Failed whatever the criteria read (CONTROL_VERDICT_RULE);
+    None (a model without a driver verdict) leaves the transition to the criteria."""
     if current not in STATUSES:
         raise SpatialQualificationError(f"unknown library status {current!r}")
+    if control_verdict is not None and control_verdict not in CONTROL_VERDICTS:
+        raise SpatialQualificationError(f"unknown control verdict {control_verdict!r} (Qualification.Verdict is one of {CONTROL_VERDICTS})")
+    if control_verdict == CONTROL_VERDICT_FAILED:
+        return STATUS_FAILED
     if not dense_passed or not identity_passed or not gate_passed:
         return STATUS_FAILED
     if unjudged_types:
@@ -588,11 +606,12 @@ RULE = ("decision 282 (F) as restated by decision 299: closure |E_thin,p4 + dE_m
 
 
 def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=None, device_boxes=None, tolerances=None,
-             unjudged_types=()):
+             unjudged_types=(), control_verdict=None):
     """The qualification record of a coupon: every dense trace's criteria (evaluate_trace
     results), the gate, the optional window references ((b) per class), the optional
     device-side domain reading (information) and the status; `unjudged_types` = the model's
-    Qualification.UnjudgedTypes (the lift refused while non-empty, UNJUDGED_TYPES_RULE)."""
+    Qualification.UnjudgedTypes (the lift refused while non-empty, UNJUDGED_TYPES_RULE);
+    `control_verdict` = the model's Qualification.Verdict (Failed is Failed, CONTROL_VERDICT_RULE)."""
     if not traces:
         raise SpatialQualificationError("(a) needs at least one dense trace")
     families = {trace["Family"] for trace in traces}
@@ -606,10 +625,12 @@ def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=Non
     unjudged_types = list(unjudged_types or [])
     status = qualification_status(current_status, dense_passed=dense_passed, identity_passed=identity_passed,
                                   gate_passed=bool(gate["Passed"]), window_validated=bool(window and window["Passed"]),
-                                  unjudged_types=unjudged_types)
+                                  unjudged_types=unjudged_types, control_verdict=control_verdict)
     return {"Version": 2, "Rule": RULE,
             "UnjudgedTypes": unjudged_types,
             "UnjudgedTypesRule": UNJUDGED_TYPES_RULE if unjudged_types else None,
+            "ControlVerdict": control_verdict,
+            "ControlVerdictRule": CONTROL_VERDICT_RULE if control_verdict == CONTROL_VERDICT_FAILED else None,
             "Tolerances": {"Closure": CLOSURE_TOLERANCE, "TwinConsistency": TWIN_CONSISTENCY_TOLERANCE,
                            "MatrixIdentity": MATRIX_IDENTITY_TOLERANCE, "GateMaxRatio": GATE_MAX_RATIO,
                            **(tolerances or {})},
@@ -633,6 +654,7 @@ def stamp_library_status(library_path, model_name, record, record_path=None):
         **{key: record[key] for key in ("Version", "Rule", "Families", "Tolerances", "DensePassed", "ClosurePassed",
                                         "TwinConsistencyPassed", "IdentityPassed", "GatePassed", "PreviousStatus", "Status")},
         "UnjudgedTypes": record.get("UnjudgedTypes") or [],
+        "ControlVerdict": record.get("ControlVerdict"),
         "Gate": {key: gate.get(key) for key in ("Passed", "MaxRatio", "Orders", "ProductionOrdersMissing", "Count", "Probed")},
         "Traces": [{"Name": t["Name"], "Family": t["Family"], "Passed": t["Passed"],
                     "Closure": {k: v["Residual"] for k, v in t["Closure"].items()},
@@ -786,16 +808,20 @@ def command_evaluate(args):
         device_boxes["Boxes"][0]["TwinTrace"] = device_traces[0]["Name"]
     library = json.loads(Path(args.library).read_text())
     model = [m for m in library["Models"] if m["Name"] == manifest["Model"]][0]
+    qualification = model.get("Qualification") or {}
     record = evaluate(traces, gate=gate, current_status=model.get("QualificationStatus", STATUS_PENDING),
                       reference_boxes=reference_boxes, device_boxes=device_boxes,
-                      unjudged_types=(model.get("Qualification") or {}).get("UnjudgedTypes") or [])
+                      unjudged_types=qualification.get("UnjudgedTypes") or [],
+                      control_verdict=qualification.get("Verdict"))
     Path(args.output).write_text(json.dumps(record, indent=2) + "\n")
     if not args.dry_run:
         stamp_library_status(args.library, manifest["Model"], record, args.output)
     print(f"{manifest['Model']}: closure {record['ClosurePassed']} twin-consistency {record['TwinConsistencyPassed']} "
           f"identity {record['IdentityPassed']} gate {record['GatePassed']} (orders {gate['Orders']}, max ratio "
           f"{gate['MaxRatio']:.2e}) -> {record['Status']}"
-          + (f" (UnjudgedTypes {record['UnjudgedTypes']}: the Qualified lift is refused)" if record["UnjudgedTypes"] else ""))
+          + (f" (UnjudgedTypes {record['UnjudgedTypes']}: the Qualified lift is refused)" if record["UnjudgedTypes"] else "")
+          + (f" (Qualification.Verdict {record['ControlVerdict']}: the Qualified lift is refused)"
+             if record["ControlVerdict"] == CONTROL_VERDICT_FAILED else ""))
     return 0 if record["Status"] in (STATUS_QUALIFIED, STATUS_WINDOW_VALIDATED) else 1
 
 

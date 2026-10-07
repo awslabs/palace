@@ -403,6 +403,96 @@ class DenseTracesTest(unittest.TestCase):
             self.assertEqual(sorted(sq.device_traces(path, 3)), [410])
 
 
+class CommandEvaluateTest(unittest.TestCase):
+    """`evaluate` end to end on a synthetic run tree whose energies obey the p4 matrices exactly
+    (the Palace CSV formats of PalaceOutputReadersTest): the library's Qualification.Verdict
+    seeds the status (decisions 485 / 487 (a)) and the identity partition is recorded
+    (decisions 482 / 487 (d))."""
+
+    Q_FAB = {"SA": {(1, 1): 2.0, (1, 2): 0.5, (2, 2): 1.0}, "Domain": {(1, 1): 10.0, (1, 2): 0.0, (2, 2): 5.0}}
+    Q_THIN = {"SA": {(1, 1): 1.8, (1, 2): 0.5, (2, 2): 0.9}, "Domain": {(1, 1): 9.5, (1, 2): 0.0, (2, 2): 4.9}}
+    TRACE = [1.0, 2.0]
+    MODEL = "spatialedgecluster_edgecount-8_e7f44561bbf0"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="spatial-qualification-evaluate-"))
+        fab_p4 = {cls: sq.quadratic_form(self.Q_FAB[cls], self.TRACE) for cls in self.Q_FAB}
+        thin_p4 = {cls: sq.quadratic_form(self.Q_THIN[cls], self.TRACE) for cls in self.Q_THIN}
+        energies = {"fabricated-p4": fab_p4, "thin-p4": thin_p4,
+                    "fabricated-p5": {cls: v * 1.005 for cls, v in fab_p4.items()},
+                    "thin-p5": {"SA": thin_p4["SA"] * 1.06, "Domain": thin_p4["Domain"] * 1.004}}
+        configs = {}
+        for name, per_class in energies.items():
+            postpro = self.tmp / name / "postpro"
+            postpro.mkdir(parents=True)
+            write_csv(postpro / "domain-E.csv", ["i", "E_elec (J)", "E_mag (J)"], [[1, per_class["Domain"], 0.0]])
+            write_csv(postpro / "surface-Q.csv", ["i", "p_surf[1]", "Q_surf[1]"], [[1, per_class["SA"] / per_class["Domain"], 1.0]])
+            write_csv(postpro / "surface-Q-edge.csv", ["i", "exc", "interface", "R (m)", "E_out (J)", "p_out", "E_ann (J)", "p_ann"],
+                      [[1, 0, 1, 2e-6, 0.0, 0.0, 0.0, 0.0]])
+            config = {"Problem": {"Output": str(postpro)}, "Model": {"Mesh": str(self.tmp / "identity.msh")},
+                      "Solver": {"Order": int(name[-1])},
+                      "Boundaries": {"Postprocessing": {"Dielectric": [{"Index": 1, "Type": "SA"}]},
+                                     "PrescribedPotential": [{"Index": 1, "DataFile": str(self.tmp / "trace.csv")}]}}
+            (self.tmp / name / "config.json").write_text(json.dumps(config))
+            configs[name] = str(self.tmp / name / "config.json")
+        for name, matrices in (("fab-matrices", self.Q_FAB), ("thin-matrices", self.Q_THIN)):
+            directory = self.tmp / name
+            directory.mkdir()
+            write_csv(directory / "domain-response-matrix.csv", ["basis_i", "basis_j", "Q_ij (J)"],
+                      [[i, j, q] for (i, j), q in matrices["Domain"].items()])
+            write_csv(directory / "surface-response-matrix.csv",
+                      ["interface", "edge", "R (m)", "basis_i", "basis_j", "Q_ij (J)", "Q_ij normal (J)", "Q_ij tangential (J)",
+                       "Q_total_ij (J)", "Q_total_ij normal (J)", "Q_total_ij tangential (J)"],
+                      [[1, 0, 2e-6, i, j, q, 0.0, 0.0, q, 0.0, 0.0] for (i, j), q in matrices["SA"].items()])
+        (self.tmp / "dense-traces.json").write_text(json.dumps(
+            {"Version": 1, "Model": self.MODEL, "Configs": configs, "Orders": [4, 5], "Unsupported": [],
+             "Traces": [{"Name": "state-2", "Family": "T2", "Coefficients": self.TRACE, "EnergyScale": 1.0}]}))
+        gate_dir = self.tmp / "c0-p4"
+        gate_dir.mkdir()
+        (gate_dir / "palace.json").write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {
+            "Count": 0, "Tolerance": 0.02, "Records": [{"Model": self.MODEL, "MaxRatio": 7.7e-8, "Excluded": False}]}}}}))
+        (gate_dir / "config_resolved.json").write_text(json.dumps({"Solver": {"Order": 4}}))
+        self.library = self.tmp / "process-library.json"
+        self.record = self.tmp / "spatial-qualification.json"
+
+    def write_library(self, model):
+        self.library.write_text(json.dumps({"Version": 3, "Models": [{"Name": self.MODEL, "LibraryQualified": False, **model}]}))
+
+    def run_evaluate(self, *extra):
+        return sq.main(["evaluate", "--dense-traces", str(self.tmp / "dense-traces.json"), "--fabricated-matrices",
+                        str(self.tmp / "fab-matrices"), "--thin-matrices", str(self.tmp / "thin-matrices"), "--gate",
+                        str(self.tmp / "c0-p4" / "palace.json"), "--library", str(self.library), "--output", str(self.record), *extra])
+
+    def test_control_verdict_seeds_the_status(self):
+        # The reproduced b-batch1 interim case: Verdict Failed, no QualificationStatus -> the old
+        # tool stamped Qualified; now Failed, rc 1, the rule recorded.
+        self.write_library({"Qualification": {"Verdict": "Failed", "Record": "qualification.json", "ReferenceAnchor": None,
+                                              "Order": 4, "UnjudgedTypes": []}})
+        self.assertEqual(self.run_evaluate(), 1)
+        record = json.loads(self.record.read_text())
+        self.assertTrue(record["DensePassed"] and record["IdentityPassed"] and record["GatePassed"])
+        self.assertEqual((record["PreviousStatus"], record["Status"], record["ControlVerdict"]),
+                         (sq.STATUS_PENDING, sq.STATUS_FAILED, "Failed"))
+        self.assertEqual(record["ControlVerdictRule"], sq.CONTROL_VERDICT_RULE)
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual((model["QualificationStatus"], model["LibraryQualified"]), (sq.STATUS_FAILED, False))
+        self.assertEqual(model["SpatialQualification"]["ControlVerdict"], "Failed")
+        # The production verdict (--reference none, controls passed) lifts to Qualified as before.
+        self.write_library({"Qualification": {"Verdict": "PendingQualification", "Record": "qualification.json",
+                                              "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []},
+                            "QualificationStatus": sq.STATUS_PENDING})
+        self.assertEqual(self.run_evaluate(), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual((record["Status"], record["ControlVerdict"], record["ControlVerdictRule"]),
+                         (sq.STATUS_QUALIFIED, "PendingQualification", None))
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual((model["QualificationStatus"], model["LibraryQualified"]), (sq.STATUS_QUALIFIED, True))
+        # A model without a driver verdict (no Qualification block) is left to the criteria.
+        self.write_library({})
+        self.assertEqual(self.run_evaluate("--dry-run"), 0)
+        self.assertIsNone(json.loads(self.record.read_text())["ControlVerdict"])
+
+
 class EvaluationTest(unittest.TestCase):
     """evaluate_trace / evaluate on consistent synthetic energies: a trace whose energies obey
     the model exactly qualifies; a trace with a 3 % closure defect fails the coupon; the gate
@@ -447,6 +537,44 @@ class EvaluationTest(unittest.TestCase):
         self.assertTrue(unjudged["DensePassed"] and unjudged["GatePassed"])
         self.assertIsNone(record["UnjudgedTypesRule"])
         self.assertEqual(record["UnjudgedTypes"], [])
+
+    def test_failed_control_verdict_is_never_lifted(self):
+        """Decisions 485 / 487 (a): the b-batch1 interim libraries of S3p / S2p read Qualification.Verdict
+        Failed (control 31 p_SA) next to QualificationStatus Qualified, because the (F) path seeded the
+        transition from QualificationStatus alone.  The verdict now refuses the lift: Failed whatever
+        the dense traces, the identity and the gate read; PendingQualification / Passed proceed."""
+        trace = sq.evaluate_trace("device-patch-9", "T1", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
+                                  thin_p5=self.thin_p5, q_fab=self.q_fab, q_thin=self.q_thin)
+        window = [sq.reference_box_closure(1.02, 1.0, 0.0, True) | {"Class": "SA", "Window": "S3p"}]
+        failed = sq.evaluate([trace], gate=self.gate, reference_boxes=window, control_verdict="Failed")
+        self.assertEqual(failed["Status"], sq.STATUS_FAILED)
+        self.assertTrue(failed["DensePassed"] and failed["IdentityPassed"] and failed["GatePassed"])
+        self.assertEqual(failed["ControlVerdict"], "Failed")
+        self.assertEqual(failed["ControlVerdictRule"], sq.CONTROL_VERDICT_RULE)
+        for verdict, status in (("PendingQualification", sq.STATUS_WINDOW_VALIDATED), ("Passed", sq.STATUS_WINDOW_VALIDATED),
+                                (None, sq.STATUS_WINDOW_VALIDATED)):
+            record = sq.evaluate([trace], gate=self.gate, reference_boxes=window, control_verdict=verdict)
+            self.assertEqual(record["Status"], status, verdict)
+            self.assertEqual(record["ControlVerdict"], verdict)
+            self.assertIsNone(record["ControlVerdictRule"])
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "unknown control verdict"):
+            sq.evaluate([trace], gate=self.gate, control_verdict="Qualified")
+        # A current status of Qualified (a stamped library) is no shield either.
+        self.assertEqual(sq.qualification_status(sq.STATUS_QUALIFIED, dense_passed=True, identity_passed=True, gate_passed=True,
+                                                 control_verdict="Failed"), sq.STATUS_FAILED)
+        # The reproduced interim case: the S3p model with the driver's Failed verdict and no
+        # QualificationStatus (PendingQualification by default) stamps Failed, LibraryQualified False.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            model = {"Name": "spatialedgecluster_edgecount-8_e7f44561bbf0", "LibraryQualified": False,
+                     "Qualification": {"Verdict": "Failed", "Record": "qualification.json", "ReferenceAnchor": None, "Order": 4,
+                                       "UnjudgedTypes": []}}
+            path.write_text(json.dumps({"Models": [model]}))
+            stamped = sq.stamp_library_status(path, model["Name"], failed)["Models"][0]
+            self.assertEqual(stamped["QualificationStatus"], sq.STATUS_FAILED)
+            self.assertFalse(stamped["LibraryQualified"])
+            self.assertEqual(stamped["SpatialQualification"]["ControlVerdict"], "Failed")
+            self.assertEqual(stamped["SpatialQualification"]["Status"], sq.STATUS_FAILED)
 
     def test_defective_trace_fails_the_coupon(self):
         defective_p5 = dict(self.fab_p5)

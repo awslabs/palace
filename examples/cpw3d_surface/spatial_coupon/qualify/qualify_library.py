@@ -1494,15 +1494,20 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
             model["ThinCutoffRule"] = THIN_CUTOFF_RULE
             paired.add(record["Case"])
         # UnjudgedTypes travels with the model: the (F) path refuses the Qualified lift while a
-        # gated Type has no judged p-sequence control (decisions 474 / 477 (1)).
+        # gated Type has no judged p-sequence control (decisions 474 / 477 (1)).  The driver's
+        # verdict also seeds the (F) status (decisions 485 / 487 (a)): a Failed control verdict is
+        # QualificationStatus Failed, every other verdict PendingQualification (the (F) input).
         model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
                                   "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"],
                                   "UnjudgedTypes": list(record["Qualification"].get("UnjudgedTypes") or [])}
+        model["QualificationStatus"] = qualification_status_of_verdict(record["Qualification"]["Verdict"])
+        model["QualificationStatusRule"] = QUALIFICATION_STATUS_RULE
         if record.get("BuildGateOverride"):
             model["BuildGateOverride"] = record["BuildGateOverride"]
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
         if (record.get("Nodes") or {}).get("MultiNode"):
-            model["MultiNodeReduction"] = {"Nodes": record["Nodes"]["Main"], "Note": build_plan.MULTI_NODE_REDUCTION_NOTE}
+            model["MultiNodeReduction"] = {"Nodes": record["Nodes"]["Main"], "Ranks": reducer_ranks_of(record),
+                                           "Note": build_plan.MULTI_NODE_REDUCTION_NOTE}
         model["SourceProcessLibrary"] = {"Path": str(library_path), "SHA256": sha256(library_path)}
         tail = context.get("ma_tail")
         order_block = (tail or {}).get("Orders", {}).get(f"p{main['Order']}")
@@ -1584,6 +1589,34 @@ def library_model_name(manifest_path, manifest, case):
     directory = source_directory(manifest_path, manifest, case)
     library_path = directory / case["Source"]["Files"]["ProcessLibrary"]["Name"]
     return json.loads(library_path.read_text())["Models"][0]["Name"] if library_path.is_file() else None
+
+
+# The (F) path's library statuses (spatial_qualification.STATUSES) the driver seeds.
+QUALIFICATION_STATUS_FAILED = "Failed"
+QUALIFICATION_STATUS_PENDING = "PendingQualification"
+QUALIFICATION_STATUS_RULE = ("decisions 485 / 487 (a): the model's QualificationStatus is seeded from the driver's control verdict - "
+                             "Failed for a Failed p-sequence verdict (the (F) path never lifts it), PendingQualification otherwise "
+                             "(the (F) dense traces + identity + gate lift it to Qualified); the (F) path reads Qualification.Verdict "
+                             "as well, so the two fields cannot disagree on a Failed coupon")
+
+
+def qualification_status_of_verdict(verdict):
+    """The (F) input status of a driver verdict: Failed -> Failed, Passed / PendingQualification
+    -> PendingQualification (QUALIFICATION_STATUS_RULE); an unknown verdict fails closed."""
+    if verdict == gate_evaluation.VERDICT_FAILED:
+        return QUALIFICATION_STATUS_FAILED
+    if verdict in (gate_evaluation.VERDICT_PASSED, gate_evaluation.VERDICT_PENDING):
+        return QUALIFICATION_STATUS_PENDING
+    raise ValueError(f"unknown qualify verdict {verdict!r}")
+
+
+def reducer_ranks_of(record):
+    """The rank count of the job that reduced the main stage (the reducer job of a split
+    coupon, the single job otherwise): the partition the (F) identity twin must take
+    (decisions 482 / 487 (d))."""
+    jobs = record.get("Jobs") or []
+    reducer = next((job for job in jobs if job["Kind"] in ("reducer", "single")), None)
+    return reducer.get("Ranks") if reducer else None
 
 
 def library_totals(records, *, args, remote, profile, wall_seconds, first_submission, last_fetch, jobs, cap):
