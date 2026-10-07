@@ -492,6 +492,75 @@ class CommandEvaluateTest(unittest.TestCase):
         self.assertEqual(self.run_evaluate("--dry-run"), 0)
         self.assertIsNone(json.loads(self.record.read_text())["ControlVerdict"])
 
+    def test_identity_partition_is_recorded_and_mandatory_for_a_multi_node_reducer(self):
+        """Decisions 482 / 487 (d): the loop end's 4-node reducer against a 1-node identity twin read
+        MS 1.6-5.3e-6 (> 1e-6); the identity twin now takes the reducer's partition and the (F) record
+        says so.  A multi-node model needs --identity-plan with the matching partition (absent or
+        differing: fail closed); a one-node model records "not supplied" without it."""
+        qualification = {"Verdict": "PendingQualification", "Record": "q.json", "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []}
+        identity_config = str(self.tmp / "fabricated-p4" / "config.json")
+
+        def plan(nodes, ranks, reducer_nodes=None, run="fabricated-p4", config=identity_config):
+            path = self.tmp / f"plan-{nodes}-{ranks}-{run}.json"
+            path.write_text(json.dumps({"Case": self.MODEL, "Stages": [{"Name": f"{run}-dense", "Config": config}],
+                                        "IdentityPartition": {"Run": run, "Nodes": nodes, "Ranks": ranks, "MatchesReducer": True,
+                                                              "Reducer": {"Nodes": reducer_nodes or nodes, "Ranks": ranks, "Job": "reducer",
+                                                                          "PBSJobID": "57910.h"}}}))
+            return str(path)
+        # One-node reducer, no plan: recorded as not supplied; the lift proceeds.
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        self.assertEqual(record["IdentityPartition"]["Supplied"], False)
+        self.assertEqual(record["IdentityPartition"]["Note"], "not supplied, one-node reducer")
+        self.assertEqual(record["IdentityPartition"]["Rule"], sq.IDENTITY_PARTITION_RULE)
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual(model["SpatialQualification"]["IdentityPartition"]["Supplied"], False)
+        # One-node reducer with a one-node plan: recorded; a 4-node plan against it fails closed.
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate("--identity-plan", plan(1, 192)), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual((record["IdentityPartition"]["Supplied"], record["IdentityPartition"]["Nodes"], record["IdentityPartition"]["Ranks"]),
+                         (True, 1, 192))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "differs from the reducer"):
+            self.run_evaluate("--identity-plan", plan(4, 768))
+        # The loop-end shape: a 4-node reducer (MultiNodeReduction) - the plan is mandatory ...
+        multi = {"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Ranks": 768, "Note": "n"}}
+        self.write_library(multi)
+        self.record.unlink()
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "mandatory"):
+            self.run_evaluate()
+        self.assertFalse(self.record.exists())   # nothing evaluated, nothing stamped
+        # ... a 1-node twin (the decision-482 reading) fails closed, as does a partition-matched twin
+        # whose plan recorded another reducer, another run or another coupon's config ...
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "differs from the reducer"):
+            self.run_evaluate("--identity-plan", plan(1, 192))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "differs from the reducer"):
+            self.run_evaluate("--identity-plan", plan(4, 768, reducer_nodes=2))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "names the run"):
+            self.run_evaluate("--identity-plan", plan(4, 768, run="fabricated-p5"))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "another coupon"):
+            self.run_evaluate("--identity-plan", plan(4, 768, config="/elsewhere/fabricated-p4/config.json"))
+        no_partition = self.tmp / "plan-none.json"
+        no_partition.write_text(json.dumps({"Case": self.MODEL, "Stages": [{"Name": "fabricated-p4-dense", "Config": identity_config}]}))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "no IdentityPartition"):
+            self.run_evaluate("--identity-plan", str(no_partition))
+        # ... and the reducer's partition is recorded in the (F) record and the stamped library.
+        self.assertEqual(self.run_evaluate("--identity-plan", plan(4, 768)), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        partition = record["IdentityPartition"]
+        self.assertEqual({key: partition[key] for key in ("Supplied", "Run", "Nodes", "Ranks", "ReducerNodes", "ReducerRanks", "ReducerJob", "MatchesReducer")},
+                         {"Supplied": True, "Run": "fabricated-p4", "Nodes": 4, "Ranks": 768, "ReducerNodes": 4, "ReducerRanks": 768,
+                          "ReducerJob": "57910.h", "MatchesReducer": True})
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual(model["SpatialQualification"]["IdentityPartition"]["Nodes"], 4)
+        # A model recording Nodes only (a library written before the Ranks field) is checked on nodes.
+        self.write_library({"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Note": "n"}})
+        self.assertEqual(self.run_evaluate("--identity-plan", plan(4, 768)), 0)
+        self.assertEqual(json.loads(self.record.read_text())["IdentityPartition"]["ReducerRanks"], 768)
+
 
 class EvaluationTest(unittest.TestCase):
     """evaluate_trace / evaluate on consistent synthetic energies: a trace whose energies obey

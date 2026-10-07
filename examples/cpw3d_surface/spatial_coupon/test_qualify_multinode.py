@@ -433,6 +433,8 @@ class RunnerMultiNodeTest(unittest.TestCase):
             self.assertGreaterEqual(len(lines), 2)
 
 
+LOOP_END_RECORDS = ASSESSMENT / "curved-clusters-20261005" / "loopend-first-case" / "records"
+LOOP_END_F = ASSESSMENT / "curved-clusters-20261005" / "loopend-first-case" / "f-qualification" / "spatial-38-edge-f0461584cccf"
 STORED_RUNS = [ASSESSMENT / "stage2-20261004" / "coupons-a" / "qualify" / "sct002-S2p" / "fab-spatial-3-edge-2c54db92028f" / "library-qualification.json",
                ASSESSMENT / "stage2-20261004" / "coupons-bc" / "qualify" / "ctx003-C3" / "fab-spatial-19-edge-12b9d5c5c1bf" / "library-qualification.json"]
 
@@ -502,20 +504,46 @@ class DenseTwinPlanTest(unittest.TestCase):
                 (root / name / "config.json").write_text(json.dumps(config))
                 configs[name] = str(root / name / "config.json")
             (root / "dense-traces.json").write_text(json.dumps({"Version": 1, "Model": "le", "Configs": configs, "Traces": []}))
-            plan, script = self.dense_twin_plan.plan_dense_twins(
-                dense_dir=root, runs=["fabricated-p4", "fabricated-p5"], counts=LOOP_END_COUNTS, binary_sha256="0" * 64,
-                remote_root="/r", job_dir="/r/dense", model=self.model, dense_model=self.dense_model, profile={**self.profile, "MaximumNodesPerJob": 8},
-                case_id="le")
+            profile = {**self.profile, "MaximumNodesPerJob": 8}
+            plan_kwargs = dict(dense_dir=root, counts=LOOP_END_COUNTS, binary_sha256="0" * 64, remote_root="/r", job_dir="/r/dense",
+                               model=self.model, dense_model=self.dense_model, profile=profile, case_id="le")
+            # Decisions 482 / 487 (d): a job holding the identity twin (fabricated-p4) takes the reducer's
+            # partition: without it the planner fails closed; the p5 twin alone plans as before.
+            with self.assertRaisesRegex(ValueError, "identity twin"):
+                self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p4", "fabricated-p5"], **plan_kwargs)
+            reducer = {"Nodes": 4, "Ranks": 768, "Job": "reducer", "PBSJobID": "57910.fake", "Case": "le", "Record": "/r/lq.json"}
+            plan, script = self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p4", "fabricated-p5"], reducer_partition=reducer,
+                                                                 **plan_kwargs)
             with self.assertRaisesRegex(ValueError, "below"):
-                self.dense_twin_plan.plan_dense_twins(dense_dir=root, runs=["fabricated-p5"], counts=LOOP_END_COUNTS, binary_sha256="0" * 64,
-                                                      remote_root="/r", job_dir="/r/dense", model=self.model, dense_model=self.dense_model,
-                                                      profile={**self.profile, "MaximumNodesPerJob": 8}, nodes=1)
+                self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p5"], nodes=1, **plan_kwargs)
+            alone, _ = self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p5"], **plan_kwargs)
+            # The identity twin on the reducer's partition exactly: a differing --nodes, a reducer whose
+            # rank count this profile cannot launch, or a twin needing more nodes than the reducer fail closed.
+            with self.assertRaisesRegex(ValueError, "differs from the reducer"):
+                self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p4"], reducer_partition=reducer, nodes=2, **plan_kwargs)
+            with self.assertRaisesRegex(ValueError, "cannot take the reducer's partition here"):
+                self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p4"], reducer_partition={**reducer, "Ranks": 384}, **plan_kwargs)
+            with self.assertRaisesRegex(ValueError, "no tolerance is widened"):
+                self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p4", "fabricated-p5"], reducer_partition={**reducer, "Nodes": 1, "Ranks": 192},
+                                                      **plan_kwargs)
+            one_node, _ = self.dense_twin_plan.plan_dense_twins(runs=["fabricated-p4"], reducer_partition={**reducer, "Nodes": 1, "Ranks": 192},
+                                                                **plan_kwargs)
         runs = plan["Estimate"]["Runs"]
-        # The loop-end fab p4 twin (887 GB Palace) fits one node; the p5 twin (1,702 GB) does not:
-        # the job runs on the p5 twin's node count, every run scaled to it.
+        # The loop-end fab p4 twin (887 GB Palace) fits one node; the p5 twin (1,702 GB) does not: alone
+        # it runs on its own node count; with the identity twin the job takes the reducer's 4 nodes.
         self.assertEqual(runs["fabricated-p4"]["NodePlan"]["NodesRequired"], 1)
         self.assertGreater(runs["fabricated-p5"]["NodePlan"]["NodesRequired"], 1)
-        self.assertEqual(plan["Nodes"], runs["fabricated-p5"]["NodePlan"]["NodesRequired"])
+        self.assertEqual(alone["Nodes"], alone["Estimate"]["Runs"]["fabricated-p5"]["NodePlan"]["NodesRequired"])
+        self.assertIsNone(alone["IdentityPartition"])
+        self.assertEqual((plan["Nodes"], plan["Ranks"]), (4, 768))
+        self.assertEqual(plan["IdentityPartition"]["Run"], "fabricated-p4")
+        self.assertEqual((plan["IdentityPartition"]["Nodes"], plan["IdentityPartition"]["Ranks"]), (4, 768))
+        self.assertEqual(plan["IdentityPartition"]["Reducer"], reducer)
+        self.assertTrue(plan["IdentityPartition"]["MatchesReducer"])
+        self.assertEqual(plan["IdentityPartition"]["Rule"], self.dense_twin_plan.IDENTITY_PARTITION_RULE)
+        self.assertIn("57910.fake", plan["Purpose"])
+        self.assertNotIn("Nodes", one_node)   # a one-node reducer: the one-node plan, byte-identical keys
+        self.assertEqual((one_node["Ranks"], one_node["IdentityPartition"]["Nodes"]), (192, 1))
         self.assertEqual(plan["Ranks"], 192 * plan["Nodes"])
         self.assertEqual(plan["Instance"]["Nodes"], plan["Nodes"])
         self.assertLessEqual(plan["Estimate"]["PerNodeUsedGiB"], 0.9 * 0.6 * plan["Instance"]["MemoryGiB"])
@@ -529,6 +557,65 @@ class DenseTwinPlanTest(unittest.TestCase):
         self.assertIn("D=/r/dense\n", script)
         with self.assertRaisesRegex(ValueError, "no measured order"):
             self.dense_twin_plan.estimate_run(self.model, self.dense_model, LOOP_END_COUNTS, 3, 5, profile=self.profile)
+
+    def test_reducer_partition_is_read_from_the_qualify_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "library-qualification.json"
+            split = {"Case": "le", "Jobs": [{"Name": "worker-1", "Kind": "worker", "Nodes": 2, "Ranks": 384, "Submission": {"Job": "1.h"}},
+                                            {"Name": "reducer", "Kind": "reducer", "Nodes": 4, "Ranks": 768, "Submission": {"Job": "57910.h"}}]}
+            single = {"Case": "s", "Jobs": [{"Name": "single", "Kind": "single", "Submission": {"Job": "2.h"}}]}
+            record.write_text(json.dumps({"Cases": [split, single]}))
+            partition = self.dense_twin_plan.reducer_partition_of(record, "le", profile=self.profile)
+            self.assertEqual({key: partition[key] for key in ("Nodes", "Ranks", "Job", "PBSJobID", "Case")},
+                             {"Nodes": 4, "Ranks": 768, "Job": "reducer", "PBSJobID": "57910.h", "Case": "le"})
+            partition = self.dense_twin_plan.reducer_partition_of(record, "s", profile=self.profile)
+            self.assertEqual((partition["Nodes"], partition["Ranks"], partition["Job"]), (1, 192, "single"))
+            with self.assertRaisesRegex(ValueError, "name the coupon"):
+                self.dense_twin_plan.reducer_partition_of(record, None, profile=self.profile)
+            with self.assertRaisesRegex(ValueError, "no case"):
+                self.dense_twin_plan.reducer_partition_of(record, "x", profile=self.profile)
+            record.write_text(json.dumps({"Cases": [{"Case": "p", "Jobs": []}]}))
+            with self.assertRaisesRegex(ValueError, "no reducer"):
+                self.dense_twin_plan.reducer_partition_of(record, None, profile=self.profile)
+
+    @unittest.skipUnless((LOOP_END_F / "dense" / "fabricated-p4-4n-plan.json").is_file() and (LOOP_END_RECORDS / "qualify-fab" / "library-qualification.json").is_file(),
+                         "the loop-end (F) records are not present")
+    def test_loop_end_identity_twin_reproduces_the_decision_482_four_node_plan(self):
+        """The acceptance example of decisions 482 / 487 (d): the loop-end fab p4 identity twin, first
+        planned on 1 node (PBS 58012, identity MS 1.6-5.3e-6 against the 4-node Gram) and re-solved by
+        the ruling on the reducer's 4 x r8g partition (PBS 58043, `--nodes 4`, identity <= 6.0e-8), is
+        now planned on that partition from the qualify record itself: the same Nodes / Ranks / instance /
+        stage caps as the stored 4-node plan, with IdentityPartition recorded."""
+        stored = json.loads((LOOP_END_F / "dense" / "fabricated-p4-4n-plan.json").read_text())
+        qualify_record = LOOP_END_RECORDS / "qualify-fab" / "library-qualification.json"
+        case_id = json.loads(qualify_record.read_text())["Cases"][0]["Case"]
+        partition = self.dense_twin_plan.reducer_partition_of(qualify_record, case_id, profile=self.profile)
+        self.assertEqual((partition["Nodes"], partition["Ranks"], partition["Job"]), (4, 768, "reducer"))
+        build = json.loads((LOOP_END_RECORDS / "library-build.json").read_text())
+        counts = next(case["H1"]["EntityCounts"] for case in build["Cases"] if case["Case"] == case_id)
+        dense = json.loads((LOOP_END_F / "dense" / "dense-traces.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            # The stored dense directory relocated to this mirror (its configs are the recorded bytes).
+            relocated = Path(tmp) / "dense"
+            relocated.mkdir()
+            configs = {name: str(LOOP_END_F / "dense" / name / "config.json") for name in dense["Configs"]}
+            (relocated / "dense-traces.json").write_text(json.dumps({**dense, "Configs": configs}))
+            model = estimate_stages.load_cost_model()
+            plan, script = self.dense_twin_plan.plan_dense_twins(
+                dense_dir=relocated, runs=["fabricated-p4"], counts=counts, binary_sha256=stored["BinarySHA256"],
+                remote_root=stored["MPIExec"].rsplit("/", 1)[0], job_dir=stored["Stages"][0]["Config"].rsplit("/", 2)[0], model=model,
+                dense_model=self.dense_model, profile=self.profile, case_id=case_id, reducer_partition=partition)
+        self.assertEqual((plan["Nodes"], plan["Ranks"], plan["Instance"]["Type"]), (stored["Nodes"], stored["Ranks"], stored["Instance"]["Type"]))
+        self.assertEqual((plan["Nodes"], plan["Ranks"]), (4, 768))
+        self.assertEqual([(stage["Name"], stage["CapSeconds"], stage["MinimumSeconds"]) for stage in plan["Stages"]],
+                         [(stage["Name"], stage["CapSeconds"], stage["MinimumSeconds"]) for stage in stored["Stages"]])
+        self.assertEqual(plan["Estimate"]["NodesRequired"], stored["Estimate"]["NodesRequired"])
+        self.assertAlmostEqual(plan["Estimate"]["PerNodeUsedGiB"], stored["Estimate"]["PerNodeUsedGiB"], places=6)
+        self.assertEqual(plan["MinimumMemAvailableBytes"], stored["MinimumMemAvailableBytes"])
+        self.assertEqual(plan["PinnedSHA256"][configs["fabricated-p4"]], stored["PinnedSHA256"][dense["Configs"]["fabricated-p4"]])
+        self.assertEqual(plan["IdentityPartition"]["Reducer"]["PBSJobID"], partition["PBSJobID"])
+        self.assertEqual((plan["IdentityPartition"]["Nodes"], plan["IdentityPartition"]["Ranks"]), (4, 768))
+        self.assertIn("#PBS -l select=4:ncpus=192:mpiprocs=192\n", script)
 
 
 class FitNodeScalingTest(unittest.TestCase):

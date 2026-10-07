@@ -606,12 +606,13 @@ RULE = ("decision 282 (F) as restated by decision 299: closure |E_thin,p4 + dE_m
 
 
 def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=None, device_boxes=None, tolerances=None,
-             unjudged_types=(), control_verdict=None):
+             unjudged_types=(), control_verdict=None, identity_partition=None):
     """The qualification record of a coupon: every dense trace's criteria (evaluate_trace
     results), the gate, the optional window references ((b) per class), the optional
     device-side domain reading (information) and the status; `unjudged_types` = the model's
     Qualification.UnjudgedTypes (the lift refused while non-empty, UNJUDGED_TYPES_RULE);
-    `control_verdict` = the model's Qualification.Verdict (Failed is Failed, CONTROL_VERDICT_RULE)."""
+    `control_verdict` = the model's Qualification.Verdict (Failed is Failed, CONTROL_VERDICT_RULE);
+    `identity_partition` = identity_partition_record (recorded; the identity residual stays the gate)."""
     if not traces:
         raise SpatialQualificationError("(a) needs at least one dense trace")
     families = {trace["Family"] for trace in traces}
@@ -631,6 +632,7 @@ def evaluate(traces, *, gate, current_status=STATUS_PENDING, reference_boxes=Non
             "UnjudgedTypesRule": UNJUDGED_TYPES_RULE if unjudged_types else None,
             "ControlVerdict": control_verdict,
             "ControlVerdictRule": CONTROL_VERDICT_RULE if control_verdict == CONTROL_VERDICT_FAILED else None,
+            "IdentityPartition": identity_partition,
             "Tolerances": {"Closure": CLOSURE_TOLERANCE, "TwinConsistency": TWIN_CONSISTENCY_TOLERANCE,
                            "MatrixIdentity": MATRIX_IDENTITY_TOLERANCE, "GateMaxRatio": GATE_MAX_RATIO,
                            **(tolerances or {})},
@@ -655,6 +657,7 @@ def stamp_library_status(library_path, model_name, record, record_path=None):
                                         "TwinConsistencyPassed", "IdentityPassed", "GatePassed", "PreviousStatus", "Status")},
         "UnjudgedTypes": record.get("UnjudgedTypes") or [],
         "ControlVerdict": record.get("ControlVerdict"),
+        "IdentityPartition": record.get("IdentityPartition"),
         "Gate": {key: gate.get(key) for key in ("Passed", "MaxRatio", "Orders", "ProductionOrdersMissing", "Count", "Probed")},
         "Traces": [{"Name": t["Name"], "Family": t["Family"], "Passed": t["Passed"],
                     "Closure": {k: v["Residual"] for k, v in t["Closure"].items()},
@@ -762,6 +765,50 @@ def gate_solve_record(path):
     return {"Diagnostics": diagnostics, "Order": order, "Source": str(path)}
 
 
+IDENTITY_PARTITION_RULE = ("decisions 482 / 487 (d): the identity twin (the fabricated run at the library order) runs on the reducer's "
+                           "partition (dense_twin_plan IdentityPartition); the (F) record carries the twin's and the reducer's node / "
+                           "rank counts - mandatory (--identity-plan) for a multi-node reducer (the model's MultiNodeReduction), where "
+                           "an absent plan or a differing partition fails closed; optional for a one-node reducer (absent: recorded as "
+                           "not supplied); the identity residual <= 1e-6 remains the gate in both cases")
+
+
+def identity_partition_record(identity_plan, *, model, run_name, run_config):
+    """The (F) record's IdentityPartition from the dense twin plan (dense_twin_plan.plan_dense_twins
+    with --qualify-record) and the library model's MultiNodeReduction (IDENTITY_PARTITION_RULE):
+    `identity_plan` = the parsed plan or None; `run_name` / `run_config` = the identity run of the
+    dense-traces manifest (the plan must hold that run's stage)."""
+    reduction = model.get("MultiNodeReduction") or {}
+    reducer_nodes = int(reduction.get("Nodes", 1))
+    reducer_ranks = reduction.get("Ranks")
+    if identity_plan is None:
+        if reducer_nodes > 1:
+            raise SpatialQualificationError(f"the model's reducer ran on {reducer_nodes} nodes: the identity twin's plan (--identity-plan, "
+                                            f"dense_twin_plan with --qualify-record) is mandatory and was not given: fail closed")
+        return {"Supplied": False, "Run": run_name, "ReducerNodes": reducer_nodes, "ReducerRanks": reducer_ranks,
+                "Note": "not supplied, one-node reducer", "Rule": IDENTITY_PARTITION_RULE}
+    partition = identity_plan.get("IdentityPartition")
+    if not partition:
+        raise SpatialQualificationError("the identity plan carries no IdentityPartition (planned without --qualify-record): fail closed")
+    if partition.get("Run") != run_name:
+        raise SpatialQualificationError(f"the identity plan names the run {partition.get('Run')!r}, the evaluation's identity run is {run_name!r}")
+    configs = [stage.get("Config") for stage in identity_plan.get("Stages", [])]
+    if run_config not in configs:
+        raise SpatialQualificationError(f"the identity plan's stages {configs} do not run the identity config {run_config}: another coupon's plan")
+    twin_nodes, twin_ranks = int(partition["Nodes"]), int(partition["Ranks"])
+    planned_reducer = partition.get("Reducer") or {}
+    mismatch = []
+    if twin_nodes != reducer_nodes or int(planned_reducer.get("Nodes", twin_nodes)) != reducer_nodes:
+        mismatch.append(f"nodes: twin {twin_nodes}, the plan's reducer {planned_reducer.get('Nodes')}, the model's reducer {reducer_nodes}")
+    if reducer_ranks is not None and twin_ranks != int(reducer_ranks):
+        mismatch.append(f"ranks: twin {twin_ranks}, the model's reducer {reducer_ranks}")
+    if mismatch:
+        raise SpatialQualificationError("the identity twin's partition differs from the reducer's (" + "; ".join(mismatch) + "): fail closed")
+    return {"Supplied": True, "Run": run_name, "Nodes": twin_nodes, "Ranks": twin_ranks, "ReducerNodes": reducer_nodes,
+            "ReducerRanks": reducer_ranks if reducer_ranks is not None else planned_reducer.get("Ranks"),
+            "ReducerJob": planned_reducer.get("PBSJobID"), "Plan": identity_plan.get("Case"), "MatchesReducer": True,
+            "Rule": IDENTITY_PARTITION_RULE}
+
+
 def command_evaluate(args):
     """Evaluate (a) + identity + gate [+ (b), + the device-side domain reading] from the run
     outputs and stamp the status."""
@@ -809,10 +856,14 @@ def command_evaluate(args):
     library = json.loads(Path(args.library).read_text())
     model = [m for m in library["Models"] if m["Name"] == manifest["Model"]][0]
     qualification = model.get("Qualification") or {}
+    identity_run = f"fabricated-p{args.library_order}"
+    identity_partition = identity_partition_record(
+        json.loads(Path(args.identity_plan).read_text()) if args.identity_plan else None, model=model, run_name=identity_run,
+        run_config=manifest["Configs"][identity_run])
     record = evaluate(traces, gate=gate, current_status=model.get("QualificationStatus", STATUS_PENDING),
                       reference_boxes=reference_boxes, device_boxes=device_boxes,
                       unjudged_types=qualification.get("UnjudgedTypes") or [],
-                      control_verdict=qualification.get("Verdict"))
+                      control_verdict=qualification.get("Verdict"), identity_partition=identity_partition)
     Path(args.output).write_text(json.dumps(record, indent=2) + "\n")
     if not args.dry_run:
         stamp_library_status(args.library, manifest["Model"], record, args.output)
@@ -853,6 +904,10 @@ def add_arguments(parser):
     evaluate_parser.add_argument("--device-boxes", help="device-box-energies.json of device_box_energies.py read (the "
                                                         "device-side domain reading, information)")
     evaluate_parser.add_argument("--library", required=True, help="process-library.json to stamp")
+    evaluate_parser.add_argument("--identity-plan", help="plan.json of the identity twin's dense-twin job (dense_twin_plan with "
+                                                          "--qualify-record): its IdentityPartition is recorded and checked against "
+                                                          "the model's MultiNodeReduction; mandatory for a multi-node reducer "
+                                                          "(decisions 482 / 487 (d))")
     evaluate_parser.add_argument("--output", required=True, help="spatial-qualification.json")
     evaluate_parser.add_argument("--dry-run", action="store_true")
     evaluate_parser.set_defaults(func=command_evaluate)
