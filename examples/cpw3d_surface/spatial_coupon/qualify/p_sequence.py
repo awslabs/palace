@@ -43,6 +43,17 @@ def amplitude_observable(name):
     return f"Q_{name[len('p_'):]}" if name.startswith("p_") else None
 
 
+def floor_numerators(name):
+    """The Type amplitudes a participation observable must be below the floor of, ALL of them,
+    to be exempt: [Q_X]; for p_MA_sharp both Q_MA_sharp and the raw Q_MA (decision 477 (4): the
+    sharp quantity is a per-source extrapolation, the Cauchy-Schwarz derivation holds for the
+    Gram diagonal Q_MA); [] for E."""
+    numerator = amplitude_observable(name)
+    if numerator is None:
+        return []
+    return [numerator, "Q_MA"] if numerator == "Q_MA_sharp" else [numerator]
+
+
 def coupon_amplitudes(main_observables):
     """Per Type amplitude the floor is referred to, from the main stage's observables of
     EVERY source (`observables(main_dir, ...)`): {Q_X: {"Maximum": the coupon's largest

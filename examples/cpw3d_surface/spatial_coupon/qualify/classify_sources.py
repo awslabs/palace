@@ -35,8 +35,12 @@ import json
 import math
 from pathlib import Path
 import statistics
+import sys
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+from p_sequence import floor_numerators  # noqa: E402
+
 GATES_FILE = HERE / "qualification-gates.json"
 
 
@@ -124,16 +128,30 @@ def classify_all(locations, zero_trace, terminals=(), *, thresholds=(NARROW_WIDT
 
 
 def amplitude_numerators(amplitudes, observables):
-    """The Type amplitudes (p_SA -> Q_SA, p_MA_sharp -> Q_MA_sharp) of the judged participation
-    observables that the coupon amplitudes carry."""
-    return [f"Q_{name[len('p_'):]}" for name in observables
-            if name.startswith("p_") and f"Q_{name[len('p_'):]}" in amplitudes]
+    """The Type amplitudes the judged participation observables are floored on and the coupon
+    amplitudes carry (p_sequence.floor_numerators: p_SA -> Q_SA; p_MA_sharp -> Q_MA_sharp and
+    the raw Q_MA, decision 477 (4))."""
+    return sorted({numerator for name in observables for numerator in floor_numerators(name) if numerator in amplitudes})
 
 
 def amplitude_ratios(i, amplitudes, numerators):
-    """Source i's Type amplitudes over the coupon maxima (p_sequence.coupon_amplitudes)."""
+    """Source i's Type amplitudes over the coupon maxima (p_sequence.coupon_amplitudes); None
+    for a zero Type maximum (never inf in a record)."""
     return {name: (amplitudes[name]["Values"].get(str(i), 0.0) / amplitudes[name]["Maximum"]
-                   if amplitudes[name]["Maximum"] else math.inf) for name in numerators}
+                   if amplitudes[name]["Maximum"] > 0.0 else None) for name in numerators}
+
+
+def source_above_floor(i, amplitudes, floor_ratio, observables):
+    """Source i is judged on every `observables` Type at the gated order: for each observable
+    ANY of its floor numerators the coupon carries is at or above floor_ratio x the coupon
+    maximum (the dual MA_sharp condition exempts only below both; a zero Type maximum never
+    exempts; an observable with no carried numerator is not tested)."""
+    for name in observables:
+        carried = [numerator for numerator in floor_numerators(name) if numerator in amplitudes]
+        if carried and not any(amplitudes[n]["Maximum"] <= 0.0
+                               or amplitudes[n]["Values"].get(str(i), 0.0) >= floor_ratio * amplitudes[n]["Maximum"] for n in carried):
+            return False
+    return True
 
 
 def class_members(classes, free):
@@ -152,7 +170,7 @@ def rank_members_by_floor(members, amplitudes, floor_ratio, observables):
     numerators = amplitude_numerators(amplitudes, observables)
     ranked, below_floor_classes = {}, {}
     for name, indices in members.items():
-        above = [i for i in indices if all(value >= floor_ratio for value in amplitude_ratios(i, amplitudes, numerators).values())]
+        above = [i for i in indices if source_above_floor(i, amplitudes, floor_ratio, observables)]
         ranked[name] = above + [i for i in indices if i not in above]
         if indices and not above:
             below_floor_classes[name] = {"Members": len(indices), "Chosen": indices[0],

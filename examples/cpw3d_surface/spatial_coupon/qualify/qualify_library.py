@@ -432,6 +432,9 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
             raise CaseStop("Controls", f"--control-source {unknown} are not sources of {case_id}")
         control_rule = "explicit --control-source"
     else:
+        if not isinstance((gates["Gates"]["PSequenceControls"].get("AmplitudeFloor") or {}).get("Fraction"), (int, float)):
+            raise CaseStop("Gates", f"the gate table {args.gates} carries no PSequenceControls.AmplitudeFloor.Fraction (a table "
+                                    f"older than Version 6): the control choice and the p-sequence gate need the amplitude floor")
         floor_ratio = gate_evaluation.amplitude_floor_ratio(gates["Gates"]["PSequenceControls"]["AmplitudeFloor"]["Fraction"])
         judged = [name for name in (p_sequence.SHARP_GATED_OBSERVABLES if inputs.get("RadialShells") else p_sequence.GATED_OBSERVABLES)
                   if name != "E"]
@@ -1490,8 +1493,11 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
             model.update(thin[record["Case"]])
             model["ThinCutoffRule"] = THIN_CUTOFF_RULE
             paired.add(record["Case"])
+        # UnjudgedTypes travels with the model: the (F) path refuses the Qualified lift while a
+        # gated Type has no judged p-sequence control (decisions 474 / 477 (1)).
         model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
-                                  "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"]}
+                                  "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"],
+                                  "UnjudgedTypes": list(record["Qualification"].get("UnjudgedTypes") or [])}
         if record.get("BuildGateOverride"):
             model["BuildGateOverride"] = record["BuildGateOverride"]
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED

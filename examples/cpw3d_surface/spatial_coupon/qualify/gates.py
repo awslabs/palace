@@ -36,7 +36,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ma_ms_offsets import reference_p_ma, strongest_sources, weighted  # noqa: E402
-from p_sequence import GATED_OBSERVABLES, SHARP_GATED_OBSERVABLES, amplitude_observable  # noqa: E402
+from p_sequence import GATED_OBSERVABLES, SHARP_GATED_OBSERVABLES, floor_numerators, sequence  # noqa: E402
 
 GATES_FILE = HERE / "qualification-gates.json"
 VERDICT_PASSED, VERDICT_FAILED, VERDICT_PENDING = "Passed", "Failed", "PendingQualification"
@@ -139,11 +139,12 @@ def evaluate_p_sequence(gate, p_sequence_summary, observables=GATED_OBSERVABLES,
     `observables` = the gated observables that apply (an interface the reference does not
     declare is left out, see applicable_observables).  `amplitudes` =
     p_sequence.coupon_amplitudes of the main stage (every source): with the gate table's
-    AmplitudeFloor a participation observable whose control amplitude (the larger of its
-    main- and high-order numerator Q_X,ii) is below floor_ratio(Fraction) x the coupon's
-    largest Q_X,jj is recorded BelowAmplitudeFloor and not judged (decisions 472 (c) / 474);
-    E is always judged; a Type with no judged control is listed in UnjudgedTypes."""
-    floor = gate.get("AmplitudeFloor") if amplitudes else None
+    AmplitudeFloor a participation observable whose control amplitude is below
+    floor_ratio(Fraction) x the coupon's largest Q_X,jj at BOTH its largest computed and its
+    extrapolated converged amplitude, for every floor numerator (below_amplitude_floor;
+    decisions 472 (c) / 474 / 477), is recorded BelowAmplitudeFloor and not judged; E is
+    always judged; a Type with no judged control is listed in UnjudgedTypes."""
+    floor = gate.get("AmplitudeFloor") if amplitudes is not None else None
     ratio = amplitude_floor_ratio(floor["Fraction"]) if floor else None
     controls = {}
     failing = []
@@ -174,7 +175,7 @@ def evaluate_p_sequence(gate, p_sequence_summary, observables=GATED_OBSERVABLES,
                                    "CouponMaximum": {name: {key: amplitudes[name][key] for key in ("Maximum", "MaximumSource", "Sources")}
                                                      for name in amplitudes},
                                    "BelowFloorAggregate": {name: below_floor_aggregate(amplitudes[name], ratio) for name in amplitudes}}
-    elif amplitudes is None and gate.get("AmplitudeFloor"):
+    elif gate.get("AmplitudeFloor"):
         record["AmplitudeFloor"] = {"Applied": False, "Reason": "no coupon amplitudes supplied (a p-sequence summary without the "
                                                                 "main stage's per-source Type amplitudes): every observable judged"}
     return record
@@ -182,37 +183,73 @@ def evaluate_p_sequence(gate, p_sequence_summary, observables=GATED_OBSERVABLES,
 
 def amplitude_floor_ratio(fraction):
     """F_X / Q_max,X = (sqrt(1 + fraction) - 1)^2: a source with Q_ii below that fraction of the
-    coupon's largest Type diagonal changes the Type energy of any normalised trace (|c_i| <= 1)
-    reaching Q_max by at most (1 + sqrt(Q_ii / Q_max))^2 - 1 <= fraction (Cauchy-Schwarz on the
-    PSD response matrix), and any normalised trace's by at most fraction x Q_max (the PLAN of
-    control-amplitude-floor, decisions 472 (c) / 474)."""
+    coupon's largest Type diagonal contributes to the Type energy of any normalised trace
+    (|c_i| <= 1) reaching Q_max at most (1 + sqrt(Q_ii / Q_max))^2 - 1 <= fraction of it
+    (Cauchy-Schwarz on the PSD response matrix), and to any normalised trace's at most
+    fraction x Q_max; the computed-vs-true ERROR attributable to the source is at most the
+    contribution in each matrix, <= 2 x fraction x Q_max (the PLAN of control-amplitude-floor,
+    decisions 472 (c) / 474 / 477 (5))."""
     fraction = float(fraction)
     if not 0.0 < fraction < 1.0:
         raise ValueError(f"the amplitude floor fraction must lie in (0, 1); got {fraction}")
     return (math.sqrt(1.0 + fraction) - 1.0) ** 2
 
 
+def control_amplitudes(values):
+    """The two amplitudes of one control's Type numerator sequence {low, main, high} the floor
+    is tested at (decision 477 (2), the margin rule): the LARGEST computed amplitude and the
+    EXTRAPOLATED converged amplitude = |p_inf| of p_sequence.sequence when it is defined
+    (0 < r < 1) and the sequence is monotone (d_low, d_high of one sign), else the largest
+    computed.  None when no computed value exists."""
+    computed = {key: values[key] for key in ("low", "main", "high")
+                if values.get(key) is not None and isinstance(values[key], (int, float)) and math.isfinite(values[key])}
+    if not computed:
+        return None
+    largest = max(abs(value) for value in computed.values())
+    seq = sequence(computed.get("low"), computed.get("main"), computed.get("high"))
+    monotone = (seq["d_low"] is not None and seq["d_high"] is not None and math.isfinite(seq["d_low"]) and math.isfinite(seq["d_high"])
+                and seq["d_low"] * seq["d_high"] > 0.0)
+    if seq["p_inf"] is not None and math.isfinite(seq["p_inf"]) and monotone:
+        return {"Largest": largest, "LargestOrder": max(computed, key=lambda key: abs(computed[key])), "Orders": sorted(computed),
+                "Extrapolated": abs(seq["p_inf"]), "ExtrapolationRule": "Aitken limit of the monotone contracting sequence",
+                "r": seq["r"]}
+    return {"Largest": largest, "LargestOrder": max(computed, key=lambda key: abs(computed[key])), "Orders": sorted(computed),
+            "Extrapolated": largest, "r": seq["r"],
+            "ExtrapolationRule": ("the largest computed amplitude (no Aitken limit: the sequence is not monotone and contracting)"
+                                  if len(computed) > 1 else "the largest computed amplitude (a single computed order)")}
+
+
 def below_amplitude_floor(name, by_observable, amplitudes, ratio):
     """The BelowAmplitudeFloor record of a control's participation observable, or None when
-    the observable is judged (E; an amplitude at or above the floor; a Type the coupon
-    amplitudes do not carry).  The control's amplitude is the larger of its main- and
-    high-order numerators (judged when either order's response reaches the floor)."""
-    numerator = amplitude_observable(name)
-    if numerator is None or numerator not in amplitudes or numerator not in by_observable:
+    the observable is judged: E; a Type the coupon amplitudes do not carry; a zero Type
+    maximum; or any of its floor numerators (floor_numerators) at or above its floor at the
+    LARGEST computed amplitude or at the EXTRAPOLATED converged amplitude (control_amplitudes;
+    decision 477 (2)): an amplitude still rising towards the floor never exempts a control."""
+    tests = {}
+    for numerator in floor_numerators(name):
+        if numerator not in amplitudes or numerator not in by_observable:
+            return None
+        maximum = amplitudes[numerator]["Maximum"]
+        if not maximum > 0.0:
+            return None
+        both = control_amplitudes(by_observable[numerator]["values"])
+        if both is None:
+            return None
+        floor = ratio * maximum
+        decisive = max(both["Largest"], both["Extrapolated"])
+        if decisive >= floor:
+            return None
+        tests[numerator] = {"ComputedAmplitude": both["Largest"], "ComputedOrder": both["LargestOrder"], "Orders": both["Orders"],
+                            "ExtrapolatedAmplitude": both["Extrapolated"], "ExtrapolationRule": both["ExtrapolationRule"], "r": both["r"],
+                            "DecisiveAmplitude": decisive, "Floor": floor, "CouponMaximum": maximum,
+                            "MaximumSource": amplitudes[numerator]["MaximumSource"],
+                            "RatioToMaximum": decisive / maximum, "ContributionBound": (1.0 + math.sqrt(decisive / maximum)) ** 2 - 1.0}
+    if not tests:
         return None
-    values = by_observable[numerator]["values"]
-    candidates = [abs(values[key]) for key in ("main", "high") if values.get(key) is not None and math.isfinite(values[key])]
-    if not candidates:
-        return None
-    amplitude = max(candidates)
-    maximum = amplitudes[numerator]["Maximum"]
-    floor = ratio * maximum
-    if amplitude >= floor:
-        return None
-    return {"Amplitude": amplitude, "AmplitudeOrders": [key for key in ("main", "high") if values.get(key) is not None],
-            "Floor": floor, "CouponMaximum": maximum, "MaximumSource": amplitudes[numerator]["MaximumSource"],
-            "RatioToMaximum": amplitude / maximum if maximum else math.inf, "FloorRatio": ratio,
-            "ContributionBound": (1.0 + math.sqrt(amplitude / maximum)) ** 2 - 1.0 if maximum else math.inf}
+    primary = tests[floor_numerators(name)[0]]
+    return {**primary, "FloorRatio": ratio, "Numerators": tests,
+            "Rule": "below the floor at the largest computed amplitude AND at the extrapolated converged amplitude, for every floor "
+                    "numerator of the observable (decision 477 (2) / (4))"}
 
 
 def below_floor_aggregate(amplitude, ratio):
@@ -224,11 +261,14 @@ def below_floor_aggregate(amplitude, ratio):
     sum_all Q_ii: the incoherent reading)."""
     maximum = amplitude["Maximum"]
     values = amplitude["Values"]
-    below = [i for i, value in values.items() if maximum and value < ratio * maximum]
-    total = sum(math.sqrt(max(values[i], 0.0) / maximum) for i in below) if maximum else math.inf
+    if not maximum > 0.0:
+        # A zero Type: nothing is below a zero floor; the aggregate has no meaning (None, never inf).
+        return {"Sources": 0, "Indices": [], "Bound": 0.0, "DiagonalSumFraction": None}
+    below = [i for i, value in values.items() if value < ratio * maximum]
+    total = sum(math.sqrt(max(values[i], 0.0) / maximum) for i in below)
     diagonal_sum = sum(values.values())
     return {"Sources": len(below), "Indices": [int(i) for i in below], "Bound": (1.0 + total) ** 2 - 1.0,
-            "DiagonalSumFraction": (sum(values[i] for i in below) / diagonal_sum) if diagonal_sum else math.inf}
+            "DiagonalSumFraction": (sum(values[i] for i in below) / diagonal_sum) if diagonal_sum else None}
 
 
 def not_applicable(gate, interface, interfaces):
@@ -337,15 +377,28 @@ def above_floor_members(classes, amplitudes, ratio, observables):
     """Per class the members (sources with a class) whose every judged Type amplitude at the
     gated order is at or above the floor: the amplitude-informed control choice a re-run
     would make (classify_sources.choose_controls with amplitudes; decision 474 (A))."""
-    numerators = [amplitude_observable(name) for name in observables]
-    numerators = [name for name in numerators if name in amplitudes]
+    judged = [name for name in observables if any(numerator in amplitudes for numerator in floor_numerators(name))]
     by_class = {}
     for i, name in sorted((classes or {}).items()):
         by_class.setdefault(name, {"Members": 0, "AboveFloor": []})
         by_class[name]["Members"] += 1
-        if all(amplitudes[numerator]["Values"].get(str(i), 0.0) >= ratio * amplitudes[numerator]["Maximum"] for numerator in numerators):
+        if all(source_above_floor(i, amplitudes, ratio, observable) for observable in judged):
             by_class[name]["AboveFloor"].append(int(i))
-    return {"Observables": numerators, "Classes": by_class}
+    return {"Observables": judged, "Numerators": sorted({n for name in judged for n in floor_numerators(name) if n in amplitudes}),
+            "Classes": by_class}
+
+
+def source_above_floor(i, amplitudes, ratio, observable):
+    """Source i is judged on `observable` at the gated order when ANY of the observable's floor
+    numerators the coupon carries is at or above its floor (the dual MA_sharp condition exempts
+    only below both; a zero Type maximum never exempts)."""
+    for numerator in floor_numerators(observable):
+        if numerator not in amplitudes:
+            continue
+        maximum = amplitudes[numerator]["Maximum"]
+        if not maximum > 0.0 or amplitudes[numerator]["Values"].get(str(i), 0.0) >= ratio * maximum:
+            return True
+    return False
 
 
 def read_classes(path):
