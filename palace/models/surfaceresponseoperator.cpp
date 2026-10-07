@@ -18875,15 +18875,15 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
         {
           // The CELL's own-edge extent (not the feature's whole portion on the segment,
           // which provenance.s0 / s1 record): its longitudinal cell about the origin on
-          // the side's own edge (edge_offset along AxisU, patch length units).
+          // the side's own edge (edge_offset along AxisU; mesh units like the origin).
           if (patch.provenance.segment == static_cast<int>(portion.segment))
           {
             const auto &cell = patch.longitudinal_cell;
             std::array<double, 3> q0{}, q1{};
             for (int k = 0; k < 3; k++)
             {
-              const double edge = patch.origin[k] + patch.provenance.edge_offset /
-                                                        coordinate_scale * patch.axis_u[k];
+              const double edge =
+                  patch.origin[k] + patch.provenance.edge_offset * patch.axis_u[k];
               q0[k] = edge + cell[0] * patch.axis_w[k];
               q1[k] = edge + cell[1] * patch.axis_w[k];
             }
@@ -18901,13 +18901,9 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
               {
                 continue;
               }
-              std::array<double, 3> q0{}, q1{};
-              for (int k = 0; k < 3; k++)
-              {
-                q0[k] = claim.p0[k] / coordinate_scale;
-                q1[k] = claim.p1[k] / coordinate_scale;
-              }
-              own = own || OverlapAlong(portion.p0, portion.p1, q0, q1) > tol;
+              // The claims' ends are segment points in mesh units (the identification's
+              // keys), like the portion's.
+              own = own || OverlapAlong(portion.p0, portion.p1, claim.p0, claim.p1) > tol;
             }
           }
         }
