@@ -1040,7 +1040,12 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
                 not math.isfinite(value) or value > gates["--maximum-corner-aspect"]
                 for value in quality["CornerAspectsAfter"])):
         raise ValueError("Seed census does not record a gated required-region optimization")
-    if (_recipe_number(quality, "RequiredMinimumScaledJacobianAfter") <
+    # Round 3 class (1): the seed records null when no cell is scaled-Jacobian-gated (a
+    # corner-free coupon under the layer rule); accepted only with ScaledJacobianGateCells 0.
+    if quality.get("RequiredMinimumScaledJacobianAfter") is None:
+        if _count(quality.get("ScaledJacobianGateCells"), "Scaled-Jacobian-gated cells") != 0:
+            raise ValueError("Seed required region lacks RequiredMinimumScaledJacobianAfter with gated cells")
+    elif (_recipe_number(quality, "RequiredMinimumScaledJacobianAfter") <
             gates["--minimum-scaled-jacobian"]):
         raise ValueError("Seed required region is below the scaled-Jacobian gate")
     if (_recipe_number(quality, "RequiredMaximumJacobianConditionAfter") >

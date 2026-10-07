@@ -641,7 +641,7 @@ function write_bent_band_inputs(
         "SemanticCorners" => [],
         "Derivation" => Dict{String, Any}(
             "CornerFree" => Dict{String, Any}(
-                "Rule" => "test fixture: every Physical vertex is an arc vertex or a box-face cut end",
+                "Rule" => CORNER_FREE_RULE,
                 "ArcInteriorVertices" => arc_count * (n - 1),
                 "SmoothJoints" => 2 * arc_count,
                 "BoxFaceCutEnds" => ground ? 6 : 4
@@ -1363,8 +1363,10 @@ end
             "at least one semantic corner",
             guard_message(() -> read_semantic_corners(contract, IDENTITY_RIGID_TRANSFORM))
         )
+        # The record as derive_semantic_contract writes it: the exact rule text and integer counts.
+        rule = escape_string(CORNER_FREE_RULE)
         record =
-            "\"Derivation\": {\"CornerFree\": {\"Rule\": \"test\", \"ArcInteriorVertices\": 34, " *
+            "\"Derivation\": {\"CornerFree\": {\"Rule\": \"$rule\", \"ArcInteriorVertices\": 34, " *
             "\"SmoothJoints\": 4, \"BoxFaceCutEnds\": 4}}"
         mixed = joinpath(directory, "mixed.json")
         write(mixed, "{\"Version\": 1, \"SemanticCorners\": [[0.0, 0.0, 0.0]], $record}")
@@ -1381,12 +1383,27 @@ end
         write(
             bad,
             "{\"Version\": 1, \"SemanticCorners\": [], \"Derivation\": {\"CornerFree\": " *
-            "{\"ArcInteriorVertices\": 0, \"SmoothJoints\": 0, \"BoxFaceCutEnds\": 4}}}"
+            "{\"Rule\": \"$rule\", \"ArcInteriorVertices\": 0, \"SmoothJoints\": 0, \"BoxFaceCutEnds\": 4}}}"
         )
         @test occursin(
             "at least one arc vertex",
             guard_message(() -> read_semantic_corners(bad, IDENTITY_RIGID_TRANSFORM))
         )
+        # Decision 524 MINOR-2: the Rule text is pinned (one spelling with the Python validator)
+        # and a JSON boolean is not a count (Bool <: Integer in Julia), as on the Python side.
+        for (name, broken) in (
+            ("wrong-rule.json", replace(record, rule => "another rule")),
+            ("boolean-count.json", replace(record, "\"SmoothJoints\": 4" => "\"SmoothJoints\": true")),
+            ("negative-count.json", replace(record, "\"BoxFaceCutEnds\": 4" => "\"BoxFaceCutEnds\": -1")),
+            ("float-count.json", replace(record, "\"ArcInteriorVertices\": 34" => "\"ArcInteriorVertices\": 34.0"))
+        )
+            path = joinpath(directory, name)
+            write(path, "{\"Version\": 1, \"SemanticCorners\": [], $broken}")
+            @test occursin(
+                "CornerFree must record the rule and the non-negative integer counts",
+                guard_message(() -> read_semantic_corners(path, IDENTITY_RIGID_TRANSFORM))
+            )
+        end
     end
     # The empty-safe size laws (G.1.2 sites 5 and 8): the corner law is the identity without
     # corners (lc_tangent, the value it takes far from every corner) and no ball boundary exists.

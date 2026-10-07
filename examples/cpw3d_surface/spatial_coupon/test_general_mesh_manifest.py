@@ -4907,6 +4907,15 @@ class RequiredRegionContractTest(unittest.TestCase):
             rejected("does not record a gated", census_data=with_quality(CornerAspectsAfter=[3.4]))
             rejected("below the scaled-Jacobian gate",
                      census_data=with_quality(RequiredMinimumScaledJacobianAfter=.009))
+            # Round 3 class (1) (decision 524 MINOR-3): the seed records null when no cell is
+            # scaled-Jacobian-gated; accepted only with ScaledJacobianGateCells 0, never silently.
+            rejected("Scaled-Jacobian-gated cells must be a non-negative integer count",
+                     census_data=with_quality(RequiredMinimumScaledJacobianAfter=None))
+            rejected("lacks RequiredMinimumScaledJacobianAfter",
+                     census_data=with_quality(RequiredMinimumScaledJacobianAfter=None, ScaledJacobianGateCells=2))
+            validate_required_region(seed, restoration, recipe,
+                                     with_quality(RequiredMinimumScaledJacobianAfter=None, ScaledJacobianGateCells=0),
+                                     required)
             # The Jacobian condition gate (decision 34): the seed carries the restorer's
             # bound, records it, gates every scaled-Jacobian-gated required cell by it,
             # and the restorer's required cells are within it.
