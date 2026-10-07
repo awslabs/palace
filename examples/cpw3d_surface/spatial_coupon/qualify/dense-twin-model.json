@@ -1,0 +1,121 @@
+{
+  "Version": 1,
+  "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "Purpose": "Measured rates of the (F) dense-twin runs (one ordinary Palace run of the dense held-out traces per twin and order; executable cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88, one node x 192 ranks, PBS 57628 (fab p4 + thin p4, m8g), 57629 (fab p5 + thin p5, r8g); validation pair 5, 2026-10-06): per order the largest Palace peak per million H1, solve seconds per million H1 per trace and non-solve seconds per million H1 over the measured runs; dense_twin_plan.py scales them to another coupon mesh by the exact closed-form H1 at that order (decision 457 (4))",
+  "Executable": "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88",
+  "PBSJobs": "57628 (fab p4 + thin p4, m8g), 57629 (fab p5 + thin p5, r8g); validation pair 5, 2026-10-06",
+  "Orders": {
+    "p4": {
+      "PalaceGBPerMillionH1": 6.83895,
+      "SolveSecondsPerMillionH1PerTrace": 1.00889,
+      "NonSolveSecondsPerMillionH1": 3.09575,
+      "MeanPCGIterations": 32.2,
+      "SetBy": {
+        "PalaceGBPerMillionH1": "thin-p4",
+        "SolveSecondsPerMillionH1PerTrace": "fabricated-p4",
+        "NonSolveSecondsPerMillionH1": "fabricated-p4",
+        "MeanPCGIterations": "fabricated-p4"
+      },
+      "Runs": [
+        "fabricated-p4",
+        "thin-p4"
+      ]
+    },
+    "p5": {
+      "PalaceGBPerMillionH1": 6.73983,
+      "SolveSecondsPerMillionH1PerTrace": 2.17236,
+      "NonSolveSecondsPerMillionH1": 3.01926,
+      "MeanPCGIterations": 36.2,
+      "SetBy": {
+        "PalaceGBPerMillionH1": "thin-p5",
+        "SolveSecondsPerMillionH1PerTrace": "fabricated-p5",
+        "NonSolveSecondsPerMillionH1": "thin-p5",
+        "MeanPCGIterations": "fabricated-p5"
+      },
+      "Runs": [
+        "fabricated-p5",
+        "thin-p5"
+      ]
+    }
+  },
+  "Runs": {
+    "fabricated-p4": {
+      "Order": 4,
+      "H1": 64333740,
+      "Traces": 5,
+      "PCG": [
+        41,
+        29,
+        32,
+        30,
+        29
+      ],
+      "PalacePeakGB": 415.4,
+      "PalaceTotalSeconds": 523.689,
+      "LinearSolveSeconds": 324.528,
+      "PalaceGBPerMillionH1": 6.456954002674179,
+      "SolveSecondsPerMillionH1PerTrace": 1.0088889593547647,
+      "NonSolveSecondsPerMillionH1": 3.0957472704058544,
+      "MeanPCGIterations": 32.2
+    },
+    "fabricated-p5": {
+      "Order": 5,
+      "H1": 125247120,
+      "Traces": 5,
+      "PCG": [
+        47,
+        32,
+        35,
+        34,
+        33
+      ],
+      "PalacePeakGB": 801.1,
+      "PalaceTotalSeconds": 1681.677,
+      "LinearSolveSeconds": 1360.4089999999999,
+      "PalaceGBPerMillionH1": 6.396155057297925,
+      "SolveSecondsPerMillionH1PerTrace": 2.172359731704809,
+      "NonSolveSecondsPerMillionH1": 2.5650729533740977,
+      "MeanPCGIterations": 36.2
+    },
+    "thin-p4": {
+      "Order": 4,
+      "H1": 53487766,
+      "Traces": 5,
+      "PCG": [
+        28,
+        24,
+        25,
+        25,
+        24
+      ],
+      "PalacePeakGB": 365.8,
+      "PalaceTotalSeconds": 368.239,
+      "LinearSolveSeconds": 213.55,
+      "PalaceGBPerMillionH1": 6.83894705940794,
+      "SolveSecondsPerMillionH1PerTrace": 0.7985003523983409,
+      "NonSolveSecondsPerMillionH1": 2.892044509766962,
+      "MeanPCGIterations": 25.2
+    },
+    "thin-p5": {
+      "Order": 5,
+      "H1": 104097690,
+      "Traces": 5,
+      "PCG": [
+        30,
+        25,
+        26,
+        26,
+        25
+      ],
+      "PalacePeakGB": 701.6,
+      "PalaceTotalSeconds": 1120.894,
+      "LinearSolveSeconds": 806.597,
+      "PalaceGBPerMillionH1": 6.739822949001078,
+      "SolveSecondsPerMillionH1PerTrace": 1.5496924091207018,
+      "NonSolveSecondsPerMillionH1": 3.019250475202668,
+      "MeanPCGIterations": 26.4
+    }
+  },
+  "Rule": "an ordinary Palace run (no PALACE_RESPONSE_* variable: the per-source postprocessing of surface-Q*.csv / domain-E.csv) of the dense traces at one order; memory and time scale from the dense-twin model by the exact closed-form H1 of the mesh at that order; the node count is the LocalEdge kind of the cost model's NodeScaling (the same ordinary stage)"
+}

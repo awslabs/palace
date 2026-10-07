@@ -257,7 +257,7 @@ class MeasuredRefitTest(unittest.TestCase):
         self.assertGreater(pessimism["ThisModel"]["Min"], 1.0)
         # The measured policy: the largest PCG factor covers the largest measured coupon-mean
         # ratio with headroom; the margin covers the measured runner overhead.
-        self.assertEqual(self.committed["PCGFactors"], [1.0, 1.25, 1.5])
+        self.assertEqual(self.committed["PCGFactors"], [1.0, 1.3, 1.5])
         self.assertEqual((self.committed["PreflightAndMarginFactor"], self.committed["PreflightSeconds"]), (1.10, 60))
         self.assertLess(self.committed["PolicyRule"]["MeasuredOverheads"]["Max"], 1.10)
         self.assertIn("previous [1.0, 1.5, 2.0]", self.committed["PolicyRule"]["PCGFactors"])

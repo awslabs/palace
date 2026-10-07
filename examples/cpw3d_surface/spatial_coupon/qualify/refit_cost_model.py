@@ -984,7 +984,7 @@ def refit_measured(qualification_paths, *, previous_path, previous_kept, referen
                   / stages[order]["MeanPCGIterations"] for order in orders}
     largest_pcg_ratio = max(pcg_ratios.values())
     worst_factor = max(1.5, round_up(PCG_HEADROOM * largest_pcg_ratio, 1))
-    model["PCGFactors"] = [1.0, round((1.0 + worst_factor) / 2.0, 3), worst_factor]
+    model["PCGFactors"] = [1.0, round_up((1.0 + worst_factor) / 2.0, 1), worst_factor]   # one decimal: the factors key ByPCGFactor as "%.1f"
     overheads = [job["ActualSeconds"] / sum(stage["WallSeconds"] for stage in job["Stages"]) for m in measurements for job in m["Jobs"].values()
                  if job.get("ActualSeconds") and job["Stages"]]
     model["PreflightAndMarginFactor"] = MEASURED_MARGIN_FACTOR
@@ -992,7 +992,7 @@ def refit_measured(qualification_paths, *, previous_path, previous_kept, referen
     model["PolicyRule"] = {
         "PCGFactors": (f"the largest factor = max(1.5, {PCG_HEADROOM} x the largest measured coupon-mean PCG count over the model mean, "
                        f"rounded up to 0.1) = {worst_factor} (measured ratios per order {json.dumps({k: round(v, 3) for k, v in pcg_ratios.items()})}); "
-                       f"the middle factor halfway; previous {previous['PCGFactors']} (set when the single-source maximum, not the stage "
+                       f"the middle factor halfway rounded up to 0.1; previous {previous['PCGFactors']} (set when the single-source maximum, not the stage "
                        "mean, was the reference)"),
         "PreflightAndMarginFactor": (f"{MEASURED_MARGIN_FACTOR}: the measured runner overhead (job total / the sum of its stage walls) is "
                                      f"{statistics(overheads)} over {len(overheads)} jobs; previous {previous['PreflightAndMarginFactor']}"),
