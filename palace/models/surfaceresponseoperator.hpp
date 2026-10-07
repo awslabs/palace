@@ -1057,12 +1057,32 @@ struct DomainBoundaryExclusion
   double nearest_distance = 0.0;
   // Why the patch is DomainBoundary rather than Mirrored (boundary-cut DESIGN 2.2.5;
   // Diagnostics.DomainBoundary.Reasons): MirrorOff (no mirror: the band is 0 - Mirror
-  // "Off" or a Maxwell build), UnmergedFeature (its feature is touched by a mirror-formed
-  // configuration without a mirror placement), NonMirroringPlane (an outside point lies
+  // "Off" or a Maxwell build), UnmergedTopology (its coupon support intersects a portion of
+  // a mirror-formed configuration without a mirror placement), NonMirroringPlane (an
+  // outside point lies
   // beyond an Unsupported / NonPlanar plane), BeyondBand (beyond a Natural plane by more
   // than the band), ReflectionNotLocated (reflected into the domain but not located: a
   // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane).
   std::string reason;
+  // Reason UnmergedTopology (decision 480): the unmerged configuration whose portion the
+  // patch's coupon support intersects (index into MirrorBand.UnmergedFeatures), that
+  // portion (mesh units, real or image) and its distance from the patch origin.
+  int unmerged_topology = -1;
+  std::array<double, 3> unmerged_p0{}, unmerged_p1{};
+  bool unmerged_image = false;
+  double unmerged_distance = 0.0;
+  bool unmerged_own = false;  // the patch's own footprint overlaps a real portion
+};
+// Information (decision 481, superseding 480's block): a patch whose coupon support reaches
+// a portion, real or image, of an unmerged mirror-formed configuration, with the nearest
+// such portion's distance from the patch origin (mesh units). The patch keeps its
+// classification.
+struct DomainBoundaryUnmergedReach
+{
+  std::size_t patch = 0;
+  int topology = -1;
+  double distance = 0.0;
+  bool image = false;
 };
 // A patch classified Mirrored (boundary-cut DESIGN 2.2.3; decisions 442 / 454): every one
 // of its placed points outside the mesh reflects through the Natural mirror planes it lies
@@ -1077,8 +1097,9 @@ struct DomainBoundaryMirrored
 };
 struct DomainBoundaryExclusions
 {
-  std::vector<DomainBoundaryExclusion> patches;  // ascending patch index
-  std::vector<DomainBoundaryMirrored> mirrored;  // ascending patch index
+  std::vector<DomainBoundaryExclusion> patches;             // ascending patch index
+  std::vector<DomainBoundaryMirrored> mirrored;             // ascending patch index
+  std::vector<DomainBoundaryUnmergedReach> unmerged_reach;  // ascending patch index
   long long int tested_patches = 0;
   long long int tested_points = 0;
   long long int reflected_points = 0;  // outside points reflected into the mesh
@@ -1090,7 +1111,11 @@ struct DomainBoundaryExclusions
 // the originals); a patch whose every outside point is located after reflection is
 // Mirrored, any other patch with an outside point is DomainBoundary (weight 0). A
 // metal-edge reference outside the mesh whose reflection is located is a cut-adjacent
-// coupon (decision 314's follow-up), never the misplaced-coupon abort.
+// coupon (decision 314's follow-up), never the misplaced-coupon abort. A patch whose own
+// footprint overlaps a REAL portion of an unmerged mirror-formed configuration
+// (`unmerged_portions`) is DomainBoundary whatever its points' containment (decision 481:
+// the configuration is read as a Missing feature); the coupon supports' reach into the
+// configurations (real or image portions) is recorded as information.
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,
@@ -1102,7 +1127,10 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
         &mirror_planes = {},
-    double mirror_band = 0.0, const std::set<int> &mirror_blocked_features = {});
+    double mirror_band = 0.0,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
+        &unmerged_portions = {});
 
 // The mirror planes of a response configuration as the mirror module's planes.
 std::vector<MirrorPlane> MirrorPlanesOf(

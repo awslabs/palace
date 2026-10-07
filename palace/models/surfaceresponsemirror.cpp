@@ -860,9 +860,11 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
     if (!mergeable)
     {
       // The real features the unmerged configuration touches (portions overlapped, or a
-      // real vertex of the configuration): their cut-crossing patches are DomainBoundary
-      // (F-DB-a, raw kept), never Mirrored with their own single-sided model (decision 473
-      // (1)); recorded on each with Status "Unmerged".
+      // real vertex of the configuration) are recorded with Status "Unmerged"; the cells
+      // whose coupon support intersects any of its portions, real or image, are
+      // DomainBoundary (F-DB-a, raw kept), never Mirrored with their own single-sided
+      // model (decision 473 (1) as ruled by decision 480: support intersection), so the
+      // configuration's portions are recorded in world coordinates (mesh units).
       std::set<std::size_t> touched = overlapping;
       for (std::size_t i = 0; i < merged.features.size(); i++)
       {
@@ -880,7 +882,7 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
       {
         auto &target = merged.features[i];
         real_ids.push_back(target.id);
-        summary.blocked_feature_ids.push_back(target.id);
+        summary.touched_feature_ids.push_back(target.id);
         if (target.mirror.is_null())
         {
           target.mirror = {{"Planes", PlanesOfFeature(feature)},
@@ -890,6 +892,28 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
                            {"UnmergedType", feature.type}};
         }
       }
+      nlohmann::json world_portions = nlohmann::json::array();
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = extended.segments[portion.segment];
+        std::array<double, 3> p0{}, p1{};
+        for (int d = 0; d < 3; d++)
+        {
+          const double direction =
+              segment.length > 0.0
+                  ? (segment.key[1][d] - segment.key[0][d]) / segment.length
+                  : 0.0;
+          p0[d] = segment.key[0][d] + direction * portion.s0;
+          p1[d] = segment.key[0][d] + direction * portion.s1;
+        }
+        world_portions.push_back({{"Segment", portion.segment},
+                                  {"S0", portion.s0},
+                                  {"S1", portion.s1},
+                                  {"Image", IsImage(portion)},
+                                  {"P0", p0},
+                                  {"P1", p1},
+                                  {"Length", portion.s1 - portion.s0}});
+      }
       summary.unmerged_features.push_back({{"Feature", feature.id},
                                            {"Type", feature.type},
                                            {"Key", feature.signature_key},
@@ -897,6 +921,7 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
                                            {"ImageLength", image_length},
                                            {"Planes", PlanesOfFeature(feature)},
                                            {"RealFeatures", real_ids},
+                                           {"Portions", world_portions},
                                            {"Status", "Unmerged"}});
       continue;
     }
@@ -909,10 +934,10 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
       merged.features[index].mirror = record;
     }
   }
-  std::sort(summary.blocked_feature_ids.begin(), summary.blocked_feature_ids.end());
-  summary.blocked_feature_ids.erase(
-      std::unique(summary.blocked_feature_ids.begin(), summary.blocked_feature_ids.end()),
-      summary.blocked_feature_ids.end());
+  std::sort(summary.touched_feature_ids.begin(), summary.touched_feature_ids.end());
+  summary.touched_feature_ids.erase(
+      std::unique(summary.touched_feature_ids.begin(), summary.touched_feature_ids.end()),
+      summary.touched_feature_ids.end());
   // The joint vertices take the extended run's reading (the virtual corner's vertex entry,
   // MirrorJoint); the feature reference is remapped to the merged Id.
   auto UpdateJointVertices = [&](const std::map<int, int> &extended_to_merged)
@@ -1136,7 +1161,7 @@ nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,
           {"ImageOnlyFeatures", summary.image_only_features},
           {"MirrorFormedFeatures", std::move(formed)},
           {"UnmergedFeatures", summary.unmerged_features},
-          {"BlockedRealFeatures", summary.blocked_feature_ids},
+          {"TouchedRealFeatures", summary.touched_feature_ids},
           {"Rule",
            "boundary-cut DESIGN 2.2 (decisions 442 / 454): the metal perimeter within "
            "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "

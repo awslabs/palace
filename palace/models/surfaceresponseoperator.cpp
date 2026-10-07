@@ -11246,12 +11246,22 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                     plane.status, plane.box_min, plane.box_max});
   }
   result.mirror_band = mirror_band.record.dump();
-  result.mirror_blocked_features.clear();
-  for (const auto &feature : identification.features)
+  result.mirror_unmerged_portions.clear();
   {
-    if (!feature.mirror.is_null() && feature.mirror.value("Status", "") == "Unmerged")
+    // The portions of every unmerged configuration (decision 480; mesh units as recorded).
+    const auto unmerged =
+        mirror_band.record.value("UnmergedFeatures", nlohmann::json::array());
+    for (std::size_t topology = 0; topology < unmerged.size(); topology++)
     {
-      result.mirror_blocked_features.push_back(feature.id);
+      for (const auto &portion :
+           unmerged[topology].value("Portions", nlohmann::json::array()))
+      {
+        result.mirror_unmerged_portions.push_back(
+            {static_cast<int>(topology), portion.at("P0").get<std::array<double, 3>>(),
+             portion.at("P1").get<std::array<double, 3>>(), portion.value("Image", false),
+             portion.at("Segment").get<std::size_t>(), portion.at("S0").get<double>(),
+             portion.at("S1").get<double>()});
+      }
     }
   }
   // No mirror in Maxwell runs and under Mirror = "Off" (band 0: every cut-crossing patch
@@ -16062,7 +16072,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 11},
+  nlohmann::json cache = {{"Version", 12},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -16112,7 +16122,18 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
     cache["MirrorPlanes"] = std::move(planes);
     cache["MirrorBand"] = config.mirror_band;
     cache["MirrorBandOverR"] = config.mirror_band_over_radius;
-    cache["MirrorBlockedFeatures"] = config.mirror_blocked_features;
+    nlohmann::json unmerged_portions = nlohmann::json::array();
+    for (const auto &portion : config.mirror_unmerged_portions)
+    {
+      unmerged_portions.push_back({{"Topology", portion.topology},
+                                   {"P0", portion.p0},
+                                   {"P1", portion.p1},
+                                   {"Image", portion.image},
+                                   {"Segment", portion.segment},
+                                   {"S0", portion.s0},
+                                   {"S1", portion.s1}});
+    }
+    cache["MirrorUnmergedPortions"] = std::move(unmerged_portions);
     nlohmann::json mirror_trims = nlohmann::json::array();
     for (const auto &trim : config.mirror_arm_trims)
     {
@@ -16173,18 +16194,18 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 11,
+      data.value("Version", 0) == 12,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 11 carries the feature, mesh segment, chain stretch and own-edge "
+          << " (version 12 carries the feature, mesh segment, chain stretch and own-edge "
              "offset of every patch, the claims, support box and chain of every spatial "
              "cluster patch, the raw claims of every vertex coupon (F-DB-a, decisions 442 "
              "/ 454), the matching radius for the continuation and vertex ownership, the "
              "quantum near-match records of the matching pass, the corner-arm trim records "
              "and the uncovered portions of decision 394, the consistent-mortar band "
              "vertices and rule of every model (decision 404 D1), and the mirror planes, "
-             "mirror band record and mirror arm trims of the boundary-cut rule; delete a "
-             "stale cache)!");
+             "mirror band record, mirror arm trims and unmerged-configuration portions of "
+             "the boundary-cut rule; delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -16231,7 +16252,15 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   }
   result.mirror_band = data.value("MirrorBand", std::string{});
   result.mirror_band_over_radius = data.value("MirrorBandOverR", 0.0);
-  result.mirror_blocked_features = data.value("MirrorBlockedFeatures", std::vector<int>{});
+  result.mirror_unmerged_portions.clear();
+  for (const auto &entry : data.value("MirrorUnmergedPortions", nlohmann::json::array()))
+  {
+    result.mirror_unmerged_portions.push_back(
+        {entry.at("Topology").get<int>(), entry.at("P0").get<std::array<double, 3>>(),
+         entry.at("P1").get<std::array<double, 3>>(), entry.value("Image", false),
+         entry.at("Segment").get<std::size_t>(), entry.at("S0").get<double>(),
+         entry.at("S1").get<double>()});
+  }
   for (const auto &entry : data.value("MirrorArmTrims", nlohmann::json::array()))
   {
     ResponseCorrectionData::MirrorArmTrimData trim;
@@ -16611,8 +16640,7 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         [&](int model_idx) { return model_names.at(model_idx); }, coordinate_scale,
         patches.matching_radius, {}, patches.mirror_planes,
         patches.mirror_band_over_radius * patches.matching_radius,
-        std::set<int>(patches.mirror_blocked_features.begin(),
-                      patches.mirror_blocked_features.end()));
+        patches.mirror_unmerged_portions);
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
     // F-DB-a (decisions 442 / 454): the excluded patches' raw claims, never dropped; the
@@ -18577,7 +18605,8 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
     double matching_radius, const std::set<std::size_t> &skipped,
     const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
-    double mirror_band, const std::set<int> &mirror_blocked_features)
+    double mirror_band,
+    const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions)
 {
   const auto start = std::chrono::steady_clock::now();
   const int dimension = mesh.Dimension();
@@ -18796,6 +18825,172 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       }
       k++;
     }
+    // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
+    // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
+    // footprint (a translational cell's [s0, s1] on its segment; a vertex / cluster
+    // coupon's claims) overlaps one of its REAL portions - are DomainBoundary (raw kept,
+    // F-DB-a), never applied with a single-sided model; a neighbour's cells keep their
+    // Applied / Mirrored classification as next to any Missing feature. The coupon
+    // support's reach into the configuration (u, v in [-R, R]; w over the cell, [-R, R]
+    // for a spatial patch; slab clipping against every portion, real or image) is recorded
+    // as INFORMATION only (decision 480's test, withdrawn as a block by 481).
+    if (!unmerged_portions.empty())
+    {
+      const auto &patch = patches[exclusion.patch];
+      const double tol = kSignatureParameterToleranceOverRadius * matching_radius;
+      // (a) own-edge overlap with a real portion
+      auto OverlapAlong =
+          [&](const std::array<double, 3> &P0, const std::array<double, 3> &P1,
+              const std::array<double, 3> &q0, const std::array<double, 3> &q1)
+      {
+        // Both on the same segment: the overlap of their arc-length intervals.
+        double L = 0.0;
+        std::array<double, 3> d{};
+        for (int k = 0; k < 3; k++)
+        {
+          d[k] = P1[k] - P0[k];
+          L += d[k] * d[k];
+        }
+        L = std::sqrt(L);
+        if (L <= 0.0)
+        {
+          return 0.0;
+        }
+        double a = 0.0, b = 0.0;
+        for (int k = 0; k < 3; k++)
+        {
+          a += (q0[k] - P0[k]) * d[k] / L;
+          b += (q1[k] - P0[k]) * d[k] / L;
+        }
+        return std::min(std::max(a, b), L) - std::max(std::min(a, b), 0.0);
+      };
+      for (const auto &portion : unmerged_portions)
+      {
+        if (portion.image)
+        {
+          continue;
+        }
+        bool own = false;
+        if (patch.provenance.coupon_depth > 0.0 && patch.provenance.segment >= 0)
+        {
+          own = patch.provenance.segment == static_cast<int>(portion.segment) &&
+                std::min(patch.provenance.s1, portion.s1) -
+                        std::max(patch.provenance.s0, portion.s0) >
+                    tol;
+        }
+        else
+        {
+          for (const auto *claims :
+               {&patch.provenance.raw_claims, &patch.provenance.claims})
+          {
+            for (const auto &claim : *claims)
+            {
+              if (claim.segment != static_cast<int>(portion.segment))
+              {
+                continue;
+              }
+              std::array<double, 3> q0{}, q1{};
+              for (int k = 0; k < 3; k++)
+              {
+                q0[k] = claim.p0[k] / coordinate_scale;
+                q1[k] = claim.p1[k] / coordinate_scale;
+              }
+              own = own || OverlapAlong(portion.p0, portion.p1, q0, q1) > tol;
+            }
+          }
+        }
+        if (own && (exclusion.unmerged_topology < 0 || !exclusion.unmerged_own))
+        {
+          exclusion.unmerged_topology = portion.topology;
+          exclusion.unmerged_p0 = portion.p0;
+          exclusion.unmerged_p1 = portion.p1;
+          exclusion.unmerged_image = false;
+          exclusion.unmerged_distance = 0.0;
+          exclusion.unmerged_own = true;
+        }
+      }
+      // (b) the support's reach (information)
+      const bool spatial = spatial_basis(patch.model);
+      const auto &cell = patch.longitudinal_cell;
+      const std::array<double, 3> lower = {
+          -matching_radius, -matching_radius,
+          (!spatial && cell[1] > cell[0]) ? cell[0] : -matching_radius};
+      const std::array<double, 3> upper = {
+          matching_radius, matching_radius,
+          (!spatial && cell[1] > cell[0]) ? cell[1] : matching_radius};
+      auto Local = [&](const std::array<double, 3> &p)
+      {
+        std::array<double, 3> local{};
+        for (int d = 0; d < 3; d++)
+        {
+          local[0] += (p[d] - patch.origin[d]) * patch.axis_u[d];
+          local[1] += (p[d] - patch.origin[d]) * patch.axis_v[d];
+          local[2] += (p[d] - patch.origin[d]) * patch.axis_w[d];
+        }
+        return local;
+      };
+      DomainBoundaryUnmergedReach reach;
+      reach.patch = exclusion.patch;
+      for (const auto &portion : unmerged_portions)
+      {
+        const auto a = Local(portion.p0), b = Local(portion.p1);
+        double t0 = 0.0, t1 = 1.0;
+        bool hit = true;
+        for (int d = 0; d < 3 && hit; d++)
+        {
+          const double lo = lower[d] - tol, hi = upper[d] + tol;
+          const double delta = b[d] - a[d];
+          if (std::abs(delta) < 1.0e-300)
+          {
+            hit = a[d] >= lo && a[d] <= hi;
+            continue;
+          }
+          double ta = (lo - a[d]) / delta, tb = (hi - a[d]) / delta;
+          if (ta > tb)
+          {
+            std::swap(ta, tb);
+          }
+          t0 = std::max(t0, ta);
+          t1 = std::min(t1, tb);
+          hit = t0 <= t1;
+        }
+        if (!hit)
+        {
+          continue;
+        }
+        double ab = 0.0, aa = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          ab += (b[d] - a[d]) * (b[d] - a[d]);
+          aa += -a[d] * (b[d] - a[d]);
+        }
+        const double s = ab > 0.0 ? std::clamp(aa / ab, 0.0, 1.0) : 0.0;
+        double distance = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          const double q = a[d] + s * (b[d] - a[d]);
+          distance += q * q;
+        }
+        distance = std::sqrt(distance);
+        if (reach.topology < 0 || distance < reach.distance)
+        {
+          reach.topology = portion.topology;
+          reach.distance = distance;
+          reach.image = portion.image;
+        }
+      }
+      if (reach.topology >= 0)
+      {
+        result.unmerged_reach.push_back(reach);
+      }
+      if (exclusion.unmerged_topology >= 0)
+      {
+        exclusion.reason = "UnmergedTopology";
+        patches[exclusion.patch].weight = 0.0;
+        result.patches.push_back(exclusion);
+        continue;
+      }
+    }
     if (exclusion.outside_points > 0)
     {
       // Every outside point reflected into the mesh: Mirrored (applied, its samples taken
@@ -18805,11 +19000,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       {
         reflected_count += (!found[i] && reflected[i]) ? 1 : 0;
       }
-      // A patch of a feature touched by an unmerged mirror-formed configuration is never
-      // Mirrored with its own single-sided model (decision 473 (1)): DomainBoundary.
-      const bool blocked =
-          mirror_blocked_features.count(patches[exclusion.patch].provenance.feature) > 0;
-      if (reflected_count == exclusion.outside_points && !blocked)
+      if (reflected_count == exclusion.outside_points)
       {
         result.mirrored.push_back(
             {exclusion.patch, exclusion.tested_points, exclusion.outside_points});
@@ -18824,10 +19015,6 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       if (mirror_planes.empty() || mirror_band <= 0.0)
       {
         exclusion.reason = "MirrorOff";
-      }
-      else if (blocked)
-      {
-        exclusion.reason = "UnmergedFeature";
       }
       else
       {
@@ -18909,6 +19096,30 @@ nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &
            exclusion.nearest_outside_point[2] * coordinate_scale}},
          {"NearestDistance", exclusion.nearest_distance * coordinate_scale},
          {"Reason", exclusion.reason}});
+    if (exclusion.unmerged_topology >= 0)
+    {
+      auto Scaled = [&](const std::array<double, 3> &p)
+      {
+        return nlohmann::json{p[0] * coordinate_scale, p[1] * coordinate_scale,
+                              p[2] * coordinate_scale};
+      };
+      entries.back()["UnmergedTopology"] = {
+          {"Topology", exclusion.unmerged_topology},
+          {"Portion",
+           {{"P0", Scaled(exclusion.unmerged_p0)},
+            {"P1", Scaled(exclusion.unmerged_p1)},
+            {"Image", exclusion.unmerged_image}}},
+          {"OwnFootprint", exclusion.unmerged_own},
+          {"Distance", exclusion.unmerged_distance * coordinate_scale}};
+    }
+  }
+  nlohmann::json reach_entries = nlohmann::json::array();
+  for (const auto &reach : exclusions.unmerged_reach)
+  {
+    reach_entries.push_back({{"Patch", reach.patch},
+                             {"Topology", reach.topology},
+                             {"Distance", reach.distance * coordinate_scale},
+                             {"Image", reach.image}});
   }
   nlohmann::json reasons = nlohmann::json::object();
   for (const auto &exclusion : exclusions.patches)
@@ -18978,6 +19189,18 @@ nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &
         {"Patches", std::move(mirrored_entries)}}},
       {"Planes", std::move(planes)},
       {"MirrorBandOverR", config.mirror_band_over_radius},
+      {"UnmergedSupportReach",
+       {{"Count", static_cast<int>(reach_entries.size())},
+        {"Patches", std::move(reach_entries)},
+        {"Rule",
+         "decision 481 (information only): a patch whose coupon support (u, v within R; w "
+         "over its cell, within R for a spatial patch) reaches a portion, real or image, "
+         "of "
+         "an unmerged mirror-formed configuration, with the nearest portion's distance "
+         "from "
+         "the patch origin (mesh units); the patch keeps its classification, as next to "
+         "any "
+         "Missing feature (the F2 neighbour approximation, measured as a bracket)"}}},
       {"Rule",
        "decision 258 (2026-10-02): a library-placed patch any of whose placed coupon "
        "points "
@@ -20534,8 +20757,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
           coordinate_scale, config->matching_radius, spatially_owned_patches,
           config->mirror_planes, config->mirror_band_over_radius * config->matching_radius,
-          std::set<int>(config->mirror_blocked_features.begin(),
-                        config->mirror_blocked_features.end()));
+          config->mirror_unmerged_portions);
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);

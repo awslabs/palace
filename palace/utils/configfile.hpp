@@ -1405,10 +1405,20 @@ public:
     std::vector<MirrorPlaneData> mirror_planes;
     std::string mirror_band;
     double mirror_band_over_radius = 0.0;
-    // The real features an unmerged mirror-formed configuration touches (a bent stack, a
-    // two-vertex cluster, a curved pair with its image: no mirror placement, decision 473
-    // (1)): their cut-crossing patches are DomainBoundary (raw kept), never Mirrored.
-    std::vector<int> mirror_blocked_features;
+    // The portions, real and image, of every unmerged mirror-formed configuration (a bent
+    // stack, a two-vertex cluster, a curved pair with its image: no mirror placement),
+    // mesh units: a patch whose own footprint overlaps a REAL one is DomainBoundary (raw
+    // kept), never applied with its own single-sided model - the configuration is read
+    // exactly as a real Missing feature (decision 473 (1) as ruled by decisions 480 / 481).
+    struct UnmergedPortionData
+    {
+      int topology = 0;  // index into MirrorBand.UnmergedFeatures
+      std::array<double, 3> p0{}, p1{};
+      bool image = false;
+      std::size_t segment = 0;    // identification segment (image segments after the real)
+      double s0 = 0.0, s1 = 0.0;  // arc length along it, mesh units
+    };
+    std::vector<UnmergedPortionData> mirror_unmerged_portions;
     // The virtual (mirror-formed) corners placed with weight 1 / 2 (HalfByMirror) and the
     // start s_half of their real arm's cells (MirrorArmTrim), patch units; one record per
     // corner (DESIGN 2.2.3).

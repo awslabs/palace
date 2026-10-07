@@ -1750,8 +1750,35 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       REQUIRE(full.model_energy.count(model) == 1);
       CHECK_THAT(2.0 * half.model_energy.at(model),
                  WithinRel(full.model_energy.at(model), 1.0e-9));
-      const bool clean_ends =
-          half.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0;
+      // MISSING-EQUIVALENCE (decision 481): the unmerged mirror-formed cluster at the
+      // pair's end is read as a Missing feature - its OWN cells raw (every DomainBoundary
+      // patch overlaps one of its real portions; none is a pair cell), its NEIGHBOURS
+      // applied: the pair cells whose support reaches the cluster (UnmergedSupportReach,
+      // distance
+      // <= R) keep their model, exactly as next to the full's real Missing cluster - which
+      // is why the pair identity above is exact on both parallel cases.
+      const auto &half_exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      REQUIRE(!half.diagnostics.at("MirrorBand").at("UnmergedFeatures").empty());
+      std::set<int> excluded_patches;
+      for (const auto &patch : half_exclusions.at("Patches"))
+      {
+        excluded_patches.insert(patch.at("Patch").get<int>());
+        CHECK(patch.at("Reason") == "UnmergedTopology");
+        CHECK(patch.at("UnmergedTopology").at("OwnFootprint").get<bool>());
+        CHECK(patch.at("Topology") != "same-conductor gap");
+        CHECK(patch.at("Topology") != "same-conductor strip");
+      }
+      int pair_cells_reaching = 0;
+      for (const auto &reach : half_exclusions.at("UnmergedSupportReach").at("Patches"))
+      {
+        CHECK(reach.at("Distance").get<double>() <= R + 1.0e-9);
+        if (!excluded_patches.count(reach.at("Patch").get<int>()))
+        {
+          pair_cells_reaching++;  // applied although its support reaches the cluster
+        }
+      }
+      CHECK(pair_cells_reaching >= 2);  // one pair cell at each end of the pair
+      const bool clean_ends = half_exclusions.at("Count").get<int>() == 0;
       if (clean_ends)
       {
         // No blocked patch at the pair's ends (the slot: its real clusters at the slot's
@@ -1772,7 +1799,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         // MISSING configurations whose raw claims differ between the two meshes by
         // construction - the F-DB-a BRACKET of DESIGN 2.2.5, not the identity. Recorded
         // (the whole-window residual beside the pair identity above); the Reasons record
-        // names the UnmergedFeature route. Note also the sub-quadrature cells: a
+        // names the UnmergedTopology route. Note also the sub-quadrature cells: a
         // DomainBoundary cell shorter than the quadrature spacing of the interface integral
         // reads 0 raw energy (the F2 nearest-foot filter is quadrature-resolved; irrelevant
         // at production cell sizes, recorded here).
@@ -1782,7 +1809,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         INFO("unmerged ends: residual " << residual << " J; raw kept " << raw_kept);
         CHECK(half.diagnostics.at("DomainBoundaryExclusions")
                   .at("Reasons")
-                  .contains("UnmergedFeature"));
+                  .contains("UnmergedTopology"));
         CHECK(std::abs(residual) < 0.05 * full.corrected[0]);
         if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
         {
@@ -1854,7 +1881,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK(!band.at("UnmergedFeatures").empty());
       const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
       CHECK(exclusions.at("Count").get<int>() > 0);
-      CHECK(exclusions.at("Reasons").contains("UnmergedFeature"));
+      CHECK(exclusions.at("Reasons").contains("UnmergedTopology"));
       CHECK(exclusions.at("Mirrored").at("Points").get<int>() > 0);
       CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
       CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
