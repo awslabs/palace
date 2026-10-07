@@ -4,6 +4,8 @@ import copy
 import csv
 import importlib.util
 import json
+import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -51,6 +53,13 @@ COMBINER_SPEC = importlib.util.spec_from_file_location(
 )
 COMBINER = importlib.util.module_from_spec(COMBINER_SPEC)
 COMBINER_SPEC.loader.exec_module(COMBINER)
+
+# The stored stage-2 library of record and the round-2 concave-60 node (decision 505 Q1: the name repeat
+# combine refuses; --supersede is the tool for the next library version); records only, matrices on the cluster.
+ASSESSMENT = Path(os.environ.get("COUPON_ASSESSMENT_ROOT", CPW2D.parents[2] / "coupon-accuracy-assessment-20260913"))
+V3B1_LIBRARY = ASSESSMENT / "stage2-20261004" / "coupons-bc" / "library" / "s2-r1p9-v3-b1" / "process-library.json"
+ROUND2_CONCAVE_60 = (ASSESSMENT / "curved-clusters-20261005" / "family4" / "round2" / "concavecorner-60-r2"
+                     / "corner-d6def3107d2c886bd4f9a1edfff823cc93c8b1c8b02be861409d49d7ce3cd11b")
 
 CORNER_COMPARE_PATH = (
     CPW2D.parent / "cpw3d_surface" / "corner_coupon"
@@ -429,6 +438,145 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                     ValueError, "not a passed corner-radius interpolation report"
                 ):
                     COMBINER.main()
+
+    @staticmethod
+    def write_library(path, name, models, *, root=None):
+        """A version-3 library at `path` whose models' matrix files are written beside it (content = the file name)."""
+        root = root or path.parent
+        root.mkdir(parents=True, exist_ok=True)
+        entries = []
+        for model_name in models:
+            entry = {"Name": model_name}
+            for field, filename in COMBINER.PATH_NAMES.items():
+                relative = Path("src") / model_name / filename
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text(f"{name}:{model_name}:{filename}\n")
+                entry[field] = str(relative)
+            entries.append(entry)
+        path.write_text(json.dumps({"Version": 3, "MatchingRadius": 2.0, "Name": name,
+                                    "Fabrication": {"InterfaceLayers": {}}, "Models": entries}, indent=2) + "\n")
+        return path
+
+    def combine(self, output, *argv):
+        with mock.patch.object(sys, "argv", ["combine_process_libraries.py", "--output", str(output), *map(str, argv)]):
+            COMBINER.main()
+        return PREPARE.load_json(output / "process-library.json")
+
+    def test_supersede_replaces_the_named_base_model_in_place_and_records_it(self):
+        """Decision 505 Q1: --supersede NAME=<record> replaces the base library's model NAME by the later input's
+        model of the same name AT THE BASE MODEL'S INDEX (every other model and its directory byte-identical to
+        the flag-less combine of the base alone), records Supersedes {Name, BaseModelSHA, NewModelSHA, Record,
+        Decision}; without the flag the repeated name is refused as before."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = self.write_library(root / "base" / "process-library.json", "base", ["alpha", "concave-corner-60deg", "omega"])
+            round2 = self.write_library(root / "round2" / "process-library.json", "round2", ["concave-corner-60deg"])
+            record = root / "concavecorner-60-r2-entry.json"
+            record.write_text(json.dumps({"Decision": "328 (3) / 505 Q1: the round-2 concave 60 replaces the round-1 node", "Node": "r2"}) + "\n")
+            plain = self.combine(root / "plain", base)
+            with self.assertRaisesRegex(ValueError, "repeated"):
+                self.combine(root / "refused", base, round2)
+            superseded = self.combine(root / "superseded", "--supersede", f"concave-corner-60deg={record}", base, round2)
+            self.assertEqual([model["Name"] for model in superseded["Models"]], ["alpha", "concave-corner-60deg", "omega"])
+            self.assertEqual([model["Name"] for model in plain["Models"]], [model["Name"] for model in superseded["Models"]])
+            # Every other model entry and file byte-identical to the flag-less combine of the base; the superseded
+            # one is the round-2 model at the base slot (index 002), its files the round-2 files.
+            for index, (before, after) in enumerate(zip(plain["Models"], superseded["Models"])):
+                if before["Name"] != "concave-corner-60deg":
+                    self.assertEqual(before, after)
+                    for field in COMBINER.PATH_FIELDS:
+                        self.assertEqual((root / "plain" / before[field]).read_bytes(), (root / "superseded" / after[field]).read_bytes())
+                else:
+                    self.assertEqual(after["CombinedFrom"], {"Path": str(round2.resolve()), "SHA256": COMBINER.sha256(round2)})
+                    self.assertEqual(after["FabricatedMatrix"], "models/002-concave-corner-60deg/fabricated-domain-response-matrix.csv")
+                    self.assertEqual((root / "superseded" / after["FabricatedMatrix"]).read_text(),
+                                     "round2:concave-corner-60deg:fabricated-domain-response-matrix.csv\n")
+                    self.assertEqual((root / "plain" / before["FabricatedMatrix"]).read_text(),
+                                     "base:concave-corner-60deg:fabricated-domain-response-matrix.csv\n")
+            self.assertEqual([entry["Name"] for entry in superseded["Supersedes"]], ["concave-corner-60deg"])
+            entry = superseded["Supersedes"][0]
+            base_model = PREPARE.load_json(base)["Models"][1]
+            new_model = PREPARE.load_json(round2)["Models"][0]
+            self.assertEqual((entry["BaseModelSHA"], entry["NewModelSHA"]),
+                             (COMBINER.model_sha256(base_model, base.parent), COMBINER.model_sha256(new_model, round2.parent)))
+            self.assertEqual(COMBINER.model_sha256(base_model, base.parent), COMBINER.model_sha256(dict(base_model), root / "base"))
+            self.assertNotEqual(entry["BaseModelSHA"], entry["NewModelSHA"])
+            self.assertEqual(entry["Record"], {"Path": str(record.resolve()), "SHA256": COMBINER.sha256(record)})
+            self.assertEqual(entry["Decision"], "328 (3) / 505 Q1: the round-2 concave 60 replaces the round-1 node")
+            self.assertEqual((entry["BaseSource"]["SHA256"], entry["NewSource"]["SHA256"]), (COMBINER.sha256(base), COMBINER.sha256(round2)))
+            self.assertEqual(entry["Rule"], COMBINER.SUPERSEDE_RULE)
+            self.assertEqual([source["Name"] for source in superseded["Sources"]], ["base", "round2"])
+            self.assertNotIn("Supersedes", plain)
+            # Refusals: a name the base does not hold, a missing record, an unreadable record, a name no later
+            # input (or two) supplies; nothing is written before the refusal.
+            other = self.write_library(root / "other" / "process-library.json", "other", ["alpha"])
+            for argv, message in (
+                    (("--supersede", f"beta={record}", base, round2), "has no model 'beta'"),
+                    (("--supersede", f"concave-corner-60deg={root / 'absent.json'}", base, round2), "is missing"),
+                    (("--supersede", f"concave-corner-60deg={root / 'base' / 'src' / 'alpha' / 'basis-points.csv'}", base, round2), "is unreadable"),
+                    (("--supersede", f"concave-corner-60deg={record}", base), "0 later inputs supply"),
+                    (("--supersede", f"concave-corner-60deg={record}", base, round2, round2), "2 later inputs supply"),
+                    (("--supersede", f"alpha={record}", base, round2), "0 later inputs supply"),
+                    (("--supersede", "concave-corner-60deg", base, round2), "not NAME=<record path>")):
+                with self.assertRaisesRegex(ValueError, message):
+                    self.combine(root / "refusal", *argv)
+                self.assertFalse((root / "refusal" / "process-library.json").exists(), message)
+            del other
+
+    @unittest.skipUnless(V3B1_LIBRARY.is_file() and (ROUND2_CONCAVE_60 / "process-library.json").is_file()
+                         and (ROUND2_CONCAVE_60 / "heldout-qualification.json").is_file(),
+                         "the stored s2-r1p9-v3-b1 library and the round-2 concave-60 node records are needed")
+    def test_supersede_round2_concave_60_replaces_the_round1_node_of_v3_b1_on_copies(self):
+        """Decision 505 Q1 on COPIES of the stored records (the matrices live on the cluster: stand-in files at
+        the recorded relative paths): combining v3-b1 with the round-2 concave-corner-60deg node is REFUSED
+        without the flag (the refusal of record), and --supersede concave-corner-60deg=<the node's held-out
+        qualification record> replaces the round-1 node (v3-b1's model 75) in place: every other model entry and
+        file byte-identical to the flag-less combine of v3-b1 alone, Supersedes recorded against the record."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def staged(source, destination):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, destination)
+                for model in PREPARE.load_json(source)["Models"]:
+                    for relative in [model[f] for f in COMBINER.PATH_FIELDS if isinstance(model.get(f), str)] + list(model.get("TraceMesh", {}).values()):
+                        self.assertFalse(Path(relative).is_absolute(), relative)
+                        target = destination.parent / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if not target.exists():
+                            target.write_text(f"{destination.parent.name}:{relative}\n")
+                return destination
+            base = staged(V3B1_LIBRARY, root / "v3-b1" / "process-library.json")
+            round2 = staged(ROUND2_CONCAVE_60 / "process-library.json", root / "concavecorner-60-r2" / "process-library.json")
+            record = ROUND2_CONCAVE_60 / "heldout-qualification.json"
+            base_names = [model["Name"] for model in PREPARE.load_json(base)["Models"]]
+            self.assertEqual(base_names.index("concave-corner-60deg"), 74)
+            self.assertEqual([model["Name"] for model in PREPARE.load_json(round2)["Models"]], ["concave-corner-60deg"])
+            with self.assertRaisesRegex(ValueError, "'concave-corner-60deg' is empty or repeated"):
+                self.combine(root / "refused", "--name", "probe", base, round2)
+            plain = self.combine(root / "plain", "--name", "s2-r1p9-v3-b1-copy", base)
+            superseded = self.combine(root / "superseded", "--name", "s2-r1p9-v3-b1-copy", "--supersede", f"concave-corner-60deg={record}", base, round2)
+            self.assertEqual([model["Name"] for model in superseded["Models"]], base_names)
+            self.assertEqual(len(superseded["Models"]), 81)
+            for before, after in zip(plain["Models"], superseded["Models"]):
+                if before["Name"] == "concave-corner-60deg":
+                    self.assertEqual(after["CombinedFrom"]["SHA256"], COMBINER.sha256(round2))
+                    self.assertEqual(after["FabricatedMatrix"], "models/075-concave-corner-60deg/fabricated-domain-response-matrix.csv")
+                    self.assertTrue((root / "superseded" / after["FabricatedMatrix"]).read_text().startswith("concavecorner-60-r2:"))
+                    self.assertTrue((root / "plain" / before["FabricatedMatrix"]).read_text().startswith("v3-b1:"))
+                    self.assertEqual(after["Topology"], "ConcaveCorner")
+                    continue
+                self.assertEqual(before, after)
+                for field in COMBINER.PATH_FIELDS:
+                    if isinstance(before.get(field), str):
+                        self.assertEqual((root / "plain" / before[field]).read_bytes(), (root / "superseded" / after[field]).read_bytes())
+            entry = superseded["Supersedes"][0]
+            self.assertEqual((entry["Name"], entry["Record"]), ("concave-corner-60deg", {"Path": str(record.resolve()), "SHA256": COMBINER.sha256(record)}))
+            self.assertNotEqual(entry["BaseModelSHA"], entry["NewModelSHA"])
+            self.assertEqual(entry["BaseSource"]["SHA256"], COMBINER.sha256(base))
+            self.assertEqual(entry["NewSource"]["SHA256"], COMBINER.sha256(round2))
+            self.assertEqual({key: value for key, value in superseded.items() if key not in ("Models", "Sources", "Supersedes")},
+                             {key: value for key, value in plain.items() if key not in ("Models", "Sources")})
 
     def test_material_options_emit_one_value_per_flag(self):
         options = PREPARE.material_options(process_parameters())
