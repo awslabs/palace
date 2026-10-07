@@ -1308,6 +1308,15 @@ def validate_tube_rings_per_side(tubes, rows, command):
     coupon_rings = _count(section.get("Rings"), "Tube rings")
     inner = tubes["InnerSize"]
     ratio = tubes["GrowthRatio"]
+    # The measurement-only ring cap (--maximum-rings; F6 2.3): the coupon's count is min(law, cap).
+    cap_option = (int(_option_or_default(command, "--maximum-rings", None)) if "--maximum-rings" in command else None)
+    recorded_cap = section.get("RingsCap")
+    if (recorded_cap is None) != (cap_option is None) or (recorded_cap is not None and recorded_cap != cap_option):
+        raise ValueError("Prism tube section RingsCap differs from the build command --maximum-rings")
+    if "TransverseBound" in section:
+        law = ring_count_within(inner, ratio, _census_number(section, "TransverseBound", "Tube section"))
+        if coupon_rings != (min(law, cap_option) if cap_option is not None else law):
+            raise ValueError("Prism tube Rings do not follow the transverse bound (and the measurement-only cap)")
     reduced = [row for row in rows if "Rings" in row]
     minimum_option = (int(_option_or_default(command, GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION, None))
                       if GMSH_BUILD_MINIMUM_QUALIFIED_RINGS_OPTION in command else None)

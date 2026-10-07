@@ -6548,7 +6548,8 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                            sector_degrees, metal_thickness, overetch, corner_radius, lc_tangent,
                            lc_fine, lower, upper, tolerance; fabricated::Bool=true,
                            maximum_jacobian_condition::Float64=0.0,
-                           minimum_qualified_rings::Int=0)
+                           minimum_qualified_rings::Int=0,
+                           maximum_rings::Int=0)
     fabricated && (overetch > 0.0 || scope_error("NoTrench", "Overetch $overetch"))
     sectors = round(Int, 270.0 / sector_degrees)
     abs(sectors * sector_degrees - 270.0) <= 1.0e-9 || error("Tube sector angle must divide 270 degrees")
@@ -6558,6 +6559,12 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # transverse bound is the corner isotropy radius (the facing rules below still hold).
     bound = fabricated ? min(overetch, 0.5 * metal_thickness, corner_radius) : corner_radius
     rings = tube_ring_count(edge_size, ratio, bound)
+    # A MEASUREMENT-ONLY ring cap (design round 2 F6 2.3, the all-rings sensitivity: the thin
+    # twin "built once more with K = 4 on EVERY side"): the coupon's count is min(law, cap) and
+    # the cap is recorded (Section.RingsCap, null without one); never a production option.
+    if maximum_rings >= 1 && maximum_rings < rings
+        rings = maximum_rings
+    end
     # Top edge: vacuum from the sidewall ray (-90) through the outward normal (0)
     # and up (90) to the top-face ray (180). Bottom edge: substrate from the
     # metal bottom face ray (180) to the trench wall ray (270), vacuum from the
@@ -6706,11 +6713,12 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                                   edge_size=edge_size, corner_radius=corner_radius,
                                                   fabricated=fabricated)]
             facing = metal_facing_widths(layer_segments, tolerance)
+            # (never above the coupon's count: the measurement-only cap bounds every side alike)
             next_rings = [segment.untubed ? rings :
-                          tube_ring_count(edge_size, ratio, min(bound, 0.5 * facing[1][index]);
-                                          context="metal side $(segment.start) -> $(segment.stop) on " *
-                                                  "plane $(segment.plane) facing across " *
-                                                  "$(facing[1][index]) of metal")
+                          min(rings, tube_ring_count(edge_size, ratio, min(bound, 0.5 * facing[1][index]);
+                                                     context="metal side $(segment.start) -> $(segment.stop) on " *
+                                                             "plane $(segment.plane) facing across " *
+                                                             "$(facing[1][index]) of metal"))
                           for (index, segment) in enumerate(layer_segments)]
             if !isempty(rings_per_side)
                 all(next_rings .<= rings_per_side) ||
@@ -6939,6 +6947,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                               "ScopeGuard[UnqualifiedRingCount]; the thin cutoff is the inner ring " *
                               "(unchanged)",
         "FacingBound" => facing_bound,
+        "RingsCap" => maximum_rings >= 1 ? maximum_rings : nothing,
         "MinimumRings" => minimum_rings,
         "ReducedSides" => reduced_sides,
         "MinimumQualifiedRings" => minimum_qualified_rings >= 1 ? minimum_qualified_rings : nothing,
@@ -7702,6 +7711,7 @@ function generate_spatial_coupon(;
     far_growth::Float64=0.0,
     corner_shape_gate::Float64=0.0,
     minimum_qualified_rings::Int=0,
+    maximum_rings::Int=0,
     filename::String
 )
     matching_trace_mode in ("all","sides","levels","none") ||
@@ -8126,7 +8136,8 @@ function generate_spatial_coupon(;
                                   metal_thickness, overetch, corner_isotropy_radius,
                                   lc_tangent, lc_fine, lower, upper, tolerance;
                                   maximum_jacobian_condition=maximum_jacobian_condition,
-                                  minimum_qualified_rings=minimum_qualified_rings)
+                                  minimum_qualified_rings=minimum_qualified_rings,
+                                  maximum_rings=maximum_rings)
         end
         domains, domain_map = occ.fragment(objects, tube_tools)
         substrate_seed = domain_map[1:length(substrates)] |> Iterators.flatten |> collect
@@ -8180,7 +8191,8 @@ function generate_spatial_coupon(;
                                   metal_thickness, overetch, corner_isotropy_radius,
                                   lc_tangent, lc_fine, lower, upper, tolerance; fabricated=false,
                                   maximum_jacobian_condition=maximum_jacobian_condition,
-                                  minimum_qualified_rings=minimum_qualified_rings)
+                                  minimum_qualified_rings=minimum_qualified_rings,
+                                  maximum_rings=maximum_rings)
             append!(tools, tube_tools)
             # SEAM (design round 2): the tip bisector curves of the convex thin tips below
             # 90 degrees, fragmented with the sheet after the tube tools (the tube map
@@ -9455,7 +9467,8 @@ function parse_options(args)
         "--tube-sector-degrees" => ("tube_sector_degrees", Float64),
         "--far-growth" => ("far_growth", Float64),
         "--corner-shape-gate" => ("corner_shape_gate", Float64),
-        "--minimum-qualified-rings" => ("minimum_qualified_rings", Int)
+        "--minimum-qualified-rings" => ("minimum_qualified_rings", Int),
+        "--maximum-rings" => ("maximum_rings", Int)
     )
     index = 4
     while index <= length(args)
@@ -9535,6 +9548,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         tube_sector_degrees = get(options, "tube_sector_degrees", 30.0),
         far_growth = get(options, "far_growth", 0.0),
         corner_shape_gate = get(options, "corner_shape_gate", 0.0),
-        minimum_qualified_rings = get(options, "minimum_qualified_rings", 0)
+        minimum_qualified_rings = get(options, "minimum_qualified_rings", 0),
+        maximum_rings = get(options, "maximum_rings", 0)
     )
 end

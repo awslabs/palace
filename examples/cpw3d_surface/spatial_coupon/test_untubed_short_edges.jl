@@ -235,7 +235,8 @@ function build_finger_coupon(
     stem="finger",
     overetch=0.05,
     minimum_qualified_rings=1,
-    edge_size=0.01
+    edge_size=0.01,
+    maximum_rings=0
 )
     inputs = write_finger_inputs(directory, width)
     mesh = joinpath(directory, "coupon-$stem.msh")
@@ -271,7 +272,8 @@ function build_finger_coupon(
         quality_displacement_over_normal=0.75,
         # Design round 2 F6: the qualified ring-count range of these synthetic sizes (the
         # finger's long sides take 1 ring under their facing bound w / 2 below w = 0.1).
-        minimum_qualified_rings=minimum_qualified_rings
+        minimum_qualified_rings=minimum_qualified_rings,
+        maximum_rings=maximum_rings
     )
     return parse_json(read(census, String)), mesh, inputs
 end
@@ -597,5 +599,37 @@ end
               all(!haskey(row, "Rings") for row in wide["PrismTubes"]["Tubes"])
         @test wide["PrismTubes"]["Section"]["FacingBound"] ≈ 0.06 &&
               wide["PrismTubes"]["Section"]["MetalFacingWidth"] ≈ 0.12
+        @test wide["PrismTubes"]["Section"]["RingsCap"] === nothing
+        # The measurement-only ring cap (F6 2.3, the all-rings sensitivity twin): --maximum-rings 2
+        # gives a 0.2 finger 2 rings on EVERY side (Rings 2, nothing reduced, RingsCap recorded; the
+        # 0.12 finger under the cap meets the decision-353 lottery at a legacy corner at these sizes);
+        # a cap at or above the law's count is a no-op but recorded.
+        capped, _, _ = build_finger_coupon(
+            directory,
+            0.2;
+            fabricated=false,
+            stem="capped",
+            minimum_qualified_rings=2,
+            edge_size=0.005,
+            maximum_rings=2
+        )
+        @test capped["PrismTubes"]["Section"]["Rings"] == 2 &&
+              capped["PrismTubes"]["Section"]["RingsCap"] == 2
+        @test capped["PrismTubes"]["Section"]["ReducedSides"] == 0 &&
+              length(capped["PrismTubes"]["Section"]["RingSizes"]) == 2
+        @test all(!haskey(row, "Rings") for row in capped["PrismTubes"]["Tubes"])
+        @test capped["PrismTubes"]["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >=
+              0.01
+        uncapped, _, _ = build_finger_coupon(
+            directory,
+            0.12;
+            fabricated=false,
+            stem="uncapped",
+            minimum_qualified_rings=3,
+            edge_size=0.005,
+            maximum_rings=5
+        )
+        @test uncapped["PrismTubes"]["Section"]["Rings"] == 3 &&
+              uncapped["PrismTubes"]["Section"]["RingsCap"] == 5
     end
 end

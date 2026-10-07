@@ -3369,10 +3369,12 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             self.assertEqual(ring_count_within(0.002, 2.0, 0.0605), 4)      # the 121-nm finger's thin sides
             self.assertEqual(ring_count_within(0.00025, 2.0, 0.0605), 7)    # its fabricated sides fit
             self.assertEqual(ring_count_within(0.002, 2.0, 0.003), 0)
-            transverse = sum(section["RingSizes"]) + 0.5 * section["RingSizes"][-1]   # r_K + h_K of the fixture
+            # r_K + h_K of the fixture section in the mesher's own arithmetic (tube_ring_count: radius =
+            # inner (ratio^K - 1) / (ratio - 1), size = inner ratio^(K - 1))
+            transverse = inner * (growth**coupon_rings - 1.0) / (growth - 1.0) + inner * growth**(coupon_rings - 1)
             reduced_rings = coupon_rings - 1
             # A facing width whose half lies between r_{K-1} + h_{K-1} and r_K + h_K reduces the side by one ring.
-            facing_width = 2.0 * 0.5 * (sum(section["RingSizes"][:reduced_rings]) + 0.5 * section["RingSizes"][reduced_rings - 1] + transverse)
+            facing_width = 2.0 * 0.5 * (inner * (growth**reduced_rings - 1.0) / (growth - 1.0) + inner * growth**(reduced_rings - 1) + transverse)
             facing_bound = min(transverse, 0.5 * facing_width)
             self.assertEqual(ring_count_within(inner, growth, facing_bound), reduced_rings)
             per_side_report = copy.deepcopy(report)
@@ -3426,9 +3428,27 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             above = copy.deepcopy(per_side_report)
             above["Command"][-1] = str(reduced_rings + 1)
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", reduced_rings + 1),
-                           "outside \[MinimumQualifiedRings", target_report=above)
+                           "outside \\[MinimumQualifiedRings", target_report=above)
             rejected_rings(lambda c: c["PrismTubes"]["Section"].__setitem__("MinimumQualifiedRings", None),
                            "without a qualified ring-count range|MinimumQualifiedRings differs", target_report=report)
+            # The measurement-only ring cap (F6 2.3): Section.RingsCap must equal the command's
+            # --maximum-rings (both absent in production); with a TransverseBound recorded, Rings ==
+            # min(the law's count, the cap).
+            capped_report = copy.deepcopy(report)
+            capped_report["Command"] += ["--maximum-rings", str(coupon_rings)]
+            capped = copy.deepcopy(census)
+            capped["PrismTubes"]["Section"]["RingsCap"] = coupon_rings
+            self.assertIs(validate_gmsh_build_census(capped_report, capped, semantic), capped)
+            with self.assertRaisesRegex(ValueError, "RingsCap differs"):
+                validate_gmsh_build_census(report, copy.deepcopy(capped), semantic)
+            with self.assertRaisesRegex(ValueError, "RingsCap differs"):
+                validate_gmsh_build_census(capped_report, copy.deepcopy(census), semantic)
+            lawful = copy.deepcopy(census)
+            lawful["PrismTubes"]["Section"]["TransverseBound"] = transverse
+            self.assertIs(validate_gmsh_build_census(report, lawful, semantic), lawful)
+            lawful["PrismTubes"]["Section"]["TransverseBound"] = 0.5 * transverse
+            with self.assertRaisesRegex(ValueError, "do not follow the transverse bound"):
+                validate_gmsh_build_census(report, lawful, semantic)
             # A census recorded before the face-end rule (no summary, no face end) still passes:
             # the fixture producer's census is one.
             self.assertNotIn("FaceEnds", census["PrismTubes"])

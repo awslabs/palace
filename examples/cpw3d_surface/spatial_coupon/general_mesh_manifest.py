@@ -324,6 +324,10 @@ CASE_KINDS = ("fabricated", "thin")
 FABRICATED_CASE_KEY = "FabricatedCase"
 THIN_RECIPE_KEY = "ThinRecipe"
 THIN_RECIPE_OPTIONS = ("--edge-size", "--corner-size")
+# Mesher design round 2 F6 2.3 (decision 437 (2)): a MEASUREMENT-ONLY thin recipe may cap the
+# coupon's ring count (the all-rings sensitivity twin: --maximum-rings, a positive integer); the
+# production manifest never carries it, the census records Section.RingsCap.
+THIN_RECIPE_MEASUREMENT_OPTIONS = ("--maximum-rings",)
 
 
 def case_kind(case):
@@ -342,8 +346,13 @@ def validate_thin_recipe(recipe):
     if block is None:
         return None
     options = block.get("BuildCommandOptions") if isinstance(block, dict) else None
-    if (not isinstance(options, dict) or sorted(options) != sorted(THIN_RECIPE_OPTIONS) or
+    measurement = [option for option in (options or {}) if option in THIN_RECIPE_MEASUREMENT_OPTIONS]
+    if (not isinstance(options, dict) or
+            sorted(option for option in options if option not in THIN_RECIPE_MEASUREMENT_OPTIONS) != sorted(THIN_RECIPE_OPTIONS) or
             any(not _finite_number(options[option], positive=True) for option in THIN_RECIPE_OPTIONS) or
+            any(isinstance(options[option], bool) or not isinstance(options[option], int) or options[option] < 1
+                for option in measurement) or
+            (measurement and not block.get("MeasurementOnly")) or
             options["--edge-size"] != options["--corner-size"] or
             not _finite_number(block.get("Cutoff"), positive=True) or block["Cutoff"] != options["--edge-size"] or
             any(not isinstance(block.get(key), str) or not block[key] for key in ("Rule", "Provenance"))):
