@@ -13264,6 +13264,17 @@ void Identifier::Assign(IdentificationResult &result)
         entry.point_contact = IsPointContact(v);
         result.vertices.push_back(entry);
       }
+      else if (vertex.mirror_joint)
+      {
+        // A real truncation vertex joined straight to its image chain on a mirror plane
+        // (boundary-cut DESIGN 2.2.2): an interior joint, listed so that the record shows
+        // where the chain continues through the plane; never a feature.
+        IdentifiedVertex entry;
+        entry.vertex = v;
+        entry.type = "MirrorJoint";
+        entry.point_contact = IsPointContact(v);
+        result.vertices.push_back(entry);
+      }
       continue;
     }
     IdentifiedVertex entry;
@@ -13271,9 +13282,12 @@ void Identifier::Assign(IdentificationResult &result)
     entry.point_contact = IsPointContact(v);
     if (!IsFeatureVertex(v))
     {
-      entry.type = cross_layer_vertices.find(v) != cross_layer_vertices.end()
-                       ? "Excluded"
-                       : (vertex.on_truncation_boundary ? "TruncationCut" : "PortCut");
+      entry.type =
+          cross_layer_vertices.find(v) != cross_layer_vertices.end()
+              ? "Excluded"
+              : (vertex.image_band_cut
+                     ? "ImageBandCut"
+                     : (vertex.on_truncation_boundary ? "TruncationCut" : "PortCut"));
       result.vertices.push_back(entry);
       continue;
     }
@@ -13751,6 +13765,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
   w.Pod(result.radius);
   w.Point(result.reference_process_normal);
   w.Pod(result.perimeter_length);
+  w.Size(result.real_segments);
   w.Pod(result.assigned_length);
   w.Pod(result.excluded_length);
   w.String(result.geometry_digest);
@@ -13824,6 +13839,7 @@ std::string SerializeIdentificationResult(const IdentificationResult &result)
     w.String(f.blend_eigenvalues.is_null() ? std::string() : f.blend_eigenvalues.dump());
     w.String(f.interpolation_fallback.is_null() ? std::string()
                                                 : f.interpolation_fallback.dump());
+    w.String(f.mirror.is_null() ? std::string() : f.mirror.dump());
     w.Point(f.claims_origin);
     for (const auto &axis : f.claims_axes)
     {
@@ -13901,6 +13917,7 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
   result.radius = r.Pod<double>();
   result.reference_process_normal = r.Point();
   result.perimeter_length = r.Pod<double>();
+  result.real_segments = r.Size();
   result.assigned_length = r.Pod<double>();
   result.excluded_length = r.Pod<double>();
   result.geometry_digest = r.String();
@@ -13999,6 +14016,8 @@ IdentificationResult DeserializeIdentificationResult(const std::string &buffer)
     const std::string fallback = r.String();
     f.interpolation_fallback =
         fallback.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(fallback);
+    const std::string mirror = r.String();
+    f.mirror = mirror.empty() ? nlohmann::json(nullptr) : nlohmann::json::parse(mirror);
     f.claims_origin = r.Point();
     for (auto &axis : f.claims_axes)
     {
@@ -14139,16 +14158,28 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     };
     return nlohmann::json{S(v[0]), S(v[1]), S(v[2])};
   };
+  // Mirror band: image segments [real_segments, size) are listed apart (ImagePortions /
+  // ImageSegments), never as perimeter.
+  const std::size_t real_segment_count =
+      real_segments > 0 && real_segments < segments.size() ? real_segments
+                                                           : segments.size();
   nlohmann::json feature_list = nlohmann::json::array();
   for (const auto &feature : features)
   {
     nlohmann::json portions = nlohmann::json::array();
+    nlohmann::json image_portions = nlohmann::json::array();
     nlohmann::json sides = nlohmann::json::array();
     nlohmann::json turns = nlohmann::json::array();
     bool multi_sided = false;
     double total_turn = 0.0;
     for (const auto &portion : feature.portions)
     {
+      if (portion.segment >= real_segment_count)
+      {
+        image_portions.push_back(
+            {portion.segment, L(portion.s0), L(portion.s1), portion.side});
+        continue;
+      }
       portions.push_back({portion.segment, L(portion.s0), L(portion.s1)});
       sides.push_back(portion.side);
       multi_sided = multi_sided || portion.side != 0;
@@ -14197,6 +14228,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       // 283): the legacy model, the aliased v3 key, the verified context digest and the
       // recorded context.
       entry["Match"]["LegacyContract"] = feature.legacy_contract;
+    }
+    if (!feature.mirror.is_null())
+    {
+      // The feature touches a mirror image across a natural truncation plane (boundary-cut
+      // DESIGN 2.2.2; decisions 442 / 454): {Planes, RealLength, ImageLength, Status}; its
+      // portions on image segments (never placed, never counted) listed apart.
+      entry["Mirror"] = feature.mirror;
+      if (!image_portions.empty())
+      {
+        entry["ImagePortions"] = image_portions;
+      }
     }
     if (!feature.blend_eigenvalues.is_null())
     {
@@ -14247,8 +14289,17 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     feature_list.push_back(std::move(entry));
   }
   nlohmann::json segment_list = nlohmann::json::array();
-  for (const auto &segment : segments)
+  nlohmann::json image_segment_list = nlohmann::json::array();
+  for (std::size_t s = 0; s < segments.size(); s++)
   {
+    const auto &segment = segments[s];
+    if (s >= real_segment_count)
+    {
+      image_segment_list.push_back({{"Key", {P(segment.key[0]), P(segment.key[1])}},
+                                    {"Length", L(segment.length)},
+                                    {"Chain", segment.chain}});
+      continue;
+    }
     nlohmann::json entry = {{"Key", {P(segment.key[0]), P(segment.key[1])}},
                             {"Length", L(segment.length)},
                             {"Chain", segment.chain}};
@@ -14352,7 +14403,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
                               {"Count", exclusion.count},
                               {"Length", L(exclusion.length)}});
   }
-  return {
+  nlohmann::json manifest = {
       {"Version", 2},
       {"MatchingRadius", scaled_radius},
       {"Conventions",
@@ -14948,6 +14999,12 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {"KnifeEdgeCensus", ScaledCensus(knife_edge_census, length_scale)},
       {"UnusedSpanCapAllowances", unused_span_cap_allowances},
       {"GeometryDigest", geometry_digest}};
+  if (!image_segment_list.empty())
+  {
+    // Mirror band: the image segments (never perimeter) listed apart.
+    manifest["ImageSegments"] = image_segment_list;
+  }
+  return manifest;
 }
 
 }  // namespace palace

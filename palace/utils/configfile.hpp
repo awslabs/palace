@@ -1323,6 +1323,24 @@ public:
     // default so that every existing output is unchanged.
     bool patch_energy = false;
 
+    // DomainBoundary rule (decisions 442 / 454 / 455; boundary-cut DESIGN 2.2): the
+    // mirror-extended identification across the planar NATURAL vertical truncation planes
+    // (window cuts, symmetry planes, natural outlines). Mirror = "Natural" (default): the
+    // metal perimeter within BandOverR x R of every such plane is reflected into the
+    // identification input, the features formed with the images (a 2 theta corner at an
+    // oblique meeting, a 2 d strip / gap at a parallel edge, nothing at a straight
+    // perpendicular meeting) are modelled with the trace taken by even extension
+    // (mirror-point evaluation) and the real half integrated; "Off": no mirror (every
+    // cut-crossing patch is a DomainBoundary exclusion). F-DB-a (the raw claim of an
+    // excluded patch is never dropped) has no switch.
+    enum class DomainBoundaryMirror
+    {
+      NATURAL,
+      OFF
+    };
+    DomainBoundaryMirror domain_boundary_mirror = DomainBoundaryMirror::NATURAL;
+    double domain_boundary_band_over_radius = 3.0;
+
     // Legacy-contract aliases resolved by the matching pass (USER decision 283): a
     // library model used for a contract-3 key the library lists explicitly as its alias
     // (the feature ids, the aliased key, the verified context digest, the recorded

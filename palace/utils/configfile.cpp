@@ -1622,6 +1622,32 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
                 "Response-correction \"MortarOversampling\" must be between 1 and 8!");
     data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
+    if (auto domain_boundary = correction.find("DomainBoundary");
+        domain_boundary != correction.end())
+    {
+      MFEM_VERIFY(domain_boundary->is_object(),
+                  "Response-correction \"DomainBoundary\" must be an object!");
+      const std::string mirror = domain_boundary->value("Mirror", "Natural");
+      if (mirror == "Natural")
+      {
+        data.domain_boundary_mirror = ResponseCorrectionData::DomainBoundaryMirror::NATURAL;
+      }
+      else if (mirror == "Off")
+      {
+        data.domain_boundary_mirror = ResponseCorrectionData::DomainBoundaryMirror::OFF;
+      }
+      else
+      {
+        MFEM_ABORT("Response-correction \"DomainBoundary\": \"Mirror\" must be "
+                   "\"Natural\" or \"Off\"!");
+      }
+      data.domain_boundary_band_over_radius =
+          domain_boundary->value("BandOverR", data.domain_boundary_band_over_radius);
+      MFEM_VERIFY(data.domain_boundary_band_over_radius >= 2.0 &&
+                      data.domain_boundary_band_over_radius <= 10.0,
+                  "Response-correction \"DomainBoundary\": \"BandOverR\" must be between "
+                  "2 (the interaction reach) and 10!");
+    }
     if (auto library = correction.find("Library"); library != correction.end())
     {
       data.library = library->get<std::string>();
