@@ -1677,11 +1677,11 @@ def corner_resolvability_constant():
     return trace_resolvability.MINIMUM_ACTIVE_NODES_PER_ORDER_SQUARED
 
 
-def corner_trace_basis(coupon_id, corner_radius, args):
+def corner_trace_basis(coupon_id, args):
     """The trace basis rule of a corner coupon: --corner-trace-basis when given, else the
-    refined default. The rule does not depend on corner_radius (the box basis never sees
-    the fillet; CORNER_TRACE_BASIS_DEFAULT): a rounded corner resolves exactly as the sharp
-    corner of its angle, and an explicit legacy request is honoured on either."""
+    refined default. The rule does not depend on the corner radius (the box basis never
+    sees the fillet; CORNER_TRACE_BASIS_DEFAULT): a rounded corner resolves exactly as the
+    sharp corner of its angle, and an explicit legacy request is honoured on either."""
     requested = getattr(args, "corner_trace_basis", None)
     if requested is None:
         return CORNER_TRACE_BASIS_DEFAULT
@@ -1719,7 +1719,7 @@ def build_corner(coupon, args, parameters, cache):
     # events: no connectivity angle; the rule is independent of CornerRadius, decision 511),
     # the recorded MetalRingsOnly layout as "legacy" on request; part of the coupon spec and
     # Id. The ring size is the rule's (2 + MetalInteriorKnots + FreeKnots).
-    trace_basis = corner_trace_basis(coupon["Id"], corner_radius, args)
+    trace_basis = corner_trace_basis(coupon["Id"], args)
     corner_ring_size = CORNER_TRACE_BASIS_RING_SIZES[trace_basis]
     if trace_basis != "legacy" and connectivity_angle is not None:
         raise ValueError(

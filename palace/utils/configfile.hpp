@@ -1471,7 +1471,9 @@ public:
     // unmatched neighbour's uncovered portion) that begins at the claim end is extended
     // back to s_arm; a stretch with no such host (the arm ends in the next feature's claim
     // at the claim end: the short-arm case, decision 310's "short edges vs corner
-    // clearances" generality item) is recorded as unhosted, with a warning. One record per
+    // clearances" generality item) is recorded as unhosted, with a warning; a virtual
+    // (mirror-formed, HalfByMirror) corner's real arm exits at s_half = (R + s) / 2, the
+    // mirror arm trim's start (decision 520 MAJOR-1). One record per
     // corner with at least one extended arm, lengths in patch units; sharp corners (claim
     // end = R <= s_arm) are never listed, so every identification record and every sharp
     // placement stays byte-identical.
@@ -1481,6 +1483,9 @@ public:
       std::string topology;
       double angle_degrees = 0.0;
       double corner_radius_over_radius = 0.0;
+      // A virtual (mirror-formed) corner placed at weight 1 / 2: its real arm's exit is
+      // s_half = (R + s) / 2 (decision 520 MAJOR-1); the image arm has no claim end.
+      bool half_by_mirror = false;
       struct Arm
       {
         int arm = 0;                        // 0 = the first arm (u), 1 = the second (theta)

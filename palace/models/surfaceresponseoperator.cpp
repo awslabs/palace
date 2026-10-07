@@ -8992,9 +8992,11 @@ std::optional<double> CornerArmClaimEnd(const IdentificationResult &identificati
 // stretch (its raw within-R energy then kept by F2); a stretch with neither host (the arm
 // ends in the next feature's claim at the claim end: the short-arm case) is recorded as
 // unhosted and warned about, never silently dropped. The extension never passes the claim
-// end, which the identification bounded by the neighbouring claims. A sharp corner's claim
-// end is R <= s_k: never extended, never listed (bitwise). One record per extended corner,
-// lengths in patch units.
+// end, which the identification bounded by the neighbouring claims. A virtual
+// (mirror-formed) corner placed HalfByMirror has its real arm's exit at s_half = (R + s) /
+// 2, where ApplyMirrorArmTrim starts that arm's cells (decision 520 MAJOR-1). A sharp
+// corner's claim end is R <= s_k: never extended, never listed (bitwise). One record per
+// extended corner, lengths in patch units.
 std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtension(
     const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
     std::vector<ResponseCorrectionData::UncoveredPortionData> &uncovered, double R)
@@ -9019,15 +9021,20 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
     {
       continue;
     }
-    if (!feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued")
-    {
-      continue;  // a virtual corner: ApplyMirrorArmTrim (s_half on the real arm)
-    }
+    // A virtual (mirror-formed) corner placed HalfByMirror — the placement's own predicate
+    // (a mirror record whose Status is not Continued; an Unmerged-touched corner follows
+    // it, decision 520): its REAL arm's cells begin at s_half = (R + s) / 2
+    // (ApplyMirrorArmTrim, which runs after this and only shortens), so a rounded virtual
+    // corner's stretch is [s_half, t_d + R) on the real arm (decision 520 MAJOR-1); its
+    // image arm carries no real portion, hence no claim end, and is skipped below.
+    const bool half_by_mirror =
+        !feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued";
     MFEM_VERIFY(feature.signature.contains("AngleDegrees"),
                 "Corner feature " << feature.id << " carries no AngleDegrees!");
     const double angle_degrees = feature.signature.at("AngleDegrees").get<double>();
     const double theta = angle_degrees * pi / 180.0;
     const double cos_theta = std::cos(theta), sin_theta = std::sin(theta);
+    const double s_half = HalfCornerArmStart(angle_degrees, R);
     const Point3D &vertex = feature.origin;
     const Point3D &u = feature.axes[0];
     const Point3D &v = feature.axes[1];
@@ -9037,12 +9044,14 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
     record.topology = feature.type;
     record.angle_degrees = angle_degrees;
     record.corner_radius_over_radius = feature.signature.value("CornerRadiusOverR", 0.0);
+    record.half_by_mirror = half_by_mirror;
     for (int k = 0; k < 2; k++)
     {
       const Point3D arm =
           k == 0 ? u : Normalize(Add(Scale(cos_theta, u), Scale(sin_theta, v)));
-      const double exit =
-          k == 0 ? R : R / std::max(std::abs(cos_theta), std::abs(sin_theta));
+      const double exit = half_by_mirror ? s_half
+                          : k == 0       ? R
+                                   : R / std::max(std::abs(cos_theta), std::abs(sin_theta));
       const auto claim_end = CornerArmClaimEnd(identification, feature, arm, tolerance);
       if (!claim_end || *claim_end - exit <= tolerance)
       {
@@ -9562,10 +9571,23 @@ void FillVertexRawClaims(
                      [&](const auto &record) { return record.feature == feature.id; });
     if (mirror_trim != mirror_trims.end() && mirror_trim->trimmed_length > 0.0)
     {
-      provenance.raw_claims.push_back(
-          {-1, Add(feature.origin, Scale(R, mirror_trim->arm)),
-           Add(feature.origin,
-               Scale(mirror_trim->half_start_over_radius * R, mirror_trim->arm))});
+      // From the claim end (R for a sharp corner; a rounded virtual corner's claim already
+      // reaches t_d + R from the virtual corner) to s_half; nothing when the claim reaches
+      // s_half (the extension's domain).
+      double start = R;
+      if (feature.signature.value("CornerRadiusOverR", 0.0) > 0.0)
+      {
+        const auto claim_end =
+            CornerArmClaimEnd(identification, feature, mirror_trim->arm, tolerance);
+        start = std::max(R, claim_end.value_or(R));
+      }
+      const double s_half = mirror_trim->half_start_over_radius * R;
+      if (s_half - start > tolerance)
+      {
+        provenance.raw_claims.push_back(
+            {-1, Add(feature.origin, Scale(start, mirror_trim->arm)),
+             Add(feature.origin, Scale(s_half, mirror_trim->arm))});
+      }
     }
   }
 }
@@ -16429,6 +16451,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                             {"Topology", extension.topology},
                             {"AngleDegrees", extension.angle_degrees},
                             {"CornerRadiusOverR", extension.corner_radius_over_radius},
+                            {"HalfByMirror", extension.half_by_mirror},
                             {"Arms", std::move(arms)},
                             {"Cells", std::move(cells)}});
     }
@@ -16579,6 +16602,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     extension.topology = entry.at("Topology");
     extension.angle_degrees = entry.at("AngleDegrees");
     extension.corner_radius_over_radius = entry.at("CornerRadiusOverR");
+    extension.half_by_mirror = entry.at("HalfByMirror");
     for (const auto &arm_entry : entry.at("Arms"))
     {
       ResponseCorrectionData::CornerArmExtensionData::Arm arm;
@@ -18861,6 +18885,7 @@ nlohmann::json DescribeCornerArmExtensions(
                        {"Topology", extension.topology},
                        {"AngleDegrees", extension.angle_degrees},
                        {"CornerRadiusOverR", extension.corner_radius_over_radius},
+                       {"HalfByMirror", extension.half_by_mirror},
                        {"Arms", std::move(arms)},
                        {"Patches", std::move(patches)}});
   }
@@ -18896,8 +18921,10 @@ nlohmann::json DescribeCornerArmExtensions(
        "stretch (ExtendedUncoveredLength; its raw energy kept by F2). An arm with neither "
        "host (the arm ends in the next feature's claim: the short-arm case) is Hosted "
        "false and its stretch counted in UnhostedLength (warned; the decision-310 'short "
-       "edges vs corner clearances' generality item). A sharp corner (claim end R <= s_k) "
-       "is never listed. Lengths in mesh units"}};
+       "edges vs corner clearances' generality item). A virtual (mirror-formed) corner "
+       "placed HalfByMirror (decision 520): its real arm's exit is s_half = (R + s) / 2 "
+       "(the mirror arm trim's start), the image arm has no claim end. A sharp corner "
+       "(claim end R <= s_k) is never listed. Lengths in mesh units"}};
 }
 
 std::string DescribeCornerArmExtensionSummary(const nlohmann::json &diagnostics)

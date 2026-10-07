@@ -68,8 +68,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     begin where the arm exits the coupon's matching square — its identification claim ends
     `r / tan(t / 2)` beyond it, a stretch that was modelled by nothing — recorded under
     `Diagnostics.CornerArmExtension` (a stretch with nothing to extend is counted in
-    `UnhostedLength` with a warning). Sharp corners are unchanged. Response-geometry cache
-    version 13.
+    `UnhostedLength` with a warning; a virtual corner on a natural truncation plane exits
+    at the mirror arm trim's `s_half`). Sharp corners are unchanged. Response-geometry
+    cache version 13.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

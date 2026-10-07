@@ -249,6 +249,92 @@ std::unique_ptr<mfem::ParMesh> MakeRoundedLeadMesh(double x_min, double x_max,
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+// Move the mesh vertex at `from` (within 1e-9) to `to`; exactly one vertex must match.
+void MoveVertex(mfem::Mesh &mesh, const std::array<double, 3> &from,
+                const std::array<double, 3> &to)
+{
+  int found = -1;
+  for (int vertex = 0; vertex < mesh.GetNV(); vertex++)
+  {
+    const double *point = mesh.GetVertex(vertex);
+    if (std::abs(point[0] - from[0]) < 1.0e-9 && std::abs(point[1] - from[1]) < 1.0e-9 &&
+        std::abs(point[2] - from[2]) < 1.0e-9)
+    {
+      REQUIRE(found < 0);
+      found = vertex;
+    }
+  }
+  REQUIRE(found >= 0);
+  for (int d = 0; d < 3; d++)
+  {
+    mesh.GetVertex(found)[d] = to[d];
+  }
+}
+
+// The sheared ROUNDED lead of decision 520 MINOR-1: the lead x in [0.125, 1] (the right
+// edge on the wall), sheared so that the left long edge tilts to (-shear, 0, -1) from the
+// cap corner C = (0.125, 0.5, 0.5): a convex corner of angle theta = 90 + atan(shear)
+// degrees (120 at shear 1 / sqrt(3), 135 at shear 1), given a TRUE circular fillet of
+// radius 0.125 in physical coordinates: the cap vertex at x = C_x + h moves to the tangent
+// point T_A = C + t_d a (t_d = r / tan(theta / 2)), the first edge vertex below C to T_B =
+// C + t_d b, the corner vertex onto the arc midpoint; a 2-chord polyline on the circle.
+std::unique_ptr<mfem::ParMesh> MakeShearedRoundedLeadMesh(double shear)
+{
+  constexpr double r = 0.125, h = 1.0 / 16, x_min = 0.125;
+  mfem::Mesh serial = MakeSerialLeadMesh(16, x_min, 1.0, shear, 0.0);
+  const double n = std::sqrt(1.0 + shear * shear);
+  const std::array<double, 3> C = {x_min, 0.5, 0.5};
+  const std::array<double, 3> a = {1.0, 0.0, 0.0};
+  const std::array<double, 3> b = {-shear / n, 0.0, -1.0 / n};
+  const double theta = std::acos(-shear / n);  // between a and b
+  const double t_d = r / std::tan(0.5 * theta);
+  REQUIRE(t_d < 2.0 * h);
+  REQUIRE(t_d <= n * h + 1.0e-12);
+  const std::array<double, 3> center = {C[0] + t_d, 0.5, 0.5 - r};
+  const double mid = 0.5 * 3.14159265358979323846 + 0.5 * (3.14159265358979323846 - theta);
+  MoveVertex(serial, {x_min + h, 0.5, 0.5}, {C[0] + t_d * a[0], 0.5, 0.5});
+  MoveVertex(serial, {x_min - shear * h, 0.5, 0.5 - h},
+             {C[0] + t_d * b[0], 0.5, C[2] + t_d * b[2]});
+  MoveVertex(serial, {x_min, 0.5, 0.5},
+             {center[0] + r * std::cos(mid), 0.5, center[2] + r * std::sin(mid)});
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+// The rounded VIRTUAL corner of decision 520 MAJOR-1: the 16 x 16 x 16 lead x in [0.375, 1]
+// (the right edge on the wall, the cap at z = 0.5) sheared uniformly in its metal plane by
+// tan(30 deg) (affine hexes; the F1 fixture's construction): the right wall tilts by 30
+// degrees to x = 1 + (z - 0.5) tan(30 deg), so that the cap (along x) meets it at 60
+// degrees, the left long edge tilts to (-tan 30, 0, -1) (the cap's left corner is a sharp
+// 120-degree convex corner, F1's), and that edge meets the bottom cut at 60 degrees (a
+// sharp 120-degree virtual corner with its image, placed HalfByMirror: the no-stretch
+// control). The cap's right end is a HALF fillet of radius 0.125 (the model's) whose
+// virtual corner C = (1, 0.5, 0.5) lies ON the wall and whose arc meets the wall
+// perpendicularly at its midpoint: the mirror image completes a 120-degree ROUNDED corner
+// (the cap and its image; t_d = r / tan(60 deg)) placed HalfByMirror. Built in physical
+// (sheared) coordinates: the cap vertices x = 14 / 16 and 15 / 16 move onto the arc at the
+// tangent point T_A = C - t_d x and at 75 degrees, the corner vertex onto the arc midpoint
+// (60 degrees; on the wall).
+constexpr double kVirtualLeadShear = 0.57735026918962576;  // tan(30 deg)
+constexpr double kVirtualLeadLeft = 0.375;
+
+std::unique_ptr<mfem::ParMesh> MakeVirtualRoundedLeadMesh()
+{
+  constexpr double r = 0.125, pi = 3.14159265358979323846;
+  mfem::Mesh serial = MakeSerialLeadMesh(16, kVirtualLeadLeft, 1.0, kVirtualLeadShear, 0.0);
+  const double t_d = r / std::tan(60.0 * pi / 180.0);
+  const std::array<double, 3> center = {1.0 - t_d, 0.5, 0.5 - r};
+  auto OnArc = [&](double degrees)
+  {
+    const double a = degrees * pi / 180.0;
+    return std::array<double, 3>{center[0] + r * std::cos(a), 0.5,
+                                 center[2] + r * std::sin(a)};
+  };
+  MoveVertex(serial, {0.875, 0.5, 0.5}, OnArc(90.0));
+  MoveVertex(serial, {0.9375, 0.5, 0.5}, OnArc(75.0));
+  MoveVertex(serial, {1.0, 0.5, 0.5}, OnArc(60.0));
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
 struct DryRunRow
 {
   std::size_t patch = 0;
@@ -872,6 +958,500 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
     CHECK_THAT(manifest["Summary"]["CornerArmExtension"]["UnhostedLength"].get<double>(),
                WithinAbs(2.0 * 0.05, 1.0e-7));
     CHECK(manifest["Summary"]["Uncovered"]["Features"].get<int>() == 0);
+  }
+#endif
+}
+
+// Decision 520 MAJOR-1: a matched ROUNDED virtual (mirror-formed) corner, placed
+// HalfByMirror with its real arm's cells from s_half = (R + s) / 2 (the mirror arm trim),
+// has its real-arm stretch [s_half, t_d + R) extended like a whole corner's (the 5ecabc3aae
+// extension skipped every virtual corner silently). The ramp-sheared lead whose cap ends in
+// a half fillet on the 30-degree-tilted wall: the rounded 120-degree virtual corner (the
+// cap + its image) is Matched to the r = 0.125 model and HalfByMirror, its one real arm
+// (the cap) extended from the claim end t_d + R = 1.361 R back to s_half = 1.077 R and
+// recorded HalfByMirror; the cap's cells end exactly at s_half from the virtual corner
+// (the stretch once, in the extended cell); the vertex coupon's raw claims stop at s_half
+// (the operator record and the geometry cache); the mirror arm trim removes nothing from
+// the extended cell (the cap's cells begin beyond s_half). The lead's left end (the sharp
+// 120-degree corner, the tilted edge reaching the bottom cut beside the right wall) forms
+// an unmergeable mirror configuration whose touched real features are Status Unmerged — the
+// decision-512 lane's topology, incidental here and not asserted: the assertions below read
+// the virtual corner's record, the cap cells' geometry and the raw claims only.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator corner-arm extension of a virtual rounded corner",
+                 "[surfaceresponseoperator][cornerarmtrim][mirror][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2, r = 0.125;
+  const auto basis_path = temp.temp_dir / "virtual-rounded-basis-points.csv";
+  const auto library_path = temp.temp_dir / "fabrication-process-virtual-rounded-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream rounded_input(rounded_library_3d_path),
+        sharp_input(convex_library_3d_path);
+    REQUIRE(rounded_input);
+    REQUIRE(sharp_input);
+    json library = json::parse(rounded_input);
+    const json sharp = json::parse(sharp_input);
+    library["Name"] = "unit-test-process-virtual-rounded-3d";
+    // The sharp 120-degree model (the cap's left corner and the virtual corner at the
+    // bottom cut; F1's) and the rounded 120-degree model (the virtual rounded corner)
+    // beside the rounded 90.
+    for (const auto &model : sharp["Models"])
+    {
+      if (model["Topology"] == "ConvexCorner")
+      {
+        json sharp_120 = model;
+        sharp_120["Name"] = "convex-corner-120";
+        sharp_120["Angle"] = 120.0;
+        library["Models"].push_back(sharp_120);
+      }
+    }
+    for (const auto &model : json(library["Models"]))
+    {
+      if (model["Name"] == "convex-corner-90-r0.125")
+      {
+        json rounded_120 = model;
+        rounded_120["Name"] = "convex-corner-120-r0.125";
+        rounded_120["Angle"] = 120.0;
+        library["Models"].push_back(rounded_120);
+      }
+    }
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  const auto manifest_path = temp.temp_dir / "surface-response-requirements-virtual.json";
+  const auto patches_path = temp.temp_dir / "surface-response-patches.csv";
+  const std::array<double, 3> rounded_corner = {1.0, 0.5, 0.5};
+  const std::array<double, 3> whole_corner = {kVirtualLeadLeft, 0.5, 0.5};
+  const double theta = 120.0 * M_PI / 180.0, t_d = r / std::tan(0.5 * theta);
+  const double s_1 = R / std::max(std::abs(std::cos(theta)), std::abs(std::sin(theta)));
+  const double s_half = 0.5 * (R + s_1), claim_end = t_d + R;
+  auto Distance = [](const std::array<double, 3> &a, const std::array<double, 3> &b)
+  {
+    double d2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      d2 += (a[d] - b[d]) * (a[d] - b[d]);
+    }
+    return std::sqrt(d2);
+  };
+  json manifest;
+  {
+    Mesh dry_run_mesh(MakeVirtualRoundedLeadMesh());
+    WriteSurfaceResponseRequirements(iodata, dry_run_mesh, manifest_path.string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream input(manifest_path);
+    REQUIRE(input);
+    manifest = json::parse(input);
+  }
+  const auto rows = ReadDryRun(patches_path);
+  int rounded_id = -1, whole_id = -1;
+  for (const auto &feature : manifest["Identification"]["Features"])
+  {
+    if (feature["Type"] != "ConvexCorner")
+    {
+      continue;
+    }
+    REQUIRE(feature["Match"]["Status"] == "Matched");
+    const auto origin = feature["Frame"]["Origin"].get<std::array<double, 3>>();
+    CHECK_THAT(feature["Signature"]["AngleDegrees"].get<double>(),
+               WithinAbs(120.0, 1.0e-6));
+    if (feature["Match"]["Model"] == "convex-corner-120-r0.125")
+    {
+      rounded_id = feature["Id"];
+      CHECK(feature["Mirror"]["Status"] == "Modelled");
+      CHECK(Distance(origin, rounded_corner) < 1.0e-6);
+      CHECK_THAT(feature["Signature"]["CornerRadiusOverR"].get<double>(),
+                 WithinAbs(r / R, 1.0e-6));
+    }
+    else if (Distance(origin, whole_corner) < 1.0e-6)
+    {
+      CHECK(feature["Match"]["Model"] == "convex-corner-120");
+      whole_id = feature["Id"];
+    }
+  }
+  REQUIRE(rounded_id >= 0);
+  REQUIRE(whole_id >= 0);
+  // The extension record: the rounded virtual corner alone, HalfByMirror, its one real arm
+  // (the cap) from s_half with the stretch claim end - s_half hosted by the cap's cell.
+  const auto &record = manifest["Identification"]["Diagnostics"]["CornerArmExtension"];
+  REQUIRE(record["Count"].get<int>() == 1);
+  CHECK(record["ArmsExtended"].get<int>() == 1);
+  CHECK(record["ArmsUnhosted"].get<int>() == 0);
+  CHECK(record["UnhostedLength"].get<double>() == 0.0);
+  const double stretch = claim_end - s_half;
+  CHECK_THAT(record["ExtendedCellLength"].get<double>(), WithinAbs(stretch, 1.0e-6));
+  REQUIRE(record["Cells"].size() == 1);
+  const json *corner = &record["Corners"][0];
+  CHECK((*corner)["Feature"].get<int>() == rounded_id);
+  CHECK((*corner)["HalfByMirror"].get<bool>());
+  CHECK_THAT((*corner)["AngleDegrees"].get<double>(), WithinAbs(120.0, 1.0e-6));
+  REQUIRE((*corner)["Arms"].size() == 1);
+  const auto &arm = (*corner)["Arms"][0];
+  CHECK(arm["Hosted"].get<bool>());
+  CHECK_THAT(arm["ExitDistanceOverR"].get<double>(), WithinAbs(s_half / R, 1.0e-9));
+  CHECK_THAT(arm["ClaimEndOverR"].get<double>(), WithinAbs(claim_end / R, 1.0e-6));
+  CHECK_THAT(arm["StretchLength"].get<double>(), WithinAbs(stretch, 1.0e-6));
+  CHECK_THAT(arm["ExtendedCellLength"].get<double>(), WithinAbs(stretch, 1.0e-6));
+  const auto direction = arm["Direction"].get<std::array<double, 3>>();
+  CHECK_THAT(direction[0], WithinAbs(-1.0, 1.0e-6));  // the cap, away from the wall
+  REQUIRE((*corner)["Patches"].size() == 1);
+  const std::size_t extended = (*corner)["Patches"][0].get<std::size_t>();
+  // The virtual rounded corner's mirror arm trim record removes nothing from the extended
+  // cell (the cap's cells begin beyond s_half); nothing uncovered.
+  const auto &mirror_record = manifest["Identification"]["Diagnostics"]["MirrorArmTrim"];
+  bool rounded_mirror_record = false;
+  for (const auto &entry : mirror_record["Corners"])
+  {
+    if (entry["Feature"].get<int>() == rounded_id)
+    {
+      rounded_mirror_record = true;
+      CHECK_THAT(entry["HalfStartOverR"].get<double>(), WithinAbs(s_half / R, 1.0e-9));
+      CHECK(entry["Patches"].empty());
+    }
+  }
+  CHECK(rounded_mirror_record);
+  for (const auto &cell : mirror_record["Cells"])
+  {
+    CHECK(cell["Patch"].get<std::size_t>() != extended);
+  }
+  CHECK(manifest["Summary"]["Uncovered"]["Features"].get<int>() == 0);
+  // The cap's cells (AxisW along x): every cell end at least s_half from the virtual
+  // corner, exactly one at s_half (the extended cell, with the dry-run weight formula
+  // holding on it: the stretch [s_half, claim end) counted once, in that cell), the cell
+  // ends of the extended cell at s_half and at its old far end; the virtual corner's
+  // patch at weight 1 / 2 (HalfByMirror).
+  int at_rounded_exit = 0, rounded_rows = 0;
+  for (const auto &row : rows)
+  {
+    if (row.topology == "convex corner")
+    {
+      if (row.feature == rounded_id)
+      {
+        rounded_rows++;
+        CHECK_THAT(row.weight, WithinAbs(0.5, 1.0e-12));
+      }
+      continue;
+    }
+    REQUIRE(row.topology == "isolated edge");
+    if (std::abs(std::abs(row.axis_w[0]) - 1.0) > 1.0e-6)
+    {
+      continue;  // the tilted left edge's cells
+    }
+    const double to_rounded = NearestCellEndDistance(row, rounded_corner);
+    CHECK(to_rounded >= s_half - 1.0e-7);
+    if (std::abs(to_rounded - s_half) < 1.0e-7)
+    {
+      at_rounded_exit++;
+      CHECK(row.patch == extended);
+      CHECK_THAT(row.quadrature_weight * (row.s1 - row.s0),
+                 WithinAbs(row.strip[1] - row.strip[0], 1.0e-9));
+      CHECK(row.strip[1] - row.strip[0] > stretch);
+    }
+  }
+  CHECK(rounded_rows == 1);
+  CHECK(at_rounded_exit == 1);
+  // The operator: the same record, and (through the geometry cache) the rounded vertex
+  // coupon's raw claims end at the exit: nothing of the stretch is claimed raw.
+  const auto cache_path = temp.temp_dir / "virtual-rounded-geometry-cache.json";
+  {
+    test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeVirtualRoundedLeadMesh()));
+    LaplaceOperator laplace(iodata, meshes);
+    SurfaceResponseOperator response(iodata, laplace);
+    const auto statistics = response.GetStatistics();
+    const auto &operator_record = statistics["Diagnostics"]["CornerArmExtension"];
+    REQUIRE(operator_record["Count"].get<int>() == 1);
+    CHECK(operator_record["Corners"][0]["HalfByMirror"].get<bool>());
+    CHECK_THAT(operator_record["ExtendedCellLength"].get<double>(),
+               WithinAbs(stretch, 1.0e-6));
+    Mpi::Barrier(Mpi::World());
+  }
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(cache_path);
+    REQUIRE(input);
+    const json cache = json::parse(input);
+    int rounded_patches = 0;
+    for (const auto &patch : cache["Patches"])
+    {
+      if (patch["Feature"].get<int>() != rounded_id || patch["Segment"].get<int>() >= 0)
+      {
+        continue;
+      }
+      rounded_patches++;
+      CHECK_THAT(patch["Weight"].get<double>(), WithinAbs(0.5, 1.0e-12));
+      REQUIRE(!patch["RawClaims"].empty());
+      double claimed = 0.0;
+      for (const auto &claim : patch["RawClaims"])
+      {
+        const auto p0 = claim["P0"].get<std::array<double, 3>>();
+        const auto p1 = claim["P1"].get<std::array<double, 3>>();
+        CHECK(claim["Segment"].get<int>() >= 0);  // no synthetic stretch: none trimmed
+        CHECK(Distance(p0, rounded_corner) <= s_half + 1.0e-7);
+        CHECK(Distance(p1, rounded_corner) <= s_half + 1.0e-7);
+        claimed += Distance(p0, p1);
+      }
+      // The real half arc (two chords of 15 degrees) + the cap from the tangent point to
+      // the exit, s_half - t_d.
+      CHECK_THAT(
+          claimed,
+          WithinAbs(2.0 * 2.0 * r * std::sin(7.5 * M_PI / 180.0) + (s_half - t_d), 1.0e-6));
+    }
+    CHECK(rounded_patches == 1);
+  }
+#endif
+}
+
+// Decision 520 MINOR-1: the non-90 rounded branches on one fixture, the sheared rounded
+// lead with a true circular fillet (r = 0.125) at a 120- or 135-degree convex corner. At
+// 120 degrees (s_1 = 1.1547 R) the claim end t_d + R = 1.361 R lies beyond both exits: both
+// arms are extended (arm 0 by t_d, arm 1 by t_d + R - s_1) and the F1 trim record removes
+// nothing. At 135 degrees (s_1 = 1.4142 R) the claim end 1.259 R lies beyond s_0 = R but
+// before s_1: arm 0 is extended by t_d, arm 1 is F1-trimmed from the claim end to s_1 and
+// the vertex coupon's raw stretch starts at the CLAIM END, not at R (FillVertexRawClaims).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator corner-arm extension of a non-90 rounded corner",
+                 "[surfaceresponseoperator][cornerarmtrim][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2, r = 0.125;
+  const auto basis_path = temp.temp_dir / "non90-rounded-basis-points.csv";
+  const auto library_path = temp.temp_dir / "fabrication-process-non90-rounded-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    std::ifstream input(rounded_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-non90-rounded-3d";
+    std::vector<json> obtuse;
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+      if (model["Topology"] == "ConvexCorner")
+      {
+        for (const double angle : {120.0, 135.0})
+        {
+          json rounded = model;
+          rounded["Name"] = fmt::format("convex-corner-{:g}-r0.125", angle);
+          rounded["Angle"] = angle;
+          obtuse.push_back(rounded);
+        }
+      }
+    }
+    for (auto &model : obtuse)
+    {
+      library["Models"].push_back(std::move(model));
+    }
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = IslandConfig();
+  config["Boundaries"]["Ground"]["Attributes"] = {4};
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["TraceCoupling"] = "SurfaceMortar";
+  correction["MortarOversampling"] = 2;
+  // The lead reaches the wall x = 1: the mirror is off (its own tests above and in
+  // test-domainboundary.cpp); this test is about the whole rounded corner at x_min.
+  correction["DomainBoundary"] = {{"Mirror", "Off"}};
+  IoData iodata(config, false);
+  iodata.boundaries.cracked_attributes.insert(9);
+  const auto manifest_path = temp.temp_dir / "surface-response-requirements-non90.json";
+  const std::array<double, 3> C = {0.125, 0.5, 0.5};
+  auto Distance = [](const std::array<double, 3> &a, const std::array<double, 3> &b)
+  {
+    double d2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      d2 += (a[d] - b[d]) * (a[d] - b[d]);
+    }
+    return std::sqrt(d2);
+  };
+  auto Run = [&](double shear, double angle_degrees)
+  {
+    const double theta = angle_degrees * M_PI / 180.0;
+    const double t_d = r / std::tan(0.5 * theta);
+    const double s_1 = R / std::max(std::abs(std::cos(theta)), std::abs(std::sin(theta)));
+    const double claim_end = t_d + R;
+    json manifest;
+    {
+      Mesh dry_run_mesh(MakeShearedRoundedLeadMesh(shear));
+      WriteSurfaceResponseRequirements(iodata, dry_run_mesh, manifest_path.string());
+      Mpi::Barrier(Mpi::World());
+      std::ifstream input(manifest_path);
+      REQUIRE(input);
+      manifest = json::parse(input);
+    }
+    int corner_id = -1;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConvexCorner")
+      {
+        REQUIRE(corner_id < 0);
+        corner_id = feature["Id"];
+        CHECK(feature["Match"]["Status"] == "Matched");
+        CHECK(feature["Match"]["Model"] ==
+              fmt::format("convex-corner-{:g}-r0.125", angle_degrees));
+        CHECK_THAT(feature["Signature"]["AngleDegrees"].get<double>(),
+                   WithinAbs(angle_degrees, 1.0e-6));
+        CHECK(Distance(feature["Frame"]["Origin"].get<std::array<double, 3>>(), C) <
+              1.0e-6);
+      }
+    }
+    REQUIRE(corner_id >= 0);
+    const auto &record = manifest["Identification"]["Diagnostics"]["CornerArmExtension"];
+    const auto &trim = manifest["Identification"]["Diagnostics"]["CornerArmTrim"];
+    REQUIRE(record["Count"].get<int>() == 1);
+    CHECK_FALSE(record["Corners"][0]["HalfByMirror"].get<bool>());
+    CHECK(record["ArmsUnhosted"].get<int>() == 0);
+    REQUIRE(trim["Count"].get<int>() == 1);  // the F1 record of every non-90 matched corner
+    CHECK_THAT(trim["TrimmedLength"].get<double>(), WithinAbs(s_1 - R, 1.0e-7));
+    std::map<int, json> arms;
+    for (const auto &arm : record["Corners"][0]["Arms"])
+    {
+      arms[arm["Arm"].get<int>()] = arm;
+    }
+    // Arm 0 (the first arm, exit R): extended by t_d in both cases.
+    REQUIRE(arms.count(0) == 1);
+    CHECK(arms.at(0)["Hosted"].get<bool>());
+    CHECK_THAT(arms.at(0)["ExitDistanceOverR"].get<double>(), WithinAbs(1.0, 1.0e-9));
+    CHECK_THAT(arms.at(0)["ClaimEndOverR"].get<double>(), WithinAbs(claim_end / R, 1.0e-6));
+    CHECK_THAT(arms.at(0)["ExtendedCellLength"].get<double>(), WithinAbs(t_d, 1.0e-6));
+    // The vertex coupon's raw claims through the geometry cache.
+    const auto cache_path =
+        temp.temp_dir / fmt::format("non90-cache-{:g}.json", angle_degrees);
+    {
+      test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      meshes.push_back(std::make_unique<Mesh>(MakeShearedRoundedLeadMesh(shear)));
+      LaplaceOperator laplace(iodata, meshes);
+      SurfaceResponseOperator response(iodata, laplace);
+      const auto statistics = response.GetStatistics();
+      CHECK(statistics["Diagnostics"]["CornerArmExtension"]["Count"].get<int>() == 1);
+      CHECK(statistics["Diagnostics"]["CornerArmTrim"]["Count"].get<int>() == 1);
+      Mpi::Barrier(Mpi::World());
+    }
+    std::vector<std::pair<double, double>> synthetic;  // (near, far) distances from C
+    double farthest_portion_claim = 0.0;
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ifstream input(cache_path);
+      REQUIRE(input);
+      const json cache = json::parse(input);
+      int vertex_patches = 0;
+      for (const auto &patch : cache["Patches"])
+      {
+        if (patch["Feature"].get<int>() != corner_id || patch["Segment"].get<int>() >= 0)
+        {
+          continue;
+        }
+        vertex_patches++;
+        for (const auto &claim : patch["RawClaims"])
+        {
+          const double d0 = Distance(claim["P0"].get<std::array<double, 3>>(), C);
+          const double d1 = Distance(claim["P1"].get<std::array<double, 3>>(), C);
+          if (claim["Segment"].get<int>() < 0)
+          {
+            synthetic.emplace_back(std::min(d0, d1), std::max(d0, d1));
+          }
+          else
+          {
+            farthest_portion_claim = std::max({farthest_portion_claim, d0, d1});
+          }
+        }
+      }
+      CHECK(vertex_patches == 1);
+    }
+    if (claim_end > s_1 + 1.0e-9)
+    {
+      // 120 degrees: arm 1 extended too (exit s_1 > R), the trim removed nothing, no raw
+      // stretch, every portion claim within s_1 of the corner.
+      REQUIRE(arms.count(1) == 1);
+      CHECK(arms.at(1)["Hosted"].get<bool>());
+      CHECK_THAT(arms.at(1)["ExitDistanceOverR"].get<double>(), WithinAbs(s_1 / R, 1.0e-9));
+      CHECK_THAT(arms.at(1)["ExtendedCellLength"].get<double>(),
+                 WithinAbs(claim_end - s_1, 1.0e-6));
+      CHECK(record["ArmsExtended"].get<int>() == 2);
+      CHECK_THAT(record["ExtendedCellLength"].get<double>(),
+                 WithinAbs(t_d + claim_end - s_1, 1.0e-6));
+      CHECK(trim["RemovedCellLength"].get<double>() == 0.0);
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK(synthetic.empty());
+        CHECK(farthest_portion_claim <= s_1 + 1.0e-7);
+      }
+    }
+    else
+    {
+      // 135 degrees: arm 1 is F1's: its cells cut from the claim end to s_1 and the raw
+      // stretch [claim end, s_1) (not [R, s_1)) claimed by the vertex coupon.
+      CHECK(arms.count(1) == 0);
+      CHECK(record["ArmsExtended"].get<int>() == 1);
+      CHECK_THAT(trim["RemovedCellLength"].get<double>(),
+                 WithinAbs(s_1 - claim_end, 1.0e-6));
+      if (Mpi::Root(Mpi::World()))
+      {
+        REQUIRE(synthetic.size() == 1);
+        CHECK_THAT(synthetic[0].first, WithinAbs(claim_end, 1.0e-6));
+        CHECK_THAT(synthetic[0].second, WithinAbs(s_1, 1.0e-6));
+        CHECK(farthest_portion_claim <= claim_end + 1.0e-7);
+      }
+    }
+  };
+  SECTION("120 degrees: both arms extended, the second from s_1 > R")
+  {
+    Run(1.0 / std::sqrt(3.0), 120.0);
+  }
+  SECTION("135 degrees: the first arm extended, the second F1-trimmed from the claim end")
+  {
+    Run(1.0, 135.0);
   }
 #endif
 }

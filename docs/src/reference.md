@@ -1750,8 +1750,9 @@ The same rule in the other direction (decision 511): a matched ROUNDED corner's 
 square exit, so its arm cells (or an unmatched neighbour's uncovered portion) beginning at
 the claim end are extended back to the exit — the stretch was modelled by nothing — and
 recorded per corner under `Diagnostics.CornerArmExtension` (`Summary.CornerArmExtension`;
-a stretch with no cell or portion to extend is counted in `UnhostedLength` with a warning);
-sharp corners are unchanged.
+a stretch with no cell or portion to extend is counted in `UnhostedLength` with a warning;
+a virtual corner on a natural truncation plane exits at the mirror arm trim's `s_half`,
+flagged `HalfByMirror`); sharp corners are unchanged.
 The single-transmon plotting helper can overlay these assignments on the chip-plane metal mesh:
 
 ```text

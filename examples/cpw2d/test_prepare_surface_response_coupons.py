@@ -757,7 +757,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "unknown corner trace basis rule"):
             PREPARE.corner_trace_basis(
-                "rounded-90", 0.5, SimpleNamespace(corner_trace_basis="fillet-knots")
+                "rounded-90", SimpleNamespace(corner_trace_basis="fillet-knots")
             )
 
     def test_corner_mesh_refinement_scales_only_fine_size(self):

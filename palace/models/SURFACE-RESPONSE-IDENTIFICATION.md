@@ -2109,12 +2109,19 @@ unit test; a short cap between two fillets is instead joined into one spatial cl
 owns its fillets as arc portions) is recorded as unhosted (`Hosted` false,
 `UnhostedLength`) with a warning, never silently dropped: decision 310's "short edges vs
 corner clearances" generality item. The extension never passes the claim end, which the
-identification bounded by the neighbouring claims. A sharp corner's claim end is R <= s_k:
+identification bounded by the neighbouring claims. A VIRTUAL (mirror-formed) corner placed
+HalfByMirror — the placement's own predicate, a mirror record whose Status is not Continued,
+an Unmerged-touched corner following it (decision 520 MAJOR-1) — has its real arm's exit at
+s_half = (R + s) / 2, where `ApplyMirrorArmTrim` (which runs after the extension and only
+shortens) starts that arm's cells; its image arm carries no real portion and has no claim
+end; the record carries `HalfByMirror`. A sharp corner's claim end is R <= s_k:
 never extended, never listed (the 90-deg lead's dry run stays byte-identical to the
 trim-disabled golden; the stage-2 bitwise windows and the transmon are unchanged). For a
 rounded NON-90 corner whose claim ends before s_1 (t_d + R < s_1), the F1 trim applies as
 written (the cells before s_1 are cut) and the vertex coupon's raw claim of the stretch
-starts at the claim end rather than at R (`FillVertexRawClaims`); F1's `TrimmedLength`
+starts at the claim end rather than at R (`FillVertexRawClaims`; likewise the mirror trim's
+raw stretch of a rounded virtual corner starts at the claim end, and is absent when the
+claim reaches s_half); F1's `TrimmedLength`
 keeps its sharp definition s - R (no census instance: every rounded corner is 90 deg). The
 vertex coupon's raw claims (F-DB-a) are clipped at s_k on every hosted arm, the stretch
 having gone to the extended cell or portion. Applied after the F1 trim and before the
@@ -2125,7 +2132,8 @@ the extended cells and the records. RECORD, one entry per extended corner, in
 `UnhostedLength`), the operator's `Diagnostics.CornerArmExtension` (palace.json) and the
 cache: `AngleDegrees`, `CornerRadiusOverR`, per `Arms` entry `Arm` (0 / 1), `Direction`,
 `ExitDistanceOverR` = s_k / R, `ClaimEndOverR`, `StretchLength` = claim end - s_k,
-`ExtendedCellLength` (model-weighted), `ExtendedUncoveredLength`, `Hosted`; `Cells` lists
+`ExtendedCellLength` (model-weighted), `ExtendedUncoveredLength`, `Hosted`; per corner
+`HalfByMirror`; `Cells` lists
 (`Patch`, `ExtendedLength` = the full length added to that patch's cell) in mesh units for
 the A7 audit (`audit.py` subtracts them from the owned lengths: a portion's quadrature x
 model weights sum to 1 - (owned + removed - extended) / portion). Unit tests
@@ -2137,6 +2145,18 @@ corners with exactly one cell end per arm at R, the portion sums 1 + extended / 
 (4 t_d in total), the operator record = the manifest's (1 and 2 ranks), no F1 trim, and the
 short-arm lead (cap at z = 0.25: each long arm 0.125 < R from its tangent point to the
 domain cut) with its two unhosted stretches recorded; the 90-deg sharp lead has no record.
+`SurfaceResponseOperator corner-arm extension of a virtual rounded corner` (decision 520
+MAJOR-1) — the lead sheared by tan 30 deg whose cap ends in a HALF fillet on the tilted
+wall (the virtual corner on the wall, the arc meeting it perpendicularly): the 120-deg
+rounded virtual corner is Matched and HalfByMirror, its one real arm extended from the
+claim end 1.361 R back to s_half = 1.077 R (hosted by the cap's cell, which then ends
+exactly at s_half; the mirror trim removes nothing from it), the vertex coupon's raw claims
+within s_half (the geometry cache). `SurfaceResponseOperator corner-arm extension of a
+non-90 rounded corner` (decision 520 MINOR-1) — the sheared lead with a true circular
+fillet at a 120- / 135-deg convex corner: at 120 deg both arms are extended (arm 1 from s_1
+= 1.155 R) and the F1 record removes nothing; at 135 deg arm 0 is extended, arm 1 is
+F1-trimmed from the claim end 1.259 R to s_1 = 1.414 R and the vertex coupon's raw stretch
+runs from the CLAIM END to s_1.
 `Electrostatic corner-arm extension keeps the stretch energy once` (design review MINOR-4)
 — the same lead solved with the rounded corner model alone (the straight runs Missing): the
 uncovered portions run from the square exits, and the uncovered raw energy equals the raw
