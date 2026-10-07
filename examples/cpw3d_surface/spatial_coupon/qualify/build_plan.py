@@ -120,9 +120,10 @@ def job_instance(profile, estimate, stage_keys, nodes, peak_gb, gb_per_gib):
     estimated per-node node-used peak of the stages `stage_keys` (the scaled estimate)."""
     if int(nodes) <= 1:
         return select_instance(profile, peak_gb, gb_per_gib)
-    from estimate_stages import select_instance_for_nodes, stage_per_node_used_gib
+    from estimate_stages import DEFAULT_PER_NODE_GUARD_MARGIN, select_instance_for_nodes, stage_per_node_used_gib
     per_node = max(stage_per_node_used_gib(estimate["Stages"][key]) for key in stage_keys)
-    instance = select_instance_for_nodes(profile, per_node, nodes)
+    margin = float((estimate.get("Nodes") or {}).get("PerNodeGuardMargin", DEFAULT_PER_NODE_GUARD_MARGIN))
+    instance = select_instance_for_nodes(profile, per_node, nodes, margin)
     if instance is None:
         raise ValueError(f"no instance's admission guard holds {per_node:.0f} GiB per node at {nodes} nodes: fail closed")
     instance["EstimatedPalacePeakGB"] = float(peak_gb)

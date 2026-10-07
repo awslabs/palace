@@ -258,11 +258,21 @@ NODE_SCALING_RULE = ("cost-model NodeScaling (measured at 1 and 2 nodes on one s
                      "(Worker / Reducer / LocalEdge); every time part scales as T(1) / N^Exponent with the exponent = log2 of the "
                      "measured 1 -> 2 node speedup of that part (WorkerPerSource, WorkerNonSource, ReducerSetup, ReducerReduction, "
                      "LocalEdge), never above 1; a stage fits N nodes when its largest per-node figure is <= MemoryFitFraction x "
-                     "MemoryGiB of an instance (the admission guard MinimumMemAvailableBytes checked on every node); NodesRequired is "
+                     "MemoryGiB of an instance x (1 - PerNodeGuardMargin) (decision 463; the admission guard MinimumMemAvailableBytes "
+                     "is checked on every node); NodesRequired is "
                      "the minimum such N in 2..MaximumNodesPerJob (1 when the one-node rules of record admit the stage); a stage "
                      "above MaximumNodesPerJob fails closed")
 ONE_NODE_HEADROOM_GIB = 60
 MEMORY_KINDS = {"Worker": "Worker", "Reducer": "Reducer", "LocalEdge": "LocalEdge"}
+# Decision 463: the estimated per-node peak must stay under the admission guard by a margin
+# (the measured p5 dense twin at 2 nodes peaked at 460.6 GiB against the 460.8 GiB m8g guard);
+# the model's NodeScaling.PerNodeGuardMargin (from the measured residuals, >= 0.10) overrides.
+DEFAULT_PER_NODE_GUARD_MARGIN = 0.10
+
+
+def per_node_guard_margin(model):
+    scaling = (model or {}).get("NodeScaling") or {}
+    return float(scaling.get("PerNodeGuardMargin", DEFAULT_PER_NODE_GUARD_MARGIN))
 
 
 def one_node_fits(model, profile, node_used_gib, palace_peak_gb):
@@ -303,16 +313,18 @@ def scaled_seconds(model, part, seconds_one, nodes):
     return float(seconds_one) if int(nodes) == 1 else float(seconds_one) / float(nodes) ** time_exponent(model, part)
 
 
-def select_instance_for_nodes(profile, per_node_gib, nodes):
+def select_instance_for_nodes(profile, per_node_gib, nodes, margin=DEFAULT_PER_NODE_GUARD_MARGIN):
     """The first instance of Instances whose admission guard (MemoryFitFraction x MemoryGiB)
     holds `per_node_gib` (the largest estimated per-node node-used GiB of the stages a job
-    runs at `nodes` nodes); None when no instance holds it."""
+    runs at `nodes` nodes) with the guard margin (decision 463: per node <= guard x (1 - margin));
+    None when no instance holds it."""
     fraction = float(profile["MemoryFitFraction"])
     for item in profile["Instances"]:
         guard_gib = fraction * item["MemoryGiB"]
-        if per_node_gib <= guard_gib:
+        if per_node_gib <= guard_gib * (1.0 - margin):
             return {"Type": item["Type"], "vCPUs": item["vCPUs"], "MemoryGiB": item["MemoryGiB"], "NodeGiB": item["NodeGiB"],
                     "Nodes": int(nodes), "PerNodeUsedGiBEstimate": float(per_node_gib), "MemoryFitFraction": fraction, "Fits": True,
+                    "PerNodeGuardMargin": margin, "PerNodeGuardGiB": guard_gib * (1.0 - margin),
                     "MinimumMemAvailableBytes": int(fraction * item["MemoryGiB"] * GIB),
                     "Candidates": [entry["Type"] for entry in profile["Instances"]], "Rule": profile["MultiNodeRule"]}
     return None
@@ -341,7 +353,7 @@ def nodes_required(model, profile, stage):
         for nodes in range(2, maximum + 1):
             per_node = {kind: per_node_used_gib(model, kind, used, nodes) for kind, used, _ in kinds}
             record["PerNodeUsedGiB"][str(nodes)] = per_node
-            instance = select_instance_for_nodes(profile, max(per_node.values()), nodes)
+            instance = select_instance_for_nodes(profile, max(per_node.values()), nodes, per_node_guard_margin(model))
             if instance is not None:
                 record.update(NodesRequired=nodes, Instance=instance)
                 return record
@@ -349,9 +361,11 @@ def nodes_required(model, profile, stage):
         record.update(NodesRequired=None, Instance=None, Reason=str(error))
         return record
     largest = max((per_node_used_gib(model, kind, used, maximum) for kind, used, _ in kinds), default=0.0)
+    margin = per_node_guard_margin(model)
     record.update(NodesRequired=None, Instance=None,
                   Reason=(f"the per-node node-used estimate at MaximumNodesPerJob = {maximum} nodes ({largest:.0f} GiB) exceeds every "
-                          f"instance's admission guard ({[round(profile['MemoryFitFraction'] * item['MemoryGiB']) for item in profile['Instances']]} GiB)"))
+                          f"instance's admission guard less the {100 * margin:.0f} % margin "
+                          f"({[round(profile['MemoryFitFraction'] * item['MemoryGiB'] * (1 - margin)) for item in profile['Instances']]} GiB)"))
     return record
 
 
@@ -377,7 +391,7 @@ def plan_nodes(estimate, model, profile):
     else:
         decision = "every stage fits one node under the one-node rules of record"
     estimate["Nodes"] = {"MaximumNodesPerJob": int(profile.get("MaximumNodesPerJob", 1)), "Required": required, "MultiNode": multi,
-                         "Fits": fits, "Decision": decision, "Rule": NODE_SCALING_RULE}
+                         "Fits": fits, "Decision": decision, "PerNodeGuardMargin": per_node_guard_margin(model), "Rule": NODE_SCALING_RULE}
     return estimate["Nodes"]
 
 
@@ -444,7 +458,8 @@ def scale_to_nodes(estimate, assignment, model, profile):
         if nodes > int(profile["MaximumNodesPerJob"]):
             raise ValueError(f"stage {name} assigned {nodes} nodes above MaximumNodesPerJob {profile['MaximumNodesPerJob']}")
         record = scale_stage_to_nodes(model, stage, nodes)
-        instance = select_instance_for_nodes(profile, stage_per_node_used_gib(record), nodes) if nodes > 1 else None
+        instance = (select_instance_for_nodes(profile, stage_per_node_used_gib(record), nodes, per_node_guard_margin(model))
+                    if nodes > 1 else None)
         if nodes > 1 and instance is None:
             raise ValueError(f"stage {name} at {nodes} nodes fits no instance's admission guard")
         record["Instance"] = instance

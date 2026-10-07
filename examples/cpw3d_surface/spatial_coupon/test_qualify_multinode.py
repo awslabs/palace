@@ -123,10 +123,13 @@ class NodePlanTest(unittest.TestCase):
         plan = main["NodePlan"]
         nodes = plan["NodesRequired"]
         fraction = self.profile["MemoryFitFraction"]
-        guards = [fraction * item["MemoryGiB"] for item in self.profile["Instances"]]
+        margin = estimate["Nodes"]["PerNodeGuardMargin"]
+        self.assertEqual(margin, 0.10)   # decision 463: the estimated per-node peak stays under the guard by >= 10 %
+        guards = [fraction * item["MemoryGiB"] * (1 - margin) for item in self.profile["Instances"]]
         for smaller in range(2, nodes):
             self.assertGreater(max(plan["PerNodeUsedGiB"][str(smaller)].values()), max(guards))
-        self.assertLessEqual(max(plan["PerNodeUsedGiB"][str(nodes)].values()), fraction * plan["Instance"]["MemoryGiB"])
+        self.assertLessEqual(max(plan["PerNodeUsedGiB"][str(nodes)].values()), fraction * plan["Instance"]["MemoryGiB"] * (1 - margin))
+        self.assertEqual(plan["Instance"]["PerNodeGuardGiB"], fraction * plan["Instance"]["MemoryGiB"] * (1 - margin))
         self.assertEqual(plan["Instance"]["Nodes"], nodes)
         self.assertEqual(plan["Instance"]["MinimumMemAvailableBytes"], int(fraction * plan["Instance"]["MemoryGiB"] * 1024 ** 3))
         # The per-node formula: one-node figure x (r + (1 - r) / N) per kind.
@@ -180,7 +183,7 @@ class NodePlanTest(unittest.TestCase):
                                    main_scaled["ByPCGFactor"][factor]["WorkerSecondsEstimate"] + main_scaled["ReducerSecondsEstimate"])
         self.assertEqual(main_scaled["OneNode"]["ByPCGFactor"], main["ByPCGFactor"])
         self.assertEqual(main_scaled["Instance"]["Nodes"], n)
-        self.assertLessEqual(estimate_stages.stage_per_node_used_gib(main_scaled), 0.6 * main_scaled["Instance"]["MemoryGiB"])
+        self.assertLessEqual(estimate_stages.stage_per_node_used_gib(main_scaled), 0.9 * 0.6 * main_scaled["Instance"]["MemoryGiB"])
         # The local-edge stage scales with the LocalEdge exponent (0: no speedup assumed).
         local, local_scaled = estimate["Stages"]["local-edge-p4-8"], scaled["Stages"]["local-edge-p4-8"]
         self.assertEqual(local_scaled["ByPCGFactor"][self.worst]["StageSecondsEstimate"], local["ByPCGFactor"][self.worst]["StageSecondsEstimate"])
@@ -260,7 +263,7 @@ class NodePlanTest(unittest.TestCase):
         self.assertEqual(reducer["MPIExecArguments"], ["--hostfile", "$PBS_NODEFILE", "--map-by", "ppr:192:node"])
         self.assertEqual(reducer["NodeGuard"]["MinimumMemAvailableBytes"], reducer["MinimumMemAvailableBytes"])
         self.assertEqual(reducer["Instance"]["Nodes"], nodes["Main"])
-        self.assertLessEqual(reducer["Instance"]["PerNodeUsedGiBEstimate"], 0.6 * reducer["Instance"]["MemoryGiB"])
+        self.assertLessEqual(reducer["Instance"]["PerNodeUsedGiBEstimate"], 0.9 * 0.6 * reducer["Instance"]["MemoryGiB"])
         self.assertEqual(reducer["Instance"]["PerNodeUsedGiBEstimate"], scaled["Stages"]["p4-846"]["PerNodeUsedGiBEstimateReducer"])
         self.assertEqual(plans["worker-1"]["Nodes"], nodes["Fixed"])
         self.assertEqual(plans["worker-1"]["StageNames"], ["le-p5-control-worker", "le-p5-control-reducer", "le-p3-control-worker",
@@ -453,7 +456,7 @@ class DenseTwinPlanTest(unittest.TestCase):
         self.assertEqual(plan["Nodes"], runs["fabricated-p5"]["NodePlan"]["NodesRequired"])
         self.assertEqual(plan["Ranks"], 192 * plan["Nodes"])
         self.assertEqual(plan["Instance"]["Nodes"], plan["Nodes"])
-        self.assertLessEqual(plan["Estimate"]["PerNodeUsedGiB"], 0.6 * plan["Instance"]["MemoryGiB"])
+        self.assertLessEqual(plan["Estimate"]["PerNodeUsedGiB"], 0.9 * 0.6 * plan["Instance"]["MemoryGiB"])
         self.assertEqual([stage["Name"] for stage in plan["Stages"]], ["fabricated-p4-dense", "fabricated-p5-dense"])
         for stage in plan["Stages"]:
             self.assertEqual(stage["Environment"], {})   # an ordinary Palace run

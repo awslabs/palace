@@ -150,7 +150,7 @@ def plan_dense_twins(*, dense_dir, runs, counts, binary_sha256, remote_root, job
     per_node = max(estimate_stages.stage_per_node_used_gib(stage) for stage in scaled.values())
     peak_gb = max(stage["PalacePeakGBEstimate"] for stage in estimates.values())
     if job_nodes > 1:
-        instance = estimate_stages.select_instance_for_nodes(profile, per_node, job_nodes)
+        instance = estimate_stages.select_instance_for_nodes(profile, per_node, job_nodes, estimate_stages.per_node_guard_margin(model))
         if instance is None:
             raise ValueError(f"no instance's admission guard holds {per_node:.0f} GiB per node at {job_nodes} nodes: fail closed")
         instance["EstimatedPalacePeakGB"] = peak_gb
