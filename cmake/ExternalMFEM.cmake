@@ -458,7 +458,7 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
 )
 # https://github.com/mfem/mfem/pull/5531
 # Essential DOFs on interior boundaries of 2D nonconforming meshes refined on one side.
-download_mfem_patch(
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   mfem_pr5531.diff
   "https://github.com/mfem/mfem/commit/641e56439e63a1774f43bc2ba904797694a047ad.diff"
   2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe

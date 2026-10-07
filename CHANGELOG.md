@@ -168,10 +168,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     identifier set with the `PALACE_BUILD_ID` CMake option (the Spack package sets it to
     its DAG hash).
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
-  - The superbuild dependencies are now pinned to release tags instead of commit SHAs, and
-    were bumped to their latest releases, including libCEED 1.0.0, STRUMPACK 8.1.0, ZFP
-    1.0.1 (with the `zfp_stream_maximum_size()` overflow fix backported), and libxsmm
-    2.1.0.
+  - The superbuild dependencies are now pinned to release tags instead of commit SHAs and
+    were bumped to their latest releases. The Spack package now uses a libCEED release
+    instead of a development commit.
     [PR 1028](https://github.com/awslabs/palace/pull/1028).
 
 ## [0.18.1] - 2026-09-21
