@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -23,7 +24,7 @@ import nearkey_detection as detection  # noqa: E402
 import nearkey_predictor as predictor  # noqa: E402
 import nearkey_reuse as reuse  # noqa: E402
 import nearkey_transplant as transplant  # noqa: E402
-from test_nearkey_predictor import activated  # noqa: E402
+from test_nearkey_predictor import activated, deactivated  # noqa: E402
 
 FIXTURE = json.loads((HERE / "testdata" / "nearkey-calibrated-pair.json").read_text())
 RADIUS = float(FIXTURE["MatchingRadius"])
@@ -465,9 +466,14 @@ class ReuseRecords(unittest.TestCase):
             library_path = Path(tmp) / "process-library.json"
             library_path.write_text(json.dumps(library))
             common = {"exact_signature": FIXTURE["Exact"]["Signature"], "exact_basis_dir": tmp, "exact_model_entry": FIXTURE["Exact"],
-                      "library": library, "library_path": library_path, "rule": rule(), "output": Path(tmp) / "out"}
-            with self.assertRaises(reuse.NearKeyReuseError):
+                      "library": library, "library_path": library_path, "rule": deactivated(rule()), "output": Path(tmp) / "out"}
+            # the rule as shipped before decision 459 (DefaultActive false): default mode is refused at the entry
+            with self.assertRaises(reuse.NearKeyReuseError) as context:
                 reuse.reuse_requirement(mode="default", **common)
+            self.assertIn("carries no DefaultActivation record", str(context.exception))
+            # the shipped rule since decision 459 passes the activation gate: the run proceeds to the exact basis (absent here)
+            with self.assertRaises(FileNotFoundError):
+                reuse.reuse_requirement(mode="default", **{**common, "rule": rule()}, log=lambda *_: None)
             with self.assertRaises(reuse.NearKeyReuseError):
                 reuse.reuse_requirement(mode="fallback", approval="x", **common)
             with self.assertRaises(reuse.NearKeyReuseError):
@@ -595,9 +601,15 @@ class ReuseRecords(unittest.TestCase):
         self.assertEqual(header["RuleVersion"], "nearkey-reuse-rule-v1")
         self.assertEqual(len(header["AdmissibleStructureKeys"]), 4)
         self.assertEqual(header["Policy"]["DefaultBoundPct"], {"SA": 0.5, "MS": 0.5, "MA_sharp": 1.0})
-        self.assertFalse(header["Policy"]["DefaultActive"])
+        # decision 459: the shipped rule is active; the header carries the pair-5 activation block
+        self.assertTrue(header["Policy"]["DefaultActive"])
+        self.assertEqual(header["Policy"]["DefaultActivation"]["Decision"], 459)
         self.assertEqual(header["Counts"]["Fallback"], 1)
         self.assertNotIn("MeasurementOnly", out)
+        inactive = deactivated(the_rule)
+        before = reuse.assemble_library(library, [self.reused_model(inactive)], rule=inactive, name="base+reuse-before-459")
+        self.assertFalse(before["NearKeyReuse"]["Policy"]["DefaultActive"])
+        self.assertIsNone(before["NearKeyReuse"]["Policy"]["DefaultActivation"])
         active = activated(the_rule)
         default = reuse.assemble_library(library, [self.reused_model(active, mode="Default")], rule=active, name="base+default")
         self.assertEqual(default["NearKeyReuse"]["Counts"]["Default"], 1)
@@ -624,9 +636,15 @@ class ReuseRecords(unittest.TestCase):
         # review case 1: a MeasurementOnly model (exact Name kept) assembled WITHOUT --measurement-only
         refused(self.reused_model(the_rule, name="spatialedgecluster_edgecount-19_5ae3dbdd2c3d", mode="MeasurementOnly"),
                 needle="MeasurementOnly model enters a measurement-only assembly only")
-        # review case 2: a Default model while the rule's default is inactive
+        # review case 2: a Default model while the rule's default is inactive (the rule as shipped before decision 459)
+        inactive = deactivated(the_rule)
+        refused(self.reused_model(inactive, mode="Default", DefaultActivation={"ValidationPair": "pair-5", "RecordSHA256": "f" * 64}),
+                assembling_rule=inactive, needle="default is inactive")
+        # decision 459: with the SHIPPED rule a Default model carrying the rule's own activation block is accepted; a stale block refused
+        shipped_default = reuse.assemble_library(library, [self.reused_model(the_rule, mode="Default")], rule=the_rule, name="base+default")
+        self.assertEqual(shipped_default["NearKeyReuse"]["Counts"]["Default"], 1)
         refused(self.reused_model(the_rule, mode="Default", DefaultActivation={"ValidationPair": "pair-5", "RecordSHA256": "f" * 64}),
-                needle="default is inactive")
+                needle="DefaultActivation")
         # review case 3: a Fallback model without its records
         refused({"Name": "spatialedgecluster_edgecount-19_5ae3dbdd2c3d-reused", "QualificationStatus": detection.STATUS_REUSED,
                  "ReuseMode": "Fallback"}, needle="FallbackStopRecord")
@@ -663,7 +681,7 @@ class BuildHook(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             common = {"palace": "/nonexistent/palace", "output": Path(tmp) / "out", "manifest_path": Path(tmp) / "manifest.json"}
             for kwargs in ({"nearkey_reuse_mode": "always"},
-                           {"nearkey_reuse_mode": "default"},                                   # no DefaultActivation record
+                           {"nearkey_reuse_mode": "default", "nearkey_rule": "other-rule.json"},    # default refuses a rule override
                            {"nearkey_reuse_mode": "fallback"},                                  # no approval / stop record
                            {"nearkey_reuse_mode": "fallback", "nearkey_fallback_approval": "x"},
                            {"nearkey_reuse_mode": "fallback", "nearkey_fallback_stop_records": ["5ae3=stop.json"]},
@@ -674,6 +692,16 @@ class BuildHook(unittest.TestCase):
                            {"nearkey_reuse_mode": "off", "nearkey_fallback_approval": "x"}):
                 with self.assertRaises(device_coupons.DeviceAdapterError, msg=str(kwargs)):
                     device_coupons.prepare_device_sources(Path(tmp) / "device.json", **common, **kwargs)
+            # default mode fails closed before discovery when the shipped rule's activation record is not readable / not active
+            # (decision 438 (5); the shipped rule itself is active since decision 459, so the inactive reading is injected)
+            with mock.patch.object(predictor, "default_active", return_value=(False, None)):
+                with self.assertRaises(device_coupons.DeviceAdapterError) as context:
+                    device_coupons.prepare_device_sources(Path(tmp) / "device.json", **common, nearkey_reuse_mode="default")
+            self.assertIn("no DefaultActivation record", str(context.exception))
+            with mock.patch.object(predictor, "default_active", side_effect=predictor.NearKeyRuleError("record unreadable (test)")):
+                with self.assertRaises(device_coupons.DeviceAdapterError) as context:
+                    device_coupons.prepare_device_sources(Path(tmp) / "device.json", **common, nearkey_reuse_mode="default")
+            self.assertIn("record unreadable (test)", str(context.exception))
             self.assertFalse((Path(tmp) / "out").exists())
 
     def test_reused_coupon_is_not_registered(self):
@@ -752,9 +780,14 @@ class SixPairsIdentity(unittest.TestCase):
                     self.assertTrue((model_dir / "fabricated-surface-response-matrix-shelled.csv").is_file())
                 else:
                     self.assertTrue(model["ShelledMatrix"]["Status"].startswith("NotTransplanted"))
-                # the pair's information-only policy verdicts (Option A, as the rule stands: default inactive)
+                # the pair's information-only policy verdicts with the SHIPPED rule (Option A, active since decision 459 / DESIGN
+                # section 3): B4 / B2 / B5 are Default reuses, B3 (T2 failed, SA bound 0.568 %) / C1 / C2 (|W| > 2.5 %) refused
                 decisions = model["PredictedReuseError"]["PolicyDecisions"]
-                self.assertFalse(decisions["default"]["Allowed"])
+                self.assertEqual(decisions["default"]["Allowed"], pair in ("B4", "B2", "B5"), (pair, decisions["default"]["Reasons"]))
+                if pair in ("B4", "B2", "B5"):
+                    self.assertEqual(decisions["default"]["DefaultActivation"]["Decision"], 459)
+                else:
+                    self.assertFalse(any(r.startswith("DefaultNotActive") for r in decisions["default"]["Reasons"]), (pair, decisions))
                 self.assertTrue(decisions["FallbackIfStopRecorded"]["Allowed"], pair)
                 for name in model_dir.iterdir():
                     name.unlink()
@@ -842,6 +875,20 @@ class SixPairsIdentity(unittest.TestCase):
             self.assertEqual([c["Model"] for c in record["Candidates"] if c["Chosen"]], [donor_name])
             # the other candidate of the family (B2's exact model, W +2.44 %) is recorded with its bound, not chosen
             self.assertTrue(any(c["Model"].endswith("5ae3dbdd2c3d") for c in record["Candidates"]))
+            # decision 460 (B): a fallback evaluation on a host where the activation record is NOT readable still evaluates; the
+            # information-only Default verdict reads DefaultNotActive (a rule override is admitted in fallback mode)
+            unreadable = activated(rule(), record_path=Path(tmp) / "missing-activation-record.json")
+            for name in Path(result["ModelDirectory"]).iterdir():
+                name.unlink()
+            result = device_coupons.nearkey_reuse_for_coupon(coupon, work, "spatial-19-edge-74b842a93a96", record_roots=roots,
+                                                             **{**hook, "rule": unreadable, "output": Path(tmp) / "reused-unreadable"})
+            self.assertTrue(result["Reused"], result)
+            self.assertEqual(result["ReuseMode"], "Fallback")
+            model = json.loads((Path(result["ModelDirectory"]) / reuse.REUSED_MODEL_RECORD).read_text())
+            default = model["PredictedReuseError"]["PolicyDecisions"]["default"]
+            self.assertFalse(default["Allowed"])
+            self.assertTrue(default["Reasons"][0].startswith("DefaultNotActive: DefaultActivation.RecordPath"), default["Reasons"])
+            self.assertTrue(model["PredictedReuseError"]["PolicyDecisions"]["fallback"]["Allowed"])
 
 
 if __name__ == "__main__":

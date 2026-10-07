@@ -176,11 +176,18 @@ def evaluate_candidate(exact, exact_signature, model, near_key, *, rule, library
         if requested == "default" and not default_admits_donor:
             reasons.append("DonorBuildGateOverride: " + (override["Kind"] if override else "donor status")
                            + " refuses default reuse (decision 431)")
-        decision = predictor.policy_decision(rule, prediction, requested_mode=requested, t2_passed=result["T2Passed"],
-                                             gates_passed=result["GatesPassed"], in_domain=in_domain,
-                                             in_domain_reasons=near_key["Refusals"],
-                                             stop_record=stop_record if requested == "fallback" else None,
-                                             approval=approval if requested == "fallback" else None)
+        try:
+            decision = predictor.policy_decision(rule, prediction, requested_mode=requested, t2_passed=result["T2Passed"],
+                                                 gates_passed=result["GatesPassed"], in_domain=in_domain,
+                                                 in_domain_reasons=near_key["Refusals"],
+                                                 stop_record=stop_record if requested == "fallback" else None,
+                                                 approval=approval if requested == "fallback" else None)
+        except predictor.NearKeyRuleError as error:
+            if requested == mode:
+                raise
+            # decision 460 (B): under fallback / measurement-only the Default verdict is information; an activation record that
+            # is not readable on this host refuses it and the evaluation continues (Default mode itself fails closed above)
+            decision = predictor.refused_decision(rule, requested, f"DefaultNotActive: {error}")
         if reasons:
             decision["Reasons"] = reasons + decision["Reasons"]
             decision["Allowed"], decision["Mode"] = False, predictor.MODE_NONE

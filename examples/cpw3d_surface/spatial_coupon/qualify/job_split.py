@@ -25,6 +25,15 @@ and the source count.  The blocks are balanced on the estimate: the first job's 
 is shortened by the controls' and local-edge share so every worker job ends together.
 A coupon fails closed only when even the maximal split does not fit (or the reducer
 job / the first job's fixed stages alone do not fit any job).
+
+Multi-node coupons (decision 457): `nodes` = {"Main": N_main, "Fixed": N_fixed} - the node
+count of the main stages (shared by every worker block and the reducer: the archive is
+per rank) and of the control + local-edge group.  The estimate passed in is already
+scaled to those counts (estimate_stages.scale_to_nodes); every job record carries its
+Nodes and NodeSecondsEstimate counts node-seconds; when N_fixed differs from N_main the
+fixed stages cannot share a job with a source block: the single job is not a candidate
+and job 1 carries them alone (ControlsJob "separate").  `nodes` None is the one-node
+planner, byte-identical to the recorded campaigns.
 """
 import math
 
@@ -73,11 +82,15 @@ def stage_seconds(estimate_stage, factor):
     return estimate_stage["ByPCGFactor"][factor]["StageSecondsEstimate"]
 
 
-def plan_split(*, indices, layout, estimate, policy, model, profile):
+def plan_split(*, indices, layout, estimate, policy, model, profile, nodes=None):
     """The split record for a coupon: `indices` = the main-order source indices in
     config order, `layout` = qualify_library.stage_layout, `estimate` =
     estimate_stages.estimate over that layout (its Stages carry the per-source and
-    non-source worker seconds of every main stage)."""
+    non-source worker seconds of every main stage); `nodes` = {"Main", "Fixed"} node
+    counts of a multi-node coupon (None: one node, the recorded planner)."""
+    main_nodes = int(nodes["Main"]) if nodes else 1
+    fixed_nodes = int(nodes["Fixed"]) if nodes else 1
+    separate_fixed = nodes is not None and main_nodes != fixed_nodes
     factors = [f"{factor:.1f}" for factor in model["PCGFactors"]]
     worst = max(factors, key=float)
     margin, preflight = model["PreflightAndMarginFactor"], model["PreflightSeconds"]
@@ -106,16 +119,30 @@ def plan_split(*, indices, layout, estimate, policy, model, profile):
                            for item in mains)
     extras_worst = job_seconds(0, with_fixed=True, factor=worst)
 
+    def with_nodes(job, job_nodes):
+        if nodes is not None:
+            job["Nodes"] = job_nodes
+        return job
+
     def candidate(jobs):
         if jobs == 1:
             single = {factor: with_margin(job_seconds(source_count, with_fixed=True, factor=factor) + reducer_seconds())
                       for factor in factors}
-            return {"N": 1, "Blocks": [list(indices)], "ControlsJob": "worker-1",
-                    "Jobs": [{"Name": "single", "Kind": "single", "Block": 1, "Sources": list(indices),
-                              "SecondsEstimateWithPreflightAndMargin": single, "Fits": single[worst] < walltime}],
-                    "CriticalPathEstimateSeconds": single, "NodeSecondsEstimate": single,
-                    "Fits": single[worst] < walltime}
-        sizes = balanced_blocks(source_count, jobs, per_source_worst, extras_worst)
+            fits = single[worst] < walltime and not separate_fixed
+            record = {"N": 1, "Blocks": [list(indices)], "ControlsJob": "worker-1",
+                      "Jobs": [with_nodes({"Name": "single", "Kind": "single", "Block": 1, "Sources": list(indices),
+                                           "SecondsEstimateWithPreflightAndMargin": single, "Fits": fits}, main_nodes)],
+                      "CriticalPathEstimateSeconds": single,
+                      "NodeSecondsEstimate": {factor: seconds * main_nodes for factor, seconds in single.items()},
+                      "Fits": fits}
+            if separate_fixed:
+                record["NotACandidate"] = (f"the main stages run on {main_nodes} node(s) and the control / local-edge group on "
+                                           f"{fixed_nodes}: they cannot share one job")
+            return record
+        if separate_fixed:
+            sizes = [0] + balanced_blocks(source_count, jobs - 1, per_source_worst, 0.0)
+        else:
+            sizes = balanced_blocks(source_count, jobs, per_source_worst, extras_worst)
         blocks, start = [], 0
         for size in sizes:
             blocks.append(list(indices[start:start + size]))
@@ -123,14 +150,16 @@ def plan_split(*, indices, layout, estimate, policy, model, profile):
         job_records = []
         for k, block in enumerate(blocks, start=1):
             seconds = {factor: with_margin(job_seconds(len(block), with_fixed=(k == 1), factor=factor)) for factor in factors}
-            job_records.append({"Name": f"worker-{k}", "Kind": "worker", "Block": k, "Sources": block,
-                                "SecondsEstimateWithPreflightAndMargin": seconds, "Fits": seconds[worst] < walltime})
+            job_nodes = fixed_nodes if (k == 1 and not block) else main_nodes
+            job_records.append(with_nodes({"Name": f"worker-{k}", "Kind": "worker", "Block": k, "Sources": block,
+                                           "SecondsEstimateWithPreflightAndMargin": seconds, "Fits": seconds[worst] < walltime}, job_nodes))
         reducer = {factor: with_margin(reducer_seconds()) for factor in factors}
-        job_records.append({"Name": "reducer", "Kind": "reducer", "Block": None, "Sources": list(indices),
-                            "SecondsEstimateWithPreflightAndMargin": reducer, "Fits": reducer[worst] < walltime})
+        job_records.append(with_nodes({"Name": "reducer", "Kind": "reducer", "Block": None, "Sources": list(indices),
+                                       "SecondsEstimateWithPreflightAndMargin": reducer, "Fits": reducer[worst] < walltime}, main_nodes))
         critical = {factor: max(job["SecondsEstimateWithPreflightAndMargin"][factor] for job in job_records[:-1]) + reducer[factor]
                     for factor in factors}
-        node_seconds = {factor: sum(job["SecondsEstimateWithPreflightAndMargin"][factor] for job in job_records) for factor in factors}
+        node_seconds = {factor: sum(job["SecondsEstimateWithPreflightAndMargin"][factor] * job.get("Nodes", 1) for job in job_records)
+                        for factor in factors}
         return {"N": jobs, "Blocks": blocks, "ControlsJob": "worker-1" if blocks[0] else "separate",
                 "Jobs": job_records, "CriticalPathEstimateSeconds": critical, "NodeSecondsEstimate": node_seconds,
                 "Fits": all(job["Fits"] for job in job_records)}
@@ -159,6 +188,11 @@ def plan_split(*, indices, layout, estimate, policy, model, profile):
             chosen = fitting[0]
     record = {"Policy": policy, "Rule": SPLIT_RULE, "WorstPCGFactor": worst, "WalltimeSeconds": walltime,
               "LargestSplit": largest, "Candidates": summary, "SourceCount": source_count}
+    if nodes is not None:
+        record["Nodes"] = {"Main": main_nodes, "Fixed": fixed_nodes, "SeparateFixedStages": separate_fixed,
+                           "Rule": ("decision 457: the main stages' worker blocks and reducer share Main nodes (the archive is per "
+                                    "rank); the control / local-edge group runs on Fixed nodes, alone in job 1 when the counts differ; "
+                                    "NodeSecondsEstimate counts node-seconds")}
     if chosen is None:
         longest = min(summary, key=lambda item: item["LongestJobSeconds"])
         record.update({"Fits": False, "N": None, "Blocks": None, "Jobs": None, "ControlsJob": None,

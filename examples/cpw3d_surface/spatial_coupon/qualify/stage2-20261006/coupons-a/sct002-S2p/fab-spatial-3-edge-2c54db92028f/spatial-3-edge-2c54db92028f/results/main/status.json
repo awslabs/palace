@@ -1,0 +1,4154 @@
+{
+  "Version": 2,
+  "Plan": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/plan.json",
+  "Case": "spatial-3-edge-2c54db92028f",
+  "PBSJobID": "56142.ip-192-168-54-24.us-west-2.compute.internal",
+  "Host": "ip-192-168-39-113",
+  "StartUTC": "2026-10-05T00:28:09Z",
+  "State": "complete",
+  "Stages": [
+    {
+      "Name": "spatial-3-edge-2c54db92028f-p4-worker",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/worker.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/archive",
+        "PALACE_RESPONSE_ARCHIVE_ONLY": "1",
+        "PALACE_RESPONSE_SOURCE_TIMING": "1"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "7500",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-worker.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_SOURCE_TIMING",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/worker.json"
+      ],
+      "CapSeconds": 7500,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-worker.log",
+      "StartUTC": "2026-10-05T00:28:10Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 1633.082147549,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 1068597248,
+      "NodePeakUsedBytesSampled": 117262495744,
+      "Parsed": {
+        "Order": 4,
+        "H1": 18917641,
+        "ND": 68960548,
+        "RT": 81887664,
+        "Elements": 1460089,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 142,
+            "Index": 1,
+            "ElapsedAtStart": 9.8e-08
+          },
+          {
+            "Step": 2,
+            "Of": 142,
+            "Index": 2,
+            "ElapsedAtStart": 11.7
+          },
+          {
+            "Step": 3,
+            "Of": 142,
+            "Index": 3,
+            "ElapsedAtStart": 25.1
+          },
+          {
+            "Step": 4,
+            "Of": 142,
+            "Index": 4,
+            "ElapsedAtStart": 39.0
+          },
+          {
+            "Step": 5,
+            "Of": 142,
+            "Index": 5,
+            "ElapsedAtStart": 53.0
+          },
+          {
+            "Step": 6,
+            "Of": 142,
+            "Index": 6,
+            "ElapsedAtStart": 62.8
+          },
+          {
+            "Step": 7,
+            "Of": 142,
+            "Index": 7,
+            "ElapsedAtStart": 75.6
+          },
+          {
+            "Step": 8,
+            "Of": 142,
+            "Index": 8,
+            "ElapsedAtStart": 88.4
+          },
+          {
+            "Step": 9,
+            "Of": 142,
+            "Index": 9,
+            "ElapsedAtStart": 101.0
+          },
+          {
+            "Step": 10,
+            "Of": 142,
+            "Index": 10,
+            "ElapsedAtStart": 113.0
+          },
+          {
+            "Step": 11,
+            "Of": 142,
+            "Index": 11,
+            "ElapsedAtStart": 127.0
+          },
+          {
+            "Step": 12,
+            "Of": 142,
+            "Index": 12,
+            "ElapsedAtStart": 140.0
+          },
+          {
+            "Step": 13,
+            "Of": 142,
+            "Index": 13,
+            "ElapsedAtStart": 155.0
+          },
+          {
+            "Step": 14,
+            "Of": 142,
+            "Index": 14,
+            "ElapsedAtStart": 168.0
+          },
+          {
+            "Step": 15,
+            "Of": 142,
+            "Index": 15,
+            "ElapsedAtStart": 179.0
+          },
+          {
+            "Step": 16,
+            "Of": 142,
+            "Index": 16,
+            "ElapsedAtStart": 187.0
+          },
+          {
+            "Step": 17,
+            "Of": 142,
+            "Index": 17,
+            "ElapsedAtStart": 198.0
+          },
+          {
+            "Step": 18,
+            "Of": 142,
+            "Index": 18,
+            "ElapsedAtStart": 209.0
+          },
+          {
+            "Step": 19,
+            "Of": 142,
+            "Index": 19,
+            "ElapsedAtStart": 221.0
+          },
+          {
+            "Step": 20,
+            "Of": 142,
+            "Index": 20,
+            "ElapsedAtStart": 232.0
+          },
+          {
+            "Step": 21,
+            "Of": 142,
+            "Index": 21,
+            "ElapsedAtStart": 242.0
+          },
+          {
+            "Step": 22,
+            "Of": 142,
+            "Index": 22,
+            "ElapsedAtStart": 254.0
+          },
+          {
+            "Step": 23,
+            "Of": 142,
+            "Index": 23,
+            "ElapsedAtStart": 266.0
+          },
+          {
+            "Step": 24,
+            "Of": 142,
+            "Index": 24,
+            "ElapsedAtStart": 276.0
+          },
+          {
+            "Step": 25,
+            "Of": 142,
+            "Index": 25,
+            "ElapsedAtStart": 290.0
+          },
+          {
+            "Step": 26,
+            "Of": 142,
+            "Index": 26,
+            "ElapsedAtStart": 305.0
+          },
+          {
+            "Step": 27,
+            "Of": 142,
+            "Index": 27,
+            "ElapsedAtStart": 317.0
+          },
+          {
+            "Step": 28,
+            "Of": 142,
+            "Index": 28,
+            "ElapsedAtStart": 327.0
+          },
+          {
+            "Step": 29,
+            "Of": 142,
+            "Index": 29,
+            "ElapsedAtStart": 336.0
+          },
+          {
+            "Step": 30,
+            "Of": 142,
+            "Index": 30,
+            "ElapsedAtStart": 347.0
+          },
+          {
+            "Step": 31,
+            "Of": 142,
+            "Index": 31,
+            "ElapsedAtStart": 360.0
+          },
+          {
+            "Step": 32,
+            "Of": 142,
+            "Index": 32,
+            "ElapsedAtStart": 372.0
+          },
+          {
+            "Step": 33,
+            "Of": 142,
+            "Index": 33,
+            "ElapsedAtStart": 384.0
+          },
+          {
+            "Step": 34,
+            "Of": 142,
+            "Index": 34,
+            "ElapsedAtStart": 397.0
+          },
+          {
+            "Step": 35,
+            "Of": 142,
+            "Index": 35,
+            "ElapsedAtStart": 417.0
+          },
+          {
+            "Step": 36,
+            "Of": 142,
+            "Index": 36,
+            "ElapsedAtStart": 432.0
+          },
+          {
+            "Step": 37,
+            "Of": 142,
+            "Index": 37,
+            "ElapsedAtStart": 443.0
+          },
+          {
+            "Step": 38,
+            "Of": 142,
+            "Index": 38,
+            "ElapsedAtStart": 451.0
+          },
+          {
+            "Step": 39,
+            "Of": 142,
+            "Index": 39,
+            "ElapsedAtStart": 459.0
+          },
+          {
+            "Step": 40,
+            "Of": 142,
+            "Index": 40,
+            "ElapsedAtStart": 467.0
+          },
+          {
+            "Step": 41,
+            "Of": 142,
+            "Index": 41,
+            "ElapsedAtStart": 475.0
+          },
+          {
+            "Step": 42,
+            "Of": 142,
+            "Index": 42,
+            "ElapsedAtStart": 484.0
+          },
+          {
+            "Step": 43,
+            "Of": 142,
+            "Index": 43,
+            "ElapsedAtStart": 493.0
+          },
+          {
+            "Step": 44,
+            "Of": 142,
+            "Index": 44,
+            "ElapsedAtStart": 502.0
+          },
+          {
+            "Step": 45,
+            "Of": 142,
+            "Index": 45,
+            "ElapsedAtStart": 510.0
+          },
+          {
+            "Step": 46,
+            "Of": 142,
+            "Index": 46,
+            "ElapsedAtStart": 517.0
+          },
+          {
+            "Step": 47,
+            "Of": 142,
+            "Index": 47,
+            "ElapsedAtStart": 532.0
+          },
+          {
+            "Step": 48,
+            "Of": 142,
+            "Index": 48,
+            "ElapsedAtStart": 543.0
+          },
+          {
+            "Step": 49,
+            "Of": 142,
+            "Index": 49,
+            "ElapsedAtStart": 551.0
+          },
+          {
+            "Step": 50,
+            "Of": 142,
+            "Index": 50,
+            "ElapsedAtStart": 559.0
+          },
+          {
+            "Step": 51,
+            "Of": 142,
+            "Index": 51,
+            "ElapsedAtStart": 568.0
+          },
+          {
+            "Step": 52,
+            "Of": 142,
+            "Index": 52,
+            "ElapsedAtStart": 576.0
+          },
+          {
+            "Step": 53,
+            "Of": 142,
+            "Index": 53,
+            "ElapsedAtStart": 584.0
+          },
+          {
+            "Step": 54,
+            "Of": 142,
+            "Index": 54,
+            "ElapsedAtStart": 592.0
+          },
+          {
+            "Step": 55,
+            "Of": 142,
+            "Index": 55,
+            "ElapsedAtStart": 600.0
+          },
+          {
+            "Step": 56,
+            "Of": 142,
+            "Index": 56,
+            "ElapsedAtStart": 615.0
+          },
+          {
+            "Step": 57,
+            "Of": 142,
+            "Index": 57,
+            "ElapsedAtStart": 638.0
+          },
+          {
+            "Step": 58,
+            "Of": 142,
+            "Index": 58,
+            "ElapsedAtStart": 658.0
+          },
+          {
+            "Step": 59,
+            "Of": 142,
+            "Index": 59,
+            "ElapsedAtStart": 664.0
+          },
+          {
+            "Step": 60,
+            "Of": 142,
+            "Index": 60,
+            "ElapsedAtStart": 670.0
+          },
+          {
+            "Step": 61,
+            "Of": 142,
+            "Index": 61,
+            "ElapsedAtStart": 677.0
+          },
+          {
+            "Step": 62,
+            "Of": 142,
+            "Index": 62,
+            "ElapsedAtStart": 684.0
+          },
+          {
+            "Step": 63,
+            "Of": 142,
+            "Index": 63,
+            "ElapsedAtStart": 691.0
+          },
+          {
+            "Step": 64,
+            "Of": 142,
+            "Index": 64,
+            "ElapsedAtStart": 697.0
+          },
+          {
+            "Step": 65,
+            "Of": 142,
+            "Index": 65,
+            "ElapsedAtStart": 704.0
+          },
+          {
+            "Step": 66,
+            "Of": 142,
+            "Index": 66,
+            "ElapsedAtStart": 711.0
+          },
+          {
+            "Step": 67,
+            "Of": 142,
+            "Index": 67,
+            "ElapsedAtStart": 718.0
+          },
+          {
+            "Step": 68,
+            "Of": 142,
+            "Index": 68,
+            "ElapsedAtStart": 727.0
+          },
+          {
+            "Step": 69,
+            "Of": 142,
+            "Index": 69,
+            "ElapsedAtStart": 744.0
+          },
+          {
+            "Step": 70,
+            "Of": 142,
+            "Index": 70,
+            "ElapsedAtStart": 758.0
+          },
+          {
+            "Step": 71,
+            "Of": 142,
+            "Index": 71,
+            "ElapsedAtStart": 767.0
+          },
+          {
+            "Step": 72,
+            "Of": 142,
+            "Index": 72,
+            "ElapsedAtStart": 776.0
+          },
+          {
+            "Step": 73,
+            "Of": 142,
+            "Index": 73,
+            "ElapsedAtStart": 786.0
+          },
+          {
+            "Step": 74,
+            "Of": 142,
+            "Index": 74,
+            "ElapsedAtStart": 795.0
+          },
+          {
+            "Step": 75,
+            "Of": 142,
+            "Index": 75,
+            "ElapsedAtStart": 804.0
+          },
+          {
+            "Step": 76,
+            "Of": 142,
+            "Index": 76,
+            "ElapsedAtStart": 813.0
+          },
+          {
+            "Step": 77,
+            "Of": 142,
+            "Index": 77,
+            "ElapsedAtStart": 824.0
+          },
+          {
+            "Step": 78,
+            "Of": 142,
+            "Index": 78,
+            "ElapsedAtStart": 839.0
+          },
+          {
+            "Step": 79,
+            "Of": 142,
+            "Index": 79,
+            "ElapsedAtStart": 864.0
+          },
+          {
+            "Step": 80,
+            "Of": 142,
+            "Index": 80,
+            "ElapsedAtStart": 884.0
+          },
+          {
+            "Step": 81,
+            "Of": 142,
+            "Index": 81,
+            "ElapsedAtStart": 892.0
+          },
+          {
+            "Step": 82,
+            "Of": 142,
+            "Index": 82,
+            "ElapsedAtStart": 899.0
+          },
+          {
+            "Step": 83,
+            "Of": 142,
+            "Index": 83,
+            "ElapsedAtStart": 906.0
+          },
+          {
+            "Step": 84,
+            "Of": 142,
+            "Index": 84,
+            "ElapsedAtStart": 914.0
+          },
+          {
+            "Step": 85,
+            "Of": 142,
+            "Index": 85,
+            "ElapsedAtStart": 921.0
+          },
+          {
+            "Step": 86,
+            "Of": 142,
+            "Index": 86,
+            "ElapsedAtStart": 929.0
+          },
+          {
+            "Step": 87,
+            "Of": 142,
+            "Index": 87,
+            "ElapsedAtStart": 937.0
+          },
+          {
+            "Step": 88,
+            "Of": 142,
+            "Index": 88,
+            "ElapsedAtStart": 945.0
+          },
+          {
+            "Step": 89,
+            "Of": 142,
+            "Index": 89,
+            "ElapsedAtStart": 953.0
+          },
+          {
+            "Step": 90,
+            "Of": 142,
+            "Index": 90,
+            "ElapsedAtStart": 961.0
+          },
+          {
+            "Step": 91,
+            "Of": 142,
+            "Index": 91,
+            "ElapsedAtStart": 972.0
+          },
+          {
+            "Step": 92,
+            "Of": 142,
+            "Index": 92,
+            "ElapsedAtStart": 984.0
+          },
+          {
+            "Step": 93,
+            "Of": 142,
+            "Index": 93,
+            "ElapsedAtStart": 996.0
+          },
+          {
+            "Step": 94,
+            "Of": 142,
+            "Index": 94,
+            "ElapsedAtStart": 1000.0
+          },
+          {
+            "Step": 95,
+            "Of": 142,
+            "Index": 95,
+            "ElapsedAtStart": 1010.0
+          },
+          {
+            "Step": 96,
+            "Of": 142,
+            "Index": 96,
+            "ElapsedAtStart": 1030.0
+          },
+          {
+            "Step": 97,
+            "Of": 142,
+            "Index": 97,
+            "ElapsedAtStart": 1040.0
+          },
+          {
+            "Step": 98,
+            "Of": 142,
+            "Index": 98,
+            "ElapsedAtStart": 1050.0
+          },
+          {
+            "Step": 99,
+            "Of": 142,
+            "Index": 99,
+            "ElapsedAtStart": 1060.0
+          },
+          {
+            "Step": 100,
+            "Of": 142,
+            "Index": 100,
+            "ElapsedAtStart": 1070.0
+          },
+          {
+            "Step": 101,
+            "Of": 142,
+            "Index": 101,
+            "ElapsedAtStart": 1080.0
+          },
+          {
+            "Step": 102,
+            "Of": 142,
+            "Index": 102,
+            "ElapsedAtStart": 1100.0
+          },
+          {
+            "Step": 103,
+            "Of": 142,
+            "Index": 103,
+            "ElapsedAtStart": 1110.0
+          },
+          {
+            "Step": 104,
+            "Of": 142,
+            "Index": 104,
+            "ElapsedAtStart": 1120.0
+          },
+          {
+            "Step": 105,
+            "Of": 142,
+            "Index": 105,
+            "ElapsedAtStart": 1130.0
+          },
+          {
+            "Step": 106,
+            "Of": 142,
+            "Index": 106,
+            "ElapsedAtStart": 1140.0
+          },
+          {
+            "Step": 107,
+            "Of": 142,
+            "Index": 107,
+            "ElapsedAtStart": 1150.0
+          },
+          {
+            "Step": 108,
+            "Of": 142,
+            "Index": 108,
+            "ElapsedAtStart": 1150.0
+          },
+          {
+            "Step": 109,
+            "Of": 142,
+            "Index": 109,
+            "ElapsedAtStart": 1160.0
+          },
+          {
+            "Step": 110,
+            "Of": 142,
+            "Index": 110,
+            "ElapsedAtStart": 1170.0
+          },
+          {
+            "Step": 111,
+            "Of": 142,
+            "Index": 111,
+            "ElapsedAtStart": 1180.0
+          },
+          {
+            "Step": 112,
+            "Of": 142,
+            "Index": 112,
+            "ElapsedAtStart": 1200.0
+          },
+          {
+            "Step": 113,
+            "Of": 142,
+            "Index": 113,
+            "ElapsedAtStart": 1210.0
+          },
+          {
+            "Step": 114,
+            "Of": 142,
+            "Index": 114,
+            "ElapsedAtStart": 1230.0
+          },
+          {
+            "Step": 115,
+            "Of": 142,
+            "Index": 115,
+            "ElapsedAtStart": 1240.0
+          },
+          {
+            "Step": 116,
+            "Of": 142,
+            "Index": 116,
+            "ElapsedAtStart": 1250.0
+          },
+          {
+            "Step": 117,
+            "Of": 142,
+            "Index": 117,
+            "ElapsedAtStart": 1270.0
+          },
+          {
+            "Step": 118,
+            "Of": 142,
+            "Index": 118,
+            "ElapsedAtStart": 1280.0
+          },
+          {
+            "Step": 119,
+            "Of": 142,
+            "Index": 119,
+            "ElapsedAtStart": 1300.0
+          },
+          {
+            "Step": 120,
+            "Of": 142,
+            "Index": 120,
+            "ElapsedAtStart": 1310.0
+          },
+          {
+            "Step": 121,
+            "Of": 142,
+            "Index": 121,
+            "ElapsedAtStart": 1320.0
+          },
+          {
+            "Step": 122,
+            "Of": 142,
+            "Index": 122,
+            "ElapsedAtStart": 1340.0
+          },
+          {
+            "Step": 123,
+            "Of": 142,
+            "Index": 123,
+            "ElapsedAtStart": 1350.0
+          },
+          {
+            "Step": 124,
+            "Of": 142,
+            "Index": 124,
+            "ElapsedAtStart": 1370.0
+          },
+          {
+            "Step": 125,
+            "Of": 142,
+            "Index": 125,
+            "ElapsedAtStart": 1380.0
+          },
+          {
+            "Step": 126,
+            "Of": 142,
+            "Index": 126,
+            "ElapsedAtStart": 1400.0
+          },
+          {
+            "Step": 127,
+            "Of": 142,
+            "Index": 127,
+            "ElapsedAtStart": 1410.0
+          },
+          {
+            "Step": 128,
+            "Of": 142,
+            "Index": 128,
+            "ElapsedAtStart": 1420.0
+          },
+          {
+            "Step": 129,
+            "Of": 142,
+            "Index": 129,
+            "ElapsedAtStart": 1430.0
+          },
+          {
+            "Step": 130,
+            "Of": 142,
+            "Index": 130,
+            "ElapsedAtStart": 1450.0
+          },
+          {
+            "Step": 131,
+            "Of": 142,
+            "Index": 131,
+            "ElapsedAtStart": 1460.0
+          },
+          {
+            "Step": 132,
+            "Of": 142,
+            "Index": 132,
+            "ElapsedAtStart": 1470.0
+          },
+          {
+            "Step": 133,
+            "Of": 142,
+            "Index": 133,
+            "ElapsedAtStart": 1480.0
+          },
+          {
+            "Step": 134,
+            "Of": 142,
+            "Index": 134,
+            "ElapsedAtStart": 1490.0
+          },
+          {
+            "Step": 135,
+            "Of": 142,
+            "Index": 135,
+            "ElapsedAtStart": 1500.0
+          },
+          {
+            "Step": 136,
+            "Of": 142,
+            "Index": 136,
+            "ElapsedAtStart": 1520.0
+          },
+          {
+            "Step": 137,
+            "Of": 142,
+            "Index": 137,
+            "ElapsedAtStart": 1530.0
+          },
+          {
+            "Step": 138,
+            "Of": 142,
+            "Index": 138,
+            "ElapsedAtStart": 1540.0
+          },
+          {
+            "Step": 139,
+            "Of": 142,
+            "Index": 139,
+            "ElapsedAtStart": 1550.0
+          },
+          {
+            "Step": 140,
+            "Of": 142,
+            "Index": 140,
+            "ElapsedAtStart": 1560.0
+          },
+          {
+            "Step": 141,
+            "Of": 142,
+            "Index": 141,
+            "ElapsedAtStart": 1580.0
+          },
+          {
+            "Step": 142,
+            "Of": 142,
+            "Index": 142,
+            "ElapsedAtStart": 1590.0
+          }
+        ],
+        "PCG": [
+          17,
+          20,
+          21,
+          21,
+          14,
+          19,
+          19,
+          19,
+          18,
+          21,
+          19,
+          22,
+          20,
+          17,
+          11,
+          15,
+          17,
+          17,
+          16,
+          15,
+          17,
+          18,
+          14,
+          21,
+          22,
+          18,
+          14,
+          14,
+          16,
+          18,
+          18,
+          18,
+          20,
+          32,
+          22,
+          16,
+          11,
+          11,
+          12,
+          11,
+          12,
+          12,
+          13,
+          12,
+          9,
+          22,
+          17,
+          11,
+          11,
+          12,
+          12,
+          11,
+          11,
+          11,
+          23,
+          36,
+          30,
+          9,
+          8,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          9,
+          14,
+          25,
+          21,
+          14,
+          13,
+          13,
+          13,
+          13,
+          14,
+          15,
+          24,
+          39,
+          31,
+          11,
+          10,
+          10,
+          10,
+          10,
+          11,
+          11,
+          11,
+          11,
+          11,
+          17,
+          17,
+          18,
+          12,
+          15,
+          16,
+          16,
+          15,
+          17,
+          15,
+          25,
+          24,
+          16,
+          10,
+          12,
+          14,
+          14,
+          12,
+          12,
+          13,
+          16,
+          23,
+          19,
+          23,
+          19,
+          22,
+          19,
+          22,
+          22,
+          21,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          22,
+          18,
+          16,
+          18,
+          17,
+          18,
+          17,
+          18,
+          18,
+          17,
+          18,
+          18,
+          18,
+          17,
+          18,
+          17,
+          18
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [
+          {
+            "Index": 1,
+            "Iterations": 17,
+            "SolveSeconds": 11.37644293,
+            "TotalSeconds": 11.67770233
+          },
+          {
+            "Index": 2,
+            "Iterations": 20,
+            "SolveSeconds": 13.07282714,
+            "TotalSeconds": 13.38456615
+          },
+          {
+            "Index": 3,
+            "Iterations": 21,
+            "SolveSeconds": 13.68608831,
+            "TotalSeconds": 13.97849937
+          },
+          {
+            "Index": 4,
+            "Iterations": 21,
+            "SolveSeconds": 13.67350222,
+            "TotalSeconds": 13.96551788
+          },
+          {
+            "Index": 5,
+            "Iterations": 14,
+            "SolveSeconds": 9.503610767,
+            "TotalSeconds": 9.788026501
+          },
+          {
+            "Index": 6,
+            "Iterations": 19,
+            "SolveSeconds": 12.49358654,
+            "TotalSeconds": 12.79286901
+          },
+          {
+            "Index": 7,
+            "Iterations": 19,
+            "SolveSeconds": 12.49078489,
+            "TotalSeconds": 12.80170021
+          },
+          {
+            "Index": 8,
+            "Iterations": 19,
+            "SolveSeconds": 12.51981785,
+            "TotalSeconds": 12.80679783
+          },
+          {
+            "Index": 9,
+            "Iterations": 18,
+            "SolveSeconds": 11.88678633,
+            "TotalSeconds": 12.17420046
+          },
+          {
+            "Index": 10,
+            "Iterations": 21,
+            "SolveSeconds": 13.66712788,
+            "TotalSeconds": 13.91527379
+          },
+          {
+            "Index": 11,
+            "Iterations": 19,
+            "SolveSeconds": 12.48947355,
+            "TotalSeconds": 12.70179069
+          },
+          {
+            "Index": 12,
+            "Iterations": 22,
+            "SolveSeconds": 14.28014581,
+            "TotalSeconds": 14.5276976
+          },
+          {
+            "Index": 13,
+            "Iterations": 20,
+            "SolveSeconds": 13.05923472,
+            "TotalSeconds": 13.29471987
+          },
+          {
+            "Index": 14,
+            "Iterations": 17,
+            "SolveSeconds": 11.29884973,
+            "TotalSeconds": 11.57798784
+          },
+          {
+            "Index": 15,
+            "Iterations": 11,
+            "SolveSeconds": 7.702776151,
+            "TotalSeconds": 8.004581843
+          },
+          {
+            "Index": 16,
+            "Iterations": 15,
+            "SolveSeconds": 10.10514722,
+            "TotalSeconds": 10.40441118
+          },
+          {
+            "Index": 17,
+            "Iterations": 17,
+            "SolveSeconds": 11.27158602,
+            "TotalSeconds": 11.58902862
+          },
+          {
+            "Index": 18,
+            "Iterations": 17,
+            "SolveSeconds": 11.38855503,
+            "TotalSeconds": 11.67034615
+          },
+          {
+            "Index": 19,
+            "Iterations": 16,
+            "SolveSeconds": 10.68392562,
+            "TotalSeconds": 10.97828883
+          },
+          {
+            "Index": 20,
+            "Iterations": 15,
+            "SolveSeconds": 10.0977239,
+            "TotalSeconds": 10.41081071
+          },
+          {
+            "Index": 21,
+            "Iterations": 17,
+            "SolveSeconds": 11.27240292,
+            "TotalSeconds": 11.57058055
+          },
+          {
+            "Index": 22,
+            "Iterations": 18,
+            "SolveSeconds": 11.89740536,
+            "TotalSeconds": 12.207265
+          },
+          {
+            "Index": 23,
+            "Iterations": 14,
+            "SolveSeconds": 9.48904873,
+            "TotalSeconds": 9.78679421
+          },
+          {
+            "Index": 24,
+            "Iterations": 21,
+            "SolveSeconds": 13.695897,
+            "TotalSeconds": 13.99199354
+          },
+          {
+            "Index": 25,
+            "Iterations": 22,
+            "SolveSeconds": 14.25015503,
+            "TotalSeconds": 14.53584157
+          },
+          {
+            "Index": 26,
+            "Iterations": 18,
+            "SolveSeconds": 11.88856952,
+            "TotalSeconds": 12.16537933
+          },
+          {
+            "Index": 27,
+            "Iterations": 14,
+            "SolveSeconds": 9.482457466,
+            "TotalSeconds": 9.797044172
+          },
+          {
+            "Index": 28,
+            "Iterations": 14,
+            "SolveSeconds": 9.485467016,
+            "TotalSeconds": 9.776595955
+          },
+          {
+            "Index": 29,
+            "Iterations": 16,
+            "SolveSeconds": 10.71596978,
+            "TotalSeconds": 11.02400988
+          },
+          {
+            "Index": 30,
+            "Iterations": 18,
+            "SolveSeconds": 11.88982497,
+            "TotalSeconds": 12.19924291
+          },
+          {
+            "Index": 31,
+            "Iterations": 18,
+            "SolveSeconds": 11.87800619,
+            "TotalSeconds": 12.13457311
+          },
+          {
+            "Index": 32,
+            "Iterations": 18,
+            "SolveSeconds": 11.8634489,
+            "TotalSeconds": 12.08954585
+          },
+          {
+            "Index": 33,
+            "Iterations": 20,
+            "SolveSeconds": 13.05243861,
+            "TotalSeconds": 13.25793687
+          },
+          {
+            "Index": 34,
+            "Iterations": 32,
+            "SolveSeconds": 20.27011841,
+            "TotalSeconds": 20.51292632
+          },
+          {
+            "Index": 35,
+            "Iterations": 22,
+            "SolveSeconds": 14.26032235,
+            "TotalSeconds": 14.5265994
+          },
+          {
+            "Index": 36,
+            "Iterations": 16,
+            "SolveSeconds": 10.6672673,
+            "TotalSeconds": 10.93769042
+          },
+          {
+            "Index": 37,
+            "Iterations": 11,
+            "SolveSeconds": 7.71025997,
+            "TotalSeconds": 7.98727851
+          },
+          {
+            "Index": 38,
+            "Iterations": 11,
+            "SolveSeconds": 7.701014357,
+            "TotalSeconds": 7.966976371
+          },
+          {
+            "Index": 39,
+            "Iterations": 12,
+            "SolveSeconds": 8.326255072,
+            "TotalSeconds": 8.572445883
+          },
+          {
+            "Index": 40,
+            "Iterations": 11,
+            "SolveSeconds": 7.741276165,
+            "TotalSeconds": 8.008954765
+          },
+          {
+            "Index": 41,
+            "Iterations": 12,
+            "SolveSeconds": 8.286566899,
+            "TotalSeconds": 8.551412472
+          },
+          {
+            "Index": 42,
+            "Iterations": 12,
+            "SolveSeconds": 8.329051311,
+            "TotalSeconds": 8.604277494
+          },
+          {
+            "Index": 43,
+            "Iterations": 13,
+            "SolveSeconds": 8.908448871,
+            "TotalSeconds": 9.137456266
+          },
+          {
+            "Index": 44,
+            "Iterations": 12,
+            "SolveSeconds": 8.322067667,
+            "TotalSeconds": 8.585500426
+          },
+          {
+            "Index": 45,
+            "Iterations": 9,
+            "SolveSeconds": 6.521652532,
+            "TotalSeconds": 6.756616233
+          },
+          {
+            "Index": 46,
+            "Iterations": 22,
+            "SolveSeconds": 14.27089436,
+            "TotalSeconds": 14.49443958
+          },
+          {
+            "Index": 47,
+            "Iterations": 17,
+            "SolveSeconds": 11.28880744,
+            "TotalSeconds": 11.50350693
+          },
+          {
+            "Index": 48,
+            "Iterations": 11,
+            "SolveSeconds": 7.693562083,
+            "TotalSeconds": 7.915652209
+          },
+          {
+            "Index": 49,
+            "Iterations": 11,
+            "SolveSeconds": 7.712788251,
+            "TotalSeconds": 7.925908561
+          },
+          {
+            "Index": 50,
+            "Iterations": 12,
+            "SolveSeconds": 8.298622084,
+            "TotalSeconds": 8.545273966
+          },
+          {
+            "Index": 51,
+            "Iterations": 12,
+            "SolveSeconds": 8.305526831,
+            "TotalSeconds": 8.548272706
+          },
+          {
+            "Index": 52,
+            "Iterations": 11,
+            "SolveSeconds": 7.729241258,
+            "TotalSeconds": 7.939878518
+          },
+          {
+            "Index": 53,
+            "Iterations": 11,
+            "SolveSeconds": 7.7010448,
+            "TotalSeconds": 7.88752722
+          },
+          {
+            "Index": 54,
+            "Iterations": 11,
+            "SolveSeconds": 7.756381082,
+            "TotalSeconds": 7.938874842
+          },
+          {
+            "Index": 55,
+            "Iterations": 23,
+            "SolveSeconds": 14.82737673,
+            "TotalSeconds": 15.18815405
+          },
+          {
+            "Index": 56,
+            "Iterations": 36,
+            "SolveSeconds": 23.05423484,
+            "TotalSeconds": 23.30346972
+          },
+          {
+            "Index": 57,
+            "Iterations": 30,
+            "SolveSeconds": 19.03552032,
+            "TotalSeconds": 19.23597675
+          },
+          {
+            "Index": 58,
+            "Iterations": 9,
+            "SolveSeconds": 6.515590204,
+            "TotalSeconds": 6.713338314
+          },
+          {
+            "Index": 59,
+            "Iterations": 8,
+            "SolveSeconds": 5.913357897,
+            "TotalSeconds": 6.108823344
+          },
+          {
+            "Index": 60,
+            "Iterations": 9,
+            "SolveSeconds": 6.508119964,
+            "TotalSeconds": 6.715717822
+          },
+          {
+            "Index": 61,
+            "Iterations": 9,
+            "SolveSeconds": 6.611663818,
+            "TotalSeconds": 6.8215088
+          },
+          {
+            "Index": 62,
+            "Iterations": 9,
+            "SolveSeconds": 6.511825454,
+            "TotalSeconds": 6.714486678
+          },
+          {
+            "Index": 63,
+            "Iterations": 9,
+            "SolveSeconds": 6.543812433,
+            "TotalSeconds": 6.744593699
+          },
+          {
+            "Index": 64,
+            "Iterations": 9,
+            "SolveSeconds": 6.553419324,
+            "TotalSeconds": 6.803943699
+          },
+          {
+            "Index": 65,
+            "Iterations": 9,
+            "SolveSeconds": 6.55888223,
+            "TotalSeconds": 6.767249847
+          },
+          {
+            "Index": 66,
+            "Iterations": 9,
+            "SolveSeconds": 6.52095636,
+            "TotalSeconds": 6.723684437
+          },
+          {
+            "Index": 67,
+            "Iterations": 14,
+            "SolveSeconds": 9.488975263,
+            "TotalSeconds": 9.689324616
+          },
+          {
+            "Index": 68,
+            "Iterations": 25,
+            "SolveSeconds": 16.12250302,
+            "TotalSeconds": 16.32303801
+          },
+          {
+            "Index": 69,
+            "Iterations": 21,
+            "SolveSeconds": 13.66689913,
+            "TotalSeconds": 13.85632482
+          },
+          {
+            "Index": 70,
+            "Iterations": 14,
+            "SolveSeconds": 9.528712582,
+            "TotalSeconds": 9.723208574
+          },
+          {
+            "Index": 71,
+            "Iterations": 13,
+            "SolveSeconds": 8.889186148,
+            "TotalSeconds": 9.08945118
+          },
+          {
+            "Index": 72,
+            "Iterations": 13,
+            "SolveSeconds": 8.891608438,
+            "TotalSeconds": 9.101869803
+          },
+          {
+            "Index": 73,
+            "Iterations": 13,
+            "SolveSeconds": 8.922579648,
+            "TotalSeconds": 9.116278611
+          },
+          {
+            "Index": 74,
+            "Iterations": 13,
+            "SolveSeconds": 8.898867236,
+            "TotalSeconds": 9.093733625
+          },
+          {
+            "Index": 75,
+            "Iterations": 14,
+            "SolveSeconds": 9.505369903,
+            "TotalSeconds": 9.697964393
+          },
+          {
+            "Index": 76,
+            "Iterations": 15,
+            "SolveSeconds": 10.08281047,
+            "TotalSeconds": 10.2566249
+          },
+          {
+            "Index": 77,
+            "Iterations": 24,
+            "SolveSeconds": 15.5268664,
+            "TotalSeconds": 15.70880862
+          },
+          {
+            "Index": 78,
+            "Iterations": 39,
+            "SolveSeconds": 24.39451722,
+            "TotalSeconds": 24.57494895
+          },
+          {
+            "Index": 79,
+            "Iterations": 31,
+            "SolveSeconds": 19.63233791,
+            "TotalSeconds": 19.83539483
+          },
+          {
+            "Index": 80,
+            "Iterations": 11,
+            "SolveSeconds": 7.76691456,
+            "TotalSeconds": 7.965859269
+          },
+          {
+            "Index": 81,
+            "Iterations": 10,
+            "SolveSeconds": 7.112205389,
+            "TotalSeconds": 7.308613636
+          },
+          {
+            "Index": 82,
+            "Iterations": 10,
+            "SolveSeconds": 7.112845316,
+            "TotalSeconds": 7.309086779
+          },
+          {
+            "Index": 83,
+            "Iterations": 10,
+            "SolveSeconds": 7.11284543,
+            "TotalSeconds": 7.31585284
+          },
+          {
+            "Index": 84,
+            "Iterations": 10,
+            "SolveSeconds": 7.109571311,
+            "TotalSeconds": 7.297047707
+          },
+          {
+            "Index": 85,
+            "Iterations": 11,
+            "SolveSeconds": 7.724674171,
+            "TotalSeconds": 7.907973038
+          },
+          {
+            "Index": 86,
+            "Iterations": 11,
+            "SolveSeconds": 7.730720882,
+            "TotalSeconds": 7.941093432
+          },
+          {
+            "Index": 87,
+            "Iterations": 11,
+            "SolveSeconds": 7.726034558,
+            "TotalSeconds": 7.992512595
+          },
+          {
+            "Index": 88,
+            "Iterations": 11,
+            "SolveSeconds": 7.760870465,
+            "TotalSeconds": 7.935471682
+          },
+          {
+            "Index": 89,
+            "Iterations": 11,
+            "SolveSeconds": 7.7159055,
+            "TotalSeconds": 7.889379654
+          },
+          {
+            "Index": 90,
+            "Iterations": 17,
+            "SolveSeconds": 11.32496038,
+            "TotalSeconds": 11.49842593
+          },
+          {
+            "Index": 91,
+            "Iterations": 17,
+            "SolveSeconds": 11.28402188,
+            "TotalSeconds": 11.46531412
+          },
+          {
+            "Index": 92,
+            "Iterations": 18,
+            "SolveSeconds": 11.91922232,
+            "TotalSeconds": 12.09833116
+          },
+          {
+            "Index": 93,
+            "Iterations": 12,
+            "SolveSeconds": 8.302464344,
+            "TotalSeconds": 8.526587091
+          },
+          {
+            "Index": 94,
+            "Iterations": 15,
+            "SolveSeconds": 10.12918114,
+            "TotalSeconds": 10.34563197
+          },
+          {
+            "Index": 95,
+            "Iterations": 16,
+            "SolveSeconds": 10.75364413,
+            "TotalSeconds": 10.93262428
+          },
+          {
+            "Index": 96,
+            "Iterations": 16,
+            "SolveSeconds": 10.68681933,
+            "TotalSeconds": 10.87550495
+          },
+          {
+            "Index": 97,
+            "Iterations": 15,
+            "SolveSeconds": 10.1134486,
+            "TotalSeconds": 10.29190108
+          },
+          {
+            "Index": 98,
+            "Iterations": 17,
+            "SolveSeconds": 11.259483,
+            "TotalSeconds": 11.43424931
+          },
+          {
+            "Index": 99,
+            "Iterations": 15,
+            "SolveSeconds": 10.1669866,
+            "TotalSeconds": 10.37451636
+          },
+          {
+            "Index": 100,
+            "Iterations": 25,
+            "SolveSeconds": 16.05262861,
+            "TotalSeconds": 16.22926998
+          },
+          {
+            "Index": 101,
+            "Iterations": 24,
+            "SolveSeconds": 15.47089533,
+            "TotalSeconds": 15.64504541
+          },
+          {
+            "Index": 102,
+            "Iterations": 16,
+            "SolveSeconds": 10.69647338,
+            "TotalSeconds": 10.87086935
+          },
+          {
+            "Index": 103,
+            "Iterations": 10,
+            "SolveSeconds": 7.113002561,
+            "TotalSeconds": 7.291915375
+          },
+          {
+            "Index": 104,
+            "Iterations": 12,
+            "SolveSeconds": 8.353351832,
+            "TotalSeconds": 8.526716098
+          },
+          {
+            "Index": 105,
+            "Iterations": 14,
+            "SolveSeconds": 9.552881037,
+            "TotalSeconds": 9.724423237
+          },
+          {
+            "Index": 106,
+            "Iterations": 14,
+            "SolveSeconds": 9.475426636,
+            "TotalSeconds": 9.653097283
+          },
+          {
+            "Index": 107,
+            "Iterations": 12,
+            "SolveSeconds": 8.341358175,
+            "TotalSeconds": 8.534745413
+          },
+          {
+            "Index": 108,
+            "Iterations": 12,
+            "SolveSeconds": 8.304081467,
+            "TotalSeconds": 8.518199496
+          },
+          {
+            "Index": 109,
+            "Iterations": 13,
+            "SolveSeconds": 8.891312329,
+            "TotalSeconds": 9.079917153
+          },
+          {
+            "Index": 110,
+            "Iterations": 16,
+            "SolveSeconds": 10.78519635,
+            "TotalSeconds": 10.97700616
+          },
+          {
+            "Index": 111,
+            "Iterations": 23,
+            "SolveSeconds": 14.9242195,
+            "TotalSeconds": 15.12195519
+          },
+          {
+            "Index": 112,
+            "Iterations": 19,
+            "SolveSeconds": 12.50436993,
+            "TotalSeconds": 12.69975307
+          },
+          {
+            "Index": 113,
+            "Iterations": 23,
+            "SolveSeconds": 14.87734963,
+            "TotalSeconds": 15.06524444
+          },
+          {
+            "Index": 114,
+            "Iterations": 19,
+            "SolveSeconds": 12.52721798,
+            "TotalSeconds": 12.72016625
+          },
+          {
+            "Index": 115,
+            "Iterations": 22,
+            "SolveSeconds": 14.30807822,
+            "TotalSeconds": 14.50999856
+          },
+          {
+            "Index": 116,
+            "Iterations": 19,
+            "SolveSeconds": 12.47202798,
+            "TotalSeconds": 12.66431115
+          },
+          {
+            "Index": 117,
+            "Iterations": 22,
+            "SolveSeconds": 14.33515136,
+            "TotalSeconds": 14.51733876
+          },
+          {
+            "Index": 118,
+            "Iterations": 22,
+            "SolveSeconds": 14.28136081,
+            "TotalSeconds": 14.45647572
+          },
+          {
+            "Index": 119,
+            "Iterations": 21,
+            "SolveSeconds": 13.68212316,
+            "TotalSeconds": 13.87006249
+          },
+          {
+            "Index": 120,
+            "Iterations": 22,
+            "SolveSeconds": 14.35056547,
+            "TotalSeconds": 14.54239503
+          },
+          {
+            "Index": 121,
+            "Iterations": 22,
+            "SolveSeconds": 14.29999256,
+            "TotalSeconds": 14.4867076
+          },
+          {
+            "Index": 122,
+            "Iterations": 22,
+            "SolveSeconds": 14.28830158,
+            "TotalSeconds": 14.47828212
+          },
+          {
+            "Index": 123,
+            "Iterations": 22,
+            "SolveSeconds": 14.28033705,
+            "TotalSeconds": 14.47870556
+          },
+          {
+            "Index": 124,
+            "Iterations": 22,
+            "SolveSeconds": 14.2872232,
+            "TotalSeconds": 14.48268538
+          },
+          {
+            "Index": 125,
+            "Iterations": 22,
+            "SolveSeconds": 14.2987562,
+            "TotalSeconds": 14.51015637
+          },
+          {
+            "Index": 126,
+            "Iterations": 22,
+            "SolveSeconds": 14.28025789,
+            "TotalSeconds": 14.46204305
+          },
+          {
+            "Index": 127,
+            "Iterations": 18,
+            "SolveSeconds": 11.9001555,
+            "TotalSeconds": 12.09594091
+          },
+          {
+            "Index": 128,
+            "Iterations": 16,
+            "SolveSeconds": 10.69279669,
+            "TotalSeconds": 10.89394051
+          },
+          {
+            "Index": 129,
+            "Iterations": 18,
+            "SolveSeconds": 11.94284598,
+            "TotalSeconds": 12.14108626
+          },
+          {
+            "Index": 130,
+            "Iterations": 17,
+            "SolveSeconds": 11.28748897,
+            "TotalSeconds": 11.47146155
+          },
+          {
+            "Index": 131,
+            "Iterations": 18,
+            "SolveSeconds": 11.92844939,
+            "TotalSeconds": 12.11497326
+          },
+          {
+            "Index": 132,
+            "Iterations": 17,
+            "SolveSeconds": 11.25601921,
+            "TotalSeconds": 11.4418859
+          },
+          {
+            "Index": 133,
+            "Iterations": 18,
+            "SolveSeconds": 11.9264255,
+            "TotalSeconds": 12.10610314
+          },
+          {
+            "Index": 134,
+            "Iterations": 18,
+            "SolveSeconds": 11.90111225,
+            "TotalSeconds": 12.07815774
+          },
+          {
+            "Index": 135,
+            "Iterations": 17,
+            "SolveSeconds": 11.2937689,
+            "TotalSeconds": 11.48467572
+          },
+          {
+            "Index": 136,
+            "Iterations": 18,
+            "SolveSeconds": 11.88745342,
+            "TotalSeconds": 12.08005528
+          },
+          {
+            "Index": 137,
+            "Iterations": 18,
+            "SolveSeconds": 11.9151458,
+            "TotalSeconds": 12.09177722
+          },
+          {
+            "Index": 138,
+            "Iterations": 18,
+            "SolveSeconds": 11.88935785,
+            "TotalSeconds": 12.06148778
+          },
+          {
+            "Index": 139,
+            "Iterations": 17,
+            "SolveSeconds": 11.30698791,
+            "TotalSeconds": 11.48051589
+          },
+          {
+            "Index": 140,
+            "Iterations": 18,
+            "SolveSeconds": 11.88939177,
+            "TotalSeconds": 12.06073671
+          },
+          {
+            "Index": 141,
+            "Iterations": 17,
+            "SolveSeconds": 11.31403556,
+            "TotalSeconds": 11.49505578
+          },
+          {
+            "Index": 142,
+            "Iterations": 18,
+            "SolveSeconds": 11.91507783,
+            "TotalSeconds": 12.08815827
+          }
+        ],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "75.6G",
+          "Max": "75.6G",
+          "Avg": "75.6G",
+          "Total": "75.6G"
+        },
+        "PalaceTotalSeconds": 1629.747,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   1.276       6.207       6.167\n  Mesh Preprocessing             7.107      12.015       7.137\nOperator Construction           15.280      15.541      15.516\n  Surface Post Setup             0.283       0.313       0.303\nLinear Solve                    65.396     136.412      88.325\n  Setup                          4.937       4.971       4.948\n  Preconditioner              1406.776    1499.198    1467.627\n  Coarse Solve                   3.589      25.286      12.228\nPostprocessing                  17.091      17.105      17.095\nDisk IO                          8.102       8.160       8.113\n--------------------------------------------------------------\nTotal                         1629.730    1629.747    1629.739",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  396.0M      396.0M      396.0M\n  Mesh Preprocessing              1.5G        1.5G        1.9G\nOperator Construction            20.0G       20.0G       22.0G\n  Surface Post Setup              4.1G        4.1G       26.1G\nLinear Solve                      0.0K        0.0K       26.1G\n  Setup                          27.0G       27.0G       53.1G\n  Preconditioner                 43.5M       43.5M       53.1G\n  Coarse Solve                    9.6G        9.6G       62.7G\nPostprocessing                   94.4M       94.4M       62.8G\nDisk IO                           1.1G        1.1G       63.9G\n--------------------------------------------------------------\nTotal                            73.4G       73.4G       73.4G"
+      },
+      "EndUTC": "2026-10-05T00:55:23Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-3-edge-2c54db92028f-p4-reducer",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/reducer.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/archive",
+        "PALACE_RESPONSE_REDUCE_ONLY": "1",
+        "PALACE_RESPONSE_BLOCK_SIZE": "48"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "300",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-reducer.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_REDUCE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_BLOCK_SIZE",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/reducer.json"
+      ],
+      "CapSeconds": 300,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-reducer.log",
+      "StartUTC": "2026-10-05T00:55:23Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 57.03873543200007,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 1023979520,
+      "NodePeakUsedBytesSampled": 124548206592,
+      "Parsed": {
+        "Elements": 1460089,
+        "Iterations": [],
+        "PCG": [],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [
+          [
+            1,
+            142
+          ],
+          [
+            2,
+            142
+          ],
+          [
+            3,
+            142
+          ],
+          [
+            4,
+            142
+          ],
+          [
+            5,
+            142
+          ],
+          [
+            6,
+            142
+          ],
+          [
+            7,
+            142
+          ],
+          [
+            8,
+            142
+          ],
+          [
+            9,
+            142
+          ],
+          [
+            10,
+            142
+          ],
+          [
+            11,
+            142
+          ],
+          [
+            12,
+            142
+          ],
+          [
+            13,
+            142
+          ],
+          [
+            14,
+            142
+          ],
+          [
+            15,
+            142
+          ],
+          [
+            16,
+            142
+          ],
+          [
+            17,
+            142
+          ],
+          [
+            18,
+            142
+          ],
+          [
+            19,
+            142
+          ],
+          [
+            20,
+            142
+          ],
+          [
+            21,
+            142
+          ],
+          [
+            22,
+            142
+          ],
+          [
+            23,
+            142
+          ],
+          [
+            24,
+            142
+          ],
+          [
+            25,
+            142
+          ],
+          [
+            26,
+            142
+          ],
+          [
+            27,
+            142
+          ],
+          [
+            28,
+            142
+          ],
+          [
+            29,
+            142
+          ],
+          [
+            30,
+            142
+          ],
+          [
+            31,
+            142
+          ],
+          [
+            32,
+            142
+          ],
+          [
+            33,
+            142
+          ],
+          [
+            34,
+            142
+          ],
+          [
+            35,
+            142
+          ],
+          [
+            36,
+            142
+          ],
+          [
+            37,
+            142
+          ],
+          [
+            38,
+            142
+          ],
+          [
+            39,
+            142
+          ],
+          [
+            40,
+            142
+          ],
+          [
+            41,
+            142
+          ],
+          [
+            42,
+            142
+          ],
+          [
+            43,
+            142
+          ],
+          [
+            44,
+            142
+          ],
+          [
+            45,
+            142
+          ],
+          [
+            46,
+            142
+          ],
+          [
+            47,
+            142
+          ],
+          [
+            48,
+            142
+          ],
+          [
+            49,
+            142
+          ],
+          [
+            50,
+            142
+          ],
+          [
+            51,
+            142
+          ],
+          [
+            52,
+            142
+          ],
+          [
+            53,
+            142
+          ],
+          [
+            54,
+            142
+          ],
+          [
+            55,
+            142
+          ],
+          [
+            56,
+            142
+          ],
+          [
+            57,
+            142
+          ],
+          [
+            58,
+            142
+          ],
+          [
+            59,
+            142
+          ],
+          [
+            60,
+            142
+          ],
+          [
+            61,
+            142
+          ],
+          [
+            62,
+            142
+          ],
+          [
+            63,
+            142
+          ],
+          [
+            64,
+            142
+          ],
+          [
+            65,
+            142
+          ],
+          [
+            66,
+            142
+          ],
+          [
+            67,
+            142
+          ],
+          [
+            68,
+            142
+          ],
+          [
+            69,
+            142
+          ],
+          [
+            70,
+            142
+          ],
+          [
+            71,
+            142
+          ],
+          [
+            72,
+            142
+          ],
+          [
+            73,
+            142
+          ],
+          [
+            74,
+            142
+          ],
+          [
+            75,
+            142
+          ],
+          [
+            76,
+            142
+          ],
+          [
+            77,
+            142
+          ],
+          [
+            78,
+            142
+          ],
+          [
+            79,
+            142
+          ],
+          [
+            80,
+            142
+          ],
+          [
+            81,
+            142
+          ],
+          [
+            82,
+            142
+          ],
+          [
+            83,
+            142
+          ],
+          [
+            84,
+            142
+          ],
+          [
+            85,
+            142
+          ],
+          [
+            86,
+            142
+          ],
+          [
+            87,
+            142
+          ],
+          [
+            88,
+            142
+          ],
+          [
+            89,
+            142
+          ],
+          [
+            90,
+            142
+          ],
+          [
+            91,
+            142
+          ],
+          [
+            92,
+            142
+          ],
+          [
+            93,
+            142
+          ],
+          [
+            94,
+            142
+          ],
+          [
+            95,
+            142
+          ],
+          [
+            96,
+            142
+          ],
+          [
+            97,
+            142
+          ],
+          [
+            98,
+            142
+          ],
+          [
+            99,
+            142
+          ],
+          [
+            100,
+            142
+          ],
+          [
+            101,
+            142
+          ],
+          [
+            102,
+            142
+          ],
+          [
+            103,
+            142
+          ],
+          [
+            104,
+            142
+          ],
+          [
+            105,
+            142
+          ],
+          [
+            106,
+            142
+          ],
+          [
+            107,
+            142
+          ],
+          [
+            108,
+            142
+          ],
+          [
+            109,
+            142
+          ],
+          [
+            110,
+            142
+          ],
+          [
+            111,
+            142
+          ],
+          [
+            112,
+            142
+          ],
+          [
+            113,
+            142
+          ],
+          [
+            114,
+            142
+          ],
+          [
+            115,
+            142
+          ],
+          [
+            116,
+            142
+          ],
+          [
+            117,
+            142
+          ],
+          [
+            118,
+            142
+          ],
+          [
+            119,
+            142
+          ],
+          [
+            120,
+            142
+          ],
+          [
+            121,
+            142
+          ],
+          [
+            122,
+            142
+          ],
+          [
+            123,
+            142
+          ],
+          [
+            124,
+            142
+          ],
+          [
+            125,
+            142
+          ],
+          [
+            126,
+            142
+          ],
+          [
+            127,
+            142
+          ],
+          [
+            128,
+            142
+          ],
+          [
+            129,
+            142
+          ],
+          [
+            130,
+            142
+          ],
+          [
+            131,
+            142
+          ],
+          [
+            132,
+            142
+          ],
+          [
+            133,
+            142
+          ],
+          [
+            134,
+            142
+          ],
+          [
+            135,
+            142
+          ],
+          [
+            136,
+            142
+          ],
+          [
+            137,
+            142
+          ],
+          [
+            138,
+            142
+          ],
+          [
+            139,
+            142
+          ],
+          [
+            140,
+            142
+          ],
+          [
+            141,
+            142
+          ],
+          [
+            142,
+            142
+          ]
+        ],
+        "ReductionSamples": {
+          "Sources": 142,
+          "Interfaces": 17,
+          "PerRankMin": 0,
+          "PerRankMax": 24664,
+          "Total": 1439280
+        },
+        "PalacePeakMemory": {
+          "Min": "71.5G",
+          "Max": "71.5G",
+          "Avg": "71.5G",
+          "Total": "71.5G"
+        },
+        "PalaceTotalSeconds": 54.975,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   1.281       6.196       6.156\n  Mesh Preprocessing             7.111      12.013       7.141\nOperator Construction            0.575       1.040       0.998\n  Surface Post Setup             0.366       0.413       0.400\n  Archive Reduction              0.360       0.676       0.421\n    Archive Read                 1.434      23.545      12.469\n    Sample Evaluation            0.367      22.748      11.213\n    Gram Assembly                3.312       3.312       3.312\n    Domain Gram                  2.013       4.916       2.586\nDisk IO                          8.127       8.179       8.141\n--------------------------------------------------------------\nTotal                           54.960      54.975      54.968",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  426.0M      426.0M      426.0M\n  Mesh Preprocessing              1.4G        1.4G        1.9G\nOperator Construction            13.8G       13.8G       15.6G\n  Surface Post Setup              8.6G        8.6G       24.3G\n  Archive Reduction               2.9G        2.9G       27.2G\n    Archive Read                 23.7G       23.7G       50.9G\n    Sample Evaluation           553.0M      553.0M       51.4G\n    Gram Assembly               810.0M      810.0M       52.2G\n    Domain Gram                   6.3G        6.3G       58.6G\nDisk IO                           1.2G        1.2G       59.8G\n--------------------------------------------------------------\nTotal                            69.3G       69.3G       69.3G"
+      },
+      "EndUTC": "2026-10-05T00:56:20Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-3-edge-2c54db92028f-p5-control-worker",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/worker.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/archive",
+        "PALACE_RESPONSE_ARCHIVE_ONLY": "1",
+        "PALACE_RESPONSE_SOURCE_TIMING": "1"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "1800",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control-worker.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_SOURCE_TIMING",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/worker.json"
+      ],
+      "CapSeconds": 1800,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control-worker.log",
+      "StartUTC": "2026-10-05T00:56:20Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 381.71225429799983,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 1038950400,
+      "NodePeakUsedBytesSampled": 164642770944,
+      "Parsed": {
+        "Order": 5,
+        "H1": 36764426,
+        "ND": 129035945,
+        "RT": 148677975,
+        "Elements": 1460089,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 8,
+            "Index": 1,
+            "ElapsedAtStart": 1.08e-07
+          },
+          {
+            "Step": 2,
+            "Of": 8,
+            "Index": 2,
+            "ElapsedAtStart": 38.9
+          },
+          {
+            "Step": 3,
+            "Of": 8,
+            "Index": 3,
+            "ElapsedAtStart": 86.7
+          },
+          {
+            "Step": 4,
+            "Of": 8,
+            "Index": 4,
+            "ElapsedAtStart": 141.0
+          },
+          {
+            "Step": 5,
+            "Of": 8,
+            "Index": 6,
+            "ElapsedAtStart": 187.0
+          },
+          {
+            "Step": 6,
+            "Of": 8,
+            "Index": 23,
+            "ElapsedAtStart": 232.0
+          },
+          {
+            "Step": 7,
+            "Of": 8,
+            "Index": 24,
+            "ElapsedAtStart": 262.0
+          },
+          {
+            "Step": 8,
+            "Of": 8,
+            "Index": 70,
+            "ElapsedAtStart": 308.0
+          }
+        ],
+        "PCG": [
+          15,
+          19,
+          22,
+          18,
+          18,
+          11,
+          18,
+          12
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [
+          {
+            "Index": 1,
+            "Iterations": 15,
+            "SolveSeconds": 38.62214214,
+            "TotalSeconds": 38.92075864
+          },
+          {
+            "Index": 2,
+            "Iterations": 19,
+            "SolveSeconds": 47.54213095,
+            "TotalSeconds": 47.79527505
+          },
+          {
+            "Index": 3,
+            "Iterations": 22,
+            "SolveSeconds": 54.3522485,
+            "TotalSeconds": 54.621546
+          },
+          {
+            "Index": 4,
+            "Iterations": 18,
+            "SolveSeconds": 45.30962019,
+            "TotalSeconds": 45.56133792
+          },
+          {
+            "Index": 6,
+            "Iterations": 18,
+            "SolveSeconds": 45.24720038,
+            "TotalSeconds": 45.51431816
+          },
+          {
+            "Index": 23,
+            "Iterations": 11,
+            "SolveSeconds": 29.37450305,
+            "TotalSeconds": 29.62691684
+          },
+          {
+            "Index": 24,
+            "Iterations": 18,
+            "SolveSeconds": 45.21244679,
+            "TotalSeconds": 45.47712655
+          },
+          {
+            "Index": 70,
+            "Iterations": 12,
+            "SolveSeconds": 31.63037341,
+            "TotalSeconds": 31.89027146
+          }
+        ],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "119.6G",
+          "Max": "119.6G",
+          "Avg": "119.6G",
+          "Total": "119.6G"
+        },
+        "PalaceTotalSeconds": 379.762,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   1.288       6.237       6.200\n  Mesh Preprocessing             7.161      12.100       7.190\nOperator Construction            2.594       3.373       3.300\n  Surface Post Setup             0.318       0.458       0.354\nLinear Solve                     9.080      22.812      13.840\n  Setup                         14.066      14.202      14.170\n  Preconditioner               311.191     327.857     322.015\n  Coarse Solve                   0.283       3.436       1.432\nPostprocessing                   0.847       0.852       0.850\nDisk IO                          8.124       8.161       8.139\n--------------------------------------------------------------\nTotal                          379.591     379.762     379.677",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  426.0M      426.0M      426.0M\n  Mesh Preprocessing              1.4G        1.4G        1.8G\nOperator Construction            36.8G       36.8G       38.6G\n  Surface Post Setup            166.0M      166.0M       38.8G\nLinear Solve                      0.0K        0.0K       38.8G\n  Setup                          58.0G       58.0G       96.8G\n  Preconditioner                130.4M      130.4M       96.9G\n  Coarse Solve                    6.7G        6.7G      103.6G\nPostprocessing                    3.3G        3.3G      106.9G\nDisk IO                           1.1G        1.1G      108.0G\n--------------------------------------------------------------\nTotal                           117.4G      117.4G      117.4G"
+      },
+      "EndUTC": "2026-10-05T01:02:41Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-3-edge-2c54db92028f-p5-control-reducer",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/reducer.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/archive",
+        "PALACE_RESPONSE_REDUCE_ONLY": "1",
+        "PALACE_RESPONSE_BLOCK_SIZE": "48"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "300",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control-reducer.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_REDUCE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_BLOCK_SIZE",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/reducer.json"
+      ],
+      "CapSeconds": 300,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control-reducer.log",
+      "StartUTC": "2026-10-05T01:02:41Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 32.47499180900013,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 1040568320,
+      "NodePeakUsedBytesSampled": 121958187008,
+      "Parsed": {
+        "Elements": 1460089,
+        "Iterations": [],
+        "PCG": [],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            3,
+            8
+          ],
+          [
+            4,
+            8
+          ],
+          [
+            5,
+            8
+          ],
+          [
+            6,
+            8
+          ],
+          [
+            7,
+            8
+          ],
+          [
+            8,
+            8
+          ]
+        ],
+        "ReductionSamples": {
+          "Sources": 8,
+          "Interfaces": 17,
+          "PerRankMin": 0,
+          "PerRankMax": 36602,
+          "Total": 2197082
+        },
+        "PalacePeakMemory": {
+          "Min": "68.7G",
+          "Max": "68.7G",
+          "Avg": "68.7G",
+          "Total": "68.7G"
+        },
+        "PalaceTotalSeconds": 30.648,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   1.285       6.232       6.195\n  Mesh Preprocessing             7.132      12.068       7.162\nOperator Construction            1.154       1.503       1.450\n  Surface Post Setup             0.363       0.403       0.391\n  Archive Reduction              0.017       0.709       0.396\n    Archive Read                 0.254       4.232       2.122\n    Sample Evaluation            0.040       4.561       2.291\n    Gram Assembly                0.025       0.025       0.025\n    Domain Gram                  0.173       0.549       0.254\nDisk IO                          8.085       8.133       8.099\n--------------------------------------------------------------\nTotal                           30.474      30.648      30.561",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  463.5M      463.5M      463.5M\n  Mesh Preprocessing              1.3G        1.3G        1.8G\nOperator Construction            25.1G       25.1G       26.8G\n  Surface Post Setup              8.7G        8.7G       35.5G\n  Archive Reduction               3.0M        3.0M       35.5G\n    Archive Read                  8.1G        8.1G       43.6G\n    Sample Evaluation           831.0M      831.0M       44.5G\n    Gram Assembly                21.0M       21.0M       44.5G\n    Domain Gram                  11.2G       11.2G       55.7G\nDisk IO                           1.3G        1.3G       57.0G\n--------------------------------------------------------------\nTotal                            66.5G       66.5G       66.5G"
+      },
+      "EndUTC": "2026-10-05T01:03:14Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-3-edge-2c54db92028f-p3-control-worker",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/worker.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/archive",
+        "PALACE_RESPONSE_ARCHIVE_ONLY": "1",
+        "PALACE_RESPONSE_SOURCE_TIMING": "1"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "300",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control-worker.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_SOURCE_TIMING",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/worker.json"
+      ],
+      "CapSeconds": 300,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control-worker.log",
+      "StartUTC": "2026-10-05T01:03:14Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 67.87504840600013,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 1039294464,
+      "NodePeakUsedBytesSampled": 97906806784,
+      "Parsed": {
+        "Order": 3,
+        "H1": 8047409,
+        "ND": 31208064,
+        "RT": 38813520,
+        "Elements": 1460089,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 8,
+            "Index": 1,
+            "ElapsedAtStart": 1.12e-07
+          },
+          {
+            "Step": 2,
+            "Of": 8,
+            "Index": 2,
+            "ElapsedAtStart": 4.69
+          },
+          {
+            "Step": 3,
+            "Of": 8,
+            "Index": 3,
+            "ElapsedAtStart": 10.0
+          },
+          {
+            "Step": 4,
+            "Of": 8,
+            "Index": 4,
+            "ElapsedAtStart": 15.5
+          },
+          {
+            "Step": 5,
+            "Of": 8,
+            "Index": 6,
+            "ElapsedAtStart": 21.0
+          },
+          {
+            "Step": 6,
+            "Of": 8,
+            "Index": 23,
+            "ElapsedAtStart": 26.0
+          },
+          {
+            "Step": 7,
+            "Of": 8,
+            "Index": 24,
+            "ElapsedAtStart": 29.8
+          },
+          {
+            "Step": 8,
+            "Of": 8,
+            "Index": 70,
+            "ElapsedAtStart": 35.0
+          }
+        ],
+        "PCG": [
+          19,
+          22,
+          23,
+          23,
+          21,
+          15,
+          22,
+          16
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [
+          {
+            "Index": 1,
+            "Iterations": 19,
+            "SolveSeconds": 4.547857066,
+            "TotalSeconds": 4.688373201
+          },
+          {
+            "Index": 2,
+            "Iterations": 22,
+            "SolveSeconds": 5.148389928,
+            "TotalSeconds": 5.322406544
+          },
+          {
+            "Index": 3,
+            "Iterations": 23,
+            "SolveSeconds": 5.299836489,
+            "TotalSeconds": 5.477370412
+          },
+          {
+            "Index": 4,
+            "Iterations": 23,
+            "SolveSeconds": 5.315217815,
+            "TotalSeconds": 5.486034052
+          },
+          {
+            "Index": 6,
+            "Iterations": 21,
+            "SolveSeconds": 4.898851878,
+            "TotalSeconds": 5.059095685
+          },
+          {
+            "Index": 23,
+            "Iterations": 15,
+            "SolveSeconds": 3.591405478,
+            "TotalSeconds": 3.749436688
+          },
+          {
+            "Index": 24,
+            "Iterations": 22,
+            "SolveSeconds": 5.077639385,
+            "TotalSeconds": 5.226257392
+          },
+          {
+            "Index": 70,
+            "Iterations": 16,
+            "SolveSeconds": 3.802168138,
+            "TotalSeconds": 3.953998896
+          }
+        ],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "54.5G",
+          "Max": "54.5G",
+          "Avg": "54.5G",
+          "Total": "54.5G"
+        },
+        "PalaceTotalSeconds": 66.073,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   1.267       6.296       6.258\n  Mesh Preprocessing             7.225      12.230       7.255\nOperator Construction            0.971       1.124       1.103\n  Surface Post Setup             0.319       0.337       0.332\nLinear Solve                     1.766       3.579       2.379\n  Setup                          2.332       2.346       2.337\n  Preconditioner                32.696      35.521      34.595\n  Coarse Solve                   0.392       1.403       0.703\nPostprocessing                   0.660       0.665       0.663\nDisk IO                          8.234       8.277       8.248\n--------------------------------------------------------------\nTotal                           65.918      66.073      65.992",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  435.0M      435.0M      435.0M\n  Mesh Preprocessing              1.4G        1.4G        1.8G\nOperator Construction            10.9G       10.9G       12.8G\n  Surface Post Setup              6.1G        6.1G       18.9G\nLinear Solve                      0.0K        0.0K       18.9G\n  Setup                          14.5G       14.5G       33.4G\n  Preconditioner                 22.5M       22.5M       33.5G\n  Coarse Solve                    8.3G        8.3G       41.7G\nPostprocessing                    0.0K        0.0K       41.7G\nDisk IO                           1.0G        1.0G       42.8G\n--------------------------------------------------------------\nTotal                            52.2G       52.2G       52.2G"
+      },
+      "EndUTC": "2026-10-05T01:04:22Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-3-edge-2c54db92028f-p3-control-reducer",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/reducer.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/archive",
+        "PALACE_RESPONSE_REDUCE_ONLY": "1",
+        "PALACE_RESPONSE_BLOCK_SIZE": "48"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "300",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control-reducer.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_REDUCE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_BLOCK_SIZE",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/reducer.json"
+      ],
+      "CapSeconds": 300,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control-reducer.log",
+      "StartUTC": "2026-10-05T01:04:22Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 26.76692785599971,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 1039130624,
+      "NodePeakUsedBytesSampled": 64859275264,
+      "Parsed": {
+        "Elements": 1460089,
+        "Iterations": [],
+        "PCG": [],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [
+          [
+            1,
+            8
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            3,
+            8
+          ],
+          [
+            4,
+            8
+          ],
+          [
+            5,
+            8
+          ],
+          [
+            6,
+            8
+          ],
+          [
+            7,
+            8
+          ],
+          [
+            8,
+            8
+          ]
+        ],
+        "ReductionSamples": {
+          "Sources": 8,
+          "Interfaces": 17,
+          "PerRankMin": 0,
+          "PerRankMax": 16760,
+          "Total": 1032952
+        },
+        "PalacePeakMemory": {
+          "Min": "31.8G",
+          "Max": "31.8G",
+          "Avg": "31.8G",
+          "Total": "31.8G"
+        },
+        "PalaceTotalSeconds": 25.063,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   1.289       6.244       6.207\n  Mesh Preprocessing             7.141      12.089       7.172\nOperator Construction            0.284       0.328       0.309\n  Surface Post Setup             0.375       0.423       0.409\n  Archive Reduction              0.013       0.082       0.049\n    Archive Read                 0.052       0.440       0.232\n    Sample Evaluation            0.013       0.454       0.233\n    Gram Assembly                0.014       0.014       0.014\n    Domain Gram                  0.039       0.090       0.052\nDisk IO                          8.113       8.151       8.131\n--------------------------------------------------------------\nTotal                           24.874      25.063      24.985",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  442.5M      442.5M      442.5M\n  Mesh Preprocessing              1.4G        1.4G        1.8G\nOperator Construction             7.9G        7.9G        9.7G\n  Surface Post Setup              8.6G        8.6G       18.3G\n  Archive Reduction               1.5M        1.5M       18.3G\n    Archive Read                167.1M      167.1M       18.5G\n    Sample Evaluation             0.0K        0.0K       18.5G\n    Gram Assembly                 3.5M        3.5M       18.5G\n    Domain Gram                 575.3M      575.3M       19.1G\nDisk IO                           1.1G        1.1G       20.2G\n--------------------------------------------------------------\nTotal                            29.6G       29.6G       29.6G"
+      },
+      "EndUTC": "2026-10-05T01:04:48Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-3-edge-2c54db92028f-p4-local-edge",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-local-edge/config.json",
+      "Environment": {},
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "900",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-local-edge.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-local-edge/config.json"
+      ],
+      "CapSeconds": 900,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-local-edge.log",
+      "StartUTC": "2026-10-05T01:04:49Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 220.29752411900017,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 1234264064,
+      "NodePeakUsedBytesSampled": 203366031360,
+      "Parsed": {
+        "Order": 4,
+        "H1": 18917641,
+        "ND": 68960548,
+        "RT": 81887664,
+        "Elements": 1460089,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 8,
+            "Index": 1,
+            "ElapsedAtStart": 1.27e-06
+          },
+          {
+            "Step": 2,
+            "Of": 8,
+            "Index": 2,
+            "ElapsedAtStart": 20.3
+          },
+          {
+            "Step": 3,
+            "Of": 8,
+            "Index": 3,
+            "ElapsedAtStart": 43.6
+          },
+          {
+            "Step": 4,
+            "Of": 8,
+            "Index": 4,
+            "ElapsedAtStart": 65.9
+          },
+          {
+            "Step": 5,
+            "Of": 8,
+            "Index": 6,
+            "ElapsedAtStart": 88.1
+          },
+          {
+            "Step": 6,
+            "Of": 8,
+            "Index": 23,
+            "ElapsedAtStart": 109.0
+          },
+          {
+            "Step": 7,
+            "Of": 8,
+            "Index": 24,
+            "ElapsedAtStart": 128.0
+          },
+          {
+            "Step": 8,
+            "Of": 8,
+            "Index": 70,
+            "ElapsedAtStart": 150.0
+          }
+        ],
+        "PCG": [
+          17,
+          20,
+          21,
+          21,
+          19,
+          14,
+          21,
+          14
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [
+          [
+            1,
+            36
+          ],
+          [
+            2,
+            36
+          ],
+          [
+            3,
+            36
+          ],
+          [
+            4,
+            36
+          ],
+          [
+            5,
+            36
+          ],
+          [
+            6,
+            36
+          ],
+          [
+            7,
+            36
+          ],
+          [
+            8,
+            36
+          ],
+          [
+            9,
+            36
+          ],
+          [
+            10,
+            36
+          ],
+          [
+            11,
+            36
+          ],
+          [
+            12,
+            36
+          ],
+          [
+            13,
+            36
+          ],
+          [
+            14,
+            36
+          ],
+          [
+            15,
+            36
+          ],
+          [
+            16,
+            36
+          ],
+          [
+            17,
+            36
+          ],
+          [
+            18,
+            36
+          ],
+          [
+            19,
+            36
+          ],
+          [
+            20,
+            36
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            22,
+            36
+          ],
+          [
+            23,
+            36
+          ],
+          [
+            24,
+            36
+          ],
+          [
+            25,
+            36
+          ],
+          [
+            26,
+            36
+          ],
+          [
+            27,
+            36
+          ],
+          [
+            28,
+            36
+          ],
+          [
+            29,
+            36
+          ],
+          [
+            30,
+            36
+          ],
+          [
+            31,
+            36
+          ],
+          [
+            32,
+            36
+          ],
+          [
+            33,
+            36
+          ],
+          [
+            34,
+            36
+          ],
+          [
+            35,
+            36
+          ],
+          [
+            36,
+            36
+          ]
+        ],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "156.7G",
+          "Max": "156.7G",
+          "Avg": "156.7G",
+          "Total": "156.7G"
+        },
+        "PalaceTotalSeconds": 218.19,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   1.295       6.302       6.263\n  Mesh Preprocessing             7.220      12.212       7.250\nOperator Construction            1.655       2.404       2.083\n  Surface Post Setup             0.283       0.316       0.303\nLinear Solve                     4.019       8.897       5.627\n  Setup                          4.932       4.967       4.945\n  Preconditioner                88.729      95.006      92.822\n  Coarse Solve                   0.300       1.709       0.874\nEstimation                       0.351       0.530       0.389\n  Construction                  14.555      14.826      14.785\n  Solve                          4.755      11.459      11.420\nPostprocessing                  60.740      67.460      60.793\nDisk IO                          8.318       8.374       8.330\n--------------------------------------------------------------\nTotal                          218.016     218.190     218.115",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  439.5M      439.5M      439.5M\n  Mesh Preprocessing              1.3G        1.3G        1.8G\nOperator Construction            21.1G       21.1G       22.8G\n  Surface Post Setup              4.1G        4.1G       27.0G\nLinear Solve                      0.0K        0.0K       27.0G\n  Setup                          27.0G       27.0G       53.9G\n  Preconditioner                  0.0K        0.0K       53.9G\n  Coarse Solve                    9.0M        9.0M       54.0G\nEstimation                        9.1G        9.1G       63.0G\n  Construction                   44.8G       44.8G      107.8G\n  Solve                          12.3G       12.3G      120.1G\nPostprocessing                   23.8G       23.8G      143.8G\nDisk IO                           1.2G        1.2G      145.0G\n--------------------------------------------------------------\nTotal                           154.4G      154.4G      154.4G"
+      },
+      "EndUTC": "2026-10-05T01:08:29Z",
+      "State": "complete"
+    }
+  ],
+  "Preflight": {
+    "MemTotalBytes": 797242064896,
+    "MemAvailableBytes": 746309840896,
+    "MinimumMemAvailableBytes": 494780232499,
+    "Instance": {
+      "Type": "m8g.48xlarge",
+      "vCPUs": 192,
+      "MemoryGiB": 768,
+      "NodeGiB": 742.49,
+      "EstimatedPalacePeakGB": 234.002395402776,
+      "EstimatedPalacePeakGiB": 217.94020247999998,
+      "MemoryFitFraction": 0.6,
+      "Fits": true,
+      "MinimumMemAvailableBytes": 494780232499,
+      "Candidates": [
+        "m8g.48xlarge",
+        "r8g.48xlarge"
+      ],
+      "Rule": "a job runs on the first instance of Instances whose MemoryFitFraction x MemoryGiB holds the job's largest estimated Palace peak (the stage estimates' GB / the cost model's PalaceGBPerGiB): m8g.48xlarge (768 GiB, 192 Graviton4 vCPUs) is the default, r8g.48xlarge (1,536 GiB) the fallback for an estimated peak above 0.6 x 768 = 460.8 GiB (the device library's largest estimate is 338 GB, 7f03's p5 control; measured node peaks <= ~240 GiB; the streaming reducer ~34 GB); c8g.48xlarge (384 GiB) is deliberately absent - not safe for the p5 control stages of the largest coupons (USER decision 2026-09-22). The plan records the chosen instance (Instance) and its admission guard MinimumMemAvailableBytes = MemoryFitFraction x MemoryGiB, checked by run_stages before the first stage; the job script's #PBS -l instance_type is the chosen type"
+    },
+    "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+    "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+    "Pinned": {
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/mesh/identity-9499353cb2ed.msh": {
+        "Expected": "9499353cb2ed0fcfc4f880baa818c8cb619b612273f422850093c98a732c4cf1",
+        "Actual": "9499353cb2ed0fcfc4f880baa818c8cb619b612273f422850093c98a732c4cf1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/worker.json": {
+        "Expected": "6b7a97a2661d0f79f106c4af9a2c9b898204aabbe3ab0714392a6858106618a1",
+        "Actual": "6b7a97a2661d0f79f106c4af9a2c9b898204aabbe3ab0714392a6858106618a1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4/reducer.json": {
+        "Expected": "5847b0ab1b7bd988a3962b63394b2676a77f9fb58eada48ef7bbf168b7fb242b",
+        "Actual": "5847b0ab1b7bd988a3962b63394b2676a77f9fb58eada48ef7bbf168b7fb242b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/worker.json": {
+        "Expected": "958dac3e81a7932a331093bef0d0c9accb26125456b3b7e7848a94cee1247dde",
+        "Actual": "958dac3e81a7932a331093bef0d0c9accb26125456b3b7e7848a94cee1247dde",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p5-control/reducer.json": {
+        "Expected": "1d0843571c22473f5369b6ce0a9843e77945072d2a92346e510c3e271994d98e",
+        "Actual": "1d0843571c22473f5369b6ce0a9843e77945072d2a92346e510c3e271994d98e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/worker.json": {
+        "Expected": "43ed41e6d69ca1a15afed52eacd1ea2cef880e452fcdb3f132e14fe450f3328a",
+        "Actual": "43ed41e6d69ca1a15afed52eacd1ea2cef880e452fcdb3f132e14fe450f3328a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p3-control/reducer.json": {
+        "Expected": "5f698bef7a6d333e7b5faf349b2b40cf35bd4e0858bc24c00e9408ddef5bbea7",
+        "Actual": "5f698bef7a6d333e7b5faf349b2b40cf35bd4e0858bc24c00e9408ddef5bbea7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/main/spatial-3-edge-2c54db92028f-p4-local-edge/config.json": {
+        "Expected": "d9640d425cded7d2224646e65d5a87055c786c0edf8ce5c22ad3826e11425ea6",
+        "Actual": "d9640d425cded7d2224646e65d5a87055c786c0edf8ce5c22ad3826e11425ea6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0001.csv": {
+        "Expected": "3c219bee04decc1e13d098abaa35f8cbdf1e293e35d00db3e52976fa6bdd7661",
+        "Actual": "3c219bee04decc1e13d098abaa35f8cbdf1e293e35d00db3e52976fa6bdd7661",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0002.csv": {
+        "Expected": "11cf4ea81719ecaa5365e937c0710da2c7ee9241b36f3cb7b3e8fc73148e918c",
+        "Actual": "11cf4ea81719ecaa5365e937c0710da2c7ee9241b36f3cb7b3e8fc73148e918c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0003.csv": {
+        "Expected": "daa0bbeec30a95532fd99010574680fc9f80044d49d85a9daa90c19c00561f8d",
+        "Actual": "daa0bbeec30a95532fd99010574680fc9f80044d49d85a9daa90c19c00561f8d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0004.csv": {
+        "Expected": "d5a79c2a0d7a4079a8434b514511b59efeee6fb08d4bc6b86377a7c66773c230",
+        "Actual": "d5a79c2a0d7a4079a8434b514511b59efeee6fb08d4bc6b86377a7c66773c230",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0005.csv": {
+        "Expected": "68c620d41a5ebb762b241d9a3da314183f28dd2ff4b012df2f0d88716337e837",
+        "Actual": "68c620d41a5ebb762b241d9a3da314183f28dd2ff4b012df2f0d88716337e837",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0006.csv": {
+        "Expected": "63dd903152814327c786478365c35a921b435f9819fef8734e02dda1e6d2ca25",
+        "Actual": "63dd903152814327c786478365c35a921b435f9819fef8734e02dda1e6d2ca25",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0007.csv": {
+        "Expected": "73e14646cd1a4e1e0fee97e3f2723df5b1685fc9600383525aed2657f273a0c9",
+        "Actual": "73e14646cd1a4e1e0fee97e3f2723df5b1685fc9600383525aed2657f273a0c9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0008.csv": {
+        "Expected": "df820dffa2809421c93f504669a26d4ef791c9c9382bc650c9881506068104a1",
+        "Actual": "df820dffa2809421c93f504669a26d4ef791c9c9382bc650c9881506068104a1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0009.csv": {
+        "Expected": "76f937f296935bef0e192134216608760d11963c9282d3679b932a302e1b2772",
+        "Actual": "76f937f296935bef0e192134216608760d11963c9282d3679b932a302e1b2772",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0010.csv": {
+        "Expected": "aca1cef32fa62d37bad1cd847cf2a1d7287495ae16f4845444cf690667cb1321",
+        "Actual": "aca1cef32fa62d37bad1cd847cf2a1d7287495ae16f4845444cf690667cb1321",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0011.csv": {
+        "Expected": "8c6ea02bd754ece884e98cadd4126d4582f614560ea5bdda1ed1c5f4d573a2cd",
+        "Actual": "8c6ea02bd754ece884e98cadd4126d4582f614560ea5bdda1ed1c5f4d573a2cd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0012.csv": {
+        "Expected": "dfb009d720b680b8e14e0822cebe82605a0a17c6de42ec2c31691bfa3f16ade5",
+        "Actual": "dfb009d720b680b8e14e0822cebe82605a0a17c6de42ec2c31691bfa3f16ade5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0013.csv": {
+        "Expected": "1ed5182784c0590ab97fb7415ed7a49ead96a84bbc37b90cdc5fed67218d8221",
+        "Actual": "1ed5182784c0590ab97fb7415ed7a49ead96a84bbc37b90cdc5fed67218d8221",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0014.csv": {
+        "Expected": "522a892c62aa4776c343083081d0e6d393559abf6eb87eda6c0a546b90b50579",
+        "Actual": "522a892c62aa4776c343083081d0e6d393559abf6eb87eda6c0a546b90b50579",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0015.csv": {
+        "Expected": "4055b9f2aee797bc28f3184ed5360d7cb6f4b33fcd1519ff5f19d77e0e0e8cba",
+        "Actual": "4055b9f2aee797bc28f3184ed5360d7cb6f4b33fcd1519ff5f19d77e0e0e8cba",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0016.csv": {
+        "Expected": "d0077fa762065c1b7f2ee77d22d6788a2016e621f927138dc6156940640fedb8",
+        "Actual": "d0077fa762065c1b7f2ee77d22d6788a2016e621f927138dc6156940640fedb8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0017.csv": {
+        "Expected": "9e483fd43712c10f5d02f74094d8e0ead03cffbacbdd9b6d9ddc7c4dd3402543",
+        "Actual": "9e483fd43712c10f5d02f74094d8e0ead03cffbacbdd9b6d9ddc7c4dd3402543",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0018.csv": {
+        "Expected": "59b0f79d6a812e64668f18f5918628bbabec6e306f79a7f0bd9dffd9a68a36dc",
+        "Actual": "59b0f79d6a812e64668f18f5918628bbabec6e306f79a7f0bd9dffd9a68a36dc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0019.csv": {
+        "Expected": "5b2a32ef6dffc12453cf961227bc752e976a7f59dde79087d3fd64c0da904cb4",
+        "Actual": "5b2a32ef6dffc12453cf961227bc752e976a7f59dde79087d3fd64c0da904cb4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0020.csv": {
+        "Expected": "fae66cd4d1017d22e0dce73237c995fa70590aec6c4565c53a5a83e0026dd7dc",
+        "Actual": "fae66cd4d1017d22e0dce73237c995fa70590aec6c4565c53a5a83e0026dd7dc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0021.csv": {
+        "Expected": "7312a46e93204f4dd860096d4f414e7a7ed2beddadbff6037713cab2842546f0",
+        "Actual": "7312a46e93204f4dd860096d4f414e7a7ed2beddadbff6037713cab2842546f0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0022.csv": {
+        "Expected": "a93dcf601c749f1633f34a09351aacd2ad6ef53d692a8a98716c54f3f62e76b6",
+        "Actual": "a93dcf601c749f1633f34a09351aacd2ad6ef53d692a8a98716c54f3f62e76b6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0023.csv": {
+        "Expected": "0dd3d5b689448151ca31e8df9982ba7e76fcdbb12300a30a368fa5587acd6540",
+        "Actual": "0dd3d5b689448151ca31e8df9982ba7e76fcdbb12300a30a368fa5587acd6540",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0024.csv": {
+        "Expected": "fb328418f389cdd7de81612e2e85f32157e79ddfd55f91c20d4f550026801832",
+        "Actual": "fb328418f389cdd7de81612e2e85f32157e79ddfd55f91c20d4f550026801832",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0025.csv": {
+        "Expected": "274bb42094d01e3c335d3da0a2b77b493a7b158345860218c48c18169a9fe430",
+        "Actual": "274bb42094d01e3c335d3da0a2b77b493a7b158345860218c48c18169a9fe430",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0026.csv": {
+        "Expected": "0709b066b523d08444216323bbdce0b311ef672e3f73dfc1fe86899ba9b3a036",
+        "Actual": "0709b066b523d08444216323bbdce0b311ef672e3f73dfc1fe86899ba9b3a036",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0027.csv": {
+        "Expected": "fb81c95983e7e19a9aeb5ceea05f8ac4411174b83312a02cb4e86b795346264e",
+        "Actual": "fb81c95983e7e19a9aeb5ceea05f8ac4411174b83312a02cb4e86b795346264e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0028.csv": {
+        "Expected": "bf3755c9abac418720421bf2a7324c3159393d94c56c076bf7cc591ca9d027ed",
+        "Actual": "bf3755c9abac418720421bf2a7324c3159393d94c56c076bf7cc591ca9d027ed",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0029.csv": {
+        "Expected": "72d6baf8b35e742ccf497fc5aeb16ec9ae3fe63db950f5e715009b3345918a97",
+        "Actual": "72d6baf8b35e742ccf497fc5aeb16ec9ae3fe63db950f5e715009b3345918a97",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0030.csv": {
+        "Expected": "c98f4c52fde035aea52a7f0be4fa05924fe4911d4f028db5c18b809dc57f490e",
+        "Actual": "c98f4c52fde035aea52a7f0be4fa05924fe4911d4f028db5c18b809dc57f490e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0031.csv": {
+        "Expected": "cf7ec18827efd74208f9a3cd14cd01083aa89958969b5d15d8ee27e47833f659",
+        "Actual": "cf7ec18827efd74208f9a3cd14cd01083aa89958969b5d15d8ee27e47833f659",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0032.csv": {
+        "Expected": "a163ecd1bef6eea00d1cfb477060a1b90df1f2725acaed16b070603ba1ebbfc4",
+        "Actual": "a163ecd1bef6eea00d1cfb477060a1b90df1f2725acaed16b070603ba1ebbfc4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0033.csv": {
+        "Expected": "94c6b395a1c03a3176d2d5aa78b22884d4051f844cb36d22ea42e2161cca965a",
+        "Actual": "94c6b395a1c03a3176d2d5aa78b22884d4051f844cb36d22ea42e2161cca965a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0034.csv": {
+        "Expected": "14113bbbdd78b29f259fdba444deacb80fd22ce35869f25d2ae3eef233198df9",
+        "Actual": "14113bbbdd78b29f259fdba444deacb80fd22ce35869f25d2ae3eef233198df9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0035.csv": {
+        "Expected": "14c9986b144c29faa25f99452cca8824d344389ad631e87d0e4f6d9d0d94d7b7",
+        "Actual": "14c9986b144c29faa25f99452cca8824d344389ad631e87d0e4f6d9d0d94d7b7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0036.csv": {
+        "Expected": "f8291e4c142e20b092e20ac58bea518241adfe45a29524e7431b0452178cb3ae",
+        "Actual": "f8291e4c142e20b092e20ac58bea518241adfe45a29524e7431b0452178cb3ae",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0037.csv": {
+        "Expected": "39396b066c716e5583617faab09780e59874438d1a3351c888af1d1f1d063986",
+        "Actual": "39396b066c716e5583617faab09780e59874438d1a3351c888af1d1f1d063986",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0038.csv": {
+        "Expected": "98dc5000c1c370beb23cf406cefc9d1ad071beba2addda704f3707dc37af8425",
+        "Actual": "98dc5000c1c370beb23cf406cefc9d1ad071beba2addda704f3707dc37af8425",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0039.csv": {
+        "Expected": "44002e646a87491338231ea6a132ed9b7c2a6591dc48107aadfb45bba6f5497f",
+        "Actual": "44002e646a87491338231ea6a132ed9b7c2a6591dc48107aadfb45bba6f5497f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0040.csv": {
+        "Expected": "520d90ee389e67a39be3718ded8e8510aa2c4e16ab472dccd0fe2841abc38fb3",
+        "Actual": "520d90ee389e67a39be3718ded8e8510aa2c4e16ab472dccd0fe2841abc38fb3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0041.csv": {
+        "Expected": "edfb5233b5bc22ec8fc0a0536fd0085f67740e832501e233238ed7f225495eb9",
+        "Actual": "edfb5233b5bc22ec8fc0a0536fd0085f67740e832501e233238ed7f225495eb9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0042.csv": {
+        "Expected": "33482d7063d57ac8b750a082d4fddc59992b10753a54bfaf56bdd874308fa24e",
+        "Actual": "33482d7063d57ac8b750a082d4fddc59992b10753a54bfaf56bdd874308fa24e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0043.csv": {
+        "Expected": "a22f867be016998e28bc698e2b7474298a6b8a3399ff7ba8d164caabb5fba33b",
+        "Actual": "a22f867be016998e28bc698e2b7474298a6b8a3399ff7ba8d164caabb5fba33b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0044.csv": {
+        "Expected": "d2dbaa9210b16462eab33b5055997e532b439822183cfdf1749a1ee8875ea68c",
+        "Actual": "d2dbaa9210b16462eab33b5055997e532b439822183cfdf1749a1ee8875ea68c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0045.csv": {
+        "Expected": "3cd71f98dbab1e55d15f5da31db144932b3f565b9651fd9ae15f393ea582b026",
+        "Actual": "3cd71f98dbab1e55d15f5da31db144932b3f565b9651fd9ae15f393ea582b026",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0046.csv": {
+        "Expected": "ead232109d52039f6bde5fb50f0ddb0924026c87d0c2e019b63d555f8ac58453",
+        "Actual": "ead232109d52039f6bde5fb50f0ddb0924026c87d0c2e019b63d555f8ac58453",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0047.csv": {
+        "Expected": "a875819d9a94a75f1f66ff5daaa0e613f82a61a2da5f4d594f61f304e6104d4a",
+        "Actual": "a875819d9a94a75f1f66ff5daaa0e613f82a61a2da5f4d594f61f304e6104d4a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0048.csv": {
+        "Expected": "1955da00ef318644041bab3b4d7b01763d7ea1c49964b90a02ed8da2a137dfec",
+        "Actual": "1955da00ef318644041bab3b4d7b01763d7ea1c49964b90a02ed8da2a137dfec",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0049.csv": {
+        "Expected": "0b7431844760726804381cf7b3bf31702df371527a1e01c3f4d3c2febbb3f40f",
+        "Actual": "0b7431844760726804381cf7b3bf31702df371527a1e01c3f4d3c2febbb3f40f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0050.csv": {
+        "Expected": "d39fa03c9feb2d61a417fe052b9238d0f4d9cbcf556974b8278443481cf4ce8f",
+        "Actual": "d39fa03c9feb2d61a417fe052b9238d0f4d9cbcf556974b8278443481cf4ce8f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0051.csv": {
+        "Expected": "a770f27ea7e61b6bed1079724e41ecb0db8a29f7f03bb74eb184502d7b6cd556",
+        "Actual": "a770f27ea7e61b6bed1079724e41ecb0db8a29f7f03bb74eb184502d7b6cd556",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0052.csv": {
+        "Expected": "bb29a90a523d629deebd31a89cd273ee6e2acda6e7d0df81bce490105960bd51",
+        "Actual": "bb29a90a523d629deebd31a89cd273ee6e2acda6e7d0df81bce490105960bd51",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0053.csv": {
+        "Expected": "2fbb66cc3519794ef75a3b555f0f757cd1b0a53c58ea7087539a12f68de24d9f",
+        "Actual": "2fbb66cc3519794ef75a3b555f0f757cd1b0a53c58ea7087539a12f68de24d9f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0054.csv": {
+        "Expected": "b9276b66e20f5909feb8dd3effa6566c4082c1c7bf03bddbaee5cb0362a6517f",
+        "Actual": "b9276b66e20f5909feb8dd3effa6566c4082c1c7bf03bddbaee5cb0362a6517f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0055.csv": {
+        "Expected": "7edebcb423cdc2a377f085bdbb2e32e40b65c70ab576bd201dff12d4b05c43e0",
+        "Actual": "7edebcb423cdc2a377f085bdbb2e32e40b65c70ab576bd201dff12d4b05c43e0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0056.csv": {
+        "Expected": "42534b9c23d6b103614a85ec2a0f74041e4ee00a14d832880a7616bd8abd3ce4",
+        "Actual": "42534b9c23d6b103614a85ec2a0f74041e4ee00a14d832880a7616bd8abd3ce4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0057.csv": {
+        "Expected": "aa1bae00c93feff9b25fdef83a5521f8d649bc366fe7e7befbd8e559a6e826fc",
+        "Actual": "aa1bae00c93feff9b25fdef83a5521f8d649bc366fe7e7befbd8e559a6e826fc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0058.csv": {
+        "Expected": "7b1b77ce662db43e193c4f3705432b5770f50316f23ed0cf442a252cd2bb8b0c",
+        "Actual": "7b1b77ce662db43e193c4f3705432b5770f50316f23ed0cf442a252cd2bb8b0c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0059.csv": {
+        "Expected": "0f090097f176a21e34c37a418dd79b7eee68013049d3d3ace7526087b6c4cdae",
+        "Actual": "0f090097f176a21e34c37a418dd79b7eee68013049d3d3ace7526087b6c4cdae",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0060.csv": {
+        "Expected": "8b322077e7c94a47f035d236907f1338214bbad5535b506938de8531edfd90ac",
+        "Actual": "8b322077e7c94a47f035d236907f1338214bbad5535b506938de8531edfd90ac",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0061.csv": {
+        "Expected": "da5f37746acad38783830c26acc13ccaeb9002812cfda655465ca803bbde90fb",
+        "Actual": "da5f37746acad38783830c26acc13ccaeb9002812cfda655465ca803bbde90fb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0062.csv": {
+        "Expected": "a6d1bcea2cd282b9d44300f7df2a7d9d6fd79d97b17440eaf2ed463ba769b1c8",
+        "Actual": "a6d1bcea2cd282b9d44300f7df2a7d9d6fd79d97b17440eaf2ed463ba769b1c8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0063.csv": {
+        "Expected": "42a2c7e8a28a7f0f21bc28f03456ec19c9259096633028851385e305c029d44e",
+        "Actual": "42a2c7e8a28a7f0f21bc28f03456ec19c9259096633028851385e305c029d44e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0064.csv": {
+        "Expected": "58cda13d673ebb8a732aaf886fc191762b5964bf2a5aa7b92d9c7b28ef17bae7",
+        "Actual": "58cda13d673ebb8a732aaf886fc191762b5964bf2a5aa7b92d9c7b28ef17bae7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0065.csv": {
+        "Expected": "91ec9583c01c8ddc163760d13acdddf775075187f809e481c19c6af0e4b741b2",
+        "Actual": "91ec9583c01c8ddc163760d13acdddf775075187f809e481c19c6af0e4b741b2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0066.csv": {
+        "Expected": "3544b00a9eb8363399ec138e0f801ade47ff89eaaeb5b44274939ea46ebd5e1c",
+        "Actual": "3544b00a9eb8363399ec138e0f801ade47ff89eaaeb5b44274939ea46ebd5e1c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0067.csv": {
+        "Expected": "ed0909639070fe571ca9b6509fb0f8b779bbc055e78b980e18f16285d20cd205",
+        "Actual": "ed0909639070fe571ca9b6509fb0f8b779bbc055e78b980e18f16285d20cd205",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0068.csv": {
+        "Expected": "e56920f0803fbd6a2e2bc08cd6e8255b59cd2bd9149b6a78174734146afc0805",
+        "Actual": "e56920f0803fbd6a2e2bc08cd6e8255b59cd2bd9149b6a78174734146afc0805",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0069.csv": {
+        "Expected": "32473d2baf5a0b533592497f28b4bee9065a8894c3adaa52105de147b32a8cfa",
+        "Actual": "32473d2baf5a0b533592497f28b4bee9065a8894c3adaa52105de147b32a8cfa",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0070.csv": {
+        "Expected": "cd1e0b44a67a83cc1b443707387c904a13e20a3ba8978cc8ee20be9f8ffb132f",
+        "Actual": "cd1e0b44a67a83cc1b443707387c904a13e20a3ba8978cc8ee20be9f8ffb132f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0071.csv": {
+        "Expected": "d4f29fb74914533b18b9c96e421b74308cecb398fc90eeca63ba334331b5de20",
+        "Actual": "d4f29fb74914533b18b9c96e421b74308cecb398fc90eeca63ba334331b5de20",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0072.csv": {
+        "Expected": "71cc8cced0bc2f08f94ffc9a391b4f94918897c3d418e8ada7f3b3e6ae50e33b",
+        "Actual": "71cc8cced0bc2f08f94ffc9a391b4f94918897c3d418e8ada7f3b3e6ae50e33b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0073.csv": {
+        "Expected": "b6e966e6376113fa12894e28a3f35035746c2e45c200a1d2271a418d7e807fb6",
+        "Actual": "b6e966e6376113fa12894e28a3f35035746c2e45c200a1d2271a418d7e807fb6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0074.csv": {
+        "Expected": "61ba87c43f11eab8ac583ca01e634043f7e878d224b2c707aa38c9552d87d10b",
+        "Actual": "61ba87c43f11eab8ac583ca01e634043f7e878d224b2c707aa38c9552d87d10b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0075.csv": {
+        "Expected": "6b40ae843b5a1694c3f6566da5ee75b3cea11b5b4fe5f66c29a8e71b06cc2c7d",
+        "Actual": "6b40ae843b5a1694c3f6566da5ee75b3cea11b5b4fe5f66c29a8e71b06cc2c7d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0076.csv": {
+        "Expected": "7a48c0d63d934ac84c700df9abaaffaa6ea1a1a3d31ae164fef598ad8b8b3f43",
+        "Actual": "7a48c0d63d934ac84c700df9abaaffaa6ea1a1a3d31ae164fef598ad8b8b3f43",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0077.csv": {
+        "Expected": "933099af6f3404c0268693ee00bfe41a2d2fb8bb49f9674252d8522a4e383d1e",
+        "Actual": "933099af6f3404c0268693ee00bfe41a2d2fb8bb49f9674252d8522a4e383d1e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0078.csv": {
+        "Expected": "a1def7fe1543e2d06a8284a1e3fdb2791fe8a16430e2535508313b51d735b363",
+        "Actual": "a1def7fe1543e2d06a8284a1e3fdb2791fe8a16430e2535508313b51d735b363",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0079.csv": {
+        "Expected": "e54fc1ef9164a1e110bb17dae92310c0929f759cc833e3565b6a5249dff95520",
+        "Actual": "e54fc1ef9164a1e110bb17dae92310c0929f759cc833e3565b6a5249dff95520",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0080.csv": {
+        "Expected": "701fa2fd7edce1653f3d407ab30a563aeda84ec54a8d62e233956a61c308c947",
+        "Actual": "701fa2fd7edce1653f3d407ab30a563aeda84ec54a8d62e233956a61c308c947",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0081.csv": {
+        "Expected": "1556fe6120b3acef67b67050d527e3261de1c82ea30f22837ecd03125e04a509",
+        "Actual": "1556fe6120b3acef67b67050d527e3261de1c82ea30f22837ecd03125e04a509",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0082.csv": {
+        "Expected": "4fc8e4c7f5bec8e37c9bb1d61870b5b35b927b2e9a2b6264553107b55c5280e6",
+        "Actual": "4fc8e4c7f5bec8e37c9bb1d61870b5b35b927b2e9a2b6264553107b55c5280e6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0083.csv": {
+        "Expected": "3176f7c837aea4de877d29c43cc97d24e573414d6f36f687209aee0fddfe04f3",
+        "Actual": "3176f7c837aea4de877d29c43cc97d24e573414d6f36f687209aee0fddfe04f3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0084.csv": {
+        "Expected": "fb79e43c8c99bfe82af6f991fc20f5dd9c65baff1c8acc40301624db1b261916",
+        "Actual": "fb79e43c8c99bfe82af6f991fc20f5dd9c65baff1c8acc40301624db1b261916",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0085.csv": {
+        "Expected": "418231650f164508b63eeb20b7e38b8151d9bc8d1846353ef65724545162b230",
+        "Actual": "418231650f164508b63eeb20b7e38b8151d9bc8d1846353ef65724545162b230",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0086.csv": {
+        "Expected": "cd28da50c15e277d8c3bbcbb0d2a39ec33f6fc2bd5644a3383b735b06185543a",
+        "Actual": "cd28da50c15e277d8c3bbcbb0d2a39ec33f6fc2bd5644a3383b735b06185543a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0087.csv": {
+        "Expected": "0276d8dfbca064a80cb643b7908bfadf454611f90c0f1656bf7b648ec011a18c",
+        "Actual": "0276d8dfbca064a80cb643b7908bfadf454611f90c0f1656bf7b648ec011a18c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0088.csv": {
+        "Expected": "2d7c629a9c8405589c733ac400674ac2799e79eccb3d81c024f5ee6a6a012bd0",
+        "Actual": "2d7c629a9c8405589c733ac400674ac2799e79eccb3d81c024f5ee6a6a012bd0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0089.csv": {
+        "Expected": "3b824bcfe0c255eea057ae2fe4ac85ef86c40ca63b02b408924d737833d9801b",
+        "Actual": "3b824bcfe0c255eea057ae2fe4ac85ef86c40ca63b02b408924d737833d9801b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0090.csv": {
+        "Expected": "5263a0f6940d6d12bf1b034260ed368b4c0d75b2923588d8c3d112ea3d093b8e",
+        "Actual": "5263a0f6940d6d12bf1b034260ed368b4c0d75b2923588d8c3d112ea3d093b8e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0091.csv": {
+        "Expected": "5963e608586f267604cee5b87d02e92fb5225a08c2d999118cc1740f63481e1f",
+        "Actual": "5963e608586f267604cee5b87d02e92fb5225a08c2d999118cc1740f63481e1f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0092.csv": {
+        "Expected": "10afb03b572d0c5757f317aad010b6e3ea1ba9c52353d573f712bd964cd47b41",
+        "Actual": "10afb03b572d0c5757f317aad010b6e3ea1ba9c52353d573f712bd964cd47b41",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0093.csv": {
+        "Expected": "a0a0a66e23dd04c10d8bcf60880a056e831830c95f8cdcd3780fff7b5a629204",
+        "Actual": "a0a0a66e23dd04c10d8bcf60880a056e831830c95f8cdcd3780fff7b5a629204",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0094.csv": {
+        "Expected": "b742e32be3ba8c58ed5380fe01d288d8ed12555dee56ba2f698e774e88a27c1f",
+        "Actual": "b742e32be3ba8c58ed5380fe01d288d8ed12555dee56ba2f698e774e88a27c1f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0095.csv": {
+        "Expected": "8653af3b5afe476213a82a0add61d124488fa910489307a944880c7e7acf537d",
+        "Actual": "8653af3b5afe476213a82a0add61d124488fa910489307a944880c7e7acf537d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0096.csv": {
+        "Expected": "abd60cf456d47d0acd4f4a447c9b60c5ef3fb75bdca8daee829c185518d3ab91",
+        "Actual": "abd60cf456d47d0acd4f4a447c9b60c5ef3fb75bdca8daee829c185518d3ab91",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0097.csv": {
+        "Expected": "8822d82f6bc9bb65105a20febbe2ac5ba009a80fc6e55de2e6030e5419506d21",
+        "Actual": "8822d82f6bc9bb65105a20febbe2ac5ba009a80fc6e55de2e6030e5419506d21",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0098.csv": {
+        "Expected": "ba8006747aae9953ea6793ed7d01593acc5176087343f28b9aceb92a204a80a3",
+        "Actual": "ba8006747aae9953ea6793ed7d01593acc5176087343f28b9aceb92a204a80a3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0099.csv": {
+        "Expected": "d5ed1cd37d4cc1c11c73e7f7b16825f973b7624686bc31d0a72dfa76ad722801",
+        "Actual": "d5ed1cd37d4cc1c11c73e7f7b16825f973b7624686bc31d0a72dfa76ad722801",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0100.csv": {
+        "Expected": "f8c26c6a560abbcfba61abeed059c8003c74b600f24bb5f7c1380fe1952e0e5f",
+        "Actual": "f8c26c6a560abbcfba61abeed059c8003c74b600f24bb5f7c1380fe1952e0e5f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0101.csv": {
+        "Expected": "294f70f453002042aff66ae00e4f4ba5a88e6d3ad69a2c9640b8660699928260",
+        "Actual": "294f70f453002042aff66ae00e4f4ba5a88e6d3ad69a2c9640b8660699928260",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0102.csv": {
+        "Expected": "d9c7e597a7d5818b6c67db6b9ea547772fb4e06208479af48df4fa94382a0dab",
+        "Actual": "d9c7e597a7d5818b6c67db6b9ea547772fb4e06208479af48df4fa94382a0dab",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0103.csv": {
+        "Expected": "97563864a84d93064654e6f73180e4bd2ff7af73f8c751c8c729aa7f73d852a6",
+        "Actual": "97563864a84d93064654e6f73180e4bd2ff7af73f8c751c8c729aa7f73d852a6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0104.csv": {
+        "Expected": "a64a9dc00202b1d45f9eb7e1ccedc6a397e1dfc52ead76838b6f83aef1854f24",
+        "Actual": "a64a9dc00202b1d45f9eb7e1ccedc6a397e1dfc52ead76838b6f83aef1854f24",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0105.csv": {
+        "Expected": "955e4630e096627c52f62a1148dd7a75ad1e992d0c04a82236148f60ce66e18c",
+        "Actual": "955e4630e096627c52f62a1148dd7a75ad1e992d0c04a82236148f60ce66e18c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0106.csv": {
+        "Expected": "90f1a4a786a1dcd7e4cd6273d9a2aaf8eb9d69572ac237add7341f9de58c61c2",
+        "Actual": "90f1a4a786a1dcd7e4cd6273d9a2aaf8eb9d69572ac237add7341f9de58c61c2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0107.csv": {
+        "Expected": "c4feb4395907e09b10af9adb9757f73ea43417bdea17b787976318d489433f5a",
+        "Actual": "c4feb4395907e09b10af9adb9757f73ea43417bdea17b787976318d489433f5a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0108.csv": {
+        "Expected": "f85751c022ebb467cedd980337b81f410ab617d0df3dbd1d8e19a0b1582835d3",
+        "Actual": "f85751c022ebb467cedd980337b81f410ab617d0df3dbd1d8e19a0b1582835d3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0109.csv": {
+        "Expected": "7c768b5d42f384f593f18d9339c995c55839096d329102f817be0f8a57fc319d",
+        "Actual": "7c768b5d42f384f593f18d9339c995c55839096d329102f817be0f8a57fc319d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0110.csv": {
+        "Expected": "33bbe0b59ad1853eb3a3ed54d0bac97b829a62e9f599dd8d2c42b3b3b0879374",
+        "Actual": "33bbe0b59ad1853eb3a3ed54d0bac97b829a62e9f599dd8d2c42b3b3b0879374",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0111.csv": {
+        "Expected": "6000f6c3c3fc09818bf1a3436e9084beae5ab067ac393617f57e8c71e0c2cc8d",
+        "Actual": "6000f6c3c3fc09818bf1a3436e9084beae5ab067ac393617f57e8c71e0c2cc8d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0112.csv": {
+        "Expected": "a0bc33a4ee5460d405342513fd5d291b93221416540afa7d9e3b2266235db571",
+        "Actual": "a0bc33a4ee5460d405342513fd5d291b93221416540afa7d9e3b2266235db571",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0113.csv": {
+        "Expected": "797adbce8b469e04a8e2dd9d1f0813eedd954409408a5f6b25f25c6dadc10830",
+        "Actual": "797adbce8b469e04a8e2dd9d1f0813eedd954409408a5f6b25f25c6dadc10830",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0114.csv": {
+        "Expected": "ece35fa096a2468d0094551cc68c35fd924104dfda541cf05115ae3e4edea6fb",
+        "Actual": "ece35fa096a2468d0094551cc68c35fd924104dfda541cf05115ae3e4edea6fb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0115.csv": {
+        "Expected": "e6562470cf7254d2351c2ed7d19e218bd402f5bc05dc05fadbe247fde47ded4f",
+        "Actual": "e6562470cf7254d2351c2ed7d19e218bd402f5bc05dc05fadbe247fde47ded4f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0116.csv": {
+        "Expected": "83ccc661d3a53375242179fa24e7fa7f4c840133c404f65158216fea0e3b3e17",
+        "Actual": "83ccc661d3a53375242179fa24e7fa7f4c840133c404f65158216fea0e3b3e17",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0117.csv": {
+        "Expected": "2004282e4708e522c3131f07e73a667f9f5616b8dd2026e73102506955a57e40",
+        "Actual": "2004282e4708e522c3131f07e73a667f9f5616b8dd2026e73102506955a57e40",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0118.csv": {
+        "Expected": "7fdb0d1a1b9ba6a341f0bfe9a2f1a3fccab6681b19369f393afd65060f472f7e",
+        "Actual": "7fdb0d1a1b9ba6a341f0bfe9a2f1a3fccab6681b19369f393afd65060f472f7e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0119.csv": {
+        "Expected": "3864a264c315b2b46d54dc5d632234f28ba23c9e1dfe01dbda6b0e14436a5cda",
+        "Actual": "3864a264c315b2b46d54dc5d632234f28ba23c9e1dfe01dbda6b0e14436a5cda",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0120.csv": {
+        "Expected": "f956f330f9cc1ecc78f97ff422a9cf4825d6f38b7856ceb62da725e2e72ad612",
+        "Actual": "f956f330f9cc1ecc78f97ff422a9cf4825d6f38b7856ceb62da725e2e72ad612",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0121.csv": {
+        "Expected": "9cf46dc07b5f7a9c6b73b4b73083a67c936cefdb411519a46744d691129dc66e",
+        "Actual": "9cf46dc07b5f7a9c6b73b4b73083a67c936cefdb411519a46744d691129dc66e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0122.csv": {
+        "Expected": "23b8724b76d89f6b21a0a63cc2d1773ee76f07557fd1a6057bb545f5f5f50dac",
+        "Actual": "23b8724b76d89f6b21a0a63cc2d1773ee76f07557fd1a6057bb545f5f5f50dac",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0123.csv": {
+        "Expected": "d665857cabde009340995813f6b300266e2ab35dafaa48386285bf954e759b50",
+        "Actual": "d665857cabde009340995813f6b300266e2ab35dafaa48386285bf954e759b50",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0124.csv": {
+        "Expected": "0899df86c23d444036c96e529f4825daef1a931c129fedc566b5f9d873d99873",
+        "Actual": "0899df86c23d444036c96e529f4825daef1a931c129fedc566b5f9d873d99873",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0125.csv": {
+        "Expected": "3fc4e9054b19a4770926c25deb35b54ab866fe56d371dbff7cd3292870618b29",
+        "Actual": "3fc4e9054b19a4770926c25deb35b54ab866fe56d371dbff7cd3292870618b29",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0126.csv": {
+        "Expected": "8bc79541452f6cd59f0e509122c364ba14f2243acb8258b3c407aa67c1ff7a57",
+        "Actual": "8bc79541452f6cd59f0e509122c364ba14f2243acb8258b3c407aa67c1ff7a57",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0127.csv": {
+        "Expected": "c6fc0be23f65400aa57d36d27dd818eb7e4f02ea30224b2bf7a288b47cfe0e2e",
+        "Actual": "c6fc0be23f65400aa57d36d27dd818eb7e4f02ea30224b2bf7a288b47cfe0e2e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0128.csv": {
+        "Expected": "fc1f411b50eb4e5194fcbbf01104109d4da9839979acd95bddbd275ce3645d44",
+        "Actual": "fc1f411b50eb4e5194fcbbf01104109d4da9839979acd95bddbd275ce3645d44",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0129.csv": {
+        "Expected": "a4ca7bdeb505f2f9ec204f6cad094da1a28dc217a94eb4d6478daa381e65e01f",
+        "Actual": "a4ca7bdeb505f2f9ec204f6cad094da1a28dc217a94eb4d6478daa381e65e01f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0130.csv": {
+        "Expected": "16b530dad394027f8d779568bb2f5ab41c1105146bdb4b82924eabf66fea5a73",
+        "Actual": "16b530dad394027f8d779568bb2f5ab41c1105146bdb4b82924eabf66fea5a73",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0131.csv": {
+        "Expected": "18ededefc1a62d2377d5d4fa2964f11a63ff458d6d4b0a63fbb15f5aceb57e5f",
+        "Actual": "18ededefc1a62d2377d5d4fa2964f11a63ff458d6d4b0a63fbb15f5aceb57e5f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0132.csv": {
+        "Expected": "44861de217b2b6a524be5c8209cacdbdc52ac50a5738d0bc9d0dd472009a2c33",
+        "Actual": "44861de217b2b6a524be5c8209cacdbdc52ac50a5738d0bc9d0dd472009a2c33",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0133.csv": {
+        "Expected": "87d94a1e50ebe22911cbff76ae6175025a75d8cede73235e3f5f2af0d658896c",
+        "Actual": "87d94a1e50ebe22911cbff76ae6175025a75d8cede73235e3f5f2af0d658896c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0134.csv": {
+        "Expected": "f9a34d498b72159450facfcc3c1775bb1cd0416d71f23aecd3a42dd56762cc3c",
+        "Actual": "f9a34d498b72159450facfcc3c1775bb1cd0416d71f23aecd3a42dd56762cc3c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0135.csv": {
+        "Expected": "178ace018488860c20be81a502856d4c3572364c1e7a8662e18bfd5633466f83",
+        "Actual": "178ace018488860c20be81a502856d4c3572364c1e7a8662e18bfd5633466f83",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0136.csv": {
+        "Expected": "1b178cb7e270e8dea46bb187edfc1986e56a7b8c4b5d79fcfea714543905c4c9",
+        "Actual": "1b178cb7e270e8dea46bb187edfc1986e56a7b8c4b5d79fcfea714543905c4c9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0137.csv": {
+        "Expected": "00c3d3d6d692f2b3472fa0c56cd8c47c374f8667b0f47d982462e0ac0093ff7e",
+        "Actual": "00c3d3d6d692f2b3472fa0c56cd8c47c374f8667b0f47d982462e0ac0093ff7e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0138.csv": {
+        "Expected": "822053439e5591a809442f4d7d1d6d3196dd6feaf690c3dd4044a8422d75fa34",
+        "Actual": "822053439e5591a809442f4d7d1d6d3196dd6feaf690c3dd4044a8422d75fa34",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0139.csv": {
+        "Expected": "8f80ae796ce685660b890a0019be16b1fb4bcda193155f7466f837cfd47094ec",
+        "Actual": "8f80ae796ce685660b890a0019be16b1fb4bcda193155f7466f837cfd47094ec",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0140.csv": {
+        "Expected": "0fc1c08a54435478087a99055d6933bc660524122ba335c8e281c8b672857bdd",
+        "Actual": "0fc1c08a54435478087a99055d6933bc660524122ba335c8e281c8b672857bdd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0141.csv": {
+        "Expected": "2f1558079bc5357d747f2887806bdc0efa7eca5242d92c456581889a08c7c102",
+        "Actual": "2f1558079bc5357d747f2887806bdc0efa7eca5242d92c456581889a08c7c102",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/fab-spatial-3-edge-2c54db92028f/spatial-3-edge-2c54db92028f/inputs/traces/basis-0142.csv": {
+        "Expected": "bb7824c95ac3ca8f68c2cba0f962986cadf8830e2587019a154a35edf5745a2c",
+        "Actual": "bb7824c95ac3ca8f68c2cba0f962986cadf8830e2587019a154a35edf5745a2c",
+        "OK": true
+      }
+    },
+    "UTC": "2026-10-05T00:28:09Z",
+    "StageBinaries": {}
+  },
+  "EndUTC": "2026-10-05T01:08:29Z",
+  "TotalSeconds": 2420.460691152,
+  "StagePeakUsedBytesSampled": {
+    "spatial-3-edge-2c54db92028f-p4-worker": 117262495744,
+    "spatial-3-edge-2c54db92028f-p4-reducer": 124548206592,
+    "spatial-3-edge-2c54db92028f-p5-control-worker": 164642770944,
+    "spatial-3-edge-2c54db92028f-p5-control-reducer": 121958187008,
+    "spatial-3-edge-2c54db92028f-p3-control-worker": 97906806784,
+    "spatial-3-edge-2c54db92028f-p3-control-reducer": 64859275264,
+    "spatial-3-edge-2c54db92028f-p4-local-edge": 203366031360
+  }
+}

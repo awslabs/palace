@@ -24,8 +24,9 @@ plans without contacting the cluster). See "Two commands" in
 the interpolation map P, Q_reused = P^T Q_D P for the fabricated / thin domain + surface and the
 fabricated SHELLED surface matrix, gates T1-T5 / T2e / knots); the predictor (`nearkey_predictor.py`,
 two regimes, r_T = -a_T W, bound (1 + rho) a |W| + b S + phi + 2 T2e, MA on MA_sharp) and the policy
-decide: DEFAULT (bound <= 0.5 % SA / MS, <= 1.0 % MA_sharp; active only once the rule file carries a
-DefaultActivation record = validation pair 5) or FALLBACK (the exact coupon unbuildable: STOP record +
+decide: DEFAULT (bound <= 0.5 % SA / MS, <= 1.0 % MA_sharp; ACTIVE since decision 459: the rule file carries the
+validation-pair-5 DefaultActivation record, shipped beside it as `nearkey-default-activation-pair5.json` and
+sha-pinned; an unreadable / mismatching record fails closed) or FALLBACK (the exact coupon unbuildable: STOP record +
 approval, bound <= 3.5 %); otherwise the feature stays Missing. A reused model (status
 `ReusedResponse`, records ReusedFrom / NearKey / PredictedReuseError / TransplantTests) is written
 under `ROOT/device/reused/`, never registered or built, and added to a library by

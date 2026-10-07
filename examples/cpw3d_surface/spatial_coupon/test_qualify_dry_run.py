@@ -198,7 +198,9 @@ class JobSplitTest(unittest.TestCase):
         # The recorded decision-61b split ran on the physics-11 model (PREVIOUS_COST_MODEL since
         # the decision-64a refit): reproduced with it; the refit model's own 7f03 outcome below.
         cls.model = estimate_stages.load_cost_model(estimate_stages.PREVIOUS_COST_MODEL)
-        cls.model_refit = estimate_stages.load_cost_model()
+        # The decision-64a device refit (the stage-2 plans of record); the decision-457 (2)
+        # measured refit is the default since (test_refit_cost_model.MeasuredRefitTest).
+        cls.model_refit = estimate_stages.load_cost_model(estimate_stages.DEVICE_COST_MODEL)
         cls.profile = json.loads((HERE / "qualify" / "cluster-profile.json").read_text())
         cls.indices = list(range(1, 226))
         cls.layout = qualify_library.stage_layout("c", [4], [3, 5], 225, 8)
@@ -237,7 +239,7 @@ class JobSplitTest(unittest.TestCase):
                                self.estimate["JobSecondsEstimateWithPreflightAndMargin"]["2.0"], places=6)
 
     def test_refit_model_keeps_7f03_fail_closed_as_one_job_and_reproduces_the_recorded_speed_split(self):
-        # The decision-64a refit model (qualify/cost-model.json, from the 2026-09-22 run): 7f03
+        # The decision-64a refit model (qualify/cost-model-device-20260922.json, from the 2026-09-22 run): 7f03
         # still does not fit one 6 h job at 2.0x PCG with preflight and margin, and the speed
         # policy at --max-jobs 6 gives the split the run recorded (PBS 47214-47300: six
         # worker jobs, the controls + local-edge alone in job 1, blocks of 45 sources).

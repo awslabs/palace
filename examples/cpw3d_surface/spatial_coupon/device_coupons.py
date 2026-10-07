@@ -41,7 +41,8 @@ structure keys of RuleVersion v1, every item of DESIGN 1.2, the transplant gates
 bound inside the policy) gives a REUSED model under output/reused/<case>-reused/ (status
 ReusedResponse; never registered / built here; `nearkey_reuse.py assemble` adds it to a
 library) and the coupon is recorded reused; a refusal is recorded and the coupon follows the
-normal path. `default` needs the rule file's DefaultActivation record (validation pair 5);
+normal path. `default` needs the rule file's DefaultActivation record (validation pair 5, shipped
+beside the rule file since decision 459; fail closed when unreadable);
 `fallback` needs --nearkey-fallback-approval and a --nearkey-fallback-stop-record
 HASH_PREFIX=PATH (the exact key's registration / build STOP record) per requirement it may
 reuse; every other requirement follows the normal path.

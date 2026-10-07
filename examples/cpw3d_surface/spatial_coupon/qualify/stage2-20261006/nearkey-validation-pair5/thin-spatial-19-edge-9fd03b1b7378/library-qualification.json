@@ -1,0 +1,3239 @@
+{
+  "Version": 1,
+  "Command": "coupon-library qualify",
+  "Root": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378",
+  "ToolCommit": "2c3ff05",
+  "BuildRecord": {
+    "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/registration/build/library-build.json",
+    "SHA256": "67ece6991693bedfaa452752d2db020d54aa16239010788ab5da451c0ab64e87",
+    "Commit": "2c3ff05"
+  },
+  "Gates": {
+    "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/qualification-gates.json",
+    "SHA256": "3c350fb41174855322c7c69519bc246314367653ffa42827db62af8cd110b055"
+  },
+  "CostModel": {
+    "Path": "/data/home/simlap/bedrock-tests/palace2-s2d/examples/cpw3d_surface/spatial_coupon/qualify/cost-model.json",
+    "SHA256": "f695da1b0aad66322a2c081e3ca0e3e46d94649b6741b47cab2e1a10996a91a0"
+  },
+  "ClusterProfile": {
+    "Path": "/data/home/simlap/bedrock-tests/palace2-s2d/examples/cpw3d_surface/spatial_coupon/qualify/cluster-profile.json",
+    "SHA256": "1f6fa1d03903f5ac766626414707c4a74fe8ee483fbcfae0b3f87b8f031bfc0f"
+  },
+  "Cases": [
+    {
+      "Case": "spatial-19-edge-9fd03b1b7378-thin",
+      "Status": "failed",
+      "StoppedBy": null,
+      "BuildStatus": "built",
+      "BuildPassed": true,
+      "Mesh": {
+        "Local": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/registration/build/spatial-19-edge-9fd03b1b7378-thin/identity.msh",
+        "SHA256": "042f08d78a297f15c646a61ddc883a7e2c8459ad250826bc08cd5b3c85ea23c6",
+        "Verified": true
+      },
+      "Reference": {
+        "Rule": "--reference none: the coupon runs on its own inputs; without reference matrices the verdict is PendingQualification (every p-sequence control passed) or Failed, never Passed"
+      },
+      "Sources": {
+        "Count": 213,
+        "Indices": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149,
+          150,
+          151,
+          152,
+          153,
+          154,
+          155,
+          156,
+          157,
+          158,
+          159,
+          160,
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          174,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          183,
+          184,
+          185,
+          186,
+          187,
+          188,
+          189,
+          190,
+          191,
+          192,
+          193,
+          194,
+          195,
+          196,
+          197,
+          198,
+          199,
+          200,
+          201,
+          202,
+          203,
+          204,
+          205,
+          206,
+          207,
+          208,
+          209,
+          210,
+          211,
+          212,
+          213
+        ],
+        "ZeroTrace": [],
+        "Free": 212,
+        "Terminals": [
+          213
+        ],
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "junction columns on the bottom/top faces",
+          "3": "wide hats, bottom/top faces",
+          "4": "wide hats, bottom/top faces",
+          "5": "wide hats, bottom/top faces",
+          "6": "wide hats, bottom/top faces",
+          "7": "wide hats, bottom/top faces",
+          "8": "wide hats, bottom/top faces",
+          "9": "wide hats, bottom/top faces",
+          "10": "box 3D corners (bottom/top faces)",
+          "11": "wide hats, bottom/top faces",
+          "12": "junction columns on the bottom/top faces",
+          "13": "wide hats, bottom/top faces",
+          "14": "wide hats, bottom/top faces",
+          "15": "junction columns on the bottom/top faces",
+          "16": "junction columns on the bottom/top faces",
+          "17": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "18": "junction columns on the bottom/top faces",
+          "19": "box 3D corners (bottom/top faces)",
+          "20": "wide hats, bottom/top faces",
+          "21": "wide hats, bottom/top faces",
+          "22": "wide hats, bottom/top faces",
+          "23": "wide hats, bottom/top faces",
+          "24": "wide hats, bottom/top faces",
+          "25": "box 3D corners (bottom/top faces)",
+          "26": "wide hats, bottom/top faces",
+          "27": "junction columns on the bottom/top faces",
+          "28": "wide hats, bottom/top faces",
+          "29": "wide hats, bottom/top faces",
+          "30": "wide hats, bottom/top faces",
+          "31": "wide hats, substrate/trench rings",
+          "32": "junction rings (metal edge meets cut)",
+          "33": "wide hats, substrate/trench rings",
+          "34": "wide hats, substrate/trench rings",
+          "35": "wide hats, substrate/trench rings",
+          "36": "wide hats, substrate/trench rings",
+          "37": "wide hats, substrate/trench rings",
+          "38": "wide hats, substrate/trench rings",
+          "39": "wide hats, substrate/trench rings",
+          "40": "wide hats, substrate/trench rings",
+          "41": "wide hats, substrate/trench rings",
+          "42": "junction rings (metal edge meets cut)",
+          "43": "wide hats, substrate/trench rings",
+          "44": "wide hats, substrate/trench rings",
+          "45": "junction rings (metal edge meets cut)",
+          "46": "junction rings (metal edge meets cut)",
+          "47": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "48": "junction rings (metal edge meets cut)",
+          "49": "wide hats, substrate/trench rings",
+          "50": "wide hats, substrate/trench rings",
+          "51": "wide hats, substrate/trench rings",
+          "52": "wide hats, substrate/trench rings",
+          "53": "wide hats, substrate/trench rings",
+          "54": "wide hats, substrate/trench rings",
+          "55": "wide hats, substrate/trench rings",
+          "56": "wide hats, substrate/trench rings",
+          "57": "junction rings (metal edge meets cut)",
+          "58": "wide hats, substrate/trench rings",
+          "59": "wide hats, substrate/trench rings",
+          "60": "wide hats, substrate/trench rings",
+          "61": "wide hats, substrate/trench rings",
+          "62": "wide hats, substrate/trench rings",
+          "63": "wide hats, substrate/trench rings",
+          "64": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "65": "wide hats, substrate/trench rings",
+          "66": "wide hats, substrate/trench rings",
+          "67": "wide hats, substrate/trench rings",
+          "68": "wide hats, metal-top ring",
+          "69": "wide hats, metal-top ring",
+          "70": "wide hats, metal-top ring",
+          "71": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "72": "wide hats, metal-top ring",
+          "73": "wide hats, metal-top ring",
+          "74": "wide hats, metal-top ring",
+          "75": "box 3D corners (bottom/top faces)",
+          "76": "junction columns on the bottom/top faces",
+          "77": "wide hats, bottom/top faces",
+          "78": "wide hats, bottom/top faces",
+          "79": "wide hats, bottom/top faces",
+          "80": "wide hats, bottom/top faces",
+          "81": "wide hats, bottom/top faces",
+          "82": "wide hats, bottom/top faces",
+          "83": "wide hats, bottom/top faces",
+          "84": "box 3D corners (bottom/top faces)",
+          "85": "wide hats, bottom/top faces",
+          "86": "junction columns on the bottom/top faces",
+          "87": "wide hats, bottom/top faces",
+          "88": "wide hats, bottom/top faces",
+          "89": "junction columns on the bottom/top faces",
+          "90": "junction columns on the bottom/top faces",
+          "91": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "92": "junction columns on the bottom/top faces",
+          "93": "box 3D corners (bottom/top faces)",
+          "94": "wide hats, bottom/top faces",
+          "95": "wide hats, bottom/top faces",
+          "96": "wide hats, bottom/top faces",
+          "97": "wide hats, bottom/top faces",
+          "98": "wide hats, bottom/top faces",
+          "99": "box 3D corners (bottom/top faces)",
+          "100": "wide hats, bottom/top faces",
+          "101": "junction columns on the bottom/top faces",
+          "102": "wide hats, bottom/top faces",
+          "103": "wide hats, bottom/top faces",
+          "104": "wide hats, bottom/top faces",
+          "105": "wide hats, bottom/top faces",
+          "106": "wide hats, bottom/top faces",
+          "107": "wide hats, bottom/top faces",
+          "108": "wide hats, bottom/top faces",
+          "109": "wide hats, bottom/top faces",
+          "110": "wide hats, bottom/top faces",
+          "111": "wide hats, bottom/top faces",
+          "112": "wide hats, bottom/top faces",
+          "113": "wide hats, bottom/top faces",
+          "114": "wide hats, bottom/top faces",
+          "115": "wide hats, bottom/top faces",
+          "116": "wide hats, bottom/top faces",
+          "117": "wide hats, bottom/top faces",
+          "118": "wide hats, bottom/top faces",
+          "119": "wide hats, bottom/top faces",
+          "120": "wide hats, bottom/top faces",
+          "121": "wide hats, bottom/top faces",
+          "122": "wide hats, bottom/top faces",
+          "123": "wide hats, bottom/top faces",
+          "124": "wide hats, bottom/top faces",
+          "125": "wide hats, bottom/top faces",
+          "126": "wide hats, bottom/top faces",
+          "127": "wide hats, bottom/top faces",
+          "128": "wide hats, bottom/top faces",
+          "129": "wide hats, bottom/top faces",
+          "130": "wide hats, bottom/top faces",
+          "131": "wide hats, bottom/top faces",
+          "132": "wide hats, bottom/top faces",
+          "133": "wide hats, bottom/top faces",
+          "134": "wide hats, bottom/top faces",
+          "135": "wide hats, bottom/top faces",
+          "136": "wide hats, bottom/top faces",
+          "137": "wide hats, bottom/top faces",
+          "138": "wide hats, bottom/top faces",
+          "139": "wide hats, bottom/top faces",
+          "140": "wide hats, bottom/top faces",
+          "141": "wide hats, bottom/top faces",
+          "142": "wide hats, bottom/top faces",
+          "143": "wide hats, bottom/top faces",
+          "144": "wide hats, bottom/top faces",
+          "145": "wide hats, bottom/top faces",
+          "146": "wide hats, bottom/top faces",
+          "147": "wide hats, bottom/top faces",
+          "148": "wide hats, bottom/top faces",
+          "149": "wide hats, bottom/top faces",
+          "150": "wide hats, bottom/top faces",
+          "151": "wide hats, bottom/top faces",
+          "152": "wide hats, bottom/top faces",
+          "153": "wide hats, bottom/top faces",
+          "154": "wide hats, bottom/top faces",
+          "155": "wide hats, bottom/top faces",
+          "156": "wide hats, bottom/top faces",
+          "157": "wide hats, bottom/top faces",
+          "158": "wide hats, bottom/top faces",
+          "159": "wide hats, bottom/top faces",
+          "160": "wide hats, bottom/top faces",
+          "161": "wide hats, bottom/top faces",
+          "162": "wide hats, bottom/top faces",
+          "163": "wide hats, bottom/top faces",
+          "164": "wide hats, bottom/top faces",
+          "165": "wide hats, bottom/top faces",
+          "166": "wide hats, bottom/top faces",
+          "167": "wide hats, bottom/top faces",
+          "168": "wide hats, bottom/top faces",
+          "169": "wide hats, bottom/top faces",
+          "170": "wide hats, bottom/top faces",
+          "171": "wide hats, bottom/top faces",
+          "172": "wide hats, bottom/top faces",
+          "173": "wide hats, bottom/top faces",
+          "174": "wide hats, bottom/top faces",
+          "175": "wide hats, bottom/top faces",
+          "176": "wide hats, bottom/top faces",
+          "177": "wide hats, bottom/top faces",
+          "178": "wide hats, bottom/top faces",
+          "179": "wide hats, bottom/top faces",
+          "180": "wide hats, bottom/top faces",
+          "181": "wide hats, bottom/top faces",
+          "182": "wide hats, bottom/top faces",
+          "183": "wide hats, bottom/top faces",
+          "184": "wide hats, bottom/top faces",
+          "185": "wide hats, bottom/top faces",
+          "186": "wide hats, bottom/top faces",
+          "187": "wide hats, bottom/top faces",
+          "188": "wide hats, bottom/top faces",
+          "189": "wide hats, bottom/top faces",
+          "190": "wide hats, bottom/top faces",
+          "191": "wide hats, bottom/top faces",
+          "192": "wide hats, bottom/top faces",
+          "193": "wide hats, bottom/top faces",
+          "194": "wide hats, bottom/top faces",
+          "195": "wide hats, bottom/top faces",
+          "196": "wide hats, bottom/top faces",
+          "197": "wide hats, bottom/top faces",
+          "198": "wide hats, bottom/top faces",
+          "199": "wide hats, bottom/top faces",
+          "200": "wide hats, bottom/top faces",
+          "201": "wide hats, bottom/top faces",
+          "202": "wide hats, bottom/top faces",
+          "203": "wide hats, bottom/top faces",
+          "204": "wide hats, bottom/top faces",
+          "205": "wide hats, bottom/top faces",
+          "206": "wide hats, bottom/top faces",
+          "207": "wide hats, bottom/top faces",
+          "208": "wide hats, bottom/top faces",
+          "209": "wide hats, bottom/top faces",
+          "210": "wide hats, bottom/top faces",
+          "211": "wide hats, bottom/top faces",
+          "212": "wide hats, bottom/top faces",
+          "213": "conductor terminal (TerminalAttributes source)"
+        },
+        "Geometry": {
+          "box": [
+            -11.5472367,
+            13.1277631,
+            -12.6033897,
+            12.971609700000009
+          ],
+          "z_levels": [
+            "bottom face z=-1.95",
+            "substrate/trench level z=-0.05",
+            "substrate/trench level z=0",
+            "metal-top level z=0.1",
+            "top face z=2"
+          ],
+          "per_z_level": {
+            "bottom face z=-1.95": 84,
+            "substrate/trench level z=-0.05": 30,
+            "substrate/trench level z=0": 7,
+            "metal-top level z=0.1": 7,
+            "top face z=2": 84
+          },
+          "layers": [
+            [
+              0.0,
+              1
+            ]
+          ]
+        }
+      },
+      "Controls": {
+        "Indices": [
+          1,
+          2,
+          3,
+          4,
+          17,
+          31,
+          32,
+          68
+        ],
+        "Rule": "8 by class (classify_sources.choose_controls: one per class in priority order, cycling)",
+        "Classes": {
+          "1": "box 3D corners (bottom/top faces)",
+          "2": "junction columns on the bottom/top faces",
+          "3": "wide hats, bottom/top faces",
+          "4": "wide hats, bottom/top faces",
+          "17": "near-junction hats (0.1 <= w, junction < 0.6 um)",
+          "31": "wide hats, substrate/trench rings",
+          "32": "junction rings (metal edge meets cut)",
+          "68": "wide hats, metal-top ring"
+        }
+      },
+      "StagePrefix": "spatial-19-edge-9fd03b1b7378-thin",
+      "Stages": [
+        {
+          "Prefix": "spatial-19-edge-9fd03b1b7378-thin-p4",
+          "Kind": "response",
+          "Order": 4,
+          "Sources": 213,
+          "EstimateKey": "p4-213",
+          "Role": "main"
+        },
+        {
+          "Prefix": "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge",
+          "Kind": "local-edge",
+          "Order": 4,
+          "Sources": 8,
+          "EstimateKey": "local-edge-p4-8",
+          "Role": "local-edge"
+        }
+      ],
+      "Estimate": {
+        "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/preflight/stage-estimate.json",
+        "FitsOneJob": false,
+        "Decision": "does NOT fit one job of 6 h at 2.0x PCG (381 min; largest Palace peak 556 GB of 1485 GiB): fail closed, not submitted",
+        "H1ByOrder": {
+          "p1": 837155,
+          "p2": 6636979,
+          "p3": 22324194,
+          "p4": 52823521,
+          "p5": 103059681
+        },
+        "JobSecondsEstimateByPCGFactor": {
+          "1.0": 9379.483416459363,
+          "1.5": 13054.027386710846,
+          "2.0": 16728.57135696233
+        },
+        "JobSecondsEstimateWithPreflightAndMargin": {
+          "1.0": 12962.30261222014,
+          "1.5": 17922.936972059644,
+          "2.0": 22883.571331899147
+        },
+        "MaxPalacePeakGBEstimate": 555.6122028226372,
+        "ReducerBlockSize": 48,
+        "MainStageNodeHoursEstimate": {
+          "1.0": 2.4034752006773163,
+          "1.5": 3.3806912029140097,
+          "2.0": 4.357907205150702
+        }
+      },
+      "Plan": {
+        "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs",
+        "Pins": 215,
+        "StageNames": [
+          "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block1",
+          "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge",
+          "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block2",
+          "spatial-19-edge-9fd03b1b7378-thin-p4-reducer"
+        ],
+        "Caps": {
+          "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block1": [
+            14700,
+            4200
+          ],
+          "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge": [
+            2100,
+            900
+          ],
+          "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block2": [
+            16800,
+            4800
+          ],
+          "spatial-19-edge-9fd03b1b7378-thin-p4-reducer": [
+            900,
+            600
+          ]
+        },
+        "JobScript": null
+      },
+      "Configs": {
+        "Directories": {
+          "spatial-19-edge-9fd03b1b7378-thin-p4": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/spatial-19-edge-9fd03b1b7378-thin-p4",
+          "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge"
+        },
+        "SHA256": {
+          "spatial-19-edge-9fd03b1b7378-thin-p4": {
+            "worker-block1.json": "1555c17f2194cc407d5dd68a647be22252840f84cc372535b1f7e3b0858dddcf",
+            "worker-block2.json": "b53e39d75413d9c3327b1f20d5cd0d72fb89a26dac31ec8589f616efba11f999",
+            "reducer.json": "d4fe7fd27678d1bf44eb6579266ab8ccdfbb27c200b40d32fb54721e52c86da8"
+          },
+          "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge": {
+            "config.json": "2a8ba109f411a53a999b2290e61d09f06a4c286e9c44e2b312d159fbcba46a57"
+          }
+        },
+        "DerivedFrom": "the case's own sources (case_inputs.derive) and the recipe PhysicsRun",
+        "RunConfig": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/run-config.json",
+        "RunConfigSHA256": "e3b6491b153851a2788fd46a1fbd4f0f35f3816c9176cf3f6f0fee9a00b7ecc5",
+        "ReferenceConfig": null,
+        "ReferenceConfigSHA256": null,
+        "ReferenceConfigRole": null,
+        "ReferenceOrder": null,
+        "LinearTol": 1e-10,
+        "Order": 4
+      },
+      "Root": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin",
+      "Remote": {
+        "Root": "/data/home/simlap/coupon_accuracy_assessment_20260913",
+        "Run": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378",
+        "Case": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin",
+        "Mesh": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/mesh/identity-042f08d78a29.msh",
+        "Traces": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces",
+        "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88.bin",
+        "MPIExec": "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh"
+      },
+      "BuildGateOverride": null,
+      "Kind": "thin",
+      "ThinCutoff": 0.002,
+      "FabricatedCase": "spatial-19-edge-9fd03b1b7378",
+      "Inputs": {
+        "Origin": "case",
+        "Directory": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/variant/sources/spatial-19-edge-9fd03b1b7378",
+        "Model": "spatialedgecluster_edgecount-19_a16c6d025c0d",
+        "Kind": "thin",
+        "FabricatedCase": "spatial-19-edge-9fd03b1b7378",
+        "SourceSHA256": {
+          "Signature": "93fbb99058972e7e778aeb5d4bbc41569d8da0211b7fc06d9b42000aab4ffb5c",
+          "Boundary": "b128c821ec200c0c2b6e190763c9c9fcffa1c6f60bb9a35d45369a9f78d2569d",
+          "Mask": "3ff0910a0784d82913ed314511a057861947a32de0dcfdc59a8aac0febef255c",
+          "Process": "6d235486b76eb537b8569f97e3040324861204c08c3dd04aff3f27b4d972a569",
+          "ProcessLibrary": "8e6d87c1f4ee91baa230219ccad6b12c5719934480fef9825e9635efad64989c",
+          "BasisContract": "055c65b060ea19aba21b9e293db74034cf55714d05e9a2caee485950d402b44d",
+          "TraceVertices": "c5ab9b7979a9139939dbf46a60392b0e5c2e93dfbab1d936a37e2dc780a49401",
+          "TraceTriangles": "2c4df741415df94c03efab5d1a5437a8a05594a0ad813876571a5441c275f2f1",
+          "Provenance": "40910488a573532f14c2560485d4743840f09b4ba12e978eeb640d7e04b52f76",
+          "MeshRecipe": "87c49fd93338420f330e4f37f5acf066558ace8ddd7ca1b85e451fed921563eb",
+          "SemanticContract": "971ee293ab065d5aef4830f4dff5ffa803efd941625b7c4ae65fa8c7cdf51832"
+        },
+        "PhysicsRun": {
+          "Order": 4,
+          "LinearTol": 1e-10,
+          "Provenance": "calibrated by the four-edge reference campaigns: graded_v2 input 07 (worker.json Order 4, Linear.Tol 1e-10, PBS 45175 physics-13 anchor) and every recorded four-edge / gallery-05 / gallery-06 qualification (physics-11 PASS, gallery-05 / -06b PASS at p4, Tol 1e-10; decisions 42, 49, 50); the producer's default Tol 1e-8 (generate_spatial_response.make_config: sub-4e-4% worst-energy change vs 1e-10 at ~25% lower solve time) is NOT the library value - the gallery-10 / ten-edge references ran the producer default at Order 5 and are compared at their own order (the reference order is added as a main stage) with this Tol, recorded as the reference-derived config's only Solver difference (decision 52, 2026-09-20)",
+          "JobPolicy": {
+            "Mode": "frugal",
+            "FixedJobs": null,
+            "Rule": "coupon-library qualify splits a coupon's main-order source set into N contiguous blocks run as N independent worker jobs archiving into one archive directory, then one reducer job on the union (decision 61b; qualify/job_split.py): frugal = the fewest jobs whose every job fits the cluster walltime at 2x the measured PCG counts with the preflight-and-margin factor; speed = the N (<= --max-jobs and the user job cap) minimizing the estimated critical path; fixed = FixedJobs. This block is the library default; --job-policy / --fixed-jobs on the command line override it and the run records the policy used (library-qualification.json JobPolicy per coupon)"
+          },
+          "ReducerBlockSize": 48,
+          "FrozenExecutableSHA256": "9ef5256bc9ca9abc109954fb97b096879b3b472f18483f867b8de0b73a832058"
+        },
+        "Interfaces": {
+          "1": "MA",
+          "2": "MS",
+          "3": "SA"
+        },
+        "InterfaceTypes": [
+          "MA",
+          "MS",
+          "SA"
+        ],
+        "Sources": [
+          {
+            "Index": 1,
+            "Name": "basis-0001.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0001.csv",
+            "SHA256": "5248e423d44ce0e484caae7b086764e3a784ac6063edfb71b99660b3be3cdd87",
+            "Terminal": false
+          },
+          {
+            "Index": 2,
+            "Name": "basis-0002.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0002.csv",
+            "SHA256": "87a5722b3554708cdd863777426d692a1c0173fef9200f2eaff11b0adf95ce0c",
+            "Terminal": false
+          },
+          {
+            "Index": 3,
+            "Name": "basis-0003.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0003.csv",
+            "SHA256": "3c5b2420459e9eae310035802a0135a3d5315fa56d31375665a6773fb776f6e6",
+            "Terminal": false
+          },
+          {
+            "Index": 4,
+            "Name": "basis-0004.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0004.csv",
+            "SHA256": "eb585764e01d54e22c8e5806e071b064b7fd999c59873f37371bde0c0b92416a",
+            "Terminal": false
+          },
+          {
+            "Index": 5,
+            "Name": "basis-0005.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0005.csv",
+            "SHA256": "e54d96ca0cd0344bcb64b847e5d1208ef80084ae74328faea6ecc2736a53e2cb",
+            "Terminal": false
+          },
+          {
+            "Index": 6,
+            "Name": "basis-0006.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0006.csv",
+            "SHA256": "df4b3c7361658911934ee5194c8477c50f0d6ba85a00e5950f7f1fd23b8a8e9f",
+            "Terminal": false
+          },
+          {
+            "Index": 7,
+            "Name": "basis-0007.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0007.csv",
+            "SHA256": "c6599815f50653a0ea34bf4a3e440db8f3e26add09015cbcbdd3abd74638dbe1",
+            "Terminal": false
+          },
+          {
+            "Index": 8,
+            "Name": "basis-0008.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0008.csv",
+            "SHA256": "3487153953497039cf31242779bdf9476044b46c2def296cd2d315542c4b2d0f",
+            "Terminal": false
+          },
+          {
+            "Index": 9,
+            "Name": "basis-0009.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0009.csv",
+            "SHA256": "1de94e923cb33da80a7cfce6d3aefb7f2b117f3b20a93bfc3503813680456a10",
+            "Terminal": false
+          },
+          {
+            "Index": 10,
+            "Name": "basis-0010.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0010.csv",
+            "SHA256": "036067626d5c6540e48ad282352247f0795583e077822438624d8d69fb463a65",
+            "Terminal": false
+          },
+          {
+            "Index": 11,
+            "Name": "basis-0011.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0011.csv",
+            "SHA256": "7661b79dcba723f1fd8705b33c57c104838b6c2b004f8b88c522dbc79beb70f2",
+            "Terminal": false
+          },
+          {
+            "Index": 12,
+            "Name": "basis-0012.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0012.csv",
+            "SHA256": "ca0cbb94e8a74485e173ac2367a0aae8f01daeea7e01b1b6283714d1178ef9d9",
+            "Terminal": false
+          },
+          {
+            "Index": 13,
+            "Name": "basis-0013.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0013.csv",
+            "SHA256": "7ce5774424baa266befc0f7cad69bf6c52cccf1918a553988243d7f5d6f31f5b",
+            "Terminal": false
+          },
+          {
+            "Index": 14,
+            "Name": "basis-0014.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0014.csv",
+            "SHA256": "89f926399493f325717bcb61c975e4d2286f7a3a628f73463c2b2ad83dcfa5b3",
+            "Terminal": false
+          },
+          {
+            "Index": 15,
+            "Name": "basis-0015.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0015.csv",
+            "SHA256": "4674325f0e8fde262ede4ae30acc1d10fa6ba4c372687e1ad1bd32bdb131d33e",
+            "Terminal": false
+          },
+          {
+            "Index": 16,
+            "Name": "basis-0016.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0016.csv",
+            "SHA256": "35de5da554a9069e3468cc33e7a6bdd887efe34759f6b1cec83a51c9b59a27a6",
+            "Terminal": false
+          },
+          {
+            "Index": 17,
+            "Name": "basis-0017.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0017.csv",
+            "SHA256": "a708308ec087be811c0369c2f64f94c92ebc6dd67b477cd9a7f57030f62234b8",
+            "Terminal": false
+          },
+          {
+            "Index": 18,
+            "Name": "basis-0018.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0018.csv",
+            "SHA256": "bba350a0c59b388b479e636b168c3d8ff84db1738da68eb1bff595369c1e9ea3",
+            "Terminal": false
+          },
+          {
+            "Index": 19,
+            "Name": "basis-0019.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0019.csv",
+            "SHA256": "6d1314d300e2e76396b2961e96515e49cade5eee049d6679bd86113dc2ab471d",
+            "Terminal": false
+          },
+          {
+            "Index": 20,
+            "Name": "basis-0020.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0020.csv",
+            "SHA256": "21cf421dc7f7a4f9b6b78ba376c49b981a14726a6a1c9121e2321d2a25e3443e",
+            "Terminal": false
+          },
+          {
+            "Index": 21,
+            "Name": "basis-0021.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0021.csv",
+            "SHA256": "329056cc5c92d70abcb6f5eb7e3c725ad9e5d6283c7f309d5390ee2bd1d18a3e",
+            "Terminal": false
+          },
+          {
+            "Index": 22,
+            "Name": "basis-0022.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0022.csv",
+            "SHA256": "a6fa8338d4cbbca25068737ef6492339b35abcb3e449ea468397c22477ba5d74",
+            "Terminal": false
+          },
+          {
+            "Index": 23,
+            "Name": "basis-0023.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0023.csv",
+            "SHA256": "dbbcc87be07bb569a03b0b277eb07cda123a548f6c197b01e3e0f6e046602a4e",
+            "Terminal": false
+          },
+          {
+            "Index": 24,
+            "Name": "basis-0024.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0024.csv",
+            "SHA256": "b791ec12846cb1817eb46d9e24124ab6e17547ab000c8b099cf0bbac6e5ce2d8",
+            "Terminal": false
+          },
+          {
+            "Index": 25,
+            "Name": "basis-0025.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0025.csv",
+            "SHA256": "bc4cfbac68e5d29dfab196bf7a39b584631844171d43c4c9e7962d9a767a560f",
+            "Terminal": false
+          },
+          {
+            "Index": 26,
+            "Name": "basis-0026.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0026.csv",
+            "SHA256": "30850400fff9f3d7c22f9e81d2a03dc4885dc3bd1d0872177ea97cb24c0dc325",
+            "Terminal": false
+          },
+          {
+            "Index": 27,
+            "Name": "basis-0027.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0027.csv",
+            "SHA256": "c51a8b1a38776a1f20d9c05fb86a441d47d2eec1ee424e74ae76e89c92f21b2d",
+            "Terminal": false
+          },
+          {
+            "Index": 28,
+            "Name": "basis-0028.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0028.csv",
+            "SHA256": "0f791120b9d92f6d586e43edb42004c4f0210d3d21025894b66ed80c14634a9b",
+            "Terminal": false
+          },
+          {
+            "Index": 29,
+            "Name": "basis-0029.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0029.csv",
+            "SHA256": "60b6d350ee20e2463fea422ab5c52865f513a415f5bf9436d120564e0c073bd9",
+            "Terminal": false
+          },
+          {
+            "Index": 30,
+            "Name": "basis-0030.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0030.csv",
+            "SHA256": "eb5690c1fbc06df63c3bae0be875db6a925a90191defd2ae384581e49df2ffdd",
+            "Terminal": false
+          },
+          {
+            "Index": 31,
+            "Name": "basis-0031.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0031.csv",
+            "SHA256": "23e1b15f6c4a348b11ae1319419d75fe3bf2b9beaa532d4433371219e27e93e9",
+            "Terminal": false
+          },
+          {
+            "Index": 32,
+            "Name": "basis-0032.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0032.csv",
+            "SHA256": "617cfcb1251f0da9c974b708214395b56306e5f05e94b5a038edb273e7f6a60e",
+            "Terminal": false
+          },
+          {
+            "Index": 33,
+            "Name": "basis-0033.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0033.csv",
+            "SHA256": "1a8e279ba3e0748572bb011d0da95f1b2361a3bc306c1f0d673fb11a049a7d6c",
+            "Terminal": false
+          },
+          {
+            "Index": 34,
+            "Name": "basis-0034.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0034.csv",
+            "SHA256": "218c58b2ca6a325282b1b141f89cbb0e81ae1a4bd65cfe31e234ddc6885cc8df",
+            "Terminal": false
+          },
+          {
+            "Index": 35,
+            "Name": "basis-0035.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0035.csv",
+            "SHA256": "a8e8da6c1bdbd2c564075243b561be302c234a550d35d6bdcd3911877e29798a",
+            "Terminal": false
+          },
+          {
+            "Index": 36,
+            "Name": "basis-0036.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0036.csv",
+            "SHA256": "a08321042342d332cee83a877810db73db2cdb23933ae009f83a05ec6b8b5f76",
+            "Terminal": false
+          },
+          {
+            "Index": 37,
+            "Name": "basis-0037.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0037.csv",
+            "SHA256": "0672e90941fb77ff119625bdb2a3138e0861d18b77376215766592259c691bb1",
+            "Terminal": false
+          },
+          {
+            "Index": 38,
+            "Name": "basis-0038.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0038.csv",
+            "SHA256": "785d82ccdc652ad49e25f6ccda7ef60928e8a0496307fbba788cfcb0fd3ff6f4",
+            "Terminal": false
+          },
+          {
+            "Index": 39,
+            "Name": "basis-0039.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0039.csv",
+            "SHA256": "c4f94cb000d8293b619112edc4da382e63b54a384c201205a544d577cf951746",
+            "Terminal": false
+          },
+          {
+            "Index": 40,
+            "Name": "basis-0040.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0040.csv",
+            "SHA256": "40a9d741602b62551b6f347b9cb41b66b2944ebf1f2159ea1ea9a9c97e4ef349",
+            "Terminal": false
+          },
+          {
+            "Index": 41,
+            "Name": "basis-0041.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0041.csv",
+            "SHA256": "4ad38a11dfb0e82d2e6b4676f95dfb020d68e8553144e0aa6d548b29e42f0a74",
+            "Terminal": false
+          },
+          {
+            "Index": 42,
+            "Name": "basis-0042.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0042.csv",
+            "SHA256": "c71cc779a86363eb33b8760700f92124be9066909b423c190192e28eb0d6ff4a",
+            "Terminal": false
+          },
+          {
+            "Index": 43,
+            "Name": "basis-0043.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0043.csv",
+            "SHA256": "b98c9fdb54c9cd675e2192072aa624e4f90c7ec2c253d724a13de671afedd1e3",
+            "Terminal": false
+          },
+          {
+            "Index": 44,
+            "Name": "basis-0044.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0044.csv",
+            "SHA256": "aa0cf661bf1db6e09576899c39cd16f0d0f79176fa15a62c2ccaf4f26541a658",
+            "Terminal": false
+          },
+          {
+            "Index": 45,
+            "Name": "basis-0045.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0045.csv",
+            "SHA256": "7fec7959d1d9dbcb6ee314d961370a115ef06395aae26732f7b82c0b8d893309",
+            "Terminal": false
+          },
+          {
+            "Index": 46,
+            "Name": "basis-0046.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0046.csv",
+            "SHA256": "079766f7dd2c6f5f48a207de958683a85d83f2ff43afd29958cbfef08203584c",
+            "Terminal": false
+          },
+          {
+            "Index": 47,
+            "Name": "basis-0047.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0047.csv",
+            "SHA256": "6b9291a7122ce2f46938428a0a8b478bbc17fc235b6b40262e4d00d143a7b8f5",
+            "Terminal": false
+          },
+          {
+            "Index": 48,
+            "Name": "basis-0048.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0048.csv",
+            "SHA256": "b6cd034d55e877971c617931f67e696212a414cb700cecfbf21472eb8a8295f4",
+            "Terminal": false
+          },
+          {
+            "Index": 49,
+            "Name": "basis-0049.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0049.csv",
+            "SHA256": "7c9867f78d51e8cf15eda6227b2d55d5cc0e89183f9eb6116c13793183c92b9d",
+            "Terminal": false
+          },
+          {
+            "Index": 50,
+            "Name": "basis-0050.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0050.csv",
+            "SHA256": "66eb767fbfad7657ea964105842829bd525d5a73245c15e0a3d61500b350136b",
+            "Terminal": false
+          },
+          {
+            "Index": 51,
+            "Name": "basis-0051.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0051.csv",
+            "SHA256": "254255f4f5a12f01248d2bdfd605d814913868aa092e8dc98db9dee66d87ec74",
+            "Terminal": false
+          },
+          {
+            "Index": 52,
+            "Name": "basis-0052.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0052.csv",
+            "SHA256": "36dc8b268c169f148d57bcf54514aafe2da66b57cfae6cea68a5b7e3efb4c433",
+            "Terminal": false
+          },
+          {
+            "Index": 53,
+            "Name": "basis-0053.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0053.csv",
+            "SHA256": "3c73edf77458b48912288c09941e8d54974b9b909998cf4bfe00424e4f28cfc1",
+            "Terminal": false
+          },
+          {
+            "Index": 54,
+            "Name": "basis-0054.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0054.csv",
+            "SHA256": "35765f573e58ae3c534e314e772a3a600ec5f12d81a69d4fc6959fef32de3d04",
+            "Terminal": false
+          },
+          {
+            "Index": 55,
+            "Name": "basis-0055.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0055.csv",
+            "SHA256": "bb33d55fbea2ce576b7a9dd0d49d431b7935e61dcc86e27c2f41ec1151353d37",
+            "Terminal": false
+          },
+          {
+            "Index": 56,
+            "Name": "basis-0056.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0056.csv",
+            "SHA256": "956851b2bf7012993b100cdd8a501ff4565502b24c4654f10aa3cfb0e8822ea2",
+            "Terminal": false
+          },
+          {
+            "Index": 57,
+            "Name": "basis-0057.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0057.csv",
+            "SHA256": "b7e31139465e8c0e550dcfc94764d2ea631e100f03740bc71b6dd2952382dbe6",
+            "Terminal": false
+          },
+          {
+            "Index": 58,
+            "Name": "basis-0058.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0058.csv",
+            "SHA256": "bf39daef28c1b10de13da3d9c6c0b2a54a4f8cd1b19a75a8a98dfe81dd7356ad",
+            "Terminal": false
+          },
+          {
+            "Index": 59,
+            "Name": "basis-0059.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0059.csv",
+            "SHA256": "bc97ded4d65ee4e739460b5ff71c087f5a3d78a40adac9e069deb552849a1c6c",
+            "Terminal": false
+          },
+          {
+            "Index": 60,
+            "Name": "basis-0060.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0060.csv",
+            "SHA256": "1af8e8e2e118bfc3db1aba12d48adc466e301e074a8c342205fcde9e3cc0d902",
+            "Terminal": false
+          },
+          {
+            "Index": 61,
+            "Name": "basis-0061.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0061.csv",
+            "SHA256": "1cc35550311a916a80e44c55c9b294e4cfed9d251baca7ce0307dd3c4f08f96f",
+            "Terminal": false
+          },
+          {
+            "Index": 62,
+            "Name": "basis-0062.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0062.csv",
+            "SHA256": "46f4f963c1b2fcde02e967428848c3d619f279ab9cdcaf280eb90b9c1f87cfe3",
+            "Terminal": false
+          },
+          {
+            "Index": 63,
+            "Name": "basis-0063.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0063.csv",
+            "SHA256": "3d7aa07777d7c7a1afe540be4b65b3b1626600b770430044fa2ded14a3adb3c3",
+            "Terminal": false
+          },
+          {
+            "Index": 64,
+            "Name": "basis-0064.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0064.csv",
+            "SHA256": "10f0d011259cb84ad2f4e9345fd482de61a827bb7068ad3b35f56ccf66afefa9",
+            "Terminal": false
+          },
+          {
+            "Index": 65,
+            "Name": "basis-0065.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0065.csv",
+            "SHA256": "6f76165147e8f08746d8112041d0fc344eec30e4eb926c1bf691dae7e086fb53",
+            "Terminal": false
+          },
+          {
+            "Index": 66,
+            "Name": "basis-0066.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0066.csv",
+            "SHA256": "9cd999a711cec3d6cd23c887efd120c5b07d6bd364af72ec119cdefa3701a549",
+            "Terminal": false
+          },
+          {
+            "Index": 67,
+            "Name": "basis-0067.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0067.csv",
+            "SHA256": "46348612fcb9b704c2e43e4d42f6c191f731fffd463cc5e26b1c542db2675524",
+            "Terminal": false
+          },
+          {
+            "Index": 68,
+            "Name": "basis-0068.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0068.csv",
+            "SHA256": "3070dff7205614b761bad64dfcf756beeba4aa447b3d055a0f856d63bef1a84c",
+            "Terminal": false
+          },
+          {
+            "Index": 69,
+            "Name": "basis-0069.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0069.csv",
+            "SHA256": "91bb3b26986b456a66514d0f35e9f8755efa5b60fc0d5cf8ff628a99d3d871fc",
+            "Terminal": false
+          },
+          {
+            "Index": 70,
+            "Name": "basis-0070.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0070.csv",
+            "SHA256": "75e46eee8cb9f1682126893a4895cedf344ed94e3abb69f5280731eb0f17fcd5",
+            "Terminal": false
+          },
+          {
+            "Index": 71,
+            "Name": "basis-0071.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0071.csv",
+            "SHA256": "c347c2121166959997c27f1a364aaf264243fc3574f397d240780f285331cc43",
+            "Terminal": false
+          },
+          {
+            "Index": 72,
+            "Name": "basis-0072.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0072.csv",
+            "SHA256": "77356be20e990b43fbd76dfd2e0929a578e05f6f2e504a999d26bc37809ab9e2",
+            "Terminal": false
+          },
+          {
+            "Index": 73,
+            "Name": "basis-0073.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0073.csv",
+            "SHA256": "13a163982efd5bbc1ee34a95d385e705aec69c283773e07612b67891145c8173",
+            "Terminal": false
+          },
+          {
+            "Index": 74,
+            "Name": "basis-0074.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0074.csv",
+            "SHA256": "985a9b76e2bb4cb12d58444cfe9ac0c37725a97f12d53d1e4886b545685d17a9",
+            "Terminal": false
+          },
+          {
+            "Index": 75,
+            "Name": "basis-0075.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0075.csv",
+            "SHA256": "8aa57ff90a882aceadd9944031536f47cf1f1d6bbd4c8fb7c1cd6ad0d89e582f",
+            "Terminal": false
+          },
+          {
+            "Index": 76,
+            "Name": "basis-0076.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0076.csv",
+            "SHA256": "ac2d3553a5f028ad52a4a86a368510cf94c5aca00a05d60a0dffe33f0468a8c1",
+            "Terminal": false
+          },
+          {
+            "Index": 77,
+            "Name": "basis-0077.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0077.csv",
+            "SHA256": "84542eee56ce410ee0e6b09a535eb71ba07a86c4a149005cc50f1a49449c2e68",
+            "Terminal": false
+          },
+          {
+            "Index": 78,
+            "Name": "basis-0078.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0078.csv",
+            "SHA256": "afee42355d0014dd91d313e2015739a0c7ea8329d8871bc863356264e7e6caa8",
+            "Terminal": false
+          },
+          {
+            "Index": 79,
+            "Name": "basis-0079.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0079.csv",
+            "SHA256": "1d60bdeaa137913ded5189e2f3694c7a7c7a2eec4230fbcdb2b00c93ec22aab1",
+            "Terminal": false
+          },
+          {
+            "Index": 80,
+            "Name": "basis-0080.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0080.csv",
+            "SHA256": "a5a074a4d9dc38d90b3990caecf8046ba133d858ae23fbd07120bc5f0d07aa4e",
+            "Terminal": false
+          },
+          {
+            "Index": 81,
+            "Name": "basis-0081.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0081.csv",
+            "SHA256": "d11fb206b9a3a3f446fb26b09b1ad9de7fd8fb4b9a007f537cfac38821e37ad6",
+            "Terminal": false
+          },
+          {
+            "Index": 82,
+            "Name": "basis-0082.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0082.csv",
+            "SHA256": "e42fbc9d4ae590ec6bee86feb6a353d23b431833ea087eabd2bcb386812efa2b",
+            "Terminal": false
+          },
+          {
+            "Index": 83,
+            "Name": "basis-0083.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0083.csv",
+            "SHA256": "42dc1d6c98e854636580a0bbe7bf5b44e4cd9ef082635eabea906313087b73b4",
+            "Terminal": false
+          },
+          {
+            "Index": 84,
+            "Name": "basis-0084.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0084.csv",
+            "SHA256": "9494b0b18c4a962964da2c2a99a43e216f029d8c89d9c03abaff14fdce3e8da3",
+            "Terminal": false
+          },
+          {
+            "Index": 85,
+            "Name": "basis-0085.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0085.csv",
+            "SHA256": "fd6d4dc809c9d0fd74777c2082beee4b64ab4289afac7abd5a2e80a74d86bc1c",
+            "Terminal": false
+          },
+          {
+            "Index": 86,
+            "Name": "basis-0086.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0086.csv",
+            "SHA256": "a4ab8f82e927f223318a88f2c5bef11d87514a50546afbe73ff604a25812e368",
+            "Terminal": false
+          },
+          {
+            "Index": 87,
+            "Name": "basis-0087.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0087.csv",
+            "SHA256": "e2b534dd90a05b65a421fe764329569a4007298cc9f86aa0f002e3d452233452",
+            "Terminal": false
+          },
+          {
+            "Index": 88,
+            "Name": "basis-0088.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0088.csv",
+            "SHA256": "5f71b077080d6dc40cc244378efa80ebdb69b101054fa5d532b58f595d74364a",
+            "Terminal": false
+          },
+          {
+            "Index": 89,
+            "Name": "basis-0089.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0089.csv",
+            "SHA256": "0cbeb947522e5d74e31dbb1c74bff6d1ba04e9c13c2b231d97969a34c7bde84a",
+            "Terminal": false
+          },
+          {
+            "Index": 90,
+            "Name": "basis-0090.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0090.csv",
+            "SHA256": "a20da560c6232ad8dc7e68dc0ce7a56dd3b38ba8e1ea08ac7b523bd564813012",
+            "Terminal": false
+          },
+          {
+            "Index": 91,
+            "Name": "basis-0091.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0091.csv",
+            "SHA256": "113ba8732e3b9e2c006fc29d147174199effaa75007732a6e3c8df3ceb2d2cfd",
+            "Terminal": false
+          },
+          {
+            "Index": 92,
+            "Name": "basis-0092.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0092.csv",
+            "SHA256": "3aaf1af75347399e8a80937180ecb14904bafe64e55108d7902971f3bde3cb8b",
+            "Terminal": false
+          },
+          {
+            "Index": 93,
+            "Name": "basis-0093.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0093.csv",
+            "SHA256": "ea3e523851acb4d8e136975056edee0908fa1498f10e7518a8375b723f20366e",
+            "Terminal": false
+          },
+          {
+            "Index": 94,
+            "Name": "basis-0094.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0094.csv",
+            "SHA256": "f2c5aa3500896c44895afd4a2fe58320fc6ae06c46667c21f9eecb7173535ab3",
+            "Terminal": false
+          },
+          {
+            "Index": 95,
+            "Name": "basis-0095.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0095.csv",
+            "SHA256": "0700ec4f81053cfe34479a3373ea283138478b19079b25fa853030c01f7331ba",
+            "Terminal": false
+          },
+          {
+            "Index": 96,
+            "Name": "basis-0096.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0096.csv",
+            "SHA256": "39eb1b23b5fbe27b212f6450e536cd4164eed07c3b704252375c141faf5d7396",
+            "Terminal": false
+          },
+          {
+            "Index": 97,
+            "Name": "basis-0097.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0097.csv",
+            "SHA256": "6bd557a3884376f9468d81050edbd09309234b7e19907559e13bdbe10bc98241",
+            "Terminal": false
+          },
+          {
+            "Index": 98,
+            "Name": "basis-0098.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0098.csv",
+            "SHA256": "4c00ad3195571b062da7a909b91073b0a0e7bce4448b2b29e8ef3264aacbd580",
+            "Terminal": false
+          },
+          {
+            "Index": 99,
+            "Name": "basis-0099.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0099.csv",
+            "SHA256": "a0092530ef2059030c7ae6041c39f6a05b65630120df660a056c37ee72deb7d5",
+            "Terminal": false
+          },
+          {
+            "Index": 100,
+            "Name": "basis-0100.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0100.csv",
+            "SHA256": "bb315201100446f542fc54ad34c661ef5256600c5c20a589a65b2eece6dc305b",
+            "Terminal": false
+          },
+          {
+            "Index": 101,
+            "Name": "basis-0101.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0101.csv",
+            "SHA256": "6e47a1e2adef65676241cbc3998abbaa0579ba90d9c56ffcb68c840c93431991",
+            "Terminal": false
+          },
+          {
+            "Index": 102,
+            "Name": "basis-0102.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0102.csv",
+            "SHA256": "bf84d5c0e880a400f3231d8590a4a666e57f984751ec22a17cef9456b0111d0e",
+            "Terminal": false
+          },
+          {
+            "Index": 103,
+            "Name": "basis-0103.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0103.csv",
+            "SHA256": "bc47ac08d605b3c3adaf0175365f23ad65bf0a20eb031220a08eb93625f84b4e",
+            "Terminal": false
+          },
+          {
+            "Index": 104,
+            "Name": "basis-0104.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0104.csv",
+            "SHA256": "e3a0af405c89eefd7784ed3919bbe0c4b8774fc54472e7ed5c876969cf774300",
+            "Terminal": false
+          },
+          {
+            "Index": 105,
+            "Name": "basis-0105.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0105.csv",
+            "SHA256": "60485dee383ac5eeba8b15c346f1b1af32d4801a17a2fb91d2217bc360a1acae",
+            "Terminal": false
+          },
+          {
+            "Index": 106,
+            "Name": "basis-0106.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0106.csv",
+            "SHA256": "3c44d6abff5fe3068ecd169b066d1d303655b8f005e678abd1b9abd8dc645f3c",
+            "Terminal": false
+          },
+          {
+            "Index": 107,
+            "Name": "basis-0107.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0107.csv",
+            "SHA256": "7bf63e22fd24491c59ffcf3a221c256b8d60b934abc5fb07c693d4d805be696e",
+            "Terminal": false
+          },
+          {
+            "Index": 108,
+            "Name": "basis-0108.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0108.csv",
+            "SHA256": "db07030bdb4480db8dfb1f077cbf81f695c337a1b0eff4072bcc3e7d0dfe782c",
+            "Terminal": false
+          },
+          {
+            "Index": 109,
+            "Name": "basis-0109.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0109.csv",
+            "SHA256": "cbf6daabb0ae1d3b390d218e7d68c1334b1ab0b223f3d39599f3ae6f53c23662",
+            "Terminal": false
+          },
+          {
+            "Index": 110,
+            "Name": "basis-0110.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0110.csv",
+            "SHA256": "555481e1b6f793e829b0135115820e1a46fb2552c833ebe475ab017d5b4bb44b",
+            "Terminal": false
+          },
+          {
+            "Index": 111,
+            "Name": "basis-0111.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0111.csv",
+            "SHA256": "fcd811405978be484d9e0241a8ba0a6e9b024ec856d36e13eeac4f1862b743e5",
+            "Terminal": false
+          },
+          {
+            "Index": 112,
+            "Name": "basis-0112.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0112.csv",
+            "SHA256": "848e7420ca7caf341e795c16ffa2e5db46f92c6c8f5790f72a0a54cf7e28dffe",
+            "Terminal": false
+          },
+          {
+            "Index": 113,
+            "Name": "basis-0113.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0113.csv",
+            "SHA256": "dabf6ccf4019eaa61ec67ff3d61c6986157963bc4e98e2982fa36876d82f54d1",
+            "Terminal": false
+          },
+          {
+            "Index": 114,
+            "Name": "basis-0114.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0114.csv",
+            "SHA256": "18f15d3921112dbec2bb81b966c564db7a6796d0576ce55132b1fba5b94d8363",
+            "Terminal": false
+          },
+          {
+            "Index": 115,
+            "Name": "basis-0115.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0115.csv",
+            "SHA256": "bf09d222cb7bf4eb6af520ed169a994e3439bb1302125d5fa8d12c5a28256b8b",
+            "Terminal": false
+          },
+          {
+            "Index": 116,
+            "Name": "basis-0116.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0116.csv",
+            "SHA256": "580b4696d2fde6d21403e76e4ef7a04f53c1b0bb95f712115fb5bb0382e7b539",
+            "Terminal": false
+          },
+          {
+            "Index": 117,
+            "Name": "basis-0117.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0117.csv",
+            "SHA256": "e791bef19fe6772d9181f958eb86db19e6810c23ceb45e59740af66275b27414",
+            "Terminal": false
+          },
+          {
+            "Index": 118,
+            "Name": "basis-0118.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0118.csv",
+            "SHA256": "9d87983ac7c86e183c2136eed04f54c285a5e546c177337225c367761fad4d61",
+            "Terminal": false
+          },
+          {
+            "Index": 119,
+            "Name": "basis-0119.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0119.csv",
+            "SHA256": "90677e79a89c78671d5bc441a520b590d51fea0dc81f150d04f893ae3f7a3e43",
+            "Terminal": false
+          },
+          {
+            "Index": 120,
+            "Name": "basis-0120.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0120.csv",
+            "SHA256": "108423704f24da7e8171d1adfcfbc86cc171221187f6b548f79e2837e58a8161",
+            "Terminal": false
+          },
+          {
+            "Index": 121,
+            "Name": "basis-0121.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0121.csv",
+            "SHA256": "6e9d953b69e945cd3ec1b7a9446a7988e024158981401407b9ad377985253ea1",
+            "Terminal": false
+          },
+          {
+            "Index": 122,
+            "Name": "basis-0122.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0122.csv",
+            "SHA256": "52bc4864e5bc840c17c79b74f4ac7ec5b4a348e4d7d4b43f004fb790ac1d7f56",
+            "Terminal": false
+          },
+          {
+            "Index": 123,
+            "Name": "basis-0123.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0123.csv",
+            "SHA256": "9d7cce08152a4dc221d4b18ae5dcfb22c0bdf9ee5bf68056c0780a0f6c14586c",
+            "Terminal": false
+          },
+          {
+            "Index": 124,
+            "Name": "basis-0124.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0124.csv",
+            "SHA256": "5dbc7e06abb63a3a4214778cc426c07a3116c0be65777e799db8d2a70a961a47",
+            "Terminal": false
+          },
+          {
+            "Index": 125,
+            "Name": "basis-0125.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0125.csv",
+            "SHA256": "9d8afe2343500ece10eb9313f0b9fbad5bb58c68e70507286ba8d1223fb73661",
+            "Terminal": false
+          },
+          {
+            "Index": 126,
+            "Name": "basis-0126.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0126.csv",
+            "SHA256": "9bc11de31f14138d29bba444fd5f5009c7d62e1c0cd6ab2fd7d9042e61472791",
+            "Terminal": false
+          },
+          {
+            "Index": 127,
+            "Name": "basis-0127.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0127.csv",
+            "SHA256": "f4e0f635d7c4c0b9fee7243d409f2180b15aa73198bf4dac044a07fb45da3ec8",
+            "Terminal": false
+          },
+          {
+            "Index": 128,
+            "Name": "basis-0128.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0128.csv",
+            "SHA256": "78808d857f366a4280626e6f5a12514e62ee84f5f7b7a95222a9969552dda58b",
+            "Terminal": false
+          },
+          {
+            "Index": 129,
+            "Name": "basis-0129.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0129.csv",
+            "SHA256": "9c2634de4243597ae3e9d1c82bddfe0c1cf08a1f8c942bbd123b0fa016df70e3",
+            "Terminal": false
+          },
+          {
+            "Index": 130,
+            "Name": "basis-0130.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0130.csv",
+            "SHA256": "bebbcffb41c8778f9e42f369d03ce2e263a9048a8704e5b5b882b1b542763421",
+            "Terminal": false
+          },
+          {
+            "Index": 131,
+            "Name": "basis-0131.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0131.csv",
+            "SHA256": "8db2695f1bf52605b37f1c742f3e22e564cbfda3eecb6cc1ea466b11d2a24804",
+            "Terminal": false
+          },
+          {
+            "Index": 132,
+            "Name": "basis-0132.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0132.csv",
+            "SHA256": "ce6ab9c14e1e5dc3e7de0bad8dece6b46f6895fe8a9136feae6f50c436bee4c9",
+            "Terminal": false
+          },
+          {
+            "Index": 133,
+            "Name": "basis-0133.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0133.csv",
+            "SHA256": "c3aa075cd074fed7924ee805906f5b232d573e6c99e95acfdb922d3bb3821328",
+            "Terminal": false
+          },
+          {
+            "Index": 134,
+            "Name": "basis-0134.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0134.csv",
+            "SHA256": "e0c921b50e871d84ebb6df6d4f2b17ea463d0b38e9b5bfeeee7b905668cdb3dd",
+            "Terminal": false
+          },
+          {
+            "Index": 135,
+            "Name": "basis-0135.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0135.csv",
+            "SHA256": "e84b89b32a34cefc7d5ce7faac3f4db51851f8e9ea7532fd2de3bf37307f84bd",
+            "Terminal": false
+          },
+          {
+            "Index": 136,
+            "Name": "basis-0136.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0136.csv",
+            "SHA256": "d372c8cb02c99287e3146d9dabbcbad5f98a6d51e3b72191ccc91dc8403a4e6e",
+            "Terminal": false
+          },
+          {
+            "Index": 137,
+            "Name": "basis-0137.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0137.csv",
+            "SHA256": "553aea858103d60e71e8560058116b33790594f0626a23c968f2191eda205d02",
+            "Terminal": false
+          },
+          {
+            "Index": 138,
+            "Name": "basis-0138.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0138.csv",
+            "SHA256": "2dca9e6a2d5ed4a1e484e238d88ba1f987788b6eef956cc6c8f969f7890bccc4",
+            "Terminal": false
+          },
+          {
+            "Index": 139,
+            "Name": "basis-0139.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0139.csv",
+            "SHA256": "98403f73443840b9b6202af6273396e8343c085f05e30836a62e2635b904c565",
+            "Terminal": false
+          },
+          {
+            "Index": 140,
+            "Name": "basis-0140.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0140.csv",
+            "SHA256": "694c5a2e768ca190bf18e855a25ce4136a68e59020e227beeceeaab585737166",
+            "Terminal": false
+          },
+          {
+            "Index": 141,
+            "Name": "basis-0141.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0141.csv",
+            "SHA256": "28ea8222383ed6873c2f27397eb5106dfd01d1b6c5d5a79c27e41e60d01ac1f4",
+            "Terminal": false
+          },
+          {
+            "Index": 142,
+            "Name": "basis-0142.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0142.csv",
+            "SHA256": "a47e58bb7c3078252915d6b12860dbbcbd7a725a96c0e8cb8c1c67283e7da7bf",
+            "Terminal": false
+          },
+          {
+            "Index": 143,
+            "Name": "basis-0143.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0143.csv",
+            "SHA256": "cd70b2a63a322303aac2c858860a2eaad9f82d54b30607106ec6dc4e133abcdc",
+            "Terminal": false
+          },
+          {
+            "Index": 144,
+            "Name": "basis-0144.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0144.csv",
+            "SHA256": "3938165a8a1d31cf81746fb37ff0322d73e274f28af10b0e4d898e55b503decd",
+            "Terminal": false
+          },
+          {
+            "Index": 145,
+            "Name": "basis-0145.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0145.csv",
+            "SHA256": "ffb42f195445d3056c44c813ca36b83a59b08003950cd52df1b76e09ff3b140d",
+            "Terminal": false
+          },
+          {
+            "Index": 146,
+            "Name": "basis-0146.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0146.csv",
+            "SHA256": "294cff87e265929662ee1f353ef66836766f8dd58710f75de81215456e809d9c",
+            "Terminal": false
+          },
+          {
+            "Index": 147,
+            "Name": "basis-0147.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0147.csv",
+            "SHA256": "b7e5f25fa95fc2571e1d8eae9612dfc46f01a003a7cb00fe3ec41c57e679f751",
+            "Terminal": false
+          },
+          {
+            "Index": 148,
+            "Name": "basis-0148.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0148.csv",
+            "SHA256": "3497491a70de4cf612a66af9acb6422b806367973c460415d4e955f5c1f772cc",
+            "Terminal": false
+          },
+          {
+            "Index": 149,
+            "Name": "basis-0149.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0149.csv",
+            "SHA256": "8d41971e32a82bfc2ab8f1278e090406cf4e6a791546ab0ad880d484e30b9a31",
+            "Terminal": false
+          },
+          {
+            "Index": 150,
+            "Name": "basis-0150.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0150.csv",
+            "SHA256": "c9dcad6972ca182db93ed08c778075b513752aff5df1105b3c20803de2014ab7",
+            "Terminal": false
+          },
+          {
+            "Index": 151,
+            "Name": "basis-0151.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0151.csv",
+            "SHA256": "be18f2629d7018b468ac178832d60e5541272609b88a316013feb7ce76f9b12a",
+            "Terminal": false
+          },
+          {
+            "Index": 152,
+            "Name": "basis-0152.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0152.csv",
+            "SHA256": "fb5ef44b1682f1ef6f149ce4875d1b4e7ecb34438b890ac7a5c475912ea0ad24",
+            "Terminal": false
+          },
+          {
+            "Index": 153,
+            "Name": "basis-0153.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0153.csv",
+            "SHA256": "73ec335e4fe4d2ce1b8d4c0818b22b87a5a1775905076029c9b0d2ab1c0093d3",
+            "Terminal": false
+          },
+          {
+            "Index": 154,
+            "Name": "basis-0154.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0154.csv",
+            "SHA256": "71675139d3cecb7fddef99d51a5db22e7aa77fe65d6e945660753d6080bfdb66",
+            "Terminal": false
+          },
+          {
+            "Index": 155,
+            "Name": "basis-0155.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0155.csv",
+            "SHA256": "f367dfaec1d16df3d484f6da0b216da294c76f0bc5634eef0324407da40891ea",
+            "Terminal": false
+          },
+          {
+            "Index": 156,
+            "Name": "basis-0156.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0156.csv",
+            "SHA256": "a1e0847e87c5bcf5dc3ea0589757624a434f98476e9e4e560d0918fc08006c1e",
+            "Terminal": false
+          },
+          {
+            "Index": 157,
+            "Name": "basis-0157.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0157.csv",
+            "SHA256": "d7613210af35a71cf2ce9a792475be99f43fe99b18ac5b9fffdd0ce762691089",
+            "Terminal": false
+          },
+          {
+            "Index": 158,
+            "Name": "basis-0158.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0158.csv",
+            "SHA256": "2d04844bb49a8a6bc759be42e540e01746bad33aa76c20ef0320d8aed9d8e677",
+            "Terminal": false
+          },
+          {
+            "Index": 159,
+            "Name": "basis-0159.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0159.csv",
+            "SHA256": "a856c44a2b393f9e9cccf20953da22c9d52d2449cb417af438a8c814debfcc03",
+            "Terminal": false
+          },
+          {
+            "Index": 160,
+            "Name": "basis-0160.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0160.csv",
+            "SHA256": "54b9c1c4cef3dd7289080e759acf45e6f1318778fa8666feadb809462ed94848",
+            "Terminal": false
+          },
+          {
+            "Index": 161,
+            "Name": "basis-0161.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0161.csv",
+            "SHA256": "01b48728f51a13d04bb88fb233327a5ef8f1ea585b2570f4da9f910b4f946f60",
+            "Terminal": false
+          },
+          {
+            "Index": 162,
+            "Name": "basis-0162.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0162.csv",
+            "SHA256": "5fb10d9316777160fbb2bfa21c0b661675640b95450d914ead73275c9e1a8e90",
+            "Terminal": false
+          },
+          {
+            "Index": 163,
+            "Name": "basis-0163.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0163.csv",
+            "SHA256": "d85e14b9c1b0a6b94764366acf05388fcfb896e27149fe42e47db8e76904cf80",
+            "Terminal": false
+          },
+          {
+            "Index": 164,
+            "Name": "basis-0164.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0164.csv",
+            "SHA256": "3545451d5b0c33f59fa3957b114dcc1129dcf4d599e56f782aa57c7b0ed40e47",
+            "Terminal": false
+          },
+          {
+            "Index": 165,
+            "Name": "basis-0165.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0165.csv",
+            "SHA256": "2bfe856cb44cd11425b7b598d961d069443257cdb4498e510ef0a2c222e80e12",
+            "Terminal": false
+          },
+          {
+            "Index": 166,
+            "Name": "basis-0166.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0166.csv",
+            "SHA256": "50a97a5a1cff0963a74a884edc39255f1a2b1f58f19d908a027f62156234002d",
+            "Terminal": false
+          },
+          {
+            "Index": 167,
+            "Name": "basis-0167.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0167.csv",
+            "SHA256": "51cf18aba176f216dfd28b209364d3a63dd57711c4a3ebebb0bde3e4f4b881e1",
+            "Terminal": false
+          },
+          {
+            "Index": 168,
+            "Name": "basis-0168.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0168.csv",
+            "SHA256": "fa03a7953d67b93bda96ca1f300910746940e0a9d7076214f6d73aaa3d36ded6",
+            "Terminal": false
+          },
+          {
+            "Index": 169,
+            "Name": "basis-0169.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0169.csv",
+            "SHA256": "8a806615680dce30d4a28f4b4c54e17afeaf7f05c98f3f8e92ee5457dd1aa45d",
+            "Terminal": false
+          },
+          {
+            "Index": 170,
+            "Name": "basis-0170.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0170.csv",
+            "SHA256": "9a586fd8d046c2d68a56563bcf0afc5d28e4d51c4ffd1faf1a746dafaa95a2bd",
+            "Terminal": false
+          },
+          {
+            "Index": 171,
+            "Name": "basis-0171.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0171.csv",
+            "SHA256": "5f534c7744936b7b53e00aab708bf1efe93a4511f4e23d5dbe13753eadf7ce1f",
+            "Terminal": false
+          },
+          {
+            "Index": 172,
+            "Name": "basis-0172.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0172.csv",
+            "SHA256": "dee94fdfc521e03b41ae167584fd23023c2b96de32e0f213e61459231fe91581",
+            "Terminal": false
+          },
+          {
+            "Index": 173,
+            "Name": "basis-0173.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0173.csv",
+            "SHA256": "b25cfcd750636ade8751b2aaa0d8c37679c0bc5fc80e05063fd87b5800261ed0",
+            "Terminal": false
+          },
+          {
+            "Index": 174,
+            "Name": "basis-0174.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0174.csv",
+            "SHA256": "74dcb88c34760699ac7c4e982749706453998e5dad37153246353e457bcbdf79",
+            "Terminal": false
+          },
+          {
+            "Index": 175,
+            "Name": "basis-0175.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0175.csv",
+            "SHA256": "d850e605acacca282a9c58c47a5a76366bcaba16e8b7e57b612edcb17661013d",
+            "Terminal": false
+          },
+          {
+            "Index": 176,
+            "Name": "basis-0176.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0176.csv",
+            "SHA256": "51557649efdd4da9c5c6d597399cff643dc77e92227dcfcf1452521465a257dd",
+            "Terminal": false
+          },
+          {
+            "Index": 177,
+            "Name": "basis-0177.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0177.csv",
+            "SHA256": "d1796782f758e839d1203f46cee41ea0b87d621829685cc4dc8b95227248dea8",
+            "Terminal": false
+          },
+          {
+            "Index": 178,
+            "Name": "basis-0178.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0178.csv",
+            "SHA256": "c33c8a23ed37a2802ac48175fb1753606a24ef5e67d540242f4e88ad58c50f36",
+            "Terminal": false
+          },
+          {
+            "Index": 179,
+            "Name": "basis-0179.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0179.csv",
+            "SHA256": "83eed2a2b90594707ac18485f8618c059ae6a9a73275f03008756809cc41fa7c",
+            "Terminal": false
+          },
+          {
+            "Index": 180,
+            "Name": "basis-0180.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0180.csv",
+            "SHA256": "d657327770fc0eb56b82c9daf2750b4e795105ca2d1395a760e71e599b170846",
+            "Terminal": false
+          },
+          {
+            "Index": 181,
+            "Name": "basis-0181.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0181.csv",
+            "SHA256": "c8ad1f219d135996f9804524e9df9dd10aa838a8b44eee75cec5826c15f841aa",
+            "Terminal": false
+          },
+          {
+            "Index": 182,
+            "Name": "basis-0182.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0182.csv",
+            "SHA256": "80689ca40da151e44b91b584b1cf702c582170c7b6f9e28db2e8ebb12a9c04dc",
+            "Terminal": false
+          },
+          {
+            "Index": 183,
+            "Name": "basis-0183.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0183.csv",
+            "SHA256": "927343d49d81a21379011d455f37211f351dcb1e76a708bb3c446d3fa937b131",
+            "Terminal": false
+          },
+          {
+            "Index": 184,
+            "Name": "basis-0184.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0184.csv",
+            "SHA256": "96d581b65d17dbdf493c31aa17b073d7c0d1ef6d84534034d72627a4966c0ed1",
+            "Terminal": false
+          },
+          {
+            "Index": 185,
+            "Name": "basis-0185.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0185.csv",
+            "SHA256": "cb914578e56816bbb5f6a1a39a185991216c0a8087845135d136d10675cb23e4",
+            "Terminal": false
+          },
+          {
+            "Index": 186,
+            "Name": "basis-0186.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0186.csv",
+            "SHA256": "454105940fd86ec3084adeede9e4345036853ad761763d461929aed758b74181",
+            "Terminal": false
+          },
+          {
+            "Index": 187,
+            "Name": "basis-0187.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0187.csv",
+            "SHA256": "f8fc6b8a249abe834cd1a5ab1b691f516ba3fc333d4f4014bdc5ceb1be148ceb",
+            "Terminal": false
+          },
+          {
+            "Index": 188,
+            "Name": "basis-0188.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0188.csv",
+            "SHA256": "03550cea2fb03b8db7a85e26b5ff13705a8c327d4b9502cbdf029f732576bb50",
+            "Terminal": false
+          },
+          {
+            "Index": 189,
+            "Name": "basis-0189.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0189.csv",
+            "SHA256": "7b61dff359d366bcbf3a173e4cd9237136691bfeb7785b2aa4b0570ab8945eee",
+            "Terminal": false
+          },
+          {
+            "Index": 190,
+            "Name": "basis-0190.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0190.csv",
+            "SHA256": "12ef463a9ec52c38304b4d50a994afedcbfbb8c0f6b6865c0bd47dbb1fbff198",
+            "Terminal": false
+          },
+          {
+            "Index": 191,
+            "Name": "basis-0191.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0191.csv",
+            "SHA256": "c00d7b7fddcad92c74ed0fff7403f094af02ad7999db8bb0d1efe56a793aa226",
+            "Terminal": false
+          },
+          {
+            "Index": 192,
+            "Name": "basis-0192.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0192.csv",
+            "SHA256": "ac006fcfbd112dd92254cdd6a25062c12314daa834ed1c81afa0486cf631c11b",
+            "Terminal": false
+          },
+          {
+            "Index": 193,
+            "Name": "basis-0193.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0193.csv",
+            "SHA256": "a59ac8396d25a93cf377cc9e00bebc719a88ed114f68c0ca82ec47ad4852ae97",
+            "Terminal": false
+          },
+          {
+            "Index": 194,
+            "Name": "basis-0194.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0194.csv",
+            "SHA256": "ee7c5ec81fd9093d5bfc20f081fd5843dae96cac4131e81fa38e7618bf5cce0c",
+            "Terminal": false
+          },
+          {
+            "Index": 195,
+            "Name": "basis-0195.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0195.csv",
+            "SHA256": "d62b1a7147f5bd3e8c8dc96723c759c36e84525a2731e0bb6712647d12d7b33d",
+            "Terminal": false
+          },
+          {
+            "Index": 196,
+            "Name": "basis-0196.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0196.csv",
+            "SHA256": "ba444339888d8cbafe62dd2d57d8e562545194e86ba2873a4a65d496f0f394d8",
+            "Terminal": false
+          },
+          {
+            "Index": 197,
+            "Name": "basis-0197.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0197.csv",
+            "SHA256": "0332ca4d52b9d9a8f7e0b00060c5435b45716a2be90c157f0019842e9b68d0d1",
+            "Terminal": false
+          },
+          {
+            "Index": 198,
+            "Name": "basis-0198.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0198.csv",
+            "SHA256": "b963c3c26ad3617c3266696641c83218a69289338c3ef9cc0302034cf8c8c99c",
+            "Terminal": false
+          },
+          {
+            "Index": 199,
+            "Name": "basis-0199.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0199.csv",
+            "SHA256": "201cbcd5f02e0b515fbe580cd2d0cb51824557e9afaf5a5102775caa8288a7df",
+            "Terminal": false
+          },
+          {
+            "Index": 200,
+            "Name": "basis-0200.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0200.csv",
+            "SHA256": "8cb74cd8c38eb73f66821d4745950d723f0d6f0b734f4d423fad9c0480ac32bf",
+            "Terminal": false
+          },
+          {
+            "Index": 201,
+            "Name": "basis-0201.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0201.csv",
+            "SHA256": "c8afda7eddc961aaa25382ae0ad14b685957777b1eac7c354c53a330e8c3c2bb",
+            "Terminal": false
+          },
+          {
+            "Index": 202,
+            "Name": "basis-0202.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0202.csv",
+            "SHA256": "52cf6b86fae1b3137dbdb4978d120e43552c8f0c2bcdd1e3f34ca21baa1b4310",
+            "Terminal": false
+          },
+          {
+            "Index": 203,
+            "Name": "basis-0203.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0203.csv",
+            "SHA256": "85fbaf334208c172daf79022bb3f43567560307868eb5dad506e4c1f994e301a",
+            "Terminal": false
+          },
+          {
+            "Index": 204,
+            "Name": "basis-0204.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0204.csv",
+            "SHA256": "308187193838292c31759ec7ac44e7893b490116c03f0e380191e903e0528830",
+            "Terminal": false
+          },
+          {
+            "Index": 205,
+            "Name": "basis-0205.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0205.csv",
+            "SHA256": "936958906f3a6ec83ad7ad41faba0eff0a7a125ecd86ea3d5d78b61f953583e3",
+            "Terminal": false
+          },
+          {
+            "Index": 206,
+            "Name": "basis-0206.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0206.csv",
+            "SHA256": "e5504ae47c36368f0645467488487e393cd398429afa68f2723862b689dfc357",
+            "Terminal": false
+          },
+          {
+            "Index": 207,
+            "Name": "basis-0207.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0207.csv",
+            "SHA256": "8d890bf0ca9fcd0ecdcbfc7dc829cbf44e2c1ca7b2bcbc5ad8d46e895730968c",
+            "Terminal": false
+          },
+          {
+            "Index": 208,
+            "Name": "basis-0208.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0208.csv",
+            "SHA256": "cff85789c54475ea0724428a71633fd6e4b1e134e8e04b435dd256e12871999a",
+            "Terminal": false
+          },
+          {
+            "Index": 209,
+            "Name": "basis-0209.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0209.csv",
+            "SHA256": "78e728325d5a29b1a95a990c9a691fb334b599855d7025eafed62eae4439dcbe",
+            "Terminal": false
+          },
+          {
+            "Index": 210,
+            "Name": "basis-0210.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0210.csv",
+            "SHA256": "9156b8d27b442b6f3b6b6123e9f97a2b8febec02c011c6034141dc80d45b3d37",
+            "Terminal": false
+          },
+          {
+            "Index": 211,
+            "Name": "basis-0211.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0211.csv",
+            "SHA256": "90ac136b0007d3d93acb461352092886711452644b5cc99b4a2ee0879453a0cf",
+            "Terminal": false
+          },
+          {
+            "Index": 212,
+            "Name": "basis-0212.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/basis-0212.csv",
+            "SHA256": "923e1a7fd0b8162c2718b4a7635214b66d35753443adb487866cdc1e931d58d4",
+            "Terminal": false
+          },
+          {
+            "Index": 213,
+            "Name": "conductor-2.csv",
+            "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/conductor-2.csv",
+            "SHA256": "98697185a1f6b690827036a44c344f397b5d47047a9e82da18a88565d7a1f6cf",
+            "Terminal": true
+          }
+        ],
+        "ZeroTraceIndices": [],
+        "Traces": {
+          "Directory": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces",
+          "Rule": "regenerated from the bound trace basis in the mesh frame (trace_basis.load_trace_basis; producer format); coordinates within the contract's FrameFitResidual of the producer's own trace files",
+          "FrameFitResidual": 0.0,
+          "ZeroTrace": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/traces/zero-trace.csv",
+          "ZeroTraceSHA256": "c44950ce3b555a2c25f49e8ee0dccb961b99a9c5e2df765c8d90483f2b9e183b",
+          "ContractOutputSourceSHA256Identical": true
+        },
+        "PlanViewBoundary": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/variant/sources/spatial-19-edge-9fd03b1b7378/plan-view-boundary.csv",
+        "RetainedEtch": null,
+        "Signature": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/variant/sources/spatial-19-edge-9fd03b1b7378/mesh-signature.csv",
+        "MeshAttributes": [
+          1,
+          3000,
+          4001,
+          4002
+        ],
+        "AttributeCheck": {
+          "Passed": true,
+          "Named": {
+            "Ground": [
+              4001,
+              4002
+            ],
+            "PrescribedPotential": [
+              1
+            ],
+            "TerminalAttributes": [
+              4002
+            ],
+            "Dielectric[1].Attributes": [
+              4001,
+              4002
+            ],
+            "Dielectric[1].EdgeAttributes": [
+              3000
+            ],
+            "Dielectric[1].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[2].Attributes": [
+              4001,
+              4002
+            ],
+            "Dielectric[2].EdgeAttributes": [
+              3000
+            ],
+            "Dielectric[2].EdgeExcludeAttributes": [
+              1
+            ],
+            "Dielectric[3].Attributes": [
+              3000
+            ],
+            "Dielectric[3].EdgeAttributes": [
+              3000
+            ],
+            "Dielectric[3].EdgeExcludeAttributes": [
+              1
+            ]
+          },
+          "MeshBoundaryAttributes": [
+            1,
+            3000,
+            4001,
+            4002
+          ]
+        },
+        "Config": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/inputs/run-config.json",
+        "ConfigSHA256": "e3b6491b153851a2788fd46a1fbd4f0f35f3816c9176cf3f6f0fee9a00b7ecc5"
+      },
+      "Orders": {
+        "Main": [
+          "p4"
+        ],
+        "Controls": [],
+        "RecipeOrder": "p4",
+        "RecipeLinearTol": 1e-10,
+        "ReferenceOrder": null,
+        "Gated": "p4",
+        "Rule": "main stages at the recipe's PhysicsRun order (the library order: cost coupon, local-edge stage, p-sequence main), then every --orders order, then the reference's own order when it differs (the same-order comparison is the gated one)"
+      },
+      "JobPolicy": {
+        "Mode": "frugal",
+        "MaxJobs": 2,
+        "WalltimeSeconds": 21600.0,
+        "FixedJobs": null,
+        "UserJobCap": 40,
+        "Origin": "--job-policy",
+        "Rule": "N contiguous source blocks as N independent worker jobs at every main order (job 1 also runs the p-sequence controls and the local-edge stage), every block archived into the stage's one archive directory; one reducer job per coupon on the archive union after every worker job completed; N = 1 is the single job of the recorded campaigns; estimates per job = the cost model at the largest PCG factor x PreflightAndMarginFactor + PreflightSeconds; a job fits when that is below the walltime"
+      },
+      "ReducerBlockSize": {
+        "Value": 48,
+        "Origin": "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize",
+        "Rule": "PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b archived source fields resident per block pair (each ~14 MB per rank at p4: V, E and their grid functions with ghosts, ~2.7 GB node-wide) and evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in identical sample order, so the matrices are independent of b (decision 62(1) acceptance: bit-identical CSVs at b = 6 and b = 48). With the streaming one-pass Gram executable (decision 62(4), SHA-256 170439c4...) the reducer evaluates every source once whatever b and keeps N x (4 Q_local + L_local) x 8 bytes resident, so b = N (a single block) is permitted (decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the default stays 48"
+      },
+      "FrozenExecutable": {
+        "SHA256": "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88",
+        "Origin": "--frozen-binary-sha256",
+        "Rule": "the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins the digest and run_stages verifies it in the preflight; 9ef5256b... (partition-independent classification, decision 69) differs from 170439c4... only in the metal-edge classification (geodata / metaledge / surfaceresponseoperator); 170439c4... (streaming one-pass Gram, decision 62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); --frozen-binary-sha256 overrides the default and the origin is recorded per coupon"
+      },
+      "Split": {
+        "N": 2,
+        "Fits": true,
+        "Decision": "policy frugal: N = 2 of at most 2 (blocks [99, 114] sources; controls + local-edge in worker-1); longest job 191 min, critical path 203 min, node time 6.56 h at 2.0x PCG (+35% and preflight) against the 6.0 h walltime",
+        "ControlsJob": "worker-1",
+        "LargestSplit": 2,
+        "Candidates": [
+          {
+            "N": 1,
+            "Fits": false,
+            "ControlsJob": "worker-1",
+            "LongestJobSeconds": 22883.571331899147,
+            "CriticalPathSeconds": 22883.571331899147,
+            "NodeSeconds": 22883.571331899147
+          },
+          {
+            "N": 2,
+            "Fits": true,
+            "ControlsJob": "worker-1",
+            "LongestJobSeconds": 11473.79141224286,
+            "CriticalPathSeconds": 12189.312400419505,
+            "NodeSeconds": 23614.198155315018
+          }
+        ],
+        "CriticalPathEstimateSeconds": {
+          "1.0": 7302.86341193041,
+          "1.5": 9721.635077501285,
+          "2.0": 12189.312400419505
+        },
+        "NodeSecondsEstimate": {
+          "1.0": 13692.929435636017,
+          "1.5": 18653.56379547552,
+          "2.0": 23614.198155315018
+        },
+        "WorstPCGFactor": "2.0",
+        "Blocks": [
+          99,
+          114
+        ],
+        "Rule": "N contiguous source blocks as N independent worker jobs at every main order (job 1 also runs the p-sequence controls and the local-edge stage), every block archived into the stage's one archive directory; one reducer job per coupon on the archive union after every worker job completed; N = 1 is the single job of the recorded campaigns; estimates per job = the cost model at the largest PCG factor x PreflightAndMarginFactor + PreflightSeconds; a job fits when that is below the walltime"
+      },
+      "Jobs": [
+        {
+          "Name": "worker-1",
+          "Kind": "worker",
+          "Block": 1,
+          "Sources": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86,
+            87,
+            88,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94,
+            95,
+            96,
+            97,
+            98,
+            99
+          ],
+          "Instance": "m8g.48xlarge",
+          "Requires": [],
+          "Directory": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-1",
+          "RemoteDirectory": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-1",
+          "SubmissionRecord": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/submission-worker-1.json",
+          "StageNames": [
+            "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block1",
+            "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge"
+          ],
+          "Estimate": {
+            "1.0": 6587.342423753764,
+            "1.5": 9006.11408932464,
+            "2.0": 11424.885754895515
+          },
+          "Plan": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-1/plan.json",
+          "Submission": {
+            "Job": "57553.ip-192-168-54-24.us-west-2.compute.internal",
+            "UTC": "2026-10-06T22:32:01Z",
+            "UserJobsBefore": 1,
+            "JobCap": 40,
+            "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-1 && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-1/job.pbs"
+          },
+          "Monitor": {
+            "Polls": 37,
+            "LastJobState": null,
+            "LastStages": [
+              [
+                "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block1",
+                "complete",
+                2677
+              ],
+              [
+                "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge",
+                "complete",
+                548
+              ]
+            ],
+            "LastPollUTC": "2026-10-06T23:28:02Z"
+          },
+          "SubmittedAt": 1791325921.8937066,
+          "FinishedAt": 1791329282.90928,
+          "Status": {
+            "State": "complete",
+            "TotalSeconds": 3226.4086800950004,
+            "Host": "ip-192-168-33-212",
+            "Stages": {
+              "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block1": [
+                "complete",
+                2676.7571278419996
+              ],
+              "spatial-19-edge-9fd03b1b7378-thin-p4-local-edge": [
+                "complete",
+                547.8629488249999
+              ]
+            }
+          }
+        },
+        {
+          "Name": "worker-2",
+          "Kind": "worker",
+          "Block": 2,
+          "Sources": [
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            107,
+            108,
+            109,
+            110,
+            111,
+            112,
+            113,
+            114,
+            115,
+            116,
+            117,
+            118,
+            119,
+            120,
+            121,
+            122,
+            123,
+            124,
+            125,
+            126,
+            127,
+            128,
+            129,
+            130,
+            131,
+            132,
+            133,
+            134,
+            135,
+            136,
+            137,
+            138,
+            139,
+            140,
+            141,
+            142,
+            143,
+            144,
+            145,
+            146,
+            147,
+            148,
+            149,
+            150,
+            151,
+            152,
+            153,
+            154,
+            155,
+            156,
+            157,
+            158,
+            159,
+            160,
+            161,
+            162,
+            163,
+            164,
+            165,
+            166,
+            167,
+            168,
+            169,
+            170,
+            171,
+            172,
+            173,
+            174,
+            175,
+            176,
+            177,
+            178,
+            179,
+            180,
+            181,
+            182,
+            183,
+            184,
+            185,
+            186,
+            187,
+            188,
+            189,
+            190,
+            191,
+            192,
+            193,
+            194,
+            195,
+            196,
+            197,
+            198,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            205,
+            206,
+            207,
+            208,
+            209,
+            210,
+            211,
+            212,
+            213
+          ],
+          "Instance": "m8g.48xlarge",
+          "Requires": [],
+          "Directory": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-2",
+          "RemoteDirectory": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-2",
+          "SubmissionRecord": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/submission-worker-2.json",
+          "StageNames": [
+            "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block2"
+          ],
+          "Estimate": {
+            "1.0": 6390.066023705608,
+            "1.5": 8931.928717974235,
+            "2.0": 11473.79141224286
+          },
+          "Plan": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-2/plan.json",
+          "Submission": {
+            "Job": "57554.ip-192-168-54-24.us-west-2.compute.internal",
+            "UTC": "2026-10-06T22:32:02Z",
+            "UserJobsBefore": 2,
+            "JobCap": 40,
+            "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-2 && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-2/job.pbs"
+          },
+          "Monitor": {
+            "Polls": 44,
+            "LastJobState": null,
+            "LastStages": [
+              [
+                "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block2",
+                "complete",
+                3463
+              ]
+            ],
+            "LastPollUTC": "2026-10-06T23:42:09Z"
+          },
+          "SubmittedAt": 1791325922.3227472,
+          "FinishedAt": 1791330129.5084152,
+          "Status": {
+            "State": "complete",
+            "TotalSeconds": 3464.179252848,
+            "Host": "ip-192-168-43-20",
+            "Stages": {
+              "spatial-19-edge-9fd03b1b7378-thin-p4-worker-block2": [
+                "complete",
+                3463.036373698
+              ]
+            }
+          }
+        },
+        {
+          "Name": "reducer",
+          "Kind": "reducer",
+          "Block": null,
+          "Sources": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            33,
+            34,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47,
+            48,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            65,
+            66,
+            67,
+            68,
+            69,
+            70,
+            71,
+            72,
+            73,
+            74,
+            75,
+            76,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82,
+            83,
+            84,
+            85,
+            86,
+            87,
+            88,
+            89,
+            90,
+            91,
+            92,
+            93,
+            94,
+            95,
+            96,
+            97,
+            98,
+            99,
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            106,
+            107,
+            108,
+            109,
+            110,
+            111,
+            112,
+            113,
+            114,
+            115,
+            116,
+            117,
+            118,
+            119,
+            120,
+            121,
+            122,
+            123,
+            124,
+            125,
+            126,
+            127,
+            128,
+            129,
+            130,
+            131,
+            132,
+            133,
+            134,
+            135,
+            136,
+            137,
+            138,
+            139,
+            140,
+            141,
+            142,
+            143,
+            144,
+            145,
+            146,
+            147,
+            148,
+            149,
+            150,
+            151,
+            152,
+            153,
+            154,
+            155,
+            156,
+            157,
+            158,
+            159,
+            160,
+            161,
+            162,
+            163,
+            164,
+            165,
+            166,
+            167,
+            168,
+            169,
+            170,
+            171,
+            172,
+            173,
+            174,
+            175,
+            176,
+            177,
+            178,
+            179,
+            180,
+            181,
+            182,
+            183,
+            184,
+            185,
+            186,
+            187,
+            188,
+            189,
+            190,
+            191,
+            192,
+            193,
+            194,
+            195,
+            196,
+            197,
+            198,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            205,
+            206,
+            207,
+            208,
+            209,
+            210,
+            211,
+            212,
+            213
+          ],
+          "Instance": "r8g.48xlarge",
+          "Requires": [
+            "worker-1",
+            "worker-2"
+          ],
+          "Directory": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/reducer",
+          "RemoteDirectory": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/reducer",
+          "SubmissionRecord": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/submission-reducer.json",
+          "StageNames": [
+            "spatial-19-edge-9fd03b1b7378-thin-p4-reducer"
+          ],
+          "Estimate": {
+            "1.0": 715.5209881766457,
+            "1.5": 715.5209881766457,
+            "2.0": 715.5209881766457
+          },
+          "Plan": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/reducer/plan.json",
+          "Submission": {
+            "Job": "57626.ip-192-168-54-24.us-west-2.compute.internal",
+            "UTC": "2026-10-06T23:42:10Z",
+            "UserJobsBefore": 1,
+            "JobCap": 40,
+            "Command": "cd /data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/reducer && /opt/soca/soca-green1/schedulers/default/pbs/bin/qsub /data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/jobs/reducer/job.pbs"
+          },
+          "Monitor": {
+            "Polls": 4,
+            "LastJobState": null,
+            "LastStages": [
+              [
+                "spatial-19-edge-9fd03b1b7378-thin-p4-reducer",
+                "complete",
+                221
+              ]
+            ],
+            "LastPollUTC": "2026-10-06T23:48:12Z"
+          },
+          "SubmittedAt": 1791330130.4305344,
+          "FinishedAt": 1791330492.0389578
+        }
+      ],
+      "Upload": {
+        "Commands": [
+          [
+            "rsync",
+            "-a",
+            "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/upload/",
+            "localhost:/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/"
+          ],
+          [
+            "rsync",
+            "-a",
+            "/data/home/simlap/bedrock-tests/palace2-s2d/examples/cpw3d_surface/spatial_coupon/qualify/run_stages.py",
+            "localhost:/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/run_stages.py"
+          ]
+        ],
+        "UTC": "2026-10-06T22:32:01Z"
+      },
+      "ArchiveUnion": {
+        "UTC": "2026-10-06T23:42:09Z",
+        "Stages": {
+          "spatial-19-edge-9fd03b1b7378-thin-p4": {
+            "Directory": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/spatial-19-edge-9fd03b1b7378-thin-p4/archive",
+            "Expected": 40896,
+            "Found": 40896,
+            "OK": true,
+            "Rule": "sources x ranks files source-*-rank-*-V.bin (one potential per source and rank)"
+          }
+        }
+      },
+      "Fetch": {
+        "Command": [
+          "rsync",
+          "-a",
+          "--exclude",
+          "archive/",
+          "--exclude",
+          "tmp/",
+          "localhost:/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/",
+          "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/results/main/"
+        ],
+        "UTC": "2026-10-06T23:48:13Z",
+        "QStatHistory": {
+          "worker-1": "Job Id: 57553.ip-192-168-54-24.us-west-2.compute.internal\n    Job_Name = coupon-qualify-spatial-19-edge-9fd03b1b7378-thin-worker-1\n    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal\n    resources_used.cpupercent = 128738\n    resources_used.cput = 171:17:54\n    resources_used.mem = 18648kb\n    resources_used.ncpus = 192\n    resources_used.vmem = 113400kb\n    resources_used.walltime = 00:53:47\n    job_state = F\n    queue = normal-g\n    server = ip-192-168-54-24.us-west-2.compute.internal\n    Checkpoint = u\n    ctime = Tue Oct  6 22:32:01 2026\n    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap\n\t/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/\n\tspatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-1/coupon-qualify-spa\n\ttial-19-edge-9fd03b1b7378-thin-worker-1.e57553\n    exec_host = 192.168.33.212/0*192\n    exec_vnode = (192.168.33.212:ncpus=192)\n    Hold_Types = n\n    Join_Path = oe\n    Keep_Files = n\n    Mail_Points = a\n    mtime = Tue Oct  6 23:27:47 2026\n    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen\n\tt_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b73\n\t78-thin/main/jobs/worker-1/pbs.log\n    Priority = 0\n    qtime = Tue Oct  6 22:32:01 2026\n    Rerunable = False\n    Resource_List.efa_support = True\n    Resource_List.instance_type = m8g.48xlarge\n    Resource_List.mpiprocs = 192\n    Resource_List.ncpus = 192\n    Resource_List.nodect = 1\n    Resource_List.place = scatter:excl\n    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job57553\n    Resource_List.stack_id = soca-green1-job-57553\n    Resource_List.subnet_id = subnet-0c98d793bbcebb39a\n    Resource_List.walltime = 06:00:00\n    stime = Tue Oct  6 22:33:56 2026\n    obittime = Tue Oct  6 23:27:45 2026\n    session_id = 5762\n    jobdir = /data/home/simlap\n    substate = 92\n    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,\n\tPBS_O_LOGNAME=simlap,\n\tPBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr\n\t/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op\n\tt/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,\n\tPBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/th\n\tin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/\n\tjobs/worker-1,PBS_O_SYSTEM=Linux,PBS_O_QUEUE=normal-g,\n\tPBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal\n    comment = Job run at Tue Oct 06 at 22:33 on (192.168.33.212:ncpus=192) and \n\tfinished\n    etime = Tue Oct  6 22:32:01 2026\n    run_count = 1\n    Stageout_status = 1\n    Exit_status = 0\n    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/th\n\tin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/\n\tjobs/worker-1/job.pbs\n    history_timestamp = 1791329267\n    project = DS-EM-FEM\n    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal\n\n",
+          "worker-2": "Job Id: 57554.ip-192-168-54-24.us-west-2.compute.internal\n    Job_Name = coupon-qualify-spatial-19-edge-9fd03b1b7378-thin-worker-2\n    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal\n    resources_used.cpupercent = 235240\n    resources_used.cput = 184:14:51\n    resources_used.mem = 19108kb\n    resources_used.ncpus = 192\n    resources_used.vmem = 112372kb\n    resources_used.walltime = 00:57:45\n    job_state = F\n    queue = normal-g\n    server = ip-192-168-54-24.us-west-2.compute.internal\n    Checkpoint = u\n    ctime = Tue Oct  6 22:32:02 2026\n    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap\n\t/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/\n\tspatial-19-edge-9fd03b1b7378-thin/main/jobs/worker-2/coupon-qualify-spa\n\ttial-19-edge-9fd03b1b7378-thin-worker-2.e57554\n    exec_host = 192.168.43.20/0*192\n    exec_vnode = (192.168.43.20:ncpus=192)\n    Hold_Types = n\n    Join_Path = oe\n    Keep_Files = n\n    Mail_Points = a\n    mtime = Tue Oct  6 23:37:18 2026\n    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen\n\tt_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b73\n\t78-thin/main/jobs/worker-2/pbs.log\n    Priority = 0\n    qtime = Tue Oct  6 22:32:02 2026\n    Rerunable = False\n    Resource_List.efa_support = True\n    Resource_List.instance_type = m8g.48xlarge\n    Resource_List.mpiprocs = 192\n    Resource_List.ncpus = 192\n    Resource_List.nodect = 1\n    Resource_List.place = scatter:excl\n    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job57554\n    Resource_List.stack_id = soca-green1-job-57554\n    Resource_List.subnet_id = subnet-0c98d793bbcebb39a\n    Resource_List.walltime = 06:00:00\n    stime = Tue Oct  6 22:39:30 2026\n    obittime = Tue Oct  6 23:37:17 2026\n    session_id = 7561\n    jobdir = /data/home/simlap\n    substate = 92\n    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,\n\tPBS_O_LOGNAME=simlap,\n\tPBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr\n\t/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op\n\tt/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,\n\tPBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/th\n\tin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/\n\tjobs/worker-2,PBS_O_SYSTEM=Linux,PBS_O_QUEUE=normal-g,\n\tPBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal\n    comment = Job run at Tue Oct 06 at 22:39 on (192.168.43.20:ncpus=192) and f\n\tinished\n    etime = Tue Oct  6 22:32:02 2026\n    run_count = 1\n    Stageout_status = 1\n    Exit_status = 0\n    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/th\n\tin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/\n\tjobs/worker-2/job.pbs\n    history_timestamp = 1791329838\n    project = DS-EM-FEM\n    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal\n\n",
+          "reducer": "Job Id: 57626.ip-192-168-54-24.us-west-2.compute.internal\n    Job_Name = coupon-qualify-spatial-19-edge-9fd03b1b7378-thin-reducer\n    Job_Owner = simlap@ip-192-168-148-82.us-west-2.compute.internal\n    resources_used.cpupercent = 31298\n    resources_used.cput = 11:24:56\n    resources_used.mem = 18948kb\n    resources_used.ncpus = 192\n    resources_used.vmem = 112368kb\n    resources_used.walltime = 00:03:42\n    job_state = F\n    queue = normal-g\n    server = ip-192-168-54-24.us-west-2.compute.internal\n    Checkpoint = u\n    ctime = Tue Oct  6 23:42:10 2026\n    Error_Path = ip-192-168-148-82.us-west-2.compute.internal:/data/home/simlap\n\t/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/\n\tspatial-19-edge-9fd03b1b7378-thin/main/jobs/reducer/coupon-qualify-spat\n\tial-19-edge-9fd03b1b7378-thin-reducer.e57626\n    exec_host = 192.168.52.7/0*192\n    exec_vnode = (192.168.52.7:ncpus=192)\n    Hold_Types = n\n    Join_Path = oe\n    Keep_Files = n\n    Mail_Points = a\n    mtime = Tue Oct  6 23:47:57 2026\n    Output_Path = ip-192-168-148-82:/data/home/simlap/coupon_accuracy_assessmen\n\tt_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b73\n\t78-thin/main/jobs/reducer/pbs.log\n    Priority = 0\n    qtime = Tue Oct  6 23:42:10 2026\n    Rerunable = False\n    Resource_List.efa_support = True\n    Resource_List.instance_type = r8g.48xlarge\n    Resource_List.mpiprocs = 192\n    Resource_List.ncpus = 192\n    Resource_List.nodect = 1\n    Resource_List.place = scatter:excl\n    Resource_List.select = 1:ncpus=192:mpiprocs=192:compute_node=job57626\n    Resource_List.stack_id = soca-green1-job-57626\n    Resource_List.subnet_id = subnet-0c98d793bbcebb39a\n    Resource_List.walltime = 06:00:00\n    stime = Tue Oct  6 23:44:12 2026\n    obittime = Tue Oct  6 23:47:57 2026\n    session_id = 5751\n    jobdir = /data/home/simlap\n    substate = 92\n    Variable_List = PBS_O_HOME=/data/home/simlap,PBS_O_LANG=C.UTF-8,\n\tPBS_O_LOGNAME=simlap,\n\tPBS_O_PATH=/apps/comsol/comsol61/multiphysics/bin:/usr/local/sbin:/usr\n\t/local/bin:/sbin:/bin:/usr/sbin:/usr/bin:/opt/pbs/bin:/opt/pbs/sbin:/op\n\tt/pbs/bin:/opt/soca/soca-green1,PBS_O_SHELL=/bin/bash,\n\tPBS_O_WORKDIR=/data/home/simlap/coupon_accuracy_assessment_20260913/th\n\tin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/\n\tjobs/reducer,PBS_O_SYSTEM=Linux,PBS_O_QUEUE=normal-g,\n\tPBS_O_HOST=ip-192-168-148-82.us-west-2.compute.internal\n    comment = Job run at Tue Oct 06 at 23:44 on (192.168.52.7:ncpus=192) and fi\n\tnished\n    etime = Tue Oct  6 23:42:10 2026\n    run_count = 1\n    Stageout_status = 1\n    Exit_status = 0\n    Submit_arguments = /data/home/simlap/coupon_accuracy_assessment_20260913/th\n\tin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/\n\tjobs/reducer/job.pbs\n    history_timestamp = 1791330477\n    project = DS-EM-FEM\n    Submit_Host = ip-192-168-148-82.us-west-2.compute.internal\n\n"
+        }
+      },
+      "ResultDigests": {
+        "main/jobs/reducer/memory-samples.csv": {
+          "Local": "b49e2d1deef170372385be7a473826c1e60956ace62a29c1ee02d29662b311e6",
+          "Remote": "b49e2d1deef170372385be7a473826c1e60956ace62a29c1ee02d29662b311e6",
+          "OK": true
+        },
+        "main/jobs/worker-1/memory-samples.csv": {
+          "Local": "ddd43836cd6d47de26c2605ef07441e812b01995ee3b18176da531b6e319bc51",
+          "Remote": "ddd43836cd6d47de26c2605ef07441e812b01995ee3b18176da531b6e319bc51",
+          "OK": true
+        },
+        "main/jobs/worker-2/memory-samples.csv": {
+          "Local": "57823f9ace03de0a9a64bad9ac2be257cd459e31dbce40dc8cfa2a3cfc8bdf03",
+          "Remote": "57823f9ace03de0a9a64bad9ac2be257cd459e31dbce40dc8cfa2a3cfc8bdf03",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4/reducer/domain-response-matrix.csv": {
+          "Local": "ee3c26aa9388de0d9e4bb3b502823c6f08286fa4565c244d92e1a11034ad106c",
+          "Remote": "ee3c26aa9388de0d9e4bb3b502823c6f08286fa4565c244d92e1a11034ad106c",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4/reducer/surface-response-matrix.csv": {
+          "Local": "1998e4df8703986ebbc55b0440159848a555e4fa4ca1003380e94c4bed576a0e",
+          "Remote": "1998e4df8703986ebbc55b0440159848a555e4fa4ca1003380e94c4bed576a0e",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge/output/domain-E.csv": {
+          "Local": "afc8aafc014d58d6b67f875d564acff16253eb53309885f8ac9c1daea24e68b3",
+          "Remote": "afc8aafc014d58d6b67f875d564acff16253eb53309885f8ac9c1daea24e68b3",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge/output/domain-response-matrix.csv": {
+          "Local": "d936fd0d4e8db5fc34253a4a44e8db43e7a506ce20b76f5dc74f6aad51b3133d",
+          "Remote": "d936fd0d4e8db5fc34253a4a44e8db43e7a506ce20b76f5dc74f6aad51b3133d",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge/output/error-indicators.csv": {
+          "Local": "b02e53856dde13694af7d4891633a532d2ce6c838b71c5fdd385a44551c16e49",
+          "Remote": "b02e53856dde13694af7d4891633a532d2ce6c838b71c5fdd385a44551c16e49",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge/output/surface-Q-edge-local.csv": {
+          "Local": "80407f519461f60bb08cd849d2f6e7405162fc5f6d84e2739f7b8865b2f48034",
+          "Remote": "80407f519461f60bb08cd849d2f6e7405162fc5f6d84e2739f7b8865b2f48034",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge/output/surface-Q-edge.csv": {
+          "Local": "7b98cea5dbc25dfe076baa2926bfe54ce1b53e9dce0113e8af4c723ba5aa866d",
+          "Remote": "7b98cea5dbc25dfe076baa2926bfe54ce1b53e9dce0113e8af4c723ba5aa866d",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge/output/surface-Q.csv": {
+          "Local": "f87e651dabbb08256f1f441958adcc981cc2eff3603dbb0adba641a4fcc006c8",
+          "Remote": "f87e651dabbb08256f1f441958adcc981cc2eff3603dbb0adba641a4fcc006c8",
+          "OK": true
+        },
+        "main/spatial-19-edge-9fd03b1b7378-thin-p4-local-edge/output/surface-response-matrix.csv": {
+          "Local": "64e8791abd5c5139cb499961bc5ad5b81130e5f2de931cd16187f4df10fcb506",
+          "Remote": "64e8791abd5c5139cb499961bc5ad5b81130e5f2de931cd16187f4df10fcb506",
+          "OK": true
+        }
+      },
+      "MatrixValidation": {
+        "spatial-19-edge-9fd03b1b7378-thin-p4": {
+          "domain": {
+            "Rows": 22791,
+            "BasisSize": 213
+          },
+          "surface": {
+            "Rows": 68373,
+            "BasisSize": 213
+          }
+        }
+      },
+      "ArchiveDeletion": {
+        "Archives": [
+          "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/spatial-19-edge-9fd03b1b7378-thin-p4/archive"
+        ],
+        "SizesBeforeDeletion": "85G\t/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/main/spatial-19-edge-9fd03b1b7378-thin-p4/archive",
+        "DeletedUTC": "2026-10-06T23:49:00Z",
+        "Remaining": ""
+      },
+      "FetchedAt": 1791330540.832527,
+      "MainReducer": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/results/main/spatial-19-edge-9fd03b1b7378-thin-p4/reducer",
+      "MATail": {
+        "Applied": false,
+        "Reason": "no radial MA shells on this run: the MA is raw"
+      },
+      "Qualification": {
+        "Verdict": "Failed",
+        "Reason": "no reference matrices and failing ['PSequenceControls']",
+        "GatesPassed": {
+          "PSequenceControls": false
+        },
+        "NotApplicable": [],
+        "ReferenceAnchor": null,
+        "GatedStage": "spatial-19-edge-9fd03b1b7378-thin-p4",
+        "GatedOrder": "p4",
+        "GatedComparison": "spatial-19-edge-9fd03b1b7378-thin-p4-vs-reference",
+        "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/qualification.json",
+        "MAQuantity": null,
+        "MASharp": null,
+        "ClassStatistics": null,
+        "Offsets": null,
+        "WeightedPMA": null,
+        "Informational": {}
+      },
+      "Cost": {
+        "MainStage": {
+          "H1": 53487766,
+          "Order": 4,
+          "MeanPCGIterations": 16.422535211267604,
+          "MaxPCGIterations": 29,
+          "SecondsPerPCGIteration": 1.6622376744139506,
+          "WorkerWallSeconds": 6139.79350154,
+          "ReducerWallSeconds": 220.51111892699998,
+          "StageWallSeconds": 6360.304620467,
+          "NodeHours": 1.7667512834630554
+        },
+        "MainStages": {
+          "spatial-19-edge-9fd03b1b7378-thin-p4": {
+            "H1": 53487766,
+            "Order": 4,
+            "MeanPCGIterations": 16.422535211267604,
+            "MaxPCGIterations": 29,
+            "SecondsPerPCGIteration": 1.6622376744139506,
+            "WorkerWallSeconds": 6139.79350154,
+            "ReducerWallSeconds": 220.51111892699998,
+            "StageWallSeconds": 6360.304620467,
+            "NodeHours": 1.7667512834630554
+          }
+        },
+        "JobNodeHours": 1.920052449413889,
+        "JobTotalSeconds": 6912.188817890001,
+        "Jobs": {
+          "worker-1": {
+            "Kind": "worker",
+            "Block": 1,
+            "SourceCount": 99,
+            "PBSJobID": "57553.ip-192-168-54-24.us-west-2.compute.internal",
+            "SubmittedUTC": "2026-10-06T22:32:01Z",
+            "EstimateSecondsWithPreflightAndMargin": 11424.885754895515,
+            "ActualSeconds": 3226.4086800950004,
+            "ActualOverEstimate": 0.2824018330960113,
+            "NodeHours": 0.8962246333597224,
+            "StartUTC": "2026-10-06T22:33:57Z",
+            "EndUTC": "2026-10-06T23:27:43Z",
+            "Host": "ip-192-168-33-212"
+          },
+          "worker-2": {
+            "Kind": "worker",
+            "Block": 2,
+            "SourceCount": 114,
+            "PBSJobID": "57554.ip-192-168-54-24.us-west-2.compute.internal",
+            "SubmittedUTC": "2026-10-06T22:32:02Z",
+            "EstimateSecondsWithPreflightAndMargin": 11473.79141224286,
+            "ActualSeconds": 3464.179252848,
+            "ActualOverEstimate": 0.30192105890574433,
+            "NodeHours": 0.96227201468,
+            "StartUTC": "2026-10-06T22:39:30Z",
+            "EndUTC": "2026-10-06T23:37:15Z",
+            "Host": "ip-192-168-43-20"
+          },
+          "reducer": {
+            "Kind": "reducer",
+            "Block": null,
+            "SourceCount": 213,
+            "PBSJobID": "57626.ip-192-168-54-24.us-west-2.compute.internal",
+            "SubmittedUTC": "2026-10-06T23:42:10Z",
+            "EstimateSecondsWithPreflightAndMargin": 715.5209881766457,
+            "ActualSeconds": 221.600884947,
+            "ActualOverEstimate": 0.30970563911996923,
+            "NodeHours": 0.06155580137416666,
+            "StartUTC": "2026-10-06T23:44:12Z",
+            "EndUTC": "2026-10-06T23:47:54Z",
+            "Host": "ip-192-168-52-7"
+          }
+        },
+        "Split": {
+          "N": 2,
+          "Blocks": [
+            99,
+            114
+          ],
+          "ControlsJob": "worker-1",
+          "Policy": "frugal",
+          "CriticalPathEstimateSeconds": 12189.312400419505,
+          "NodeSecondsEstimate": 23614.198155315018
+        },
+        "CriticalPathSeconds": 4618.938820362091,
+        "CriticalPathRule": "first submission of the coupon's jobs to its fetch (a split coupon: the worker jobs in parallel, then the reducer job's queue wait and run)",
+        "ReferenceNodeHours": null,
+        "MainStageOverReference": null,
+        "Path": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/nearkey-validation-pair5/qualify/thin-spatial-19-edge-9fd03b1b7378/spatial-19-edge-9fd03b1b7378-thin/cost-summary.json"
+      }
+    }
+  ],
+  "Library": {
+    "CouponsAttempted": 1,
+    "CouponsQualified": 0,
+    "CouponsPending": 0,
+    "CouponsFailed": 1,
+    "CouponsPlanned": 0,
+    "CouponsSkipped": 0,
+    "CouponsUnsupported": 0,
+    "StoppedCoupons": {},
+    "NodeHours": 1.920052449413889,
+    "CriticalPathSeconds": 4618.938820362091,
+    "CriticalPathRule": "first submission to the last fetch of this run (the jobs of different coupons overlap up to MaxJobs)",
+    "JobWallSeconds": {
+      "spatial-19-edge-9fd03b1b7378-thin": 6912.188817890001
+    },
+    "WallClockSeconds": 4631.0224776268005,
+    "JobsSubmitted": 3,
+    "UserJobCap": 40,
+    "MaxJobs": 2,
+    "JobsRule": "every qsub of this run is counted at submission (a stop after the submission keeps its job counted); a split coupon counts N worker jobs and its reducer job",
+    "JobPolicy": {
+      "Mode": "frugal",
+      "FixedJobs": null,
+      "MaxJobs": 2,
+      "Rule": "N contiguous source blocks as N independent worker jobs at every main order (job 1 also runs the p-sequence controls and the local-edge stage), every block archived into the stage's one archive directory; one reducer job per coupon on the archive union after every worker job completed; N = 1 is the single job of the recorded campaigns; estimates per job = the cost model at the largest PCG factor x PreflightAndMarginFactor + PreflightSeconds; a job fits when that is below the walltime"
+    },
+    "ReducerBlockSize": {
+      "CommandLine": null,
+      "PerCase": {
+        "spatial-19-edge-9fd03b1b7378-thin": {
+          "Value": 48,
+          "Origin": "manifest ProductionRecipe.PhysicsRun.ReducerBlockSize",
+          "Rule": "PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b archived source fields resident per block pair (each ~14 MB per rank at p4: V, E and their grid functions with ghosts, ~2.7 GB node-wide) and evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in identical sample order, so the matrices are independent of b (decision 62(1) acceptance: bit-identical CSVs at b = 6 and b = 48). With the streaming one-pass Gram executable (decision 62(4), SHA-256 170439c4...) the reducer evaluates every source once whatever b and keeps N x (4 Q_local + L_local) x 8 bytes resident, so b = N (a single block) is permitted (decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the default stays 48"
+        }
+      },
+      "Rule": "PALACE_RESPONSE_BLOCK_SIZE = b: the reducer keeps 2b archived source fields resident per block pair (each ~14 MB per rank at p4: V, E and their grid functions with ghosts, ~2.7 GB node-wide) and evaluates every source ceil(N / b) times; b = 48 -> 96 resident fields, estimated 350-450 GB of the r8g.48xlarge's 1,485 GiB (b = 6 measured 194 GB); the per-entry sums are identical in identical sample order, so the matrices are independent of b (decision 62(1) acceptance: bit-identical CSVs at b = 6 and b = 48). With the streaming one-pass Gram executable (decision 62(4), SHA-256 170439c4...) the reducer evaluates every source once whatever b and keeps N x (4 Q_local + L_local) x 8 bytes resident, so b = N (a single block) is permitted (decision 63 rule; PBS 46718: p4 78 sources at b = 48 peak 33.3 GB vs 91.2 GB with b28); the default stays 48"
+    },
+    "Splits": {
+      "spatial-19-edge-9fd03b1b7378-thin": {
+        "N": 2,
+        "Blocks": [
+          99,
+          114
+        ],
+        "Policy": "frugal",
+        "CriticalPathSeconds": 4618.938820362091,
+        "NodeHours": 1.920052449413889
+      }
+    },
+    "DryRun": false,
+    "Remote": {
+      "Host": "localhost",
+      "Root": "/data/home/simlap/coupon_accuracy_assessment_20260913"
+    },
+    "Orders": [],
+    "OrdersRule": "main stages at the recipe's PhysicsRun order (the library order: cost coupon, local-edge stage, p-sequence main), then every --orders order, then the reference's own order when it differs (the same-order comparison is the gated one)",
+    "Controls": [],
+    "FrozenBinarySHA256": {
+      "CommandLine": "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88",
+      "PerCase": {
+        "spatial-19-edge-9fd03b1b7378-thin": {
+          "SHA256": "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88",
+          "Origin": "--frozen-binary-sha256",
+          "Rule": "the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins the digest and run_stages verifies it in the preflight; 9ef5256b... (partition-independent classification, decision 69) differs from 170439c4... only in the metal-edge classification (geodata / metaledge / surfaceresponseoperator); 170439c4... (streaming one-pass Gram, decision 62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); --frozen-binary-sha256 overrides the default and the origin is recorded per coupon"
+        }
+      },
+      "Default": "9ef5256bc9ca9abc109954fb97b096879b3b472f18483f867b8de0b73a832058",
+      "Rule": "the frozen palace-archive-estimate-<sha256>.bin under the remote root runs every stage; the plan pins the digest and run_stages verifies it in the preflight; 9ef5256b... (partition-independent classification, decision 69) differs from 170439c4... only in the metal-edge classification (geodata / metaledge / surfaceresponseoperator); 170439c4... (streaming one-pass Gram, decision 62(4)) reproduces b28f089a... at p3 bit for bit and at p4 to 8.4e-13 per entry (PBS 46718); --frozen-binary-sha256 overrides the default and the origin is recorded per coupon"
+    },
+    "ClusterProfile": "soca-green normal-g m8g.48xlarge (r8g.48xlarge fallback)"
+  },
+  "LibraryContinuity": {
+    "Gate": "LibraryContinuity",
+    "Statement": "every pair / stack model whose consecutive edge separations are all at or above 2R (1 - ThresholdBandOverR) responds per basis function like the isolated-edge model within MaximumRelativeOffset (decision 82(4): the strict interaction rule at 2R is continuous only if the pair model at the threshold equals two isolated edges; USER decision 117(3), 2026-09-28: compared per basis function; USER decision 2026-09-28 on the decision-117 review MAJOR-2: gated per edge in aggregate AND per matched basis function against PerBasisFunctionLimit, an edge with zero matched basis functions Failed)",
+    "Quantity": "per edge: the energy-weighted per-basis-function offset (sum of the diagonal domain-response entries Q_ii of the basis functions assigned to the edge over the sum of the isolated-edge model's Q_ii at the same positions in the edge's local frame, minus one), each candidate basis function matched to the isolated basis function within MatchToleranceOverSpacing x the isolated hat spacing; basis functions within CornerExclusionOverR x R of a corner of the isolated coupon's box are not compared (the box truncation changes their support); unmatched basis functions are reported, never gated; the per-hat offsets (median, worst) are recorded (library_continuity.py); per matched basis function: its own offset (candidate Q_ii over its isolated partner's Q_ii, minus one) against PerBasisFunctionLimit, the verdict failing on any matched hat above it; an edge with zero matched basis functions is Failed (not NotApplicable)",
+    "PreviousQuantity": "until decision 117(3): per edge, the sum of Q_ii of the basis points nearest to the edge line divided by the edge length: a hat-count artefact (-23 / -51 / -24 % at the 1.985 R threshold stack whose per-hat response agrees within 1 %); evaluated and recorded as PreviousDefinition, not gated",
+    "MatchingRadius": 1.9,
+    "MaximumRelativeOffset": 0.01,
+    "PerBasisFunctionLimit": 0.05,
+    "ThresholdBandOverR": 0.01,
+    "MatchToleranceOverSpacing": 0.5,
+    "CornerExclusionOverR": 0.25,
+    "Isolated": null,
+    "Models": [],
+    "Verdict": "NotApplicable",
+    "Reason": "no pair / stack model with every consecutive separation at or above 2R (1 - band)"
+  }
+}

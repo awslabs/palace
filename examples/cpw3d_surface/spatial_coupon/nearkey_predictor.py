@@ -15,7 +15,8 @@ prediction so that a later RuleVersion can re-score a stored model from its reco
               FALLBACK |W| > WDefaultMax: max(the full-range form, the default form at WDefaultMax) - monotone
     MA_sharp  Bound_MA x (1 + t_donor) + TailDifferenceBound                                  (decision 422)
     policy    DEFAULT  iff bound <= 0.5 % SA, <= 0.5 % MS, <= 1.0 % MA_sharp AND |W| <= WDefaultMax AND the rule's
-                       DefaultActive is true (validation pair 5 recorded) AND the T2 trace gate passed (<= 1e-3);
+                       DefaultActive is true (validation pair 5 recorded: decision 459, the DefaultActivation record
+                       shipped beside the rule file) AND the T2 trace gate passed (<= 1e-3);
               FALLBACK iff every Type's bound <= 3.5 % inside the calibrated domain, the exact coupon is unbuildable
                        (a STOP record) and an approval is recorded; else NO reuse (the feature stays Missing / F2).
 """
@@ -123,6 +124,15 @@ def predict(rule, *, w, s, t2e_max, tail_donor):
             "MA_sharp": {"Bound": sharp, "TailDonor": tail_donor, "TailDifferenceBound": tail_bound, "TailFromDonor": True}}
 
 
+def activation_record_path(rule, activation):
+    """DefaultActivation.RecordPath resolved: a RELATIVE path is read against the rule file's own directory (the
+    activation record is shipped beside the rule file, decision 460), an absolute path as given."""
+    record = Path(activation["RecordPath"])
+    if record.is_absolute():
+        return record
+    return Path(rule.get("_path") or RULE_FILE).resolve().parent / record
+
+
 def default_active(rule):
     """The rule's DefaultActive flag is honoured only with a DefaultActivation {ValidationPair, RecordPath,
     RecordSHA256, Decision} record whose RecordPath is readable and re-hashes to RecordSHA256 (decision 438 (5):
@@ -135,7 +145,7 @@ def default_active(rule):
             and activation.get("RecordPath")):
         raise NearKeyRuleError("the rule says DefaultActive true without a DefaultActivation {ValidationPair, RecordPath, RecordSHA256} "
                                "record")
-    record = Path(activation["RecordPath"])
+    record = activation_record_path(rule, activation)
     if not record.is_file():
         raise NearKeyRuleError(f"DefaultActivation.RecordPath {record} is not readable: the validation-pair record cannot be verified")
     actual = hashlib.sha256(record.read_bytes()).hexdigest()
@@ -162,8 +172,7 @@ def policy_decision(rule, prediction, *, requested_mode, t2_passed, gates_passed
     reasons = []
     bounds = {T: prediction[T]["Bound"] for T in TYPES}
     sharp = prediction["MA_sharp"]["Bound"]
-    result = {"PolicyLimit": {"Default": dict(limits), "FallbackMaxPct": 100.0 * policy["FallbackMaxBound"]},
-              "RequestedMode": requested_mode, "DefaultActivation": None, "Mode": MODE_NONE, "Allowed": False}
+    result = refused_decision(rule, requested_mode)
     if requested_mode not in (MODE_DEFAULT.lower(), MODE_FALLBACK.lower()):
         raise NearKeyRuleError(f"--nearkey-reuse must be 'default' or 'fallback' to reuse anything, not {requested_mode!r}")
     if not gates_passed:
@@ -201,6 +210,15 @@ def policy_decision(rule, prediction, *, requested_mode, t2_passed, gates_passed
             result.update({"Mode": MODE_FALLBACK, "Allowed": True})
     result["Reasons"] = reasons
     return result
+
+
+def refused_decision(rule, requested_mode, *reasons):
+    """The policy_decision shape with Mode None / Allowed false and the given reasons (the skeleton every decision
+    starts from; decision 460 (B): the information-only Default verdict of a non-Default evaluation when the
+    activation record is not readable on this host)."""
+    policy = rule["Policy"]
+    return {"PolicyLimit": {"Default": dict(policy["DefaultBound"]), "FallbackMaxPct": 100.0 * policy["FallbackMaxBound"]},
+            "RequestedMode": requested_mode, "DefaultActivation": None, "Mode": MODE_NONE, "Allowed": False, "Reasons": list(reasons)}
 
 
 def implied_default_tolerance(rule, s_over_w=0.10, tail_donor=0.0, limits=None):
