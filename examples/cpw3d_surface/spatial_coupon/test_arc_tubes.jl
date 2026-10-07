@@ -764,10 +764,13 @@ end
         # FACE ENDS: the arc cut by the x1 face at 45 and 70 degrees is a face end of the arc side
         # (theta exact, the face named); at 71 degrees it fails closed; an arc whose end tangent
         # runs along the face (the perpendicular / tangential end) and an arc at a box vertex fail closed.
-        for theta in (45.0, 70.0), fabricated in (true, false)
+        for (theta, chord) in ((15.0, 2.5), (45.0, 5.0), (70.0, 5.0)),
+            fabricated in (true, false)
+
             inputs = write_arc_face_end_inputs(
                 mkpath(joinpath(directory, "fe$theta-$fabricated"));
-                theta_degrees=theta
+                theta_degrees=theta,
+                chord_degrees=chord
             )
             arc = only(
                 s for s in segments_of(inputs; fabricated=fabricated) if s.kind == :arc
@@ -862,16 +865,21 @@ end
 
 @testset "round 2b (decision 437 (3)): the four synthetic arc FULL builds at the test sizes" begin
     mktempdir() do directory
-        # (1) / (2) arc face ends at 45 and 70 degrees, fabricated and thin: the arc tube ends ON
+        # (1) / (2) arc face ends at 15 / 45 / 70 degrees, fabricated and thin: the arc tube ends ON
         # the face (design A2 for arcs) with the face-end record on the ArcTube row, the cap entities
         # on the face plane matched by their conic centroids, every gate passed.
-        for theta in (45.0, 70.0), fabricated in (true, false)
+        # (decision 475 MINOR-1: the 15-degree face end closes the shallow end of the lifted range;
+        # 2.5-degree chords so that the 15-degree arc keeps the >= 4-chord guard's four chords)
+        for (theta, chord) in ((15.0, 2.5), (45.0, 5.0), (70.0, 5.0)),
+            fabricated in (true, false)
+
             census, mesh, inputs = build_arc_coupon(
                 mkpath(joinpath(directory, "fe$theta-$fabricated")),
                 write_arc_face_end_inputs;
                 fabricated=fabricated,
                 stem="fe",
-                theta_degrees=theta
+                theta_degrees=theta,
+                chord_degrees=chord
             )
             tubes = census["PrismTubes"]
             arc_rows = [row for row in tubes["Tubes"] if haskey(row, "Arc")]

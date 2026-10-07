@@ -1495,7 +1495,9 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     `UnqualifiedRingCount` - a per-side ring count below the smallest count validated by
     (F) for the coupon kind (ADDED by round 2 F6, decisions 437 / 443);
     `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
-    decision-391 stop-gaps above, until the synthetic arc builds exist);
+    decision-391 stop-gaps, LIFTED by round 2b to the tested ranges above: arc cut ends of
+    tilt <= 70 degrees, smooth joints <= 5e-5 rad, corner joints 2e-4 rad .. 30 degrees on
+    thin coupons; everything beyond still fails closed, decision 437 (3));
     `SteepFaceCrossing` - a face end beyond the validity ceiling of the capped end block,
     2 h_pyr |tan theta| >= lc_cap (ADDED by mesher design round 2 F2b, decision 437);
     `FootprintWithoutEdge` - an explicit footprint without
