@@ -5360,6 +5360,13 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBand",
   planes[0].offset = 0.0;
   planes[0].faces = 1;
   planes[0].status = "Natural";
+  // A synthetic plane acts everywhere (its faces span the whole plan view).
+  auto Unbounded = [](MirrorPlane &plane)
+  {
+    plane.box_min = {-1.0e9, -1.0e9, -1.0e9};
+    plane.box_max = {1.0e9, 1.0e9, 1.0e9};
+  };
+  Unbounded(planes[0]);
   auto Serialise = [](const IdentificationResult &result)
   {
     // The real features' Ids, types, keys and portions (segment, s0, s1, side), in order.
@@ -5676,4 +5683,112 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBand",
     CHECK_THAT(HalfCornerArmStart(120.0, R),
                WithinAbs(HalfCornerArmStart(60.0, R), 1.0e-12));
   }
+}
+
+TEST_CASE("SurfaceResponseIdentificationMirrorBandTwoWalls",
+          "[surfaceresponseidentification][mirror][Serial]")
+{
+  // The symmetry fixture's plan view: a pad between two parallel walls leaning at 45
+  // degrees (direction (1, 1)): the wall A through (0, 0) with outward normal (1, -1) /
+  // sqrt 2 (the pad on its left) and the wall B through (-1, 0) with outward normal (-1, 1)
+  // / sqrt 2. The pad's edges along x at y = 0 and y = 0.5 meet both walls at 45 degrees:
+  // four virtual 90-degree corners, convex / concave alternating (the top edge convex at A,
+  // concave at B; the bottom edge concave at A, convex at B).
+  const double R = 0.2;
+  const double r = 1.0 / std::sqrt(2.0);
+  std::vector<MirrorPlane> planes(2);
+  auto Unbounded = [](MirrorPlane &plane)
+  {
+    plane.box_min = {-1.0e9, -1.0e9, -1.0e9};
+    plane.box_max = {1.0e9, 1.0e9, 1.0e9};
+  };
+  planes[0].normal = {r, -r, 0.0};
+  planes[0].offset = 0.0;
+  planes[0].status = "Natural";
+  planes[1].normal = {-r, r, 0.0};
+  planes[1].offset = r;  // through (-1, 0): -r x + r y = r
+  planes[1].status = "Natural";
+  Unbounded(planes[0]);
+  Unbounded(planes[1]);
+  // CCW pad: bottom edge from B to A at y = 0, then up along A, top edge back, down along
+  // B.
+  LoopSpec pad{{{-1.0, 0.0}, {0.0, 0.0}, {0.5, 0.5}, {-0.5, 0.5}}, 0, 0.125};
+  pad.truncation_edges = {1, 3};
+  const auto input = MakeInput({pad}, R);
+  const auto real = IdentifyMetalPerimeter(input);
+  const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+  REQUIRE(extension.joined_vertices.size() == 4);
+  for (std::size_t i = 0; i < 4; i++)
+  {
+    CHECK_FALSE(extension.joined_straight[i]);
+  }
+  const auto extended = IdentifyMetalPerimeter(extension.input);
+  IdentificationResult merged;
+  const auto summary = MergeMirrorIdentification(real, extended, extension, planes, merged);
+  std::map<std::string, int> formed;
+  for (const auto &feature : merged.features)
+  {
+    if (!feature.mirror.is_null())
+    {
+      INFO(feature.type << " at (" << feature.origin[0] << ", " << feature.origin[1]
+                        << ")");
+      formed[feature.type]++;
+      CHECK_THAT(feature.signature.at("AngleDegrees").get<double>(),
+                 WithinAbs(90.0, 1.0e-6));
+    }
+  }
+  CHECK(summary.mirror_formed_features == 4);
+  CHECK(formed["ConvexCorner"] == 2);
+  CHECK(formed["ConcaveCorner"] == 2);
+
+  // The FULL symmetry fixture's plan view (the chevron: the pad and its reflection across
+  // the wall x = z through the apex corners at (0.75, 0.75) / (1.25, 1.25)), cut by the
+  // wall x - z = -1 and its image x - z = 1: the same four virtual corners, two per wall.
+  std::vector<MirrorPlane> chevron_planes(2);
+  chevron_planes[0].normal = {-r, r, 0.0};
+  chevron_planes[0].offset = r;
+  chevron_planes[0].status = "Natural";
+  chevron_planes[1].normal = {r, -r, 0.0};
+  chevron_planes[1].offset = r;
+  chevron_planes[1].status = "Natural";
+  Unbounded(chevron_planes[0]);
+  Unbounded(chevron_planes[1]);
+  LoopSpec chevron{{{-0.25, 0.75},
+                    {0.75, 0.75},
+                    {0.75, -0.25},
+                    {1.25, 0.25},
+                    {1.25, 1.25},
+                    {0.25, 1.25}},
+                   0,
+                   0.125};
+  chevron.truncation_edges = {2, 5};
+  const auto chevron_input = MakeInput({chevron}, R);
+  const auto chevron_real = IdentifyMetalPerimeter(chevron_input);
+  const auto chevron_extension =
+      ExtendIdentificationInputAcrossMirrorPlanes(chevron_input, chevron_planes);
+  REQUIRE(chevron_extension.joined_vertices.size() == 4);
+  const auto chevron_extended = IdentifyMetalPerimeter(chevron_extension.input);
+  IdentificationResult chevron_merged;
+  const auto chevron_summary = MergeMirrorIdentification(
+      chevron_real, chevron_extended, chevron_extension, chevron_planes, chevron_merged);
+  std::map<std::string, int> chevron_formed, chevron_real_corners;
+  for (const auto &feature : chevron_merged.features)
+  {
+    if (!feature.mirror.is_null())
+    {
+      INFO(feature.type << " at (" << feature.origin[0] << ", " << feature.origin[1]
+                        << ")");
+      chevron_formed[feature.type]++;
+    }
+    else if (feature.type == "ConvexCorner" || feature.type == "ConcaveCorner")
+    {
+      chevron_real_corners[feature.type]++;
+    }
+  }
+  INFO(chevron_summary.unmerged_features.dump());
+  CHECK(chevron_summary.mirror_formed_features == 4);
+  CHECK(chevron_formed["ConvexCorner"] == 2);
+  CHECK(chevron_formed["ConcaveCorner"] == 2);
+  CHECK(chevron_real_corners["ConvexCorner"] == 1);
+  CHECK(chevron_real_corners["ConcaveCorner"] == 1);
 }

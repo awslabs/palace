@@ -105,6 +105,12 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
     double max_deviation = 0.0;
     Point3D normal{};
     double offset = 0.0;
+    Point3D box_min = {std::numeric_limits<double>::infinity(),
+                       std::numeric_limits<double>::infinity(),
+                       std::numeric_limits<double>::infinity()};
+    Point3D box_max = {-std::numeric_limits<double>::infinity(),
+                       -std::numeric_limits<double>::infinity(),
+                       -std::numeric_limits<double>::infinity()};
   };
   std::map<std::array<long long int, 5>, Group> local;
   mfem::Vector normal(3), center(3);
@@ -147,11 +153,22 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
     const double offset = normal * center;
     double deviation = 0.0;
     mesh.GetBdrElementVertices(be, vertices);
+    Point3D face_min = {std::numeric_limits<double>::infinity(),
+                        std::numeric_limits<double>::infinity(),
+                        std::numeric_limits<double>::infinity()};
+    Point3D face_max = {-std::numeric_limits<double>::infinity(),
+                        -std::numeric_limits<double>::infinity(),
+                        -std::numeric_limits<double>::infinity()};
     for (const int v : vertices)
     {
       const double *x = mesh.GetVertex(v);
       deviation = std::max(deviation, std::abs(normal(0) * x[0] + normal(1) * x[1] +
                                                normal(2) * x[2] - offset));
+      for (int d = 0; d < 3; d++)
+      {
+        face_min[d] = std::min(face_min[d], x[d]);
+        face_max[d] = std::max(face_max[d], x[d]);
+      }
     }
     const std::array<long long int, 5> key = {
         attribute, std::llround(normal(0) / normal_quantum),
@@ -165,9 +182,14 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
       group.normal[d] += normal(d);
     }
     group.offset += offset;
+    for (int d = 0; d < 3; d++)
+    {
+      group.box_min[d] = std::min(group.box_min[d], face_min[d]);
+      group.box_max[d] = std::max(group.box_max[d], face_max[d]);
+    }
   }
   // Gather every rank's groups (flat records) and merge by key.
-  constexpr int record_size = 11;
+  constexpr int record_size = 17;
   std::vector<double> send;
   for (const auto &[key, group] : local)
   {
@@ -181,6 +203,14 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
     send.push_back(group.normal[1]);
     send.push_back(group.normal[2]);
     send.push_back(group.offset);
+    for (int d = 0; d < 3; d++)
+    {
+      send.push_back(group.box_min[d]);
+    }
+    for (int d = 0; d < 3; d++)
+    {
+      send.push_back(group.box_max[d]);
+    }
   }
   const int size = Mpi::Size(comm);
   std::vector<int> counts(size), displs(size);
@@ -209,6 +239,11 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
     group.normal[1] += all[i + 8];
     group.normal[2] += all[i + 9];
     group.offset += all[i + 10];
+    for (int d = 0; d < 3; d++)
+    {
+      group.box_min[d] = std::min(group.box_min[d], all[i + 11 + d]);
+      group.box_max[d] = std::max(group.box_max[d], all[i + 14 + d]);
+    }
   }
   // One plane per group (the map order = (attribute, normal, offset): identical on every
   // rank), then the per-attribute status.
@@ -220,6 +255,8 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
     plane.offset = group.offset / group.faces;
     plane.faces = group.faces;
     plane.max_deviation = group.max_deviation;
+    plane.box_min = group.box_min;
+    plane.box_max = group.box_max;
     planes.push_back(plane);
   }
   const Point3D n_process = Normalize(process_normal);
@@ -269,9 +306,9 @@ std::optional<ReflectedPoint> ReflectIntoDomain(const Point3D &p,
   for (std::size_t k = 0; k < planes.size(); k++)
   {
     const double inside = planes[k].Inside(result.point);
-    if (inside >= -tolerance)
+    if (inside >= -tolerance || !planes[k].NearFaces(result.point, tolerance))
     {
-      continue;
+      continue;  // inside, or beyond the infinite plane but off its faces
     }
     if (!planes[k].Mirrors() || -inside > band)
     {
@@ -283,7 +320,7 @@ std::optional<ReflectedPoint> ReflectIntoDomain(const Point3D &p,
   // A non-convex domain: the composition may still leave the point beyond a plane.
   for (const auto &plane : planes)
   {
-    if (plane.Inside(result.point) < -tolerance)
+    if (plane.Inside(result.point) < -tolerance && plane.NearFaces(result.point, tolerance))
     {
       return std::nullopt;
     }
@@ -324,7 +361,7 @@ ExtendIdentificationInputAcrossMirrorPlanes(const IdentificationInput &input,
     std::vector<int> on;
     for (const int k : mirroring)
     {
-      if (std::abs(planes[k].Inside(p)) <= tolerance)
+      if (std::abs(planes[k].Inside(p)) <= tolerance && planes[k].NearFaces(p, tolerance))
       {
         on.push_back(k);
       }
@@ -407,7 +444,8 @@ ExtendIdentificationInputAcrossMirrorPlanes(const IdentificationInput &input,
     for (const int k : mirroring)
     {
       const double d = std::min(planes[k].Inside(segment.p0), planes[k].Inside(segment.p1));
-      if (d <= band)
+      if (d <= band && (planes[k].NearFaces(segment.p0, tolerance) ||
+                        planes[k].NearFaces(segment.p1, tolerance)))
       {
         near.push_back(k);
       }
@@ -598,11 +636,13 @@ ExtendIdentificationInputAcrossMirrorPlanes(const IdentificationInput &input,
     for (const int k : mirroring)
     {
       double d = std::numeric_limits<double>::infinity();
+      bool near_faces = false;
       for (const auto &vertex : face.vertices)
       {
         d = std::min(d, planes[k].Inside(vertex));
+        near_faces = near_faces || planes[k].NearFaces(vertex, tolerance);
       }
-      if (d <= band)
+      if (d <= band && near_faces)
       {
         near.push_back(k);
       }
@@ -1005,12 +1045,18 @@ nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,
   nlohmann::json plane_list = nlohmann::json::array();
   for (const auto &plane : planes)
   {
-    plane_list.push_back({{"Attribute", plane.attribute},
-                          {"Normal", plane.normal},
-                          {"Offset", plane.offset * coordinate_scale},
-                          {"Faces", plane.faces},
-                          {"MaxDeviation", plane.max_deviation * coordinate_scale},
-                          {"Status", plane.status}});
+    plane_list.push_back(
+        {{"Attribute", plane.attribute},
+         {"Normal", plane.normal},
+         {"Offset", plane.offset * coordinate_scale},
+         {"Faces", plane.faces},
+         {"MaxDeviation", plane.max_deviation * coordinate_scale},
+         {"Box",
+          {{plane.box_min[0] * coordinate_scale, plane.box_min[1] * coordinate_scale,
+            plane.box_min[2] * coordinate_scale},
+           {plane.box_max[0] * coordinate_scale, plane.box_max[1] * coordinate_scale,
+            plane.box_max[2] * coordinate_scale}}},
+         {"Status", plane.status}});
   }
   nlohmann::json formed = nlohmann::json::array();
   for (const auto &feature : merged.features)

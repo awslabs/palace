@@ -189,6 +189,192 @@ std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
   return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
 }
 
+// The M1 symmetry fixture (boundary-cut DESIGN 4.1): a pad on the metal plane y = 0.5 of
+// the box [0, 1] x [0, 1] x [0, 2] meshed 8 x 8 x 8 (h = 0.125 in x, y; 0.25 in z) and
+// sheared IN THE METAL PLANE, x -> x + s (z - 1), so that the wall x = 1 becomes the
+// VERTICAL plane x = 1 + s (z - 1) (a natural cut perpendicular to the metal plane: the
+// window configuration). The pad spans x in [0, 1] (from the wall x = 0 to the wall x = 1:
+// a strip between two parallel cuts, no real corner), z in [0.75, 1.25] before the shear
+// (0.75 > 3 R from the z walls: their images reach nothing): its long edges (along z,
+// tilted to (s, 0, 1)) are parallel to the walls, its short edges (along x) meet each wall
+// at theta = atan(1 / s) (s = 1: 45 degrees; the virtual corners with the images are 2
+// theta = 90 degrees, convex at the top edge (metal in the acute wedge), concave at the
+// bottom edge). The FULL mesh is the half plus its exact reflection across the wall
+// (reflected vertices appended, the wall's vertices shared, hex vertex order mirrored,
+// boundary attributes mapped, the pad faces reflected): the mirror-symmetric full problem
+// whose restriction the half solves.
+mfem::Mesh MakeSerialMirrorPadMesh(double s, bool full)
+{
+  constexpr int n = 8;
+  constexpr double h = 1.0 / n;
+  constexpr double hz = 2.0 / n;
+  constexpr double z_center = 1.0;
+  constexpr double tolerance = 1.0e-12;
+  // The wall x = 1 + s (z - 1): unit outward normal and offset.
+  const double norm = std::sqrt(1.0 + s * s);
+  const std::array<double, 3> normal = {1.0 / norm, 0.0, -s / norm};
+  const double offset = (1.0 - z_center * s) / norm;
+  auto Reflect = [&](const std::array<double, 3> &p)
+  {
+    const double d = normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - offset;
+    return std::array<double, 3>{p[0] - 2.0 * d * normal[0], p[1] - 2.0 * d * normal[1],
+                                 p[2] - 2.0 * d * normal[2]};
+  };
+  auto OnWall = [&](const std::array<double, 3> &p)
+  {
+    return std::abs(normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - offset) <
+           tolerance;
+  };
+  // Half vertices (sheared) and hexes.
+  std::vector<std::array<double, 3>> vertices;
+  auto Vertex = [](int i, int j, int k) { return i + (n + 1) * (j + (n + 1) * k); };
+  for (int k = 0; k <= n; k++)
+  {
+    for (int j = 0; j <= n; j++)
+    {
+      for (int i = 0; i <= n; i++)
+      {
+        vertices.push_back({i * h + s * (k * hz - z_center), j * h, k * hz});
+      }
+    }
+  }
+  std::vector<std::array<int, 8>> hexes;
+  for (int k = 0; k < n; k++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      for (int i = 0; i < n; i++)
+      {
+        hexes.push_back({Vertex(i, j, k), Vertex(i + 1, j, k), Vertex(i + 1, j + 1, k),
+                         Vertex(i, j + 1, k), Vertex(i, j, k + 1), Vertex(i + 1, j, k + 1),
+                         Vertex(i + 1, j + 1, k + 1), Vertex(i, j + 1, k + 1)});
+      }
+    }
+  }
+  const std::size_t half_vertices = vertices.size(), half_hexes = hexes.size();
+  if (full)
+  {
+    // The reflected copy: the wall's vertices are shared, every other vertex reflected; a
+    // reflected hex keeps a positive Jacobian with its first and second vertex pairs
+    // swapped (the mirror of the reference cube's x axis).
+    std::vector<int> image(half_vertices);
+    for (std::size_t v = 0; v < half_vertices; v++)
+    {
+      if (OnWall(vertices[v]))
+      {
+        image[v] = static_cast<int>(v);
+      }
+      else
+      {
+        image[v] = static_cast<int>(vertices.size());
+        vertices.push_back(Reflect(vertices[v]));
+      }
+    }
+    for (std::size_t e = 0; e < half_hexes; e++)
+    {
+      const auto &hex = hexes[e];
+      hexes.push_back({image[hex[1]], image[hex[0]], image[hex[3]], image[hex[2]],
+                       image[hex[5]], image[hex[4]], image[hex[7]], image[hex[6]]});
+    }
+  }
+  mfem::Mesh serial(3, static_cast<int>(vertices.size()), static_cast<int>(hexes.size()), 0,
+                    3);
+  for (const auto &vertex : vertices)
+  {
+    serial.AddVertex(vertex[0], vertex[1], vertex[2]);
+  }
+  for (const auto &hex : hexes)
+  {
+    serial.AddHex(hex.data(), 1);
+  }
+  serial.FinalizeTopology();  // the exterior boundary elements (attribute 1)
+  // The Cartesian attributes of the unsheared half (1 bottom z, 2 front y, 3 right x = the
+  // wall, 4 back y, 5 left x, 6 top z), the image's faces mapped to the same attributes
+  // (the reflection preserves y: the ground y = 1 is one symmetric face); the wall is
+  // interior in the full mesh.
+  auto Unshear = [&](std::array<double, 3> p)
+  {
+    // A point of the image half is mapped back by the reflection first.
+    const double d = normal[0] * p[0] + normal[1] * p[1] + normal[2] * p[2] - offset;
+    if (d > tolerance)
+    {
+      p = Reflect(p);
+    }
+    p[0] -= s * (p[2] - z_center);
+    return p;
+  };
+  for (int be = 0; be < serial.GetNBE(); be++)
+  {
+    mfem::Array<int> face_vertices;
+    serial.GetBdrElementVertices(be, face_vertices);
+    std::array<double, 3> centroid{};
+    for (const int vertex : face_vertices)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        centroid[d] += serial.GetVertex(vertex)[d] / face_vertices.Size();
+      }
+    }
+    const auto u = Unshear(centroid);
+    int attribute = 1;
+    if (std::abs(u[2]) < tolerance)
+    {
+      attribute = 1;
+    }
+    else if (std::abs(u[1]) < tolerance)
+    {
+      attribute = 2;
+    }
+    else if (std::abs(u[0] - 1.0) < tolerance)
+    {
+      attribute = 3;
+    }
+    else if (std::abs(u[1] - 1.0) < tolerance)
+    {
+      attribute = 4;
+    }
+    else if (std::abs(u[0]) < tolerance)
+    {
+      attribute = 5;
+    }
+    else if (std::abs(u[2] - 2.0) < tolerance)
+    {
+      attribute = 6;
+    }
+    serial.SetBdrAttribute(be, attribute);
+  }
+  // The pad: the interior faces on y = 0.5 with (unsheared) x in [0, 1], z in [0.75,
+  // 1.25], on both halves of the full mesh.
+  for (int face = 0; face < serial.GetNumFaces(); face++)
+  {
+    int element1, element2;
+    serial.GetFaceElements(face, &element1, &element2);
+    if (element1 < 0 || element2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> face_vertices;
+    serial.GetFaceVertices(face, face_vertices);
+    bool on_plane = true, inside = true;
+    for (const int vertex : face_vertices)
+    {
+      const double *point = serial.GetVertex(vertex);
+      on_plane = on_plane && std::abs(point[1] - 0.5) < tolerance;
+      const auto u = Unshear({point[0], point[1], point[2]});
+      inside = inside && u[0] >= -tolerance && u[0] <= 1.0 + tolerance &&
+               u[2] >= 0.75 - tolerance && u[2] <= 1.25 + tolerance;
+    }
+    if (on_plane && inside)
+    {
+      serial.AddBdrElement(serial.GetFace(face)->Duplicate(&serial));
+      serial.SetBdrAttribute(serial.GetNBE() - 1, 9);
+    }
+  }
+  serial.FinalizeTopology();
+  serial.Finalize();
+  return serial;
+}
+
 // Whether a point (sheared coordinates) lies in the device of MakeObliqueCutLeadMesh.
 bool InsideObliqueCutLead(const std::array<double, 3> &point, double shear, bool notch)
 {
@@ -1028,6 +1214,311 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         CHECK(Overlap(a, b) <= 1.0e-9);
       }
     }
+  }
+#endif
+}
+
+// The SYMMETRY TEST (boundary-cut DESIGN 4.1, M1): for the mirror-symmetric pad solved on
+// the FULL domain (no cut through its features) and on the HALF (the wall as a natural
+// face), the half's corrected energies under F-DB-c equal HALF the full's: raw, E_out,
+// models, uncovered and the per-type terms. S-45 (s = 1): the short edges meet the wall at
+// 45 degrees, the virtual corners are 90 degrees (convex at the top, concave at the bottom:
+// exact fixture models), s = R so s_half = R and the second-order term is exactly zero (a
+// 1e-9-exact case, decision 454 MINOR-4); the pad's real corners at x = 0.5 are 45 / 135
+// degrees (Missing in the fixture library: uncovered on both sides). S-90 (s = 0): the
+// perpendicular meeting forms no feature (Continued) and the half is bitwise the straight
+// continuation. The control with Mirror "Off": every cut-crossing cell is a DomainBoundary
+// exclusion whose raw claim is kept (F-DB-a), the ft identity still closes, and the half
+// under-reads the full by the raw-vs-model difference of those cells (reported).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Electrostatic mirror symmetry: half with F-DB-c = full / 2",
+                 "[electrostaticsolver][surfaceresponseoperator][domainboundary][mirror]"
+                 "[symmetry][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr double R = 0.2;
+  const auto basis_path = temp.temp_dir / "mirror-pad-basis-points.csv";
+  const auto library_path = temp.temp_dir / "fabrication-process-mirror-pad.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    {
+      std::ofstream output(basis_path);
+      output << "x,y,z\n"
+             << "-0.2,-0.2,0.0\n"
+             << "0.2,-0.2,0.0\n"
+             << "0.2,0.2,0.0\n"
+             << "-0.2,0.2,0.0\n";
+    }
+    // The isolated edge, the convex 90 and the concave 90 corner (the concave fixture's
+    // corner relabelled: the test is the symmetry identity, not the coupon physics).
+    std::ifstream input(convex_library_3d_path);
+    REQUIRE(input);
+    json library = json::parse(input);
+    library["Name"] = "unit-test-process-mirror-pad";
+    json concave;
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      if (model["Topology"] == "IsolatedEdge")
+      {
+        model["BasisPoints"] = basis_path.string();
+      }
+      if (model["Topology"] == "ConvexCorner")
+      {
+        concave = model;
+        concave["Name"] = "concave-corner-90";
+        concave["Topology"] = "ConcaveCorner";
+      }
+    }
+    REQUIRE(!concave.is_null());
+    library["Models"].push_back(concave);
+    std::ofstream output(library_path);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+
+  struct Energies
+  {
+    double raw = 0.0, outside = 0.0;
+    std::array<double, 3> corrected{};  // ft, ff, sc
+    std::array<double, 2> models{};     // evaluation 0, 1
+    double uncovered_ft = 0.0, domain_boundary_ft = 0.0;
+    json diagnostics;
+    json manifest_summary;
+  };
+  auto Run = [&](const std::string &name, double s, bool full, const std::string &mirror)
+  {
+    const fs::path mesh_path = temp.temp_dir / (name + ".mesh");
+    if (Mpi::Root(Mpi::World()))
+    {
+      mfem::Mesh serial = MakeSerialMirrorPadMesh(s, full);
+      std::ofstream output(mesh_path);
+      serial.Print(output);
+    }
+    Mpi::Barrier(Mpi::World());
+    json config = IslandConfig();
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"]["L0"] = 1.0;
+    // The ground is the far face y = 1 (and its image); every other wall is natural. The
+    // pad's short edges meet the walls x = 0 and x = 1 (and, in the full mesh, the image of
+    // x = 0); the walls z = 0 / z = 2 are 0.75 > 3 R from the pad (outside the band).
+    config["Boundaries"]["Ground"]["Attributes"] = {4};
+    auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["TraceCoupling"] = "SurfaceMortar";
+    correction["MortarOversampling"] = 2;
+    correction["CorrectionMode"] = "Both";
+    correction["PatchEnergy"] = true;
+    correction["DomainBoundary"] = {{"Mirror", mirror}};
+    config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 600}};
+    const fs::path dir = temp.temp_dir / name;
+    config["Problem"]["Output"] = dir.string();
+    if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+    {
+      // Evidence export (the lane record): the dry run, mesh, library and config of this
+      // case into the given directory, and its postpro after the run.
+      IoData iodata(config, false);
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      mfem::Mesh serial_debug = MakeSerialMirrorPadMesh(s, full);
+      meshes.push_back(std::make_unique<Mesh>(
+          std::make_unique<mfem::ParMesh>(Mpi::World(), serial_debug)));
+      const fs::path debug = fs::path(debug_dir) / name;
+      fs::create_directories(debug);
+      WriteSurfaceResponseRequirements(iodata, *meshes.front(),
+                                       (debug / "requirements.json").string());
+      if (Mpi::Root(Mpi::World()))
+      {
+        fs::copy_file(mesh_path, debug / "mesh.mesh", fs::copy_options::overwrite_existing);
+        fs::copy_file(library_path, debug / "library.json",
+                      fs::copy_options::overwrite_existing);
+        fs::copy_file(basis_path, debug / "basis.csv",
+                      fs::copy_options::overwrite_existing);
+        json debug_config = config;
+        debug_config["Model"]["Mesh"] = "mesh.mesh";
+        debug_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+            "library.json";
+        debug_config["Problem"]["Output"] = "postpro";
+        std::ofstream output(debug / "config.json");
+        output << debug_config.dump(2) << "\n";
+      }
+    }
+    test::RunElectrostatic(config);
+    Mpi::Barrier(Mpi::World());
+    Energies e;
+    if (!Mpi::Root(Mpi::World()))
+    {
+      return e;
+    }
+    if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+    {
+      fs::copy(dir, fs::path(debug_dir) / name / "postpro",
+               fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    }
+    {
+      const Table surface = test::LoadCsv(dir / "surface-Q.csv");
+      const Table domain = test::LoadCsv(dir / "domain-E.csv");
+      e.raw = test::ColumnByHeader(surface, "p_surf[4]").data[0] *
+              test::ColumnByHeader(domain, "E_elec (J)").data[0];
+      const Table edge = test::LoadCsv(dir / "surface-Q-edge.csv");
+      e.outside = test::ColumnByHeader(edge, "E_out (J)").data[0];
+      const Table corrected = test::LoadCsv(dir / "surface-Q-corrected.csv");
+      e.corrected = {
+          test::ColumnByHeader(corrected, "E_surf postprocessed fixed-trace[4] (J)")
+              .data[0],
+          test::ColumnByHeader(corrected, "E_surf postprocessed fixed-flux[4] (J)").data[0],
+          test::ColumnByHeader(corrected, "E_surf corrected[4] (J)").data[0]};
+      const Table models = test::LoadCsv(dir / "surface-response-model-energy.csv");
+      const Column &eval = test::ColumnByHeader(models, "evaluation");
+      const Column &energy =
+          test::ColumnByHeader(models, "fabricated surface energy[4] (J)");
+      for (std::size_t i = 0; i < eval.data.size(); i++)
+      {
+        const int evaluation = static_cast<int>(std::lround(eval.data[i]));
+        if (evaluation < 2)
+        {
+          e.models[evaluation] += energy.data[i];
+        }
+      }
+      auto TotalRow = [&](const fs::path &path, const std::string &label)
+      {
+        if (!fs::is_regular_file(path))
+        {
+          return 0.0;
+        }
+        const test::TextCsv csv = test::ReadTextCsv(path);
+        const std::size_t type = csv.Column("type"), evaluation = csv.Column("evaluation");
+        const std::size_t energy_column = csv.Column(label + " raw energy[4] (J)");
+        for (const auto &row : csv.rows)
+        {
+          if (row[type] == "Total" && std::stoi(row[evaluation]) == 0)
+          {
+            return std::stod(row[energy_column]);
+          }
+        }
+        return 0.0;
+      };
+      e.uncovered_ft = TotalRow(dir / "surface-response-uncovered-energy.csv", "uncovered");
+      e.domain_boundary_ft =
+          TotalRow(dir / "surface-response-domain-boundary-energy.csv", "domainboundary");
+      std::ifstream metadata_input(dir / "palace.json");
+      REQUIRE(metadata_input);
+      e.diagnostics = json::parse(metadata_input).at("SurfaceResponse").at("Diagnostics");
+    }
+    return e;
+  };
+  auto CheckIdentity = [&](const Energies &e)
+  {
+    CHECK_THAT(e.corrected[0],
+               WithinRel(e.outside + e.models[0] + e.uncovered_ft + e.domain_boundary_ft,
+                         1.0e-10));
+    CHECK_THAT(e.corrected[1],
+               WithinRel(e.outside + e.models[1] + e.uncovered_ft + e.domain_boundary_ft,
+                         1.0e-10));
+  };
+
+  SECTION("S-45: the virtual 90-degree corners (s_half = R, exact to 1e-9)")
+  {
+    const Energies full = Run("mirror-pad-45-full", 1.0, true, "Natural");
+    const Energies half = Run("mirror-pad-45-half", 1.0, false, "Natural");
+    if (!Mpi::Root(Mpi::World()))
+    {
+      return;
+    }
+    CheckIdentity(full);
+    CheckIdentity(half);
+    // The raw interface energies and E_out: the half is exactly half the full (the
+    // discrete half problem is the restriction of the symmetric full one).
+    CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+    CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+    // Nothing is a DomainBoundary exclusion in the half: its cut-crossing cells are
+    // Mirrored, the two virtual corners carry weight 1 / 2 and a mirror arm trim.
+    const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+    CHECK(exclusions.at("Count").get<int>() == 0);
+    CHECK(exclusions.at("Mirrored").at("Count").get<int>() > 0);
+    CHECK(exclusions.at("Mirrored").at("Points").get<int>() > 0);
+    // Four virtual corners (two per wall: convex at the top edge, concave at the bottom).
+    CHECK(exclusions.at("Mirrored").at("HalfVertices").get<int>() == 4);
+    CHECK(exclusions.at("Mirrored").at("ArmTrims").get<int>() == 4);
+    const auto &band = half.diagnostics.at("MirrorBand");
+    INFO(band.dump());
+    REQUIRE(band.at("MirrorFormedFeatures").size() == 4);
+    std::map<std::string, int> formed;
+    for (const auto &entry : band.at("MirrorFormedFeatures"))
+    {
+      formed[entry.at("Type").get<std::string>()]++;
+      CHECK(entry.at("Status") == "Modelled");
+      CHECK_THAT(entry.at("Key").get<std::string>(),
+                 ContainsSubstring("\"AngleDegrees\":90.0"));
+    }
+    CHECK(formed["ConvexCorner"] == 2);
+    CHECK(formed["ConcaveCorner"] == 2);
+    CHECK(half.domain_boundary_ft == 0.0);
+    // The full has no cut through the pad: nothing mirrored, nothing excluded.
+    // The full has no cut through the pad at the (former) wall x = 1; its ends at x = 0 and
+    // the image wall are virtual corners on both sides alike.
+    CHECK(full.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
+    CHECK(full.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").size() == 4);
+    // THE IDENTITY: the half's model energies, uncovered energy and corrected energies are
+    // half the full's (the half-energy identity of DESIGN 2.2.4; the s_half term is zero
+    // at 90 degrees).
+    CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+    CHECK_THAT(2.0 * half.models[1], WithinRel(full.models[1], 1.0e-9));
+    CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+    CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+    CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
+    // The self-consistent column: the symmetric sc solution's restriction (accepted on both
+    // or unavailable on both).
+    if (std::isfinite(full.corrected[2]) && std::isfinite(half.corrected[2]))
+    {
+      CHECK_THAT(2.0 * half.corrected[2], WithinRel(full.corrected[2], 1.0e-5));
+    }
+  }
+
+  SECTION("S-90: a perpendicular meeting forms nothing (Continued) and is half the full")
+  {
+    const Energies full = Run("mirror-pad-90-full", 0.0, true, "Natural");
+    const Energies half = Run("mirror-pad-90-half", 0.0, false, "Natural");
+    if (!Mpi::Root(Mpi::World()))
+    {
+      return;
+    }
+    CheckIdentity(full);
+    CheckIdentity(half);
+    const auto &band = half.diagnostics.at("MirrorBand");
+    CHECK(band.at("MirrorFormedFeatures").empty());
+    CHECK(band.at("ContinuedFeatures").get<int>() == 2);  // the two short edges
+    CHECK(half.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
+    CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+    CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+    CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+    CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+    CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+    CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
+  }
+
+  SECTION("S-off (control): Mirror Off keeps the raw claims and the identity, not the half")
+  {
+    const Energies full = Run("mirror-pad-45-full-off", 1.0, true, "Natural");
+    const Energies half = Run("mirror-pad-45-half-off", 1.0, false, "Off");
+    if (!Mpi::Root(Mpi::World()))
+    {
+      return;
+    }
+    CheckIdentity(half);
+    const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+    CHECK(exclusions.at("Count").get<int>() > 0);
+    CHECK(exclusions.at("Mirrored").at("Count").get<int>() == 0);
+    CHECK(half.domain_boundary_ft > 0.0);
+    CHECK(half.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").empty());
+    // The DomainBoundary term is the raw energy of the cut cells; the half's ft differs
+    // from half the full's by the raw-vs-model difference of those cells (not zero).
+    CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+    CHECK(std::abs(2.0 * half.corrected[0] - full.corrected[0]) >
+          1.0e-6 * full.corrected[0]);
   }
 #endif
 }

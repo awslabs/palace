@@ -11214,8 +11214,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   result.mirror_planes.clear();
   for (const auto &plane : mirror_band.planes)
   {
-    result.mirror_planes.push_back(
-        {plane.attribute, plane.normal, plane.offset, plane.status});
+    result.mirror_planes.push_back({plane.attribute, plane.normal, plane.offset,
+                                    plane.status, plane.box_min, plane.box_max});
   }
   result.mirror_band = mirror_band.record.dump();
   // No mirror in Maxwell runs and under Mirror = "Off" (band 0: every cut-crossing patch
@@ -16069,7 +16069,9 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
       planes.push_back({{"Attribute", plane.attribute},
                         {"Normal", plane.normal},
                         {"Offset", plane.offset},
-                        {"Status", plane.status}});
+                        {"Status", plane.status},
+                        {"BoxMin", plane.box_min},
+                        {"BoxMax", plane.box_max}});
     }
     cache["MirrorPlanes"] = std::move(planes);
     cache["MirrorBand"] = config.mirror_band;
@@ -16184,7 +16186,9 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   {
     result.mirror_planes.push_back(
         {entry.at("Attribute").get<int>(), entry.at("Normal").get<std::array<double, 3>>(),
-         entry.at("Offset").get<double>(), entry.at("Status").get<std::string>()});
+         entry.at("Offset").get<double>(), entry.at("Status").get<std::string>(),
+         entry.at("BoxMin").get<std::array<double, 3>>(),
+         entry.at("BoxMax").get<std::array<double, 3>>()});
   }
   result.mirror_band = data.value("MirrorBand", std::string{});
   result.mirror_band_over_radius = data.value("MirrorBandOverR", 0.0);
@@ -18425,6 +18429,8 @@ MirrorPlanesOf(const std::vector<ResponseCorrectionData::MirrorPlaneData> &plane
     entry.normal = plane.normal;
     entry.offset = plane.offset;
     entry.status = plane.status;
+    entry.box_min = plane.box_min;
+    entry.box_max = plane.box_max;
     result.push_back(entry);
   }
   return result;
@@ -18452,7 +18458,8 @@ int ReflectPointsIntoDomain(
     bool outside = false;
     for (const auto &plane : planes)
     {
-      outside = outside || plane.Inside(point) < -tolerance;
+      outside = outside ||
+                (plane.Inside(point) < -tolerance && plane.NearFaces(point, tolerance));
     }
     if (!outside)
     {
@@ -20522,6 +20529,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 coordinate_scale;
       }
     }
+    // A Mirrored patch's first basis point may lie beyond a natural truncation plane: the
+    // probe reads the resolution at its reflection (boundary-cut DESIGN 2.2.3).
+    ReflectPointsIntoDomain(centers, dimension, mirror_planes, mirror_band,
+                            mirror_tolerance);
     // The owning element's size (the smallest singular value of its Jacobian).
     const std::function<double(int)> element_size = [&](int element)
     { return response_mesh.GetElementSize(element, 1); };

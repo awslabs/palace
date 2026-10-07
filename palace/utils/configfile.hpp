@@ -1400,6 +1400,7 @@ public:
       std::array<double, 3> normal{};
       double offset = 0.0;
       std::string status;
+      std::array<double, 3> box_min{}, box_max{};  // the plane's faces' bounding box
     };
     std::vector<MirrorPlaneData> mirror_planes;
     std::string mirror_band;

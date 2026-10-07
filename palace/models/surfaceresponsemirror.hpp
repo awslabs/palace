@@ -53,7 +53,25 @@ struct MirrorPlane
   int faces = 0;
   double max_deviation = 0.0;
   std::string status;
+  // The bounding box of the plane's faces: a plane acts only where a point's PROJECTION
+  // onto it falls within its faces (a non-convex domain — a window with a re-entrant
+  // outline, the symmetry fixture's chevron — has planes whose infinite extension passes
+  // through the domain elsewhere).
+  std::array<double, 3> box_min{}, box_max{};
   bool Mirrors() const { return status == "Natural"; }
+  bool NearFaces(const std::array<double, 3> &p, double margin) const
+  {
+    const double d = Inside(p);
+    for (int k = 0; k < 3; k++)
+    {
+      const double projected = p[k] + d * normal[k];
+      if (projected < box_min[k] - margin || projected > box_max[k] + margin)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
   // Signed distance of a point into the domain (>= 0 inside).
   double Inside(const std::array<double, 3> &p) const
   {
