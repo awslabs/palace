@@ -303,20 +303,23 @@ class RunnerMultiNodeTest(unittest.TestCase):
             # is read back from the shared job directory.
             saved = os.environ.get("PATH")
             os.environ["PATH"] = "/nonexistent-dir"
+            nodefile_text = "\n".join(["h1"] * 3 + ["h2"] * 3) + "\n"
             try:
-                shell = run_stages.NodeShell({"PBSDsh": "/nonexistent/pbsdsh"}, tmp, ["h2"])
+                shell = run_stages.NodeShell({"PBSDsh": "/nonexistent/pbsdsh"}, tmp, ["h2"], nodefile_text)
             finally:
                 os.environ["PATH"] = saved
             self.assertIsNone(shell.pbsdsh)
             self.assertEqual(shell.prefix("h2")[:3], ["ssh", "-o", "BatchMode=yes"])
-            # A fake pbsdsh (PBS 23: `-n <vnode index>`, the task's output routed to the job's
-            # stdout): the discovery pass maps every host to its vnode index through the map
-            # file the tasks append to, and a command's output is read from the file it writes.
+            self.assertEqual(run_stages.first_slot_index(nodefile_text), {"h1": 0, "h2": 3})
+            with self.assertRaisesRegex(SystemExit, "no slot"):
+                run_stages.NodeShell({"PBSDsh": "/nonexistent/pbsdsh"}, tmp, ["h3"], nodefile_text)
+            # A fake pbsdsh (PBS 23: `-n <task slot index>`, the slot = the host's first line in
+            # PBS_NODEFILE; the task's output routed to the job's stdout): a command's output is
+            # read from the file it writes on the shared job directory, the hostname verified.
             pbsdsh = Path(tmp) / "pbsdsh"
             pbsdsh.write_text("#!/bin/sh\n"
-                              "# fake pbsdsh: without -n run the program as vnode 0 (h1) and vnode 192 (h2); with -n run it once\n"
-                              'if [ "$1" = "--" ]; then shift; PBS_NODENUM=0 HOSTNAME_FAKE=h1 "$@"; PBS_NODENUM=192 HOSTNAME_FAKE=h2 "$@"; '
-                              'else idx=$2; shift 3; PBS_NODENUM=$idx "$@"; fi\n')
+                              "# fake pbsdsh -n IDX -- program: slot 3 is h2, every other slot h1\n"
+                              'idx=$2; shift 3; if [ "$idx" = 3 ]; then HOSTNAME_FAKE=h2 "$@"; else HOSTNAME_FAKE=h1 "$@"; fi\n')
             pbsdsh.chmod(0o755)
             fake_bin = Path(tmp) / "bin"
             fake_bin.mkdir()
@@ -324,13 +327,13 @@ class RunnerMultiNodeTest(unittest.TestCase):
             (fake_bin / "hostname").chmod(0o755)
             os.environ["PATH"] = f"{fake_bin}:{saved}"
             try:
-                shell = run_stages.NodeShell({"PBSDsh": str(pbsdsh)}, tmp, ["h2"])
-                self.assertEqual(shell.index, {"h1": 0, "h2": 192})
-                self.assertEqual(shell.prefix("h2"), [str(pbsdsh), "-n", "192", "--"])
+                shell = run_stages.NodeShell({"PBSDsh": str(pbsdsh)}, tmp, ["h2"], nodefile_text)
+                self.assertEqual(shell.index, {"h1": 0, "h2": 3})
+                self.assertEqual(shell.prefix("h2"), [str(pbsdsh), "-n", "3", "--"])
                 text = shell.run("h2", "hostname; echo ---MEM---; echo 'MemTotal: 10 kB'; echo ---PS---; echo '1 bash'", Path(tmp) / "out.txt")
                 self.assertIn("---PS---", text)
                 with self.assertRaisesRegex(SystemExit, "landed on"):
-                    run_stages.remote_node_preflight(shell, "h1", tmp)
+                    run_stages.remote_node_preflight(run_stages.NodeShell({"PBSDsh": str(pbsdsh)}, tmp, ["h1", "h2"], "\n".join(["h2"] * 3 + ["h1"] * 3)), "h1", tmp)
                 if Path("/proc/meminfo").exists():
                     values, processes = run_stages.remote_node_preflight(shell, "h2", tmp)
                     self.assertGreater(values["MemAvailableBytes" if "MemAvailableBytes" in values else "MemAvailable"], 0)
@@ -338,8 +341,6 @@ class RunnerMultiNodeTest(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(SystemExit, "no MemTotal"):
                         run_stages.remote_node_preflight(shell, "h2", tmp)
-                with self.assertRaisesRegex(SystemExit, "no vnode"):
-                    run_stages.NodeShell({"PBSDsh": str(pbsdsh)}, tmp, ["h3"])
             finally:
                 os.environ["PATH"] = saved
             samples = Path(tmp) / "memory-samples-h2.csv"

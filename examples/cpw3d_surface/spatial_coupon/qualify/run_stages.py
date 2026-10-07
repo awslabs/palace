@@ -90,6 +90,16 @@ def node_sampler(csv_path, stop_path, interval=5.0):
             time.sleep(interval)
 
 
+def first_slot_index(nodefile_text):
+    """host -> the index of its first line in PBS_NODEFILE (the pbsdsh task-slot index of that
+    host's first rank)."""
+    index = {}
+    for slot, entry in enumerate(entry for entry in nodefile_text.split() if entry.strip()):
+        host = normalize_host(entry)
+        index.setdefault(host, slot)
+    return index
+
+
 def unique_hosts(nodefile_text):
     """The job's hosts in PBS_NODEFILE order (one entry per rank slot; duplicates dropped)."""
     hosts = []
@@ -109,39 +119,23 @@ def shutil_which(name):
 
 
 class NodeShell:
-    """Runs programs on the other nodes of the job.  pbsdsh (PBS 23: `-n <vnode index>`, the
-    task's output routed to the JOB's stdout, no capture option) with the vnode index of every
-    host discovered by one pbsdsh pass over all vnodes (the tasks' PBS_NODENUM + hostname
-    appended to a map file); the output of a command is read back from a file on the shared
-    job directory.  ssh in batch mode is the fallback when no pbsdsh exists."""
+    """Runs programs on the other nodes of the job.  pbsdsh (PBS 23.06: `-n <index>` counts the
+    job's TASK SLOTS in PBS_NODEFILE order - one per mpiprocs rank, so the second host of a
+    192-rank-per-node job is index 192, not 1 (measured: `-n 1` lands on the first host while
+    the tasks' PBS_NODENUM reports the vnode 0 / 1); the task's output is routed to the JOB's
+    stdout with no capture option) with every host's index = its first line in PBS_NODEFILE,
+    the landed hostname verified by every command; the output of a command is read back from
+    a file on the shared job directory.  ssh in batch mode is the fallback without pbsdsh."""
 
-    def __init__(self, plan, base, hosts):
+    def __init__(self, plan, base, hosts, nodefile_text):
         pbsdsh = plan.get("PBSDsh")
         self.pbsdsh = pbsdsh if pbsdsh and Path(pbsdsh).exists() else shutil_which("pbsdsh")
         self.base = Path(base)
         self.hosts = list(hosts)
-        self.index = {}
-        if self.pbsdsh:
-            self.index = self.discover()
-
-    def discover(self):
-        map_path = self.base / "node-map.txt"
-        if map_path.exists():
-            map_path.unlink()
-        command = [self.pbsdsh, "--", "/bin/sh", "-c", f'echo "$PBS_NODENUM $(hostname)" >> "{map_path}"']
-        result = subprocess.run(command, text=True, capture_output=True, timeout=300)
-        if result.returncode != 0 or not map_path.exists():
-            raise SystemExit(f"pbsdsh node discovery failed: rc {result.returncode} {result.stderr.strip()[:400]}")
-        index = {}
-        for line in map_path.read_text().splitlines():
-            parts = line.split()
-            if len(parts) == 2 and parts[0].isdigit():
-                host = normalize_host(parts[1])
-                index[host] = min(index.get(host, int(parts[0])), int(parts[0]))
-        missing = [host for host in self.hosts if host not in index]
+        self.index = first_slot_index(nodefile_text)
+        missing = [host for host in self.hosts if host not in self.index]
         if missing:
-            raise SystemExit(f"pbsdsh node discovery found no vnode for {missing} (map {index})")
-        return index
+            raise SystemExit(f"PBS_NODEFILE has no slot for {missing} (slots {self.index})")
 
     def prefix(self, host):
         if self.pbsdsh:
@@ -287,10 +281,10 @@ def main(argv):
     other_hosts = [host for host in ordered_hosts if host != status["Host"]]
     node_shell = None
     if nodes > 1:
-        node_shell = NodeShell(plan, base, other_hosts)
+        node_shell = NodeShell(plan, base, other_hosts, Path(os.environ["PBS_NODEFILE"]).read_text())
         preflight["Nodes"] = {status["Host"]: {"MemTotalBytes": memory0["MemTotal"], "MemAvailableBytes": memory0["MemAvailable"],
                                                "Conflicts": [], "Role": "runner"}}
-        preflight["NodeShell"] = {"PBSDsh": node_shell.pbsdsh, "VnodeIndex": node_shell.index}
+        preflight["NodeShell"] = {"PBSDsh": node_shell.pbsdsh, "SlotIndex": node_shell.index}
         for host in other_hosts:
             values, remote_processes = remote_node_preflight(node_shell, host, base)
             remote_conflicts = conflicting_processes(remote_processes)
