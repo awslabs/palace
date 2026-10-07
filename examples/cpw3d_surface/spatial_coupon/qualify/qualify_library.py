@@ -432,8 +432,32 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
             raise CaseStop("Controls", f"--control-source {unknown} are not sources of {case_id}")
         control_rule = "explicit --control-source"
     else:
-        controls = classify_sources.choose_controls(classes, args.control_count, free)
-        control_rule = f"{args.control_count} by class (classify_sources.choose_controls: one per class in priority order, cycling)"
+        if not isinstance((gates["Gates"]["PSequenceControls"].get("AmplitudeFloor") or {}).get("Fraction"), (int, float)):
+            raise CaseStop("Gates", f"the gate table {args.gates} carries no PSequenceControls.AmplitudeFloor.Fraction (a table "
+                                    f"older than Version 6): the control choice and the p-sequence gate need the amplitude floor")
+        floor_ratio = gate_evaluation.amplitude_floor_ratio(gates["Gates"]["PSequenceControls"]["AmplitudeFloor"]["Fraction"])
+        judged = [name for name in (p_sequence.SHARP_GATED_OBSERVABLES if inputs.get("RadialShells") else p_sequence.GATED_OBSERVABLES)
+                  if name != "E"]
+        if args.control_amplitudes:
+            # Decision 474 (A): a prior main stage of the same case ranks every class's members
+            # by the amplitude floor; without one the first-pass choice is unchanged.
+            shell_map = ma_tail.shell_map_of(inputs["RadialShells"]) if inputs.get("RadialShells") else None
+            amplitudes = p_sequence.coupon_amplitudes(p_sequence.observables(
+                args.control_amplitudes, interface_types,
+                ma_tail.tails(args.control_amplitudes, shell_map, interface_types) if shell_map else None))
+            chosen = classify_sources.choose_controls_record(classes, args.control_count, free, amplitudes, floor_ratio, judged)
+            controls = chosen["Controls"]
+            control_rule = (f"{args.control_count} by class (classify_sources.choose_controls: one per class in priority order, "
+                            f"cycling, the lowest-index member above the amplitude floor for every judged Type from the prior "
+                            f"main stage {args.control_amplitudes}; decision 474 (A))")
+            record["ControlAmplitudes"] = {"PriorMainStage": str(args.control_amplitudes), **{key: chosen[key] for key in
+                                                                                             ("FloorRatio", "Observables", "BelowFloorClasses")}}
+        else:
+            controls = classify_sources.choose_controls(classes, args.control_count, free)
+            control_rule = f"{args.control_count} by class (classify_sources.choose_controls: one per class in priority order, cycling)"
+            record["ControlAmplitudes"] = {"PriorMainStage": None, "FloorRatio": floor_ratio, "Observables": judged,
+                                           "Rule": "no prior main stage (--control-amplitudes): the first-pass lowest-index choice; "
+                                                   "the gate's amplitude floor records a below-floor Type of a control, not judged"}
     record["Sources"] = {"Count": len(indices), "Indices": indices, "ZeroTrace": zero_trace, "Free": len(free),
                          "Terminals": terminals, "Classes": {str(i): name for i, (name, _) in classes.items()},
                          "Geometry": {key: geometry[key] for key in ("box", "z_levels", "per_z_level", "layers")}}
@@ -1002,13 +1026,12 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
     if higher:
         orders_of["high"] = min(higher)
         runs["high"] = control_dirs[min(higher)]
-    p_sequence_summary = p_sequence.write_p_sequence(runs, orders_of, controls, comparison_dir / "p-sequence-controls.md",
-                                                     comparison_dir / "p-sequence-controls.json",
-                                                     title=f"p-sequence controls of {record['Case']}", interface_types=interface_types,
-                                                     reference_interface_types=reference_interface_types,
-                                                     ma_tails=({key: tails_of(path) for key, path in runs.items()
-                                                                if path is not None and key != "ref"} if shell_map else None),
-                                                     reference_ma_side=reference_ma_side)
+    p_sequence_summary, coupon_amplitudes = p_sequence.write_p_sequence(
+        runs, orders_of, controls, comparison_dir / "p-sequence-controls.md", comparison_dir / "p-sequence-controls.json",
+        title=f"p-sequence controls of {record['Case']}", interface_types=interface_types,
+        reference_interface_types=reference_interface_types,
+        ma_tails=({key: tails_of(path) for key, path in runs.items() if path is not None and key != "ref"} if shell_map else None),
+        reference_ma_side=reference_ma_side)
     ma_tail_record = None
     if shell_map is not None:
         ref_pma = ma_ms_offsets.reference_p_ma(reference_dir, reference_interface_types) if reference_dir else {}
@@ -1092,10 +1115,11 @@ def analyze_case(record, context, results, *, gates, gates_digest, profile):
         gates, comparison=comparisons.get(main_label), classes={i: name for i, (name, _) in classes.items()},
         ref_pma=ma_ms_offsets.reference_p_ma(reference_dir, reference_interface_types) if reference_dir else None,
         p_sequence_summary=p_sequence_summary, reference_order=reference_order, gates_sha256=gates_digest,
-        interfaces=context["interfaces"], gated_order=gated["Order"])
+        interfaces=context["interfaces"], gated_order=gated["Order"], amplitudes=coupon_amplitudes)
     write_json(case_root / "qualification.json", gate_record)
     record["Qualification"] = {"Verdict": gate_record["Verdict"], "Reason": gate_record["Reason"],
                                "GatesPassed": gate_record["GatesPassed"], "NotApplicable": gate_record["NotApplicable"],
+                               "UnjudgedTypes": gate_record["UnjudgedTypes"],
                                "ReferenceAnchor": gate_record["ReferenceAnchor"],
                                "GatedStage": gated["Prefix"], "GatedOrder": f"p{gated['Order']}", "GatedComparison": main_label,
                                "Path": str(case_root / "qualification.json"),
@@ -1469,8 +1493,11 @@ def process_library_entries(records, contexts, *, manifest_path, manifest, root,
             model.update(thin[record["Case"]])
             model["ThinCutoffRule"] = THIN_CUTOFF_RULE
             paired.add(record["Case"])
+        # UnjudgedTypes travels with the model: the (F) path refuses the Qualified lift while a
+        # gated Type has no judged p-sequence control (decisions 474 / 477 (1)).
         model["Qualification"] = {"Verdict": record["Qualification"]["Verdict"], "Record": record["Qualification"]["Path"],
-                                  "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"]}
+                                  "ReferenceAnchor": record["Qualification"]["ReferenceAnchor"], "Order": main["Order"],
+                                  "UnjudgedTypes": list(record["Qualification"].get("UnjudgedTypes") or [])}
         if record.get("BuildGateOverride"):
             model["BuildGateOverride"] = record["BuildGateOverride"]
         model["LibraryQualified"] = record["Qualification"]["Verdict"] == gate_evaluation.VERDICT_PASSED
@@ -1825,6 +1852,10 @@ def add_arguments(parser):
     parser.add_argument("--controls", type=parse_orders, default=[3, 5], help="control orders (default p3,p5)")
     parser.add_argument("--control-count", type=int, default=DEFAULT_CONTROL_COUNT, help="controls chosen by class (default 8)")
     parser.add_argument("--control-source", type=int, action="append", help="explicit control source (repeatable; overrides the class choice)")
+    parser.add_argument("--control-amplitudes", type=Path, default=None,
+                        help="main-stage reducer directory of a PRIOR solve of the same case (domain- / surface-response-matrix.csv): "
+                             "the class choice takes, per class, the lowest-index member whose every judged Type amplitude is above "
+                             "the gate table's amplitude floor (decision 474 (A)); without it the choice is the lowest index per class")
     parser.add_argument("--max-jobs", type=int, default=40, help="at most this many of the run's jobs queued / running at once "
                                                                   "(a coupon's split is bounded by it too; every qsub is counted "
                                                                   "against the cluster profile's user cap)")

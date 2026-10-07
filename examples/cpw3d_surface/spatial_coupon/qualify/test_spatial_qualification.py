@@ -136,6 +136,14 @@ class CriteriaTest(unittest.TestCase):
                                                      gate_passed=gate), sq.STATUS_FAILED)
         with self.assertRaises(sq.SpatialQualificationError):
             sq.qualification_status("Accepted", dense_passed=True, identity_passed=True, gate_passed=True)
+        # Decisions 474 / 477 (1): an unjudged p-sequence Type refuses the Qualified / WindowValidated
+        # lift (PendingQualification stays), while a failing (a) / identity / gate is still Failed.
+        self.assertEqual(sq.qualification_status(sq.STATUS_PENDING, dense_passed=True, identity_passed=True, gate_passed=True,
+                                                 unjudged_types=["p_SA"]), sq.STATUS_PENDING)
+        self.assertEqual(sq.qualification_status(sq.STATUS_PENDING, dense_passed=True, identity_passed=True, gate_passed=True,
+                                                 window_validated=True, unjudged_types=["p_SA"]), sq.STATUS_PENDING)
+        self.assertEqual(sq.qualification_status(sq.STATUS_PENDING, dense_passed=False, identity_passed=True, gate_passed=True,
+                                                 unjudged_types=["p_SA"]), sq.STATUS_FAILED)
 
 
 def write_csv(path, header, rows):
@@ -431,6 +439,14 @@ class EvaluationTest(unittest.TestCase):
         off_marker = [sq.reference_box_closure(1.2, 1.0, 0.0, True)]
         self.assertEqual(sq.evaluate([trace], gate=self.gate, reference_boxes=off_marker)["Status"], sq.STATUS_QUALIFIED)
         self.assertEqual(sq.evaluate([trace], gate={"Passed": False, "Probed": 0})["Status"], sq.STATUS_FAILED)
+        # The model's Qualification.UnjudgedTypes (decisions 474 / 477 (1)) refuses the lift with the reason recorded.
+        unjudged = sq.evaluate([trace], gate=self.gate, reference_boxes=window, unjudged_types=["p_SA"])
+        self.assertEqual(unjudged["Status"], sq.STATUS_PENDING)
+        self.assertEqual(unjudged["UnjudgedTypes"], ["p_SA"])
+        self.assertEqual(unjudged["UnjudgedTypesRule"], sq.UNJUDGED_TYPES_RULE)
+        self.assertTrue(unjudged["DensePassed"] and unjudged["GatePassed"])
+        self.assertIsNone(record["UnjudgedTypesRule"])
+        self.assertEqual(record["UnjudgedTypes"], [])
 
     def test_defective_trace_fails_the_coupon(self):
         defective_p5 = dict(self.fab_p5)
@@ -479,6 +495,12 @@ class EvaluationTest(unittest.TestCase):
             self.assertEqual(model["SpatialQualification"]["Traces"][0]["Name"], "state-2")
             with self.assertRaises(sq.SpatialQualificationError):
                 sq.stamp_library_status(path, "other", record)
+            # An unjudged Type stamps PendingQualification, LibraryQualified stays False (decision 477 (1)).
+            unjudged = sq.evaluate([trace], gate=self.gate, unjudged_types=["p_MS"])
+            model = sq.stamp_library_status(path, "m", unjudged)["Models"][0]
+            self.assertEqual(model["QualificationStatus"], sq.STATUS_PENDING)
+            self.assertFalse(model["LibraryQualified"])
+            self.assertEqual(model["SpatialQualification"]["UnjudgedTypes"], ["p_MS"])
 
 
 if __name__ == "__main__":

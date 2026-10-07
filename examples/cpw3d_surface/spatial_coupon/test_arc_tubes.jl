@@ -150,14 +150,23 @@ function write_strip_inputs(directory; chord_degrees=5.0, plane=0.0, kink_degree
             println(io, join([1, 1, plane, point[1], point[2]], ","))
         end
     end
-    open(joinpath(directory, "semantic.json"), "w") do io
-        return write_json(
-            io,
-            Dict{String, Any}(
-                "Version" => 1,
-                "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]
+    # Design round 2 F5-A: a kinked arc end is an INVARIANT corner (the arc's end tangent
+    # against the kinked side: a non-zero dot product); the contract records it as
+    # derive_semantic_contract does.
+    contract = Dict{String, Any}(
+        "Version" => 1,
+        "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]
+    )
+    kink_degrees > 1.0e-4 * 180 / pi && (
+        contract["Derivation"] = Dict{String, Any}(
+            "InvariantCorners" => Dict{String, Any}(
+                "Rule" => "test fixture: the kinked arc / line joint",
+                "Points" => [[1.0, 1.0, plane]]
             )
         )
+    )
+    open(joinpath(directory, "semantic.json"), "w") do io
+        return write_json(io, contract)
     end
     return (
         signature=joinpath(directory, "signature.csv"),
@@ -219,6 +228,227 @@ function build_strip_coupon(
         minimum_scaled_jacobian=0.01,
         maximum_jacobian_condition=1000.0,
         quality_displacement_over_normal=0.75,
+        # The invariant-corner verdict bound (design round 2 F5-A): a kinked arc end is invariant.
+        corner_shape_gate=5.0,
+        labels_only=labels_only ? census : nothing
+    )
+    return parse_json(read(census, String)), mesh, inputs
+end
+
+# Round 2b (decision 437 (3); CC DESIGN A2 (7) / AMENDMENT 2 B3): a metal block whose bottom edge
+# runs from the convex corner (-1, 0) to (0, 0) and continues as a convex arc (centre (0, rho),
+# radius rho = x1 / sin theta) that is CUT by the x1 box face at the tilt theta (the angle between
+# the arc tangent at the cut and the face normal); the left edge x = -1 leaves the top face
+# perpendicularly (a legacy box corner). The box follows from the rows (the bottom edge's claim
+# ending at (0, 0) sets x1 = 0 + 2 R + R = 1.5; the left edge's claim sets y1 = 3.5, y0 = -1.2; the chord
+# rows stop at x <= x1 - R so they never move the box): the arc's end vertex lies exactly on the
+# face. The arc end is a box-face cut end (no corner, class Continuation), the joint at (0, 0)
+# exactly tangent (turn 0, smooth).
+function write_arc_face_end_inputs(
+    directory;
+    theta_degrees=45.0,
+    chord_degrees=5.0,
+    plane=0.0
+)
+    radius = 0.5
+    rows = NamedTuple[]
+    function straight!(a, b, gap_sign)
+        d = (b[1] - a[1], b[2] - a[2])
+        L = hypot(d...)
+        t = (d[1] / L, d[2] / L)
+        return push!(
+            rows,
+            (
+                point=(0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), plane),
+                tangent=(t[1], t[2], 0.0),
+                gap=(gap_sign * t[2], -gap_sign * t[1], 0.0),
+                interval=(-0.5 * L, 0.5 * L),
+                normal_sign=1.0,
+                vertex_arm=false,
+                slot=0,
+                conductor=1
+            )
+        )
+    end
+    straight!((-1.0, 0.0), (0.0, 0.0), 1.0)
+    # The left edge's claim ends 0.3 above the corner so that the box face y0 (-1.2) does not
+    # coincide with the 3 R collar of the bottom edge and of the arc (y = -1.5: a tangent collar /
+    # face contact leaves sliver tetrahedra between them).
+    straight!((-1.0, 2.0), (-1.0, 0.3), 1.0)
+    x1 = 0.0 + 3.0 * radius
+    rho = x1 / sind(theta_degrees)
+    centre = (0.0, rho)
+    sweep = theta_degrees
+    n = ceil(Int, sweep / chord_degrees - 1.0e-9)
+    chord_points = [
+        (
+            centre[1] + rho * cosd(-90.0 + sweep * k / n),
+            centre[2] + rho * sind(-90.0 + sweep * k / n)
+        ) for k = 0:n
+    ]
+    chord_points[end] = (x1, rho * (1.0 - cosd(theta_degrees)))   # exactly on the face
+    # Chord rows while the row's transverse pad (+- R along its gap) and the box pad stay left
+    # of x1: max(x) + R |gap_x| + R <= x1.
+    for k = 1:n
+        p, q = chord_points[k], chord_points[k + 1]
+        t = (q[1] - p[1], q[2] - p[2]) ./ hypot(q[1] - p[1], q[2] - p[2])
+        max(p[1], q[1]) + radius * abs(t[2]) + radius <= x1 + 1.0e-12 || break
+        straight!(p, q, 1.0)
+    end
+    lower, upper = row_coupon_bounds(rows, radius, 0.1, 0.05)
+    @assert upper[1] == x1 "the box x1 $(upper[1]) is not the designed $x1"
+    polygon = Tuple{Float64, Float64}[(-1.0, 0.0)]
+    append!(polygon, chord_points)                  # (0, 0) ... the face point
+    push!(polygon, (x1, upper[2]))
+    push!(polygon, (-1.0, upper[2]))
+    m = length(polygon)
+    on_face(p, q) = any(
+        (abs(p[d] - lower[d]) <= 1.0e-9 && abs(q[d] - lower[d]) <= 1.0e-9) ||
+            (abs(p[d] - upper[d]) <= 1.0e-9 && abs(q[d] - upper[d]) <= 1.0e-9) for
+        d = 1:2
+    )
+    classes =
+        [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
+    arcs = Vector{Any}(nothing, m)
+    for i = 2:(n + 1)
+        arcs[i] = (1, centre[1], centre[2], rho, 1)
+    end
+    joints = Vector{Any}(nothing, m)
+    joints[2] = (0.0, 1)
+    # Corners: the convex 90-degree corner (-1, 0) and the legacy perpendicular box corner (-1, y1);
+    # the arc end on the face is a cut end (decision 320 for arcs: no corner).
+    corners = [(-1.0, 0.0, plane), (-1.0, upper[2], plane)]
+    open(joinpath(directory, "signature.csv"), "w") do io
+        println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
+        for (i, row) in enumerate(rows)
+            println(
+                io,
+                join(
+                    [
+                        i,
+                        0,
+                        1,
+                        row.point...,
+                        row.gap...,
+                        row.tangent...,
+                        1,
+                        row.interval...,
+                        0
+                    ],
+                    ","
+                )
+            )
+        end
+    end
+    open(joinpath(directory, "boundary.csv"), "w") do io
+        println(
+            io,
+            "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y,ArcId,ArcCx,ArcCy,ArcR,ArcSign,JointTurn,JointSmooth"
+        )
+        for (i, point) in enumerate(polygon)
+            arc = arcs[i] === nothing ? ["", "", "", "", ""] : collect(arcs[i])
+            joint = joints[i] === nothing ? ["", ""] : collect(joints[i])
+            println(
+                io,
+                join(
+                    vcat([1, i, 1, plane, 0, classes[i], point[1], point[2]], arc, joint),
+                    ","
+                )
+            )
+        end
+    end
+    open(joinpath(directory, "mask.csv"), "w") do io
+        println(io, "Facet,Conductor,Plane,X,Y")
+        for point in polygon
+            println(io, join([1, 1, plane, point[1], point[2]], ","))
+        end
+    end
+    open(joinpath(directory, "semantic.json"), "w") do io
+        return write_json(
+            io,
+            Dict{String, Any}(
+                "Version" => 1,
+                "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]
+            )
+        )
+    end
+    return (
+        signature=joinpath(directory, "signature.csv"),
+        boundary=joinpath(directory, "boundary.csv"),
+        mask=joinpath(directory, "mask.csv"),
+        semantic=joinpath(directory, "semantic.json"),
+        polygon=polygon,
+        classes=classes,
+        corners=corners,
+        chords=n,
+        lower=lower,
+        upper=upper,
+        centre=centre,
+        rho=rho,
+        face_point=chord_points[end]
+    )
+end
+
+# Mesh nodes within `reach` of `point`.
+function nodes_near(path, point, reach)
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.open(path)
+    _, coordinates, _ = gmsh.model.mesh.getNodes()
+    gmsh.finalize()
+    xyz = reshape(coordinates, 3, :)
+    return [xyz[:, i] for i = 1:size(xyz, 2) if norm(xyz[:, i] .- point) <= reach]
+end
+
+# The full build of a fixture written by `writer` (write_strip_inputs / write_arc_face_end_inputs)
+# at the test sizes (R 0.5, EdgeSize 0.01: 2-ring tubes) with the production gates; `edge_size`
+# 0.00025 / 0.002 gives the production fabricated / thin tubes on the same coupon.
+function build_arc_coupon(
+    directory,
+    writer;
+    fabricated=true,
+    stem="arc",
+    labels_only=false,
+    edge_size=0.01,
+    lc_fine=0.05,
+    lc_tangent=0.1,
+    lc_far=0.3,
+    max_elements=3_000_000,
+    writer_options...
+)
+    inputs = writer(directory; writer_options...)
+    mesh = joinpath(directory, "coupon-$stem.msh")
+    census = joinpath(directory, "census-$stem.json")
+    generate_spatial_coupon(;
+        signature=inputs.signature,
+        mask=inputs.mask,
+        boundary=inputs.boundary,
+        fabricated=fabricated,
+        filename=mesh,
+        radius=0.5,
+        metal_thickness=0.1,
+        overetch=0.05,
+        sidewall_angle=90.0,
+        top_rounding=0.0,
+        trench_rounding=0.0,
+        lc_fine=lc_fine,
+        lc_tangent=lc_tangent,
+        lc_far=lc_far,
+        max_nodes=max_elements,
+        max_elements=max_elements,
+        semantic_contract=inputs.semantic,
+        corner_isotropy_radius=0.1,
+        corner_census=census,
+        edge_size=edge_size,
+        edge_growth_ratio=2.0,
+        corner_size=edge_size,
+        prism_tubes=true,
+        far_growth=0.5,
+        maximum_corner_aspect=4.0,
+        minimum_scaled_jacobian=0.01,
+        maximum_jacobian_condition=1000.0,
+        quality_displacement_over_normal=0.75,
+        corner_shape_gate=5.0,
         labels_only=labels_only ? census : nothing
     )
     return parse_json(read(census, String)), mesh, inputs
@@ -305,6 +535,7 @@ end
         0.04,
         0.01,
         0.1;
+        spacing_cap=Inf,
         face_axis=1,
         face_value=0.3
     )
@@ -422,37 +653,103 @@ end
     end
 end
 
-@testset "decision 391 MAJOR-2 (ii): arc face ends and arc joints beyond the tested turn fail closed" begin
-    # Both guards are in the recipe scope list (mesh_stage_contract.py spells the same list)
-    # and the turn bound is the loop end's tested range.
+@testset "decision 391 MAJOR-2 (ii) lifted by round 2b (decision 437 (3)): arc face ends and arc joints build inside the TESTED ranges, fail closed beyond" begin
+    # Both guards stay in the recipe scope list (mesh_stage_contract.py spells the same list and
+    # the same bounds); the loop end's tested turn bound lies inside the smooth range.
     ids = [guard[1] for guard in RECIPE_SCOPE_GUARDS]
     @test "ArcFaceEnds" in ids && "ArcJointTilt" in ids
-    @test ARC_JOINT_TURN_BOUND == 1.6e-6
-    @test occursin(string(ARC_JOINT_TURN_BOUND), scope_guard_statement("ArcJointTilt"))
-    clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
-    segments_of(inputs; lower=inputs.lower, upper=inputs.upper) = metal_edge_segments(
-        read_boundary(inputs.boundary),
-        inputs.corners,
-        clearance,
-        lower,
-        upper,
-        1.0e-7 * 0.5;
-        edge_size=0.01,
-        corner_radius=0.1
+    @test ARC_JOINT_TURN_BOUND == 1.6e-6 < ARC_SMOOTH_JOINT_TURN_BOUND == 5.0e-5
+    @test ARC_CORNER_JOINT_TURN_RANGE == (2.0e-4, deg2rad(30.0)) &&
+          ARC_FACE_END_TILT_BOUND == deg2rad(70.0)
+    @test occursin(
+        string(ARC_SMOOTH_JOINT_TURN_BOUND),
+        scope_guard_statement("ArcJointTilt")
     )
-    mktempdir() do directory
-        # POSITIVE: the exactly tangent strip (turn 0 at both joints) and a joint turning by
-        # 1e-6 rad (inside the tested range, tagged smooth) pass; the census of a labels-only
-        # build spells both guards among the GuardedClasses.
-        tangent = write_strip_inputs(mkpath(joinpath(directory, "t0")))
-        segments = segments_of(tangent)
-        @test count(s.kind == :arc for s in segments) == 1
-        @test all(s.face_ends == (nothing, nothing) for s in segments if s.kind == :arc)
-        inside = write_strip_inputs(
-            mkpath(joinpath(directory, "t1e-6"));
-            kink_degrees=rad2deg(1.0e-6)
+    @test occursin("70.0", scope_guard_statement("ArcFaceEnds"))
+    clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
+    segments_of(inputs; lower=inputs.lower, upper=inputs.upper, fabricated=false) =
+        metal_edge_segments(
+            read_boundary(inputs.boundary),
+            inputs.corners,
+            clearance,
+            lower,
+            upper,
+            1.0e-7 * 0.5;
+            edge_size=0.01,
+            corner_radius=0.1,
+            fabricated=fabricated
         )
-        @test count(s.kind == :arc for s in segments_of(inside)) == 1
+    mktempdir() do directory
+        # SMOOTH joints: the exactly tangent strip, the loop end's 1e-6 rad and the tested 5e-5 rad
+        # pass; 6e-5 rad (smooth-tagged, above the tested bound) fails closed naming the turn.
+        for turn in (0.0, 1.0e-6, 1.01 * ARC_JOINT_TURN_BOUND, 5.0e-5)
+            inside = write_strip_inputs(
+                mkpath(joinpath(directory, "s$turn"));
+                kink_degrees=rad2deg(turn)
+            )
+            @test count(s.kind == :arc for s in segments_of(inside)) == 1
+        end
+        message = guard_message(
+            () -> segments_of(
+                write_strip_inputs(
+                    mkpath(joinpath(directory, "s6e-5"));
+                    kink_degrees=rad2deg(6.0e-5)
+                )
+            )
+        )
+        @test occursin("ScopeGuard[ArcJointTilt]", message) &&
+              occursin("smooth-joint turn", message) &&
+              occursin("arc 1 part 1", message) &&
+              occursin("straight side", message)
+        @test isapprox(
+            parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1]),
+            6.0e-5;
+            rtol=1.0e-6
+        )
+        # CORNER joints: 2e-4 rad and 30 degrees (the tested ends of the range) pass, with the
+        # kinked arc end a corner retracted along the arc (A3 (3)); 1.5e-4 rad (a corner below the
+        # tested range) and 31 degrees fail closed.
+        for turn in (2.0e-4, deg2rad(30.0))
+            kinked = write_strip_inputs(
+                mkpath(joinpath(directory, "c$turn"));
+                kink_degrees=rad2deg(turn)
+            )
+            arc = only(s for s in segments_of(kinked) if s.kind == :arc)
+            @test arc.corners == (false, true) && arc.s_end < arc.span
+            @test isapprox(arc.corner_angles[2], pi - turn; atol=1.0e-9)
+            # The corner joint is tested on THIN coupons only: fabricated fails closed.
+            message = guard_message(() -> segments_of(kinked; fabricated=true))
+            @test occursin("ScopeGuard[ArcJointTilt]", message) &&
+                  occursin("FABRICATED", message)
+        end
+        # Smooth joints and face ends build on both kinds.
+        @test count(
+            s.kind == :arc for s in segments_of(
+                write_strip_inputs(
+                    mkpath(joinpath(directory, "sfab"));
+                    kink_degrees=rad2deg(5.0e-5)
+                );
+                fabricated=true
+            )
+        ) == 1
+        for (turn, label) in ((1.5e-4, "below"), (deg2rad(31.0), "above"))
+            message = guard_message(
+                () -> segments_of(
+                    write_strip_inputs(
+                        mkpath(joinpath(directory, "c-$label"));
+                        kink_degrees=rad2deg(turn)
+                    )
+                )
+            )
+            @test occursin("ScopeGuard[ArcJointTilt]", message) &&
+                  occursin("corner-joint turn", message)
+            @test isapprox(
+                parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1]),
+                turn;
+                rtol=1.0e-6
+            )
+        end
+        # The census of a labels-only build spells both guards among the GuardedClasses.
         census, _, _ = build_strip_coupon(
             mkpath(joinpath(directory, "labels"));
             fabricated=true,
@@ -464,85 +761,335 @@ end
             guard["Id"] == "ArcJointTilt" && guard["DetectedFrom"] == "build" for
             guard in census["Scope"]["Guards"]
         )
-        # NEGATIVE (ArcJointTilt): a smooth-tagged joint turning by 1e-5 rad (A3 (1) smooth,
-        # above the tested 1.6e-6), a 2e-4-rad corner joint and a 30-degree kinked arc / line
-        # joint all fail closed at the same guard, naming the arc and the turn.
-        for (turn, label) in
-            ((1.0e-5, "smooth"), (2.0e-4, "corner"), (deg2rad(30.0), "kink"))
-            kinked = write_strip_inputs(
-                mkpath(joinpath(directory, label));
-                kink_degrees=rad2deg(turn)
+        # FACE ENDS: the arc cut by the x1 face at 45 and 70 degrees is a face end of the arc side
+        # (theta exact, the face named); at 71 degrees it fails closed; an arc whose end tangent
+        # runs along the face (the perpendicular / tangential end) and an arc at a box vertex fail closed.
+        for (theta, chord) in ((15.0, 2.5), (45.0, 5.0), (70.0, 5.0)),
+            fabricated in (true, false)
+
+            inputs = write_arc_face_end_inputs(
+                mkpath(joinpath(directory, "fe$theta-$fabricated"));
+                theta_degrees=theta,
+                chord_degrees=chord
             )
-            message = guard_message(() -> segments_of(kinked))
-            @test occursin("ScopeGuard[ArcJointTilt]", message) &&
-                  occursin("arc 1 part 1", message) &&
-                  occursin("straight side", message)
-            @test occursin(r"turn of ([0-9.e+-]+) rad", message)
-            read_turn = parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1])
-            @test isapprox(read_turn, turn; rtol=1.0e-6)
+            arc = only(
+                s for s in segments_of(inputs; fabricated=fabricated) if s.kind == :arc
+            )
+            @test arc.face_ends[1] === nothing && arc.face_ends[2] !== nothing
+            @test arc.face_ends[2].face == "x1" &&
+                  isapprox(rad2deg(arc.face_ends[2].theta), theta; atol=1.0e-9)
+            @test arc.joints[1] !== nothing && arc.corners == (false, false)
         end
-        # The bound is exclusive-above: a turn 1 % above it fails, 1 % below it passes.
-        for (factor, fails) in ((1.01, true), (0.99, false))
-            edge = write_strip_inputs(
-                mkpath(joinpath(directory, "bound-$factor"));
-                kink_degrees=rad2deg(factor * ARC_JOINT_TURN_BOUND)
-            )
-            message = guard_message(() -> segments_of(edge))
-            @test occursin("ScopeGuard[ArcJointTilt]", message) == fails
-        end
-        # NEGATIVE (ArcFaceEnds): a metal strip entering through the x0 face whose outer edge
-        # bends about (0, 1) along a convex arc of radius 1 from (0, 0) and leaves the box along
-        # the x1 face: with a 45-degree sweep the arc ends ON the x1 face at a 45-degree tilt
-        # (a box-face cut end), with a 90-degree sweep its end tangent (0, 1) runs along the
-        # face (the box face through the arc end at any angle); both fail closed at the arc
-        # (a straight side ending on the box keeps its decision-320 treatment).
-        for sweep in (45.0, 90.0)
-            chords = 9
-            arc_points = [
-                (cosd(-90.0 + sweep * k / chords), 1.0 + sind(-90.0 + sweep * k / chords)) for k = 0:chords
-            ]
-            x_face = arc_points[end][1]
-            points = vcat([(-3.0, 0.0)], arc_points, [(x_face, 3.0), (-3.0, 3.0)])
-            m = length(points)
-            classes = [
-                i == m - 2 || i == m - 1 || i == m ? "Continuation" : "Physical" for i = 1:m
-            ]
-            arcs = Vector{Union{Nothing, NamedTuple}}(nothing, m)
-            for i = 2:(chords + 1)
-                arcs[i] = (id=1, centre=(0.0, 1.0), radius=1.0, sign=1)
-            end
-            joints = Vector{Union{Nothing, NamedTuple}}(nothing, m)
-            joints[2] = (turn=0.0, smooth=true)
-            loop = (
-                conductor=1,
-                plane=0.0,
-                hole=false,
-                points=points,
-                classes=classes,
-                arcs=arcs,
-                joints=joints
-            )
-            message = guard_message(
-                () -> metal_edge_segments(
-                    [loop],
-                    Tuple{Float64, Float64, Float64}[],
-                    clearance,
-                    [-3.0, -3.0],
-                    [x_face, 3.0],
-                    1.0e-9;
-                    edge_size=0.01,
-                    corner_radius=0.1
+        message = guard_message(
+            () -> segments_of(
+                write_arc_face_end_inputs(
+                    mkpath(joinpath(directory, "fe71"));
+                    theta_degrees=71.0
                 )
             )
-            @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
-                  occursin("arc 1 part 1", message) &&
-                  occursin("on the outer box", message)
+        )
+        @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+              occursin("above the tested 70.0", message)
+        chords = 9
+        arc_points = [
+            (cosd(-90.0 + 90.0 * k / chords), 1.0 + sind(-90.0 + 90.0 * k / chords)) for
+            k = 0:chords
+        ]
+        x_face = arc_points[end][1]
+        points = vcat([(-3.0, 0.0)], arc_points, [(x_face, 3.0), (-3.0, 3.0)])
+        m = length(points)
+        classes =
+            [i == m - 2 || i == m - 1 || i == m ? "Continuation" : "Physical" for i = 1:m]
+        arcs = Vector{Union{Nothing, NamedTuple}}(nothing, m)
+        for i = 2:(chords + 1)
+            arcs[i] = (id=1, centre=(0.0, 1.0), radius=1.0, sign=1)
         end
-        # A straight side ending on the box keeps its face end (decision 320): the guard is
-        # the arc's alone.
-        @test any(
-            s.face_ends != (nothing, nothing) || s.legacy_box_corners != (false, false) for
-            s in segments if s.kind == :straight
+        joints = Vector{Union{Nothing, NamedTuple}}(nothing, m)
+        joints[2] = (turn=0.0, smooth=true)
+        loop = (
+            conductor=1,
+            plane=0.0,
+            hole=false,
+            points=points,
+            classes=classes,
+            arcs=arcs,
+            joints=joints
+        )
+        message = guard_message(
+            () -> metal_edge_segments(
+                [loop],
+                Tuple{Float64, Float64, Float64}[],
+                clearance,
+                [-3.0, -3.0],
+                [x_face, 3.0],
+                1.0e-9;
+                edge_size=0.01,
+                corner_radius=0.1
+            )
+        )
+        @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+              occursin("exactly perpendicular", message)
+        corner_points = vcat([(-3.0, 0.0)], arc_points, [(-3.0, 3.0)])     # the arc end (1, 1) is the box vertex (x1, y1)
+        mc = length(corner_points)
+        corner_classes = [i == mc - 1 || i == mc ? "Continuation" : "Physical" for i = 1:mc]
+        corner_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, mc)
+        for i = 2:(chords + 1)
+            corner_arcs[i] = (id=1, centre=(0.0, 1.0), radius=1.0, sign=1)
+        end
+        corner_joints = Vector{Union{Nothing, NamedTuple}}(nothing, mc)
+        corner_joints[2] = (turn=0.0, smooth=true)
+        corner_loop = (
+            conductor=1,
+            plane=0.0,
+            hole=false,
+            points=corner_points,
+            classes=corner_classes,
+            arcs=corner_arcs,
+            joints=corner_joints
+        )
+        message = guard_message(
+            () -> metal_edge_segments(
+                [corner_loop],
+                Tuple{Float64, Float64, Float64}[],
+                clearance,
+                [-3.0, -3.0],
+                [1.0, 1.0],
+                1.0e-9;
+                edge_size=0.01,
+                corner_radius=0.1
+            )
+        )
+        @test occursin("ScopeGuard[ArcFaceEnds]", message)
+    end
+end
+
+@testset "round 2b (decision 437 (3)): the four synthetic arc FULL builds at the test sizes" begin
+    mktempdir() do directory
+        # (1) / (2) arc face ends at 15 / 45 / 70 degrees, fabricated and thin: the arc tube ends ON
+        # the face (design A2 for arcs) with the face-end record on the ArcTube row, the cap entities
+        # on the face plane matched by their conic centroids, every gate passed.
+        # (decision 475 MINOR-1: the 15-degree face end closes the shallow end of the lifted range;
+        # 2.5-degree chords so that the 15-degree arc keeps the >= 4-chord guard's four chords)
+        for (theta, chord) in ((15.0, 2.5), (45.0, 5.0), (70.0, 5.0)),
+            fabricated in (true, false)
+
+            census, mesh, inputs = build_arc_coupon(
+                mkpath(joinpath(directory, "fe$theta-$fabricated")),
+                write_arc_face_end_inputs;
+                fabricated=fabricated,
+                stem="fe",
+                theta_degrees=theta,
+                chord_degrees=chord
+            )
+            tubes = census["PrismTubes"]
+            arc_rows = [row for row in tubes["Tubes"] if haskey(row, "Arc")]
+            @test length(arc_rows) == (fabricated ? 2 : 1) &&
+                  all(haskey(row, "FaceEnds") for row in arc_rows)
+            for row in arc_rows
+                record = only(row["FaceEnds"])
+                @test record["Face"] == "x1" &&
+                      isapprox(record["ThetaDegrees"], theta; atol=1.0e-9)
+                @test record["Regime"] == "I"
+                # The arc tube travels against the loop here (orientation -sigma Nz): the face
+                # end is the tube's START station; its axis point lies on the face.
+                face_point = record["End"] == "end" ? row["EndPoint"] : row["StartPoint"]
+                @test isapprox(face_point[1], inputs.upper[1]; atol=1.0e-9)
+            end
+            @test tubes["FaceEnds"]["Count"] == length(arc_rows) &&
+                  tubes["ArcTubes"]["SharedSections"] == length(arc_rows)
+            @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+            @test tubes["Quality"]["Prism"]["PositiveOrientation"] &&
+                  tubes["Quality"]["Pyramid"]["PositiveOrientation"]
+            # Every node of the arc tube's last station lies on the face, none beyond it.
+            # (the end polygon of a section: the edge point + Rings x (Sectors + 1) nodes on the face)
+            # (the face cut stretches the section by 1 / cos theta along the face)
+            near = nodes_near(
+                mesh,
+                [inputs.face_point[1], inputs.face_point[2], fabricated ? 0.1 : 0.0],
+                2.0 * tubes["Section"]["Radius"] / cosd(theta)
+            )
+            @test count(p -> abs(p[1] - inputs.upper[1]) <= 1.0e-9, near) >=
+                  1 + tubes["Section"]["Rings"] * (tubes["Section"]["Sectors"] + 1)
+            @test all(p[1] <= inputs.upper[1] + 1.0e-9 for p in near)
+        end
+        # (3) the 5e-5-rad smooth joint (fabricated): one shared section owned by the arc, the
+        # straight tubes' end sheared by the tilt (PlaneCut), no corner at the joint; (4) the
+        # 2e-4-rad corner joint and the 30-degree kinked arc / line joint (THIN: the tested kind):
+        # the kinked arc end is an INVARIANT corner (kappa_reg under the gate), the arc tube
+        # retracted along its arc by the corner clearance, no shared section at that end. (The
+        # thin twin of (3) and the 2e-4 thin corner at these TEST sizes meet the decision-353
+        # 90-degree seed lottery at another corner on some sizes; the fabricated corner joint fails
+        # in Gmsh's surface mesher at the production sizes and stays guarded: round2b-impl REPORT
+        # section 3.)
+        census, _, _ = build_strip_coupon(
+            mkpath(joinpath(directory, "smooth"));
+            fabricated=true,
+            stem="smooth",
+            kink_degrees=rad2deg(5.0e-5)
+        )
+        tubes = census["PrismTubes"]
+        tilted = [
+            j for row in tubes["Tubes"] for
+            j in get(row, "Joints", []) if j["TiltRadians"] > 0.0
+        ]
+        @test length(tilted) == 2 && all(
+            isapprox(j["TiltRadians"], 5.0e-5; rtol=1.0e-6) && j["PlaneCut"] for j in tilted
+        )
+        @test tubes["ArcTubes"]["SharedSections"] == 4 &&
+              tubes["ArcTubes"]["JointEnds"] == 4
+        @test length(census["SemanticCorners"]) == 3 &&
+              tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        # (the 2e-4-rad thin corner at these test sizes meets the lottery at a legacy corner, 4.34 > 4.0:
+        # its full build is the production-size record)
+        for (fabricated, turn, stem) in ((false, deg2rad(30.0), "kink"),)
+            census, _, _ = build_strip_coupon(
+                mkpath(joinpath(directory, stem));
+                fabricated=fabricated,
+                stem=stem,
+                kink_degrees=rad2deg(turn)
+            )
+            tubes = census["PrismTubes"]
+            measures = census["SeedQualityOptimization"]["CornerMeasures"]
+            kinked = only(r for r in measures if r["Point"] == [1.0, 1.0, 0.0])
+            @test kinked["Kind"] == "Invariant" &&
+                  kinked["Passed"] &&
+                  kinked["After"] <= 5.0
+            @test tubes["ArcTubes"]["SharedSections"] == (fabricated ? 2 : 1)
+            for row in tubes["Tubes"]
+                haskey(row, "Arc") || continue
+                # The arc of radius 1 sweeps 90 degrees (span pi / 2): its kinked end is retracted
+                # by the corner clearance along the arc (whichever tube end the travel puts it at).
+                @test row["Length"] < 0.5 * pi - 1.0e-6 &&
+                      (row["Start"] > 0.0) != (row["End"] < 0.5 * pi - 1.0e-6)
+                @test isapprox(row["CornerAngles"][2], pi - turn; atol=1.0e-9)
+            end
+            @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        end
+    end
+end
+
+@testset "F6 / decision 391 MINOR-6: facing widths of ARC tube intervals (exact circle geometry)" begin
+    # Synthetic side records of one plane (the fields metal_facing_widths reads): an arc side's
+    # interval runs from the angle of s_start to that of s_end along its travel (theta(s) =
+    # theta_start + sign(sweep) s / rho), its outward normal is sigma x the radial direction;
+    # a straight side's interval is (start + s_start d, start + s_end d) with its normal.
+    function arc_side(
+        centre,
+        rho,
+        sigma,
+        theta_a,
+        theta_b;
+        s_start=0.0,
+        s_end=nothing,
+        plane=0.0
+    )
+        sweep = theta_b - theta_a
+        span = rho * abs(sweep)
+        a = centre .+ rho .* [cos(theta_a), sin(theta_a)]
+        b = centre .+ rho .* [cos(theta_b), sin(theta_b)]
+        return (
+            kind=:arc,
+            start=a,
+            stop=b,
+            direction=sign(sweep) .* [-sin(theta_a), cos(theta_a)],
+            normal=sigma .* [cos(theta_a), sin(theta_a)],
+            span=span,
+            plane=plane,
+            untubed=false,
+            s_start=s_start,
+            s_end=s_end === nothing ? span : s_end,
+            arc=(
+                id=1,
+                centre=centre,
+                rho=rho,
+                sigma=sigma,
+                theta_start=theta_a,
+                theta_end=theta_b,
+                sweep=sweep,
+                part=1,
+                parts=1,
+                run_sweep=sweep,
+                chords=[]
+            )
         )
     end
+    function straight_side(a, b, normal; s_start=0.0, s_end=nothing, plane=0.0)
+        d = b .- a
+        span = norm(d)
+        return (
+            kind=:straight,
+            start=a,
+            stop=b,
+            direction=d ./ span,
+            normal=normal,
+            span=span,
+            plane=plane,
+            untubed=false,
+            s_start=s_start,
+            s_end=s_end === nothing ? span : s_end,
+            arc=nothing
+        )
+    end
+    centre = [0.0, 0.0]
+    # An annular metal strip of width w between two concentric quarter arcs (the outer arc
+    # convex: dielectric outside, sigma +1; the inner one concave about the metal: sigma -1):
+    # both sides read exactly w, at every chording (no sampling: the closest points lie at
+    # a common angle).
+    w = 0.121
+    outer = arc_side(centre, 1.0 + w, 1.0, -pi / 2, 0.0)
+    inner = arc_side(centre, 1.0, -1.0, 0.0, -pi / 2)
+    widths, pairs = metal_facing_widths([outer, inner], 1.0e-9)
+    @test widths ≈ [w, w] && length(pairs) == 1 && pairs[1].width ≈ w
+    @test metal_facing_width([outer, inner], 1.0e-9) ≈ w
+    # The intervals retracted at their ends (a corner clearance): still w where they overlap
+    # in angle, Inf once the angular intervals no longer overlap.
+    retracted = arc_side(centre, 1.0, -1.0, 0.0, -pi / 2; s_start=0.3, s_end=1.2)
+    @test metal_facing_widths([outer, retracted], 1.0e-9)[1] ≈ [w, w]
+    far = arc_side(centre, 1.0 + w, 1.0, pi / 4, pi / 2)
+    @test metal_facing_widths([far, inner], 1.0e-9)[1] == [Inf, Inf]
+    # The same two arcs with the metal OUTSIDE both (a dielectric annulus: the normals point at
+    # each other) face across dielectric, not metal: no facing pair.
+    dielectric_outer = arc_side(centre, 1.0 + w, -1.0, -pi / 2, 0.0)
+    dielectric_inner = arc_side(centre, 1.0, 1.0, 0.0, -pi / 2)
+    @test metal_facing_widths([dielectric_outer, dielectric_inner], 1.0e-9)[1] == [Inf, Inf]
+    # An arc against a straight side: a concave arc of radius 1 about the origin (the metal
+    # outside the circle, sigma -1) and a straight side along y = 1 + w (its metal below it,
+    # normal +y) enclose a metal ribbon of width w: the closest pair is the foot of the centre
+    # on the straight side against the arc's top point, exactly w; a straight interval starting
+    # at x = 1 has its END as the closest point, against the arc point at the end's own angle
+    # (48.3 degrees, on the arc): the exact distance from the end to the circle.
+    top_arc = arc_side(centre, 1.0, -1.0, pi / 4, 3 * pi / 4)
+    line = straight_side([-2.0, 1.0 + w], [2.0, 1.0 + w], [0.0, 1.0])
+    widths, pairs = metal_facing_widths([top_arc, line], 1.0e-9)
+    @test widths ≈ [w, w] &&
+          pairs[1].points[2] ≈ [0.0, 1.0 + w] &&
+          pairs[1].points[1] ≈ [0.0, 1.0]
+    offset_line = straight_side([1.0, 1.0 + w], [2.0, 1.0 + w], [0.0, 1.0])
+    widths, pairs = metal_facing_widths([top_arc, offset_line], 1.0e-9)
+    expected = norm([1.0, 1.0 + w]) - 1.0
+    @test widths ≈ [expected, expected] &&
+          pairs[1].points[2] ≈ [1.0, 1.0 + w] &&
+          pairs[1].points[1] ≈ [1.0, 1.0 + w] ./ norm([1.0, 1.0 + w])
+    # A straight interval entirely past the arc's angular range (below and to the right, its
+    # metal above it so that the metal lies between the two): the arc's END is the closest
+    # point.
+    beyond_line = straight_side([1.5, 0.5], [2.0, 0.5], [0.0, -1.0])
+    widths, pairs = metal_facing_widths([top_arc, beyond_line], 1.0e-9)
+    @test length(pairs) == 1 &&
+          pairs[1].points[1] ≈ [cos(pi / 4), sin(pi / 4)] &&
+          widths ≈ fill(norm([1.5, 0.5] .- [cos(pi / 4), sin(pi / 4)]), 2)
+    # Two arcs on different circles: the closest points lie on the line of centres when both
+    # arcs contain its direction (two concave arcs - the metal outside both circles, i.e.
+    # between them - facing across the metal between them).
+    left = arc_side([-1.0, 0.0], 0.5, -1.0, -pi / 4, pi / 4)       # bulging towards +x, metal to its right
+    right = arc_side([1.0, 0.0], 0.5, -1.0, 3 * pi / 4, 5 * pi / 4) # bulging towards -x, metal to its left
+    widths, pairs = metal_facing_widths([left, right], 1.0e-9)
+    @test widths ≈ [1.0, 1.0] &&
+          pairs[1].points[1] ≈ [-0.5, 0.0] &&
+          pairs[1].points[2] ≈ [0.5, 0.0]
+    # Adjacent sides (sharing an end) and untubed sides are not facing pairs.
+    leg = straight_side([1.0 + w, 0.0], [1.0 + w, -1.0], [1.0, 0.0])
+    @test metal_facing_widths([outer, leg], 1.0e-9)[1] == [Inf, Inf]
+    untubed_inner = (inner..., untubed=true)
+    @test metal_facing_widths([outer, untubed_inner], 1.0e-9)[1] == [Inf, Inf]
 end

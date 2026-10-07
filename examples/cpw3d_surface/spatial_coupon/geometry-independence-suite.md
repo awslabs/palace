@@ -592,18 +592,17 @@ build census (`build-census`, the bound build report):
     design A3 (3), supervisor decision 303: the pyramid-envelope margin, which is h_K
     exactly for phi >= 77.4 degrees - every rectilinear corner bitwise - and larger
     at the acute tips of the oblique family);
-  - FACE ENDS (block (b) design A2 / A6, supervisor decisions 302 / 320): a tube end
-    on a box face where a single metal side meets the face at a tilt theta > 0 (the
-    side is not exactly perpendicular to the face: its face-parallel coordinate
-    differs between its two ends, exact arithmetic, no tolerance) ends ON the face -
-    the CAD solid is extruded over-long by (R + h_pyr) |tan theta| + TangentialSize
-    and intersected with the coupon box before the fragment (the single-descendant
-    check unchanged), and the mesh ends with m = ceil(2 (R + h_pyr) |tan theta| /
-    lc_end) sheared layers of axial spacing lc_end = max(TangentialSize, 4 h_pyr |tan
-    theta|) whose last station is the face plane (every end node on the face; layer
-    thickness in [lc_end / 2, 3 lc_end / 2]; planar trapezoid quadrangles; apexes
-    inside the box; recorded `Tubes[].FaceEnds` and `PrismTubes.FaceEnds`, the
-    labels-only census `PrismTubeFaceEnds`). The box-face VERTEX class is decided by
+  - |tan theta| / (lc_cap - 2 h_pyr |tan theta|)), the regime-I count at lc_cap), the exact
+    apex rule t_min >= 2 h_pyr |tan theta| on the thinnest layer (70 degrees: lc_end 80.57
+    nm, m 3; 74.3: m 6; 75.5: m 9; the maximum prism condition then reads ~958 < 1000);
+    beyond the validity ceiling 2 h_pyr |tan theta| >= lc_cap (78.77 degrees fabricated)
+    the build fails closed at `ScopeGuard[SteepFaceCrossing]`. Recorded per face end
+    `Regime` ("I" / "II"), `EndSpacingCap`, `ApexThickness`; per section
+    `FaceEndSpacingCap` / `FaceEndSpacingCapRule`; the census validator recomputes the
+    cap from the section's rings and rays and the command's ceiling and binds the regime,
+    lc_end <= lc_cap and the apex inequality per record (a round-2b mesher's record
+    without a Regime fails closed; a pre-F2b record is judged by the regime-I formulas).
+    The box-face VERTEX class is decided by
     the vertex, angle-gated: with theta > 0 such an end is a box-face cut end
     (clearance 0, no corner ball; `derive_semantic_contract` excludes it from the
     SemanticCorners and records `Derivation.BoxFaceCutEnds`; the estimator counts the
@@ -642,12 +641,29 @@ build census (`build-census`, the bound build report):
     plane whose tube intervals face each other across the metal (each on the metal
     side of the other's outward normal at their closest points) must be more than
     2 (Radius + PyramidHeight) apart - the decision-66 thin tube (R 62 nm, h_pyr 16
-    nm) needs a strip wider than 156 nm, the fabricated top tube 79.5 nm. Narrower
-    strips fail closed at `ScopeGuard[NarrowMetal]` with the measured width and the
-    envelope (`metal_facing_width`; the S2p c83be8376d3a junction leads are 121-nm
-    strips: fabricated builds, thin stops); the Section records `MetalFacingRule` and
-    `MetalFacingWidth` (the narrowest facing width, null without a facing pair). A
-    per-side or per-coupon ring bound for such strips is the family-6 design item;
+    nm) needs a strip wider than 156 nm, the fabricated top tube 79.5 nm. Step 4.2
+    stopped narrower strips at `ScopeGuard[NarrowMetal]`; mesher design round 2 F6
+    (section 2.2, decisions 437 / 443) RETIRES that guard into a PER-SIDE ring bound
+    (`RingsPerSideRule`): every tubed side's ring count K_side is the largest K with
+    r_K + h_K <= FacingBound_side = min(TransverseBound, FacingWidth_side / 2),
+    FacingWidth_side its smallest facing width across the metal measured on the tube
+    intervals (`metal_facing_widths`; arc intervals by their exact circle geometry -
+    the interval ends, the straight interval's foot of the arc centre, the line of
+    centres, a common angle of concentric arcs; decision 391 MINOR-6), iterated with
+    the sides' own corner clearances (R, h_K, h_pyr of K_side) to a fixed point (a
+    count only decreases); the two facing envelopes r_K + h_K / 2 stay one outer ring
+    apart. The thin tube on a 121-nm finger takes 4 rings (30 + 16 <= 60.5 nm), the
+    fabricated tubes keep 7 (47.75 <= 60.5); every built coupon (facing widths >= 203
+    nm, above 2 (r_K + h_K) = 188 nm thin) is unchanged. Recorded: `Tubes[].Rings / FacingWidth / FacingBound` on a reduced side only, `Section.MinimumRings / ReducedSides / FacingBound / MinimumQualifiedRings`, `MetalFacingWidth` (the
+    narrowest facing width, null without a facing pair), the labels-only
+    `PrismTubeRings`. A side at a count below the smallest ring count validated by (F)
+    for the coupon KIND - the manifest `Gates.MinimumQualifiedRings {Fabricated 7, Thin 4}` (Thin 5 -> 4 after the round-2b family-6 pairs passed (F), prediction B15) with its provenance, the mesher's `--minimum-qualified-rings`
+    (run_gmsh_only_case passes the case kind's value) - fails closed at
+    `ScopeGuard[UnqualifiedRingCount]` until an (F) case extends the range (the
+    qualified-range mechanism per kind); a smooth joint between sides of different
+    counts fails closed (one shared section). The census validator recomputes every
+    reduced row's count and bound, binds the command's range and the section
+    aggregates (`validate_tube_rings_per_side`);
   - ARC SIDES - T2 (block (b) design sections 1-2, AMENDMENT 1 A1 (4), A2, A3, A7
     MINOR-6 / MINOR-7; supervisor decision 303; step 4.3): the plan-view boundary of a
     cluster whose signature carries arc entries is TAGGED by the generator
@@ -708,20 +724,32 @@ build census (`build-census`, the bound build report):
         end reads 7 corners / 24 caps instead of 313 / 1,244). Not supported, fail closed:
         an arc of fewer than four chords (the untagged fit of the trench footprint needs
         four), an untubed arc, a tilted arc / arc joint of two different circles, a loop
-        made of one closed arc; arc sides are not in the NarrowMetal facing test (a narrow
-        curved strip fails closed at the fragment). Decision 391 MAJOR-2 (ii) (mesher review
-        R2): until the next mesher lane's four synthetic FULL builds (arc face ends at 45 /
-        70 degrees, a kinked arc / line joint, a 5e-5-rad smooth joint, a 2e-4-rad corner
-        joint) exist, two more guards fail closed in `metal_edge_segments`:
-        `ScopeGuard[ArcFaceEnds]` - an arc side with an end on the outer box (a cut end at
-        any tilt, an end exactly perpendicular to the face, a box-vertex corner); and
-        `ScopeGuard[ArcJointTilt]` - an arc side meeting another side at a joint whose turn
-        (the arc's end tangent against the other side's direction, by atan of cross and
-        dot) exceeds `ARC_JOINT_TURN_BOUND` = 1.6e-6 rad, the loop end 1b26671c9080's
-        tested range (its 32 smooth arc / line joints turn by 3.0e-8 .. 1.6e-6 rad on the
-        signature; the mesher reads post-snap tilts <= 1.27e-6 rad on its built meshes),
-        so smooth joints turning more, kinked arc / line joints and arc corners stop
-        (`mesh_stage_contract.py` `ARC_JOINT_TURN_BOUND_RADIANS`, the same list);
+        made of one closed arc; arc sides take part in the facing test with their exact circle
+        geometry since round 2 F6 (above). Decision 391 MAJOR-2 (ii) (mesher review R2)
+        added two fail-closed guards in `metal_edge_segments` until the four synthetic FULL
+        builds existed; mesher design round 2b (decision 437 (3)) built them (arc face ends
+        at 45 / 70 degrees fab + thin, the 5e-5-rad smooth joint, the 2e-4-rad corner joint,
+        the 30-degree kinked arc / line joint; `test_arc_tubes.jl` at the test sizes, the
+        production-size builds in round2b-impl REPORT section 3) and LIFTED the guards to the
+        TESTED ranges, fail-closed beyond: `ScopeGuard[ArcFaceEnds]` - an arc box-face CUT end
+        of tilt 0 < theta <= `ARC_FACE_END_TILT_BOUND` (70 degrees) builds (the ArcTube ends
+        ON the face with the A2 end block; its cap entities on the face plane are conics /
+        a conic-bounded region matched by their exact arc-length / area centroids,
+        `face_cap_curve_centroid` / `face_cap_face_centroid`, 8-point Gauss-Legendre); an
+        arc end exactly perpendicular to the face, an arc at a box-vertex corner or a tilt
+        above the bound fails closed; `ScopeGuard[ArcJointTilt]` - a SMOOTH joint
+        (JointSmooth) turning by at most `ARC_SMOOTH_JOINT_TURN_BOUND` (5e-5 rad; the loop
+        end's `ARC_JOINT_TURN_BOUND` 1.6e-6 inside) and a CORNER joint turning by
+        `ARC_CORNER_JOINT_TURN_RANGE` (2e-4 rad .. 30 degrees; A3 (3): ball, caps, the
+        clearance along the arc, the kinked arc end an invariant corner) build; a smooth
+        turn above the bound, a corner turn below the range or above it fails closed
+        (`mesh_stage_contract.py` spells the same bounds, bound to the Julia source by
+        `test_mesh_stage_contract_arcs.py`). Also from round 2b: `polygon_union_boundary`'s
+        side probe never reaches past another sub-segment of the collar arrangement (a chord
+        of an arc meeting the box face at a shallow tilt leaves a wedge thinner than a quarter
+        of the shortest sub-segment: the old probe read the box exterior and the union
+        "touched itself"); every built collar is unchanged (the exactly tangent strip
+        sha-identical, V3);
   - isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
     required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
     0.1 um ball), and every tube cap centre before a corner is a graded point of the
@@ -1463,8 +1491,15 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     after the corner clearances (RETIRED by block (b) step 4.2: the supported class
     `UntubedShortEdges` above, decision 304); `NarrowMetal` - a metal strip narrower than
     twice the tube envelope between facing tubed sides (ADDED by step 4.2, decision
-    347); `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
-    decision-391 stop-gaps above, until the synthetic arc builds exist);
+    347; RETIRED by mesher design round 2 F6 into the per-side ring bound, decision 437);
+    `UnqualifiedRingCount` - a per-side ring count below the smallest count validated by
+    (F) for the coupon kind (ADDED by round 2 F6, decisions 437 / 443);
+    `ArcTubeRadiusVsCurvature` (step 4.3), `ArcFaceEnds` and `ArcJointTilt` (the
+    decision-391 stop-gaps, LIFTED by round 2b to the tested ranges above: arc cut ends of
+    tilt <= 70 degrees, smooth joints <= 5e-5 rad, corner joints 2e-4 rad .. 30 degrees on
+    thin coupons; everything beyond still fails closed, decision 437 (3));
+    `SteepFaceCrossing` - a face end beyond the validity ceiling of the capped end block,
+    2 h_pyr |tan theta| >= lc_cap (ADDED by mesher design round 2 F2b, decision 437);
     `FootprintWithoutEdge` - an explicit footprint without
     the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
     simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists

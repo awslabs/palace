@@ -1,5 +1,5 @@
 {
-  "Version": 5,
+  "Version": 7,
   "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
   "SPDX-License-Identifier": "Apache-2.0",
   "Purpose": "Machine-readable qualification gates of a coupon's response matrices against its graded_v2 reference (supervisor decision 48 and the 2026-09-20 gate confirmation): the class statements of the geometry-independence suite's physics table, evaluated on the free view. Changing a threshold means editing this frozen file; every qualification record carries its SHA-256.",
@@ -49,11 +49,17 @@
       "MinimumFractionWithin5Percent": 0.9
     },
     "PSequenceControls": {
-      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA_sharp / p_MS / p_SA within 5% (controls at the orders below and above the main order)",
+      "Statement": "for every control source the p-step d45 = (p_high - p_main) / |p_high| of the domain energy is within 1% and that of every participation p_MA_sharp / p_MS / p_SA within 5% (controls at the orders below and above the main order); a participation whose control amplitude lies below the amplitude floor is recorded BelowAmplitudeFloor and not judged; a Type with no judged control is recorded UnjudgedTypes and the verdict is PendingQualification (decisions 472 (c) / 474)",
       "MAObservable": "p_MA_sharp",
       "MAObservableRule": "decision 61a: the p-sequence gate on the MA evaluates the sharp-edge extrapolated p_MA_sharp (the tail measured at each order from that order's own shells) in place of the raw p_MA, whose step is dominated by the innermost ring's resolution; the raw p_MA step is still recorded",
       "MaximumAbsoluteEnergyStep": 0.01,
-      "MaximumAbsoluteParticipationStep": 0.05
+      "MaximumAbsoluteParticipationStep": 0.05,
+      "AmplitudeFloor": {
+        "Fraction": 0.001,
+        "Rule": "decisions 472 (c) / 474 (control-amplitude-floor PLAN, 2026-10-07): a control's participation p_X is judged only when its Type response can matter. With Q_X the coupon's whole-interface response matrix of the Type at the gated main order (PSD) and a device trace normalised by the excitation potential (|c_i| <= 1, the maximum principle), Cauchy-Schwarz bounds source i's whole contribution to the Type energy of ANY normalised trace by |dE_X| <= 2 sqrt(Q_X,ii E_X(c)) + Q_X,ii, i.e. relative to any trace whose Type energy reaches the coupon's largest Type diagonal Q_max,X = max_j Q_X,jj by (1 + sqrt(Q_X,ii / Q_max,X))^2 - 1. Requiring that to be <= Fraction gives the floor F_X = (sqrt(1 + Fraction) - 1)^2 x Q_max,X (gates.amplitude_floor_ratio: 2.4988e-7 of Q_max,X at Fraction 1e-3; the absolute contribution is <= Fraction x Q_max,X for every normalised trace). MARGIN RULE (decision 477 (2)): the observable is exempt only if its numerator Q_X,ii lies below the floor at BOTH the LARGEST of its computed amplitudes (the orders solved: low / main / high) AND its EXTRAPOLATED converged amplitude - the p_sequence Aitken limit p_inf of the low -> main -> high sequence when it is defined (0 < r < 1) and the sequence is monotone (d_low, d_high of one sign), else the largest computed amplitude - so a still-rising, unconverged amplitude never buys an exemption and the verdict does not hinge on the estimator choice. DUAL MA_sharp CONDITION (decision 477 (4)): Q_MA_sharp,ii = Q_MA,ii + tail_i is a per-source extrapolation, not a Gram diagonal, so p_MA_sharp is exempt only below BOTH its MA_sharp floor (ratio x max_j Q_MA_sharp,jj) and the raw-MA floor (ratio x max_j Q_MA,jj), each under the margin rule. Q_max,X is read from every source of the gated main stage. Below the floor the observable is recorded BelowAmplitudeFloor (the computed and the extrapolated amplitude with its rule, the decisive amplitude, floor, maximum, ratio, the step it would have been judged on; per numerator) and neither passes nor fails; E (domain) is always judged. ERROR WORDING (decision 477 (5)): the bound limits the source's whole contribution in one matrix; the computed-vs-true error attributable to the source is at most that contribution in each of the two matrices, <= 2 x Fraction x Q_max,X (the true diagonal is not measured; the margin rule tests its extrapolate). Fraction 1e-3 = 1/50 of the participation step bound and of the D4 bar, 1/10 of the E step bound; the energy ratio 2.5e-7 is below the accepted partition-reproducibility floor of the near-edge interface entries (<= 8e-6 of the interface's largest entry, decisions 466 / 468). The ratio is derived from Fraction, never written as a case constant; it is invariant under rigid transforms of the coupon and under any common energy scale.",
+        "UnjudgedTypes": "a gated Type with no judged control (every control below its floor) is recorded UnjudgedTypes; the verdict is PendingQualification (never Passed / Qualified, never Failed on that account) until a controls-only re-qualification with amplitude-informed controls (classify_sources.choose_controls with the stored p4 amplitudes) judges it (decision 474)",
+        "Information": "per Type the coupon sources below the floor and the bound (1 + sum_i sqrt(Q_ii / Q_max))^2 - 1 on their collective contribution (BelowFloorAggregate); per class the members above the floor for every judged Type (AboveFloorMembers): recorded, never gated; a zero Type maximum never exempts (ratios recorded None, never inf)"
+      }
     },
     "LibraryContinuity": {
       "Statement": "every pair / stack model whose consecutive edge separations are all at or above 2R (1 - ThresholdBandOverR) responds per basis function like the isolated-edge model within MaximumRelativeOffset (decision 82(4): the strict interaction rule at 2R is continuous only if the pair model at the threshold equals two isolated edges; USER decision 117(3), 2026-09-28: compared per basis function; USER decision 2026-09-28 on the decision-117 review MAJOR-2: gated per edge in aggregate AND per matched basis function against PerBasisFunctionLimit, an edge with zero matched basis functions Failed)",
@@ -85,6 +91,6 @@
   "Verdicts": {
     "Passed": "every gate with a reference passed and every p-sequence control passed",
     "Failed": "a gate or a p-sequence control failed on a complete run (with or without a reference)",
-    "PendingQualification": "no reference matrices for this coupon and every p-sequence control passed: the matrices carry their own convergence control but no accuracy statement; never Passed"
+    "PendingQualification": "no reference matrices for this coupon and every p-sequence control passed: the matrices carry their own convergence control but no accuracy statement; never Passed; or every gate passed but a Type's p-sequence has no judged control (UnjudgedTypes; decision 474)"
   }
 }

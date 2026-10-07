@@ -24,8 +24,19 @@ guard_message(f) =
     # Fabricated production tube: EdgeSize 0.25 nm, ratio 2, 7 rings -> R 31.75 nm,
     # h_K 16 nm, h_pyr 8 nm, r_env 39.75 nm; TangentialSize 50 nm.
     r_env, h_pyr, lc = 0.03975, 0.008, 0.05
-    f45 = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 1.0, 0.0, r_env, h_pyr, lc)
-    @test f45.spacing == lc && f45.layers == 2
+    f45 = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(45.0),
+        1.0,
+        0.0,
+        r_env,
+        h_pyr,
+        lc;
+        spacing_cap=Inf
+    )
+    @test f45.spacing == lc && f45.layers == 2 && f45.regime == 1
     @test f45.over_length ≈ r_env + lc && f45.envelope_shear ≈ r_env
     f12 = FaceEnd(
         1,
@@ -36,7 +47,8 @@ guard_message(f) =
         0.0,
         r_env,
         h_pyr,
-        lc
+        lc;
+        spacing_cap=Inf
     )
     @test f12.spacing == lc && f12.layers == 1
     f74 = FaceEnd(
@@ -48,11 +60,26 @@ guard_message(f) =
         0.0,
         r_env,
         h_pyr,
-        lc
+        lc;
+        spacing_cap=Inf
     )
-    @test f74.spacing ≈ 4.0 * h_pyr * tan(deg2rad(74.3)) && f74.layers == 3
+    # Without a cap (an unbounded condition ceiling) the A2 (4) formulas hold at any tilt.
+    @test f74.spacing ≈ 4.0 * h_pyr * tan(deg2rad(74.3)) &&
+          f74.layers == 3 &&
+          f74.regime == 1
     # Thin production tube: EdgeSize 2 nm, 5 rings -> R 62 nm, h_K 32, h_pyr 16, r_env 78 nm.
-    t45 = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 1.0, 0.0, 0.078, 0.016, lc)
+    t45 = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(45.0),
+        1.0,
+        0.0,
+        0.078,
+        0.016,
+        lc;
+        spacing_cap=Inf
+    )
     @test t45.spacing ≈ 0.064 && t45.layers == 3
     # The shear per layer never exceeds lc_end / 2: thickness in [lc_end / 2, 3 lc_end / 2].
     for face_end in (f45, f12, f74, t45)
@@ -71,8 +98,115 @@ guard_message(f) =
         0.0,
         r_env,
         h_pyr,
-        lc
+        lc;
+        spacing_cap=Inf
     )
+end
+
+@testset "F2b: the end-spacing cap from the section's prism frames and the two regimes (design round 2, 3.2)" begin
+    # The production sections: fabricated EdgeSize 0.25 nm, ratio 2, 7 rings; thin 2 nm, 5
+    # rings; 30-degree sectors (the top section's rays -90 .. 180, the sheet's 180 .. 540).
+    fab = TubeSection(0.00025, 2.0, 7, [-90.0 + 30.0 * j for j = 0:9], fill(2, 9))
+    thin = TubeSection(
+        0.002,
+        2.0,
+        5,
+        [180.0 + 30.0 * j for j = 0:12],
+        vcat(fill(1, 6), fill(2, 6))
+    )
+    # The analytic regular-layer prism condition reproduces the stored S2p 3-edge build
+    # censuses (stage2-20261004/coupons-a/registration/sct002-S2p/build/spatial-3-edge-
+    # 2c54db92028f[-thin]: Prism.MaximumJacobianCondition at SpacingMaximum) to 1e-9: the
+    # measured 589 / 73.5 of the design text are these frames.
+    @test section_prism_condition(fab, 0.04998265841897798) ≈ 589.3294590097332 rtol =
+        1.0e-9
+    @test section_prism_condition(thin, 0.049882932143200165) ≈ 73.51920231844923 rtol =
+        1.0e-9
+    # The frame with the smallest planar singular value is the second ring's (a, c, d)
+    # triangle at its ring-2 vertex: sigma_2 = 0.33925 r_1 at ratio 2 / 30 degrees (the inner
+    # triangle's edge-point frame reads sqrt(1 - cos 30) r_1 = 0.36603 r_1).
+    frames = section_frame_singular_values(fab)
+    @test minimum(last.(frames)) ≈ 0.33925104306172854 * 0.00025 rtol = 1.0e-12
+    @test minimum(last.(frames)) < sqrt(1.0 - cosd(30.0)) * 0.00025
+    @test minimum(last.(section_frame_singular_values(thin))) ≈ 0.33925104306172854 * 0.002 rtol =
+        1.0e-12
+    # The cap at the production ceiling 1000: 0.95 x 1000 x sigma_2 - 80.572 nm fabricated,
+    # 644.58 nm thin (the design's ~80.5 / ~624 nm were read from measured conditions); its
+    # exact value is fixed here. The condition at the cap reads exactly 950, and it is
+    # monotone in the spacing above it.
+    cap_fab = face_end_spacing_cap(fab, 1000.0)
+    cap_thin = face_end_spacing_cap(thin, 1000.0)
+    @test cap_fab ≈ 0.08057212272716054 rtol = 1.0e-12
+    @test cap_thin ≈ 0.6445769818172843 rtol = 1.0e-12
+    @test section_prism_condition(fab, cap_fab) ≈ 950.0 rtol = 1.0e-12
+    @test section_prism_condition(thin, cap_thin) ≈ 950.0 rtol = 1.0e-12
+    @test section_prism_condition(fab, 1.1 * cap_fab) >
+          section_prism_condition(fab, cap_fab) >
+          section_prism_condition(fab, 0.9 * cap_fab)
+    @test face_end_spacing_cap(fab, 500.0) ≈ 0.5 * cap_fab rtol = 1.0e-12
+    @test_throws ErrorException face_end_spacing_cap(fab, 0.0)
+    @test_throws ErrorException face_end_spacing_cap(fab, Inf)
+    # A ceiling so low that the cap falls under a frame's sigma_1 (not spacing-dominated).
+    @test_throws ErrorException face_end_spacing_cap(fab, 1.5)
+    # Regimes at the fabricated production sizes (h_pyr 8 nm, r_env 39.75 nm, lc 50 nm; the
+    # design's worked values): the boundary 4 h_pyr |tan theta| = lc_cap at 68.3 degrees.
+    r_env, h_pyr, lc = 0.03975, 0.008, 0.05
+    face(theta; cap=cap_fab, env=r_env, pyr=h_pyr) = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(theta),
+        tand(theta),
+        0.0,
+        env,
+        pyr,
+        lc;
+        spacing_cap=cap
+    )
+    @test rad2deg(atan(cap_fab / (4.0 * h_pyr))) ≈ 68.3 atol = 0.05
+    for theta in (12.6, 22.5, 45.0, 68.0, 68.3)
+        f = face(theta)
+        legacy = face(theta; cap=Inf)
+        @test f.regime == 1 && f.spacing == legacy.spacing && f.layers == legacy.layers
+        @test f.spacing <= cap_fab && f.spacing_cap == cap_fab
+        @test f.apex_thickness ≈ 2.0 * h_pyr * tand(theta)
+        @test face_end_record(f)["Regime"] == "I"
+    end
+    @test face(68.3).spacing ≈ 4.0 * h_pyr * tand(68.3) && face(68.3).layers == 3
+    # Regime II: 70 deg lc_end = lc_cap, m 3, t_min 44.17 >= 43.96 nm; 74.3 deg (the census
+    # crossing 32dc558f4810) m 6 (the uncapped rule: 113.8 nm / m 3); 75.5 deg m 9.
+    for (theta, m) in ((68.4, 3), (70.0, 3), (74.3, 6), (75.5, 9))
+        f = face(theta)
+        slope = tand(theta)
+        @test f.regime == 2 && f.spacing == cap_fab && f.layers == m
+        @test f.layers >= max(1, ceil(Int, 2.0 * r_env * slope / cap_fab * (1.0 - 1.0e-9)))
+        t_min = f.spacing - f.envelope_shear / f.layers
+        @test t_min >= f.apex_thickness && f.apex_thickness ≈ 2.0 * h_pyr * slope
+        @test f.envelope_shear / f.layers <= 0.5 * f.spacing
+        record = face_end_record(f)
+        @test record["Regime"] == "II" &&
+              record["EndSpacingCap"] == cap_fab &&
+              record["ApexThickness"] ≈ 2.0 * h_pyr * slope &&
+              record["LayerThicknessRange"][1] ≈ t_min
+    end
+    @test face(70.0).spacing - face(70.0).envelope_shear / 3 ≈ 0.04417 atol = 2.0e-5
+    @test isapprox(face(74.3; cap=Inf).spacing, 0.1138; atol=1.0e-4) &&
+          face(74.3; cap=Inf).layers == 3
+    # The validity ceiling 2 h_pyr |tan theta| < lc_cap: 78.77 degrees fabricated; 80 degrees
+    # has no capped block (the build fails closed at ScopeGuard[SteepFaceCrossing]).
+    @test rad2deg(atan(cap_fab / (2.0 * h_pyr))) ≈ 78.77 atol = 0.05
+    @test face(78.7).regime == 2
+    @test_throws ErrorException face(78.8)
+    @test_throws ErrorException face(80.0)
+    # Thin: every admissible crossing (<= 75.5 degrees) is regime I under the 644.6-nm cap
+    # (the boundary lies at 84.3 degrees), bitwise with the uncapped rule.
+    for theta in (45.0, 70.0, 74.3, 75.5)
+        f = face(theta; cap=cap_thin, env=0.078, pyr=0.016)
+        legacy = face(theta; cap=Inf, env=0.078, pyr=0.016)
+        @test f.regime == 1 && f.spacing == legacy.spacing && f.layers == legacy.layers
+    end
+    @test rad2deg(atan(cap_thin / (4.0 * 0.016))) ≈ 84.3 atol = 0.05
+    @test_throws ErrorException face(45.0; cap=0.0)
 end
 
 @testset "face-ended tube stations: the sheared end block ends on the face plane" begin
@@ -88,7 +222,8 @@ end
     @test kappa ≈ -tand(40.0)
     s_face = 1.0 / cosd(40.0)
     # r_env 0.04, h_pyr 0.01, lc_tangent 0.1 at 40 degrees: lc_end 0.1, m = ceil(0.0671 / 0.1) = 1.
-    face_end = FaceEnd(1, "x0", N, deg2rad(40.0), kappa, 0.0, 0.04, 0.01, 0.1)
+    face_end =
+        FaceEnd(1, "x0", N, deg2rad(40.0), kappa, 0.0, 0.04, 0.01, 0.1; spacing_cap=Inf)
     @test face_end.layers == 1 && face_end.spacing == 0.1
     tube = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_face, 0.1; face_ends=[face_end])
     @test tube_cad_interval(tube) == (0.0, s_face + face_end.over_length)
@@ -123,8 +258,18 @@ end
           (tube_station(graded, L - 1, 0.03, 0.0) + tube_station(graded, L, 0.03, 0.0))
     # A start face end on the plane x = 0 through the origin (N = (1, 0, 0): the same
     # kappa) mirrors the construction, here with a 70-degree face end (m = 2).
-    start_face =
-        FaceEnd(0, "x1", [1.0, 0.0, 0.0], deg2rad(70.0), -tand(70.0), 0.0, 0.04, 0.01, 0.1)
+    start_face = FaceEnd(
+        0,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(70.0),
+        -tand(70.0),
+        0.0,
+        0.04,
+        0.01,
+        0.1;
+        spacing_cap=Inf
+    )
     @test start_face.layers == 2 && start_face.spacing ≈ 0.04 * tand(70.0)
     both =
         EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_face, 0.1; face_ends=[face_end, start_face])
@@ -136,8 +281,18 @@ end
     graded = EdgeTube(both, stations; shear_u=shear_u, shear_w=shear_w)
     # With the geometric kappa of the plane x = 0 (-tan 40) the start nodes lie on it; the
     # prescribed 70-degree kappa only exercises the block arithmetic here.
-    plane_face =
-        FaceEnd(0, "x1", [1.0, 0.0, 0.0], deg2rad(40.0), kappa, 0.0, 0.04, 0.01, 0.1)
+    plane_face = FaceEnd(
+        0,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(40.0),
+        kappa,
+        0.0,
+        0.04,
+        0.01,
+        0.1;
+        spacing_cap=Inf
+    )
     planar =
         EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_face, 0.1; face_ends=[face_end, plane_face])
     stations, shear_u, shear_w, _, _ = face_ended_tube_stations(planar, s -> 0.1, 0.1, 2.0)
@@ -199,7 +354,8 @@ end
         dot(N, b) / dot(N, e),
         0.04,
         0.01,
-        0.1
+        0.1;
+        spacing_cap=Inf
     )
     s_end = (1.0 - 0.0) / abs(e[1])     # the axis from (0, 0, 0) reaches x = -1 at this s
     tube = EdgeTube([0.0, 0.0, 0.0], n, b, 0.0, s_end, 0.1; face_ends=[face_end])
@@ -539,6 +695,181 @@ function nodes_near(path, point, reach)
     gmsh.finalize()
     xyz = reshape(coordinates, 3, :)
     return [xyz[:, i] for i = 1:size(xyz, 2) if norm(xyz[:, i] .- point) <= reach]
+end
+
+# The tip family at the PRODUCTION tube sizes (EdgeSize 0.25 nm fabricated / 2 nm thin, ratio 2,
+# TangentialSize 50 nm, NormalSize 25 nm, CornerIsotropyRadius 0.1 um; the step-4.1 V7-c and the
+# round-2 V10 families) on a small coupon (Radius 0.5, FarSize 0.152 as in production so that the
+# tangential size stays 50 nm), with a long row B (`factor` x) so that side A meets the +x face
+# at the steep crossing theta.
+function build_production_tip_coupon(
+    directory,
+    phi,
+    theta,
+    factor;
+    fabricated=true,
+    stem="prod",
+    labels_only=false
+)
+    inputs = write_tip_inputs(
+        directory,
+        phi,
+        theta;
+        radius=0.5,
+        side_length=0.5,
+        side_length_b=factor * 0.5
+    )
+    mesh = joinpath(directory, "coupon-$stem.msh")
+    census = joinpath(directory, "census-$stem.json")
+    edge = fabricated ? 0.00025 : 0.002
+    generate_spatial_coupon(;
+        signature=inputs.signature,
+        mask=inputs.mask,
+        boundary=inputs.boundary,
+        fabricated=fabricated,
+        filename=mesh,
+        radius=0.5,
+        metal_thickness=0.1,
+        overetch=0.05,
+        sidewall_angle=90.0,
+        top_rounding=0.0,
+        trench_rounding=0.0,
+        lc_fine=0.025,
+        lc_tangent=0.05,
+        lc_far=0.152,
+        max_nodes=2_000_000,
+        max_elements=2_000_000,
+        semantic_contract=inputs.semantic,
+        corner_isotropy_radius=0.1,
+        corner_census=census,
+        edge_size=edge,
+        edge_growth_ratio=2.0,
+        corner_size=edge,
+        prism_tubes=true,
+        far_growth=0.5,
+        maximum_corner_aspect=4.0,
+        minimum_scaled_jacobian=0.01,
+        maximum_jacobian_condition=1000.0,
+        quality_displacement_over_normal=0.75,
+        corner_shape_gate=5.0,
+        labels_only=labels_only ? census : nothing
+    )
+    return parse_json(read(census, String)), mesh, inputs
+end
+
+@testset "F2b full builds at the production tube sizes: the 70-degree crossing in regime II (fabricated), regime I (thin), the 80-degree guard" begin
+    mktempdir() do directory
+        # phi 30, side A at 70 degrees, row B 6x: side A meets the +x face at exactly 70 degrees
+        # (the V7-c steep set whose fabricated twin read a prism condition 1045 > 1000 under the
+        # uncapped rule, phase2 REPORT 4.1), side B leaves through +y at 10 degrees.
+        census, mesh, inputs =
+            build_production_tip_coupon(directory, 30.0, 70.0, 6.0; stem="fab70")
+        tubes = census["PrismTubes"]
+        section = tubes["Section"]
+        cap = face_end_spacing_cap(
+            TubeSection(
+                0.00025,
+                2.0,
+                section["Rings"],
+                section["Top"]["Angles"],
+                section["Top"]["Materials"]
+            ),
+            1000.0
+        )
+        @test section["FaceEndSpacingCap"] == cap
+        @test cap ≈ 0.08057212272716054 rtol = 1.0e-12
+        @test occursin("regime II", tubes["FaceEnds"]["Rule"]) &&
+              occursin("SteepFaceCrossing", tubes["FaceEnds"]["Rule"])
+        records = [f for row in tubes["Tubes"] for f in get(row, "FaceEnds", [])]
+        steep = [f for f in records if f["ThetaDegrees"] ≈ 70.0]
+        shallow = [f for f in records if f["ThetaDegrees"] ≈ 10.0]
+        @test length(steep) == 2 && length(shallow) == 2 && length(records) == 4
+        for f in steep
+            @test f["Regime"] == "II" &&
+                  f["EndSpacing"] == cap &&
+                  f["Layers"] == 3 &&
+                  f["EndSpacingCap"] == cap
+            @test f["ApexThickness"] ≈ 2.0 * section["PyramidHeight"] * tand(70.0)
+            @test f["LayerThicknessRange"][1] >= f["ApexThickness"]
+            @test f["LayerThicknessRange"][1] ≈ 0.04417 atol = 2.0e-5
+        end
+        for f in shallow
+            @test f["Regime"] == "I" && f["EndSpacing"] == 0.05 && f["Layers"] == 1
+        end
+        # B14's measured clauses: the maximum prism condition in [900, 1000] (the capped block
+        # at 0.95 x 1000 on the analytic frame, the sheared block ~1 % above it), min SJ >= 0.01,
+        # every gate passed (the build would have failed otherwise).
+        quality = tubes["Quality"]
+        @test 900.0 <= quality["Prism"]["MaximumJacobianCondition"] <= 1000.0
+        @test quality["Prism"]["MaximumJacobianCondition"] > section_prism_condition(
+            TubeSection(
+                0.00025,
+                2.0,
+                section["Rings"],
+                section["Top"]["Angles"],
+                section["Top"]["Materials"]
+            ),
+            tubes["TangentialSize"]
+        )
+        @test quality["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        @test quality["Prism"]["PositiveOrientation"] &&
+              quality["Pyramid"]["PositiveOrientation"]
+        @test tubes["FaceEndSpacingMaximum"] == cap
+        # The thin twin: every thin crossing is regime I (its cap 644.6 nm), lc_end = 4 h_pyr
+        # tan 70 = 175.84 nm, m 3; its prisms read ~268 (the design's thin figure).
+        thin, _, _ = build_production_tip_coupon(
+            directory,
+            30.0,
+            70.0,
+            6.0;
+            fabricated=false,
+            stem="thin70"
+        )
+        thin_tubes = thin["PrismTubes"]
+        @test thin_tubes["Section"]["FaceEndSpacingCap"] ≈ 0.6445769818172843 rtol = 1.0e-12
+        thin_steep = [
+            f for row in thin_tubes["Tubes"] for
+            f in get(row, "FaceEnds", []) if f["ThetaDegrees"] ≈ 70.0
+        ]
+        @test length(thin_steep) == 1 &&
+              thin_steep[1]["Regime"] == "I" &&
+              thin_steep[1]["Layers"] == 3
+        @test thin_steep[1]["EndSpacing"] ≈
+              4.0 * thin_tubes["Section"]["PyramidHeight"] * tand(70.0)
+        @test 250.0 <= thin_tubes["Quality"]["Prism"]["MaximumJacobianCondition"] <= 300.0
+        @test thin_tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        # 80 degrees (row B 20x so that side A reaches the +x face): the fabricated tube end lies
+        # beyond the validity ceiling 78.77 degrees and fails closed at the guard before any
+        # CAD tube exists; the thin twin's 80-degree end is regime I (its ceiling 87.2 degrees).
+        message = guard_message(
+            () -> build_production_tip_coupon(
+                directory,
+                30.0,
+                80.0,
+                20.0;
+                stem="fab80",
+                labels_only=true
+            )
+        )
+        @test occursin("ScopeGuard[SteepFaceCrossing]", message) &&
+              occursin("80.0", message) &&
+              occursin("validity ceiling", message)
+        thin80, _, _ = build_production_tip_coupon(
+            directory,
+            30.0,
+            80.0,
+            20.0;
+            fabricated=false,
+            stem="thin80",
+            labels_only=true
+        )
+        thin80_steep = [
+            f for row in thin80["PrismTubeFaceEnds"]["Tubes"] for
+            f in row["FaceEnds"] if f["ThetaDegrees"] ≈ 80.0
+        ]
+        @test length(thin80_steep) == 1 && thin80_steep[1]["Regime"] == "I"
+        @test thin80["PrismTubeFaceEnds"]["SpacingCap"] ≈ 0.6445769818172843 rtol = 1.0e-12
+    end
 end
 
 @testset "synthetic 45-degree tip, side A at theta 20: fabricated and thin builds end on both faces" begin
