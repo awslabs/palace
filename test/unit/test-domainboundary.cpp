@@ -15,6 +15,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <fmt/format.h>
 #include <mfem.hpp>
@@ -209,15 +210,33 @@ std::unique_ptr<mfem::ParMesh> MakeObliqueCutLeadMesh(double shear, bool notch)
 using PadRectangle = std::array<double, 4>;
 const std::vector<PadRectangle> kDefaultPads = {{0.0, 0.75, 1.0, 1.25}};
 
+// A BEND of the pad's edges along x (decision 512, the chains lane): the mesh is shifted in
+// z by t(x), piecewise linear with the given slope on every x cell (n = 8 entries, the
+// unsheared x in [i h, (i + 1) h]); every edge along x becomes a polyline with a joint at
+// each slope change (sub-noise joints: one chain with windowed curvature), the x walls stay
+// the vertical planes x = 0 / x = 1 and the pad's edges meet them at atan(1 / slope). Only
+// with s = 0 (the unshear is then x-independent).
+using PadBend = std::vector<double>;
+
 mfem::Mesh MakeSerialMirrorPadMesh(double s, bool full,
                                    const std::vector<PadRectangle> &pads = kDefaultPads,
-                                   int nz = 8)
+                                   int nz = 8, const PadBend &bend = {})
 {
   constexpr int n = 8;
   constexpr double h = 1.0 / n;
   const double hz = 2.0 / nz;
   constexpr double z_center = 1.0;
   constexpr double tolerance = 1.0e-12;
+  REQUIRE((bend.empty() || (bend.size() == n && s == 0.0)));
+  auto Bend = [&](double x)
+  {
+    double t = 0.0;
+    for (std::size_t i = 0; i < bend.size(); i++)
+    {
+      t += bend[i] * std::clamp(x - i * h, 0.0, h);
+    }
+    return t;
+  };
   // The wall x = 1 + s (z - 1): unit outward normal and offset.
   const double norm = std::sqrt(1.0 + s * s);
   const std::array<double, 3> normal = {1.0 / norm, 0.0, -s / norm};
@@ -242,7 +261,7 @@ mfem::Mesh MakeSerialMirrorPadMesh(double s, bool full,
     {
       for (int i = 0; i <= n; i++)
       {
-        vertices.push_back({i * h + s * (k * hz - z_center), j * h, k * hz});
+        vertices.push_back({i * h + s * (k * hz - z_center), j * h, k * hz + Bend(i * h)});
       }
     }
   }
@@ -309,6 +328,7 @@ mfem::Mesh MakeSerialMirrorPadMesh(double s, bool full,
       p = Reflect(p);
     }
     p[0] -= s * (p[2] - z_center);
+    p[2] -= Bend(p[0]);
     return p;
   };
   for (int be = 0; be < serial.GetNBE(); be++)
@@ -1260,6 +1280,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   constexpr double R = 0.2;
   const auto basis_path = temp.temp_dir / "mirror-pad-basis-points.csv";
   const auto library_path = temp.temp_dir / "fabrication-process-mirror-pad.json";
+  const auto curved_library_path =
+      temp.temp_dir / "fabrication-process-mirror-pad-curved.json";
   if (Mpi::Root(Mpi::World()))
   {
     {
@@ -1322,6 +1344,32 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     std::ofstream output(library_path);
     output << library.dump(2) << "\n";
+    // A SECOND library for the decision-512 chain sections: the same models plus a
+    // curvature family of relabelled isolated models (every node the anchor's matrices AT
+    // THE ANCHOR'S COUPON DEPTH, so that every per-length node equals the anchor and any
+    // Lagrange blend - whose weights sum to one - IS the anchor, positive semidefinite), so
+    // that the bent chains carry the first-order curvature term and their CurvedEdge
+    // sections a model - the symmetric PLACEMENT is the test, not the coupon physics. The
+    // M1 sections of record keep the first library byte for byte.
+    library["Name"] = "unit-test-process-mirror-pad-curved";
+    const double anchor_depth =
+        isolated.value("CouponDepth", library.at("CouponDepth").get<double>());
+    for (const char *convexity : {"Convex", "Concave"})
+    {
+      for (const double kappa : {0.1, 0.25, 0.5, 0.8})
+      {
+        json curved = isolated;
+        curved["Name"] =
+            std::string("curved-edge-") + convexity + "-" + std::to_string(kappa);
+        curved["Topology"] = "CurvedEdge";
+        curved["Kappa"] = kappa;
+        curved["Convexity"] = convexity;
+        curved["CouponDepth"] = anchor_depth;
+        library["Models"].push_back(curved);
+      }
+    }
+    std::ofstream curved_output(curved_library_path);
+    curved_output << library.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
 
@@ -1339,14 +1387,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::map<std::string, double> model_energy;
     json diagnostics;
     json manifest_summary;
+    // The identification manifest's Features (the dry run of the case).
+    json manifest_features;
   };
   auto Run = [&](const std::string &name, double s, bool full, const std::string &mirror,
-                 const std::vector<PadRectangle> &pads = kDefaultPads, int nz = 8)
+                 const std::vector<PadRectangle> &pads = kDefaultPads, int nz = 8,
+                 const PadBend &bend = {}, bool curved_library = false)
   {
     const fs::path mesh_path = temp.temp_dir / (name + ".mesh");
     if (Mpi::Root(Mpi::World()))
     {
-      mfem::Mesh serial = MakeSerialMirrorPadMesh(s, full, pads, nz);
+      mfem::Mesh serial = MakeSerialMirrorPadMesh(s, full, pads, nz, bend);
       std::ofstream output(mesh_path);
       // Full precision: the sheared coordinates (s = 1 / tan theta) are irrational, and a
       // wall written at 6 digits is no longer one plane for the truncation-plane fit.
@@ -1363,7 +1414,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     config["Boundaries"]["Ground"]["Attributes"] = {4};
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
-    correction["Library"] = library_path.string();
+    correction["Library"] = (curved_library ? curved_library_path : library_path).string();
     correction["UnmatchedPolicy"] = "Warn";
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
@@ -1373,24 +1424,32 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 600}};
     const fs::path dir = temp.temp_dir / name;
     config["Problem"]["Output"] = dir.string();
+    // The identification manifest of the case (the dry run; its Features are read by the
+    // decision-512 sections, which run on the curved library, and exported as evidence),
+    // beside the output directory.
+    const fs::path manifest_path = temp.temp_dir / (name + "-requirements.json");
+    if (curved_library || std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+    {
+      IoData iodata(config, false);
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      mfem::Mesh serial_manifest = MakeSerialMirrorPadMesh(s, full, pads, nz, bend);
+      meshes.push_back(std::make_unique<Mesh>(
+          std::make_unique<mfem::ParMesh>(Mpi::World(), serial_manifest)));
+      WriteSurfaceResponseRequirements(iodata, *meshes.front(), manifest_path.string());
+    }
     if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
     {
       // Evidence export (the lane record): the dry run, mesh, library and config of this
       // case into the given directory, and its postpro after the run.
-      IoData iodata(config, false);
-      std::vector<std::unique_ptr<Mesh>> meshes;
-      mfem::Mesh serial_debug = MakeSerialMirrorPadMesh(s, full, pads, nz);
-      meshes.push_back(std::make_unique<Mesh>(
-          std::make_unique<mfem::ParMesh>(Mpi::World(), serial_debug)));
       const fs::path debug = fs::path(debug_dir) / name;
       fs::create_directories(debug);
-      WriteSurfaceResponseRequirements(iodata, *meshes.front(),
-                                       (debug / "requirements.json").string());
       if (Mpi::Root(Mpi::World()))
       {
-        fs::copy_file(mesh_path, debug / "mesh.mesh", fs::copy_options::overwrite_existing);
-        fs::copy_file(library_path, debug / "library.json",
+        fs::copy_file(manifest_path, debug / "requirements.json",
                       fs::copy_options::overwrite_existing);
+        fs::copy_file(mesh_path, debug / "mesh.mesh", fs::copy_options::overwrite_existing);
+        fs::copy_file(curved_library ? curved_library_path : library_path,
+                      debug / "library.json", fs::copy_options::overwrite_existing);
         fs::copy_file(basis_path, debug / "basis.csv",
                       fs::copy_options::overwrite_existing);
         json debug_config = config;
@@ -1481,6 +1540,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       REQUIRE(metadata_input);
       const json metadata = json::parse(metadata_input);
       e.diagnostics = metadata.at("SurfaceResponse").at("Diagnostics");
+      if (fs::is_regular_file(manifest_path))
+      {
+        std::ifstream manifest_input(manifest_path);
+        const json manifest = json::parse(manifest_input);
+        e.manifest_features = manifest.at("Identification").at("Features");
+      }
       {
         std::map<int, std::string> names;
         for (const auto &model : metadata.at("SurfaceResponse").at("ModelCatalog"))
@@ -1910,6 +1975,354 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {"HalfDomainBoundary", half.domain_boundary_ft},
                        {"FullDomainBoundary", full.domain_boundary_ft},
                        {"HalfReasons", exclusions.at("Reasons")}}
+                      .dump(2)
+               << "\n";
+      }
+    }
+  }
+
+  // Decision 512 (the boundary-cut CHAINS lane; DESIGN ERRATA-7): the rerun-2 J1 finding -
+  // a real chain with curved sub-portions (BendRadiusOverR) straight at one plane and
+  // clipped by a virtual corner at another was refused as Continued (its extended portions
+  // differed from the unextended ones) and became an Unmerged IsolatedEdge whose own cells
+  // (rule 481) went DomainBoundary raw, the WHOLE chain (S5 1163.5 um). The fixture: the
+  // default pad with its edges along x bent in z by t(x) (PadBend: a slope per x cell).
+  SECTION("S-90-bent: a bent chain straight at the symmetry plane and oblique at the far "
+          "wall is Continued; half = full / 2 exact")
+  {
+    // t(x): slope 1 / tan 76 on [0, 0.25], 0.6 of it on [0.25, 0.5], 0.2 of it on [0.5,
+    // 0.75], 0 beyond: the edges meet the far wall x = 0 at theta = 76 degrees (virtual
+    // 152-degree corners, Modelled: the S-76 class on BOTH meshes alike, so they cancel in
+    // 2 x half - full) and turn by ~0.1 rad at x = 0.25 / 0.5 / 0.75 (sub-noise joints:
+    // implied sagitta 0.003 < 0.05 R = 0.01 on 0.25-long pieces; the turn density of a
+    // joint is spread over its two half-runs: 0.38-0.39 on [0.125, 0.625], so the windowed
+    // bend radius stays above 10 R everywhere (~12.8 R): ONE IsolatedEdge per edge WITH
+    // curved sub-portions, BendRadiusOverR set and PortionTurns non-zero - the S5 class,
+    // no CurvedEdge section), then run straight into the plane x = 1 (a straight joint).
+    // The image continues the last run collinearly, so the extended run spreads the x =
+    // 0.75 joint's turn over a longer half-run (0.13 instead of 0.2 per unit): a turn
+    // difference far inside the joint noise rule, tolerated by the Continued test.
+    const double slope = 1.0 / std::tan(76.0 * M_PI / 180.0);
+    const PadBend bend = {slope,       slope,       0.6 * slope, 0.6 * slope,
+                          0.2 * slope, 0.2 * slope, 0.0,         0.0};
+    const Energies full =
+        Run("mirror-pad-bent-full", 0.0, true, "Natural", kDefaultPads, 8, bend, true);
+    const Energies half =
+        Run("mirror-pad-bent-half", 0.0, false, "Natural", kDefaultPads, 8, bend, true);
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      INFO(band.dump());
+      INFO(half.diagnostics.at("DomainBoundaryExclusions").dump());
+      // The two chains (the pad's bottom and top edges) are Continued at x = 1 although
+      // their far ends are clipped by the virtual corners at x = 0 (the unextended
+      // IsolatedEdge runs from the wall, the extended one from the corner's claim: the
+      // exact-portions test of record refused this); nothing is Unmerged, no real feature
+      // is touched, no cell is DomainBoundary. The chains are ONE IsolatedEdge each with
+      // curved sub-portions (no real corner, no CurvedEdge section).
+      CHECK(band.at("ContinuedFeatures").get<int>() == 2);
+      {
+        int isolated = 0, curved = 0, real_corners = 0;
+        for (const auto &feature : half.manifest_features)
+        {
+          const std::string type = feature.at("Type").get<std::string>();
+          const bool mirror_formed = feature.contains("Mirror") &&
+                                     !feature.at("Mirror").is_null() &&
+                                     feature.at("Mirror").at("Status") != "Continued";
+          isolated += type == "IsolatedEdge" ? 1 : 0;
+          curved += type == "CurvedEdge" ? 1 : 0;
+          // A real corner would be a kink read as a corner instead of a sub-noise joint.
+          real_corners +=
+              ((type == "ConvexCorner" || type == "ConcaveCorner") && !mirror_formed) ? 1
+                                                                                      : 0;
+          if (type == "IsolatedEdge")
+          {
+            REQUIRE(!feature.at("BendRadiusOverR").is_null());
+            CHECK(feature.at("BendRadiusOverR").get<double>() >= 10.0);
+            CHECK(feature.at("BendRadiusOverR").get<double>() < 20.0);
+            double total_turn = 0.0;
+            for (const auto &turn : feature.at("PortionTurns"))
+            {
+              total_turn += std::abs(turn.get<double>());
+            }
+            CHECK(total_turn > 0.1);
+            REQUIRE(!feature.at("Mirror").is_null());
+            CHECK(feature.at("Mirror").at("Status") == "Continued");
+          }
+        }
+        CHECK(isolated == 2);
+        CHECK(curved == 0);
+        CHECK(real_corners == 0);
+      }
+      CHECK(band.at("UnmergedFeatures").empty());
+      CHECK(band.at("TouchedRealFeatures").empty());
+      std::map<std::string, int> formed;
+      for (const auto &entry : band.at("MirrorFormedFeatures"))
+      {
+        formed[entry.at("Type").get<std::string>()]++;
+        CHECK(entry.at("Status") == "Modelled");
+        CHECK_THAT(entry.at("Key").get<std::string>(),
+                   ContainsSubstring("\"AngleDegrees\":152.0"));
+      }
+      CHECK(formed["ConvexCorner"] == 1);
+      CHECK(formed["ConcaveCorner"] == 1);
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Count").get<int>() == 0);
+      CHECK(exclusions.at("Mirrored").at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Mirrored").at("HalfVertices").get<int>() == 2);
+      CHECK(half.domain_boundary_ft == 0.0);
+      // THE IDENTITY, exact: raw, E_out, models, uncovered, ft, ff, and per model class.
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.models[1], WithinRel(full.models[1], 1.0e-9));
+      CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
+      // Per class: the virtual corners to 1e-9 of the total (they hold ~1e-2 of the models,
+      // at roundoff level between the half's and the reflected full's coordinates); the
+      // straight-like chain's anchor ("isolated") and first-order curvature node ("...kappa
+      // 0.1...") TOGETHER to 1e-9 - the Continued chain keeps the UNEXTENDED turns
+      // (ERRATA-4 MINOR-2) while the full reads the joint at x = 0.75 spread over its run
+      // continued through the plane: the first-order weights of the last run's cells
+      // differ, a reallocation between the anchor and the node that this fixture's family
+      // (every node the anchor) leaves exactly invariant in total.
+      REQUIRE(half.model_energy.size() == full.model_energy.size());
+      double half_chain = 0.0, full_chain = 0.0;
+      for (const auto &[name, energy] : full.model_energy)
+      {
+        INFO("model " << name);
+        REQUIRE(half.model_energy.count(name) == 1);
+        if (name.find("corner") != std::string::npos)
+        {
+          CHECK_THAT(2.0 * half.model_energy.at(name),
+                     WithinAbs(energy, 1.0e-9 * full.models[0]));
+        }
+        else
+        {
+          half_chain += half.model_energy.at(name);
+          full_chain += energy;
+        }
+      }
+      CHECK(full_chain > 0.0);
+      CHECK_THAT(2.0 * half_chain, WithinRel(full_chain, 1.0e-9));
+      if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+      {
+        std::ofstream record(fs::path(debug_dir) / "symmetry-bent.json");
+        record << json{{"Case", "bent"},
+                       {"FullFt", full.corrected[0]},
+                       {"TwiceHalfFt", 2.0 * half.corrected[0]},
+                       {"ResidualRelative",
+                        (2.0 * half.corrected[0] - full.corrected[0]) / full.corrected[0]},
+                       {"ContinuedFeatures", band.at("ContinuedFeatures")},
+                       {"HalfDomainBoundary", half.domain_boundary_ft}}
+                      .dump(2)
+               << "\n";
+      }
+    }
+  }
+
+  SECTION("S-90-curved-end: a chain curved up to the plane - the unmerged joined bend owns "
+          "the re-classified sliver only (decision 512 (c)), the accounting exact")
+  {
+    // The edges along x: slope -tan 30 on [0, 0.5] (theta = 60 degrees at the far wall x =
+    // 0: virtual 120-degree corners, Modelled, on BOTH meshes alike), then a CIRCULAR arc
+    // of radius rho = 1 = 5 R centred ON the plane x = 1 (the chord vertices at x = 0.5 ...
+    // 1.0 lie exactly on the circle, tangent-continuous with the straight run at 0.5 and
+    // perpendicular to the plane at 1.0: joints of ~0.13 rad, all of one sense and all
+    // sub-noise; the arc rule fits the circle). The image of the arc is the SAME circle, so
+    // the extended run reads one bend arc through the plane. Unextended run: the arc's
+    // density ends at its last joint (x = 0.875) and the window is clipped at the chain
+    // end, so the windowed bend radius leaves the curved regime before the plane: a
+    // CurvedEdge (kappa = R / rho = 0.2, on the curved family) and an IsolatedEdge sliver
+    // [~0.875, 1.0] before it. Extended run: the joined arc continues through the plane
+    // (the same convexity, the same radius), so the CurvedEdge extends over the sliver -
+    // ONE unmerged CurvedEdge per edge (no mirror placement) whose real portions the
+    // unextended run identifies identically except that sliver. Rule 481 + decision 512
+    // (c): the sliver's cells are the configuration's own (DomainBoundary, raw kept); the
+    // CurvedEdge's cells keep their curved-family model (they would have been the
+    // configuration's own under the whole-portion reading of ERRATA-5).
+    PadBend bend(8, -std::tan(30.0 * M_PI / 180.0));
+    for (int i = 4; i < 8; i++)
+    {
+      auto Circle = [](double x) { return -std::sqrt(1.0 - (1.0 - x) * (1.0 - x)); };
+      bend[i] = (Circle((i + 1) * 0.125) - Circle(i * 0.125)) / 0.125;
+    }
+    const Energies full = Run("mirror-pad-curved-end-full", 0.0, true, "Natural",
+                              kDefaultPads, 8, bend, true);
+    const Energies half = Run("mirror-pad-curved-end-half", 0.0, false, "Natural",
+                              kDefaultPads, 8, bend, true);
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      INFO(band.dump());
+      INFO(exclusions.dump());
+      // The unextended reading: per edge one IsolatedEdge (the run from the far wall and
+      // the sliver) and one CurvedEdge on the curved family; the virtual 120-degree
+      // corners.
+      std::set<int> isolated_ids, curved_ids;
+      for (const auto &feature : half.manifest_features)
+      {
+        const std::string type = feature.at("Type").get<std::string>();
+        if (type == "IsolatedEdge")
+        {
+          isolated_ids.insert(feature.at("Id").get<int>());
+        }
+        else if (type == "CurvedEdge")
+        {
+          curved_ids.insert(feature.at("Id").get<int>());
+          CHECK(feature.at("Match").at("Status") == "Matched");
+          CHECK_THAT(feature.at("Match").at("Model").get<std::string>(),
+                     ContainsSubstring("kappa"));
+          // Not touched: identified identically by both runs.
+          CHECK((!feature.contains("Mirror") || feature.at("Mirror").is_null()));
+        }
+      }
+      CHECK(isolated_ids.size() == 2);
+      CHECK(curved_ids.size() == 2);
+      std::map<std::string, int> formed;
+      for (const auto &entry : band.at("MirrorFormedFeatures"))
+      {
+        if (entry.at("Status") == "Modelled")
+        {
+          formed[entry.at("Type").get<std::string>()]++;
+          CHECK_THAT(entry.at("Key").get<std::string>(),
+                     ContainsSubstring("\"AngleDegrees\":120.0"));
+        }
+      }
+      CHECK(formed["ConvexCorner"] == 1);
+      CHECK(formed["ConcaveCorner"] == 1);
+      // Two unmerged joined bends (the bottom and the top edge), each with identical real
+      // portions (the unextended CurvedEdge's three chords [0.5, 0.875]) and a differing
+      // one (the sliver [0.875, 1.0], read as the IsolatedEdge's by the unextended run):
+      // 3 : 1 in length (the record's lengths are in the operator's mesh units).
+      REQUIRE(band.at("UnmergedFeatures").size() == 2);
+      double identical = 0.0, differing = 0.0;
+      for (const auto &entry : band.at("UnmergedFeatures"))
+      {
+        CHECK(entry.at("Type") == "CurvedEdge");
+        const double entry_identical = entry.at("IdenticalRealLength").get<double>();
+        const double entry_differing = entry.at("DifferingRealLength").get<double>();
+        CHECK(entry_differing > 0.0);
+        CHECK_THAT(entry_identical / (entry_identical + entry_differing),
+                   WithinAbs(0.76, 0.06));
+        identical += entry_identical;
+        differing += entry_differing;
+        REQUIRE(entry.at("RealFeatures").size() == 1);
+        CHECK(isolated_ids.count(entry.at("RealFeatures")[0].get<int>()) == 1);
+        for (const auto &portion : entry.at("Portions"))
+        {
+          if (portion.at("Image").get<bool>())
+          {
+            continue;
+          }
+          if (portion.at("Identical").get<bool>())
+          {
+            CHECK(curved_ids.count(portion.at("RealFeature").get<int>()) == 1);
+          }
+          else
+          {
+            CHECK(portion.at("Differs") == "Type");
+            CHECK(isolated_ids.count(portion.at("RealFeature").get<int>()) == 1);
+          }
+        }
+      }
+      std::set<int> touched;
+      for (const auto &id : band.at("TouchedRealFeatures"))
+      {
+        touched.insert(id.get<int>());
+      }
+      CHECK(touched == isolated_ids);
+      // The own cells: on the differing slivers only (every DomainBoundary patch is a cell
+      // of a touched IsolatedEdge - its isolated-edge patch and the co-located first-order
+      // "curved edge" blend patch of the same cell), never the CurvedEdge features' cells,
+      // which keep their curved-family model (applied / Mirrored). The excluded own-edge
+      // length (distinct geometric cells, in the config's units) is the two slivers' one
+      // mesh segment each (0.125 along x, tilted by the last chord's slope 0.063).
+      CHECK(exclusions.at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Reasons").contains("UnmergedTopology"));
+      std::map<std::tuple<int, int, double, double>, double> own_cells;
+      for (const auto &patch : exclusions.at("Patches"))
+      {
+        CHECK(patch.at("Reason") == "UnmergedTopology");
+        CHECK(patch.at("UnmergedTopology").at("OwnFootprint").get<bool>());
+        CHECK(isolated_ids.count(patch.at("Feature").get<int>()) == 1);
+        const auto cell = patch.at("Cell").get<std::array<double, 2>>();
+        own_cells[{patch.at("Feature").get<int>(), patch.at("Segment").get<int>(),
+                   std::round(cell[0] * 1.0e9), std::round(cell[1] * 1.0e9)}] =
+            cell[1] - cell[0];
+      }
+      double own_length = 0.0;
+      for (const auto &[key, length] : own_cells)
+      {
+        own_length += length;
+      }
+      INFO("own cells " << own_cells.size() << ", length " << own_length << ", differing "
+                        << differing);
+      CHECK_THAT(own_length, WithinAbs(2.0 * 0.125 * std::hypot(1.0, bend[7]), 1.0e-6));
+      bool curved_model = false;
+      for (const auto &[name, energy] : half.model_energy)
+      {
+        if (name.find("kappa0.2") != std::string::npos)
+        {
+          curved_model = true;
+          CHECK(energy > 0.0);
+        }
+      }
+      CHECK(curved_model);
+      CHECK(half.domain_boundary_ft > 0.0);
+      // The symmetric terms are exact: raw, E_out. The window differs from half the full by
+      // the slivers alone: raw on the half (the DomainBoundary term), modelled on the full
+      // by its single CurvedEdge over the plane - 2 x half - full = 2 x DB_half - (the
+      // full's curved-family energy on the slivers' mirror pair), the latter read at the
+      // full's mean curved energy per length (the fixture's coupon response dwarfs the raw
+      // field energy, so the residual is the whole model energy of the slivers; within 15 %
+      // for the non-uniform density along the arc).
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      const double residual = 2.0 * half.corrected[0] - full.corrected[0];
+      double full_curved_energy = 0.0, full_curved_length = 0.0;
+      for (const auto &[name, energy] : full.model_energy)
+      {
+        if (name.find("kappa0.2") != std::string::npos)
+        {
+          full_curved_energy += energy;
+        }
+      }
+      for (const auto &feature : full.manifest_features)
+      {
+        if (feature.at("Type") == "CurvedEdge")
+        {
+          full_curved_length += feature.at("Length").get<double>();
+        }
+      }
+      REQUIRE(full_curved_length > 0.0);
+      const double expected_residual =
+          2.0 * half.domain_boundary_ft -
+          full_curved_energy * (2.0 * own_length / full_curved_length);
+      INFO("residual " << residual << " J, expected " << expected_residual
+                       << " J; half DomainBoundary " << half.domain_boundary_ft);
+      CHECK_THAT(residual, WithinRel(expected_residual, 0.15));
+      if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+      {
+        std::ofstream record(fs::path(debug_dir) / "symmetry-curved-end.json");
+        record << json{{"Case", "curved-end"},
+                       {"FullFt", full.corrected[0]},
+                       {"TwiceHalfFt", 2.0 * half.corrected[0]},
+                       {"Residual", residual},
+                       {"ExpectedResidual", expected_residual},
+                       {"ResidualRelative", residual / full.corrected[0]},
+                       {"HalfDomainBoundary", half.domain_boundary_ft},
+                       {"IdenticalRealLength", identical},
+                       {"DifferingRealLength", differing},
+                       {"OwnCellLength", own_length},
+                       {"ContinuedFeatures", band.at("ContinuedFeatures")},
+                       {"Reasons", exclusions.at("Reasons")}}
                       .dump(2)
                << "\n";
       }

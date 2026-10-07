@@ -772,3 +772,91 @@ end
         run in circular_arc_runs(grown, TOLERANCE)
     )
 end
+
+@testset "round 3 class (5) interim 5B (decision 510; part M 2.2): a concave arc leaving the box by less than the collar fails closed at ScopeGuard[CollarFaceEnd]" begin
+    # A metal slab above the box face y = 0 with a concave circular bite (the metal OUTSIDE the
+    # circle of radius 10 centred at (0, -c)) whose two ends lie on the face: the 5.7 collar,
+    # offset away from the metal, SHRINKS the circle to 4.3; it meets the face line only when
+    # the circle protrudes into the box by rho - c > 5.7 (the 32dc558f4810 mechanism: a CPW
+    # ground's bend leaving the box by 2.18 um < 3 R).
+    rho = 10.0
+    collar = 5.7
+    function bitten(c; chords=12)
+        half = sqrt(rho^2 - c^2)
+        a0 = atan(c, -half)                 # the left face intersection, over the top, to the right
+        a1 = atan(c, half)
+        arc = [(rho * cos(a), -c + rho * sin(a)) for a in range(a0, a1; length=chords + 1)]
+        arc[1] = (-half, 0.0)
+        arc[end] = (half, 0.0)
+        points = vcat([(-20.0, 0.0)], arc, [(20.0, 0.0), (20.0, 20.0), (-20.0, 20.0)])
+        n = length(points)
+        classes = [i == 1 || i >= n - 3 ? "Continuation" : "Physical" for i = 1:n]
+        return exterior(points; classes=classes)
+    end
+    for c in (6.0, 4.4)                     # protrusions 4.0 and 5.6 < 5.7: the guard fires
+        loop = bitten(c)
+        runs = circular_arc_runs(loop.points, TOLERANCE)
+        @test length(runs) == 1 && isapprox(runs[1].radius, rho; atol=1.0e-9)
+        message = guard_message(() -> curved_offset_loop(loop, -collar, runs, TOLERANCE))
+        @test occursin("ScopeGuard[CollarFaceEnd]", message) &&
+              occursin("box-face line", message) &&
+              occursin("collar width $collar", message)
+        @test isapprox(
+            parse(Float64, match(r"line ([0-9.e+-]+) from its centre", message)[1]),
+            c;
+            atol=1.0e-9
+        )
+        @test isapprox(
+            parse(Float64, match(r"rho - h_face = ([0-9.e+-]+)", message)[1]),
+            rho - c;
+            atol=1.0e-9
+        )
+    end
+    # Protrusion 7 > 5.7: the shrunk circle meets the face line; both junctions resolve ON the
+    # concentric offset circle of radius rho - collar.
+    loop = bitten(3.0)
+    runs = circular_arc_runs(loop.points, TOLERANCE)
+    offset = curved_offset_loop(loop, -collar, runs, TOLERANCE)
+    @test !offset.bridged && all(j.point !== nothing for j in offset.junctions)
+    shrunk = only(item for item in offset.items if item.kind == :arc)
+    @test isapprox(shrunk.radius, rho - collar; atol=1.0e-9) &&
+          isapprox(shrunk.center[2], -3.0; atol=1.0e-9)
+    arc_index = findfirst(item -> item.kind == :arc, offset.items)
+    arc_junctions =
+        [j for j in offset.junctions if j.before == arc_index || j.after == arc_index]
+    @test length(arc_junctions) == 2 && all(
+        distance_to_circle(j.point, shrunk.center, shrunk.radius) <= 1.0e-9 &&
+        abs(j.point[2]) <= 1.0e-9 for j in arc_junctions
+    )
+    # 510 MINOR-8 (b): a line-arc CORNER kink whose shifted (Physical) line misses the shrunk
+    # concave circle is named by the same guard as the untested corner case: a 1-wide slot
+    # from the face into a circular chamber of radius 6 (its walls shifted by 5.7 miss the
+    # 0.3 circle).
+    chamber = 6.0
+    y_wall = 10.0 - sqrt(chamber^2 - 0.25)
+    a_left = atan(y_wall - 10.0, -0.5)
+    a_right = atan(y_wall - 10.0, 0.5)
+    sweep = mod(a_left - a_right, 2pi)       # clockwise the long way round, over the top
+    chords = 24
+    bite = [
+        (
+            chamber * cos(a_left - sweep * k / chords),
+            10.0 + chamber * sin(a_left - sweep * k / chords)
+        ) for k = 0:chords
+    ]
+    bite[1] = (-0.5, y_wall)
+    bite[end] = (0.5, y_wall)
+    slot_points = vcat(
+        [(-20.0, 0.0), (-0.5, 0.0)],
+        bite,
+        [(0.5, 0.0), (20.0, 0.0), (20.0, 30.0), (-20.0, 30.0)]
+    )
+    ns = length(slot_points)
+    slot_classes = [i == 1 || i >= ns - 3 ? "Continuation" : "Physical" for i = 1:ns]
+    slot = exterior(slot_points; classes=slot_classes)
+    slot_runs = circular_arc_runs(slot.points, TOLERANCE)
+    @test length(slot_runs) == 1 && isapprox(slot_runs[1].radius, chamber; atol=1.0e-9)
+    message = guard_message(() -> curved_offset_loop(slot, -collar, slot_runs, TOLERANCE))
+    @test occursin("ScopeGuard[CollarFaceEnd]", message) &&
+          occursin("corner kink whose offsets do not meet (untested)", message)
+end

@@ -732,12 +732,19 @@ build census (`build-census`, the bound build report):
         the 30-degree kinked arc / line joint; `test_arc_tubes.jl` at the test sizes, the
         production-size builds in round2b-impl REPORT section 3) and LIFTED the guards to the
         TESTED ranges, fail-closed beyond: `ScopeGuard[ArcFaceEnds]` - an arc box-face CUT end
-        of tilt 0 < theta <= `ARC_FACE_END_TILT_BOUND` (70 degrees) builds (the ArcTube ends
+        whose tilt lies in `ARC_FACE_END_TILT_RANGE` = (lowest BUILT, largest BUILT) = (0.1, 70)
+        degrees builds (mesher design round 3 B2, decisions 497 ERRATUM / 510 MAJOR-1 / 510 O6:
+        round 2b had built 15 / 45 / 70 and admitted (0, 15) untested; round 3 built 0.1 / 0.5 /
+        2.1 / 8 degrees fab + thin at the production sizes and set the low end at the lowest
+        built angle; the high end stays the largest built angle, the thin top the largest built
+        THIN angle; `mesh_stage_contract.py` spells the same range) - the ArcTube ends
         ON the face with the A2 end block; its cap entities on the face plane are conics /
         a conic-bounded region matched by their exact arc-length / area centroids,
         `face_cap_curve_centroid` / `face_cap_face_centroid`, 8-point Gauss-Legendre); an
-        arc end exactly perpendicular to the face, an arc at a box-vertex corner or a tilt
-        above the bound fails closed; `ScopeGuard[ArcJointTilt]` - a SMOOTH joint
+        arc end exactly perpendicular to the face, an arc at a box-vertex corner, a tilt
+        below the lowest or above the largest built angle, or an end whose inner node circle
+        rho - (Radius + PyramidHeight) does not reach the face plane (rho (1 - sin theta) <= the
+        envelope; part M 3.3) fails closed; `ScopeGuard[ArcJointTilt]` - a SMOOTH joint
         (JointSmooth) turning by at most `ARC_SMOOTH_JOINT_TURN_BOUND` (5e-5 rad; the loop
         end's `ARC_JOINT_TURN_BOUND` 1.6e-6 inside) and a CORNER joint turning by
         `ARC_CORNER_JOINT_TURN_RANGE` (2e-4 rad .. 30 degrees; A3 (3): ball, caps, the
@@ -1499,8 +1506,18 @@ statement, so that a library run distinguishes "unsupported class" from a bug:
     tilt <= 70 degrees, smooth joints <= 5e-5 rad, corner joints 2e-4 rad .. 30 degrees on
     thin coupons; everything beyond still fails closed, decision 437 (3));
     `SteepFaceCrossing` - a face end beyond the validity ceiling of the capped end block,
-    2 h_pyr |tan theta| >= lc_cap (ADDED by mesher design round 2 F2b, decision 437);
-    `FootprintWithoutEdge` - an explicit footprint without
+    2 h_pyr |tan theta| >= lc_cap (ADDED by mesher design round 2 F2b, decision 437), or a
+    THIN face end above the largest BUILT thin tilt `THIN_FACE_END_TILT_BOUND` (70 degrees:
+    the thin 74.3 / 75.5-degree crossings fail the tetrahedral gate after the build, E3;
+    round 3 class (8) interim 8B, decision 510);
+    `ArcArcJoint` - a smooth joint of two DISTINCT arc runs (one circle serialised as several
+    entries): the joint table names no owner, the build crashed after the mesh (32b0083dad90,
+    decisions 497 / 500); round 3 class (11) interim, refused by name until fix 11 (ADDED by
+    round 3 B2, decision 510); `CollarFaceEnd` - a concave Physical arc of a fabricated coupon
+    leaving the box by less than the trench-collar width 3 R (its shrunk collar circle misses
+    the box-face line; 32dc558f4810) and the untested line-arc corner kink whose offsets do not
+    meet (round 3 class (5) interim 5B, decision 510; fix 5A continues the collar to the box
+    exit); `FootprintWithoutEdge` - an explicit footprint without
     the metal edge; `FootprintTopology` - a producer-default collar whose region is not one
     simple polygon, decision 54a below). `mesh_stage_contract.py` spells the same two lists
     (`RECIPE_SCOPE_SUPPORTED_CLASSES`, `RECIPE_SCOPE_GUARDS`).

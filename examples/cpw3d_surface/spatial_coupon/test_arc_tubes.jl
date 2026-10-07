@@ -244,11 +244,22 @@ end
 # rows stop at x <= x1 - R so they never move the box): the arc's end vertex lies exactly on the
 # face. The arc end is a box-face cut end (no corner, class Continuation), the joint at (0, 0)
 # exactly tangent (turn 0, smooth).
+# Round 3 (DESIGN-part-M 3.3 Fact 1): the default tie rho = x1 / sin theta makes rho (1 - sin theta)
+# shrink below the tube envelope at steep tilts (a fixture artefact, not a mesher property), so
+# `rho` is a parameter. Given, the arc still starts at (0, 0) tangent to the bottom edge and the
+# face moves to x1 = rho sin theta (> 1.5 required); since the bottom edge's extended claim can
+# only set x1 = 1.5, a NOTCH in the block's top-right sets the face instead: a horizontal metal
+# edge at y_t = y_face + 8 R from (x1 - 3, y_t) to the face (a legacy perpendicular box end) whose
+# claim ends at x1 - 1.5 (2 R extension + R padding = x1), closed by a vertical edge up to the top
+# face y1 (the left edge's claim is lengthened so that y1 = y_t + 3). The arc face end, 8 R below
+# the notch on the same face, keeps its round-2b configuration. The default (rho === nothing)
+# writes the round-2b fixture byte for byte.
 function write_arc_face_end_inputs(
     directory;
     theta_degrees=45.0,
     chord_degrees=5.0,
-    plane=0.0
+    plane=0.0,
+    rho=nothing
 )
     radius = 0.5
     rows = NamedTuple[]
@@ -271,12 +282,31 @@ function write_arc_face_end_inputs(
         )
     end
     straight!((-1.0, 0.0), (0.0, 0.0), 1.0)
+    notch = rho !== nothing
+    if notch
+        x1 = rho * sind(theta_degrees)
+        x1 > 3.0 * radius + 1.0e-9 || error(
+            "rho $rho at $theta_degrees degrees puts the face at x1 = $x1 <= 3 R: the bottom edge sets the box"
+        )
+        y_face = rho * (1.0 - cosd(theta_degrees))
+        y_notch = y_face + 8.0 * radius
+        x_notch = x1 - 3.0
+    else
+        x1 = 0.0 + 3.0 * radius
+        rho = x1 / sind(theta_degrees)
+        y_notch = 0.0
+        x_notch = 0.0
+    end
     # The left edge's claim ends 0.3 above the corner so that the box face y0 (-1.2) does not
     # coincide with the 3 R collar of the bottom edge and of the arc (y = -1.5: a tangent collar /
     # face contact leaves sliver tetrahedra between them).
-    straight!((-1.0, 2.0), (-1.0, 0.3), 1.0)
-    x1 = 0.0 + 3.0 * radius
-    rho = x1 / sind(theta_degrees)
+    straight!((-1.0, notch ? y_notch + 1.5 : 2.0), (-1.0, 0.3), 1.0)
+    if notch
+        # The notch's horizontal edge (claim ending at x1 - 1.5: it sets the face) and its vertical
+        # edge (claim 1 long: its extension stays below y1 = y_notch + 3).
+        straight!((x_notch, y_notch), (x1 - 1.5, y_notch), 1.0)
+        straight!((x_notch, y_notch + 1.0), (x_notch, y_notch), 1.0)
+    end
     centre = (0.0, rho)
     sweep = theta_degrees
     n = ceil(Int, sweep / chord_degrees - 1.0e-9)
@@ -299,7 +329,13 @@ function write_arc_face_end_inputs(
     @assert upper[1] == x1 "the box x1 $(upper[1]) is not the designed $x1"
     polygon = Tuple{Float64, Float64}[(-1.0, 0.0)]
     append!(polygon, chord_points)                  # (0, 0) ... the face point
-    push!(polygon, (x1, upper[2]))
+    if notch
+        push!(polygon, (x1, y_notch))
+        push!(polygon, (x_notch, y_notch))
+        push!(polygon, (x_notch, upper[2]))
+    else
+        push!(polygon, (x1, upper[2]))
+    end
     push!(polygon, (-1.0, upper[2]))
     m = length(polygon)
     on_face(p, q) = any(
@@ -316,8 +352,14 @@ function write_arc_face_end_inputs(
     joints = Vector{Any}(nothing, m)
     joints[2] = (0.0, 1)
     # Corners: the convex 90-degree corner (-1, 0) and the legacy perpendicular box corner (-1, y1);
-    # the arc end on the face is a cut end (decision 320 for arcs: no corner).
+    # the arc end on the face is a cut end (decision 320 for arcs: no corner). With the notch: its
+    # legacy perpendicular box end (x1, y_notch), its convex corner (x_notch, y_notch) and its
+    # legacy box corner (x_notch, y1).
     corners = [(-1.0, 0.0, plane), (-1.0, upper[2], plane)]
+    notch && append!(
+        corners,
+        [(x1, y_notch, plane), (x_notch, y_notch, plane), (x_notch, upper[2], plane)]
+    )
     open(joinpath(directory, "signature.csv"), "w") do io
         println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
         for (i, row) in enumerate(rows)
@@ -917,14 +959,29 @@ end
     # the same bounds); the loop end's tested turn bound lies inside the smooth range.
     ids = [guard[1] for guard in RECIPE_SCOPE_GUARDS]
     @test "ArcFaceEnds" in ids && "ArcJointTilt" in ids
+    # Round 3 B2 (decision 510): the interim guards ArcArcJoint (class 11) and CollarFaceEnd
+    # (class 5) are in the list; the arc face-end range is ONE named constant, (lowest built,
+    # largest built) = (0.1, 70) degrees (decisions 497 / 510 MAJOR-1 / O6), the thin face-end
+    # bound of 8B the largest built thin tilt.
+    @test "ArcArcJoint" in ids && "CollarFaceEnd" in ids
     @test ARC_JOINT_TURN_BOUND == 1.6e-6 < ARC_SMOOTH_JOINT_TURN_BOUND == 5.0e-5
     @test ARC_CORNER_JOINT_TURN_RANGE == (2.0e-4, deg2rad(30.0)) &&
-          ARC_FACE_END_TILT_BOUND == deg2rad(70.0)
+          ARC_FACE_END_TILT_RANGE == (deg2rad(0.1), deg2rad(70.0)) &&
+          THIN_FACE_END_TILT_BOUND == deg2rad(70.0)
     @test occursin(
         string(ARC_SMOOTH_JOINT_TURN_BOUND),
         scope_guard_statement("ArcJointTilt")
     )
-    @test occursin("70.0", scope_guard_statement("ArcFaceEnds"))
+    @test occursin("0.1 <= theta <= 70.0", scope_guard_statement("ArcFaceEnds")) &&
+          occursin("inner node circle", scope_guard_statement("ArcFaceEnds"))
+    @test occursin("names no owner", scope_guard_statement("ArcArcJoint")) &&
+          occursin("32b0083dad90", scope_guard_statement("ArcArcJoint"))
+    @test occursin("rho - h_face < 3 Radius", scope_guard_statement("CollarFaceEnd")) &&
+          occursin("CORNER kink", scope_guard_statement("CollarFaceEnd"))
+    @test occursin(
+        "largest BUILT thin tilt 70.0",
+        scope_guard_statement("SteepFaceCrossing")
+    )
     clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
     segments_of(inputs; lower=inputs.lower, upper=inputs.upper, fabricated=false) =
         metal_edge_segments(
@@ -1020,10 +1077,20 @@ end
             guard["Id"] == "ArcJointTilt" && guard["DetectedFrom"] == "build" for
             guard in census["Scope"]["Guards"]
         )
-        # FACE ENDS: the arc cut by the x1 face at 45 and 70 degrees is a face end of the arc side
-        # (theta exact, the face named); at 71 degrees it fails closed; an arc whose end tangent
-        # runs along the face (the perpendicular / tangential end) and an arc at a box vertex fail closed.
-        for (theta, chord) in ((15.0, 2.5), (45.0, 5.0), (70.0, 5.0)),
+        # FACE ENDS: the arc cut by the x1 face at 0.1 / 0.5 / 2.1 / 8 (round 3 B2) and 15 / 45 / 70
+        # degrees (round 2b) is a face end of the arc side (theta exact, the face named); at 71 degrees
+        # (above the largest built) and at 0.05 degrees (below the lowest built) it fails closed;
+        # an arc whose end tangent runs along the face (the perpendicular / tangential end) and an
+        # arc at a box vertex fail closed.
+        for (theta, chord) in (
+                (0.1, 0.025),
+                (0.5, 0.125),
+                (2.1, 0.5),
+                (8.0, 2.0),
+                (15.0, 2.5),
+                (45.0, 5.0),
+                (70.0, 5.0)
+            ),
             fabricated in (true, false)
 
             inputs = write_arc_face_end_inputs(
@@ -1048,7 +1115,39 @@ end
             )
         )
         @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
-              occursin("above the tested 70.0", message)
+              occursin("above the largest built 70.0", message)
+        message = guard_message(
+            () -> segments_of(
+                write_arc_face_end_inputs(
+                    mkpath(joinpath(directory, "fe0p05"));
+                    theta_degrees=0.05,
+                    chord_degrees=0.0125
+                )
+            )
+        )
+        @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+              occursin("below the lowest built 0.1", message)
+        @test isapprox(
+            parse(Float64, match(r"tilt of ([0-9.e+-]+) degrees", message)[1]),
+            0.05;
+            rtol=1.0e-6
+        )
+        # The rho-parametrised fixture (round 3, part M 3.3): rho 3 at 45 degrees moves the face to
+        # x1 = 2.12 (the notch sets the box); the arc's face end reads the same tilt, rho (1 - sin
+        # theta) = 0.88 against the fixture tie's 0.44.
+        rho_inputs = write_arc_face_end_inputs(
+            mkpath(joinpath(directory, "fe45-rho3"));
+            theta_degrees=45.0,
+            rho=3.0
+        )
+        @test rho_inputs.rho == 3.0 &&
+              isapprox(rho_inputs.upper[1], 3.0 * sind(45.0); atol=1.0e-12) &&
+              length(rho_inputs.corners) == 5
+        rho_arc = only(s for s in segments_of(rho_inputs) if s.kind == :arc)
+        @test rho_arc.face_ends[2] !== nothing &&
+              rho_arc.face_ends[2].face == "x1" &&
+              isapprox(rad2deg(rho_arc.face_ends[2].theta), 45.0; atol=1.0e-9) &&
+              rho_arc.arc.rho == 3.0
         chords = 9
         arc_points = [
             (cosd(-90.0 + 90.0 * k / chords), 1.0 + sind(-90.0 + 90.0 * k / chords)) for
@@ -1119,6 +1218,56 @@ end
             )
         )
         @test occursin("ScopeGuard[ArcFaceEnds]", message)
+        # Round 3 class (11) interim (decisions 497 / 500 / 510; part M 1.3): two DISTINCT tagged arc
+        # runs of ONE circle (ids 1 and 2, 4 chords each) meeting at a smooth joint (turn 0,
+        # JointSmooth 1) fail closed at ScopeGuard[ArcArcJoint] naming both arcs - before the joint
+        # table that has no owner for them. The same chords under ONE id (the exact part split of
+        # one arc) pass the guards: the control.
+        split_points =
+            [(cosd(-90.0 + 45.0 * k / 8), 1.0 + sind(-90.0 + 45.0 * k / 8)) for k = 0:8]
+        x_split = split_points[end][1]            # the arc leaves the x1 face at a 45-degree tilt
+        split_loop_points = vcat([(-3.0, 0.0)], split_points, [(x_split, 3.0), (-3.0, 3.0)])
+        ms = length(split_loop_points)
+        split_classes = [
+            i == ms - 2 || i == ms - 1 || i == ms ? "Continuation" : "Physical" for i = 1:ms
+        ]
+        function split_loop(ids)
+            split_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, ms)
+            for i = 2:9
+                split_arcs[i] = (id=ids[i - 1], centre=(0.0, 1.0), radius=1.0, sign=1)
+            end
+            split_joints = Vector{Union{Nothing, NamedTuple}}(nothing, ms)
+            split_joints[2] = (turn=0.0, smooth=true)
+            split_joints[6] = (turn=0.0, smooth=true)       # the joint vertex of the two runs
+            return (
+                conductor=1,
+                plane=0.0,
+                hole=false,
+                points=split_loop_points,
+                classes=split_classes,
+                arcs=split_arcs,
+                joints=split_joints
+            )
+        end
+        split_segments(loop) = metal_edge_segments(
+            [loop],
+            Tuple{Float64, Float64, Float64}[],
+            clearance,
+            [-3.0, -3.0],
+            [x_split, 3.0],
+            1.0e-9;
+            edge_size=0.01,
+            corner_radius=0.1
+        )
+        message =
+            guard_message(() -> split_segments(split_loop(vcat(fill(1, 4), fill(2, 4)))))
+        @test occursin("ScopeGuard[ArcArcJoint]", message) &&
+              occursin("arc 1 part 1", message) &&
+              occursin("meets arc 2 part 1", message) &&
+              occursin("no joint owner", message)
+        control = split_segments(split_loop(fill(1, 8)))
+        @test count(s.kind == :arc for s in control) == 1 &&
+              only(s for s in control if s.kind == :arc).face_ends[2] !== nothing
     end
 end
 
@@ -1129,7 +1278,19 @@ end
         # on the face plane matched by their conic centroids, every gate passed.
         # (decision 475 MINOR-1: the 15-degree face end closes the shallow end of the lifted range;
         # 2.5-degree chords so that the 15-degree arc keeps the >= 4-chord guard's four chords)
-        for (theta, chord) in ((15.0, 2.5), (45.0, 5.0), (70.0, 5.0)),
+        # Round 3 B2, 9L-b (decisions 497 / 510 O6; DESIGN R9, part M 3.2): the LOW end is BUILT at
+        # 0.1 / 0.5 / 2.1 / 8 degrees (4 chords each; 0.1 = the admitted floor, 2.1 = the 32b0083dad90
+        # angle), fab + thin; regime I with one sheared layer, continuous towards theta -> 0+ (the
+        # production-size record is the round-3 B2 cluster run).
+        for (theta, chord) in (
+                (0.1, 0.025),
+                (0.5, 0.125),
+                (2.1, 0.5),
+                (8.0, 2.0),
+                (15.0, 2.5),
+                (45.0, 5.0),
+                (70.0, 5.0)
+            ),
             fabricated in (true, false)
 
             census, mesh, inputs = build_arc_coupon(

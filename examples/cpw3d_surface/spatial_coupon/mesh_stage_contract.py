@@ -1520,10 +1520,14 @@ RECIPE_SCOPE_SUPPORTED_CLASSES = ("ArcSides", "ContinuationVertices", "DeviceFoo
 RECIPE_SCOPE_GUARDS = {
     "ArcTubeRadiusVsCurvature": "build",
     # Decision 391 MAJOR-2 (ii) / decision 437 (3): arc face ends and arc joints beyond the
-    # TESTED ranges (ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS,
-    # ARC_FACE_END_TILT_BOUND_DEGREES; the loop end's ARC_JOINT_TURN_BOUND_RADIANS inside) fail
+    # BUILT ranges (ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS,
+    # ARC_FACE_END_TILT_RANGE_DEGREES; the loop end's ARC_JOINT_TURN_BOUND_RADIANS inside) fail
     # closed (mesh_spatial_coupon.jl spells the same list).
     "ArcFaceEnds": "build", "ArcJointTilt": "build",
+    # Mesher design round 3 class (11) interim (decisions 497 / 500 / 510; part M 1.3): a smooth
+    # joint of two DISTINCT arc runs has no joint owner (the 32b0083dad90 build failure) - refused
+    # by name before any CAD until fix 11 lands.
+    "ArcArcJoint": "build",
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
@@ -1532,23 +1536,40 @@ RECIPE_SCOPE_GUARDS = {
     # per-side bound).
     "UnqualifiedRingCount": "build",
     # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face end beyond the validity
-    # ceiling of the capped end block (2 h_pyr |tan theta| >= lc_cap).
+    # ceiling of the capped end block (2 h_pyr |tan theta| >= lc_cap); round 3 class (8) interim
+    # 8B (part M 5.2): a THIN end above THIN_FACE_END_TILT_BOUND_DEGREES (the largest built thin
+    # tilt) fails closed at the same guard.
     "SteepFaceCrossing": "build",
     "FreeEdgeEnds": "build", "FootprintWithoutEdge": "build",
-    "FootprintTopology": "build"}
+    "FootprintTopology": "build",
+    # Mesher design round 3 class (5) interim 5B (part M 2.2): a concave Physical arc of a
+    # fabricated coupon leaving the box by less than the trench-collar width (its shrunk collar
+    # circle misses the box-face line; the 32dc558f4810 refusal) and the untested line-arc corner
+    # kink whose offsets do not meet.
+    "CollarFaceEnd": "build"}
 # The largest arc-joint turn any full build has exercised: the loop end 1b26671c9080's
 # smooth arc / line joints (3.0e-8 .. 1.6e-6 rad on the signature); the mesher's
 # ScopeGuard[ArcJointTilt] bound (decision 391 MAJOR-2 (ii)).
 ARC_JOINT_TURN_BOUND_RADIANS = 1.6e-6
 # Mesher design round 2b (decision 437 (3)): the guards are LIFTED to the ranges the four synthetic
 # full builds tested (the mesher's ARC_SMOOTH_JOINT_TURN_BOUND / ARC_CORNER_JOINT_TURN_RANGE /
-# ARC_FACE_END_TILT_BOUND, spelled identically): a smooth arc joint turning by <= 5e-5 rad, a corner
+# ARC_FACE_END_TILT_RANGE, spelled identically): a smooth arc joint turning by <= 5e-5 rad, a corner
 # arc joint turning by 2e-4 rad .. 30 degrees on a THIN coupon (the fabricated corner joint stays
-# guarded: untested), an arc box-face cut end of tilt <= 70 degrees build; everything beyond fails
-# closed at the same guards.
+# guarded: untested), an arc box-face cut end whose tilt lies in the BUILT range build; everything
+# beyond fails closed at the same guards.
 ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS = 5.0e-5
 ARC_CORNER_JOINT_TURN_RANGE_RADIANS = (2.0e-4, math.radians(30.0))
-ARC_FACE_END_TILT_BOUND_DEGREES = 70.0
+# Mesher design round 3 (decisions 497 ERRATUM / 510 MAJOR-1 / 510 O6; DESIGN R9): the admitted arc
+# face-end tilt range is the BUILT range (lowest built, largest built) in degrees - ONE constant, the
+# mesher's ARC_FACE_END_TILT_RANGE in radians. Provenance: 0.1 degrees = fe0p1 of the round-3 B2
+# record run (fe0p1 / fe0p5 / fe2p1 / fe8 fab + thin at the production sizes); 70 degrees = fe70 fab
+# + thin of the round-2b record run (PBS 57706 / 57892; the thin top is the largest built THIN
+# angle). Round 2b had built 15 / 45 / 70 only and admitted (0, 15) untested (the 497 erratum).
+ARC_FACE_END_TILT_RANGE_DEGREES = (0.1, 70.0)
+# Round 3 class (8) interim 8B (part M 5.2; E3, decision 475 (7)): the largest BUILT thin face-end
+# tilt (the V10 thin 70-degree production-size build); a thin end above it fails closed at
+# ScopeGuard[SteepFaceCrossing] until the class-8 fix builds it.
+THIN_FACE_END_TILT_BOUND_DEGREES = 70.0
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)

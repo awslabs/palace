@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
-"""Combine response models into one portable fabrication-process library."""
+"""Combine response models into one portable fabrication-process library.
+
+--supersede NAME=<record> (decision 505 Q1) replaces the base (first) library's model NAME by the
+model of the same name of one later input, recording the replacement under Supersedes with the
+mandatory --supersede-decision TEXT (decision 513 (2)); without the flag a repeated model name is
+refused and the output is unchanged."""
 
 import argparse
 import hashlib
@@ -63,6 +68,82 @@ def load_library(path):
     return path, data
 
 
+def model_sha256(model, source_root):
+    """Digest of one model as its input library records it: the entry (sorted keys) with every
+    matrix / basis / trace-mesh path replaced by that file's sha256, so the digest follows the
+    model's numbers, not where they are stored."""
+    content = dict(model)
+
+    def digest_of(relative):
+        path = Path(relative)
+        return {"SHA256": sha256(path if path.is_absolute() else Path(source_root) / path)}
+    for field in PATH_FIELDS:
+        if isinstance(content.get(field), str):
+            content[field] = digest_of(content[field])
+    if isinstance(content.get("TraceMesh"), dict):
+        content["TraceMesh"] = {key: digest_of(value) for key, value in content["TraceMesh"].items()}
+    return hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
+
+
+def parse_supersede(spec):
+    """NAME=<record path> of --supersede; the record must exist and parse as JSON."""
+    name, separator, record = spec.partition("=")
+    if not separator or not name or not record:
+        raise ValueError(f"--supersede {spec!r} is not NAME=<record path>")
+    path = Path(record).expanduser()
+    if not path.is_file():
+        raise ValueError(f"--supersede {name}: the record {path} is missing")
+    try:
+        json.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        raise ValueError(f"--supersede {name}: the record {path} is unreadable ({error})")
+    return name, {"Path": str(path.resolve()), "SHA256": sha256(path)}
+
+
+def supersede_decision(text, supersedes):
+    """The decision text that rules every --supersede replacement (decision 513 (2)): mandatory and
+    non-blank whenever --supersede is given, refused without one."""
+    if supersedes and not (isinstance(text, str) and text.strip()):
+        raise ValueError("--supersede requires --supersede-decision TEXT (the decision that rules the replacement, "
+                         "recorded in Supersedes.Decision)")
+    if text is not None and not supersedes:
+        raise ValueError("--supersede-decision is given without --supersede")
+    return text.strip() if text else None
+
+
+def apply_supersedes(entries, base_path, supersedes, decision):
+    """`entries` = [(source path, library, model)] in input order; for every --supersede NAME the
+    BASE library's (the first input's) model NAME is replaced IN PLACE by the model of the same
+    name of exactly one later input (which then contributes it nowhere else), so every other
+    model keeps its index and directory.  Refuses a name absent from the base or not supplied
+    by exactly one later input.  Returns (entries, Supersedes records)."""
+    records = []
+    for name, record in supersedes:
+        base_slots = [i for i, (path, _, model) in enumerate(entries) if path == base_path and model.get("Name") == name]
+        if not base_slots:
+            raise ValueError(f"--supersede {name}: the base library {base_path} has no model {name!r}")
+        new_slots = [i for i, (path, _, model) in enumerate(entries) if path != base_path and model.get("Name") == name]
+        if len(new_slots) != 1:
+            raise ValueError(f"--supersede {name}: {len(new_slots)} later inputs supply a model {name!r}; exactly one must")
+        base_entry, new_entry = entries[base_slots[0]], entries[new_slots[0]]
+        records.append({"Name": name, "BaseModelSHA": model_sha256(base_entry[2], base_entry[0].parent),
+                        "NewModelSHA": model_sha256(new_entry[2], new_entry[0].parent),
+                        "BaseSource": {"Path": str(base_entry[0]), "SHA256": sha256(base_entry[0])},
+                        "NewSource": {"Path": str(new_entry[0]), "SHA256": sha256(new_entry[0])},
+                        "Record": {"Path": record["Path"], "SHA256": record["SHA256"]}, "Decision": decision,
+                        "Rule": SUPERSEDE_RULE})
+        entries[base_slots[0]] = new_entry
+        del entries[new_slots[0]]
+    return entries, records
+
+
+SUPERSEDE_RULE = ("--supersede NAME=<record>: the base library's model NAME is replaced in place by the model of the same "
+                  "name of exactly one later input (its matrices copied under the base model's index / directory), "
+                  "recorded under Supersedes with both model digests (the entry with its files' sha256, model_sha256), "
+                  "the stored record and the mandatory --supersede-decision text that rule the replacement; "
+                  "without the flag a repeated name is refused and the output is unchanged")
+
+
 def merge_metadata(first, second, path="Fabrication"):
     if isinstance(first, dict) and isinstance(second, dict):
         result = {}
@@ -105,8 +186,25 @@ def main():
         action="store_true",
         help="Write a metadata-only version-3 library when no model qualified",
     )
+    parser.add_argument(
+        "--supersede",
+        action="append",
+        default=[],
+        metavar="NAME=RECORD",
+        help="replace the base (first) library's model NAME by the model of the same name of one later "
+             "input, recording Supersedes {Name, BaseModelSHA, NewModelSHA, Record, Decision}; RECORD is the "
+             "stored record (JSON) that rules the replacement; requires --supersede-decision",
+    )
+    parser.add_argument(
+        "--supersede-decision",
+        metavar="TEXT",
+        help="the decision that rules every --supersede replacement (mandatory with --supersede; recorded as "
+             "Supersedes.Decision)",
+    )
     parser.add_argument("libraries", type=Path, nargs="+")
     args = parser.parse_args()
+    supersedes = [parse_supersede(spec) for spec in args.supersede]
+    decision = supersede_decision(args.supersede_decision, supersedes)
 
     destination = args.output.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -155,74 +253,78 @@ def main():
     names = set()
     index = 0
     interpolation = []
-    for source_path, library in loaded:
+    entries = [(source_path, library, source_model) for source_path, library in loaded for source_model in library["Models"]]
+    if supersedes:
+        entries, result["Supersedes"] = apply_supersedes(entries, loaded[0][0], supersedes, decision)
+    source_digests = {source_path: sha256(source_path) for source_path, _ in loaded}
+    for source_path, library, source_model in entries:
         source_root = source_path.parent
-        combined_from = {"Path": str(source_path), "SHA256": sha256(source_path)}
+        combined_from = {"Path": str(source_path), "SHA256": source_digests[source_path]}
         default_depth = library.get("CouponDepth")
-        for source_model in library["Models"]:
-            if (
-                len(source_model.get("ConductorReferences", [])) > 1
-                and int(library.get("TraceLiftVersion", 0)) < 2
-            ):
-                raise ValueError(
-                    f"{source_path} contains multiconductor model "
-                    f"{source_model.get('Name')!r} without TraceLiftVersion >= 2"
-                )
-            index += 1
-            model = dict(source_model)
-            name = model.get("Name", "")
-            if not name or name in names:
-                raise ValueError(
-                    f"Response model name {name!r} is empty or repeated"
-                )
-            names.add(name)
-            if default_depth is not None and "CouponDepth" not in model:
-                model["CouponDepth"] = default_depth
+        if (
+            len(source_model.get("ConductorReferences", [])) > 1
+            and int(library.get("TraceLiftVersion", 0)) < 2
+        ):
+            raise ValueError(
+                f"{source_path} contains multiconductor model "
+                f"{source_model.get('Name')!r} without TraceLiftVersion >= 2"
+            )
+        index += 1
+        model = dict(source_model)
+        name = model.get("Name", "")
+        if not name or name in names:
+            raise ValueError(
+                f"Response model name {name!r} is empty or repeated"
+            )
+        names.add(name)
+        if default_depth is not None and "CouponDepth" not in model:
+            model["CouponDepth"] = default_depth
 
-            relative_directory = model_directory(index, name)
-            model_destination = destination / relative_directory
-            model_destination.mkdir(parents=True, exist_ok=True)
-            model["CombinedFrom"] = combined_from
-            for field in PATH_FIELDS:
-                if field not in model:
-                    continue
-                if not isinstance(model[field], str):
-                    # Palace reads every matrix path as a string (ThinMatrix unconditionally):
-                    # a model without the file (a qualify NotLoadable entry) cannot be combined.
-                    raise ValueError(
-                        f"{name} field {field} is {model[field]!r}, not a file path"
-                        + (f" ({model['NotLoadable'].get('Reason')})" if isinstance(model.get("NotLoadable"), dict) else "")
-                    )
-                source = Path(model[field])
+        relative_directory = model_directory(index, name)
+        model_destination = destination / relative_directory
+        model_destination.mkdir(parents=True, exist_ok=True)
+        model["CombinedFrom"] = combined_from
+        for field in PATH_FIELDS:
+            if field not in model:
+                continue
+            if not isinstance(model[field], str):
+                # Palace reads every matrix path as a string (ThinMatrix unconditionally):
+                # a model without the file (a qualify NotLoadable entry) cannot be combined.
+                raise ValueError(
+                    f"{name} field {field} is {model[field]!r}, not a file path"
+                    + (f" ({model['NotLoadable'].get('Reason')})" if isinstance(model.get("NotLoadable"), dict) else "")
+                )
+            source = Path(model[field])
+            if not source.is_absolute():
+                source = source_root / source
+            source = source.resolve()
+            if not source.is_file():
+                raise FileNotFoundError(
+                    f"{name} field {field} does not exist: {source}"
+                )
+            target = model_destination / PATH_NAMES[field]
+            shutil.copy2(source, target)
+            model[field] = str(relative_directory / target.name)
+        if "TraceMesh" in model:
+            trace_mesh = dict(model["TraceMesh"])
+            for field, filename in (
+                ("Vertices", "trace-vertices.csv"),
+                ("Triangles", "trace-triangles.csv"),
+            ):
+                source = Path(trace_mesh[field])
                 if not source.is_absolute():
                     source = source_root / source
                 source = source.resolve()
                 if not source.is_file():
                     raise FileNotFoundError(
-                        f"{name} field {field} does not exist: {source}"
+                        f"{name} TraceMesh.{field} does not exist: {source}"
                     )
-                target = model_destination / PATH_NAMES[field]
+                target = model_destination / filename
                 shutil.copy2(source, target)
-                model[field] = str(relative_directory / target.name)
-            if "TraceMesh" in model:
-                trace_mesh = dict(model["TraceMesh"])
-                for field, filename in (
-                    ("Vertices", "trace-vertices.csv"),
-                    ("Triangles", "trace-triangles.csv"),
-                ):
-                    source = Path(trace_mesh[field])
-                    if not source.is_absolute():
-                        source = source_root / source
-                    source = source.resolve()
-                    if not source.is_file():
-                        raise FileNotFoundError(
-                            f"{name} TraceMesh.{field} does not exist: {source}"
-                        )
-                    target = model_destination / filename
-                    shutil.copy2(source, target)
-                    trace_mesh[field] = str(relative_directory / target.name)
-                model["TraceMesh"] = trace_mesh
-            result["Models"].append(model)
+                trace_mesh[field] = str(relative_directory / target.name)
+            model["TraceMesh"] = trace_mesh
+        result["Models"].append(model)
+    for _, library in loaded:
         interpolation.extend(library.get("CornerRadiusInterpolation", []))
 
     for report_path in args.corner_interpolation_qualification:

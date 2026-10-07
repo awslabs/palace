@@ -854,21 +854,26 @@ end
         @test occursin("ScopeGuard[SteepFaceCrossing]", message) &&
               occursin("80.0", message) &&
               occursin("validity ceiling", message)
-        thin80, _, _ = build_production_tip_coupon(
-            directory,
-            30.0,
-            80.0,
-            20.0;
-            fabricated=false,
-            stem="thin80",
-            labels_only=true
+        # Round 3 class (8) interim 8B (decision 510; DESIGN-part-M 5.2): the thin 80-degree end
+        # (regime I under its 87.2-degree ceiling, but above the largest BUILT thin tilt 70 degrees:
+        # the thin 74.3 / 75.5-degree crossings fail the tetrahedral gate after the build, E3) now
+        # fails closed at the same guard before any CAD tube, naming the tested-range rule.
+        @test THIN_FACE_END_TILT_BOUND == deg2rad(70.0)
+        message = guard_message(
+            () -> build_production_tip_coupon(
+                directory,
+                30.0,
+                80.0,
+                20.0;
+                fabricated=false,
+                stem="thin80",
+                labels_only=true
+            )
         )
-        thin80_steep = [
-            f for row in thin80["PrismTubeFaceEnds"]["Tubes"] for
-            f in row["FaceEnds"] if f["ThetaDegrees"] ≈ 80.0
-        ]
-        @test length(thin80_steep) == 1 && thin80_steep[1]["Regime"] == "I"
-        @test thin80["PrismTubeFaceEnds"]["SpacingCap"] ≈ 0.6445769818172843 rtol = 1.0e-12
+        @test occursin("ScopeGuard[SteepFaceCrossing]", message) &&
+              occursin("THIN tube end", message) &&
+              occursin("80.0", message) &&
+              occursin("largest built thin tilt 70.0", message)
     end
 end
 

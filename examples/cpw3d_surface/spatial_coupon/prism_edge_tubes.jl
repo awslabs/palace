@@ -653,8 +653,15 @@ function arc_face_station(tube::ArcTube, face_end::FaceEnd, u, w)
     s_axis = face_end.end_index == 0 ? tube.s_start : tube.s_end
     theta_axis = arc_angle(tube, s_axis)
     offset = (face_end.face_value - tube.centre[face_end.face_axis]) / radius
-    abs(offset) <= 1.0 ||
-        error("the node circle of an arc tube does not reach its box face")
+    # Every node circle must reach the face plane: |x_face - c| <= rho - (Radius + PyramidHeight),
+    # i.e. rho (1 - sin theta) > the tube envelope. The caller fails closed BY NAME before any CAD
+    # (ScopeGuard[ArcFaceEnds], mesh_spatial_coupon.jl build_edge_tubes!; mesher design round 3
+    # part M 3.3 Fact 1); this is the invariant's assertion.
+    abs(offset) <= 1.0 || error(
+        "the node circle of radius $radius of an arc tube does not reach its box face " *
+        "(|x_face - c| = $(abs(face_end.face_value - tube.centre[face_end.face_axis])) > " *
+        "the node radius; the caller guards this at ScopeGuard[ArcFaceEnds])"
+    )
     candidates =
         face_end.face_axis == 1 ? (acos(offset), -acos(offset)) :
         (asin(offset), pi - asin(offset))

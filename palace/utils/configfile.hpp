@@ -1415,6 +1415,10 @@ public:
       int topology = 0;  // index into MirrorBand.UnmergedFeatures
       std::array<double, 3> p0{}, p1{};
       bool image = false;
+      // A real portion the unextended run identifies exactly as the extended run does
+      // (decision 512 (c)): its cells keep their models, they are not the configuration's
+      // own cells.
+      bool identical = false;
       std::size_t segment = 0;    // identification segment (image segments after the real)
       double s0 = 0.0, s1 = 0.0;  // arc length along it, mesh units
     };

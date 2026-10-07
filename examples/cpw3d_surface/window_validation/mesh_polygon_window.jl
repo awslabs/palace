@@ -9,6 +9,8 @@
 #       [--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none|partition|curve]
 #       [--sweep tensor|graded] [--alpha A] [--beta B] [--region-grading on|off]
 #       [--region-ring on|off] [--region-z-grading on|off]
+#       [--step-face-z-grading legacy|mirrored] [--vertex-column-grading on|off]
+#       [--vertex-grading-min-turn-deg A]
 #
 # Writes OUTPUT.msh2 and OUTPUT.json (the manifest). `--sweep tensor` (default) sweeps every
 # plan triangle through every z level (the recorded reference family); `--sweep graded` (own
@@ -19,7 +21,13 @@
 # size; `--region-ring` (graded only, default on) puts the region nodes adjacent to the band on
 # the band's outermost z stack; `--region-z-grading` (graded only, default off) puts every region
 # node on the geometric z stack grown from the fabricated steps' faces (decision 276 option
-# (ii)). `--plan-only` builds and checks the plan
+# (ii)). Both sweeps, reference-quality lane (decision 406): `--step-face-z-grading mirrored`
+# (D1; default legacy = the recorded family) adds the band row heights r (2^k - 1) as z levels
+# beyond both faces of every fabricated step; `--vertex-column-grading on` (D3; default off,
+# own band only) grades the band's column stations toward every plan vertex with the same
+# ladder (`--vertex-grading-min-turn-deg A`, default 30: a joint of two metal curves is a
+# vertex when it turns by at least A degrees on one plane; a plan crossing of the two planes'
+# edges is not). `--plan-only` builds and checks the plan
 # mesh only and prints the manifest (no volume mesh). `--band-mode own` (default) builds the
 # structured boundary-layer band itself with the per-segment, per-side band cap
 # (structured_band.jl); `gmsh` uses Gmsh's BoundaryLayer field as the recorded transmon
@@ -48,6 +56,9 @@ beta = PolygonWindowMesh.DEFAULT_GRADED_BETA
 region_grading = nothing # nothing: the sweep's default (graded on, tensor off)
 region_ring = true
 region_z_grading = false
+step_face_z_grading = :legacy
+vertex_column_grading = false
+vertex_grading_min_turn_deg = PolygonWindowMesh.DEFAULT_VERTEX_GRADING_MIN_TURN_DEG
 function parse_switch(option, value)
     value in ("on", "off") || error("$option takes on or off, not $value")
     return value == "on"
@@ -89,12 +100,23 @@ let i = 1
         elseif argument == "--region-z-grading"
             global region_z_grading = parse_switch(argument, ARGS[i + 1])
             i += 1
+        elseif argument == "--step-face-z-grading"
+            global step_face_z_grading = Symbol(ARGS[i + 1])
+            i += 1
+        elseif argument == "--vertex-column-grading"
+            global vertex_column_grading = parse_switch(argument, ARGS[i + 1])
+            i += 1
+        elseif argument == "--vertex-grading-min-turn-deg"
+            global vertex_grading_min_turn_deg = parse(Float64, ARGS[i + 1])
+            i += 1
         elseif startswith(argument, "--")
             error(
                 "Unknown option $argument; known: --plan-only --band-mode own|gmsh " *
                 "--fan-turn-angle-deg A --cross-plane-snap-um DELTA --exact-band-thickness " *
                 "--band-cap none|partition|curve --sweep tensor|graded --alpha A --beta B " *
-                "--region-grading on|off --region-ring on|off --region-z-grading on|off"
+                "--region-grading on|off --region-ring on|off --region-z-grading on|off " *
+                "--step-face-z-grading legacy|mirrored --vertex-column-grading on|off " *
+                "--vertex-grading-min-turn-deg A"
             )
         else
             push!(positional, argument)
@@ -107,7 +129,9 @@ length(positional) == 4 || error(
     "[--plan-only] [--band-mode own|gmsh] [--fan-turn-angle-deg A] " *
     "[--cross-plane-snap-um DELTA] [--exact-band-thickness] [--band-cap none|partition|curve] " *
     "[--sweep tensor|graded] [--alpha A] [--beta B] [--region-grading on|off] " *
-    "[--region-ring on|off] [--region-z-grading on|off]"
+    "[--region-ring on|off] [--region-z-grading on|off] " *
+    "[--step-face-z-grading legacy|mirrored] [--vertex-column-grading on|off] " *
+    "[--vertex-grading-min-turn-deg A]"
 )
 spec = read_polygon_set(positional[1])
 manifest = mesh_polygon_window(
@@ -126,7 +150,10 @@ manifest = mesh_polygon_window(
     beta=beta,
     region_grading=region_grading === nothing ? sweep == :graded : region_grading,
     region_ring=region_ring,
-    region_z_grading=region_z_grading
+    region_z_grading=region_z_grading,
+    step_face_z_grading=step_face_z_grading,
+    vertex_column_grading=vertex_column_grading,
+    vertex_grading_min_turn_deg=vertex_grading_min_turn_deg
 )
 if plan_only
     JSON.print(stdout, manifest, 2)
