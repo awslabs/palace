@@ -64,6 +64,7 @@ HERE = Path(__file__).resolve().parent
 for path in (str(HERE), str(HERE.parents[1] / "cpw2d"), str(HERE.parents[1] / "surface_response_identification")):
     if path not in sys.path:
         sys.path.insert(0, path)
+import deterministic_math  # noqa: E402
 import generate_spatial_response as spatial_generator  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
 import signature_library  # noqa: E402
@@ -117,13 +118,32 @@ ARC_FACE_SNAP_OVER_R = SIGNATURE_QUANTUM_OVER_R
 HALF_QUANTUM_OVER_R = 0.5 * SIGNATURE_QUANTUM_OVER_R
 
 
+# Round-3 class (10), the scalar-arithmetic rule (decisions 492 / 493 / 510; DESIGN-part-G
+# G.10.3): every float of this module reaches a content-hashed source (the rows, the mask, the
+# boundary tags) or a decision on their path, so it is produced by CPython scalar float
+# arithmetic on the serialised inputs and by deterministic_math for the trigonometry. numpy
+# arrays carry the 2-vectors and do elementwise + - x / (IEEE, correctly rounded) only: the
+# 2-vector `np.dot` / `np.linalg.norm` go through BLAS, where Accelerate contracts a0 b0 + a1 b1
+# into one FMA and OpenBLAS does not (impl-B0 probe: 15 % of random 2-vectors differ), so they
+# are replaced by these two helpers, whose a0 b0 + a1 b1 is the Linux (OpenBLAS) value, i.e.
+# the bytes of every registration of record.
+def _dot2(a, b):
+    """a . b of two 2-vectors by scalar arithmetic (a0 b0 + a1 b1, two roundings)."""
+    return float(a[0]) * float(b[0]) + float(a[1]) * float(b[1])
+
+
+def _norm2(v):
+    """|v| of a 2-vector by scalar arithmetic (sqrt of the two-rounding sum of squares)."""
+    return math.sqrt(float(v[0]) * float(v[0]) + float(v[1]) * float(v[1]))
+
+
 def _arc_sweep(a, b, c, m):
     """The signed sweep from a to b about c through m (signature_library's rule); 2 pi for a
     closed circle (equal ends)."""
     r = math.hypot(a[0] - c[0], a[1] - c[1])
     if math.hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * max(r, 1.0):
         return 2.0 * math.pi, True
-    angle = lambda q: math.atan2(q[1] - c[1], q[0] - c[0])  # noqa: E731
+    angle = lambda q: deterministic_math.atan2(q[1] - c[1], q[0] - c[0])  # noqa: E731
     ta, tb, tm = angle(a), angle(b), angle(m)
     ccw = (tb - ta) % (2.0 * math.pi)
     return (ccw if ((tm - ta) % (2.0 * math.pi)) <= ccw + 1.0e-12 else ccw - 2.0 * math.pi), False
@@ -141,21 +161,21 @@ def rebuilt_arc(a, b, c, m, radius, step_degrees=signature_library.CLUSTER_ARC_C
     a, b, c, m = (np.asarray(v, dtype=float) for v in (a, b, c, m))
     sweep, closed = _arc_sweep(a, b, c, m)
     if closed:
-        centre, r = c, float(np.linalg.norm(a - c))
+        centre, r = c, _norm2(a - c)
     else:
         midpoint = 0.5 * (a + b)
         chord = b - a
-        bisector = np.asarray([-chord[1], chord[0]]) / float(np.linalg.norm(chord))
-        centre = midpoint + float(np.dot(c - midpoint, bisector)) * bisector
-        r = float(np.linalg.norm(a - centre))
+        bisector = np.asarray([-chord[1], chord[0]]) / _norm2(chord)
+        centre = midpoint + _dot2(c - midpoint, bisector) * bisector
+        r = _norm2(a - centre)
         sweep, _ = _arc_sweep(a, b, centre, m)
-    ta = math.atan2(a[1] - centre[1], a[0] - centre[0])
+    ta = deterministic_math.atan2(a[1] - centre[1], a[0] - centre[0])
     n = max(int(math.ceil(abs(sweep) / math.radians(step_degrees) - 1.0e-9)),
             int(math.ceil(r * abs(sweep) / (max_chord_over_R * radius) - 1.0e-9)), 1)
     vertices = [a.copy()]
     for k in range(1, n):
         t = ta + sweep * k / n
-        vertices.append(np.asarray([centre[0] + r * math.cos(t), centre[1] + r * math.sin(t)]))
+        vertices.append(np.asarray([centre[0] + r * deterministic_math.cos(t), centre[1] + r * deterministic_math.sin(t)]))
     vertices.append(a.copy() if closed else b.copy())
     return vertices, centre, r, sweep
 
@@ -189,10 +209,10 @@ def arc_end_snaps(signature, radius):
     coincidence = COINCIDENCE_OVER_R * radius
 
     def radius_of(entry):
-        return float(np.linalg.norm(entry["A"] - np.asarray(entry["Arc"][:2]))) if entry["Arc"] else math.inf
+        return _norm2(entry["A"] - np.asarray(entry["Arc"][:2])) if entry["Arc"] else math.inf
 
     def is_closed(entry):
-        return entry["Arc"] is not None and float(np.linalg.norm(entry["A"] - entry["B"])) <= 1.0e-9 * max(radius_of(entry), 1.0)
+        return entry["Arc"] is not None and _norm2(entry["A"] - entry["B"]) <= 1.0e-9 * max(radius_of(entry), 1.0)
 
     def candidates(i, point):
         """Candidate target points for the end `point` of entry i: the ends of other pieces of
@@ -202,11 +222,11 @@ def arc_end_snaps(signature, radius):
             if j == i or other["Conductor"] != entries[i]["Conductor"]:
                 continue
             for end_index, q in enumerate((other["A"], other["B"])):
-                distance = float(np.linalg.norm(point - q))
+                distance = _norm2(point - q)
                 if distance > joint_tolerance:
                     continue
                 for group in groups:
-                    if float(np.linalg.norm(group["Point"] - q)) <= coincidence:
+                    if _norm2(group["Point"] - q) <= coincidence:
                         group["Members"].append((j, end_index, distance))
                         break
                 else:
@@ -249,11 +269,11 @@ def arc_end_snaps(signature, radius):
                                                  f"other's nearest free end (fail closed)")
                 if not straight and radius_of(entry) <= radius_of(entries[j]):
                     target = snapped  # the smaller (or equal) arc keeps its serialised end
-                if float(np.linalg.norm(target - snapped)) > 0.0:
+                if _norm2(target - snapped) > 0.0:
                     records.append({"Piece": [entry["Kind"], entry["Index"]], "End": end_index,
                                     "Class": "ArcJoint" if straight else "ArcArcJoint",
                                     "To": [entries[j]["Kind"], entries[j]["Index"], k],
-                                    "DistanceOverR": float(np.linalg.norm(target - snapped)) / radius})
+                                    "DistanceOverR": _norm2(target - snapped) / radius})
                     snapped = target.copy()
             ends.append(snapped)
         fixed[(entry["Kind"], entry["Index"])] = (ends[0], ends[1])
@@ -274,14 +294,14 @@ def _entry_tangent_at(entry, point, radius):
     a, b = entry["A"], entry["B"]
     if entry["Arc"] is None:
         d = b - a
-        return d / float(np.linalg.norm(d))
+        return d / _norm2(d)
     c = np.asarray(entry["Arc"][:2])
     m = np.asarray(entry["Arc"][2:])
     sweep, closed = _arc_sweep(a, b, c, m)
     if closed:
         raise SignatureGeometryError("a closed circle has no joint")
     rad = point - c
-    tangent = np.asarray([-rad[1], rad[0]]) / float(np.linalg.norm(rad))
+    tangent = np.asarray([-rad[1], rad[0]]) / _norm2(rad)
     return tangent if sweep > 0.0 else -tangent
 
 
@@ -311,17 +331,17 @@ def rebuilt_arcs(signature, radius):
         c, m = np.asarray(entry["Arc"][:2]), np.asarray(entry["Arc"][2:])
         a_fixed, b_fixed = fixed.get((kind, index), (a, b))
         vertices, centre, r, sweep = rebuilt_arc(a_fixed, b_fixed, c, m, radius)
-        r_signature = float(np.linalg.norm(a - c))
-        deviation = max(abs(float(np.linalg.norm(q - c)) - r_signature) for q in vertices)
+        r_signature = _norm2(a - c)
+        deviation = max(abs(_norm2(q - c) - r_signature) for q in vertices)
         if deviation > tolerance:
             raise SignatureGeometryError(f"{kind.lower()} {index}: arc rebuild outside the fit tolerance (the rebuilt chord "
                                          f"vertices deviate {deviation / radius:.3e} R from the signature's circle, tolerance "
                                          f"{ARC_REBUILD_TOLERANCE_OVER_R:g} R: a snap bent a short arc too far)")
         records.append({"Piece": [kind, index], "Class": "Arc", "ArcDeviationOverR": deviation / radius,
-                        "CentreShiftOverR": float(np.linalg.norm(centre - c)) / radius,
+                        "CentreShiftOverR": _norm2(centre - c) / radius,
                         "RadiusShiftOverR": abs(r - r_signature) / radius, "Chords": len(vertices) - 1,
                         "Centre": [float(centre[0]) / radius, float(centre[1]) / radius], "RadiusOverR": r / radius})
-        closed = float(np.linalg.norm(a - b)) <= 1.0e-9 * max(r_signature, 1.0)
+        closed = _norm2(a - b) <= 1.0e-9 * max(r_signature, 1.0)
         joints = [None, None]
         if not closed:
             for end_index, point in enumerate((a, b)):
@@ -330,15 +350,15 @@ def rebuilt_arcs(signature, radius):
                     if j == i or other["Conductor"] != entry["Conductor"]:
                         continue
                     for other_point in (other["A"], other["B"]):
-                        if float(np.linalg.norm(point - other_point)) > joint_tolerance:
+                        if _norm2(point - other_point) > joint_tolerance:
                             continue
-                        if other["Arc"] is not None and float(np.linalg.norm(other["A"] - other["B"])) <= 1.0e-9 * radius:
+                        if other["Arc"] is not None and _norm2(other["A"] - other["B"]) <= 1.0e-9 * radius:
                             continue
                         neighbour = _entry_tangent_at(other, other_point, radius)
                         # The two travel directions meet head-on or tail-to-head at the joint:
                         # the turn is the angle between the lines of travel through it.
-                        cosine = abs(float(np.dot(own, neighbour)))
-                        turn = math.acos(min(1.0, cosine))
+                        cosine = abs(_dot2(own, neighbour))
+                        turn = deterministic_math.acos(min(1.0, cosine))
                         joints[end_index] = turn if joints[end_index] is None else min(joints[end_index], turn)
         arcs.append({"ArcId": len(arcs) + 1, "Kind": kind, "Index": index, "Vertices": vertices, "Centre": centre,
                      "Radius": r, "Sweep": sweep, "Sign": int(entry["Entry"]["GapRadial"]), "Conductor": entry["Conductor"],
@@ -372,11 +392,11 @@ def chorded_entries(signature, radius, include_context=False):
         arc = rebuilt[("Context" if context else "Claim", index)]
         vertices, centre, sweep, sign = arc["Vertices"], arc["Centre"], arc["Sweep"], arc["Sign"]
         n = len(vertices) - 1
-        ta = math.atan2(vertices[0][1] - centre[1], vertices[0][0] - centre[0])
+        ta = deterministic_math.atan2(vertices[0][1] - centre[1], vertices[0][0] - centre[0])
         for k in range(n):
             tmid = ta + sweep * (k + 0.5) / n
             edges.append(dict(common, P0=(float(vertices[k][0]), float(vertices[k][1])), P1=(float(vertices[k + 1][0]), float(vertices[k + 1][1])),
-                              Gap=(sign * math.cos(tmid), sign * math.sin(tmid)), Chord=k, Chords=n))
+                              Gap=(sign * deterministic_math.cos(tmid), sign * deterministic_math.sin(tmid)), Chord=k, Chords=n))
     return edges, records
 
 
@@ -398,7 +418,7 @@ def context_from_signature(signature, radius):
         label = f"context piece {edge['Portion']}"
         gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, label,
                                              serialised=edge.get("Chord") is None)
-        length = float(np.linalg.norm(p1 - p0))
+        length = _norm2(p1 - p0)
         pieces.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                        "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
                        "Portion": edge["Portion"], "Chain": bool(edge.get("Chain", False)), "GapRederived": rederived})
@@ -433,15 +453,15 @@ def perpendicular_gap(p0, p1, gap, radius, label, serialised=True):
     a fail-closed refusal naming the bound. An arc chord (``serialised`` False: its gap is the
     arc's radial direction at the chord's middle, not a serialised number) is kept as computed
     within the same bound. Returns (unit gap, re-derived flag, deviation)."""
-    norm = float(np.linalg.norm(gap))
+    norm = _norm2(gap)
     if norm <= 0.0:
         raise SignatureGeometryError(f"{label} has an invalid P or Gap")
-    length = float(np.linalg.norm(p1 - p0))
+    length = _norm2(p1 - p0)
     if length <= 0.0:
         raise SignatureGeometryError(f"{label} has zero length")
     tangent = (p1 - p0) / length
     gap = gap / norm
-    deviation = abs(float(np.dot(tangent, gap)))
+    deviation = abs(_dot2(tangent, gap))
     bound = gap_perpendicularity_bound(length / radius)
     if deviation > bound:
         raise SignatureGeometryError(f"{label}: Gap is not perpendicular to the portion (|tangent . gap| = "
@@ -449,7 +469,7 @@ def perpendicular_gap(p0, p1, gap, radius, label, serialised=True):
     if deviation == 0.0 or not serialised:
         return gap, False, deviation
     perpendicular = np.asarray([tangent[1], -tangent[0]])
-    sign = 1.0 if float(np.dot(perpendicular, gap)) >= 0.0 else -1.0
+    sign = 1.0 if _dot2(perpendicular, gap) >= 0.0 else -1.0
     return sign * perpendicular + 0.0, True, deviation  # + 0.0: no negative zero in the rows
 
 
@@ -474,7 +494,7 @@ def portions_from_signature(signature, radius):
         p0, p1 = np.asarray(edge["P0"], dtype=float), np.asarray(edge["P1"], dtype=float)
         gap, rederived, _ = perpendicular_gap(p0, p1, np.asarray(edge["Gap"], dtype=float), radius, f"portion {index}",
                                              serialised=edge.get("Chord") is None)
-        length = float(np.linalg.norm(p1 - p0))
+        length = _norm2(p1 - p0)
         portions.append({"P0": p0, "P1": p1, "Gap": gap, "Length": length, "Conductor": int(edge["Conductor"]),
                          "Interfaces": sorted(edge.get("Interfaces") or []), "Law": edge.get("Law") or '{"Type":"PEC"}',
                          "Portion": index, "GapRederived": rederived})
@@ -505,9 +525,9 @@ def end_states(portions, vertices, radius):
     for i, (a, b) in enumerate(ends):
         free = []
         for point in (a, b):
-            connected = any(np.linalg.norm(point - v) <= tolerance for v in vertices)
+            connected = any(_norm2(point - v) <= tolerance for v in vertices)
             connected = connected or any(
-                np.linalg.norm(point - other) <= tolerance for j, pair in enumerate(ends) if j != i for other in pair)
+                _norm2(point - other) <= tolerance for j, pair in enumerate(ends) if j != i for other in pair)
             free.append(not connected)
         states.append(tuple(free))
     return states
@@ -533,7 +553,7 @@ def interior_bridges(portions, states, radius):
 
     def same_chain(a, b):
         return (a["Conductor"] == b["Conductor"] and sorted(a["Interfaces"]) == sorted(b["Interfaces"])
-                and a["Law"] == b["Law"] and float(np.linalg.norm(a["Gap"] - b["Gap"])) <= 1.0e-6)
+                and a["Law"] == b["Law"] and _norm2(a["Gap"] - b["Gap"]) <= 1.0e-6)
 
     def facing(i, end_i, j, end_j):
         if i == j or not same_chain(portions[i], portions[j]):
@@ -541,10 +561,10 @@ def interior_bridges(portions, states, radius):
         point_i, direction_i = ray(i, end_i)
         point_j, direction_j = ray(j, end_j)
         offset = point_j - point_i
-        along = float(np.dot(offset, direction_i))
-        if not tolerance < along < reach or float(np.linalg.norm(offset - along * direction_i)) > tolerance:
+        along = _dot2(offset, direction_i)
+        if not tolerance < along < reach or _norm2(offset - along * direction_i) > tolerance:
             return False
-        return float(np.dot(direction_i, direction_j)) < -1.0 + 1.0e-9   # anti-parallel: j's ray leads back
+        return _dot2(direction_i, direction_j) < -1.0 + 1.0e-9   # anti-parallel: j's ray leads back
 
     partner = {}
     for i, end_i in free_ends:
@@ -587,7 +607,7 @@ def edge_rows(portions, states, radius, record_interfaces, boundary_condition):
         p0, p1, length = portion["P0"], portion["P1"], portion["Length"]
         midpoint = 0.5 * (p0 + p1)
         # The end at +tangent from the midpoint is the interval end, the other the begin.
-        forward_is_p1 = float(np.dot(p1 - midpoint, tangent)) > 0.0
+        forward_is_p1 = _dot2(p1 - midpoint, tangent) > 0.0
         end_is_free = end_free if forward_is_p1 else begin_free
         begin_is_free = begin_free if forward_is_p1 else end_free
         half = 0.5 * length
@@ -613,7 +633,7 @@ def context_slot(piece, pieces_and_portions, record_interfaces):
     for other in pieces_and_portions:
         if other is piece or not other["Interfaces"] or other["Conductor"] != piece["Conductor"]:
             continue
-        distance = min(np.linalg.norm(a - b) for a in (piece["P0"], piece["P1"]) for b in (other["P0"], other["P1"]))
+        distance = min(_norm2(a - b) for a in (piece["P0"], piece["P1"]) for b in (other["P0"], other["P1"]))
         if best is None or distance < best[0]:
             best = (distance, other)
     if best is None:
@@ -661,7 +681,7 @@ def exact_portion_edges(portions, rows):
     for portion, row in zip(portions, rows):
         gap = portion["Gap"]
         tangent = np.asarray([gap[1], -gap[0]])
-        forward = float(np.dot(portion["P1"] - portion["P0"], tangent)) > 0.0
+        forward = _dot2(portion["P1"] - portion["P0"], tangent) > 0.0
         interval = [0.0, portion["Length"]] if forward else [-portion["Length"], 0.0]
         edges.append({**row, "Point": [float(portion["P0"][0]), float(portion["P0"][1]), 0.0], "Interval": interval})
     return edges
@@ -675,12 +695,12 @@ def _segment_intersection(a0, a1, b0, b1, tolerance):
     """The proper intersection point of two segments (interior of both), or None."""
     d1, d2 = a1 - a0, b1 - b0
     denominator = d1[0] * d2[1] - d1[1] * d2[0]
-    if abs(denominator) <= 1.0e-14 * (np.linalg.norm(d1) * np.linalg.norm(d2)):
+    if abs(denominator) <= 1.0e-14 * (_norm2(d1) * _norm2(d2)):
         return None
     r = b0 - a0
     t = (r[0] * d2[1] - r[1] * d2[0]) / denominator
     u = (r[0] * d1[1] - r[1] * d1[0]) / denominator
-    la, lb = np.linalg.norm(d1), np.linalg.norm(d2)
+    la, lb = _norm2(d1), _norm2(d2)
     if tolerance / la < t < 1.0 - tolerance / la and tolerance / lb < u < 1.0 - tolerance / lb:
         return a0 + t * d1
     return None
@@ -729,7 +749,7 @@ def snap_chain_ends(segments, radius):
 
     def snapped(point):
         for representative in representatives:
-            if float(np.linalg.norm(point - representative)) <= tolerance:
+            if _norm2(point - representative) <= tolerance:
                 return representative.copy()
         representatives.append(np.asarray(point, dtype=float).copy())
         return representatives[-1].copy()
@@ -767,13 +787,13 @@ def plan_view_faces(segments, box, radius):
     edges = []
     for a, b, owner in raw:
         direction = b - a
-        length = float(np.linalg.norm(direction))
+        length = _norm2(direction)
         if length <= tolerance:
             raise SignatureGeometryError("a zero-length chain segment")
         split = [0.0, 1.0]
         for p in points:
             offset = p - a
-            t = float(np.dot(offset, direction)) / length ** 2
+            t = _dot2(offset, direction) / (length * length)   # a product, not a power: CPython's float power is libm pow
             if tolerance / length < t < 1.0 - tolerance / length:
                 distance = abs(direction[0] * offset[1] - direction[1] * offset[0]) / length
                 if distance <= tolerance:
@@ -794,7 +814,7 @@ def plan_view_faces(segments, box, radius):
     def angle(index):
         start, stop, _ = half_edges[index]
         d = nodes[stop] - nodes[start]
-        return math.atan2(d[1], d[0])
+        return deterministic_math.atan2(d[1], d[0])
 
     for start in outgoing:
         outgoing[start].sort(key=angle)
@@ -831,7 +851,7 @@ def plan_view_faces(segments, box, radius):
             gap = segments[owner]["Gap"]
             d = nodes[stop] - nodes[start]
             left = np.asarray((-d[1], d[0]))
-            metal.add(float(np.dot(left, gap)) < 0.0)
+            metal.add(_dot2(left, gap) < 0.0)
             conductors.add(segments[owner]["Conductor"])
         if not metal:
             raise SignatureGeometryError("a face of the coupon box is bounded by no chain segment")
@@ -856,7 +876,7 @@ def triangulate(polygon):
         for i in range(len(points)):
             a, b, c = points[i - 1], points[i], points[(i + 1) % len(points)]
             cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
-            if abs(cross) <= 1.0e-18 or np.linalg.norm(b - a) <= 0.0:
+            if abs(cross) <= 1.0e-18 or _norm2(b - a) <= 0.0:
                 points.pop(i)
                 changed = True
                 break
@@ -936,7 +956,10 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
         rotation = np.asarray(frame)[:2, :2]
 
         def to_local(point):
-            return rotation @ np.asarray(point)
+            # The 2 x 2 rotation applied by scalar arithmetic (the scalar rule): bitwise the
+            # matmul for the signed-permutation frames of every coupon built so far.
+            return np.asarray([float(rotation[0, 0]) * float(point[0]) + float(rotation[0, 1]) * float(point[1]),
+                               float(rotation[1, 0]) * float(point[0]) + float(rotation[1, 1]) * float(point[1])])
 
         local_portions = [{**p, "P0": to_local(p["P0"]), "P1": to_local(p["P1"]), "Gap": to_local(p["Gap"])} for p in portions]
         segments = extended_chain_segments(local_portions, states, box, radius) + bridge_segments(local_portions, bridges)
@@ -971,7 +994,9 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
         if not is_metal:
             continue
         for triangle in triangulate(polygon):
-            points = [(np.asarray(frame).T @ np.asarray([x, y, 0.0])).tolist() for x, y in triangle]
+            # frame^T (x, y, 0) by scalar arithmetic (the scalar rule; see to_local above).
+            points = [[(float(frame[0][i]) * x + float(frame[1][i]) * y) + float(frame[2][i]) * 0.0 for i in range(3)]
+                      for x, y in triangle]
             facets.append({"Conductor": conductor, "Points": points})
     if {f["Conductor"] for f in facets} != conductors:
         raise SignatureGeometryError("the plan-view mask does not cover every conductor of the signature")
@@ -989,7 +1014,7 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
             {"Portions": [portions[i]["Portion"], portions[j]["Portion"]],
              "Ends": [[float(v) for v in (portions[i]["P1"] if end_i else portions[i]["P0"])],
                       [float(v) for v in (portions[j]["P1"] if end_j else portions[j]["P0"])]],
-             "LengthOverR": float(np.linalg.norm((portions[j]["P1"] if end_j else portions[j]["P0"])
-                                                 - (portions[i]["P1"] if end_i else portions[i]["P0"]))) / radius}
+             "LengthOverR": _norm2((portions[j]["P1"] if end_j else portions[j]["P0"])
+                                   - (portions[i]["P1"] if end_i else portions[i]["P0"])) / radius}
             for i, end_i, j, end_j in bridges]
     return coupon, exact_portion_edges(portions, exact_rows)

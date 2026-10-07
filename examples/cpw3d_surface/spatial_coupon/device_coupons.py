@@ -67,6 +67,7 @@ for path in (str(HERE), str(CPW2D)):
     if path not in sys.path:
         sys.path.insert(0, path)
 import cluster_signature_geometry  # noqa: E402
+import deterministic_math  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
 import general_mesh_manifest  # noqa: E402
 import nearkey_predictor  # noqa: E402
 import nearkey_reuse  # noqa: E402
@@ -76,6 +77,10 @@ from refreeze_manifest_tools import PRODUCTION_MANIFEST  # noqa: E402
 
 DISCOVERY = CPW2D / "discover_surface_response_requirements.py"
 GENERATOR = HERE / "generate_spatial_response.py"
+# Round-3 class (10) (decisions 492 / 493 / 510; DESIGN-part-G G.10.4 rule 3): provenance.json (outside
+# the content hash) names the float-serialisation rule of the generated sources, so a case id's
+# generation rule is self-describing without changing the id of a straight coupon.
+FLOAT_SERIALISATION_MODULE = Path(deterministic_math.__file__).resolve()
 SPATIAL_METHOD = "SpatialCoupon"
 DEFAULT_RING_SIZE = 16   # prepare_surface_response_coupons --spatial-ring-size default
 DEFAULT_CAP_TRIANGULATION = "delaunay"   # generate_spatial_response --cap-triangulation (decisions 54b / 57)
@@ -493,6 +498,17 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                                     "TaperAndRound / Vertical (the planner's execute rule)")},
             "ContentHash": {"SHA256": digest, "Roles": digests, "Rule": "SHA-256 over the sorted (role, digest) pairs of "
                             "the bound source files; the case id is spatial-<edges>-edge-<first 12 hex>"},
+            "FloatSerialisation": {
+                "Rule": deterministic_math.FLOAT_SERIALISATION_RULE,
+                "Module": {"Path": str(FLOAT_SERIALISATION_MODULE.relative_to(HERE.parents[2])),
+                           "SHA256": sha256(FLOAT_SERIALISATION_MODULE)},
+                "Statement": "every float written into a content-hashed source is produced by CPython scalar float "
+                             "arithmetic (+ - x / sqrt, int, math.hypot; squares by multiplication, no ** / pow / log10) on "
+                             "serialised inputs and by deterministic_math's "
+                             "correctly rounded sin / cos / tan / atan2 / acos on the arc paths; numpy arrays carry data on "
+                             "that path but do no BLAS arithmetic on it; the frame rotation is applied with scalar arithmetic "
+                             "(round-3 class (10), decisions 492 / 493 / 510); a straight coupon reaches no transcendental "
+                             "function and its id is unchanged"},
             "EtchFootprint": {"Declared": register_case.PRODUCER_DEFAULT_ETCH_FOOTPRINT,
                               "Reason": "the device path binds no retained-etch.csv: the producer-default footprint "
                                         "(3R collars around every conductor loop, cut by the retained mask) is a "
