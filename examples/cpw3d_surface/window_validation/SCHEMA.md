@@ -194,3 +194,30 @@ counts by kind (swept cells,
 strip / collapse prisms, plain / hanging region prisms; `region_hanging_node_incidences` counts
 a hanging node once per region prism it hangs on) and the analytic volume per material the mesh
 is checked against. The sweep mode never changes what the writer has to emit.
+
+## Step-face z-grading and vertex column grading (not part of the input)
+
+Two recorded mesher options of the reference-quality lane (supervisor decisions 406 (1), 411 /
+412; documented at the branch's merge, decision 525), both defaulting to the recorded family so
+the stored S2.1 reference meshes are reproduced byte for byte:
+
+- `--step-face-z-grading legacy|mirrored` (D1; default `legacy`): `mirrored` adds the band row
+  heights r (2^k - 1) as plain z levels beyond BOTH faces of every plane's fabricated step
+  (metal top plus r, 3r, 7r, ...; trench bottom minus r, 3r, 7r, ...) while they stay strictly
+  inside the first fixed offset cell beyond that face, inside the plane's substrate and, with two
+  planes, on the plane's own side of the gap midpoint; `legacy` leaves the first cell beyond
+  each face at the fixed offset (50 nm). The graded sweep thins these levels like any level.
+- `--vertex-column-grading on|off` (D3; default `off`; own structured band only) with
+  `--vertex-grading-min-turn-deg A` (default 30): the band's column stations along every metal
+  curve follow the row ladder s_j = r (2^j - 1) from every plan vertex of that curve (a joint
+  turning by at least A degrees, or a junction of three or more metal curves, decided per plane:
+  a plan crossing of one plane's edge with the other plane's is not a vertex, nor is a bump
+  footprint corner) until the spacing reaches t; the first station is the first s_j >= 2 r /
+  tan(phi / 2) for the vertex's smallest wedge angle phi. Not adopted for the references
+  (decision 412 (1)).
+
+The manifest (`OUT.json`) records them with three additive keys: `step_face_z_grading`
+(`"legacy"` or `"mirrored"`) and `step_face_z_levels_um` (the added levels, `[]` under `legacy`)
+in every manifest, and `band.vertex_column_grading` in the own structured band's record
+(`false`, or `min_turn_deg`, `vertices`, `graded_curve_ends`, `ladder_stations`,
+`min_wedge_angle_deg` and the `first_station_rule`).
