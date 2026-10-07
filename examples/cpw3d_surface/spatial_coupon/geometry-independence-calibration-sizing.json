@@ -53,7 +53,7 @@
     },
     "MinimumQualifiedRings": {
       "Fabricated": 7,
-      "Thin": 5
+      "Thin": 4
     },
     "MinimumQualifiedRingsProvenance": {
       "Rule": "mesher design round 2 F6 (supervisor decisions 347 / 349 / 437 / 443): every tubed metal side's ring count is the largest K with r_K + h_K <= min(TransverseBound, FacingWidth / 2) (its facing width across the metal; RingsPerSideRule); a side whose count falls below the kind's MinimumQualifiedRings - the smallest ring count validated by (F) for that coupon kind - fails closed at ScopeGuard[UnqualifiedRingCount] until an (F) case extends the range (the qualified-range mechanism per kind, decision 443; the NarrowMetal guard of decision 347 is retired into the per-side bound); the mesher reads the case kind's value as --minimum-qualified-rings (run_gmsh_only_case)",
@@ -62,8 +62,8 @@
         "Record": "coupon-accuracy-assessment-20260913/stage2-20261004/coupons-a/REPORT.md (the group-A (F) records), device-plan-coupons-20260913/r2 (S1p v3); the per-side rule: mesher-design-round2-20261005/DESIGN.md section 2.2 + ERRATA E2"
       },
       "Thin": {
-        "Cases": "every (F)-Qualified thin coupon carries the process count 5 (EdgeSize 2 nm, ratio 2, bound CornerIsotropyRadius 0.1: r_5 + h_5 = 94 nm): the same 8 group-A pairs and the S1p v3 pairs; the 4-ring thin tube of the family-6 cases (S2p c83be8376d3a claims, 9f6184a5de53 context; 121-nm fingers, facing bound 60.5 nm) awaits its (F) validation (prediction B15, STAGE2-PLAN AMENDMENT 10)",
-        "Record": "coupon-accuracy-assessment-20260913/stage2-20261004/coupons-a/REPORT.md, device-plan-coupons-20260913/r2; mesher-design-round2-20261005/DESIGN.md section 2.2 + ERRATA E2"
+        "Cases": "every (F)-Qualified thin coupon through round 2 carried the process count 5 (EdgeSize 2 nm, ratio 2, bound CornerIsotropyRadius 0.1: r_5 + h_5 = 94 nm): the 8 group-A pairs and the S1p v3 pairs; round 2b (decision 437 (2) / 443, prediction B15) extended the range to 4 with the two family-6 S2p pairs built under the per-side ring bound and (F)-Qualified at the group-A bar: c83be8376d3a (spatial-19-edge-49399c997700-thin: 7 sides at 4 rings facing across 121 nm, 5 elsewhere; (F) closure <= 0.0104, domain twin-consistency <= 6.5e-5, identity, gate Count 0 at p3 / p4 / p5) and 9f6184a5de53 (spatial-19-edge-d36494106cb3-thin: 2 context finger sides at 4 rings; closure <= 0.0089, twin <= 1.6e-5); the all-4-ring c83 thin variant differs from the per-side twin by 4.6e-5 (energy-weighted) / 1.12e-3 (worst basis function) on the domain diagonal and <= 0.45 % on the MS / MA surface matrices",
+        "Record": "coupon-accuracy-assessment-20260913/mesher-design-round2-20261005/round2b-impl/REPORT.md section 2 + b15/f-qualification/<case>/spatial-qualification.json (the (F) records, PBS 57758-57761), b15/sensitivity/sensitivity-compare.txt; the per-side rule: mesher-design-round2-20261005/DESIGN.md section 2.2 + ERRATA E2; the fabricated range stays 7 (no (F) case with fewer fabricated rings)"
       }
     },
     "PreviousValues": {

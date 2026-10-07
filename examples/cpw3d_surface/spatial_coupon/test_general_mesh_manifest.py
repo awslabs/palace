@@ -2272,13 +2272,14 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
 
     def test_minimum_qualified_rings_is_the_per_kind_range_with_its_provenance(self):
         # Mesher design round 2 F6 (decisions 347 / 349 / 437 / 443): the qualified ring-count
-        # range per coupon kind - Fabricated 7 / Thin 5 on the production manifest (every
-        # (F)-Qualified tube: the process counts), each with the (F) cases behind it; a case
-        # reads its kind's value (run_gmsh_only_case --minimum-qualified-rings).
+        # range per coupon kind - Fabricated 7 (every (F)-Qualified fabricated tube: the process
+        # count) / Thin 4 (the round-2b family-6 pairs, (F)-Qualified with 4-ring thin tubes on
+        # their 121-nm finger sides; prediction B15) on the production manifest, each with the (F)
+        # cases behind it; a case reads its kind's value (run_gmsh_only_case --minimum-qualified-rings).
         from general_mesh_manifest import (MINIMUM_QUALIFIED_RINGS, MINIMUM_QUALIFIED_RINGS_PROVENANCE,
                                            minimum_qualified_rings, validate_minimum_qualified_rings)
         production = json.loads((HERE / "geometry-independence-suite.json").read_text())
-        self.assertEqual(validate_minimum_qualified_rings(production), {"Fabricated": 7, "Thin": 5})
+        self.assertEqual(validate_minimum_qualified_rings(production), {"Fabricated": 7, "Thin": 4})
         provenance = production["Gates"][MINIMUM_QUALIFIED_RINGS_PROVENANCE]
         self.assertIn("UnqualifiedRingCount", provenance["Rule"])
         self.assertIn("d67abe58c1cf", provenance["Fabricated"]["Cases"])
@@ -2286,7 +2287,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         fabricated = next(c for c in production["Cases"] if case_kind(c) == "fabricated")
         thin = next(c for c in production["Cases"] if case_kind(c) == "thin")
         self.assertEqual(minimum_qualified_rings(production, fabricated), 7)
-        self.assertEqual(minimum_qualified_rings(production, thin), 5)
+        self.assertEqual(minimum_qualified_rings(production, thin), 4)
         # Without the gate nothing is required (a manifest without it builds no reduced side);
         # a gate without its provenance, a missing kind, a non-integer, or an empty case list
         # fails closed.

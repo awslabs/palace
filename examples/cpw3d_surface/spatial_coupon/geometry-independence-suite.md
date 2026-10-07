@@ -657,7 +657,7 @@ build census (`build-census`, the bound build report):
     nm, above 2 (r_K + h_K) = 188 nm thin) is unchanged. Recorded: `Tubes[].Rings / FacingWidth / FacingBound` on a reduced side only, `Section.MinimumRings / ReducedSides / FacingBound / MinimumQualifiedRings`, `MetalFacingWidth` (the
     narrowest facing width, null without a facing pair), the labels-only
     `PrismTubeRings`. A side at a count below the smallest ring count validated by (F)
-    for the coupon KIND - the manifest `Gates.MinimumQualifiedRings {Fabricated 7, Thin 5}` with its provenance, the mesher's `--minimum-qualified-rings`
+    for the coupon KIND - the manifest `Gates.MinimumQualifiedRings {Fabricated 7, Thin 4}` (Thin 5 -> 4 after the round-2b family-6 pairs passed (F), prediction B15) with its provenance, the mesher's `--minimum-qualified-rings`
     (run_gmsh_only_case passes the case kind's value) - fails closed at
     `ScopeGuard[UnqualifiedRingCount]` until an (F) case extends the range (the
     qualified-range mechanism per kind); a smooth joint between sides of different
