@@ -1,0 +1,4640 @@
+{
+  "Version": 2,
+  "Plan": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/plan.json",
+  "Case": "spatial-18-edge-836268084cff-thin",
+  "PBSJobID": "56229.ip-192-168-54-24.us-west-2.compute.internal",
+  "Host": "ip-192-168-40-155",
+  "StartUTC": "2026-10-05T03:27:51Z",
+  "State": "complete",
+  "Stages": [
+    {
+      "Name": "spatial-18-edge-836268084cff-thin-p4-worker",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/worker.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/archive",
+        "PALACE_RESPONSE_ARCHIVE_ONLY": "1",
+        "PALACE_RESPONSE_SOURCE_TIMING": "1"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "20578",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-worker.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_SOURCE_TIMING",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/worker.json"
+      ],
+      "CapSeconds": 20578.617221860997,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-worker.log",
+      "StartUTC": "2026-10-05T03:27:53Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 4357.701657313,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 2608054272,
+      "NodePeakUsedBytesSampled": 182470119424,
+      "Parsed": {
+        "Order": 4,
+        "H1": 44673217,
+        "ND": 164680100,
+        "RT": 197232300,
+        "Elements": 3617066,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 190,
+            "Index": 1,
+            "ElapsedAtStart": 9.5e-08
+          },
+          {
+            "Step": 2,
+            "Of": 190,
+            "Index": 2,
+            "ElapsedAtStart": 20.9
+          },
+          {
+            "Step": 3,
+            "Of": 190,
+            "Index": 3,
+            "ElapsedAtStart": 47.7
+          },
+          {
+            "Step": 4,
+            "Of": 190,
+            "Index": 4,
+            "ElapsedAtStart": 70.9
+          },
+          {
+            "Step": 5,
+            "Of": 190,
+            "Index": 5,
+            "ElapsedAtStart": 92.9
+          },
+          {
+            "Step": 6,
+            "Of": 190,
+            "Index": 6,
+            "ElapsedAtStart": 118.0
+          },
+          {
+            "Step": 7,
+            "Of": 190,
+            "Index": 7,
+            "ElapsedAtStart": 144.0
+          },
+          {
+            "Step": 8,
+            "Of": 190,
+            "Index": 8,
+            "ElapsedAtStart": 169.0
+          },
+          {
+            "Step": 9,
+            "Of": 190,
+            "Index": 9,
+            "ElapsedAtStart": 195.0
+          },
+          {
+            "Step": 10,
+            "Of": 190,
+            "Index": 10,
+            "ElapsedAtStart": 221.0
+          },
+          {
+            "Step": 11,
+            "Of": 190,
+            "Index": 11,
+            "ElapsedAtStart": 248.0
+          },
+          {
+            "Step": 12,
+            "Of": 190,
+            "Index": 12,
+            "ElapsedAtStart": 274.0
+          },
+          {
+            "Step": 13,
+            "Of": 190,
+            "Index": 13,
+            "ElapsedAtStart": 298.0
+          },
+          {
+            "Step": 14,
+            "Of": 190,
+            "Index": 14,
+            "ElapsedAtStart": 317.0
+          },
+          {
+            "Step": 15,
+            "Of": 190,
+            "Index": 15,
+            "ElapsedAtStart": 339.0
+          },
+          {
+            "Step": 16,
+            "Of": 190,
+            "Index": 16,
+            "ElapsedAtStart": 365.0
+          },
+          {
+            "Step": 17,
+            "Of": 190,
+            "Index": 17,
+            "ElapsedAtStart": 391.0
+          },
+          {
+            "Step": 18,
+            "Of": 190,
+            "Index": 18,
+            "ElapsedAtStart": 416.0
+          },
+          {
+            "Step": 19,
+            "Of": 190,
+            "Index": 19,
+            "ElapsedAtStart": 434.0
+          },
+          {
+            "Step": 20,
+            "Of": 190,
+            "Index": 20,
+            "ElapsedAtStart": 454.0
+          },
+          {
+            "Step": 21,
+            "Of": 190,
+            "Index": 21,
+            "ElapsedAtStart": 476.0
+          },
+          {
+            "Step": 22,
+            "Of": 190,
+            "Index": 22,
+            "ElapsedAtStart": 497.0
+          },
+          {
+            "Step": 23,
+            "Of": 190,
+            "Index": 23,
+            "ElapsedAtStart": 518.0
+          },
+          {
+            "Step": 24,
+            "Of": 190,
+            "Index": 24,
+            "ElapsedAtStart": 536.0
+          },
+          {
+            "Step": 25,
+            "Of": 190,
+            "Index": 25,
+            "ElapsedAtStart": 554.0
+          },
+          {
+            "Step": 26,
+            "Of": 190,
+            "Index": 26,
+            "ElapsedAtStart": 574.0
+          },
+          {
+            "Step": 27,
+            "Of": 190,
+            "Index": 27,
+            "ElapsedAtStart": 592.0
+          },
+          {
+            "Step": 28,
+            "Of": 190,
+            "Index": 28,
+            "ElapsedAtStart": 613.0
+          },
+          {
+            "Step": 29,
+            "Of": 190,
+            "Index": 29,
+            "ElapsedAtStart": 634.0
+          },
+          {
+            "Step": 30,
+            "Of": 190,
+            "Index": 30,
+            "ElapsedAtStart": 657.0
+          },
+          {
+            "Step": 31,
+            "Of": 190,
+            "Index": 31,
+            "ElapsedAtStart": 674.0
+          },
+          {
+            "Step": 32,
+            "Of": 190,
+            "Index": 32,
+            "ElapsedAtStart": 702.0
+          },
+          {
+            "Step": 33,
+            "Of": 190,
+            "Index": 33,
+            "ElapsedAtStart": 726.0
+          },
+          {
+            "Step": 34,
+            "Of": 190,
+            "Index": 34,
+            "ElapsedAtStart": 748.0
+          },
+          {
+            "Step": 35,
+            "Of": 190,
+            "Index": 35,
+            "ElapsedAtStart": 776.0
+          },
+          {
+            "Step": 36,
+            "Of": 190,
+            "Index": 36,
+            "ElapsedAtStart": 813.0
+          },
+          {
+            "Step": 37,
+            "Of": 190,
+            "Index": 37,
+            "ElapsedAtStart": 838.0
+          },
+          {
+            "Step": 38,
+            "Of": 190,
+            "Index": 38,
+            "ElapsedAtStart": 863.0
+          },
+          {
+            "Step": 39,
+            "Of": 190,
+            "Index": 39,
+            "ElapsedAtStart": 887.0
+          },
+          {
+            "Step": 40,
+            "Of": 190,
+            "Index": 40,
+            "ElapsedAtStart": 913.0
+          },
+          {
+            "Step": 41,
+            "Of": 190,
+            "Index": 41,
+            "ElapsedAtStart": 941.0
+          },
+          {
+            "Step": 42,
+            "Of": 190,
+            "Index": 42,
+            "ElapsedAtStart": 964.0
+          },
+          {
+            "Step": 43,
+            "Of": 190,
+            "Index": 43,
+            "ElapsedAtStart": 984.0
+          },
+          {
+            "Step": 44,
+            "Of": 190,
+            "Index": 44,
+            "ElapsedAtStart": 1000.0
+          },
+          {
+            "Step": 45,
+            "Of": 190,
+            "Index": 45,
+            "ElapsedAtStart": 1030.0
+          },
+          {
+            "Step": 46,
+            "Of": 190,
+            "Index": 46,
+            "ElapsedAtStart": 1070.0
+          },
+          {
+            "Step": 47,
+            "Of": 190,
+            "Index": 47,
+            "ElapsedAtStart": 1090.0
+          },
+          {
+            "Step": 48,
+            "Of": 190,
+            "Index": 48,
+            "ElapsedAtStart": 1110.0
+          },
+          {
+            "Step": 49,
+            "Of": 190,
+            "Index": 49,
+            "ElapsedAtStart": 1130.0
+          },
+          {
+            "Step": 50,
+            "Of": 190,
+            "Index": 50,
+            "ElapsedAtStart": 1150.0
+          },
+          {
+            "Step": 51,
+            "Of": 190,
+            "Index": 51,
+            "ElapsedAtStart": 1160.0
+          },
+          {
+            "Step": 52,
+            "Of": 190,
+            "Index": 52,
+            "ElapsedAtStart": 1180.0
+          },
+          {
+            "Step": 53,
+            "Of": 190,
+            "Index": 53,
+            "ElapsedAtStart": 1200.0
+          },
+          {
+            "Step": 54,
+            "Of": 190,
+            "Index": 54,
+            "ElapsedAtStart": 1220.0
+          },
+          {
+            "Step": 55,
+            "Of": 190,
+            "Index": 55,
+            "ElapsedAtStart": 1230.0
+          },
+          {
+            "Step": 56,
+            "Of": 190,
+            "Index": 56,
+            "ElapsedAtStart": 1250.0
+          },
+          {
+            "Step": 57,
+            "Of": 190,
+            "Index": 57,
+            "ElapsedAtStart": 1270.0
+          },
+          {
+            "Step": 58,
+            "Of": 190,
+            "Index": 58,
+            "ElapsedAtStart": 1280.0
+          },
+          {
+            "Step": 59,
+            "Of": 190,
+            "Index": 59,
+            "ElapsedAtStart": 1300.0
+          },
+          {
+            "Step": 60,
+            "Of": 190,
+            "Index": 60,
+            "ElapsedAtStart": 1320.0
+          },
+          {
+            "Step": 61,
+            "Of": 190,
+            "Index": 61,
+            "ElapsedAtStart": 1340.0
+          },
+          {
+            "Step": 62,
+            "Of": 190,
+            "Index": 62,
+            "ElapsedAtStart": 1360.0
+          },
+          {
+            "Step": 63,
+            "Of": 190,
+            "Index": 63,
+            "ElapsedAtStart": 1380.0
+          },
+          {
+            "Step": 64,
+            "Of": 190,
+            "Index": 64,
+            "ElapsedAtStart": 1400.0
+          },
+          {
+            "Step": 65,
+            "Of": 190,
+            "Index": 65,
+            "ElapsedAtStart": 1420.0
+          },
+          {
+            "Step": 66,
+            "Of": 190,
+            "Index": 66,
+            "ElapsedAtStart": 1440.0
+          },
+          {
+            "Step": 67,
+            "Of": 190,
+            "Index": 67,
+            "ElapsedAtStart": 1460.0
+          },
+          {
+            "Step": 68,
+            "Of": 190,
+            "Index": 68,
+            "ElapsedAtStart": 1480.0
+          },
+          {
+            "Step": 69,
+            "Of": 190,
+            "Index": 69,
+            "ElapsedAtStart": 1500.0
+          },
+          {
+            "Step": 70,
+            "Of": 190,
+            "Index": 70,
+            "ElapsedAtStart": 1520.0
+          },
+          {
+            "Step": 71,
+            "Of": 190,
+            "Index": 71,
+            "ElapsedAtStart": 1530.0
+          },
+          {
+            "Step": 72,
+            "Of": 190,
+            "Index": 72,
+            "ElapsedAtStart": 1550.0
+          },
+          {
+            "Step": 73,
+            "Of": 190,
+            "Index": 73,
+            "ElapsedAtStart": 1570.0
+          },
+          {
+            "Step": 74,
+            "Of": 190,
+            "Index": 74,
+            "ElapsedAtStart": 1590.0
+          },
+          {
+            "Step": 75,
+            "Of": 190,
+            "Index": 75,
+            "ElapsedAtStart": 1610.0
+          },
+          {
+            "Step": 76,
+            "Of": 190,
+            "Index": 76,
+            "ElapsedAtStart": 1630.0
+          },
+          {
+            "Step": 77,
+            "Of": 190,
+            "Index": 77,
+            "ElapsedAtStart": 1650.0
+          },
+          {
+            "Step": 78,
+            "Of": 190,
+            "Index": 78,
+            "ElapsedAtStart": 1670.0
+          },
+          {
+            "Step": 79,
+            "Of": 190,
+            "Index": 79,
+            "ElapsedAtStart": 1690.0
+          },
+          {
+            "Step": 80,
+            "Of": 190,
+            "Index": 80,
+            "ElapsedAtStart": 1710.0
+          },
+          {
+            "Step": 81,
+            "Of": 190,
+            "Index": 81,
+            "ElapsedAtStart": 1730.0
+          },
+          {
+            "Step": 82,
+            "Of": 190,
+            "Index": 82,
+            "ElapsedAtStart": 1760.0
+          },
+          {
+            "Step": 83,
+            "Of": 190,
+            "Index": 83,
+            "ElapsedAtStart": 1780.0
+          },
+          {
+            "Step": 84,
+            "Of": 190,
+            "Index": 84,
+            "ElapsedAtStart": 1800.0
+          },
+          {
+            "Step": 85,
+            "Of": 190,
+            "Index": 85,
+            "ElapsedAtStart": 1820.0
+          },
+          {
+            "Step": 86,
+            "Of": 190,
+            "Index": 86,
+            "ElapsedAtStart": 1840.0
+          },
+          {
+            "Step": 87,
+            "Of": 190,
+            "Index": 87,
+            "ElapsedAtStart": 1860.0
+          },
+          {
+            "Step": 88,
+            "Of": 190,
+            "Index": 88,
+            "ElapsedAtStart": 1880.0
+          },
+          {
+            "Step": 89,
+            "Of": 190,
+            "Index": 89,
+            "ElapsedAtStart": 1900.0
+          },
+          {
+            "Step": 90,
+            "Of": 190,
+            "Index": 90,
+            "ElapsedAtStart": 1920.0
+          },
+          {
+            "Step": 91,
+            "Of": 190,
+            "Index": 91,
+            "ElapsedAtStart": 1930.0
+          },
+          {
+            "Step": 92,
+            "Of": 190,
+            "Index": 92,
+            "ElapsedAtStart": 1950.0
+          },
+          {
+            "Step": 93,
+            "Of": 190,
+            "Index": 93,
+            "ElapsedAtStart": 1970.0
+          },
+          {
+            "Step": 94,
+            "Of": 190,
+            "Index": 94,
+            "ElapsedAtStart": 1990.0
+          },
+          {
+            "Step": 95,
+            "Of": 190,
+            "Index": 95,
+            "ElapsedAtStart": 2000.0
+          },
+          {
+            "Step": 96,
+            "Of": 190,
+            "Index": 96,
+            "ElapsedAtStart": 2020.0
+          },
+          {
+            "Step": 97,
+            "Of": 190,
+            "Index": 97,
+            "ElapsedAtStart": 2040.0
+          },
+          {
+            "Step": 98,
+            "Of": 190,
+            "Index": 98,
+            "ElapsedAtStart": 2050.0
+          },
+          {
+            "Step": 99,
+            "Of": 190,
+            "Index": 99,
+            "ElapsedAtStart": 2070.0
+          },
+          {
+            "Step": 100,
+            "Of": 190,
+            "Index": 100,
+            "ElapsedAtStart": 2090.0
+          },
+          {
+            "Step": 101,
+            "Of": 190,
+            "Index": 101,
+            "ElapsedAtStart": 2100.0
+          },
+          {
+            "Step": 102,
+            "Of": 190,
+            "Index": 102,
+            "ElapsedAtStart": 2120.0
+          },
+          {
+            "Step": 103,
+            "Of": 190,
+            "Index": 103,
+            "ElapsedAtStart": 2150.0
+          },
+          {
+            "Step": 104,
+            "Of": 190,
+            "Index": 104,
+            "ElapsedAtStart": 2180.0
+          },
+          {
+            "Step": 105,
+            "Of": 190,
+            "Index": 105,
+            "ElapsedAtStart": 2200.0
+          },
+          {
+            "Step": 106,
+            "Of": 190,
+            "Index": 106,
+            "ElapsedAtStart": 2230.0
+          },
+          {
+            "Step": 107,
+            "Of": 190,
+            "Index": 107,
+            "ElapsedAtStart": 2260.0
+          },
+          {
+            "Step": 108,
+            "Of": 190,
+            "Index": 108,
+            "ElapsedAtStart": 2280.0
+          },
+          {
+            "Step": 109,
+            "Of": 190,
+            "Index": 109,
+            "ElapsedAtStart": 2310.0
+          },
+          {
+            "Step": 110,
+            "Of": 190,
+            "Index": 110,
+            "ElapsedAtStart": 2330.0
+          },
+          {
+            "Step": 111,
+            "Of": 190,
+            "Index": 111,
+            "ElapsedAtStart": 2360.0
+          },
+          {
+            "Step": 112,
+            "Of": 190,
+            "Index": 112,
+            "ElapsedAtStart": 2390.0
+          },
+          {
+            "Step": 113,
+            "Of": 190,
+            "Index": 113,
+            "ElapsedAtStart": 2410.0
+          },
+          {
+            "Step": 114,
+            "Of": 190,
+            "Index": 114,
+            "ElapsedAtStart": 2440.0
+          },
+          {
+            "Step": 115,
+            "Of": 190,
+            "Index": 115,
+            "ElapsedAtStart": 2460.0
+          },
+          {
+            "Step": 116,
+            "Of": 190,
+            "Index": 116,
+            "ElapsedAtStart": 2480.0
+          },
+          {
+            "Step": 117,
+            "Of": 190,
+            "Index": 117,
+            "ElapsedAtStart": 2510.0
+          },
+          {
+            "Step": 118,
+            "Of": 190,
+            "Index": 118,
+            "ElapsedAtStart": 2540.0
+          },
+          {
+            "Step": 119,
+            "Of": 190,
+            "Index": 119,
+            "ElapsedAtStart": 2560.0
+          },
+          {
+            "Step": 120,
+            "Of": 190,
+            "Index": 120,
+            "ElapsedAtStart": 2590.0
+          },
+          {
+            "Step": 121,
+            "Of": 190,
+            "Index": 121,
+            "ElapsedAtStart": 2620.0
+          },
+          {
+            "Step": 122,
+            "Of": 190,
+            "Index": 122,
+            "ElapsedAtStart": 2650.0
+          },
+          {
+            "Step": 123,
+            "Of": 190,
+            "Index": 123,
+            "ElapsedAtStart": 2670.0
+          },
+          {
+            "Step": 124,
+            "Of": 190,
+            "Index": 124,
+            "ElapsedAtStart": 2700.0
+          },
+          {
+            "Step": 125,
+            "Of": 190,
+            "Index": 125,
+            "ElapsedAtStart": 2720.0
+          },
+          {
+            "Step": 126,
+            "Of": 190,
+            "Index": 126,
+            "ElapsedAtStart": 2750.0
+          },
+          {
+            "Step": 127,
+            "Of": 190,
+            "Index": 127,
+            "ElapsedAtStart": 2780.0
+          },
+          {
+            "Step": 128,
+            "Of": 190,
+            "Index": 128,
+            "ElapsedAtStart": 2800.0
+          },
+          {
+            "Step": 129,
+            "Of": 190,
+            "Index": 129,
+            "ElapsedAtStart": 2830.0
+          },
+          {
+            "Step": 130,
+            "Of": 190,
+            "Index": 130,
+            "ElapsedAtStart": 2860.0
+          },
+          {
+            "Step": 131,
+            "Of": 190,
+            "Index": 131,
+            "ElapsedAtStart": 2880.0
+          },
+          {
+            "Step": 132,
+            "Of": 190,
+            "Index": 132,
+            "ElapsedAtStart": 2910.0
+          },
+          {
+            "Step": 133,
+            "Of": 190,
+            "Index": 133,
+            "ElapsedAtStart": 2940.0
+          },
+          {
+            "Step": 134,
+            "Of": 190,
+            "Index": 134,
+            "ElapsedAtStart": 2960.0
+          },
+          {
+            "Step": 135,
+            "Of": 190,
+            "Index": 135,
+            "ElapsedAtStart": 2990.0
+          },
+          {
+            "Step": 136,
+            "Of": 190,
+            "Index": 136,
+            "ElapsedAtStart": 3020.0
+          },
+          {
+            "Step": 137,
+            "Of": 190,
+            "Index": 137,
+            "ElapsedAtStart": 3040.0
+          },
+          {
+            "Step": 138,
+            "Of": 190,
+            "Index": 138,
+            "ElapsedAtStart": 3070.0
+          },
+          {
+            "Step": 139,
+            "Of": 190,
+            "Index": 139,
+            "ElapsedAtStart": 3100.0
+          },
+          {
+            "Step": 140,
+            "Of": 190,
+            "Index": 140,
+            "ElapsedAtStart": 3120.0
+          },
+          {
+            "Step": 141,
+            "Of": 190,
+            "Index": 141,
+            "ElapsedAtStart": 3150.0
+          },
+          {
+            "Step": 142,
+            "Of": 190,
+            "Index": 142,
+            "ElapsedAtStart": 3180.0
+          },
+          {
+            "Step": 143,
+            "Of": 190,
+            "Index": 143,
+            "ElapsedAtStart": 3200.0
+          },
+          {
+            "Step": 144,
+            "Of": 190,
+            "Index": 144,
+            "ElapsedAtStart": 3230.0
+          },
+          {
+            "Step": 145,
+            "Of": 190,
+            "Index": 145,
+            "ElapsedAtStart": 3260.0
+          },
+          {
+            "Step": 146,
+            "Of": 190,
+            "Index": 146,
+            "ElapsedAtStart": 3280.0
+          },
+          {
+            "Step": 147,
+            "Of": 190,
+            "Index": 147,
+            "ElapsedAtStart": 3300.0
+          },
+          {
+            "Step": 148,
+            "Of": 190,
+            "Index": 148,
+            "ElapsedAtStart": 3320.0
+          },
+          {
+            "Step": 149,
+            "Of": 190,
+            "Index": 149,
+            "ElapsedAtStart": 3340.0
+          },
+          {
+            "Step": 150,
+            "Of": 190,
+            "Index": 150,
+            "ElapsedAtStart": 3370.0
+          },
+          {
+            "Step": 151,
+            "Of": 190,
+            "Index": 151,
+            "ElapsedAtStart": 3390.0
+          },
+          {
+            "Step": 152,
+            "Of": 190,
+            "Index": 152,
+            "ElapsedAtStart": 3410.0
+          },
+          {
+            "Step": 153,
+            "Of": 190,
+            "Index": 153,
+            "ElapsedAtStart": 3430.0
+          },
+          {
+            "Step": 154,
+            "Of": 190,
+            "Index": 154,
+            "ElapsedAtStart": 3450.0
+          },
+          {
+            "Step": 155,
+            "Of": 190,
+            "Index": 155,
+            "ElapsedAtStart": 3470.0
+          },
+          {
+            "Step": 156,
+            "Of": 190,
+            "Index": 156,
+            "ElapsedAtStart": 3490.0
+          },
+          {
+            "Step": 157,
+            "Of": 190,
+            "Index": 157,
+            "ElapsedAtStart": 3510.0
+          },
+          {
+            "Step": 158,
+            "Of": 190,
+            "Index": 158,
+            "ElapsedAtStart": 3530.0
+          },
+          {
+            "Step": 159,
+            "Of": 190,
+            "Index": 159,
+            "ElapsedAtStart": 3550.0
+          },
+          {
+            "Step": 160,
+            "Of": 190,
+            "Index": 160,
+            "ElapsedAtStart": 3580.0
+          },
+          {
+            "Step": 161,
+            "Of": 190,
+            "Index": 161,
+            "ElapsedAtStart": 3600.0
+          },
+          {
+            "Step": 162,
+            "Of": 190,
+            "Index": 162,
+            "ElapsedAtStart": 3620.0
+          },
+          {
+            "Step": 163,
+            "Of": 190,
+            "Index": 163,
+            "ElapsedAtStart": 3640.0
+          },
+          {
+            "Step": 164,
+            "Of": 190,
+            "Index": 164,
+            "ElapsedAtStart": 3660.0
+          },
+          {
+            "Step": 165,
+            "Of": 190,
+            "Index": 165,
+            "ElapsedAtStart": 3680.0
+          },
+          {
+            "Step": 166,
+            "Of": 190,
+            "Index": 166,
+            "ElapsedAtStart": 3710.0
+          },
+          {
+            "Step": 167,
+            "Of": 190,
+            "Index": 167,
+            "ElapsedAtStart": 3730.0
+          },
+          {
+            "Step": 168,
+            "Of": 190,
+            "Index": 168,
+            "ElapsedAtStart": 3750.0
+          },
+          {
+            "Step": 169,
+            "Of": 190,
+            "Index": 169,
+            "ElapsedAtStart": 3770.0
+          },
+          {
+            "Step": 170,
+            "Of": 190,
+            "Index": 170,
+            "ElapsedAtStart": 3790.0
+          },
+          {
+            "Step": 171,
+            "Of": 190,
+            "Index": 171,
+            "ElapsedAtStart": 3810.0
+          },
+          {
+            "Step": 172,
+            "Of": 190,
+            "Index": 172,
+            "ElapsedAtStart": 3830.0
+          },
+          {
+            "Step": 173,
+            "Of": 190,
+            "Index": 173,
+            "ElapsedAtStart": 3850.0
+          },
+          {
+            "Step": 174,
+            "Of": 190,
+            "Index": 174,
+            "ElapsedAtStart": 3880.0
+          },
+          {
+            "Step": 175,
+            "Of": 190,
+            "Index": 175,
+            "ElapsedAtStart": 3900.0
+          },
+          {
+            "Step": 176,
+            "Of": 190,
+            "Index": 176,
+            "ElapsedAtStart": 3920.0
+          },
+          {
+            "Step": 177,
+            "Of": 190,
+            "Index": 177,
+            "ElapsedAtStart": 3940.0
+          },
+          {
+            "Step": 178,
+            "Of": 190,
+            "Index": 178,
+            "ElapsedAtStart": 3960.0
+          },
+          {
+            "Step": 179,
+            "Of": 190,
+            "Index": 179,
+            "ElapsedAtStart": 3980.0
+          },
+          {
+            "Step": 180,
+            "Of": 190,
+            "Index": 180,
+            "ElapsedAtStart": 4010.0
+          },
+          {
+            "Step": 181,
+            "Of": 190,
+            "Index": 181,
+            "ElapsedAtStart": 4030.0
+          },
+          {
+            "Step": 182,
+            "Of": 190,
+            "Index": 182,
+            "ElapsedAtStart": 4050.0
+          },
+          {
+            "Step": 183,
+            "Of": 190,
+            "Index": 183,
+            "ElapsedAtStart": 4070.0
+          },
+          {
+            "Step": 184,
+            "Of": 190,
+            "Index": 184,
+            "ElapsedAtStart": 4090.0
+          },
+          {
+            "Step": 185,
+            "Of": 190,
+            "Index": 185,
+            "ElapsedAtStart": 4110.0
+          },
+          {
+            "Step": 186,
+            "Of": 190,
+            "Index": 186,
+            "ElapsedAtStart": 4140.0
+          },
+          {
+            "Step": 187,
+            "Of": 190,
+            "Index": 187,
+            "ElapsedAtStart": 4160.0
+          },
+          {
+            "Step": 188,
+            "Of": 190,
+            "Index": 188,
+            "ElapsedAtStart": 4180.0
+          },
+          {
+            "Step": 189,
+            "Of": 190,
+            "Index": 189,
+            "ElapsedAtStart": 4200.0
+          },
+          {
+            "Step": 190,
+            "Of": 190,
+            "Index": 190,
+            "ElapsedAtStart": 4220.0
+          }
+        ],
+        "PCG": [
+          15,
+          20,
+          17,
+          16,
+          19,
+          19,
+          18,
+          20,
+          19,
+          20,
+          20,
+          17,
+          14,
+          16,
+          19,
+          20,
+          18,
+          13,
+          14,
+          16,
+          15,
+          15,
+          13,
+          13,
+          14,
+          13,
+          15,
+          15,
+          17,
+          12,
+          21,
+          18,
+          16,
+          21,
+          28,
+          19,
+          18,
+          18,
+          19,
+          21,
+          17,
+          14,
+          14,
+          20,
+          28,
+          19,
+          14,
+          12,
+          12,
+          13,
+          12,
+          12,
+          12,
+          11,
+          12,
+          12,
+          12,
+          12,
+          14,
+          12,
+          18,
+          14,
+          12,
+          12,
+          17,
+          15,
+          13,
+          15,
+          13,
+          13,
+          13,
+          14,
+          12,
+          16,
+          15,
+          14,
+          15,
+          15,
+          13,
+          16,
+          15,
+          16,
+          16,
+          14,
+          13,
+          14,
+          14,
+          15,
+          15,
+          11,
+          11,
+          14,
+          12,
+          12,
+          11,
+          11,
+          12,
+          11,
+          12,
+          12,
+          14,
+          20,
+          20,
+          19,
+          21,
+          20,
+          19,
+          20,
+          17,
+          20,
+          20,
+          18,
+          18,
+          18,
+          18,
+          20,
+          20,
+          20,
+          20,
+          20,
+          20,
+          18,
+          20,
+          20,
+          20,
+          20,
+          20,
+          19,
+          20,
+          20,
+          21,
+          20,
+          17,
+          20,
+          21,
+          21,
+          21,
+          19,
+          19,
+          21,
+          20,
+          19,
+          19,
+          20,
+          20,
+          15,
+          15,
+          15,
+          16,
+          15,
+          15,
+          16,
+          14,
+          16,
+          16,
+          14,
+          15,
+          15,
+          15,
+          16,
+          16,
+          16,
+          16,
+          15,
+          16,
+          14,
+          15,
+          15,
+          16,
+          16,
+          16,
+          15,
+          16,
+          16,
+          16,
+          16,
+          14,
+          16,
+          16,
+          16,
+          16,
+          16,
+          15,
+          16,
+          16,
+          16,
+          15,
+          16,
+          16,
+          28
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [
+          {
+            "Index": 1,
+            "Iterations": 15,
+            "SolveSeconds": 20.50617033,
+            "TotalSeconds": 20.88688359
+          },
+          {
+            "Index": 2,
+            "Iterations": 20,
+            "SolveSeconds": 26.52105066,
+            "TotalSeconds": 26.86214453
+          },
+          {
+            "Index": 3,
+            "Iterations": 17,
+            "SolveSeconds": 22.82449517,
+            "TotalSeconds": 23.17029434
+          },
+          {
+            "Index": 4,
+            "Iterations": 16,
+            "SolveSeconds": 21.57158126,
+            "TotalSeconds": 21.94329652
+          },
+          {
+            "Index": 5,
+            "Iterations": 19,
+            "SolveSeconds": 25.24854001,
+            "TotalSeconds": 25.6358344
+          },
+          {
+            "Index": 6,
+            "Iterations": 19,
+            "SolveSeconds": 25.26662296,
+            "TotalSeconds": 25.60973578
+          },
+          {
+            "Index": 7,
+            "Iterations": 18,
+            "SolveSeconds": 24.06019075,
+            "TotalSeconds": 24.4171103
+          },
+          {
+            "Index": 8,
+            "Iterations": 20,
+            "SolveSeconds": 26.44203604,
+            "TotalSeconds": 26.79948093
+          },
+          {
+            "Index": 9,
+            "Iterations": 19,
+            "SolveSeconds": 25.19509895,
+            "TotalSeconds": 25.55677227
+          },
+          {
+            "Index": 10,
+            "Iterations": 20,
+            "SolveSeconds": 26.45882171,
+            "TotalSeconds": 26.82592636
+          },
+          {
+            "Index": 11,
+            "Iterations": 20,
+            "SolveSeconds": 26.41088088,
+            "TotalSeconds": 26.75878081
+          },
+          {
+            "Index": 12,
+            "Iterations": 17,
+            "SolveSeconds": 22.8348536,
+            "TotalSeconds": 23.17379352
+          },
+          {
+            "Index": 13,
+            "Iterations": 14,
+            "SolveSeconds": 19.19427565,
+            "TotalSeconds": 19.53163147
+          },
+          {
+            "Index": 14,
+            "Iterations": 16,
+            "SolveSeconds": 21.60506889,
+            "TotalSeconds": 21.954102
+          },
+          {
+            "Index": 15,
+            "Iterations": 19,
+            "SolveSeconds": 25.22710238,
+            "TotalSeconds": 25.59624572
+          },
+          {
+            "Index": 16,
+            "Iterations": 20,
+            "SolveSeconds": 26.414719,
+            "TotalSeconds": 26.75689633
+          },
+          {
+            "Index": 17,
+            "Iterations": 18,
+            "SolveSeconds": 24.05250826,
+            "TotalSeconds": 24.39959116
+          },
+          {
+            "Index": 18,
+            "Iterations": 13,
+            "SolveSeconds": 18.01047258,
+            "TotalSeconds": 18.36135414
+          },
+          {
+            "Index": 19,
+            "Iterations": 14,
+            "SolveSeconds": 19.17364231,
+            "TotalSeconds": 19.52332183
+          },
+          {
+            "Index": 20,
+            "Iterations": 16,
+            "SolveSeconds": 21.64983515,
+            "TotalSeconds": 22.02263448
+          },
+          {
+            "Index": 21,
+            "Iterations": 15,
+            "SolveSeconds": 20.40666278,
+            "TotalSeconds": 20.80228206
+          },
+          {
+            "Index": 22,
+            "Iterations": 15,
+            "SolveSeconds": 20.62586508,
+            "TotalSeconds": 20.97489883
+          },
+          {
+            "Index": 23,
+            "Iterations": 13,
+            "SolveSeconds": 18.01245423,
+            "TotalSeconds": 18.34922109
+          },
+          {
+            "Index": 24,
+            "Iterations": 13,
+            "SolveSeconds": 17.99802603,
+            "TotalSeconds": 18.32636029
+          },
+          {
+            "Index": 25,
+            "Iterations": 14,
+            "SolveSeconds": 19.18444258,
+            "TotalSeconds": 19.54128607
+          },
+          {
+            "Index": 26,
+            "Iterations": 13,
+            "SolveSeconds": 18.05360468,
+            "TotalSeconds": 18.3785278
+          },
+          {
+            "Index": 27,
+            "Iterations": 15,
+            "SolveSeconds": 20.3929532,
+            "TotalSeconds": 20.72133886
+          },
+          {
+            "Index": 28,
+            "Iterations": 15,
+            "SolveSeconds": 20.45252886,
+            "TotalSeconds": 20.77684192
+          },
+          {
+            "Index": 29,
+            "Iterations": 17,
+            "SolveSeconds": 22.84563377,
+            "TotalSeconds": 23.1726246
+          },
+          {
+            "Index": 30,
+            "Iterations": 12,
+            "SolveSeconds": 16.82461797,
+            "TotalSeconds": 17.16913193
+          },
+          {
+            "Index": 31,
+            "Iterations": 21,
+            "SolveSeconds": 27.70572532,
+            "TotalSeconds": 28.04767499
+          },
+          {
+            "Index": 32,
+            "Iterations": 18,
+            "SolveSeconds": 24.06992987,
+            "TotalSeconds": 24.40338653
+          },
+          {
+            "Index": 33,
+            "Iterations": 16,
+            "SolveSeconds": 21.65840219,
+            "TotalSeconds": 21.99393966
+          },
+          {
+            "Index": 34,
+            "Iterations": 21,
+            "SolveSeconds": 27.63800335,
+            "TotalSeconds": 27.96608807
+          },
+          {
+            "Index": 35,
+            "Iterations": 28,
+            "SolveSeconds": 36.14405928,
+            "TotalSeconds": 36.47293952
+          },
+          {
+            "Index": 36,
+            "Iterations": 19,
+            "SolveSeconds": 25.2423059,
+            "TotalSeconds": 25.57159094
+          },
+          {
+            "Index": 37,
+            "Iterations": 18,
+            "SolveSeconds": 24.04410174,
+            "TotalSeconds": 24.38346263
+          },
+          {
+            "Index": 38,
+            "Iterations": 18,
+            "SolveSeconds": 24.01085923,
+            "TotalSeconds": 24.37119631
+          },
+          {
+            "Index": 39,
+            "Iterations": 19,
+            "SolveSeconds": 25.22688142,
+            "TotalSeconds": 25.58684188
+          },
+          {
+            "Index": 40,
+            "Iterations": 21,
+            "SolveSeconds": 27.71108266,
+            "TotalSeconds": 28.05393272
+          },
+          {
+            "Index": 41,
+            "Iterations": 17,
+            "SolveSeconds": 22.84712238,
+            "TotalSeconds": 23.18361348
+          },
+          {
+            "Index": 42,
+            "Iterations": 14,
+            "SolveSeconds": 19.1937041,
+            "TotalSeconds": 19.52468611
+          },
+          {
+            "Index": 43,
+            "Iterations": 14,
+            "SolveSeconds": 19.2313836,
+            "TotalSeconds": 19.56246328
+          },
+          {
+            "Index": 44,
+            "Iterations": 20,
+            "SolveSeconds": 26.42200764,
+            "TotalSeconds": 26.75438979
+          },
+          {
+            "Index": 45,
+            "Iterations": 28,
+            "SolveSeconds": 36.09122735,
+            "TotalSeconds": 36.41730492
+          },
+          {
+            "Index": 46,
+            "Iterations": 19,
+            "SolveSeconds": 25.27519063,
+            "TotalSeconds": 25.62533667
+          },
+          {
+            "Index": 47,
+            "Iterations": 14,
+            "SolveSeconds": 19.24176479,
+            "TotalSeconds": 19.57480999
+          },
+          {
+            "Index": 48,
+            "Iterations": 12,
+            "SolveSeconds": 16.82620852,
+            "TotalSeconds": 17.1655295
+          },
+          {
+            "Index": 49,
+            "Iterations": 12,
+            "SolveSeconds": 16.82736825,
+            "TotalSeconds": 17.17117125
+          },
+          {
+            "Index": 50,
+            "Iterations": 13,
+            "SolveSeconds": 18.02619823,
+            "TotalSeconds": 18.35275771
+          },
+          {
+            "Index": 51,
+            "Iterations": 12,
+            "SolveSeconds": 16.81452367,
+            "TotalSeconds": 17.14605254
+          },
+          {
+            "Index": 52,
+            "Iterations": 12,
+            "SolveSeconds": 16.82807823,
+            "TotalSeconds": 17.15666134
+          },
+          {
+            "Index": 53,
+            "Iterations": 12,
+            "SolveSeconds": 16.84398005,
+            "TotalSeconds": 17.18244062
+          },
+          {
+            "Index": 54,
+            "Iterations": 11,
+            "SolveSeconds": 15.61318385,
+            "TotalSeconds": 15.95682812
+          },
+          {
+            "Index": 55,
+            "Iterations": 12,
+            "SolveSeconds": 16.84667865,
+            "TotalSeconds": 17.20137504
+          },
+          {
+            "Index": 56,
+            "Iterations": 12,
+            "SolveSeconds": 16.82904914,
+            "TotalSeconds": 17.15258128
+          },
+          {
+            "Index": 57,
+            "Iterations": 12,
+            "SolveSeconds": 16.85280732,
+            "TotalSeconds": 17.19144272
+          },
+          {
+            "Index": 58,
+            "Iterations": 12,
+            "SolveSeconds": 16.81723263,
+            "TotalSeconds": 17.14636071
+          },
+          {
+            "Index": 59,
+            "Iterations": 14,
+            "SolveSeconds": 19.23857373,
+            "TotalSeconds": 19.58186263
+          },
+          {
+            "Index": 60,
+            "Iterations": 12,
+            "SolveSeconds": 16.82346544,
+            "TotalSeconds": 17.15543352
+          },
+          {
+            "Index": 61,
+            "Iterations": 18,
+            "SolveSeconds": 24.07395109,
+            "TotalSeconds": 24.41334707
+          },
+          {
+            "Index": 62,
+            "Iterations": 14,
+            "SolveSeconds": 19.23105046,
+            "TotalSeconds": 19.5639469
+          },
+          {
+            "Index": 63,
+            "Iterations": 12,
+            "SolveSeconds": 16.81561218,
+            "TotalSeconds": 17.15016641
+          },
+          {
+            "Index": 64,
+            "Iterations": 12,
+            "SolveSeconds": 16.78591151,
+            "TotalSeconds": 17.11422872
+          },
+          {
+            "Index": 65,
+            "Iterations": 17,
+            "SolveSeconds": 22.88508512,
+            "TotalSeconds": 23.2121263
+          },
+          {
+            "Index": 66,
+            "Iterations": 15,
+            "SolveSeconds": 20.42796797,
+            "TotalSeconds": 20.75712297
+          },
+          {
+            "Index": 67,
+            "Iterations": 13,
+            "SolveSeconds": 17.96009741,
+            "TotalSeconds": 18.28742427
+          },
+          {
+            "Index": 68,
+            "Iterations": 15,
+            "SolveSeconds": 20.45149483,
+            "TotalSeconds": 20.77770026
+          },
+          {
+            "Index": 69,
+            "Iterations": 13,
+            "SolveSeconds": 17.98360407,
+            "TotalSeconds": 18.31615141
+          },
+          {
+            "Index": 70,
+            "Iterations": 13,
+            "SolveSeconds": 17.96778971,
+            "TotalSeconds": 18.31202646
+          },
+          {
+            "Index": 71,
+            "Iterations": 13,
+            "SolveSeconds": 17.93977743,
+            "TotalSeconds": 18.2655674
+          },
+          {
+            "Index": 72,
+            "Iterations": 14,
+            "SolveSeconds": 19.3150227,
+            "TotalSeconds": 19.66121601
+          },
+          {
+            "Index": 73,
+            "Iterations": 12,
+            "SolveSeconds": 16.77467159,
+            "TotalSeconds": 17.11488102
+          },
+          {
+            "Index": 74,
+            "Iterations": 16,
+            "SolveSeconds": 21.69341343,
+            "TotalSeconds": 22.04655088
+          },
+          {
+            "Index": 75,
+            "Iterations": 15,
+            "SolveSeconds": 20.4521251,
+            "TotalSeconds": 20.78399288
+          },
+          {
+            "Index": 76,
+            "Iterations": 14,
+            "SolveSeconds": 19.2147955,
+            "TotalSeconds": 19.55281347
+          },
+          {
+            "Index": 77,
+            "Iterations": 15,
+            "SolveSeconds": 20.43199131,
+            "TotalSeconds": 20.76568376
+          },
+          {
+            "Index": 78,
+            "Iterations": 15,
+            "SolveSeconds": 20.70745437,
+            "TotalSeconds": 21.03879223
+          },
+          {
+            "Index": 79,
+            "Iterations": 13,
+            "SolveSeconds": 18.00527634,
+            "TotalSeconds": 18.33156389
+          },
+          {
+            "Index": 80,
+            "Iterations": 16,
+            "SolveSeconds": 21.69035262,
+            "TotalSeconds": 22.0396886
+          },
+          {
+            "Index": 81,
+            "Iterations": 15,
+            "SolveSeconds": 20.44745675,
+            "TotalSeconds": 20.78558911
+          },
+          {
+            "Index": 82,
+            "Iterations": 16,
+            "SolveSeconds": 21.61654617,
+            "TotalSeconds": 21.9444733
+          },
+          {
+            "Index": 83,
+            "Iterations": 16,
+            "SolveSeconds": 21.68339659,
+            "TotalSeconds": 22.01490184
+          },
+          {
+            "Index": 84,
+            "Iterations": 14,
+            "SolveSeconds": 19.25552573,
+            "TotalSeconds": 19.58506318
+          },
+          {
+            "Index": 85,
+            "Iterations": 13,
+            "SolveSeconds": 18.01151131,
+            "TotalSeconds": 18.35496089
+          },
+          {
+            "Index": 86,
+            "Iterations": 14,
+            "SolveSeconds": 19.30027606,
+            "TotalSeconds": 19.63233912
+          },
+          {
+            "Index": 87,
+            "Iterations": 14,
+            "SolveSeconds": 19.24147451,
+            "TotalSeconds": 19.56525838
+          },
+          {
+            "Index": 88,
+            "Iterations": 15,
+            "SolveSeconds": 20.48791417,
+            "TotalSeconds": 20.81909192
+          },
+          {
+            "Index": 89,
+            "Iterations": 15,
+            "SolveSeconds": 20.42983779,
+            "TotalSeconds": 20.75933228
+          },
+          {
+            "Index": 90,
+            "Iterations": 11,
+            "SolveSeconds": 15.64890481,
+            "TotalSeconds": 15.98149669
+          },
+          {
+            "Index": 91,
+            "Iterations": 11,
+            "SolveSeconds": 15.66751425,
+            "TotalSeconds": 16.0108009
+          },
+          {
+            "Index": 92,
+            "Iterations": 14,
+            "SolveSeconds": 19.2578135,
+            "TotalSeconds": 19.59682176
+          },
+          {
+            "Index": 93,
+            "Iterations": 12,
+            "SolveSeconds": 16.869907,
+            "TotalSeconds": 17.22667425
+          },
+          {
+            "Index": 94,
+            "Iterations": 12,
+            "SolveSeconds": 16.78501564,
+            "TotalSeconds": 17.11581772
+          },
+          {
+            "Index": 95,
+            "Iterations": 11,
+            "SolveSeconds": 15.62006535,
+            "TotalSeconds": 15.95083783
+          },
+          {
+            "Index": 96,
+            "Iterations": 11,
+            "SolveSeconds": 15.65114019,
+            "TotalSeconds": 15.97997828
+          },
+          {
+            "Index": 97,
+            "Iterations": 12,
+            "SolveSeconds": 16.79827375,
+            "TotalSeconds": 17.12586927
+          },
+          {
+            "Index": 98,
+            "Iterations": 11,
+            "SolveSeconds": 15.63066299,
+            "TotalSeconds": 15.9667353
+          },
+          {
+            "Index": 99,
+            "Iterations": 12,
+            "SolveSeconds": 16.87129398,
+            "TotalSeconds": 17.21532323
+          },
+          {
+            "Index": 100,
+            "Iterations": 12,
+            "SolveSeconds": 16.79724262,
+            "TotalSeconds": 17.13933916
+          },
+          {
+            "Index": 101,
+            "Iterations": 14,
+            "SolveSeconds": 19.26736215,
+            "TotalSeconds": 19.60174915
+          },
+          {
+            "Index": 102,
+            "Iterations": 20,
+            "SolveSeconds": 26.51802061,
+            "TotalSeconds": 26.86187802
+          },
+          {
+            "Index": 103,
+            "Iterations": 20,
+            "SolveSeconds": 26.4564213,
+            "TotalSeconds": 26.83253438
+          },
+          {
+            "Index": 104,
+            "Iterations": 19,
+            "SolveSeconds": 25.24758605,
+            "TotalSeconds": 25.57701659
+          },
+          {
+            "Index": 105,
+            "Iterations": 21,
+            "SolveSeconds": 27.63877877,
+            "TotalSeconds": 27.9669612
+          },
+          {
+            "Index": 106,
+            "Iterations": 20,
+            "SolveSeconds": 26.53193975,
+            "TotalSeconds": 26.86624545
+          },
+          {
+            "Index": 107,
+            "Iterations": 19,
+            "SolveSeconds": 25.21806725,
+            "TotalSeconds": 25.54503959
+          },
+          {
+            "Index": 108,
+            "Iterations": 20,
+            "SolveSeconds": 26.53735821,
+            "TotalSeconds": 26.87300068
+          },
+          {
+            "Index": 109,
+            "Iterations": 17,
+            "SolveSeconds": 22.93146411,
+            "TotalSeconds": 23.26041175
+          },
+          {
+            "Index": 110,
+            "Iterations": 20,
+            "SolveSeconds": 26.41528834,
+            "TotalSeconds": 26.7513502
+          },
+          {
+            "Index": 111,
+            "Iterations": 20,
+            "SolveSeconds": 26.50067393,
+            "TotalSeconds": 26.83186085
+          },
+          {
+            "Index": 112,
+            "Iterations": 18,
+            "SolveSeconds": 24.07078007,
+            "TotalSeconds": 24.39728923
+          },
+          {
+            "Index": 113,
+            "Iterations": 18,
+            "SolveSeconds": 24.10195158,
+            "TotalSeconds": 24.44264911
+          },
+          {
+            "Index": 114,
+            "Iterations": 18,
+            "SolveSeconds": 24.07644577,
+            "TotalSeconds": 24.40092617
+          },
+          {
+            "Index": 115,
+            "Iterations": 18,
+            "SolveSeconds": 24.0792102,
+            "TotalSeconds": 24.40614507
+          },
+          {
+            "Index": 116,
+            "Iterations": 20,
+            "SolveSeconds": 26.48183615,
+            "TotalSeconds": 26.82374268
+          },
+          {
+            "Index": 117,
+            "Iterations": 20,
+            "SolveSeconds": 26.86530373,
+            "TotalSeconds": 27.19715902
+          },
+          {
+            "Index": 118,
+            "Iterations": 20,
+            "SolveSeconds": 26.54113925,
+            "TotalSeconds": 26.86736505
+          },
+          {
+            "Index": 119,
+            "Iterations": 20,
+            "SolveSeconds": 26.44256272,
+            "TotalSeconds": 26.76928481
+          },
+          {
+            "Index": 120,
+            "Iterations": 20,
+            "SolveSeconds": 26.58233497,
+            "TotalSeconds": 26.94275935
+          },
+          {
+            "Index": 121,
+            "Iterations": 20,
+            "SolveSeconds": 26.50292181,
+            "TotalSeconds": 26.83104658
+          },
+          {
+            "Index": 122,
+            "Iterations": 18,
+            "SolveSeconds": 24.02959679,
+            "TotalSeconds": 24.35771105
+          },
+          {
+            "Index": 123,
+            "Iterations": 20,
+            "SolveSeconds": 26.52556021,
+            "TotalSeconds": 26.86873923
+          },
+          {
+            "Index": 124,
+            "Iterations": 20,
+            "SolveSeconds": 26.40889712,
+            "TotalSeconds": 26.73853281
+          },
+          {
+            "Index": 125,
+            "Iterations": 20,
+            "SolveSeconds": 26.5243057,
+            "TotalSeconds": 26.86643028
+          },
+          {
+            "Index": 126,
+            "Iterations": 20,
+            "SolveSeconds": 26.3535812,
+            "TotalSeconds": 26.68088193
+          },
+          {
+            "Index": 127,
+            "Iterations": 20,
+            "SolveSeconds": 26.43658288,
+            "TotalSeconds": 26.79263545
+          },
+          {
+            "Index": 128,
+            "Iterations": 19,
+            "SolveSeconds": 25.15135542,
+            "TotalSeconds": 25.47688867
+          },
+          {
+            "Index": 129,
+            "Iterations": 20,
+            "SolveSeconds": 26.39451525,
+            "TotalSeconds": 26.72109903
+          },
+          {
+            "Index": 130,
+            "Iterations": 20,
+            "SolveSeconds": 26.34537088,
+            "TotalSeconds": 26.67117007
+          },
+          {
+            "Index": 131,
+            "Iterations": 21,
+            "SolveSeconds": 27.68158582,
+            "TotalSeconds": 28.00566571
+          },
+          {
+            "Index": 132,
+            "Iterations": 20,
+            "SolveSeconds": 26.46601102,
+            "TotalSeconds": 26.78978159
+          },
+          {
+            "Index": 133,
+            "Iterations": 17,
+            "SolveSeconds": 22.87803613,
+            "TotalSeconds": 23.21016652
+          },
+          {
+            "Index": 134,
+            "Iterations": 20,
+            "SolveSeconds": 26.46421417,
+            "TotalSeconds": 26.80347202
+          },
+          {
+            "Index": 135,
+            "Iterations": 21,
+            "SolveSeconds": 27.655509,
+            "TotalSeconds": 27.99187242
+          },
+          {
+            "Index": 136,
+            "Iterations": 21,
+            "SolveSeconds": 27.74351676,
+            "TotalSeconds": 28.0771693
+          },
+          {
+            "Index": 137,
+            "Iterations": 21,
+            "SolveSeconds": 27.66355253,
+            "TotalSeconds": 27.99394103
+          },
+          {
+            "Index": 138,
+            "Iterations": 19,
+            "SolveSeconds": 25.29006583,
+            "TotalSeconds": 25.61605993
+          },
+          {
+            "Index": 139,
+            "Iterations": 19,
+            "SolveSeconds": 25.23028969,
+            "TotalSeconds": 25.55496906
+          },
+          {
+            "Index": 140,
+            "Iterations": 21,
+            "SolveSeconds": 27.60680052,
+            "TotalSeconds": 27.94727199
+          },
+          {
+            "Index": 141,
+            "Iterations": 20,
+            "SolveSeconds": 26.47678163,
+            "TotalSeconds": 26.83169945
+          },
+          {
+            "Index": 142,
+            "Iterations": 19,
+            "SolveSeconds": 25.22371459,
+            "TotalSeconds": 25.56254765
+          },
+          {
+            "Index": 143,
+            "Iterations": 19,
+            "SolveSeconds": 25.29997249,
+            "TotalSeconds": 25.6416795
+          },
+          {
+            "Index": 144,
+            "Iterations": 20,
+            "SolveSeconds": 26.4252108,
+            "TotalSeconds": 26.75749247
+          },
+          {
+            "Index": 145,
+            "Iterations": 20,
+            "SolveSeconds": 26.49555526,
+            "TotalSeconds": 26.85170709
+          },
+          {
+            "Index": 146,
+            "Iterations": 15,
+            "SolveSeconds": 20.41787377,
+            "TotalSeconds": 20.77772345
+          },
+          {
+            "Index": 147,
+            "Iterations": 15,
+            "SolveSeconds": 20.39750161,
+            "TotalSeconds": 20.73705945
+          },
+          {
+            "Index": 148,
+            "Iterations": 15,
+            "SolveSeconds": 20.48780474,
+            "TotalSeconds": 20.8219139
+          },
+          {
+            "Index": 149,
+            "Iterations": 16,
+            "SolveSeconds": 21.62200174,
+            "TotalSeconds": 21.95335184
+          },
+          {
+            "Index": 150,
+            "Iterations": 15,
+            "SolveSeconds": 20.39528863,
+            "TotalSeconds": 20.72489798
+          },
+          {
+            "Index": 151,
+            "Iterations": 15,
+            "SolveSeconds": 20.50648358,
+            "TotalSeconds": 20.83967818
+          },
+          {
+            "Index": 152,
+            "Iterations": 16,
+            "SolveSeconds": 21.6030909,
+            "TotalSeconds": 21.93353387
+          },
+          {
+            "Index": 153,
+            "Iterations": 14,
+            "SolveSeconds": 19.16027875,
+            "TotalSeconds": 19.50135757
+          },
+          {
+            "Index": 154,
+            "Iterations": 16,
+            "SolveSeconds": 21.63734514,
+            "TotalSeconds": 21.96549853
+          },
+          {
+            "Index": 155,
+            "Iterations": 16,
+            "SolveSeconds": 21.71699887,
+            "TotalSeconds": 22.08801954
+          },
+          {
+            "Index": 156,
+            "Iterations": 14,
+            "SolveSeconds": 19.18360472,
+            "TotalSeconds": 19.52693494
+          },
+          {
+            "Index": 157,
+            "Iterations": 15,
+            "SolveSeconds": 20.53455602,
+            "TotalSeconds": 20.8909713
+          },
+          {
+            "Index": 158,
+            "Iterations": 15,
+            "SolveSeconds": 20.37057048,
+            "TotalSeconds": 20.72546376
+          },
+          {
+            "Index": 159,
+            "Iterations": 15,
+            "SolveSeconds": 20.39033431,
+            "TotalSeconds": 20.7251444
+          },
+          {
+            "Index": 160,
+            "Iterations": 16,
+            "SolveSeconds": 21.69254265,
+            "TotalSeconds": 22.03425777
+          },
+          {
+            "Index": 161,
+            "Iterations": 16,
+            "SolveSeconds": 21.62371902,
+            "TotalSeconds": 21.95603785
+          },
+          {
+            "Index": 162,
+            "Iterations": 16,
+            "SolveSeconds": 21.65100919,
+            "TotalSeconds": 21.98807009
+          },
+          {
+            "Index": 163,
+            "Iterations": 16,
+            "SolveSeconds": 21.69261627,
+            "TotalSeconds": 22.05827188
+          },
+          {
+            "Index": 164,
+            "Iterations": 15,
+            "SolveSeconds": 20.38272016,
+            "TotalSeconds": 20.73656106
+          },
+          {
+            "Index": 165,
+            "Iterations": 16,
+            "SolveSeconds": 21.6457579,
+            "TotalSeconds": 21.97067154
+          },
+          {
+            "Index": 166,
+            "Iterations": 14,
+            "SolveSeconds": 19.22937165,
+            "TotalSeconds": 19.56182547
+          },
+          {
+            "Index": 167,
+            "Iterations": 15,
+            "SolveSeconds": 20.44147686,
+            "TotalSeconds": 20.7774389
+          },
+          {
+            "Index": 168,
+            "Iterations": 15,
+            "SolveSeconds": 20.44723558,
+            "TotalSeconds": 20.78040921
+          },
+          {
+            "Index": 169,
+            "Iterations": 16,
+            "SolveSeconds": 21.62114471,
+            "TotalSeconds": 21.9486115
+          },
+          {
+            "Index": 170,
+            "Iterations": 16,
+            "SolveSeconds": 21.63099097,
+            "TotalSeconds": 21.95716019
+          },
+          {
+            "Index": 171,
+            "Iterations": 16,
+            "SolveSeconds": 21.67102181,
+            "TotalSeconds": 22.0089261
+          },
+          {
+            "Index": 172,
+            "Iterations": 15,
+            "SolveSeconds": 20.42791594,
+            "TotalSeconds": 20.76757224
+          },
+          {
+            "Index": 173,
+            "Iterations": 16,
+            "SolveSeconds": 21.60513715,
+            "TotalSeconds": 21.95274857
+          },
+          {
+            "Index": 174,
+            "Iterations": 16,
+            "SolveSeconds": 21.67396696,
+            "TotalSeconds": 22.01263726
+          },
+          {
+            "Index": 175,
+            "Iterations": 16,
+            "SolveSeconds": 21.61474861,
+            "TotalSeconds": 21.96936612
+          },
+          {
+            "Index": 176,
+            "Iterations": 16,
+            "SolveSeconds": 21.59393055,
+            "TotalSeconds": 21.92175927
+          },
+          {
+            "Index": 177,
+            "Iterations": 14,
+            "SolveSeconds": 19.21907471,
+            "TotalSeconds": 19.54636981
+          },
+          {
+            "Index": 178,
+            "Iterations": 16,
+            "SolveSeconds": 21.62105397,
+            "TotalSeconds": 21.96090649
+          },
+          {
+            "Index": 179,
+            "Iterations": 16,
+            "SolveSeconds": 21.68091749,
+            "TotalSeconds": 22.00868293
+          },
+          {
+            "Index": 180,
+            "Iterations": 16,
+            "SolveSeconds": 21.72416621,
+            "TotalSeconds": 22.06708902
+          },
+          {
+            "Index": 181,
+            "Iterations": 16,
+            "SolveSeconds": 21.60809801,
+            "TotalSeconds": 21.93466366
+          },
+          {
+            "Index": 182,
+            "Iterations": 16,
+            "SolveSeconds": 21.65711493,
+            "TotalSeconds": 21.99353255
+          },
+          {
+            "Index": 183,
+            "Iterations": 15,
+            "SolveSeconds": 20.45516244,
+            "TotalSeconds": 20.79322063
+          },
+          {
+            "Index": 184,
+            "Iterations": 16,
+            "SolveSeconds": 21.63952894,
+            "TotalSeconds": 21.9712052
+          },
+          {
+            "Index": 185,
+            "Iterations": 16,
+            "SolveSeconds": 21.67167566,
+            "TotalSeconds": 22.00259894
+          },
+          {
+            "Index": 186,
+            "Iterations": 16,
+            "SolveSeconds": 21.61540215,
+            "TotalSeconds": 21.95362199
+          },
+          {
+            "Index": 187,
+            "Iterations": 15,
+            "SolveSeconds": 20.43395428,
+            "TotalSeconds": 20.77698332
+          },
+          {
+            "Index": 188,
+            "Iterations": 16,
+            "SolveSeconds": 21.6692691,
+            "TotalSeconds": 22.00256926
+          },
+          {
+            "Index": 189,
+            "Iterations": 16,
+            "SolveSeconds": 21.62730762,
+            "TotalSeconds": 21.97316974
+          },
+          {
+            "Index": 190,
+            "Iterations": 28,
+            "SolveSeconds": 36.23289422,
+            "TotalSeconds": 36.62260392
+          }
+        ],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "137.4G",
+          "Max": "137.4G",
+          "Avg": "137.4G",
+          "Total": "137.4G"
+        },
+        "PalaceTotalSeconds": 4354.145,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   3.114      31.155      31.000\n  Mesh Preprocessing            18.789      46.825      18.939\nOperator Construction           46.435      47.437      47.349\n  Surface Post Setup             0.731       0.912       0.777\nLinear Solve                   168.888     303.495     206.037\n  Setup                         10.543      10.707      10.675\n  Preconditioner              3835.839    4016.615    3967.670\n  Coarse Solve                   8.108      63.169      21.224\nPostprocessing                  19.456      19.477      19.464\nDisk IO                         28.676      28.731      28.694\n--------------------------------------------------------------\nTotal                         4354.129    4354.145    4354.138",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  351.0M      351.0M      351.0M\n  Mesh Preprocessing              3.3G        3.3G        3.6G\nOperator Construction            46.6G       46.6G       50.2G\n  Surface Post Setup              3.4G        3.4G       53.5G\nLinear Solve                      0.0K        0.0K       53.5G\n  Setup                          60.9G       60.9G      114.5G\n  Preconditioner                150.1M      150.1M      114.6G\n  Coarse Solve                    4.6G        4.6G      119.2G\nPostprocessing                    4.7G        4.7G      124.0G\nDisk IO                           1.7G        1.7G      125.7G\n--------------------------------------------------------------\nTotal                           135.2G      135.2G      135.2G"
+      },
+      "EndUTC": "2026-10-05T04:40:30Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-18-edge-836268084cff-thin-p4-reducer",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/reducer.json",
+      "Environment": {
+        "PALACE_RESPONSE_ARCHIVE_DIR": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/archive",
+        "PALACE_RESPONSE_REDUCE_ONLY": "1",
+        "PALACE_RESPONSE_BLOCK_SIZE": "48"
+      },
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "600",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-reducer.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-x",
+        "PALACE_RESPONSE_ARCHIVE_DIR",
+        "-x",
+        "PALACE_RESPONSE_REDUCE_ONLY",
+        "-x",
+        "PALACE_RESPONSE_BLOCK_SIZE",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/reducer.json"
+      ],
+      "CapSeconds": 600,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-reducer.log",
+      "StartUTC": "2026-10-05T04:40:30Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 170.54746695999984,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 2607693824,
+      "NodePeakUsedBytesSampled": 239646896128,
+      "Parsed": {
+        "Elements": 3617066,
+        "Iterations": [],
+        "PCG": [],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [
+          [
+            1,
+            190
+          ],
+          [
+            2,
+            190
+          ],
+          [
+            3,
+            190
+          ],
+          [
+            4,
+            190
+          ],
+          [
+            5,
+            190
+          ],
+          [
+            6,
+            190
+          ],
+          [
+            7,
+            190
+          ],
+          [
+            8,
+            190
+          ],
+          [
+            9,
+            190
+          ],
+          [
+            10,
+            190
+          ],
+          [
+            11,
+            190
+          ],
+          [
+            12,
+            190
+          ],
+          [
+            13,
+            190
+          ],
+          [
+            14,
+            190
+          ],
+          [
+            15,
+            190
+          ],
+          [
+            16,
+            190
+          ],
+          [
+            17,
+            190
+          ],
+          [
+            18,
+            190
+          ],
+          [
+            19,
+            190
+          ],
+          [
+            20,
+            190
+          ],
+          [
+            21,
+            190
+          ],
+          [
+            22,
+            190
+          ],
+          [
+            23,
+            190
+          ],
+          [
+            24,
+            190
+          ],
+          [
+            25,
+            190
+          ],
+          [
+            26,
+            190
+          ],
+          [
+            27,
+            190
+          ],
+          [
+            28,
+            190
+          ],
+          [
+            29,
+            190
+          ],
+          [
+            30,
+            190
+          ],
+          [
+            31,
+            190
+          ],
+          [
+            32,
+            190
+          ],
+          [
+            33,
+            190
+          ],
+          [
+            34,
+            190
+          ],
+          [
+            35,
+            190
+          ],
+          [
+            36,
+            190
+          ],
+          [
+            37,
+            190
+          ],
+          [
+            38,
+            190
+          ],
+          [
+            39,
+            190
+          ],
+          [
+            40,
+            190
+          ],
+          [
+            41,
+            190
+          ],
+          [
+            42,
+            190
+          ],
+          [
+            43,
+            190
+          ],
+          [
+            44,
+            190
+          ],
+          [
+            45,
+            190
+          ],
+          [
+            46,
+            190
+          ],
+          [
+            47,
+            190
+          ],
+          [
+            48,
+            190
+          ],
+          [
+            49,
+            190
+          ],
+          [
+            50,
+            190
+          ],
+          [
+            51,
+            190
+          ],
+          [
+            52,
+            190
+          ],
+          [
+            53,
+            190
+          ],
+          [
+            54,
+            190
+          ],
+          [
+            55,
+            190
+          ],
+          [
+            56,
+            190
+          ],
+          [
+            57,
+            190
+          ],
+          [
+            58,
+            190
+          ],
+          [
+            59,
+            190
+          ],
+          [
+            60,
+            190
+          ],
+          [
+            61,
+            190
+          ],
+          [
+            62,
+            190
+          ],
+          [
+            63,
+            190
+          ],
+          [
+            64,
+            190
+          ],
+          [
+            65,
+            190
+          ],
+          [
+            66,
+            190
+          ],
+          [
+            67,
+            190
+          ],
+          [
+            68,
+            190
+          ],
+          [
+            69,
+            190
+          ],
+          [
+            70,
+            190
+          ],
+          [
+            71,
+            190
+          ],
+          [
+            72,
+            190
+          ],
+          [
+            73,
+            190
+          ],
+          [
+            74,
+            190
+          ],
+          [
+            75,
+            190
+          ],
+          [
+            76,
+            190
+          ],
+          [
+            77,
+            190
+          ],
+          [
+            78,
+            190
+          ],
+          [
+            79,
+            190
+          ],
+          [
+            80,
+            190
+          ],
+          [
+            81,
+            190
+          ],
+          [
+            82,
+            190
+          ],
+          [
+            83,
+            190
+          ],
+          [
+            84,
+            190
+          ],
+          [
+            85,
+            190
+          ],
+          [
+            86,
+            190
+          ],
+          [
+            87,
+            190
+          ],
+          [
+            88,
+            190
+          ],
+          [
+            89,
+            190
+          ],
+          [
+            90,
+            190
+          ],
+          [
+            91,
+            190
+          ],
+          [
+            92,
+            190
+          ],
+          [
+            93,
+            190
+          ],
+          [
+            94,
+            190
+          ],
+          [
+            95,
+            190
+          ],
+          [
+            96,
+            190
+          ],
+          [
+            97,
+            190
+          ],
+          [
+            98,
+            190
+          ],
+          [
+            99,
+            190
+          ],
+          [
+            100,
+            190
+          ],
+          [
+            101,
+            190
+          ],
+          [
+            102,
+            190
+          ],
+          [
+            103,
+            190
+          ],
+          [
+            104,
+            190
+          ],
+          [
+            105,
+            190
+          ],
+          [
+            106,
+            190
+          ],
+          [
+            107,
+            190
+          ],
+          [
+            108,
+            190
+          ],
+          [
+            109,
+            190
+          ],
+          [
+            110,
+            190
+          ],
+          [
+            111,
+            190
+          ],
+          [
+            112,
+            190
+          ],
+          [
+            113,
+            190
+          ],
+          [
+            114,
+            190
+          ],
+          [
+            115,
+            190
+          ],
+          [
+            116,
+            190
+          ],
+          [
+            117,
+            190
+          ],
+          [
+            118,
+            190
+          ],
+          [
+            119,
+            190
+          ],
+          [
+            120,
+            190
+          ],
+          [
+            121,
+            190
+          ],
+          [
+            122,
+            190
+          ],
+          [
+            123,
+            190
+          ],
+          [
+            124,
+            190
+          ],
+          [
+            125,
+            190
+          ],
+          [
+            126,
+            190
+          ],
+          [
+            127,
+            190
+          ],
+          [
+            128,
+            190
+          ],
+          [
+            129,
+            190
+          ],
+          [
+            130,
+            190
+          ],
+          [
+            131,
+            190
+          ],
+          [
+            132,
+            190
+          ],
+          [
+            133,
+            190
+          ],
+          [
+            134,
+            190
+          ],
+          [
+            135,
+            190
+          ],
+          [
+            136,
+            190
+          ],
+          [
+            137,
+            190
+          ],
+          [
+            138,
+            190
+          ],
+          [
+            139,
+            190
+          ],
+          [
+            140,
+            190
+          ],
+          [
+            141,
+            190
+          ],
+          [
+            142,
+            190
+          ],
+          [
+            143,
+            190
+          ],
+          [
+            144,
+            190
+          ],
+          [
+            145,
+            190
+          ],
+          [
+            146,
+            190
+          ],
+          [
+            147,
+            190
+          ],
+          [
+            148,
+            190
+          ],
+          [
+            149,
+            190
+          ],
+          [
+            150,
+            190
+          ],
+          [
+            151,
+            190
+          ],
+          [
+            152,
+            190
+          ],
+          [
+            153,
+            190
+          ],
+          [
+            154,
+            190
+          ],
+          [
+            155,
+            190
+          ],
+          [
+            156,
+            190
+          ],
+          [
+            157,
+            190
+          ],
+          [
+            158,
+            190
+          ],
+          [
+            159,
+            190
+          ],
+          [
+            160,
+            190
+          ],
+          [
+            161,
+            190
+          ],
+          [
+            162,
+            190
+          ],
+          [
+            163,
+            190
+          ],
+          [
+            164,
+            190
+          ],
+          [
+            165,
+            190
+          ],
+          [
+            166,
+            190
+          ],
+          [
+            167,
+            190
+          ],
+          [
+            168,
+            190
+          ],
+          [
+            169,
+            190
+          ],
+          [
+            170,
+            190
+          ],
+          [
+            171,
+            190
+          ],
+          [
+            172,
+            190
+          ],
+          [
+            173,
+            190
+          ],
+          [
+            174,
+            190
+          ],
+          [
+            175,
+            190
+          ],
+          [
+            176,
+            190
+          ],
+          [
+            177,
+            190
+          ],
+          [
+            178,
+            190
+          ],
+          [
+            179,
+            190
+          ],
+          [
+            180,
+            190
+          ],
+          [
+            181,
+            190
+          ],
+          [
+            182,
+            190
+          ],
+          [
+            183,
+            190
+          ],
+          [
+            184,
+            190
+          ],
+          [
+            185,
+            190
+          ],
+          [
+            186,
+            190
+          ],
+          [
+            187,
+            190
+          ],
+          [
+            188,
+            190
+          ],
+          [
+            189,
+            190
+          ],
+          [
+            190,
+            190
+          ]
+        ],
+        "ReductionSamples": {
+          "Sources": 190,
+          "Interfaces": 3,
+          "PerRankMin": 0,
+          "PerRankMax": 72491,
+          "Total": 4767945
+        },
+        "PalacePeakMemory": {
+          "Min": "176.2G",
+          "Max": "176.2G",
+          "Avg": "176.2G",
+          "Total": "176.2G"
+        },
+        "PalaceTotalSeconds": 168.393,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   3.064      31.072      30.914\n  Mesh Preprocessing            18.862      46.862      19.012\nOperator Construction            1.507       1.879       1.752\n  Surface Post Setup             0.763       0.831       0.819\n  Archive Reduction              0.666       1.428       1.212\n    Archive Read                 5.021      65.112      32.014\n    Sample Evaluation            2.789      62.490      34.663\n    Gram Assembly                8.049       8.300       8.130\n    Domain Gram                  8.010      12.692       9.254\nDisk IO                         28.424      28.460      28.437\n--------------------------------------------------------------\nTotal                          168.378     168.393     168.385",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  406.3M      406.3M      406.3M\n  Mesh Preprocessing              3.2G        3.2G        3.6G\nOperator Construction            31.4G       31.4G       35.1G\n  Surface Post Setup             15.5G       15.5G       50.6G\n  Archive Reduction              20.3G       20.3G       70.9G\n    Archive Read                 75.5G       75.5G      146.4G\n    Sample Evaluation           918.0M      918.0M      147.3G\n    Gram Assembly               258.0M      258.0M      147.5G\n    Domain Gram                  15.3G       15.3G      162.8G\nDisk IO                           1.7G        1.7G      164.5G\n--------------------------------------------------------------\nTotal                           174.0G      174.0G      174.0G"
+      },
+      "EndUTC": "2026-10-05T04:43:21Z",
+      "State": "complete"
+    },
+    {
+      "Name": "spatial-18-edge-836268084cff-thin-p4-local-edge",
+      "Config": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-local-edge/config.json",
+      "Environment": {},
+      "Command": [
+        "timeout",
+        "-k",
+        "30",
+        "1800",
+        "/usr/bin/time",
+        "-v",
+        "-o",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-local-edge.time",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/mpiexec_bound.sh",
+        "-n",
+        "192",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+        "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-local-edge/config.json"
+      ],
+      "CapSeconds": 1800,
+      "Log": "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-local-edge.log",
+      "StartUTC": "2026-10-05T04:43:21Z",
+      "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+      "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+      "ReturnCode": 0,
+      "WallSeconds": 747.0685496040005,
+      "TimedOut": false,
+      "MaxSingleProcessRSSBytes": 2626334720,
+      "NodePeakUsedBytesSampled": 394426220544,
+      "Parsed": {
+        "Order": 4,
+        "H1": 44673217,
+        "ND": 164680100,
+        "RT": 197232300,
+        "Elements": 3617066,
+        "Iterations": [
+          {
+            "Step": 1,
+            "Of": 8,
+            "Index": 1,
+            "ElapsedAtStart": 2.19e-07
+          },
+          {
+            "Step": 2,
+            "Of": 8,
+            "Index": 2,
+            "ElapsedAtStart": 37.3
+          },
+          {
+            "Step": 3,
+            "Of": 8,
+            "Index": 3,
+            "ElapsedAtStart": 79.3
+          },
+          {
+            "Step": 4,
+            "Of": 8,
+            "Index": 4,
+            "ElapsedAtStart": 119.0
+          },
+          {
+            "Step": 5,
+            "Of": 8,
+            "Index": 17,
+            "ElapsedAtStart": 159.0
+          },
+          {
+            "Step": 6,
+            "Of": 8,
+            "Index": 30,
+            "ElapsedAtStart": 200.0
+          },
+          {
+            "Step": 7,
+            "Of": 8,
+            "Index": 31,
+            "ElapsedAtStart": 232.0
+          },
+          {
+            "Step": 8,
+            "Of": 8,
+            "Index": 66,
+            "ElapsedAtStart": 276.0
+          }
+        ],
+        "PCG": [
+          15,
+          20,
+          17,
+          16,
+          18,
+          12,
+          21,
+          15
+        ],
+        "Nonconvergence": [],
+        "SourceTiming": [],
+        "PairsProgress": [
+          [
+            1,
+            36
+          ],
+          [
+            2,
+            36
+          ],
+          [
+            3,
+            36
+          ],
+          [
+            4,
+            36
+          ],
+          [
+            5,
+            36
+          ],
+          [
+            6,
+            36
+          ],
+          [
+            7,
+            36
+          ],
+          [
+            8,
+            36
+          ],
+          [
+            9,
+            36
+          ],
+          [
+            10,
+            36
+          ],
+          [
+            11,
+            36
+          ],
+          [
+            12,
+            36
+          ],
+          [
+            13,
+            36
+          ],
+          [
+            14,
+            36
+          ],
+          [
+            15,
+            36
+          ],
+          [
+            16,
+            36
+          ],
+          [
+            17,
+            36
+          ],
+          [
+            18,
+            36
+          ],
+          [
+            19,
+            36
+          ],
+          [
+            20,
+            36
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            22,
+            36
+          ],
+          [
+            23,
+            36
+          ],
+          [
+            24,
+            36
+          ],
+          [
+            25,
+            36
+          ],
+          [
+            26,
+            36
+          ],
+          [
+            27,
+            36
+          ],
+          [
+            28,
+            36
+          ],
+          [
+            29,
+            36
+          ],
+          [
+            30,
+            36
+          ],
+          [
+            31,
+            36
+          ],
+          [
+            32,
+            36
+          ],
+          [
+            33,
+            36
+          ],
+          [
+            34,
+            36
+          ],
+          [
+            35,
+            36
+          ],
+          [
+            36,
+            36
+          ]
+        ],
+        "BlockPairsProgress": [],
+        "StreamedSourcesProgress": [],
+        "PalacePeakMemory": {
+          "Min": "335.0G",
+          "Max": "335.0G",
+          "Avg": "335.0G",
+          "Total": "335.0G"
+        },
+        "PalaceTotalSeconds": 744.632,
+        "ElapsedTimeReport": "Elapsed Time Report (s)           Min.        Max.        Avg.\n==============================================================\nInitialization                   3.058      32.423      32.258\n  Mesh Preprocessing            18.874      48.230      19.030\nOperator Construction            4.411       6.241       5.500\n  Surface Post Setup             0.736       0.920       0.780\nLinear Solve                     7.752      13.333       9.333\n  Setup                         10.552      10.716      10.689\n  Preconditioner               167.714     175.299     173.165\n  Coarse Solve                   0.462       2.762       1.035\nEstimation                       0.679       1.091       0.957\n  Construction                 329.302     330.057     329.950\n  Solve                         10.608      16.016      15.979\nPostprocessing                 115.055     120.488     115.109\nDisk IO                         28.438      28.486      28.452\n--------------------------------------------------------------\nTotal                          744.450     744.632     744.561",
+        "PeakMemoryReport": "Peak Memory                   Per-Node       Total   Total HWM\n==============================================================\nInitialization                  417.0M      417.0M      417.0M\n  Mesh Preprocessing              3.1G        3.1G        3.5G\nOperator Construction            47.8G       47.8G       51.3G\n  Surface Post Setup              3.4G        3.4G       54.7G\nLinear Solve                      0.0K        0.0K       54.7G\n  Setup                          60.9G       60.9G      115.7G\n  Preconditioner                 10.5M       10.5M      115.7G\n  Coarse Solve                    9.0M        9.0M      115.7G\nEstimation                       22.1G       22.1G      137.8G\n  Construction                  111.8G      111.8G      249.5G\n  Solve                          31.5G       31.5G      281.0G\nPostprocessing                   40.3G       40.3G      321.3G\nDisk IO                           1.9G        1.9G      323.2G\n--------------------------------------------------------------\nTotal                           332.7G      332.7G      332.7G"
+      },
+      "EndUTC": "2026-10-05T04:55:48Z",
+      "State": "complete"
+    }
+  ],
+  "Preflight": {
+    "MemTotalBytes": 797242064896,
+    "MemAvailableBytes": 746165047296,
+    "MinimumMemAvailableBytes": 494780232499,
+    "Instance": {
+      "Type": "m8g.48xlarge",
+      "vCPUs": 192,
+      "MemoryGiB": 768,
+      "NodeGiB": 742.49,
+      "EstimatedPalacePeakGB": 456.0714465265126,
+      "EstimatedPalacePeakGiB": 424.76617912500006,
+      "MemoryFitFraction": 0.6,
+      "Fits": true,
+      "MinimumMemAvailableBytes": 494780232499,
+      "Candidates": [
+        "m8g.48xlarge",
+        "r8g.48xlarge"
+      ],
+      "Rule": "a job runs on the first instance of Instances whose MemoryFitFraction x MemoryGiB holds the job's largest estimated Palace peak (the stage estimates' GB / the cost model's PalaceGBPerGiB): m8g.48xlarge (768 GiB, 192 Graviton4 vCPUs) is the default, r8g.48xlarge (1,536 GiB) the fallback for an estimated peak above 0.6 x 768 = 460.8 GiB (the device library's largest estimate is 338 GB, 7f03's p5 control; measured node peaks <= ~240 GiB; the streaming reducer ~34 GB); c8g.48xlarge (384 GiB) is deliberately absent - not safe for the p5 control stages of the largest coupons (USER decision 2026-09-22). The plan records the chosen instance (Instance) and its admission guard MinimumMemAvailableBytes = MemoryFitFraction x MemoryGiB, checked by run_stages before the first stage; the job script's #PBS -l instance_type is the chosen type"
+    },
+    "Binary": "/data/home/simlap/coupon_accuracy_assessment_20260913/palace-archive-estimate-8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333.bin",
+    "BinarySHA256": "8357b113c16646dd80b8262757a010b2b7671df62875289113a0d2963e3bc333",
+    "Pinned": {
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/mesh/identity-2220124491ed.msh": {
+        "Expected": "2220124491edfba4d39f998c500d684b082ec3a967a997b3d1a75ab049044dfe",
+        "Actual": "2220124491edfba4d39f998c500d684b082ec3a967a997b3d1a75ab049044dfe",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/worker.json": {
+        "Expected": "e110d570ded7875262a7595985ab59be5d7385d0c7c0ad927b80434403a8b819",
+        "Actual": "e110d570ded7875262a7595985ab59be5d7385d0c7c0ad927b80434403a8b819",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4/reducer.json": {
+        "Expected": "6b68a162df16dc34ec0d72a860de34bf22283801daa5625584e34548aedcd6a1",
+        "Actual": "6b68a162df16dc34ec0d72a860de34bf22283801daa5625584e34548aedcd6a1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/main/spatial-18-edge-836268084cff-thin-p4-local-edge/config.json": {
+        "Expected": "1b3bf46cc67a2008f2d8104b6ab1b50f0e0a045d0db071193e4dd21daecf8357",
+        "Actual": "1b3bf46cc67a2008f2d8104b6ab1b50f0e0a045d0db071193e4dd21daecf8357",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0001.csv": {
+        "Expected": "69b99ba13d1a3a71378edbcb97d3b92cba5b05b174816ee343fe877e17842c32",
+        "Actual": "69b99ba13d1a3a71378edbcb97d3b92cba5b05b174816ee343fe877e17842c32",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0002.csv": {
+        "Expected": "c38d84947bd49968c41e4216270c377f7bb5c4e900331984ae80191a1bda7dca",
+        "Actual": "c38d84947bd49968c41e4216270c377f7bb5c4e900331984ae80191a1bda7dca",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0003.csv": {
+        "Expected": "37b8fdbaf09f8dd2d7d7d5df668b4aaf8335c00559d2c7ef0a2fb9d25d657bfd",
+        "Actual": "37b8fdbaf09f8dd2d7d7d5df668b4aaf8335c00559d2c7ef0a2fb9d25d657bfd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0004.csv": {
+        "Expected": "ef09b107c387472691076ef32fc2cc84ade817f92098420b44a2743cf1b885f3",
+        "Actual": "ef09b107c387472691076ef32fc2cc84ade817f92098420b44a2743cf1b885f3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0005.csv": {
+        "Expected": "e639ca351f9c77cec39d53fd700c982cc65c053a268f971987fd41ef69500aca",
+        "Actual": "e639ca351f9c77cec39d53fd700c982cc65c053a268f971987fd41ef69500aca",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0006.csv": {
+        "Expected": "1518f9454d557ccbaf0490a192659d4f6193ce46a7faa0d0c402bc04bcb9c213",
+        "Actual": "1518f9454d557ccbaf0490a192659d4f6193ce46a7faa0d0c402bc04bcb9c213",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0007.csv": {
+        "Expected": "ab7a7ec5853b1a959c10be57bb6a4597d28bbad976bc5e9c9678d441e4d3969c",
+        "Actual": "ab7a7ec5853b1a959c10be57bb6a4597d28bbad976bc5e9c9678d441e4d3969c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0008.csv": {
+        "Expected": "8151eb7c6b7c161463a8e377e195d702c33ff7307a52aeb48337bb32b351f0a8",
+        "Actual": "8151eb7c6b7c161463a8e377e195d702c33ff7307a52aeb48337bb32b351f0a8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0009.csv": {
+        "Expected": "86a065ddea9750cc6bb7a3d64c0d566e354eb12df56e0445f40fb2f334db2f1e",
+        "Actual": "86a065ddea9750cc6bb7a3d64c0d566e354eb12df56e0445f40fb2f334db2f1e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0010.csv": {
+        "Expected": "bc18d8a5b1a5b1d1ae4f97a9faf6b32470803c9e3e65393000e1724c082cfd20",
+        "Actual": "bc18d8a5b1a5b1d1ae4f97a9faf6b32470803c9e3e65393000e1724c082cfd20",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0011.csv": {
+        "Expected": "1c98b8a6baaa2ecb44b664edf28e464b97117866dcd644d61331cc9fa749f975",
+        "Actual": "1c98b8a6baaa2ecb44b664edf28e464b97117866dcd644d61331cc9fa749f975",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0012.csv": {
+        "Expected": "7688e76cf130f5135e1038aa499883911d8af71c41885bf21d56aa09b0c43e0f",
+        "Actual": "7688e76cf130f5135e1038aa499883911d8af71c41885bf21d56aa09b0c43e0f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0013.csv": {
+        "Expected": "fef526a18e032cefa04c72ac5d77fef55867eccf89925ea30ca4ef36ad9f2df1",
+        "Actual": "fef526a18e032cefa04c72ac5d77fef55867eccf89925ea30ca4ef36ad9f2df1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0014.csv": {
+        "Expected": "37ee6d45369da5ddb95b76e74e6ff1896a64e01d1910d06a9a11abb3f41526aa",
+        "Actual": "37ee6d45369da5ddb95b76e74e6ff1896a64e01d1910d06a9a11abb3f41526aa",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0015.csv": {
+        "Expected": "195d7668966838965318131334bf1b216b1a75fc41a7c202af6d856462533fed",
+        "Actual": "195d7668966838965318131334bf1b216b1a75fc41a7c202af6d856462533fed",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0016.csv": {
+        "Expected": "536daf6983c324d0bf62b92479ae7bd626758467338351f0cdcc045d2f1d6f9a",
+        "Actual": "536daf6983c324d0bf62b92479ae7bd626758467338351f0cdcc045d2f1d6f9a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0017.csv": {
+        "Expected": "57e9b43ee9baf3c91a8a4486fa3cf448921ac82ddac68c386419c834e45e4a63",
+        "Actual": "57e9b43ee9baf3c91a8a4486fa3cf448921ac82ddac68c386419c834e45e4a63",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0018.csv": {
+        "Expected": "1abc24f08f75c6878919319549697f5c8ed5ed16a3034330aba1787b0a61127f",
+        "Actual": "1abc24f08f75c6878919319549697f5c8ed5ed16a3034330aba1787b0a61127f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0019.csv": {
+        "Expected": "0108ade4a77ba295ca78920e49cb13debb37d6905ebd2a0698ed9bce364e029f",
+        "Actual": "0108ade4a77ba295ca78920e49cb13debb37d6905ebd2a0698ed9bce364e029f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0020.csv": {
+        "Expected": "43949f9c3854bd0c50bab3519f107a9f3cdb8131289ae4d0f93e33a2f2ae9f02",
+        "Actual": "43949f9c3854bd0c50bab3519f107a9f3cdb8131289ae4d0f93e33a2f2ae9f02",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0021.csv": {
+        "Expected": "872aafc895a4bf128c09f03b510911b1dcf6c08dae034b3284d78a449b4dcc0e",
+        "Actual": "872aafc895a4bf128c09f03b510911b1dcf6c08dae034b3284d78a449b4dcc0e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0022.csv": {
+        "Expected": "388ba3164c44ff35563fcc3ca2d8d21fab9674f6fe03414f73e1411b04266cc5",
+        "Actual": "388ba3164c44ff35563fcc3ca2d8d21fab9674f6fe03414f73e1411b04266cc5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0023.csv": {
+        "Expected": "38324da12411abb424c54acc49da50ae110fb77d462a116a60d96bfe2ec6e16f",
+        "Actual": "38324da12411abb424c54acc49da50ae110fb77d462a116a60d96bfe2ec6e16f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0024.csv": {
+        "Expected": "b8075368532375695f8ceb928d7b6ac19476b6a9f7f53a68b0f76410b719942d",
+        "Actual": "b8075368532375695f8ceb928d7b6ac19476b6a9f7f53a68b0f76410b719942d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0025.csv": {
+        "Expected": "cbd2542bf40a2ccee0c621c940365e95a54a72ea9593fd29a58f57be90f12a7c",
+        "Actual": "cbd2542bf40a2ccee0c621c940365e95a54a72ea9593fd29a58f57be90f12a7c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0026.csv": {
+        "Expected": "5dfacec9ccf4a9ffb2685c238709a178501702d1d221e6ec655b146bfd9980b0",
+        "Actual": "5dfacec9ccf4a9ffb2685c238709a178501702d1d221e6ec655b146bfd9980b0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0027.csv": {
+        "Expected": "d5e4ddd9bf197dfadf5cde7c610ddce0676cbc5275c7736683f695f7b761a47f",
+        "Actual": "d5e4ddd9bf197dfadf5cde7c610ddce0676cbc5275c7736683f695f7b761a47f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0028.csv": {
+        "Expected": "864f392a662b0bddb93fcbf40a9fae44d5540a5393a82675ac1b270a93a956e6",
+        "Actual": "864f392a662b0bddb93fcbf40a9fae44d5540a5393a82675ac1b270a93a956e6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0029.csv": {
+        "Expected": "b53539a05050f3aae33bd800cc3b092b5cb9866b327f102d39c214247b1d2b61",
+        "Actual": "b53539a05050f3aae33bd800cc3b092b5cb9866b327f102d39c214247b1d2b61",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0030.csv": {
+        "Expected": "332e8e94969cbd07807a0511493231da78e5c0458b4c53b8624e78ad0bdd409a",
+        "Actual": "332e8e94969cbd07807a0511493231da78e5c0458b4c53b8624e78ad0bdd409a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0031.csv": {
+        "Expected": "3b27f32883cf51977d90540e3a1373fcedc37ce9f06ca99618b5771b9932489f",
+        "Actual": "3b27f32883cf51977d90540e3a1373fcedc37ce9f06ca99618b5771b9932489f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0032.csv": {
+        "Expected": "730d8e530bf5938afae16db5d6ae40bfefe40dd7fba154fb7e299e25a7808f0a",
+        "Actual": "730d8e530bf5938afae16db5d6ae40bfefe40dd7fba154fb7e299e25a7808f0a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0033.csv": {
+        "Expected": "34f5ce1ff7da6aa15bcf106d59f4db6f852f9446475b985dd15f7cc39159e9c1",
+        "Actual": "34f5ce1ff7da6aa15bcf106d59f4db6f852f9446475b985dd15f7cc39159e9c1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0034.csv": {
+        "Expected": "4766262fbe98dffc9663666d6264c88b2800cb040615c6ede76fe83b4a7e1bc5",
+        "Actual": "4766262fbe98dffc9663666d6264c88b2800cb040615c6ede76fe83b4a7e1bc5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0035.csv": {
+        "Expected": "fe419e31e3042f2fe2d25427421a33412f5ae72c152896600771e486f55e07c0",
+        "Actual": "fe419e31e3042f2fe2d25427421a33412f5ae72c152896600771e486f55e07c0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0036.csv": {
+        "Expected": "505421df4f95afb4955e3f6e1310f2898589e979817ef6c08ed49ad29dddc519",
+        "Actual": "505421df4f95afb4955e3f6e1310f2898589e979817ef6c08ed49ad29dddc519",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0037.csv": {
+        "Expected": "0865bdd9845af846c2dc5a703aa7bd5d80d95bb5b0bfbd2fc0b4d06b3e622f4e",
+        "Actual": "0865bdd9845af846c2dc5a703aa7bd5d80d95bb5b0bfbd2fc0b4d06b3e622f4e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0038.csv": {
+        "Expected": "abc2e8111110a2b35b793843e9d084ecf49c1721289445796cb6612c6637e60d",
+        "Actual": "abc2e8111110a2b35b793843e9d084ecf49c1721289445796cb6612c6637e60d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0039.csv": {
+        "Expected": "0ab7c9ead291aac8dc6bfd75370a2eb9a2ca9504d893e1ebbfd2970d2eff16d2",
+        "Actual": "0ab7c9ead291aac8dc6bfd75370a2eb9a2ca9504d893e1ebbfd2970d2eff16d2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0040.csv": {
+        "Expected": "b41d8c31331c2b63618735295f8a586ab26dd87f731c1cce4dd732feca661860",
+        "Actual": "b41d8c31331c2b63618735295f8a586ab26dd87f731c1cce4dd732feca661860",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0041.csv": {
+        "Expected": "78b70411b2d2f04c10c4b383b688d92f92f2b2128213e10c034637a079425a05",
+        "Actual": "78b70411b2d2f04c10c4b383b688d92f92f2b2128213e10c034637a079425a05",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0042.csv": {
+        "Expected": "fea353371f8bd288e3ae6243b07186e63c7058b086b34c5a36991db2d23f4b75",
+        "Actual": "fea353371f8bd288e3ae6243b07186e63c7058b086b34c5a36991db2d23f4b75",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0043.csv": {
+        "Expected": "8a5da38e6c808aa9426043e7ad6d85309a74fb91ce78a1dd427338e4eb3e6248",
+        "Actual": "8a5da38e6c808aa9426043e7ad6d85309a74fb91ce78a1dd427338e4eb3e6248",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0044.csv": {
+        "Expected": "62f35c2608cdd181c8f01650dec66e6fbaf463559a76d026526a7c7ec46a957d",
+        "Actual": "62f35c2608cdd181c8f01650dec66e6fbaf463559a76d026526a7c7ec46a957d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0045.csv": {
+        "Expected": "6b90ab64aeb80cfdff9c594cdf0e5aff0fd46c1a3de2a330f5f03ef7edc9d631",
+        "Actual": "6b90ab64aeb80cfdff9c594cdf0e5aff0fd46c1a3de2a330f5f03ef7edc9d631",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0046.csv": {
+        "Expected": "d957e7c24623ddc85bfc266ecb13fcaf4d35e369c78c5583814d5b83675cde9b",
+        "Actual": "d957e7c24623ddc85bfc266ecb13fcaf4d35e369c78c5583814d5b83675cde9b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0047.csv": {
+        "Expected": "b4c6dbde3b0b6637284bfd2171763e10997e52e032835271aef11d90c9427d99",
+        "Actual": "b4c6dbde3b0b6637284bfd2171763e10997e52e032835271aef11d90c9427d99",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0048.csv": {
+        "Expected": "bb4504fd506b0aa87670bea3074c309d3294c1edb813cc9f6c3216d99b76b0bf",
+        "Actual": "bb4504fd506b0aa87670bea3074c309d3294c1edb813cc9f6c3216d99b76b0bf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0049.csv": {
+        "Expected": "9448105cd9791666b9aa5af645c8c2b75e3cd9fc7608dda93ca1d6010b8fa43b",
+        "Actual": "9448105cd9791666b9aa5af645c8c2b75e3cd9fc7608dda93ca1d6010b8fa43b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0050.csv": {
+        "Expected": "239f90177bd0f1f3f8253cd8a420fff98fdc7fdebf601bdfc7929739edede70a",
+        "Actual": "239f90177bd0f1f3f8253cd8a420fff98fdc7fdebf601bdfc7929739edede70a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0051.csv": {
+        "Expected": "dec77fa7334514779dcdb5dfbeb847e2b4e2727cfa97ba729776b10c3309d5a6",
+        "Actual": "dec77fa7334514779dcdb5dfbeb847e2b4e2727cfa97ba729776b10c3309d5a6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0052.csv": {
+        "Expected": "502a949ba5d68e66377f5b37281d62717c43b7a6e6e6f4f52578ea712e2ce784",
+        "Actual": "502a949ba5d68e66377f5b37281d62717c43b7a6e6e6f4f52578ea712e2ce784",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0053.csv": {
+        "Expected": "cf55bd9605e4fa05dd10f8398350cef8dffbe84b673b344f387d198aacf74796",
+        "Actual": "cf55bd9605e4fa05dd10f8398350cef8dffbe84b673b344f387d198aacf74796",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0054.csv": {
+        "Expected": "c0b7bc0168a674908fd628f17295b0efbef4db4ef08c04c16be9c5bb86c63f97",
+        "Actual": "c0b7bc0168a674908fd628f17295b0efbef4db4ef08c04c16be9c5bb86c63f97",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0055.csv": {
+        "Expected": "5b96a4ba0909be7695fc66b24a22d6e3b8da35e6316f2d5066fbcc65e62a4b26",
+        "Actual": "5b96a4ba0909be7695fc66b24a22d6e3b8da35e6316f2d5066fbcc65e62a4b26",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0056.csv": {
+        "Expected": "c3e60a90a6c4d555380ef653d0dad6058b938a93f84b49393c0e57ec0eaf065b",
+        "Actual": "c3e60a90a6c4d555380ef653d0dad6058b938a93f84b49393c0e57ec0eaf065b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0057.csv": {
+        "Expected": "d4eae94e35e9a93e37eb3fccff9bc782f00bdac39c24586992c2ece4fa761024",
+        "Actual": "d4eae94e35e9a93e37eb3fccff9bc782f00bdac39c24586992c2ece4fa761024",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0058.csv": {
+        "Expected": "706a4635811b19f3ccb5996d9c59ee8509032e9069c632adf77776ce75788072",
+        "Actual": "706a4635811b19f3ccb5996d9c59ee8509032e9069c632adf77776ce75788072",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0059.csv": {
+        "Expected": "03a8ae16e57eaf1603c9c8a815b3fc8ae30ab540f25e8f30fd15cc0fcb80d288",
+        "Actual": "03a8ae16e57eaf1603c9c8a815b3fc8ae30ab540f25e8f30fd15cc0fcb80d288",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0060.csv": {
+        "Expected": "1ec3bcb14f5eef457963ed2794bc6dc61f049a2db49c18aa6cc023d0f8e53430",
+        "Actual": "1ec3bcb14f5eef457963ed2794bc6dc61f049a2db49c18aa6cc023d0f8e53430",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0061.csv": {
+        "Expected": "4f1dedd01aebee0b27b2be2e88ae1c140750a87b2f7a1ad783a618a734c8d189",
+        "Actual": "4f1dedd01aebee0b27b2be2e88ae1c140750a87b2f7a1ad783a618a734c8d189",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0062.csv": {
+        "Expected": "8209fb4fc920f4fef290b432c966abfe999f7c91c0a6599c671e6110aee24a95",
+        "Actual": "8209fb4fc920f4fef290b432c966abfe999f7c91c0a6599c671e6110aee24a95",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0063.csv": {
+        "Expected": "30190f622c5bccf22d3e0c762a6a1411c353b4dd721579f7a80c4725bfd9f985",
+        "Actual": "30190f622c5bccf22d3e0c762a6a1411c353b4dd721579f7a80c4725bfd9f985",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0064.csv": {
+        "Expected": "d6266ffc258d13688e45d0db633ccd67b4023b2c66fdfe0dea4c9672bfc69a27",
+        "Actual": "d6266ffc258d13688e45d0db633ccd67b4023b2c66fdfe0dea4c9672bfc69a27",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0065.csv": {
+        "Expected": "1177b352d0b7344dd4e101ba9254d4c4cfff654d93d9a0f80cd294214839fe1c",
+        "Actual": "1177b352d0b7344dd4e101ba9254d4c4cfff654d93d9a0f80cd294214839fe1c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0066.csv": {
+        "Expected": "e90bc1d5b4f2b0aa7347e66251d43c70b6225cd7cbe0683b26067065fb4d7772",
+        "Actual": "e90bc1d5b4f2b0aa7347e66251d43c70b6225cd7cbe0683b26067065fb4d7772",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0067.csv": {
+        "Expected": "2e6fd120eac5ac588b398fa9d94e6ab80f88379ac1d1aeafaa569aece4882176",
+        "Actual": "2e6fd120eac5ac588b398fa9d94e6ab80f88379ac1d1aeafaa569aece4882176",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0068.csv": {
+        "Expected": "315415eaa9bbeabf434c071ffdcd519544b28982011c9532ef8aa8edda3cfa15",
+        "Actual": "315415eaa9bbeabf434c071ffdcd519544b28982011c9532ef8aa8edda3cfa15",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0069.csv": {
+        "Expected": "9d66ad9acb091105d9f162857a393cd874a7158dc2dbe212bd1e429097108dba",
+        "Actual": "9d66ad9acb091105d9f162857a393cd874a7158dc2dbe212bd1e429097108dba",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0070.csv": {
+        "Expected": "8282a642b6b2305b1f235bc8461370d2bd124988377cd769da77ae8b24b7ab13",
+        "Actual": "8282a642b6b2305b1f235bc8461370d2bd124988377cd769da77ae8b24b7ab13",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0071.csv": {
+        "Expected": "a76190e407fb5b6c5a517d463ba755ace70cdae7d1abdcce43ce99faabfaa3b7",
+        "Actual": "a76190e407fb5b6c5a517d463ba755ace70cdae7d1abdcce43ce99faabfaa3b7",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0072.csv": {
+        "Expected": "b818665c3d9bf8f36dd50f6ed6d7ed8f00346b57e5c876ae83536ef792bc3e8f",
+        "Actual": "b818665c3d9bf8f36dd50f6ed6d7ed8f00346b57e5c876ae83536ef792bc3e8f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0073.csv": {
+        "Expected": "68283871cbde2a568b0e95cca215d50dcebf50e59aa14d93ae756e99ee3c5231",
+        "Actual": "68283871cbde2a568b0e95cca215d50dcebf50e59aa14d93ae756e99ee3c5231",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0074.csv": {
+        "Expected": "4bfefad12e80977f4a14599949ad2f9b06b3513ccf28682e8cf91150bd96c418",
+        "Actual": "4bfefad12e80977f4a14599949ad2f9b06b3513ccf28682e8cf91150bd96c418",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0075.csv": {
+        "Expected": "6985b3f520a532ff02f8b1e26d4e878430e390f9564dec64191842fba2cad814",
+        "Actual": "6985b3f520a532ff02f8b1e26d4e878430e390f9564dec64191842fba2cad814",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0076.csv": {
+        "Expected": "9f2354a06628871251bb3f2a9d68b1c382bb71f2575e2b8c30113a23836f12d2",
+        "Actual": "9f2354a06628871251bb3f2a9d68b1c382bb71f2575e2b8c30113a23836f12d2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0077.csv": {
+        "Expected": "66c286c6e071a9477bf34ce45d09e7b17abadd544c25066bfa1061eb9bea6e54",
+        "Actual": "66c286c6e071a9477bf34ce45d09e7b17abadd544c25066bfa1061eb9bea6e54",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0078.csv": {
+        "Expected": "46c30456040209a51a9abd29d88c296efece53542818552b9c80911e85d3c754",
+        "Actual": "46c30456040209a51a9abd29d88c296efece53542818552b9c80911e85d3c754",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0079.csv": {
+        "Expected": "b2c91357a8b627db9d02c6c217e2944ab5945bd5aaff8a6a3e7e3810e57c0555",
+        "Actual": "b2c91357a8b627db9d02c6c217e2944ab5945bd5aaff8a6a3e7e3810e57c0555",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0080.csv": {
+        "Expected": "b86069568498ad388062c69597bb4fee150725168cdaaa0fa269270f345c3d8a",
+        "Actual": "b86069568498ad388062c69597bb4fee150725168cdaaa0fa269270f345c3d8a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0081.csv": {
+        "Expected": "2dfe4e22e21f18bde7aa68387d30057932a3f2953932cd88acaa72e41992e772",
+        "Actual": "2dfe4e22e21f18bde7aa68387d30057932a3f2953932cd88acaa72e41992e772",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0082.csv": {
+        "Expected": "28a4a81a7c70072f90ef6c4ba85844ece1e148fe707c58436d612ce420b844fb",
+        "Actual": "28a4a81a7c70072f90ef6c4ba85844ece1e148fe707c58436d612ce420b844fb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0083.csv": {
+        "Expected": "b335e7e36d5e80779f8f367247fcd1f26fb7b4a8b2b6082b19e618e9555cfb3c",
+        "Actual": "b335e7e36d5e80779f8f367247fcd1f26fb7b4a8b2b6082b19e618e9555cfb3c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0084.csv": {
+        "Expected": "7bb09b2e1dc85faaba472730f7f4b3846ca3f23aa1f1cc817784352f405da62e",
+        "Actual": "7bb09b2e1dc85faaba472730f7f4b3846ca3f23aa1f1cc817784352f405da62e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0085.csv": {
+        "Expected": "744fcae04977baaed902c2806e7aeb53d8b9f88fbb15512698e9d9bf7ca7c2fc",
+        "Actual": "744fcae04977baaed902c2806e7aeb53d8b9f88fbb15512698e9d9bf7ca7c2fc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0086.csv": {
+        "Expected": "c02226798dc613514b8072e90948b8012ea906b81930ddbccbe9b11a561b957d",
+        "Actual": "c02226798dc613514b8072e90948b8012ea906b81930ddbccbe9b11a561b957d",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0087.csv": {
+        "Expected": "a426e29871787b09ad02be5d8ddec48a66a063152e2debaa5e685166c7d824fc",
+        "Actual": "a426e29871787b09ad02be5d8ddec48a66a063152e2debaa5e685166c7d824fc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0088.csv": {
+        "Expected": "305fca9018993e1049cbd603192e7eb0b854e06ab4b92e0577f7de201d4dd9f9",
+        "Actual": "305fca9018993e1049cbd603192e7eb0b854e06ab4b92e0577f7de201d4dd9f9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0089.csv": {
+        "Expected": "cce60f34ef2f6a956bb37e07b966315840337d2d8bf797124671b82c5e12383f",
+        "Actual": "cce60f34ef2f6a956bb37e07b966315840337d2d8bf797124671b82c5e12383f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0090.csv": {
+        "Expected": "39257e39d0812a72252f0a8cc5de34f080e5314fb5130a3ccdefae62cab16e6e",
+        "Actual": "39257e39d0812a72252f0a8cc5de34f080e5314fb5130a3ccdefae62cab16e6e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0091.csv": {
+        "Expected": "1a2caab0cf81c8324937d3ff9fbe3e055565d6d0738ce4e64f537afba20e265e",
+        "Actual": "1a2caab0cf81c8324937d3ff9fbe3e055565d6d0738ce4e64f537afba20e265e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0092.csv": {
+        "Expected": "486e4e90d35f24d323712d5f539805fe8427c75ca349cd4c05452d278e4bc2fb",
+        "Actual": "486e4e90d35f24d323712d5f539805fe8427c75ca349cd4c05452d278e4bc2fb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0093.csv": {
+        "Expected": "cfd2adbcc950f46e7504fd602f0a3668e232b82c68095e4b5c9bbbab6b516888",
+        "Actual": "cfd2adbcc950f46e7504fd602f0a3668e232b82c68095e4b5c9bbbab6b516888",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0094.csv": {
+        "Expected": "9c8c930df5e57244d711c599487208e1a5ca68bef4acfc5a3da0da91f0b775b1",
+        "Actual": "9c8c930df5e57244d711c599487208e1a5ca68bef4acfc5a3da0da91f0b775b1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0095.csv": {
+        "Expected": "73847c62a161464edccc77bc96f3a4194319a66f7df72b811f53b8f24c9523db",
+        "Actual": "73847c62a161464edccc77bc96f3a4194319a66f7df72b811f53b8f24c9523db",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0096.csv": {
+        "Expected": "8b38b27768e314cca62cc9d6d781ee4193f51daa31d99698d70e932a31e99d5e",
+        "Actual": "8b38b27768e314cca62cc9d6d781ee4193f51daa31d99698d70e932a31e99d5e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0097.csv": {
+        "Expected": "3eb4746f5ece0269312d940b8443cc89ce669ba305aad92acbdfa5bb9610e783",
+        "Actual": "3eb4746f5ece0269312d940b8443cc89ce669ba305aad92acbdfa5bb9610e783",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0098.csv": {
+        "Expected": "116542b56ce7abbe09e6b4dcdd8d5135046ad59405842db4732abdeb7d045b0f",
+        "Actual": "116542b56ce7abbe09e6b4dcdd8d5135046ad59405842db4732abdeb7d045b0f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0099.csv": {
+        "Expected": "b3ad5d93a69fbb203579eeb4dc73a2ad2ba5a364e8bc4e992dbcb8d91c135560",
+        "Actual": "b3ad5d93a69fbb203579eeb4dc73a2ad2ba5a364e8bc4e992dbcb8d91c135560",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0100.csv": {
+        "Expected": "e71e6d1b9fd6c45dbbf4cbfbdb6809cb2064a5316139bee39d10dd004e50151a",
+        "Actual": "e71e6d1b9fd6c45dbbf4cbfbdb6809cb2064a5316139bee39d10dd004e50151a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0101.csv": {
+        "Expected": "acf2728a8f34fb65621d9254d73a986005da213056b05255ccdee4e6c6aefdc9",
+        "Actual": "acf2728a8f34fb65621d9254d73a986005da213056b05255ccdee4e6c6aefdc9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0102.csv": {
+        "Expected": "e5b9f66dfc8e1a28f83bdd06bb28b1ba9c76547f4f7b4d3bff200fdb312e53c1",
+        "Actual": "e5b9f66dfc8e1a28f83bdd06bb28b1ba9c76547f4f7b4d3bff200fdb312e53c1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0103.csv": {
+        "Expected": "11a2f7c162821c50dee8755cb604bdb3a7334bb7d6fc335c1a5f4b8ec99fc857",
+        "Actual": "11a2f7c162821c50dee8755cb604bdb3a7334bb7d6fc335c1a5f4b8ec99fc857",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0104.csv": {
+        "Expected": "a85f0f33952ad21f5083b13e7df25f88420f12c8db2cee7d64a28885b3aa0650",
+        "Actual": "a85f0f33952ad21f5083b13e7df25f88420f12c8db2cee7d64a28885b3aa0650",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0105.csv": {
+        "Expected": "deb4bdcd2b643873e2b0e85086360cbaf71a0840476f3552aace3a2fd1bd43c1",
+        "Actual": "deb4bdcd2b643873e2b0e85086360cbaf71a0840476f3552aace3a2fd1bd43c1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0106.csv": {
+        "Expected": "de4a445ae1f8448567a811d325a022ac359a5a798ab58d297c80f67344a62c67",
+        "Actual": "de4a445ae1f8448567a811d325a022ac359a5a798ab58d297c80f67344a62c67",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0107.csv": {
+        "Expected": "288acb84ee3c4bfea0090294ee8fde97af8ce221769e67b629bbed485606eea5",
+        "Actual": "288acb84ee3c4bfea0090294ee8fde97af8ce221769e67b629bbed485606eea5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0108.csv": {
+        "Expected": "9e40573f99e6a3cba48ef6c71c713ec237696714cd3365627a8b6415626a526c",
+        "Actual": "9e40573f99e6a3cba48ef6c71c713ec237696714cd3365627a8b6415626a526c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0109.csv": {
+        "Expected": "70ea2e06c2bb9d98af19fcfddb6fe3b3403a0cb5ea1c68a0fee6d18f02c335c2",
+        "Actual": "70ea2e06c2bb9d98af19fcfddb6fe3b3403a0cb5ea1c68a0fee6d18f02c335c2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0110.csv": {
+        "Expected": "8cc9efe47c18f3483466e6d0f048e52ebdfba22d27c77ea996bb054498b43530",
+        "Actual": "8cc9efe47c18f3483466e6d0f048e52ebdfba22d27c77ea996bb054498b43530",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0111.csv": {
+        "Expected": "28005a33b5176af11b4f2a57086c500d162d8d8f0925329c6f90db20a66d644c",
+        "Actual": "28005a33b5176af11b4f2a57086c500d162d8d8f0925329c6f90db20a66d644c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0112.csv": {
+        "Expected": "e0178e2a6d28bfa66889ae39b361f9a8721d60c39a5b795e25f0fb784436bebe",
+        "Actual": "e0178e2a6d28bfa66889ae39b361f9a8721d60c39a5b795e25f0fb784436bebe",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0113.csv": {
+        "Expected": "38f7c9a02080295ee8084b68c2eeb7abe371677fbd2500dc0d71e518e4e18922",
+        "Actual": "38f7c9a02080295ee8084b68c2eeb7abe371677fbd2500dc0d71e518e4e18922",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0114.csv": {
+        "Expected": "0d6bfbc2c1fbe705fb67d67fa96a993dc0aa2dcb35b042c5915142f3103bd65e",
+        "Actual": "0d6bfbc2c1fbe705fb67d67fa96a993dc0aa2dcb35b042c5915142f3103bd65e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0115.csv": {
+        "Expected": "2f2c4401d173e0c72c9b9ac1fbf27325d6d8f60c11b7ad2c90e8a6a05965a900",
+        "Actual": "2f2c4401d173e0c72c9b9ac1fbf27325d6d8f60c11b7ad2c90e8a6a05965a900",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0116.csv": {
+        "Expected": "7d99c30653764fa9f5a898c7d0417c3441c32371d0cdd3aa519914d33b4b90d4",
+        "Actual": "7d99c30653764fa9f5a898c7d0417c3441c32371d0cdd3aa519914d33b4b90d4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0117.csv": {
+        "Expected": "a878743662a05a60ee19f963bde2eab7de755118b8d06ee993ca3793b052a117",
+        "Actual": "a878743662a05a60ee19f963bde2eab7de755118b8d06ee993ca3793b052a117",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0118.csv": {
+        "Expected": "6a1fa4ae15f39bf950a1d5d1491ba904d7b8ce416dea6247610788a9818352e3",
+        "Actual": "6a1fa4ae15f39bf950a1d5d1491ba904d7b8ce416dea6247610788a9818352e3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0119.csv": {
+        "Expected": "816606befd4148aa8bde354c9d76e5b85cf10fa88435f26a76255986a3974fb9",
+        "Actual": "816606befd4148aa8bde354c9d76e5b85cf10fa88435f26a76255986a3974fb9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0120.csv": {
+        "Expected": "fc0dcae06e7361e85401714c73cf55a0a175c5deb91019f5b4f6af7cc2f87c36",
+        "Actual": "fc0dcae06e7361e85401714c73cf55a0a175c5deb91019f5b4f6af7cc2f87c36",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0121.csv": {
+        "Expected": "2e6f3f7cb112d7aa1d09d635a72e54ae3e77cc37bbf6f59e6a2262f060055387",
+        "Actual": "2e6f3f7cb112d7aa1d09d635a72e54ae3e77cc37bbf6f59e6a2262f060055387",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0122.csv": {
+        "Expected": "ed8650531608a6cd0b1f80ee3584624d7d866d11360bf6a43d1b6643f77b3df4",
+        "Actual": "ed8650531608a6cd0b1f80ee3584624d7d866d11360bf6a43d1b6643f77b3df4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0123.csv": {
+        "Expected": "584c56f2c52d2ea27ee6f7583c74d4847b6cac06d7dcead7f3694fafcdb601c6",
+        "Actual": "584c56f2c52d2ea27ee6f7583c74d4847b6cac06d7dcead7f3694fafcdb601c6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0124.csv": {
+        "Expected": "172b1f68415dce1cda965b99775b13e18c66dc39488384e77c585e067b902a19",
+        "Actual": "172b1f68415dce1cda965b99775b13e18c66dc39488384e77c585e067b902a19",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0125.csv": {
+        "Expected": "e046113d3cee336cb1b35e34f638ee72c3381988b4778753bf67f93985e1c58c",
+        "Actual": "e046113d3cee336cb1b35e34f638ee72c3381988b4778753bf67f93985e1c58c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0126.csv": {
+        "Expected": "14d3a2840bb812e7f5f8d34cdd09aa64b401a837c16cc0e6597fb7084af0a251",
+        "Actual": "14d3a2840bb812e7f5f8d34cdd09aa64b401a837c16cc0e6597fb7084af0a251",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0127.csv": {
+        "Expected": "58202aaba4a2dafaee808b53a4d7b95de9d56e4fd8b44a616d4a3dea75728409",
+        "Actual": "58202aaba4a2dafaee808b53a4d7b95de9d56e4fd8b44a616d4a3dea75728409",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0128.csv": {
+        "Expected": "bea854db2d046f4ae19a99a47f2ae2e1e25cb63bab019378c88e6adf7d00e1bd",
+        "Actual": "bea854db2d046f4ae19a99a47f2ae2e1e25cb63bab019378c88e6adf7d00e1bd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0129.csv": {
+        "Expected": "22b124c6b427ce27855778aca0295dbb33438c070a963a10168c8b27ab0ae2f3",
+        "Actual": "22b124c6b427ce27855778aca0295dbb33438c070a963a10168c8b27ab0ae2f3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0130.csv": {
+        "Expected": "4c0bcdcd7251fa2b9cc9049692cd3c823006046d6281a72ec3d1bf1ea01d159c",
+        "Actual": "4c0bcdcd7251fa2b9cc9049692cd3c823006046d6281a72ec3d1bf1ea01d159c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0131.csv": {
+        "Expected": "4ee4e29b27187e26e259a35cc199a9f3dd4afe5f2a4de7478ef37db25e219fd2",
+        "Actual": "4ee4e29b27187e26e259a35cc199a9f3dd4afe5f2a4de7478ef37db25e219fd2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0132.csv": {
+        "Expected": "06d7c6d522870aa8228900e3c3cca643a9a32e0f8f1e898885fed4790b591c4b",
+        "Actual": "06d7c6d522870aa8228900e3c3cca643a9a32e0f8f1e898885fed4790b591c4b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0133.csv": {
+        "Expected": "0eafd5385ef783ccefc7596eef2f55e6e3dc4c0852b2223a99154578cb2eb161",
+        "Actual": "0eafd5385ef783ccefc7596eef2f55e6e3dc4c0852b2223a99154578cb2eb161",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0134.csv": {
+        "Expected": "58c1ffa17e8e3cf2b8e4f7467ae89b3d1649a271c2488782c428f53c4906f757",
+        "Actual": "58c1ffa17e8e3cf2b8e4f7467ae89b3d1649a271c2488782c428f53c4906f757",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0135.csv": {
+        "Expected": "3ce3b108b6a0d81df5da856d596f7037a880abc6f05aec55830636afd33a12d0",
+        "Actual": "3ce3b108b6a0d81df5da856d596f7037a880abc6f05aec55830636afd33a12d0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0136.csv": {
+        "Expected": "11cd8f5f5fb71624e01c2aa1f66d7bbb3ec6909d4e12695cb5fa2ec117bc0d70",
+        "Actual": "11cd8f5f5fb71624e01c2aa1f66d7bbb3ec6909d4e12695cb5fa2ec117bc0d70",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0137.csv": {
+        "Expected": "056e00649123c939893c32800228c10488319556766696eaf08ed5066f0fad0f",
+        "Actual": "056e00649123c939893c32800228c10488319556766696eaf08ed5066f0fad0f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0138.csv": {
+        "Expected": "cb2cdc71dc4b8d1945b69300edadc609f9d23566ac86a62a7f9b0ca640c12b0b",
+        "Actual": "cb2cdc71dc4b8d1945b69300edadc609f9d23566ac86a62a7f9b0ca640c12b0b",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0139.csv": {
+        "Expected": "bed1d8f778f56f692dd9716684bb186d479cd13c2e6d9e9c0be383155f5fe094",
+        "Actual": "bed1d8f778f56f692dd9716684bb186d479cd13c2e6d9e9c0be383155f5fe094",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0140.csv": {
+        "Expected": "b1bcb5ba63cf59666f5033090db98692ac33db1b8f68f9f0138829dc37bd41c4",
+        "Actual": "b1bcb5ba63cf59666f5033090db98692ac33db1b8f68f9f0138829dc37bd41c4",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0141.csv": {
+        "Expected": "cc5970fd2383876cd5165f19fbac01de0da890cc5146db0f82b4dc399b5e0fb5",
+        "Actual": "cc5970fd2383876cd5165f19fbac01de0da890cc5146db0f82b4dc399b5e0fb5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0142.csv": {
+        "Expected": "7ff6f30573459ba313225af4bee79041605fca4cb17441bea87176faa406ccf2",
+        "Actual": "7ff6f30573459ba313225af4bee79041605fca4cb17441bea87176faa406ccf2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0143.csv": {
+        "Expected": "bf0093c9565196397f7e754a929c8d08d07f92ba4e8aea530f52fa6f5bf95df3",
+        "Actual": "bf0093c9565196397f7e754a929c8d08d07f92ba4e8aea530f52fa6f5bf95df3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0144.csv": {
+        "Expected": "6810513da4cc9197b599edd7e35cb6080d21dc78121b546cceb0126dfeb83c59",
+        "Actual": "6810513da4cc9197b599edd7e35cb6080d21dc78121b546cceb0126dfeb83c59",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0145.csv": {
+        "Expected": "a9ccbe5b056d8d1b4d5b69fdff6c35570af6fa843871a9f9f8a53a98a182ddb0",
+        "Actual": "a9ccbe5b056d8d1b4d5b69fdff6c35570af6fa843871a9f9f8a53a98a182ddb0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0146.csv": {
+        "Expected": "ae5bc67ac2383e95f9548a4045d5f986c4a72ee971d456d052b94ebb6a3dc555",
+        "Actual": "ae5bc67ac2383e95f9548a4045d5f986c4a72ee971d456d052b94ebb6a3dc555",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0147.csv": {
+        "Expected": "c73f790b13e417434e96a4abe909a6f67dfeb84083d22aba77cd0d2d8db39843",
+        "Actual": "c73f790b13e417434e96a4abe909a6f67dfeb84083d22aba77cd0d2d8db39843",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0148.csv": {
+        "Expected": "e2e5ec4d853afdea9d6d2e890f7c0b6457cecb1efc12aa3be12e8963f8dabef2",
+        "Actual": "e2e5ec4d853afdea9d6d2e890f7c0b6457cecb1efc12aa3be12e8963f8dabef2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0149.csv": {
+        "Expected": "805f40b781c2ca816f098d744dcdfbafd8a2e010fc6f5a2e6af861efc9f9d1b8",
+        "Actual": "805f40b781c2ca816f098d744dcdfbafd8a2e010fc6f5a2e6af861efc9f9d1b8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0150.csv": {
+        "Expected": "f98f6276a6b8bb7591e9757febd2e0d91e6e11fe5c6596e6643f507c910c2dbb",
+        "Actual": "f98f6276a6b8bb7591e9757febd2e0d91e6e11fe5c6596e6643f507c910c2dbb",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0151.csv": {
+        "Expected": "7f8cc043d50485f0f5b13af3595b8f2e7a382c967b8f7bbce9b1cb3d6afddaf8",
+        "Actual": "7f8cc043d50485f0f5b13af3595b8f2e7a382c967b8f7bbce9b1cb3d6afddaf8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0152.csv": {
+        "Expected": "59da01c344e7e0ff0af02a13fa29f3d4753c60b7b70b1e8feb537b9c13d0e9b8",
+        "Actual": "59da01c344e7e0ff0af02a13fa29f3d4753c60b7b70b1e8feb537b9c13d0e9b8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0153.csv": {
+        "Expected": "26b2d316129f80728e9c4ba2ed4ffbf92c411bfdf63d743667fdcccc1b399bca",
+        "Actual": "26b2d316129f80728e9c4ba2ed4ffbf92c411bfdf63d743667fdcccc1b399bca",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0154.csv": {
+        "Expected": "481c0b05cb05a05fbccf5fee1ca75cf00803b93228a46ed5e2e6f62828718ecd",
+        "Actual": "481c0b05cb05a05fbccf5fee1ca75cf00803b93228a46ed5e2e6f62828718ecd",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0155.csv": {
+        "Expected": "1f3e2d714de7a384384784b7e1e5550e395f5fa76433187031330111f61aa8bc",
+        "Actual": "1f3e2d714de7a384384784b7e1e5550e395f5fa76433187031330111f61aa8bc",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0156.csv": {
+        "Expected": "5dfd22416571a7d2407fd7f8e84f6753d8b43a2eefa71c2867f01f8580140bec",
+        "Actual": "5dfd22416571a7d2407fd7f8e84f6753d8b43a2eefa71c2867f01f8580140bec",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0157.csv": {
+        "Expected": "c4894492e3b571bc9d1ad7794a739262686897cc36b118aacc4d87d68bbc8ab8",
+        "Actual": "c4894492e3b571bc9d1ad7794a739262686897cc36b118aacc4d87d68bbc8ab8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0158.csv": {
+        "Expected": "89bbf56bb292e9dc273b9f057f7d53a4e2f614ccb4e432457436e004de370e94",
+        "Actual": "89bbf56bb292e9dc273b9f057f7d53a4e2f614ccb4e432457436e004de370e94",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0159.csv": {
+        "Expected": "b1e58530df243ff7c78828ab79d334e6aacfc9b454f747589504075f66b71661",
+        "Actual": "b1e58530df243ff7c78828ab79d334e6aacfc9b454f747589504075f66b71661",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0160.csv": {
+        "Expected": "9c834b842bfaad76d715f80ae7817db1d8edc225b205b500feb2a78db3fcebf3",
+        "Actual": "9c834b842bfaad76d715f80ae7817db1d8edc225b205b500feb2a78db3fcebf3",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0161.csv": {
+        "Expected": "946c99edca44e7102950e0b4995f6786b53d9011af080d7d13b81d7f1e8590d8",
+        "Actual": "946c99edca44e7102950e0b4995f6786b53d9011af080d7d13b81d7f1e8590d8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0162.csv": {
+        "Expected": "4d52641942fd75f71a45c5104371f24daa4a7569ab2d4d3c36eb9a30f4d17493",
+        "Actual": "4d52641942fd75f71a45c5104371f24daa4a7569ab2d4d3c36eb9a30f4d17493",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0163.csv": {
+        "Expected": "1a77d6260af233a720aacfbb87a5b947c2ba81d889ad972062ed0edd4d1e34c2",
+        "Actual": "1a77d6260af233a720aacfbb87a5b947c2ba81d889ad972062ed0edd4d1e34c2",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0164.csv": {
+        "Expected": "6d8e1a68c07396249c922ddb260a9bedf20d7266d45f756e92a7249b5d2098ee",
+        "Actual": "6d8e1a68c07396249c922ddb260a9bedf20d7266d45f756e92a7249b5d2098ee",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0165.csv": {
+        "Expected": "41fdfc11b101bec14d42989da5de688d039c60f056755d84468b413d36ec8a20",
+        "Actual": "41fdfc11b101bec14d42989da5de688d039c60f056755d84468b413d36ec8a20",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0166.csv": {
+        "Expected": "6130f45a9d32c2fd5878fa00d55c1f1ac66c683cd70e6d4c763f4fcca05c27bf",
+        "Actual": "6130f45a9d32c2fd5878fa00d55c1f1ac66c683cd70e6d4c763f4fcca05c27bf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0167.csv": {
+        "Expected": "d2914e7f9eb18e33f627cfbfe1896da91c9f07cc4124914dece178a9b064bcb6",
+        "Actual": "d2914e7f9eb18e33f627cfbfe1896da91c9f07cc4124914dece178a9b064bcb6",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0168.csv": {
+        "Expected": "a9ade963629123942c296e387b21fdcbffa7323ccb4066a6e8c26e0570005b97",
+        "Actual": "a9ade963629123942c296e387b21fdcbffa7323ccb4066a6e8c26e0570005b97",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0169.csv": {
+        "Expected": "27cd7461afea02ace9e73ae60e827e14f85cdd4a3b467424cbbc45650613b2df",
+        "Actual": "27cd7461afea02ace9e73ae60e827e14f85cdd4a3b467424cbbc45650613b2df",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0170.csv": {
+        "Expected": "661845fa1c9a8ab75ff05167af85f3b528018b90f52264ff579646e6ceaa1faf",
+        "Actual": "661845fa1c9a8ab75ff05167af85f3b528018b90f52264ff579646e6ceaa1faf",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0171.csv": {
+        "Expected": "98dc64d3ae898a79b6db99f935b5fc2741c25c6def46c0cd8fb4b32c977a3722",
+        "Actual": "98dc64d3ae898a79b6db99f935b5fc2741c25c6def46c0cd8fb4b32c977a3722",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0172.csv": {
+        "Expected": "98ef1254064ed65cd88ccb33b2fd932604677aeb03f911901ab26f8595806598",
+        "Actual": "98ef1254064ed65cd88ccb33b2fd932604677aeb03f911901ab26f8595806598",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0173.csv": {
+        "Expected": "18b8c12d95e85c3be0d7607536c345e5d5a1cfc623b5143886070da07ce333d0",
+        "Actual": "18b8c12d95e85c3be0d7607536c345e5d5a1cfc623b5143886070da07ce333d0",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0174.csv": {
+        "Expected": "e307afa286b9923d616980c4aafc67258c1f8556a8bc8d56e6bbccfae7b6fa1f",
+        "Actual": "e307afa286b9923d616980c4aafc67258c1f8556a8bc8d56e6bbccfae7b6fa1f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0175.csv": {
+        "Expected": "55f4fda3d53d888ce5008a8e6cb0cf36cb88bf34ca5a71a26e79e49421fc8a0f",
+        "Actual": "55f4fda3d53d888ce5008a8e6cb0cf36cb88bf34ca5a71a26e79e49421fc8a0f",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0176.csv": {
+        "Expected": "d65fb5837e90faaec2c112899ed2a88310d08e3910425c7ffc21e33e82fae2e8",
+        "Actual": "d65fb5837e90faaec2c112899ed2a88310d08e3910425c7ffc21e33e82fae2e8",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0177.csv": {
+        "Expected": "6d15892e2341e0dd445629cc85fd8b992a90c6e2ef3feec73428f4822fdd678e",
+        "Actual": "6d15892e2341e0dd445629cc85fd8b992a90c6e2ef3feec73428f4822fdd678e",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0178.csv": {
+        "Expected": "465e1706587b036055b97c8f1b956cfe9f86dd436ce637f2f58c11073d3e2e9a",
+        "Actual": "465e1706587b036055b97c8f1b956cfe9f86dd436ce637f2f58c11073d3e2e9a",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0179.csv": {
+        "Expected": "e7f663d047a051fc3d3498f7cb06e97923173cd93c4964bdc9052e0705415d56",
+        "Actual": "e7f663d047a051fc3d3498f7cb06e97923173cd93c4964bdc9052e0705415d56",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0180.csv": {
+        "Expected": "920f59c21bbc80f0e8e1163fe645b2843eaa3819ce03a120974d3c203984f065",
+        "Actual": "920f59c21bbc80f0e8e1163fe645b2843eaa3819ce03a120974d3c203984f065",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0181.csv": {
+        "Expected": "bd36b6a680a4acbadfc4ceeb38b33ff37f06fe7d50f1a2cc8aef021059da89e5",
+        "Actual": "bd36b6a680a4acbadfc4ceeb38b33ff37f06fe7d50f1a2cc8aef021059da89e5",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0182.csv": {
+        "Expected": "771b320989c62e8290862d623f10de9eabf08effd25cf710e51b998936f6ea6c",
+        "Actual": "771b320989c62e8290862d623f10de9eabf08effd25cf710e51b998936f6ea6c",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0183.csv": {
+        "Expected": "52daa79ba2a93089ccccd6dca31c6a5b4c14b216f791d9e5c29faebaf600c139",
+        "Actual": "52daa79ba2a93089ccccd6dca31c6a5b4c14b216f791d9e5c29faebaf600c139",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0184.csv": {
+        "Expected": "78456306bceb3d2c6515bb3551b2bbc806033ec8f668dfe03ff68b91ca2feb89",
+        "Actual": "78456306bceb3d2c6515bb3551b2bbc806033ec8f668dfe03ff68b91ca2feb89",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0185.csv": {
+        "Expected": "d9fb92e1ea28c996a5d1cb92adce53c24f919eacafff551773804a04dc930f52",
+        "Actual": "d9fb92e1ea28c996a5d1cb92adce53c24f919eacafff551773804a04dc930f52",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0186.csv": {
+        "Expected": "e6832eda5e39995b943e101c2624ed6cc55906fb0967ff31a490d68322e9f8a1",
+        "Actual": "e6832eda5e39995b943e101c2624ed6cc55906fb0967ff31a490d68322e9f8a1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0187.csv": {
+        "Expected": "101e893c191242d09d06cb34518eb04def2f5b156b70a10249e03c70d5e30ab1",
+        "Actual": "101e893c191242d09d06cb34518eb04def2f5b156b70a10249e03c70d5e30ab1",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0188.csv": {
+        "Expected": "77299378a4aa9d9804974f0cee8a20f753122df669a2667be989fb603b6c2d29",
+        "Actual": "77299378a4aa9d9804974f0cee8a20f753122df669a2667be989fb603b6c2d29",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/basis-0189.csv": {
+        "Expected": "d1514344e1d7f73cb6d5e0d2ee64f8bcaf7a553b2efddc4bed67da7758da6ae9",
+        "Actual": "d1514344e1d7f73cb6d5e0d2ee64f8bcaf7a553b2efddc4bed67da7758da6ae9",
+        "OK": true
+      },
+      "/data/home/simlap/coupon_accuracy_assessment_20260913/thin-spatial-18-edge-836268084cff/spatial-18-edge-836268084cff-thin/inputs/traces/conductor-2.csv": {
+        "Expected": "456e1d923ad4bb34fc70381ecb2481bdcdc5c3c91fe74c1a36e85791052b8622",
+        "Actual": "456e1d923ad4bb34fc70381ecb2481bdcdc5c3c91fe74c1a36e85791052b8622",
+        "OK": true
+      }
+    },
+    "UTC": "2026-10-05T03:27:51Z",
+    "StageBinaries": {}
+  },
+  "EndUTC": "2026-10-05T04:55:48Z",
+  "TotalSeconds": 5276.933827457,
+  "StagePeakUsedBytesSampled": {
+    "spatial-18-edge-836268084cff-thin-p4-worker": 182470119424,
+    "spatial-18-edge-836268084cff-thin-p4-reducer": 239646896128,
+    "spatial-18-edge-836268084cff-thin-p4-local-edge": 394426220544
+  }
+}

@@ -535,11 +535,12 @@ class ControlsPlanAndEstimateRuleTest(unittest.TestCase):
         self.assertAlmostEqual(at48["ReducerResidentFieldsGBEstimate"], 84 * 0.068 * measured["H1"] / 1e6)
         # The physics-11 model carries no streaming block: its reducer peak IS the previous term.
         self.assertEqual(at48["ReducerPalacePeakGBEstimate"], at48["ReducerPalacePeakGBEstimatePrevious"])
-        # USER decision 2026-09-22 (B), on the current (decision-64a refit) model: the reducer
-        # peak of every stage is the streaming executable's node-used line (independent of b),
-        # >= 1.5x every measured node-used peak of the library-device-thin-01 calibration;
-        # the previous term (measured peak x H1 ratio + resident fields) stays recorded.
-        current = estimate_stages.load_cost_model()
+        # USER decision 2026-09-22 (B), on the decision-64a device refit model (kept as
+        # DEVICE_COST_MODEL since the decision-457 measured refit): the reducer peak of every
+        # stage is the streaming executable's node-used line (independent of b), >= 1.5x every
+        # measured node-used peak of the library-device-thin-01 calibration; the previous term
+        # (measured peak x H1 ratio + resident fields) stays recorded.
+        current = estimate_stages.load_cost_model(estimate_stages.DEVICE_COST_MODEL)
         streaming = current["ReducerPeakStreaming"]
         self.assertEqual(streaming["Executable"], build_plan.COST_MODEL_FROZEN_BINARY_SHA256)
         self.assertEqual(streaming["Executable"], current["Provenance"]["FrozenExecutable"])

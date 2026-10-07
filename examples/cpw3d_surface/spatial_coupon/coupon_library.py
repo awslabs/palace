@@ -8,7 +8,9 @@
   coupon_library.py build [--register CASE_ID=SOURCE_DIR ... --footprint {bound,producer-default}
                            --inventory-status STATUS [--mesh-recipe PATH] [--provenance TEXT]] [--no-thin]
                           [--device PALACE_CONFIG --palace PATH [--device-output DIR] [--ring-size N]
-                           [--cap-triangulation METHOD] [--cap-interior-spacing X] [--omit-requirement HASH_PREFIX ...]]
+                           [--cap-triangulation METHOD] [--cap-interior-spacing X] [--omit-requirement HASH_PREFIX ...]
+                           [--nearkey-reuse off|default|fallback [--nearkey-fallback-approval TEXT]
+                            [--nearkey-fallback-stop-record HASH_PREFIX=PATH ...] [--nearkey-rule PATH]]
                           [--case ID ...] [--jobs N] [--build-limit N] [--root DIR] [--output PATH] [--manifest PATH]
   coupon_library.py qualify --build-record library-build.json --reference <campaign dir or none>
                             --remote HOST:ROOT [--orders p5] --controls p3,p5 --max-jobs N
@@ -29,6 +31,14 @@ the manifest's shared mesh recipe; the device basis's box caps are Delaunay-tria
 by default - decision 57 -, `--cap-triangulation ear-clipping` selects the gallery
 producer's caps); `--build-limit N` builds the N smallest by the
 pre-build estimate and records the rest registered-unbuilt with their estimates.
+`--nearkey-reuse default | fallback` (USER decision 428 = Option A; decision 431; DESIGN v2;
+nearkey_reuse.py) offers every spatial coupon's generated basis to the near-key reuse rule before
+registration: a qualifying library donor gives a REUSED model (status ReusedResponse, written
+under ROOT/device/reused/, recorded in library-build.json Device.NearKeyReuse; added to a
+library by `nearkey_reuse.py assemble`) and the coupon is neither registered nor built;
+`default` is active since decision 459 (the rule file's DefaultActivation record = validation
+pair 5, shipped beside the rule file; refused when that record is not readable / does not re-hash);
+`fallback` needs the approval text and the exact key's STOP record per requirement.
 `build --register` registers the given source directories as manifest cases (register_case.py:
 source SHA256s, the automated two-pass contract derivation, idempotent by content; the
 footprint declaration is mandatory and applies to every directory registered by the
@@ -162,6 +172,8 @@ def main(argv=None):
         parser.error("--omit-requirement applies to the --device discovery only")
     if (args.support_span_cap or args.element_cap) and args.device is None:
         parser.error("--support-span-cap / --element-cap apply to the --device coupons only")
+    if (args.nearkey_reuse != "off" or args.nearkey_fallback_stop_record or args.nearkey_fallback_approval) and args.device is None:
+        parser.error("--nearkey-reuse and its options apply to the --device coupons only")
     registered = []
     extra = None
     if args.device is not None:
@@ -187,10 +199,16 @@ def main(argv=None):
             if thin_status in (register_case.STATUS_REGISTERED, register_case.STATUS_REUSED):
                 registered.append(coupon["ThinCase"])
         extra = {"Device": {key: device_record[key] for key in ("Device", "ProcessLibrary", "Discovery", "Plan", "TraceBasis",
-                                                                "OutOfScope", "MeshRecipe", "Output")},
+                                                                "OutOfScope", "MeshRecipe", "Output", "NearKeyReuse")},
                  "DeviceCoupons": device_record["Coupons"]}
         if args.case is None:
             args.case = []
+        reused = device_record["NearKeyReuse"]["Reused"]
+        if reused and not registered and not args.case:
+            print(f"DEVICE {device_record['Device']['Config']}: every spatial coupon near-key REUSED ({len(reused)}; mode "
+                  f"{device_record['NearKeyReuse']['Mode']}); nothing to register or build - the reused models are under "
+                  f"{device_output / 'reused'} (nearkey_reuse.py assemble adds them to a library)")
+            return 0
     for case_id, directory in args.register:
         pairs = [(case_id, "fabricated", None)]
         if not args.no_thin:

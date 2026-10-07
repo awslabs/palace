@@ -303,10 +303,19 @@ class LibraryBuildEndToEndTest(unittest.TestCase):
             for stage in ("canonical-source", "gmsh-build", "canonical-publish", "identity-publication",
                           "identity-variant-audits", "per-entry-verification"):
                 self.assertIn(stage, case["Stages"])
-                self.assertEqual(case["Stages"][stage]["Limits"],
-                                 {"Seconds": float(manifest["Gates"]["MaximumSeconds"]),
-                                  "MemoryGiB": float(manifest["Gates"]["MaximumRSSGiB"])})
                 self.assertEqual(case["Stages"][stage]["ReturnCode"], 0)
+                if stage != "per-entry-verification":
+                    self.assertEqual(case["Stages"][stage]["Limits"],
+                                     {"Seconds": float(manifest["Gates"]["MaximumSeconds"]),
+                                      "MemoryGiB": float(manifest["Gates"]["MaximumRSSGiB"])})
+            # The per-entry verification runs under its element-scaled whole-run bound (decision
+            # 410; the one-stage floor on these small fixtures) and its watchdog allows the grace.
+            from run_gmsh_only_case import VERIFICATION_WATCHDOG_GRACE_SECONDS
+            verification = json.loads(Path(case["Verification"]["Path"]).read_text())
+            self.assertEqual(verification["TimeBound"]["Seconds"], manifest["Gates"]["MaximumSeconds"])
+            self.assertEqual(case["Stages"]["per-entry-verification"]["Limits"],
+                             {"Seconds": float(verification["TimeBound"]["Seconds"] + VERIFICATION_WATCHDOG_GRACE_SECONDS),
+                              "MemoryGiB": float(manifest["Gates"]["MaximumRSSGiB"])})
         # The copy binds exactly the gallery case's sources (the contract is the derived one).
         self.assertEqual(json.loads((root / "library" / copy_id / "input-hashes.json").read_text())["Signature"],
                          smallest["Source"]["Files"]["Signature"]["SHA256"])
