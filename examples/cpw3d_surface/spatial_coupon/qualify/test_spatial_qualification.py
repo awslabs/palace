@@ -403,6 +403,206 @@ class DenseTracesTest(unittest.TestCase):
             self.assertEqual(sorted(sq.device_traces(path, 3)), [410])
 
 
+class CommandEvaluateTest(unittest.TestCase):
+    """`evaluate` end to end on a synthetic run tree whose energies obey the p4 matrices exactly
+    (the Palace CSV formats of PalaceOutputReadersTest): the library's Qualification.Verdict
+    seeds the status (decisions 485 / 487 (a)) and the identity partition is recorded
+    (decisions 482 / 487 (d))."""
+
+    Q_FAB = {"SA": {(1, 1): 2.0, (1, 2): 0.5, (2, 2): 1.0}, "Domain": {(1, 1): 10.0, (1, 2): 0.0, (2, 2): 5.0}}
+    Q_THIN = {"SA": {(1, 1): 1.8, (1, 2): 0.5, (2, 2): 0.9}, "Domain": {(1, 1): 9.5, (1, 2): 0.0, (2, 2): 4.9}}
+    TRACE = [1.0, 2.0]
+    MODEL = "spatialedgecluster_edgecount-8_e7f44561bbf0"
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="spatial-qualification-evaluate-"))
+        fab_p4 = {cls: sq.quadratic_form(self.Q_FAB[cls], self.TRACE) for cls in self.Q_FAB}
+        thin_p4 = {cls: sq.quadratic_form(self.Q_THIN[cls], self.TRACE) for cls in self.Q_THIN}
+        energies = {"fabricated-p4": fab_p4, "thin-p4": thin_p4,
+                    "fabricated-p5": {cls: v * 1.005 for cls, v in fab_p4.items()},
+                    "thin-p5": {"SA": thin_p4["SA"] * 1.06, "Domain": thin_p4["Domain"] * 1.004}}
+        configs = {}
+        for name, per_class in energies.items():
+            postpro = self.tmp / name / "postpro"
+            postpro.mkdir(parents=True)
+            write_csv(postpro / "domain-E.csv", ["i", "E_elec (J)", "E_mag (J)"], [[1, per_class["Domain"], 0.0]])
+            write_csv(postpro / "surface-Q.csv", ["i", "p_surf[1]", "Q_surf[1]"], [[1, per_class["SA"] / per_class["Domain"], 1.0]])
+            write_csv(postpro / "surface-Q-edge.csv", ["i", "exc", "interface", "R (m)", "E_out (J)", "p_out", "E_ann (J)", "p_ann"],
+                      [[1, 0, 1, 2e-6, 0.0, 0.0, 0.0, 0.0]])
+            config = {"Problem": {"Output": str(postpro)}, "Model": {"Mesh": str(self.tmp / "identity.msh")},
+                      "Solver": {"Order": int(name[-1])},
+                      "Boundaries": {"Postprocessing": {"Dielectric": [{"Index": 1, "Type": "SA"}]},
+                                     "PrescribedPotential": [{"Index": 1, "DataFile": str(self.tmp / "trace.csv")}]}}
+            (self.tmp / name / "config.json").write_text(json.dumps(config))
+            configs[name] = str(self.tmp / name / "config.json")
+        for name, matrices in (("fab-matrices", self.Q_FAB), ("thin-matrices", self.Q_THIN)):
+            directory = self.tmp / name
+            directory.mkdir()
+            write_csv(directory / "domain-response-matrix.csv", ["basis_i", "basis_j", "Q_ij (J)"],
+                      [[i, j, q] for (i, j), q in matrices["Domain"].items()])
+            write_csv(directory / "surface-response-matrix.csv",
+                      ["interface", "edge", "R (m)", "basis_i", "basis_j", "Q_ij (J)", "Q_ij normal (J)", "Q_ij tangential (J)",
+                       "Q_total_ij (J)", "Q_total_ij normal (J)", "Q_total_ij tangential (J)"],
+                      [[1, 0, 2e-6, i, j, q, 0.0, 0.0, q, 0.0, 0.0] for (i, j), q in matrices["SA"].items()])
+        (self.tmp / "dense-traces.json").write_text(json.dumps(
+            {"Version": 1, "Model": self.MODEL, "Configs": configs, "Orders": [4, 5], "Unsupported": [],
+             "Traces": [{"Name": "state-2", "Family": "T2", "Coefficients": self.TRACE, "EnergyScale": 1.0}]}))
+        gate_dir = self.tmp / "c0-p4"
+        gate_dir.mkdir()
+        (gate_dir / "palace.json").write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {
+            "Count": 0, "Tolerance": 0.02, "Records": [{"Model": self.MODEL, "MaxRatio": 7.7e-8, "Excluded": False}]}}}}))
+        (gate_dir / "config_resolved.json").write_text(json.dumps({"Solver": {"Order": 4}}))
+        self.library = self.tmp / "process-library.json"
+        self.record = self.tmp / "spatial-qualification.json"
+
+    def write_library(self, model):
+        self.library.write_text(json.dumps({"Version": 3, "Models": [{"Name": self.MODEL, "LibraryQualified": False, **model}]}))
+
+    def run_evaluate(self, *extra):
+        return sq.main(["evaluate", "--dense-traces", str(self.tmp / "dense-traces.json"), "--fabricated-matrices",
+                        str(self.tmp / "fab-matrices"), "--thin-matrices", str(self.tmp / "thin-matrices"), "--gate",
+                        str(self.tmp / "c0-p4" / "palace.json"), "--library", str(self.library), "--output", str(self.record), *extra])
+
+    def test_control_verdict_seeds_the_status(self):
+        # The reproduced b-batch1 interim case: Verdict Failed, no QualificationStatus -> the old
+        # tool stamped Qualified; now Failed, rc 1, the rule recorded.
+        self.write_library({"Qualification": {"Verdict": "Failed", "Record": "qualification.json", "ReferenceAnchor": None,
+                                              "Order": 4, "UnjudgedTypes": []}})
+        self.assertEqual(self.run_evaluate(), 1)
+        record = json.loads(self.record.read_text())
+        self.assertTrue(record["DensePassed"] and record["IdentityPassed"] and record["GatePassed"])
+        self.assertEqual((record["PreviousStatus"], record["Status"], record["ControlVerdict"]),
+                         (sq.STATUS_PENDING, sq.STATUS_FAILED, "Failed"))
+        self.assertEqual(record["ControlVerdictRule"], sq.CONTROL_VERDICT_RULE)
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual((model["QualificationStatus"], model["LibraryQualified"]), (sq.STATUS_FAILED, False))
+        self.assertEqual(model["SpatialQualification"]["ControlVerdict"], "Failed")
+        # The production verdict (--reference none, controls passed) lifts to Qualified as before.
+        self.write_library({"Qualification": {"Verdict": "PendingQualification", "Record": "qualification.json",
+                                              "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []},
+                            "QualificationStatus": sq.STATUS_PENDING})
+        self.assertEqual(self.run_evaluate(), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual((record["Status"], record["ControlVerdict"], record["ControlVerdictRule"]),
+                         (sq.STATUS_QUALIFIED, "PendingQualification", None))
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual((model["QualificationStatus"], model["LibraryQualified"]), (sq.STATUS_QUALIFIED, True))
+        # A model without a driver verdict (no Qualification block) is left to the criteria.
+        self.write_library({})
+        self.assertEqual(self.run_evaluate("--dry-run"), 0)
+        self.assertIsNone(json.loads(self.record.read_text())["ControlVerdict"])
+
+    def test_identity_partition_is_recorded_and_mandatory_for_a_multi_node_reducer(self):
+        """Decisions 482 / 487 (d): the loop end's 4-node reducer against a 1-node identity twin read
+        MS 1.6-5.3e-6 (> 1e-6); the identity twin now takes the reducer's partition and the (F) record
+        says so.  A multi-node model needs --identity-plan with the matching partition (absent or
+        differing: fail closed); a one-node model records "not supplied" without it."""
+        qualification = {"Verdict": "PendingQualification", "Record": "q.json", "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []}
+        identity_config = str(self.tmp / "fabricated-p4" / "config.json")
+
+        def plan(nodes, ranks, reducer_nodes=None, run="fabricated-p4", config=identity_config):
+            path = self.tmp / f"plan-{nodes}-{ranks}-{run}.json"
+            path.write_text(json.dumps({"Case": self.MODEL, "Stages": [{"Name": f"{run}-dense", "Config": config}],
+                                        "IdentityPartition": {"Run": run, "Nodes": nodes, "Ranks": ranks, "MatchesReducer": True,
+                                                              "Reducer": {"Nodes": reducer_nodes or nodes, "Ranks": ranks, "Job": "reducer",
+                                                                          "PBSJobID": "57910.h"}}}))
+            return str(path)
+        # One-node reducer, no plan: recorded as not supplied; the lift proceeds.
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        self.assertEqual(record["IdentityPartition"]["Supplied"], False)
+        self.assertEqual(record["IdentityPartition"]["Note"], "not supplied, one-node reducer")
+        self.assertEqual(record["IdentityPartition"]["Rule"], sq.IDENTITY_PARTITION_RULE)
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual(model["SpatialQualification"]["IdentityPartition"]["Supplied"], False)
+        # One-node reducer with a one-node plan: recorded; a 4-node plan against it fails closed.
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate("--identity-plan", plan(1, 192)), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual((record["IdentityPartition"]["Supplied"], record["IdentityPartition"]["Nodes"], record["IdentityPartition"]["Ranks"]),
+                         (True, 1, 192))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "differs from the reducer"):
+            self.run_evaluate("--identity-plan", plan(4, 768))
+        # The loop-end shape: a 4-node reducer (MultiNodeReduction) - the plan is mandatory ...
+        multi = {"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Ranks": 768, "Note": "n"}}
+        self.write_library(multi)
+        self.record.unlink()
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "mandatory"):
+            self.run_evaluate()
+        self.assertFalse(self.record.exists())   # nothing evaluated, nothing stamped
+        # ... a 1-node twin (the decision-482 reading) fails closed, as does a partition-matched twin
+        # whose plan recorded another reducer, another run or another coupon's config ...
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "differs from the reducer"):
+            self.run_evaluate("--identity-plan", plan(1, 192))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "differs from the reducer"):
+            self.run_evaluate("--identity-plan", plan(4, 768, reducer_nodes=2))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "names the run"):
+            self.run_evaluate("--identity-plan", plan(4, 768, run="fabricated-p5"))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "another coupon"):
+            self.run_evaluate("--identity-plan", plan(4, 768, config="/elsewhere/fabricated-p4/config.json"))
+        no_partition = self.tmp / "plan-none.json"
+        no_partition.write_text(json.dumps({"Case": self.MODEL, "Stages": [{"Name": "fabricated-p4-dense", "Config": identity_config}]}))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "no IdentityPartition"):
+            self.run_evaluate("--identity-plan", str(no_partition))
+        # ... and the reducer's partition is recorded in the (F) record and the stamped library.
+        self.assertEqual(self.run_evaluate("--identity-plan", plan(4, 768)), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        partition = record["IdentityPartition"]
+        self.assertEqual({key: partition[key] for key in ("Supplied", "Run", "Nodes", "Ranks", "ReducerNodes", "ReducerRanks", "ReducerJob", "MatchesReducer")},
+                         {"Supplied": True, "Run": "fabricated-p4", "Nodes": 4, "Ranks": 768, "ReducerNodes": 4, "ReducerRanks": 768,
+                          "ReducerJob": "57910.h", "MatchesReducer": True})
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual(model["SpatialQualification"]["IdentityPartition"]["Nodes"], 4)
+        # A model recording Nodes only (a library written before the Ranks field) is checked on nodes.
+        self.write_library({"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Note": "n"}})
+        self.assertEqual(self.run_evaluate("--identity-plan", plan(4, 768)), 0)
+        self.assertEqual(json.loads(self.record.read_text())["IdentityPartition"]["ReducerRanks"], 768)
+
+    def test_identity_record_reads_the_executed_twin(self):
+        """Decision 495 (4): when the identity twin job's status.json is present (the sibling of the plan, or
+        --identity-status) its EXECUTED node count (the runner's Nodes host list) must be the planned one and
+        the run's stage complete; the executed partition is recorded; a 1-node execution of a 4-node plan (the
+        decision-482 reading) or an incomplete stage fails closed."""
+        qualification = {"Verdict": "PendingQualification", "Record": "q.json", "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []}
+        self.write_library({"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Ranks": 768, "Note": "n"}})
+        job_dir = self.tmp / "le-dense" / "fabricated-p4"
+        job_dir.mkdir(parents=True)
+        plan = job_dir / "plan.json"
+        plan.write_text(json.dumps({"Case": self.MODEL, "Stages": [{"Name": "fabricated-p4-dense", "Config": str(self.tmp / "fabricated-p4" / "config.json")}],
+                                    "IdentityPartition": {"Run": "fabricated-p4", "Nodes": 4, "Ranks": 768, "MatchesReducer": True,
+                                                          "Reducer": {"Nodes": 4, "Ranks": 768, "Job": "reducer", "PBSJobID": "57910.h"}}}))
+        hosts = ["ip-10-0-0-1", "ip-10-0-0-2", "ip-10-0-0-3", "ip-10-0-0-4"]
+        status = {"Version": 2, "PBSJobID": "58043.h", "Host": hosts[0], "Nodes": hosts, "State": "complete",
+                  "Stages": [{"Name": "fabricated-p4-dense", "State": "complete", "WallSeconds": 1234.5}]}
+        # No status next to the plan: the plan alone (Executed None).
+        self.assertEqual(self.run_evaluate("--identity-plan", str(plan)), 0)
+        self.assertIsNone(json.loads(self.record.read_text())["IdentityPartition"]["Executed"])
+        # The sibling status.json of a 4-node execution: recorded.
+        (job_dir / "status.json").write_text(json.dumps(status))
+        self.write_library({"Qualification": qualification, "MultiNodeReduction": {"Nodes": 4, "Ranks": 768, "Note": "n"}})
+        self.assertEqual(self.run_evaluate("--identity-plan", str(plan)), 0)
+        executed = json.loads(self.record.read_text())["IdentityPartition"]["Executed"]
+        self.assertEqual((executed["Nodes"], executed["Hosts"], executed["PBSJobID"], executed["StageState"], executed["WallSeconds"]),
+                         (4, hosts, "58043.h", "complete", 1234.5))
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual(model["SpatialQualification"]["IdentityPartition"]["Executed"]["Nodes"], 4)
+        # A 1-node execution (the runner writes no Nodes list, Host only) of the 4-node plan: fail closed.
+        one_node = self.tmp / "status-1node.json"
+        one_node.write_text(json.dumps({**status, "Nodes": None, "PBSJobID": "58012.h"}))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "EXECUTED on 1 node"):
+            self.run_evaluate("--identity-plan", str(plan), "--identity-status", str(one_node))
+        # An incomplete / absent stage, and a named status that does not exist: fail closed.
+        incomplete = self.tmp / "status-incomplete.json"
+        incomplete.write_text(json.dumps({**status, "State": "incomplete", "Stages": [{"Name": "fabricated-p4-dense", "State": "timed-out"}]}))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "no complete stage"):
+            self.run_evaluate("--identity-plan", str(plan), "--identity-status", str(incomplete))
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "does not exist"):
+            self.run_evaluate("--identity-plan", str(plan), "--identity-status", str(self.tmp / "missing.json"))
+
+
 class EvaluationTest(unittest.TestCase):
     """evaluate_trace / evaluate on consistent synthetic energies: a trace whose energies obey
     the model exactly qualifies; a trace with a 3 % closure defect fails the coupon; the gate
@@ -447,6 +647,44 @@ class EvaluationTest(unittest.TestCase):
         self.assertTrue(unjudged["DensePassed"] and unjudged["GatePassed"])
         self.assertIsNone(record["UnjudgedTypesRule"])
         self.assertEqual(record["UnjudgedTypes"], [])
+
+    def test_failed_control_verdict_is_never_lifted(self):
+        """Decisions 485 / 487 (a): the b-batch1 interim libraries of S3p / S2p read Qualification.Verdict
+        Failed (control 31 p_SA) next to QualificationStatus Qualified, because the (F) path seeded the
+        transition from QualificationStatus alone.  The verdict now refuses the lift: Failed whatever
+        the dense traces, the identity and the gate read; PendingQualification / Passed proceed."""
+        trace = sq.evaluate_trace("device-patch-9", "T1", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
+                                  thin_p5=self.thin_p5, q_fab=self.q_fab, q_thin=self.q_thin)
+        window = [sq.reference_box_closure(1.02, 1.0, 0.0, True) | {"Class": "SA", "Window": "S3p"}]
+        failed = sq.evaluate([trace], gate=self.gate, reference_boxes=window, control_verdict="Failed")
+        self.assertEqual(failed["Status"], sq.STATUS_FAILED)
+        self.assertTrue(failed["DensePassed"] and failed["IdentityPassed"] and failed["GatePassed"])
+        self.assertEqual(failed["ControlVerdict"], "Failed")
+        self.assertEqual(failed["ControlVerdictRule"], sq.CONTROL_VERDICT_RULE)
+        for verdict, status in (("PendingQualification", sq.STATUS_WINDOW_VALIDATED), ("Passed", sq.STATUS_WINDOW_VALIDATED),
+                                (None, sq.STATUS_WINDOW_VALIDATED)):
+            record = sq.evaluate([trace], gate=self.gate, reference_boxes=window, control_verdict=verdict)
+            self.assertEqual(record["Status"], status, verdict)
+            self.assertEqual(record["ControlVerdict"], verdict)
+            self.assertIsNone(record["ControlVerdictRule"])
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "unknown control verdict"):
+            sq.evaluate([trace], gate=self.gate, control_verdict="Qualified")
+        # A current status of Qualified (a stamped library) is no shield either.
+        self.assertEqual(sq.qualification_status(sq.STATUS_QUALIFIED, dense_passed=True, identity_passed=True, gate_passed=True,
+                                                 control_verdict="Failed"), sq.STATUS_FAILED)
+        # The reproduced interim case: the S3p model with the driver's Failed verdict and no
+        # QualificationStatus (PendingQualification by default) stamps Failed, LibraryQualified False.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "process-library.json"
+            model = {"Name": "spatialedgecluster_edgecount-8_e7f44561bbf0", "LibraryQualified": False,
+                     "Qualification": {"Verdict": "Failed", "Record": "qualification.json", "ReferenceAnchor": None, "Order": 4,
+                                       "UnjudgedTypes": []}}
+            path.write_text(json.dumps({"Models": [model]}))
+            stamped = sq.stamp_library_status(path, model["Name"], failed)["Models"][0]
+            self.assertEqual(stamped["QualificationStatus"], sq.STATUS_FAILED)
+            self.assertFalse(stamped["LibraryQualified"])
+            self.assertEqual(stamped["SpatialQualification"]["ControlVerdict"], "Failed")
+            self.assertEqual(stamped["SpatialQualification"]["Status"], sq.STATUS_FAILED)
 
     def test_defective_trace_fails_the_coupon(self):
         defective_p5 = dict(self.fab_p5)
