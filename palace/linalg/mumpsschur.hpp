@@ -18,6 +18,25 @@
 namespace palace
 {
 
+// Lower-triangle COO pattern (1-based global indices, one entry per position, columns
+// ascending in each row) of the local rows of the union of the given symmetric matrices
+// (same row distribution; null ones skipped) and the diagonal of the given local rows. The
+// entries of each matrix in pattern order are returned in vals (empty for a null one), and
+// the first pattern entry of each local row in row_ptr (n_loc + 1).
+void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
+                          const mfem::Array<int> &diag_rows, std::vector<MUMPS_INT> &irn,
+                          std::vector<MUMPS_INT> &jcn,
+                          std::vector<std::vector<double>> &vals,
+                          std::vector<int> &row_ptr);
+
+// val += a X on a pattern from LowerTrianglePattern, for a matrix X with entries inside the
+// pattern (or zero).
+void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int> &row_ptr,
+                  const std::vector<MUMPS_INT> &jcn, std::vector<double> &val);
+void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
+                  const std::vector<int> &row_ptr, const std::vector<MUMPS_INT> &jcn,
+                  std::vector<std::complex<double>> &val);
+
 // MUMPS partial factorization with a Schur complement: factors the symmetric parent-space
 // operator A (rows/cols outside the eliminated subsystem set to identity) with the given
 // Schur variables left unfactored, returning the dense Schur complement on rank 0 -- for
@@ -35,24 +54,39 @@ class MumpsSchurSolverT
 public:
   using VecType = std::conditional_t<kComplex, ComplexVector, mfem::Vector>;
 
+  // Local lower-triangle COO entries (1-based global indices) of the local rows of an
+  // n_glob x n_glob symmetric matrix.
+  struct Coo
+  {
+    std::vector<MUMPS_INT> irn, jcn;
+    std::vector<T> val;
+  };
+
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
-  // factorization of A. Ai: the imaginary part of a complex A (complex only; null for a
-  // real A). blr_tol > 0 enables a block low-rank (BLR) factorization with that relative
-  // accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it avoids
-  // MUMPS's per-rank workspace). With refactor, the input entries are kept so that
+  // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
+  // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
+  // avoids MUMPS's per-rank workspace). With refactor, the entries are kept so that
   // Refactor can factor new values with the same pattern, reusing the analysis. spd: A is
   // positive definite, so the BLR factorization skips numerical pivoting.
   MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    bool serial = false, bool refactor = false, bool spd = true,
-                    const mfem::HypreParMatrix *Ai = nullptr);
+                    bool serial = false, bool refactor = false, bool spd = true);
+
+  // From the local lower-triangle entries of A (n_loc local rows, in rank order).
+  MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
+                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
+                    bool serial = false, bool refactor = false, bool spd = true);
 
   ~MumpsSchurSolverT();
 
-  // Factor A (= Ar + i Ai) with new values and the sparsity pattern of the analysis
-  // (collective).
-  void Refactor(const mfem::HypreParMatrix &A, const mfem::HypreParMatrix *Ai = nullptr);
+  // With refactor: the entries of the next Refactor in the order of the input (to be
+  // overwritten), and their columns.
+  std::vector<T> &Values() { return val; }
+  const std::vector<MUMPS_INT> &Columns() const { return jcn; }
+
+  // Factor the entries in Values() with the sparsity pattern of the analysis (collective).
+  void Refactor();
 
   // Dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric).
   const std::vector<T> &Schur() const { return schur; }
@@ -73,6 +107,7 @@ public:
   void Expand(const std::vector<T> &u, const std::vector<VecType *> &X);
 
 private:
+  void Init(const std::vector<HYPRE_BigInt> &schur_vars);
   void Factor();
   void Check(const char *phase) const;
   void Call();

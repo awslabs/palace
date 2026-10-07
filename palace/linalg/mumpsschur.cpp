@@ -17,98 +17,30 @@ namespace palace
 namespace
 {
 
-// The local rows of a HypreParMatrix with global column indices.
-struct LocalRows
+// f(i, j, a) for the entries of local row i of A with global column j <= global row.
+template <typename F>
+void ForEachLowerEntry(const mfem::HypreParMatrix &A, int i, F &&f)
 {
-  hypre_CSRMatrix *csr;
-  HYPRE_BigInt row0;
-  explicit LocalRows(const mfem::HypreParMatrix &A)
+  auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
+  const hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(parcsr);
+  const hypre_CSRMatrix *offd = hypre_ParCSRMatrixOffd(parcsr);
+  const HYPRE_BigInt *cmap = hypre_ParCSRMatrixColMapOffd(parcsr);
+  const HYPRE_BigInt row = hypre_ParCSRMatrixFirstRowIndex(parcsr) + i;
+  const HYPRE_BigInt col0 = hypre_ParCSRMatrixFirstColDiag(parcsr);
+  for (HYPRE_Int k = diag->i[i]; k < diag->i[i + 1]; k++)
   {
-    auto *parcsr = (hypre_ParCSRMatrix *)const_cast<mfem::HypreParMatrix &>(A);
-    A.HostRead();
-    csr = hypre_MergeDiagAndOffd(parcsr);
-    row0 = parcsr->first_row_index;
-  }
-  ~LocalRows() { hypre_CSRMatrixDestroy(csr); }
-  HYPRE_BigInt Col(HYPRE_Int k) const
-  {
-#if MFEM_HYPRE_VERSION >= 21600
-    return csr->big_j[k];
-#else
-    return csr->j[k];
-#endif
-  }
-};
-
-// Local rows of A (= Ar + i Ai) as 1-based COO, lower triangle only (symmetric storage),
-// one entry per position.
-template <typename T>
-void LowerTriangleCOO(const mfem::HypreParMatrix &A, const mfem::HypreParMatrix *Ai,
-                      std::vector<MUMPS_INT> &irn, std::vector<MUMPS_INT> &jcn,
-                      std::vector<T> &val)
-{
-  irn.clear();
-  jcn.clear();
-  val.clear();
-  LocalRows R(A);
-  std::unique_ptr<LocalRows> I;
-  if constexpr (!std::is_same_v<T, double>)
-  {
-    if (Ai)
+    const HYPRE_BigInt j = col0 + diag->j[k];
+    if (j <= row)
     {
-      MFEM_VERIFY(Ai->Height() == A.Height() &&
-                      Ai->GetRowStarts()[0] == A.GetRowStarts()[0],
-                  "Real and imaginary parts must have the same row distribution!");
-      I = std::make_unique<LocalRows>(*Ai);
+      f(row, j, diag->data[k]);
     }
   }
-  else
+  for (HYPRE_Int k = offd->i ? offd->i[i] : 0; offd->i && k < offd->i[i + 1]; k++)
   {
-    MFEM_VERIFY(!Ai, "A real MUMPS factorization takes no imaginary part!");
-  }
-  std::vector<std::pair<HYPRE_BigInt, T>> row;
-  for (int i = 0; i < A.Height(); i++)
-  {
-    const HYPRE_BigInt ii = R.row0 + i;
-    row.clear();
-    for (HYPRE_Int k = R.csr->i[i]; k < R.csr->i[i + 1]; k++)
+    const HYPRE_BigInt j = cmap[offd->j[k]];
+    if (j <= row)
     {
-      if (R.Col(k) <= ii)
-      {
-        row.emplace_back(R.Col(k), T(R.csr->data[k]));
-      }
-    }
-    if constexpr (!std::is_same_v<T, double>)
-    {
-      for (HYPRE_Int k = I ? I->csr->i[i] : 0; I && k < I->csr->i[i + 1]; k++)
-      {
-        if (I->Col(k) <= ii)
-        {
-          row.emplace_back(I->Col(k), T(0.0, I->csr->data[k]));
-        }
-      }
-      // Merge the parts: one entry per column (a pattern independent of their overlap).
-      std::sort(row.begin(), row.end(),
-                [](const auto &a, const auto &b) { return a.first < b.first; });
-      std::size_t m = 0;
-      for (std::size_t q = 0; q < row.size(); q++)
-      {
-        if (m > 0 && row[m - 1].first == row[q].first)
-        {
-          row[m - 1].second += row[q].second;
-        }
-        else
-        {
-          row[m++] = row[q];
-        }
-      }
-      row.resize(m);
-    }
-    for (const auto &[j, v] : row)
-    {
-      irn.push_back(static_cast<MUMPS_INT>(ii + 1));
-      jcn.push_back(static_cast<MUMPS_INT>(j + 1));
-      val.push_back(v);
+      f(row, j, offd->data[k]);
     }
   }
 }
@@ -121,14 +53,203 @@ MPI_Datatype MpiType()
 
 }  // namespace
 
+void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
+                          const mfem::Array<int> &diag_rows, std::vector<MUMPS_INT> &irn,
+                          std::vector<MUMPS_INT> &jcn,
+                          std::vector<std::vector<double>> &vals, std::vector<int> &row_ptr)
+{
+  const mfem::HypreParMatrix *A0 = nullptr;
+  for (const auto *X : A)
+  {
+    if (X)
+    {
+      MFEM_VERIFY(!A0 || (X->Height() == A0->Height() &&
+                          X->GetRowStarts()[0] == A0->GetRowStarts()[0]),
+                  "Matrices of a pattern must have the same row distribution!");
+      A0 = A0 ? A0 : X;
+      X->HostRead();
+    }
+  }
+  MFEM_VERIFY(A0, "LowerTrianglePattern needs a matrix!");
+  const int n = A0->Height();
+  const HYPRE_BigInt row0 = A0->GetRowStarts()[0];
+  std::vector<char> unit(n, 0);
+  for (int i : diag_rows)
+  {
+    unit[i] = 1;
+  }
+  // Two passes over the rows (count, then fill) to allocate the pattern exactly.
+  std::vector<std::pair<HYPRE_BigInt, int>> row;  // (column, matrix)
+  std::vector<double> rv;
+  auto gather = [&](int i)
+  {
+    row.clear();
+    rv.clear();
+    for (std::size_t p = 0; p < A.size(); p++)
+    {
+      if (A[p])
+      {
+        ForEachLowerEntry(*A[p], i,
+                          [&](HYPRE_BigInt, HYPRE_BigInt j, double a)
+                          {
+                            row.emplace_back(j, static_cast<int>(p));
+                            rv.push_back(a);
+                          });
+      }
+    }
+    if (unit[i])
+    {
+      row.emplace_back(row0 + i, -1);
+      rv.push_back(0.0);
+    }
+  };
+  std::vector<int> perm;
+  auto sorted = [&]()
+  {
+    perm.resize(row.size());
+    for (std::size_t q = 0; q < perm.size(); q++)
+    {
+      perm[q] = static_cast<int>(q);
+    }
+    std::sort(perm.begin(), perm.end(),
+              [&](int a, int b) { return row[a].first < row[b].first; });
+  };
+  row_ptr.assign(n + 1, 0);
+  for (int i = 0; i < n; i++)
+  {
+    gather(i);
+    sorted();
+    int m = 0;
+    for (std::size_t q = 0; q < perm.size(); q++)
+    {
+      m += (q == 0 || row[perm[q]].first != row[perm[q - 1]].first);
+    }
+    row_ptr[i + 1] = row_ptr[i] + m;
+  }
+  const std::size_t nnz = row_ptr[n];
+  irn.assign(nnz, 0);
+  jcn.assign(nnz, 0);
+  vals.assign(A.size(), {});
+  for (std::size_t p = 0; p < A.size(); p++)
+  {
+    if (A[p])
+    {
+      vals[p].assign(nnz, 0.0);
+    }
+  }
+  for (int i = 0; i < n; i++)
+  {
+    gather(i);
+    sorted();
+    int pos = row_ptr[i] - 1;
+    for (std::size_t q = 0; q < perm.size(); q++)
+    {
+      const auto [j, p] = row[perm[q]];
+      if (q == 0 || j != row[perm[q - 1]].first)
+      {
+        pos++;
+        irn[pos] = static_cast<MUMPS_INT>(row0 + i + 1);
+        jcn[pos] = static_cast<MUMPS_INT>(j + 1);
+      }
+      if (p >= 0)
+      {
+        vals[p][pos] += rv[perm[q]];
+      }
+    }
+  }
+}
+
+namespace
+{
+
+template <typename T>
+void AddToPatternT(const mfem::HypreParMatrix &X, T a, const std::vector<int> &row_ptr,
+                   const std::vector<MUMPS_INT> &jcn, std::vector<T> &val)
+{
+  X.HostRead();
+  for (int i = 0; i < X.Height(); i++)
+  {
+    const auto first = jcn.begin() + row_ptr[i], last = jcn.begin() + row_ptr[i + 1];
+    ForEachLowerEntry(X, i,
+                      [&](HYPRE_BigInt, HYPRE_BigInt j, double x)
+                      {
+                        const auto it =
+                            std::lower_bound(first, last, static_cast<MUMPS_INT>(j + 1));
+                        if (it != last && *it == j + 1)
+                        {
+                          val[it - jcn.begin()] += a * x;
+                        }
+                        else
+                        {
+                          MFEM_VERIFY(x == 0.0, "Entry outside of the sparsity pattern!");
+                        }
+                      });
+  }
+}
+
+}  // namespace
+
+void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int> &row_ptr,
+                  const std::vector<MUMPS_INT> &jcn, std::vector<double> &val)
+{
+  AddToPatternT(X, a, row_ptr, jcn, val);
+}
+
+void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
+                  const std::vector<int> &row_ptr, const std::vector<MUMPS_INT> &jcn,
+                  std::vector<std::complex<double>> &val)
+{
+  AddToPatternT(X, a, row_ptr, jcn, val);
+}
+
+namespace
+{
+
+template <typename T>
+typename MumpsSchurSolverT<T>::Coo LowerTriangle(const mfem::HypreParMatrix &A)
+{
+  typename MumpsSchurSolverT<T>::Coo coo;
+  std::vector<std::vector<double>> vals;
+  std::vector<int> row_ptr;
+  LowerTrianglePattern({&A}, mfem::Array<int>(), coo.irn, coo.jcn, vals, row_ptr);
+  if constexpr (std::is_same_v<T, double>)
+  {
+    coo.val = std::move(vals[0]);
+  }
+  else
+  {
+    coo.val.assign(vals[0].begin(), vals[0].end());
+  }
+  return coo;
+}
+
+}  // namespace
+
 template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
                                         double blr_tol, bool serial, bool refactor,
-                                        bool spd, const mfem::HypreParMatrix *Ai)
-  : comm(A.GetComm()), serial(serial), refactor(refactor), spd(spd),
-    n_glob(A.GetGlobalNumRows()), n_loc(A.Height()),
-    n_schur(static_cast<int>(schur_vars.size())), blr_tol(blr_tol)
+                                        bool spd)
+  : MumpsSchurSolverT(A.GetComm(), A.GetGlobalNumRows(), A.Height(), LowerTriangle<T>(A),
+                      schur_vars, blr_tol, serial, refactor, spd)
+{
+}
+
+template <typename T>
+MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc,
+                                        Coo &&A,
+                                        const std::vector<HYPRE_BigInt> &schur_vars,
+                                        double blr_tol, bool serial, bool refactor,
+                                        bool spd)
+  : comm(comm), serial(serial), refactor(refactor), spd(spd), n_glob(n_glob), n_loc(n_loc),
+    n_schur(static_cast<int>(schur_vars.size())), irn(std::move(A.irn)),
+    jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
+{
+  Init(schur_vars);
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
 {
   MPI_Comm_rank(comm, &rank);
   active = !serial || rank == 0;
@@ -142,7 +263,6 @@ MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
     row_disp[r] = row_disp[r - 1] + row_cnt[r - 1];
   }
 
-  LowerTriangleCOO(A, Ai, irn, jcn, val);
   MFEM_VERIFY(!(refactor && serial), "MumpsSchurSolver: Refactor needs distributed input!");
   if (blr_tol > 0.0)
   {
@@ -337,18 +457,9 @@ void MumpsSchurSolverT<T>::Factor()
 }
 
 template <typename T>
-void MumpsSchurSolverT<T>::Refactor(const mfem::HypreParMatrix &A,
-                                    const mfem::HypreParMatrix *Ai)
+void MumpsSchurSolverT<T>::Refactor()
 {
   MFEM_VERIFY(refactor, "MumpsSchurSolver was not set up for refactorization!");
-  std::vector<MUMPS_INT> irn_new, jcn_new;
-  std::vector<T> val_new;
-  LowerTriangleCOO(A, Ai, irn_new, jcn_new, val_new);
-  int same = (irn_new == irn && jcn_new == jcn);
-  MPI_Allreduce(MPI_IN_PLACE, &same, 1, MPI_INT, MPI_MIN, comm);
-  MFEM_VERIFY(same,
-              "MumpsSchurSolver::Refactor needs the sparsity pattern of the analysis!");
-  val.swap(val_new);
   for (auto &v : val)
   {
     v /= scale;

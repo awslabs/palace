@@ -57,29 +57,46 @@ public:
 
 private:
   SpaceOperator &space_op;
-  std::vector<int> region_attrs, env_attrs;
   std::vector<char> is_env_int, is_gamma, is_region_int;
-  // Local true DOFs pinned in the environment operator (outside its interior and Γ) and in
-  // the region operator (outside the region interior and Γ).
-  mfem::Array<int> other_env, other_region;
   std::vector<HYPRE_BigInt> gamma_tdofs;
   std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank
-  std::unique_ptr<ComplexOperator> K_env, C_env, M_env, K_region, C_region, M_region;
-  std::unique_ptr<MumpsSchurSolverT<std::complex<double>>> env_schur, region_schur;
-  // Real and imaginary parts of a side operator, A_E(ω) or A_R(ω) (until factored).
-  struct Parts
+
+  // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), with its
+  // pinned DOFs, factored by MUMPS: the lower-triangle pattern, the entries of the
+  // frequency-independent parts in pattern order (the assembled operators are not kept),
+  // and the positions of the unit diagonal of the pinned DOFs.
+  struct Side
   {
-    std::unique_ptr<mfem::HypreParMatrix> real, imag;
+    std::vector<int> attrs;
+    // Local true DOFs pinned in the side's operator: outside its interior and Γ.
+    mfem::Array<int> pinned;
+    std::vector<int> row_ptr, unit;
+    std::vector<std::vector<double>> parts;  // Kr, Ki, Cr, Ci, Mr, Mi (empty if absent)
+    bool extra = false;                      // A2(ω) is present
+    // The local entries (1-based COO) at the first frequency, until factored.
+    std::vector<int> irn, jcn;
+    std::vector<std::complex<double>> val;
+    std::unique_ptr<MumpsSchurSolverT<std::complex<double>>> schur;
   };
-  Parts env_op, region_op;
+  Side env, region;
   // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots.
   std::vector<std::complex<double>> S, T;
   std::vector<int> T_piv;
 
-  // K + iω C - ω² M + A2(ω) for one side, with the given DOFs pinned.
-  Parts SideOperator(double omega, const std::vector<int> &attrs, const ComplexOperator *K,
-                     const ComplexOperator *C, const ComplexOperator *M,
-                     const mfem::Array<int> &pinned);
+  // The assembled parts of A2(ω) of a side, with the pinned DOFs eliminated.
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> ExtraParts(const Side &side,
+                                                                double omega);
+
+  // The pattern and entries of a side at the first frequency.
+  void Setup(Side &side, double omega);
+
+  // Factor a side (set up at ω), or refactor it at another frequency.
+  void Factor(Side &side, double omega);
+
+  // The entries of a side at ω on its pattern (columns jcn), given its A2(ω).
+  void Fill(const Side &side, double omega,
+            const std::vector<std::unique_ptr<mfem::HypreParMatrix>> &extra,
+            const std::vector<int> &jcn, std::vector<std::complex<double>> &val) const;
 };
 
 }  // namespace palace
