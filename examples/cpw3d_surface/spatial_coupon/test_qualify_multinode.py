@@ -409,6 +409,10 @@ class DenseTwinPlanTest(unittest.TestCase):
                 dense_dir=root, runs=["fabricated-p4", "fabricated-p5"], counts=LOOP_END_COUNTS, binary_sha256="0" * 64,
                 remote_root="/r", job_dir="/r/dense", model=self.model, dense_model=self.dense_model, profile={**self.profile, "MaximumNodesPerJob": 8},
                 case_id="le")
+            with self.assertRaisesRegex(ValueError, "below"):
+                self.dense_twin_plan.plan_dense_twins(dense_dir=root, runs=["fabricated-p5"], counts=LOOP_END_COUNTS, binary_sha256="0" * 64,
+                                                      remote_root="/r", job_dir="/r/dense", model=self.model, dense_model=self.dense_model,
+                                                      profile={**self.profile, "MaximumNodesPerJob": 8}, nodes=1)
         runs = plan["Estimate"]["Runs"]
         # The loop-end fab p4 twin (887 GB Palace) fits one node; the p5 twin (1,702 GB) does not:
         # the job runs on the p5 twin's node count, every run scaled to it.
@@ -426,10 +430,6 @@ class DenseTwinPlanTest(unittest.TestCase):
         self.assertEqual(plan["UnpinnedInputs"], [])
         self.assertIn(f"#PBS -l select={plan['Nodes']}:ncpus=192:mpiprocs=192\n", script)
         self.assertIn("D=/r/dense\n", script)
-        with self.assertRaisesRegex(ValueError, "below"):
-            self.dense_twin_plan.plan_dense_twins(dense_dir=root, runs=["fabricated-p5"], counts=LOOP_END_COUNTS, binary_sha256="0" * 64,
-                                                  remote_root="/r", job_dir="/r/dense", model=self.model, dense_model=self.dense_model,
-                                                  profile={**self.profile, "MaximumNodesPerJob": 8}, nodes=1)
         with self.assertRaisesRegex(ValueError, "no measured order"):
             self.dense_twin_plan.estimate_run(self.model, self.dense_model, LOOP_END_COUNTS, 3, 5, profile=self.profile)
 
