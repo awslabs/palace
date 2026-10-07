@@ -1427,11 +1427,63 @@ function revolved_face_centroid(tube::ArcTube, uw_1, uw_2)
     return moment ./ area
 end
 
+# The cap of an ARC tube on a box face (round 2b, decision 437 (3); design A2 for arcs): the
+# face plane cuts the revolved lateral faces in conics, so the cap curves and the cap face are
+# the images of the section's straight segments and triangles under the map (u, w) ->
+# P(u, w) = tube_end_point (the node circle of radius rho + sigma u meets the face at its own
+# angle). On the face plane the in-plane coordinates are (O(u), w) with O the face-parallel
+# horizontal coordinate, (O - c_o)^2 = r(u)^2 - d^2, so dO / du = sigma r(u) / (O - c_o): the
+# arc-length centroid of a cap curve and the area centroid of the cap face follow by
+# Gauss-Legendre quadrature (8-point; composite over the segment / the sector triangles).
+function face_cap_stretch(tube::ArcTube, face_end::FaceEnd, u, w)
+    point = tube_end_point(tube, face_end.end_index, u, w)
+    other = 3 - face_end.face_axis
+    offset = point[other] - tube.centre[other]
+    abs(offset) > 0.0 || error("arc tube face cap is tangent to the face at a node")
+    return point, tube.sigma * (tube.rho + tube.sigma * u) / offset
+end
+
+function face_cap_curve_centroid(tube::ArcTube, face_end::FaceEnd, a, b)
+    nodes, weights = GAUSS_LEGENDRE_8
+    moment = zeros(3)
+    length = 0.0
+    du, dw = b[1] - a[1], b[2] - a[2]
+    for (t, weight) in zip(nodes, weights)
+        point, stretch = face_cap_stretch(tube, face_end, a[1] + t * du, a[2] + t * dw)
+        speed = hypot(stretch * du, dw)
+        moment .+= weight .* speed .* point
+        length += weight * speed
+    end
+    length > 0.0 || error("degenerate arc tube face cap curve")
+    return moment ./ length
+end
+
+function face_cap_face_centroid(tube::ArcTube, face_end::FaceEnd, triangles)
+    nodes, weights = GAUSS_LEGENDRE_8
+    moment = zeros(3)
+    area = 0.0
+    for (p, q, r) in triangles
+        # Duffy map of the unit square onto the (u, w) triangle p q r: (x, y) -> p + x (q - p) +
+        # x y (r - q), Jacobian x |(q - p) x (r - p)|.
+        twice = abs((q[1] - p[1]) * (r[2] - p[2]) - (q[2] - p[2]) * (r[1] - p[1]))
+        for (x, wx) in zip(nodes, weights), (y, wy) in zip(nodes, weights)
+            u = p[1] + x * (q[1] - p[1]) + x * y * (r[1] - q[1])
+            w = p[2] + x * (q[2] - p[2]) + x * y * (r[2] - q[2])
+            point, stretch = face_cap_stretch(tube, face_end, u, w)
+            weight = wx * wy * x * twice * abs(stretch)
+            moment .+= weight .* point
+            area += weight
+        end
+    end
+    area > 0.0 || error("degenerate arc tube face cap")
+    return moment ./ area
+end
+
 # Structural entities of an ARC tube volume (design 1.2 (3)): points and cap curves / faces
-# on the two end sections (radial planes, or the box face plane at a face end: the cap
-# curves are then conics whose chord midpoint is used, within the match tolerance), the
-# longitudinal curves as circle arcs (exact centroids) and the lateral / radial faces as
-# surfaces of revolution (revolved_face_centroid).
+# on the two end sections (radial planes; at a face end the box face plane, where the cap
+# curves are conics and the cap face a conic-bounded region: face_cap_curve_centroid /
+# face_cap_face_centroid), the longitudinal curves as circle arcs (exact centroids) and the
+# lateral / radial faces as surfaces of revolution (revolved_face_centroid).
 function tube_entities(tube::ArcTube, section::TubeSection, group)
     first, last, _ = group
     uw = section_coordinates(section)
@@ -1441,6 +1493,11 @@ function tube_entities(tube::ArcTube, section::TubeSection, group)
     outer(j) = uw[:, section_node(section, K, j)]
     at(end_index, u, w) = tube_end_point(tube, end_index, u, w)
     for end_index in (0, 1)
+        face_end = face_end_at(tube, end_index)
+        curve_centroid(a_uw, b_uw) =
+            face_end === nothing ?
+            0.5 .* (at(end_index, a_uw...) .+ at(end_index, b_uw...)) :
+            face_cap_curve_centroid(tube, face_end, a_uw, b_uw)
         push!(entities, TubeEntity(0, :edge_point, (0, end_index), at(end_index, 0.0, 0.0)))
         for j in rays
             push!(
@@ -1449,18 +1506,39 @@ function tube_entities(tube::ArcTube, section::TubeSection, group)
             )
         end
         for j = first:last
-            a = at(end_index, outer(j)...)
-            b = at(end_index, outer(j + 1)...)
-            push!(entities, TubeEntity(1, :cap_polygon, (j, end_index), 0.5 .* (a .+ b)))
+            push!(
+                entities,
+                TubeEntity(
+                    1,
+                    :cap_polygon,
+                    (j, end_index),
+                    curve_centroid(outer(j), outer(j + 1))
+                )
+            )
         end
         for j in (first, last + 1)
-            a = at(end_index, 0.0, 0.0)
-            b = at(end_index, outer(j)...)
-            push!(entities, TubeEntity(1, :cap_ray, (j, end_index), 0.5 .* (a .+ b)))
+            push!(
+                entities,
+                TubeEntity(
+                    1,
+                    :cap_ray,
+                    (j, end_index),
+                    curve_centroid((0.0, 0.0), outer(j))
+                )
+            )
         end
-        polygon =
-            vcat([at(end_index, 0.0, 0.0)], [at(end_index, outer(j)...) for j in rays])
-        push!(entities, TubeEntity(2, :cap, (0, end_index), polygon_centroid_3d(polygon)))
+        cap_centroid = if face_end === nothing
+            polygon_centroid_3d(
+                vcat([at(end_index, 0.0, 0.0)], [at(end_index, outer(j)...) for j in rays])
+            )
+        else
+            face_cap_face_centroid(
+                tube,
+                face_end,
+                [((0.0, 0.0), outer(j), outer(j + 1)) for j = first:last]
+            )
+        end
+        push!(entities, TubeEntity(2, :cap, (0, end_index), cap_centroid))
     end
     s_a(u, w) = tube_end_station(tube, 0, u, w)
     s_b(u, w) = tube_end_station(tube, 1, u, w)

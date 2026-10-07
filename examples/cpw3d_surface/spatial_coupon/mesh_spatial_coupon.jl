@@ -3862,14 +3862,25 @@ function polygon_union_boundary(pieces, tolerance; island_rule=nothing, absorbed
     end
     probe = 0.25 * minimum(hypot(b[1] - a[1], b[2] - a[2]) for (a, b) in subsegments)
     inside_union(p) = any(point_in_polygon(p, piece, 1.0e-3 * probe) for piece in pieces)
+    same_segment(p, q, r, t) =
+        (hypot(p[1] - r[1], p[2] - r[2]) <= tolerance && hypot(q[1] - t[1], q[2] - t[2]) <= tolerance) ||
+        (hypot(p[1] - t[1], p[2] - t[2]) <= tolerance && hypot(q[1] - r[1], q[2] - r[2]) <= tolerance)
     boundary = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
     for (a, b) in subsegments
         u = (b[1] - a[1], b[2] - a[2])
         len = hypot(u...)
         normal = (-u[2] / len, u[1] / len)
         mid = (0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]))
-        left = inside_union((mid[1] + probe * normal[1], mid[2] + probe * normal[2]))
-        right = inside_union((mid[1] - probe * normal[1], mid[2] - probe * normal[2]))
+        # The probe never reaches past another sub-segment of the arrangement (round 2b, decision
+        # 437 (3): a chord of an arc meeting a box face at a shallow tilt leaves a wedge thinner
+        # than a quarter of the shortest sub-segment between the chord and the clipped face edge;
+        # a probe through that edge would read the box exterior). Sub-segments are split at every
+        # crossing, so every non-coincident one keeps a positive distance from this midpoint.
+        reach = minimum(point_segment_distance_2d(mid, c, d) for (c, d) in subsegments
+                        if !same_segment(a, b, c, d); init=Inf)
+        local_probe = min(probe, 0.5 * reach)
+        left = inside_union((mid[1] + local_probe * normal[1], mid[2] + local_probe * normal[2]))
+        right = inside_union((mid[1] - local_probe * normal[1], mid[2] - local_probe * normal[2]))
         left == right && continue
         segment = left ? (a, b) : (b, a)
         same(p, q) = hypot(p[1] - q[1], p[2] - q[2]) <= tolerance
@@ -5475,22 +5486,43 @@ const RECIPE_SCOPE_SUPPORTED_CLASSES = [
 # signature (the mesher's post-snap tilts read <= 1.27e-6 rad on its built thin and
 # measurement-only fabricated meshes) and the exact part splits of one arc (turn 0).
 const ARC_JOINT_TURN_BOUND = 1.6e-6
+# Mesher design round 2b (decision 437 (3); CC DESIGN AMENDMENT 2 B3 lifted): the TESTED ranges of
+# the four synthetic FULL builds. A SMOOTH arc joint (JointSmooth, turn <= JUNCTION_TANGENT_ANGLE
+# 1e-4 rad) builds when its turn is at most ARC_SMOOTH_JOINT_TURN_BOUND (the 5e-5-rad synthetic
+# joint; the loop end's <= 1.6e-6 lies inside); a CORNER joint of an arc with another side
+# (kinked arc / line; A3 (3): ball, caps, the clearance along the arc) builds when its turn lies
+# in ARC_CORNER_JOINT_TURN_RANGE (the 2e-4-rad corner joint and the 30-degree kinked joint);
+# an arc end on a box face builds when it is a CUT end of tilt 0 < theta <= ARC_FACE_END_TILT_BOUND
+# (the 45 / 70-degree synthetic face ends, fab + thin). The corner joint is tested on THIN coupons
+# only (the fabricated kinked arc end fails in Gmsh's surface mesher at the production sizes:
+# every fabricated corner joint stays guarded). Everything beyond fails closed at the same guards
+# (ScopeGuard[ArcJointTilt] / [ArcFaceEnds]: an exactly perpendicular arc end, an arc at a
+# box-vertex corner, a smooth turn in (5e-5, 1e-4], a corner turn in (1e-4, 2e-4) or above 30
+# degrees). Recorded scope rules, not physics thresholds.
+const ARC_SMOOTH_JOINT_TURN_BOUND = 5.0e-5
+const ARC_CORNER_JOINT_TURN_RANGE = (2.0e-4, deg2rad(30.0))
+const ARC_FACE_END_TILT_BOUND = deg2rad(70.0)
 const RECIPE_SCOPE_GUARDS = [
     ("ArcTubeRadiusVsCurvature", "build",
      "an arc metal side whose radius is below four times the tube envelope (Radius + " *
      "PyramidHeight): the revolved sections would fold (block (b) design 1.2 (3))"),
     ("ArcFaceEnds", "build",
-     "an arc metal side with an end on the outer box (a box-face cut end at any tilt, an end " *
-     "exactly perpendicular to the face or a box-vertex corner): no full build has exercised " *
-     "an arc tube reaching a box face (supervisor decision 391 MAJOR-2 (ii); lifted by the " *
-     "synthetic arc face-end builds at 45 / 70 degrees)"),
+     "an arc metal side with an end on the outer box outside the TESTED range (mesher design " *
+     "round 2b, decision 437 (3): a box-face cut end of tilt 0 < theta <= " *
+     "$(rad2deg(ARC_FACE_END_TILT_BOUND)) degrees builds - the synthetic 45 / 70-degree arc face " *
+     "ends, fab + thin): an arc end exactly perpendicular to the face, an arc at a box-vertex " *
+     "corner or a tilt above the bound fails closed (supervisor decision 391 MAJOR-2 (ii))"),
     ("ArcJointTilt", "build",
      "an arc metal side meeting another side (straight or arc) at a joint whose turn (the " *
-     "angle between the arc's end tangent and the other side's direction) exceeds " *
-     "$(ARC_JOINT_TURN_BOUND) rad, the loop end's tested range (smooth joints turning more, " *
-     "kinked arc / line joints and arc corners): no full build has exercised a sheared or a " *
-     "capped arc joint beyond it (supervisor decision 391 MAJOR-2 (ii); lifted by the " *
-     "synthetic 5e-5-rad smooth, 2e-4-rad corner and kinked arc / line joint builds)"),
+     "angle between the arc's end tangent and the other side's direction) lies outside the " *
+     "TESTED ranges (mesher design round 2b, decision 437 (3)): a SMOOTH joint (JointSmooth) " *
+     "turning by at most $(ARC_SMOOTH_JOINT_TURN_BOUND) rad (the synthetic 5e-5-rad smooth " *
+     "joint; the loop end's <= $(ARC_JOINT_TURN_BOUND)) or a CORNER joint turning by " *
+     "$(ARC_CORNER_JOINT_TURN_RANGE[1]) .. $(ARC_CORNER_JOINT_TURN_RANGE[2]) rad on a THIN coupon (the " *
+     "synthetic 2e-4-rad corner and 30-degree kinked arc / line joints) builds; a smooth turn above " *
+     "the bound, a corner turn below the range or above it, or any corner joint on a FABRICATED " *
+     "coupon (untested: it fails in the surface mesher of the trench wall) fails closed " *
+     "(supervisor decision 391 MAJOR-2 (ii))"),
     ("TopRounding", "inputs",
      "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
     ("TrenchRounding", "inputs",
@@ -5697,7 +5729,7 @@ box_face_name(d, side) = string(("x", "y")[d], side)
 # boundary is a designed discontinuity between two valid treatments 3 R past the
 # claims (decision 320; dropping the theta-0 box balls is a recorded follow-up).
 function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, tolerance;
-                             edge_size=0.0, corner_radius=0.0)
+                             edge_size=0.0, corner_radius=0.0, fabricated::Bool=true)
     segments = NamedTuple[]
     on_box(p) = any(abs(p[d] - lower[d]) <= tolerance || abs(p[d] - upper[d]) <= tolerance
                     for d in 1:2)
@@ -5892,10 +5924,27 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
     # and dot products (exact to the rounding of the directions, unlike acos near 1).
     function arc_end_guards(side)
         side.kind == :arc || return
-        for (point, away) in ((side.start, side.away[1]), (side.stop, side.away[2]))
-            on_box(point) && scope_error("ArcFaceEnds",
-                                          "arc $(side.arc.id) part $(side.arc.part) of conductor " *
-                                          "$(side.conductor) ends at $point on the outer box")
+        for (point, away, tangent) in ((side.start, side.away[1], side.tangents[1]),
+                                       (side.stop, side.away[2], side.tangents[2]))
+            if on_box(point)
+                # Round 2b: a box-face CUT end of the arc within the tested tilt range builds (the
+                # face-end rule of design A2 for arcs); the exactly perpendicular end, a box-vertex
+                # corner and a tilt above the bound stay guarded.
+                describe = "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) ends at $point " *
+                           "on the outer box"
+                sides_at(point, side.plane) == 1 ||
+                    scope_error("ArcFaceEnds", describe * " at a box-vertex corner (two metal sides)")
+                face = crossed_box_face(point, tangent, lower, upper, tolerance)
+                face === nothing && scope_error("ArcFaceEnds", describe * " without a crossed face")
+                d, _ = face
+                abs(tangent[d]) == 1.0 &&
+                    scope_error("ArcFaceEnds", describe * " exactly perpendicular to the face (untested)")
+                theta = acos(clamp(abs(tangent[d]), 0.0, 1.0))
+                theta <= ARC_FACE_END_TILT_BOUND * (1.0 + 1.0e-12) ||
+                    scope_error("ArcFaceEnds", describe * " at a tilt of $(rad2deg(theta)) degrees above the " *
+                                               "tested $(rad2deg(ARC_FACE_END_TILT_BOUND)) degrees")
+            end
+            smooth_here = (point[1], point[2], side.plane) in smooth_vertices
             for other in sides
                 other === side && continue
                 abs(other.plane - side.plane) <= tolerance || continue
@@ -5904,11 +5953,32 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                     continuing = -other_away
                     turn = atan(abs(cross2d((away[1], away[2]), (continuing[1], continuing[2]))),
                                 dot(away, continuing))
-                    turn <= ARC_JOINT_TURN_BOUND ||
-                        scope_error("ArcJointTilt",
-                                    "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
-                                    "meets a $(other.kind == :arc ? "arc" : "straight") side at $point " *
-                                    "with a turn of $turn rad")
+                    kind = other.kind == :arc ? "arc" : "straight"
+                    # The exact part split of one arc turns by 0 (within rounding) and is smooth.
+                    split = other.kind == :arc && other.arc.id == side.arc.id
+                    if smooth_here || split
+                        turn <= ARC_SMOOTH_JOINT_TURN_BOUND ||
+                            scope_error("ArcJointTilt",
+                                        "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
+                                        "meets a $kind side at $point with a smooth-joint turn of $turn rad " *
+                                        "above the tested $(ARC_SMOOTH_JOINT_TURN_BOUND)")
+                    else
+                        # Round 2b: the corner joint is TESTED on THIN coupons only; the fabricated
+                        # kinked arc end (production sizes) stops in Gmsh's surface mesher on the
+                        # cylindrical trench wall behind the cap ("Impossible to mesh periodic
+                        # surface"; round2b-impl REPORT section 3) and stays guarded.
+                        fabricated &&
+                            scope_error("ArcJointTilt",
+                                        "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
+                                        "meets a $kind side at $point with a corner-joint turn of $turn rad " *
+                                        "on a FABRICATED coupon (untested: the thin corner joint builds, the " *
+                                        "fabricated one fails in the surface mesher of the trench wall)")
+                        ARC_CORNER_JOINT_TURN_RANGE[1] <= turn <= ARC_CORNER_JOINT_TURN_RANGE[2] * (1.0 + 1.0e-12) ||
+                            scope_error("ArcJointTilt",
+                                        "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
+                                        "meets a $kind side at $point with a corner-joint turn of $turn rad " *
+                                        "outside the tested $(ARC_CORNER_JOINT_TURN_RANGE) rad")
+                    end
                 end
             end
         end
@@ -6633,7 +6703,8 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                               metal_edge_segments(layer_loops, corners,
                                                   (angle, index) -> clearance_of(side_rings(index))(angle),
                                                   lower, upper, tolerance;
-                                                  edge_size=edge_size, corner_radius=corner_radius)]
+                                                  edge_size=edge_size, corner_radius=corner_radius,
+                                                  fabricated=fabricated)]
             facing = metal_facing_widths(layer_segments, tolerance)
             next_rings = [segment.untubed ? rings :
                           tube_ring_count(edge_size, ratio, min(bound, 0.5 * facing[1][index]);
@@ -6927,8 +6998,10 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                            "coordinate) and the legacy perpendicular end for the mesher (clearance " *
                            "0, no ball, no disagreement error since the contract lists no corner " *
                            "there): consistent in effect, recorded here (mesher review R2 MINOR-5, " *
-                           "decision 391); every arc end on the outer box fails closed at " *
-                           "ScopeGuard[ArcFaceEnds] until the next mesher lane lifts it",
+                           "decision 391); the exactly perpendicular arc end and an arc at a box " *
+                           "vertex fail closed at ScopeGuard[ArcFaceEnds] (untested); an arc cut end " *
+                           "of tilt 0 < theta <= $(rad2deg(ARC_FACE_END_TILT_BOUND)) degrees builds " *
+                           "(round 2b, decision 437 (3))",
         "EnvelopeRadius" => envelope_radius,
         "MetalFacingRule" => "two tubed metal sides of one plane whose tube intervals face each " *
                              "other across the metal (each on the metal side of the other's " *

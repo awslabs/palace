@@ -725,19 +725,31 @@ build census (`build-census`, the bound build report):
         an arc of fewer than four chords (the untagged fit of the trench footprint needs
         four), an untubed arc, a tilted arc / arc joint of two different circles, a loop
         made of one closed arc; arc sides take part in the facing test with their exact circle
-        geometry since round 2 F6 (above). Decision 391 MAJOR-2 (ii) (mesher review
-        R2): until the next mesher lane's four synthetic FULL builds (arc face ends at 45 /
-        70 degrees, a kinked arc / line joint, a 5e-5-rad smooth joint, a 2e-4-rad corner
-        joint) exist, two more guards fail closed in `metal_edge_segments`:
-        `ScopeGuard[ArcFaceEnds]` - an arc side with an end on the outer box (a cut end at
-        any tilt, an end exactly perpendicular to the face, a box-vertex corner); and
-        `ScopeGuard[ArcJointTilt]` - an arc side meeting another side at a joint whose turn
-        (the arc's end tangent against the other side's direction, by atan of cross and
-        dot) exceeds `ARC_JOINT_TURN_BOUND` = 1.6e-6 rad, the loop end 1b26671c9080's
-        tested range (its 32 smooth arc / line joints turn by 3.0e-8 .. 1.6e-6 rad on the
-        signature; the mesher reads post-snap tilts <= 1.27e-6 rad on its built meshes),
-        so smooth joints turning more, kinked arc / line joints and arc corners stop
-        (`mesh_stage_contract.py` `ARC_JOINT_TURN_BOUND_RADIANS`, the same list);
+        geometry since round 2 F6 (above). Decision 391 MAJOR-2 (ii) (mesher review R2)
+        added two fail-closed guards in `metal_edge_segments` until the four synthetic FULL
+        builds existed; mesher design round 2b (decision 437 (3)) built them (arc face ends
+        at 45 / 70 degrees fab + thin, the 5e-5-rad smooth joint, the 2e-4-rad corner joint,
+        the 30-degree kinked arc / line joint; `test_arc_tubes.jl` at the test sizes, the
+        production-size builds in round2b-impl REPORT section 3) and LIFTED the guards to the
+        TESTED ranges, fail-closed beyond: `ScopeGuard[ArcFaceEnds]` - an arc box-face CUT end
+        of tilt 0 < theta <= `ARC_FACE_END_TILT_BOUND` (70 degrees) builds (the ArcTube ends
+        ON the face with the A2 end block; its cap entities on the face plane are conics /
+        a conic-bounded region matched by their exact arc-length / area centroids,
+        `face_cap_curve_centroid` / `face_cap_face_centroid`, 8-point Gauss-Legendre); an
+        arc end exactly perpendicular to the face, an arc at a box-vertex corner or a tilt
+        above the bound fails closed; `ScopeGuard[ArcJointTilt]` - a SMOOTH joint
+        (JointSmooth) turning by at most `ARC_SMOOTH_JOINT_TURN_BOUND` (5e-5 rad; the loop
+        end's `ARC_JOINT_TURN_BOUND` 1.6e-6 inside) and a CORNER joint turning by
+        `ARC_CORNER_JOINT_TURN_RANGE` (2e-4 rad .. 30 degrees; A3 (3): ball, caps, the
+        clearance along the arc, the kinked arc end an invariant corner) build; a smooth
+        turn above the bound, a corner turn below the range or above it fails closed
+        (`mesh_stage_contract.py` spells the same bounds, bound to the Julia source by
+        `test_mesh_stage_contract_arcs.py`). Also from round 2b: `polygon_union_boundary`'s
+        side probe never reaches past another sub-segment of the collar arrangement (a chord
+        of an arc meeting the box face at a shallow tilt leaves a wedge thinner than a quarter
+        of the shortest sub-segment: the old probe read the box exterior and the union
+        "touched itself"); every built collar is unchanged (the exactly tangent strip
+        sha-identical, V3);
   - isotropic corner balls graded to the tube inner size: CornerSize == EdgeSize is
     required (one graded law; shells 0.25/0.5/1/2/4/8/16 nm to NormalSize inside the
     0.1 um ball), and every tube cap centre before a corner is a graded point of the

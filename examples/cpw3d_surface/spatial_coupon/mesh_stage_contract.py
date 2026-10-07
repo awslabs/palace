@@ -1492,9 +1492,10 @@ RECIPE_SCOPE_SUPPORTED_CLASSES = ("ArcSides", "ContinuationVertices", "DeviceFoo
                                   "UntubedShortEdges")
 RECIPE_SCOPE_GUARDS = {
     "ArcTubeRadiusVsCurvature": "build",
-    # Decision 391 MAJOR-2 (ii): arc face ends and arc joints beyond the loop end's tested
-    # turn range (ARC_JOINT_TURN_BOUND_RADIANS) fail closed until the synthetic full builds
-    # of the next mesher lane lift the guards (mesh_spatial_coupon.jl spells the same list).
+    # Decision 391 MAJOR-2 (ii) / decision 437 (3): arc face ends and arc joints beyond the
+    # TESTED ranges (ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS,
+    # ARC_FACE_END_TILT_BOUND_DEGREES; the loop end's ARC_JOINT_TURN_BOUND_RADIANS inside) fail
+    # closed (mesh_spatial_coupon.jl spells the same list).
     "ArcFaceEnds": "build", "ArcJointTilt": "build",
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
@@ -1512,6 +1513,15 @@ RECIPE_SCOPE_GUARDS = {
 # smooth arc / line joints (3.0e-8 .. 1.6e-6 rad on the signature); the mesher's
 # ScopeGuard[ArcJointTilt] bound (decision 391 MAJOR-2 (ii)).
 ARC_JOINT_TURN_BOUND_RADIANS = 1.6e-6
+# Mesher design round 2b (decision 437 (3)): the guards are LIFTED to the ranges the four synthetic
+# full builds tested (the mesher's ARC_SMOOTH_JOINT_TURN_BOUND / ARC_CORNER_JOINT_TURN_RANGE /
+# ARC_FACE_END_TILT_BOUND, spelled identically): a smooth arc joint turning by <= 5e-5 rad, a corner
+# arc joint turning by 2e-4 rad .. 30 degrees on a THIN coupon (the fabricated corner joint stays
+# guarded: untested), an arc box-face cut end of tilt <= 70 degrees build; everything beyond fails
+# closed at the same guards.
+ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS = 5.0e-5
+ARC_CORNER_JOINT_TURN_RANGE_RADIANS = (2.0e-4, math.radians(30.0))
+ARC_FACE_END_TILT_BOUND_DEGREES = 70.0
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)
