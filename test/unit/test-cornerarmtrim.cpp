@@ -1137,6 +1137,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       rounded_mirror_record = true;
       CHECK_THAT(entry["HalfStartOverR"].get<double>(), WithinAbs(s_half / R, 1.0e-9));
       CHECK(entry["Patches"].empty());
+      // The record's real-arm direction is the cap (-x), not a chord of the real half arc
+      // (decision 533 MINOR-3: ApplyMirrorArmTrim reads the arm from the first real
+      // portion; pinned here).
+      const auto mirror_arm = entry["Arm"].get<std::array<double, 3>>();
+      CHECK_THAT(mirror_arm[0], WithinAbs(-1.0, 1.0e-6));
+      CHECK_THAT(mirror_arm[2], WithinAbs(0.0, 1.0e-6));
     }
   }
   CHECK(rounded_mirror_record);
