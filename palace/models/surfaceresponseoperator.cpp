@@ -9574,10 +9574,18 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.longitudinal_cell = LongitudinalCellOffsets(
             quadrature_cells[q], fp.a, fp.b, t, fp.segment->tangent, patch.axis_w);
         // The cell's pre-image on the side's own segment (its F-DB-a raw claim, decision
-        // 537): the segment points at the quadrature cell's arc-length ends.
+        // 537): the segment points at the quadrature cell's arc-length ends, ordered as
+        // the cell's offsets along AxisW (the segment runs against AxisW when the
+        // projection is negative), so that own_cell[k] is the pre-image of
+        // longitudinal_cell[k] - the convention ClipOwnCell and the raw-claim record rely
+        // on.
         patch.provenance.own_cell = {
             Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][0]),
             Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][1])};
+        if (Dot(fp.segment->tangent, patch.axis_w) < 0.0)
+        {
+          std::swap(patch.provenance.own_cell[0], patch.provenance.own_cell[1]);
+        }
         patch.provenance.has_own_cell = true;
         patch.provenance.segment = static_cast<int>(fp.geometry_index);
         patch.provenance.s0 = fp.s0;

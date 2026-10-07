@@ -2769,6 +2769,52 @@ TEST_CASE("Domain-boundary raw claim of a pair / stack cell lies on its own segm
     CHECK_THAT(both.length, WithinRel(portions.length, 1.0e-12));
   }
 
+  SECTION("a cell whose segment runs against AxisW: the record follows the cell's offsets")
+  {
+    // The placement orders own_cell as the cell offsets (own_cell[k] = the pre-image of
+    // longitudinal_cell[k]); with the segment running against AxisW (projection < 0) the
+    // far-arc end is own_cell[0]. A clip of the cell's LOW offsets must then move that
+    // end, not the other (the first gate run's 78-nm shifts on trimmed reversed cells).
+    patch.provenance.has_own_cell = true;
+    for (int d = 0; d < 3; d++)
+    {
+      patch.axis_w[d] = -patch.axis_w[d];
+      patch.axis_u[d] = -patch.axis_u[d];  // keep AxisW = AxisU x AxisV
+    }
+    const double reversed_projection = -projection;
+    for (int k = 0; k < 2; k++)
+    {
+      const double s = sample_s + cell[k] / reversed_projection;
+      for (int d = 0; d < 3; d++)
+      {
+        patch.provenance.own_cell[k][d] = p0[d] + s * tangent[d];
+      }
+    }
+    for (int d = 0; d < 3; d++)
+    {
+      patch.origin[d] = sample[d] + edge_offset * axis_u[d];  // EdgeOffset along -AxisU
+    }
+    const auto before = patch.provenance.own_cell;
+    ClipLongitudinalCell(patch, cell[0] + 0.3, cell[1]);
+    const auto portions =
+        CollectDomainBoundaryPortions(exclusions, {patch}, config, ownership, clipping, R);
+    REQUIRE(portions.portions.size() == 1);
+    const auto &portion = portions.portions.front();
+    CHECK(Off(portion.p0) <= 1.0e-12);
+    CHECK(Off(portion.p1) <= 1.0e-12);
+    CHECK_THAT(portions.length, WithinRel((cell[1] - cell[0] - 0.3) / projection, 1.0e-12));
+    // own_cell[0] (the low offset's pre-image, the far-arc end here) moved by 0.3 /
+    // |projection|; own_cell[1] stayed.
+    double moved0 = 0.0, moved1 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      moved0 += (portion.p0[d] - before[0][d]) * (portion.p0[d] - before[0][d]);
+      moved1 += (portion.p1[d] - before[1][d]) * (portion.p1[d] - before[1][d]);
+    }
+    CHECK_THAT(std::sqrt(moved0), WithinRel(0.3 / projection, 1.0e-12));
+    CHECK(std::sqrt(moved1) <= 1.0e-12);
+  }
+
   SECTION("a clipped cell (an arm trim, an ownership clip) keeps the kept part's pre-image")
   {
     // The clip keeps [c0 + 0.3, c1] of the cell: the record follows (ClipOwnCell through
