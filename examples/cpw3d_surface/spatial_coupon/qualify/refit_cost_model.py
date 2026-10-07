@@ -584,13 +584,15 @@ def main(argv=None):
                         help="the Version-3 refit on several runs (refit_measured: mean rates + per-stage safety factors, the reducer "
                              "line refit, the cap table; decision 457 (2) / 458)")
     parser.add_argument("--label", help="the label of the measured runs in the model's text (with --measured)")
+    parser.add_argument("--node-scaling", type=Path, help="fit_node_scaling.py's calibration carried as the model's NodeScaling (with --measured)")
     parser.add_argument("--out", type=Path, required=True, help="the refit cost model")
     parser.add_argument("--record", type=Path, required=True, help="the refit record (measurements, maxima, self-check)")
     args = parser.parse_args(argv)
     profile = json.loads(args.cluster_profile.read_text())
     if args.measured:
         model, record = refit_measured(args.qualification, previous_path=args.previous, previous_kept=args.previous_kept,
-                                       reference_case=args.reference_case, profile=profile, label=args.label)
+                                       reference_case=args.reference_case, profile=profile, label=args.label,
+                                       node_scaling_path=args.node_scaling)
     else:
         if len(args.qualification) != 1:
             parser.error("one --qualification without --measured")
@@ -891,7 +893,8 @@ def cap_check(model, measurements, block_size, profile, qualification_cases):
             "NewCapOverCapOfRecord": statistics([row["NewCapOverCapOfRecord"] for row in rows if row["NewCapOverCapOfRecord"]])}
 
 
-def refit_measured(qualification_paths, *, previous_path, previous_kept, reference_case=None, profile=None, label=None):
+def refit_measured(qualification_paths, *, previous_path, previous_kept, reference_case=None, profile=None, label=None,
+                   node_scaling_path=None):
     """The Version-3 model from several completed runs (decision 457 (2) / 458): every time
     rate the mean of the scaled measurements with a per-stage SafetyFactor from the residuals
     (estimate_stages applies it), the memory peaks the largest (fail-closed), the reducer
@@ -1021,6 +1024,14 @@ def refit_measured(qualification_paths, *, previous_path, previous_kept, referen
                      "Rule": "the line of the previous model (library-device-thin-01's reducers, USER decision 2026-09-22 (B))"}}
     model["Stages"] = stages
     model["LocalEdge"] = local_edge
+    if node_scaling_path is not None:
+        # The multi-node calibration (decision 457 (1) / (3)): fit_node_scaling.py's block from the
+        # 1-node statuses of record and the 2-node runner status, carried with its digest.
+        node_scaling = json.loads(Path(node_scaling_path).read_text())
+        for key in ("MeasuredNodes", "Memory", "Time"):
+            if key not in node_scaling:
+                raise RefitError(f"{node_scaling_path} is not a NodeScaling calibration (no {key})")
+        model["NodeScaling"] = {**node_scaling, "Source": {"Path": recorded_path(node_scaling_path), "SHA256": sha256(node_scaling_path)}}
     model["RateRule"] = ("per stage and time quantity the MEAN over the measured coupons after scaling to the reference H1 (times: x "
                         "H1_ref / H1_c; the reducer block-pair seconds divided by the estimator's evaluation / Gram scale of the coupon "
                         "relative to the reference source count), the PCG counts the mean of the coupon means (MaxPCGIterations the "
@@ -1074,7 +1085,7 @@ def refit_measured(qualification_paths, *, previous_path, previous_kept, referen
         raise RefitError(f"the refit fails: {len(caps['StagesBelowNewCap'])} measured stages are above their new cap "
                          f"(minimum margin {caps['MinimumMarginNewCapOverWall']:.3f}): {caps['StagesBelowNewCap'][:6]}")
     record = {"Model": {key: model[key] for key in ("Version", "MeasuredMesh", "MeasuredBlockSize", "Stages", "LocalEdge",
-                                                     "ReducerPeakStreaming", "Previous")},
+                                                     "ReducerPeakStreaming", "Previous") + (("NodeScaling",) if "NodeScaling" in model else ())},
               "SelfCheck": check, "SelfCheckPreviousModel": check_previous, "CapCheck": caps, "SetBy": provenance}
     return model, record
 
