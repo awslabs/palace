@@ -84,13 +84,13 @@ class StoredCampaignGateTest(unittest.TestCase):
                                               zero_trace_indices=campaign.zero_trace, locations=locations,
                                               interface_types=campaign.interface_types)
         summary = compare_matrices.summary_record(comparison)
-        sequence = p_sequence.p_sequence({"low": campaign.stage("p3-control"), "main": campaign.stage("p4"),
-                                          "high": campaign.stage("p5-control"), "ref": campaign.reference},
-                                         campaign.spec["Controls"], campaign.interface_types)
+        sequence, amplitudes = p_sequence.p_sequence_with_amplitudes(
+            {"low": campaign.stage("p3-control"), "main": campaign.stage("p4"), "high": campaign.stage("p5-control"),
+             "ref": campaign.reference}, campaign.spec["Controls"], campaign.interface_types)
         table, digest = gates.load_gates()
         record = gates.evaluate(table, comparison=summary, classes={i: name for i, (name, _) in classes.items()},
                                 ref_pma=ma_ms_offsets.reference_p_ma(campaign.reference, campaign.interface_types),
-                                p_sequence_summary=sequence, reference_order=4, gates_sha256=digest)
+                                p_sequence_summary=sequence, reference_order=4, gates_sha256=digest, amplitudes=amplitudes)
         return record, summary, classes
 
     def check_counts(self, name):
@@ -115,6 +115,16 @@ class StoredCampaignGateTest(unittest.TestCase):
         self.assertEqual(len(ma["StrongestSources"]), 20)
         self.assertTrue(record["Gates"]["PSequenceControls"]["Passed"])
         self.assertEqual(sorted(int(i) for i in record["Gates"]["PSequenceControls"]["Controls"]), spec["Controls"])
+        # The amplitude floor (decisions 472 (c) / 474) on the recorded controls: every Type keeps
+        # judged controls (no UnjudgedTypes), E is judged on every control, the verdict is unchanged.
+        controls = record["Gates"]["PSequenceControls"]
+        self.assertEqual(controls["UnjudgedTypes"], [])
+        self.assertEqual(record["UnjudgedTypes"], [])
+        self.assertEqual(controls["JudgedControls"]["E"], len(spec["Controls"]))
+        self.assertTrue(all(controls["JudgedControls"][name] >= 1 for name in ("p_MA", "p_MS", "p_SA")))
+        self.assertAlmostEqual(controls["AmplitudeFloor"]["Ratio"], (math.sqrt(1.001) - 1) ** 2)
+        self.assertEqual(set(controls["AmplitudeFloor"]["CouponMaximum"]), {"Q_MA", "Q_MS", "Q_SA"})
+        self.assertEqual(set(controls["AboveFloorMembers"]["Classes"]), {name for name, _ in classes.values()})
         # The classes partition the sources; every wide-class source is in the free view.
         by_class = {}
         for i, (name_, _) in classes.items():
@@ -338,8 +348,223 @@ class GateRuleTest(unittest.TestCase):
         self.assertAlmostEqual(table["Gates"]["p_SA"]["MinimumFractionWithin2Percent"], 2 / 3)
         self.assertEqual(table["Gates"]["p_SA"]["MinimumFractionWithin5Percent"], 0.9)
         self.assertEqual(table["Gates"]["PSequenceControls"]["MaximumAbsoluteEnergyStep"], 0.01)
+        self.assertEqual(table["Gates"]["PSequenceControls"]["MaximumAbsoluteParticipationStep"], 0.05)
+        self.assertEqual(table["Gates"]["PSequenceControls"]["AmplitudeFloor"]["Fraction"], 0.001)
+        self.assertEqual(table["Version"], 6)
         self.assertEqual(table["WideClasses"], list(classify_sources.WIDE_CLASSES))
         self.assertEqual(digest, reference_campaign.sha256(gates.GATES_FILE))
+
+
+class AmplitudeFloorTest(unittest.TestCase):
+    """The amplitude floor of the p-sequence controls (decisions 472 (c) / 474): a control's
+    participation is judged only when its Type response can matter; E is always judged."""
+
+    STEPS = {"E": -0.0032, "p_MA_sharp": 0.016, "p_MS": -0.0012, "p_SA": 0.0751}  # the S3p control-31 steps (d45)
+
+    def sequence(self, controls):
+        """{control: {observable: {values, seq}}} with the given steps and Type amplitudes:
+        controls = {i: {"steps": {...}, "amplitudes": {Q_X: (main, high)}}}."""
+        summary = {}
+        for i, spec in controls.items():
+            record = {}
+            for name in p_sequence.SHARP_GATED_OBSERVABLES:
+                record[name] = {"seq": {"d_low": 2 * spec["steps"][name], "d_high": spec["steps"][name], "r": 0.5, "p_inf": None},
+                                "values": {}, "vs_ref": {}}
+            for name, (main, high) in spec["amplitudes"].items():
+                record[name] = {"values": {"low": main, "main": main, "high": high}, "seq": {}, "vs_ref": {}}
+            summary[i] = record
+        return summary
+
+    def amplitudes(self, values_by_type):
+        """p_sequence.coupon_amplitudes of synthetic per-source Type diagonals {Q_X: {i: value}}."""
+        return p_sequence.coupon_amplitudes({i: {name: values[i] for name, values in values_by_type.items() if i in values}
+                                             for i in set().union(*(set(v) for v in values_by_type.values()))})
+
+    def coupon(self, control_sa, control_sa_high=None, control_steps=None):
+        """A 40-source coupon whose SA maximum is 2e-18 J on source 5, MS maximum 1e-17 on source 20,
+        MA_sharp maximum 5e-18 on source 7; two controls: 5 (every Type far above the floor,
+        converging) and 31 (the S3p-like steps; its SA diagonal = control_sa, MS / MA_sharp above the floor)."""
+        sa = {i: 2e-18 * (0.5 if i != 5 else 1.0) for i in range(1, 41)}
+        ms = {i: 1e-17 * (0.3 if i != 20 else 1.0) for i in range(1, 41)}
+        ma = {i: 5e-18 * (0.4 if i != 7 else 1.0) for i in range(1, 41)}
+        sa[31] = control_sa
+        amplitudes = self.amplitudes({"Q_SA": sa, "Q_MS": ms, "Q_MA_sharp": ma})
+        converging = {"E": 0.0005, "p_MA_sharp": 0.004, "p_MS": 0.002, "p_SA": 0.006}
+        controls = {5: {"steps": converging, "amplitudes": {"Q_SA": (sa[5], sa[5] * 1.006), "Q_MS": (ms[5], ms[5]), "Q_MA_sharp": (ma[5], ma[5])}},
+                    31: {"steps": control_steps or self.STEPS,
+                         "amplitudes": {"Q_SA": (control_sa, control_sa_high if control_sa_high is not None else control_sa * 1.0751),
+                                        "Q_MS": (ms[31], ms[31]), "Q_MA_sharp": (ma[31], ma[31])}}}
+        return self.sequence(controls), amplitudes
+
+    def test_floor_ratio_is_derived_from_the_fraction(self):
+        table, _ = gates.load_gates()
+        floor = table["Gates"]["PSequenceControls"]["AmplitudeFloor"]
+        self.assertEqual(floor["Fraction"], 0.001)
+        ratio = gates.amplitude_floor_ratio(floor["Fraction"])
+        self.assertAlmostEqual(ratio, 2.498750780703525e-07, places=20)
+        # The bound the ratio comes from: a source at the floor moves the Type energy of a trace
+        # reaching Q_max by at most the fraction; (eta / 2)^2 is its first-order form.
+        self.assertAlmostEqual((1 + math.sqrt(ratio)) ** 2 - 1, floor["Fraction"], places=15)
+        self.assertLess(abs(ratio - (floor["Fraction"] / 2) ** 2) / ratio, 1e-3)
+        for bad in (0.0, 1.0, -0.1):
+            with self.assertRaises(ValueError):
+                gates.amplitude_floor_ratio(bad)
+
+    def test_s3p_like_control_below_the_floor_is_recorded_not_judged(self):
+        """Control 31's SA diagonal at 1e-7 of the coupon maximum (the finding of record) with a
+        +7.51 % SA step and converging E / MS / MA_sharp: BelowAmplitudeFloor on p_SA, judged and
+        passing elsewhere; the coupon's controls pass (PendingQualification without a reference)."""
+        table, digest = gates.load_gates()
+        summary, amplitudes = self.coupon(control_sa=2e-18 * 1e-7)
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest, amplitudes=amplitudes)
+        self.assertEqual(record["Verdict"], gates.VERDICT_PENDING, record["Reason"])
+        controls = record["Gates"]["PSequenceControls"]
+        self.assertTrue(controls["Passed"])
+        self.assertEqual(controls["Failing"], [])
+        sa = controls["Controls"]["31"]["p_SA"]
+        self.assertFalse(sa["Judged"])
+        self.assertIsNone(sa["Passed"])
+        self.assertAlmostEqual(sa["StepToHigherOrder"], 0.0751)
+        below = sa["BelowAmplitudeFloor"]
+        self.assertAlmostEqual(below["RatioToMaximum"], 1e-7 * 1.0751)
+        self.assertEqual(below["AmplitudeOrders"], ["main", "high"])
+        self.assertAlmostEqual(below["Floor"], 2e-18 * 2.498750780703525e-07)
+        self.assertEqual(below["MaximumSource"], 5)
+        self.assertLess(below["ContributionBound"], 0.001)
+        for name in ("E", "p_MS", "p_MA_sharp"):
+            self.assertTrue(controls["Controls"]["31"][name]["Judged"])
+            self.assertTrue(controls["Controls"]["31"][name]["Passed"])
+        self.assertEqual(controls["JudgedControls"], {"E": 2, "p_MA_sharp": 2, "p_MS": 2, "p_SA": 1})
+        self.assertEqual(controls["UnjudgedTypes"], [])
+        aggregate = controls["AmplitudeFloor"]["BelowFloorAggregate"]["Q_SA"]
+        self.assertEqual(aggregate["Indices"], [31])
+        self.assertLess(aggregate["Bound"], 0.001)
+        self.assertEqual(controls["AmplitudeFloor"]["BelowFloorAggregate"]["Q_MS"]["Sources"], 0)
+
+    def test_control_above_the_floor_is_judged_and_fails_as_today(self):
+        """The same control with an SA diagonal at the floor or above it (positive case): judged,
+        the 7.51 % step fails the coupon exactly as before the rule."""
+        table, digest = gates.load_gates()
+        ratio = gates.amplitude_floor_ratio(0.001)
+        for amplitude in (2e-18 * ratio, 2e-18 * 1e-5, 2e-18):
+            summary, amplitudes = self.coupon(control_sa=amplitude, control_sa_high=amplitude)
+            record = gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest, amplitudes=amplitudes)
+            self.assertEqual(record["Verdict"], gates.VERDICT_FAILED, amplitude)
+            sa = record["Gates"]["PSequenceControls"]["Controls"]["31"]["p_SA"]
+            self.assertTrue(sa["Judged"])
+            self.assertFalse(sa["Passed"])
+            self.assertNotIn("BelowAmplitudeFloor", sa)
+            self.assertEqual(record["Gates"]["PSequenceControls"]["Failing"],
+                             [{"Control": 31, "Observable": "p_SA", "StepToHigherOrder": 0.0751, "Bound": 0.05}])
+        # Below the floor at the main order but above it at the high order: judged (the larger amplitude).
+        summary, amplitudes = self.coupon(control_sa=2e-18 * 1e-8, control_sa_high=2e-18 * 1e-5)
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest, amplitudes=amplitudes)
+        self.assertEqual(record["Verdict"], gates.VERDICT_FAILED)
+        # Without coupon amplitudes (a summary of the pre-rule tools) every observable is judged.
+        summary, _ = self.coupon(control_sa=2e-18 * 1e-7)
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest)
+        self.assertEqual(record["Verdict"], gates.VERDICT_FAILED)
+        self.assertFalse(record["Gates"]["PSequenceControls"]["AmplitudeFloor"]["Applied"])
+
+    def test_energy_is_always_judged(self):
+        """A below-floor source whose domain step exceeds 1 % still fails: E has no floor."""
+        table, digest = gates.load_gates()
+        steps = dict(self.STEPS, E=0.012)
+        summary, amplitudes = self.coupon(control_sa=2e-18 * 1e-7, control_steps=steps)
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest, amplitudes=amplitudes)
+        self.assertEqual(record["Verdict"], gates.VERDICT_FAILED)
+        self.assertEqual([f["Observable"] for f in record["Gates"]["PSequenceControls"]["Failing"]], ["E"])
+        self.assertFalse(record["Gates"]["PSequenceControls"]["Controls"]["31"]["p_SA"]["Judged"])
+
+    def test_unjudged_type_is_pending_never_passed(self):
+        """Every control below the SA floor: UnjudgedTypes ['p_SA'], the verdict PendingQualification
+        with and without a reference (decision 474), Failed when a judged control fails."""
+        table, digest = gates.load_gates()
+        summary, amplitudes = self.coupon(control_sa=2e-18 * 1e-7)
+        summary[5]["Q_SA"]["values"] = {"low": 1e-26, "main": 1e-26, "high": 1e-26}
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest, amplitudes=amplitudes)
+        self.assertEqual(record["Verdict"], gates.VERDICT_PENDING)
+        self.assertEqual(record["UnjudgedTypes"], ["p_SA"])
+        self.assertIn("UnjudgedTypes: ['p_SA']", record["Reason"])
+        self.assertTrue(record["GatesPassed"]["PSequenceControls"])
+        # With a passing reference comparison: still PendingQualification, not Passed.
+        rule = GateRuleTest()
+        comparison, classes, ref_pma = rule.synthetic()
+        with_reference = gates.evaluate(table, comparison=comparison, classes=classes, ref_pma=ref_pma, p_sequence_summary=summary,
+                                        reference_order=4, gates_sha256=digest, amplitudes=amplitudes)
+        self.assertEqual(with_reference["Verdict"], gates.VERDICT_PENDING)
+        self.assertTrue(all(with_reference["GatesPassed"].values()))
+        self.assertIn("UnjudgedTypes", with_reference["Reason"])
+        # A failing judged control is Failed regardless.
+        summary[5]["E"]["seq"]["d_high"] = 0.02
+        self.assertEqual(gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest,
+                                        amplitudes=amplitudes)["Verdict"], gates.VERDICT_FAILED)
+
+    def test_floor_is_invariant_under_rotation_and_scale(self):
+        """The floor decisions are identical on a coupon whose sources are relabelled (a rigid
+        transform permutes the diagonal set) and whose energies carry a common factor (another
+        excitation potential / unit): the ratio is dimensionless and refers to the coupon's own maximum."""
+        table, digest = gates.load_gates()
+        summary, amplitudes = self.coupon(control_sa=2e-18 * 1e-7)
+        reference = gates.evaluate(table, comparison=None, p_sequence_summary=summary, gates_sha256=digest, amplitudes=amplitudes)
+        decisions = lambda record: {(i, name): (obs["Judged"], obs["Passed"])  # noqa: E731
+                                    for i, by_name in record["Gates"]["PSequenceControls"]["Controls"].items() for name, obs in by_name.items()}
+        for scale in (1e-3, 7.3e4):
+            scaled = {name: {"Values": {i: scale * v for i, v in block["Values"].items()}, "Maximum": scale * block["Maximum"],
+                             "MaximumSource": block["MaximumSource"], "Sources": block["Sources"]} for name, block in amplitudes.items()}
+            scaled_summary = json.loads(json.dumps(summary))
+            for by_name in scaled_summary.values():
+                for name in ("Q_SA", "Q_MS", "Q_MA_sharp"):
+                    by_name[name]["values"] = {key: scale * value for key, value in by_name[name]["values"].items()}
+            record = gates.evaluate(table, comparison=None, p_sequence_summary={int(k): v for k, v in scaled_summary.items()},
+                                    gates_sha256=digest, amplitudes=scaled)
+            self.assertEqual(decisions(record), decisions(reference), scale)
+            self.assertEqual(record["Verdict"], reference["Verdict"])
+            below = record["Gates"]["PSequenceControls"]["Controls"]["31"]["p_SA"]["BelowAmplitudeFloor"]
+            self.assertAlmostEqual(below["RatioToMaximum"], 1e-7 * 1.0751)
+        # A relabelling (rotation: the hats keep their energies under new indices).
+        permutation = {i: 41 - i for i in range(1, 41)}
+        rotated = {name: {"Values": {str(permutation[int(i)]): v for i, v in block["Values"].items()}, "Maximum": block["Maximum"],
+                          "MaximumSource": permutation[block["MaximumSource"]], "Sources": block["Sources"]}
+                   for name, block in amplitudes.items()}
+        rotated_summary = {permutation[i]: by_name for i, by_name in summary.items()}
+        record = gates.evaluate(table, comparison=None, p_sequence_summary=rotated_summary, gates_sha256=digest, amplitudes=rotated)
+        self.assertEqual(record["Verdict"], reference["Verdict"])
+        self.assertEqual({(permutation[int(i)], name) for (i, name), (judged, _) in decisions(reference).items() if not judged},
+                         {(int(i), name) for (i, name), (judged, _) in decisions(record).items() if not judged})
+        self.assertEqual(record["Gates"]["PSequenceControls"]["AmplitudeFloor"]["CouponMaximum"]["Q_SA"]["MaximumSource"], 36)
+
+    def test_choose_controls_with_amplitudes_prefers_members_above_the_floor(self):
+        """Decision 474 (A): with a prior main stage's amplitudes a class's lowest-index member below
+        the floor for a judged Type yields to the lowest-index member above it; a class with no
+        such member keeps its lowest index and is recorded; without amplitudes the choice is unchanged."""
+        classes = {1: (classify_sources.CLASS_WIDE_FACES, 1.0), 2: (classify_sources.CLASS_WIDE_FACES, 1.0),
+                   3: (classify_sources.CLASS_BOX_CORNERS, 1.0), 4: (classify_sources.CLASS_JUNCTION_RINGS, 1.0),
+                   5: (classify_sources.CLASS_ZERO_TRACE, 1.0), 6: (classify_sources.CLASS_NARROW_JUNCTION, 0.05),
+                   7: (classify_sources.CLASS_WIDE_SUBSTRATE, 1.0), 8: (classify_sources.CLASS_WIDE_SUBSTRATE, 1.0)}
+        free = [1, 2, 3, 4, 6, 7, 8]
+        ratio = gates.amplitude_floor_ratio(0.001)
+        sa = {1: 1e-26, 2: 1e-19, 3: 1e-19, 4: 1e-19, 6: 1e-19, 7: 1e-26, 8: 1e-26}  # 1 below (the max 1e-19 on 2..6); 7 / 8 below
+        ms = {i: 1e-18 for i in free}
+        amplitudes = self.amplitudes({"Q_SA": sa, "Q_MS": ms})
+        observables = ["p_MS", "p_SA"]
+        self.assertEqual(classify_sources.choose_controls(classes, 4, free), [1, 3, 6, 7])
+        self.assertEqual(classify_sources.choose_controls(classes, 5, free, amplitudes, ratio, observables), [2, 3, 4, 6, 7])
+        record = classify_sources.choose_controls_record(classes, 5, free, amplitudes, ratio, observables)
+        self.assertEqual(record["Controls"], [2, 3, 4, 6, 7])
+        self.assertEqual(record["Observables"], ["Q_MS", "Q_SA"])
+        self.assertEqual(list(record["BelowFloorClasses"]), [classify_sources.CLASS_WIDE_SUBSTRATE])
+        below = record["BelowFloorClasses"][classify_sources.CLASS_WIDE_SUBSTRATE]
+        self.assertEqual((below["Members"], below["Chosen"]), (2, 7))
+        self.assertAlmostEqual(below["ChosenRatios"]["Q_SA"], 1e-7)
+        # Every member chosen in turn: the second wide-faces control is the below-floor source 1.
+        self.assertEqual(classify_sources.choose_controls(classes, 7, free, amplitudes, ratio, observables), [1, 2, 3, 4, 6, 7, 8])
+        with self.assertRaises(ValueError):
+            classify_sources.choose_controls(classes, 3, free, amplitudes, None, observables)
+        # The gate record's AboveFloorMembers agrees with the choice.
+        members = gates.above_floor_members({i: name for i, (name, _) in classes.items()}, amplitudes, ratio, observables)
+        self.assertEqual(members["Classes"][classify_sources.CLASS_WIDE_FACES], {"Members": 2, "AboveFloor": [2]})
+        self.assertEqual(members["Classes"][classify_sources.CLASS_WIDE_SUBSTRATE], {"Members": 2, "AboveFloor": []})
 
 
 class BuildGateOverrideTest(unittest.TestCase):

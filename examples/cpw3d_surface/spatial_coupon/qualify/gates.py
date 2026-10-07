@@ -36,7 +36,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from ma_ms_offsets import reference_p_ma, strongest_sources, weighted  # noqa: E402
-from p_sequence import GATED_OBSERVABLES, SHARP_GATED_OBSERVABLES  # noqa: E402
+from p_sequence import GATED_OBSERVABLES, SHARP_GATED_OBSERVABLES, amplitude_observable  # noqa: E402
 
 GATES_FILE = HERE / "qualification-gates.json"
 VERDICT_PASSED, VERDICT_FAILED, VERDICT_PENDING = "Passed", "Failed", "PendingQualification"
@@ -132,14 +132,22 @@ def evaluate_sa(gate, per_source, free):
             "Bounds": {key: gate[key] for key in ("MinimumFractionWithin2Percent", "MinimumFractionWithin5Percent")}}
 
 
-def evaluate_p_sequence(gate, p_sequence_summary, observables=GATED_OBSERVABLES):
+def evaluate_p_sequence(gate, p_sequence_summary, observables=GATED_OBSERVABLES, amplitudes=None):
     """`p_sequence_summary` = p_sequence.p_sequence output {control: {observable: {seq}}};
     the step of every gated observable towards the higher order (d_high = (high - main)
     / |high|) must be within the bound; d_low and the contraction ratio are reported.
     `observables` = the gated observables that apply (an interface the reference does not
-    declare is left out, see applicable_observables)."""
+    declare is left out, see applicable_observables).  `amplitudes` =
+    p_sequence.coupon_amplitudes of the main stage (every source): with the gate table's
+    AmplitudeFloor a participation observable whose control amplitude (the larger of its
+    main- and high-order numerator Q_X,ii) is below floor_ratio(Fraction) x the coupon's
+    largest Q_X,jj is recorded BelowAmplitudeFloor and not judged (decisions 472 (c) / 474);
+    E is always judged; a Type with no judged control is listed in UnjudgedTypes."""
+    floor = gate.get("AmplitudeFloor") if amplitudes else None
+    ratio = amplitude_floor_ratio(floor["Fraction"]) if floor else None
     controls = {}
     failing = []
+    judged_count = {name: 0 for name in observables}
     for control, by_observable in p_sequence_summary.items():
         record = {}
         for name in observables:
@@ -149,10 +157,72 @@ def evaluate_p_sequence(gate, p_sequence_summary, observables=GATED_OBSERVABLES)
             ok = step is not None and math.isfinite(step) and abs(step) < bound
             record[name] = {"StepToHigherOrder": step, "StepFromLowerOrder": seq.get("d_low"), "Bound": bound,
                             "Passed": ok, "r": seq.get("r")}
+            below = below_amplitude_floor(name, by_observable, amplitudes, ratio) if floor else None
+            if below is not None:
+                record[name].update({"Judged": False, "Passed": None, "BelowAmplitudeFloor": below})
+                continue
+            record[name]["Judged"] = True
+            judged_count[name] += 1
             if not ok:
                 failing.append({"Control": int(control), "Observable": name, "StepToHigherOrder": step, "Bound": bound})
         controls[str(control)] = record
-    return {"Statement": gate["Statement"], "Passed": not failing and bool(controls), "Controls": controls, "Failing": failing}
+    unjudged = [name for name in observables if name != "E" and controls and judged_count[name] == 0]
+    record = {"Statement": gate["Statement"], "Passed": not failing and bool(controls), "Controls": controls, "Failing": failing,
+              "JudgedControls": judged_count, "UnjudgedTypes": unjudged}
+    if floor:
+        record["AmplitudeFloor"] = {"Fraction": floor["Fraction"], "Ratio": ratio, "Rule": floor.get("Rule"),
+                                   "CouponMaximum": {name: {key: amplitudes[name][key] for key in ("Maximum", "MaximumSource", "Sources")}
+                                                     for name in amplitudes},
+                                   "BelowFloorAggregate": {name: below_floor_aggregate(amplitudes[name], ratio) for name in amplitudes}}
+    elif amplitudes is None and gate.get("AmplitudeFloor"):
+        record["AmplitudeFloor"] = {"Applied": False, "Reason": "no coupon amplitudes supplied (a p-sequence summary without the "
+                                                                "main stage's per-source Type amplitudes): every observable judged"}
+    return record
+
+
+def amplitude_floor_ratio(fraction):
+    """F_X / Q_max,X = (sqrt(1 + fraction) - 1)^2: a source with Q_ii below that fraction of the
+    coupon's largest Type diagonal changes the Type energy of any normalised trace (|c_i| <= 1)
+    reaching Q_max by at most (1 + sqrt(Q_ii / Q_max))^2 - 1 <= fraction (Cauchy-Schwarz on the
+    PSD response matrix), and any normalised trace's by at most fraction x Q_max (the PLAN of
+    control-amplitude-floor, decisions 472 (c) / 474)."""
+    fraction = float(fraction)
+    if not 0.0 < fraction < 1.0:
+        raise ValueError(f"the amplitude floor fraction must lie in (0, 1); got {fraction}")
+    return (math.sqrt(1.0 + fraction) - 1.0) ** 2
+
+
+def below_amplitude_floor(name, by_observable, amplitudes, ratio):
+    """The BelowAmplitudeFloor record of a control's participation observable, or None when
+    the observable is judged (E; an amplitude at or above the floor; a Type the coupon
+    amplitudes do not carry).  The control's amplitude is the larger of its main- and
+    high-order numerators (judged when either order's response reaches the floor)."""
+    numerator = amplitude_observable(name)
+    if numerator is None or numerator not in amplitudes or numerator not in by_observable:
+        return None
+    values = by_observable[numerator]["values"]
+    candidates = [abs(values[key]) for key in ("main", "high") if values.get(key) is not None and math.isfinite(values[key])]
+    if not candidates:
+        return None
+    amplitude = max(candidates)
+    maximum = amplitudes[numerator]["Maximum"]
+    floor = ratio * maximum
+    if amplitude >= floor:
+        return None
+    return {"Amplitude": amplitude, "AmplitudeOrders": [key for key in ("main", "high") if values.get(key) is not None],
+            "Floor": floor, "CouponMaximum": maximum, "MaximumSource": amplitudes[numerator]["MaximumSource"],
+            "RatioToMaximum": amplitude / maximum if maximum else math.inf, "FloorRatio": ratio,
+            "ContributionBound": (1.0 + math.sqrt(amplitude / maximum)) ** 2 - 1.0 if maximum else math.inf}
+
+
+def below_floor_aggregate(amplitude, ratio):
+    """Information per Type: the coupon sources below the floor and the bound
+    (1 + sum_i sqrt(Q_ii / Q_max))^2 - 1 on their COLLECTIVE contribution to the Type
+    energy of any normalised trace reaching Q_max (the triangle inequality summed)."""
+    maximum = amplitude["Maximum"]
+    below = [i for i, value in amplitude["Values"].items() if maximum and value < ratio * maximum]
+    total = sum(math.sqrt(max(amplitude["Values"][i], 0.0) / maximum) for i in below) if maximum else math.inf
+    return {"Sources": len(below), "Indices": [int(i) for i in below], "Bound": (1.0 + total) ** 2 - 1.0}
 
 
 def not_applicable(gate, interface, interfaces):
@@ -178,13 +248,16 @@ def applicable_observables(interfaces, observables=GATED_OBSERVABLES):
 
 
 def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_summary=None, reference_order=None,
-             free=None, gates_sha256=None, interfaces=None, gated_order=None):
+             free=None, gates_sha256=None, interfaces=None, gated_order=None, amplitudes=None):
     """The gate record.  Without `comparison` (no reference matrices) only the p-sequence
     controls are evaluated and the verdict is PendingQualification when they pass, Failed
     otherwise.  `interfaces` = the
     reference's postprocessed interface types (reference_campaign.interfaces); a
     participation gate of an undeclared interface is NotApplicable.  `gated_order` = the
-    order of the gated main stage (recorded next to the anchor)."""
+    order of the gated main stage (recorded next to the anchor).  `amplitudes` =
+    p_sequence.coupon_amplitudes of the gated main stage: the amplitude floor of the
+    p-sequence controls (evaluate_p_sequence); a gated Type left with no judged control
+    (UnjudgedTypes) makes the verdict PendingQualification, never Passed (decision 474)."""
     record = {"GatesFile": str(GATES_FILE), "GatesSHA256": gates_sha256, "FreeView": gates["FreeView"],
               "ReferenceAnchor": f"vs p{reference_order} anchor" if reference_order is not None else None,
               "GatedOrder": gated_order,
@@ -210,17 +283,28 @@ def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_s
     if p_sequence_summary is not None:
         observables = gated_observables(table["PSequenceControls"], p_sequence_summary)
         record["Gates"]["PSequenceControls"] = evaluate_p_sequence(table["PSequenceControls"], p_sequence_summary,
-                                                                   observables=applicable_observables(interfaces, observables))
+                                                                   observables=applicable_observables(interfaces, observables),
+                                                                   amplitudes=amplitudes)
         skipped = [name for name in observables if name not in applicable_observables(interfaces, observables)]
         record["Gates"]["PSequenceControls"]["NotApplicableObservables"] = skipped
         record["Gates"]["PSequenceControls"]["MAObservable"] = "p_MA_sharp" if "p_MA_sharp" in observables else "p_MA"
         record["Gates"]["PSequenceControls"]["MAObservableRule"] = (
             table["PSequenceControls"].get("MAObservableRule") if "p_MA_sharp" in observables else
             "raw p_MA: the p-sequence carries no sharp-edge extrapolation (no radial MA shells on this run)")
+        if amplitudes and table["PSequenceControls"].get("AmplitudeFloor"):
+            record["Gates"]["PSequenceControls"]["AboveFloorMembers"] = above_floor_members(
+                classes, amplitudes, record["Gates"]["PSequenceControls"]["AmplitudeFloor"]["Ratio"],
+                [name for name in applicable_observables(interfaces, observables) if name != "E"])
     passed = {name: gate["Passed"] for name, gate in record["Gates"].items()}
     record["GatesPassed"] = passed
+    unjudged = (record["Gates"].get("PSequenceControls") or {}).get("UnjudgedTypes") or []
+    record["UnjudgedTypes"] = unjudged
     suffix = f" ({', '.join(record['NotApplicable'])} not applicable)" if record["NotApplicable"] else ""
-    if comparison is None and passed and all(passed.values()):
+    if comparison is None and passed and all(passed.values()) and unjudged:
+        record["Verdict"] = VERDICT_PENDING
+        record["Reason"] = (f"no reference matrices and UnjudgedTypes: {unjudged} (every control below the amplitude floor for "
+                            f"that Type: a controls-only re-qualification with amplitude-informed controls is needed; decision 474)")
+    elif comparison is None and passed and all(passed.values()):
         record["Verdict"] = VERDICT_PENDING
         record["Reason"] = "no reference matrices: only the p-sequence controls were evaluated (passed); never Passed"
     elif comparison is None:
@@ -229,6 +313,11 @@ def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_s
         record["Verdict"] = VERDICT_FAILED
         record["Reason"] = (f"no reference matrices and failing {[k for k, v in passed.items() if not v]}"
                             if passed else "no reference matrices and no p-sequence controls evaluated")
+    elif all(passed.values()) and passed and unjudged:
+        # Every gate passed, but a Type's convergence was never judged: not Passed (decision 474).
+        record["Verdict"] = VERDICT_PENDING
+        record["Reason"] = (f"every gate passed but UnjudgedTypes: {unjudged} (every control below the amplitude floor for that "
+                            f"Type: a controls-only re-qualification with amplitude-informed controls is needed; decision 474)" + suffix)
     elif all(passed.values()) and passed:
         record["Verdict"] = VERDICT_PASSED
         record["Reason"] = "every gate passed" + suffix
@@ -236,6 +325,21 @@ def evaluate(gates, *, comparison=None, classes=None, ref_pma=None, p_sequence_s
         record["Verdict"] = VERDICT_FAILED
         record["Reason"] = f"failing gates {[k for k, v in passed.items() if not v]}" + suffix
     return record
+
+
+def above_floor_members(classes, amplitudes, ratio, observables):
+    """Per class the members (sources with a class) whose every judged Type amplitude at the
+    gated order is at or above the floor: the amplitude-informed control choice a re-run
+    would make (classify_sources.choose_controls with amplitudes; decision 474 (A))."""
+    numerators = [amplitude_observable(name) for name in observables]
+    numerators = [name for name in numerators if name in amplitudes]
+    by_class = {}
+    for i, name in sorted((classes or {}).items()):
+        by_class.setdefault(name, {"Members": 0, "AboveFloor": []})
+        by_class[name]["Members"] += 1
+        if all(amplitudes[numerator]["Values"].get(str(i), 0.0) >= ratio * amplitudes[numerator]["Maximum"] for numerator in numerators):
+            by_class[name]["AboveFloor"].append(int(i))
+    return {"Observables": numerators, "Classes": by_class}
 
 
 def read_classes(path):
@@ -260,9 +364,11 @@ def main(argv=None):
     gates, digest = load_gates(args.gates)
     comparison = json.loads(Path(args.comparison).read_text()) if args.comparison else None
     p_sequence_summary = None
+    amplitudes = None
     if args.p_sequence:
         loaded = json.loads(Path(args.p_sequence).read_text())
         p_sequence_summary = {int(k): v for k, v in loaded["Sources"].items()}
+        amplitudes = loaded.get("CouponAmplitudes")
     reference_types = None
     if args.reference_dir:
         if not args.reference_config:
@@ -272,7 +378,7 @@ def main(argv=None):
     record = evaluate(gates, comparison=comparison, classes=read_classes(args.classes) if args.classes else None,
                       ref_pma=reference_p_ma(args.reference_dir, reference_types) if args.reference_dir else None,
                       p_sequence_summary=p_sequence_summary, reference_order=args.reference_order, gates_sha256=digest,
-                      interfaces=args.interface, gated_order=args.gated_order)
+                      interfaces=args.interface, gated_order=args.gated_order, amplitudes=amplitudes)
     args.out.write_text(json.dumps(record, indent=2) + "\n")
     print(record["Verdict"], record["Reason"])
     return 0 if record["Verdict"] == VERDICT_PASSED else 1
