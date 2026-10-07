@@ -601,14 +601,43 @@ function json_point(value)
     return (Float64(value[1]), Float64(value[2]), Float64(value[3]))
 end
 
-# Contract semantic corners pulled back into the seed's source-local frame.
+# Round 3 class (1) (supervisor decision 510): a contract whose arc classification left no
+# semantic corner records Derivation.CornerFree (derive_semantic_contract; integer vertex
+# counts only) and lists SemanticCorners []; the record is the ONE condition under which the
+# mesher takes its corner-free branches (no corner ball, no graded corner point, no cap
+# centre before a corner, the corner gates NotApplicable). A legacy contract keeps the >= 1
+# corner rule bitwise. The same spelling as semantic_mesh_contract.contract_is_corner_free.
+function contract_is_corner_free(contract)
+    derivation = get(contract, "Derivation", nothing)
+    derivation isa AbstractDict && haskey(derivation, "CornerFree") || return false
+    record = derivation["CornerFree"]
+    record isa AbstractDict &&
+        all(get(record, name, nothing) isa Integer && record[name] >= 0 for
+            name in ("ArcInteriorVertices", "SmoothJoints", "BoxFaceCutEnds")) &&
+        record["ArcInteriorVertices"] + record["SmoothJoints"] > 0 ||
+        error("Semantic contract Derivation.CornerFree must record the non-negative integer " *
+              "counts ArcInteriorVertices / SmoothJoints / BoxFaceCutEnds with at least one arc vertex")
+    return true
+end
+
+# The census record of the corner gates on a corner-free build (mesh_stage_contract.
+# CORNER_GATES_NOT_APPLICABLE): MaximumCornerAspect / CornerShapeGate have nothing to judge.
+const CORNER_GATES_NOT_APPLICABLE = "NotApplicable (0 semantic corners, Derivation.CornerFree)"
+
+# Contract semantic corners pulled back into the seed's source-local frame. An empty list
+# is admitted iff the contract records Derivation.CornerFree (round 3 class (1)); a record
+# beside a non-empty list fails closed.
 function read_semantic_corners(path, transform)
     contract = parse_json(read(path, String))
     contract isa AbstractDict && haskey(contract, "SemanticCorners") ||
         error("Semantic contract lacks SemanticCorners")
     corners = contract["SemanticCorners"]
-    corners isa AbstractVector && !isempty(corners) ||
+    corners isa AbstractVector || error("Semantic contract must list at least one semantic corner")
+    corner_free = contract_is_corner_free(contract)
+    isempty(corners) && !corner_free &&
         error("Semantic contract must list at least one semantic corner")
+    corner_free && !isempty(corners) &&
+        error("Semantic contract records Derivation.CornerFree with $(length(corners)) semantic corners")
     placement = haskey(contract, "RigidTransform") ?
         rigid_transform(Float64.(contract["RigidTransform"])) : copy(IDENTITY_RIGID_TRANSFORM)
     isapprox(placement, transform; atol=1.0e-12, rtol=0.0) ||
@@ -692,7 +721,11 @@ end
 
 # Tangential size of a longitudinal curve through the corner balls: the corner
 # law inside a ball, the process-band grading slope up to lc_tangent outside.
+# Without corners (round 3 class (1)) the law is the identity: lc_tangent, the value it
+# takes far from every corner, so the composed field is continuous with the
+# corner-bearing case.
 function corner_curve_size(point, corners, grading::CornerGrading, lc_tangent, slope)
+    isempty(corners) && return lc_tangent
     distance = minimum(norm(point .- corner) for corner in corners)
     return min(lc_tangent, corner_ball_size(grading, distance) +
                            slope * max(distance - grading.radius, 0.0))
@@ -720,6 +753,9 @@ end
 # metal-thickness vertical corner edge when the thickness equals the radius) would
 # otherwise get a node at roundoff distance and degenerate cells.
 function ball_boundary_parameters(curve, from, to, corners, grading::CornerGrading)
+    # No corners, no ball boundary to cross (round 3 class (1); the production caller
+    # passes `nothing` for an empty graded point list and never reaches this).
+    isempty(corners) && return Float64[]
     radius = grading.radius
     samples = 256
     parameters = collect(range(from, to; length=samples + 1))
@@ -2506,8 +2542,8 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         "RequiredSetRecomputations" => recomputations,
         "CornerAspectsBefore" => corner_before, "CornerAspectsAfter" => corner_after,
         "CornerMoves" => corner_moves,
-        "RequiredMinimumScaledJacobianBefore" => required_before,
-        "RequiredMinimumScaledJacobianAfter" => required_after,
+        "RequiredMinimumScaledJacobianBefore" => isfinite(required_before) ? required_before : nothing,
+        "RequiredMinimumScaledJacobianAfter" => isfinite(required_after) ? required_after : nothing,
         "RequiredCellsBelowTargetBefore" => below_before,
         "RequiredCellsBelowTargetAfter" => below_after,
         "RequiredCellsBelowGateAfter" => below_gate,
@@ -2564,7 +2600,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         centroid = sum(points[:, i] for i in cell) ./ 4
         lengths = [norm(points[:, cell[i]] .- points[:, cell[j]]) for i in 1:4 for j in (i + 1):4]
         println("  $label cell $k: $(value), centroid $(centroid), " *
-                "corner distance $(minimum(norm(centroid .- collect(c)) for c in corners)), " *
+                "corner distance $(minimum((norm(centroid .- collect(c)) for c in corners); init=Inf)), " *
                 "span distance $(minimum(span_distance[i] for i in cell)), " *
                 "surface vertices $(count(surface[i] for i in cell)), edges $(sort(lengths)), " *
                 "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
@@ -7499,7 +7535,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "Corners" => length(semantic_corners), "Law" => "CornerExteriorRule",
             "Shells" => shell_size_statistics(
                 points, index,
-                c -> minimum(norm(c .- collect(corner)) for corner in semantic_corners),
+                c -> minimum((norm(c .- collect(corner)) for corner in semantic_corners); init=Inf),
                 corner_radius, corner_radius .+ [2lc_fine, 4lc_fine, 8lc_fine],
                 (c, d) -> corner_exterior_size(d, lc_fine, lc_far, far_growth))),
         "JunctionLines" => Dict{String, Any}(
@@ -7792,6 +7828,9 @@ function generate_spatial_coupon(;
     # semantic corner, graded to the far size with the process-band slope.
     semantic_corners = corner_isotropy ? read_semantic_corners(semantic_contract, transform) :
                        NTuple{3, Float64}[]
+    # Round 3 class (1): the contract's Derivation.CornerFree admits the empty list above and
+    # is the one condition for the corner-free branches below (tube ends, census record).
+    corner_free = corner_isotropy && contract_is_corner_free(parse_json(read(semantic_contract, String)))
     trace_basis_paths = (trace_basis_contract, trace_vertices, trace_triangles, process_library)
     trace_basis_bound = all(path -> path !== nothing, trace_basis_paths)
     trace_basis_bound || all(path -> path === nothing, trace_basis_paths) ||
@@ -8511,7 +8550,10 @@ function generate_spatial_coupon(;
         end
         sort!(unique!(tube_axis_curves))
         sort!(unique!(tube_cap_points))
-        isempty(tube_cap_points) && error("No tube ends before a semantic corner")
+        # On a corner-free coupon every tube end is a smooth joint or on the outer box: no cap
+        # centre before a corner (round 3 class (1)); otherwise the list is never empty.
+        isempty(tube_cap_points) && !corner_free && error("No tube ends before a semantic corner")
+        corner_free && println("TubeCapPoints: $(length(tube_cap_points)) (CornerFree)")
     end
     graded_points = copy(semantic_corners)
     graded_point_tags = copy(corner_point_tags)
@@ -8650,7 +8692,10 @@ function generate_spatial_coupon(;
                 curve_spacing = band_curve ? lc_fine : lc_tangent
                 placed = composed_curve_nodes(
                     curve, curve_spacing, point -> curve_size_law(point, curve_spacing),
-                    edge_growth_ratio, corner_isotropy ? graded_points : nothing, corner_grading)
+                    edge_growth_ratio,
+                    # No graded point (corner-free): no ball boundary to cross.
+                    corner_isotropy && !isempty(graded_points) ? graded_points : nothing,
+                    corner_grading)
                 curve_record = Dict{String, Any}(
                     "Curve" => Int(curve),
                     "Kind" => curve in junction_set ? "junction" : band_curve ? "band" : "metal",
@@ -8720,8 +8765,8 @@ function generate_spatial_coupon(;
             any(surface_family(first(record)) in METAL_SURFACE_FAMILIES
                 for record in records) || continue
             xyz = ridge_nodes[curve]
-            corner_distance = [minimum(norm(xyz[:, i] .- collect(corner))
-                                       for corner in semantic_corners) for i in axes(xyz, 2)]
+            corner_distance = [minimum((norm(xyz[:, i] .- collect(corner))
+                                        for corner in semantic_corners); init=Inf) for i in axes(xyz, 2)]
             # Without corner grading the rows lie on the lc_tangent grid outside the
             # corner size law, after the taper intervals; with corner grading
             # (decision 33) the span starts at the ball boundary node (the graded
@@ -9126,226 +9171,230 @@ function generate_spatial_coupon(;
     if corner_isotropy
         # Recorded seed-stage artifact, source-local frame, no pass/fail gate.
         ispath(corner_census) && error("Corner census output already exists")
-        open(corner_census, "w") do stream
-            write_json(stream, Dict{String, Any}(
-                "Version" => 1, "Frame" => "SourceLocal",
-                "Purpose" => "Seed corner-ball census, longitudinal-face census and interface areas; reported, not a qualification gate",
-                "Scope" => prism_tubes ?
-                    recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance,
-                                        tube_untubed_edges) :
-                    nothing,
-                "SemanticContract" => semantic_contract,
-                "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
-                "RigidTransform" => vec(transform'),
-                "SemanticCorners" => [collect(corner) for corner in semantic_corners],
-                "SemanticCornerKinds" => [kind === :invariant ? "Invariant" : "Legacy"
-                                          for kind in corner_kinds],
-                "InvariantCorners" => Dict{String, Any}(
-                    "Rule" => INVARIANT_CORNER_RULE,
-                    "Points" => [collect(corner) for (corner, kind) in
-                                 zip(semantic_corners, corner_kinds) if kind === :invariant],
-                    "CornerShapeGate" => corner_shape_gate > 0.0 ? corner_shape_gate : nothing,
-                    "Target" => INVARIANT_CORNER_TARGET),
-                "CornerIsotropyRadius" => corner_isotropy_radius,
-                "IsotropicSize" => lc_fine,
-                "Sqrt2IsotropicSize" => sqrt(2.0) * lc_fine,
+        census_record = Dict{String, Any}(
+            "Version" => 1, "Frame" => "SourceLocal",
+            "Purpose" => "Seed corner-ball census, longitudinal-face census and interface areas; reported, not a qualification gate",
+            "Scope" => prism_tubes ?
+                recipe_scope_record(scope_classes, boundary_loops, lower, upper, tolerance,
+                                    tube_untubed_edges) :
+                nothing,
+            "SemanticContract" => semantic_contract,
+            "SemanticContractSHA256" => bytes2hex(sha256(read(semantic_contract))),
+            "RigidTransform" => vec(transform'),
+            "SemanticCorners" => [collect(corner) for corner in semantic_corners],
+            "SemanticCornerKinds" => [kind === :invariant ? "Invariant" : "Legacy"
+                                      for kind in corner_kinds],
+            "InvariantCorners" => Dict{String, Any}(
+                "Rule" => INVARIANT_CORNER_RULE,
+                "Points" => [collect(corner) for (corner, kind) in
+                             zip(semantic_corners, corner_kinds) if kind === :invariant],
+                "CornerShapeGate" => corner_shape_gate > 0.0 ? corner_shape_gate : nothing,
+                "Target" => INVARIANT_CORNER_TARGET),
+            "CornerIsotropyRadius" => corner_isotropy_radius,
+            "IsotropicSize" => lc_fine,
+            "Sqrt2IsotropicSize" => sqrt(2.0) * lc_fine,
+            "FarSize" => lc_far,
+            "CouponBox" => Dict{String, Any}(
+                "Rule" => COUPON_BOX_RULE, "Radius" => radius,
+                "Lower" => collect(lower), "Upper" => collect(upper),
+                "EdgeChains" => copy(EDGE_CHAIN_RECORDS),
+                "ChainedRows" => sum(Int[length(chain["Rows"]) for chain in EDGE_CHAIN_RECORDS]),
+                "ExtendedChains" => count(chain -> chain["UnionLength"] / 2 >= radius - 1.0e-10radius,
+                                          EDGE_CHAIN_RECORDS)),
+            "SizeBounds" => Dict{String, Any}(
+                "Rule" => SIZE_BOUND_RULE,
                 "FarSize" => lc_far,
-                "CouponBox" => Dict{String, Any}(
-                    "Rule" => COUPON_BOX_RULE, "Radius" => radius,
-                    "Lower" => collect(lower), "Upper" => collect(upper),
-                    "EdgeChains" => copy(EDGE_CHAIN_RECORDS),
-                    "ChainedRows" => sum(Int[length(chain["Rows"]) for chain in EDGE_CHAIN_RECORDS]),
-                    "ExtendedChains" => count(chain -> chain["UnionLength"] / 2 >= radius - 1.0e-10radius,
-                                              EDGE_CHAIN_RECORDS)),
-                "SizeBounds" => Dict{String, Any}(
-                    "Rule" => SIZE_BOUND_RULE,
-                    "FarSize" => lc_far,
-                    "RequestedTangentialSize" => requested_lc_tangent,
-                    "TangentialSize" => lc_tangent,
-                    "TangentialSizeBoundByFarSize" => lc_tangent < requested_lc_tangent),
-                "GradingTransitionWidth" => process_core_width - process_fine_width,
-                "LongitudinalCurves" => length(longitudinal_curves),
-                "CornerIsotropicLongitudinalCurves" => length(corner_curves),
-                "CurveSpacing" => Dict{String, Any}(
-                    "Rule" => CURVE_SPACING_RULE,
-                    "GrowthRatio" => edge_growth_ratio,
-                    "Count" => length(curve_spacing_records),
-                    "GradedCurves" => count(record["Graded"] for record in curve_spacing_records),
-                    "Curves" => curve_spacing_records),
-                "JunctionCurves" => Dict{String, Any}(
-                    "Count" => length(junction_curves),
-                    "TotalLength" => junction_length,
-                    # Source-local CAD endpoints of every junction curve (the Gmsh-only
-                    # audit's junction band lines; a curved junction is recorded by its
-                    # chord and flagged).
-                    "Segments" => [vcat(a, b) for (a, b) in curve_segments(junction_curves)],
-                    "CurvedCurves" => count(
-                        abs(gmsh.model.occ.getMass(1, curve) - norm(b .- a)) >
-                        1.0e-9 * max(norm(b .- a), 1.0)
-                        for (curve, (a, b)) in zip(junction_curves, curve_segments(junction_curves))),
-                    "Rule" => "curves of material-interface surfaces (substrate on one " *
-                              "side, vacuum on the other) lying on the outer box: the " *
-                              "cut-surface junctions of the trench floor/walls and the " *
-                              "un-etched plane; feature curves with the process-edge band"),
-                "CornerLawReach" => corner_reach,
-                "CornerGrading" => Dict{String, Any}(
-                    "CornerSize" => corner_size,
-                    "GrowthRatio" => edge_growth_ratio,
-                    "NormalSize" => lc_fine,
-                    "Radius" => corner_isotropy_radius,
-                    "Reach" => corner_grading_reach(corner_grading),
-                    "ShellRadii" => corner_shell_radii(corner_grading),
-                    "ShellSizes" => [corner_ball_size(corner_grading, inner)
-                                     for inner in vcat(0.0, corner_shell_radii(corner_grading)[1:(end - 1)])],
-                    "Rule" => corner_size > 0.0 ?
-                        "inside every corner ball the isotropic size grows geometrically from " *
-                        "CornerSize at the corner point in shells: shell k has size CornerSize x " *
-                        "GrowthRatio^(k-1) and ends at the cumulative radius CornerSize " *
-                        "(GrowthRatio^k - 1) / (GrowthRatio - 1) (ShellRadii, ShellSizes), " *
-                        "NormalSize from the Reach to the ball radius; the Gmsh background " *
-                        "field, the ridge node placement (nodes on the shell radii and on the " *
-                        "ball boundary) and the seed optimizer's local bounds follow the shells, " *
-                        "which never exceed the metric stage's continuous law min(NormalSize, " *
-                        "CornerSize + (GrowthRatio - 1) x distance) (supervisor decision 33)" :
-                        "uniform NormalSize inside every corner ball (no corner grading)"),
-                "LongitudinalFaceHistogramBins" => LONGITUDINAL_FACE_HISTOGRAM_BINS,
-                "LongitudinalFaces" => face_rows,
-                "InterfaceAreaUnits" => "um^2",
-                "EtchBoundary" => etch_boundary === nothing ? "producer-default" : etch_boundary,
-                "EtchBoundarySHA256" => etch_boundary === nothing ? nothing :
-                                        bytes2hex(sha256(read(etch_boundary))),
-                "FootprintCollinearTolerance" => FOOTPRINT_COLLINEAR_TOLERANCE,
-                "FootprintSimplification" => Dict{String, Any}(
-                    "Rule" => "consecutive footprint edges are merged when every vertex " *
-                              "between their outer endpoints lies within " *
-                              "FootprintCollinearTolerance times the merged edge length " *
-                              "of the merged edge, before CAD face creation",
-                    "Polygons" => length(footprint_polygons),
-                    "RemovedVertices" => sum(Int[polygon["Simplification"]["RemovedVertexCount"]
-                                                 for polygon in footprint_polygons]),
-                    "MaximumRelativeDeviation" => maximum(
-                        Float64[polygon["Simplification"]["MaximumRelativeDeviation"]
-                                for polygon in footprint_polygons]; init=0.0),
-                    "ConstructionRule" => "an exterior loop's collar polygon is the miter " *
-                                          "offset of its Physical sides (MiterOffset) while " *
-                                          "that polygon is simple; a self-intersecting miter " *
-                                          "polygon (facing sides closer than twice the collar) " *
-                                          "is replaced by the outer boundary of the union of " *
-                                          "the loop, the per-side collar rectangles and the " *
-                                          "convex-corner miter kites, clipped to the coupon " *
-                                          "box (CollarUnion); circular arcs of the loop are " *
-                                          "offset exactly as concentric arcs (r + collar for a " *
-                                          "convex-metal arc, r - collar for a concave one, " *
-                                          "collapsed onto its neighbours' junction when " *
-                                          "r <= collar), tangent joints staying continuous " *
-                                          "(a junction turning by at most " *
-                                          "$JUNCTION_TANGENT_ANGLE rad snaps its two shifted " *
-                                          "ends, at most collar x that angle apart, to one " *
-                                          "point: the one sub-nanometre tolerance of the exact " *
-                                          "offsets), and the union " *
-                                          "takes an annular sector per arc; where an offset " *
-                                          "arc crosses another collar front on the union " *
-                                          "boundary the crossing vertex is the chord-polyline " *
-                                          "intersection (within the chord sagitta of the " *
-                                          "exact arc) and the arc run is interrupted there",
-                    "IslandRule" => "an un-etched region bounded entirely by collar " *
-                                    "boundaries (not touching the box face) whose every " *
-                                    "point lies within IslandExcessCap beyond the collar is " *
-                                    "absorbed into the etched collar and recorded " *
-                                    "(AbsorbedIslands of its polygon: area, maximum excess " *
-                                    "found and its bound); the bound (half the island's " *
-                                    "smallest width) measures beyond the constructed collar " *
-                                    "boundary, kites included, the maximum excess found " *
-                                    "measures the exact metal distance, and both must stay " *
-                                    "within the cap; a larger island fails closed " *
-                                    "(ScopeGuard FootprintTopology)",
-                    "IslandExcessCapOverRadius" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS,
-                    "IslandExcessCap" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS * radius,
-                    "AbsorbedIslands" => sum(Int[length(get(polygon, "AbsorbedIslands", []))
-                                                for polygon in footprint_polygons]),
-                    "AbsorbedIslandArea" => sum(Float64[island["Area"]
-                                                        for polygon in footprint_polygons
-                                                        for island in get(polygon, "AbsorbedIslands", [])]),
-                    "AbsorbedIslandMaximumExcess" => maximum(
-                        Float64[island["MaximumExcess"] for polygon in footprint_polygons
-                                for island in get(polygon, "AbsorbedIslands", [])]; init=0.0),
-                    "AbsorbedIslandMaximumExcessBound" => maximum(
-                        Float64[island["MaximumExcessBound"] for polygon in footprint_polygons
-                                for island in get(polygon, "AbsorbedIslands", [])]; init=0.0),
-                    "CollarUnionPolygons" => count(polygon["Construction"] == "CollarUnion"
-                                                   for polygon in footprint_polygons)),
-                "FootprintPolygons" => footprint_polygons,
-                "PrismTubes" => tube_record,
-                "EdgeLayer" => prism_tubes ? nothing : Dict{String, Any}(
-                    "EdgeSize" => edge_size,
-                    "GrowthRatio" => edge_growth_ratio,
-                    "Aspect" => edge_layer_aspect,
-                    "NormalSize" => lc_fine,
-                    "TangentialSize" => lc_tangent,
-                    "Layers" => length(edge_layer_offsets),
-                    "RowOffsets" => edge_layer_offsets,
-                    "LayerThickness" => isempty(edge_layer_offsets) ? 0.0 : edge_layer_offsets[end],
-                    "TangentialSubdivision" => edge_layer_subdivision,
-                    "RowSubdivisions" => edge_layer_row_subdivisions,
-                    "RowTangentialSpacings" =>
-                        [lc_tangent / n for n in edge_layer_row_subdivisions],
-                    "TaperSubdivisions" => edge_layer_taper,
-                    "CornerTaperOffset" => layer_to_ball ? corner_isotropy_radius :
-                                           corner_reach + length(edge_layer_taper) * lc_tangent,
-                    "LayerReachesCornerBall" => layer_to_ball,
-                    "UnlayeredEdgeLengthPerCorner" => unlayered_edge_length_per_corner(
-                        semantic_corners, edge_layer_curves, corner_isotropy_radius),
-                    "RowZigzag" => EDGE_LAYER_ROW_ZIGZAG,
-                    "Rule" => "on every face bounding a metal edge (longitudinal feature " *
-                              "curve of a metal surface family, junction curves excluded) " *
-                              "one embedded explicit node row per geometric layer of size " *
-                              "EdgeSize x GrowthRatio^(k-1) below NormalSize, at the " *
-                              "cumulative layer distance from the edge; inside the row span " *
-                              "the ridge lc_tangent grid is subdivided by TangentialSubdivision " *
-                              "(smallest power of two with spacing <= Aspect x EdgeSize) and " *
-                              "row k by the nested power of two with spacing <= Aspect x its " *
-                              "size, so every layer cell has aspect <= Aspect (a tetrahedron " *
-                              "corner with three tangential edges has scaled Jacobian " *
-                              "(hn/ht)^2); the ridge subdivision halves interval by interval " *
-                              "(TaperSubdivisions) towards the span ends, where no row is " *
-                              "seeded; rows start at the ridge grid outside the corner size " *
-                              "law after the taper (CornerTaperOffset from a semantic corner) " *
-                              "or, with corner grading (LayerReachesCornerBall), at the ridge " *
-                              "node on the corner ball boundary with no taper, so the " *
-                              "un-layered edge length per corner is the ball radius " *
-                              "(UnlayeredEdgeLengthPerCorner: per semantic corner, the " *
-                              "distances from the corner to the nearest span end of each " *
-                              "adjacent layered edge and their maximum); " *
-                              "every second row node is RowZigzag of the offset farther out (no " *
-                              "Delaunay-degenerate rectangles); rows stop where the next " *
-                              "layer leaves the face",
-                    "Curves" => edge_layer_curves,
-                    "TotalSpanLength" =>
-                        sum(Float64[row["SpanLength"] for row in edge_layer_curves]),
-                    "Rows" =>
-                        sum(Int[length(record["Rows"]) for (record, _) in edge_layer_records]),
-                    "RowNodes" =>
-                        sum(Int[record["RowNodes"] for (record, _) in edge_layer_records]),
-                    "RidgeNodesAdded" => edge_layer_ridge_nodes),
-                "TraceBasisSizing" => trace_basis_record,
-                "SeedQualityOptimization" => seed_quality,
-                "TipBisectors" => Dict{String, Any}(
-                    "Rule" => TIP_BISECTOR_RULE, "Count" => length(tip_bisectors),
-                    "Curves" => tip_bisectors,
-                    "MinimumOpeningDegrees" => corner_shape_gate > 0.0 ?
-                                               rad2deg(tip_bisector_minimum_opening(corner_shape_gate)) :
-                                               nothing,
-                    "DescentExcess" => TIP_BISECTOR_DESCENT_EXCESS,
-                    "SplitFloorRule" => "the 2D condition number of the affine map from the " *
-                                        "equilateral triangle onto the isoceles triangle of apex " *
-                                        "angle phi / 2 (singular-value interlacing: the kappa_reg " *
-                                        "floor of every cell on a split fan sector); the bisector is " *
-                                        "embedded for phi >= 2 alpha* with floor(alpha*) = " *
-                                        "CornerShapeGate / DescentExcess (supervisor decision 368)",
-                    "UnrefinedTips" => length(unrefined_tips)),
-                "ThinSheetSeams" => thin_sheet_seams,
-                "InterfaceAreas" => area_rows,
-                "Corners" => census_rows))
+                "RequestedTangentialSize" => requested_lc_tangent,
+                "TangentialSize" => lc_tangent,
+                "TangentialSizeBoundByFarSize" => lc_tangent < requested_lc_tangent),
+            "GradingTransitionWidth" => process_core_width - process_fine_width,
+            "LongitudinalCurves" => length(longitudinal_curves),
+            "CornerIsotropicLongitudinalCurves" => length(corner_curves),
+            "CurveSpacing" => Dict{String, Any}(
+                "Rule" => CURVE_SPACING_RULE,
+                "GrowthRatio" => edge_growth_ratio,
+                "Count" => length(curve_spacing_records),
+                "GradedCurves" => count(record["Graded"] for record in curve_spacing_records),
+                "Curves" => curve_spacing_records),
+            "JunctionCurves" => Dict{String, Any}(
+                "Count" => length(junction_curves),
+                "TotalLength" => junction_length,
+                # Source-local CAD endpoints of every junction curve (the Gmsh-only
+                # audit's junction band lines; a curved junction is recorded by its
+                # chord and flagged).
+                "Segments" => [vcat(a, b) for (a, b) in curve_segments(junction_curves)],
+                "CurvedCurves" => count(
+                    abs(gmsh.model.occ.getMass(1, curve) - norm(b .- a)) >
+                    1.0e-9 * max(norm(b .- a), 1.0)
+                    for (curve, (a, b)) in zip(junction_curves, curve_segments(junction_curves))),
+                "Rule" => "curves of material-interface surfaces (substrate on one " *
+                          "side, vacuum on the other) lying on the outer box: the " *
+                          "cut-surface junctions of the trench floor/walls and the " *
+                          "un-etched plane; feature curves with the process-edge band"),
+            "CornerLawReach" => corner_reach,
+            "CornerGrading" => Dict{String, Any}(
+                "CornerSize" => corner_size,
+                "GrowthRatio" => edge_growth_ratio,
+                "NormalSize" => lc_fine,
+                "Radius" => corner_isotropy_radius,
+                "Reach" => corner_grading_reach(corner_grading),
+                "ShellRadii" => corner_shell_radii(corner_grading),
+                "ShellSizes" => [corner_ball_size(corner_grading, inner)
+                                 for inner in vcat(0.0, corner_shell_radii(corner_grading)[1:(end - 1)])],
+                "Rule" => corner_size > 0.0 ?
+                    "inside every corner ball the isotropic size grows geometrically from " *
+                    "CornerSize at the corner point in shells: shell k has size CornerSize x " *
+                    "GrowthRatio^(k-1) and ends at the cumulative radius CornerSize " *
+                    "(GrowthRatio^k - 1) / (GrowthRatio - 1) (ShellRadii, ShellSizes), " *
+                    "NormalSize from the Reach to the ball radius; the Gmsh background " *
+                    "field, the ridge node placement (nodes on the shell radii and on the " *
+                    "ball boundary) and the seed optimizer's local bounds follow the shells, " *
+                    "which never exceed the metric stage's continuous law min(NormalSize, " *
+                    "CornerSize + (GrowthRatio - 1) x distance) (supervisor decision 33)" :
+                    "uniform NormalSize inside every corner ball (no corner grading)"),
+            "LongitudinalFaceHistogramBins" => LONGITUDINAL_FACE_HISTOGRAM_BINS,
+            "LongitudinalFaces" => face_rows,
+            "InterfaceAreaUnits" => "um^2",
+            "EtchBoundary" => etch_boundary === nothing ? "producer-default" : etch_boundary,
+            "EtchBoundarySHA256" => etch_boundary === nothing ? nothing :
+                                    bytes2hex(sha256(read(etch_boundary))),
+            "FootprintCollinearTolerance" => FOOTPRINT_COLLINEAR_TOLERANCE,
+            "FootprintSimplification" => Dict{String, Any}(
+                "Rule" => "consecutive footprint edges are merged when every vertex " *
+                          "between their outer endpoints lies within " *
+                          "FootprintCollinearTolerance times the merged edge length " *
+                          "of the merged edge, before CAD face creation",
+                "Polygons" => length(footprint_polygons),
+                "RemovedVertices" => sum(Int[polygon["Simplification"]["RemovedVertexCount"]
+                                             for polygon in footprint_polygons]),
+                "MaximumRelativeDeviation" => maximum(
+                    Float64[polygon["Simplification"]["MaximumRelativeDeviation"]
+                            for polygon in footprint_polygons]; init=0.0),
+                "ConstructionRule" => "an exterior loop's collar polygon is the miter " *
+                                      "offset of its Physical sides (MiterOffset) while " *
+                                      "that polygon is simple; a self-intersecting miter " *
+                                      "polygon (facing sides closer than twice the collar) " *
+                                      "is replaced by the outer boundary of the union of " *
+                                      "the loop, the per-side collar rectangles and the " *
+                                      "convex-corner miter kites, clipped to the coupon " *
+                                      "box (CollarUnion); circular arcs of the loop are " *
+                                      "offset exactly as concentric arcs (r + collar for a " *
+                                      "convex-metal arc, r - collar for a concave one, " *
+                                      "collapsed onto its neighbours' junction when " *
+                                      "r <= collar), tangent joints staying continuous " *
+                                      "(a junction turning by at most " *
+                                      "$JUNCTION_TANGENT_ANGLE rad snaps its two shifted " *
+                                      "ends, at most collar x that angle apart, to one " *
+                                      "point: the one sub-nanometre tolerance of the exact " *
+                                      "offsets), and the union " *
+                                      "takes an annular sector per arc; where an offset " *
+                                      "arc crosses another collar front on the union " *
+                                      "boundary the crossing vertex is the chord-polyline " *
+                                      "intersection (within the chord sagitta of the " *
+                                      "exact arc) and the arc run is interrupted there",
+                "IslandRule" => "an un-etched region bounded entirely by collar " *
+                                "boundaries (not touching the box face) whose every " *
+                                "point lies within IslandExcessCap beyond the collar is " *
+                                "absorbed into the etched collar and recorded " *
+                                "(AbsorbedIslands of its polygon: area, maximum excess " *
+                                "found and its bound); the bound (half the island's " *
+                                "smallest width) measures beyond the constructed collar " *
+                                "boundary, kites included, the maximum excess found " *
+                                "measures the exact metal distance, and both must stay " *
+                                "within the cap; a larger island fails closed " *
+                                "(ScopeGuard FootprintTopology)",
+                "IslandExcessCapOverRadius" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS,
+                "IslandExcessCap" => COLLAR_ISLAND_EXCESS_CAP_OVER_RADIUS * radius,
+                "AbsorbedIslands" => sum(Int[length(get(polygon, "AbsorbedIslands", []))
+                                            for polygon in footprint_polygons]),
+                "AbsorbedIslandArea" => sum(Float64[island["Area"]
+                                                    for polygon in footprint_polygons
+                                                    for island in get(polygon, "AbsorbedIslands", [])]),
+                "AbsorbedIslandMaximumExcess" => maximum(
+                    Float64[island["MaximumExcess"] for polygon in footprint_polygons
+                            for island in get(polygon, "AbsorbedIslands", [])]; init=0.0),
+                "AbsorbedIslandMaximumExcessBound" => maximum(
+                    Float64[island["MaximumExcessBound"] for polygon in footprint_polygons
+                            for island in get(polygon, "AbsorbedIslands", [])]; init=0.0),
+                "CollarUnionPolygons" => count(polygon["Construction"] == "CollarUnion"
+                                               for polygon in footprint_polygons)),
+            "FootprintPolygons" => footprint_polygons,
+            "PrismTubes" => tube_record,
+            "EdgeLayer" => prism_tubes ? nothing : Dict{String, Any}(
+                "EdgeSize" => edge_size,
+                "GrowthRatio" => edge_growth_ratio,
+                "Aspect" => edge_layer_aspect,
+                "NormalSize" => lc_fine,
+                "TangentialSize" => lc_tangent,
+                "Layers" => length(edge_layer_offsets),
+                "RowOffsets" => edge_layer_offsets,
+                "LayerThickness" => isempty(edge_layer_offsets) ? 0.0 : edge_layer_offsets[end],
+                "TangentialSubdivision" => edge_layer_subdivision,
+                "RowSubdivisions" => edge_layer_row_subdivisions,
+                "RowTangentialSpacings" =>
+                    [lc_tangent / n for n in edge_layer_row_subdivisions],
+                "TaperSubdivisions" => edge_layer_taper,
+                "CornerTaperOffset" => layer_to_ball ? corner_isotropy_radius :
+                                       corner_reach + length(edge_layer_taper) * lc_tangent,
+                "LayerReachesCornerBall" => layer_to_ball,
+                "UnlayeredEdgeLengthPerCorner" => unlayered_edge_length_per_corner(
+                    semantic_corners, edge_layer_curves, corner_isotropy_radius),
+                "RowZigzag" => EDGE_LAYER_ROW_ZIGZAG,
+                "Rule" => "on every face bounding a metal edge (longitudinal feature " *
+                          "curve of a metal surface family, junction curves excluded) " *
+                          "one embedded explicit node row per geometric layer of size " *
+                          "EdgeSize x GrowthRatio^(k-1) below NormalSize, at the " *
+                          "cumulative layer distance from the edge; inside the row span " *
+                          "the ridge lc_tangent grid is subdivided by TangentialSubdivision " *
+                          "(smallest power of two with spacing <= Aspect x EdgeSize) and " *
+                          "row k by the nested power of two with spacing <= Aspect x its " *
+                          "size, so every layer cell has aspect <= Aspect (a tetrahedron " *
+                          "corner with three tangential edges has scaled Jacobian " *
+                          "(hn/ht)^2); the ridge subdivision halves interval by interval " *
+                          "(TaperSubdivisions) towards the span ends, where no row is " *
+                          "seeded; rows start at the ridge grid outside the corner size " *
+                          "law after the taper (CornerTaperOffset from a semantic corner) " *
+                          "or, with corner grading (LayerReachesCornerBall), at the ridge " *
+                          "node on the corner ball boundary with no taper, so the " *
+                          "un-layered edge length per corner is the ball radius " *
+                          "(UnlayeredEdgeLengthPerCorner: per semantic corner, the " *
+                          "distances from the corner to the nearest span end of each " *
+                          "adjacent layered edge and their maximum); " *
+                          "every second row node is RowZigzag of the offset farther out (no " *
+                          "Delaunay-degenerate rectangles); rows stop where the next " *
+                          "layer leaves the face",
+                "Curves" => edge_layer_curves,
+                "TotalSpanLength" =>
+                    sum(Float64[row["SpanLength"] for row in edge_layer_curves]),
+                "Rows" =>
+                    sum(Int[length(record["Rows"]) for (record, _) in edge_layer_records]),
+                "RowNodes" =>
+                    sum(Int[record["RowNodes"] for (record, _) in edge_layer_records]),
+                "RidgeNodesAdded" => edge_layer_ridge_nodes),
+            "TraceBasisSizing" => trace_basis_record,
+            "SeedQualityOptimization" => seed_quality,
+            "TipBisectors" => Dict{String, Any}(
+                "Rule" => TIP_BISECTOR_RULE, "Count" => length(tip_bisectors),
+                "Curves" => tip_bisectors,
+                "MinimumOpeningDegrees" => corner_shape_gate > 0.0 ?
+                                           rad2deg(tip_bisector_minimum_opening(corner_shape_gate)) :
+                                           nothing,
+                "DescentExcess" => TIP_BISECTOR_DESCENT_EXCESS,
+                "SplitFloorRule" => "the 2D condition number of the affine map from the " *
+                                    "equilateral triangle onto the isoceles triangle of apex " *
+                                    "angle phi / 2 (singular-value interlacing: the kappa_reg " *
+                                    "floor of every cell on a split fan sector); the bisector is " *
+                                    "embedded for phi >= 2 alpha* with floor(alpha*) = " *
+                                    "CornerShapeGate / DescentExcess (supervisor decision 368)",
+                "UnrefinedTips" => length(unrefined_tips)),
+            "ThinSheetSeams" => thin_sheet_seams,
+            "InterfaceAreas" => area_rows,
+            "Corners" => census_rows)
+        # Round 3 class (1): recorded only where the rule acts (a corner-free build has no
+        # corner to judge); every corner-bearing census is unchanged.
+        corner_free && (census_record["CornerGates"] = CORNER_GATES_NOT_APPLICABLE)
+        open(corner_census, "w") do stream
+            write_json(stream, census_record)
             println(stream)
         end
         println("Seed corner census: $corner_census")

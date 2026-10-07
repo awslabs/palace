@@ -4139,6 +4139,82 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "declares pipeline"):
                 validate_manifest({**manifest, "Pipeline": "legacy-mmg"}, manifest_path)
 
+    def test_gmsh_build_census_corner_free_contract(self):
+        # Mesher design round 3 class (1) (decisions 491 / 510): a corner-free build (the
+        # contract's Derivation.CornerFree, SemanticCorners []) records 0 semantic corners, 0
+        # kinds, 0 CornerMeasures / CornerAspectsAfter rows, 0 seed corner census rows, 0 tube
+        # cap regions (no tube end before a corner) and the explicit CornerGates NotApplicable;
+        # every one of those zeros is accepted ONLY under the record, and the record only with
+        # them: nothing passes silently. Corner-bearing censuses are judged as before.
+        from mesh_stage_contract import CORNER_GATES_NOT_APPLICABLE, validate_gmsh_build_census
+        from semantic_mesh_contract import CORNER_FREE_RULE
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); manifest_path, manifest, audits = self._gmsh_only_matrix(root)
+            report = json.loads((root / "base--canonical-gmsh-build.log.json").read_text())
+            census = json.loads(Path(report["Artifacts"]["build-census"]["Path"]).read_text())
+            semantic = json.loads(Path(report["Inputs"]["canonical-semantic-contract"]["Path"]).read_text())
+            self.assertIs(validate_gmsh_build_census(report, census, semantic), census)
+            free_semantic = copy.deepcopy(semantic)
+            free_semantic["SemanticCorners"] = []
+            free_semantic.setdefault("Derivation", {})["CornerFree"] = {
+                "Rule": CORNER_FREE_RULE, "ArcInteriorVertices": 34, "SmoothJoints": 4, "BoxFaceCutEnds": 2}
+            free = copy.deepcopy(census)
+            free.update(SemanticCorners=[], SemanticCornerKinds=[], Corners=[],
+                        CornerGates=CORNER_GATES_NOT_APPLICABLE)
+            free["InvariantCorners"]["Points"] = []
+            free["SeedQualityOptimization"].update(CornerMeasures=[], CornerAspectsAfter=[], CornerAspectsBefore=[],
+                                                   CornerMoves=[], InvariantCorners=0, RequiredTetrahedra=0,
+                                                   RequiredMinimumScaledJacobianBefore=None,
+                                                   RequiredMinimumScaledJacobianAfter=None)
+            free["PrismTubes"]["CapRegions"] = {"Caps": 0, "MinimumScaledJacobian": None,
+                                                "MaximumJacobianCondition": None, "Regions": []}
+            self.assertIs(validate_gmsh_build_census(report, free, free_semantic), free)
+
+            def rejected(mutate, message, contract=free_semantic):
+                broken = copy.deepcopy(free)
+                mutate(broken)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_gmsh_build_census(report, broken, contract)
+            # The empty corner list without the record (a legacy contract) fails closed; a record
+            # beside corners fails in the contract validator and in the census binding alike.
+            rejected(lambda c: None, "Build census corners differ", contract=semantic)
+            mixed_semantic = copy.deepcopy(free_semantic)
+            mixed_semantic["SemanticCorners"] = semantic["SemanticCorners"]
+            rejected(lambda c: None, "Build census corners differ", contract=mixed_semantic)
+            rejected(lambda c: c.__setitem__("SemanticCorners", semantic["SemanticCorners"]), "Build census corners differ")
+            # The CornerGates record is explicit: absent, misspelt or present on a corner-bearing
+            # census it fails closed.
+            rejected(lambda c: c.pop("CornerGates"), "CornerGates record differs")
+            rejected(lambda c: c.__setitem__("CornerGates", "NotApplicable"), "record is not")
+            corner_bearing = copy.deepcopy(census)
+            corner_bearing["CornerGates"] = CORNER_GATES_NOT_APPLICABLE
+            with self.assertRaisesRegex(ValueError, "CornerGates record differs"):
+                validate_gmsh_build_census(report, corner_bearing, semantic)
+            # The zero rows must all be zero: a stray seed census row, kind, measure or aspect.
+            rejected(lambda c: c.__setitem__("Corners", census["Corners"]), "Build census corners differ")
+            rejected(lambda c: c.__setitem__("SemanticCornerKinds", ["Legacy"]), "SemanticCornerKinds differ")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__("CornerAspectsAfter", [1.0]),
+                     "does not record gated corner balls")
+            rejected(lambda c: c["SeedQualityOptimization"].__setitem__(
+                         "CornerMeasures", census["SeedQualityOptimization"]["CornerMeasures"]),
+                     "one CornerMeasures row per semantic corner")
+            # Tube cap regions: none on a corner-free coupon (and none means corner-free); a
+            # statistic recorded with 0 caps, or 0 caps on a corner-bearing census, fails closed.
+            rejected(lambda c: c["PrismTubes"]["CapRegions"].__setitem__("Caps", 1), "cap regions differ")
+            rejected(lambda c: c["PrismTubes"]["CapRegions"].__setitem__("MinimumScaledJacobian", .5),
+                     "cap region statistics on a corner-free coupon")
+            rejected(lambda c: c["PrismTubes"]["CapRegions"].__setitem__("Regions", [{}]),
+                     "cap region statistics on a corner-free coupon")
+            no_caps = copy.deepcopy(census)
+            no_caps["PrismTubes"]["CapRegions"]["Caps"] = 0
+            with self.assertRaisesRegex(ValueError, "cap regions differ"):
+                validate_gmsh_build_census(report, no_caps, semantic)
+            # The corner-bearing path is unchanged: its cap statistics are still gated.
+            weak_caps = copy.deepcopy(census)
+            weak_caps["PrismTubes"]["CapRegions"]["MinimumScaledJacobian"] = 0.0
+            with self.assertRaisesRegex(ValueError, "cap regions fail the tetrahedral gates"):
+                validate_gmsh_build_census(report, weak_caps, semantic)
+
 
 class TraceBasisSizeMeasureTest(unittest.TestCase):
     """Decision 43: the census trace rule is measured by the basis triangle's minimum
