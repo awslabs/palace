@@ -92,7 +92,11 @@ def exponent(speedup):
     return math.log2(speedup) if speedup > 0 else None
 
 
-def fit(one_node_statuses, two_node_status, *, ordinary_one_node_log=None, ordinary_two_node_stage=None):
+PALACE_GB_PER_GIB = 1.0737   # the cost model's PalaceGBPerGiB (Palace prints GB as 1e9 bytes)
+
+
+def fit(one_node_statuses, two_node_status, *, ordinary_one_node_log=None, ordinary_two_node_stage=None,
+        palace_gb_per_gib=PALACE_GB_PER_GIB):
     one = stage_index(one_node_statuses)
     two = stage_index([two_node_status])
     nodes_two = int(two_node_status.get("Nodes") and len(two_node_status["Nodes"]) or 2)
@@ -132,13 +136,30 @@ def fit(one_node_statuses, two_node_status, *, ordinary_one_node_log=None, ordin
         peak_one = memory_gb(parsed_one["PalacePeakMemory"]["Total"])
         peak_two_max = memory_gb(stage_two["Parsed"]["PalacePeakMemory"]["Max"])
         peak_two_total = memory_gb(stage_two["Parsed"]["PalacePeakMemory"]["Total"])
-        fraction = replicated_fraction(peak_one, peak_two_max, nodes_two)
-        ordinary = {"Stage": ordinary_two_node_stage, "Kind": "LocalEdge", "Basis": "Palace per-node peak report (the one-node run of "
-                    "record ran outside the runner: no node-used sample)", "OneNodePalacePeakGB": peak_one,
-                    "TwoNodePalacePeakMaxGB": peak_two_max, "TwoNodePalacePeakTotalGB": peak_two_total,
-                    "TwoNodePerNodeUsedGiB": {host: value / GIB for host, value in (stage_two.get("NodePeakUsedBytesSampledPerNode") or {}).items()},
+        palace_based = replicated_fraction(peak_one, peak_two_max, nodes_two)
+        # The planner compares NODE-USED figures, whose per-node overhead (OS, MPI, the runner)
+        # does not divide: the one-node node-used peak of a run outside the runner (no sample) is
+        # reconstructed as its Palace peak in GiB + the measured 2-node per-node overhead
+        # (node used - Palace per-node peak); the larger of the two fractions is kept.
+        per_node_used = stage_two.get("NodePeakUsedBytesSampledPerNode") or {}
+        node_used_based = None
+        if per_node_used:
+            used_two_gib = max(per_node_used.values()) / GIB
+            overhead_gib = used_two_gib - peak_two_max / palace_gb_per_gib
+            used_one_gib = peak_one / palace_gb_per_gib + overhead_gib
+            node_used_based = {**replicated_fraction(used_one_gib, used_two_gib, nodes_two), "OneNodeUsedGiBReconstructed": used_one_gib,
+                               "TwoNodePerNodeUsedGiB": used_two_gib, "PerNodeOverheadGiB": overhead_gib}
+        chosen = node_used_based if node_used_based and node_used_based["ReplicatedFraction"] > palace_based["ReplicatedFraction"] else palace_based
+        ordinary = {"Stage": ordinary_two_node_stage, "Kind": "LocalEdge",
+                    "Basis": ("the larger of the Palace per-node peak fraction and the node-used fraction with the one-node node-used "
+                              "reconstructed (Palace peak / PalaceGBPerGiB + the 2-node per-node overhead); the one-node run of record ran "
+                              "outside the runner: no node-used sample"),
+                    "OneNodePalacePeakGB": peak_one, "TwoNodePalacePeakMaxGB": peak_two_max, "TwoNodePalacePeakTotalGB": peak_two_total,
+                    "PalaceBased": palace_based, "NodeUsedBased": node_used_based,
+                    "TwoNodePerNodeUsedGiB": {host: value / GIB for host, value in per_node_used.items()},
                     "OneNodePalaceTotalSeconds": parsed_one["PalaceTotalSeconds"], "TwoNodePalaceTotalSeconds": stage_two["Parsed"]["PalaceTotalSeconds"],
-                    "OneNodePCG": parsed_one.get("PCG"), "TwoNodePCG": stage_two["Parsed"].get("PCG"), **fraction}
+                    "OneNodePCG": parsed_one.get("PCG"), "TwoNodePCG": stage_two["Parsed"].get("PCG"),
+                    "Raw": chosen["Raw"], "ReplicatedFraction": chosen["ReplicatedFraction"]}
         memory["LocalEdge"].append(ordinary)
         times["LocalEdge"].append((parsed_one["PalaceTotalSeconds"] / stage_two["Parsed"]["PalaceTotalSeconds"], ordinary_two_node_stage))
     block = {"MeasuredNodes": nodes_two, "Rule": {"Memory": MEMORY_RULE, "Time": EXPONENT_RULE}, "Memory": {}, "Time": {}}
