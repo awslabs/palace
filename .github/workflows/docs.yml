@@ -110,7 +110,9 @@ jobs:
           done
   
           # Workaround for https://github.com/spack/spack/issues/51505
-          ln -s "$(spack location --repo builtin)"/packages/mfem "$PALACE_DIR"/spack_repo/local/packages/
+          for pkg in mfem libceed; do
+            ln -s "$(spack location --repo builtin)"/packages/$pkg "$PALACE_DIR"/spack_repo/local/packages/
+          done
   
       - name: Setup Environment
         if: needs.filter.outputs.should_build == 'true'
