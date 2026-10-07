@@ -187,7 +187,7 @@ class MeasuredRefitTest(unittest.TestCase):
         cls.runs = sorted(STAGE2_RECORDS.glob("**/library-qualification.json"))
         cls.model, cls.record = refit_cost_model.refit_measured(
             cls.runs, previous_path=estimate_stages.DEVICE_COST_MODEL, previous_kept=estimate_stages.DEVICE_COST_MODEL,
-            label="stage-2 2026-10-05/06 (coupons-a, coupons-bc, pair 5)")
+            label="stage-2 2026-10-05/06 (coupons-a, coupons-bc, pair 5)", node_scaling_path=STAGE2_RECORDS / "node-scaling.json")
         cls.committed = json.loads(estimate_stages.COST_MODEL.read_text())
 
     def test_committed_model_is_the_measured_refit_with_the_device_model_kept(self):
@@ -261,6 +261,35 @@ class MeasuredRefitTest(unittest.TestCase):
         self.assertEqual((self.committed["PreflightAndMarginFactor"], self.committed["PreflightSeconds"]), (1.10, 60))
         self.assertLess(self.committed["PolicyRule"]["MeasuredOverheads"]["Max"], 1.10)
         self.assertIn("previous [1.0, 1.5, 2.0]", self.committed["PolicyRule"]["PCGFactors"])
+
+
+    def test_node_scaling_is_the_measured_1_vs_2_node_calibration(self):
+        """Decisions 457 (3) / 463 / 466: the NodeScaling block is fit_node_scaling on the pair-5 one-node
+        statuses of record and the two 2-node runs (PBS 57720 p4 blocks + reducer, 57721 p5 dense twin)."""
+        import fit_node_scaling
+        records = STAGE2_RECORDS / "multinode-20261007"
+        pair5 = STAGE2_RECORDS / "nearkey-validation-pair5" / "fab-spatial-19-edge-9fd03b1b7378" / "spatial-19-edge-9fd03b1b7378" / "results" / "main" / "jobs"
+        one = [json.loads((pair5 / job / "status.json").read_text()) for job in ("worker-1", "worker-2", "reducer")]
+        p4 = json.loads((records / "pair5-fab-p4-2n-status.json").read_text())
+        dense = json.loads((records / "pair5-fab-p5-dense-2n-status.json").read_text())
+        merged = {**p4, "Stages": p4["Stages"] + dense["Stages"]}
+        block = fit_node_scaling.fit(one, merged, ordinary_one_node_log=records / "pair5-fab-p5-dense-1n-palace.log",
+                                     ordinary_two_node_stage="fabricated-p5-dense")
+        scaling = self.committed["NodeScaling"]
+        self.assertEqual(scaling["Memory"], block["Memory"])
+        self.assertEqual(scaling["Time"], block["Time"])
+        self.assertEqual(scaling["MeasuredNodes"], 2)
+        # The reducer DISTRIBUTES (decision 457 (3)): 299.6 GiB at one node -> 183.9 GiB per node at two.
+        self.assertAlmostEqual(scaling["Memory"]["Reducer"]["ReplicatedFraction"], 0.2278, places=3)
+        self.assertAlmostEqual(scaling["Memory"]["Worker"]["ReplicatedFraction"], 0.3821, places=3)
+        self.assertAlmostEqual(scaling["Memory"]["LocalEdge"]["ReplicatedFraction"], 0.1406, places=3)
+        self.assertAlmostEqual(scaling["Time"]["WorkerPerSource"]["Exponent"], 0.8989, places=3)
+        self.assertAlmostEqual(scaling["Time"]["ReducerReduction"]["Exponent"], 0.8233, places=3)
+        self.assertLess(scaling["Time"]["ReducerSetup"]["Exponent"], 0.0)   # the setup does not speed up: kept as measured
+        self.assertEqual(scaling["PerNodeGuardMargin"], 0.10)   # decision 463
+        self.assertEqual(scaling["Source"]["SHA256"], refit_cost_model.sha256(STAGE2_RECORDS / "node-scaling.json"))
+        self.assertEqual(estimate_stages.per_node_guard_margin(self.committed), 0.10)
+        self.assertAlmostEqual(estimate_stages.per_node_used_gib(self.committed, "Reducer", 299.6, 2), 299.6 * (0.2278 + 0.7722 / 2), places=1)
 
 
 if __name__ == "__main__":

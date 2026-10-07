@@ -697,6 +697,302 @@
       "Path": "cost-model-device-20260922.json",
       "SHA256": "f695da1b0aad66322a2c081e3ca0e3e46d94649b6741b47cab2e1a10996a91a0",
       "Provenance": "the model every qualify run up to this refit used: Measured per-stage cost rates of the Palace response worker / reducer / ordinary local-edge stages on one r8g.48xlarge node (192 ranks, frozen executable 170439c4a9fc5d5ce329310812055be5fb83a4a7f288024b57b3b83551cbe70b, streaming one-pass Gram reducer at block size 48) refit by refit_cost_model.py from the 6-coupon device library qualification library-qualification.json (tool commit 7c7bb5fe5, PBS 47080, 47081, 47082, 47083, 47084, 47086, 47105, 47106, 47107, 47108, 47109, 47110, 47207, 47212, 47213, 47214, 47215, 47216, 47218, 47219, 47250, 47256, 47289, 47290, 47291, 47298, 47300, 47301, 47335, 47336, 47348, 47349, 47356, 47358, 47467). Every rate is on the reference mesh spatial-3-edge-5d3b5e644745 and is the LARGEST the run's coupons imply once scaled to it by the exact H1 ratio (fail-closed: the 1x estimate is at least the measured wall of every stage of every coupon; SelfCheck). estimate_stages.py scales them to another hybrid prism-tube coupon mesh by the exact H1 DOF ratio with 1x / 1.5x / 2x the measured mean PCG counts."
+    },
+    "NodeScaling": {
+      "MeasuredNodes": 2,
+      "Rule": {
+        "Memory": "per-node node-used GiB at N nodes = the one-node figure x (ReplicatedFraction + (1 - ReplicatedFraction) / N); ReplicatedFraction = 2 x per-node peak at 2 nodes / the one-node peak - 1, clamped to [0, 1], the largest over the measured stages of the kind",
+        "Time": "T(N) = T(1) / N^Exponent with Exponent = log2(the measured 1 -> 2 node speedup of the part); estimate_stages caps it at 1 (no superlinear speedup is budgeted); a negative exponent (slower at 2 nodes) is kept"
+      },
+      "Memory": {
+        "Worker": {
+          "ReplicatedFraction": 0.3821,
+          "SetBy": "spatial-19-edge-9fd03b1b7378-p4-worker-block2",
+          "Raw": [
+            0.359,
+            0.3821
+          ]
+        },
+        "Reducer": {
+          "ReplicatedFraction": 0.2278,
+          "SetBy": "spatial-19-edge-9fd03b1b7378-p4-reducer",
+          "Raw": [
+            0.2278
+          ]
+        },
+        "LocalEdge": {
+          "ReplicatedFraction": 0.1406,
+          "SetBy": "fabricated-p5-dense",
+          "Raw": [
+            0.1406
+          ]
+        }
+      },
+      "Time": {
+        "WorkerPerSource": {
+          "Speedup": 1.8646,
+          "Exponent": 0.8989,
+          "SetBy": "spatial-19-edge-9fd03b1b7378-p4-worker-block2",
+          "Measured": [
+            {
+              "Speedup": 1.9544,
+              "Stage": "spatial-19-edge-9fd03b1b7378-p4-worker-block1"
+            },
+            {
+              "Speedup": 1.8646,
+              "Stage": "spatial-19-edge-9fd03b1b7378-p4-worker-block2"
+            }
+          ]
+        },
+        "WorkerNonSource": {
+          "Speedup": 1.0225,
+          "Exponent": 0.0322,
+          "SetBy": "spatial-19-edge-9fd03b1b7378-p4-worker-block1",
+          "Measured": [
+            {
+              "Speedup": 1.0225,
+              "Stage": "spatial-19-edge-9fd03b1b7378-p4-worker-block1"
+            },
+            {
+              "Speedup": 1.0366,
+              "Stage": "spatial-19-edge-9fd03b1b7378-p4-worker-block2"
+            }
+          ]
+        },
+        "ReducerSetup": {
+          "Speedup": 0.9723,
+          "Exponent": -0.0406,
+          "SetBy": "spatial-19-edge-9fd03b1b7378-p4-reducer",
+          "Measured": [
+            {
+              "Speedup": 0.9723,
+              "Stage": "spatial-19-edge-9fd03b1b7378-p4-reducer"
+            }
+          ]
+        },
+        "ReducerReduction": {
+          "Speedup": 1.7694,
+          "Exponent": 0.8233,
+          "SetBy": "spatial-19-edge-9fd03b1b7378-p4-reducer",
+          "Measured": [
+            {
+              "Speedup": 1.7694,
+              "Stage": "spatial-19-edge-9fd03b1b7378-p4-reducer"
+            }
+          ]
+        },
+        "LocalEdge": {
+          "Speedup": 1.8425,
+          "Exponent": 0.8816,
+          "SetBy": "fabricated-p5-dense",
+          "Measured": [
+            {
+              "Speedup": 1.8425,
+              "Stage": "fabricated-p5-dense"
+            }
+          ]
+        }
+      },
+      "Measured": {
+        "Stages": [
+          {
+            "Stage": "spatial-19-edge-9fd03b1b7378-p4-worker-block1",
+            "Kind": "Worker",
+            "OneNodeUsedGiB": 211.00439834594727,
+            "TwoNodePerNodeUsedGiB": 143.3813133239746,
+            "TwoNodePerNode": {
+              "ip-192-168-34-45": 143.3813133239746,
+              "ip-192-168-33-106": 141.67227935791016
+            },
+            "PalacePeakOneNode": {
+              "Min": "177.6G",
+              "Max": "177.6G",
+              "Avg": "177.6G",
+              "Total": "177.6G"
+            },
+            "PalacePeakTwoNodes": {
+              "Min": "106.0G",
+              "Max": "107.7G",
+              "Avg": "106.8G",
+              "Total": "213.7G"
+            },
+            "Raw": 0.35903625183108434,
+            "ReplicatedFraction": 0.35903625183108434,
+            "Time": {
+              "OneNode": {
+                "Sources": 79,
+                "PerSourceSeconds": 37.01503584,
+                "NonSourceSeconds": 108.27893035099987,
+                "WallSeconds": 3032.466761711,
+                "MeanPCGIterations": 17.924050632911392
+              },
+              "TwoNodes": {
+                "Sources": 79,
+                "PerSourceSeconds": 18.93980494772152,
+                "NonSourceSeconds": 105.89164916900017,
+                "WallSeconds": 1602.136240039,
+                "MeanPCGIterations": 17.911392405063292
+              }
+            }
+          },
+          {
+            "Stage": "spatial-19-edge-9fd03b1b7378-p4-worker-block2",
+            "Kind": "Worker",
+            "OneNodeUsedGiB": 208.58557510375977,
+            "TwoNodePerNodeUsedGiB": 144.14273071289062,
+            "TwoNodePerNode": {
+              "ip-192-168-34-45": 144.14273071289062,
+              "ip-192-168-33-106": 142.25758361816406
+            },
+            "PalacePeakOneNode": {
+              "Min": "177.5G",
+              "Max": "177.5G",
+              "Avg": "177.5G",
+              "Total": "177.5G"
+            },
+            "PalacePeakTwoNodes": {
+              "Min": "106.0G",
+              "Max": "107.7G",
+              "Avg": "106.9G",
+              "Total": "213.7G"
+            },
+            "Raw": 0.3820968266016249,
+            "ReplicatedFraction": 0.3820968266016249,
+            "Time": {
+              "OneNode": {
+                "Sources": 134,
+                "PerSourceSeconds": 40.3634032869403,
+                "NonSourceSeconds": 107.51320400000077,
+                "WallSeconds": 5516.20924445,
+                "MeanPCGIterations": 19.746268656716417
+              },
+              "TwoNodes": {
+                "Sources": 134,
+                "PerSourceSeconds": 21.646671487761193,
+                "NonSourceSeconds": 103.71473163300061,
+                "WallSeconds": 3004.3687109930006,
+                "MeanPCGIterations": 19.79850746268657
+              }
+            }
+          },
+          {
+            "Stage": "spatial-19-edge-9fd03b1b7378-p4-reducer",
+            "Kind": "Reducer",
+            "OneNodeUsedGiB": 299.5868034362793,
+            "TwoNodePerNodeUsedGiB": 183.91253280639648,
+            "TwoNodePerNode": {
+              "ip-192-168-34-45": 183.91253280639648,
+              "ip-192-168-33-106": 177.47744750976562
+            },
+            "PalacePeakOneNode": {
+              "Min": "246.0G",
+              "Max": "246.0G",
+              "Avg": "246.0G",
+              "Total": "246.0G"
+            },
+            "PalacePeakTwoNodes": {
+              "Min": "131.9G",
+              "Max": "136.9G",
+              "Avg": "134.4G",
+              "Total": "268.8G"
+            },
+            "Raw": 0.22777459285194324,
+            "ReplicatedFraction": 0.22777459285194324,
+            "Time": {
+              "OneNode": {
+                "ReductionSeconds": 153.31640161248532,
+                "SetupSeconds": 91.43503614851473,
+                "WallSeconds": 244.75143776100003
+              },
+              "TwoNodes": {
+                "ReductionSeconds": 86.64937829134222,
+                "SetupSeconds": 94.04360398065813,
+                "WallSeconds": 180.69298227200034
+              }
+            }
+          }
+        ],
+        "Ordinary": {
+          "Stage": "fabricated-p5-dense",
+          "Kind": "LocalEdge",
+          "Basis": "the larger of the Palace per-node peak fraction and the node-used fraction with the one-node node-used reconstructed (Palace peak / PalaceGBPerGiB + the 2-node per-node overhead); the one-node run of record ran outside the runner: no node-used sample",
+          "OneNodePalacePeakGB": 801.1,
+          "TwoNodePalacePeakMaxGB": 428.5,
+          "TwoNodePalacePeakTotalGB": 842.6,
+          "PalaceBased": {
+            "Raw": 0.06977905380102367,
+            "ReplicatedFraction": 0.06977905380102367
+          },
+          "NodeUsedBased": {
+            "Raw": 0.14060445330309523,
+            "ReplicatedFraction": 0.14060445330309523,
+            "OneNodeUsedGiBReconstructed": 807.6008999577512,
+            "TwoNodePerNodeUsedGiB": 460.5765914916992,
+            "PerNodeOverheadGiB": 61.489323167213854
+          },
+          "TwoNodePerNodeUsedGiB": {
+            "ip-192-168-44-52": 460.5765914916992,
+            "ip-192-168-58-163": 446.1757278442383
+          },
+          "OneNodePalaceTotalSeconds": 1681.677,
+          "TwoNodePalaceTotalSeconds": 912.725,
+          "OneNodePCG": [
+            47,
+            32,
+            35,
+            34,
+            33
+          ],
+          "TwoNodePCG": [
+            48,
+            32,
+            35,
+            34,
+            33
+          ],
+          "Raw": 0.14060445330309523,
+          "ReplicatedFraction": 0.14060445330309523
+        },
+        "TwoNodeJob": {
+          "PBSJobID": "57720.ip-192-168-54-24.us-west-2.compute.internal + 57721.ip-192-168-54-24.us-west-2.compute.internal",
+          "Hosts": [
+            "ip-192-168-33-106",
+            "ip-192-168-34-45"
+          ],
+          "Preflight": {
+            "ip-192-168-33-106": {
+              "MemTotalBytes": 797242064896,
+              "MemAvailableBytes": 746793234432,
+              "Conflicts": [],
+              "Role": "runner"
+            },
+            "ip-192-168-34-45": {
+              "MemTotalBytes": 797242064896,
+              "MemAvailableBytes": 746757685248,
+              "Conflicts": [],
+              "Role": "node"
+            }
+          }
+        },
+        "OneNodeJobs": [
+          "57459.ip-192-168-54-24.us-west-2.compute.internal",
+          "57460.ip-192-168-54-24.us-west-2.compute.internal",
+          "57551.ip-192-168-54-24.us-west-2.compute.internal"
+        ]
+      },
+      "PerNodeGuardMargin": 0.1,
+      "PerNodeGuardMarginRule": "decision 463: the estimated per-node peak stays under the admission guard by this margin; the measured per-node residuals (the p5 dense twin at 2 nodes peaked at 460.6 GiB against the 460.8 GiB m8g guard, i.e. the one-node Palace-peak-based estimate under-predicted the node-used peak by the per-node overhead) justify no less than 10 %",
+      "Provenance": {
+        "OneNodeRunsOfRecord": "PBS 57461 / 57462 (p4 worker blocks, m8g) / 57538 (p4 reducer, r8g) / 57629 (p5 dense twin, r8g)",
+        "TwoNodeRuns": "PBS 57720 (p4 blocks + reducer, 2 x m8g, 384 ranks) / 57721 (p5 dense twin, 2 x m8g)",
+        "Coupon": "spatial-19-edge-9fd03b1b7378 (validation pair 5 fab, 4,722,858 elements, 213 sources, 64.3 M H1 at p4)",
+        "Executable": "cc7c4091fa47bde8739fe57678d1b72a22a4aee51b0de8da18ccb9912a5aec88",
+        "Records": "qualify/stage2-20261006/multinode-20261007/ (the 2-node statuses, the dense 1-node palace.log) + the pair-5 statuses"
+      },
+      "Source": {
+        "Path": "qualify/stage2-20261006/node-scaling.json",
+        "SHA256": "27ec44a65589f8b38880520363a6e54d2d90b63184cd104e8f64c89882dbb142"
+      }
     }
   },
   "SelfCheck": {
