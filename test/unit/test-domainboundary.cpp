@@ -1424,57 +1424,59 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     const Energies full = Run("mirror-pad-45-full", 1.0, true, "Natural");
     const Energies half = Run("mirror-pad-45-half", 1.0, false, "Natural");
-    if (!Mpi::Root(Mpi::World()))
+    // The checks run on the root; every rank stays in the section (a return inside a
+    // SECTION would end the test body early on that rank and desynchronise Catch2's
+    // section discovery across the ranks: the next pass then hangs in a collective).
+    if (Mpi::Root(Mpi::World()))
     {
-      return;
-    }
-    CheckIdentity(full);
-    CheckIdentity(half);
-    // The raw interface energies and E_out: the half is exactly half the full (the
-    // discrete half problem is the restriction of the symmetric full one).
-    CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
-    CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
-    // Nothing is a DomainBoundary exclusion in the half: its cut-crossing cells are
-    // Mirrored, the two virtual corners carry weight 1 / 2 and a mirror arm trim.
-    const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
-    CHECK(exclusions.at("Count").get<int>() == 0);
-    CHECK(exclusions.at("Mirrored").at("Count").get<int>() > 0);
-    CHECK(exclusions.at("Mirrored").at("Points").get<int>() > 0);
-    // Four virtual corners (two per wall: convex at the top edge, concave at the bottom).
-    CHECK(exclusions.at("Mirrored").at("HalfVertices").get<int>() == 4);
-    CHECK(exclusions.at("Mirrored").at("ArmTrims").get<int>() == 4);
-    const auto &band = half.diagnostics.at("MirrorBand");
-    INFO(band.dump());
-    REQUIRE(band.at("MirrorFormedFeatures").size() == 4);
-    std::map<std::string, int> formed;
-    for (const auto &entry : band.at("MirrorFormedFeatures"))
-    {
-      formed[entry.at("Type").get<std::string>()]++;
-      CHECK(entry.at("Status") == "Modelled");
-      CHECK_THAT(entry.at("Key").get<std::string>(),
-                 ContainsSubstring("\"AngleDegrees\":90.0"));
-    }
-    CHECK(formed["ConvexCorner"] == 2);
-    CHECK(formed["ConcaveCorner"] == 2);
-    CHECK(half.domain_boundary_ft == 0.0);
-    // The full has no cut through the pad: nothing mirrored, nothing excluded.
-    // The full has no cut through the pad at the (former) wall x = 1; its ends at x = 0 and
-    // the image wall are virtual corners on both sides alike.
-    CHECK(full.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
-    CHECK(full.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").size() == 4);
-    // THE IDENTITY: the half's model energies, uncovered energy and corrected energies are
-    // half the full's (the half-energy identity of DESIGN 2.2.4; the s_half term is zero
-    // at 90 degrees).
-    CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
-    CHECK_THAT(2.0 * half.models[1], WithinRel(full.models[1], 1.0e-9));
-    CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
-    CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
-    CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
-    // The self-consistent column: the symmetric sc solution's restriction (accepted on both
-    // or unavailable on both).
-    if (std::isfinite(full.corrected[2]) && std::isfinite(half.corrected[2]))
-    {
-      CHECK_THAT(2.0 * half.corrected[2], WithinRel(full.corrected[2], 1.0e-5));
+      CheckIdentity(full);
+      CheckIdentity(half);
+      // The raw interface energies and E_out: the half is exactly half the full (the
+      // discrete half problem is the restriction of the symmetric full one).
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      // Nothing is a DomainBoundary exclusion in the half: its cut-crossing cells are
+      // Mirrored, the two virtual corners carry weight 1 / 2 and a mirror arm trim.
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Count").get<int>() == 0);
+      CHECK(exclusions.at("Mirrored").at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Mirrored").at("Points").get<int>() > 0);
+      // Four virtual corners (two per wall: convex at the top edge, concave at the bottom).
+      CHECK(exclusions.at("Mirrored").at("HalfVertices").get<int>() == 4);
+      CHECK(exclusions.at("Mirrored").at("ArmTrims").get<int>() == 4);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      INFO(band.dump());
+      REQUIRE(band.at("MirrorFormedFeatures").size() == 4);
+      std::map<std::string, int> formed;
+      for (const auto &entry : band.at("MirrorFormedFeatures"))
+      {
+        formed[entry.at("Type").get<std::string>()]++;
+        CHECK(entry.at("Status") == "Modelled");
+        CHECK_THAT(entry.at("Key").get<std::string>(),
+                   ContainsSubstring("\"AngleDegrees\":90.0"));
+      }
+      CHECK(formed["ConvexCorner"] == 2);
+      CHECK(formed["ConcaveCorner"] == 2);
+      CHECK(half.domain_boundary_ft == 0.0);
+      // The full has no cut through the pad: nothing mirrored, nothing excluded.
+      // The full has no cut through the pad at the (former) wall x = 1; its ends at x = 0
+      // and the image wall are virtual corners on both sides alike.
+      CHECK(full.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
+      CHECK(full.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").size() == 4);
+      // THE IDENTITY: the half's model energies, uncovered energy and corrected energies
+      // are half the full's (the half-energy identity of DESIGN 2.2.4; the s_half term is
+      // zero at 90 degrees).
+      CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.models[1], WithinRel(full.models[1], 1.0e-9));
+      CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
+      // The self-consistent column: the symmetric sc solution's restriction (accepted on
+      // both or unavailable on both).
+      if (std::isfinite(full.corrected[2]) && std::isfinite(half.corrected[2]))
+      {
+        CHECK_THAT(2.0 * half.corrected[2], WithinRel(full.corrected[2], 1.0e-5));
+      }
     }
   }
 
@@ -1482,43 +1484,47 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     const Energies full = Run("mirror-pad-90-full", 0.0, true, "Natural");
     const Energies half = Run("mirror-pad-90-half", 0.0, false, "Natural");
-    if (!Mpi::Root(Mpi::World()))
+    // The checks run on the root; every rank stays in the section (a return inside a
+    // SECTION would end the test body early on that rank and desynchronise Catch2's
+    // section discovery across the ranks: the next pass then hangs in a collective).
+    if (Mpi::Root(Mpi::World()))
     {
-      return;
+      CheckIdentity(full);
+      CheckIdentity(half);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      CHECK(band.at("MirrorFormedFeatures").empty());
+      CHECK(band.at("ContinuedFeatures").get<int>() == 2);  // the two short edges
+      CHECK(half.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
+      CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
     }
-    CheckIdentity(full);
-    CheckIdentity(half);
-    const auto &band = half.diagnostics.at("MirrorBand");
-    CHECK(band.at("MirrorFormedFeatures").empty());
-    CHECK(band.at("ContinuedFeatures").get<int>() == 2);  // the two short edges
-    CHECK(half.diagnostics.at("DomainBoundaryExclusions").at("Count").get<int>() == 0);
-    CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
-    CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
-    CHECK_THAT(2.0 * half.models[0], WithinRel(full.models[0], 1.0e-9));
-    CHECK_THAT(2.0 * half.uncovered_ft, WithinRel(full.uncovered_ft, 1.0e-9));
-    CHECK_THAT(2.0 * half.corrected[0], WithinRel(full.corrected[0], 1.0e-9));
-    CHECK_THAT(2.0 * half.corrected[1], WithinRel(full.corrected[1], 1.0e-9));
   }
 
   SECTION("S-off (control): Mirror Off keeps the raw claims and the identity, not the half")
   {
     const Energies full = Run("mirror-pad-45-full-off", 1.0, true, "Natural");
     const Energies half = Run("mirror-pad-45-half-off", 1.0, false, "Off");
-    if (!Mpi::Root(Mpi::World()))
+    // The checks run on the root; every rank stays in the section (a return inside a
+    // SECTION would end the test body early on that rank and desynchronise Catch2's
+    // section discovery across the ranks: the next pass then hangs in a collective).
+    if (Mpi::Root(Mpi::World()))
     {
-      return;
+      CheckIdentity(half);
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Mirrored").at("Count").get<int>() == 0);
+      CHECK(half.domain_boundary_ft > 0.0);
+      CHECK(half.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").empty());
+      // The DomainBoundary term is the raw energy of the cut cells; the half's ft differs
+      // from half the full's by the raw-vs-model difference of those cells (not zero).
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK(std::abs(2.0 * half.corrected[0] - full.corrected[0]) >
+            1.0e-6 * full.corrected[0]);
     }
-    CheckIdentity(half);
-    const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
-    CHECK(exclusions.at("Count").get<int>() > 0);
-    CHECK(exclusions.at("Mirrored").at("Count").get<int>() == 0);
-    CHECK(half.domain_boundary_ft > 0.0);
-    CHECK(half.diagnostics.at("MirrorBand").at("MirrorFormedFeatures").empty());
-    // The DomainBoundary term is the raw energy of the cut cells; the half's ft differs
-    // from half the full's by the raw-vs-model difference of those cells (not zero).
-    CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
-    CHECK(std::abs(2.0 * half.corrected[0] - full.corrected[0]) >
-          1.0e-6 * full.corrected[0]);
   }
 #endif
 }

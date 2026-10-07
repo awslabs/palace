@@ -993,6 +993,13 @@ nlohmann::json DescribeCornerArmTrims(
         config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     double coordinate_scale);
+// The Diagnostics entry of the mirror arm trim (boundary-cut DESIGN 2.2.3): the virtual
+// corners placed at weight 1 / 2 and the real-arm cells beginning at s_half.
+nlohmann::json DescribeMirrorArmTrims(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorArmTrimData> &trims,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
 // The trimmed corners whose vertex coupon the placement does not apply (decision 399
 // MINOR-7): excluded_reason names the exclusion of a patch index (nullopt: applied). Their
 // second arm's [R, s) is then modelled by nothing (a recorded KNOWN LIMIT).

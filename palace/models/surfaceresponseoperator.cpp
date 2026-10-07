@@ -16139,13 +16139,15 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
       data.value("Version", 0) == 11,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 10 carries the feature, mesh segment, chain stretch and own-edge "
+          << " (version 11 carries the feature, mesh segment, chain stretch and own-edge "
              "offset of every patch, the claims, support box and chain of every spatial "
-             "cluster patch, the matching radius for the continuation and vertex "
-             "ownership, the quantum near-match records of the matching pass, the "
-             "corner-arm trim records and the uncovered portions of decision 394, and the "
-             "consistent-mortar band vertices and rule of every model (decision 404 D1); "
-             "delete a stale cache)!");
+             "cluster patch, the raw claims of every vertex coupon (F-DB-a, decisions 442 "
+             "/ 454), the matching radius for the continuation and vertex ownership, the "
+             "quantum near-match records of the matching pass, the corner-arm trim records "
+             "and the uncovered portions of decision 394, the consistent-mortar band "
+             "vertices and rule of every model (decision 404 D1), and the mirror planes, "
+             "mirror band record and mirror arm trims of the boundary-cut rule; delete a "
+             "stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -16491,6 +16493,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     // inventory summary carries both.
     diagnostics["CornerArmTrim"] =
         DescribeCornerArmTrims(patches.corner_arm_trims, patches, coordinate_scale);
+    diagnostics["MirrorArmTrim"] =
+        DescribeMirrorArmTrims(patches.mirror_arm_trims, patches, coordinate_scale);
     auto placed_uncovered = patches.uncovered_portions;
     const auto uncovered_clipping =
         ClipUncoveredPortionsBySpatialSupport(placed_uncovered, boxes, 3);
@@ -18237,6 +18241,55 @@ nlohmann::json DescribeConsistentMortar(const ResponseCorrectionData &config)
        "outside the rule) or no Fabrication.MetalThickness (legacy mortar). Collocated "
        "trace coupling does not use the mortar. Coordinates in the canonical coupon "
        "frame"}};
+}
+
+// The Diagnostics.MirrorArmTrim record (boundary-cut DESIGN 2.2.3): per virtual corner its
+// angle, s, s_half, the real arm, the vertex patch (weight 1 / 2) and the cells trimmed.
+nlohmann::json
+DescribeMirrorArmTrims(const std::vector<ResponseCorrectionData::MirrorArmTrimData> &trims,
+                       const ResponseCorrectionData &config, double coordinate_scale)
+{
+  nlohmann::json corners = nlohmann::json::array(), cells = nlohmann::json::array();
+  double trimmed = 0.0, removed = 0.0;
+  for (const auto &trim : trims)
+  {
+    trimmed += trim.trimmed_length;
+    nlohmann::json patches = nlohmann::json::array();
+    for (const auto &[patch, removed_length] : trim.cells)
+    {
+      patches.push_back(patch);
+      removed += removed_length;
+      const auto &data = config.patches[patch];
+      cells.push_back({{"Patch", patch},
+                       {"Corner", trim.feature},
+                       {"Feature", data.provenance.feature},
+                       {"Segment", data.provenance.segment},
+                       {"RemovedLength", removed_length * coordinate_scale}});
+    }
+    corners.push_back({{"Feature", trim.feature},
+                       {"Topology", trim.topology},
+                       {"AngleDegrees", trim.angle_degrees},
+                       {"ExitDistanceOverR", trim.exit_distance_over_radius},
+                       {"HalfStartOverR", trim.half_start_over_radius},
+                       {"TrimmedLength", trim.trimmed_length * coordinate_scale},
+                       {"VertexPatch", trim.vertex_patch},
+                       {"Weight", config.patches[trim.vertex_patch].weight},
+                       {"Arm", trim.arm},
+                       {"Patches", std::move(patches)}});
+  }
+  return {
+      {"Count", static_cast<int>(trims.size())},
+      {"TrimmedLength", trimmed * coordinate_scale},
+      {"RemovedCellLength", removed * coordinate_scale},
+      {"Corners", std::move(corners)},
+      {"Cells", std::move(cells)},
+      {"Rule",
+       "boundary-cut DESIGN 2.2.3 (decisions 442 / 454): a virtual (mirror-formed) "
+       "corner on a natural truncation plane is placed with weight 1 / 2 (HalfByMirror) "
+       "and its REAL arm's translational cells begin at s_half = (R + s) / 2, s = R / "
+       "max(|cos theta|, |sin theta|): the half coupon integrates E(real [0, R]) + "
+       "E(real [0, s]) over two = E(real [0, s_half]) up to the second-order term "
+       "(E[R, s_half] - E[s_half, s]) / 2, exactly zero at 90 degrees"}};
 }
 
 nlohmann::json
@@ -20210,6 +20263,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // (GetUncoveredPortions).
     ownership_diagnostics["CornerArmTrim"] =
         DescribeCornerArmTrims(config->corner_arm_trims, *config, coordinate_scale);
+    ownership_diagnostics["MirrorArmTrim"] =
+        DescribeMirrorArmTrims(config->mirror_arm_trims, *config, coordinate_scale);
     uncovered_portions = config->uncovered_portions;
     mirror_planes = config->mirror_planes;
     mirror_band = config->mirror_band_over_radius * config->matching_radius;
