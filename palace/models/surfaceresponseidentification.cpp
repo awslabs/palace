@@ -14863,7 +14863,24 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
          "chain are listed (Context.ChainVertices: [x, y, Type, distance from the nearest "
          "face / R]) for the placement's vertex ownership (rule B4; a corner closer than R "
          "to a face has an arm partly outside the box); their signatures are unchanged"},
-        {"Comparison", "strict less on the quantized grid"}}},
+        {"Comparison", "strict less on the quantized grid"},
+        {"MirrorRule",
+         "boundary-cut DESIGN 2.2 (decisions 442 / 454 / 473): the perimeter within "
+         "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "
+         "into "
+         "the identification input and the result merged onto the unextended run; a "
+         "straight joint (collinear within the direction quantum or a sub-noise turn) "
+         "continues its chain (Mirror Status Continued: the real feature verbatim), an "
+         "oblique meeting is a corner of 2 theta, a parallel edge at d < R a strip / gap "
+         "of "
+         "2 d (Modelled: placed on the real half - a vertex coupon ON the plane at weight "
+         "1 "
+         "/ 2 with the real arm's cells from s_half = (R + s) / 2, a pair's real side with "
+         "its side factor - with the trace by even extension; Missing: the real portions "
+         "kept raw as <Type>:MirrorFormed uncovered portions); a mirror-formed stack, "
+         "cluster or curved pair is not placed (Unmerged): the real features it touches "
+         "keep their reading and their cut-crossing patches are DomainBoundary (raw kept); "
+         "image perimeter is never placed or counted"}}},
       {"ReferenceProcessNormal", D(reference_process_normal)},
       {"Features", feature_list},
       {"Segments", segment_list},

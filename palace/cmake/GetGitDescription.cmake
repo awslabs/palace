@@ -75,11 +75,13 @@ function(git_describe _var)
     return()
   endif()
 
-  # Force rerun only if Git status has changed
+  # Force rerun only if Git status has changed. In a linked worktree (`.git` is a file
+  # pointing at the main repository's gitdir) the head file is not found here; the describe
+  # string below is still produced (git handles the worktree itself) so that the binary
+  # records its revision, without the reconfigure-on-change dependency.
   get_git_head_revision(refspec hash)
   if(NOT hash)
-    set(${_var} "HEAD-HASH-NOTFOUND" PARENT_SCOPE)
-    return()
+    message(STATUS "Git head revision not found (a linked worktree?): describing without the reconfigure dependency")
   endif()
 
   # message(STATUS "Git head revision: ${refspec} ${hash}")

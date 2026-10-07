@@ -1405,6 +1405,10 @@ public:
     std::vector<MirrorPlaneData> mirror_planes;
     std::string mirror_band;
     double mirror_band_over_radius = 0.0;
+    // The real features an unmerged mirror-formed configuration touches (a bent stack, a
+    // two-vertex cluster, a curved pair with its image: no mirror placement, decision 473
+    // (1)): their cut-crossing patches are DomainBoundary (raw kept), never Mirrored.
+    std::vector<int> mirror_blocked_features;
     // The virtual (mirror-formed) corners placed with weight 1 / 2 (HalfByMirror) and the
     // start s_half of their real arm's cells (MirrorArmTrim), patch units; one record per
     // corner (DESIGN 2.2.3).

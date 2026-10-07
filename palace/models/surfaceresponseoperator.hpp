@@ -1055,6 +1055,14 @@ struct DomainBoundaryExclusion
   int outside_points = 0;
   std::array<double, 3> nearest_outside_point{};
   double nearest_distance = 0.0;
+  // Why the patch is DomainBoundary rather than Mirrored (boundary-cut DESIGN 2.2.5;
+  // Diagnostics.DomainBoundary.Reasons): MirrorOff (no mirror: the band is 0 - Mirror
+  // "Off" or a Maxwell build), UnmergedFeature (its feature is touched by a mirror-formed
+  // configuration without a mirror placement), NonMirroringPlane (an outside point lies
+  // beyond an Unsupported / NonPlanar plane), BeyondBand (beyond a Natural plane by more
+  // than the band), ReflectionNotLocated (reflected into the domain but not located: a
+  // non-convex domain, a hole), NoPlane (an outside point beyond no truncation plane).
+  std::string reason;
 };
 // A patch classified Mirrored (boundary-cut DESIGN 2.2.3; decisions 442 / 454): every one
 // of its placed points outside the mesh reflects through the Natural mirror planes it lies
@@ -1094,7 +1102,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
         &mirror_planes = {},
-    double mirror_band = 0.0);
+    double mirror_band = 0.0, const std::set<int> &mirror_blocked_features = {});
 
 // The mirror planes of a response configuration as the mirror module's planes.
 std::vector<MirrorPlane> MirrorPlanesOf(

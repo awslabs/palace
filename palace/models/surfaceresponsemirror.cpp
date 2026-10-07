@@ -249,10 +249,15 @@ std::vector<MirrorPlane> FitTruncationPlanes(const mfem::ParMesh &mesh,
   // rank), then the per-attribute status.
   for (const auto &[key, group] : merged)
   {
+    // The plane constants are the QUANTISED key's (the grid both the grouping and every
+    // rank see), not the gathered sums' average: identical for every rank count and
+    // partition (decision 473 MINOR-9; a sum in rank order differs in the last bits).
     MirrorPlane plane;
     plane.attribute = static_cast<int>(key[0]);
-    plane.normal = Normalize(group.normal);
-    plane.offset = group.offset / group.faces;
+    plane.normal = Normalize({static_cast<double>(key[1]) * normal_quantum,
+                              static_cast<double>(key[2]) * normal_quantum,
+                              static_cast<double>(key[3]) * normal_quantum});
+    plane.offset = static_cast<double>(key[4]) * offset_quantum;
     plane.faces = group.faces;
     plane.max_deviation = group.max_deviation;
     plane.box_min = group.box_min;
@@ -854,12 +859,44 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
         feature.type == "SameConductorStrip";
     if (!mergeable)
     {
+      // The real features the unmerged configuration touches (portions overlapped, or a
+      // real vertex of the configuration): their cut-crossing patches are DomainBoundary
+      // (F-DB-a, raw kept), never Mirrored with their own single-sided model (decision 473
+      // (1)); recorded on each with Status "Unmerged".
+      std::set<std::size_t> touched = overlapping;
+      for (std::size_t i = 0; i < merged.features.size(); i++)
+      {
+        for (const std::size_t v : merged.features[i].vertices)
+        {
+          if (std::find(feature.vertices.begin(), feature.vertices.end(), v) !=
+              feature.vertices.end())
+          {
+            touched.insert(i);
+          }
+        }
+      }
+      nlohmann::json real_ids = nlohmann::json::array();
+      for (const std::size_t i : touched)
+      {
+        auto &target = merged.features[i];
+        real_ids.push_back(target.id);
+        summary.blocked_feature_ids.push_back(target.id);
+        if (target.mirror.is_null())
+        {
+          target.mirror = {{"Planes", PlanesOfFeature(feature)},
+                           {"RealLength", target.length},
+                           {"ImageLength", 0.0},
+                           {"Status", "Unmerged"},
+                           {"UnmergedType", feature.type}};
+        }
+      }
       summary.unmerged_features.push_back({{"Feature", feature.id},
                                            {"Type", feature.type},
                                            {"Key", feature.signature_key},
                                            {"RealLength", real_length},
                                            {"ImageLength", image_length},
                                            {"Planes", PlanesOfFeature(feature)},
+                                           {"RealFeatures", real_ids},
                                            {"Status", "Unmerged"}});
       continue;
     }
@@ -867,8 +904,15 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
   }
   for (const auto &[index, record] : continued)
   {
-    merged.features[index].mirror = record;
+    if (merged.features[index].mirror.is_null())
+    {
+      merged.features[index].mirror = record;
+    }
   }
+  std::sort(summary.blocked_feature_ids.begin(), summary.blocked_feature_ids.end());
+  summary.blocked_feature_ids.erase(
+      std::unique(summary.blocked_feature_ids.begin(), summary.blocked_feature_ids.end()),
+      summary.blocked_feature_ids.end());
   // The joint vertices take the extended run's reading (the virtual corner's vertex entry,
   // MirrorJoint); the feature reference is remapped to the merged Id.
   auto UpdateJointVertices = [&](const std::map<int, int> &extended_to_merged)
@@ -1092,6 +1136,7 @@ nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,
           {"ImageOnlyFeatures", summary.image_only_features},
           {"MirrorFormedFeatures", std::move(formed)},
           {"UnmergedFeatures", summary.unmerged_features},
+          {"BlockedRealFeatures", summary.blocked_feature_ids},
           {"Rule",
            "boundary-cut DESIGN 2.2 (decisions 442 / 454): the metal perimeter within "
            "BandOverR x R of every planar NATURAL vertical truncation plane is reflected "

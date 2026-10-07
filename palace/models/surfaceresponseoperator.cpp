@@ -8207,21 +8207,49 @@ IdentificationResult RunGeometryIdentification(
   // a two-vertex cluster, a curved pair with its image) fails closed to Missing.
   for (auto &feature : result.features)
   {
-    if (feature.mirror.is_null() || feature.mirror.value("Status", "") == "Continued")
+    if (feature.mirror.is_null() || feature.mirror.value("Status", "") == "Continued" ||
+        feature.mirror.value("Status", "") == "Unmerged")
     {
       continue;
     }
-    const bool placeable =
-        feature.type == "ConvexCorner" || feature.type == "ConcaveCorner" ||
-        feature.type == "SameConductorGap" || feature.type == "DifferentConductorGap" ||
-        feature.type == "SameConductorStrip";
+    bool placeable = feature.type == "ConvexCorner" || feature.type == "ConcaveCorner" ||
+                     feature.type == "SameConductorGap" ||
+                     feature.type == "DifferentConductorGap" ||
+                     feature.type == "SameConductorStrip";
+    if (placeable && (feature.type == "ConvexCorner" || feature.type == "ConcaveCorner"))
+    {
+      // A virtual corner is halved only when its vertex lies ON one of its mirror planes
+      // (within the signature tolerance; decision 473 MINOR-6): a mirror-formed corner off
+      // the plane is not the half of a symmetric configuration -> fail closed to Missing.
+      const double tolerance =
+          kSignatureParameterToleranceOverRadius * library.matching_radius;
+      bool on_plane = false;
+      for (const auto &k : feature.mirror.value("Planes", std::vector<int>{}))
+      {
+        if (k >= 0 && static_cast<std::size_t>(k) < mirror_band.planes.size() &&
+            std::abs(mirror_band.planes[static_cast<std::size_t>(k)].Inside(
+                feature.origin)) <= tolerance)
+        {
+          on_plane = true;
+        }
+      }
+      if (!on_plane)
+      {
+        placeable = false;
+        feature.match_note = "mirror-formed corner whose vertex is not on a mirror plane "
+                             "(fail closed to the raw energy, decision 473 MINOR-6)";
+      }
+    }
     if (feature.matched_model && !placeable)
     {
       feature.matched_model.reset();
       feature.match_deviation.reset();
-      feature.match_note = "mirror-formed " + feature.type +
-                           ": no mirror placement for this topology (fail closed to the "
-                           "raw energy, boundary-cut DESIGN 2.2.5)";
+      if (!feature.match_note || feature.match_note->find("MINOR-6") == std::string::npos)
+      {
+        feature.match_note = "mirror-formed " + feature.type +
+                             ": no mirror placement for this topology (fail closed to the "
+                             "raw energy, boundary-cut DESIGN 2.2.5)";
+      }
       if (curved_matches)
       {
         curved_matches->erase(feature.id);
@@ -11218,6 +11246,14 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                                     plane.status, plane.box_min, plane.box_max});
   }
   result.mirror_band = mirror_band.record.dump();
+  result.mirror_blocked_features.clear();
+  for (const auto &feature : identification.features)
+  {
+    if (!feature.mirror.is_null() && feature.mirror.value("Status", "") == "Unmerged")
+    {
+      result.mirror_blocked_features.push_back(feature.id);
+    }
+  }
   // No mirror in Maxwell runs and under Mirror = "Off" (band 0: every cut-crossing patch
   // is a DomainBoundary exclusion whose raw claim is kept, F-DB-a).
   result.mirror_band_over_radius =
@@ -16076,6 +16112,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
     cache["MirrorPlanes"] = std::move(planes);
     cache["MirrorBand"] = config.mirror_band;
     cache["MirrorBandOverR"] = config.mirror_band_over_radius;
+    cache["MirrorBlockedFeatures"] = config.mirror_blocked_features;
     nlohmann::json mirror_trims = nlohmann::json::array();
     for (const auto &trim : config.mirror_arm_trims)
     {
@@ -16194,6 +16231,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   }
   result.mirror_band = data.value("MirrorBand", std::string{});
   result.mirror_band_over_radius = data.value("MirrorBandOverR", 0.0);
+  result.mirror_blocked_features = data.value("MirrorBlockedFeatures", std::vector<int>{});
   for (const auto &entry : data.value("MirrorArmTrims", nlohmann::json::array()))
   {
     ResponseCorrectionData::MirrorArmTrimData trim;
@@ -16572,7 +16610,9 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         [&](int model_idx) { return spatial_basis.at(model_idx); },
         [&](int model_idx) { return model_names.at(model_idx); }, coordinate_scale,
         patches.matching_radius, {}, patches.mirror_planes,
-        patches.mirror_band_over_radius * patches.matching_radius);
+        patches.mirror_band_over_radius * patches.matching_radius,
+        std::set<int>(patches.mirror_blocked_features.begin(),
+                      patches.mirror_blocked_features.end()));
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
     // F-DB-a (decisions 442 / 454): the excluded patches' raw claims, never dropped; the
@@ -18537,7 +18577,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     const std::function<std::string(int model_idx)> &model_name, double coordinate_scale,
     double matching_radius, const std::set<std::size_t> &skipped,
     const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
-    double mirror_band)
+    double mirror_band, const std::set<int> &mirror_blocked_features)
 {
   const auto start = std::chrono::steady_clock::now();
   const int dimension = mesh.Dimension();
@@ -18647,10 +18687,33 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   // the band is reflected into the domain (canonical plane order) and located again; its
   // found flag is OR-reduced like the original's (the same arithmetic on every rank).
   std::vector<unsigned char> reflected(points.size(), 0);
+  // Per outside point, why it was not reflected (Diagnostics.DomainBoundary.Reasons; the
+  // same arithmetic on every rank): 0 none / reflected, 1 beyond no truncation plane, 2
+  // beyond an Unsupported / NonPlanar plane, 3 beyond a Natural plane by more than the
+  // band, 4 reflected into the domain but not located.
+  std::vector<unsigned char> unreflected_reason(points.size(), 0);
+  const auto planes = MirrorPlanesOf(mirror_planes);
+  const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
+  auto ReasonOf = [&](const std::array<double, 3> &point)
+  {
+    unsigned char reason = 1;
+    for (const auto &plane : planes)
+    {
+      const double inside = plane.Inside(point);
+      if (inside >= 0.0 || !plane.NearFaces(point, tolerance))
+      {
+        continue;
+      }
+      if (!plane.Mirrors())
+      {
+        return static_cast<unsigned char>(2);
+      }
+      reason = -inside > mirror_band ? 3 : 4;
+    }
+    return reason;
+  };
   if (!mirror_planes.empty() && mirror_band > 0.0)
   {
-    const auto planes = MirrorPlanesOf(mirror_planes);
-    const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
     std::vector<int> element_candidates;
     int element;
     mfem::IntegrationPoint reference;
@@ -18665,6 +18728,10 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
           locator.Find(image->point, box_tolerance, element, reference, element_candidates))
       {
         reflected[i] = 1;
+      }
+      else
+      {
+        unreflected_reason[i] = ReasonOf(points[i]);
       }
     }
     Mpi::GlobalMax(static_cast<int>(reflected.size()), reflected.data(), comm);
@@ -18738,7 +18805,11 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       {
         reflected_count += (!found[i] && reflected[i]) ? 1 : 0;
       }
-      if (reflected_count == exclusion.outside_points)
+      // A patch of a feature touched by an unmerged mirror-formed configuration is never
+      // Mirrored with its own single-sided model (decision 473 (1)): DomainBoundary.
+      const bool blocked =
+          mirror_blocked_features.count(patches[exclusion.patch].provenance.feature) > 0;
+      if (reflected_count == exclusion.outside_points && !blocked)
       {
         result.mirrored.push_back(
             {exclusion.patch, exclusion.tested_points, exclusion.outside_points});
@@ -18749,6 +18820,30 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       if (exclusion.outside_points == exclusion.tested_points && reflected_count == 0)
       {
         MFEM_ABORT(DescribeMisplacedPatch(c, begin, "every one of its tested points"));
+      }
+      if (mirror_planes.empty() || mirror_band <= 0.0)
+      {
+        exclusion.reason = "MirrorOff";
+      }
+      else if (blocked)
+      {
+        exclusion.reason = "UnmergedFeature";
+      }
+      else
+      {
+        // The strongest reason over the unreflected outside points (the same order on
+        // every rank): a non-mirroring plane, beyond the band, not located, no plane.
+        unsigned char strongest = 0;
+        for (std::size_t i = begin; i < end; i++)
+        {
+          if (!found[i] && !reflected[i])
+          {
+            strongest = std::max(strongest, unreflected_reason[i]);
+          }
+        }
+        const char *names[] = {"Unknown", "NoPlane", "NonMirroringPlane", "BeyondBand",
+                               "ReflectionNotLocated"};
+        exclusion.reason = names[std::min<unsigned char>(strongest, 4)];
       }
       patches[exclusion.patch].weight = 0.0;
       result.patches.push_back(exclusion);
@@ -18812,7 +18907,13 @@ nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &
           {exclusion.nearest_outside_point[0] * coordinate_scale,
            exclusion.nearest_outside_point[1] * coordinate_scale,
            exclusion.nearest_outside_point[2] * coordinate_scale}},
-         {"NearestDistance", exclusion.nearest_distance * coordinate_scale}});
+         {"NearestDistance", exclusion.nearest_distance * coordinate_scale},
+         {"Reason", exclusion.reason}});
+  }
+  nlohmann::json reasons = nlohmann::json::object();
+  for (const auto &exclusion : exclusions.patches)
+  {
+    reasons[exclusion.reason] = reasons.value(exclusion.reason, 0) + 1;
   }
   nlohmann::json features = nlohmann::json::array();
   for (const auto &[feature, count_length] : by_feature)
@@ -18866,6 +18967,7 @@ nlohmann::json DescribeDomainBoundaryExclusions(const DomainBoundaryExclusions &
       {"CellEndInsetOverRadius", kSignatureParameterToleranceOverRadius},
       {"ByFeature", std::move(features)},
       {"Patches", std::move(entries)},
+      {"Reasons", std::move(reasons)},
       {"Mirrored",
        {{"Count", static_cast<int>(exclusions.mirrored.size())},
         {"Features", static_cast<int>(mirrored_features.size())},
@@ -20431,7 +20533,9 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           [&](int model_idx) { return models[model_indices.at(model_idx)].spatial_basis; },
           [&](int model_idx) { return models[model_indices.at(model_idx)].name; },
           coordinate_scale, config->matching_radius, spatially_owned_patches,
-          config->mirror_planes, config->mirror_band_over_radius * config->matching_radius);
+          config->mirror_planes, config->mirror_band_over_radius * config->matching_radius,
+          std::set<int>(config->mirror_blocked_features.begin(),
+                        config->mirror_blocked_features.end()));
       for (const auto &exclusion : exclusions.patches)
       {
         spatially_owned_patches.insert(exclusion.patch);

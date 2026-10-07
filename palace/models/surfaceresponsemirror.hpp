@@ -181,6 +181,9 @@ struct MirrorMergeSummary
   // curved pairs): not merged, recorded {Feature, Type, Key, RealLength, ImageLength,
   // Planes, Status "Unmerged"} for the discovery.
   nlohmann::json unmerged_features = nlohmann::json::array();
+  // The real features an unmerged configuration touches (ascending ids): their
+  // cut-crossing patches are DomainBoundary, never Mirrored (decision 473 (1)).
+  std::vector<int> blocked_feature_ids;
 };
 MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
                                              const IdentificationResult &extended,

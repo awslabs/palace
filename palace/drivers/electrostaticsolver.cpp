@@ -1802,7 +1802,6 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // previous adaptive iteration leaves a symlink into its archive folder at this path
       // (BaseSolver::SaveIteration): remove it first, as TableWithCSVFile does, so that the
       // file is written at the root and the archived iteration keeps its own.
-      std::filesystem::remove(path);
       std::ofstream output(path);
       MFEM_VERIFY(output, "Unable to open " << path.filename().string() << " for writing!");
       output << "source,evaluation,type,portions,length (m)," << extra_header;
@@ -1886,6 +1885,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       return std::sqrt(length2);
     };
+    // Both tables are removed UNCONDITIONALLY before the conditional write (decision 473
+    // MAJOR-3): a stale table of an earlier run or attempt in the output directory would
+    // otherwise read as a term this solve did not have.
+    std::filesystem::remove(post_dir / "surface-response-uncovered-energy.csv");
+    std::filesystem::remove(post_dir / "surface-response-domain-boundary-energy.csv");
     if (!uncovered_portions.empty())
     {
       std::map<std::string, PortionTypeRow> portions_by_type;
