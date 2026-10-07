@@ -11262,8 +11262,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         result.mirror_unmerged_portions.push_back(
             {static_cast<int>(topology), portion.at("P0").get<std::array<double, 3>>(),
              portion.at("P1").get<std::array<double, 3>>(), portion.value("Image", false),
-             portion.at("Segment").get<std::size_t>(), portion.at("S0").get<double>(),
-             portion.at("S1").get<double>()});
+             portion.value("Identical", false), portion.at("Segment").get<std::size_t>(),
+             portion.at("S0").get<double>(), portion.at("S1").get<double>()});
       }
     }
   }
@@ -16075,7 +16075,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 12},
+  nlohmann::json cache = {{"Version", 13},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -16132,6 +16132,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                                    {"P0", portion.p0},
                                    {"P1", portion.p1},
                                    {"Image", portion.image},
+                                   {"Identical", portion.identical},
                                    {"Segment", portion.segment},
                                    {"S0", portion.s0},
                                    {"S1", portion.s1}});
@@ -16197,18 +16198,19 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 12,
+      data.value("Version", 0) == 13,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 12 carries the feature, mesh segment, chain stretch and own-edge "
+          << " (version 13 carries the feature, mesh segment, chain stretch and own-edge "
              "offset of every patch, the claims, support box and chain of every spatial "
              "cluster patch, the raw claims of every vertex coupon (F-DB-a, decisions 442 "
              "/ 454), the matching radius for the continuation and vertex ownership, the "
              "quantum near-match records of the matching pass, the corner-arm trim records "
              "and the uncovered portions of decision 394, the consistent-mortar band "
              "vertices and rule of every model (decision 404 D1), and the mirror planes, "
-             "mirror band record, mirror arm trims and unmerged-configuration portions of "
-             "the boundary-cut rule; delete a stale cache)!");
+             "mirror band record, mirror arm trims and unmerged-configuration portions "
+             "(each real one flagged Identical, decision 512) of the boundary-cut rule; "
+             "delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -16261,8 +16263,8 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     result.mirror_unmerged_portions.push_back(
         {entry.at("Topology").get<int>(), entry.at("P0").get<std::array<double, 3>>(),
          entry.at("P1").get<std::array<double, 3>>(), entry.value("Image", false),
-         entry.at("Segment").get<std::size_t>(), entry.at("S0").get<double>(),
-         entry.at("S1").get<double>()});
+         entry.value("Identical", false), entry.at("Segment").get<std::size_t>(),
+         entry.at("S0").get<double>(), entry.at("S1").get<double>()});
   }
   for (const auto &entry : data.value("MirrorArmTrims", nlohmann::json::array()))
   {
@@ -18831,8 +18833,11 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     // An unmerged mirror-formed configuration is read EXACTLY as a real Missing feature
     // (decision 481, MISSING-EQUIVALENCE): its OWN cells - the patches whose own-edge
     // footprint (a translational cell's [s0, s1] on its segment; a vertex / cluster
-    // coupon's claims) overlaps one of its REAL portions - are DomainBoundary (raw kept,
-    // F-DB-a), never applied with a single-sided model; a neighbour's cells keep their
+    // coupon's claims) overlaps one of its REAL portions whose identification DIFFERS
+    // between the unextended and the extended run (decision 512 (c): a portion identified
+    // identically keeps its model, so an unmerged chain never sends its far cells raw) -
+    // are DomainBoundary (raw kept, F-DB-a), never applied with a single-sided model; a
+    // neighbour's cells keep their
     // Applied / Mirrored classification as next to any Missing feature. The coupon
     // support's reach into the configuration (u, v in [-R, R]; w over the cell, [-R, R]
     // for a spatial patch; slab clipping against every portion, real or image) is recorded
@@ -18869,7 +18874,10 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       };
       for (const auto &portion : unmerged_portions)
       {
-        if (portion.image)
+        // Image portions are never own; a real portion the unextended run identifies
+        // exactly as the extended run does is not the configuration's own either
+        // (decision 512 (c)): its cells keep their models.
+        if (portion.image || portion.identical)
         {
           continue;
         }

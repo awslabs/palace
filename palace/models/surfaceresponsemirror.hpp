@@ -160,17 +160,20 @@ double HalfCornerArmStart(double angle_degrees, double matching_radius);
 
 // Merge the identification of the extended input onto the unextended run (DESIGN 2.2.2
 // (a)-(c)): the real features, Ids, portions and order are the unextended run's wherever
-// the images formed no new feature (a feature of the extended run whose real portions are
-// exactly one real feature's portions with the same type and key: Mirror Status
-// "Continued"); a feature of the extended run touching an image whose real portions are not
-// such a feature is MIRROR-FORMED (the 2 theta corner, the 2 d strip / gap, a bent stack,
-// a two-vertex cluster): the real features' portions it overlaps are clipped to it, a real
-// feature it replaces wholly lends it its Id, otherwise it is numbered after every real
-// feature; its portions keep the image portions (segment index >= real_segments, framed by
-// the caller for the pair / stack placement, never placed, never counted); image-only
-// features are counted and dropped. The merged result's segments are the real ones followed
-// by the image ones; the joint vertices take the extended run's reading. `diagnostics`
-// receives the MirrorBand record.
+// the images formed no new feature (a feature of the extended run whose every real portion
+// is IDENTIFIED IDENTICALLY by exactly one real feature - the same type, signature key and
+// side, the portion turn within the joint noise rule - whatever the split of the portions
+// and whether the real feature extends further (its far end clipped by a virtual corner at
+// another plane, or taken by another configuration): Mirror Status "Continued"; decision
+// 512 (b), DESIGN ERRATA-7); a feature of the extended run touching an image whose real
+// portions are not such a feature is MIRROR-FORMED (the 2 theta corner, the 2 d strip /
+// gap, a bent stack, a two-vertex cluster): the real features' portions it overlaps are
+// clipped to it, a real feature it replaces wholly lends it its Id, otherwise it is
+// numbered after every real feature; its portions keep the image portions (segment index >=
+// real_segments, framed by the caller for the pair / stack placement, never placed, never
+// counted); image-only features are counted and dropped. The merged result's segments are
+// the real ones followed by the image ones; the joint vertices take the extended run's
+// reading. `diagnostics` receives the MirrorBand record.
 struct MirrorMergeSummary
 {
   int continued_features = 0;
@@ -181,11 +184,14 @@ struct MirrorMergeSummary
   // curved pairs): not merged, recorded {Feature, Type, Key, RealLength, ImageLength,
   // Planes, Status "Unmerged"} for the discovery.
   nlohmann::json unmerged_features = nlohmann::json::array();
-  // The real features an unmerged configuration touches (ascending ids; a portion
-  // overlapped or a shared vertex): recorded with Mirror Status "Unmerged" (information).
-  // The configuration is read as a real Missing feature (decision 481): every unmerged
-  // entry carries its world-space portions, real and image, and the operator makes the
-  // cells whose own footprint overlaps a REAL portion DomainBoundary.
+  // The real features an unmerged configuration touches (ascending ids; a portion whose
+  // identification DIFFERS between the unextended and the extended run overlapped, or a
+  // shared vertex): recorded with Mirror Status "Unmerged" (information). The
+  // configuration is read as a real Missing feature (decision 481): every unmerged entry
+  // carries its world-space portions, real and image, each real portion flagged Identical
+  // when the unextended run identifies it exactly as the extended run does (decision 512
+  // (c), DESIGN ERRATA-7), and the operator makes the cells whose own footprint overlaps a
+  // DIFFERING real portion DomainBoundary; identically identified cells keep their models.
   std::vector<int> touched_feature_ids;
 };
 MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
