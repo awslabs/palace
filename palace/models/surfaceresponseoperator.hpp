@@ -1175,6 +1175,16 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
 // and the uncovered portions clipped by its box. Overlaps are excluded by construction (a
 // DB cell is a kept part outside every matched box; a vertex claim ends where the arm cells
 // start). Portions in mesh units; `types` names each portion's type (the model topology).
+// Clip the longitudinal cell of a translational patch to the kept offsets [kept_lo,
+// kept_hi] of its cell (the corner / mirror arm trims and the continuation ownership): the
+// origin moves to the kept midpoint, the cell becomes symmetric about it, the weight and
+// the provenance quadrature weight scale by kept / cell, the Maxwell anchors move with the
+// origin, the recorded own-segment pre-image (Provenance::own_cell, decision 537) maps
+// linearly onto the kept part; an empty kept interval leaves weight 0 and cell {0, 0}.
+void ClipLongitudinalCell(
+    config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch, double kept_lo,
+    double kept_hi);
+
 DomainBoundaryPortions CollectDomainBoundaryPortions(
     const DomainBoundaryExclusions &exclusions,
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>

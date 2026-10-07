@@ -8707,8 +8707,31 @@ double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 
   return Norm(Subtract(q, Add(a, Scale(t, ab))));
 }
 
-namespace
+// The recorded pre-image of the cell on its own segment (Provenance::own_cell, decision
+// 537) follows a clip: the kept offsets [kept_lo, kept_hi] of the cell [c0, c1] map
+// linearly onto the recorded segment interval (the pre-image is affine in the cell offset).
+void ClipOwnCell(ResponsePatchData &patch, double kept_lo, double kept_hi)
 {
+  auto &provenance = patch.provenance;
+  if (!provenance.has_own_cell)
+  {
+    return;
+  }
+  const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+  if (c1 <= c0)
+  {
+    return;
+  }
+  const auto a = provenance.own_cell[0], b = provenance.own_cell[1];
+  for (int k = 0; k < 2; k++)
+  {
+    const double fraction = ((k == 0 ? kept_lo : kept_hi) - c0) / (c1 - c0);
+    for (int d = 0; d < 3; d++)
+    {
+      provenance.own_cell[k][d] = a[d] + fraction * (b[d] - a[d]);
+    }
+  }
+}
 
 // Clip the longitudinal cell of a translational patch to the kept interval [kept_lo,
 // kept_hi] of its cell offsets (the continuation ownership's clipping, decision 236 (2)):
@@ -8722,6 +8745,7 @@ void ClipLongitudinalCell(ResponsePatchData &patch, double kept_lo, double kept_
   const bool wholly = kept_length <= 1.0e-12 * std::max(1.0, cell_length);
   const double fraction = wholly ? 0.0 : kept_length / cell_length;
   const double shift = wholly ? 0.0 : 0.5 * (kept_lo + kept_hi);
+  ClipOwnCell(patch, kept_lo, kept_hi);
   for (int d = 0; d < 3; d++)
   {
     patch.origin[d] += shift * patch.axis_w[d];
@@ -8736,6 +8760,9 @@ void ClipLongitudinalCell(ResponsePatchData &patch, double kept_lo, double kept_
   patch.weight *= fraction;
   patch.provenance.quadrature_weight *= fraction;
 }
+
+namespace
+{
 
 // Corner-arm trim (decision 394, F1). A matched corner's coupon is calibrated on the
 // matching square |u|, |v| <= R of its canonical frame (u = the first arm away from the
@@ -17608,9 +17635,11 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       }
       ownership.owned_length += owned_length;
       // Clip: the kept interval becomes the cell of a patch at its midpoint (the quadrature
-      // point of the kept piece), weight and quadrature weight scaled by kept / cell.
+      // point of the kept piece), weight and quadrature weight scaled by kept / cell; the
+      // recorded own-segment pre-image follows (decision 537).
       const double fraction = wholly ? 0.0 : kept_length / cell_length;
       const double shift = wholly ? 0.0 : 0.5 * (kept_lo + kept_hi);
+      ClipOwnCell(patch, kept_lo, kept_hi);
       for (int d = 0; d < 3; d++)
       {
         patch.origin[d] += shift * patch.axis_w[d];

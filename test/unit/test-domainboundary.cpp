@@ -2768,6 +2768,35 @@ TEST_CASE("Domain-boundary raw claim of a pair / stack cell lies on its own segm
     CHECK(both.duplicate_patches == 1);
     CHECK_THAT(both.length, WithinRel(portions.length, 1.0e-12));
   }
+
+  SECTION("a clipped cell (an arm trim, an ownership clip) keeps the kept part's pre-image")
+  {
+    // The clip keeps [c0 + 0.3, c1] of the cell: the record follows (ClipOwnCell through
+    // ClipLongitudinalCell), so the raw claim is the kept part on the segment, not the
+    // whole cell nor the frame reconstruction about the moved origin.
+    patch.provenance.has_own_cell = true;
+    const auto before = patch.provenance.own_cell;
+    ClipLongitudinalCell(patch, cell[0] + 0.3, cell[1]);
+    CHECK_THAT(patch.longitudinal_cell[1] - patch.longitudinal_cell[0],
+               WithinRel(cell[1] - cell[0] - 0.3, 1.0e-12));
+    const auto portions =
+        CollectDomainBoundaryPortions(exclusions, {patch}, config, ownership, clipping, R);
+    REQUIRE(portions.portions.size() == 1);
+    const auto &portion = portions.portions.front();
+    CHECK(Off(portion.p0) <= 1.0e-12);
+    CHECK(Off(portion.p1) <= 1.0e-12);
+    // The kept end is the recorded far end; the clipped end moved 0.3 / projection along
+    // the segment.
+    CHECK_THAT(portions.length, WithinRel((cell[1] - cell[0] - 0.3) / projection, 1.0e-12));
+    double far_end_moved = 0.0, near_end_moved = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      far_end_moved += (portion.p1[d] - before[1][d]) * (portion.p1[d] - before[1][d]);
+      near_end_moved += (portion.p0[d] - before[0][d]) * (portion.p0[d] - before[0][d]);
+    }
+    CHECK(std::sqrt(far_end_moved) <= 1.0e-12);
+    CHECK_THAT(std::sqrt(near_end_moved), WithinRel(0.3 / projection, 1.0e-12));
+  }
 }
 
 TEST_CASE("Truncation planes are deterministic across rank counts",
