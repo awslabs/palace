@@ -826,6 +826,46 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
   {
     merged.features[index].mirror = record;
   }
+  // The joint vertices take the extended run's reading (the virtual corner's vertex entry,
+  // MirrorJoint); the feature reference is remapped to the merged Id.
+  auto UpdateJointVertices = [&](const std::map<int, int> &extended_to_merged)
+  {
+    for (const std::size_t v : extension.joined_vertices)
+    {
+      const auto extended_entry =
+          std::find_if(extended.vertices.begin(), extended.vertices.end(),
+                       [&](const IdentifiedVertex &entry) { return entry.vertex == v; });
+      auto merged_entry =
+          std::find_if(merged.vertices.begin(), merged.vertices.end(),
+                       [&](const IdentifiedVertex &entry) { return entry.vertex == v; });
+      if (extended_entry == extended.vertices.end())
+      {
+        if (merged_entry != merged.vertices.end())
+        {
+          merged.vertices.erase(merged_entry);
+        }
+        continue;
+      }
+      IdentifiedVertex entry = *extended_entry;
+      if (entry.feature >= 0)
+      {
+        const auto remapped = extended_to_merged.find(entry.feature);
+        entry.feature = remapped != extended_to_merged.end() ? remapped->second : -1;
+      }
+      if (merged_entry != merged.vertices.end())
+      {
+        *merged_entry = entry;
+      }
+      else
+      {
+        merged.vertices.push_back(entry);
+      }
+    }
+
+    std::sort(merged.vertices.begin(), merged.vertices.end(),
+              [](const IdentifiedVertex &a, const IdentifiedVertex &b)
+              { return a.vertex < b.vertex; });
+  };
   if (formed.empty())
   {
     UpdateJointVertices({});
