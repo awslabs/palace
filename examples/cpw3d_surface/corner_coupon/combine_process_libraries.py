@@ -3,8 +3,9 @@
 """Combine response models into one portable fabrication-process library.
 
 --supersede NAME=<record> (decision 505 Q1) replaces the base (first) library's model NAME by the
-model of the same name of one later input, recording the replacement under Supersedes; without
-the flag a repeated model name is refused and the output is unchanged."""
+model of the same name of one later input, recording the replacement under Supersedes with the
+mandatory --supersede-decision TEXT (decision 513 (2)); without the flag a repeated model name is
+refused and the output is unchanged."""
 
 import argparse
 import hashlib
@@ -93,14 +94,24 @@ def parse_supersede(spec):
     if not path.is_file():
         raise ValueError(f"--supersede {name}: the record {path} is missing")
     try:
-        content = json.loads(path.read_text())
+        json.loads(path.read_text())
     except (OSError, ValueError) as error:
         raise ValueError(f"--supersede {name}: the record {path} is unreadable ({error})")
-    return name, {"Path": str(path.resolve()), "SHA256": sha256(path),
-                  "Decision": content.get("Decision") if isinstance(content, dict) else None}
+    return name, {"Path": str(path.resolve()), "SHA256": sha256(path)}
 
 
-def apply_supersedes(entries, base_path, supersedes):
+def supersede_decision(text, supersedes):
+    """The decision text that rules every --supersede replacement (decision 513 (2)): mandatory and
+    non-blank whenever --supersede is given, refused without one."""
+    if supersedes and not (isinstance(text, str) and text.strip()):
+        raise ValueError("--supersede requires --supersede-decision TEXT (the decision that rules the replacement, "
+                         "recorded in Supersedes.Decision)")
+    if text is not None and not supersedes:
+        raise ValueError("--supersede-decision is given without --supersede")
+    return text.strip() if text else None
+
+
+def apply_supersedes(entries, base_path, supersedes, decision):
     """`entries` = [(source path, library, model)] in input order; for every --supersede NAME the
     BASE library's (the first input's) model NAME is replaced IN PLACE by the model of the same
     name of exactly one later input (which then contributes it nowhere else), so every other
@@ -119,7 +130,7 @@ def apply_supersedes(entries, base_path, supersedes):
                         "NewModelSHA": model_sha256(new_entry[2], new_entry[0].parent),
                         "BaseSource": {"Path": str(base_entry[0]), "SHA256": sha256(base_entry[0])},
                         "NewSource": {"Path": str(new_entry[0]), "SHA256": sha256(new_entry[0])},
-                        "Record": {"Path": record["Path"], "SHA256": record["SHA256"]}, "Decision": record["Decision"],
+                        "Record": {"Path": record["Path"], "SHA256": record["SHA256"]}, "Decision": decision,
                         "Rule": SUPERSEDE_RULE})
         entries[base_slots[0]] = new_entry
         del entries[new_slots[0]]
@@ -128,8 +139,8 @@ def apply_supersedes(entries, base_path, supersedes):
 
 SUPERSEDE_RULE = ("--supersede NAME=<record>: the base library's model NAME is replaced in place by the model of the same "
                   "name of exactly one later input (its matrices copied under the base model's index / directory), "
-                  "recorded under Supersedes with both model digests (the entry with its files' sha256, model_sha256) and "
-                  "the record that rules the replacement; "
+                  "recorded under Supersedes with both model digests (the entry with its files' sha256, model_sha256), "
+                  "the stored record and the mandatory --supersede-decision text that rule the replacement; "
                   "without the flag a repeated name is refused and the output is unchanged")
 
 
@@ -182,11 +193,18 @@ def main():
         metavar="NAME=RECORD",
         help="replace the base (first) library's model NAME by the model of the same name of one later "
              "input, recording Supersedes {Name, BaseModelSHA, NewModelSHA, Record, Decision}; RECORD is the "
-             "stored record (JSON) that rules the replacement",
+             "stored record (JSON) that rules the replacement; requires --supersede-decision",
+    )
+    parser.add_argument(
+        "--supersede-decision",
+        metavar="TEXT",
+        help="the decision that rules every --supersede replacement (mandatory with --supersede; recorded as "
+             "Supersedes.Decision)",
     )
     parser.add_argument("libraries", type=Path, nargs="+")
     args = parser.parse_args()
     supersedes = [parse_supersede(spec) for spec in args.supersede]
+    decision = supersede_decision(args.supersede_decision, supersedes)
 
     destination = args.output.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
@@ -237,7 +255,7 @@ def main():
     interpolation = []
     entries = [(source_path, library, source_model) for source_path, library in loaded for source_model in library["Models"]]
     if supersedes:
-        entries, result["Supersedes"] = apply_supersedes(entries, loaded[0][0], supersedes)
+        entries, result["Supersedes"] = apply_supersedes(entries, loaded[0][0], supersedes, decision)
     source_digests = {source_path: sha256(source_path) for source_path, _ in loaded}
     for source_path, library, source_model in entries:
         source_root = source_path.parent

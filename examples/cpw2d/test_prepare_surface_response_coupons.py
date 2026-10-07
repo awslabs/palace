@@ -472,11 +472,13 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             base = self.write_library(root / "base" / "process-library.json", "base", ["alpha", "concave-corner-60deg", "omega"])
             round2 = self.write_library(root / "round2" / "process-library.json", "round2", ["concave-corner-60deg"])
             record = root / "concavecorner-60-r2-entry.json"
-            record.write_text(json.dumps({"Decision": "328 (3) / 505 Q1: the round-2 concave 60 replaces the round-1 node", "Node": "r2"}) + "\n")
+            record.write_text(json.dumps({"Node": "r2"}) + "\n")
+            decision = "328 (3) / 505 Q1: the round-2 concave 60 replaces the round-1 node"
             plain = self.combine(root / "plain", base)
             with self.assertRaisesRegex(ValueError, "repeated"):
                 self.combine(root / "refused", base, round2)
-            superseded = self.combine(root / "superseded", "--supersede", f"concave-corner-60deg={record}", base, round2)
+            superseded = self.combine(root / "superseded", "--supersede", f"concave-corner-60deg={record}", "--supersede-decision", decision,
+                                      base, round2)
             self.assertEqual([model["Name"] for model in superseded["Models"]], ["alpha", "concave-corner-60deg", "omega"])
             self.assertEqual([model["Name"] for model in plain["Models"]], [model["Name"] for model in superseded["Models"]])
             # Every other model entry and file byte-identical to the flag-less combine of the base; the superseded
@@ -502,26 +504,29 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             self.assertEqual(COMBINER.model_sha256(base_model, base.parent), COMBINER.model_sha256(dict(base_model), root / "base"))
             self.assertNotEqual(entry["BaseModelSHA"], entry["NewModelSHA"])
             self.assertEqual(entry["Record"], {"Path": str(record.resolve()), "SHA256": COMBINER.sha256(record)})
-            self.assertEqual(entry["Decision"], "328 (3) / 505 Q1: the round-2 concave 60 replaces the round-1 node")
+            self.assertEqual(entry["Decision"], decision)        # the --supersede-decision text, never read from the record
             self.assertEqual((entry["BaseSource"]["SHA256"], entry["NewSource"]["SHA256"]), (COMBINER.sha256(base), COMBINER.sha256(round2)))
             self.assertEqual(entry["Rule"], COMBINER.SUPERSEDE_RULE)
             self.assertEqual([source["Name"] for source in superseded["Sources"]], ["base", "round2"])
             self.assertNotIn("Supersedes", plain)
             # Refusals: a name the base does not hold, a missing record, an unreadable record, a name no later
-            # input (or two) supplies; nothing is written before the refusal.
-            other = self.write_library(root / "other" / "process-library.json", "other", ["alpha"])
+            # input (or two) supplies, --supersede without a decision text (decision 513 (2): mandatory, non-blank)
+            # or a decision text without --supersede; nothing is written before the refusal.
+            ruled = ("--supersede-decision", decision)
             for argv, message in (
-                    (("--supersede", f"beta={record}", base, round2), "has no model 'beta'"),
-                    (("--supersede", f"concave-corner-60deg={root / 'absent.json'}", base, round2), "is missing"),
-                    (("--supersede", f"concave-corner-60deg={root / 'base' / 'src' / 'alpha' / 'basis-points.csv'}", base, round2), "is unreadable"),
-                    (("--supersede", f"concave-corner-60deg={record}", base), "0 later inputs supply"),
-                    (("--supersede", f"concave-corner-60deg={record}", base, round2, round2), "2 later inputs supply"),
-                    (("--supersede", f"alpha={record}", base, round2), "0 later inputs supply"),
-                    (("--supersede", "concave-corner-60deg", base, round2), "not NAME=<record path>")):
+                    (("--supersede", f"beta={record}", *ruled, base, round2), "has no model 'beta'"),
+                    (("--supersede", f"concave-corner-60deg={root / 'absent.json'}", *ruled, base, round2), "is missing"),
+                    (("--supersede", f"concave-corner-60deg={root / 'base' / 'src' / 'alpha' / 'basis-points.csv'}", *ruled, base, round2), "is unreadable"),
+                    (("--supersede", f"concave-corner-60deg={record}", *ruled, base), "0 later inputs supply"),
+                    (("--supersede", f"concave-corner-60deg={record}", *ruled, base, round2, round2), "2 later inputs supply"),
+                    (("--supersede", f"alpha={record}", *ruled, base, round2), "0 later inputs supply"),
+                    (("--supersede", "concave-corner-60deg", *ruled, base, round2), "not NAME=<record path>"),
+                    (("--supersede", f"concave-corner-60deg={record}", base, round2), "requires --supersede-decision TEXT"),
+                    (("--supersede", f"concave-corner-60deg={record}", "--supersede-decision", "  ", base, round2), "requires --supersede-decision TEXT"),
+                    (("--supersede-decision", decision, base), "without --supersede")):
                 with self.assertRaisesRegex(ValueError, message):
                     self.combine(root / "refusal", *argv)
                 self.assertFalse((root / "refusal" / "process-library.json").exists(), message)
-            del other
 
     @unittest.skipUnless(V3B1_LIBRARY.is_file() and (ROUND2_CONCAVE_60 / "process-library.json").is_file()
                          and (ROUND2_CONCAVE_60 / "heldout-qualification.json").is_file(),
@@ -530,7 +535,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
         """Decision 505 Q1 on COPIES of the stored records (the matrices live on the cluster: stand-in files at
         the recorded relative paths): combining v3-b1 with the round-2 concave-corner-60deg node is REFUSED
         without the flag (the refusal of record), and --supersede concave-corner-60deg=<the node's held-out
-        qualification record> replaces the round-1 node (v3-b1's model 75) in place: every other model entry and
+        qualification record> with its --supersede-decision replaces the round-1 node (v3-b1's model 75) in place: every other model entry and
         file byte-identical to the flag-less combine of v3-b1 alone, Supersedes recorded against the record."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -555,7 +560,12 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "'concave-corner-60deg' is empty or repeated"):
                 self.combine(root / "refused", "--name", "probe", base, round2)
             plain = self.combine(root / "plain", "--name", "s2-r1p9-v3-b1-copy", base)
-            superseded = self.combine(root / "superseded", "--name", "s2-r1p9-v3-b1-copy", "--supersede", f"concave-corner-60deg={record}", base, round2)
+            decision = ("decisions 328 (3) / 505 Q1 / 513 (2): the round-2 concave-corner-60deg node replaces the round-1 node of "
+                        "s2-r1p9-v3-b1 in the next library version")
+            with self.assertRaisesRegex(ValueError, "requires --supersede-decision TEXT"):
+                self.combine(root / "undecided", "--name", "probe", "--supersede", f"concave-corner-60deg={record}", base, round2)
+            superseded = self.combine(root / "superseded", "--name", "s2-r1p9-v3-b1-copy", "--supersede", f"concave-corner-60deg={record}",
+                                      "--supersede-decision", decision, base, round2)
             self.assertEqual([model["Name"] for model in superseded["Models"]], base_names)
             self.assertEqual(len(superseded["Models"]), 81)
             for before, after in zip(plain["Models"], superseded["Models"]):
@@ -572,6 +582,7 @@ class PrepareSurfaceResponseCouponsTest(unittest.TestCase):
                         self.assertEqual((root / "plain" / before[field]).read_bytes(), (root / "superseded" / after[field]).read_bytes())
             entry = superseded["Supersedes"][0]
             self.assertEqual((entry["Name"], entry["Record"]), ("concave-corner-60deg", {"Path": str(record.resolve()), "SHA256": COMBINER.sha256(record)}))
+            self.assertEqual(entry["Decision"], decision)
             self.assertNotEqual(entry["BaseModelSHA"], entry["NewModelSHA"])
             self.assertEqual(entry["BaseSource"]["SHA256"], COMBINER.sha256(base))
             self.assertEqual(entry["NewSource"]["SHA256"], COMBINER.sha256(round2))
