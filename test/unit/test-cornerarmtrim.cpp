@@ -894,7 +894,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
     }
     CHECK(extended_portions == 4);
     CHECK_THAT(gained_total, WithinAbs(4.0 * r, 1.0e-7));
-    // The operator applies the same extended cells and carries the same record.
+    // The operator applies the same extended cells and carries the same record; the
+    // geometry cache it writes carries their own-segment pre-image.
+    const auto cache_path = temp.temp_dir / "response-geometry-corner-arm-extension.json";
+    test::GeometryCacheEnvGuard cache_env(cache_path.string(), true);
     std::vector<std::unique_ptr<Mesh>> meshes;
     meshes.push_back(std::make_unique<Mesh>(MakeRoundedLeadMesh(x_min, x_max)));
     LaplaceOperator laplace(iodata, meshes);
@@ -911,6 +914,53 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
       CHECK(extended.count(cell["Patch"].get<std::size_t>()) == 1);
     }
     CHECK(statistics["Diagnostics"]["Uncovered"]["Count"].get<int>() == 0);
+    // The own-segment pre-image (decision 537) of every extended cell follows the
+    // extension's clip (ClipOwnCell extrapolates the recorded pre-image affinely to the
+    // kept offset below the old cell): the cached OwnCell begins exactly R from the cell's
+    // virtual corner on the arm line, its far end is the cell's (R + the cell length, at
+    // or beyond the claim end), and both ends equal the frame reconstruction (origin +
+    // EdgeOffset AxisU + c AxisW), the rule the trims locate cells by on a straight arm.
+    Mpi::Barrier(Mpi::World());
+    std::ifstream cache_input(cache_path);
+    REQUIRE(cache_input);
+    const json cache = json::parse(cache_input);
+    CHECK(cache["Version"] == 15);
+    const auto &cached_patches = cache["Patches"];
+    for (const std::size_t p : extended)
+    {
+      REQUIRE(p < cached_patches.size());
+      const auto &cached = cached_patches[p];
+      REQUIRE(!cached["OwnCell"].is_null());
+      const auto own_cell = cached["OwnCell"].get<std::array<std::array<double, 3>, 2>>();
+      const auto cell = cached["LongitudinalCell"].get<std::array<double, 2>>();
+      const auto origin = cached["Origin"].get<std::array<double, 3>>();
+      const auto axis_u = cached["AxisU"].get<std::array<double, 3>>();
+      const auto axis_w = cached["AxisW"].get<std::array<double, 3>>();
+      const double edge_offset = cached["EdgeOffset"].get<double>();
+      for (int e = 0; e < 2; e++)
+      {
+        for (int d = 0; d < 3; d++)
+        {
+          CHECK_THAT(
+              own_cell[e][d],
+              WithinAbs(origin[d] + edge_offset * axis_u[d] + cell[e] * axis_w[d], 1.0e-9));
+        }
+      }
+      std::array<double, 2> distance{};
+      std::array<std::size_t, 2> corner{};
+      for (int e = 0; e < 2; e++)
+      {
+        const double d0 = Distance(own_cell[e], virtual_corners[0]);
+        const double d1 = Distance(own_cell[e], virtual_corners[1]);
+        corner[e] = d0 < d1 ? 0 : 1;
+        distance[e] = std::min(d0, d1);
+      }
+      const int near = distance[0] < distance[1] ? 0 : 1;
+      CHECK_THAT(distance[near], WithinAbs(R, 1.0e-7));
+      CHECK_THAT(Distance(own_cell[1 - near], virtual_corners[corner[near]]),
+                 WithinAbs(R + (cell[1] - cell[0]), 1.0e-7));
+      CHECK(Distance(own_cell[1 - near], virtual_corners[corner[near]]) >= r + R - 1.0e-7);
+    }
   }
 
   SECTION("short arms: the stretch without a host is recorded, never silent")

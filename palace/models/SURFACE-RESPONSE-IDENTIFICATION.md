@@ -2125,7 +2125,7 @@ claim reaches s_half); F1's `TrimmedLength`
 keeps its sharp definition s - R (no census instance: every rounded corner is 90 deg). The
 vertex coupon's raw claims (F-DB-a) are clipped at s_k on every hosted arm, the stretch
 having gone to the extended cell or portion. Applied after the F1 trim and before the
-mirror trim at the end of `BuildFeaturePatches`; the geometry cache (version 13) carries
+mirror trim at the end of `BuildFeaturePatches`; the geometry cache (version 15) carries
 the extended cells and the records. RECORD, one entry per extended corner, in
 `Identification.Diagnostics.CornerArmExtension` of the preflight manifest
 (`Summary.CornerArmExtension` = `Corners` / `StretchLength` / `ExtendedCellLength` /

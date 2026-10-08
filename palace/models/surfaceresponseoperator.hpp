@@ -1188,6 +1188,7 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
 // and the uncovered portions clipped by its box. Overlaps are excluded by construction (a
 // DB cell is a kept part outside every matched box; a vertex claim ends where the arm cells
 // start). Portions in mesh units; `types` names each portion's type (the model topology).
+
 // The real arm of a virtual (mirror-formed) corner for the mirror arm trim: the direction
 // from the vertex along the feature's first real straight portion (its arc chords, when the
 // corner is rounded, are skipped; the first real portion without a straight one; empty

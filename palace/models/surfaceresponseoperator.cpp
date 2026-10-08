@@ -16738,11 +16738,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "consistent-mortar band vertices and rule of every model (decision 404 D1), "
              "and the mirror planes, mirror band record, mirror arm trims and "
              "unmerged-configuration portions (each real one flagged Identical, decision "
-             "512) of the boundary-cut rule; version 15 = both the fillet lane's version "
-             "14 "
-             "(the decision-511 and decision-512 additions, decision 527) and the stacks "
-             "lane's version 14 (the decision-537 own-cell pre-image), decision 552 (3); "
-             "delete a stale cache)!");
+             "512) of the boundary-cut rule; version 15 = both the fillet lane's "
+             "version 14 (the decision-511 and decision-512 additions, decision 527) and "
+             "the stacks lane's version 14 (the decision-537 own-cell pre-image), decision "
+             "552 (3); delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
