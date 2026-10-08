@@ -242,9 +242,10 @@ INVARIANT_CORNER_RULE = ("mesher design round 2 F5-A (supervisor decisions 351 /
 
 def boundary_arc_tags(rows):
     """Per plan-view boundary row (file order) the arc tag of its OUTGOING side ({ArcId, ArcCx,
-    ArcCy, ArcR, ArcSign} or None) and the joint record of its vertex ((turn or None, smooth)
-    or None), from the ARC columns of block (b) design A1 (4) (generate_spatial_response.
-    ARC_BOUNDARY_COLUMNS); every row None on a boundary without the columns (a legacy coupon)."""
+    ArcCy, ArcR, ArcSign, ArcChain} or None) and the joint record of its vertex ((turn or None,
+    smooth) or None), from the ARC columns of block (b) design A1 (4) (generate_spatial_response.
+    ARC_BOUNDARY_COLUMNS; the round-3 ArcChain column optional, 0 without it); every row None on a
+    boundary without the columns (a legacy coupon)."""
     if not rows or "ArcId" not in rows[0]:
         return [None] * len(rows), [None] * len(rows)
     arcs, joints = [], []
@@ -253,7 +254,9 @@ def boundary_arc_tags(rows):
             arcs.append(None)
         else:
             arcs.append({"ArcId": int(row["ArcId"]), "ArcCx": float(row["ArcCx"]), "ArcCy": float(row["ArcCy"]),
-                         "ArcR": float(row["ArcR"]), "ArcSign": int(row["ArcSign"])})
+                         "ArcR": float(row["ArcR"]), "ArcSign": int(row["ArcSign"]),
+                         # Round 3 R7: the optional ArcChain column (0 without it).
+                         "ArcChain": int(row["ArcChain"]) if row.get("ArcChain") not in (None, "") else 0})
         if row.get("JointSmooth") in (None, ""):
             joints.append(None)
         else:

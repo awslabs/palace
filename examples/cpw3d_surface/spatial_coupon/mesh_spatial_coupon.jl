@@ -254,10 +254,14 @@ end
 
 # The arc columns of the plan-view boundary (block (b) design A1 (4); generate_spatial_response
 # ARC_BOUNDARY_COLUMNS): per vertex row the tag of its OUTGOING side - (id, centre, radius,
-# sign) of the rebuilt circle the side is a chord of, or nothing on a straight side - and the
-# joint record of the vertex - (turn, smooth) at an arc end, nothing elsewhere. A boundary
+# sign, chain) of the rebuilt circle the side is a chord of, or nothing on a straight side - and
+# the joint record of the vertex - (turn, smooth) at an arc end, nothing elsewhere. A boundary
 # without the columns (every legacy coupon) carries nothing: the untagged path is taken bitwise.
+# Mesher design round 3 (DESIGN R7, decision 510 MINOR-6): the optional ArcChain column names
+# the same-circle chain of the arc (the generator's fix 2a; 0 = none); a tagged boundary without
+# it (every stored arc coupon) reads chain 0 - both column sets are accepted.
 const ARC_BOUNDARY_COLUMNS = ("ArcId", "ArcCx", "ArcCy", "ArcR", "ArcSign", "JointTurn", "JointSmooth")
+const ARC_CHAIN_COLUMN = "ArcChain"
 
 blank_cell(value) = value === "" || (value isa AbstractString && isempty(strip(value)))
 
@@ -276,7 +280,12 @@ function read_boundary_arc_tags(data, columns, rows, loop_index)
             sign = Int(round(Float64(cell(row, "ArcSign"))))
             id > 0 && all(isfinite, centre) && isfinite(radius) && radius > 0.0 && sign in (-1, 1) ||
                 error("Invalid arc tag on plan-view boundary loop $loop_index row $k")
-            arcs[k] = (id=id, centre=centre, radius=radius, sign=sign)
+            chain = 0
+            if haskey(columns, ARC_CHAIN_COLUMN) && !blank_cell(cell(row, ARC_CHAIN_COLUMN))
+                chain = Int(round(Float64(cell(row, ARC_CHAIN_COLUMN))))
+                chain >= 0 || error("Invalid arc chain on plan-view boundary loop $loop_index row $k")
+            end
+            arcs[k] = (id=id, centre=centre, radius=radius, sign=sign, chain=chain)
         end
         if !blank_cell(cell(row, "JointSmooth"))
             smooth = Int(round(Float64(cell(row, "JointSmooth"))))
@@ -331,7 +340,7 @@ function tagged_arc_runs(loop, tolerance)
         point_indices = vcat(edge_indices, [mod1(edge_indices[end] + 1, n)])
         tag = loop.arcs[index]
         all(loop.arcs[e] !== nothing && loop.arcs[e].centre == tag.centre && loop.arcs[e].radius == tag.radius &&
-            loop.arcs[e].sign == tag.sign for e in edge_indices) ||
+            loop.arcs[e].sign == tag.sign && get(loop.arcs[e], :chain, 0) == get(tag, :chain, 0) for e in edge_indices) ||
             error("arc $id of the plan-view boundary carries two circles")
         circle = (center=tag.centre, radius=tag.radius)
         fit_tolerance = arc_fit_tolerance(tag.radius, tolerance)
@@ -341,7 +350,7 @@ function tagged_arc_runs(loop, tolerance)
                   "$fit_tolerance, or do not travel monotonically around it")
         diagnostic = arc_fit_diagnostic(points, point_indices, tag, fit_tolerance, tolerance)
         diagnostic === nothing || println(diagnostic)
-        push!(runs, (run..., id=id, sign=tag.sign,
+        push!(runs, (run..., id=id, sign=tag.sign, chain=get(tag, :chain, 0),
                      sweep=run_sweep(points, run.point_indices, run.center, run.orientation)))
     end
     return runs
@@ -5971,10 +5980,13 @@ function metal_loop_records(loops, lower, upper, tolerance)
         if !isempty(runs)
             record["StraightSides"] = sides
             record["ArcParts"] = parts
-            record["Arcs"] = [Dict{String, Any}(
+            # "Chain" (round 3 R7) only where the boundary names one: a tagged CSV without the
+            # ArcChain column (every stored arc coupon) records exactly what it did.
+            record["Arcs"] = [merge(Dict{String, Any}(
                 "ArcId" => run.id, "Centre" => [run.center[1], run.center[2]], "Radius" => run.radius,
                 "SweepDegrees" => rad2deg(run.sweep), "Parts" => arc_part_count(run.sweep),
-                "Chords" => length(run.edge_indices), "Sign" => run.sign) for run in runs]
+                "Chords" => length(run.edge_indices), "Sign" => run.sign),
+                get(run, :chain, 0) == 0 ? Dict{String, Any}() : Dict{String, Any}("Chain" => run.chain)) for run in runs]
         end
         push!(records, record)
     end

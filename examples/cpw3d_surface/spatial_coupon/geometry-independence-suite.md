@@ -732,7 +732,18 @@ build census (`build-census`, the bound build report):
         chords, keeping the untagged fit (bitwise) asserted against the propagated circles
         otherwise; the former `metal_edge_segments` guard is deleted. Round 3 class (4)
         (G.4.3 A): `tagged_arc_runs` is residual-only - the tagged circle IS the circle; the
-        ill-conditioned three-point fit is a printed diagnostic. Decision 391 MAJOR-2 (ii) (mesher review R2)
+        ill-conditioned three-point fit is a printed diagnostic. Round 3 classes (2) / (3) / (11)
+        (B3; DESIGN R1 / R2 / R6 / R7, part M 1.3): the generator rebuilds same-circle arc
+        entries of one conductor as ONE chain on one circle (`cluster_signature_geometry.
+        rebuilt_arcs` fix 2a: `ChainJoint` records, identical tag digits on every member, the
+        integer `ArcChain` boundary column - optional for every reader, written only on a tagged
+        boundary), protects every kept arc's chord vertices from the near-collinear merge (fix
+        2b), demotes a chain whose sweep is at most JUNCTION_TANGENT_ANGLE to its chords
+        (`Geometry.StraightenedArcs`; every smooth joint of a demoted entry must read a chord
+        turn below ARC_SMOOTH_JOINT_TURN_BOUND = JUNCTION_TANGENT_ANGLE / 2, else the generator
+        stops by name), and the mesher's joint table names the earlier tube in install order as
+        the owner of an arc-arc smooth joint of ONE circle (fix 11; `ScopeGuard[ArcArcJoint]`
+        keeps the untested distinct-circle / opposite-sigma residual). Decision 391 MAJOR-2 (ii) (mesher review R2)
         added two fail-closed guards in `metal_edge_segments` until the four synthetic FULL
         builds existed; mesher design round 2b (decision 437 (3)) built them (arc face ends
         at 45 / 70 degrees fab + thin, the 5e-5-rad smooth joint, the 2e-4-rad corner joint,

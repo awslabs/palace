@@ -808,6 +808,27 @@ end
         legacy_loop = read_boundary(legacy)[1]
         @test !loop_has_arcs(legacy_loop)
         @test isempty(tagged_arc_runs(legacy_loop, 1.0e-7 * 0.5))
+        # Round 3 R7 (decision 510 MINOR-6): the optional ArcChain column. The fixture (every stored
+        # arc coupon) has none: chain 0, no "Chain" key in the census record; a boundary carrying it
+        # reads the chain on every tag and run and records it.
+        @test all(arc === nothing || arc.chain == 0 for arc in loop.arcs) && run.chain == 0
+        records = metal_loop_records([loop], inputs.lower, inputs.upper, 1.0e-7 * 0.5)
+        @test length(records) == 1 && !haskey(records[1]["Arcs"][1], "Chain")
+        chained = joinpath(directory, "chained.csv")
+        open(chained, "w") do io
+            for (i, line) in enumerate(readlines(inputs.boundary))
+                cells = split(line, ",")
+                println(io, join(vcat(cells, [i == 1 ? "ArcChain" : (cells[9] == "" ? "" : "2")]), ","))
+            end
+        end
+        chained_loop = read_boundary(chained)[1]
+        @test all(arc === nothing || arc.chain == 2 for arc in chained_loop.arcs) &&
+              count(arc !== nothing for arc in chained_loop.arcs) == inputs.chords
+        chained_runs = tagged_arc_runs(chained_loop, 1.0e-7 * 0.5)
+        @test length(chained_runs) == 1 && chained_runs[1].chain == 2 &&
+              chained_runs[1].point_indices == run.point_indices && chained_runs[1].center == run.center
+        records = metal_loop_records([chained_loop], inputs.lower, inputs.upper, 1.0e-7 * 0.5)
+        @test records[1]["Arcs"][1]["Chain"] == 2
         # A corrupted tag (another centre) fails closed at the residual test (round 3 class (4),
         # G.4.3 Option A: the tagged circle IS the circle; the former three-point-fit comparison
         # is a printed diagnostic).

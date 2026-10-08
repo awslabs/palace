@@ -1707,7 +1707,9 @@ def boundary_arc_runs(rows):
                 sweep = orientation * (2.0 * math.pi if first == last else travel)
                 runs.append({"ArcId": ids[index], "Centre": centre, "Radius": float(row["ArcR"]),
                              "Sign": int(row["ArcSign"]), "Chords": len(edges), "Sweep": sweep,
-                             "Parts": arc_part_count(sweep), "EdgeIndices": edges})
+                             "Parts": arc_part_count(sweep), "EdgeIndices": edges,
+                             # Round 3 R7: the optional ArcChain column (0 without it).
+                             "Chain": int(row["ArcChain"]) if row.get("ArcChain") not in (None, "") else 0})
         result.append(runs)
     return result
 
@@ -1895,6 +1897,7 @@ def validate_recipe_scope(build_report, census):
                 any(not isinstance(arc, dict) or arc.get("ArcId") != run["ArcId"] or
                     _count(arc.get("Parts"), "Metal loop arc parts") != run["Parts"] or
                     _count(arc.get("Chords"), "Metal loop arc chords") != run["Chords"] or
+                    _count(arc.get("Chain", 0), "Metal loop arc chain") != run["Chain"] or
                     abs(_census_number(arc, "Radius", "Metal loop arc") - run["Radius"]) > 1e-9 * run["Radius"] or
                     abs(_census_number(arc, "SweepDegrees", "Metal loop arc") - math.degrees(run["Sweep"])) > 1e-9
                     for arc, run in zip(arcs, runs))):

@@ -47,6 +47,27 @@ def tagged_loop(sweep_degrees, chords, radius=1.0):
 
 
 class ArcRunsTest(unittest.TestCase):
+    def test_arc_chain_column_is_optional_for_every_reader(self):
+        # Round 3 R7 (decision 510 MINOR-6): a tagged boundary WITHOUT the ArcChain column (every
+        # stored arc coupon) reads Chain 0; one WITH it reads the chain; the contract reader
+        # (semantic_mesh_contract.boundary_arc_tags) likewise; a straight boundary has no column.
+        import semantic_mesh_contract
+        without = tagged_loop(90.0, 18)
+        self.assertNotIn("ArcChain", without[0])
+        self.assertEqual([run["Chain"] for run in boundary_arc_runs(without)[0]], [0])
+        tags, _ = semantic_mesh_contract.boundary_arc_tags(without)
+        self.assertEqual({tag["ArcChain"] for tag in tags if tag is not None}, {0})
+        with_chain = [dict(row, ArcChain="3" if row["ArcId"] else "") for row in without]
+        self.assertEqual([run["Chain"] for run in boundary_arc_runs(with_chain)[0]], [3])
+        tags, _ = semantic_mesh_contract.boundary_arc_tags(with_chain)
+        self.assertEqual({tag["ArcChain"] for tag in tags if tag is not None}, {3})
+        # The stored rounded-strip boundary (round 2b, no arc column at all) reads no runs.
+        import csv
+        with (HERE / "testdata" / "rounded-strip" / "plan-view-boundary.csv").open(newline="") as stream:
+            stored = list(csv.DictReader(stream))
+        self.assertNotIn("ArcId", stored[0])
+        self.assertEqual(boundary_arc_runs(stored), [[]])
+
     def test_part_count_rule(self):
         self.assertEqual(arc_part_count(math.radians(90.0)), 1)
         self.assertEqual(arc_part_count(math.radians(90.000001)), 2)
