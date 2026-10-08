@@ -187,7 +187,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     {
       Mpi::Print(" Freezing the frequency-dependent PML stretch at the target in the NLEPS "
                  "seed\n");
-      A2_pml = space_op.GetFrequencyDependentPMLMatrices(target, Operator::DIAG_ZERO);
+      A2_pml = space_op.GetFrozenPMLMatrices(target, Operator::DIAG_ZERO);
     }
     Kp = BuildParSumOperator({1.0 + 0i, 1.0 + 0i, 1.0 + 0i},
                              {K.get(), A2_0.get(), A2_pml[0].get()});

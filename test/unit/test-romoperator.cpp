@@ -1,6 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
+#include <array>
+#include <fstream>
 #include <numbers>
 #include <vector>
 #include <Eigen/Dense>
@@ -73,6 +76,12 @@ public:
   auto &GetKr() const { return Kr; }
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
+  void ResetPMLOnlineFit()
+  {
+    pml_online_fit.reset();
+    Ar_omega = std::numeric_limits<double>::quiet_NaN();
+  }
+  bool HasPMLOnlineFit() const { return pml_online_fit.has_value(); }
   bool WavePortPairingChecked() const { return wp_pairing_checked; }
   bool WavePortPairingOk() const { return wp_pairing_ok; }
   void UseAssembledWavePortPath(bool assembled)
@@ -1264,6 +1273,117 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   check_excitations(omega_back);
 }
 
+// Adaptive PROM and circuit synthesis with a frequency-dependent PML: the PROM reproduces
+// the HDM solutions at the sample frequencies, the online rational fit of the PML terms
+// matches their per-frequency projection, and the synthesized pencil realizes the PML terms
+// with decaying auxiliary states.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-FrequencyDependentPML",
+                 "[romoperator][pml][Serial][Parallel]")
+{
+  MPI_Comm world_comm = Mpi::World();
+
+  // Box [0, 1] x [0, 1] x [0, 2] with a PML layer for z > 1.5 (attribute 2), a lumped port
+  // on the z = 0 face (boundary attribute 1), and PEC elsewhere.
+  const auto mesh_path = temp_dir / "pml_box.mesh";
+  if (Mpi::Root(world_comm))
+  {
+    auto smesh =
+        mfem::Mesh::MakeCartesian3D(2, 2, 8, mfem::Element::HEXAHEDRON, 1.0, 1.0, 2.0);
+    for (int i = 0; i < smesh.GetNE(); i++)
+    {
+      mfem::Vector center;
+      smesh.GetElementCenter(i, center);
+      smesh.SetAttribute(i, (center(2) > 1.5) ? 2 : 1);
+    }
+    smesh.SetAttributes();
+    std::ofstream fo(mesh_path);
+    fo.precision(17);
+    smesh.Print(fo);
+  }
+  Mpi::Barrier(world_comm);
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path}, {"L0", 0.05}};
+  setup_json["Domains"] = {
+      {"Materials",
+       json::array(
+           {json::object({{"Attributes", {1}}, {"Permittivity", 2.0}}),
+            json::object({{"Attributes", {2}},
+                          {"Permittivity", 1.0},
+                          {"PML", json::object({{"Direction", {"+Z"}},
+                                                {"Thickness", 0.5},
+                                                {"FrequencyDependent", true}})}})})}};
+  setup_json["Boundaries"] = {
+      {"PEC", json::object({{"Attributes", {2, 3, 4, 5, 6}}})},
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", 1},
+                                                {"Attributes", {1}},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 2},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"AdaptiveTol", 1.0e-3},
+        {"AdaptiveCircuitSynthesis", true},
+        {"MinFreq", 4.0},
+        {"MaxFreq", 8.0},
+        {"FreqStep", 0.05}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 500}, {"Tol", 1.0e-12}}}};
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
+  SpaceOperator space_op(iodata, mesh_io);
+  REQUIRE(space_op.GetMaterialOp().HasFrequencyDependentPML());
+  RomOperatorTest prom_op(iodata, space_op, 20);
+  prom_op.AddLumpedPortModesForSynthesis();
+
+  const auto &f = iodata.solver.driven.sample_f;
+  const std::array<double, 4> omegas = {f.front(), f[f.size() / 3], f[2 * f.size() / 3],
+                                        f.back()};
+  const int excitation_idx = 1;
+  std::vector<ComplexVector> E_hdm;
+  for (std::size_t i = 0; i < omegas.size(); i++)
+  {
+    auto &E = E_hdm.emplace_back(space_op.GetNDSpace().GetTrueVSize());
+    E.UseDevice(true);
+    prom_op.SolveHDM(excitation_idx, omegas[i], E);
+    prom_op.UpdatePROM(E, fmt::format("sample_{:d}", i));
+  }
+
+  // Galerkin reproduction at the sample frequencies (per-frequency PML projection).
+  ComplexVector E_prom(E_hdm[0].Size());
+  E_prom.UseDevice(true);
+  for (std::size_t i = 0; i < omegas.size(); i++)
+  {
+    prom_op.SolvePROM(excitation_idx, omegas[i], E_prom);
+    E_prom.Add(-1.0, E_hdm[i]);
+    CHECK_THAT(linalg::Norml2(world_comm, E_prom) / linalg::Norml2(world_comm, E_hdm[i]),
+               WithinAbs(0.0, 1.0e-6));
+  }
+
+  // Synthesis: the PML terms add auxiliary states for this band.
+  const auto matrices = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+  CHECK(std::ranges::any_of(matrices.aux_labels,
+                            [](const auto &label) { return label.starts_with("pml_p"); }));
+  CHECK(matrices.L_inv->allFinite());
+  CHECK(matrices.C->allFinite());
+
+  // Online rational fit of the PML terms vs. their per-frequency projection.
+  prom_op.PrepareOnlineExcitations();
+  REQUIRE(prom_op.HasPMLOnlineFit());
+  const double omega_test = 0.5 * (omegas[1] + omegas[2]);
+  ComplexVector E_fit(E_prom.Size());
+  E_fit.UseDevice(true);
+  prom_op.SolvePROM(excitation_idx, omega_test, E_fit);
+  prom_op.ResetPMLOnlineFit();
+  prom_op.SolvePROM(excitation_idx, omega_test, E_prom);
+  const double norm = linalg::Norml2(world_comm, E_prom);
+  E_fit.Add(-1.0, E_prom);
+  CHECK_THAT(linalg::Norml2(world_comm, E_fit) / norm, WithinAbs(0.0, 1.0e-8));
+}
+
 TEST_CASE("RomOperator-Synthesis-ExcludedExcitedRejected", "[romoperator][Serial]")
 {
   json setup_json;
@@ -1475,6 +1595,63 @@ TEST_CASE("RomOperator-AugmentedPencil-SchurComplement", "[romoperator][Serial]"
       rational += blk.residues[k] / (omega - blk.poles[k]);
     }
     want += std::complex<double>(0.0, 1.0) * rational * M_proj;
+    CHECK(((schur - want).cwiseAbs().maxCoeff() < 1.0e-12));
+  }
+}
+
+// Complex (Takagi) aux directions, as used for the frequency-dependent PML: eliminating the
+// aux states reproduces i·rₖ·Σⱼ σⱼ uⱼuⱼᵀ / (ω − pₖ) for complex uⱼ, so a complex symmetric
+// residue matrix R = Σⱼ σⱼ uⱼuⱼᵀ is realized with one aux state per direction.
+TEST_CASE("RomOperator-AugmentedPencil-ComplexDirections", "[romoperator][Serial]")
+{
+  Eigen::MatrixXcd Kr(3, 3), Cr = Eigen::MatrixXcd::Zero(3, 3), Mr(3, 3);
+  Kr << 2.0, 0.1, 0.0, 0.1, 3.0, 0.2, 0.0, 0.2, 1.5;
+  Mr = Eigen::MatrixXcd::Identity(3, 3);
+
+  // Complex symmetric residue and its Takagi factorization from the real symmetric
+  // embedding [[Re R, Im R], [Im R, -Re R]].
+  Eigen::MatrixXcd R(3, 3);
+  R << std::complex<double>(1.0, 0.5), std::complex<double>(0.2, -0.3),
+      std::complex<double>(0.0, 0.1), std::complex<double>(0.2, -0.3),
+      std::complex<double>(-0.4, 0.2), std::complex<double>(0.3, 0.0),
+      std::complex<double>(0.0, 0.1), std::complex<double>(0.3, 0.0),
+      std::complex<double>(0.7, -0.6);
+  Eigen::MatrixXd E(6, 6);
+  E << R.real(), R.imag(), R.imag(), -R.real();
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(E);
+  RomOperatorTest::WavePortAuxBlock blk;
+  blk.port_idx = -1;
+  blk.label = "pml_p0";
+  blk.poles = {std::complex<double>(0.0, 2.5)};
+  blk.residues = {std::complex<double>(0.0, -1.0)};
+  for (int j = 0; j < 6; j++)
+  {
+    if (eig.eigenvalues()(j) > 1.0e-12)
+    {
+      blk.weights.push_back(eig.eigenvalues()(j));
+      blk.u_dirs_c.push_back(
+          eig.eigenvectors().col(j).head(3).cast<std::complex<double>>() +
+          std::complex<double>(0.0, 1.0) *
+              eig.eigenvectors().col(j).tail(3).cast<std::complex<double>>());
+    }
+  }
+  REQUIRE(blk.weights.size() == 3);
+
+  std::vector<std::string> aux_labels;
+  auto aug = RomOperatorTest::BuildAugmentedPencil(Kr, Cr, Mr, {blk}, aux_labels);
+  REQUIRE(aug.Kr.rows() == 6);
+  CHECK(aux_labels.front() == "pml_p0_p0d0");
+  for (std::complex<double> omega :
+       {std::complex<double>(0.5, 0.0), std::complex<double>(1.6, 0.3),
+        std::complex<double>(4.0, -0.1)})
+  {
+    const Eigen::MatrixXcd A_aug =
+        aug.Kr + std::complex<double>(0.0, 1.0) * omega * aug.Cr - omega * omega * aug.Mr;
+    const Eigen::MatrixXcd schur =
+        A_aug.topLeftCorner(3, 3) -
+        A_aug.topRightCorner(3, 3) *
+            A_aug.bottomRightCorner(3, 3).fullPivLu().solve(A_aug.bottomLeftCorner(3, 3));
+    const Eigen::MatrixXcd want = Kr - omega * omega * Mr + R / (omega - blk.poles[0]);
     CHECK(((schur - want).cwiseAbs().maxCoeff() < 1.0e-12));
   }
 }

@@ -339,7 +339,7 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
   {
     // The frozen-stretch matrices at ω₀ reproduce A2(ω₀) and the static PML terms of the
     // stiffness and mass matrices for the reference frequency ω₀.
-    auto P = fd_op->GetFrequencyDependentPMLMatrices(omega0, Operator::DIAG_ZERO);
+    auto P = fd_op->GetFrozenPMLMatrices(omega0, Operator::DIAG_ZERO);
     REQUIRE(P[0]);
     REQUIRE(!P[1]);
     REQUIRE(P[2]);
