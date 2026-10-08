@@ -995,7 +995,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
 
 std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
-                                    Operator::DiagonalPolicy diag_policy)
+                                    Operator::DiagonalPolicy diag_policy, bool include_pml)
 {
   // Complex-ω A2(λ) for the eigenmode nonlinear solve: identical assembly to the real-ω
   // overload but the frequency-dependent terms (2nd-order ABC, surface conductivity,
@@ -1008,8 +1008,11 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
       fbi(mat_op.MaxCeedBdrAttribute());
   AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi);
   std::vector<PMLIntegrator> pml_re, pml_im;
-  AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
-                  omega, ExtraSystemPMLPencil(omega));
+  if (include_pml)
+  {
+    AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op,
+                    PMLFilter::FREQUENCY_DEPENDENT, omega, ExtraSystemPMLPencil(omega));
+  }
   int empty[2] = {AreExactlyZero(dfbr, fbr) && pml_re.empty(),
                   AreExactlyZero(dfbi, fbi) && pml_im.empty()};
   Mpi::GlobalMin(2, empty, GetComm());
@@ -1032,6 +1035,45 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
   A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
   return A;
+}
+
+std::array<std::unique_ptr<ComplexOperator>, 3>
+SpaceOperator::GetFrequencyDependentPMLMatrices(double omega,
+                                                Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  std::array<std::unique_ptr<ComplexOperator>, 3> ops;
+  const std::array<PMLPencil, 3> terms = {
+      {{.a0 = 1.0}, {.a1 = 1.0}, {.a2 = 1.0, .a2_floquet = 1.0}}};
+  for (std::size_t k = 0; k < terms.size(); k++)
+  {
+    std::vector<PMLIntegrator> pml_re, pml_im;
+    AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op,
+                    PMLFilter::FREQUENCY_DEPENDENT, omega, terms[k]);
+    int empty[2] = {pml_re.empty(), pml_im.empty()};
+    Mpi::GlobalMin(2, empty, GetComm());
+    if (empty[0] && empty[1])
+    {
+      continue;
+    }
+    constexpr bool skip_zeros = false;
+    std::unique_ptr<Operator> ar, ai;
+    if (!empty[0])
+    {
+      ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr,
+                            skip_zeros, false, &pml_re);
+    }
+    if (!empty[1])
+    {
+      ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr,
+                            skip_zeros, false, &pml_im);
+    }
+    auto A =
+        std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
+    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    ops[k] = std::move(A);
+  }
+  return ops;
 }
 
 template <OperatorType OperType>

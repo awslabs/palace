@@ -335,6 +335,41 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
     CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-13));
   }
 
+  SECTION("Frozen-stretch PML matrices are the static PML matrices")
+  {
+    // The frozen-stretch matrices at ω₀ reproduce A2(ω₀) and the static PML terms of the
+    // stiffness and mass matrices for the reference frequency ω₀.
+    auto P = fd_op->GetFrequencyDependentPMLMatrices(omega0, Operator::DIAG_ZERO);
+    REQUIRE(P[0]);
+    REQUIRE(!P[1]);
+    REQUIRE(P[2]);
+    ComplexVector t(x.Size());
+    t.UseDevice(true);
+    P[0]->Mult(x, y1);
+    P[2]->Mult(x, t);
+    y1.Add(-omega0 * omega0, t);
+    A2(omega0)->Mult(x, y2);
+    CHECK_THAT(RelErr(y1, y2), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+
+    auto static_op = MakeSpaceOperator(false);
+    auto Ks = static_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto Kf = fd_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    Ks->Mult(x, y1);
+    Kf->Mult(x, y2);
+    P[0]->AddMult(x, y2);
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+    auto Ms = static_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto Mf = fd_op->GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    Ms->Mult(x, y1);
+    Mf->Mult(x, y2);
+    P[2]->AddMult(x, y2);
+    CHECK_THAT(RelErr(y2, y1), Catch::Matchers::WithinAbs(0.0, 1.0e-14));
+
+    // Without the PML terms, A2 is empty.
+    CHECK(!fd_op->GetExtraSystemMatrix(std::complex<double>(omega0, 0.3),
+                                       Operator::DIAG_ZERO, false));
+  }
+
   SECTION("A2(ω) is the analytic continuation in ω")
   {
     // Cauchy-Riemann equations for the operator action, with central differences.
