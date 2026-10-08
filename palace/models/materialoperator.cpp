@@ -700,19 +700,44 @@ void MaterialOperator::SetUpPML(const std::vector<config::MaterialData> &materia
   has_pml_attr = !pml_profiles.empty();
 }
 
-mfem::DenseTensor MaterialOperator::GetBackgroundPermittivityReal() const
+namespace
 {
-  mfem::DenseTensor T(mat_epsilon);
+
+// Copy of the material tensors T with the background tensors of the PML profiles (a member
+// of pml::Profile) in the PML regions.
+template <typename Member>
+mfem::DenseTensor
+WithPMLBackground(const mfem::DenseTensor &T, const mfem::Array<int> &attr_mat,
+                  const std::vector<int> &pml_attr_to_profile,
+                  const std::vector<pml::Profile> &pml_profiles, Member member)
+{
+  mfem::DenseTensor B(T);
   for (std::size_t i = 0; i < pml_attr_to_profile.size(); i++)
   {
     const int k = pml_attr_to_profile[i];
     if (k >= 0 && attr_mat[static_cast<int>(i)] >= 0)
     {
-      const auto &eps = pml_profiles[k].epsilon_real;
-      std::copy(eps.begin(), eps.end(), T(attr_mat[static_cast<int>(i)]).Data());
+      MFEM_ASSERT(B.SizeI() == 3 && B.SizeJ() == 3,
+                  "PML background material tensors are only available in 3D!");
+      const auto &t = pml_profiles[k].*member;
+      std::copy(t.begin(), t.end(), B(attr_mat[static_cast<int>(i)]).Data());
     }
   }
-  return T;
+  return B;
+}
+
+}  // namespace
+
+mfem::DenseTensor MaterialOperator::GetBackgroundPermittivityReal() const
+{
+  return WithPMLBackground(mat_epsilon, attr_mat, pml_attr_to_profile, pml_profiles,
+                           &pml::Profile::epsilon_real);
+}
+
+mfem::DenseTensor MaterialOperator::GetBackgroundInvPermeability() const
+{
+  return WithPMLBackground(mat_muinv, attr_mat, pml_attr_to_profile, pml_profiles,
+                           &pml::Profile::mu_inv);
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const
