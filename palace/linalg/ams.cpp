@@ -189,11 +189,17 @@ void HypreAmsSolver::InitializeSolver()
   HYPRE_ParVector HY_Z = (z) ? (HYPRE_ParVector)*z : nullptr;
   HYPRE_AMSSetCoordinateVectors(ams, HY_X, HY_Y, HY_Z);
 
-  HYPRE_ParCSRMatrix HY_Pi = (Pi) ? (HYPRE_ParCSRMatrix)*Pi : nullptr;
-  HYPRE_ParCSRMatrix HY_Pix = (Pix) ? (HYPRE_ParCSRMatrix)*Pix : nullptr;
-  HYPRE_ParCSRMatrix HY_Piy = (Piy) ? (HYPRE_ParCSRMatrix)*Piy : nullptr;
-  HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
-  HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
+  // Only pass the interpolation matrices when they exist (order > 1): hypre marks them as
+  // not owned by AMS even when given null pointers, so at order 1 the matrices that hypre
+  // builds from the vertex coordinates in each setup would never be freed.
+  if (Pi || Pix)
+  {
+    HYPRE_ParCSRMatrix HY_Pi = (Pi) ? (HYPRE_ParCSRMatrix)*Pi : nullptr;
+    HYPRE_ParCSRMatrix HY_Pix = (Pix) ? (HYPRE_ParCSRMatrix)*Pix : nullptr;
+    HYPRE_ParCSRMatrix HY_Piy = (Piy) ? (HYPRE_ParCSRMatrix)*Piy : nullptr;
+    HYPRE_ParCSRMatrix HY_Piz = (Piz) ? (HYPRE_ParCSRMatrix)*Piz : nullptr;
+    HYPRE_AMSSetInterpolations(ams, HY_Pi, HY_Pix, HY_Piy, HY_Piz);
+  }
 }
 
 void HypreAmsSolver::SetOperator(const Operator &op)
