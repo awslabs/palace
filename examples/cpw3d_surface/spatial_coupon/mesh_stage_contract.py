@@ -2029,7 +2029,10 @@ FACE_END_RULE = ("block (b) design A2 (supervisor decisions 302 / 320): a tube e
                  "lc_cap = FACE_END_CONDITION_MARGIN x MaximumJacobianCondition x the smallest planar singular value of "
                  "the section's prism corner frames and m = max(ceil((R + h_pyr) |tan theta| / (lc_cap - 2 h_pyr |tan theta|)), "
                  "the regime-I count at lc_cap) (regime II), so the thinnest layer keeps t_min >= 2 h_pyr |tan theta|; "
-                 "2 h_pyr |tan theta| >= lc_cap fails closed at ScopeGuard[SteepFaceCrossing]")
+                 "2 h_pyr |tan theta| >= lc_cap fails closed at ScopeGuard[SteepFaceCrossing]; mesher design round 3 "
+                 "9H (part M 3.3): an ARC tube's formulas read its crossing slope max_u |s'(u)| = rho h / (r sqrt(r^2 - "
+                 "h^2)) at the inner node circle r = rho - (R + h_pyr) in place of |tan theta| (FaceEnds[].CrossingSlope; "
+                 "tan theta at the axis), a derived ceiling INSIDE the admitted tilt range")
 FACE_END_CONDITION_MARGIN = 0.95
 FACE_END_REGIMES = ("I", "II")
 GMSH_BUILD_CONDITION_OPTION = "--maximum-jacobian-condition"
@@ -2106,20 +2109,38 @@ def section_frame_angles(section):
     raise ValueError("Tube section lacks the Top / Sheet rays")
 
 
+def arc_crossing_slope(rho, envelope_radius, face_distance):
+    """Mesher design round 3 class (9) 9H (part M 3.3 Fact 2): the largest crossing slope of an
+    arc tube's end block over its section, |s'(u)| = rho h / (r sqrt(r^2 - h^2)) at the inner
+    node circle r = rho - (Radius + PyramidHeight), h the distance from the arc centre to the
+    face plane (tan theta at the axis; the mesher's `arc_crossing_slope`, spelled identically:
+    sqrt only, no transcendental, so no deterministic_math route is needed)."""
+    if not (rho > 0.0 and 0.0 <= envelope_radius < rho):
+        raise ValueError("Tube face end crossing slope needs 0 <= envelope < rho")
+    r = rho - envelope_radius
+    if not r > face_distance >= 0.0:
+        raise ValueError("Tube face end of an arc row: the inner node circle does not reach the face plane")
+    return rho * face_distance / (r * math.sqrt((r - face_distance) * (r + face_distance)))
+
+
 def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=None, round2b=False,
-                            inner_size=None, growth_ratio=None):
+                            inner_size=None, growth_ratio=None, box=None):
     """The face-end records of one census tube row (Tubes[].FaceEnds, absent on a plain
     tube): every record names a box face and an end, its tilt lies in (0, 90) degrees,
     its spacing and layer count follow FACE_END_RULE from the section's radius and pyramid
     height, and at most one record per end.  A record carrying Regime (mesher design round
     2 F2b) is judged by its regime against the cap recomputed from the section's rings and
     rays and the command's Jacobian-condition ceiling (`condition_ceiling`): regime I below
-    4 h_pyr |tan theta| <= lc_cap with the A2 (4) formulas, regime II above with lc_end ==
-    lc_cap and the apex-rule layer count; every record binds EndSpacing <= lc_cap,
-    EndSpacingCap == lc_cap, ApexThickness == 2 h_pyr |tan theta| and the apex inequality
-    LayerThicknessRange[0] >= ApexThickness.  A record without Regime is a pre-F2b record
-    (the regime-I formulas alone); from the round-2b mesher (`round2b`) it fails closed.
-    Returns the largest EndSpacing (0 without face ends)."""
+    4 h_pyr s <= lc_cap with the A2 (4) formulas, regime II above with lc_end == lc_cap and
+    the apex-rule layer count; every record binds EndSpacing <= lc_cap, EndSpacingCap ==
+    lc_cap, ApexThickness == 2 h_pyr s and the apex inequality LayerThicknessRange[0] >=
+    ApexThickness.  The slope s (round 3 9H) is |tan theta| for a straight row; for an ARC
+    row it is the arc's crossing slope recomputed from the row's Arc (Centre, Radius), the
+    row's envelope and the face plane of the census CouponBox (`box` = (Lower, Upper)), and
+    the record's CrossingSlope must carry it (a straight row's CrossingSlope, when recorded,
+    is |tan theta|).  A record without Regime is a pre-F2b record (the regime-I formulas
+    alone); from the round-2b mesher (`round2b`) it fails closed.  Returns the largest
+    EndSpacing (0 without face ends)."""
     records = row.get("FaceEnds", [])
     if not isinstance(records, list):
         raise ValueError("Tube row FaceEnds is not a list")
@@ -2150,6 +2171,20 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
         if not 0.0 < theta < 90.0:
             raise ValueError("Tube face end tilt is outside (0, 90) degrees")
         slope = abs(math.tan(math.radians(theta)))
+        if "Arc" in row:
+            # Round 3 9H: the arc's own crossing slope, from the row's circle and the face plane.
+            if box is None:
+                raise ValueError("Tube face end of an arc row needs the census CouponBox to recompute its crossing slope")
+            arc = row["Arc"]
+            axis = 0 if record["Face"][0] == "x" else 1
+            face_value = (box[0] if record["Face"][1] == "0" else box[1])[axis]
+            slope = arc_crossing_slope(_census_number(arc, "Radius", "Tube arc"), radius + pyramid_height,
+                                       abs(face_value - _census_number({"c": arc["Centre"][axis]}, "c", "Tube arc centre")))
+            if "CrossingSlope" not in record:
+                raise ValueError("Tube face end of an arc row lacks its CrossingSlope")
+        if "CrossingSlope" in record and \
+                abs(_census_number(record, "CrossingSlope", "Tube face end") - slope) > 1e-12 * slope:
+            raise ValueError("Tube face end CrossingSlope does not follow the row's crossing geometry")
         spacing = _census_number(record, "EndSpacing", "Tube face end")
         layers = _count(record.get("Layers"), "Tube face end layers")
         regime_one_spacing = max(tangential_size, 4.0 * pyramid_height * slope)
@@ -2404,10 +2439,14 @@ def validate_gmsh_build_census(build_report, census, semantic):
     condition_ceiling = (_option_or_default(command, GMSH_BUILD_CONDITION_OPTION, None)
                          if GMSH_BUILD_CONDITION_OPTION in command else None)
     round2b = _mesher_digest(build_report) == sha256(ROUND2_MESHER)
+    coupon_box = census.get("CouponBox")
+    face_box = ((coupon_box["Lower"], coupon_box["Upper"])
+                if isinstance(coupon_box, dict) and "Lower" in coupon_box and "Upper" in coupon_box else None)
     for index, row in enumerate(rows):
         face_end_bound[index] = validate_tube_face_ends(row, tubes["TangentialSize"], section,
                                                         condition_ceiling, round2b,
-                                                        tubes["InnerSize"], tubes["GrowthRatio"])
+                                                        tubes["InnerSize"], tubes["GrowthRatio"],
+                                                        box=face_box)
     if (isinstance(section, dict) and section.get("FaceEndSpacingCap") is not None and
             not any(row.get("FaceEnds") for row in rows)):
         raise ValueError("Tube section records a face-end spacing cap without a face end")

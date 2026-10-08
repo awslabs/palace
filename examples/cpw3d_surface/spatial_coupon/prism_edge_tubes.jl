@@ -236,6 +236,18 @@ end
 #             fails closed (ScopeGuard[SteepFaceCrossing], checked by the caller).
 # A tube end with theta == 0 exactly (every rectilinear coupon) has no FaceEnd and
 # takes the unchanged path.
+# Mesher design round 3 class (9) HIGH end, fix 9H (part M 3.3 Fact 2; decisions 491 / 510 O9): the
+# regime formulas read a CROSSING SLOPE in place of |tan theta|. A straight tube's end plane is
+# sheared linearly, s(u) = u tan theta; an ARC tube's end block meets the face per node where
+# the node's own circle (radius rho + sigma u) crosses the face plane (arc_face_station), s(u) =
+# rho (theta_face(u) - theta_0), whose slope |s'(u)| = rho h / (r sqrt(r^2 - h^2)) (r = rho +
+# sigma u, h = the distance from the arc centre to the face plane) equals tan theta at the axis
+# and GROWS towards the concave side, so the straight cap under-reads the arc's shear (the
+# 74.3-degree fixture: prism condition 1028 > 1000). `crossing_slope` = max over the section's
+# radial extent, at r = rho - (Radius + PyramidHeight) (arc_crossing_slope); the straight tube
+# passes nothing and keeps |tan theta| bitwise; the slope reduces to tan theta as rho -> inf.
+# It is a DERIVED fail-closed ceiling inside the admitted range, never the admission bound
+# (510 MAJOR-1); recorded as FaceEnds[].CrossingSlope and bound by mesh_stage_contract.py.
 struct FaceEnd
     end_index::Int            # 0: the tube start (s_start) lies on the face, 1: the end
     face::String              # "x0" / "x1" / "y0" / "y1"
@@ -251,9 +263,25 @@ struct FaceEnd
     face_value::Float64       # the face coordinate on that axis (an ArcTube crosses it per node)
     regime::Int               # 1 or 2 (design round 2 F2b)
     spacing_cap::Float64      # lc_cap of the tube's section
-    apex_thickness::Float64   # 2 h_pyr |tan theta|: the thinnest layer the apex rule admits
+    apex_thickness::Float64   # 2 h_pyr x slope: the thinnest layer the apex rule admits
+    crossing_slope::Float64   # the slope of the regime formulas: |tan theta|, or the arc's max |s'(u)| (9H)
 end
 
+# The largest crossing slope of an arc tube's end block over its section (round 3 9H): |s'(u)| =
+# rho h / (r sqrt(r^2 - h^2)) decreases with the node radius r = rho + sigma u, so its maximum
+# over |u| <= Radius + PyramidHeight sits at r = rho - envelope_radius; the node circle there
+# must reach the face (r > h: the caller's ScopeGuard[ArcFaceEnds] node-circle condition).
+# At the axis (r = rho) the expression is tan theta exactly, cos theta = sqrt(1 - (h / rho)^2).
+function arc_crossing_slope(rho, envelope_radius, face_distance)
+    rho > 0.0 && 0.0 <= envelope_radius < rho ||
+        error("an arc crossing slope needs 0 <= envelope < rho")
+    r = rho - envelope_radius
+    r > face_distance >= 0.0 || error(
+        "the inner node circle of radius $r does not reach the face plane at distance " *
+        "$face_distance from the arc centre (ScopeGuard[ArcFaceEnds] guards this before any CAD)"
+    )
+    return rho * face_distance / (r * sqrt((r - face_distance) * (r + face_distance)))
+end
 
 function FaceEnd(
     end_index,
@@ -267,11 +295,14 @@ function FaceEnd(
     lc_tangent;
     spacing_cap,
     face_axis=0,
-    face_value=NaN
+    face_value=NaN,
+    crossing_slope=abs(tan(theta))
 )
     theta > 0.0 || error("a face end needs a positive tilt")
     spacing_cap > 0.0 || error("a face end needs a positive end-spacing cap")
-    slope = abs(tan(theta))
+    isfinite(crossing_slope) && crossing_slope >= abs(tan(theta)) * (1.0 - 1.0e-12) ||
+        error("a face end's crossing slope is at least |tan theta| (the axis value)")
+    slope = crossing_slope
     apex_thickness = 2.0 * pyramid_height * slope
     regime_one_spacing = max(lc_tangent, 4.0 * pyramid_height * slope)
     regime_one_layers(spacing) =
@@ -283,7 +314,8 @@ function FaceEnd(
     else
         apex_thickness < spacing_cap || error(
             "face end at $(rad2deg(theta)) degrees lies beyond the validity ceiling of the " *
-            "capped end block: 2 h_pyr |tan theta| = $apex_thickness >= lc_cap $spacing_cap"
+            "capped end block: 2 h_pyr x slope = $apex_thickness >= lc_cap $spacing_cap " *
+            "(slope $slope: |tan theta| of a straight tube, the arc's crossing slope)"
         )
         regime = 2
         spacing = spacing_cap
@@ -312,7 +344,8 @@ function FaceEnd(
         face_value,
         regime,
         spacing_cap,
-        apex_thickness
+        apex_thickness,
+        slope
     )
 end
 
@@ -335,7 +368,8 @@ face_end_record(face_end::FaceEnd) = Dict{String, Any}(
     "Kappa" => [face_end.kappa_u, face_end.kappa_w],
     "Regime" => face_end.regime == 1 ? "I" : "II",
     "EndSpacingCap" => face_end.spacing_cap,
-    "ApexThickness" => face_end.apex_thickness
+    "ApexThickness" => face_end.apex_thickness,
+    "CrossingSlope" => face_end.crossing_slope
 )
 
 # A SMOOTH joint of a straight tube with an arc tube (block (b) design A3 (2), decision

@@ -5672,10 +5672,13 @@ const RECIPE_SCOPE_GUARDS = [
      "NarrowMetal guard of decision 347 retired into the per-side bound)"),
     ("SteepFaceCrossing", "build",
      "a tube end on a box face whose tilt lies beyond the validity ceiling of the capped end " *
-     "block, 2 PyramidHeight |tan theta| >= the section's end-spacing cap lc_cap (the largest " *
+     "block, 2 PyramidHeight x slope >= the section's end-spacing cap lc_cap (the largest " *
      "axial spacing at which the section's own prism frames read <= 0.95 x the Jacobian-" *
-     "condition ceiling): no sheared layer can keep its pyramid apex inside the box within " *
-     "the cap (mesher design round 2 F2b 3.2, supervisor decisions 358 / 363 / 437); or a THIN " *
+     "condition ceiling; the slope = |tan theta| for a straight tube, the arc's own crossing " *
+     "slope max |s'(u)| over the section for an arc tube: round 3 9H, FaceEnds[].CrossingSlope): " *
+     "no sheared layer can keep its pyramid apex inside the box within the cap (mesher design " *
+     "round 2 F2b 3.2, supervisor decisions 358 / 363 / 437; a derived ceiling INSIDE the " *
+     "admitted range, never the admission bound: decision 510 MAJOR-1); or a THIN " *
      "tube end whose tilt exceeds the largest BUILT thin tilt $(rad2deg(THIN_FACE_END_TILT_BOUND)) " *
      "degrees (the V10 thin 70-degree production-size build): the thin 74.3 / 75.5-degree " *
      "crossings fail the tetrahedral scaled-Jacobian gate after the build (E3, decision 475 (7)), " *
@@ -6764,20 +6767,26 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # too (E3: the thin 74.3 / 75.5-degree crossings fail the tetrahedral gate after the build).
     # (slack 1e-9 relative: the built V10 thin 70-degree tip fixture itself reads its tilt as
     # 70.0000000014 degrees from its rows' directions)
-    function guard_steep_face_crossing(face, K)
+    # Round 3 class (9) HIGH end, 9H (part M 3.3 Fact 2; 510 O9 / MAJOR-1): the ceiling reads the
+    # CROSSING SLOPE - |tan theta| for a straight tube, the arc's max |s'(u)| over the section
+    # (arc_crossing_slope) for an ArcTube - a derived fail-closed cap INSIDE the admitted range.
+    function guard_steep_face_crossing(face, K; slope=abs(tan(face.theta)))
         fabricated || face.theta <= THIN_FACE_END_TILT_BOUND * (1.0 + 1.0e-9) ||
             scope_error("SteepFaceCrossing",
                         "the THIN tube end on face $(face.face) at $(rad2deg(face.theta)) degrees lies " *
                         "above the largest built thin tilt $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees " *
                         "(E3: untested until the class-8 fix)")
         cap = face_end_spacing_cap_of(K)
-        apex = 2.0 * sections_of(K).pyramid_height * abs(tan(face.theta))
+        apex = 2.0 * sections_of(K).pyramid_height * slope
         apex < cap ||
             scope_error("SteepFaceCrossing",
                         "the tube end on face $(face.face) at $(rad2deg(face.theta)) degrees " *
-                        "needs a thinnest layer 2 PyramidHeight |tan theta| = $apex at or above " *
-                        "the end-spacing cap $cap of the tube section (the validity ceiling is " *
-                        "$(rad2deg(atan(cap / (2.0 * sections_of(K).pyramid_height)))) degrees)")
+                        "(crossing slope $slope; |tan theta| = $(abs(tan(face.theta)))) needs a thinnest " *
+                        "layer 2 PyramidHeight x slope = $apex at or above the end-spacing cap $cap of " *
+                        "the tube section (the validity ceiling is a slope of " *
+                        "$(cap / (2.0 * sections_of(K).pyramid_height)), " *
+                        "$(rad2deg(atan(cap / (2.0 * sections_of(K).pyramid_height)))) degrees for a " *
+                        "straight tube)")
         return cap
     end
     fabricated && (radius + pyramid_height < overetch ||
@@ -6962,10 +6971,15 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                     "face: rho (1 - sin theta) = $(arc.rho - h_face) <= the tube envelope " *
                                     "$(own.envelope_radius) (Radius + PyramidHeight; rho $(arc.rho), face " *
                                     "distance $h_face)")
+                    # Round 3 9H (part M 3.3 Fact 2): the arc's own crossing slope, max |s'(u)| over the
+                    # section (at the inner node circle rho - envelope), replaces |tan theta| in the
+                    # ceiling and the regime formulas (recorded as FaceEnds[].CrossingSlope).
+                    slope = arc_crossing_slope(arc.rho, own.envelope_radius, h_face)
                     push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta, 0.0, 0.0,
                                              own.envelope_radius, own.pyramid_height, lc_tangent;
-                                             spacing_cap=guard_steep_face_crossing(face, segment.rings),
-                                             face_axis=face.axis, face_value=face.value))
+                                             spacing_cap=guard_steep_face_crossing(face, segment.rings; slope=slope),
+                                             face_axis=face.axis, face_value=face.value,
+                                             crossing_slope=slope))
                 end
                 for (z, section) in placements
                     s_start, s_end = along > 0.0 ? (segment.s_start, segment.s_end) :
@@ -7138,17 +7152,22 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                          "solid is extruded over-long by (R + h_pyr) |tan theta| + TangentialSize " *
                          "and intersected with the coupon box before the fragment; the mesh ends " *
                          "with m sheared layers of axial spacing lc_end whose last station is the " *
-                         "face plane (Tubes[].FaceEnds). Regime I (4 h_pyr |tan theta| <= lc_cap): " *
-                         "lc_end = max(TangentialSize, 4 h_pyr |tan theta|), m = ceil(2 (R + h_pyr) " *
-                         "|tan theta| / lc_end) (block (b) design A2 (4), bitwise); regime II (4 h_pyr " *
-                         "|tan theta| > lc_cap): lc_end = lc_cap, m = max(ceil((R + h_pyr) |tan theta| / " *
-                         "(lc_cap - 2 h_pyr |tan theta|)), the regime-I count at lc_cap), so the " *
-                         "thinnest layer keeps the apex rule t_min >= 2 h_pyr |tan theta| (mesher " *
-                         "design round 2 F2b 3.2); lc_cap = FaceEndSpacingCap (FaceEndSpacingCapRule); " *
-                         "2 h_pyr |tan theta| >= lc_cap fails closed at ScopeGuard[SteepFaceCrossing], as " *
-                         "does a THIN end above $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees (the largest " *
-                         "built thin tilt; round 3 8B); " *
-                         "theta == 0 keeps the unchanged perpendicular end (decisions 302 / 320)",
+                         "face plane (Tubes[].FaceEnds). The formulas read the crossing SLOPE s = " *
+                         "|tan theta| for a straight tube and, for an ARC tube, the arc's own max_u |s'(u)| " *
+                         "= rho h / (r sqrt(r^2 - h^2)) at the inner node circle r = rho - (R + h_pyr), h the " *
+                         "distance from the arc centre to the face plane (round 3 9H, part M 3.3: the " *
+                         "per-node face crossing shears more than the straight law towards the concave " *
+                         "side; = tan theta at the axis and as rho -> inf; FaceEnds[].CrossingSlope). " *
+                         "Regime I (4 h_pyr s <= lc_cap): lc_end = max(TangentialSize, 4 h_pyr s), m = " *
+                         "ceil(2 (R + h_pyr) s / lc_end) (block (b) design A2 (4), bitwise for every " *
+                         "straight tube); regime II (4 h_pyr s > lc_cap): lc_end = lc_cap, m = max(ceil((R + " *
+                         "h_pyr) s / (lc_cap - 2 h_pyr s)), the regime-I count at lc_cap), so the thinnest " *
+                         "layer keeps the apex rule t_min >= 2 h_pyr s (mesher design round 2 F2b 3.2); " *
+                         "lc_cap = FaceEndSpacingCap (FaceEndSpacingCapRule); 2 h_pyr s >= lc_cap fails " *
+                         "closed at ScopeGuard[SteepFaceCrossing] (a derived ceiling INSIDE the admitted " *
+                         "tilt range, never the admission bound: 510 MAJOR-1), as does a THIN end above " *
+                         "$(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees (the largest built thin tilt; round 3 " *
+                         "8B); theta == 0 keeps the unchanged perpendicular end (decisions 302 / 320)",
         "FaceEndSpacingCapRule" => "the largest axial spacing at which the section's own prism " *
                                    "corner frames (every sector triangle of the section at each " *
                                    "vertex, the axial edge orthogonal: singular values {lc, " *

@@ -12,9 +12,9 @@ import unittest
 
 from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_TILT_RANGE_DEGREES,
                                  ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS,
-                                 RECIPE_SCOPE_GUARDS, THIN_FACE_END_TILT_BOUND_DEGREES, arc_part_count,
-                                 boundary_arc_runs, metal_loop_arc_parts, metal_loop_side_points, scope_classes,
-                                 scope_guard_in_text, validate_arc_tubes)
+                                 RECIPE_SCOPE_GUARDS, THIN_FACE_END_TILT_BOUND_DEGREES, arc_crossing_slope,
+                                 arc_part_count, boundary_arc_runs, metal_loop_arc_parts, metal_loop_side_points,
+                                 scope_classes, scope_guard_in_text, validate_arc_tubes, validate_tube_face_ends)
 
 HERE = Path(__file__).resolve().parent
 
@@ -149,6 +149,81 @@ class ValidateArcTubesTest(unittest.TestCase):
         rejected(lambda c: c["ArcTubes"].__setitem__("Count", 1), "arc summary does not match")
         rejected(lambda c: c["Tubes"][2]["Joints"][0].__setitem__("PlaneCut", True), "joint record")
         rejected(lambda c: c.pop("ArcTubes"), "arc summary does not match")
+
+
+class ArcFaceEndCrossingSlopeTest(unittest.TestCase):
+    """Mesher design round 3 class (9) 9H (part M 3.3 Fact 2; decisions 491 / 510 O9): an arc row's
+    face-end formulas read the arc's crossing slope max_u |s'(u)| = rho h / (r sqrt(r^2 - h^2)) at the
+    inner node circle r = rho - (R + h_pyr) in place of |tan theta|; the record's CrossingSlope is
+    bound to it, recomputed from the row's Arc and the census CouponBox."""
+
+    def test_slope_formula(self):
+        for theta in (2.1, 45.0, 74.3):
+            for rho in (1.56, 58.5):
+                h = rho * math.sin(math.radians(theta))
+                self.assertAlmostEqual(arc_crossing_slope(rho, 0.0, h) / math.tan(math.radians(theta)), 1.0, places=12)
+                self.assertGreater(arc_crossing_slope(rho, 0.04, h), math.tan(math.radians(theta)))
+                self.assertAlmostEqual(arc_crossing_slope(1e9 * rho, 0.04, 1e9 * h) / math.tan(math.radians(theta)), 1.0, places=8)
+        # the mesher's value on the 32dc558f4810 geometry (rho 58.5, h 56.324, envelope 0.04)
+        self.assertAlmostEqual(arc_crossing_slope(58.5, 0.04, 56.324169260983396), 3.5997093489397574, places=12)
+        with self.assertRaisesRegex(ValueError, "does not reach the face plane"):
+            arc_crossing_slope(1.0, 0.04, 0.97)
+        with self.assertRaisesRegex(ValueError, "envelope"):
+            arc_crossing_slope(1.0, 1.0, 0.5)
+
+    def face_end_row(self, slope_scale=1.0, drop_slope=False, theta=45.0):
+        radius, h_pyr, lc = 0.03175, 0.0079375, 0.05
+        rho, centre = 1.5 / math.sin(math.radians(theta)), [0.0, 0.0]
+        box = ([-2.0, -1.0, -1.0], [1.5, 3.0, 1.0])      # the x1 face at 1.5 = rho sin theta from the centre
+        slope = arc_crossing_slope(rho, radius + h_pyr, 1.5)
+        lc_end = max(lc, 4.0 * h_pyr * slope)
+        m = max(1, math.ceil(2.0 * (radius + h_pyr) * slope / lc_end * (1.0 - 1e-9)))
+        shear = (radius + h_pyr) * slope
+        record = {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": m, "EndSpacing": lc_end,
+                  "EnvelopeShear": shear, "LayerThicknessRange": [lc_end - shear / m, lc_end + shear / m],
+                  "OverLength": shear + lc, "Kappa": [0.0, 0.0], "CrossingSlope": slope * slope_scale}
+        if drop_slope:
+            record.pop("CrossingSlope")
+        row = {"Arc": {"ArcId": 1, "Centre": centre, "Radius": rho, "Sign": 1, "Part": 1, "Parts": 1},
+               "FaceEnds": [record]}
+        return row, lc, {"Radius": radius, "PyramidHeight": h_pyr}, box, lc_end, slope
+
+    def test_arc_row_binds_the_recomputed_slope(self):
+        row, lc, section, box, lc_end, slope = self.face_end_row()
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box), lc_end)
+        self.assertGreater(slope, math.tan(math.radians(45.0)))
+        with self.assertRaisesRegex(ValueError, "CrossingSlope does not follow"):
+            validate_tube_face_ends(self.face_end_row(slope_scale=1.0 + 1e-9)[0], lc, section, box=box)
+        with self.assertRaisesRegex(ValueError, "lacks its CrossingSlope"):
+            validate_tube_face_ends(self.face_end_row(drop_slope=True)[0], lc, section, box=box)
+        with self.assertRaisesRegex(ValueError, "needs the census CouponBox"):
+            validate_tube_face_ends(row, lc, section)
+        # the straight law (tan theta) is NOT the arc's: at 74.3 degrees (the 32dc558f4810 tilt) the
+        # arc record's spacing / layers do not follow a straight row's formulas
+        steep, lc, section, box, lc_end, slope = self.face_end_row(theta=74.3)
+        self.assertEqual(validate_tube_face_ends(steep, lc, section, box=box), lc_end)
+        self.assertGreater(slope, 1.5 * math.tan(math.radians(74.3)))
+        steep.pop("Arc")
+        steep["FaceEnds"][0]["CrossingSlope"] = math.tan(math.radians(74.3))
+        with self.assertRaisesRegex(ValueError, "face-end rule"):
+            validate_tube_face_ends(steep, lc, section, box=box)
+
+    def test_straight_row_slope_is_tan_theta(self):
+        radius, h_pyr, lc, theta = 0.03175, 0.0079375, 0.05, 45.0
+        slope = math.tan(math.radians(theta))
+        lc_end = max(lc, 4.0 * h_pyr * slope)
+        m = max(1, math.ceil(2.0 * (radius + h_pyr) * slope / lc_end * (1.0 - 1e-9)))
+        shear = (radius + h_pyr) * slope
+        record = {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": m, "EndSpacing": lc_end,
+                  "EnvelopeShear": shear, "LayerThicknessRange": [lc_end - shear / m, lc_end + shear / m],
+                  "OverLength": shear + lc, "Kappa": [-slope, 0.0], "CrossingSlope": slope}
+        section = {"Radius": radius, "PyramidHeight": h_pyr}
+        self.assertEqual(validate_tube_face_ends({"FaceEnds": [record]}, lc, section), lc_end)
+        record.pop("CrossingSlope")          # a pre-9H straight record carries none
+        self.assertEqual(validate_tube_face_ends({"FaceEnds": [record]}, lc, section), lc_end)
+        record["CrossingSlope"] = 1.01 * slope
+        with self.assertRaisesRegex(ValueError, "CrossingSlope does not follow"):
+            validate_tube_face_ends({"FaceEnds": [record]}, lc, section)
 
 
 class ArcScopeGuardsTest(unittest.TestCase):

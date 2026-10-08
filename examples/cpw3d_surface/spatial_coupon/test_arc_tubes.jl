@@ -318,11 +318,15 @@ function write_arc_face_end_inputs(
     ]
     chord_points[end] = (x1, rho * (1.0 - cosd(theta_degrees)))   # exactly on the face
     # Chord rows while the row's transverse pad (+- R along its gap) and the box pad stay left
-    # of x1: max(x) + R |gap_x| + R <= x1.
+    # of x1: max(x) + R |gap_x| + R <= x1. With `rho` given (round 3 9H: the steep representative
+    # fixture, rho (1 - sin theta) >> the tube envelope) the LAST chord row carries the chain's
+    # outer end and is extended by 2 R along its tangent (extended_interval), so its longitudinal
+    # reach 2 R |t_x| joins the test; the default fixture keeps its round-2b rows byte for byte.
     for k = 1:n
         p, q = chord_points[k], chord_points[k + 1]
         t = (q[1] - p[1], q[2] - p[2]) ./ hypot(q[1] - p[1], q[2] - p[2])
-        max(p[1], q[1]) + radius * abs(t[2]) + radius <= x1 + 1.0e-12 || break
+        reach = radius * abs(t[2]) + radius + (notch ? 2.0 * radius * abs(t[1]) : 0.0)
+        max(p[1], q[1]) + reach <= x1 + 1.0e-12 || break
         straight!(p, q, 1.0)
     end
     lower, upper = row_coupon_bounds(rows, radius, 0.1, 0.05)
@@ -856,6 +860,71 @@ end
         point = tube_point(faced, u, w, s)
         @test isapprox(point[1], 0.3; atol=1.0e-12)
     end
+    # Round 3 9H (part M 3.3 Fact 2): the arc's crossing slope max_u |s'(u)| = rho h / (r sqrt(r^2 -
+    # h^2)) at the inner node circle r = rho - envelope. At the axis (envelope 0) it is tan theta
+    # exactly (h = rho sin theta: the face plane at distance h from the centre is crossed at the
+    # tilt theta); it grows with the envelope (the concave side shears more) and with h / rho, and
+    # tends to tan theta as rho -> inf at fixed theta and envelope. It is the per-node derivative
+    # of arc_face_station: a finite difference of the station across the inner node circle.
+    for theta in (deg2rad(2.1), deg2rad(45.0), deg2rad(74.3)), rho in (1.56, 58.5)
+        h = rho * sin(theta)
+        @test isapprox(arc_crossing_slope(rho, 0.0, h), tan(theta); rtol=1.0e-12)
+        slope = arc_crossing_slope(rho, 0.04, h)
+        @test slope > tan(theta) && slope > arc_crossing_slope(rho, 0.02, h)
+        @test isapprox(
+            arc_crossing_slope(1.0e9 * rho, 0.04, 1.0e9 * h),
+            tan(theta);
+            rtol=1.0e-8
+        )
+    end
+    @test isapprox(
+        arc_crossing_slope(58.5, 0.04, 56.324169260983396),
+        3.5997093489397574;
+        rtol=1.0e-12
+    )
+    @test_throws ErrorException arc_crossing_slope(1.0, 0.04, 0.97)          # the node circle misses the face
+    @test_throws ErrorException arc_crossing_slope(1.0, 1.0, 0.5)
+    # the finite difference of the face station across the inner node circle (u = -envelope .. -envelope + du)
+    inner = -0.04
+    du = 1.0e-6
+    s0 = arc_face_station(faced, face, inner, 0.0)
+    s1 = arc_face_station(faced, face, inner + du, 0.0)
+    @test isapprox(abs(s1 - s0) / du, arc_crossing_slope(1.0, 0.04, 0.3); rtol=1.0e-4)
+    # the FaceEnd carries the slope it was given (default |tan theta|) and refuses one below it
+    @test face.crossing_slope == abs(tan(0.3))
+    sloped = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        0.3,
+        0.0,
+        0.0,
+        0.04,
+        0.01,
+        0.1;
+        spacing_cap=Inf,
+        face_axis=1,
+        face_value=0.3,
+        crossing_slope=arc_crossing_slope(1.0, 0.04, 0.3)
+    )
+    @test sloped.crossing_slope > face.crossing_slope &&
+          sloped.apex_thickness == 2.0 * 0.01 * sloped.crossing_slope &&
+          sloped.envelope_shear == 0.04 * sloped.crossing_slope &&
+          sloped.layers >= face.layers
+    @test face_end_record(sloped)["CrossingSlope"] == sloped.crossing_slope
+    @test_throws ErrorException FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        0.3,
+        0.0,
+        0.0,
+        0.04,
+        0.01,
+        0.1;
+        spacing_cap=Inf,
+        crossing_slope=0.5 * tan(0.3)
+    )
 end
 
 @testset "synthetic rounded strip: fabricated and thin builds with one arc, two smooth joints and a concave corner" begin
@@ -1318,14 +1387,21 @@ end
         # 0.1 / 0.5 / 2.1 / 8 degrees (4 chords each; 0.1 = the admitted floor, 2.1 = the 32b0083dad90
         # angle), fab + thin; regime I with one sheared layer, continuous towards theta -> 0+ (the
         # production-size record is the round-3 B2 cluster run).
-        for (theta, chord) in (
-                (0.1, 0.025),
-                (0.5, 0.125),
-                (2.1, 0.5),
-                (8.0, 2.0),
-                (15.0, 2.5),
-                (45.0, 5.0),
-                (70.0, 5.0)
+        # Round 3 9H (part M 3.3 Fact 2; decisions 491 / 510 O9): the arc face end's formulas read
+        # the arc's CROSSING SLOPE (FaceEnds[].CrossingSlope = max |s'(u)| over the section, >= tan
+        # theta, -> tan theta as rho -> inf). The default fixture ties rho = 3 R / sin theta, which
+        # at 70 degrees leaves the inner node circle only 2.4 envelopes from the face (part M 3.3
+        # Fact 1: a fixture artefact) and, with the slope-aware block, fails the tetrahedral gate
+        # (0.0094 < 0.01): the 70-degree case takes the rho-parametrised (notch) fixture at rho 3.5
+        # (5.3 envelopes; slope 1.127 tan theta), the representative steep configuration.
+        for (theta, chord, rho) in (
+                (0.1, 0.025, nothing),
+                (0.5, 0.125, nothing),
+                (2.1, 0.5, nothing),
+                (8.0, 2.0, nothing),
+                (15.0, 2.5, nothing),
+                (45.0, 5.0, nothing),
+                (70.0, 5.0, 3.5)
             ),
             fabricated in (true, false)
 
@@ -1335,7 +1411,8 @@ end
                 fabricated=fabricated,
                 stem="fe",
                 theta_degrees=theta,
-                chord_degrees=chord
+                chord_degrees=chord,
+                rho=rho
             )
             tubes = census["PrismTubes"]
             arc_rows = [row for row in tubes["Tubes"] if haskey(row, "Arc")]
@@ -1346,6 +1423,22 @@ end
                 @test record["Face"] == "x1" &&
                       isapprox(record["ThetaDegrees"], theta; atol=1.0e-9)
                 @test record["Regime"] == "I"
+                # 9H: the recorded crossing slope is the arc's (rho, envelope, face distance), above
+                # tan theta by the concave side's excess (5.9 % on the default fixture at 45, 12.7 % at
+                # 70 / rho 3.5, within 1.5 % below 15 degrees), and the block's apex / shear read it.
+                slope = arc_crossing_slope(
+                    row["Arc"]["Radius"],
+                    tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"],
+                    abs(inputs.upper[1] - row["Arc"]["Centre"][1])
+                )
+                @test record["CrossingSlope"] == slope &&
+                      tand(theta) * (1.0 - 1.0e-12) <= slope <= 1.13 * tand(theta)
+                theta <= 15.0 && @test slope <= 1.015 * tand(theta)
+                @test record["ApexThickness"] ==
+                      2.0 * tubes["Section"]["PyramidHeight"] * slope &&
+                      record["EnvelopeShear"] ==
+                      (tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"]) *
+                      slope
                 # The arc tube travels against the loop here (orientation -sigma Nz): the face
                 # end is the tube's START station; its axis point lies on the face.
                 face_point = record["End"] == "end" ? row["EndPoint"] : row["StartPoint"]
