@@ -99,12 +99,14 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   }
   if (nonlinear_type == NonlinearEigenSolver::SLP && !has_A2)
   {
-    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports
-    // or absorbing boundaries). Without one the NEP function/Jacobian shells dereference a
-    // null A2; fall back to the standard linear/quadratic eigensolver instead.
+    // The SLP nonlinear eigensolver requires a frequency-dependent term A2(λ) (wave ports,
+    // absorbing boundaries, or frequency-dependent PML). Without one the NEP
+    // function/Jacobian shells dereference a null A2; fall back to the standard
+    // linear/quadratic eigensolver instead.
     Mpi::Warning(
-        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports or "
-        "absorbing boundaries), none found; using a linear eigensolver!\n");
+        "SLP nonlinear eigensolver requires a nonlinear system term (wave ports, absorbing "
+        "boundaries, or frequency-dependent PML), none found; using a linear "
+        "eigensolver!\n");
     nonlinear_type = NonlinearEigenSolver::HYBRID;
   }
   if (has_A2 && nonlinear_type == NonlinearEigenSolver::HYBRID)
@@ -288,7 +290,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   if (iodata.solver.eigenmode.mass_orthog)
   {
     Mpi::Print(" Basis uses M-inner product\n");
-    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get(), target);
     eigen->SetBMat(*KM);
 
     // Mpi::Print(" Basis uses (K + M)-inner product\n");
@@ -301,8 +303,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   std::unique_ptr<DivFreeSolver<ComplexVector>> divfree;
   if (iodata.solver.linear.divfree_max_it > 0 &&
       !space_op.GetMaterialOp().HasWaveVector() &&
-      !space_op.GetMaterialOp().HasLondonDepth() &&
-      !space_op.GetMaterialOp().HasPML())
+      !space_op.GetMaterialOp().HasLondonDepth() && !space_op.GetMaterialOp().HasPML())
   {
     Mpi::Print(" Configuring divergence-free projection\n");
     constexpr int divfree_verbose = 0;
@@ -508,7 +509,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     // Normalize every converged eigenvector with respect to the mass matrix (unit electric
     // field energy) even if they are not computed to be orthogonal with respect to it.
-    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get());
+    KM = space_op.GetInnerProductMatrix(0.0, 1.0, nullptr, M.get(), target);
     eigen->SetBMat(*KM);
     eigen->RescaleEigenvectors(num_report);
   }

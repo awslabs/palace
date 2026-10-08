@@ -138,7 +138,8 @@ auto GetElementIndices(const mfem::ParMesh &mesh, bool use_bdr, int start, int s
 }
 
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
-                          const mfem::GridFunction &mesh_nodes, const Vector &elem_attr)
+                          const mfem::GridFunction &mesh_nodes, const Vector &elem_attr,
+                          bool coords)
 {
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
@@ -178,10 +179,10 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
 
   // Allocate storage for geometry factor data (stored as attribute + quadrature weight +
-  // Jacobian + physical coordinate, column-major). The physical coordinate is cached so
-  // QFunctions with spatially-varying coefficients (e.g. PML stretch) can sample at each
-  // quadrature point without additional plumbing at operator-apply time.
-  CeedInt geom_data_size = 2 + data.space_dim * (data.dim + 1);
+  // Jacobian, column-major, optionally followed by the quadrature point coordinates for 3D
+  // domain elements).
+  coords = coords && data.dim == 3 && data.space_dim == 3;
+  CeedInt geom_data_size = 2 + data.space_dim * data.dim + (coords ? data.space_dim : 0);
   PalaceCeedCall(
       ceed,
       CeedVectorCreate(ceed, static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size,
@@ -208,7 +209,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
 auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
     const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr, Ceed ceed,
-    bool ceed_from_self)
+    bool ceed_from_self, bool coords)
 {
   // Create a list of the element indices in the mesh corresponding to a given thread and
   // element geometry type and corresponding geometry factor data. libCEED operators will be
@@ -273,7 +274,8 @@ auto BuildCeedGeomFactorData(
         elem_attr[k] = GetCeedAttribute(indices[k]);
       }
       geom_data_map.emplace(
-          geom, AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(), elem_attr));
+          geom,
+          AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(), elem_attr, coords));
     }
   }
 
@@ -303,8 +305,8 @@ auto BuildCeedGeomFactorData(
       {
         elem_attr[k] = GetCeedAttribute(indices[k]);
       }
-      geom_data_map.emplace(
-          geom, AssembleGeometryData(ceed, geom, indices, *mesh.GetNodes(), elem_attr));
+      geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices,
+                                                       *mesh.GetNodes(), elem_attr, false));
     }
   }
 
@@ -321,8 +323,8 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   auto &geom_data_map = it->second;
   if (geom_data_map.empty() && !loc_attr.empty())
   {
-    geom_data_map =
-        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed, ceed_from_self);
+    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, ceed,
+                                            ceed_from_self, ceed_quadrature_coordinates);
   }
   return geom_data_map;
 }
@@ -342,6 +344,15 @@ void Mesh::ResetCeedObjects()
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
     geom_data.emplace(ceed, ceed::GeometryObjectMap<ceed::CeedGeomFactorData>());
+  }
+}
+
+void Mesh::SetCeedQuadratureCoordinates(bool coords)
+{
+  if (coords != ceed_quadrature_coordinates)
+  {
+    ceed_quadrature_coordinates = coords;
+    ResetCeedObjects();
   }
 }
 
