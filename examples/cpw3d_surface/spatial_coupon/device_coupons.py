@@ -274,13 +274,22 @@ OMITTED_METHOD = "OmittedRequirement"
 # whose Signature is the FULL symmetric signature of the extended chain (real + image portions),
 # flagged `MirrorFormed: true` and carrying `MirrorFormedContract` {Version, Planes, Frame,
 # RealPortions, RealLengthOverR, ImageLengthOverR, RealFeatures, ExtendedFeature, Rule}.  This
-# adapter CONSUMES it: by default (`refuse`) such a coupon is recorded out of scope (today's
+# adapter CONSUMES it, routing on the CONTRACT (decision 562 MAJOR-1): the flag `MirrorFormed:
+# true` alone is NOT "a mirror-formed key" - the C++ sets it on every feature whose Mirror record
+# is not Continued (formed OR touched by an Unmerged configuration) and ORs it over the group, so
+# a REAL spatial key touched by a plane carries it; such a flag-only requirement keeps today's
+# path (built as the ordinary real coupon it is) and is recorded as information.  A requirement
+# CARRYING `MirrorFormedContract`: by default (`refuse`) it is recorded out of scope (today's
 # bytes); with `--mirror-formed admit` the contract is validated (fail closed by field), the
 # coupon is generated from the full signature unchanged (an image portion is an ordinary claim
 # of the generator) and the library ENTRY (the model of process-library.json) is stamped with
 # the real / image split: every model Edge gets Weight 1 (real) / 0 (image) so the placement
 # applies the model on the real half only, never an image claim.
 MIRROR_FORMED_MODES = ("refuse", "admit")
+MIRROR_FORMED_FLAG_ONLY_RULE = ("decision 562 MAJOR-1: MirrorFormed: true without a MirrorFormedContract is a REAL key touched by a "
+                                "mirror configuration (the identification's flag means formed OR touched, ORed over the group; "
+                                "surfaceresponseoperator.cpp instance.mirror_formed / surfaceresponsemirror.cpp Status Unmerged on "
+                                "the touched real features): built as the ordinary real coupon, recorded as information")
 MIRROR_FORMED_NOT_ADMITTED_METHOD = "MirrorFormedNotAdmitted"
 MIRROR_FORMED_CONTRACT_VERSION = 1
 # The contract's RealLengthOverR / ImageLengthOverR must agree with the signature's own portion
@@ -332,8 +341,8 @@ def validate_mirror_formed_contract(coupon):
         raise _contract_error(coupon, "needs MirrorFormed: true on the requirement")
     contract = coupon.get("MirrorFormedContract")
     if not isinstance(contract, dict):
-        raise _contract_error(coupon, "is missing: the requirement is MirrorFormed without the identification's contract "
-                                      "(a mergeable formed feature, or an identification that predates decision 557)")
+        raise _contract_error(coupon, f"is not an object ({contract!r}): a requirement routed on the contract must carry the "
+                                      "identification's record (a flag-only requirement never reaches this validation, decision 562)")
     if contract.get("Version") != MIRROR_FORMED_CONTRACT_VERSION:
         raise _contract_error(coupon, f"Version {contract.get('Version')!r} is not {MIRROR_FORMED_CONTRACT_VERSION}")
     signature = coupon.get("Signature")
@@ -499,9 +508,11 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     - with their reason (and approval) texts, all recorded in the provenance and the record.
     `nearkey_reuse_mode` off | default | fallback (nearkey_reuse.py; the module docstring): a reused
     coupon is recorded under NearKeyReuse and is not registered.
-    `mirror_formed` refuse | admit (decision 557; the contract block above): a mirror-formed spatial
-    coupon (requirement `MirrorFormed: true`) is recorded out of scope (refuse, the default) or
-    built from its full signature with the validated contract stamped on its entry (admit)."""
+    `mirror_formed` refuse | admit (decisions 557 / 562; the contract block above): a spatial coupon
+    whose requirement CARRIES `MirrorFormedContract` is recorded out of scope (refuse, the default)
+    or built from its full signature with the validated contract stamped on its entry (admit); a
+    requirement flagged `MirrorFormed: true` without a contract is built as the ordinary real coupon
+    (recorded under MirrorFormed.FlagOnly)."""
     span_caps = requirement_options(support_span_caps, float, "--support-span-cap")
     caps = requirement_options(element_caps, int, "--element-cap")
     if mirror_formed not in MIRROR_FORMED_MODES:
@@ -593,12 +604,14 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                "Rule": "USER decision 428 (Option A) / decision 431 / DESIGN v2: nearkey_reuse.reuse_requirement on the "
                                        "generated "
                                        "basis before registration; a reused coupon is not registered / built; a refusal is recorded"},
-              "MirrorFormed": {"Mode": mirror_formed, "ContractVersion": MIRROR_FORMED_CONTRACT_VERSION,
-                               "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): a requirement flagged MirrorFormed with the "
+              "MirrorFormed": {"Mode": mirror_formed, "ContractVersion": MIRROR_FORMED_CONTRACT_VERSION, "FlagOnly": [],
+                               "Rule": "decision 557 / round-3 DESIGN 4.4 (MF) / decision 562: a requirement CARRYING the "
                                        "identification's MirrorFormedContract is built from its FULL symmetric signature and its "
                                        "entry stamped with the real / image split (admit), or recorded out of scope with Method "
-                                       f"{MIRROR_FORMED_NOT_ADMITTED_METHOD} (refuse, the default); a MirrorFormed requirement "
-                                       "without a valid contract fails closed in admit mode"},
+                                       f"{MIRROR_FORMED_NOT_ADMITTED_METHOD} (refuse, the default); a contract that fails its "
+                                       "validation fails closed in admit mode; a requirement flagged MirrorFormed: true WITHOUT a "
+                                       "contract (a real key touched by a mirror configuration) is built as the ordinary real coupon "
+                                       "and listed under FlagOnly"},
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
         method = coupon["Preparation"]["Method"]
@@ -620,20 +633,26 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                                  f"({method})"})
             continue
         contract = None
-        if coupon.get("MirrorFormed"):
+        flag_only = False
+        if "MirrorFormedContract" in coupon:
+            # The CONTRACT routes (decision 562 MAJOR-1), never the flag alone.
             if mirror_formed == "refuse":
                 record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"],
                                              "Method": MIRROR_FORMED_NOT_ADMITTED_METHOD,
-                                             "Reason": "a mirror-formed cluster requirement (MirrorFormed: true) is built only with "
+                                             "Reason": "a mirror-formed cluster requirement (MirrorFormedContract) is built only with "
                                                        "--mirror-formed admit (decision 557)",
-                                             "FamilyMethod": method, "Hash": coupon.get("Hash"),
-                                             "MirrorFormedContract": coupon.get("MirrorFormedContract") is not None,
+                                             "FamilyMethod": method, "Hash": coupon.get("Hash"), "MirrorFormed": coupon.get("MirrorFormed"),
+                                             "MirrorFormedContract": coupon["MirrorFormedContract"],
                                              "DeviceOccurrences": coupon["DeviceOccurrences"],
                                              "DeviceEdgeLength": coupon["DeviceEdgeLength"],
                                              "Rule": "a mirror-formed requirement is not built by default: it stays Missing against "
                                                      "the library (recorded, never silent)"})
                 continue
             contract = validate_mirror_formed_contract(coupon)
+        elif coupon.get("MirrorFormed"):
+            flag_only = True
+            record["MirrorFormed"]["FlagOnly"].append({"Id": coupon["Id"], "Topology": coupon["Topology"], "Hash": coupon.get("Hash"),
+                                                       "Rule": MIRROR_FORMED_FLAG_ONLY_RULE})
         work = output / "work" / coupon["Id"]
         if work.exists():
             shutil.rmtree(work)
@@ -729,6 +748,9 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             provenance["MirrorFormed"] = {"Mode": mirror_formed, "Contract": coupon["MirrorFormedContract"],
                                           "RealPortions": contract["RealPortions"], "ImagePortions": contract["ImagePortions"],
                                           "Rule": MIRROR_FORMED_ENTRY_RULE}
+        elif flag_only:
+            # Decision 562: information only - the sources and the id are the ordinary real coupon's.
+            provenance["MirrorFormed"] = {"Mode": mirror_formed, "FlagOnly": True, "Contract": None, "Rule": MIRROR_FORMED_FLAG_ONLY_RULE}
         if directory.exists():
             existing, _ = content_hash(directory)
             if existing != digest:
@@ -758,7 +780,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                                           "Approval": element_cap_approval, "Reason": element_cap_reason}),
                                   "Interfaces": coupon["Interfaces"], "DeviceOccurrences": coupon["DeviceOccurrences"],
                                   "DeviceEdgeLength": coupon["DeviceEdgeLength"], "Registration": None, "NearKeyReuse": near_key,
-                                  "MirrorFormed": None if contract is None else built_model.get("MirrorFormed")})
+                                  "MirrorFormed": None if contract is None else built_model.get("MirrorFormed"),
+                                  "MirrorFormedFlagOnly": flag_only})
         log(f"{case_id}: source directory {status} ({edge_count} edges, requirement {coupon['Id']})"
             + (f"; near-key REUSED from {near_key['Donor']} ({near_key['ReuseMode']}): not registered"
                if near_key and near_key["Reused"] else ""))
@@ -940,10 +963,11 @@ def add_requirement_option_arguments(parser):
                         help="map the library's record paths (cluster) to a local mirror: the donors' stored (F) records are REQUIRED "
                              "for the T4 gate in default / fallback (decision 438 (2))")
     parser.add_argument("--mirror-formed", choices=MIRROR_FORMED_MODES, default="refuse",
-                        help="with --device: admit = build a mirror-formed cluster requirement (MirrorFormed: true with the "
-                             "identification's MirrorFormedContract, decision 557) from its FULL symmetric signature and stamp its "
-                             "entry with the real / image split (Edges[].Weight 1 / 0); refuse (default) = record it out of scope "
-                             f"with Method {MIRROR_FORMED_NOT_ADMITTED_METHOD}")
+                        help="with --device: admit = build a mirror-formed cluster requirement (one CARRYING the identification's "
+                             "MirrorFormedContract, decisions 557 / 562) from its FULL symmetric signature and stamp its entry with "
+                             "the real / image split (Edges[].Weight 1 / 0); refuse (default) = record it out of scope with Method "
+                             f"{MIRROR_FORMED_NOT_ADMITTED_METHOD}; a MirrorFormed: true requirement without a contract is built as "
+                             "the ordinary real coupon either way")
 
 
 def requirement_option_kwargs(args):

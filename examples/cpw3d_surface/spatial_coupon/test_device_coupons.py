@@ -249,7 +249,7 @@ class MirrorFormedContractTest(unittest.TestCase):
 
         cases = [("Version", mutated(**{"contract.Version": 2})),
                  ("MirrorFormed: true", mutated(MirrorFormed=False)),
-                 ("is missing", mutated(MirrorFormedContract=None)),
+                 ("is not an object", mutated(MirrorFormedContract=None)),
                  ("RealPortions", mutated(**{"contract.RealPortions": []})),
                  ("names every portion", mutated(**{"contract.RealPortions": [0, 1]})),
                  ("outside", mutated(**{"contract.RealPortions": [2]})),
@@ -331,28 +331,78 @@ class MirrorFormedContractTest(unittest.TestCase):
         return device_coupons.prepare_device_sources(device, palace="no-palace", output=output, manifest_path=self.tmp / "m.json",
                                                      log=lambda message: None, **kwargs)
 
-    def test_default_refuses_and_admit_builds_the_full_signature_with_the_stamped_entry(self):
-        requirement = mirror_formed_fixture("o1-f17-b0b764b21b95")
-        refused = self.prepared([requirement])
+    def test_contract_flag_only_and_plain_requirements_in_both_modes(self):
+        """Decision 562 MAJOR-1: the CONTRACT routes. (1) a requirement CARRYING MirrorFormedContract: refuse
+        (default) -> OutOfScope MirrorFormedNotAdmitted, nothing built; admit -> built from the FULL signature with
+        the stamped entry. (2) a requirement flagged MirrorFormed: true WITHOUT a contract (a real key touched by a
+        mirror configuration: the C++ flag is formed OR touched, ORed over the group): built as the ordinary real
+        coupon in BOTH modes - the same case id and bytes as (3) the plain requirement - recorded under FlagOnly.
+        (3) neither: today's path, no record."""
+        contract_requirement = mirror_formed_fixture("o1-f17-b0b764b21b95")
+        flag_only = json.loads(json.dumps(contract_requirement))
+        del flag_only["MirrorFormedContract"]
+        plain = json.loads(json.dumps(flag_only))
+        del plain["MirrorFormed"]
+        # (3) neither, both modes: the ordinary real coupon, no mirror record anywhere
+        plain_ids = {}
+        for mode in ("refuse", "admit"):
+            record = self.prepared([plain], mirror_formed=mode)
+            self.assertEqual(record["OutOfScope"], [])
+            self.assertEqual(record["MirrorFormed"]["FlagOnly"], [])
+            self.assertEqual(len(record["Coupons"]), 1)
+            coupon = record["Coupons"][0]
+            self.assertEqual((coupon["MirrorFormed"], coupon["MirrorFormedFlagOnly"]), (None, False))
+            model = json.loads((Path(coupon["Directory"]) / "process-library.json").read_text())["Models"][0]
+            self.assertNotIn("MirrorFormed", model)
+            self.assertTrue(all("Weight" not in edge for edge in model["Edges"]))
+            self.assertNotIn("MirrorFormed", json.loads((Path(coupon["Directory"]) / "provenance.json").read_text()))
+            plain_ids[mode] = (coupon["Case"], device_coupons.content_hash(Path(coupon["Directory"]))[0])
+            shutil.rmtree(self.tmp / f"device-{mode}")
+        self.assertEqual(plain_ids["refuse"], plain_ids["admit"])
+        # (2) flag only, both modes: built as the ordinary real coupon (the SAME id and content hash as (3)), recorded
+        for mode in ("refuse", "admit"):
+            record = self.prepared([flag_only], mirror_formed=mode)
+            self.assertEqual(record["OutOfScope"], [])
+            self.assertEqual(len(record["Coupons"]), 1)
+            coupon = record["Coupons"][0]
+            self.assertEqual((coupon["Case"], device_coupons.content_hash(Path(coupon["Directory"]))[0]), plain_ids[mode])
+            self.assertEqual((coupon["MirrorFormed"], coupon["MirrorFormedFlagOnly"]), (None, True))
+            self.assertEqual([(item["Id"], item["Hash"][:12], item["Rule"]) for item in record["MirrorFormed"]["FlagOnly"]],
+                             [(coupon["Requirement"], "b0b764b21b95", device_coupons.MIRROR_FORMED_FLAG_ONLY_RULE)])
+            model = json.loads((Path(coupon["Directory"]) / "process-library.json").read_text())["Models"][0]
+            self.assertNotIn("MirrorFormed", model)
+            self.assertTrue(all("Weight" not in edge for edge in model["Edges"]))
+            provenance = json.loads((Path(coupon["Directory"]) / "provenance.json").read_text())
+            self.assertEqual(provenance["MirrorFormed"], {"Mode": mode, "FlagOnly": True, "Contract": None,
+                                                          "Rule": device_coupons.MIRROR_FORMED_FLAG_ONLY_RULE})
+            shutil.rmtree(self.tmp / f"device-{mode}")
+        # (1) the contract, refuse: out of scope with the contract itself recorded; nothing built
+        refused = self.prepared([contract_requirement])
         self.assertEqual(refused["MirrorFormed"]["Mode"], "refuse")
         self.assertEqual(refused["Coupons"], [])
-        self.assertEqual([(item["Method"], item["Hash"][:12], item["MirrorFormedContract"]) for item in refused["OutOfScope"]],
-                         [(device_coupons.MIRROR_FORMED_NOT_ADMITTED_METHOD, "b0b764b21b95", True)])
+        self.assertEqual(refused["MirrorFormed"]["FlagOnly"], [])
+        self.assertEqual([(item["Method"], item["Hash"][:12], item["MirrorFormed"], item["MirrorFormedContract"])
+                          for item in refused["OutOfScope"]],
+                         [(device_coupons.MIRROR_FORMED_NOT_ADMITTED_METHOD, "b0b764b21b95", True,
+                           contract_requirement["MirrorFormedContract"])])
         self.assertFalse((Path(refused["Output"]) / "work").exists())
-        admitted = self.prepared([requirement], mirror_formed="admit")
+        # (1) the contract, admit: the full symmetric signature built, the entry stamped, a NEW id (the stamp is hashed)
+        admitted = self.prepared([contract_requirement], mirror_formed="admit")
         self.assertEqual(admitted["MirrorFormed"]["Mode"], "admit")
         self.assertEqual(admitted["OutOfScope"], [])
         self.assertEqual(len(admitted["Coupons"]), 1)
         coupon = admitted["Coupons"][0]
         self.assertEqual(coupon["EdgeCount"], 2)
+        self.assertFalse(coupon["MirrorFormedFlagOnly"])
         directory = Path(coupon["Directory"])
         self.assertEqual(directory.name, coupon["Case"])
+        self.assertNotEqual(coupon["Case"], plain_ids["admit"][0])
         # the full symmetric signature is built: both portions are claims (mesh-signature rows: 2 claims + 4 context)
         rows = (directory / "mesh-signature.csv").read_text().splitlines()
         self.assertEqual(len(rows), 1 + 2 + 4)
         self.assertEqual([row.split(",")[-2] for row in rows[1:]], ["0", "0", "1", "1", "1", "1"])
         model = json.loads((directory / "process-library.json").read_text())["Models"][0]
-        self.assertEqual(model["Signature"], requirement["Signature"])
+        self.assertEqual(model["Signature"], contract_requirement["Signature"])
         self.assertEqual([edge["Weight"] for edge in model["Edges"]], [1.0, 0.0])
         stamp = model["MirrorFormed"]
         self.assertEqual((stamp["RealPortions"], stamp["ImagePortions"], stamp["EdgePortions"], stamp["Planes"]), ([0], [1], [0, 1], [0]))
@@ -361,23 +411,28 @@ class MirrorFormedContractTest(unittest.TestCase):
         self.assertEqual(coupon["MirrorFormed"], stamp)
         provenance = json.loads((directory / "provenance.json").read_text())
         self.assertEqual(provenance["MirrorFormed"]["Mode"], "admit")
-        self.assertEqual(provenance["MirrorFormed"]["Contract"], requirement["MirrorFormedContract"])
+        self.assertEqual(provenance["MirrorFormed"]["Contract"], contract_requirement["MirrorFormedContract"])
         self.assertEqual(provenance["MirrorFormed"]["RealPortions"], [0])
         # the stamp is inside the content hash (process-library.json is a bound source role)
         digest, digests = device_coupons.content_hash(directory)
         self.assertEqual(coupon["Case"], f"spatial-2-edge-{digest[:12]}")
         self.assertIn("ProcessLibrary", digests)
-        # an inconsistent contract fails closed before any generation (admit mode)
-        broken = json.loads(json.dumps(requirement))
+        # an inconsistent contract fails closed before any generation (admit mode); a non-object contract too
+        broken = json.loads(json.dumps(contract_requirement))
         broken["MirrorFormedContract"]["RealPortions"] = [0, 1]
         shutil.rmtree(self.tmp / "device-admit")
         with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "names every portion"):
             self.prepared([broken], mirror_formed="admit")
-        missing = json.loads(json.dumps(requirement))
-        del missing["MirrorFormedContract"]
+        null_contract = json.loads(json.dumps(contract_requirement))
+        null_contract["MirrorFormedContract"] = None
         shutil.rmtree(self.tmp / "device-admit")
-        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "is missing"):
-            self.prepared([missing], mirror_formed="admit")
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "is not an object"):
+            self.prepared([null_contract], mirror_formed="admit")
+        # a null contract is still a contract-bearing requirement for the router: refused out of scope in the default mode
+        shutil.rmtree(self.tmp / "device-admit", ignore_errors=True)
+        shutil.rmtree(self.tmp / "device-refuse")
+        refused_null = self.prepared([null_contract])
+        self.assertEqual([item["Method"] for item in refused_null["OutOfScope"]], [device_coupons.MIRROR_FORMED_NOT_ADMITTED_METHOD])
 
     def test_qualify_and_combine_carry_the_stamp_verbatim(self):
         import qualify_library
