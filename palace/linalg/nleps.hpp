@@ -185,6 +185,9 @@ private:
   // Refine linear eigenvalues with nonlinear Newton eigenvalue solver.
   bool refine_nonlinear;
 
+  // Whether the linear eigenvalue solver solves for μ = -λ² rather than λ.
+  bool linear_squared = false;
+
   // Set the initial guesses from the linear eigenvalue solver results.
   void SetInitialGuess();
 
@@ -221,6 +224,10 @@ public:
 
   // Set the maximum number of restarts with the same initial guess.
   void SetMaxRestart(int max_num_restart);
+
+  // Set whether the linear eigenvalue solver for the initial guesses solves the linear
+  // eigenvalue problem K x = μ M x for μ = -λ² (rather than a quadratic problem for λ).
+  void SetLinearEigenvalueSquared(bool squared) { linear_squared = squared; }
 
   // Solve the nonlinear eigenvalue problem.
   int Solve() override;
