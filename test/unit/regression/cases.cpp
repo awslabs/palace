@@ -1087,6 +1087,34 @@ TEST_CASE("cylinder_cavity_drude", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cylinder", "cavity_drude.json", "cavity_drude", opts);
 }
 
+// Lorentz medium tuned to the TM010 cavity mode. Each cavity mode splits into a polariton
+// branch on each side of the material pole; above a target below the pole the lowest modes
+// are the lower branches, including that of TM011 next to the pole, which a polynomial seed
+// or an unscaled Newton step misses. Both nonlinear eigensolvers must find it.
+TEST_CASE("cylinder_cavity_lorentz", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz.json", "cavity_lorentz",
+                                  opts);
+}
+
+TEST_CASE("cylinder_cavity_lorentz_slp", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz_slp.json",
+                                  "cavity_lorentz_slp", opts);
+}
+
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

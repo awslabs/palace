@@ -121,8 +121,11 @@ all nonlinear terms on a material share one unit vector-mass operator.
 Transient, electrostatic, magnetostatic, and boundary-mode problems, Absorbing boundaries,
 Floquet or numeric wave ports, and a nonzero `Periodic.FloquetWaveVector` are not supported
 with this material model. The eigenmode divergence-free projection is disabled because
-longitudinal plasma modes can be physical. In adaptive circuit synthesis, pole terms are
-realized exactly, while `DjordjevicSarkar` terms are fit over the frequency sweep.
+longitudinal plasma modes can be physical. Eigenmodes of a region partially filled with a
+pole material accumulate at the material resonance, so choose the eigenmode `Target` away
+from material resonances; the eigensolver warns when it cannot resolve the requested modes.
+In adaptive circuit synthesis, pole terms are realized exactly, while `DjordjevicSarkar`
+terms are fit over the frequency sweep.
 
 Frequency-aware postprocessing is not yet available. Domain electric energy, EPR, and
 quality factor; permittivity-based error indicators; electric `SurfaceFlux`; automatic
