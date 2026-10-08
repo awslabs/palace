@@ -289,7 +289,8 @@ public:
   // the driven frequency range or the eigenmode target). Ignored when frequency_dependent.
   double reference_frequency = -1.0;
 
-  // If false, adaptive mesh refinement is disabled inside this PML region.
+  // If false, adaptive mesh refinement is disabled inside this PML region (the error
+  // indicators of its elements are ignored for marking and the refinement tolerance).
   bool allow_refinement = false;
 
   PMLData() = default;

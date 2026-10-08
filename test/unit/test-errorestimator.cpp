@@ -4,6 +4,7 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
@@ -182,6 +183,103 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
         {
           return GradFluxErrorEstimator<decltype(vec_type)>(mat_op, nd_fespace, rt_fespaces,
                                                             tol, max_it, print, use_mg);
+        },
+        nd_fespace);
+  }
+}
+
+// The bulk material properties of PML regions are zero (the stretched PML tensors are
+// assembled separately), so the flux error estimators use the background material of the
+// PML: the error indicators match those of the same mesh and fields without PML, rather
+// than vanishing in the PML and spuriously growing at the PML interface.
+TEST_CASE("Flux error estimators use the background material in PML regions",
+          "[errorestimator][pml][Serial][Parallel]")
+{
+  const auto comm = MPI_COMM_WORLD;
+  auto smesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < smesh.GetNE(); i++)
+  {
+    mfem::Vector c;
+    smesh.GetElementCenter(i, c);
+    smesh.SetAttribute(i, (c(2) > 0.75) ? 2 : 1);  // +z PML layer of thickness 0.25
+  }
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, smesh));
+  constexpr int order = 2;
+  fem::DefaultIntegrationOrder::p_trial = order;
+
+  auto MakeMaterials = [](bool pml)
+  {
+    std::vector<config::MaterialData> materials(2);
+    for (int k = 0; k < 2; k++)
+    {
+      materials[k].attributes = {k + 1};
+      materials[k].epsilon_r.s = {2.0, 3.0, 4.0};
+      materials[k].mu_r.s = {1.0, 1.5, 2.0};
+    }
+    if (pml)
+    {
+      materials[1].pml = config::PMLData();
+      materials[1].pml->reference_frequency = 2.0;
+    }
+    return materials;
+  };
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op_pml(MakeMaterials(true), periodic, ProblemType::DRIVEN, mesh);
+  MaterialOperator mat_op_ref(MakeMaterials(false), periodic, ProblemType::DRIVEN, mesh);
+  REQUIRE(mat_op_pml.HasPML());
+  REQUIRE(!mat_op_ref.HasPML());
+
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::RT_FECollection rt_fec(order - 1, mesh.Dimension());
+  FiniteElementSpaceHierarchy nd_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &nd_fec));
+  FiniteElementSpaceHierarchy rt_fespaces(
+      std::make_unique<FiniteElementSpace>(mesh, &rt_fec));
+  auto &nd_fespace = nd_fespaces.GetFinestFESpace();
+  auto &rt_fespace = rt_fespaces.GetFinestFESpace();
+  constexpr double tol = 1.0e-14;
+  constexpr int max_it = 1000, print = 0;
+  constexpr bool use_mg = false;
+
+  auto Check = [&](auto MakeEstimator, const FiniteElementSpace &fespace)
+  {
+    Vector X(fespace.GetTrueVSize());
+    X.UseDevice(true);
+    FillRandom(X, 13);
+    ErrorIndicator ind_pml, ind_ref;
+    MakeEstimator(mat_op_pml).AddErrorIndicator(X, 1.0, ind_pml);
+    MakeEstimator(mat_op_ref).AddErrorIndicator(X, 1.0, ind_ref);
+    const auto *hp = ind_pml.Local().HostRead();
+    const auto *hr = ind_ref.Local().HostRead();
+    REQUIRE(ind_pml.Local().Size() == mesh.GetNE());
+    for (int i = 0; i < mesh.GetNE(); i++)
+    {
+      INFO("element " << i << " (attribute " << mesh.Get().GetAttribute(i) << ")");
+      CHECK(hr[i] > 0.0);
+      CHECK_THAT(hp[i], WithinRel(hr[i], 1.0e-8));
+    }
+  };
+
+  SECTION("Curl flux estimator")
+  {
+    Check(
+        [&](const MaterialOperator &mat_op)
+        {
+          return CurlFluxErrorEstimator<Vector>(mat_op, rt_fespace, nd_fespaces, tol,
+                                                max_it, print, use_mg);
+        },
+        rt_fespace);
+  }
+
+  SECTION("Gradient flux estimator")
+  {
+    Check(
+        [&](const MaterialOperator &mat_op)
+        {
+          return GradFluxErrorEstimator<Vector>(mat_op, nd_fespace, rt_fespaces, tol,
+                                                max_it, print, use_mg);
         },
         nd_fespace);
   }

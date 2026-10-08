@@ -171,10 +171,11 @@ public:
   const std::vector<pml::Profile> &GetPMLProfiles() const { return pml_profiles; }
   const std::vector<int> &GetPMLAttrToProfile() const { return pml_attr_to_profile; }
 
-  // Real part of the permittivity, with the background permittivity in PML regions (the
-  // bulk properties of PML attributes are zero otherwise). For positive definite weights
-  // which do not need to account for the PML stretch.
+  // Real part of the permittivity and inverse permeability, with the background material
+  // properties in PML regions (the bulk properties of PML attributes are zero otherwise).
+  // For positive definite weights which do not need to account for the PML stretch.
   mfem::DenseTensor GetBackgroundPermittivityReal() const;
+  mfem::DenseTensor GetBackgroundInvPermeability() const;
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;

@@ -37,22 +37,23 @@ namespace palace
 namespace
 {
 
-// PML attributes have mat_epsilon / mat_muinv zeroed out by MaterialOperator (the PML
-// tensors are applied separately via per-QP integrators). MatrixPow(zero, -0.5) evaluates
-// pow(0, -0.5) = +inf on each eigenvalue, which would poison the flux-recovery error
-// integrand on PML elements. Replace those non-finite entries with zero so the weighted
-// residual ||√ε·E − ε^{-1/2}·D||² collapses to 0 on PML elements (E and D are both zero
-// there through the coefficient path, so the semantic is "PML contributes no error").
-void ZeroNonFiniteEntries(mfem::DenseTensor &T)
+// Material tensors for the flux recovery. The bulk material properties of PML regions are
+// zero (the stretched PML tensors are assembled separately), so the background material is
+// used instead: the stretch factors are continuous, so the normal component of the flux of
+// the background material is continuous across the PML interface and between the elements
+// of the PML up to discretization error, and the PML elements do not create spurious flux
+// jumps at the PML interface which would inflate the error indicators of the adjacent
+// elements of the physical region.
+mfem::DenseTensor FluxPermittivity(const MaterialOperator &mat_op)
 {
-  double *d = T.Data();
-  for (int i = 0, n = T.TotalSize(); i < n; i++)
-  {
-    if (!std::isfinite(d[i]))
-    {
-      d[i] = 0.0;
-    }
-  }
+  return mat_op.GetBackgroundPermittivityReal();
+}
+
+mfem::DenseTensor FluxInvPermeability(const MaterialOperator &mat_op)
+{
+  // In 2D, the curl is scalar so we use scalar (1x1) μ⁻¹ (no PML in 2D).
+  return (mat_op.GetInvPermeability().SizeI() == 2) ? mat_op.GetCurlCurlInvPermeability()
+                                                    : mat_op.GetBackgroundInvPermeability();
 }
 
 template <OperatorType OperType>
@@ -304,7 +305,7 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
     bool use_mg)
   : nd_fespace(nd_fespace), rt_fespace(rt_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
-                                          mat_op.GetPermittivityReal()),
+                                          FluxPermittivity(mat_op)),
               rt_fespaces, nd_fespace, tol, max_it, print, use_mg),
     integ_op(nd_fespace.GetMesh().GetNE(), nd_fespace.GetVSize()),
     E_gf(nd_fespace.GetVSize()), D(rt_fespace.GetTrueVSize()), D_gf(rt_fespace.GetVSize())
@@ -359,9 +360,9 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
       CeedBasis rt_basis = rt_fespace.GetCeedBasis(ceed, geom);
 
       // Construct coefficient for discontinuous flux, then smooth flux.
-      auto mat_sqrtepsilon = linalg::MatrixSqrt(mat_op.GetPermittivityReal());
-      auto mat_invsqrtepsilon = linalg::MatrixPow(mat_op.GetPermittivityReal(), -0.5);
-      ZeroNonFiniteEntries(mat_invsqrtepsilon);
+      const auto mat_epsilon = FluxPermittivity(mat_op);
+      auto mat_sqrtepsilon = linalg::MatrixSqrt(mat_epsilon);
+      auto mat_invsqrtepsilon = linalg::MatrixPow(mat_epsilon, -0.5);
       MaterialPropertyCoefficient sqrtepsilon_func(mat_op.GetAttributeToMaterial(),
                                                    mat_sqrtepsilon);
       MaterialPropertyCoefficient invsqrtepsilon_func(mat_op.GetAttributeToMaterial(),
@@ -428,7 +429,7 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
     bool use_mg)
   : rt_fespace(rt_fespace), nd_fespace(nd_fespaces.GetFinestFESpace()),
     projector(MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
-                                          mat_op.GetCurlCurlInvPermeability()),
+                                          FluxInvPermeability(mat_op)),
               nd_fespaces, rt_fespace, tol, max_it, print, use_mg),
     integ_op(nd_fespace.GetMesh().GetNE(), rt_fespace.GetVSize()),
     B_gf(rt_fespace.GetVSize()), H(nd_fespace.GetTrueVSize()), H_gf(nd_fespace.GetVSize())
@@ -485,11 +486,9 @@ CurlFluxErrorEstimator<VecType>::CurlFluxErrorEstimator(
       // Construct coefficient for discontinuous flux, then smooth flux.
       // In 2D, the curl is scalar so we use scalar (1x1) √μ⁻¹ and √μ coefficients.
       const bool scalar_curl = (mesh.Dimension() == 2);
-      const auto &muinv_tensor =
-          scalar_curl ? mat_op.GetCurlCurlInvPermeability() : mat_op.GetInvPermeability();
+      const auto muinv_tensor = FluxInvPermeability(mat_op);
       auto mat_invsqrtmu = linalg::MatrixSqrt(muinv_tensor);
       auto mat_sqrtmu = linalg::MatrixPow(muinv_tensor, -0.5);
-      ZeroNonFiniteEntries(mat_sqrtmu);  // See note at ZeroNonFiniteEntries (PML μ⁻¹=0).
       MaterialPropertyCoefficient invsqrtmu_func(mat_op.GetAttributeToMaterial(),
                                                  mat_invsqrtmu);
       MaterialPropertyCoefficient sqrtmu_func(mat_op.GetAttributeToMaterial(), mat_sqrtmu);
