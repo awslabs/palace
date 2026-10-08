@@ -52,10 +52,16 @@ RADIUS = 1.9
 # The golden content hashes (sha256 of the sorted (role, digest) pairs; the case id is its first 12
 # hex): written by this module at the round-3 B0 head on macOS arm64 and reproduced on Linux
 # aarch64 (impl-B0 REPORT, the two-platform replay). A changed value is a changed source byte.
+# Round 3 B3 (DESIGN R7 / R8 (d), decision 510 MINOR-6) re-froze the three: every TAGGED boundary
+# gains the integer ArcChain column (the rounded finger 55d18fb2e29e... and 448693d60a6f
+# 93418d21c397... changed in the Boundary role alone), and 2bc3d927fda6 (2aee170a6108...) carries
+# its same-circle claim arc 1 / context arc 3 as ONE chain (fix 2a: Boundary, Mask, Signature and
+# ProcessLibrary roles) - its Refused ENTRY ce44cb3ceb86 stays; the re-admission registers a new id
+# (impl-B3 REPORT). The cross-platform property is what the test asserts.
 GOLDEN_CONTENT_HASH = {
-    "rounded-finger": "55d18fb2e29ef702674c886b0241263f834a26d856caa4d7542d268f137acf8b",
-    "448693d60a6f": "93418d21c39779e93e0378ef2e28b2ebd8702ea35f887cced83f90b1e43a0f80",
-    "2bc3d927fda6": "2aee170a6108b30243e0297e97ae7e5eda7d40254e6371d2bc22f3b5a03ddfe9",
+    "rounded-finger": "355ac30231c95a9e2211dc8cfa2e07568c8503a4e6e6cd8bd50f36fdcba3fc43",
+    "448693d60a6f": "a6e3e7bc630b50a3a898db44e71c71ffdf6701760daaed7246caf4db62ea7c26",
+    "2bc3d927fda6": "3ddfc207ed52872993bac117b76eb8d88fab716d6f9b2b8d54b07cf8dfaf64b1",
 }
 
 

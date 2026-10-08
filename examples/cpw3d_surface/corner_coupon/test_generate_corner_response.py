@@ -11,6 +11,10 @@ support on the PEC part of the box contour. The 90-degree convex node reproduces
 8-knot layout byte-identically."""
 
 import importlib.util
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -710,6 +714,76 @@ class AcuteConcaveGradingTest(unittest.TestCase):
             for slot in range(16):
                 self.assertAlmostEqual(by_slot[slot][0], fractions[slot], places=9, msg=(angle, slot))
                 self.assertEqual(by_slot[slot][1] == "zero", slot in [0, 10, 11, 12, 13, 14, 15], (angle, slot))
+
+
+class CornerRadiusIndependenceTest(unittest.TestCase):
+    """The box trace basis never sees the fillet (fillet-basis design 2026-10-07 section 1.2,
+    decision 511): the fillet's tangency points lie r / tan(angle / 2) < R inside the matching
+    box and the arms are straight where they cross it, so the basis points, the trace mesh,
+    the held-out reference surface and its coefficients of a rounded corner are byte-identical
+    to the sharp corner's at the same angle; the model record differs in the radius keys
+    only. Pinned as a contract: a later r-dependent layout needs a record change."""
+
+    BASIS_FILES = (
+        "basis-points.csv",
+        "trace-vertices.csv",
+        "trace-triangles.csv",
+        "heldout-trace.csv",
+        "heldout-coefficients.csv",
+    )
+    # The admissible radii of the 90-degree node (tangent distance r < R): the sweep nodes of
+    # the fillet-basis design (0.25, 0.526316 = S7's 1.0000004 um, 0.90 R).
+    RADII_OVER_R = (0.25, 1.0000004 / RADIUS, 0.90)
+
+    @staticmethod
+    def generate(output, topology, corner_radius):
+        command = [
+            sys.executable,
+            str(ROOT / "generate_corner_response.py"),
+            "--output", str(output),
+            "--thin-mesh", str(output / "thin.msh"),
+            "--fabricated-mesh", str(output / "fabricated.msh"),
+            "--radius", repr(RADIUS),
+            "--angle", "90",
+            "--corner-radius", repr(corner_radius),
+            "--trace-basis", "all-rings-follow-metal",
+            "--ring-size", "16",
+            "--order", "3",
+            "--metal-thickness", repr(THICKNESS),
+            "--overetch-depth", repr(OVERETCH),
+            "--sidewall-angle", "90",
+            "--top-rounding", "0",
+            "--trench-rounding", "0",
+            "--topology", topology,
+        ]
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        return json.loads((output / "process-library.json").read_text())["Models"][0]
+
+    def test_corner_basis_files_independent_of_corner_radius(self):
+        for topology in ("convex", "concave"):
+            with tempfile.TemporaryDirectory() as directory:
+                sharp_dir = Path(directory) / "r0"
+                sharp = self.generate(sharp_dir, topology, 0.0)
+                sharp_files = {name: (sharp_dir / name).read_bytes() for name in self.BASIS_FILES}
+                self.assertEqual(sharp["CornerRadius"], 0.0)
+                for radius_over_r in self.RADII_OVER_R:
+                    corner_radius = radius_over_r * RADIUS
+                    rounded_dir = Path(directory) / f"r{radius_over_r:g}"
+                    rounded = self.generate(rounded_dir, topology, corner_radius)
+                    for name in self.BASIS_FILES:
+                        with self.subTest(topology=topology, radius=radius_over_r, file=name):
+                            self.assertEqual((rounded_dir / name).read_bytes(), sharp_files[name])
+                    differing = {key for key in sharp if sharp[key] != rounded.get(key)}
+                    expected = {"Name", "CornerRadius", "CornerRadiusTolerance"}
+                    if topology == "convex":
+                        expected.add("Reference")  # the arc centre: the apex is no longer metal
+                    self.assertEqual(differing, expected, (topology, radius_over_r))
+                    self.assertEqual(set(sharp), set(rounded))
+                    self.assertEqual(rounded["CornerRadius"], corner_radius)
+                    self.assertEqual(rounded["TraceBasis"], sharp["TraceBasis"])
+                    self.assertEqual(rounded["TraceBasis"]["RingLayout"], "AllRingsFollowMetal")
+                    self.assertEqual(rounded["ZeroTraceIndices"], sharp["ZeroTraceIndices"])
+                    self.assertEqual(rounded["ContourGroups"], sharp["ContourGroups"])
 
 
 if __name__ == "__main__":

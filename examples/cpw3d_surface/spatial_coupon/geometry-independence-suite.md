@@ -722,10 +722,28 @@ build census (`build-census`, the bound build report):
         (straight sides + arc parts - untubed sides)). The estimator counts an arc side by
         its length and its corners / caps from the arc classes (no chord corners: the loop
         end reads 7 corners / 24 caps instead of 313 / 1,244). Not supported, fail closed:
-        an arc of fewer than four chords (the untagged fit of the trench footprint needs
-        four), an untubed arc, a tilted arc / arc joint of two different circles, a loop
-        made of one closed arc; arc sides take part in the facing test with their exact circle
-        geometry since round 2 F6 (above). Decision 391 MAJOR-2 (ii) (mesher review R2)
+        an untubed arc, a tilted arc / arc joint of two different circles, a loop made of one
+        closed arc; arc sides take part in the facing test with their exact circle geometry
+        since round 2 F6 (above). An arc of fewer than four chords builds since mesher design
+        round 3 class (7) Option B (B3, decision 510 O1): `curved_offset_loop` propagates the
+        metal runs through the trench collar offset (`runs` / `short` on its record,
+        `carried_offset_runs` on the final collar polygon), and `polygon_wire` /
+        `loft_polygon` / `physical_segments` read them where a metal run has fewer than four
+        chords, keeping the untagged fit (bitwise) asserted against the propagated circles
+        otherwise; the former `metal_edge_segments` guard is deleted. Round 3 class (4)
+        (G.4.3 A): `tagged_arc_runs` is residual-only - the tagged circle IS the circle; the
+        ill-conditioned three-point fit is a printed diagnostic. Round 3 classes (2) / (3) / (11)
+        (B3; DESIGN R1 / R2 / R6 / R7, part M 1.3): the generator rebuilds same-circle arc
+        entries of one conductor as ONE chain on one circle (`cluster_signature_geometry.
+        rebuilt_arcs` fix 2a: `ChainJoint` records, identical tag digits on every member, the
+        integer `ArcChain` boundary column - optional for every reader, written only on a tagged
+        boundary), protects every kept arc's chord vertices from the near-collinear merge (fix
+        2b), demotes a chain whose sweep is at most JUNCTION_TANGENT_ANGLE to its chords
+        (`Geometry.StraightenedArcs`; every smooth joint of a demoted entry must read a chord
+        turn below ARC_SMOOTH_JOINT_TURN_BOUND = JUNCTION_TANGENT_ANGLE / 2, else the generator
+        stops by name), and the mesher's joint table names the earlier tube in install order as
+        the owner of an arc-arc smooth joint of ONE circle (fix 11; `ScopeGuard[ArcArcJoint]`
+        keeps the untested distinct-circle / opposite-sigma residual). Decision 391 MAJOR-2 (ii) (mesher review R2)
         added two fail-closed guards in `metal_edge_segments` until the four synthetic FULL
         builds existed; mesher design round 2b (decision 437 (3)) built them (arc face ends
         at 45 / 70 degrees fab + thin, the 5e-5-rad smooth joint, the 2e-4-rad corner joint,

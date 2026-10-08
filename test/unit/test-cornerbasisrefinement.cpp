@@ -1449,8 +1449,8 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
   const fs::path corner_domain = temp.temp_dir / "corner-domain.csv";
   const fs::path corner_surface = temp.temp_dir / "corner-surface.csv";
   std::map<std::string, fs::path> libraries;
-  for (const std::string name :
-       {"family", "wrong-angle", "connectivity", "no-extra-ring", "spurious-zero"})
+  for (const std::string name : {"family", "wrong-angle", "connectivity", "no-extra-ring",
+                                 "spurious-zero", "rounded", "rounded-wrong-angle"})
   {
     libraries[name] = temp.temp_dir / ("library-" + name + ".json");
   }
@@ -1621,6 +1621,32 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
       missing[1] = Model("105", 105.0, files);
       Write("no-extra-ring", missing);
     }
+    {
+      // Decision 511 (fillet basis): a ROUNDED corner of the refined rule carries the same
+      // files as the sharp node of its angle (the box basis never sees the fillet: the
+      // tangency points lie r / tan(theta / 2) inside the box), so the load-time check
+      // reads the angle only and covers rounded models too (before decision 511 it skipped
+      // every model with CornerRadius > 0). A rounded 90-degree model (r = 0.525 R, the S7
+      // class) with the 90 node's files loads beside the family; the same model with the
+      // perturbed files is refused with the sharp coupon's message.
+      auto Rounded = [&](json model)
+      {
+        model["Name"] = "convex-corner-90-r0.105";
+        model["CornerRadius"] = 0.105;
+        model["CornerRadiusTolerance"] = 0.0021;
+        model["Reference"] = {0.105, 0.105, 0.0};
+        return model;
+      };
+      auto rounded = family;
+      rounded.push_back(Rounded(family[0]));
+      Write("rounded", rounded);
+      auto rounded_wrong = family;
+      rounded_wrong.push_back(
+          Rounded(Model("90-rounded-wrong", 90.0,
+                        WriteRefinedCoupon(temp.temp_dir, "90-rounded-wrong", 90.0, true, R,
+                                           t, oe, 6 * 16 + 0))));
+      Write("rounded-wrong-angle", rounded_wrong);
+    }
   }
   Mpi::Barrier(Mpi::World());
 
@@ -1693,6 +1719,27 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
   CHECK_THROWS_WITH(Preflight("spurious-zero", *square_mesh),
                     ContainsSubstring("is not its trace basis rule's coupon") &&
                         ContainsSubstring("is in ZeroTraceIndices but is a free knot"));
+  CHECK_THROWS_WITH(Preflight("rounded-wrong-angle", *square_mesh),
+                    ContainsSubstring("convex-corner-90-r0.105") &&
+                        ContainsSubstring("is not its trace basis rule's coupon") &&
+                        ContainsSubstring("basis point"));
+  {
+    // The rounded refined model loads under the extended check; the square island's sharp
+    // corners still match the sharp 90 node (a rounded model is matched by its radius
+    // only).
+    const json manifest = Preflight("rounded", *square_mesh);
+    int corners = 0;
+    for (const auto &feature : manifest["Identification"]["Features"])
+    {
+      if (feature["Type"] == "ConvexCorner")
+      {
+        corners++;
+        CHECK(feature["Match"]["Status"] == "Matched");
+        CHECK(feature["Match"]["Model"] == "convex-corner-90");
+      }
+    }
+    CHECK(corners == 4);
+  }
   {
     const json manifest = Preflight("family", *square_mesh);
     int corners = 0;
