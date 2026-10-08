@@ -152,8 +152,7 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
 PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
 
-PALACE_ENUM_STRING_DEFINE(PMLCoordinateType,
-                          {{PMLCoordinateType::CARTESIAN, "Cartesian"}})
+PALACE_ENUM_STRING_DEFINE(PMLCoordinateType, {{PMLCoordinateType::CARTESIAN, "Cartesian"}})
 
 #undef PALACE_ENUM_STRING_DEFINE
 

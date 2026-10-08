@@ -8,195 +8,115 @@
 #include <complex>
 #include <vector>
 #include "utils/configfile.hpp"
-#include "utils/labels.hpp"
 
 // Forward-declare the union used by libCEED QFunction contexts (defined in
-// fem/qfunctions/coeff/coeff_qf.h). Callers that invoke PackProfileContext need to
-// include that header themselves, after bringing in <ceed.h> first.
+// fem/qfunctions/coeff/coeff_qf.h).
 union CeedIntScalar;
 
 namespace palace::pml
 {
 
-// A compiled, nondimensionalized per-region PML profile. Built from config::PMLData at
-// setup time. Holds the geometric extents of the PML layer (inner interface + thickness
-// along each signed face) and the profile parameters (order, σ_max, κ_max, α_max).
 //
-// Geometry convention: direction_signs and thickness are indexed per signed face in the
-// order {−x, +x, −y, +y, −z, +z}. For each active face:
-//   - sign != 0 ⇒ absorption is active in that direction
-//   - thickness[i] > 0 ⇒ PML layer depth
-//   - interface_coord[axis][0] = inner interface on the negative-x side (min of PML
-//     region becomes outer, max is inner)
-//   - interface_coord[axis][1] = inner interface on the positive-x side
+// Cartesian perfectly matched layer (PML) model. Within the layer, the coordinates normal
+// to each active face of the PML box are stretched by the complex factor (Palace's e^{+iωt}
+// time convention)
+//                       s(x, ω) = κ(x) + σ(x) / (α(x) + iω) ,
+// with σ, κ - 1, α graded polynomially from zero at the inner interface to their maximum
+// values at the outer boundary. The stretch is applied through the equivalent anisotropic
+// material tensors μ̃⁻¹ = S μ⁻¹ S / det(S) and ε̃ = det(S) S⁻¹ ε S⁻¹, S = diag(s_x, s_y,
+// s_z), evaluated at each quadrature point (see fem/qfunctions/coeff/pml_qf.h). Static
+// profiles use a fixed real reference frequency ω₀ in the stretch, while
+// frequency-dependent profiles use the (possibly complex) solve frequency.
 //
-// The "inner interface" is the PML/physical boundary; the "outer boundary" is the
-// truncation face where a PEC (or PMC) condition closes the domain.
+// Faces are indexed {-x, +x, -y, +y, -z, +z}: face f is on axis f / 2 and on the positive
+// side if f % 2 == 1. All quantities are nondimensional.
+//
+
+// Coordinate of the inner interface (the boundary with the physical region) and layer
+// thickness of each face. Faces with zero thickness are inactive.
+struct LayerGeometry
+{
+  std::array<double, 6> inner{};
+  std::array<double, 6> thickness{};
+};
+
+// A compiled PML profile: the stretch parameters of one PML material together with its
+// background material tensors (3 x 3, column-major).
 struct Profile
 {
-  // Bulk properties (nondimensional) of the background material filling this PML region.
-  // These are multiplied by the Jacobian combination to produce the effective μ̃⁻¹, ε̃.
-  double epsilon_r = 1.0;
-  double mu_r = 1.0;
-
-  // Grading order n in σ(x) = σ_max · ((x − x₀) / d)^n.
-  int order = 3;
-
-  // Per-axis peak σ, κ, α (ready to use; sentinels already resolved).
-  std::array<double, 3> sigma_max{{0.0, 0.0, 0.0}};
+  LayerGeometry geometry;
+  std::array<double, 6> sigma_max{};
   std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
-  std::array<double, 3> alpha_max{{0.0, 0.0, 0.0}};
-
-  // Per-axis PML thickness from the inner interface. One value per axis: we assume the
-  // negative and positive faces of the same axis use the same thickness (typical usage).
-  // If different thicknesses per face are needed, revisit.
-  std::array<double, 3> thickness{{0.0, 0.0, 0.0}};
-
-  // Inner-interface coordinate per signed face. interface_coord[axis][0] is the x
-  // coordinate of the inner edge of the negative-side PML on that axis;
-  // interface_coord[axis][1] is the inner edge of the positive-side PML. Elements
-  // outside these limits are in the PML along that axis.
-  std::array<std::array<double, 2>, 3> interface_coord{};
-
-  // Which signed faces are active (1 = active, 0 = inactive), layout identical to
-  // config::PMLData::direction_signs.
-  std::array<int, 6> direction_active{{0, 0, 0, 0, 0, 0}};
-
-  // If true, the stretch ω is the live solve frequency (refreshed per frequency in
-  // SpaceOperator). If false, ω is baked into reference_frequency at setup.
+  std::array<double, 3> alpha_max{};
+  int order = 3;
   bool frequency_dependent = false;
-
-  // Reference ω₀ for static PML (nondimensional). Must be set (> 0) before use when
-  // frequency_dependent is false. Left at 0 when frequency_dependent is true.
   double reference_frequency = 0.0;
-
-  bool allow_refinement = false;
+  std::array<double, 9> mu_inv{{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
+  std::array<double, 9> epsilon_real{{1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}};
+  std::array<double, 9> epsilon_imag{};
 };
 
-// Compute the per-axis depth d_i(x) into the PML layer from the inner interface, along
-// each active direction. Returns 0 for axes where the element is not in the PML.
-// Inputs x are in the same frame as `profile.interface_coord` (nondimensional).
-std::array<double, 3> ComputeDepth(const Profile &profile, const std::array<double, 3> &x);
+// Detect the PML layer geometry from the bounding box of the physical (non-PML) region,
+// whose faces are the inner PML interfaces, and the bounding box of the whole mesh, whose
+// faces are the outer PML boundaries. A face is active if the two boxes differ on that face
+// by more than rel_tol times the extent of the mesh.
+LayerGeometry DetectLayerGeometry(const std::array<double, 3> &inner_min,
+                                  const std::array<double, 3> &inner_max,
+                                  const std::array<double, 3> &outer_min,
+                                  const std::array<double, 3> &outer_max,
+                                  double rel_tol = 1.0e-6);
 
-// Compute the local σ, κ, α at position x using the polynomial grading profile.
-// σ_i(x) = σ_max_i · (d_i(x) / thickness_i)^n; similarly for α_i. κ_i(x) goes from 1 at
-// the inner interface to κ_max_i at the outer, using the same polynomial shape.
-struct LocalStretchParams
+// Layer geometry from explicitly configured directions and thicknesses, measured inward
+// from the faces of the bounding box of the whole mesh.
+LayerGeometry ConfiguredLayerGeometry(const config::PMLData &data,
+                                      const std::array<double, 3> &outer_min,
+                                      const std::array<double, 3> &outer_max);
+
+// Peak conductivity σ_max of each active face, either the configured value for the face's
+// axis, or, if not specified, σ_max = -(n + 1) ln(R) / (2 d n_r) for a target
+// normal-incidence reflection coefficient R, layer thickness d, grading order n, and
+// refractive index n_r.
+std::array<double, 6> ResolveSigmaMax(const config::PMLData &data,
+                                      const LayerGeometry &geometry, double n_r);
+
+// Build a profile from a (nondimensionalized) configuration, layer geometry, and background
+// material tensors μ⁻¹ and ε = ε' + i ε'' (3 x 3, column-major).
+Profile BuildProfile(const config::PMLData &data, const LayerGeometry &geometry,
+                     const std::array<double, 9> &mu_inv,
+                     const std::array<double, 9> &epsilon_real,
+                     const std::array<double, 9> &epsilon_imag);
+
+// Fractional depth d / t ∈ [0, 1] into the layer along each axis at the point x (zero for
+// axes along which x is not in the layer).
+std::array<double, 3> ComputeDepthFraction(const Profile &profile,
+                                           const std::array<double, 3> &x);
+
+// Output part of the complex PML tensor terms assembled by a PML integrator.
+enum class TensorPart : int
 {
-  std::array<double, 3> sigma{{0.0, 0.0, 0.0}};
-  std::array<double, 3> kappa{{1.0, 1.0, 1.0}};
-  std::array<double, 3> alpha{{0.0, 0.0, 0.0}};
+  REAL = 0,
+  IMAG = 1,
+  ABS = 2  // Re{c} |T| with entrywise magnitude, for real-valued approximations
 };
-LocalStretchParams ComputeLocalStretchParams(const Profile &profile,
-                                             const std::array<double, 3> &x);
 
-// Compute the diagonal CFS-PML stretch s_i(ω) = κ_i + σ_i/(α_i + iω), using Palace's
-// e^{+iωt} time convention. Reduces to classic UPML (s = 1 − iσ/ω) at α=0, κ=1. The
-// caller picks ω: profile.reference_frequency for static PML, the live solve frequency
-// for frequency-dependent PML.
-std::array<std::complex<double>, 3> ComputeStretch(const LocalStretchParams &local,
-                                                   double omega);
-
-// The complex anisotropic μ̃⁻¹ and ε̃ tensors needed by Palace's real/imag-paired
-// integrator path, for a Cartesian (diagonal) PML. Each tensor is stored as the three
-// real-part diagonal entries plus the three imaginary-part diagonal entries:
-//
-//   μ̃⁻¹_ii = mu_inv_re[i] + i · mu_inv_im[i]
-//   ε̃_ii   = eps_re[i]    + i · eps_im[i]
-struct StretchTensors
+// Per-integrator data of the PML QFunction context: the integrator assembles
+// part(c_muinv μ̃⁻¹) and/or part(c_eps ε̃) terms, with the stretch of frequency-dependent
+// profiles evaluated at omega.
+struct ContextHeader
 {
-  std::array<double, 3> mu_inv_re{{1.0, 1.0, 1.0}};
-  std::array<double, 3> mu_inv_im{{0.0, 0.0, 0.0}};
-  std::array<double, 3> eps_re{{1.0, 1.0, 1.0}};
-  std::array<double, 3> eps_im{{0.0, 0.0, 0.0}};
+  TensorPart part = TensorPart::REAL;
+  std::complex<double> c_muinv = 0.0, c_eps = 0.0, omega = 0.0;
+  std::array<double, 9> wave_vector_cross{};  // [k ×], column-major
 };
 
-// Top-level helper: given a profile, a sample position x, and a solve frequency ω,
-// return the four tensors. This is the single source of truth for PML stretch math;
-// every caller in the solver pipeline goes through this function.
-StretchTensors ComputeStretchTensors(const Profile &profile, const std::array<double, 3> &x,
-                                     double omega);
-
-// Resolve "auto" σ_max sentinels (-1) into concrete values using the standard formula
-// σ_max_i = −(n + 1) · ln(R) / (2 · d_i · √(εᵣ · μᵣ)). Called when building a Profile
-// from a config::PMLData. Leaves positive user-specified values untouched.
-void ResolveSigmaMaxDefaults(const config::PMLData &data, double mu_r, double epsilon_r,
-                             std::array<double, 3> &sigma_max_out);
-
-// Build a Profile from a parsed config::PMLData. Assumes config data is already
-// nondimensionalized. For FREQUENCY_DEPENDENT, reference_frequency is left at zero
-// and refilled each time ComputeStretchTensors is called with the live ω.
-Profile BuildProfile(const config::PMLData &data, double mu_r, double epsilon_r);
-
-// Representative sample point inside a PML attribute's meshed slab, given the global
-// mesh bounding box. For axis-aligned PML layers this is the midpoint of the active
-// face's slab along each direction.
-std::array<double, 3> ComputeSlabCentroid(const config::PMLData &data,
-                                          const std::array<double, 3> &bbmin,
-                                          const std::array<double, 3> &bbmax);
-
-// Auto-detect which faces of a PML region are active and how thick the layer is, from
-// the per-attribute bounding box and the global mesh bounding box. A face is
-// considered "active" if the PML bbox reaches the global bbox on that side (within
-// `tol` relative to the global extent) while being strictly inside the global bbox on
-// the opposite side. The thickness along each axis is the PML bbox extent in that
-// direction. Returns (direction_signs, thickness) in PMLData's convention.
-struct SlabGeometry
-{
-  std::array<int, 6> direction_signs{{0, 0, 0, 0, 0, 0}};
-  std::array<double, 6> thickness{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
-};
-struct SlabRegion
-{
-  int attribute = 0;
-  std::array<double, 3> attr_min{{0.0, 0.0, 0.0}};
-  std::array<double, 3> attr_max{{0.0, 0.0, 0.0}};
-};
-struct AttributeSlabGeometry
-{
-  int attribute = 0;
-  SlabGeometry geometry;
-};
-SlabGeometry DetectSlabGeometry(const std::array<double, 3> &attr_min,
-                                const std::array<double, 3> &attr_max,
-                                const std::array<double, 3> &global_min,
-                                const std::array<double, 3> &global_max,
-                                double rel_tol = 1.0e-6);
-std::vector<AttributeSlabGeometry>
-DetectLayeredSlabGeometry(const std::vector<SlabRegion> &regions,
-                          const std::array<double, 3> &global_min,
-                          const std::array<double, 3> &global_max, double rel_tol = 1.0e-6);
-
-// Pack a Profile into the libCEED QFunction context layout consumed by pml_qf.h's
-// PMLEvalStretchTensors. Writes kPMLRegionStride entries into the output array.
-// See fem/qfunctions/coeff/pml_qf.h for the layout documentation. This must match
-// PALACE_PML_REGION_STRIDE in that file.
-constexpr int kPMLRegionStride = 29;
-void PackProfileContext(const Profile &profile, CeedIntScalar *out);
-
-// Build a complete PML QFunction context:
-//   [scale:CeedScalar]
-//   [num_attr:CeedInt]
-//   [attr→profile map]            // one per libCEED attribute; -1 for non-PML
-//   [region 0 (kPMLRegionStride entries)]
-//   [region 1 (kPMLRegionStride entries)]
-//   ...
-// `attr_to_profile[k]` gives the profile index for libCEED attribute k+1 (0-based).
-// `scale` multiplies the stretch-tensor output (used to combine PML contributions
-// with bilinear-form scalar prefactors like a0 in preconditioner cross-terms).
-std::vector<CeedIntScalar> PackProfileContextAll(const std::vector<int> &attr_to_profile,
-                                                 const std::vector<Profile> &profiles,
-                                                 double scale = 1.0);
-
-// Write `scale` into an already-built context buffer. Used by solvers that need the
-// same PML QFunction with different coefficient scales (real vs imag cross-terms).
-void SetPMLContextScale(CeedIntScalar *ctx, double scale);
-
-// Write `omega` into every FREQUENCY_DEPENDENT region of an already-built context.
-// Called by SpaceOperator::GetExtraSystemMatrix(ω) each time the live solve frequency
-// changes. FIXED/CFS regions are left untouched.
-void RefreshPMLContextFrequency(CeedIntScalar *ctx, int num_attr, int num_profiles,
-                                double omega);
+// Pack the QFunction context (layout in fem/qfunctions/coeff/pml_qf.h), mapping each
+// libCEED attribute to its profile index in attr_to_profile (-1 for non-PML attributes).
+// Only profiles whose frequency dependence matches frequency_dependent are included.
+// Returns an empty context if no local attribute maps to an included profile.
+std::vector<CeedIntScalar> PackContext(const ContextHeader &header,
+                                       const std::vector<int> &attr_to_profile,
+                                       const std::vector<Profile> &profiles,
+                                       bool frequency_dependent);
 
 }  // namespace palace::pml
 
