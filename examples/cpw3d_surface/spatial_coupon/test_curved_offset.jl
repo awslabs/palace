@@ -860,3 +860,116 @@ end
     @test occursin("ScopeGuard[CollarFaceEnd]", message) &&
           occursin("corner kink whose offsets do not meet (untested)", message)
 end
+
+@testset "round 3 class (7) Option B (G.7.3 / G.7.6, decision 510 O1): the metal runs propagate through the offset; a run of fewer than four chords is tag-seeded, four or more keep the untagged fit asserted against the propagated circle" begin
+    # A rounded rectangle whose four TAGGED quarter arcs carry 1, 2, 3 and 9 chords (ids 1..4):
+    # the untagged fit of the collar offset recognises the 9-chord arc only; the propagated
+    # runs carry all four with the concentric circle (centre unchanged, radius r + collar).
+    r = 1.0
+    collar = 1.5
+    chords_of = (1, 2, 3, 9)
+    centers = ((3.0, -2.0, -pi / 2), (3.0, 2.0, 0.0), (-3.0, 2.0, pi / 2), (-3.0, -2.0, pi))
+    points = NTuple{2, Float64}[]
+    arcs = Union{Nothing, NamedTuple}[]
+    for (index, (cx, cy, a0)) in enumerate(centers)
+        chords = chords_of[index]
+        for k = 0:chords
+            push!(points, (cx + r * cos(a0 + k * (pi / 2) / chords), cy + r * sin(a0 + k * (pi / 2) / chords)))
+            push!(arcs, k < chords ? (id=index, centre=(cx, cy), radius=r, sign=1) : nothing)
+        end
+    end
+    n = length(points)
+    loop = (conductor=1, plane=0.0, hole=false, points=points, classes=fill("Physical", n), arcs=arcs,
+            joints=Vector{Union{Nothing, NamedTuple}}(nothing, n))
+    runs = tagged_arc_runs(loop, TOLERANCE)
+    @test [length(run.edge_indices) for run in runs] == collect(chords_of)
+    @test length(circular_arc_runs(points, TOLERANCE)) == 1      # the untagged fit: the 9-chord arc only
+    offset = curved_offset_loop(loop, -collar, runs, TOLERANCE)
+    @test offset.short && !offset.bridged
+    @test [run.id for run in offset.runs] == [1, 2, 3, 4]
+    @test [length(run.edge_indices) for run in offset.runs] == collect(chords_of)
+    for (run, (cx, cy, _)) in zip(offset.runs, centers)
+        @test run.center == (cx, cy) && isapprox(run.radius, r + collar; atol=1.0e-12) && run.sign == 1
+        @test all(distance_to_circle(offset.points[i], run.center, r + collar) <= 1.0e-12 for i in run.point_indices)
+        fitted = fit_carried_run(offset.points, run, TOLERANCE)
+        @test isapprox(abs(fitted.sweep), pi / 2; atol=1.0e-9) && fitted.orientation == 1.0 && fitted.id == run.id
+        # The propagated edges are consecutive edges of the offset polygon (cyclic).
+        @test all(run.point_indices[k + 1] == mod1(run.point_indices[k] + 1, length(offset.points))
+                  for k in 1:(length(run.point_indices) - 1))
+    end
+    @test length(offset.points) == n
+    # offset_loop / collar_loop_points carry the record; carried_offset_runs reads it on the miter
+    # polygon itself and on a polygon that drops the 3-chord arc's middle vertex (the one surviving
+    # consecutive pair is carried as a 1-chord piece; the merged side is a straight side).
+    record = offset_loop(loop, -collar, TOLERANCE)
+    @test record.points == offset.points && record.short && length(record.runs) == 4
+    miter, construction, collar_record = collar_loop_points(loop, -collar, ([-10.0, -10.0], [10.0, 10.0]), TOLERANCE)
+    @test construction == "MiterOffset" && miter == offset.points && collar_record.runs == offset.runs
+    carried = carried_offset_runs(offset, offset.points, TOLERANCE)
+    @test carried.short && carried.runs == offset.runs
+    middle = offset.runs[3].point_indices[2]
+    dropped = [offset.points[i] for i in eachindex(offset.points) if i != middle]
+    carried = carried_offset_runs(offset, dropped, TOLERANCE)
+    @test carried.short && [run.id for run in carried.runs] == [1, 2, 3, 4] &&
+          [length(run.edge_indices) for run in carried.runs] == [1, 2, 1, 9]
+    # Reversed polygon order: the runs are read backwards, in polygon order (orientation flipped).
+    reversed = reverse(offset.points)
+    carried = carried_offset_runs(offset, reversed, TOLERANCE)
+    @test [length(run.edge_indices) for run in carried.runs] == collect(chords_of) &&
+          all(fit_carried_run(reversed, run, TOLERANCE).orientation == -1.0 for run in carried.runs)
+    @test carried_offset_runs(nothing, offset.points, TOLERANCE) === nothing
+    # offset_wire_runs: the propagated runs (fitted) where short; the untagged fit otherwise, asserted.
+    seeded = offset_wire_runs(offset.points, carried_offset_runs(offset, offset.points, TOLERANCE), TOLERANCE)
+    @test [(run.id, run.edge_indices, run.center, run.radius) for run in seeded] ==
+          [(run.id, run.edge_indices, run.center, run.radius) for run in offset.runs]
+    reference = exterior(rounded_rectangle(-4.0, -3.0, 4.0, 3.0, r))
+    reference_runs = circular_arc_runs(reference.points, TOLERANCE)
+    reference_offset = curved_offset_loop(reference, -collar, reference_runs, TOLERANCE)
+    @test !reference_offset.short && length(reference_offset.runs) == 4
+    refit = offset_wire_runs(reference_offset.points, (runs=reference_offset.runs, short=false), TOLERANCE)
+    @test refit == circular_arc_runs(reference_offset.points, TOLERANCE)       # bitwise today's path
+    for run in refit
+        @test isapprox(run.radius, r + collar; atol=1.0e-9)
+    end
+    @test offset_wire_runs(reference_offset.points, nothing, TOLERANCE) == refit
+    # The assertion: a propagated radius perturbed by three tolerances fails closed.
+    slack = arc_fit_tolerance(r + collar, TOLERANCE)
+    perturbed = [k == 2 ? merge(run, (radius=run.radius + 3.0 * slack,)) : run
+                 for (k, run) in enumerate(reference_offset.runs)]
+    message = guard_message(() -> offset_wire_runs(reference_offset.points, (runs=perturbed, short=false), TOLERANCE))
+    @test occursin("disagrees with the propagated circle", message) && occursin("class (7) Option B", message)
+    # physical_segments: the 1 / 2 / 3-chord offset arcs are exact arc primitives (the untagged
+    # fit would have read 6 straight chords); the 9-chord one too.
+    primitives = physical_segments([loop], -collar, TOLERANCE)
+    @test count(p -> p.kind == :arc, primitives) == 4 && count(p -> p.kind == :line, primitives) == 4
+    @test all(isapprox(p.radius, r + collar; atol=1.0e-9) for p in primitives if p.kind == :arc)
+    @test count(p -> p.kind == :arc, physical_segments([loop], 0.0, TOLERANCE)) == 4
+    # polygon_wire on the offset polygon: one OCC circle arc per propagated run (4 arcs + 4 lines),
+    # the arcs concentric with the metal arcs; the extruded loft has cylindrical walls.
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("option-b")
+    occ = gmsh.model.occ
+    wire = polygon_wire(occ, offset.points, 0.0; propagated=carried_offset_runs(offset, offset.points, TOLERANCE))
+    occ.synchronize()
+    curves = [(dim, tag) for (dim, tag) in gmsh.model.getEntities(1)]
+    circles = [tag for (dim, tag) in curves if gmsh.model.getType(dim, tag) == "Circle"]
+    lines = [tag for (dim, tag) in curves if gmsh.model.getType(dim, tag) == "Line"]
+    @test length(circles) == 4 && length(lines) == 4
+    for tag in circles
+        lower, upper = gmsh.model.getParametrizationBounds(1, tag)
+        p = gmsh.model.getValue(1, tag, [0.5 * (lower[1] + upper[1])])
+        @test any(distance_to_circle((p[1], p[2]), (cx, cy), r + collar) <= 1.0e-9 for (cx, cy, _) in centers)
+    end
+    volumes = loft_polygon(occ, offset.points, offset.points, 0.0, 0.2;
+                           propagated=carried_offset_runs(offset, offset.points, TOLERANCE))
+    occ.synchronize()
+    @test length(volumes) == 1
+    faces = gmsh.model.getBoundary(volumes, true, false, false)
+    @test count(gmsh.model.getType(2, abs(tag)) == "Cylinder" for (_, tag) in faces) == 4
+    gmsh.finalize()
+    # A hole with a short arc fails closed by name (the shrunk hole offset is not tag-seeded).
+    hole = (conductor=1, plane=0.0, hole=true, points=reverse(points), classes=fill("Physical", n),
+            arcs=[arcs[mod1(n - j, n)] for j in 1:n], joints=Vector{Union{Nothing, NamedTuple}}(nothing, n))
+    @test occursin("fewer than four chords", guard_message(() -> offset_hole_points(hole, -0.3, TOLERANCE)))
+end

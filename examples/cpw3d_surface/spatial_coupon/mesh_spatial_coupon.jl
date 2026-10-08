@@ -3321,14 +3321,17 @@ end
 # vertices, the concentric circle) and the arc tubes (ArcTube parts: the same rule) are
 # split at the same radial planes and the fragment keeps every tube entity whole, whatever
 # the chord count (design 1.2 (3), A7 MINOR-7). A straight loop has no run: bitwise.
-function polygon_wire(occ, points, z; runs=nothing)
+# `propagated` (round 3 class (7) Option B): the carried runs of an OFFSET polygon - read where
+# a metal run has fewer than four chords, else the untagged fit stands and is asserted against
+# them (offset_wire_runs).
+function polygon_wire(occ, points, z; runs=nothing, propagated=nothing)
     tolerance =
         1.0e-9 * max(
             maximum(point[1] for point in points) - minimum(point[1] for point in points),
             maximum(point[2] for point in points) - minimum(point[2] for point in points),
             1.0
         )
-    runs = runs === nothing ? circular_arc_runs(points, tolerance) : runs
+    runs = runs === nothing ? offset_wire_runs(points, propagated, tolerance) : runs
     projected = collect(points)
     for run in runs, index in run.point_indices[2:(end - 1)]
         radial = (points[index][1] - run.center[1], points[index][2] - run.center[2])
@@ -3394,7 +3397,19 @@ end
 # never a simple offset: it fails closed here; only collar_loop_points, which
 # routes it to the collar union, accepts it.
 function offset_loop_points(loop, distance, tolerance)
-    abs(distance)<=tolerance && return loop.points
+    abs(distance) <= tolerance && return loop.points
+    return offset_loop(loop, distance, tolerance).points
+end
+
+# The offset loop WITH its arc runs (round 3 class (7) Option B, G.7.3): `points` as
+# offset_loop_points, `runs` the propagated runs of curved_offset_loop over them (the loop's
+# own tagged / fitted runs at a zero offset; none for a straight loop) and `short` (a metal
+# run of fewer than four chords: the consumers read `runs` instead of refitting).
+function offset_loop(loop, distance, tolerance)
+    if abs(distance) <= tolerance
+        runs = loop_arc_runs(loop, tolerance)
+        return (points=loop.points, runs=runs, short=any(length(run.edge_indices) < 4 for run in runs))
+    end
     runs = loop_arc_runs(loop, tolerance)
     if !isempty(runs)
         offset = curved_offset_loop(loop, distance, runs, tolerance)
@@ -3402,7 +3417,7 @@ function offset_loop_points(loop, distance, tolerance)
             error("Offset $distance of the plan-view loop of conductor $(loop.conductor) on " *
                   "plane $(loop.plane) bridges a collapsed circular arc whose neighbours' " *
                   "offsets do not meet: not a simple offset (only the collar union takes it)")
-        return offset.points
+        return (points=offset.points, runs=offset.runs, short=offset.short)
     end
     metal_side=loop_orientation(loop.points)*(loop.hole ? -1.0 : 1.0)
     shifted = Tuple{NTuple{2, Float64}, NTuple{2, Float64}}[]
@@ -3439,7 +3454,7 @@ function offset_loop_points(loop, distance, tolerance)
             error("Plan-view taper produces an unresolved miter")
         push!(points, point)
     end
-    return points
+    return (points=points, runs=NamedTuple[], short=false)
 end
 
 # ---------------------------------------------------------------------------
@@ -3557,7 +3572,7 @@ function offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
             center=run.center, original_radius=run.radius, radius=radius,
             orientation=run.orientation, convex_sign=convex_sign,
             tangent_start=tangent(start), tangent_stop=tangent(stop),
-            collapsed=collapsed, interior=interior, angle=run.angle)
+            collapsed=collapsed, interior=interior, angle=run.angle, run=item.run)
 end
 
 # Where the shifted line (`point`, `direction`) meets the offset circle of `arc`:
@@ -3640,10 +3655,27 @@ end
 # loop vertex, or the two vertices of the collapsed arcs between them), `point`
 # (nothing when bridged), `tangent` (the items join within JUNCTION_TANGENT_ANGLE)
 # and `convex` (the metal turns convexly there).
+# Mesher design round 3 class (7) Option B (DESIGN-part-G G.7.3, DESIGN R3; decision 510 O1):
+# the record also carries `runs`, the metal runs PROPAGATED through the offset - per
+# non-collapsed arc item one record (center, radius, id, sign, point_indices, edge_indices)
+# over the offset polygon's indices: the same chord count, the metal run's `id` / `sign`
+# (0 for an untagged fit), the concentric circle (centre unchanged, radius r - s x distance)
+# - and `short`, true iff a METAL run has fewer than four chords (the configuration the
+# former metal_edge_segments guard refused: the untagged fit of the offset cannot recognise
+# it, so the consumers read the propagated runs instead, fitted on the final polygon by
+# fit_carried_run; otherwise they keep the untagged fit, bitwise, and assert its circles
+# against these). `offset_loop` / `collar_loop_points` carry the record to
+# `loft_mask_offsets` / `physical_segments`; fix 5A (round 3 B4) extends a propagated run
+# along its circle to the box exit, never refits.
 function curved_offset_loop(loop, distance, runs, tolerance)
     points = loop.points
     n = length(points)
     metal_side = loop_orientation(points) * (loop.hole ? -1.0 : 1.0)
+    short = any(length(run.edge_indices) < 4 for run in runs)
+    propagated(point_indices, center, radius, run) =
+        (center=center, radius=radius, id=haskey(run, :id) ? run.id : 0,
+         sign=haskey(run, :sign) ? run.sign : 0, point_indices=point_indices,
+         edge_indices=point_indices[1:(end - 1)])
     if length(runs) == 1 && length(runs[1].edge_indices) == n
         # A whole circle: concentric, or collapsed (no neighbour to collapse onto).
         run = runs[1]
@@ -3660,8 +3692,9 @@ function curved_offset_loop(loop, distance, runs, tolerance)
                    run.center[2] + radius * (p[2] - run.center[2]) /
                                    hypot(p[1] - run.center[1], p[2] - run.center[2]))
                   for p in points]
+        whole = propagated(vcat(collect(1:n), 1), run.center, radius, run)
         return (points=offset, bridged=false, items=NamedTuple[], junctions=NamedTuple[],
-                metal_side=metal_side)
+                metal_side=metal_side, runs=[whole], short=short)
     end
     items = [offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
              for item in loop_edge_items(points, runs)]
@@ -3671,6 +3704,11 @@ function curved_offset_loop(loop, distance, runs, tolerance)
     offset = NTuple{2, Float64}[]
     junctions = NamedTuple[]
     bridged = false
+    # The offset polygon's indices of every live item's start / stop vertex and interior
+    # (offset chord) vertices, for the propagated runs.
+    start_index = Dict{Int, Int}()
+    stop_index = Dict{Int, Int}()
+    interior_indices = Dict{Int, Vector{Int}}()
     for (position, k) in enumerate(live)
         before = items[k]
         next = live[mod1(position + 1, length(live))]
@@ -3701,21 +3739,35 @@ function curved_offset_loop(loop, distance, runs, tolerance)
         tangent = !collapsed_between && abs(turn) <= JUNCTION_TANGENT_ANGLE
         convex = !collapsed_between && turn > JUNCTION_TANGENT_ANGLE
         append!(offset, before.interior)
+        interior_indices[k] = collect((length(offset) - length(before.interior) + 1):length(offset))
         if resolved
             push!(offset, point)
+            stop_index[k] = length(offset)
+            start_index[next] = length(offset)
         else
             bridged = true
             push!(offset, before.shifted_stop)
+            stop_index[k] = length(offset)
             push!(offset, after.shifted_start)
+            start_index[next] = length(offset)
         end
         push!(junctions, (before=k, after=next, vertices=vertices,
                           point=resolved ? point : nothing, tangent=tangent, convex=convex,
                           collapsed=skipped))
     end
+    offset_runs = NamedTuple[]
+    for k in live
+        item = items[k]
+        item.kind == :arc || continue
+        # The first live item's start vertex is the closing junction (the last point pushed):
+        # its run wraps around the end of the polygon, like a run of a loop may.
+        point_indices = vcat([start_index[k]], interior_indices[k], [stop_index[k]])
+        push!(offset_runs, propagated(point_indices, item.center, item.radius, runs[item.run]))
+    end
     # The cycle [interior_1, J_12, interior_2, ..., interior_m, J_m1] is the offset
     # polygon in loop order (J_m1 closes onto interior_1).
     return (points=offset, bridged=bridged, items=items, junctions=junctions,
-            metal_side=metal_side)
+            metal_side=metal_side, runs=offset_runs, short=short)
 end
 
 # A closed plan-view polygon is simple when no side is degenerate (shorter than
@@ -4175,13 +4227,17 @@ end
 # curved_collar_pieces); its bridged offset polygon is never a simple offset. The
 # union's un-etched islands fail closed unless `island_rule` (collar_island_rule)
 # admits them; `absorbed` collects their records.
+# Returns (points, construction, offset) with `offset` the curved offset record of
+# curved_offset_loop (its propagated `runs` over its `points`, `short`), or nothing for a
+# straight loop / a zero offset (round 3 class (7) Option B): carried_offset_runs reads the
+# runs on the final polygon.
 function collar_loop_points(loop, distance, box, tolerance; island_rule=nothing,
                             absorbed=nothing)
     runs = abs(distance) <= tolerance ? NamedTuple[] : loop_arc_runs(loop, tolerance)
     offset = isempty(runs) ? nothing : curved_offset_loop(loop, distance, runs, tolerance)
     miter = offset === nothing ? offset_loop_points(loop, distance, tolerance) : offset.points
     (offset === nothing || !offset.bridged) && polygon_is_simple(miter, tolerance) &&
-        return miter, "MiterOffset"
+        return miter, "MiterOffset", offset
     distance < 0.0 ||
         error("Inward offset $distance of the plan-view loop of conductor $(loop.conductor) " *
               "on plane $(loop.plane) self-intersects")
@@ -4189,7 +4245,103 @@ function collar_loop_points(loop, distance, box, tolerance; island_rule=nothing,
     pieces = offset === nothing ? collar_pieces(loop, distance, miter, box[1], box[2], tolerance) :
              curved_collar_pieces(loop, distance, offset, box[1], box[2], tolerance)
     return polygon_union_boundary(pieces, tolerance; island_rule=island_rule,
-                                  absorbed=absorbed), "CollarUnion"
+                                  absorbed=absorbed), "CollarUnion", offset
+end
+
+# The propagated runs of a curved offset record read on the FINAL polygon of the loft (the
+# miter polygon itself, the collar union's boundary or either after the footprint
+# simplification): every maximal sequence of consecutive polygon vertices that are, in order
+# (forward or reversed), consecutive offset chord vertices of one propagated run is a carried
+# run of that run's circle (a run clipped by the box or merged by the union is carried in the
+# pieces that survive; one with no surviving edge is dropped). Returns (runs, short) in the
+# propagated format (center, radius, id, sign, point_indices, edge_indices over `polygon`) that
+# polygon_wire / loft_polygon / physical_segments take as `propagated`, or nothing without a
+# curved offset record (round 3 class (7) Option B, G.7.3).
+function carried_offset_runs(offset, polygon, tolerance)
+    offset === nothing && return nothing
+    polygon == offset.points && return (runs=offset.runs, short=offset.short)
+    n = length(polygon)
+    index_of(p) = findfirst(v -> hypot(v[1] - p[1], v[2] - p[2]) <= tolerance, polygon)
+    carried = NamedTuple[]
+    for run in offset.runs
+        indices = [index_of(offset.points[i]) for i in run.point_indices]
+        pieces = Vector{Int}[]
+        piece = Int[]
+        direction = 0            # +1 / -1: the run read forward / reversed along the polygon
+        for index in indices
+            if index === nothing
+                length(piece) >= 2 && push!(pieces, piece)
+                piece, direction = Int[], 0
+                continue
+            end
+            if isempty(piece)
+                push!(piece, index)
+                continue
+            end
+            step = index == mod1(piece[end] + 1, n) ? 1 : piece[end] == mod1(index + 1, n) ? -1 : 0
+            if step != 0 && (direction == 0 || direction == step)
+                push!(piece, index)
+                direction = step
+            else
+                length(piece) >= 2 && push!(pieces, piece)
+                piece, direction = [index], 0
+            end
+        end
+        length(piece) >= 2 && push!(pieces, piece)
+        for piece in pieces
+            # In polygon order (increasing index, cyclic), whichever way the run was matched.
+            point_indices = piece[2] == mod1(piece[1] + 1, n) ? piece : reverse(piece)
+            push!(carried, (center=run.center, radius=run.radius, id=run.id, sign=run.sign,
+                            point_indices=point_indices, edge_indices=point_indices[1:(end - 1)]))
+        end
+    end
+    return (runs=carried, short=offset.short)
+end
+
+# A propagated run fitted on its polygon in the format of tagged_arc_runs (orientation, angle,
+# sweep from the polygon's own travel; every vertex on the circle within the arc-fit
+# tolerance): what the CAD reads on the tag-seeded path. Fails closed when the carried vertices
+# are not a monotone run of the circle (a run the collar union folded: its pieces would have to
+# be carried separately).
+function fit_carried_run(polygon, run, tolerance)
+    fit = fitted_arc_run(polygon, run.point_indices, run.edge_indices,
+                         (center=run.center, radius=run.radius), tolerance)
+    fit === nothing &&
+        error("the offset vertices of arc $(run.id) carried onto the footprint polygon do not lie on its " *
+              "concentric circle (centre $(run.center), radius $(run.radius)) within " *
+              "$(arc_fit_tolerance(run.radius, tolerance)), or do not travel monotonically around it " *
+              "(round 3 class (7) Option B: the tag-seeded path of a run of fewer than four chords)")
+    return (fit..., id=run.id, sign=run.sign,
+            sweep=run_sweep(polygon, run.point_indices, run.center, fit.orientation))
+end
+
+# Round 3 class (7) Option B: on the untagged-fit path the fit of the offset polygon must
+# agree with the propagated circle of every arc it shares an edge with, within the arc-fit
+# tolerance (the offset vertices are exact points of the concentric circle: the two circles
+# agree to ~1e-13 R_arc); a disagreement fails closed - the two spellings of one arc.
+function assert_refit_matches_propagated(refit, propagated, tolerance)
+    for run in refit, carried in propagated
+        isempty(intersect(run.edge_indices, carried.edge_indices)) && continue
+        slack = arc_fit_tolerance(max(run.radius, carried.radius), tolerance)
+        hypot(run.center[1] - carried.center[1], run.center[2] - carried.center[2]) <= slack &&
+        abs(run.radius - carried.radius) <= slack ||
+            error("the untagged fit of the offset loop (centre $(run.center), radius $(run.radius)) " *
+                  "disagrees with the propagated circle of arc $(carried.id) (centre $(carried.center), " *
+                  "radius $(carried.radius)) beyond $slack: the two spellings of the trench footprint's " *
+                  "arc must agree (mesher design round 3 class (7) Option B)")
+    end
+    return nothing
+end
+
+# The runs polygon_wire reads for an offset polygon: the propagated runs where a metal run has
+# fewer than four chords (the untagged fit cannot recognise it), else the untagged fit of
+# `points` (bitwise today's path) asserted against the propagated circles.
+function offset_wire_runs(points, propagated, tolerance)
+    propagated !== nothing && propagated.short &&
+        return NamedTuple[fit_carried_run(points, run, tolerance) for run in propagated.runs]
+    refit = circular_arc_runs(points, tolerance)
+    propagated === nothing || assert_refit_matches_propagated(refit, propagated.runs, tolerance)
+    return refit
 end
 
 # Two consecutive etch-footprint edges are one edge when every vertex between
@@ -4330,14 +4482,18 @@ function loop_wire_runs(loop, points, tolerance)
     return tagged_arc_runs(loop, tolerance)
 end
 
-function loft_polygon(occ, bottom_points, top_points, z0, z1; runs=nothing)
+# `propagated` = carried_offset_runs of an offset polygon (round 3 class (7) Option B): a
+# prismatic loft whose propagated runs are read (a metal run of fewer than four chords) is
+# extruded like a fitted one; otherwise the untagged fit decides, as before.
+function loft_polygon(occ, bottom_points, top_points, z0, z1; runs=nothing, propagated=nothing)
     if bottom_points == top_points
         tolerance = 1.0e-9 * max(
             maximum(point[1] for point in bottom_points) - minimum(point[1] for point in bottom_points),
             maximum(point[2] for point in bottom_points) - minimum(point[2] for point in bottom_points),
             1.0)
-        if runs !== nothing || !isempty(circular_arc_runs(bottom_points, tolerance))
-            face = occ.addPlaneSurface([polygon_wire(occ, bottom_points, z0; runs=runs)])
+        seeded = runs === nothing && propagated !== nothing && propagated.short && !isempty(propagated.runs)
+        if runs !== nothing || seeded || !isempty(circular_arc_runs(bottom_points, tolerance))
+            face = occ.addPlaneSurface([polygon_wire(occ, bottom_points, z0; runs=runs, propagated=propagated)])
             entities = occ.extrude([(2, face)], 0.0, 0.0, z1 - z0)
             volumes = [(dim, tag) for (dim, tag) in entities if dim == 3]
             length(volumes) == 1 || error("Plan-view mask extrusion produced $(length(volumes)) volumes")
@@ -4373,6 +4529,13 @@ function offset_hole_points(loop,distance,tolerance)
             error("Shrinking a nonconvex fabrication hole requires topology-aware offset support")
     end
     runs=loop_arc_runs(loop,tolerance)
+    # Round 3 class (7) Option B carries the propagated runs of the exterior collar only; the
+    # shrunk hole's clipped chords are refitted by polygon_wire, which cannot read an arc of
+    # fewer than four chords: such a hole fails closed by name.
+    any(length(run.edge_indices) < 4 for run in runs) &&
+        error("a hole of conductor $(loop.conductor) on plane $(loop.plane) carries an arc of fewer than " *
+              "four chords: the shrunk hole offset is not tag-seeded (round 3 class (7) covers the exterior " *
+              "collar; a short arc of a hole is not supported yet)")
     sides=Tuple{NTuple{2,Float64},NTuple{2,Float64},Float64}[]
     arc_edges=falses(length(points))
     for run in runs
@@ -4447,10 +4610,10 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
                               collar_island_rule(outer, offset, box, island_radius, tolerance)
         bottom_islands = Dict{String, Any}[]
         top_islands = Dict{String, Any}[]
-        bottom_points, bottom_construction =
+        bottom_points, bottom_construction, bottom_offset_record =
             collar_loop_points(outer, bottom_offset, box, tolerance;
                                island_rule=island_rule(bottom_offset), absorbed=bottom_islands)
-        top_points, top_construction =
+        top_points, top_construction, _ =
             collar_loop_points(outer, top_offset, box, tolerance;
                                island_rule=island_rule(top_offset), absorbed=top_islands)
         if simplify
@@ -4462,7 +4625,8 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
                 bottom_construction; absorbed_islands=bottom_islands)
         end
         volume = loft_polygon(occ, bottom_points, top_points, z0, z1;
-                              runs=loop_wire_runs(outer, bottom_points, tolerance))
+                              runs=loop_wire_runs(outer, bottom_points, tolerance),
+                              propagated=carried_offset_runs(bottom_offset_record, bottom_points, tolerance))
         cutters = Tuple{Int32, Int32}[]
         for (index,hole) in enumerate(holes)
             hole.conductor==outer.conductor && abs(hole.plane-outer.plane)<=tolerance || continue
@@ -4646,12 +4810,25 @@ function point_segment_distance(point, first, second)
     return hypot(point[1] - closest[1], point[2] - closest[2])
 end
 
+# The metal boundary primitives of the loops offset by `offset`: exact arcs and lines. The arcs
+# are the untagged fit of the offset points (bitwise), asserted against the propagated runs
+# at a non-zero offset (exact offset vertices), or the propagated / tagged runs themselves
+# where a metal run has fewer than four chords (round 3 class (7) Option B); at a zero offset
+# the fit of the 1e-9 R quantised metal vertices is not asserted (class (4): ill-conditioned).
 function physical_segments(loops, offset, tolerance)
     primitives = NamedTuple[]
     for loop in loops
-        points = offset_loop_points(loop, offset, tolerance)
+        record = offset_loop(loop, offset, tolerance)
+        points = record.points
+        runs = if abs(offset) <= tolerance
+            # The loop's own runs: the tagged runs where a metal run has fewer than four chords,
+            # else the untagged fit of the metal vertices as before (not asserted: class (4)).
+            record.short ? record.runs : circular_arc_runs(points, tolerance)
+        else
+            offset_wire_runs(points, (runs=record.runs, short=record.short), tolerance)
+        end
         covered = falses(length(points))
-        for run in circular_arc_runs(points, tolerance)
+        for run in runs
             all(loop.classes[index] == "Physical" for index in run.edge_indices) || continue
             push!(
                 primitives,
@@ -5959,11 +6136,11 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
             Int(sigma) == run.sign ||
                 error("arc $(run.id): the plan-view metal side (sigma $(Int(sigma))) disagrees with the tagged " *
                       "ArcSign $(run.sign)")
+            # Round 3 class (7) Option B (G.7.3; decisions 391 MINOR-1 / 437 (3) superseded by 510 O1):
+            # a run of fewer than four chords is admitted - the trench footprint under it reads the
+            # propagated run (curved_offset_loop) instead of the untagged fit that needed four.
             chords = [([loop.points[run.point_indices[k]]...], [loop.points[run.point_indices[k + 1]]...])
                       for k in 1:(length(run.point_indices) - 1)]
-            length(chords) >= 4 ||
-                error("arc $(run.id) of conductor $(loop.conductor) has $(length(chords)) chords: the untagged " *
-                      "arc fit of the trench footprint needs at least four (a short arc is not supported yet)")
             angles = arc_split_angles(loop.points, run.point_indices, run.center, sweep)
             parts = length(angles) - 1
             for k in 1:parts
