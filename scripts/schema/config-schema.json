@@ -800,7 +800,7 @@
             },
             "AllowRefinement": {
               "type": "boolean",
-              "description": "Allow adaptive mesh refinement inside this PML region.",
+              "description": "Allow adaptive mesh refinement inside this PML region. The error indicators of PML elements measure the discretization error of the stretched fields with the background material properties. By default, PML elements are not marked for refinement, and their error indicators do not contribute to the adaptive mesh refinement tolerance (they are included in the postprocessed error indicators).",
               "default": false
             }
           }
