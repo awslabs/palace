@@ -66,12 +66,20 @@ def validate_semantic_contract(data):
     _unique_nonempty(boundary_attributes, "boundary attributes")
 
     corners = data.get("SemanticCorners")
-    if (not isinstance(corners, list) or not corners or
+    if (not isinstance(corners, list) or
             any(not isinstance(point, list) or len(point) != 3 or
                 any(not isinstance(value, (int, float)) or not math.isfinite(value)
                     for value in point)
                 for point in corners)):
         raise ValueError("SemanticCorners must contain at least one 3D point")
+    # Round 3 class (1) (decision 510): an empty corner list is admitted iff the arc
+    # classification produced it (Derivation.CornerFree); a legacy contract (no record)
+    # keeps the >= 1 rule bitwise, and a record beside a non-empty list fails closed.
+    corner_free = contract_is_corner_free(data)
+    if not corners and not corner_free:
+        raise ValueError("SemanticCorners must contain at least one 3D point")
+    if corner_free and corners:
+        raise ValueError("Derivation.CornerFree is recorded on a contract with semantic corners")
     supports = _unique_nonempty(data.get("ProtectedSupports"), "ProtectedSupports")
     if not all(isinstance(value, str) and value.strip() for value in supports):
         raise ValueError("ProtectedSupports must contain names")
@@ -328,6 +336,37 @@ def _boundary_vertex_classes(rows):
                 corners.append(point)
                 corner_sides.append((points[index - 1], points[index], points[(index + 1) % n]))
     return corners, cut_ends, corner_sides, arc_vertices
+
+
+CORNER_FREE_RULE = ("mesher design round 3 class (1) (supervisor decisions 491 / 510): a plan-view boundary whose "
+                    "every Physical vertex is an ArcInterior vertex, a smooth ArcJoint (ARC_VERTEX_RULE) or a "
+                    "box-face cut end (BOX_FACE_CUT_END_RULE) has NO semantic corner - a C1-continuous metal "
+                    "outline; the edge singularity is carried by the tubes (one shared section at every smooth "
+                    "joint) and the corner isotropy ball and the corner gates have nothing to judge, so the "
+                    "contract records SemanticCorners [] with this Derivation.CornerFree record (integer vertex "
+                    "counts only) and every consumer takes its corner-free branch - the empty-safe minima, no "
+                    "graded corner points, CornerGates NotApplicable - only under it; a boundary that classifies "
+                    "no Physical vertex at all is still malformed, and a legacy contract without the record "
+                    "keeps the >= 1 corner rule bitwise")
+
+
+def contract_is_corner_free(contract):
+    """Whether the contract records Derivation.CornerFree (round 3 class (1)): the arc
+    classification left no semantic corner. The one spelling every consumer (the
+    validator, mesh_stage_contract, general_mesh_manifest, the mesher's
+    contract_is_corner_free) reads; the record's shape is validated here."""
+    derivation = contract.get("Derivation") if isinstance(contract, dict) else None
+    record = derivation.get("CornerFree") if isinstance(derivation, dict) else None
+    if record is None:
+        return False
+    if (not isinstance(record, dict) or record.get("Rule") != CORNER_FREE_RULE or
+            any(isinstance(record.get(name), bool) or not isinstance(record.get(name), int) or
+                record.get(name) < 0
+                for name in ("ArcInteriorVertices", "SmoothJoints", "BoxFaceCutEnds")) or
+            record["ArcInteriorVertices"] + record["SmoothJoints"] == 0):
+        raise ValueError("Derivation.CornerFree must record the rule and the non-negative integer counts "
+                         "ArcInteriorVertices / SmoothJoints / BoxFaceCutEnds with at least one arc vertex")
+    return True
 
 
 def invariant_corners(contract):
