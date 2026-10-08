@@ -828,6 +828,37 @@ PMLPencil ExtraSystemPMLPencil(std::complex<double> omega, bool shifted = false,
           ShiftedMassCoefficient(-omega * omega, shifted_floquet)};
 }
 
+// Assemble a complex-valued operator from PML integrators only (null if empty on all
+// processes).
+std::unique_ptr<ComplexOperator> AssemblePMLOperator(const FiniteElementSpace &fespace,
+                                                     const mfem::Array<int> &dbc_tdof_list,
+                                                     std::vector<PMLIntegrator> &pml_re,
+                                                     std::vector<PMLIntegrator> &pml_im,
+                                                     Operator::DiagonalPolicy diag_policy)
+{
+  int empty[2] = {pml_re.empty(), pml_im.empty()};
+  Mpi::GlobalMin(2, empty, fespace.GetComm());
+  if (empty[0] && empty[1])
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  std::unique_ptr<Operator> ar, ai;
+  if (!empty[0])
+  {
+    ar = AssembleOperator(fespace, nullptr, nullptr, nullptr, nullptr, nullptr, skip_zeros,
+                          false, &pml_re);
+  }
+  if (!empty[1])
+  {
+    ai = AssembleOperator(fespace, nullptr, nullptr, nullptr, nullptr, nullptr, skip_zeros,
+                          false, &pml_im);
+  }
+  auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), fespace);
+  A->SetEssentialTrueDofs(dbc_tdof_list, diag_policy);
+  return A;
+}
+
 // The PML terms are complex-valued (and only set up for frequency domain problems).
 template <OperatorType OperType>
 void CheckPMLOperatorType(const MaterialOperator &mat_op)
@@ -1015,7 +1046,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
 template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy,
-                                    bool include_wave_ports)
+                                    bool include_wave_ports, bool include_pml)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
@@ -1026,8 +1057,11 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   // Frequency-dependent PML profiles, with the stretch evaluated at ω.
   CheckPMLOperatorType<OperType>(mat_op);
   std::vector<PMLIntegrator> pml_re, pml_im;
-  AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
-                  omega, ExtraSystemPMLPencil(omega));
+  if (include_pml)
+  {
+    AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op,
+                    PMLFilter::FREQUENCY_DEPENDENT, omega, ExtraSystemPMLPencil(omega));
+  }
 
   int empty[2] = {AreExactlyZero(dfbr, fbr) && pml_re.empty(),
                   AreExactlyZero(dfbi, fbi) && pml_im.empty()};
@@ -1109,8 +1143,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
 }
 
 std::array<std::unique_ptr<ComplexOperator>, 3>
-SpaceOperator::GetFrequencyDependentPMLMatrices(double omega,
-                                                Operator::DiagonalPolicy diag_policy)
+SpaceOperator::GetFrozenPMLMatrices(double omega, Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
   std::array<std::unique_ptr<ComplexOperator>, 3> ops;
@@ -1121,30 +1154,22 @@ SpaceOperator::GetFrequencyDependentPMLMatrices(double omega,
     std::vector<PMLIntegrator> pml_re, pml_im;
     AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op,
                     PMLFilter::FREQUENCY_DEPENDENT, omega, terms[k]);
-    int empty[2] = {pml_re.empty(), pml_im.empty()};
-    Mpi::GlobalMin(2, empty, GetComm());
-    if (empty[0] && empty[1])
-    {
-      continue;
-    }
-    constexpr bool skip_zeros = false;
-    std::unique_ptr<Operator> ar, ai;
-    if (!empty[0])
-    {
-      ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr,
-                            skip_zeros, false, &pml_re);
-    }
-    if (!empty[1])
-    {
-      ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, nullptr,
-                            skip_zeros, false, &pml_im);
-    }
-    auto A =
-        std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
-    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
-    ops[k] = std::move(A);
+    ops[k] = AssemblePMLOperator(GetNDSpace(), nd_dbc_tdof_lists.back(), pml_re, pml_im,
+                                 diag_policy);
   }
   return ops;
+}
+
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemPMLMatrix(std::complex<double> omega,
+                                       Operator::DiagonalPolicy diag_policy)
+{
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  std::vector<PMLIntegrator> pml_re, pml_im;
+  AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
+                  omega, ExtraSystemPMLPencil(omega));
+  return AssemblePMLOperator(GetNDSpace(), nd_dbc_tdof_lists.back(), pml_re, pml_im,
+                             diag_policy);
 }
 
 template <OperatorType OperType>
@@ -2275,9 +2300,9 @@ template std::unique_ptr<ComplexOperator>
 SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy);
 
 template std::unique_ptr<Operator>
-SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy, bool);
+SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy, bool, bool);
 template std::unique_ptr<ComplexOperator>
-SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy, bool);
+SpaceOperator::GetExtraSystemMatrix(double, Operator::DiagonalPolicy, bool, bool);
 
 template std::unique_ptr<Operator>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int, Operator::DiagonalPolicy);

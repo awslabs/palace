@@ -101,7 +101,12 @@ eigenmode problems remain linear, while the attenuation in the layer scales with
 With `"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
 frequency, for an attenuation independent of frequency. For eigenmode simulations, this is
 the complex eigenfrequency, and the resulting nonlinear eigenvalue problem is solved with
-the nonlinear eigenvalue solver as for other frequency-dependent boundary conditions.
+the nonlinear eigenvalue solver as for other frequency-dependent boundary conditions. For
+adaptive frequency sweeps, the frequency-dependent PML terms of the reduced-order model are
+evaluated from a rational fit on the frequency band, and for circuit synthesis they are
+approximated by a quadratic polynomial in frequency and, if required by the tolerance, poles
+on the imaginary frequency axis, which add decaying auxiliary states to the synthesized
+circuit.
 
 ## Finite conductivity boundary
 
