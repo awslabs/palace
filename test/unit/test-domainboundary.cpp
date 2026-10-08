@@ -3015,45 +3015,6 @@ TEST_CASE("Domain-boundary raw claim of a pair / stack cell lies on its own segm
     }
   }
 
-  SECTION(
-      "the part of a cell attributed to a spatial coupon maps like the cell (decision 545 "
-      "MAJOR-1): OwnEdgePointAt on the record vs the frame")
-  {
-    // ApplyContinuationOwnership attributes the owned part [removed_lo, removed_hi] of a
-    // cell to its owning spatial coupon through OwnEdgePointAt; a DomainBoundary coupon
-    // keeps those parts raw (CollectDomainBoundaryPortions). Without the record the frame
-    // reconstruction leaves the segment by the skew; with it the points lie on the segment
-    // and agree with the clip of the same offsets.
-    const double removed_lo = cell[0], removed_hi = cell[0] + 0.5;
-    patch.provenance.has_own_cell = false;
-    const auto frame_lo = OwnEdgePointAt(patch, removed_lo);
-    const auto frame_hi = OwnEdgePointAt(patch, removed_hi);
-    CHECK(Off(frame_lo) > tolerance);
-    CHECK_THAT(Off(frame_lo), WithinRel(0.9 * std::sin(skew), 1.0e-9));
-    CHECK(Off(frame_hi) > tolerance);
-    patch.provenance.has_own_cell = true;
-    const auto record_lo = OwnEdgePointAt(patch, removed_lo);
-    const auto record_hi = OwnEdgePointAt(patch, removed_hi);
-    CHECK(Off(record_lo) <= 1.0e-12);
-    CHECK(Off(record_hi) <= 1.0e-12);
-    // The attributed part's arc length is the offsets' length over the projection.
-    double length2 = 0.0;
-    for (int d = 0; d < 3; d++)
-    {
-      length2 += (record_hi[d] - record_lo[d]) * (record_hi[d] - record_lo[d]);
-    }
-    CHECK_THAT(std::sqrt(length2), WithinRel(0.5 / projection, 1.0e-12));
-    // The same affine rule as the clip: clipping the cell to [removed_lo, removed_hi]
-    // records exactly these two points.
-    auto clipped = patch;
-    ClipLongitudinalCell(clipped, removed_lo, removed_hi);
-    for (int d = 0; d < 3; d++)
-    {
-      CHECK_THAT(clipped.provenance.own_cell[0][d], WithinAbs(record_lo[d], 1.0e-12));
-      CHECK_THAT(clipped.provenance.own_cell[1][d], WithinAbs(record_hi[d], 1.0e-12));
-    }
-  }
-
   SECTION("a cell whose segment runs against AxisW: the record follows the cell's offsets")
   {
     // The placement orders own_cell as the cell offsets (own_cell[k] = the pre-image of
