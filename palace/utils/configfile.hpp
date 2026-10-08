@@ -1044,6 +1044,15 @@ public:
     // Explicit configuration syntax always uses the default unit weight.
     double weight = 1.0;
 
+    // Internal factor on the patch's DOMAIN correction only (the domain defect in the ft
+    // correction, the ff transform and the self-consistent operator): 1 by default; 0 for
+    // the cells of a translational stretch lying on a B5-excluded ForeignEdge of the Box +
+    // Context coupon whose box contains it (decision 553 sub-class (i)): the coupon's
+    // domain matrices integrate the whole box, context metal included, so the cells'
+    // domain defect would be counted twice, while rule B5 leaves that edge's within-R
+    // SURFACES to the cells (their surface matrices keep `weight`).
+    double domain_weight = 1.0;
+
     // Internal longitudinal cell of an automatically generated 3D translational patch: the
     // interval of its feature portion that this quadrature point integrates, as offsets
     // along AxisW (mesh length units) from the patch origin, so that the cells of one
@@ -1130,6 +1139,12 @@ public:
       std::array<double, 4> support_box{};
       bool has_support_box = false;
       std::vector<std::array<double, 4>> chain;
+      // The model's Chain: false context pieces (the library's ForeignEdges = the coupon
+      // qualification's EdgeExcludeSegments, rule B5), same frame and units as `chain`.
+      // The placement's foreign-context ownership (decision 553): a translational stretch
+      // inside the box on one of these pieces drops its domain correction only; on a chain
+      // piece it is owned by the coupon (weight 0).
+      std::vector<std::array<double, 4>> foreign;
       // The within-R raw footprint of a VERTEX coupon (corner / junction / endpoint:
       // coupon_depth 0, no claims, no support box) as perimeter sub-segments: the feature's
       // claimed portions (R along each arm) and, for a corner whose second arm was trimmed
