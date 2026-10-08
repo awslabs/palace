@@ -6,6 +6,7 @@
 
 #include <array>
 #include <complex>
+#include <string>
 #include <vector>
 #include "utils/configfile.hpp"
 
@@ -72,19 +73,32 @@ LayerGeometry ConfiguredLayerGeometry(const config::PMLData &data,
                                       const std::array<double, 3> &outer_min,
                                       const std::array<double, 3> &outer_max);
 
+// Smallest refractive index of a background material over its principal directions.
+double RefractiveIndex(const std::array<double, 9> &mu_inv,
+                       const std::array<double, 9> &epsilon_real);
+
 // Peak conductivity σ_max of each active face, either the configured value for the face's
 // axis, or, if not specified, σ_max = -(n + 1) ln(R) / (2 d n_r) for a target
 // normal-incidence reflection coefficient R, layer thickness d, grading order n, and
-// refractive index n_r.
+// refractive index n_r of each face. For the stretch to be the same in all materials on
+// a face, n_r is the smallest refractive index of the PML materials on that face, so that
+// the reflection target is met in each of them.
 std::array<double, 6> ResolveSigmaMax(const config::PMLData &data,
-                                      const LayerGeometry &geometry, double n_r);
+                                      const LayerGeometry &geometry,
+                                      const std::array<double, 6> &n_r);
 
-// Build a profile from a (nondimensionalized) configuration, layer geometry, and background
-// material tensors μ⁻¹ and ε = ε' + i ε'' (3 x 3, column-major).
+// Build a profile from a (nondimensionalized) configuration, layer geometry, refractive
+// indices of the faces for the default σ_max, and background material tensors μ⁻¹ and
+// ε = ε' + i ε'' (3 x 3, column-major).
 Profile BuildProfile(const config::PMLData &data, const LayerGeometry &geometry,
-                     const std::array<double, 9> &mu_inv,
+                     const std::array<double, 6> &n_r, const std::array<double, 9> &mu_inv,
                      const std::array<double, 9> &epsilon_real,
                      const std::array<double, 9> &epsilon_imag);
+
+// Check that two profiles define the same stretch on the faces they share (with tolerance
+// tol for coordinates). Returns the names of inconsistent configuration parameters, or an
+// empty string.
+std::string CheckStretchConsistency(const Profile &p, const Profile &q, double tol);
 
 // Fractional depth d / t ∈ [0, 1] into the layer along each axis at the point x (zero for
 // axes along which x is not in the layer).

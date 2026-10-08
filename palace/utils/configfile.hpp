@@ -265,7 +265,7 @@ public:
   // Peak conductivity σ_max per axis, in S/m (nondimensionalized at load time). The stretch
   // factor along each axis is s = κ + σ / (ε₀ (2π α + iω)). Negative entries are computed
   // per face from reflection_target as σ_max = −(n + 1) ln(R) / (2 Z₀ n_r d), with d the
-  // face thickness and n_r the refractive index of the background material.
+  // face thickness and n_r the smallest refractive index of the PML materials on the face.
   std::array<double, 3> sigma_max{{-1.0, -1.0, -1.0}};
 
   // Peak real coordinate scaling κ_max per axis (dimensionless, ≥ 1).
