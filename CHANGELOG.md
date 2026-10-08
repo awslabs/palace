@@ -44,21 +44,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigenvalue solver. `Solver.Eigenmode.MaxIts` no longer limits these iterations, and
     only applies to the linear or quadratic eigenvalue solver computing the initial guesses
     of the hybrid solver. SchemaVer 2-2-0
-    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
 
 #### Bug Fixes
 
-  - Fixed the quasi-Newton refinement of the hybrid nonlinear eigenvalue solver iterating
-    up to 1,000,000 times on an eigenpair which does not converge when
-    `Solver.Eigenmode.MaxIts` is not specified (since 0.17.0, where the default of `MaxIts`
-    became 1,000,000 for the linear eigenvalue solvers), instead of restarting or moving on
-    to the next initial guess after 100 iterations as before. A stagnating eigenpair could
-    make the simulation run indefinitely. The limit is set by the new
-    `Solver.Eigenmode.NonlinearMaxIts` [PR XXX](https://github.com/awslabs/palace/pull/XXX).
-  - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
-    quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
-    error since fewer eigenmodes than requested were found
-    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
     attributes with equal properties shared one material entry (a term stamped per attribute
     or per port element was counted once per attribute on all of them). This affects every
@@ -99,6 +88,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
     conditions of the cross-section.
     [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
+    quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
+    error since fewer eigenmodes than requested were found
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
 
 #### Performance Improvements
 
