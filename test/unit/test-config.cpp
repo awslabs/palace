@@ -1832,6 +1832,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_pml["ReferenceFrequency"].get<double>() == 2.0);
     CHECK(j_pml["FrequencyDependent"].get<bool>() == false);
     CHECK(j_pml["AllowRefinement"].get<bool>() == false);
+    CHECK(j_pml["SigmaMax"].is_null());
 
     IoData iodata2(config, false);
     REQUIRE(iodata2.domains.materials[0].pml);
@@ -1846,12 +1847,12 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
   SECTION("Static PML ReferenceFrequency defaults to eigenmode target")
   {
-    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials", {{{"Attributes", {1}}, {"PML", json::object()}}}}}},
-                   {"Boundaries", json::object()},
-                   {"Solver", {{"Eigenmode", {{"Target", 4.2}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}, {"PML", json::object()}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Eigenmode", {{"Target", 4.2}}}}}};
 
     IoData iodata(config, false);
     REQUIRE(iodata.domains.materials[0].pml);
@@ -1864,14 +1865,13 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
   SECTION("Static PML ReferenceFrequency zero is invalid")
   {
-    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials",
-                      {{{"Attributes", {1}}, {"PML", {{"ReferenceFrequency", 0.0}}}}}}}},
-                   {"Boundaries", json::object()},
-                   {"Solver",
-                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials", {{{"Attributes", {1}}, {"PML", {{"ReferenceFrequency", 0.0}}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
 
     CHECK_THROWS(IoData(config, false));
   }

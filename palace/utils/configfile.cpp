@@ -303,8 +303,8 @@ MaterialData::MaterialData(const json &domain)
 namespace
 {
 
-// Helper: parse an array of 6 direction strings like "+x", "-y", "+z" into per-face
-// signs. Entries may be omitted (empty string) to indicate no absorption on that face.
+// Helper: parse an array of direction strings like "+X", "-y", "+z" (case-insensitive) into
+// per-face signs. Empty strings are ignored.
 std::array<int, 6> ParsePMLDirections(const json &pml)
 {
   std::array<int, 6> signs{{0, 0, 0, 0, 0, 0}};
@@ -314,7 +314,7 @@ std::array<int, 6> ParsePMLDirections(const json &pml)
     return signs;
   }
   MFEM_VERIFY(it->is_array(),
-              "\"PML.Direction\" must be an array of strings like \"+x\", \"-y\"!");
+              "\"PML.Direction\" must be an array of strings like \"+X\", \"-Y\"!");
   for (const auto &entry : *it)
   {
     auto s = entry.get<std::string>();
@@ -322,14 +322,13 @@ std::array<int, 6> ParsePMLDirections(const json &pml)
     {
       continue;
     }
-    MFEM_VERIFY(s.size() == 2 && (s[0] == '+' || s[0] == '-') &&
-                    (s[1] == 'x' || s[1] == 'y' || s[1] == 'z'),
-                "\"PML.Direction\" entries must be \"+x\", \"-x\", \"+y\", \"-y\", "
-                "\"+z\", or \"-z\" (got: \""
+    const char axis = (s.size() == 2) ? std::tolower(s[1]) : '\0';
+    MFEM_VERIFY((s[0] == '+' || s[0] == '-') && (axis == 'x' || axis == 'y' || axis == 'z'),
+                "\"PML.Direction\" entries must be \"+X\", \"-X\", \"+Y\", \"-Y\", "
+                "\"+Z\", or \"-Z\" (got: \""
                     << s << "\")!");
-    const int axis = s[1] - 'x';             // 0, 1, 2
     const int face = (s[0] == '-') ? 0 : 1;  // 0 = negative face, 1 = positive face
-    signs[2 * axis + face] = (s[0] == '-') ? -1 : 1;
+    signs[2 * (axis - 'x') + face] = (s[0] == '-') ? -1 : 1;
   }
   return signs;
 }
@@ -401,6 +400,10 @@ PMLData::PMLData(const json &pml)
   ParseScalarOrArray3(pml, "SigmaMax", sigma_max);
   ParseScalarOrArray3(pml, "KappaMax", kappa_max);
   ParseScalarOrArray3(pml, "AlphaMax", alpha_max);
+  MFEM_VERIFY(std::ranges::all_of(kappa_max, [](double k) { return k >= 1.0; }),
+              "\"PML.KappaMax\" entries must be ≥ 1!");
+  MFEM_VERIFY(std::ranges::all_of(alpha_max, [](double a) { return a >= 0.0; }),
+              "\"PML.AlphaMax\" entries must be nonnegative!");
 
   reflection_target = pml.value("ReflectionTarget", reflection_target);
   MFEM_VERIFY(reflection_target > 0.0 && reflection_target < 1.0,

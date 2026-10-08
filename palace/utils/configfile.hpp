@@ -237,56 +237,59 @@ public:
 };
 
 // Per-material PML configuration. Attached to a MaterialData entry via
-// MaterialData::pml. See pml-plan.md §4 for the full schema.
+// MaterialData::pml (the "PML" object of a material in the configuration file).
 struct PMLData
 {
 public:
-  // Coordinate system for the stretch. v1: Cartesian only.
+  // Coordinate system for the stretch. Only Cartesian is supported.
   PMLCoordinateType coordinate_type = PMLCoordinateType::CARTESIAN;
 
-  // Active absorption directions: per-axis signs (±x, ±y, ±z). Each entry is +1 (absorb
-  // on the positive side of the physical domain), −1 (negative side), or 0 (no absorption
-  // in that direction). Layout: [x_neg, x_pos, y_neg, y_pos, z_neg, z_pos]. When left
-  // at the all-zero default, MaterialOperator auto-detects from mesh geometry.
+  // Active absorption directions: per-face signs. Each entry is +1 (absorb on the positive
+  // side of the physical domain), −1 (negative side), or 0 (no absorption in that
+  // direction). Layout: [x_neg, x_pos, y_neg, y_pos, z_neg, z_pos].
   std::array<int, 6> direction_signs{{0, 0, 0, 0, 0, 0}};
 
-  // PML layer thickness per face [m]. Same layout as direction_signs. When both this
-  // and direction_signs are left at their defaults, geometry is auto-detected.
+  // PML layer thickness per face, in mesh length units (nondimensionalized at load time).
+  // Same layout as direction_signs.
   std::array<double, 6> thickness{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
 
-  // True when the user did not specify Direction/Thickness in config; MaterialOperator
-  // will compute them from the per-attribute and global mesh bounding boxes.
+  // True when neither Direction nor Thickness is specified: MaterialOperator then detects
+  // the layer geometry by comparing the bounding boxes of the physical (non-PML) region
+  // and of the whole mesh.
   bool autodetect_geometry = true;
 
-  // Polynomial grading order n in σ(x) = σ_max · ((x − x₀) / d)^n. Must be ≥ 2.
+  // Polynomial grading order n of the profiles (·)(r) = (·)_max rⁿ, with r ∈ [0, 1] the
+  // normalized depth into the layer. Must be ≥ 2.
   int order = 3;
 
-  // Peak σ value (per direction). If any entry is negative, it is auto-computed from
-  // reflection_target using σ_max = −(n+1) ln(R) / (2 d √(με)). Default: auto for all.
+  // Peak conductivity σ_max per axis, in S/m (nondimensionalized at load time). The stretch
+  // factor along each axis is s = κ + σ / (ε₀ (2π α + iω)). Negative entries are computed
+  // per face from reflection_target as σ_max = −(n + 1) ln(R) / (2 Z₀ n_r d), with d the
+  // face thickness and n_r the refractive index of the background material.
   std::array<double, 3> sigma_max{{-1.0, -1.0, -1.0}};
 
-  // Peak κ (real coordinate scaling); 1.0 ⇒ pure UPML.
+  // Peak real coordinate scaling κ_max per axis (dimensionless, ≥ 1).
   std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
 
-  // Peak α (CFS real frequency shift). Nonzero ⇒ CFS-PML.
+  // Peak complex frequency shift α_max per axis for CFS-PML, as a frequency in GHz
+  // (nondimensionalized to the angular frequency 2π α_max at load time).
   std::array<double, 3> alpha_max{{0.0, 0.0, 0.0}};
 
-  // Target round-trip reflection coefficient for auto-σ_max. Typical 1e-6 to 1e-8.
+  // Target normal-incidence reflection coefficient for the computed σ_max.
   double reflection_target = 1.0e-6;
 
-  // If true, the stretch ω is the live solve frequency (rebuilt per frequency in the
-  // driven sweep or per eigen solve). If false (default), ω is the static reference
-  // below. Default static PML is cheapest for narrow-band and eigenmode; frequency-
-  // dependent PML gives uniform absorption across a broadband sweep.
+  // If true, the stretch factors are evaluated at the solve frequency: the real frequency
+  // of each driven solve, or the complex eigenfrequency of the eigenmode nonlinear solve
+  // (making the eigenvalue problem nonlinear). If false, they are evaluated at the
+  // reference frequency below, which keeps the system matrices frequency-independent.
   bool frequency_dependent = false;
 
-  // Reference frequency f0 (in GHz, nondimensionalized at load time) for static PML.
-  // Negative means use the solver-appropriate default (driven center frequency / eigen
-  // target).
-  // Ignored when frequency_dependent is true.
+  // Reference frequency f₀ in GHz for static profiles (nondimensionalized to the angular
+  // frequency ω₀ = 2π f₀ at load time). Negative means use the solver default (center of
+  // the driven frequency range or the eigenmode target). Ignored when frequency_dependent.
   double reference_frequency = -1.0;
 
-  // If false (default), AMR refinement is disabled inside this PML region.
+  // If false, adaptive mesh refinement is disabled inside this PML region.
   bool allow_refinement = false;
 
   PMLData() = default;
