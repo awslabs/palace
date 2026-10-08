@@ -957,8 +957,9 @@ end
     @test polygon_is_simple(wide, tolerance)
     # Zero offset is the loop itself; an inward (positive) self-intersecting offset has
     # no union form; the union needs the box.
+    # (round 3 B3: the third element is the curved offset record, nothing for a straight loop)
     @test collar_loop_points(loop(8.0), 0.0, nothing, tolerance) ==
-          (notched(8.0), "MiterOffset")
+          (notched(8.0), "MiterOffset", nothing)
     @test occursin(
         "Inward offset",
         guard_message(
