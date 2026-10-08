@@ -801,17 +801,21 @@ config::ElectrostaticSolverData::ResponseCorrectionData ReadResponseGeometryCach
 // (patch units); boxes are (spatial patch index, min, max, claims) in patch units;
 // continuation_tolerance is the abutment tolerance along the chain (the signature parameter
 // tolerance 1e-3 R). Records in (feature, stretch, spatial patch) order.
-// The foreign-context sub-class of a Foreign stretch inside a contract-3 support (the B5
-// test at placement, judged per stretch on the cells' OWN-edge ends and midpoints within
-// continuation_tolerance of the support's context pieces, the EdgeExcludeSegments form):
-// NONE (not Foreign, or on no context piece: the legacy class), EXCLUDED_EDGE (every cell
-// on a Chain: false piece), CONTEXT_EDGE (every cell on a context piece, at least one on a
-// Chain: true piece).
+// The foreign-context class of a Foreign stretch inside a contract-3 support (the B5 test
+// at placement: a CELL lies on a context piece when its OWN-edge ends and midpoint lie
+// within continuation_tolerance of one piece of that class, the EdgeExcludeSegments form;
+// decision 559 (1): the treatment is PER CELL by piece class, the stretch class summarises
+// its cells): NONE (not Foreign, or no cell on any context piece: the legacy class, every
+// cell untouched), EXCLUDED_EDGE (every cell on a Chain: false piece: every cell keeps its
+// surface matrices and drops its domain correction), CONTEXT_EDGE (every cell on a Chain:
+// true piece: every cell owned by the coupon), MIXED_EDGES (cells of different classes:
+// each treated by its own class, a cell on no piece untouched; the three counts recorded).
 enum class ForeignContextClass
 {
   NONE,
   EXCLUDED_EDGE,
-  CONTEXT_EDGE
+  CONTEXT_EDGE,
+  MIXED_EDGES
 };
 struct TranslationalOwnershipRecord
 {
@@ -825,8 +829,8 @@ struct TranslationalOwnershipRecord
   bool continuation = false;
   ForeignContextClass foreign_context = ForeignContextClass::NONE;
   // Cells of the stretch whose own-edge ends and midpoint lie on a Chain: false / Chain:
-  // true context piece of the support (the sub-class evidence; a cell on no piece counts in
-  // neither).
+  // true context piece of the support (the per-cell classes the treatment applies; a cell
+  // on no piece counts in neither: patch_count - both).
   std::size_t cells_on_excluded_edges = 0;
   std::size_t cells_on_chain_edges = 0;
 };
@@ -846,7 +850,11 @@ struct SpatialSupportBounds
   std::vector<std::array<double, 4>> chain;
   std::vector<std::array<double, 4>> foreign;
   // The matching radius R in patch units (the scale of `support_box` / `chain` / `foreign`;
-  // CollectSpatialSupports copies the configuration's); 0 for a legacy model.
+  // CollectSpatialSupports copies the configuration's); 0 for a legacy model. REQUIRED
+  // (> 0) for a contract-3 support that carries context pieces: the foreign-context
+  // classification fails closed (MFEM_VERIFY) without it, so a hand-built support of a unit
+  // fixture with `chain` / `foreign` pieces must set it (the B4 vertex ownership scales by
+  // the explicit `matching_radius` argument instead).
   double matching_radius = 0.0;
   // The bounds come from the Signature's box (a placeholder without basis points).
   bool from_signature_box = false;
@@ -904,13 +912,18 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
 // direction is no translational cell of a coupon library). Curved cells never continue a
 // claim (the Continuation criterion is parallel within the signature angle tolerance), so
 // an arc continuing an arc claim keeps its patches: a residual double count the record
-// lengths show. FOREIGN-CONTEXT OWNERSHIP (decision 553, the same pass): a Foreign stretch
-// wholly inside a contract-3 support (the record above) whose cells lie on the support's
-// context pieces is treated by sub-class — ForeignContextEdge: every cell owned by the
-// coupon (weight 0, quadrature weight 0, cell {0, 0}, listed under `cells` like a wholly
-// owned continuation cell so the portion audit reconciles); ForeignExcludedEdge: every cell
-// keeps its weight and sets `domain_weight` 0 (listed under `foreign_excluded_cells`).
-// Lengths in patch units.
+// lengths show. FOREIGN-CONTEXT OWNERSHIP (decisions 553 / 559, the same pass): the cells
+// of a Foreign stretch wholly inside a contract-3 support (the record above) are classified
+// ONCE on the intact patches, before the continuation pass (the same classification the
+// stretch records carry), and treated PER CELL by piece class after it — a cell on a
+// Chain: true piece is owned by the coupon (weight 0, quadrature weight 0, cell {0, 0},
+// listed under `cells` like a wholly owned continuation cell so the portion audit
+// reconciles); a cell on a Chain: false piece (an excluded ForeignEdge) keeps its weight
+// and sets `domain_weight` 0 (listed under `foreign_excluded_cells`); a cell on no piece is
+// untouched. A cell inside two supports takes the stronger class (owned over
+// domain-dropped) and lists every support of that class as an owner (ascending spatial
+// patch; the owned length split equally): deterministic in the support order. A cell
+// already at weight 0 (owned by the continuation pass) is skipped. Lengths in patch units.
 struct ContinuationOwnership
 {
   struct Cell
@@ -931,13 +944,16 @@ struct ContinuationOwnership
     bool foreign_context = false;
   };
   std::vector<Cell> cells;  // in patch order
-  // ForeignExcludedEdge cells (decision 553 sub-class (i)): weight kept, domain_weight 0.
+  // Cells on an excluded ForeignEdge (decision 553 sub-class (i)): weight kept,
+  // domain_weight 0.
   struct ForeignExcludedCell
   {
     std::size_t patch = 0;
     int feature = -1;
     int stretch = -1;
-    std::size_t owner = 0;  // the spatial patch whose ForeignEdge the cell lies on
+    // The spatial patches whose ForeignEdge the cell lies on (ascending; every support that
+    // classes the cell so, decision 559 MINOR-6).
+    std::vector<std::size_t> owners;
     double cell_length = 0.0;
   };
   std::vector<ForeignExcludedCell> foreign_excluded_cells;  // in patch order

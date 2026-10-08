@@ -8082,26 +8082,31 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
 TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
           "[surfaceresponseoperator][foreignctx][Serial]")
 {
-  // Decision 553 (the rerun-2 diagnosis review MAJOR-1): a Foreign stretch wholly inside a
-  // Box + Context coupon's box is judged against the coupon's context pieces by the rule-B5
-  // test (own-edge cell ends and midpoint within 1e-3 R of a piece, in the spatial patch's
-  // frame in units of R). Sub-class (i) ForeignExcludedEdge: every cell on a Chain: false
-  // piece (ForeignEdges = EdgeExcludeSegments; the coupon's within-R surfaces leave that
-  // edge to the cells, its domain matrices integrate it) -> the cells keep their weight and
-  // drop their domain correction (domain_weight 0). Sub-class (ii) ForeignContextEdge:
-  // every cell on a context piece, at least one on a Chain: true piece (the coupon carries
-  // the edge WITH its surfaces) -> the cells are owned by the coupon (weight 0, both
-  // matrices, as a wholly owned continuation cell). A stretch on no piece, or inside a
-  // legacy (claims-only) coupon, stays Foreign and untouched (the decision-236 treatment).
-  // The fixture FAILS on the code before decision 553: every record there is "Foreign" and
-  // every cell untouched. Geometry: R = 1.5; the spatial patch 0 at the origin with the
-  // identity frame (AxisU = x, AxisV = y, AxisW = z), support box x in [-2, 1] R, y in
-  // [-2, 2] R (= the stretch-record fixture's box x in [-3, 1.5], |y| <= 3), claims y = 0
-  // from x = -2.5 to 0 (segment 3) and x = -2.5 from y = 0 to 1 (segment 5); one Chain:
-  // true piece along y = 1.5 (x from -1.5 to 0.75: P = [-1, 1, 0.5, 1] R) and one Chain:
-  // false piece along y = -1.5 (x from -2.25 to 0.75: P = [-1.5, -1, 0.5, -1] R).
-  // Translational cells run along +x (AxisU = +y, AxisW = +x) with weight 0.1 x length; a
-  // pair side's cells sit on the midline y with its own edge at y + edge_offset.
+  // Decisions 553 / 559 (the rerun-2 diagnosis review MAJOR-1; the fresh review's MAJOR-1):
+  // the cells of a Foreign stretch wholly inside a Box + Context coupon's box are judged
+  // against the coupon's context pieces by the rule-B5 test (own-edge cell ends and
+  // midpoint within 1e-3 R of a piece, in the spatial patch's frame in units of R), PER
+  // CELL. A cell on a Chain: false piece (ForeignEdges = EdgeExcludeSegments; the coupon's
+  // within-R surfaces leave that edge to the cell, its domain matrices integrate it) keeps
+  // its weight and drops its domain correction (domain_weight 0); a cell on a Chain: true
+  // piece (the coupon carries the edge WITH its surfaces) is owned by the coupon (weight 0,
+  // both matrices, as a wholly owned continuation cell); a cell on no piece, or inside a
+  // legacy (claims-only) coupon, stays untouched (the decision-236 treatment). The stretch
+  // Class summarises its cells: ForeignExcludedEdge / ForeignContextEdge /
+  // ForeignMixedEdges / Foreign. The classification is read ONCE on the intact cells,
+  // before the continuation pass (decision 559 MINOR-1), by the records and the treatment
+  // alike. The fixture FAILS on the code before decision 553 (every record "Foreign", every
+  // cell untouched) and its mixed sections on the 553 code before 559 (a mixed stretch was
+  // treated as a whole). Geometry: R = 1.5; the spatial patch 0 at the origin with the
+  // identity frame (AxisU = x, AxisV = y, AxisW = z), support box x in [-2, 1] R, y in [-2,
+  // 2] R (= the stretch-record fixture's box x in [-3, 1.5], |y| <= 3), claims y = 0 from x
+  // = -2.5 to 0 (segment 3) and x = -2.5 from y = 0 to 1 (segment 5); Chain: true pieces
+  // along y = 1.5 (x from -1.5 to 0.75: P = [-1, 1, 0.5, 1] R) and along y = -1.5 from x =
+  // 0.75 to 1.2 (P = [0.5, -1, 0.8, -1] R, the continuation of the Chain: false piece
+  // beyond its end); one Chain: false piece along y = -1.5 (x from -2.25 to 0.75: P =
+  // [-1.5, -1, 0.5, -1] R). Translational cells run along +x (AxisU = +y, AxisW = +x) with
+  // weight 0.1 x length; a pair side's cells sit on the midline y with its own edge at y +
+  // edge_offset.
   using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
   using Claim = Patch::Provenance::Claim;
   const double R = 1.5;
@@ -8141,7 +8146,7 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
                                Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
     patch.provenance.has_support_box = true;
     patch.provenance.support_box = {-2.0, -2.0, 1.0, 2.0};
-    patch.provenance.chain = {{-1.0, 1.0, 0.5, 1.0}};
+    patch.provenance.chain = {{-1.0, 1.0, 0.5, 1.0}, {0.5, -1.0, 0.8, -1.0}};
     patch.provenance.foreign = {{-1.5, -1.0, 0.5, -1.0}};
     return patch;
   };
@@ -8168,12 +8173,14 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     CHECK(a.longitudinal_cell == b.longitudinal_cell);
     CHECK(a.origin == b.origin);
   };
-  // Patch 0 the spatial coupon; 1-2 stretch (4, 0) on the Chain: true piece; 3-4 stretch
-  // (6, 0) on the Chain: false piece; 5-6 stretch (7, 0) at y = 2.4 on no piece; 7-8 a
-  // pair's two sides on the midline y = 1.0 whose own edges are y = 1.5 (edge offset +0.5,
-  // stretch (9, 0): the Chain: true piece) and y = 0.5 (edge offset -0.5, stretch (9, 1):
-  // no piece); 9-10 stretch (11, 0) with one cell on the Chain: true piece and one beyond
-  // its end x = 0.75.
+  // Patch 0 the spatial coupon; 1-2 stretch (4, 0) on the Chain: true piece y = 1.5; 3-4
+  // stretch (6, 0) on the Chain: false piece; 5-6 stretch (7, 0) at y = 2.4 on no piece;
+  // 7-8 a pair's two sides on the midline y = 1.0 whose own edges are y = 1.5 (edge offset
+  // +0.5, stretch (9, 0): the Chain: true piece) and y = 0.5 (edge offset -0.5, stretch
+  // (9, 1): no piece); 9-10 stretch (11, 0) with one cell on the Chain: true piece y = 1.5
+  // and one beyond its end x = 0.75 (mixed: chain + none); 11-12 stretch (13, 0) along
+  // y = -1.5 with one cell on the Chain: false piece and the next on the Chain: true piece
+  // beyond x = 0.75 (mixed: excluded + chain, the review's case).
   std::vector<Patch> patches = {Spatial(),
                                 Cell(4, 0, -1.2, -0.2, 1.5),
                                 Cell(4, 0, -0.2, 0.6, 1.5),
@@ -8184,7 +8191,9 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
                                 Cell(9, 0, -1.2, 0.0, 1.0, 0.5),
                                 Cell(9, 1, -1.2, 0.0, 1.0, -0.5),
                                 Cell(11, 0, -1.2, -0.2, 1.5),
-                                Cell(11, 0, 0.9, 1.4, 1.5)};
+                                Cell(11, 0, 0.9, 1.4, 1.5),
+                                Cell(13, 0, -0.5, 0.5, -1.5),
+                                Cell(13, 0, 0.75, 1.2, -1.5)};
   patches[8].provenance.segment = 8;
   const auto before = patches;
   const std::vector<SpatialSupportBounds> supports = {Support(patches[0])};
@@ -8192,7 +8201,7 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
   {
     const auto records =
         FindTranslationalStretchInsideSpatialSupport(patches, supports, 3, tolerance);
-    REQUIRE(records.size() == 6);
+    REQUIRE(records.size() == 7);
     auto Record = [&](int feature, int stretch) -> const TranslationalOwnershipRecord &
     {
       const auto it = std::find_if(
@@ -8217,11 +8226,15 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     // edge is the context piece is ForeignContextEdge, the other side Foreign.
     CHECK(Record(9, 0).foreign_context == ForeignContextClass::CONTEXT_EDGE);
     CHECK(Record(9, 1).foreign_context == ForeignContextClass::NONE);
-    // A cell off every piece leaves the stretch Foreign (judged per stretch), its evidence
-    // recorded.
-    CHECK(Record(11, 0).foreign_context == ForeignContextClass::NONE);
+    // Mixed stretches (decision 559): the class summarises, the counts carry the cells.
+    CHECK(Record(11, 0).foreign_context == ForeignContextClass::MIXED_EDGES);
     CHECK(Record(11, 0).cells_on_chain_edges == 1);
     CHECK(Record(11, 0).cells_on_excluded_edges == 0);
+    CHECK(std::string(TranslationalOwnershipClassName(Record(11, 0))) ==
+          "ForeignMixedEdges");
+    CHECK(Record(13, 0).foreign_context == ForeignContextClass::MIXED_EDGES);
+    CHECK(Record(13, 0).cells_on_excluded_edges == 1);
+    CHECK(Record(13, 0).cells_on_chain_edges == 1);
     // The Diagnostics entry: classes, treatments, the per-class sums and the rule.
     config::ElectrostaticSolverData::ResponseCorrectionData data;
     data.matching_radius = R;
@@ -8233,26 +8246,31 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     data.patches = patches;
     const auto description =
         DescribeTranslationalOwnershipRecords(records, supports, data, 1.0, {});
-    CHECK(description["Count"] == 6);
+    CHECK(description["Count"] == 7);
     CHECK(description["Continuation"]["Count"] == 0);
-    CHECK(description["Foreign"]["Count"] == 3);
+    CHECK(description["Foreign"]["Count"] == 2);
     CHECK(description["ForeignExcludedEdge"]["Count"] == 1);
     CHECK_THAT(description["ForeignExcludedEdge"]["Length"].get<double>(),
                WithinAbs(2.0, 1.0e-12));
     CHECK(description["ForeignContextEdge"]["Count"] == 2);
     CHECK_THAT(description["ForeignContextEdge"]["Length"].get<double>(),
                WithinAbs(1.8 + 1.2, 1.0e-12));
+    CHECK(description["ForeignMixedEdges"]["Count"] == 2);
+    CHECK_THAT(description["ForeignMixedEdges"]["Length"].get<double>(),
+               WithinAbs(1.5 + 1.45, 1.0e-12));
     CHECK_THAT(description["Length"].get<double>(),
-               WithinAbs(1.8 + 2.0 + 1.8 + 1.2 + 1.2 + 1.5, 1.0e-12));
-    int owned_by_coupon = 0, keep_surface_drop_domain = 0, untouched = 0;
+               WithinAbs(1.8 + 2.0 + 1.8 + 1.2 + 1.2 + 1.5 + 1.45, 1.0e-12));
+    int owned_by_coupon = 0, keep_surface_drop_domain = 0, per_cell = 0, untouched = 0;
     for (const auto &entry : description["Records"])
     {
       const std::string treatment = entry["Treatment"].get<std::string>();
       const std::string cls = entry["Class"].get<std::string>();
+      const int feature = entry["Feature"].get<int>();
       if (treatment == "OwnedByCoupon")
       {
         owned_by_coupon++;
         CHECK(cls == "ForeignContextEdge");
+        CHECK(entry["CellsOnNoPiece"] == 0);
       }
       else if (treatment == "KeepSurfaceDropDomain")
       {
@@ -8260,42 +8278,61 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
         CHECK(cls == "ForeignExcludedEdge");
         CHECK(entry["CellsOnExcludedEdges"] == 2);
       }
+      else if (treatment == "PerCell")
+      {
+        per_cell++;
+        CHECK(cls == "ForeignMixedEdges");
+        CHECK(entry["CellsOnChainEdges"] == 1);
+        CHECK(entry["CellsOnExcludedEdges"] == (feature == 13 ? 1 : 0));
+        CHECK(entry["CellsOnNoPiece"] == (feature == 11 ? 1 : 0));
+      }
       else
       {
         untouched++;
         CHECK(treatment == "Untouched");
         CHECK(cls == "Foreign");
+        CHECK(entry["CellsOnNoPiece"] == entry["Patches"]);
       }
     }
     CHECK(owned_by_coupon == 2);
     CHECK(keep_surface_drop_domain == 1);
-    CHECK(untouched == 3);
-    CHECK(description["Rule"].get<std::string>().find("decision 553") != std::string::npos);
+    CHECK(per_cell == 2);
+    CHECK(untouched == 2);
+    CHECK(description["Rule"].get<std::string>().find("decision 559") != std::string::npos);
     const std::string warning = DescribeTranslationalOwnershipWarning(description);
-    CHECK(warning.find("ForeignExcludedEdge 1 / ForeignContextEdge 2") !=
+    CHECK(warning.find(
+              "ForeignExcludedEdge 1 / ForeignContextEdge 2 / ForeignMixedEdges 2") !=
           std::string::npos);
     CHECK(warning.find("ForeignContextEdge (OwnedByCoupon)") != std::string::npos);
     CHECK(warning.find("ForeignExcludedEdge (KeepSurfaceDropDomain)") != std::string::npos);
+    CHECK(warning.find("ForeignMixedEdges (PerCell)") != std::string::npos);
   }
-  SECTION(
-      "sub-class (ii): the cells on a Chain: true piece are owned by the coupon, weight "
-      "0 for both matrices; sub-class (i): the cells on a ForeignEdge keep their weight "
-      "and drop their domain correction; Foreign cells are untouched")
+  SECTION("per cell (decision 559): a cell on a Chain: true piece is owned by the coupon, "
+          "weight 0 for both matrices; a cell on a ForeignEdge keeps its weight and drops "
+          "its domain correction; a cell on no piece is untouched - whatever its stretch "
+          "mates")
   {
     const auto ownership = ApplyContinuationOwnership(patches, supports, 3, tolerance, R);
-    // (ii): stretches (4, 0) and (9, 0): 3 cells, 1.8 + 1.2, listed with the continuation
-    // cells (none here) for the portion audit, flagged ForeignContextEdge.
-    REQUIRE(ownership.cells.size() == 3);
-    CHECK(ownership.foreign_context_cells == 3);
-    CHECK(ownership.wholly_owned_cells == 3);
+    // Owned: stretches (4, 0) and (9, 0) (1.8 + 1.2) and the Chain: true cells of the mixed
+    // stretches (11, 0) (patch 9, 1.0) and (13, 0) (patch 12, 0.45): 5 cells, 4.45, listed
+    // with the continuation cells (none here) for the portion audit, flagged
+    // ForeignContextEdge.
+    REQUIRE(ownership.cells.size() == 5);
+    CHECK(ownership.foreign_context_cells == 5);
+    CHECK(ownership.wholly_owned_cells == 5);
     CHECK(ownership.clipped_cells == 0);
-    CHECK_THAT(ownership.foreign_context_length, WithinAbs(3.0, 1.0e-12));
-    CHECK_THAT(ownership.owned_length, WithinAbs(3.0, 1.0e-12));
-    CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(3.0, 1.0e-12));
+    CHECK(ownership.shared_cells == 0);
+    CHECK_THAT(ownership.foreign_context_length, WithinAbs(4.45, 1.0e-12));
+    CHECK_THAT(ownership.owned_length, WithinAbs(4.45, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(0), WithinAbs(4.45, 1.0e-12));
     CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(4, 0, std::size_t{0})),
                WithinAbs(1.8, 1.0e-12));
     CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(9, 0, std::size_t{0})),
                WithinAbs(1.2, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(11, 0, std::size_t{0})),
+               WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_stretch.at(std::make_tuple(13, 0, std::size_t{0})),
+               WithinAbs(0.45, 1.0e-12));
     for (const auto &cell : ownership.cells)
     {
       CHECK(cell.foreign_context);
@@ -8303,14 +8340,18 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
       CHECK_THAT(cell.attributed.front(), WithinAbs(cell.cell_length, 1.0e-12));
       CHECK_THAT(cell.owned_length, WithinAbs(cell.cell_length, 1.0e-12));
       REQUIRE(cell.attributed_intervals.size() == 1);
-      // The attributed own-edge interval lies on the piece y = 1.5.
-      CHECK_THAT(cell.attributed_intervals.front()[0][1], WithinAbs(1.5, 1.0e-12));
-      CHECK_THAT(cell.attributed_intervals.front()[1][1], WithinAbs(1.5, 1.0e-12));
+      // The attributed own-edge interval lies on the piece (y = 1.5, or y = -1.5 for the
+      // (13, 0) cell).
+      const double y = cell.feature == 13 ? -1.5 : 1.5;
+      CHECK_THAT(cell.attributed_intervals.front()[0][1], WithinAbs(y, 1.0e-12));
+      CHECK_THAT(cell.attributed_intervals.front()[1][1], WithinAbs(y, 1.0e-12));
     }
     CHECK(ownership.cells[0].patch == 1);
     CHECK(ownership.cells[1].patch == 2);
     CHECK(ownership.cells[2].patch == 7);
-    for (const std::size_t owned : {1, 2, 7})
+    CHECK(ownership.cells[3].patch == 9);
+    CHECK(ownership.cells[4].patch == 12);
+    for (const std::size_t owned : {1, 2, 7, 9, 12})
     {
       CHECK(patches[owned].weight == 0.0);
       CHECK(patches[owned].provenance.quadrature_weight == 0.0);
@@ -8318,25 +8359,30 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
       CHECK(patches[owned].origin == before[owned].origin);  // no shift: wholly owned
       CHECK_THAT(patches[owned].domain_weight, WithinAbs(1.0, 1.0e-15));
     }
-    // (i): stretch (6, 0): 2 cells, 2.0, weight kept, domain weight 0.
-    REQUIRE(ownership.foreign_excluded_cells.size() == 2);
-    CHECK_THAT(ownership.foreign_excluded_length, WithinAbs(2.0, 1.0e-12));
+    // Domain dropped: stretch (6, 0) (2 cells, 2.0) and the Chain: false cell of the mixed
+    // stretch (13, 0) (patch 11, 1.0): weight kept, domain weight 0. The mixed stretch's
+    // excluded cell keeps its SURFACE (the coupon does not carry it: rule B5) - the
+    // whole-stretch sub-rule of 553 would have zeroed it (the decision-559 correction).
+    REQUIRE(ownership.foreign_excluded_cells.size() == 3);
+    CHECK_THAT(ownership.foreign_excluded_length, WithinAbs(3.0, 1.0e-12));
     CHECK(ownership.foreign_excluded_cells[0].patch == 3);
     CHECK(ownership.foreign_excluded_cells[1].patch == 4);
+    CHECK(ownership.foreign_excluded_cells[2].patch == 11);
     for (const auto &cell : ownership.foreign_excluded_cells)
     {
-      CHECK(cell.feature == 6);
+      CHECK(cell.feature == (cell.patch == 11 ? 13 : 6));
       CHECK(cell.stretch == 0);
-      CHECK(cell.owner == 0);
+      CHECK(cell.owners == std::vector<std::size_t>{0});
       CHECK_THAT(cell.cell_length, WithinAbs(1.0, 1.0e-12));
       CHECK_THAT(patches[cell.patch].weight, WithinAbs(before[cell.patch].weight, 1.0e-15));
+      CHECK(patches[cell.patch].weight > 0.0);
       CHECK(patches[cell.patch].domain_weight == 0.0);
       CHECK(patches[cell.patch].longitudinal_cell == before[cell.patch].longitudinal_cell);
       CHECK_THAT(patches[cell.patch].provenance.quadrature_weight,
                  WithinAbs(before[cell.patch].provenance.quadrature_weight, 1.0e-15));
     }
-    // Foreign: stretches (7, 0), (9, 1), (11, 0) untouched.
-    for (const std::size_t foreign : {5, 6, 8, 9, 10})
+    // Untouched: stretches (7, 0), (9, 1) and the off-piece cell of (11, 0).
+    for (const std::size_t foreign : {5, 6, 8, 10})
     {
       Untouched(patches[foreign], before[foreign]);
     }
@@ -8357,33 +8403,35 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     data.models.back().spatial_basis = true;
     data.patches = patches;
     const auto summary = DescribeContinuationOwnership(ownership, supports, data, 2.0);
-    CHECK(summary["Cells"] == 3);
-    CHECK(summary["WhollyOwnedCells"] == 3);
-    CHECK_THAT(summary["OwnedLength"].get<double>(), WithinAbs(2.0 * 3.0, 1.0e-12));
+    CHECK(summary["Cells"] == 5);
+    CHECK(summary["WhollyOwnedCells"] == 5);
+    CHECK_THAT(summary["OwnedLength"].get<double>(), WithinAbs(2.0 * 4.45, 1.0e-12));
     for (const auto &cell : summary["OwnedCells"])
     {
       CHECK(cell["Class"] == "ForeignContextEdge");
       CHECK(cell["Owners"][0]["SpatialFeature"] == 8);
     }
-    CHECK(summary["ForeignContext"]["ContextEdgeCells"] == 3);
+    CHECK(summary["ForeignContext"]["ContextEdgeCells"] == 5);
     CHECK_THAT(summary["ForeignContext"]["ContextEdgeLength"].get<double>(),
-               WithinAbs(2.0 * 3.0, 1.0e-12));
-    CHECK(summary["ForeignContext"]["ExcludedEdgeCells"] == 2);
+               WithinAbs(2.0 * 4.45, 1.0e-12));
+    CHECK(summary["ForeignContext"]["ExcludedEdgeCells"] == 3);
     CHECK_THAT(summary["ForeignContext"]["ExcludedEdgeLength"].get<double>(),
-               WithinAbs(2.0 * 2.0, 1.0e-12));
-    REQUIRE(summary["ForeignContext"]["ExcludedEdgeCellRecords"].size() == 2);
+               WithinAbs(2.0 * 3.0, 1.0e-12));
+    REQUIRE(summary["ForeignContext"]["ExcludedEdgeCellRecords"].size() == 3);
     CHECK(summary["ForeignContext"]["ExcludedEdgeCellRecords"][0]["Patch"] == 3);
     CHECK(summary["ForeignContext"]["ExcludedEdgeCellRecords"][0]["Feature"] == 6);
-    CHECK(summary["ForeignContext"]["ExcludedEdgeCellRecords"][0]["SpatialModel"] ==
-          "cluster");
+    CHECK(summary["ForeignContext"]["ExcludedEdgeCellRecords"][0]["Owners"][0]
+                 ["SpatialModel"] == "cluster");
+    CHECK(summary["ForeignContext"]["ExcludedEdgeCellRecords"][2]["Patch"] == 11);
+    CHECK(summary["ForeignContext"]["ExcludedEdgeCellRecords"][2]["Feature"] == 13);
     CHECK_THAT(
         summary["ForeignContext"]["ExcludedEdgeCellRecords"][0]["CellLength"].get<double>(),
         WithinAbs(2.0, 1.0e-12));
-    CHECK(summary["ForeignContext"]["Rule"].get<std::string>().find("decision 553") !=
-          std::string::npos);
+    CHECK(summary["ForeignContext"]["Rule"].get<std::string>().find(
+              "decisions 553 / 559") != std::string::npos);
     const std::string line = DescribeContinuationOwnershipSummary(summary);
-    CHECK(line.find("3 ForeignContextEdge cell(s) owned") != std::string::npos);
-    CHECK(line.find("2 ForeignExcludedEdge cell(s)") != std::string::npos);
+    CHECK(line.find("5 ForeignContextEdge cell(s) owned") != std::string::npos);
+    CHECK(line.find("3 ForeignExcludedEdge cell(s)") != std::string::npos);
     // The owned-cell records reconcile the portion audit: OwnedLength = CellLength.
     for (const auto &cell : summary["OwnedCells"])
     {
@@ -8421,7 +8469,7 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     const std::vector<SpatialSupportBounds> legacy_supports = {Support(legacy[0])};
     const auto records =
         FindTranslationalStretchInsideSpatialSupport(legacy, legacy_supports, 3, tolerance);
-    REQUIRE(records.size() == 6);
+    REQUIRE(records.size() == 7);
     for (const auto &record : records)
     {
       CHECK(!record.continuation);
@@ -8437,22 +8485,164 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
       Untouched(legacy[i], before[i]);
     }
   }
+  SECTION("a cell inside two coupons' boxes takes the stronger class and lists every "
+          "owner, ascending, whatever the support order (decision 559 MINOR-6)")
+  {
+    // Coupon B (patch 13; the same frame, a box 0.5 wider on every side so that the
+    // boxes overlap) carries the y = 1.5 piece as a chain piece too and the y = -1.5 line
+    // x in [-2.25, 0.75] as a CHAIN piece where A excludes it. Supports passed as {B, A}.
+    auto two = patches;
+    Patch coupon_b = Spatial();
+    coupon_b.provenance.feature = 14;
+    coupon_b.provenance.claims = {Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
+    coupon_b.provenance.chain = {{-1.0, 1.0, 0.5, 1.0}, {-1.5, -1.0, 0.5, -1.0}};
+    coupon_b.provenance.foreign.clear();
+    two.push_back(coupon_b);
+    SpatialSupportBounds support_b = Support(coupon_b);
+    support_b.patch = 13;
+    support_b.min = {-3.5, -3.5, -2.5};
+    support_b.max = {2.0, 3.5, 2.5};
+    const std::vector<SpatialSupportBounds> both = {support_b, supports[0]};
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(two, both, 3, tolerance);
+    // Stretch (6, 0): ForeignExcludedEdge in A's record, ForeignContextEdge in B's.
+    int excluded_in_a = 0, context_in_b = 0;
+    for (const auto &record : records)
+    {
+      if (record.feature == 6 && record.spatial_patch == 0)
+      {
+        excluded_in_a += record.foreign_context == ForeignContextClass::EXCLUDED_EDGE;
+      }
+      if (record.feature == 6 && record.spatial_patch == 13)
+      {
+        context_in_b += record.foreign_context == ForeignContextClass::CONTEXT_EDGE;
+      }
+    }
+    CHECK(excluded_in_a == 1);
+    CHECK(context_in_b == 1);
+    const auto ownership = ApplyContinuationOwnership(two, both, 3, tolerance, R);
+    // (6, 0): owned (B's class wins), owner B only; not in the excluded list.
+    // (4, 0) and the y = 1.5 cells of (9, 0) / (11, 0): owned by BOTH, owners {0, 13}
+    // ascending, the length split equally, counted as shared cells.
+    for (const auto &cell : ownership.cells)
+    {
+      if (cell.feature == 6)
+      {
+        CHECK(cell.owners == std::vector<std::size_t>{13});
+      }
+      else if (cell.feature == 4 || cell.feature == 9 || cell.feature == 11)
+      {
+        CHECK(cell.owners == std::vector<std::size_t>{0, 13});
+        REQUIRE(cell.attributed.size() == 2);
+        CHECK_THAT(cell.attributed[0], WithinAbs(0.5 * cell.cell_length, 1.0e-12));
+        CHECK_THAT(cell.attributed[1], WithinAbs(0.5 * cell.cell_length, 1.0e-12));
+        REQUIRE(cell.attributed_intervals.size() == 2);
+        CHECK_THAT(cell.attributed_intervals[0][1][0],
+                   WithinAbs(cell.attributed_intervals[1][0][0], 1.0e-12));
+      }
+    }
+    CHECK(ownership.shared_cells == 4);  // (4, 0) x 2, (9, 0), (11, 0)'s first cell
+    CHECK(two[3].weight == 0.0);
+    CHECK(two[4].weight == 0.0);
+    // The mixed stretch (13, 0): its first cell is on A's ForeignEdge AND on B's chain
+    // piece
+    // -> owned by B (the stronger class), nothing left in the excluded list; its second
+    // cell is on A's chain piece only -> owned by A.
+    CHECK(ownership.foreign_excluded_cells.empty());
+    CHECK(two[11].weight == 0.0);
+    CHECK(two[12].weight == 0.0);
+    CHECK_THAT(ownership.owned_by_support.at(13),
+               WithinAbs(0.5 + 0.4 + 0.6 + 2.0 + 0.5 + 1.0, 1.0e-12));
+    CHECK_THAT(ownership.owned_by_support.at(0),
+               WithinAbs(0.5 + 0.4 + 0.6 + 0.5 + 0.45, 1.0e-12));
+    // The same with the supports in the other order: identical owners and shares.
+    auto two_again = patches;
+    two_again.push_back(coupon_b);
+    const auto reversed =
+        ApplyContinuationOwnership(two_again, {supports[0], support_b}, 3, tolerance, R);
+    REQUIRE(reversed.cells.size() == ownership.cells.size());
+    for (std::size_t i = 0; i < reversed.cells.size(); i++)
+    {
+      CHECK(reversed.cells[i].patch == ownership.cells[i].patch);
+      CHECK(reversed.cells[i].owners == ownership.cells[i].owners);
+      CHECK(reversed.cells[i].attributed == ownership.cells[i].attributed);
+    }
+  }
+  SECTION("the records and the treatment read one classification of the intact cells "
+          "(decision 559 MINOR-1): a stretch continuation-owned by one coupon inside "
+          "another's box is recorded ForeignContextEdge with its cell counts, and the "
+          "foreign-context pass adds nothing to it")
+  {
+    // Coupon B (patch 13) with a chain piece along y = 0 for x in [0, 1.5] (B's claims
+    // are the x = -2.5 edge only, so the stretch continues none of them); the stretch
+    // (15, 0) continues A's claim y = 0 through its cut x = 0 (segment 3) and is owned by A
+    // (one cell wholly, one clipped at A's face x = 1.5).
+    std::vector<Patch> owned_elsewhere = {Spatial(), Cell(15, 0, 0.0, 1.0, 0.0),
+                                          Cell(15, 0, 1.0, 1.4, 0.0)};
+    owned_elsewhere[1].provenance.segment = owned_elsewhere[2].provenance.segment = 3;
+    Patch coupon_b = Spatial();
+    coupon_b.provenance.feature = 14;
+    coupon_b.provenance.claims = {Claim{5, {-2.5, 0.0, 0.0}, {-2.5, 1.0, 0.0}}};
+    coupon_b.provenance.chain = {{0.0, 0.0, 1.0, 0.0}};
+    coupon_b.provenance.foreign.clear();
+    owned_elsewhere.push_back(coupon_b);
+    SpatialSupportBounds support_b = Support(coupon_b);
+    support_b.patch = 3;
+    support_b.min = {-3.5, -3.5, -2.5};
+    support_b.max = {2.0, 3.5, 2.5};
+    const std::vector<SpatialSupportBounds> both = {supports[0], support_b};
+    const auto records =
+        FindTranslationalStretchInsideSpatialSupport(owned_elsewhere, both, 3, tolerance);
+    REQUIRE(records.size() == 2);
+    for (const auto &record : records)
+    {
+      if (record.spatial_patch == 0)
+      {
+        CHECK(record.continuation);
+      }
+      else
+      {
+        CHECK(!record.continuation);
+        CHECK(record.foreign_context == ForeignContextClass::CONTEXT_EDGE);
+        CHECK(record.cells_on_chain_edges == 2);
+      }
+    }
+    const auto ownership =
+        ApplyContinuationOwnership(owned_elsewhere, both, 3, tolerance, R);
+    REQUIRE(ownership.cells.size() == 2);
+    for (const auto &cell : ownership.cells)
+    {
+      CHECK(!cell.foreign_context);
+      CHECK(cell.owners == std::vector<std::size_t>{0});
+    }
+    CHECK(ownership.foreign_context_cells == 0);
+    CHECK(ownership.foreign_excluded_cells.empty());
+    CHECK(ownership.owned_by_stretch.count(std::make_tuple(15, 0, std::size_t{3})) == 0);
+    CHECK(owned_elsewhere[1].weight == 0.0);
+    CHECK(owned_elsewhere[2].weight == 0.0);
+    // The record Treatment (OwnedByCoupon) equals the applied state (weight 0).
+  }
   SECTION("a contract-3 coupon without ForeignEdges (the exact coupons): every context "
           "piece is a chain piece, so a stretch on it is owned")
   {
     auto exact = patches;
     exact[0].provenance.foreign.clear();
-    exact[0].provenance.chain = {{-1.0, 1.0, 0.5, 1.0}, {-1.5, -1.0, 0.5, -1.0}};
+    exact[0].provenance.chain = {
+        {-1.0, 1.0, 0.5, 1.0}, {-1.5, -1.0, 0.5, -1.0}, {0.5, -1.0, 0.8, -1.0}};
     const std::vector<SpatialSupportBounds> exact_supports = {Support(exact[0])};
     const auto records =
         FindTranslationalStretchInsideSpatialSupport(exact, exact_supports, 3, tolerance);
-    REQUIRE(records.size() == 6);
+    REQUIRE(records.size() == 7);
     for (const auto &record : records)
     {
-      if ((record.feature == 4 || record.feature == 6) ||
+      if ((record.feature == 4 || record.feature == 6 || record.feature == 13) ||
           (record.feature == 9 && record.stretch == 0))
       {
         CHECK(record.foreign_context == ForeignContextClass::CONTEXT_EDGE);
+      }
+      else if (record.feature == 11)
+      {
+        CHECK(record.foreign_context == ForeignContextClass::MIXED_EDGES);
       }
       else
       {
@@ -8461,13 +8651,14 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     }
     const auto ownership =
         ApplyContinuationOwnership(exact, exact_supports, 3, tolerance, R);
-    CHECK(ownership.cells.size() == 5);
+    CHECK(ownership.cells.size() == 8);
     CHECK(ownership.foreign_excluded_cells.empty());
-    CHECK_THAT(ownership.owned_length, WithinAbs(1.8 + 2.0 + 1.2, 1.0e-12));
-    for (const std::size_t owned : {1, 2, 3, 4, 7})
+    CHECK_THAT(ownership.owned_length, WithinAbs(1.8 + 2.0 + 1.2 + 1.0 + 1.45, 1.0e-12));
+    for (const std::size_t owned : {1, 2, 3, 4, 7, 9, 11, 12})
     {
       CHECK(exact[owned].weight == 0.0);
     }
+    Untouched(exact[10], before[10]);
   }
 }
 

@@ -17272,20 +17272,28 @@ bool StretchStrictlyInside(const TranslationalStretch &stretch,
                      });
 }
 
-// The foreign-context sub-class of a stretch inside a contract-3 support (decision 553):
-// the B5 test at placement. A cell lies on a context piece when its OWN-edge ends and
-// midpoint (OwnEdgePointAt: the recorded pre-image on the own segment) each lie within
-// `tolerance` (1e-3 R, the default EdgeExcludeSegmentTolerance) of one piece of that class
-// in the support's local frame (the spatial patch frame in units of R, the frame of the
-// Signature's Context) — the form in which ExcludeCoincidentEdgeSegments drops a perimeter
-// segment from the coupon's within-R accounting. Judged per stretch: every cell on a
-// Chain: false piece (ForeignEdges) -> EXCLUDED_EDGE; every cell on some piece with at
-// least one on a Chain: true piece -> CONTEXT_EDGE; a cell on no piece leaves the stretch
-// NONE (the legacy Foreign class: metal the context does not list). A legacy support (no
-// support box) is always NONE.
+// The foreign-context classification of a stretch inside a contract-3 support (decisions
+// 553 / 559): the B5 test at placement, PER CELL. A cell lies on a context piece when its
+// OWN-edge ends and midpoint (OwnEdgePointAt: the recorded pre-image on the own segment)
+// each lie within `tolerance` (1e-3 R, the default EdgeExcludeSegmentTolerance) of one
+// piece of that class in the support's local frame (the spatial patch frame in units of R,
+// the frame of the Signature's Context) — the form in which ExcludeCoincidentEdgeSegments
+// drops a perimeter segment from the coupon's within-R accounting. Each cell is classed
+// EXCLUDED_EDGE (on a Chain: false piece = an excluded ForeignEdge), CHAIN_EDGE (on a
+// Chain: true piece) or NONE (on no piece), and treated by its own class; the stretch's
+// class summarises: all NONE -> NONE (the legacy Foreign class, metal the context does not
+// list), all EXCLUDED_EDGE -> EXCLUDED_EDGE, all CHAIN_EDGE -> CONTEXT_EDGE, otherwise
+// MIXED_EDGES. A legacy support (no support box) is always NONE.
+enum class ForeignContextCellClass
+{
+  NONE,
+  EXCLUDED_EDGE,
+  CHAIN_EDGE
+};
 struct ForeignContextClassification
 {
   ForeignContextClass cls = ForeignContextClass::NONE;
+  std::vector<ForeignContextCellClass> cells;  // parallel to the stretch's patches
   std::size_t cells_on_excluded_edges = 0;
   std::size_t cells_on_chain_edges = 0;
 };
@@ -17294,6 +17302,7 @@ ForeignContextClassification ClassifyForeignContext(
     const std::vector<ResponsePatchData> &patches, int dimension, double tolerance)
 {
   ForeignContextClassification result;
+  result.cells.assign(stretch.patches.size(), ForeignContextCellClass::NONE);
   if (!support.has_support_box || (support.chain.empty() && support.foreign.empty()))
   {
     return result;
@@ -17350,25 +17359,89 @@ ForeignContextClassification ClassifyForeignContext(
     }
     return true;
   };
-  for (const std::size_t patch_idx : stretch.patches)
+  for (std::size_t i = 0; i < stretch.patches.size(); i++)
   {
-    const auto &patch = patches[patch_idx];
+    const auto &patch = patches[stretch.patches[i]];
     if (CellOn(patch, support.foreign))
     {
+      result.cells[i] = ForeignContextCellClass::EXCLUDED_EDGE;
       result.cells_on_excluded_edges++;
     }
     else if (CellOn(patch, support.chain))
     {
+      result.cells[i] = ForeignContextCellClass::CHAIN_EDGE;
       result.cells_on_chain_edges++;
     }
   }
-  if (result.cells_on_excluded_edges + result.cells_on_chain_edges !=
-      stretch.patches.size())
+  const std::size_t on_pieces =
+      result.cells_on_excluded_edges + result.cells_on_chain_edges;
+  if (on_pieces == 0)
   {
-    return result;  // a cell on no context piece: the legacy Foreign class
+    result.cls = ForeignContextClass::NONE;
   }
-  result.cls = result.cells_on_chain_edges > 0 ? ForeignContextClass::CONTEXT_EDGE
-                                               : ForeignContextClass::EXCLUDED_EDGE;
+  else if (result.cells_on_excluded_edges == stretch.patches.size())
+  {
+    result.cls = ForeignContextClass::EXCLUDED_EDGE;
+  }
+  else if (result.cells_on_chain_edges == stretch.patches.size())
+  {
+    result.cls = ForeignContextClass::CONTEXT_EDGE;
+  }
+  else
+  {
+    result.cls = ForeignContextClass::MIXED_EDGES;
+  }
+  return result;
+}
+
+// The foreign-context classifications of every (Foreign stretch, contract-3 support) pair
+// of a patch set: the stretch wholly inside the support's box, not a continuation of its
+// claims, at least one cell on a context piece. Computed ONCE on the INTACT patches
+// (decision 559 MINOR-1): the stretch records
+// (FindTranslationalStretchInsideSpatialSupport) and the ownership pass
+// (ApplyContinuationOwnership, before its continuation pass mutates any cell) both read it,
+// so the recorded Class / Treatment and the applied treatment are the same classification.
+// Supports are visited in ascending spatial patch order (deterministic whatever the order
+// of `supports`).
+struct StretchForeignContext
+{
+  std::pair<int, int> key;           // (feature, stretch)
+  std::vector<std::size_t> patches;  // the stretch's cells
+  std::size_t support = 0;           // index into `supports`
+  ForeignContextClassification classification;
+};
+std::vector<StretchForeignContext> ClassifyForeignContextStretches(
+    const std::map<std::pair<int, int>, TranslationalStretch> &stretches,
+    const std::vector<ResponsePatchData> &patches,
+    const std::vector<SpatialSupportBounds> &supports, int dimension,
+    double continuation_tolerance)
+{
+  std::vector<std::size_t> order(supports.size());
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b)
+                   { return supports[a].patch < supports[b].patch; });
+  std::vector<StretchForeignContext> result;
+  for (const auto &entry : stretches)
+  {
+    const auto &stretch = entry.second;
+    for (const std::size_t s : order)
+    {
+      const auto &support = supports[s];
+      if (!support.has_support_box || !StretchStrictlyInside(stretch, support, dimension) ||
+          ContinuedSupportClaimEnd(stretch, support, dimension, continuation_tolerance)
+              .has_value())
+      {
+        continue;
+      }
+      auto classification = ClassifyForeignContext(stretch, support, patches, dimension,
+                                                   continuation_tolerance);
+      if (classification.cls == ForeignContextClass::NONE)
+      {
+        continue;
+      }
+      result.push_back({entry.first, stretch.patches, s, std::move(classification)});
+    }
+  }
   return result;
 }
 
@@ -17386,6 +17459,8 @@ const char *TranslationalOwnershipClassName(const TranslationalOwnershipRecord &
       return "ForeignExcludedEdge";
     case ForeignContextClass::CONTEXT_EDGE:
       return "ForeignContextEdge";
+    case ForeignContextClass::MIXED_EDGES:
+      return "ForeignMixedEdges";
     case ForeignContextClass::NONE:
       break;
   }
@@ -17398,13 +17473,16 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
     double continuation_tolerance)
 {
   const auto stretches = CollectTranslationalStretches(patches, dimension);
+  const auto foreign_context = ClassifyForeignContextStretches(
+      stretches, patches, supports, dimension, continuation_tolerance);
   std::vector<TranslationalOwnershipRecord> records;
   for (const auto &entry : stretches)
   {
     const auto &key = entry.first;
     const auto &stretch = entry.second;
-    for (const auto &support : supports)
+    for (std::size_t s = 0; s < supports.size(); s++)
     {
+      const auto &support = supports[s];
       // Strictly inside: a stretch touching the box face is not inside.
       if (!StretchStrictlyInside(stretch, support, dimension))
       {
@@ -17431,11 +17509,16 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
               .has_value();
       if (!record.continuation)
       {
-        const auto classification = ClassifyForeignContext(
-            stretch, support, patches, dimension, continuation_tolerance);
-        record.foreign_context = classification.cls;
-        record.cells_on_excluded_edges = classification.cells_on_excluded_edges;
-        record.cells_on_chain_edges = classification.cells_on_chain_edges;
+        // The same classification the ownership pass applies (NONE when absent).
+        const auto it = std::find_if(foreign_context.begin(), foreign_context.end(),
+                                     [&](const StretchForeignContext &c)
+                                     { return c.key == key && c.support == s; });
+        if (it != foreign_context.end())
+        {
+          record.foreign_context = it->classification.cls;
+          record.cells_on_excluded_edges = it->classification.cells_on_excluded_edges;
+          record.cells_on_chain_edges = it->classification.cells_on_chain_edges;
+        }
       }
       records.push_back(record);
     }
@@ -17541,9 +17624,9 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
   };
   nlohmann::json entries = nlohmann::json::array();
   int continuation_count = 0, foreign_count = 0, excluded_edge_count = 0,
-      context_edge_count = 0;
+      context_edge_count = 0, mixed_edges_count = 0;
   double continuation_length = 0.0, foreign_length = 0.0, excluded_edge_length = 0.0,
-         context_edge_length = 0.0, owned_length = 0.0;
+         context_edge_length = 0.0, mixed_edges_length = 0.0, owned_length = 0.0;
   for (const auto &record : records)
   {
     const auto support = std::find_if(supports.begin(), supports.end(), [&](const auto &s)
@@ -17568,18 +17651,26 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
       context_edge_count++;
       context_edge_length += length;
     }
+    else if (record.foreign_context == ForeignContextClass::MIXED_EDGES)
+    {
+      mixed_edges_count++;
+      mixed_edges_length += length;
+    }
     else
     {
       foreign_count++;
       foreign_length += length;
     }
-    // The treatment the placement applied to the stretch's cells (decision 553).
-    const char *treatment = record.continuation ? "OwnedByCoupon"
-                            : record.foreign_context == ForeignContextClass::CONTEXT_EDGE
-                                ? "OwnedByCoupon"
-                            : record.foreign_context == ForeignContextClass::EXCLUDED_EDGE
-                                ? "KeepSurfaceDropDomain"
-                                : "Untouched";
+    // The treatment the placement applied to the stretch's cells (decisions 553 / 559:
+    // per cell by piece class; PerCell names a stretch whose cells differ, each treated by
+    // its own class).
+    const char *treatment =
+        record.continuation                                           ? "OwnedByCoupon"
+        : record.foreign_context == ForeignContextClass::CONTEXT_EDGE ? "OwnedByCoupon"
+        : record.foreign_context == ForeignContextClass::EXCLUDED_EDGE
+            ? "KeepSurfaceDropDomain"
+        : record.foreign_context == ForeignContextClass::MIXED_EDGES ? "PerCell"
+                                                                     : "Untouched";
     double owned = 0.0;
     if (ownership)
     {
@@ -17605,18 +17696,21 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
          {"Class", class_name},
          {"Treatment", treatment},
          {"CellsOnExcludedEdges", record.cells_on_excluded_edges},
-         {"CellsOnChainEdges", record.cells_on_chain_edges}});
+         {"CellsOnChainEdges", record.cells_on_chain_edges},
+         {"CellsOnNoPiece", record.patch_count - record.cells_on_excluded_edges -
+                                record.cells_on_chain_edges}});
   }
   return {
       {"Count", static_cast<int>(records.size())},
-      {"Length",
-       continuation_length + foreign_length + excluded_edge_length + context_edge_length},
+      {"Length", continuation_length + foreign_length + excluded_edge_length +
+                     context_edge_length + mixed_edges_length},
       {"Continuation", {{"Count", continuation_count}, {"Length", continuation_length}}},
       {"Foreign", {{"Count", foreign_count}, {"Length", foreign_length}}},
       {"ForeignExcludedEdge",
        {{"Count", excluded_edge_count}, {"Length", excluded_edge_length}}},
       {"ForeignContextEdge",
        {{"Count", context_edge_count}, {"Length", context_edge_length}}},
+      {"ForeignMixedEdges", {{"Count", mixed_edges_count}, {"Length", mixed_edges_length}}},
       // The continuation ownership's removed length: per record (the stretch's cells inside
       // that box, clipped exactly) and in total over every stretch, inside or straddling.
       {"OwnedLength", owned_length},
@@ -17648,18 +17742,24 @@ nlohmann::json DescribeTranslationalOwnershipRecords(
        "(decision 553, 2026-10-08; spatial-support contract v3, decisions 281 / 282 / 285 "
        "/ 286: the coupon's twins CONTAIN the context metal inside the box, which inverts "
        "the decision-236 premise 'foreign metal in a box is absent from both twins'): "
-       "every cell's own-edge ends and midpoint within ContinuationToleranceOverR x R of a "
-       "context piece (the rule-B5 EdgeExcludeSegments form) - on Chain: false pieces (the "
-       "library's ForeignEdges = the qualification's EdgeExcludeSegments, so the coupon's "
-       "within-R SURFACES leave that edge to the cells while its DOMAIN matrices integrate "
-       "it) the stretch is ForeignExcludedEdge and its cells keep their surface matrices "
-       "and drop their domain correction (DomainWeight 0); on a Chain: true piece, or any "
-       "context piece of a coupon without ForeignEdges, the stretch is ForeignContextEdge "
-       "and its cells are owned by the coupon (weight 0, both matrices, as a "
-       "continuation). Foreign = a stretch on no context piece (a legacy claims-only "
-       "coupon, or metal the context does not list): absent from the coupon's twins, a "
-       "second-order model mismatch of the coupon, not a double count, untouched. Judged "
-       "per stretch, never per cell: the first cells of every stack portion adjacent to a "
+       "each CELL by its own-edge ends and midpoint within ContinuationToleranceOverR x R "
+       "of a context piece (the rule-B5 EdgeExcludeSegments form; decision 559: the "
+       "treatment is PER CELL by piece class, classified once on the intact cells before "
+       "the continuation pass) - a cell on a Chain: false piece (the library's "
+       "ForeignEdges "
+       "= the qualification's EdgeExcludeSegments, so the coupon's within-R SURFACES leave "
+       "that edge to the cell while its DOMAIN matrices integrate it) keeps its surface "
+       "matrices and drops its domain correction (DomainWeight 0); a cell on a Chain: true "
+       "piece, or any context piece of a coupon without ForeignEdges, is owned by the "
+       "coupon (weight 0, both matrices, as a continuation cell); a cell on no piece is "
+       "untouched. The stretch Class summarises its cells: ForeignExcludedEdge (every cell "
+       "on a Chain: false piece; Treatment KeepSurfaceDropDomain), ForeignContextEdge "
+       "(every cell on a Chain: true piece; OwnedByCoupon), ForeignMixedEdges (cells of "
+       "different classes, each treated by its own; PerCell; the three cell counts "
+       "recorded), Foreign (no cell on any context piece: a legacy claims-only coupon, or "
+       "metal the context does not list - absent from the coupon's twins, a second-order "
+       "model mismatch, not a double count; Untouched). The containment is judged per "
+       "stretch, never per cell: the first cells of every stack portion adjacent to a "
        "cluster lie inside its box legitimately. Lengths and coordinates in mesh units"}};
 }
 
@@ -17680,15 +17780,16 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
   }
   return fmt::format(
       "{:d} translational response-correction stretch(es) ({:.6e} mesh units; Continuation "
-      "{:d} / Foreign {:d} / ForeignExcludedEdge {:d} / ForeignContextEdge {:d}) lie "
-      "wholly "
-      "inside a spatial patch's matching volume (decisions 236 / 553, recorded under "
+      "{:d} / Foreign {:d} / ForeignExcludedEdge {:d} / ForeignContextEdge {:d} / "
+      "ForeignMixedEdges {:d}) lie wholly inside a spatial patch's matching volume "
+      "(decisions 236 / 553 / 559, recorded under "
       "Diagnostics.TranslationalStretchesInsideSpatialSupport):\n{}",
       diagnostics["Count"].get<int>(), diagnostics["Length"].get<double>(),
       diagnostics["Continuation"]["Count"].get<int>(),
       diagnostics["Foreign"]["Count"].get<int>(),
       diagnostics["ForeignExcludedEdge"]["Count"].get<int>(),
-      diagnostics["ForeignContextEdge"]["Count"].get<int>(), lines);
+      diagnostics["ForeignContextEdge"]["Count"].get<int>(),
+      diagnostics["ForeignMixedEdges"]["Count"].get<int>(), lines);
 }
 
 ContinuationOwnership
@@ -17698,6 +17799,11 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
 {
   ContinuationOwnership ownership;
   const auto stretches = CollectTranslationalStretches(patches, dimension);
+  // The foreign-context classification (decisions 553 / 559) is read on the INTACT patches,
+  // before the continuation pass below clips or collapses any cell (decision 559 MINOR-1):
+  // the same classification FindTranslationalStretchInsideSpatialSupport records.
+  const auto foreign_context = ClassifyForeignContextStretches(
+      stretches, patches, supports, dimension, continuation_tolerance);
   for (const auto &entry : stretches)
   {
     const auto &key = entry.first;
@@ -17869,73 +17975,110 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
     }
   }
 
-  // Foreign-context ownership (decision 553): every Foreign stretch wholly inside a
-  // contract-3 support, by the B5 sub-class of ClassifyForeignContext. ForeignContextEdge:
-  // the coupon's twins carry the stretch's edge WITH its within-R surfaces, so every cell
-  // is owned by the coupon as a wholly owned continuation cell (weight 0, the own cell
-  // collapsed, listed under `cells` for the portion audit). ForeignExcludedEdge: rule B5
-  // left that edge's within-R surfaces to the cells while the coupon's domain matrices
-  // integrate the whole box, so every cell keeps its weight and drops its domain
-  // correction (domain_weight 0). Idempotent: an owned cell (weight 0) or a cell whose
-  // domain correction is already dropped is skipped.
-  for (const auto &entry : stretches)
+  // Foreign-context ownership (decisions 553 / 559), PER CELL by piece class from the
+  // classification read above. A cell on a Chain: true piece: the coupon's twins carry its
+  // edge WITH its within-R surfaces, so it is owned by the coupon as a wholly owned
+  // continuation cell (weight 0, the own cell collapsed, listed under `cells` for the
+  // portion audit). A cell on a Chain: false piece (an excluded ForeignEdge): rule B5 left
+  // that edge's within-R surfaces to the cell while the coupon's domain matrices integrate
+  // the whole box, so it keeps its weight and drops its domain correction (domain_weight
+  // 0). A cell on no piece is untouched. A cell inside several supports takes the stronger
+  // class (owned over domain-dropped) and lists every support of that class as an owner, in
+  // ascending spatial patch order (deterministic, decision 559 MINOR-6). Idempotent: a cell
+  // already at weight 0 (owned by the continuation pass or a previous call) or whose domain
+  // correction is already dropped is skipped.
   {
-    const auto &key = entry.first;
-    const auto &stretch = entry.second;
-    for (const auto &support : supports)
+    struct CellTreatment
     {
-      if (!support.has_support_box || !StretchStrictlyInside(stretch, support, dimension) ||
-          ContinuedSupportClaimEnd(stretch, support, dimension, continuation_tolerance)
-              .has_value())
+      std::pair<int, int> key;
+      ForeignContextCellClass cls = ForeignContextCellClass::NONE;
+      std::vector<std::size_t> owners;  // spatial patches of the supports of `cls`
+    };
+    std::map<std::size_t, CellTreatment> treatments;  // by patch index (ascending)
+    for (const auto &context : foreign_context)
+    {
+      const std::size_t owner = supports[context.support].patch;
+      for (std::size_t i = 0; i < context.patches.size(); i++)
       {
-        continue;
-      }
-      const auto classification = ClassifyForeignContext(stretch, support, patches,
-                                                         dimension, continuation_tolerance);
-      if (classification.cls == ForeignContextClass::NONE)
-      {
-        continue;
-      }
-      for (const std::size_t patch_idx : stretch.patches)
-      {
-        auto &patch = patches[patch_idx];
-        const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
-        const double cell_length = c1 - c0;
-        if (patch.weight <= 0.0 || cell_length <= 0.0)
+        const auto cell_class = context.classification.cells[i];
+        if (cell_class == ForeignContextCellClass::NONE)
         {
           continue;
         }
-        if (classification.cls == ForeignContextClass::CONTEXT_EDGE)
+        auto &treatment = treatments[context.patches[i]];
+        treatment.key = context.key;
+        if (cell_class == treatment.cls)
         {
-          ContinuationOwnership::Cell cell;
-          cell.patch = patch_idx;
-          cell.feature = key.first;
-          cell.stretch = key.second;
-          cell.cell_length = cell_length;
-          cell.owned_length = cell_length;
-          cell.owners.push_back(support.patch);
-          cell.attributed.push_back(cell_length);
+          treatment.owners.push_back(owner);
+        }
+        else if (treatment.cls == ForeignContextCellClass::NONE ||
+                 cell_class == ForeignContextCellClass::CHAIN_EDGE)
+        {
+          treatment.cls = cell_class;  // the stronger class replaces the weaker
+          treatment.owners = {owner};
+        }
+      }
+    }
+    for (auto &[patch_idx, treatment] : treatments)
+    {
+      auto &patch = patches[patch_idx];
+      const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+      const double cell_length = c1 - c0;
+      if (patch.weight <= 0.0 || cell_length <= 0.0)
+      {
+        continue;
+      }
+      std::sort(treatment.owners.begin(), treatment.owners.end());
+      treatment.owners.erase(std::unique(treatment.owners.begin(), treatment.owners.end()),
+                             treatment.owners.end());
+      const auto &[feature, stretch] = treatment.key;
+      if (treatment.cls == ForeignContextCellClass::CHAIN_EDGE)
+      {
+        ContinuationOwnership::Cell cell;
+        cell.patch = patch_idx;
+        cell.feature = feature;
+        cell.stretch = stretch;
+        cell.cell_length = cell_length;
+        cell.owned_length = cell_length;
+        cell.foreign_context = true;
+        // The owned length split equally between the owners, the own-edge interval in
+        // consecutive pieces (one owner takes the whole cell).
+        const std::size_t n = treatment.owners.size();
+        for (std::size_t i = 0; i < n; i++)
+        {
+          const double share = cell_length / static_cast<double>(n);
+          const double lo =
+              c0 + cell_length * static_cast<double>(i) / static_cast<double>(n);
+          const double hi = i + 1 == n ? c1
+                                       : c0 + cell_length * static_cast<double>(i + 1) /
+                                                  static_cast<double>(n);
+          cell.owners.push_back(treatment.owners[i]);
+          cell.attributed.push_back(share);
           cell.attributed_intervals.push_back(
-              {OwnEdgePointAt(patch, c0), OwnEdgePointAt(patch, c1)});
-          cell.foreign_context = true;
+              {OwnEdgePointAt(patch, lo), OwnEdgePointAt(patch, hi)});
           ownership
-              .owned_by_stretch[std::make_tuple(key.first, key.second, support.patch)] +=
-              cell_length;
-          ownership.owned_by_support[support.patch] += cell_length;
-          ownership.owned_length += cell_length;
-          ownership.foreign_context_length += cell_length;
-          ownership.foreign_context_cells++;
-          ownership.wholly_owned_cells++;
-          ClipLongitudinalCell(patch, c1, c1);
-          ownership.cells.push_back(std::move(cell));
+              .owned_by_stretch[std::make_tuple(feature, stretch, treatment.owners[i])] +=
+              share;
+          ownership.owned_by_support[treatment.owners[i]] += share;
         }
-        else if (patch.domain_weight > 0.0)
+        if (n > 1)
         {
-          patch.domain_weight = 0.0;
-          ownership.foreign_excluded_cells.push_back(
-              {patch_idx, key.first, key.second, support.patch, cell_length});
-          ownership.foreign_excluded_length += cell_length;
+          ownership.shared_cells++;
+          ownership.shared_length += cell_length;
         }
+        ownership.owned_length += cell_length;
+        ownership.foreign_context_length += cell_length;
+        ownership.foreign_context_cells++;
+        ownership.wholly_owned_cells++;
+        ClipLongitudinalCell(patch, c1, c1);
+        ownership.cells.push_back(std::move(cell));
+      }
+      else if (patch.domain_weight > 0.0)
+      {
+        patch.domain_weight = 0.0;
+        ownership.foreign_excluded_cells.push_back(
+            {patch_idx, feature, stretch, treatment.owners, cell_length});
+        ownership.foreign_excluded_length += cell_length;
       }
     }
   }
@@ -18429,7 +18572,14 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
   for (const auto &cell : ownership.foreign_excluded_cells)
   {
     const auto &patch = config.patches[cell.patch];
-    const auto &spatial = config.patches[cell.owner];
+    nlohmann::json owners = nlohmann::json::array();
+    for (const std::size_t owner : cell.owners)
+    {
+      const auto &spatial = config.patches[owner];
+      owners.push_back({{"SpatialPatch", owner},
+                        {"SpatialFeature", spatial.provenance.feature},
+                        {"SpatialModel", models.at(spatial.model)->name}});
+    }
     excluded_cells.push_back({{"Patch", cell.patch},
                               {"Feature", cell.feature},
                               {"Stretch", cell.stretch},
@@ -18438,9 +18588,7 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
                               {"S1", patch.provenance.s1 * coordinate_scale},
                               {"Model", models.at(patch.model)->name},
                               {"CellLength", cell.cell_length * coordinate_scale},
-                              {"SpatialPatch", cell.owner},
-                              {"SpatialFeature", spatial.provenance.feature},
-                              {"SpatialModel", models.at(spatial.model)->name}});
+                              {"Owners", std::move(owners)}});
   }
   nlohmann::json by_support = nlohmann::json::array();
   for (const auto &support : supports)
@@ -18498,19 +18646,23 @@ DescribeContinuationOwnership(const ContinuationOwnership &ownership,
         {"ExcludedEdgeLength", ownership.foreign_excluded_length * coordinate_scale},
         {"ExcludedEdgeCellRecords", std::move(excluded_cells)},
         {"Rule",
-         "decision 553 (2026-10-08): a Foreign stretch wholly inside a Box + Context "
-         "coupon's box (TranslationalStretchesInsideSpatialSupport) whose every cell lies "
-         "on a context piece of the coupon (own-edge ends and midpoint within 1e-3 R, the "
-         "rule-B5 EdgeExcludeSegments form) is a double count under spatial-support "
-         "contract v3 (the twins contain the context metal): ForeignContextEdge (a Chain: "
-         "true piece, or any context piece of a coupon without ForeignEdges) - every cell "
-         "owned by the coupon, weight 0 for both matrices, listed under OwnedCells with "
-         "Class ForeignContextEdge; ForeignExcludedEdge (every cell on a Chain: false "
-         "piece = the library's ForeignEdges = the qualification's EdgeExcludeSegments, "
-         "whose within-R surfaces rule B5 left to the cells) - every cell keeps its weight "
-         "(surface matrices) and drops its domain correction (DomainWeight 0; the ft "
-         "domain correction, the ff transform and the self-consistent operator), listed "
-         "under ExcludedEdgeCellRecords. Lengths in mesh units"}}},
+         "decisions 553 / 559 (2026-10-08): the cells of a Foreign stretch wholly inside "
+         "a Box + Context coupon's box (TranslationalStretchesInsideSpatialSupport) that "
+         "lie on a context piece of the coupon (own-edge ends and midpoint within 1e-3 R, "
+         "the rule-B5 EdgeExcludeSegments form) are double counts under spatial-support "
+         "contract v3 (the twins contain the context metal), treated PER CELL by piece "
+         "class from one classification of the intact cells: a cell on a Chain: true "
+         "piece (or any context piece of a coupon without ForeignEdges) is owned by the "
+         "coupon, weight 0 for both matrices, listed under OwnedCells with Class "
+         "ForeignContextEdge; a cell on a Chain: false piece (= the library's "
+         "ForeignEdges = the qualification's EdgeExcludeSegments, whose within-R surfaces "
+         "rule B5 left to the cell) keeps its weight (surface matrices) and drops its "
+         "domain correction (DomainWeight 0; the ft domain correction, the ff transform "
+         "and the self-consistent operator), listed under ExcludedEdgeCellRecords with "
+         "every support whose ForeignEdge it lies on; a cell on no piece is untouched. A "
+         "cell inside several supports takes the stronger class and lists every support "
+         "of that class as an owner (ascending spatial patch, the owned length split "
+         "equally). Lengths in mesh units"}}},
       {"Vertices",
        {{"Count", static_cast<int>(ownership.vertices.size())},
         {"Shared", ownership.shared_vertices},
