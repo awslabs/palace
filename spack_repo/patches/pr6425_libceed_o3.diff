@@ -15,23 +15,22 @@ diff --git a/repos/spack_repo/builtin/packages/libceed/package.py b/repos/spack_
      version("0.12.0", tag="v0.12.0", commit="4018a20a98d451fac24765d3ddb936861647ce8d")
      version("0.11.0", tag="v0.11.0", commit="8ec64e9ae9d5df169dba8c8ee61d8ec8907b8f80")
      version("0.10.1", tag="v0.10.1", commit="74532b27052d94e943eb8bc76257fbd710103614")
-@@ -71,6 +72,15 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
+@@ -71,6 +72,14 @@ class Libceed(MakefilePackage, CudaPackage, ROCmPackage):
  
      patch("libceed-v0.8-hip.patch", when="@0.8+rocm")
      patch("pkgconfig-version-0.4.diff", when="@0.4")
 +    # Find the LIBXSMM 2.x headers in include/libxsmm when MKLROOT is set
 +    # https://github.com/CEED/libCEED/pull/2074
 +    patch(
-+        "https://github.com/CEED/libCEED/compare/"
-+        "8a374e8d5d8d33fd19ce69a93026384ec1046a86..."
-+        "5bcd48b31d8cafb1af6a385ec9184a1619888a26.diff?full_index=1",
-+        sha256="414a584f48e6679e02d499f91d84a60cf339654324ac9e07d3168d0ce0d80883",
++        "https://github.com/CEED/libCEED/commit/"
++        "dfcf18c3829f9b97597f2c752d260571f94b3197.diff?full_index=1",
++        sha256="51043a20647ec31035da3f4d6c665c28467b00aa3ef196635fad383b6a6deb0a",
 +        when="@1.0.0+libxsmm",
 +    )
  
      # occa: do not occaFree kernels
      # Repeated creation and freeing of kernels appears to expose a caching
-@@ -124,19 +134,23 @@ def common_make_opts(self):
+@@ -124,19 +133,23 @@ def common_make_opts(self):
              if spec.satisfies("@:0.7") and "avx" in self.spec.target:
                  makeopts.append("AVX=1")
  
