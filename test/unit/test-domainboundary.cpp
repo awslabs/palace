@@ -2083,6 +2083,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
       auto StampedLibrary = [&](const std::string &variant)
       {
+        // The path on every rank (the config below is built on every rank); written on
+        // the root.
+        const fs::path path =
+            temp.temp_dir / ("fabrication-process-mirror-pad-wedge-" + variant + ".json");
+        if (!Mpi::Root(Mpi::World()))
+        {
+          return path;
+        }
         std::ifstream input(wedge_library_path);
         REQUIRE(input);
         json library = json::parse(input);
@@ -2139,8 +2147,6 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
               {"RealLengthFraction", real_over_R / (real_over_R + image_over_R)},
               {"Rule", "unit test: the consumer's ENTRY stamp (impl-B5 CONTRACT.md s3)"}};
         }
-        const fs::path path =
-            temp.temp_dir / ("fabrication-process-mirror-pad-wedge-" + variant + ".json");
         std::ofstream output(path);
         output << library.dump(2) << "\n";
         return path;
@@ -2177,13 +2183,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         std::ifstream manifest_input(manifest_path);
         return json::parse(manifest_input);
       };
-      fs::path consistent, image_portions, flipped;
-      if (Mpi::Root(Mpi::World()))
-      {
-        consistent = StampedLibrary("consistent");
-        image_portions = StampedLibrary("image-portions");
-        flipped = StampedLibrary("flipped-weight");
-      }
+      const fs::path consistent = StampedLibrary("consistent");
+      const fs::path image_portions = StampedLibrary("image-portions");
+      const fs::path flipped = StampedLibrary("flipped-weight");
       Mpi::Barrier(Mpi::World());
       {
         const json manifest = Preflight(consistent, "mirror-pad-wedge-stamped-consistent");
