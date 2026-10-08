@@ -1137,3 +1137,179 @@ end
         p in ((0.0, 3.0), (0.9, 7.5), (0.0, 7.99), (5.0, 5.0))
     )
 end
+
+@testset "round 3 class (5), fix 5A (DESIGN R3 / R11, part M 2.2): a concave arc leaving the box by less than the collar takes a DEFERRED junction - the annular piece continues to the box exit, the loop is a collar union, the propagated run is extended on its circle" begin
+    collar = 5.7
+    # (1) The B2 fixture of the interim guard: a slab above the face y = 0 with a concave bite of
+    # radius 10 whose two ends lie on the face; the shrunk circle (4.3) misses the face line for
+    # protrusions 4.0 and 5.6. Without the coupon box the guard still fires by name; with the box
+    # both junctions are deferred, the offset circle lies wholly outside the box (no extension,
+    # exit angle 0), and the collar union is the whole slab [-20, 20] x [0, 20]: the bite region
+    # between the arc and the face is etched throughout (decision 246 (B)).
+    rho = 10.0
+    function bitten(c; chords=12)
+        half = sqrt(rho^2 - c^2)
+        a0 = atan(c, -half)
+        a1 = atan(c, half)
+        arc = [(rho * cos(a), -c + rho * sin(a)) for a in range(a0, a1; length=chords + 1)]
+        arc[1] = (-half, 0.0)
+        arc[end] = (half, 0.0)
+        points = vcat([(-20.0, 0.0)], arc, [(20.0, 0.0), (20.0, 20.0), (-20.0, 20.0)])
+        n = length(points)
+        classes = [i == 1 || i >= n - 3 ? "Continuation" : "Physical" for i = 1:n]
+        return exterior(points; classes=classes)
+    end
+    box = ([-20.0, 0.0], [20.0, 20.0])
+    for c in (6.0, 4.4)
+        loop = bitten(c)
+        runs = circular_arc_runs(loop.points, TOLERANCE)
+        @test occursin(
+            "ScopeGuard[CollarFaceEnd]",
+            guard_message(() -> curved_offset_loop(loop, -collar, runs, TOLERANCE))
+        )
+        offset = curved_offset_loop(loop, -collar, runs, TOLERANCE; box=box)
+        @test offset.bridged &&
+              count(j -> j.deferred, offset.junctions) == 2 &&
+              all(j.point === nothing for j in offset.junctions if j.deferred)
+        @test length(offset.deferred) == 2 &&
+              all(
+                  r["ExtensionChords"] == 0 && r["ExitAngleDegrees"] == 0.0 for
+                  r in offset.deferred
+              ) &&
+              Set(r["ArcEnd"] for r in offset.deferred) == Set(["start", "stop"])
+        @test all(isempty(e.metal) && isempty(e.offset) for e in values(offset.extensions))
+        union, construction, record = collar_loop_points(loop, -collar, box, TOLERANCE)
+        @test construction == "CollarUnion" && record.deferred == offset.deferred
+        @test isapprox(0.5 * polygon_area2(union), 40.0 * 20.0; atol=1.0e-6)
+        @test all(
+            point_in_polygon(p, union, TOLERANCE) for
+            p in ((0.0, 1.0), (0.0, rho - c - 0.1), (-19.0, 19.0))
+        )
+    end
+    # A protrusion of 7 > 5.7 resolves ON the offset circle as before: the box changes nothing.
+    loop = bitten(3.0)
+    runs = circular_arc_runs(loop.points, TOLERANCE)
+    plain = curved_offset_loop(loop, -collar, runs, TOLERANCE)
+    boxed = curved_offset_loop(loop, -collar, runs, TOLERANCE; box=box)
+    @test !boxed.bridged &&
+          boxed.points == plain.points &&
+          boxed.runs == plain.runs &&
+          isempty(boxed.deferred) &&
+          isempty(boxed.extensions) &&
+          all(!j.deferred for j in boxed.junctions)
+    # (2) The 32dc558f4810 configuration: the offset circle ENTERS the box, so the collar is the
+    # slab between the face and the offset circle. The metal is the region between the face x = 0
+    # and a concave arc of radius 30 about (28, -5) (the metal outside the circle), from the top
+    # face down to V = (0, 5.77) on x0; below V the circle lies outside the box while its offset
+    # circle (radius 27) stays inside down to (1.47, 0) on y0: the annular piece is continued from
+    # V's angle (158.9 degrees) to the exit (169.3 degrees) at the arc's own 5-degree chord step
+    # (three chords, the last at the exit), clipped to the box.
+    centre = (28.0, -5.0)
+    rho2 = 30.0
+    y_v = -5.0 + sqrt(rho2^2 - 28.0^2)                      # the face crossing
+    theta_v = atan(y_v - centre[2], 0.0 - centre[1])
+    x_top = centre[1] - sqrt(rho2^2 - (20.0 - centre[2])^2)   # the top-face crossing
+    theta_top = atan(20.0 - centre[2], x_top - centre[1])
+    step = deg2rad(5.0)
+    angles = vcat(collect(theta_top:step:(theta_v - 1.0e-9)), theta_v)
+    arc = [(centre[1] + rho2 * cos(a), centre[2] + rho2 * sin(a)) for a in angles]
+    arc[1] = (x_top, 20.0)
+    arc[end] = (0.0, y_v)
+    # counterclockwise loop order (the metal inside): V -> up the ARC to the top face -> left along
+    # the top face to (0, 20) -> down the face x0 back to V (the arc STARTS at V, on the face)
+    points = vcat(reverse(arc), [(0.0, 20.0)])
+    n = length(points)
+    classes = vcat(fill("Physical", n - 2), ["Continuation", "Continuation"])
+    loop2 = exterior(points; classes=classes)
+    @test loop_orientation(points) > 0.0
+    box2 = ([0.0, 0.0], [20.0, 20.0])
+    runs2 = circular_arc_runs(points, TOLERANCE)
+    @test length(runs2) == 1 && isapprox(runs2[1].radius, rho2; atol=1.0e-9)
+    collar2 = 3.0
+    r_off = rho2 - collar2
+    @test occursin(
+        "ScopeGuard[CollarFaceEnd]",
+        guard_message(() -> curved_offset_loop(loop2, -collar2, runs2, TOLERANCE))
+    )
+    offset2 = curved_offset_loop(loop2, -collar2, runs2, TOLERANCE; box=box2)
+    @test offset2.bridged &&
+          count(j -> j.deferred, offset2.junctions) == 1 &&
+          length(offset2.deferred) == 1
+    record2 = only(offset2.deferred)
+    # the exit: past the offset circle's y0 crossing (169.3 degrees) the annulus still covers the box
+    # corner (0, 0) (radius 28.4 from the centre, between 27 and 30), so the extension stops at the
+    # corner's angle (169.9 degrees) and no corner triangle of the slab is lost
+    exit_angle = atan(0.0 - centre[2], 0.0 - centre[1]) - theta_v
+    @test exit_angle >
+          atan(0.0 - centre[2], (centre[1] - sqrt(r_off^2 - centre[2]^2)) - centre[1]) -
+          theta_v
+    @test isapprox(record2["ExitAngleDegrees"], rad2deg(exit_angle); atol=1.0e-9) &&
+          record2["ExtensionChords"] == 3 &&
+          record2["ArcEnd"] == "start" &&
+          isapprox(record2["OffsetRadius"], r_off; atol=1.0e-12)
+    extension = only(values(offset2.extensions))
+    @test !extension.at_stop && length(extension.metal) == 3 == length(extension.offset)
+    # the extension's chords: the arc's OWN chord step (the run's sweep over its chords, 4.43 degrees
+    # here - the fixture's last chord is short), the last at the exit; the metal vertices outside the
+    # box, the offset vertices on their circle, inside the box but for the last (at the corner's angle,
+    # below y0: the clip keeps the box corner)
+    @test all(
+        distance_to_circle(p, centre, rho2) <= 1.0e-9 && p[1] < 0.0 for p in extension.metal
+    )
+    @test all(distance_to_circle(p, centre, r_off) <= 1.0e-9 for p in extension.offset)
+    @test all(p[1] >= -1.0e-9 && p[2] >= -1.0e-9 for p in extension.offset[1:(end - 1)]) &&
+          extension.offset[end][2] < 0.0
+    chord_step = runs2[1].angle / length(runs2[1].edge_indices)
+    deltas = [
+        abs(rem2pi(atan(p[2] - centre[2], p[1] - centre[1]) - theta_v, RoundNearest))
+        for p in extension.offset
+    ]
+    @test isapprox(deltas[1], chord_step; atol=1.0e-9) &&
+          isapprox(deltas[2], 2chord_step; atol=1.0e-9) &&
+          isapprox(deltas[3], exit_angle; atol=1.0e-9)
+    # the propagated run spans the interior offset vertices AND the extension (never refitted)
+    run2 = only(offset2.runs)
+    @test length(run2.point_indices) == length(runs2[1].point_indices) + 3 && all(
+        distance_to_circle(offset2.points[i], centre, r_off) <= 1.0e-9 for
+        i in run2.point_indices
+    )
+    union2, construction2, carried_record =
+        collar_loop_points(loop2, -collar2, box2, TOLERANCE)
+    @test construction2 == "CollarUnion" && carried_record.deferred == offset2.deferred
+    # the slab: between the face and the offset circle, down to the box corner (0, 0), which is a
+    # union vertex; the offset-circle side of the union carries the extension vertices exactly
+    @test all(
+        point_in_polygon(p, union2, TOLERANCE) for
+        p in ((0.5, 2.0), (1.0, 4.0), (0.1, 0.5), (0.3, 0.05), (2.5, 4.0), (5.0, 15.0))
+    )
+    @test !any(
+        point_in_polygon(p, union2, TOLERANCE) for
+        p in ((5.0, 2.0), (10.0, 5.0), (3.0, 0.5))
+    )
+    @test all(
+        any(hypot(v[1] - p[1], v[2] - p[2]) <= 1.0e-9 for v in union2) for
+        p in extension.offset[1:(end - 1)]
+    ) && any(hypot(v[1], v[2]) <= 1.0e-9 for v in union2)
+    # the propagated run carried onto the union: the extension's in-box vertices, the arc's shifted
+    # start and its offset chord vertices - one monotone run of the offset circle (the arc's top-face
+    # end is a corner junction here: the kite's shifted stop interrupts the run before the junction)
+    carried = carried_offset_runs(carried_record, union2, TOLERANCE)
+    @test length(carried.runs) == 1 &&
+          length(carried.runs[1].point_indices) ==
+          2 + 1 + (length(runs2[1].point_indices) - 2)
+    fitted = fit_carried_run(union2, carried.runs[1], TOLERANCE)
+    @test isapprox(fitted.radius, r_off; atol=1.0e-9) &&
+          isapprox(collect(fitted.center), collect(centre); atol=1.0e-12)
+    # the union minus the metal = the arc's collar annulus inside the box (the slab included), up to
+    # the miter kite's approximation of the top-face corner: a grid quadrature of
+    # {p in the box : r_off <= |p - c| <= rho} within 6 %
+    metal_area = 0.5 * polygon_area2(points)
+    collar_area = 0.5 * polygon_area2(union2) - metal_area
+    h = 0.01
+    sampled =
+        count(
+            r_off <= hypot(x - centre[1], y - centre[2]) <= rho2 for
+            x = (0.5h):h:20.0, y = (0.5h):h:20.0
+        ) * h^2
+    @test abs(collar_area - sampled) <= 0.06 * sampled
+end

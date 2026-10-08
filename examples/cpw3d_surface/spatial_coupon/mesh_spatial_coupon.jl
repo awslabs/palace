@@ -3649,7 +3649,8 @@ function collar_face_end_guard(before, after, distance)
                     "sign $(arc.convex_sign)) of the plan-view boundary ends at $vertex on a box-face " *
                     "line $h_face from its centre; its collar circle offset by $distance (radius " *
                     "$(arc.radius)) misses that line: rho - h_face = $(arc.original_radius - h_face) " *
-                    "< the collar width $(abs(distance))")
+                    "< the collar width $(abs(distance)) (fix 5A builds this collar as the box slab " *
+                    "when the offset is computed with the coupon box: this offset was asked without it)")
     end
     scope_error("CollarFaceEnd",
                 "the shifted straight side meeting the circular arc (centre $(arc.center), radius " *
@@ -3657,13 +3658,112 @@ function collar_face_end_guard(before, after, distance)
                 "$(arc.radius)): a line-arc corner kink whose offsets do not meet (untested)")
 end
 
+# Mesher design round 3 class (5), fix 5A (DESIGN section 1 row (5), R3, R11; part M 2.1 / 2.2;
+# decisions 491 / 510): a Physical arc ending on a box face whose offset circle misses the
+# face line - a CONCAVE metal arc (the metal outside its circle) leaving the box by less than
+# the collar width, rho - h_face < |distance| (the 32dc558f4810 refusal) - has a DEFERRED
+# junction with its Continuation neighbour: no junction point, the loop is never a simple
+# offset (it takes the collar union, like a bridged one), and the arc's annular piece is
+# CONTINUED along its circle past the face-end vertex, in its travel direction, to the first
+# angle at which BOTH the circle and its offset circle have left the box (the exits are the
+# circle / box-edge intersections, exact), then clipped to the box as every piece is: the
+# collar is the box slab between the face and the offset circle, the real overetch of the
+# exposed substrate (decision 246 (B)). No new constant: the extension angle is derived from
+# the box, the circle and the collar width; its chord vertices sit at the item's own chord
+# step so that polygon_wire rebuilds one OCC arc; the propagated run (R3) is EXTENDED on the
+# same circle (centre and radius unchanged, the end moved to the box exit), never refitted.
+# Returns the extension's vertices on the metal circle and on the offset circle, in order
+# AWAY from the face-end vertex (empty when both circles are outside the box already there).
+function deferred_arc_extension(arc, at_stop::Bool, lower, upper, tolerance)
+    vertex = at_stop ? arc.stop : arc.start
+    centre = arc.center
+    theta_vertex = atan(vertex[2] - centre[2], vertex[1] - centre[1])
+    # the angular direction leaving the arc at this end (+1 counterclockwise)
+    direction = at_stop ? arc.orientation : -arc.orientation
+    inside(p) = all(lower[d] - tolerance <= p[d] <= upper[d] + tolerance for d in 1:2)
+    at(radius, delta) = (centre[1] + radius * cos(theta_vertex + direction * delta),
+                         centre[2] + radius * sin(theta_vertex + direction * delta))
+    radii = (min(arc.original_radius, arc.radius), max(arc.original_radius, arc.radius))
+    # Whether the radial segment between the two circles at angle delta meets the box (the
+    # parametric clip of the segment against the four half-planes).
+    function annulus_meets_box(delta)
+        p, q = at(radii[1], delta), at(radii[2], delta)
+        t0, t1 = 0.0, 1.0
+        for d in 1:2
+            dp = q[d] - p[d]
+            for (bound, sign) in ((lower[d] - tolerance, 1.0), (upper[d] + tolerance, -1.0))
+                f = sign * (p[d] - bound)                 # f + g t >= 0 inside this half-plane
+                g = sign * dp
+                if g == 0.0
+                    f >= 0.0 || return false
+                elseif g < 0.0
+                    t1 = min(t1, -f / g)
+                else
+                    t0 = max(t0, -f / g)
+                end
+            end
+        end
+        return t0 <= t1
+    end
+    # Every angle (beyond this vertex, within one turn) at which either circle crosses a box
+    # edge, and of every box corner inside the annulus: the candidate exits.
+    candidates = Float64[]
+    for radius in radii, (axis, bound) in
+        ((1, lower[1]), (1, upper[1]), (2, lower[2]), (2, upper[2]))
+        offset = (bound - centre[axis]) / radius
+        abs(offset) <= 1.0 || continue
+        for theta in (axis == 1 ? (acos(offset), -acos(offset)) : (asin(offset), pi - asin(offset)))
+            p = (centre[1] + radius * cos(theta), centre[2] + radius * sin(theta))
+            inside(p) || continue
+            delta = mod(direction * (theta - theta_vertex), 2pi)
+            delta > tolerance / radius && push!(candidates, delta)
+        end
+    end
+    for corner in ((lower[1], lower[2]), (lower[1], upper[2]), (upper[1], lower[2]), (upper[1], upper[2]))
+        r = hypot(corner[1] - centre[1], corner[2] - centre[2])
+        radii[1] - tolerance <= r <= radii[2] + tolerance || continue
+        delta = mod(direction * (atan(corner[2] - centre[2], corner[1] - centre[1]) - theta_vertex), 2pi)
+        delta > tolerance / r && push!(candidates, delta)
+    end
+    sort!(candidates)
+    unique!(c -> round(c; digits=12), candidates)
+    push!(candidates, 2pi)
+    # The first candidate beyond which the annulus misses the box (the probe is the midpoint
+    # of the following interval); delta 0 when it misses right at the vertex.
+    exit = 0.0
+    found = false
+    previous = 0.0
+    for candidate in candidates
+        if !annulus_meets_box(0.5 * (previous + candidate))
+            exit = previous
+            found = true
+            break
+        end
+        previous = candidate
+    end
+    found || error("the deferred collar junction of the circular arc (centre $centre, radius " *
+                   "$(arc.original_radius)) at $vertex finds no angle at which its collar annulus " *
+                   "has left the coupon box")
+    exit <= 0.0 && return (metal=NTuple{2, Float64}[], offset=NTuple{2, Float64}[], exit=0.0)
+    step = arc.angle / length(arc.edges)
+    count = max(1, ceil(Int, exit / step * (1.0 - 1.0e-9)))
+    deltas = [j < count ? j * step : exit for j in 1:count]
+    return (metal=[at(arc.original_radius, delta) for delta in deltas],
+            offset=[at(arc.radius, delta) for delta in deltas], exit=exit)
+end
+
 # The offset polygon of a curved loop: `points` (the miter polygon with exact arc
-# vertices), `bridged` (a collapsed arc's neighbours did not meet: not a simple
-# offset), `items` (offset_item_geometry per item) and `junctions`, one per pair of
-# consecutive non-collapsed items: (before, after) item indices, `vertex` (the
-# loop vertex, or the two vertices of the collapsed arcs between them), `point`
-# (nothing when bridged), `tangent` (the items join within JUNCTION_TANGENT_ANGLE)
-# and `convex` (the metal turns convexly there).
+# vertices), `bridged` (a collapsed arc's neighbours did not meet, or a junction was
+# deferred: not a simple offset), `items` (offset_item_geometry per item) and `junctions`,
+# one per pair of consecutive non-collapsed items: (before, after) item indices, `vertex`
+# (the loop vertex, or the two vertices of the collapsed arcs between them), `point`
+# (nothing when bridged or deferred), `tangent` (the items join within
+# JUNCTION_TANGENT_ANGLE), `convex` (the metal turns convexly there) and `deferred` (fix
+# 5A: a Continuation line and an arc whose offsets do not meet; the arc's extension to the
+# box exit is in `extensions[arc item] = (at_stop, metal, offset, exit)`, and the offset
+# polygon carries the extension's offset-circle vertices so that the propagated run spans
+# them). `deferred` records the deferred junctions for the footprint census. The coupon
+# `box` = (lower, upper) is needed for a deferred junction (fail closed by name without it).
 # Mesher design round 3 class (7) Option B (DESIGN-part-G G.7.3, DESIGN R3; decision 510 O1):
 # the record also carries `runs`, the metal runs PROPAGATED through the offset - per
 # non-collapsed arc item one record (center, radius, id, sign, point_indices, edge_indices)
@@ -3676,7 +3776,7 @@ end
 # against these). `offset_loop` / `collar_loop_points` carry the record to
 # `loft_mask_offsets` / `physical_segments`; fix 5A (round 3 B4) extends a propagated run
 # along its circle to the box exit, never refits.
-function curved_offset_loop(loop, distance, runs, tolerance)
+function curved_offset_loop(loop, distance, runs, tolerance; box=nothing)
     points = loop.points
     n = length(points)
     metal_side = loop_orientation(points) * (loop.hole ? -1.0 : 1.0)
@@ -3703,7 +3803,8 @@ function curved_offset_loop(loop, distance, runs, tolerance)
                   for p in points]
         whole = propagated(vcat(collect(1:n), 1), run.center, radius, run)
         return (points=offset, bridged=false, items=NamedTuple[], junctions=NamedTuple[],
-                metal_side=metal_side, runs=[whole], short=short)
+                metal_side=metal_side, runs=[whole], short=short,
+                extensions=Dict{Int, NamedTuple}(), deferred=Dict{String, Any}[])
     end
     items = [offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
              for item in loop_edge_items(points, runs)]
@@ -3718,6 +3819,12 @@ function curved_offset_loop(loop, distance, runs, tolerance)
     start_index = Dict{Int, Int}()
     stop_index = Dict{Int, Int}()
     interior_indices = Dict{Int, Vector{Int}}()
+    # Fix 5A: the deferred junctions' arc extensions and the offset polygon's indices of their
+    # offset-circle vertices (after the arc's stop / before its start).
+    extensions = Dict{Int, NamedTuple}()
+    extension_after = Dict{Int, Vector{Int}}()
+    extension_before = Dict{Int, Vector{Int}}()
+    deferred_records = Dict{String, Any}[]
     for (position, k) in enumerate(live)
         before = items[k]
         next = live[mod1(position + 1, length(live))]
@@ -3734,13 +3841,37 @@ function curved_offset_loop(loop, distance, runs, tolerance)
         resolved = point !== nothing && any(
             hypot(point[1] - v[1], point[2] - v[2]) <= 8.0 * max(abs(distance), tolerance)
             for v in vertices)
+        deferred = false
         if !resolved && !collapsed_between
             if point === nothing && before.kind == :line && after.kind == :line
                 error("Plan-view taper has a singular boundary vertex at $(before.stop)")
             elseif point === nothing
-                collar_face_end_guard(before, after, distance)
+                # Fix 5A: a Continuation line (zero shift: the box face) and an arc whose offsets
+                # do not meet - the arc leaves the box by less than the collar - defer the
+                # junction and continue the arc's annular piece to the box exit; the Physical
+                # line-arc corner kink and the box-less offset stay guarded by name.
+                line, arc = before.kind == :line ? (before, after) : (after, before)
+                (box !== nothing && line.shift == (0.0, 0.0)) ||
+                    collar_face_end_guard(before, after, distance)
+                arc_index = before.kind == :arc ? k : next
+                at_stop = before.kind == :arc
+                extension = deferred_arc_extension(arc, at_stop, box[1], box[2], tolerance)
+                extensions[arc_index] = (at_stop=at_stop, extension...)
+                push!(deferred_records, Dict{String, Any}(
+                    "Vertex" => [before.stop[1], before.stop[2]], "ArcId" => runs[arc.run] isa NamedTuple &&
+                                haskey(runs[arc.run], :id) ? runs[arc.run].id : 0,
+                    "Centre" => [arc.center[1], arc.center[2]], "Radius" => arc.original_radius,
+                    "OffsetRadius" => arc.radius, "ArcEnd" => at_stop ? "stop" : "start",
+                    "ExitAngleDegrees" => rad2deg(extension.exit),
+                    "ExtensionChords" => length(extension.offset),
+                    "Rule" => "round 3 fix 5A (part M 2.2, DESIGN R3): the arc's collar annulus is " *
+                              "continued along its circle past the face-end vertex to the first angle " *
+                              "at which both the circle and its offset circle have left the box, then " *
+                              "clipped to the box; the propagated run is extended on the same circle"))
+                deferred = true
+            else
+                error("Plan-view taper produces an unresolved miter at $(before.stop)")
             end
-            error("Plan-view taper produces an unresolved miter at $(before.stop)")
         end
         turn = metal_side * atan(cross2d(before.tangent_stop, after.tangent_start),
                                  before.tangent_stop[1] * after.tangent_start[1] +
@@ -3757,12 +3888,22 @@ function curved_offset_loop(loop, distance, runs, tolerance)
             bridged = true
             push!(offset, before.shifted_stop)
             stop_index[k] = length(offset)
+            # Fix 5A: the deferred arc's extension vertices on the offset circle, in travel order
+            # (beyond the stop of `before`, or ahead of the start of `after`), so that the
+            # propagated run spans the slab's curved side.
+            if deferred && before.kind == :arc
+                append!(offset, extensions[k].offset)
+                extension_after[k] = collect((length(offset) - length(extensions[k].offset) + 1):length(offset))
+            elseif deferred
+                append!(offset, reverse(extensions[next].offset))
+                extension_before[next] = collect((length(offset) - length(extensions[next].offset) + 1):length(offset))
+            end
             push!(offset, after.shifted_start)
             start_index[next] = length(offset)
         end
         push!(junctions, (before=k, after=next, vertices=vertices,
                           point=resolved ? point : nothing, tangent=tangent, convex=convex,
-                          collapsed=skipped))
+                          collapsed=skipped, deferred=deferred))
     end
     offset_runs = NamedTuple[]
     for k in live
@@ -3770,13 +3911,15 @@ function curved_offset_loop(loop, distance, runs, tolerance)
         item.kind == :arc || continue
         # The first live item's start vertex is the closing junction (the last point pushed):
         # its run wraps around the end of the polygon, like a run of a loop may.
-        point_indices = vcat([start_index[k]], interior_indices[k], [stop_index[k]])
+        point_indices = vcat(get(extension_before, k, Int[]), [start_index[k]], interior_indices[k],
+                             [stop_index[k]], get(extension_after, k, Int[]))
         push!(offset_runs, propagated(point_indices, item.center, item.radius, runs[item.run]))
     end
     # The cycle [interior_1, J_12, interior_2, ..., interior_m, J_m1] is the offset
     # polygon in loop order (J_m1 closes onto interior_1).
     return (points=offset, bridged=bridged, items=items, junctions=junctions,
-            metal_side=metal_side, runs=offset_runs, short=short)
+            metal_side=metal_side, runs=offset_runs, short=short, extensions=extensions,
+            deferred=deferred_records)
 end
 
 # A closed plan-view polygon is simple when no side is degenerate (shorter than
@@ -3942,6 +4085,7 @@ function curved_collar_pieces(loop, distance, offset, lower, upper, tolerance)
         end
     end
     pieces = [[(Float64(p[1]), Float64(p[2])) for p in points]]
+    extensions = get(offset, :extensions, Dict{Int, NamedTuple}())
     for (k, item) in enumerate(items)
         chords = [points[edge] for edge in item.edges[2:end]]
         if item.kind == :line
@@ -3951,8 +4095,17 @@ function curved_collar_pieces(loop, distance, offset, lower, upper, tolerance)
             push!(pieces, vcat([item.start], chords, [item.stop, get(apex, k, item.center)]))
         else
             abs(item.radius - item.original_radius) > tolerance || continue
-            push!(pieces, vcat([item.start], chords, [item.stop, stop_corner[k]],
-                               reverse(item.interior), [start_corner[k]]))
+            # Fix 5A: the annular piece continued past a deferred face end along both circles
+            # (the metal side forward, the offset side back), clipped to the box below.
+            extension = get(extensions, k, nothing)
+            at_stop = extension !== nothing && extension.at_stop
+            at_start = extension !== nothing && !extension.at_stop
+            push!(pieces, vcat(at_start ? reverse(extension.metal) : NTuple{2, Float64}[],
+                               [item.start], chords, [item.stop],
+                               at_stop ? extension.metal : NTuple{2, Float64}[],
+                               at_stop ? reverse(extension.offset) : NTuple{2, Float64}[],
+                               [stop_corner[k]], reverse(item.interior), [start_corner[k]],
+                               at_start ? extension.offset : NTuple{2, Float64}[]))
         end
     end
     append!(pieces, kites)
@@ -4243,7 +4396,7 @@ end
 function collar_loop_points(loop, distance, box, tolerance; island_rule=nothing,
                             absorbed=nothing)
     runs = abs(distance) <= tolerance ? NamedTuple[] : loop_arc_runs(loop, tolerance)
-    offset = isempty(runs) ? nothing : curved_offset_loop(loop, distance, runs, tolerance)
+    offset = isempty(runs) ? nothing : curved_offset_loop(loop, distance, runs, tolerance; box=box)
     miter = offset === nothing ? offset_loop_points(loop, distance, tolerance) : offset.points
     (offset === nothing || !offset.bridged) && polygon_is_simple(miter, tolerance) &&
         return miter, "MiterOffset", offset
@@ -4446,21 +4599,26 @@ end
 # (offset_hole_points) or "EdgeStrip" (loft_strip); a CollarUnion polygon records
 # the un-etched islands absorbed by the island rule (absorb_collar_islands!).
 function footprint_record(conductor, plane, hole, points, record, construction;
-                          absorbed_islands=nothing)
+                          absorbed_islands=nothing, deferred_face_ends=nothing)
     footprint = Dict{String, Any}(
         "Conductor" => conductor, "Plane" => plane, "Hole" => hole,
         "Points" => [collect(point) for point in points], "Simplification" => record,
         "Construction" => construction)
-    construction == "CollarUnion" &&
-        (footprint["AbsorbedIslands"] = absorbed_islands === nothing ? Dict{String, Any}[] :
-                                        absorbed_islands)
+    if construction == "CollarUnion"
+        footprint["AbsorbedIslands"] = absorbed_islands === nothing ? Dict{String, Any}[] :
+                                       absorbed_islands
+        # Round 3 fix 5A: the deferred face-end junctions of this collar (none on every
+        # coupon built before; recorded only on the collar union).
+        footprint["DeferredFaceEnds"] = deferred_face_ends === nothing ? Dict{String, Any}[] :
+                                        deferred_face_ends
+    end
     return footprint
 end
 
 # Simplify the bottom and top polygons of a footprint loft; when `footprint` is a
 # vector, the loft must be prismatic (one polygon) and the polygon is recorded.
 function simplified_loft_polygons(bottom_points, top_points, footprint, conductor, plane, hole,
-                                  construction; absorbed_islands=nothing)
+                                  construction; absorbed_islands=nothing, deferred_face_ends=nothing)
     bottom_points, bottom_record =
         simplify_footprint_polygon(bottom_points, FOOTPRINT_COLLINEAR_TOLERANCE)
     top_points, _ = simplify_footprint_polygon(top_points, FOOTPRINT_COLLINEAR_TOLERANCE)
@@ -4468,7 +4626,8 @@ function simplified_loft_polygons(bottom_points, top_points, footprint, conducto
         bottom_points == top_points ||
             error("Footprint recording requires a prismatic (vertical-wall) loft")
         push!(footprint, footprint_record(conductor, plane, hole, bottom_points, bottom_record,
-                                          construction; absorbed_islands=absorbed_islands))
+                                          construction; absorbed_islands=absorbed_islands,
+                                          deferred_face_ends=deferred_face_ends))
     end
     return bottom_points, top_points
 end
@@ -4631,7 +4790,9 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
                       "constructions")
             bottom_points, top_points = simplified_loft_polygons(
                 bottom_points, top_points, footprint, outer.conductor, z0, false,
-                bottom_construction; absorbed_islands=bottom_islands)
+                bottom_construction; absorbed_islands=bottom_islands,
+                deferred_face_ends=bottom_offset_record === nothing ? nothing :
+                                   bottom_offset_record.deferred)
         end
         volume = loft_polygon(occ, bottom_points, top_points, z0, z1;
                               runs=loop_wire_runs(outer, bottom_points, tolerance),
@@ -5938,11 +6099,15 @@ const RECIPE_SCOPE_GUARDS = [
      "rho - h_face < 3 Radius with h_face the distance from the arc centre to the face line, so " *
      "the shrunk collar circle never meets the Continuation side and the offset loop has no " *
      "junction there (the 32dc558f4810 refusal; mesher design round 3 class (5), part M 2.1); " *
-     "the physically right collar is the box slab between the face and the offset circle " *
-     "(fix 5A, a deferred junction continued to the box exit) - refused by name until it lands " *
-     "(interim guard 5B of round 3 B2). The same guard names a line-arc CORNER kink whose " *
-     "shifted line misses the shrunk concave circle (untested; unreachable for the admitted " *
-     "corner turns, 510 MINOR-8 (b))")]
+     "the physically right collar is the box slab between the face and the offset circle, " *
+     "which fix 5A (round 3 B4, DESIGN R3 / part M 2.2) BUILDS: the junction is deferred, the " *
+     "arc's annular piece is continued along its circle past the face-end vertex to the first " *
+     "angle at which both the circle and its offset circle have left the box and clipped to the " *
+     "box, the loop takes the collar union (CollarUnion, FootprintPolygons[].DeferredFaceEnds) " *
+     "and the propagated run is extended on the same circle, never refitted - so this reading " *
+     "fires only where the collar is computed without the coupon box (interim guard 5B of " *
+     "round 3 B2). The same guard names a line-arc CORNER kink whose shifted line misses the " *
+     "shrunk concave circle (untested; unreachable for the admitted corner turns, 510 MINOR-8 (b))")]
 const RECIPE_SCOPE_RULE =
     "the prism-tube recipe builds every input whose classes are all in SupportedClasses; " *
     "an input exhibiting a class in GuardedClasses fails closed at the guard whose " *
