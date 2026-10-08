@@ -4,12 +4,9 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
-#include <array>
 #include <vector>
 #include <mfem.hpp>
-#include "fem/libceed/ceed.hpp"  // brings <ceed.h> which coeff_qf.h depends on
 #include "fem/mesh.hpp"
-#include "fem/qfunctions/coeff/coeff_qf.h"  // defines CeedIntScalar
 #include "models/pml.hpp"
 #include "utils/configfile.hpp"
 
@@ -43,18 +40,12 @@ private:
   double floquet_omega_ref = 0.0;  // Nondimensional; when > 0, k_F scales with frequency.
   mfem::Array<double> mat_c0_min, mat_c0_max, mat_mu_eps_max;
 
-  // Per-PML-attribute profile (one per user-declared PML material block). Indexed by
-  // slot in pml_profiles; pml_attr_to_profile maps libCEED attribute → slot, or -1 for
-  // non-PML attributes.
+  // PML profiles (one per PML material, the same on all processes) and the map from
+  // libCEED attribute to profile index, -1 for non-PML attributes. The bulk material
+  // properties above are zero for PML attributes: their contributions come from the PML
+  // integrators instead.
   std::vector<pml::Profile> pml_profiles;
   std::vector<int> pml_attr_to_profile;
-
-  // Packed PML QFunction context (libCEED layout defined in fem/qfunctions/coeff/pml_qf.h).
-  // Built once at setup; SpaceOperator reads via GetPMLContext() and passes it into the
-  // PML QFunction. Contains FIXED/CFS regions at their reference ω and FREQUENCY_DEPENDENT
-  // regions at ω = 0 until RefreshPMLContextFrequency(ω) is called at solve time.
-  mutable std::vector<CeedIntScalar> pml_ctx;
-
   bool has_pml_attr = false;
   bool has_pml_freq_dependent_attr = false;
 
@@ -70,6 +61,8 @@ private:
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
+  void SetUpPML(const std::vector<config::MaterialData> &materials,
+                ProblemType problem_type, const mfem::ParMesh &mesh);
   void SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
                               ProblemType problem_type, const mfem::ParMesh &mesh);
 
@@ -170,30 +163,13 @@ public:
   const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
+  // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems. The
+  // frequency-dependent PML profiles have a stretch evaluated at the solve frequency, and
+  // contribute to the frequency-dependent part A2(ω) of the system matrix.
   bool HasPML() const { return has_pml_attr; }
   bool HasFrequencyDependentPML() const { return has_pml_freq_dependent_attr; }
-
-  // Access to the packed PML QFunction context. Size in bytes is ctx.size() *
-  // sizeof(CeedIntScalar). The pointer is stable across calls but its FD-region ω fields
-  // may be updated in place by RefreshPMLContextFrequency (for the solve-time callers).
-  // Call sites must be careful: the libCEED operator CopyValues-copies the context when
-  // the operator is built, so mutating ctx after build time doesn't propagate — callers
-  // re-assemble the extra-system operator per frequency.
-  const CeedIntScalar *GetPMLContextData() const { return pml_ctx.data(); }
-  std::size_t GetPMLContextSize() const { return pml_ctx.size() * sizeof(CeedIntScalar); }
-  int GetPMLNumProfiles() const { return static_cast<int>(pml_profiles.size()); }
-  int GetPMLNumAttributes() const { return static_cast<int>(pml_attr_to_profile.size()); }
-
-  // Read-only access to the raw profile list and the attribute→profile map, for callers
-  // that need to filter the context (e.g., keeping only FIXED/CFS or only
-  // FREQUENCY_DEPENDENT profiles when assembling different operator pieces).
   const std::vector<pml::Profile> &GetPMLProfiles() const { return pml_profiles; }
   const std::vector<int> &GetPMLAttrToProfile() const { return pml_attr_to_profile; }
-
-  // Refresh the `omega` field of each FREQUENCY_DEPENDENT PML region in the context
-  // buffer. FIXED/CFS regions are untouched. Call before each solve whose extra-system
-  // operator is being rebuilt at a new frequency.
-  void RefreshPMLContextFrequency(double omega) const;
 
   const auto &GetAttributeToMaterial() const { return attr_mat; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;

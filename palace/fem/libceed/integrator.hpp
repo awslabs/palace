@@ -49,8 +49,14 @@ struct CeedQFunctionInfo
 int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedInt dim,
                                       CeedInt *space_dim);
 
+// Whether the geometry factor quadrature data of elements of the given dimension also
+// stores the physical coordinates of the quadrature points (only for 3D domain elements,
+// see Mesh::SetCeedQuadratureCoordinates).
+bool CeedGeometryDataHasCoordinates(CeedElemRestriction geom_data_restr, CeedInt dim);
+
 // Assemble libCEED mesh geometry factor quadrature data for use in a partially assembled
-// libCEED operator.
+// libCEED operator. The quadrature point coordinates are included if the storage provided
+// for geom_data has room for them.
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
                               CeedElemRestriction attr_restr, CeedBasis attr_basis,

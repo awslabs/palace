@@ -120,12 +120,16 @@ private:
   bool AddExcitationVector1Internal(int excitation_idx, Vector &RHS);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
+  // Print a summary of the PML profiles.
+  void PrintPMLProfiles(const Units &units) const;
+
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
   // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
   // AddExtraSystemBdrCoefficients (driven/boundary-mode: Floquet term included, cached
   // wave-port Initialize, Re(k_n) only), while std::complex dispatches to the complex-ω
   // overload (eigenmode nonlinear solve: exact analytic continuation, including the
-  // wave-port attenuation -Im(k_n)·M on the real slot even at real ω).
+  // wave-port attenuation -Im(k_n)·M on the real slot even at real ω). Frequency-dependent
+  // PML terms are analytic in ω and evaluated at a3 in both cases.
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
@@ -257,11 +261,12 @@ public:
 
   // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
   // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
-  // impedance, numeric wave ports) evaluated at the genuinely complex frequency
-  // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution
-  // at complex ω). For real ω this matches GetExtraSystemMatrix<ComplexOperator>(double)
-  // up to the wave-port term, which additionally carries the attenuation -Im(k_n)·M on
-  // the real slot (the real-ω path intentionally stamps only Re(k_n)).
+  // impedance, numeric wave ports) and frequency-dependent PML regions evaluated at the
+  // genuinely complex frequency (ω = -i·λ). Always a ComplexOperator (these terms acquire
+  // a real-slot contribution at complex ω). For real ω this matches
+  // GetExtraSystemMatrix<ComplexOperator>(double) up to the wave-port term, which
+  // additionally carries the attenuation -Im(k_n)·M on the real slot (the real-ω path
+  // intentionally stamps only Re(k_n)).
   std::unique_ptr<ComplexOperator>
   GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
 
@@ -340,10 +345,13 @@ public:
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   // If K or M have eliminated boundary conditions, they are not eliminated from the
-  // returned operator.
+  // returned operator. With PML regions, the matrix is instead assembled using the
+  // entrywise magnitudes of the PML material tensors (with the frequency-dependent profiles
+  // evaluated at omega, if positive).
   std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,
                                                   const ComplexOperator *K,
-                                                  const ComplexOperator *M);
+                                                  const ComplexOperator *M,
+                                                  double omega = 0.0);
 
   // Construct the matrix for frequency or time domain linear system preconditioning. If it
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,

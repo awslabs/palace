@@ -347,8 +347,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
     const auto marked_elements = [&comm, &refinement](const Vector &indicators)
     {
-      const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-          comm, indicators, refinement.update_fraction);
+      const auto [threshold, marked_error] =
+          utils::ComputeDorflerThreshold(comm, indicators, refinement.update_fraction);
       const auto marked_elements = MarkedElements(indicators, threshold);
       const auto [glob_marked_elements, glob_elements] =
           linalg::GlobalSize2(comm, marked_elements, indicators);

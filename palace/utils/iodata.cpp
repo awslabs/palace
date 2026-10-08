@@ -490,7 +490,7 @@ void IoData::CheckConfiguration()
 
     MFEM_VERIFY(material.pml->reference_frequency < 0.0,
                 "\"PML.ReferenceFrequency\" must be positive when specified. Omit it "
-                "or use a negative value to request the solver default.");
+                "to use the solver default.");
 
     double reference_frequency = -1.0;
     if (problem.type == ProblemType::DRIVEN)
@@ -507,8 +507,9 @@ void IoData::CheckConfiguration()
     }
     else
     {
-      MFEM_ABORT("Static PML requires a positive \"PML.ReferenceFrequency\" for "
-                 "problem types other than Driven and Eigenmode.");
+      // PML regions are only supported for driven and eigenmode simulations, and treated as
+      // regular materials otherwise (see MaterialOperator).
+      continue;
     }
     MFEM_VERIFY(reference_frequency > 0.0,
                 "Static PML requires a positive reference frequency. Set "

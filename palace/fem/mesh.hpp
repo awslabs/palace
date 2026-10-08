@@ -29,7 +29,9 @@ struct CeedGeomFactorData
   std::vector<int> indices;
 
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
-  // space_dim x dim, stored column-major by component.
+  // space_dim x dim, stored column-major by component. For 3D domain elements, this is
+  // optionally followed by the physical coordinates x of the quadrature points (see
+  // Mesh::SetCeedQuadratureCoordinates).
   CeedVector geom_data;
 
   // Element restriction for the geometry factor quadrature data.
@@ -67,6 +69,10 @@ private:
   //   - Geometry factor quadrature point data (w |J| and adj(J)^T / |J|) for domain and
   //     boundary elements.
   mutable ceed::CeedObjectMap<ceed::CeedGeomFactorData> geom_data;
+
+  // Whether the geometry factor data for 3D domain elements also stores the physical
+  // coordinates of the quadrature points.
+  bool ceed_quadrature_coordinates = false;
 
 public:
   template <typename... T>
@@ -162,6 +168,12 @@ public:
   GetCeedGeomFactorData(Ceed ceed) const;
 
   void ResetCeedObjects();
+
+  // Store the physical coordinates of the quadrature points with the geometry factor data
+  // of 3D domain elements, for QFunctions with spatially varying coefficients (such as the
+  // PML material tensors). This resets any previously constructed geometry factor data.
+  void SetCeedQuadratureCoordinates(bool coords);
+  bool HasCeedQuadratureCoordinates() const { return ceed_quadrature_coordinates; }
 
   void Update();
 
