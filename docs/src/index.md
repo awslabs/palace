@@ -65,5 +65,4 @@ the frequency or time domain, using the
 ## Coming soon
 
   - Improved adaptive mesh refinement (AMR) support for transient simulations
-  - Perfectly matched layer (PML) boundaries
   - Automatic mesh generation and optimization
