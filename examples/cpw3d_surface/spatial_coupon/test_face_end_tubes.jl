@@ -81,8 +81,80 @@ guard_message(f) =
         spacing_cap=Inf
     )
     @test t45.spacing ≈ 0.064 && t45.layers == 3
+    # Round 3 class (8) 8A (part M 5.2): the end block's own pyramid height h_pyr_end = min(h_pyr,
+    # lc / (4 s)) makes the regular spacing satisfy the apex rule: the thin 74.3-degree block reads
+    # lc_end = lc, m = ceil(2 r_env tan 74.3 / lc) = 12 regular layers (E3's block: lc_end 247 nm,
+    # m 3); the fabricated 75.5 likewise (m 7); the record carries PyramidHeight; a height above the
+    # regular one is refused. The caller applies it only above the kind's largest built tilt.
+    s74 = tan(deg2rad(74.3))
+    h_end = derived_face_end_pyramid_height(0.016, lc, s74)
+    @test h_end ≈ lc / (4.0 * s74) && h_end < 0.016
+    @test derived_face_end_pyramid_height(0.016, lc, tan(deg2rad(20.0))) == 0.016
+    t74 = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(74.3),
+        s74,
+        0.0,
+        0.078,
+        0.016,
+        lc;
+        spacing_cap=0.6445769818172843,
+        apex_height=h_end
+    )
+    @test t74.spacing == lc &&
+          t74.regime == 1 &&
+          t74.layers == 12 &&
+          t74.apex_thickness ≈ 0.5 * lc &&
+          t74.apex_height == h_end &&
+          t74.envelope_shear == 0.078 * s74
+    @test face_end_record(t74)["PyramidHeight"] == h_end
+    t74_regular = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(74.3),
+        s74,
+        0.0,
+        0.078,
+        0.016,
+        lc;
+        spacing_cap=0.6445769818172843
+    )
+    @test t74_regular.apex_height == 0.016 &&
+          t74_regular.layers == 3 &&
+          t74_regular.spacing ≈ 4.0 * 0.016 * s74
+    s75 = tan(deg2rad(75.5))
+    f75 = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(75.5),
+        s75,
+        0.0,
+        r_env,
+        h_pyr,
+        lc;
+        spacing_cap=0.08057212272716054,
+        apex_height=derived_face_end_pyramid_height(h_pyr, lc, s75)
+    )
+    @test f75.regime == 1 && f75.spacing == lc && f75.layers == 7
+    @test_throws ErrorException FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        deg2rad(74.3),
+        s74,
+        0.0,
+        0.078,
+        0.016,
+        lc;
+        spacing_cap=Inf,
+        apex_height=0.017
+    )
     # The shear per layer never exceeds lc_end / 2: thickness in [lc_end / 2, 3 lc_end / 2].
-    for face_end in (f45, f12, f74, t45)
+    for face_end in (f45, f12, f74, t45, t74, f75)
         @test face_end.envelope_shear / face_end.layers <=
               0.5 * face_end.spacing * (1.0 + 1.0e-9)
         range = face_end_record(face_end)["LayerThicknessRange"]
@@ -792,7 +864,15 @@ end
             @test f["ApexThickness"] ≈ 2.0 * section["PyramidHeight"] * tand(70.0)
             @test f["LayerThicknessRange"][1] >= f["ApexThickness"]
             @test f["LayerThicknessRange"][1] ≈ 0.04417 atol = 2.0e-5
+            # Round 3 8A-bitwise (decision 510 O8): AT the fabricated threshold (70 degrees, the
+            # largest built fabricated tilt) the block keeps the regular pyramid height - bitwise.
+            @test f["PyramidHeight"] == section["PyramidHeight"]
+            @test f["CrossingSlope"] ≈ tand(70.0) rtol = 1.0e-9
         end
+        @test section["FaceEndDerivedApexAboveDegrees"] == 70.0 &&
+              FACE_END_DERIVED_APEX_ABOVE ==
+              (fabricated=deg2rad(70.0), thin=deg2rad(70.0)) &&
+              FACE_END_DERIVED_APEX_ABOVE.thin == THIN_FACE_END_TILT_BOUND
         for f in shallow
             @test f["Regime"] == "I" && f["EndSpacing"] == 0.05 && f["Layers"] == 1
         end
@@ -816,7 +896,12 @@ end
               quality["Pyramid"]["PositiveOrientation"]
         @test tubes["FaceEndSpacingMaximum"] == cap
         # The thin twin: every thin crossing is regime I (its cap 644.6 nm), lc_end = 4 h_pyr
-        # tan 70 = 175.84 nm, m 3; its prisms read ~268 (the design's thin figure).
+        # tan 70 = 175.84 nm, m 3; its prisms read ~268 (the design's thin figure). Mesher design
+        # round 3 class (8) 8A-bitwise (part M 5.2; decisions 510 O8 / 563): the derived pyramid
+        # height applies only ABOVE the kind's largest built tilt - 70 degrees for the thin kind too
+        # (this very build, B2's THIN_FACE_END_TILT_BOUND; under part M's stale "45" this block
+        # changed and failed the tetrahedral gate at 0.0089) - so this A2 (4) block is BITWISE:
+        # PyramidHeight = the regular h_pyr, lc_end and m unchanged.
         thin, _, _ = build_production_tip_coupon(
             directory,
             30.0,
@@ -826,7 +911,11 @@ end
             stem="thin70"
         )
         thin_tubes = thin["PrismTubes"]
-        @test thin_tubes["Section"]["FaceEndSpacingCap"] ≈ 0.6445769818172843 rtol = 1.0e-12
+        thin_section = thin_tubes["Section"]
+        @test thin_section["FaceEndSpacingCap"] ≈ 0.6445769818172843 rtol = 1.0e-12
+        @test thin_section["FaceEndDerivedApexAboveDegrees"] ==
+              70.0 ==
+              rad2deg(THIN_FACE_END_TILT_BOUND)
         thin_steep = [
             f for row in thin_tubes["Tubes"] for
             f in get(row, "FaceEnds", []) if f["ThetaDegrees"] ≈ 70.0
@@ -834,13 +923,20 @@ end
         @test length(thin_steep) == 1 &&
               thin_steep[1]["Regime"] == "I" &&
               thin_steep[1]["Layers"] == 3
-        @test thin_steep[1]["EndSpacing"] ≈
-              4.0 * thin_tubes["Section"]["PyramidHeight"] * tand(70.0)
+        @test thin_steep[1]["EndSpacing"] ≈ 4.0 * thin_section["PyramidHeight"] * tand(70.0)
+        @test thin_steep[1]["PyramidHeight"] == thin_section["PyramidHeight"] &&
+              thin_steep[1]["ApexThickness"] ≈
+              2.0 * thin_section["PyramidHeight"] * tand(70.0)
         @test 250.0 <= thin_tubes["Quality"]["Prism"]["MaximumJacobianCondition"] <= 300.0
         @test thin_tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
-        # 80 degrees (row B 20x so that side A reaches the +x face): the fabricated tube end lies
-        # beyond the validity ceiling 78.77 degrees and fails closed at the guard before any
-        # CAD tube exists; the thin twin's 80-degree end is regime I (its ceiling 87.2 degrees).
+        # 80 degrees (row B 20x so that side A reaches the +x face): round 2 F2b refused the
+        # fabricated end at the validity ceiling 78.77 degrees; under round 3 8A (decision 566) the
+        # derived block's apex thickness lc / 2 never reaches lc_cap, so the ceiling no longer binds
+        # for the fabricated kind and the FABRICATED tested-range bound (70 degrees = the largest
+        # fabricated tilt built under 8A; the record run raises it) refuses it before any CAD tube.
+        @test FABRICATED_FACE_END_TILT_BOUND == deg2rad(70.0) &&
+              face_end_tilt_bound(true) == FABRICATED_FACE_END_TILT_BOUND &&
+              face_end_tilt_bound(false) == THIN_FACE_END_TILT_BOUND
         message = guard_message(
             () -> build_production_tip_coupon(
                 directory,
@@ -852,8 +948,9 @@ end
             )
         )
         @test occursin("ScopeGuard[SteepFaceCrossing]", message) &&
+              occursin("FABRICATED tube end", message) &&
               occursin("80.0", message) &&
-              occursin("validity ceiling", message)
+              occursin("largest built fabricated tilt 70.0", message)
         # Round 3 class (8) interim 8B (decision 510; DESIGN-part-M 5.2): the thin 80-degree end
         # (regime I under its 87.2-degree ceiling, but above the largest BUILT thin tilt 70 degrees:
         # the thin 74.3 / 75.5-degree crossings fail the tetrahedral gate after the build, E3) now

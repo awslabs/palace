@@ -5603,6 +5603,33 @@ const ARC_FACE_END_TILT_RANGE = (deg2rad(0.1), deg2rad(70.0))
 # tetrahedral scaled-Jacobian gate after the build: E3). Above it the thin end fails closed at
 # ScopeGuard[SteepFaceCrossing] before any CAD tube, until the class-8 fix (8A) builds it.
 const THIN_FACE_END_TILT_BOUND = deg2rad(70.0)
+# Round 3 B4 (decision 566; the 466 / 497 rule for the FABRICATED kind): a fabricated straight tube
+# end on a box face is admitted up to the largest fabricated tilt BUILT under the code that runs -
+# 70 degrees (the V10 fabricated 70-degree production-size build, regime II, PBS 57505, bitwise under
+# 8A). Before 8A the derived SteepFaceCrossing ceiling (78.77 degrees at the production sizes) was the
+# de-facto fabricated cap; under 8A the block above 70 degrees takes h_pyr_end = lc / (4 s), whose
+# apex thickness lc / 2 never reaches lc_cap, so that ceiling no longer binds for the fabricated kind
+# and this bound is the admission. The V10 fabricated 74.3 / 75.5-degree builds were made under the
+# A2 regime-II block, which 8A changes above 70: they do not count. RAISE RULE: the B4 part-2 record
+# run raises this bound to the largest fabricated tilt it BUILDS and PASSES under 8A (75.5 if P5
+# holds there), the same way it raises ARC_FACE_END_TILT_RANGE's top (decision 563 B).
+const FABRICATED_FACE_END_TILT_BOUND = deg2rad(70.0)
+face_end_tilt_bound(fabricated::Bool) = fabricated ? FABRICATED_FACE_END_TILT_BOUND : THIN_FACE_END_TILT_BOUND
+# Mesher design round 3 class (8), fix 8A-bitwise (part M 5.2; decisions 491 / 510 O8 / 563): above
+# the largest BUILT face-end tilt of the coupon kind, the end block's lateral pyramids take the
+# derived height h_pyr_end = min(h_pyr, TangentialSize / (4 slope)) (prism_edge_tubes.jl
+# derived_face_end_pyramid_height), so the regular spacing satisfies the apex rule and the sheared
+# layers stay regular (E3: the thin 74.3 / 75.5-degree slivers; the pre-score lifted the thin SJ
+# 0.0023 -> 0.0075 at 74.3 and 0.0032 -> 0.0125 at 75.5). The thresholds are each kind's largest
+# BUILT tilt: 70 degrees fabricated = the V10 fabricated 70-degree production-size build (regime
+# II, PBS 57505; the library's fabricated face ends reach 45); 70 degrees thin = the V10 thin
+# 70-degree production-size build = B2's THIN_FACE_END_TILT_BOUND (decision 563: part M 5.2's "45"
+# predates B2's 70; under 45 the ADMITTED thin 70-degree block changed and failed the tetrahedral
+# gate, 0.0089 < 0.01). At or below the threshold (slack 1e-9 relative, as the thin bound's) the
+# A2 (4) block is bitwise: no built end block changes - 8A-bitwise in the strict sense.
+const FACE_END_DERIVED_APEX_ABOVE = (fabricated=deg2rad(70.0), thin=THIN_FACE_END_TILT_BOUND)
+face_end_derived_apex_above(fabricated::Bool) =
+    fabricated ? FACE_END_DERIVED_APEX_ABOVE.fabricated : FACE_END_DERIVED_APEX_ABOVE.thin
 const RECIPE_SCOPE_GUARDS = [
     ("ArcTubeRadiusVsCurvature", "build",
      "an arc metal side whose radius is below four times the tube envelope (Radius + " *
@@ -5678,12 +5705,15 @@ const RECIPE_SCOPE_GUARDS = [
      "slope max |s'(u)| over the section for an arc tube: round 3 9H, FaceEnds[].CrossingSlope): " *
      "no sheared layer can keep its pyramid apex inside the box within the cap (mesher design " *
      "round 2 F2b 3.2, supervisor decisions 358 / 363 / 437; a derived ceiling INSIDE the " *
-     "admitted range, never the admission bound: decision 510 MAJOR-1); or a THIN " *
-     "tube end whose tilt exceeds the largest BUILT thin tilt $(rad2deg(THIN_FACE_END_TILT_BOUND)) " *
-     "degrees (the V10 thin 70-degree production-size build): the thin 74.3 / 75.5-degree " *
-     "crossings fail the tetrahedral scaled-Jacobian gate after the build (E3, decision 475 (7)), " *
-     "so the end fails closed before any CAD tube until mesher design round 3 class (8) builds it " *
-     "(part M 5.2 8B; the decision 466 / 497 rule: no credit beyond the largest built angle)"),
+     "admitted range, never the admission bound: decision 510 MAJOR-1); or a tube end whose tilt " *
+     "exceeds the largest BUILT tilt of its kind - THIN $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees " *
+     "(the V10 thin 70-degree production-size build: the thin 74.3 / 75.5-degree crossings fail the " *
+     "tetrahedral scaled-Jacobian gate after the build, E3, decision 475 (7); under the class-8 fix 8A " *
+     "the thin 74.3-degree crossing still reads 0.0075 < 0.01: a named follow-up, decision 563), " *
+     "FABRICATED $(rad2deg(FABRICATED_FACE_END_TILT_BOUND)) degrees (the V10 fabricated 70-degree " *
+     "build; decision 566: under 8A the derived ceiling no longer binds for the fabricated kind, the " *
+     "record run raises this bound to the largest tilt built under 8A) - fails closed before any CAD " *
+     "tube (part M 5.2 8B; the decision 466 / 497 rule: no credit beyond the largest built angle)"),
     ("FreeEdgeEnds", "build",
      "a metal edge end that is neither a semantic corner nor on the outer box"),
     ("FootprintWithoutEdge", "build",
@@ -6770,23 +6800,36 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # Round 3 class (9) HIGH end, 9H (part M 3.3 Fact 2; 510 O9 / MAJOR-1): the ceiling reads the
     # CROSSING SLOPE - |tan theta| for a straight tube, the arc's max |s'(u)| over the section
     # (arc_crossing_slope) for an ArcTube - a derived fail-closed cap INSIDE the admitted range.
+    # Round 3 class (8), 8A-bitwise (part M 5.2; 510 O8): the end block's pyramid height - the
+    # regular h_pyr at or below the kind's largest built tilt (the A2 (4) block, bitwise), the
+    # derived h_pyr_end = min(h_pyr, TangentialSize / (4 slope)) above it (FaceEnds[].PyramidHeight).
+    function face_end_apex_height(face, K, slope)
+        derived = face.theta > face_end_derived_apex_above(fabricated) * (1.0 + 1.0e-9)
+        return derived ? derived_face_end_pyramid_height(sections_of(K).pyramid_height, lc_tangent, slope) :
+                         sections_of(K).pyramid_height
+    end
     function guard_steep_face_crossing(face, K; slope=abs(tan(face.theta)))
-        fabricated || face.theta <= THIN_FACE_END_TILT_BOUND * (1.0 + 1.0e-9) ||
+        # The tested-range reading per kind (8B thin, decision 566 fabricated): no credit beyond
+        # the largest built tilt of the kind (decisions 466 / 497).
+        face.theta <= face_end_tilt_bound(fabricated) * (1.0 + 1.0e-9) ||
             scope_error("SteepFaceCrossing",
-                        "the THIN tube end on face $(face.face) at $(rad2deg(face.theta)) degrees lies " *
-                        "above the largest built thin tilt $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees " *
-                        "(E3: untested until the class-8 fix)")
+                        "the $(fabricated ? "FABRICATED" : "THIN") tube end on face $(face.face) at " *
+                        "$(rad2deg(face.theta)) degrees lies above the largest built " *
+                        "$(fabricated ? "fabricated" : "thin") tilt $(rad2deg(face_end_tilt_bound(fabricated))) " *
+                        "degrees (untested: " *
+                        (fabricated ? "the record run raises the bound to the largest tilt built under 8A)" :
+                                      "E3; the thin steep crossing above 70 degrees is a named follow-up)"))
         cap = face_end_spacing_cap_of(K)
-        apex = 2.0 * sections_of(K).pyramid_height * slope
+        apex_height = face_end_apex_height(face, K, slope)
+        apex = 2.0 * apex_height * slope
         apex < cap ||
             scope_error("SteepFaceCrossing",
                         "the tube end on face $(face.face) at $(rad2deg(face.theta)) degrees " *
                         "(crossing slope $slope; |tan theta| = $(abs(tan(face.theta)))) needs a thinnest " *
-                        "layer 2 PyramidHeight x slope = $apex at or above the end-spacing cap $cap of " *
-                        "the tube section (the validity ceiling is a slope of " *
-                        "$(cap / (2.0 * sections_of(K).pyramid_height)), " *
-                        "$(rad2deg(atan(cap / (2.0 * sections_of(K).pyramid_height)))) degrees for a " *
-                        "straight tube)")
+                        "layer 2 PyramidHeight x slope = $apex (the block's pyramid height $apex_height) at " *
+                        "or above the end-spacing cap $cap of the tube section (the validity ceiling is a " *
+                        "slope of $(cap / (2.0 * apex_height)), " *
+                        "$(rad2deg(atan(cap / (2.0 * apex_height)))) degrees for a straight tube)")
         return cap
     end
     fabricated && (radius + pyramid_height < overetch ||
@@ -6979,7 +7022,8 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                              own.envelope_radius, own.pyramid_height, lc_tangent;
                                              spacing_cap=guard_steep_face_crossing(face, segment.rings; slope=slope),
                                              face_axis=face.axis, face_value=face.value,
-                                             crossing_slope=slope))
+                                             crossing_slope=slope,
+                                             apex_height=face_end_apex_height(face, segment.rings, slope)))
                 end
                 for (z, section) in placements
                     s_start, s_end = along > 0.0 ? (segment.s_start, segment.s_end) :
@@ -7016,7 +7060,9 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                              dot(normal, n) / along_normal, dot(normal, b) / along_normal,
                                              own.envelope_radius, own.pyramid_height, lc_tangent;
                                              spacing_cap=guard_steep_face_crossing(face, segment.rings),
-                                             face_axis=face.axis, face_value=face.value))
+                                             face_axis=face.axis, face_value=face.value,
+                                             apex_height=face_end_apex_height(face, segment.rings,
+                                                                              abs(tan(face.theta)))))
                 end
                 for (z, section) in placements
                     # Smooth joints (design A3 (2)): the straight tube's end section at a joint
@@ -7141,6 +7187,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "SectorDegrees" => sector_degrees, "Sectors" => sectors,
         "PyramidHeight" => pyramid_height,
         "PyramidHeightOverOuterRing" => TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING,
+        "FaceEndDerivedApexAboveDegrees" => rad2deg(face_end_derived_apex_above(fabricated)),
         "CornerClearanceRule" => "R / tan(phi / 2) + max(h_K, 1.25 h_pyr / sin(phi / 2)) before " *
                                  "a semantic corner, phi the smallest in-plane angle between the " *
                                  "tube edges meeting there (h_K alone for a single tube edge; the " *
@@ -7165,9 +7212,16 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                          "layer keeps the apex rule t_min >= 2 h_pyr s (mesher design round 2 F2b 3.2); " *
                          "lc_cap = FaceEndSpacingCap (FaceEndSpacingCapRule); 2 h_pyr s >= lc_cap fails " *
                          "closed at ScopeGuard[SteepFaceCrossing] (a derived ceiling INSIDE the admitted " *
-                         "tilt range, never the admission bound: 510 MAJOR-1), as does a THIN end above " *
-                         "$(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees (the largest built thin tilt; round 3 " *
-                         "8B); theta == 0 keeps the unchanged perpendicular end (decisions 302 / 320)",
+                         "tilt range, never the admission bound: 510 MAJOR-1), as does an end above the " *
+                         "largest built tilt of its kind, THIN $(rad2deg(THIN_FACE_END_TILT_BOUND)) / " *
+                         "FABRICATED $(rad2deg(FABRICATED_FACE_END_TILT_BOUND)) degrees (round 3 8B / " *
+                         "decision 566); theta == 0 keeps the unchanged perpendicular end (decisions 302 / 320). " *
+                         "Round 3 class (8) 8A-bitwise (part M 5.2, decision 510 O8): ABOVE the kind's largest " *
+                         "built tilt FaceEndDerivedApexAboveDegrees ($(rad2deg(face_end_derived_apex_above(fabricated))) " *
+                         "degrees for this kind) the end block's lateral pyramids take h_pyr_end = min(h_pyr, " *
+                         "TangentialSize / (4 s)) in every formula above (FaceEnds[].PyramidHeight; the regular " *
+                         "layers keep h_pyr), so lc_end = TangentialSize and m = ceil(2 (R + h_pyr) s / " *
+                         "TangentialSize): the sheared layers stay regular (E3); at or below it h_pyr_end = h_pyr",
         "FaceEndSpacingCapRule" => "the largest axial spacing at which the section's own prism " *
                                    "corner frames (every sector triangle of the section at each " *
                                    "vertex, the axial edge orthogonal: singular values {lc, " *
@@ -7196,9 +7250,10 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                            "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE[1])) <= theta <= " *
                            "$(rad2deg(ARC_FACE_END_TILT_RANGE[2])) degrees (the BUILT range: round 2b " *
                            "15 / 45 / 70, round 3 B2 0.1 / 0.5 / 2.1 / 8 degrees; decisions 437 (3) / " *
-                           "497 / 510 MAJOR-1) builds, below or above it fails closed likewise; a THIN " *
-                           "end above $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees (the largest built " *
-                           "thin tilt) fails closed at ScopeGuard[SteepFaceCrossing] (round 3 8B)",
+                           "497 / 510 MAJOR-1) builds, below or above it fails closed likewise; a straight " *
+                           "end above the largest built tilt of its kind (THIN $(rad2deg(THIN_FACE_END_TILT_BOUND)) " *
+                           "/ FABRICATED $(rad2deg(FABRICATED_FACE_END_TILT_BOUND)) degrees) fails closed at " *
+                           "ScopeGuard[SteepFaceCrossing] (round 3 8B / decision 566)",
         "EnvelopeRadius" => envelope_radius,
         "MetalFacingRule" => "two tubed metal sides of one plane whose tube intervals face each " *
                              "other across the metal (each on the metal side of the other's " *

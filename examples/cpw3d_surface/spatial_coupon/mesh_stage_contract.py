@@ -1536,9 +1536,10 @@ RECIPE_SCOPE_GUARDS = {
     # per-side bound).
     "UnqualifiedRingCount": "build",
     # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face end beyond the validity
-    # ceiling of the capped end block (2 h_pyr |tan theta| >= lc_cap); round 3 class (8) interim
-    # 8B (part M 5.2): a THIN end above THIN_FACE_END_TILT_BOUND_DEGREES (the largest built thin
-    # tilt) fails closed at the same guard.
+    # ceiling of the capped end block (2 h_pyr_end x slope >= lc_cap); round 3 class (8) 8B (part M
+    # 5.2) / decision 566: an end above the largest built tilt of its kind
+    # (THIN_FACE_END_TILT_BOUND_DEGREES / FABRICATED_FACE_END_TILT_BOUND_DEGREES) fails closed at
+    # the same guard.
     "SteepFaceCrossing": "build",
     "FreeEdgeEnds": "build", "FootprintWithoutEdge": "build",
     "FootprintTopology": "build",
@@ -1576,6 +1577,18 @@ ARC_FACE_END_TILT_RANGE_DEGREES = (0.1, 70.0)
 # tilt (the V10 thin 70-degree production-size build); a thin end above it fails closed at
 # ScopeGuard[SteepFaceCrossing] until the class-8 fix builds it.
 THIN_FACE_END_TILT_BOUND_DEGREES = 70.0
+# Round 3 B4 (decision 566): the fabricated tested-range bound - the largest fabricated straight face-end
+# tilt BUILT under the code that runs (the V10 fabricated 70-degree production build; under 8A the derived
+# SteepFaceCrossing ceiling no longer binds for the fabricated kind, so this bound is the admission); the
+# B4 part-2 record run raises it to the largest fabricated tilt it builds and passes under 8A.
+FABRICATED_FACE_END_TILT_BOUND_DEGREES = 70.0
+# Round 3 class (8), 8A-bitwise (part M 5.2; decisions 510 O8 / 563): above the kind's largest BUILT
+# face-end tilt the end block's pyramids take h_pyr_end = min(h_pyr, TangentialSize / (4 slope)) (the
+# mesher's FACE_END_DERIVED_APEX_ABOVE, spelled identically: 70 degrees fabricated = the V10 fabricated
+# 70-degree production build, 70 degrees thin = the V10 thin 70-degree production build = the thin
+# admission top THIN_FACE_END_TILT_BOUND_DEGREES; part M 5.2's "45 thin" predates B2's 70); at or
+# below it h_pyr_end = h_pyr (the A2 (4) block, bitwise). FaceEnds[].PyramidHeight carries h_pyr_end.
+FACE_END_DERIVED_APEX_ABOVE_DEGREES = {"fabricated": 70.0, "thin": THIN_FACE_END_TILT_BOUND_DEGREES}
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)
@@ -2032,7 +2045,10 @@ FACE_END_RULE = ("block (b) design A2 (supervisor decisions 302 / 320): a tube e
                  "2 h_pyr |tan theta| >= lc_cap fails closed at ScopeGuard[SteepFaceCrossing]; mesher design round 3 "
                  "9H (part M 3.3): an ARC tube's formulas read its crossing slope max_u |s'(u)| = rho h / (r sqrt(r^2 - "
                  "h^2)) at the inner node circle r = rho - (R + h_pyr) in place of |tan theta| (FaceEnds[].CrossingSlope; "
-                 "tan theta at the axis), a derived ceiling INSIDE the admitted tilt range")
+                 "tan theta at the axis), a derived ceiling INSIDE the admitted tilt range; round 3 8A-bitwise (part M "
+                 "5.2): above the kind's largest built tilt FACE_END_DERIVED_APEX_ABOVE_DEGREES the block's pyramids take "
+                 "h_pyr_end = min(h_pyr, TangentialSize / (4 s)) (FaceEnds[].PyramidHeight) in every formula, so the "
+                 "sheared layers stay regular")
 FACE_END_CONDITION_MARGIN = 0.95
 FACE_END_REGIMES = ("I", "II")
 GMSH_BUILD_CONDITION_OPTION = "--maximum-jacobian-condition"
@@ -2124,7 +2140,7 @@ def arc_crossing_slope(rho, envelope_radius, face_distance):
 
 
 def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=None, round2b=False,
-                            inner_size=None, growth_ratio=None, box=None):
+                            inner_size=None, growth_ratio=None, box=None, fabricated=None):
     """The face-end records of one census tube row (Tubes[].FaceEnds, absent on a plain
     tube): every record names a box face and an end, its tilt lies in (0, 90) degrees,
     its spacing and layer count follow FACE_END_RULE from the section's radius and pyramid
@@ -2138,9 +2154,12 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
     row it is the arc's crossing slope recomputed from the row's Arc (Centre, Radius), the
     row's envelope and the face plane of the census CouponBox (`box` = (Lower, Upper)), and
     the record's CrossingSlope must carry it (a straight row's CrossingSlope, when recorded,
-    is |tan theta|).  A record without Regime is a pre-F2b record (the regime-I formulas
-    alone); from the round-2b mesher (`round2b`) it fails closed.  Returns the largest
-    EndSpacing (0 without face ends)."""
+    is |tan theta|).  The block's pyramid height (round 3 8A-bitwise) is h_pyr at or below the
+    kind's FACE_END_DERIVED_APEX_ABOVE_DEGREES (`fabricated` names the kind) and h_pyr_end =
+    min(h_pyr, TangentialSize / (4 s)) above it; a record above the threshold must carry
+    PyramidHeight = h_pyr_end, and every recorded PyramidHeight is bound.  A record without
+    Regime is a pre-F2b record (the regime-I formulas alone); from the round-2b mesher
+    (`round2b`) it fails closed.  Returns the largest EndSpacing (0 without face ends)."""
     records = row.get("FaceEnds", [])
     if not isinstance(records, list):
         raise ValueError("Tube row FaceEnds is not a list")
@@ -2185,9 +2204,20 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
         if "CrossingSlope" in record and \
                 abs(_census_number(record, "CrossingSlope", "Tube face end") - slope) > 1e-12 * slope:
             raise ValueError("Tube face end CrossingSlope does not follow the row's crossing geometry")
+        # Round 3 8A-bitwise: the block's own pyramid height above the kind's largest built tilt.
+        apex_height = pyramid_height
+        if fabricated is not None:
+            threshold = FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated" if fabricated else "thin"]
+            if theta > threshold * (1.0 + 1e-9):
+                apex_height = min(pyramid_height, tangential_size / (4.0 * slope))
+        if "PyramidHeight" in record:
+            if abs(_census_number(record, "PyramidHeight", "Tube face end") - apex_height) > 1e-12 * apex_height:
+                raise ValueError("Tube face end PyramidHeight does not follow the kind's derived apex rule")
+        elif apex_height != pyramid_height:
+            raise ValueError("Tube face end above the kind's largest built tilt lacks its PyramidHeight")
         spacing = _census_number(record, "EndSpacing", "Tube face end")
         layers = _count(record.get("Layers"), "Tube face end layers")
-        regime_one_spacing = max(tangential_size, 4.0 * pyramid_height * slope)
+        regime_one_spacing = max(tangential_size, 4.0 * apex_height * slope)
 
         def regime_one_layers(lc):
             return max(1, math.ceil(2.0 * (radius + pyramid_height) * slope / lc * (1.0 - 1e-9)))
@@ -2207,13 +2237,13 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
                         isinstance(section.get("FaceEndSpacingCapRule"), str) and section["FaceEndSpacingCapRule"]):
                     raise ValueError("Tube section FaceEndSpacingCap does not follow the section's prism frames")
             regime = record["Regime"]
-            apex = 2.0 * pyramid_height * slope
+            apex = 2.0 * apex_height * slope
             if regime not in FACE_END_REGIMES:
                 raise ValueError("Tube face end regime is unknown")
             if abs(_census_number(record, "EndSpacingCap", "Tube face end") - cap) > 1e-12 * cap or \
                     abs(_census_number(record, "ApexThickness", "Tube face end") - apex) > 1e-12 * apex:
                 raise ValueError("Tube face end cap or apex thickness does not follow the section")
-            if 4.0 * pyramid_height * slope <= cap:
+            if 4.0 * apex_height * slope <= cap:
                 expected_regime, expected_spacing = "I", regime_one_spacing
                 expected_layers = regime_one_layers(expected_spacing)
             else:
@@ -2442,11 +2472,16 @@ def validate_gmsh_build_census(build_report, census, semantic):
     coupon_box = census.get("CouponBox")
     face_box = ((coupon_box["Lower"], coupon_box["Upper"])
                 if isinstance(coupon_box, dict) and "Lower" in coupon_box and "Upper" in coupon_box else None)
+    kind_fabricated = build_coupon_kind(command) == "fabricated"
+    if isinstance(section, dict) and "FaceEndDerivedApexAboveDegrees" in section and \
+            _census_number(section, "FaceEndDerivedApexAboveDegrees", "Tube section") != \
+            FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated" if kind_fabricated else "thin"]:
+        raise ValueError("Tube section FaceEndDerivedApexAboveDegrees differs from the kind's largest built tilt")
     for index, row in enumerate(rows):
         face_end_bound[index] = validate_tube_face_ends(row, tubes["TangentialSize"], section,
                                                         condition_ceiling, round2b,
                                                         tubes["InnerSize"], tubes["GrowthRatio"],
-                                                        box=face_box)
+                                                        box=face_box, fabricated=kind_fabricated)
     if (isinstance(section, dict) and section.get("FaceEndSpacingCap") is not None and
             not any(row.get("FaceEnds") for row in rows)):
         raise ValueError("Tube section records a face-end spacing cap without a face end")

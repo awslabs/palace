@@ -1059,10 +1059,8 @@ end
           occursin("32b0083dad90", scope_guard_statement("ArcArcJoint"))
     @test occursin("rho - h_face < 3 Radius", scope_guard_statement("CollarFaceEnd")) &&
           occursin("CORNER kink", scope_guard_statement("CollarFaceEnd"))
-    @test occursin(
-        "largest BUILT thin tilt 70.0",
-        scope_guard_statement("SteepFaceCrossing")
-    )
+    @test occursin("THIN 70.0 degrees", scope_guard_statement("SteepFaceCrossing")) &&
+          occursin("FABRICATED 70.0 degrees", scope_guard_statement("SteepFaceCrossing"))
     clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
     segments_of(inputs; lower=inputs.lower, upper=inputs.upper, fabricated=false) =
         metal_edge_segments(
@@ -1434,8 +1432,9 @@ end
                 @test record["CrossingSlope"] == slope &&
                       tand(theta) * (1.0 - 1.0e-12) <= slope <= 1.13 * tand(theta)
                 theta <= 15.0 && @test slope <= 1.015 * tand(theta)
-                @test record["ApexThickness"] ==
-                      2.0 * tubes["Section"]["PyramidHeight"] * slope &&
+                # (8A, decision 563: at or below 70 degrees the block's pyramid height is the regular one)
+                @test record["PyramidHeight"] == tubes["Section"]["PyramidHeight"] &&
+                      record["ApexThickness"] == 2.0 * record["PyramidHeight"] * slope &&
                       record["EnvelopeShear"] ==
                       (tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"]) *
                       slope
