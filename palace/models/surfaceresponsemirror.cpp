@@ -729,7 +729,8 @@ nlohmann::json BuildMirrorFormedContract(
       "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster "
       "requirement; RealPortions index Signature.Portions (0-based) whose world portions "
       "lie on real segments (segment < real_segments); every other portion is an image; "
-      "Frame = the signature's canonical frame in mesh units; lengths over R";
+      "Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = "
+      "Chirality x (Axes[0] x Axes[1])); lengths over R";
   if (feature.type == "CurvedEdge")
   {
     rule += "; a CurvedEdge key carries no Portions (RealPortions empty): the real / image "
@@ -853,11 +854,18 @@ nlohmann::json BuildMirrorFormedContract(
       return nullptr;
     }
   }
+  // The Frame is the identification's canonical frame AS IS (Features[].Frame: Axes[2] =
+  // the process normal n for both handedness values) with its Chirality made explicit
+  // (CONTRACT.md v3, decision 584 (2)): Axes[2] = Chirality x (Axes[0] x Axes[1]), so a
+  // chirality -1 key's left-handed triple is a valid frame, read by the consumer with the
+  // same rule; the placement uses this very frame (M = identity for a Signature-keyed
+  // model).
   return nlohmann::json{{"Version", 1},
                         {"Planes", planes},
                         {"Frame",
                          {{"Origin", feature.origin},
-                          {"Axes", {feature.axes[0], feature.axes[1], feature.axes[2]}}}},
+                          {"Axes", {feature.axes[0], feature.axes[1], feature.axes[2]}},
+                          {"Chirality", feature.chirality}}},
                         {"RealPortions", real_portions},
                         {"RealLengthOverR", real_length / R},
                         {"ImageLengthOverR", image_length / R},

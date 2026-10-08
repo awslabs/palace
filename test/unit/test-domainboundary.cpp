@@ -1923,7 +1923,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         CHECK(contract.at("RealPortions").size() > 0);
         CHECK(contract.at("RealPortions").size() <
               feature.at("Signature").at("Portions").size());
-        CHECK(contract.at("Frame") == feature.at("Frame"));
+        {
+          nlohmann::json frame = contract.at("Frame");
+          CHECK(frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>());
+          frame.erase("Chirality");
+          CHECK(frame == feature.at("Frame"));
+        }
         CHECK_THAT(contract.at("RealLengthOverR").get<double>(),
                    WithinRel(contract.at("ImageLengthOverR").get<double>(), 1.0e-6));
         keys[feature.at("Hash").get<std::string>()] = feature.at("Signature");
@@ -2758,7 +2763,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           CHECK(contract.at("RealPortions").empty());
           CHECK(contract.at("RealLengthOverR").get<double>() > 0.0);
           CHECK(contract.at("ImageLengthOverR").get<double>() > 0.0);
-          CHECK(contract.at("Frame") == feature.at("Frame"));
+          {
+            nlohmann::json frame = contract.at("Frame");
+            CHECK(frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>());
+            frame.erase("Chirality");
+            CHECK(frame == feature.at("Frame"));
+          }
           CHECK(feature.contains("ImagePortions"));
           continue;
         }

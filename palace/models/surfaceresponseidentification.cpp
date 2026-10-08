@@ -14310,6 +14310,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {
         entry["Mirror"]["Contract"]["Frame"] =
             FrameToJson(feature.origin, feature.axes, radius, length_scale);
+        entry["Mirror"]["Contract"]["Frame"]["Chirality"] = feature.chirality;
       }
       if (!image_portions.empty())
       {

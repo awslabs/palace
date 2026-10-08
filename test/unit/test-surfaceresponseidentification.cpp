@@ -6209,6 +6209,19 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
       CHECK(contract.at("RealFeatures") == unmerged.at("RealFeatures"));
       CHECK(contract.at("Frame").at("Origin").get<std::array<double, 3>>() ==
             feature.origin);
+      // CONTRACT.md v3 (decision 584 (2)): the frame is the identification's with its
+      // Chirality explicit, Axes[2] = Chirality x (Axes[0] x Axes[1]).
+      CHECK(contract.at("Frame").at("Chirality").get<int>() == feature.chirality);
+      {
+        const auto &x = feature.axes[0], &y = feature.axes[1];
+        const std::array<double, 3> cross = {x[1] * y[2] - x[2] * y[1],
+                                             x[2] * y[0] - x[0] * y[2],
+                                             x[0] * y[1] - x[1] * y[0]};
+        for (int d = 0; d < 3; d++)
+        {
+          CHECK_THAT(feature.chirality * cross[d], WithinAbs(feature.axes[2][d], 1.0e-9));
+        }
+      }
       CHECK(contract.at("Frame").at("Axes").get<std::array<std::array<double, 3>, 3>>() ==
             feature.axes);
       CHECK_THAT(contract.at("RealLengthOverR").get<double>(),
@@ -6286,7 +6299,12 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
                        [&](const nlohmann::json &f) { return f.at("Id") == feature.id; });
       REQUIRE(entry != manifest.at("Features").end());
       CHECK(entry->at("Mirror").at("Status") == "Unmerged");
-      CHECK(entry->at("Mirror").at("Contract").at("Frame") == entry->at("Frame"));
+      {
+        nlohmann::json frame = entry->at("Mirror").at("Contract").at("Frame");
+        CHECK(frame.at("Chirality").get<int>() == entry->at("Chirality").get<int>());
+        frame.erase("Chirality");
+        CHECK(frame == entry->at("Frame"));
+      }
       CHECK(entry->at("Mirror").at("Contract").at("RealPortions") == real_portions);
       CHECK(entry->contains("ImagePortions"));
       CHECK(entry->at("Hash") == feature.hash);
