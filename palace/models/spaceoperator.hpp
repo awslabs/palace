@@ -266,9 +266,20 @@ public:
   // a real-slot contribution at complex ω). For real ω this matches
   // GetExtraSystemMatrix<ComplexOperator>(double) up to the wave-port term, which
   // additionally carries the attenuation -Im(k_n)·M on the real slot (the real-ω path
-  // intentionally stamps only Re(k_n)).
+  // intentionally stamps only Re(k_n)). The frequency-dependent PML terms can be excluded
+  // (see GetFrequencyDependentPMLMatrices).
   std::unique_ptr<ComplexOperator>
-  GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+  GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy,
+                       bool include_pml = true);
+
+  // Construct the matrices {K_pml, C_pml, M_pml} of the frequency-dependent PML terms of
+  // A2(λ) ≈ K_pml + λ C_pml + λ² M_pml with the PML stretch frozen at the real frequency
+  // omega: the corresponding terms of the system matrix for a static PML with reference
+  // frequency omega, exact at λ = iω. This is the approximation of the PML terms used for
+  // the polynomial seed eigenvalue problem of the hybrid nonlinear eigensolver. Absent
+  // terms are returned as null.
+  std::array<std::unique_ptr<ComplexOperator>, 3>
+  GetFrequencyDependentPMLMatrices(double omega, Operator::DiagonalPolicy diag_policy);
 
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port

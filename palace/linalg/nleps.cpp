@@ -260,12 +260,18 @@ void QuasiNewtonSolver::SetInitialGuess()
   MFEM_VERIFY(nev > 0, "Must call SetNumModes before using SetInitialguess for nonlinear "
                        "eigenvalue solver!");
 
-  // Get eigenmodes initial guesses from linear eigensolver
+  // Get eigenmodes initial guesses from linear eigensolver, with λ = iω = i √μ for a
+  // linear eigenvalue problem in μ = -λ² = ω².
+  auto GetLinearEigenvalue = [this](int i)
+  {
+    const std::complex<double> l = linear_eigensolver_->GetEigenvalue(i);
+    return linear_squared ? std::complex<double>(0.0, 1.0) * std::sqrt(l) : l;
+  };
   eigenvalues.resize(nev_linear);
   eigenvectors.resize(nev_linear);
   for (int i = 0; i < nev_linear; i++)
   {
-    eigenvalues[i] = linear_eigensolver_->GetEigenvalue(i);
+    eigenvalues[i] = GetLinearEigenvalue(i);
     linear_eigensolver_->GetEigenvector(i, x1);
     eigenvectors[i] = x1;
   }
@@ -304,7 +310,7 @@ void QuasiNewtonSolver::SetInitialGuess()
   }
   for (int i = 0; i < nev_linear; i++)
   {
-    eigenvalues[i] = linear_eigensolver_->GetEigenvalue(indices[i]);
+    eigenvalues[i] = GetLinearEigenvalue(indices[i]);
     linear_eigensolver_->GetEigenvector(indices[i], x1);
     linalg::NormalizePhase(comm, x1);
     eigenvectors[i] = x1;
