@@ -259,6 +259,10 @@ end
 # block keeps the A2 (4) formulas bitwise); below it apex_height = h_pyr. Regime II and the SteepFaceCrossing
 # ceiling stay as the fail-closed cap where lc_tangent > lc_cap (never at the production sizes).
 # The regular layers keep h_pyr (TubeMesh.layer_pyramid_heights); recorded as FaceEnds[].PyramidHeight.
+# Round 3 B4 review (decision 579 MAJOR-3 (b)): an ARC face end also carries its NODE-CIRCLE MARGIN
+# rho (1 - sin theta) / (Radius + PyramidHeight) = (rho - h) / envelope, the second parameter of
+# the dominance rule the caller checks (mesh_spatial_coupon.jl ARC_FACE_END_BUILT_CASES) and the
+# record of FaceEnds[].NodeCircleMargin; a straight tube's end has none (NaN, not recorded).
 struct FaceEnd
     end_index::Int            # 0: the tube start (s_start) lies on the face, 1: the end
     face::String              # "x0" / "x1" / "y0" / "y1"
@@ -277,6 +281,7 @@ struct FaceEnd
     apex_thickness::Float64   # 2 h_pyr_end x slope: the thinnest layer the apex rule admits
     crossing_slope::Float64   # the slope of the regime formulas: |tan theta|, or the arc's max |s'(u)| (9H)
     apex_height::Float64      # h_pyr_end, the end block's lateral pyramid height (8A: <= h_pyr)
+    node_circle_margin::Float64  # an arc end's (rho - h) / envelope (decision 579); NaN on a straight tube
 end
 
 # The end block's pyramid height under 8A: the regular spacing's apex rule, lc_tangent / 2 >= 2
@@ -314,9 +319,12 @@ function FaceEnd(
     face_axis=0,
     face_value=NaN,
     crossing_slope=abs(tan(theta)),
-    apex_height=pyramid_height
+    apex_height=pyramid_height,
+    node_circle_margin=NaN
 )
     theta > 0.0 || error("a face end needs a positive tilt")
+    isnan(node_circle_margin) || node_circle_margin > 1.0 ||
+        error("an arc face end's node-circle margin exceeds 1 (the inner node circle reaches the face)")
     spacing_cap > 0.0 || error("a face end needs a positive end-spacing cap")
     isfinite(crossing_slope) && crossing_slope >= abs(tan(theta)) * (1.0 - 1.0e-12) ||
         error("a face end's crossing slope is at least |tan theta| (the axis value)")
@@ -367,7 +375,8 @@ function FaceEnd(
         spacing_cap,
         apex_thickness,
         slope,
-        apex_height
+        apex_height,
+        node_circle_margin
     )
 end
 
@@ -375,7 +384,13 @@ end
 # envelope lies in EndSpacing -+ EnvelopeShear / Layers (within [lc_end / 2, 3 lc_end / 2]
 # and at or above ApexThickness, the exact apex rule); Regime "I" / "II" and the section's
 # EndSpacingCap bind lc_end <= lc_cap (design round 2 F2b).
-face_end_record(face_end::FaceEnd) = Dict{String, Any}(
+function face_end_record(face_end::FaceEnd)
+    record = face_end_record_common(face_end)
+    # An arc end records its node-circle margin (decision 579); a straight end's record is bitwise.
+    isnan(face_end.node_circle_margin) || (record["NodeCircleMargin"] = face_end.node_circle_margin)
+    return record
+end
+face_end_record_common(face_end::FaceEnd) = Dict{String, Any}(
     "End" => face_end.end_index == 0 ? "start" : "end",
     "Face" => face_end.face,
     "ThetaDegrees" => rad2deg(face_end.theta),

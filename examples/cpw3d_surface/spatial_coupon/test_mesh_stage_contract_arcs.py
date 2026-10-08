@@ -10,12 +10,14 @@ from pathlib import Path
 import re
 import unittest
 
-from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_TILT_RANGE_DEGREES,
+from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_BUILT_CASES,
+                                 ARC_FACE_END_FAILED_CASES, ARC_FACE_END_TILT_RANGE_DEGREES,
                                  ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS,
                                  FABRICATED_FACE_END_TILT_BOUND_DEGREES, FACE_END_DERIVED_APEX_ABOVE_DEGREES,
                                  RECIPE_SCOPE_GUARDS, THIN_FACE_END_TILT_BOUND_DEGREES, arc_crossing_slope,
-                                 arc_part_count, boundary_arc_runs, metal_loop_arc_parts, metal_loop_side_points,
-                                 scope_classes, scope_guard_in_text, validate_arc_tubes, validate_tube_face_ends)
+                                 arc_face_end_dominating_case, arc_part_count, boundary_arc_runs,
+                                 metal_loop_arc_parts, metal_loop_side_points, scope_classes, scope_guard_in_text,
+                                 validate_arc_tubes, validate_tube_face_ends)
 
 HERE = Path(__file__).resolve().parent
 
@@ -201,14 +203,43 @@ class ArcFaceEndCrossingSlopeTest(unittest.TestCase):
         lc_end = max(lc, 4.0 * h_pyr * slope)
         m = max(1, math.ceil(2.0 * (radius + h_pyr) * slope / lc_end * (1.0 - 1e-9)))
         shear = (radius + h_pyr) * slope
+        margin = (rho - 1.5) / (radius + h_pyr)
         record = {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": m, "EndSpacing": lc_end,
                   "EnvelopeShear": shear, "LayerThicknessRange": [lc_end - shear / m, lc_end + shear / m],
-                  "OverLength": shear + lc, "Kappa": [0.0, 0.0], "CrossingSlope": slope * slope_scale}
+                  "OverLength": shear + lc, "Kappa": [0.0, 0.0], "CrossingSlope": slope * slope_scale,
+                  "NodeCircleMargin": margin}
         if drop_slope:
             record.pop("CrossingSlope")
         row = {"Arc": {"ArcId": 1, "Centre": centre, "Radius": rho, "Sign": 1, "Part": 1, "Parts": 1},
                "FaceEnds": [record]}
         return row, lc, {"Radius": radius, "PyramidHeight": h_pyr}, box, lc_end, slope
+
+    def test_arc_row_binds_the_node_circle_margin(self):
+        # Round 3 B4 review (decision 579): the margin is recorded, recomputed and bound; without the kind
+        # (`fabricated` None: the per-record reader) the dominance is not judged.
+        row, lc, section, box, lc_end, _ = self.face_end_row()
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box), lc_end)
+        row["FaceEnds"][0]["NodeCircleMargin"] *= 1.0 + 1e-9
+        with self.assertRaisesRegex(ValueError, "NodeCircleMargin does not follow"):
+            validate_tube_face_ends(row, lc, section, box=box)
+        row["FaceEnds"][0].pop("NodeCircleMargin")
+        with self.assertRaisesRegex(ValueError, "lacks its NodeCircleMargin"):
+            validate_tube_face_ends(row, lc, section, box=box)
+
+    def test_arc_row_must_be_dominated_by_a_built_case(self):
+        # The default 45-degree fixture row (rho 2.12, margin 15.6 fabricated envelopes at R 31.75 + 7.94 nm)
+        # is dominated (fe45 / fe70r13p3 / fe75p5r13p3 fabricated); the default fe70 geometry (rho 1.596,
+        # 2.4 envelopes) - the record run's measured failure - is dominated by nothing on either kind.
+        row, lc, section, box, lc_end, _ = self.face_end_row()
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box, fabricated=True), lc_end)
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box, fabricated=False), lc_end)
+        steep, lc, section, box, lc_end, _ = self.face_end_row(theta=70.0)
+        # (2.426 at this fixture's 7.94-nm pyramid height; 2.4218 at the production 8 nm)
+        self.assertAlmostEqual(steep["FaceEnds"][0]["NodeCircleMargin"], 2.4218, places=1)
+        for fabricated in (True, False):
+            with self.assertRaisesRegex(ValueError, "dominated by no built-and-passed case"):
+                validate_tube_face_ends(steep, lc, section, box=box, fabricated=fabricated)
+        self.assertEqual(validate_tube_face_ends(steep, lc, section, box=box), lc_end)   # kind unknown: not judged
 
     def test_arc_row_binds_the_recomputed_slope(self):
         row, lc, section, box, lc_end, slope = self.face_end_row()
@@ -374,6 +405,35 @@ class ArcScopeGuardsTest(unittest.TestCase):
         self.assertEqual(FACE_END_DERIVED_APEX_ABOVE_DEGREES["thin"], THIN_FACE_END_TILT_BOUND_DEGREES)
         self.assertLessEqual(ARC_FACE_END_TILT_RANGE_DEGREES["thin"][1], THIN_FACE_END_TILT_BOUND_DEGREES)
         self.assertLess(ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
+        # Round 3 B4 review (decision 579 MAJOR-3 (b)): the built-and-passed cases (case, tilt, margin) per
+        # kind and the two measured failures, spelled identically; the tilt range is the table's projection.
+        block = re.search(r"const ARC_FACE_END_BUILT_CASES = \((.*?)\n\)\n", source, re.S).group(1)
+        julia_cases = {}
+        for kind, body in re.findall(r"(fabricated|thin)=\[(.*?)\]", block, re.S):
+            julia_cases[kind] = tuple((m.group(1), float(m.group(2)), float(m.group(3))) for m in
+                                      re.finditer(r'\(case="([a-z0-9]+)", tilt=([0-9.]+), margin=([0-9.]+)\)', body))
+        self.assertEqual(julia_cases, ARC_FACE_END_BUILT_CASES)
+        failed = re.search(r"const ARC_FACE_END_FAILED_CASES = \[(.*?)\n\]\n", source, re.S).group(1)
+        self.assertEqual(tuple((m.group(1), m.group(2), float(m.group(3)), float(m.group(4))) for m in
+                               re.finditer(r'\(case="([a-z0-9]+)", kind="(fabricated|thin)", tilt=([0-9.]+), margin=([0-9.]+),',
+                                           failed)), ARC_FACE_END_FAILED_CASES)
+        for kind in ("fabricated", "thin"):
+            cases = ARC_FACE_END_BUILT_CASES[kind]
+            self.assertEqual((min(c[1] for c in cases), max(c[1] for c in cases)), ARC_FACE_END_TILT_RANGE_DEGREES[kind])
+            self.assertTrue(all(c[2] > 1.0 for c in cases))
+        for case, kind, tilt, margin in ARC_FACE_END_FAILED_CASES:
+            self.assertIsNone(arc_face_end_dominating_case(kind == "fabricated", tilt, margin))
+        # the admitted region: the 32dc558f4810 fabricated face end (74.32 deg, 54 envelopes) is dominated by
+        # fe75p5r13p3; a synthetic at 60 deg / 6.3 envelopes (the C1 0.5 R concave fixture) by nothing
+        self.assertEqual(arc_face_end_dominating_case(True, 74.32, 54.0)[0], "fe75p5r13p3")
+        self.assertIsNone(arc_face_end_dominating_case(True, 74.32, 10.0))
+        self.assertIsNone(arc_face_end_dominating_case(True, 59.0, 6.3))
+        self.assertIsNone(arc_face_end_dominating_case(False, 74.32, 54.0))
+        self.assertEqual(arc_face_end_dominating_case(False, 45.0, 8.0)[0], "fe45")
+        self.assertIsNone(arc_face_end_dominating_case(False, 46.0, 8.0))
+        for kind in (True, False):
+            for case in ARC_FACE_END_BUILT_CASES["fabricated" if kind else "thin"]:
+                self.assertIsNotNone(arc_face_end_dominating_case(kind, case[1], case[2]))   # each case dominates itself
         for kind in ("fabricated", "thin"):
             self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[kind][0])
 

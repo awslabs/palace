@@ -1952,8 +1952,11 @@ end
         # theta, -> tan theta as rho -> inf). The default fixture ties rho = 3 R / sin theta, which
         # at 70 degrees leaves the inner node circle only 2.4 envelopes from the face (part M 3.3
         # Fact 1: a fixture artefact) and, with the slope-aware block, fails the tetrahedral gate
-        # (0.0094 < 0.01): the 70-degree case takes the rho-parametrised (notch) fixture at rho 3.5
-        # (5.3 envelopes; slope 1.127 tan theta), the representative steep configuration.
+        # (0.0094 < 0.01): the 70-degree case takes the rho-parametrised (notch) fixture. Round 3 B4
+        # review (decision 579 MAJOR-3 (b)): the fixture must be DOMINATED by a built-and-passed case
+        # (ARC_FACE_END_BUILT_CASES: tilt >= 70 and margin <= the fixture's) - rho 3.5 (5.3 envelopes)
+        # is not (the floor is fe75p5r13p3's 10.66 fabricated / fe70r13p3's 10.28 thin), rho 8 (12.1
+        # envelopes at the test-size envelope 0.04; slope 1.05 tan theta) is.
         for (theta, chord, rho) in (
                 (0.1, 0.025, nothing),
                 (0.5, 0.125, nothing),
@@ -1961,7 +1964,7 @@ end
                 (8.0, 2.0, nothing),
                 (15.0, 2.5, nothing),
                 (45.0, 5.0, nothing),
-                (70.0, 5.0, 3.5)
+                (70.0, 5.0, 8.0)
             ),
             fabricated in (true, false)
 
@@ -1984,8 +1987,8 @@ end
                       isapprox(record["ThetaDegrees"], theta; atol=1.0e-9)
                 @test record["Regime"] == "I"
                 # 9H: the recorded crossing slope is the arc's (rho, envelope, face distance), above
-                # tan theta by the concave side's excess (5.9 % on the default fixture at 45, 12.7 % at
-                # 70 / rho 3.5, within 1.5 % below 15 degrees), and the block's apex / shear read it.
+                # tan theta by the concave side's excess (5.9 % on the default fixture at 45, 5.3 % at
+                # 70 / rho 8, within 1.5 % below 15 degrees), and the block's apex / shear read it.
                 slope = arc_crossing_slope(
                     row["Arc"]["Radius"],
                     tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"],
@@ -1994,6 +1997,11 @@ end
                 @test record["CrossingSlope"] == slope &&
                       tand(theta) * (1.0 - 1.0e-12) <= slope <= 1.13 * tand(theta)
                 theta <= 15.0 && @test slope <= 1.015 * tand(theta)
+                # (decision 579: the node-circle margin is recorded and dominated by a built case)
+                margin = (row["Arc"]["Radius"] - abs(inputs.upper[1] - row["Arc"]["Centre"][1])) /
+                         (tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"])
+                @test record["NodeCircleMargin"] == margin &&
+                      arc_face_end_dominating_case(fabricated, deg2rad(theta), margin) !== nothing
                 # (8A, decision 563: at or below 70 degrees the block's pyramid height is the regular one)
                 @test record["PyramidHeight"] == tubes["Section"]["PyramidHeight"] &&
                       record["ApexThickness"] == 2.0 * record["PyramidHeight"] * slope &&
@@ -2080,6 +2088,86 @@ end
                 @test isapprox(row["CornerAngles"][2], pi - turn; atol=1.0e-9)
             end
             @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        end
+    end
+end
+
+@testset "round 3 B4 review (decision 579 MAJOR-3 (b)): an arc face end is admitted only where a built-and-passed case of its kind dominates it (tilt and node-circle margin)" begin
+    # The table is PBS 59701's built cases with the margins measured on the identical fixture geometry
+    # (every case dominates itself: the margins are rounded DOWN); the tilt range is its projection.
+    for fabricated in (true, false)
+        cases = arc_face_end_built_cases(fabricated)
+        range = arc_face_end_tilt_range(fabricated)
+        @test minimum(c.tilt for c in cases) == rad2deg(range[1]) &&
+              isapprox(maximum(c.tilt for c in cases), rad2deg(range[2]); atol=1.0e-12)
+        @test all(c.margin > 1.0 for c in cases)
+        for c in cases
+            @test arc_face_end_dominating_case(fabricated, deg2rad(c.tilt), c.margin) === c
+        end
+    end
+    @test length(ARC_FACE_END_BUILT_CASES.fabricated) == 9 &&
+          length(ARC_FACE_END_BUILT_CASES.thin) == 7
+    # The two measured failures (the default fe70 fixture, 2.42 fabricated / 1.23 thin envelopes) are
+    # dominated by nothing; the record's rho-13.3 cases are; a dominated synthetic (45 degrees, 16
+    # envelopes: fe45) is admitted, an undominated one (59 degrees, 6.3 envelopes: the C1 0.5 R concave
+    # fixture, part M 2.4) and a 74.32-degree end at 10 envelopes (below fe75p5r13p3's 10.66) refused.
+    for failed in ARC_FACE_END_FAILED_CASES
+        @test arc_face_end_dominating_case(failed.kind == "fabricated", deg2rad(failed.tilt), failed.margin) ===
+              nothing
+    end
+    @test arc_face_end_dominating_case(true, deg2rad(45.0), 16.0).case == "fe45"
+    @test arc_face_end_dominating_case(true, deg2rad(74.32), 54.0).case == "fe75p5r13p3"   # 32dc558f4810 fab
+    @test arc_face_end_dominating_case(true, deg2rad(74.32), 10.0) === nothing
+    @test arc_face_end_dominating_case(true, deg2rad(59.0), 6.3) === nothing
+    @test arc_face_end_dominating_case(false, deg2rad(59.0), 6.3) === nothing
+    @test arc_face_end_dominating_case(false, deg2rad(45.0), 8.0).case == "fe45"
+    @test arc_face_end_dominating_case(false, deg2rad(46.0), 8.0) === nothing
+    @test arc_face_end_dominating_case(false, deg2rad(70.0), 10.3).case == "fe70r13p3"
+    @test arc_face_end_dominating_case(false, deg2rad(70.0), 10.2) === nothing
+    # FaceEnd carries the margin (NaN on a straight tube's end: not recorded, bitwise record); an arc
+    # margin at or below 1 is rejected (the Fact-1 condition).
+    straight = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 0.0, 0.0, 0.04, 0.01, 0.1; spacing_cap=Inf)
+    @test isnan(straight.node_circle_margin) && !haskey(face_end_record(straight), "NodeCircleMargin")
+    arc_end = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 0.0, 0.0, 0.04, 0.01, 0.1; spacing_cap=Inf,
+                      crossing_slope=1.06, node_circle_margin=15.5)
+    @test face_end_record(arc_end)["NodeCircleMargin"] == 15.5
+    @test_throws ErrorException FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 0.0, 0.0, 0.04, 0.01, 0.1;
+                                        spacing_cap=Inf, crossing_slope=1.06, node_circle_margin=0.9)
+    mktempdir() do directory
+        # The default fe70 fixture (rho 1.596 um) is refused BY NAME on both kinds before any CAD - the
+        # record run's two gate failures fail closed at the guard; the record's rho-13.3 fe70 builds
+        # pass the guard on both kinds (labels-only census with the margin recorded).
+        for fabricated in (true, false)
+            message = guard_message(
+                () -> build_arc_coupon(
+                    mkpath(joinpath(directory, "fe70-default-$fabricated")),
+                    write_arc_face_end_inputs;
+                    fabricated=fabricated,
+                    stem="fe70",
+                    labels_only=true,
+                    theta_degrees=70.0,
+                    chord_degrees=5.0
+                )
+            )
+            @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+                  occursin("dominated by no built-and-passed $(fabricated ? "FABRICATED" : "THIN") case", message) &&
+                  occursin("decision 579", message) &&
+                  occursin("FAILED fe70 fabricated 70.0 / 2.4218", message)
+            margin_text = match(r"margin rho \(1 - sin theta\) / envelope of ([0-9.e+-]+) envelopes", message)
+            @test margin_text !== nothing && 2.3 < parse(Float64, margin_text[1]) < 2.5
+            census, _, _ = build_arc_coupon(
+                mkpath(joinpath(directory, "fe70-rho13p3-$fabricated")),
+                write_arc_face_end_inputs;
+                fabricated=fabricated,
+                stem="fe70r13p3",
+                labels_only=true,
+                theta_degrees=70.0,
+                chord_degrees=5.0,
+                rho=13.3
+            )
+            records = [f for t in census["PrismTubeFaceEnds"]["Tubes"] for f in t["FaceEnds"]]
+            @test length(records) == (fabricated ? 2 : 1) &&
+                  all(19.0 < f["NodeCircleMargin"] < 21.0 && f["ThetaDegrees"] == 70.0 for f in records)
         end
     end
 end

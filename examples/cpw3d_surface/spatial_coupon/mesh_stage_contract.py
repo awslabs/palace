@@ -1573,11 +1573,41 @@ ARC_CORNER_JOINT_TURN_RANGE_RADIANS = {"fabricated": (2.0e-4, math.radians(15.0)
 # record run (fe0p1 / fe0p5 / fe2p1 / fe8 fab + thin at the production sizes); 70 degrees = fe70 fab
 # + thin of the round-2b record run (PBS 57706 / 57892; the thin top is the largest built THIN
 # angle). Round 2b had built 15 / 45 / 70 only and admitted (0, 15) untested (the 497 erratum).
-# Round 3 B4 (decisions 563 B / 566; the per-kind top): THIN 70 (the round-2b fe70 thin; the thin 74.3 / 75.5
-# fail the tetrahedral gate, a named follow-up), FABRICATED 75.5 = the B4 part-2 record run's fab 74.3 / 75.5
-# arc face ends on the rho-parametrised fixture under 9H + 8A (the raise rule: the largest fabricated tilt
-# that run built and passed - PBS 59701, impl-B4/part2/records/record-59701.json).
+# Round 3 B4 (decisions 563 B / 566; the per-kind top): THIN 70 = fe70r13p3 thin of the B4 part-2 record run
+# PBS 59701 (the round-2b default-rho fe70 thin build fails under 9H + 8A: a measured failure of the dominance
+# table below; the thin 74.3 / 75.5 fail the tetrahedral gate, a named follow-up), FABRICATED 75.5 = the same
+# run's fab 74.3 / 75.5 arc face ends on the rho-parametrised fixture under 9H + 8A (the raise rule: the
+# largest fabricated tilt that run built and passed - PBS 59701, impl-B4/part2/records/record-59701.json),
+# RATIFIED by decision 579 (MAJOR-1: P5's pre-8A prism bracket does not apply to the derived regime-I blocks;
+# conditioned on the dominance guard, 579 MAJOR-3 (b)).
 ARC_FACE_END_TILT_RANGE_DEGREES = {"fabricated": (0.1, 75.5), "thin": (0.1, 70.0)}
+# Round 3 B4 review (decision 579 MAJOR-3 (b)): an arc face end is admitted only if a BUILT-AND-PASSED
+# case of its kind DOMINATES it - tilt >= its tilt AND node-circle margin rho (1 - sin theta) /
+# (Radius + PyramidHeight) <= its margin (the mesher's ARC_FACE_END_BUILT_CASES, spelled identically:
+# (case, tilt degrees, margin in envelopes); the record run PBS 59701's built cases, the margins read on
+# the identical fixture geometry and rounded DOWN to 4 decimals). The two measured failures of that run
+# (the default fe70 fixture: fabricated 70 deg / 2.4218 envelopes, prism Jacobian condition 1009.6;
+# thin 70 deg / 1.2341, 10 non-positive pyramids) are the band the rule closes; a lower floor comes
+# only from more builds in a later record run (follow-up 5). An arc row's FaceEnds[].NodeCircleMargin
+# is recomputed from the row's Arc, the section's envelope and the census CouponBox, bound, and must
+# be dominated (validate_tube_face_ends).
+ARC_FACE_END_BUILT_CASES = {
+    "fabricated": (("fe0p1", 0.1, 21583.3240), ("fe0p5", 0.5, 4286.5288), ("fe2p1", 2.1, 992.0684),
+                   ("fe8", 8.0, 233.4074), ("fe15", 15.0, 108.0642), ("fe45", 45.0, 15.6307),
+                   ("fe70r13p3", 70.0, 20.1783), ("fe74p3r13p3", 74.3, 12.4830), ("fe75p5r13p3", 75.5, 10.6575)),
+    "thin": (("fe0p1", 0.1, 10999.1939), ("fe0p5", 0.5, 2184.4810), ("fe2p1", 2.1, 505.5733),
+             ("fe8", 8.0, 118.9480), ("fe15", 15.0, 55.0712), ("fe45", 45.0, 7.9656),
+             ("fe70r13p3", 70.0, 10.2831))}
+ARC_FACE_END_FAILED_CASES = (("fe70", "fabricated", 70.0, 2.4218), ("fe70", "thin", 70.0, 1.2341))
+
+
+def arc_face_end_dominating_case(fabricated, theta_degrees, margin):
+    """The built-and-passed case of the kind dominating (theta, margin), or None (the mesher's
+    arc_face_end_dominating_case: tilt >= theta and margin <= the end's, slack 1e-9 relative)."""
+    for case in ARC_FACE_END_BUILT_CASES["fabricated" if fabricated else "thin"]:
+        if case[1] >= theta_degrees * (1.0 - 1e-9) and case[2] <= margin * (1.0 + 1e-9):
+            return case
+    return None
 # Round 3 class (8) interim 8B (part M 5.2; E3, decision 475 (7)): the largest BUILT thin face-end
 # tilt (the V10 thin 70-degree production-size build); a thin end above it fails closed at
 # ScopeGuard[SteepFaceCrossing] until the class-8 fix builds it.
@@ -1586,7 +1616,8 @@ THIN_FACE_END_TILT_BOUND_DEGREES = 70.0
 # tilt BUILT under the code that runs (the V10 fabricated 70-degree production build; under 8A the derived
 # SteepFaceCrossing ceiling no longer binds for the fabricated kind, so this bound is the admission); the
 # B4 part-2 record run raises it to the largest fabricated tilt it builds and passes under 8A: 75.5 = the V10
-# fabricated 74.3 / 75.5 straight crossings at R 1.9 rebuilt under 8A by PBS 59701 (min SJ 0.0178 / 0.0147).
+# fabricated 74.3 / 75.5 straight crossings at R 1.9 rebuilt under 8A by PBS 59701 (min SJ 0.0178 / 0.0147);
+# ratified by decision 579 (MAJOR-1), conditioned on the arc face ends' dominance guard.
 FABRICATED_FACE_END_TILT_BOUND_DEGREES = 75.5
 # Round 3 class (8), 8A-bitwise (part M 5.2; decisions 510 O8 / 563): above the kind's largest BUILT
 # face-end tilt the end block's pyramids take h_pyr_end = min(h_pyr, TangentialSize / (4 slope)) (the
@@ -2166,7 +2197,10 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
     is |tan theta|).  The block's pyramid height (round 3 8A-bitwise) is h_pyr at or below the
     kind's FACE_END_DERIVED_APEX_ABOVE_DEGREES (`fabricated` names the kind) and h_pyr_end =
     min(h_pyr, TangentialSize / (4 s)) above it; a record above the threshold must carry
-    PyramidHeight = h_pyr_end, and every recorded PyramidHeight is bound.  A record without
+    PyramidHeight = h_pyr_end, and every recorded PyramidHeight is bound.  An ARC row's record
+    carries NodeCircleMargin = (rho - h) / (Radius + PyramidHeight) (round 3 decision 579), bound
+    to the recomputed value and, with `fabricated` given, dominated by a built-and-passed case of
+    the kind (ARC_FACE_END_BUILT_CASES).  A record without
     Regime is a pre-F2b record (the regime-I formulas alone); from the round-2b mesher
     (`round2b`) it fails closed.  Returns the largest EndSpacing (0 without face ends)."""
     records = row.get("FaceEnds", [])
@@ -2206,10 +2240,19 @@ def validate_tube_face_ends(row, tangential_size, section, condition_ceiling=Non
             arc = row["Arc"]
             axis = 0 if record["Face"][0] == "x" else 1
             face_value = (box[0] if record["Face"][1] == "0" else box[1])[axis]
-            slope = arc_crossing_slope(_census_number(arc, "Radius", "Tube arc"), radius + pyramid_height,
-                                       abs(face_value - _census_number({"c": arc["Centre"][axis]}, "c", "Tube arc centre")))
+            rho = _census_number(arc, "Radius", "Tube arc")
+            face_distance = abs(face_value - _census_number({"c": arc["Centre"][axis]}, "c", "Tube arc centre"))
+            slope = arc_crossing_slope(rho, radius + pyramid_height, face_distance)
             if "CrossingSlope" not in record:
                 raise ValueError("Tube face end of an arc row lacks its CrossingSlope")
+            # Round 3 B4 review (decision 579): the node-circle margin is recorded, bound and dominated.
+            margin = (rho - face_distance) / (radius + pyramid_height)
+            if "NodeCircleMargin" not in record:
+                raise ValueError("Tube face end of an arc row lacks its NodeCircleMargin")
+            if abs(_census_number(record, "NodeCircleMargin", "Tube face end") - margin) > 1e-12 * margin:
+                raise ValueError("Tube face end NodeCircleMargin does not follow the row's circle and the face plane")
+            if fabricated is not None and arc_face_end_dominating_case(fabricated, theta, margin) is None:
+                raise ValueError("Tube face end of an arc row is dominated by no built-and-passed case of its kind")
         if "CrossingSlope" in record and \
                 abs(_census_number(record, "CrossingSlope", "Tube face end") - slope) > 1e-12 * slope:
             raise ValueError("Tube face end CrossingSlope does not follow the row's crossing geometry")

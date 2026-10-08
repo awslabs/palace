@@ -5957,14 +5957,18 @@ arc_corner_joint_turn_range(fabricated::Bool) =
 # LOW end 0.1 degrees = fe0p1 of the round-3 B2 record run (fe0p1 / fe0p5 / fe2p1 / fe8 fab + thin
 # at the production sizes; `test_arc_tubes.jl` at the test sizes) - round 2b had built 15 / 45 / 70
 # only and admitted (0, 15) untested (the 497 erratum); HIGH end per KIND (the thin top is the
-# largest built THIN angle): THIN 70 degrees = fe70 thin of the round-2b record run (PBS 57706 /
-# 57892; the thin 74.3 / 75.5 arc ends fail the tetrahedral gate before and after 8A, part M ERRATA
-# E-M6: a named follow-up); FABRICATED 75.5 degrees = the round-3 B4 part-2 record run of the
-# rho-parametrised steep fixture (fe74p3 / fe75p5 fab at rho 13.3 under 9H + 8A; prediction P5: the
-# the block under 8A is the derived regime-I one) - the RAISE RULE of decisions 563 (B) / 566: this
-# top is the largest fabricated arc tilt that record run BUILT and PASSED: PBS 59701 (mirror
-# 35a5b5a6e8; fe74p3r13p3 / fe75p5r13p3 fab min SJ 0.0153 / 0.0119, every gate; impl-B4/part2
-# records/record-59701.json), 70 otherwise. Below the low end, above the kind's high end and at theta == 0 exactly
+# largest built THIN angle): THIN 70 degrees = fe70r13p3 thin of the round-3 B4 part-2 record run
+# (PBS 59701: the rho-13.3 fixture, regime I, min SJ 0.0171, every gate; the round-2b fe70 thin
+# build at the default rho 1.596, PBS 57706 / 57892, FAILS under 9H + 8A and is a measured failure of
+# the dominance table below; the thin 74.3 / 75.5 arc ends fail the tetrahedral gate before and
+# after 8A, part M ERRATA E-M6: a named follow-up); FABRICATED 75.5 degrees = the same record run's
+# rho-parametrised steep fixture (fe74p3 / fe75p5 fab at rho 13.3 under 9H + 8A) - the RAISE RULE of
+# decisions 563 (B) / 566: this top is the largest fabricated arc tilt that record run BUILT and
+# PASSED: PBS 59701 (mirror 35a5b5a6e8; fe74p3r13p3 / fe75p5r13p3 fab min SJ 0.0153 / 0.0119, every
+# gate; impl-B4/part2/records/record-59701.json), 70 otherwise. RATIFIED by decision 579 (MAJOR-1):
+# under 8A those blocks are derived regime-I ones, so part M 3.3 P5's pre-8A prism-condition bracket
+# [900, 1000] does not apply (measured 595.7 / 595.6); the raise is CONDITIONED on the dominance
+# guard of decision 579 MAJOR-3 (b) (ARC_FACE_END_BUILT_CASES below). Below the low end, above the kind's high end and at theta == 0 exactly
 # (the legacy on-box end) the end fails closed at ScopeGuard[ArcFaceEnds]. Any derived ceiling
 # (SteepFaceCrossing) is a fail-closed cap INSIDE this range, never the admission bound.
 const ARC_FACE_END_TILT_RANGE = (fabricated=(deg2rad(0.1), deg2rad(75.5)), thin=(deg2rad(0.1), deg2rad(70.0)))
@@ -5988,7 +5992,9 @@ const THIN_FACE_END_TILT_BOUND = deg2rad(70.0)
 # holds there), the same way it raises ARC_FACE_END_TILT_RANGE's fabricated top (decision 563 B).
 # 75.5 degrees = the V10 fabricated 74.3 (row B 6x) / 75.5 (row B 8x) straight crossings at R 1.9
 # rebuilt under 8A by that record run, PBS 59701 (min SJ 0.0178 / 0.0147, derived regime-I blocks
-# m 6 / 7; impl-B4/part2/records/record-59701.json; the fab 70 / thin 70 bitwise vs PBS 57505).
+# m 6 / 7; impl-B4/part2/records/record-59701.json; the fab 70 / thin 70 bitwise vs PBS 57505);
+# RATIFIED by decision 579 (MAJOR-1) under the 566 reading, conditioned on the arc face ends'
+# dominance guard (579 MAJOR-3 (b)).
 const FABRICATED_FACE_END_TILT_BOUND = deg2rad(75.5)
 face_end_tilt_bound(fabricated::Bool) = fabricated ? FABRICATED_FACE_END_TILT_BOUND : THIN_FACE_END_TILT_BOUND
 # Mesher design round 3 class (8), fix 8A-bitwise (part M 5.2; decisions 491 / 510 O8 / 563): above
@@ -6006,6 +6012,76 @@ face_end_tilt_bound(fabricated::Bool) = fabricated ? FABRICATED_FACE_END_TILT_BO
 const FACE_END_DERIVED_APEX_ABOVE = (fabricated=deg2rad(70.0), thin=THIN_FACE_END_TILT_BOUND)
 face_end_derived_apex_above(fabricated::Bool) =
     fabricated ? FACE_END_DERIVED_APEX_ABOVE.fabricated : FACE_END_DERIVED_APEX_ABOVE.thin
+# Round 3 B4 review (decision 579 MAJOR-3 (b); the 466 / 497 built-range rule extended to the SECOND
+# parameter of an arc face end): an arc box-face cut end is admitted only if a BUILT-AND-PASSED case of
+# its kind DOMINATES it - a case of tilt >= its tilt AND node-circle margin rho (1 - sin theta) /
+# (Radius + PyramidHeight) <= its margin (a smaller margin is the harder configuration: the inner
+# node circle lies closer to the face and the crossing slope grows above tan theta, 9H). The tilt
+# range above is the projection of this table; the table is the measured provenance: the B4 part-2
+# record run PBS 59701 (mirror 35a5b5a6e8; impl-B4/part2/records/record-59701.json, every gate at
+# the production sizes), the margins read on the identical fixture geometry at the branch head
+# (labels-only, CrossingSlope equal to the record's; impl-B4/part3/local/margins-stub), rounded DOWN
+# to 4 decimals so each case dominates itself. The two MEASURED FAILURES of that run - the default
+# fe70 fixture (rho 1.596 um, 2.4 fabricated / 1.2 thin envelopes), built in round 2b (PBS 57892 /
+# 58336) and failing under 9H + 8A (fabricated prism Jacobian condition 1009.6 > 1000; thin 10
+# non-positive pyramids, tetrahedron scaled Jacobian 0.00045) - are the band this guard closes;
+# a lower floor comes only from MORE BUILDS in a later record run (named follow-up 5), never from
+# a local build (decision 510 MAJOR-1; 581 (3): the C1 synthetics below the floors are candidates).
+# The thin fe74p3r13p3 / fe75p5r13p3 twins stopped at the thin tilt top (not built): absent.
+const ARC_FACE_END_BUILT_CASES = (
+    fabricated=[
+        (case="fe0p1", tilt=0.1, margin=21583.3240),
+        (case="fe0p5", tilt=0.5, margin=4286.5288),
+        (case="fe2p1", tilt=2.1, margin=992.0684),
+        (case="fe8", tilt=8.0, margin=233.4074),
+        (case="fe15", tilt=15.0, margin=108.0642),
+        (case="fe45", tilt=45.0, margin=15.6307),
+        (case="fe70r13p3", tilt=70.0, margin=20.1783),
+        (case="fe74p3r13p3", tilt=74.3, margin=12.4830),
+        (case="fe75p5r13p3", tilt=75.5, margin=10.6575)
+    ],
+    thin=[
+        (case="fe0p1", tilt=0.1, margin=10999.1939),
+        (case="fe0p5", tilt=0.5, margin=2184.4810),
+        (case="fe2p1", tilt=2.1, margin=505.5733),
+        (case="fe8", tilt=8.0, margin=118.9480),
+        (case="fe15", tilt=15.0, margin=55.0712),
+        (case="fe45", tilt=45.0, margin=7.9656),
+        (case="fe70r13p3", tilt=70.0, margin=10.2831)
+    ]
+)
+const ARC_FACE_END_FAILED_CASES = [
+    (case="fe70", kind="fabricated", tilt=70.0, margin=2.4218,
+     failure="prism Jacobian condition 1009.6 > 1000"),
+    (case="fe70", kind="thin", tilt=70.0, margin=1.2341,
+     failure="10 non-positive pyramids, tetrahedron scaled Jacobian 0.00045 < 0.01")
+]
+arc_face_end_built_cases(fabricated::Bool) =
+    fabricated ? ARC_FACE_END_BUILT_CASES.fabricated : ARC_FACE_END_BUILT_CASES.thin
+# The built-and-passed case of the kind dominating (theta, margin), or nothing: tilt >= theta and
+# margin <= the end's (slack 1e-9 relative on both, the tilt range's own rounding slack).
+function arc_face_end_dominating_case(fabricated::Bool, theta, margin)
+    for case in arc_face_end_built_cases(fabricated)
+        deg2rad(case.tilt) >= theta * (1.0 - 1.0e-9) && case.margin <= margin * (1.0 + 1.0e-9) &&
+            return case
+    end
+    return nothing
+end
+arc_face_end_provenance_text() =
+    "built and passed (PBS 59701; case: tilt degrees / margin envelopes) FABRICATED " *
+    join(["$(c.case) $(c.tilt) / $(c.margin)" for c in ARC_FACE_END_BUILT_CASES.fabricated], ", ") *
+    "; THIN " * join(["$(c.case) $(c.tilt) / $(c.margin)" for c in ARC_FACE_END_BUILT_CASES.thin], ", ") *
+    "; FAILED " * join(["$(c.case) $(c.kind) $(c.tilt) / $(c.margin): $(c.failure)" for c in ARC_FACE_END_FAILED_CASES], ", ")
+function guard_arc_face_end_dominance(fabricated, arc, conductor, face, margin)
+    arc_face_end_dominating_case(fabricated, face.theta, margin) === nothing || return
+    kind = fabricated ? "FABRICATED" : "THIN"
+    scope_error("ArcFaceEnds",
+                "arc $(arc.id) of conductor $conductor ends on face $(face.face) at a tilt of " *
+                "$(rad2deg(face.theta)) degrees with a node-circle margin rho (1 - sin theta) / envelope of " *
+                "$margin envelopes on a $kind coupon, dominated by no built-and-passed $kind case (a " *
+                "case of tilt >= this tilt and margin <= this margin; decision 579): " *
+                arc_face_end_provenance_text())
+end
 const RECIPE_SCOPE_GUARDS = [
     ("ArcTubeRadiusVsCurvature", "build",
      "an arc metal side whose radius is below four times the tube envelope (Radius + " *
@@ -6022,7 +6098,11 @@ const RECIPE_SCOPE_GUARDS = [
      "corner, a tilt below the lowest built angle or above the largest built angle, or an end " *
      "whose inner node circle (rho - the tube envelope) does not reach the face plane (rho (1 - " *
      "sin theta) <= Radius + PyramidHeight: no face station exists for every node; mesher design " *
-     "round 3 part M 3.3) fails closed (supervisor decisions 391 MAJOR-2 (ii) / 466 / 497)"),
+     "round 3 part M 3.3) fails closed (supervisor decisions 391 MAJOR-2 (ii) / 466 / 497); " *
+     "round 3 B4 review (decision 579 MAJOR-3 (b)): an arc cut end is admitted only if a built-" *
+     "and-passed case of its kind DOMINATES it (tilt >= its tilt and node-circle margin rho (1 - " *
+     "sin theta) / envelope <= its margin: ARC_FACE_END_BUILT_CASES, FaceEnds[].NodeCircleMargin), " *
+     "the measured provenance being " * arc_face_end_provenance_text()),
     ("ArcJointTilt", "build",
      "an arc metal side meeting another side (straight or arc) at a joint whose turn (the " *
      "angle between the arc's end tangent and the other side's direction) lies outside the " *
@@ -7428,12 +7508,18 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                     # section (at the inner node circle rho - envelope), replaces |tan theta| in the
                     # ceiling and the regime formulas (recorded as FaceEnds[].CrossingSlope).
                     slope = arc_crossing_slope(arc.rho, own.envelope_radius, h_face)
+                    # Round 3 B4 review (decision 579 MAJOR-3 (b)): the node-circle margin rho (1 - sin
+                    # theta) / envelope is the second admission parameter - the end builds only where a
+                    # BUILT-AND-PASSED case of its kind dominates it (recorded as FaceEnds[].NodeCircleMargin).
+                    margin = (arc.rho - h_face) / own.envelope_radius
+                    guard_arc_face_end_dominance(fabricated, arc, segment.conductor, face, margin)
                     push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta, 0.0, 0.0,
                                              own.envelope_radius, own.pyramid_height, lc_tangent;
                                              spacing_cap=guard_steep_face_crossing(face, segment.rings; slope=slope),
                                              face_axis=face.axis, face_value=face.value,
                                              crossing_slope=slope,
-                                             apex_height=face_end_apex_height(face, segment.rings, slope)))
+                                             apex_height=face_end_apex_height(face, segment.rings, slope),
+                                             node_circle_margin=margin))
                 end
                 for (z, section) in placements
                     s_start, s_end = along > 0.0 ? (segment.s_start, segment.s_end) :
