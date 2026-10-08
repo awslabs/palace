@@ -21,6 +21,7 @@
 #include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/basis.hpp"
+#include "fem/libceed/ceed.hpp"
 #include "fem/libceed/coefficient.hpp"
 #include "fem/libceed/functional.hpp"
 #include "fem/libceed/integrator.hpp"
@@ -309,36 +310,6 @@ MakeCanonicalTracePointKey(mfem::Geometry::Type vol_geom, mfem::Geometry::Type f
   AppendPointRuleSignature(key, canonical_pts);
   return key;
 }
-
-// Holds libCEED object references created during operator assembly for destruction once
-// the assembled operator owns them.
-struct CeedAssemblyScratch
-{
-  Ceed ceed;
-  std::vector<CeedVector> vecs;
-  std::vector<CeedElemRestriction> restrs;
-  std::vector<CeedBasis> bases;
-
-  CeedAssemblyScratch(Ceed ceed) : ceed(ceed) {}
-  CeedAssemblyScratch(const CeedAssemblyScratch &) = delete;
-  CeedAssemblyScratch &operator=(const CeedAssemblyScratch &) = delete;
-
-  ~CeedAssemblyScratch()
-  {
-    for (auto &v : vecs)
-    {
-      PalaceCeedCall(ceed, CeedVectorDestroy(&v));
-    }
-    for (auto &r : restrs)
-    {
-      PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&r));
-    }
-    for (auto &b : bases)
-    {
-      PalaceCeedCall(ceed, CeedBasisDestroy(&b));
-    }
-  }
-};
 
 }  // namespace
 
@@ -1510,7 +1481,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                                  fem::DefaultIntegrationOrder::Get(pmesh, group.bdr_geom));
 
     // Objects are owned by the assembled operator; scratch destroys our references.
-    CeedAssemblyScratch scratch(ceed);
+    ceed::CeedAssemblyScratch scratch(ceed);
 
     // Assemble the inputs in the order expected by the QFunctions: quadrature weights
     // and boundary element mesh node gradients (surface measure and normal), per-side
