@@ -1514,8 +1514,11 @@ end
           (fabricated=(2.0e-4, deg2rad(15.0)), thin=(2.0e-4, deg2rad(30.0))) &&
           arc_corner_joint_turn_range(true) == ARC_CORNER_JOINT_TURN_RANGE.fabricated &&
           arc_corner_joint_turn_range(false) == ARC_CORNER_JOINT_TURN_RANGE.thin &&
-          ARC_FACE_END_TILT_RANGE == (deg2rad(0.1), deg2rad(70.0)) &&
-          THIN_FACE_END_TILT_BOUND == deg2rad(70.0)
+          ARC_FACE_END_TILT_RANGE ==
+          (fabricated=(deg2rad(0.1), deg2rad(75.5)), thin=(deg2rad(0.1), deg2rad(70.0))) &&
+          arc_face_end_tilt_range(true) == ARC_FACE_END_TILT_RANGE.fabricated &&
+          arc_face_end_tilt_range(false) == ARC_FACE_END_TILT_RANGE.thin &&
+          THIN_FACE_END_TILT_BOUND == deg2rad(70.0) == ARC_FACE_END_TILT_RANGE.thin[2]
     @test occursin(
         "0.0002 .. 0.2617993877991494 rad on a FABRICATED",
         scope_guard_statement("ArcJointTilt")
@@ -1527,8 +1530,10 @@ end
         string(ARC_SMOOTH_JOINT_TURN_BOUND),
         scope_guard_statement("ArcJointTilt")
     )
-    @test occursin("0.1 <= theta <= 70.0", scope_guard_statement("ArcFaceEnds")) &&
-          occursin("inner node circle", scope_guard_statement("ArcFaceEnds"))
+    @test occursin(
+        "0.1 <= theta <= 70.0 degrees THIN / <= 75.5 degrees FABRICATED",
+        scope_guard_statement("ArcFaceEnds")
+    ) && occursin("inner node circle", scope_guard_statement("ArcFaceEnds"))
     # Round 3 B3 (fix 11): the ArcArcJoint guard keeps its id for the residual untested class
     # (distinct circles / opposite sigma); two runs of ONE circle build.
     @test occursin("NOT one circle", scope_guard_statement("ArcArcJoint")) &&
@@ -1537,7 +1542,7 @@ end
     @test occursin("rho - h_face < 3 Radius", scope_guard_statement("CollarFaceEnd")) &&
           occursin("CORNER kink", scope_guard_statement("CollarFaceEnd"))
     @test occursin("THIN 70.0 degrees", scope_guard_statement("SteepFaceCrossing")) &&
-          occursin("FABRICATED 70.0 degrees", scope_guard_statement("SteepFaceCrossing"))
+          occursin("FABRICATED 75.5 degrees", scope_guard_statement("SteepFaceCrossing"))
     clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
     segments_of(inputs; lower=inputs.lower, upper=inputs.upper, fabricated=false) =
         metal_edge_segments(
@@ -1686,6 +1691,9 @@ end
                   isapprox(rad2deg(arc.face_ends[2].theta), theta; atol=1.0e-9)
             @test arc.joints[1] !== nothing && arc.corners == (false, false)
         end
+        # the tops per kind (decisions 563 B / 566; the B4 record run): THIN 70, FABRICATED 75.5 - the
+        # 71-degree thin end and the 76-degree fabricated end fail closed, the 74.3-degree fabricated
+        # end (32dc558f4810's tilt) is a face end of the arc side
         message = guard_message(
             () -> segments_of(
                 write_arc_face_end_inputs(
@@ -1695,7 +1703,31 @@ end
             )
         )
         @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
-              occursin("above the largest built 70.0", message)
+              occursin("above the largest built THIN 70.0", message)
+        message = guard_message(
+            () -> segments_of(
+                write_arc_face_end_inputs(
+                    mkpath(joinpath(directory, "fe76"));
+                    theta_degrees=76.0,
+                    rho=13.3
+                );
+                fabricated=true
+            )
+        )
+        @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+              occursin("above the largest built FABRICATED 75.5", message)
+        steep_fab = only(
+            s for s in segments_of(
+                write_arc_face_end_inputs(
+                    mkpath(joinpath(directory, "fe74p3-fab"));
+                    theta_degrees=74.3,
+                    rho=13.3
+                );
+                fabricated=true
+            ) if s.kind == :arc
+        )
+        @test steep_fab.face_ends[2] !== nothing &&
+              isapprox(rad2deg(steep_fab.face_ends[2].theta), 74.3; atol=1.0e-9)
         message = guard_message(
             () -> segments_of(
                 write_arc_face_end_inputs(

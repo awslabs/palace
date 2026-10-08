@@ -348,25 +348,31 @@ class ArcScopeGuardsTest(unittest.TestCase):
         self.assertLess(ARC_CORNER_JOINT_TURN_RANGE_RADIANS["fabricated"][1], ARC_CORNER_JOINT_TURN_RANGE_RADIANS["thin"][1])
         # Round 3 (decisions 497 / 510 MAJOR-1 / O6): ONE range constant, (lowest built, largest built), in
         # both lists; the thin tested-range bound of 8B likewise.
-        tilt = re.search(r"const ARC_FACE_END_TILT_RANGE = \(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\)", source)
-        self.assertEqual((float(tilt.group(1)), float(tilt.group(2))), ARC_FACE_END_TILT_RANGE_DEGREES)
-        self.assertEqual(ARC_FACE_END_TILT_RANGE_DEGREES, (0.1, 70.0))
+        # (decisions 563 B / 566, the B4 record run: the top per kind - thin 70, fabricated 75.5)
+        tilt = re.search(r"const ARC_FACE_END_TILT_RANGE = \(fabricated=\(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\), "
+                         r"thin=\(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\)\)", source)
+        self.assertIsNotNone(tilt)
+        self.assertEqual({"fabricated": (float(tilt.group(1)), float(tilt.group(2))),
+                          "thin": (float(tilt.group(3)), float(tilt.group(4)))}, ARC_FACE_END_TILT_RANGE_DEGREES)
+        self.assertEqual(ARC_FACE_END_TILT_RANGE_DEGREES, {"fabricated": (0.1, 75.5), "thin": (0.1, 70.0)})
         thin = re.search(r"const THIN_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
         self.assertEqual(float(thin), THIN_FACE_END_TILT_BOUND_DEGREES)
         # Round 3 8A-bitwise (decision 510 O8): the per-kind thresholds of the derived face-end pyramid height.
         # Round 3 B4 (decision 566): the fabricated tested-range bound, the kind's largest built straight tilt.
         fab_bound = re.search(r"const FABRICATED_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
         self.assertEqual(float(fab_bound), FABRICATED_FACE_END_TILT_BOUND_DEGREES)
-        self.assertEqual(FABRICATED_FACE_END_TILT_BOUND_DEGREES, 70.0)
-        self.assertEqual(FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"], FABRICATED_FACE_END_TILT_BOUND_DEGREES)
+        self.assertEqual(FABRICATED_FACE_END_TILT_BOUND_DEGREES, 75.5)
+        # the derived apex applies in (70, 75.5]: the A2 block below, the record run's builds above
+        self.assertLess(FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"], FABRICATED_FACE_END_TILT_BOUND_DEGREES)
         # (decision 563: each kind's largest BUILT tilt; the thin one IS the thin admission top)
         apex = re.search(r"const FACE_END_DERIVED_APEX_ABOVE = \(fabricated=deg2rad\(([0-9.]+)\), thin=THIN_FACE_END_TILT_BOUND\)",
                          source)
         self.assertIsNotNone(apex)
         self.assertEqual({"fabricated": float(apex.group(1)), "thin": float(thin)}, FACE_END_DERIVED_APEX_ABOVE_DEGREES)
-        self.assertEqual(FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"], ARC_FACE_END_TILT_RANGE_DEGREES[1])
+        self.assertLess(FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"], ARC_FACE_END_TILT_RANGE_DEGREES["fabricated"][1])
+        self.assertEqual(ARC_FACE_END_TILT_RANGE_DEGREES["fabricated"][1], FABRICATED_FACE_END_TILT_BOUND_DEGREES)
         self.assertEqual(FACE_END_DERIVED_APEX_ABOVE_DEGREES["thin"], THIN_FACE_END_TILT_BOUND_DEGREES)
-        self.assertLessEqual(ARC_FACE_END_TILT_RANGE_DEGREES[1], THIN_FACE_END_TILT_BOUND_DEGREES)
+        self.assertLessEqual(ARC_FACE_END_TILT_RANGE_DEGREES["thin"][1], THIN_FACE_END_TILT_BOUND_DEGREES)
         self.assertLess(ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
         for kind in ("fabricated", "thin"):
             self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[kind][0])

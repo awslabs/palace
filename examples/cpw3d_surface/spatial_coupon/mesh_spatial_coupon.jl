@@ -5956,12 +5956,19 @@ arc_corner_joint_turn_range(fabricated::Bool) =
 # the same rule at both ends (decision 466: no credit beyond the largest measured). Provenance:
 # LOW end 0.1 degrees = fe0p1 of the round-3 B2 record run (fe0p1 / fe0p5 / fe2p1 / fe8 fab + thin
 # at the production sizes; `test_arc_tubes.jl` at the test sizes) - round 2b had built 15 / 45 / 70
-# only and admitted (0, 15) untested (the 497 erratum); HIGH end 70 degrees = fe70 fab + thin of the
-# round-2b record run (PBS 57706 / 57892; the largest built angle of BOTH kinds: the thin top is
-# the largest built THIN angle). Below the low end, above the high end and at theta == 0 exactly
+# only and admitted (0, 15) untested (the 497 erratum); HIGH end per KIND (the thin top is the
+# largest built THIN angle): THIN 70 degrees = fe70 thin of the round-2b record run (PBS 57706 /
+# 57892; the thin 74.3 / 75.5 arc ends fail the tetrahedral gate before and after 8A, part M ERRATA
+# E-M6: a named follow-up); FABRICATED 75.5 degrees = the round-3 B4 part-2 record run of the
+# rho-parametrised steep fixture (fe74p3 / fe75p5 fab at rho 13.3 under 9H + 8A; prediction P5: the
+# max prism condition in [900, 1000]) - the RAISE RULE of decisions 563 (B) / 566: this top is the
+# largest fabricated arc tilt that record run BUILDS and PASSES (impl-B4/part2/REPORT: the job and
+# its shas), 70 otherwise. Below the low end, above the kind's high end and at theta == 0 exactly
 # (the legacy on-box end) the end fails closed at ScopeGuard[ArcFaceEnds]. Any derived ceiling
 # (SteepFaceCrossing) is a fail-closed cap INSIDE this range, never the admission bound.
-const ARC_FACE_END_TILT_RANGE = (deg2rad(0.1), deg2rad(70.0))
+const ARC_FACE_END_TILT_RANGE = (fabricated=(deg2rad(0.1), deg2rad(75.5)), thin=(deg2rad(0.1), deg2rad(70.0)))
+arc_face_end_tilt_range(fabricated::Bool) =
+    fabricated ? ARC_FACE_END_TILT_RANGE.fabricated : ARC_FACE_END_TILT_RANGE.thin
 # Mesher design round 3 class (8) interim (part M 5.2, 8B; decisions 475 (7) E3 / 497 / 466): a THIN
 # tube end on a box face is admitted up to the largest built THIN tilt, 70 degrees (the V10 thin
 # 70-degree production-size build, PBS 57505; the thin 74.3 / 75.5-degree crossings FAIL the
@@ -5977,8 +5984,10 @@ const THIN_FACE_END_TILT_BOUND = deg2rad(70.0)
 # and this bound is the admission. The V10 fabricated 74.3 / 75.5-degree builds were made under the
 # A2 regime-II block, which 8A changes above 70: they do not count. RAISE RULE: the B4 part-2 record
 # run raises this bound to the largest fabricated tilt it BUILDS and PASSES under 8A (75.5 if P5
-# holds there), the same way it raises ARC_FACE_END_TILT_RANGE's top (decision 563 B).
-const FABRICATED_FACE_END_TILT_BOUND = deg2rad(70.0)
+# holds there), the same way it raises ARC_FACE_END_TILT_RANGE's fabricated top (decision 563 B).
+# 75.5 degrees = the V10 fabricated 74.3 (row B 6x) / 75.5 (row B 8x) straight crossings at R 1.9
+# rebuilt under 8A by that record run (impl-B4/part2/REPORT: the job and its shas).
+const FABRICATED_FACE_END_TILT_BOUND = deg2rad(75.5)
 face_end_tilt_bound(fabricated::Bool) = fabricated ? FABRICATED_FACE_END_TILT_BOUND : THIN_FACE_END_TILT_BOUND
 # Mesher design round 3 class (8), fix 8A-bitwise (part M 5.2; decisions 491 / 510 O8 / 563): above
 # the largest BUILT face-end tilt of the coupon kind, the end block's lateral pyramids take the
@@ -6002,10 +6011,12 @@ const RECIPE_SCOPE_GUARDS = [
     ("ArcFaceEnds", "build",
      "an arc metal side with an end on the outer box outside the BUILT range (mesher design " *
      "round 2b, decision 437 (3), and round 3, decisions 497 / 510 MAJOR-1: a box-face cut end " *
-     "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE[1])) <= theta <= " *
-     "$(rad2deg(ARC_FACE_END_TILT_RANGE[2])) degrees builds - the synthetic arc face ends built " *
-     "fab + thin at the production sizes: 0.1 / 0.5 / 2.1 / 8 degrees (round 3 B2), 15 / 45 / 70 " *
-     "degrees (round 2b)): an arc end exactly perpendicular to the face, an arc at a box-vertex " *
+     "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE.thin[1])) <= theta <= " *
+     "$(rad2deg(ARC_FACE_END_TILT_RANGE.thin[2])) degrees THIN / <= " *
+     "$(rad2deg(ARC_FACE_END_TILT_RANGE.fabricated[2])) degrees FABRICATED builds - the synthetic " *
+     "arc face ends built at the production sizes: 0.1 / 0.5 / 2.1 / 8 degrees (round 3 B2), 15 / " *
+     "45 / 70 degrees (round 2b), fab 74.3 / 75.5 degrees on the rho-parametrised fixture (round 3 " *
+     "B4, 9H + 8A)): an arc end exactly perpendicular to the face, an arc at a box-vertex " *
      "corner, a tilt below the lowest built angle or above the largest built angle, or an end " *
      "whose inner node circle (rho - the tube envelope) does not reach the face plane (rho (1 - " *
      "sin theta) <= Radius + PyramidHeight: no face station exists for every node; mesher design " *
@@ -6485,12 +6496,14 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                 abs(tangent[d]) == 1.0 &&
                     scope_error("ArcFaceEnds", describe * " exactly perpendicular to the face (untested)")
                 theta = acos(clamp(abs(tangent[d]), 0.0, 1.0))
-                theta >= ARC_FACE_END_TILT_RANGE[1] * (1.0 - 1.0e-12) ||
+                tilt_range = arc_face_end_tilt_range(fabricated)
+                theta >= tilt_range[1] * (1.0 - 1.0e-12) ||
                     scope_error("ArcFaceEnds", describe * " at a tilt of $(rad2deg(theta)) degrees below the " *
-                                               "lowest built $(rad2deg(ARC_FACE_END_TILT_RANGE[1])) degrees")
-                theta <= ARC_FACE_END_TILT_RANGE[2] * (1.0 + 1.0e-12) ||
+                                               "lowest built $(rad2deg(tilt_range[1])) degrees")
+                theta <= tilt_range[2] * (1.0 + 1.0e-12) ||
                     scope_error("ArcFaceEnds", describe * " at a tilt of $(rad2deg(theta)) degrees above the " *
-                                               "largest built $(rad2deg(ARC_FACE_END_TILT_RANGE[2])) degrees")
+                                               "largest built $(fabricated ? "FABRICATED" : "THIN") " *
+                                               "$(rad2deg(tilt_range[2])) degrees")
             end
             smooth_here = (point[1], point[2], side.plane) in smooth_vertices
             for other in sides
@@ -7653,9 +7666,11 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                            "there): consistent in effect, recorded here (mesher review R2 MINOR-5, " *
                            "decision 391); the exactly perpendicular arc end and an arc at a box " *
                            "vertex fail closed at ScopeGuard[ArcFaceEnds] (untested); an arc cut end " *
-                           "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE[1])) <= theta <= " *
-                           "$(rad2deg(ARC_FACE_END_TILT_RANGE[2])) degrees (the BUILT range: round 2b " *
-                           "15 / 45 / 70, round 3 B2 0.1 / 0.5 / 2.1 / 8 degrees; decisions 437 (3) / " *
+                           "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE.thin[1])) <= theta <= " *
+                           "$(rad2deg(ARC_FACE_END_TILT_RANGE.thin[2])) degrees THIN / " *
+                           "$(rad2deg(ARC_FACE_END_TILT_RANGE.fabricated[2])) degrees FABRICATED (the BUILT " *
+                           "range per kind: round 2b 15 / 45 / 70, round 3 B2 0.1 / 0.5 / 2.1 / 8 degrees, " *
+                           "round 3 B4 fab 74.3 / 75.5; decisions 437 (3) / " *
                            "497 / 510 MAJOR-1) builds, below or above it fails closed likewise; a straight " *
                            "end above the largest built tilt of its kind (THIN $(rad2deg(THIN_FACE_END_TILT_BOUND)) " *
                            "/ FABRICATED $(rad2deg(FABRICATED_FACE_END_TILT_BOUND)) degrees) fails closed at " *

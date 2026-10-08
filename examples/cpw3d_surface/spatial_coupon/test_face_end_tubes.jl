@@ -932,9 +932,10 @@ end
         # 80 degrees (row B 20x so that side A reaches the +x face): round 2 F2b refused the
         # fabricated end at the validity ceiling 78.77 degrees; under round 3 8A (decision 566) the
         # derived block's apex thickness lc / 2 never reaches lc_cap, so the ceiling no longer binds
-        # for the fabricated kind and the FABRICATED tested-range bound (70 degrees = the largest
-        # fabricated tilt built under 8A; the record run raises it) refuses it before any CAD tube.
-        @test FABRICATED_FACE_END_TILT_BOUND == deg2rad(70.0) &&
+        # for the fabricated kind and the FABRICATED tested-range bound (75.5 degrees = the largest
+        # fabricated tilt the B4 record run built and passed under 8A) refuses it before any CAD tube.
+        @test FABRICATED_FACE_END_TILT_BOUND == deg2rad(75.5) &&
+              FACE_END_DERIVED_APEX_ABOVE.fabricated < FABRICATED_FACE_END_TILT_BOUND &&
               face_end_tilt_bound(true) == FABRICATED_FACE_END_TILT_BOUND &&
               face_end_tilt_bound(false) == THIN_FACE_END_TILT_BOUND
         message = guard_message(
@@ -950,7 +951,7 @@ end
         @test occursin("ScopeGuard[SteepFaceCrossing]", message) &&
               occursin("FABRICATED tube end", message) &&
               occursin("80.0", message) &&
-              occursin("largest built fabricated tilt 70.0", message)
+              occursin("largest built fabricated tilt 75.5", message)
         # Round 3 class (8) interim 8B (decision 510; DESIGN-part-M 5.2): the thin 80-degree end
         # (regime I under its 87.2-degree ceiling, but above the largest BUILT thin tilt 70 degrees:
         # the thin 74.3 / 75.5-degree crossings fail the tetrahedral gate after the build, E3) now
