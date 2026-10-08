@@ -266,14 +266,15 @@ public:
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
 
-  // As GetExtraSystemMatrix, but optionally excluding the wave-port contribution. Used by
-  // the reduced-order model to apply the wave-port term separately via per-port factored
-  // operators while keeping the slow path for any remaining ω-dependent BCs (e.g.
-  // second-order farfield, surface conductivity).
+  // As GetExtraSystemMatrix, but optionally excluding the wave-port or frequency-dependent
+  // PML contributions. Used by the reduced-order model to apply the wave-port term
+  // separately via per-port factored operators while keeping the slow path for any
+  // remaining ω-dependent BCs (e.g. second-order farfield, surface conductivity), and to
+  // project the PML terms separately (see GetExtraSystemPMLMatrix).
   template <OperatorType OperType>
-  std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
-                                                 Operator::DiagonalPolicy diag_policy,
-                                                 bool include_wave_ports);
+  std::unique_ptr<OperType>
+  GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy,
+                       bool include_wave_ports, bool include_pml = true);
 
   // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
   // frequency-dependent boundary terms (2nd-order ABC, surface conductivity, rational
@@ -281,7 +282,8 @@ public:
   // genuinely complex frequency (ω = -i·λ). Always a ComplexOperator (these terms acquire
   // a real-slot contribution at complex ω). For real ω this matches
   // GetExtraSystemMatrix<ComplexOperator>(double) up to the Floquet port term. The
-  // frequency-dependent PML terms can be excluded (see GetFrequencyDependentPMLMatrices).
+  // frequency-dependent PML terms can be excluded (see GetExtraSystemPMLMatrix and
+  // GetFrozenPMLMatrices).
   std::unique_ptr<ComplexOperator>
   GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy,
                        bool include_pml = true);
@@ -293,7 +295,12 @@ public:
   // the polynomial seed eigenvalue problem of the hybrid nonlinear eigensolver. Absent
   // terms are returned as null.
   std::array<std::unique_ptr<ComplexOperator>, 3>
-  GetFrequencyDependentPMLMatrices(double omega, Operator::DiagonalPolicy diag_policy);
+  GetFrozenPMLMatrices(double omega, Operator::DiagonalPolicy diag_policy);
+
+  // Construct the frequency-dependent PML terms of A2(ω) only, at the (possibly complex)
+  // frequency ω. Returns null if there are no frequency-dependent PML regions.
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemPMLMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
 
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
