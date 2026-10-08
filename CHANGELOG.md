@@ -59,6 +59,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the basis without a coefficient, so the adjacent hats no longer span the band. Recorded
     under `Diagnostics.ConsistentMortar`; libraries without a derivable band and the
     `Collocated` coupling are unchanged. Response-geometry cache version 10.
+  - Rounded corners in the automatic surface-response correction: the corner coupon
+    planner's refined trace basis rule (`all-rings-follow-metal`) now applies to rounded
+    corners as to sharp ones (the box basis does not depend on `CornerRadius`; the legacy
+    rule it replaces failed the held-out self-check on every 90-degree corner), the
+    library load checks rounded refined coupons against the rule at their angle, and a
+    matched rounded corner's arm cells (or an unmatched neighbour's uncovered portion)
+    begin where the arm exits the coupon's matching square — its identification claim ends
+    `r / tan(t / 2)` beyond it, a stretch that was modelled by nothing — recorded under
+    `Diagnostics.CornerArmExtension` (a stretch with nothing to extend is counted in
+    `UnhostedLength` with a warning; a virtual corner on a natural truncation plane exits
+    at the mirror arm trim's `s_half`). Sharp corners are unchanged. Response-geometry
+    cache version 15.
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

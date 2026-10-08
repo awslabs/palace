@@ -993,6 +993,19 @@ nlohmann::json DescribeCornerArmTrims(
         config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmTrimData> &trims,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     double coordinate_scale);
+// The Diagnostics entry of the corner-arm extension (decision 511 O2 (i); fillet-basis
+// design section 7.1): the matched corners whose claim ends beyond the square exit on an
+// arm (rounded corners), the cells extended back to the exit and any unhosted stretch;
+// empty-but-complete when nothing was extended. The one-line summary and the warning on an
+// unhosted stretch read that entry.
+nlohmann::json DescribeCornerArmExtensions(
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::CornerArmExtensionData>
+        &extensions,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
+std::string DescribeCornerArmExtensionSummary(const nlohmann::json &diagnostics);
+std::string DescribeCornerArmExtensionUnhostedWarning(const nlohmann::json &diagnostics);
 // The Diagnostics entry of the mirror arm trim (boundary-cut DESIGN 2.2.3): the virtual
 // corners placed at weight 1 / 2 and the real-arm cells beginning at s_half.
 nlohmann::json DescribeMirrorArmTrims(
@@ -1175,6 +1188,15 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
 // and the uncovered portions clipped by its box. Overlaps are excluded by construction (a
 // DB cell is a kept part outside every matched box; a vertex claim ends where the arm cells
 // start). Portions in mesh units; `types` names each portion's type (the model topology).
+
+// The real arm of a virtual (mirror-formed) corner for the mirror arm trim: the direction
+// from the vertex along the feature's first real straight portion (its arc chords, when the
+// corner is rounded, are skipped; the first real portion without a straight one; empty
+// without a real portion). Segments at or beyond `real_segments` are images.
+std::optional<std::array<double, 3>>
+MirrorArmDirection(const IdentificationResult &identification,
+                   const IdentifiedFeature &feature, std::size_t real_segments);
+
 // Clip the longitudinal cell of a translational patch to the kept offsets [kept_lo,
 // kept_hi] of its cell (the corner / mirror arm trims and the continuation ownership): the
 // origin moves to the kept midpoint, the cell becomes symmetric about it, the weight and

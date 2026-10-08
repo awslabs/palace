@@ -570,6 +570,12 @@ def patch_gates(identification, patches, radius):
     # length does.
     for cell in identification.get("Diagnostics", {}).get("CornerArmTrim", {}).get("Cells", []):
         owned_by_patch[cell["Patch"]] = owned_by_patch.get(cell["Patch"], 0.0) + float(cell["RemovedLength"])
+    # Corner-arm extension (decision 511 O2 (i)): the arm cells of a matched ROUNDED corner,
+    # whose claim ends t_d beyond the square exit, begin at the exit; the extended length
+    # per patch (Diagnostics.CornerArmExtension.Cells, mesh units) enters the portion's
+    # quadrature sum as a negative owned length (1 + extended / portion length).
+    for cell in identification.get("Diagnostics", {}).get("CornerArmExtension", {}).get("Cells", []):
+        owned_by_patch[cell["Patch"]] = owned_by_patch.get(cell["Patch"], 0.0) - float(cell["ExtendedLength"])
     # Mirror arm trim (boundary-cut DESIGN 2.2.3): a virtual corner's real-arm cells begin at
     # s_half; the removed part leaves the portion's quadrature sum like the F1 trim.
     for cell in identification.get("Diagnostics", {}).get("MirrorArmTrim", {}).get("Cells", []):
@@ -646,7 +652,7 @@ def patch_gates(identification, patches, radius):
             {"Defects": len(coverage_defects), "Examples": coverage_defects[:10], "CoveredLength": covered_length, "MatchedLength": matched_length, "AssignedLength": assigned_length, "CoveredFractionOfAssigned": covered_length / assigned_length if assigned_length else None, "Basis": "every portion of a matched longitudinal feature is one quadrature interval; a vertex / cluster feature is one patch"},
         )
     )
-    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2), plus Diagnostics.CornerArmTrim.Cells, decision 394 F1); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster"}))
+    gates.append(gate("A7-patch-weights", not weight_defects, {"Defects": len(weight_defects), "Examples": weight_defects[:10], "DomainBoundaryExcludedPatches": len(excluded_by_patch), "DomainBoundaryExcludedLength": sum(excluded_by_patch.values()), "Basis": "per interval sum(quadrature x model weight) = 1 - owned / portion length (Diagnostics.ContinuationOwnership.OwnedCells, decision 236 (2), plus Diagnostics.CornerArmTrim.Cells, decision 394 F1, minus Diagnostics.CornerArmExtension.Cells, decision 511); weight = model x quadrature x length x side factor / coupon depth, 0 for a patch of Diagnostics.DomainBoundaryExclusions whose record cell length is quadrature x portion (decision 258); side factor = 1 / chains of a pair or parallel cluster"}))
     # The mirror band (boundary-cut DESIGN 2.2; decisions 442 / 454): the planes, the images,
     # the features continued through a plane and the mirror-formed ones, listed apart from
     # the library gaps so the coupon lane can decide per key (decision 315 class) whether a

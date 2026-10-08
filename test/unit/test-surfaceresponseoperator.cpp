@@ -1790,7 +1790,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 14);
+      CHECK(cache["Version"] == 15);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3080,7 +3080,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 14);
+      CHECK(cache["Version"] == 15);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -7829,7 +7829,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 14);
+    CHECK(stale["Version"] == 15);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
@@ -7838,6 +7838,48 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(stale_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 6"));
+    // A version-13 cache — main's schema before the fillet merge (decision 512's Identical
+    // flags WITHOUT decision 511's corner-arm extension records; decision 527) — is refused
+    // by the version message, never misread for its missing records.
+    nlohmann::json thirteen = stale;
+    thirteen["Version"] = 13;
+    thirteen.erase("CornerArmExtensions");
+    const auto thirteen_path = temp.temp_dir / "response-geometry-ownership-v13.json";
+    {
+      std::ofstream output(thirteen_path);
+      output << thirteen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(thirteen_path, data),
+                      Catch::Matchers::ContainsSubstring("cache version 13") &&
+                          Catch::Matchers::ContainsSubstring("version 15"));
+    // Two version-14 caches existed before the fillet merge (decision 552 (3), the 527
+    // rule): main's (the decision-537 own-cell pre-image WITHOUT the corner-arm extension
+    // records) and the fillet lane's (the extension records WITHOUT the own-cell
+    // pre-image). Both are refused by the version message, never misread for their
+    // missing records.
+    nlohmann::json main_fourteen = stale;
+    main_fourteen["Version"] = 14;
+    main_fourteen.erase("CornerArmExtensions");
+    nlohmann::json fillet_fourteen = stale;
+    fillet_fourteen["Version"] = 14;
+    for (auto &patch : fillet_fourteen["Patches"])
+    {
+      patch.erase("OwnCell");
+    }
+    for (const auto &[name, fourteen] :
+         {std::pair<const char *, const nlohmann::json &>{"main", main_fourteen},
+          std::pair<const char *, const nlohmann::json &>{"fillet", fillet_fourteen}})
+    {
+      const auto fourteen_path = temp.temp_dir / ("response-geometry-ownership-v14-" +
+                                                  std::string(name) + ".json");
+      {
+        std::ofstream output(fourteen_path);
+        output << fourteen.dump(2) << "\n";
+      }
+      CHECK_THROWS_WITH(ReadResponseGeometryCache(fourteen_path, data),
+                        Catch::Matchers::ContainsSubstring("cache version 14") &&
+                            Catch::Matchers::ContainsSubstring("version 15"));
+    }
   }
   SECTION("vertex ownership (rule B4): a corner patch on a chain piece end inside a "
           "contract-3 box is owned once; interior chain points, other planes, other boxes "

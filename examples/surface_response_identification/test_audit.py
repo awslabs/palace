@@ -836,6 +836,29 @@ class PatchGateTest(unittest.TestCase):
         self.assertEqual(status["A7-patch-weights"], "FAIL")
         self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "quadrature x model weights do not sum to 1 - owned / portion")
 
+    def test_corner_arm_extension_scales_the_quadrature_weights(self):
+        # Decision 511 O2 (i): the arm cell of a matched rounded corner beginning at the claim
+        # end is extended back to the square exit; its quadrature weight scales by new / old
+        # and the manifest's CornerArmExtension.Cells reconciles the portion's sum
+        # (1 + extended / length), the mirror image of the F1 trim's record.
+        ident = self.identification()
+        rows = self.patches()
+        # Feature 0, segment 1 (portion [0, 2], two half cells of 1.0): the first cell gains
+        # 0.5 (new / old = 1.5).
+        rows[2]["QuadratureWeight"] = 0.5 * 1.5
+        rows[2]["Weight"] = 0.5 * 1.5 * 2.0 / 2.0
+        ident["Diagnostics"] = {"CornerArmExtension": {"Cells": [
+            {"Patch": 2, "Corner": 2, "Feature": 0, "Segment": 1, "ExtendedLength": 0.5},
+        ]}}
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "PASS", detail["A7-patch-weights"])
+        self.assertEqual(status["A7-patch-coverage"], "PASS")
+        # Without the record the grown weights are a defect (fail-before).
+        del ident["Diagnostics"]
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        self.assertEqual(detail["A7-patch-weights"]["Examples"][0]["Defect"], "quadrature x model weights do not sum to 1 - owned / portion")
+
     def test_domain_boundary_exclusion_keeps_the_portion_tiled(self):
         # Decision 258: a patch whose placed coupon section leaves the device mesh is written
         # with Weight 0 and its unscaled quadrature weight (the portion stays tiled), listed
