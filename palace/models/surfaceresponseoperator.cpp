@@ -8601,7 +8601,7 @@ IdentificationResult RunGeometryIdentification(
       {
         contract["Frame"] =
             FrameToJson(feature.origin, feature.axes, R, requirements->CoordinateScale());
-        contract["Frame"]["Chirality"] = feature.chirality;
+        contract["Frame"]["Chirality"] = FrameHandedness(feature.axes);
         if (instance->second.mirror_formed_contract.is_null())
         {
           instance->second.mirror_formed_contract = std::move(contract);

@@ -6210,8 +6210,13 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
       CHECK(contract.at("Frame").at("Origin").get<std::array<double, 3>>() ==
             feature.origin);
       // CONTRACT.md v3 (decision 584 (2)): the frame is the identification's with its
-      // Chirality explicit, Axes[2] = Chirality x (Axes[0] x Axes[1]).
-      CHECK(contract.at("Frame").at("Chirality").get<int>() == feature.chirality);
+      // handedness explicit, Axes[2] = Chirality x (Axes[0] x Axes[1]); Frame.Chirality =
+      // Features[].Chirality for a chiral key, the recorded frame's handedness (never 0)
+      // for a mirror-symmetric one.
+      const int handedness = contract.at("Frame").at("Chirality").get<int>();
+      CHECK(handedness == FrameHandedness(feature.axes));
+      CHECK((handedness == 1 || handedness == -1));
+      CHECK((feature.chirality == 0 || handedness == feature.chirality));
       {
         const auto &x = feature.axes[0], &y = feature.axes[1];
         const std::array<double, 3> cross = {x[1] * y[2] - x[2] * y[1],
@@ -6219,7 +6224,7 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
                                              x[0] * y[1] - x[1] * y[0]};
         for (int d = 0; d < 3; d++)
         {
-          CHECK_THAT(feature.chirality * cross[d], WithinAbs(feature.axes[2][d], 1.0e-9));
+          CHECK_THAT(handedness * cross[d], WithinAbs(feature.axes[2][d], 1.0e-9));
         }
       }
       CHECK(contract.at("Frame").at("Axes").get<std::array<std::array<double, 3>, 3>>() ==
@@ -6301,7 +6306,7 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
       CHECK(entry->at("Mirror").at("Status") == "Unmerged");
       {
         nlohmann::json frame = entry->at("Mirror").at("Contract").at("Frame");
-        CHECK(frame.at("Chirality").get<int>() == entry->at("Chirality").get<int>());
+        CHECK(frame.at("Chirality").get<int>() == FrameHandedness(feature.axes));
         frame.erase("Chirality");
         CHECK(frame == entry->at("Frame"));
       }

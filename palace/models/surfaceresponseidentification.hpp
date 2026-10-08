@@ -638,6 +638,14 @@ std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature
 double DistanceToSerializedPortion(const nlohmann::json &portion,
                                    const std::array<double, 2> &q);
 
+// The handedness of a feature frame: +1 when Axes[2] = Axes[0] x Axes[1], -1 when Axes[2] =
+// -(Axes[0] x Axes[1]) (the canonical cluster frame is {x, y, n} with n the process normal
+// for both handedness values). Equal to IdentifiedFeature::chirality for a chiral key; a
+// mirror-symmetric key (chirality 0: both handedness values reach the minimal serialisation)
+// records the first minimal frame, whose handedness this reads (the mirror-formed contract's
+// Frame.Chirality, CONTRACT.md v3).
+int FrameHandedness(const std::array<std::array<double, 3>, 3> &axes);
+
 // The manifest form of a feature frame, exactly as Features[].Frame is written: Origin in
 // the manifest's length units (`length_scale` x the identification's units) snapped to the
 // 1e-10 R step of IdentificationResult::ToJson, Axes rounded to 1e-12.

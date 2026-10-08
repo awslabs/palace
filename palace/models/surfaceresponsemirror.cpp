@@ -855,17 +855,19 @@ nlohmann::json BuildMirrorFormedContract(
     }
   }
   // The Frame is the identification's canonical frame AS IS (Features[].Frame: Axes[2] =
-  // the process normal n for both handedness values) with its Chirality made explicit
-  // (CONTRACT.md v3, decision 584 (2)): Axes[2] = Chirality x (Axes[0] x Axes[1]), so a
-  // chirality -1 key's left-handed triple is a valid frame, read by the consumer with the
-  // same rule; the placement uses this very frame (M = identity for a Signature-keyed
-  // model).
+  // the process normal n for both handedness values) with its handedness made explicit
+  // (CONTRACT.md v3, decision 584 (2)): Frame.Chirality = FrameHandedness(axes), so that
+  // Axes[2] = Chirality x (Axes[0] x Axes[1]) and a left-handed triple is a valid frame,
+  // read by the consumer with the same rule; the placement uses this very frame (M =
+  // identity for a Signature-keyed model). It equals Features[].Chirality for a chiral key;
+  // a mirror-symmetric configuration (chirality 0 - the O1 wedge, S2p's clusters) records
+  // the first minimal frame, whose own handedness is written (never 0).
   return nlohmann::json{{"Version", 1},
                         {"Planes", planes},
                         {"Frame",
                          {{"Origin", feature.origin},
                           {"Axes", {feature.axes[0], feature.axes[1], feature.axes[2]}},
-                          {"Chirality", feature.chirality}}},
+                          {"Chirality", FrameHandedness(feature.axes)}}},
                         {"RealPortions", real_portions},
                         {"RealLengthOverR", real_length / R},
                         {"ImageLengthOverR", image_length / R},

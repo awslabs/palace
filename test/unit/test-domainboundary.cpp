@@ -1940,7 +1940,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
               feature.at("Signature").at("Portions").size());
         {
           nlohmann::json frame = contract.at("Frame");
-          CHECK(frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>());
+          // the recorded frame's handedness (= Features[].Chirality for a chiral key)
+          CHECK((frame.at("Chirality").get<int>() == 1 ||
+                 frame.at("Chirality").get<int>() == -1));
+          CHECK((feature.at("Chirality").get<int>() == 0 ||
+                 frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>()));
           frame.erase("Chirality");
           CHECK(frame == feature.at("Frame"));
         }
@@ -2849,7 +2853,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           CHECK(contract.at("ImageLengthOverR").get<double>() > 0.0);
           {
             nlohmann::json frame = contract.at("Frame");
-            CHECK(frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>());
+            CHECK((frame.at("Chirality").get<int>() == 1 ||
+                   frame.at("Chirality").get<int>() == -1));
+            CHECK((feature.at("Chirality").get<int>() == 0 ||
+                   frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>()));
             frame.erase("Chirality");
             CHECK(frame == feature.at("Frame"));
           }

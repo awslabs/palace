@@ -393,11 +393,13 @@ def validate_mirror_formed_contract(coupon):
             if abs(dot3(axes[j], axis)) > MIRROR_FORMED_FRAME_TOLERANCE:
                 raise _contract_error(coupon, f"Frame.Axes[{j}] and [{i}] are not orthogonal")
     # CONTRACT.md v3 (decision 584 (2)): the Frame is the identification's canonical frame AS
-    # IS - Axes[2] is the process normal for BOTH handedness values (Features[].Chirality) -
-    # with its Chirality explicit: Axes[2] = Chirality x (Axes[0] x Axes[1]). A record without
-    # Chirality, or whose triple disagrees with it, is refused by name (4 of the 15 production
-    # cluster keys of the rerun-2 windows are chirality -1: C3 02db9a314b1b, O4 03fa3fb9166c,
-    # S1b cb82f37fe3ba / 95e080429eb9).
+    # IS - Axes[2] is the process normal for BOTH handedness values - with its handedness
+    # explicit: Frame.Chirality (1 / -1; = Features[].Chirality for a chiral key, the recorded
+    # frame's own handedness for a mirror-symmetric key of chirality 0 - the O1 wedge, S2p's
+    # clusters), Axes[2] = Chirality x (Axes[0] x Axes[1]). A record without Chirality, or whose
+    # triple disagrees with it, is refused by name (4 of the 16 production cluster contracts of
+    # the rerun-2 windows are left-handed triples: C3 02db9a314b1b, S1b cb82f37fe3ba / 95e080429eb9
+    # and O4 03fa3fb9166c).
     chirality = frame.get("Chirality")
     if isinstance(chirality, bool) or chirality not in (1, -1):
         raise _contract_error(coupon, f"Frame.Chirality {chirality!r} must be 1 or -1 (CONTRACT.md v3: Axes[2] = Chirality x "

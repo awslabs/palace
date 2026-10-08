@@ -1466,6 +1466,15 @@ double DistanceToSerializedPortion(const nlohmann::json &portion,
                   std::hypot(q[0] - b[0], q[1] - b[1]));
 }
 
+int FrameHandedness(const std::array<std::array<double, 3>, 3> &axes)
+{
+  const auto &x = axes[0], &y = axes[1], &n = axes[2];
+  const double det = (x[1] * y[2] - x[2] * y[1]) * n[0] +
+                     (x[2] * y[0] - x[0] * y[2]) * n[1] +
+                     (x[0] * y[1] - x[1] * y[0]) * n[2];
+  return det >= 0.0 ? 1 : -1;
+}
+
 nlohmann::json FrameToJson(const std::array<double, 3> &origin,
                            const std::array<std::array<double, 3>, 3> &axes, double radius,
                            double length_scale)
@@ -14310,7 +14319,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
       {
         entry["Mirror"]["Contract"]["Frame"] =
             FrameToJson(feature.origin, feature.axes, radius, length_scale);
-        entry["Mirror"]["Contract"]["Frame"]["Chirality"] = feature.chirality;
+        entry["Mirror"]["Contract"]["Frame"]["Chirality"] = FrameHandedness(feature.axes);
       }
       if (!image_portions.empty())
       {

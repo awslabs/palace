@@ -2895,8 +2895,10 @@ image); anything else refuses the contract by name (`ContractRefused`: PortionUn
 PortionAmbiguous / PortionUnclaimed / MixedPortion / NoRealPortion / NoImagePortion /
 PortionOffPlane), never a length heuristic; the `Frame` is the identification's canonical
 frame AS IS (`Features[].Frame`, `Axes[2]` = the process normal for both handedness values)
-with `Frame.Chirality` = `Features[].Chirality` explicit, `Axes[2]` = Chirality x (`Axes[0]` x
-`Axes[1]`) (CONTRACT.md v3); a CurvedEdge key carries the contract with `RealPortions` []
+with `Frame.Chirality` = the recorded frame's handedness explicit (`FrameHandedness`: =
+`Features[].Chirality` for a chiral key, the first minimal frame's for a mirror-symmetric
+key of chirality 0 — never 0), `Axes[2]` = Chirality x (`Axes[0]` x `Axes[1]`) (CONTRACT.md
+v3); a CurvedEdge key carries the contract with `RealPortions` []
 (no Portions in its key; the 2D curvature family's consumer). The requirement record of the
 key (`Requirements[]`) carries `MirrorFormed: true` and `MirrorFormedContract` (the Frame in
 manifest units, as `Features[].Frame`); the configurations of one key / near-key group must
