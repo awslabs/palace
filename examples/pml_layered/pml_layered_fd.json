@@ -1,0 +1,94 @@
+{
+  // Layered parallel-plate waveguide (substrate for y < 0, vacuum for y > 0) terminated by a
+  // PML on +z which the substrate/vacuum interface crosses. The default σ_max of the +z face
+  // is computed for the smallest refractive index among the PML materials (vacuum), so that
+  // the stretch is the same in both PML materials and the quasi-TEM mode is absorbed without
+  // reflection at the interface inside the layer.
+  // Frequency-dependent stretch, uniform absorption over the band.
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/pml_layered_fd",
+    "OutputFormats": {
+      "Paraview": false
+    }
+  },
+  "Model": {
+    "Mesh": "mesh/pml_layered.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 9.8
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [
+          3
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 9.8,
+        "PML": {
+          "FrequencyDependent": true
+        }
+      },
+      {
+        "Attributes": [
+          4
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "PML": {
+          "FrequencyDependent": true
+        }
+      }
+    ]
+  },
+  "Boundaries": {
+    "WavePort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          5
+        ],
+        "Mode": 1,
+        "Excitation": true
+      }
+    ],
+    "PEC": {
+      "Attributes": [
+        6,
+        7
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {
+      "MinFreq": 2.0,
+      "MaxFreq": 8.0,
+      "FreqStep": 0.5,
+      "SaveStep": 0
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1e-08,
+      "MaxIts": 200,
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
+    }
+  }
+}
