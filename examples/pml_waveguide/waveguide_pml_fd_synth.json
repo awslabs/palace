@@ -1,0 +1,85 @@
+{
+  // Adaptive fast frequency sweep and circuit synthesis with a frequency-dependent PML. The
+  // guide is filled with a dielectric (ε_r = 2) so that the step to the vacuum PML region
+  // reflects (|S11| ~ -13 dB), and the PML absorbs the transmitted wave. The PML terms of the
+  // reduced-order model are projected at each frequency during the greedy sampling, fit with a
+  // rational function for the online sweep, and realized with auxiliary states in the
+  // synthesized circuit.
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/waveguide_pml_fd_synth",
+    "OutputFormats": {
+      "Paraview": false
+    }
+  },
+  "Model": {
+    "Mesh": "mesh/waveguide.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 2.0
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "PML": {
+          "Direction": [
+            "+Z"
+          ],
+          "Thickness": 0.1,
+          "Order": 3,
+          "FrequencyDependent": true
+        }
+      }
+    ]
+  },
+  "Boundaries": {
+    "WavePort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          3
+        ],
+        "Mode": 1,
+        "Excitation": true
+      }
+    ],
+    "PEC": {
+      "Attributes": [
+        4,
+        5
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven": {
+      "MinFreq": 2.5,
+      "MaxFreq": 3.5,
+      "FreqStep": 0.01,
+      "SaveStep": 0,
+      "AdaptiveTol": 0.0001,
+      "AdaptiveMaxSamples": 40,
+      "AdaptiveCircuitSynthesis": true
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1e-10,
+      "MaxIts": 100,
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
+    }
+  }
+}
