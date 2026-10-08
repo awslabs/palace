@@ -294,12 +294,17 @@ loop_has_arcs(loop) = haskey(loop, :arcs) && any(arc !== nothing for arc in loop
 # The arc runs of a TAGGED loop (design A1 (4)): one run per ArcId over its consecutive
 # chord sides (the loop rotated so that no run straddles its end), in the format of
 # circular_arc_runs (centre, radius, point_indices, edge_indices, orientation, angle) plus
-# `id`, `sign` and `sweep` (the signed angular travel of the run). The fit is SEEDED by the
-# tags: the circle through the run's first, middle and last vertex must agree with the tagged
-# centre / radius and every tagged vertex must lie on it within the fit tolerance of
-# fitted_arc_run (max(64 tol, 2e-7 rho)); any disagreement fails closed - one source of truth
+# `id`, `sign` and `sweep` (the signed angular travel of the run). The circle IS the tagged
+# one: every tagged vertex must lie on it within the fit tolerance of fitted_arc_run (max(64 tol,
+# 2e-7 rho)) and travel monotonically around it, else the run fails closed - one source of truth
 # (the signature), one circle (the tagged one) for the CAD. A one-chord run is admitted (no
-# four-chord minimum).
+# four-chord minimum). Mesher design round 3 class (4) (DESIGN-part-G G.4.3 Option A, decision
+# 510): the former comparison of the circle THROUGH the run's first, middle and last vertex with
+# the tag is gone - on the 1e-9 R grid of the boundary that three-point fit amplifies the vertex
+# rounding by R_arc / sagitta (3.2e5 on 2bc3d927fda6's 3-chord 134 R arc: 1.96e-4 um against a
+# 5.1e-5 um tolerance while every vertex sits within 7.1e-10 um of the tagged circle) - a
+# property of the CHECK, not of the data. The fit stays a printed diagnostic (arc_fit_diagnostic);
+# the residual test is the check.
 function tagged_arc_runs(loop, tolerance)
     points = loop.points
     n = length(points)
@@ -330,27 +335,40 @@ function tagged_arc_runs(loop, tolerance)
             error("arc $id of the plan-view boundary carries two circles")
         circle = (center=tag.centre, radius=tag.radius)
         fit_tolerance = arc_fit_tolerance(tag.radius, tolerance)
-        fit = circle_through(points[point_indices[1]], points[point_indices[cld(length(point_indices), 2)]],
-                             points[point_indices[end]], tolerance)
-        if fit === nothing
-            # Two vertices (one chord): the tagged circle must pass through both.
-            length(point_indices) == 2 ||
-                error("arc $id of the plan-view boundary: its vertices are not concyclic")
-        else
-            hypot(fit.center[1] - tag.centre[1], fit.center[2] - tag.centre[2]) <= fit_tolerance &&
-            abs(fit.radius - tag.radius) <= fit_tolerance ||
-                error("arc $id of the plan-view boundary: the fitted circle (centre $(fit.center), radius " *
-                      "$(fit.radius)) disagrees with the tagged circle (centre $(tag.centre), radius " *
-                      "$(tag.radius)) beyond $fit_tolerance")
-        end
         run = fitted_arc_run(points, point_indices, edge_indices, circle, tolerance)
         run === nothing &&
             error("arc $id of the plan-view boundary: its vertices do not lie on the tagged circle within " *
                   "$fit_tolerance, or do not travel monotonically around it")
+        diagnostic = arc_fit_diagnostic(points, point_indices, tag, fit_tolerance, tolerance)
+        diagnostic === nothing || println(diagnostic)
         push!(runs, (run..., id=id, sign=tag.sign,
                      sweep=run_sweep(points, run.point_indices, run.center, run.orientation)))
     end
     return runs
+end
+
+# The printed diagnostic of a tagged run (class (4), G.4.3): the circle through the run's
+# first, middle and last vertex against the tag, with the conditioning factor R_arc / sagitta
+# that amplifies the 1e-9 R vertex grid into the fit's disagreement. Printed only where the
+# former check would have refused (the fit off the tag beyond `fit_tolerance`): the logs of
+# every run that passed it are unchanged. Never a verdict.
+function arc_fit_diagnostic(points, point_indices, tag, fit_tolerance, tolerance)
+    first = points[point_indices[1]]
+    last = points[point_indices[end]]
+    fit = circle_through(first, points[point_indices[cld(length(point_indices), 2)]], last, tolerance)
+    fit === nothing && return nothing
+    centre_off = hypot(fit.center[1] - tag.centre[1], fit.center[2] - tag.centre[2])
+    radius_off = abs(fit.radius - tag.radius)
+    centre_off <= fit_tolerance && radius_off <= fit_tolerance && return nothing
+    half = 0.5 * hypot(last[1] - first[1], last[2] - first[2])
+    sagitta = half < tag.radius ? tag.radius - sqrt(tag.radius^2 - half^2) : tag.radius
+    conditioning = sagitta > 0.0 ? tag.radius / sagitta : Inf
+    return "arc $(tag.id) of the plan-view boundary: the three-point fit through its $(length(point_indices)) " *
+           "vertices (centre $(fit.center), radius $(fit.radius)) is off the tagged circle (centre " *
+           "$(tag.centre), radius $(tag.radius)) by $centre_off / $radius_off, beyond $fit_tolerance: the " *
+           "1e-9 R vertex grid amplified by the conditioning factor R_arc / sagitta = $conditioning " *
+           "(mesher design round 3 class (4)); diagnostic only - every vertex lies on the tagged circle " *
+           "within the residual tolerance, which is the check"
 end
 
 # The signed angular travel of a run from its first to its last vertex about its centre

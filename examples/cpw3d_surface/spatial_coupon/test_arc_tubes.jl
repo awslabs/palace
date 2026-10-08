@@ -791,7 +791,9 @@ end
         legacy_loop = read_boundary(legacy)[1]
         @test !loop_has_arcs(legacy_loop)
         @test isempty(tagged_arc_runs(legacy_loop, 1.0e-7 * 0.5))
-        # A corrupted tag (another centre) fails closed.
+        # A corrupted tag (another centre) fails closed at the residual test (round 3 class (4),
+        # G.4.3 Option A: the tagged circle IS the circle; the former three-point-fit comparison
+        # is a printed diagnostic).
         broken = joinpath(directory, "broken.csv")
         open(broken, "w") do io
             for line in readlines(inputs.boundary)
@@ -800,9 +802,65 @@ end
         end
         message =
             guard_message(() -> tagged_arc_runs(read_boundary(broken)[1], 1.0e-7 * 0.5))
-        @test occursin("disagrees with the tagged circle", message) ||
-              occursin("do not lie on the tagged circle", message)
+        @test occursin("do not lie on the tagged circle", message)
+        @test !occursin("disagrees with the tagged circle", message)
     end
+    # Round 3 class (4) (DESIGN-part-G G.4.2 / G.4.5, decision 510): a 3-chord arc of 134 R on
+    # the 1e-9 R grid (2bc3d927fda6's context arc 2: R_arc 255.02 um, chords 0.224 R, sagitta
+    # 7.98e-4 um, conditioning R_arc / sagitta 3.2e5) is ACCEPTED - every vertex lies within one
+    # grid quantum of the tagged circle - although the three-point fit through its quantised
+    # vertices is off the tag by ~1e-4 um (> the 5.1e-5 um tolerance): the former check refused it.
+    R = 1.9
+    rho = 255.02107
+    centre = (-246.39, -4.77)
+    quantum = 1.0e-9 * R
+    quantise(v) = round(v / quantum) * quantum
+    theta0 = 0.3
+    step = 0.224 * R / rho
+    arc_points = [(quantise(centre[1] + rho * cos(theta0 + step * k)),
+                   quantise(centre[2] + rho * sin(theta0 + step * k))) for k = 0:3]
+    short_points = vcat(arc_points, [(arc_points[end][1] - 3.0, arc_points[end][2] + 1.0),
+                                     (arc_points[1][1] - 3.0, arc_points[1][2] - 1.0)])
+    short_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, 6)
+    for i = 1:3
+        short_arcs[i] = (id=2, centre=centre, radius=rho, sign=1)
+    end
+    short_loop = (conductor=1, plane=0.0, hole=false, points=short_points,
+                  classes=fill("Physical", 6), arcs=short_arcs,
+                  joints=Vector{Union{Nothing, NamedTuple}}(nothing, 6))
+    tolerance = 1.0e-9 * R
+    fit_tolerance = arc_fit_tolerance(rho, tolerance)
+    residual = maximum(abs(hypot(p[1] - centre[1], p[2] - centre[2]) - rho) for p in arc_points)
+    @test residual <= quantum * (1.0 + 1.0e-6) && residual <= fit_tolerance
+    fit = circle_through(arc_points[1], arc_points[2], arc_points[4], tolerance)
+    @test fit !== nothing && hypot(fit.center[1] - centre[1], fit.center[2] - centre[2]) > fit_tolerance
+    short_runs = tagged_arc_runs(short_loop, tolerance)
+    @test length(short_runs) == 1 && short_runs[1].id == 2 && length(short_runs[1].edge_indices) == 3 &&
+          short_runs[1].center == centre && short_runs[1].radius == rho
+    diagnostic = arc_fit_diagnostic(short_points, [1, 2, 3, 4], short_arcs[1], fit_tolerance, tolerance)
+    @test diagnostic !== nothing && occursin("conditioning factor R_arc / sagitta", diagnostic) &&
+          occursin("diagnostic only", diagnostic)
+    # One vertex displaced off the tagged circle by three residual tolerances: refused by the
+    # residual test (the guard that remains).
+    displaced = copy(short_points)
+    displaced[2] = (displaced[2][1] + 3.0 * fit_tolerance, displaced[2][2])
+    displaced_loop = merge(short_loop, (points=displaced,))
+    @test occursin("do not lie on the tagged circle", guard_message(() -> tagged_arc_runs(displaced_loop, tolerance)))
+    # A two-vertex run (one chord) on the circle is admitted; off it (3 tolerances) refused.
+    one_chord_points = vcat(arc_points[1:2], [(arc_points[2][1] - 3.0, arc_points[2][2] + 1.0),
+                                              (arc_points[1][1] - 3.0, arc_points[1][2] - 1.0)])
+    one_chord_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, 4)
+    one_chord_arcs[1] = (id=2, centre=centre, radius=rho, sign=1)
+    one_chord_loop = (conductor=1, plane=0.0, hole=false, points=one_chord_points,
+                      classes=fill("Physical", 4), arcs=one_chord_arcs,
+                      joints=Vector{Union{Nothing, NamedTuple}}(nothing, 4))
+    one_chord = tagged_arc_runs(one_chord_loop, tolerance)
+    @test length(one_chord) == 1 && length(one_chord[1].edge_indices) == 1
+    @test arc_fit_diagnostic(one_chord_points, [1, 2], one_chord_arcs[1], fit_tolerance, tolerance) === nothing
+    off_points = copy(one_chord_points)
+    off_points[2] = (off_points[2][1] + 3.0 * fit_tolerance, off_points[2][2])
+    @test occursin("do not lie on the tagged circle",
+                   guard_message(() -> tagged_arc_runs(merge(one_chord_loop, (points=off_points,)), tolerance)))
 end
 
 @testset "ArcTube geometry: frame, revolved centroids against OCC, face crossing" begin
