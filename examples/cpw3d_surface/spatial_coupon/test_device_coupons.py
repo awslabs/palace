@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE.parents[1] / "cpw2d"))
 import numpy as np  # noqa: E402
 
 import case_inputs  # noqa: E402
+import cluster_signature_geometry  # noqa: E402
 import coupon_library  # noqa: E402
 import device_coupons  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
@@ -132,7 +133,8 @@ class DeviceBasisDefaultTest(unittest.TestCase):
                          {"support_span_caps": ["5ed91f8890c0=20"], "support_span_cap_reason": "closed loop",
                           "element_caps": ["5ed91f8890c0=16000000"], "element_cap_approval": "supervisor",
                           "element_cap_reason": "12-13 M elements", "nearkey_reuse_mode": "off", "nearkey_fallback_approval": None,
-                          "nearkey_fallback_stop_records": [], "nearkey_rule": None, "nearkey_record_roots": []})
+                          "nearkey_fallback_stop_records": [], "nearkey_rule": None, "nearkey_record_roots": [],
+                          "mirror_formed": "refuse"})
         self.assertEqual(parser.parse_args(common).support_span_cap, [])
         with self.assertRaises(SystemExit):
             coupon_library.main(["build", "--manifest", "m.json", "--element-cap", "5ed91f8890c0=16000000"])
@@ -172,6 +174,236 @@ class DeviceBasisDefaultTest(unittest.TestCase):
                                                       manifest_path="m.json", **kwargs)
         # The generator receives the cap for the named coupon only.
         self.assertIn("--support-span-cap", device_coupons.generate_sources.__doc__)
+
+
+MIRROR_FORMED_FIXTURE = HERE / "testdata" / "mirror-formed" / "contract-requirements.json"
+
+
+def mirror_formed_fixture(name):
+    """A SYNTHETIC MirrorFormedContract requirement of the fixture (impl-B5 CONTRACT.md, decision 557):
+    the signature is a rerun-2 mirror-formed Unmerged key of record, the contract the test author's."""
+    return json.loads(json.dumps(json.loads(MIRROR_FORMED_FIXTURE.read_text())["Requirements"][name]))
+
+
+def synthetic_closure(tmp, requirements):
+    """A requirement closure standing in for the discovery (no Palace): the transmon process seed
+    as the library, the given requirement records (every one Missing)."""
+    seed = json.loads(PROCESS_SEED.read_text())
+    library = tmp / "process-seed.json"
+    library.write_text(json.dumps(seed, indent=2) + "\n")
+    closure = {"Version": 2, "Complete": False, "Library": {"Path": str(library), "MatchingRadius": seed["MatchingRadius"]},
+               "Summary": {"Missing": len(requirements)}, "Requirements": requirements}
+    path = tmp / "discovery" / "surface-response-requirements.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(closure, indent=2) + "\n")
+    return path
+
+
+class MirrorFormedContractTest(unittest.TestCase):
+    """The consumer of the mirror-formed cluster REQUIREMENT CONTRACT (decision 557; round-3 DESIGN 4.4 (MF);
+    coupon-accuracy-assessment-20260913/mesher-design-round3-20261007/impl-B5/CONTRACT.md): a requirement
+    `MirrorFormed: true` + `MirrorFormedContract` is refused by default (today's bytes), validated field by field
+    and, with --mirror-formed admit, built from its FULL symmetric signature with the library entry stamped
+    (RealPortions, Edges[].Weight 1 real / 0 image, RealLengthFraction); qualify / combine carry the stamp."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="coupon-mirror-formed-test-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_fixture_requirements_validate_and_hash_to_their_keys(self):
+        fixture = json.loads(MIRROR_FORMED_FIXTURE.read_text())
+        self.assertEqual(sorted(fixture["Requirements"]), ["o1-f17-b0b764b21b95", "o3-f45-d7c875318447", "s2p-f11-613e6f656498"])
+        expected = {"o1-f17-b0b764b21b95": ([0], [1]), "o3-f45-d7c875318447": ([0, 3], [1, 2]), "s2p-f11-613e6f656498": ([0, 1], [2, 3])}
+        for name, requirement in fixture["Requirements"].items():
+            coupon = {"Id": name, **requirement}
+            # the requirement Hash is sha256 of the identification's Key = the compact sorted dump of the signature
+            # (the O1 key IS the Qualified batch-1 coupon b0b764b21b95: the convention checked against a record)
+            self.assertEqual(device_coupons.signature_key_hash(requirement["Signature"]), requirement["Hash"])
+            self.assertTrue(requirement["Hash"].startswith(name.rsplit("-", 1)[1]))
+            contract = device_coupons.validate_mirror_formed_contract(coupon)
+            self.assertEqual((contract["RealPortions"], contract["ImagePortions"]), expected[name])
+            lengths = device_coupons.signature_portion_lengths_over_R(requirement["Signature"])
+            self.assertAlmostEqual(sum(lengths[i] for i in contract["RealPortions"]), contract["RealLengthOverR"], delta=1e-3)
+            self.assertAlmostEqual(sum(lengths[i] for i in contract["ImagePortions"]), contract["ImageLengthOverR"], delta=1e-3)
+        # the O3 real arm is the ARC portion 0 (R_arc 157.9 R) + the straight 3; its context arc 0 shares the circle
+        o3 = fixture["Requirements"]["o3-f45-d7c875318447"]["Signature"]
+        self.assertIn("Arc", o3["Portions"][0])
+        self.assertEqual(o3["Portions"][0]["Arc"][:2], o3["Context"][0]["Arc"][:2])
+        self.assertAlmostEqual(device_coupons.signature_portion_lengths_over_R(o3)[0], 3.5530, places=3)
+
+    def test_inconsistent_contracts_fail_closed_by_field(self):
+        base = mirror_formed_fixture("o1-f17-b0b764b21b95")
+
+        def mutated(**changes):
+            coupon = {"Id": "o1", **json.loads(json.dumps(base))}
+            contract = coupon["MirrorFormedContract"]
+            for key, value in changes.items():
+                target, _, field = key.partition(".")
+                if field:
+                    (contract if target == "contract" else coupon[target])[field] = value
+                elif value is None:
+                    coupon.pop(key, None)
+                else:
+                    coupon[key] = value
+            return coupon
+
+        cases = [("Version", mutated(**{"contract.Version": 2})),
+                 ("MirrorFormed: true", mutated(MirrorFormed=False)),
+                 ("is missing", mutated(MirrorFormedContract=None)),
+                 ("RealPortions", mutated(**{"contract.RealPortions": []})),
+                 ("names every portion", mutated(**{"contract.RealPortions": [0, 1]})),
+                 ("outside", mutated(**{"contract.RealPortions": [2]})),
+                 ("sorted list of distinct", mutated(**{"contract.RealPortions": [1, 0]})),
+                 ("sorted list of distinct", mutated(**{"contract.RealPortions": [0, 0]})),
+                 ("Planes", mutated(**{"contract.Planes": []})),
+                 ("Frame must carry", mutated(**{"contract.Frame": {"Origin": [0, 0, 0]}})),
+                 ("not a unit vector", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[2, 0, 0], [0, 1, 0], [0, 0, 1]]}})),
+                 ("not orthogonal", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0.6, 0.8, 0], [0, 0, 1]]}})),
+                 ("not right-handed", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, -1]]}})),
+                 ("Frame is not finite", mutated(**{"contract.Frame": {"Origin": [0, 0, float("nan")], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}})),
+                 ("RealLengthOverR", mutated(**{"contract.RealLengthOverR": 5.3})),
+                 ("ImageLengthOverR", mutated(**{"contract.ImageLengthOverR": -1.0})),
+                 ("RealFeatures", mutated(**{"contract.RealFeatures": "17"})),
+                 ("ExtendedFeature", mutated(**{"contract.ExtendedFeature": None})),
+                 ("Rule text", mutated(**{"contract.Rule": ""})),
+                 ("Hash", mutated(Hash="0" * 64)),
+                 ("EdgeCount", mutated(Geometry={"EdgeCount": 3, "Signature": base["Signature"]})),
+                 ("Geometry.Signature differs", mutated(Geometry={"EdgeCount": 2, "Signature": {**base["Signature"], "Box": [0, 0, 1, 1]}})),
+                 ("SpatialEdgeCluster only", mutated(Topology="CurvedEdge"))]
+        for text, coupon in cases:
+            with self.assertRaisesRegex(device_coupons.DeviceAdapterError, text, msg=text):
+                device_coupons.validate_mirror_formed_contract(coupon)
+        # the length check tolerates the serialisation quantum but not a wrong arm
+        within = mutated(**{"contract.RealLengthOverR": base["MirrorFormedContract"]["RealLengthOverR"] + 5e-4})
+        self.assertEqual(device_coupons.validate_mirror_formed_contract(within)["RealPortions"], [0])
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "disagrees"):
+            device_coupons.validate_mirror_formed_contract(mutated(**{"contract.RealLengthOverR": base["MirrorFormedContract"]["RealLengthOverR"] + 2e-3}))
+
+    def test_entry_stamp_weights_the_real_portions_only(self):
+        requirement = mirror_formed_fixture("o3-f45-d7c875318447")
+        contract = device_coupons.validate_mirror_formed_contract({"Id": "o3", **requirement})
+        radius = 1.9
+        portions = cluster_signature_geometry.portions_from_signature(requirement["Signature"], radius)
+        edge_portions = [portion["Portion"] for portion in portions]
+        # the arc portion 0 is chorded: several model edges share its index
+        self.assertGreater(edge_portions.count(0), 1)
+        self.assertEqual(sorted(set(edge_portions)), [0, 1, 2, 3])
+        record, weights = device_coupons.mirror_formed_entry(contract, edge_portions, radius)
+        self.assertEqual(weights, [1.0 if index in (0, 3) else 0.0 for index in edge_portions])
+        self.assertEqual((record["RealPortions"], record["ImagePortions"], record["EdgePortions"]), ([0, 3], [1, 2], edge_portions))
+        self.assertEqual(record["RealLengthFraction"], contract["RealLengthOverR"] / (contract["RealLengthOverR"] + contract["ImageLengthOverR"]))
+        self.assertAlmostEqual(record["RealLengthFraction"], 0.5, places=3)
+        self.assertEqual((record["Planes"], record["RealFeatures"], record["ExtendedFeature"]), ([0], [45], 0))
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "no real / image split"):
+            device_coupons.mirror_formed_entry(contract, [1, 2], radius)
+
+    def test_planner_carries_the_contract_and_the_option_is_a_device_option(self):
+        requirement = mirror_formed_fixture("o1-f17-b0b764b21b95")
+        closure = synthetic_closure(self.tmp, [requirement])
+        manifest = json.loads(closure.read_text())
+        library = json.loads(Path(manifest["Library"]["Path"]).read_text())
+        plan = planner.plan_from_manifest(closure, manifest, manifest["Library"]["Path"], library, include_matched=False)
+        self.assertEqual(len(plan["Coupons"]), 1)
+        coupon = plan["Coupons"][0]
+        self.assertEqual(coupon["Preparation"]["Method"], device_coupons.SPATIAL_METHOD)
+        self.assertIs(coupon["MirrorFormed"], True)
+        self.assertEqual(coupon["MirrorFormedContract"], requirement["MirrorFormedContract"])
+        parser = coupon_library.build_parser()
+        common = ["build", "--device", "device.json", "--palace", "palace", "--root", "root"]
+        self.assertEqual(parser.parse_args(common).mirror_formed, "refuse")
+        self.assertEqual(parser.parse_args(common + ["--mirror-formed", "admit"]).mirror_formed, "admit")
+        with self.assertRaises(SystemExit):
+            parser.parse_args(common + ["--mirror-formed", "always"])
+        with self.assertRaises(SystemExit):
+            coupon_library.main(["build", "--manifest", "m.json", "--mirror-formed", "admit"])
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "--mirror-formed must be one of"):
+            device_coupons.prepare_device_sources("device.json", palace="palace", output=self.tmp / "out", manifest_path="m.json",
+                                                  mirror_formed="always")
+
+    def prepared(self, requirements, **kwargs):
+        closure = synthetic_closure(self.tmp, requirements)
+        original = device_coupons.run_discovery
+        device_coupons.run_discovery = lambda device_config, output, palace, python=sys.executable, omit_requirements=(): closure
+        self.addCleanup(setattr, device_coupons, "run_discovery", original)
+        device = self.tmp / "device.json"
+        device.write_text("{}\n")
+        output = self.tmp / f"device-{kwargs.get('mirror_formed', 'refuse')}"
+        return device_coupons.prepare_device_sources(device, palace="no-palace", output=output, manifest_path=self.tmp / "m.json",
+                                                     log=lambda message: None, **kwargs)
+
+    def test_default_refuses_and_admit_builds_the_full_signature_with_the_stamped_entry(self):
+        requirement = mirror_formed_fixture("o1-f17-b0b764b21b95")
+        refused = self.prepared([requirement])
+        self.assertEqual(refused["MirrorFormed"]["Mode"], "refuse")
+        self.assertEqual(refused["Coupons"], [])
+        self.assertEqual([(item["Method"], item["Hash"][:12], item["MirrorFormedContract"]) for item in refused["OutOfScope"]],
+                         [(device_coupons.MIRROR_FORMED_NOT_ADMITTED_METHOD, "b0b764b21b95", True)])
+        self.assertFalse((Path(refused["Output"]) / "work").exists())
+        admitted = self.prepared([requirement], mirror_formed="admit")
+        self.assertEqual(admitted["MirrorFormed"]["Mode"], "admit")
+        self.assertEqual(admitted["OutOfScope"], [])
+        self.assertEqual(len(admitted["Coupons"]), 1)
+        coupon = admitted["Coupons"][0]
+        self.assertEqual(coupon["EdgeCount"], 2)
+        directory = Path(coupon["Directory"])
+        self.assertEqual(directory.name, coupon["Case"])
+        # the full symmetric signature is built: both portions are claims (mesh-signature rows: 2 claims + 4 context)
+        rows = (directory / "mesh-signature.csv").read_text().splitlines()
+        self.assertEqual(len(rows), 1 + 2 + 4)
+        self.assertEqual([row.split(",")[-2] for row in rows[1:]], ["0", "0", "1", "1", "1", "1"])
+        model = json.loads((directory / "process-library.json").read_text())["Models"][0]
+        self.assertEqual(model["Signature"], requirement["Signature"])
+        self.assertEqual([edge["Weight"] for edge in model["Edges"]], [1.0, 0.0])
+        stamp = model["MirrorFormed"]
+        self.assertEqual((stamp["RealPortions"], stamp["ImagePortions"], stamp["EdgePortions"], stamp["Planes"]), ([0], [1], [0, 1], [0]))
+        self.assertEqual(stamp["RealLengthFraction"], stamp["RealLengthOverR"] / (stamp["RealLengthOverR"] + stamp["ImageLengthOverR"]))
+        self.assertEqual(stamp["Rule"], device_coupons.MIRROR_FORMED_ENTRY_RULE)
+        self.assertEqual(coupon["MirrorFormed"], stamp)
+        provenance = json.loads((directory / "provenance.json").read_text())
+        self.assertEqual(provenance["MirrorFormed"]["Mode"], "admit")
+        self.assertEqual(provenance["MirrorFormed"]["Contract"], requirement["MirrorFormedContract"])
+        self.assertEqual(provenance["MirrorFormed"]["RealPortions"], [0])
+        # the stamp is inside the content hash (process-library.json is a bound source role)
+        digest, digests = device_coupons.content_hash(directory)
+        self.assertEqual(coupon["Case"], f"spatial-2-edge-{digest[:12]}")
+        self.assertIn("ProcessLibrary", digests)
+        # an inconsistent contract fails closed before any generation (admit mode)
+        broken = json.loads(json.dumps(requirement))
+        broken["MirrorFormedContract"]["RealPortions"] = [0, 1]
+        shutil.rmtree(self.tmp / "device-admit")
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "names every portion"):
+            self.prepared([broken], mirror_formed="admit")
+        missing = json.loads(json.dumps(requirement))
+        del missing["MirrorFormedContract"]
+        shutil.rmtree(self.tmp / "device-admit")
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "is missing"):
+            self.prepared([missing], mirror_formed="admit")
+
+    def test_qualify_and_combine_carry_the_stamp_verbatim(self):
+        import qualify_library
+        requirement = mirror_formed_fixture("o3-f45-d7c875318447")
+        contract = device_coupons.validate_mirror_formed_contract({"Id": "o3", **requirement})
+        stamp, weights = device_coupons.mirror_formed_entry(contract, [0, 0, 0, 1, 2, 3], 1.9)
+        source = self.tmp / "source"
+        source.mkdir()
+        model = {"Name": "spatialedgecluster_edgecount-4_d7c875318447", "Topology": "SpatialEdgeCluster", "MirrorFormed": stamp,
+                 "Edges": [{"Point": [0.0, 0.0, 0.0], "Weight": weight} for weight in weights], "Signature": requirement["Signature"]}
+        for field, filename in qualify_library.MODEL_FILE_NAMES.items():
+            (source / filename).write_text("0\n")
+            model[field] = filename
+        library = {"Version": 3, "Name": "test", "MatchingRadius": 1.9, "TraceLiftVersion": 2,
+                   "Fabrication": json.loads(PROCESS_SEED.read_text())["Fabrication"], "Models": [model]}
+        (source / "process-library.json").write_text(json.dumps(library, indent=1) + "\n")
+        copied = qualify_library.copy_model_files(dict(model), root=self.tmp / "qualified", directories=[source])
+        self.assertEqual(copied["MirrorFormed"], stamp)
+        self.assertEqual([edge["Weight"] for edge in copied["Edges"]], weights)
+        combine = HERE.parents[0] / "corner_coupon" / "combine_process_libraries.py"
+        result = subprocess.run([sys.executable, str(combine), "--output", str(self.tmp / "combined"), str(source / "process-library.json")],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        combined = json.loads((self.tmp / "combined" / "process-library.json").read_text())["Models"][0]
+        self.assertEqual(combined["MirrorFormed"], stamp)
+        self.assertEqual([edge["Weight"] for edge in combined["Edges"]], weights)
 
 
 @unittest.skipUnless(available(), "the Palace executable and the transmon fixture are needed")

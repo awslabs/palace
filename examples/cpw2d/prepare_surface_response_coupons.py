@@ -319,9 +319,11 @@ def plan_from_manifest(
             "Preparation": preparation(requirement, spatial_mesh),
         }
         # Version-2 records (SURFACE-RESPONSE-IDENTIFICATION.md (d)): the canonical
-        # Signature is the library model's key; the group statistics are recorded.
+        # Signature is the library model's key; the group statistics are recorded. A
+        # mirror-formed cluster (round-3 DESIGN 4.4, decision 557: impl-B5 CONTRACT.md) carries
+        # MirrorFormed + MirrorFormedContract, consumed by device_coupons.
         for key in ("Signature", "Hash", "Instances", "DistinctSignatures", "ParameterSpread", "ExactParameters",
-                    "NearKeys", "SpanCapAllowance"):
+                    "NearKeys", "SpanCapAllowance", "MirrorFormed", "MirrorFormedContract"):
             if key in requirement:
                 coupon[key] = copy.deepcopy(requirement[key])
         if uses_finite_impedance(coupon):

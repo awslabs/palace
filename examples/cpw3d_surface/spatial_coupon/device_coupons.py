@@ -55,6 +55,7 @@ import concurrent.futures
 import copy
 import hashlib
 import json
+import math
 from pathlib import Path
 import shutil
 import subprocess
@@ -170,13 +171,17 @@ def coupon_geometry(coupon, radius, parameters=None):
             "BoundaryCondition": coupon["BoundaryCondition"]}
 
 
-def stamp_signature_model(library_path, coupon, radius, generated=None):
+def stamp_signature_model(library_path, coupon, radius, generated=None, mirror_formed=None):
     """A version-2 coupon's model carries the record's canonical Signature (the matcher's
     exact key for a SpatialEdgeCluster) and, as Edges, the claimed portions exactly (what
     ModelClusterSignature canonicalises to the feature's frame; the generator wrote the
-    lengthened rows of the mesh geometry there). Version-1 coupons are left as written."""
+    lengthened rows of the mesh geometry there). Version-1 coupons are left as written.
+    `mirror_formed` (the validated MirrorFormedContract of a mirror-formed cluster, decision
+    557) stamps the model's `MirrorFormed` record and every Edge's Weight (1.0 real / 0.0 image)."""
     geometry = coupon["Geometry"]
     if coupon["Topology"] != "SpatialEdgeCluster" or "Signature" not in geometry or geometry.get("Edges"):
+        if mirror_formed is not None:
+            raise DeviceAdapterError(f"coupon {coupon.get('Id')}: a mirror-formed contract needs a version-2 signature coupon")
         return False
     library_path = Path(library_path)
     library = json.loads(library_path.read_text())
@@ -185,6 +190,14 @@ def stamp_signature_model(library_path, coupon, radius, generated=None):
     model = library["Models"][0]
     model["Signature"] = geometry["Signature"]
     model["Edges"] = cluster_signature_geometry.model_edges(coupon, radius)
+    if mirror_formed is not None:
+        portions = cluster_signature_geometry.portions_from_signature(geometry["Signature"], radius)
+        if len(portions) != len(model["Edges"]):
+            raise DeviceAdapterError(f"{library_path}: {len(model['Edges'])} model edges for {len(portions)} chorded portions")
+        record, weights = mirror_formed_entry(mirror_formed, [portion["Portion"] for portion in portions], radius)
+        for edge, weight in zip(model["Edges"], weights):
+            edge["Weight"] = weight
+        model["MirrorFormed"] = record
     built = (generated or {}).get("Geometry", {})
     if built.get("SupportBox") is not None:
         # A device-plan coupon (decision 282): the generator's box (the signature's Box,
@@ -205,10 +218,13 @@ def generate_spatial_response_default_span_cap():
 
 
 def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangulation=DEFAULT_CAP_TRIANGULATION,
-                     cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, support_span_cap=None):
+                     cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, support_span_cap=None,
+                     mirror_formed=None):
     """generate_spatial_response.py --basis-only into `work`; returns the generator command.
     `support_span_cap` (x R) raises the generator's matching-support span bound for this
-    coupon alone (--support-span-cap; None = the generator default)."""
+    coupon alone (--support-span-cap; None = the generator default). `mirror_formed` (the
+    validated MirrorFormedContract) stamps the model's real / image split after the generation;
+    the generator itself reads the full signature unchanged."""
     work = Path(work)
     work.mkdir(parents=True, exist_ok=True)
     coupon_path = work / "coupon.json"
@@ -229,7 +245,7 @@ def generate_sources(coupon, work, *, radius, parameters, ring_size, cap_triangu
         failure = work / "generation-failure.json"
         reason = json.loads(failure.read_text()).get("Reason") if failure.is_file() else f"rc {result.returncode}"
         raise DeviceAdapterError(f"coupon {coupon['Id']}: the spatial generator stopped: {reason} (see {work / 'generate.log'})")
-    stamp_signature_model(work / "process-library.json", coupon, radius, generated)
+    stamp_signature_model(work / "process-library.json", coupon, radius, generated, mirror_formed=mirror_formed)
     return command
 
 
@@ -250,6 +266,169 @@ def content_hash(directory):
 
 
 OMITTED_METHOD = "OmittedRequirement"
+
+
+# The mirror-formed cluster REQUIREMENT CONTRACT (decision 557; round-3 DESIGN 4.4 (MF), part G G.C.1 /
+# X11; the spec: coupon-accuracy-assessment-20260913/mesher-design-round3-20261007/impl-B5/CONTRACT.md).
+# The identification EMITS a mirror-formed SpatialEdgeCluster as an ordinary Missing requirement
+# whose Signature is the FULL symmetric signature of the extended chain (real + image portions),
+# flagged `MirrorFormed: true` and carrying `MirrorFormedContract` {Version, Planes, Frame,
+# RealPortions, RealLengthOverR, ImageLengthOverR, RealFeatures, ExtendedFeature, Rule}.  This
+# adapter CONSUMES it: by default (`refuse`) such a coupon is recorded out of scope (today's
+# bytes); with `--mirror-formed admit` the contract is validated (fail closed by field), the
+# coupon is generated from the full signature unchanged (an image portion is an ordinary claim
+# of the generator) and the library ENTRY (the model of process-library.json) is stamped with
+# the real / image split: every model Edge gets Weight 1 (real) / 0 (image) so the placement
+# applies the model on the real half only, never an image claim.
+MIRROR_FORMED_MODES = ("refuse", "admit")
+MIRROR_FORMED_NOT_ADMITTED_METHOD = "MirrorFormedNotAdmitted"
+MIRROR_FORMED_CONTRACT_VERSION = 1
+# The contract's RealLengthOverR / ImageLengthOverR must agree with the signature's own portion
+# lengths within the identification's arc-fit tolerance (the serialised ends are 1e-6 R quantised;
+# an arc's length is read on the serialised circle).
+MIRROR_FORMED_LENGTH_TOLERANCE_OVER_R = cluster_signature_geometry.ARC_FIT_TOLERANCE_OVER_R
+MIRROR_FORMED_FRAME_TOLERANCE = 1.0e-9
+MIRROR_FORMED_ENTRY_RULE = ("decision 557 / round-3 DESIGN 4.4 (MF): the library entry of a mirror-formed cluster built from "
+                            "the FULL symmetric signature; RealPortions index Signature.Portions (0-based), EdgePortions names "
+                            "the portion of every model Edge (an arc portion's chords share it), Edges[].Weight is 1.0 on a "
+                            "real portion and 0.0 on an image portion: the placement applies the model on the real half only; "
+                            "RealLengthFraction = RealLengthOverR / (RealLengthOverR + ImageLengthOverR)")
+
+
+def signature_key_hash(signature):
+    """sha256 of the identification's Key of a signature (the nlohmann compact dump with sorted
+    keys = json.dumps(signature, separators=(',', ':'), sort_keys=True)): the requirement Hash."""
+    return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+
+
+def signature_portion_lengths_over_R(signature):
+    """The length over R of every Signature.Portions entry: a straight portion its chord, an arc
+    portion its length on the serialised circle (|sweep| x radius about the serialised centre
+    through the serialised midpoint; 2 pi r for a closed circle)."""
+    lengths = []
+    for entry in signature["Portions"]:
+        p = [float(v) for v in entry["P"]]
+        if "Arc" in entry:
+            arc = [float(v) for v in entry["Arc"]]
+            sweep, _ = cluster_signature_geometry._arc_sweep(p[:2], p[2:], arc[:2], arc[2:])
+            lengths.append(abs(sweep) * math.hypot(p[0] - arc[0], p[1] - arc[1]))
+        else:
+            lengths.append(math.hypot(p[2] - p[0], p[3] - p[1]))
+    return lengths
+
+
+def _contract_error(coupon, text):
+    return DeviceAdapterError(f"coupon {coupon.get('Id')}: MirrorFormedContract {text} (impl-B5 CONTRACT.md section 2)")
+
+
+def validate_mirror_formed_contract(coupon):
+    """The MirrorFormedContract of a planned mirror-formed SpatialEdgeCluster coupon, validated
+    field by field (CONTRACT.md section 2; every failure a named DeviceAdapterError): returns
+    {RealPortions, ImagePortions, Planes, Frame, RealLengthOverR, ImageLengthOverR, RealFeatures,
+    ExtendedFeature, Version}."""
+    if coupon.get("Topology") != "SpatialEdgeCluster":
+        raise _contract_error(coupon, f"is consumed for SpatialEdgeCluster only, not {coupon.get('Topology')!r}")
+    if coupon.get("MirrorFormed") is not True:
+        raise _contract_error(coupon, "needs MirrorFormed: true on the requirement")
+    contract = coupon.get("MirrorFormedContract")
+    if not isinstance(contract, dict):
+        raise _contract_error(coupon, "is missing: the requirement is MirrorFormed without the identification's contract "
+                                      "(a mergeable formed feature, or an identification that predates decision 557)")
+    if contract.get("Version") != MIRROR_FORMED_CONTRACT_VERSION:
+        raise _contract_error(coupon, f"Version {contract.get('Version')!r} is not {MIRROR_FORMED_CONTRACT_VERSION}")
+    signature = coupon.get("Signature")
+    geometry = coupon.get("Geometry") or {}
+    if not isinstance(signature, dict) or signature.get("Type") != "SpatialEdgeCluster" or not signature.get("Portions"):
+        raise _contract_error(coupon, "needs a SpatialEdgeCluster Signature with Portions on the requirement")
+    if geometry.get("Signature") != signature:
+        raise _contract_error(coupon, "Geometry.Signature differs from Signature")
+    portion_count = len(signature["Portions"])
+    if int(geometry.get("EdgeCount", -1)) != portion_count:
+        raise _contract_error(coupon, f"Geometry.EdgeCount {geometry.get('EdgeCount')!r} is not the portion count {portion_count}")
+    expected_hash = signature_key_hash(signature)
+    if coupon.get("Hash") != expected_hash:
+        raise _contract_error(coupon, f"Hash {str(coupon.get('Hash'))[:12]} is not sha256(Key) {expected_hash[:12]}")
+    real = contract.get("RealPortions")
+    if (not isinstance(real, list) or not real or any(isinstance(i, bool) or not isinstance(i, int) for i in real)
+            or sorted(set(real)) != real):
+        raise _contract_error(coupon, f"RealPortions {real!r} must be a non-empty sorted list of distinct ints")
+    if real[0] < 0 or real[-1] >= portion_count:
+        raise _contract_error(coupon, f"RealPortions {real!r} index outside the {portion_count} portions")
+    if len(real) == portion_count:
+        raise _contract_error(coupon, f"RealPortions {real!r} names every portion: not a mirror-formed cluster")
+    image = [i for i in range(portion_count) if i not in real]
+    planes = contract.get("Planes")
+    if (not isinstance(planes, list) or not planes or any(isinstance(k, bool) or not isinstance(k, int) or k < 0 for k in planes)
+            or len(set(planes)) != len(planes)):
+        raise _contract_error(coupon, f"Planes {planes!r} must be a non-empty list of distinct plane indices")
+    frame = contract.get("Frame")
+    if not isinstance(frame, dict) or not isinstance(frame.get("Origin"), list) or not isinstance(frame.get("Axes"), list):
+        raise _contract_error(coupon, "Frame must carry Origin [3] and Axes [3][3]")
+    origin = frame["Origin"]
+    axes = frame["Axes"]
+    if len(origin) != 3 or len(axes) != 3 or any(not isinstance(axis, list) or len(axis) != 3 for axis in axes):
+        raise _contract_error(coupon, "Frame must carry Origin [3] and Axes [3][3]")
+    try:
+        origin = [float(v) for v in origin]
+        axes = [[float(v) for v in axis] for axis in axes]
+    except (TypeError, ValueError) as error:
+        raise _contract_error(coupon, f"Frame is not numeric: {error}") from error
+    if not all(math.isfinite(v) for v in origin + [v for axis in axes for v in axis]):
+        raise _contract_error(coupon, "Frame is not finite")
+    # Decisions on the frame only (nothing of it is written): scalar 3-vector arithmetic.
+    dot3 = lambda a, b: a[0] * b[0] + a[1] * b[1] + a[2] * b[2]  # noqa: E731
+    for i, axis in enumerate(axes):
+        if abs(math.sqrt(dot3(axis, axis)) - 1.0) > MIRROR_FORMED_FRAME_TOLERANCE:
+            raise _contract_error(coupon, f"Frame.Axes[{i}] is not a unit vector")
+        for j in range(i):
+            if abs(dot3(axes[j], axis)) > MIRROR_FORMED_FRAME_TOLERANCE:
+                raise _contract_error(coupon, f"Frame.Axes[{j}] and [{i}] are not orthogonal")
+    x, y = axes[0], axes[1]
+    cross = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]
+    if any(abs(cross[d] - axes[2][d]) > MIRROR_FORMED_FRAME_TOLERANCE for d in range(3)):
+        raise _contract_error(coupon, "Frame.Axes is not right-handed (Axes[2] must be Axes[0] x Axes[1])")
+    lengths = signature_portion_lengths_over_R(signature)
+    recorded = {}
+    for key, indices in (("RealLengthOverR", real), ("ImageLengthOverR", image)):
+        value = contract.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) <= 0.0:
+            raise _contract_error(coupon, f"{key} {value!r} must be a positive finite number")
+        own = sum(lengths[i] for i in indices)
+        if abs(float(value) - own) > MIRROR_FORMED_LENGTH_TOLERANCE_OVER_R:
+            raise _contract_error(coupon, f"{key} {float(value)!r} disagrees with the signature's portions {indices} "
+                                          f"({own!r}) by more than {MIRROR_FORMED_LENGTH_TOLERANCE_OVER_R} R")
+        recorded[key] = float(value)
+    features = contract.get("RealFeatures")
+    if not isinstance(features, list) or any(isinstance(f, bool) or not isinstance(f, int) for f in features):
+        raise _contract_error(coupon, f"RealFeatures {features!r} must be a list of feature ids")
+    extended = contract.get("ExtendedFeature")
+    if isinstance(extended, bool) or not isinstance(extended, int):
+        raise _contract_error(coupon, f"ExtendedFeature {extended!r} must be a feature id")
+    if not isinstance(contract.get("Rule"), str) or not contract["Rule"].strip():
+        raise _contract_error(coupon, "Rule text is missing")
+    return {"Version": MIRROR_FORMED_CONTRACT_VERSION, "RealPortions": list(real), "ImagePortions": image, "Planes": list(planes),
+            "Frame": {"Origin": origin, "Axes": axes}, "RealLengthOverR": recorded["RealLengthOverR"],
+            "ImageLengthOverR": recorded["ImageLengthOverR"], "RealFeatures": list(features), "ExtendedFeature": extended}
+
+
+def mirror_formed_entry(contract, edge_portions, radius):
+    """The ENTRY stamp of a mirror-formed cluster's model (CONTRACT.md section 3): the
+    `MirrorFormed` record and the per-Edge Weight list (1.0 real / 0.0 image), from the validated
+    contract and the signature Portion index of every model Edge (the chorded portions' order of
+    cluster_signature_geometry.portions_from_signature = the order of model_edges)."""
+    edge_portions = [int(index) for index in edge_portions]
+    real = set(contract["RealPortions"])
+    weights = [1.0 if index in real else 0.0 for index in edge_portions]
+    if not any(weights) or all(weights):
+        raise DeviceAdapterError(f"mirror-formed entry: the model edges carry no real / image split ({edge_portions})")
+    total = contract["RealLengthOverR"] + contract["ImageLengthOverR"]
+    record = {"Version": MIRROR_FORMED_CONTRACT_VERSION, "RealPortions": list(contract["RealPortions"]),
+              "ImagePortions": list(contract["ImagePortions"]), "EdgePortions": edge_portions, "Planes": list(contract["Planes"]),
+              "RealLengthOverR": contract["RealLengthOverR"], "ImageLengthOverR": contract["ImageLengthOverR"],
+              "RealLengthFraction": contract["RealLengthOverR"] / total, "MatchingRadius": float(radius),
+              "RealFeatures": list(contract["RealFeatures"]), "ExtendedFeature": contract["ExtendedFeature"],
+              "Rule": MIRROR_FORMED_ENTRY_RULE}
+    return record, weights
 
 
 # Per-requirement options of `build --device` (HASH_PREFIX=VALUE, repeatable): a raised
@@ -307,7 +486,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                            cap_interior_spacing=DEFAULT_CAP_INTERIOR_SPACING, python=sys.executable, log=print,
                            omit_requirements=(), support_span_caps=(), support_span_cap_reason=None, element_caps=(),
                            element_cap_approval=None, element_cap_reason=None, nearkey_reuse_mode="off",
-                           nearkey_fallback_approval=None, nearkey_fallback_stop_records=(), nearkey_rule=None, nearkey_record_roots=()):
+                           nearkey_fallback_approval=None, nearkey_fallback_stop_records=(), nearkey_rule=None, nearkey_record_roots=(),
+                           mirror_formed="refuse"):
     """Steps 1-3: the source directories of every spatial coupon of the device under
     output/sources/<case id>; returns the device record (written to output/device-coupons.json).
     `omit_requirements`: Hash prefixes of Missing requirements the discovery gives no
@@ -318,9 +498,14 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
     element cap its registered cases carry as GateOverrides.MaximumElements (register_device_sources)
     - with their reason (and approval) texts, all recorded in the provenance and the record.
     `nearkey_reuse_mode` off | default | fallback (nearkey_reuse.py; the module docstring): a reused
-    coupon is recorded under NearKeyReuse and is not registered."""
+    coupon is recorded under NearKeyReuse and is not registered.
+    `mirror_formed` refuse | admit (decision 557; the contract block above): a mirror-formed spatial
+    coupon (requirement `MirrorFormed: true`) is recorded out of scope (refuse, the default) or
+    built from its full signature with the validated contract stamped on its entry (admit)."""
     span_caps = requirement_options(support_span_caps, float, "--support-span-cap")
     caps = requirement_options(element_caps, int, "--element-cap")
+    if mirror_formed not in MIRROR_FORMED_MODES:
+        raise DeviceAdapterError(f"--mirror-formed must be one of {MIRROR_FORMED_MODES}, not {mirror_formed!r}")
     if span_caps and not (isinstance(support_span_cap_reason, str) and support_span_cap_reason.strip()):
         raise DeviceAdapterError("--support-span-cap needs --support-span-cap-reason (recorded with the coupon)")
     if caps and not all(isinstance(text, str) and text.strip() for text in (element_cap_approval, element_cap_reason)):
@@ -408,6 +593,12 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                "Rule": "USER decision 428 (Option A) / decision 431 / DESIGN v2: nearkey_reuse.reuse_requirement on the "
                                        "generated "
                                        "basis before registration; a reused coupon is not registered / built; a refusal is recorded"},
+              "MirrorFormed": {"Mode": mirror_formed, "ContractVersion": MIRROR_FORMED_CONTRACT_VERSION,
+                               "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): a requirement flagged MirrorFormed with the "
+                                       "identification's MirrorFormedContract is built from its FULL symmetric signature and its "
+                                       "entry stamped with the real / image split (admit), or recorded out of scope with Method "
+                                       f"{MIRROR_FORMED_NOT_ADMITTED_METHOD} (refuse, the default); a MirrorFormed requirement "
+                                       "without a valid contract fails closed in admit mode"},
               "Coupons": [], "OutOfScope": []}
     for coupon in plan["Coupons"]:
         method = coupon["Preparation"]["Method"]
@@ -428,6 +619,21 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                          "Rule": "not a coupon of the Gmsh-only spatial library: built by its own family "
                                                  f"({method})"})
             continue
+        contract = None
+        if coupon.get("MirrorFormed"):
+            if mirror_formed == "refuse":
+                record["OutOfScope"].append({"Id": coupon["Id"], "Topology": coupon["Topology"],
+                                             "Method": MIRROR_FORMED_NOT_ADMITTED_METHOD,
+                                             "Reason": "a mirror-formed cluster requirement (MirrorFormed: true) is built only with "
+                                                       "--mirror-formed admit (decision 557)",
+                                             "FamilyMethod": method, "Hash": coupon.get("Hash"),
+                                             "MirrorFormedContract": coupon.get("MirrorFormedContract") is not None,
+                                             "DeviceOccurrences": coupon["DeviceOccurrences"],
+                                             "DeviceEdgeLength": coupon["DeviceEdgeLength"],
+                                             "Rule": "a mirror-formed requirement is not built by default: it stays Missing against "
+                                                     "the library (recorded, never silent)"})
+                continue
+            contract = validate_mirror_formed_contract(coupon)
         work = output / "work" / coupon["Id"]
         if work.exists():
             shutil.rmtree(work)
@@ -450,7 +656,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             span_cap_reason = support_span_cap_reason
         command = generate_sources(coupon, work, radius=radius, parameters=parameters, ring_size=ring_size,
                                    cap_triangulation=cap_triangulation, cap_interior_spacing=cap_interior_spacing,
-                                   python=python, support_span_cap=None if span_cap is None else span_cap[1])
+                                   python=python, support_span_cap=None if span_cap is None else span_cap[1],
+                                   mirror_formed=contract)
         write_process_toml(work / "process.toml", parameters, radius)
         digest, digests = content_hash(work)
         edge_count = int(coupon["Geometry"].get("EdgeCount", len(coupon["Geometry"].get("Edges", []))))
@@ -516,6 +723,12 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
             "CopiedSourceFiles": sorted(name for name in CONTENT_ROLES.values() if (work / name).is_file()),
             "ExcludedArtifacts": ["traces/ (per-source basis CSVs: regenerated by qualify from the trace basis; their "
                                   "digests are the basis contract's OutputSourceSHA256)", "coupon.json", "generate.log"]}
+        if contract is not None:
+            # Decision 557: the mirror-formed admission and the contract it was built under (the
+            # model's stamp is inside the content hash; this record is the provenance of it).
+            provenance["MirrorFormed"] = {"Mode": mirror_formed, "Contract": coupon["MirrorFormedContract"],
+                                          "RealPortions": contract["RealPortions"], "ImagePortions": contract["ImagePortions"],
+                                          "Rule": MIRROR_FORMED_ENTRY_RULE}
         if directory.exists():
             existing, _ = content_hash(directory)
             if existing != digest:
@@ -544,7 +757,8 @@ def prepare_device_sources(device_config, *, palace, output, manifest_path=PRODU
                                                          {"Value": element_cap[1], "Prefix": element_cap[0],
                                                           "Approval": element_cap_approval, "Reason": element_cap_reason}),
                                   "Interfaces": coupon["Interfaces"], "DeviceOccurrences": coupon["DeviceOccurrences"],
-                                  "DeviceEdgeLength": coupon["DeviceEdgeLength"], "Registration": None, "NearKeyReuse": near_key})
+                                  "DeviceEdgeLength": coupon["DeviceEdgeLength"], "Registration": None, "NearKeyReuse": near_key,
+                                  "MirrorFormed": None if contract is None else built_model.get("MirrorFormed")})
         log(f"{case_id}: source directory {status} ({edge_count} edges, requirement {coupon['Id']})"
             + (f"; near-key REUSED from {near_key['Donor']} ({near_key['ReuseMode']}): not registered"
                if near_key and near_key["Reused"] else ""))
@@ -725,6 +939,11 @@ def add_requirement_option_arguments(parser):
     parser.add_argument("--nearkey-record-root", action="append", default=[], metavar="REMOTE=LOCAL",
                         help="map the library's record paths (cluster) to a local mirror: the donors' stored (F) records are REQUIRED "
                              "for the T4 gate in default / fallback (decision 438 (2))")
+    parser.add_argument("--mirror-formed", choices=MIRROR_FORMED_MODES, default="refuse",
+                        help="with --device: admit = build a mirror-formed cluster requirement (MirrorFormed: true with the "
+                             "identification's MirrorFormedContract, decision 557) from its FULL symmetric signature and stamp its "
+                             "entry with the real / image split (Edges[].Weight 1 / 0); refuse (default) = record it out of scope "
+                             f"with Method {MIRROR_FORMED_NOT_ADMITTED_METHOD}")
 
 
 def requirement_option_kwargs(args):
@@ -733,7 +952,7 @@ def requirement_option_kwargs(args):
             "element_cap_reason": args.element_cap_reason, "nearkey_reuse_mode": args.nearkey_reuse,
             "nearkey_fallback_approval": args.nearkey_fallback_approval,
             "nearkey_fallback_stop_records": args.nearkey_fallback_stop_record, "nearkey_rule": args.nearkey_rule,
-            "nearkey_record_roots": args.nearkey_record_root}
+            "nearkey_record_roots": args.nearkey_record_root, "mirror_formed": args.mirror_formed}
 
 
 def main(argv=None):
