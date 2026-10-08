@@ -5817,13 +5817,16 @@ const RECIPE_SCOPE_GUARDS = [
      "(supervisor decision 391 MAJOR-2 (ii))"),
     ("ArcArcJoint", "build",
      "an arc metal side meeting a DIFFERENT arc side at a smooth joint (JointSmooth; two tagged " *
-     "arc runs, e.g. one circle serialised as a claim and a context entry or split at a cardinal " *
-     "angle): the joint table names no owner for two distinct arc runs, so the shared cap face " *
-     "has no adopting tube and the build crashes in finalize_tube_volumes! after the mesh " *
-     "(KeyError; the 32b0083dad90 build failure, decisions 497 / 500) - refused by name until " *
-     "mesher design round 3 class (11) installs the owner rule (the earlier tube in install order, " *
-     "same circle, same sigma, turn <= the part-split bound; DESIGN-part-M 1.3; interim guard of " *
-     "round 3 B2)"),
+     "arc runs) that are NOT one circle - centres or radii apart by more than the arc-fit " *
+     "tolerance max(64 tol, 2e-7 rho) (a tangent S-bend, a nested fillet) - or that carry " *
+     "opposite metal sides (sigma): untested, no acceptance coupon in the round-3 census " *
+     "(DESIGN R6). Two distinct runs of ONE circle, one sigma, turning by at most the part-split " *
+     "bound $(ARC_JOINT_TURN_BOUND) rad (one circle serialised as a claim and a context entry or " *
+     "split at a cardinal angle; the generator's chain rebuild writes identical digits) BUILD " *
+     "since mesher design round 3 class (11), fix 11 (part M 1.3; decisions 497 / 500 / 510): the " *
+     "joint table names the earlier tube in install order as the owner of the shared section (the " *
+     "32b0083dad90 KeyError of decision 500 had no owner; the round-3 B2 interim guard refused " *
+     "every such joint by name)"),
     ("TopRounding", "inputs",
      "rounded metal top edges (TopRounding > 0): the tube rings surround a sharp edge"),
     ("TrenchRounding", "inputs",
@@ -6278,15 +6281,35 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                     kind = other.kind == :arc ? "arc" : "straight"
                     # The exact part split of one arc turns by 0 (within rounding) and is smooth.
                     split = other.kind == :arc && other.arc.id == side.arc.id
-                    if smooth_here || split
-                        # Round 3 class (11) interim (part M 1.3; decisions 497 / 500): a smooth joint of
-                        # two DISTINCT arc runs has no owner in the joint table and crashes after the
-                        # mesh - refused by name here, before any CAD, until fix 11 lands.
-                        smooth_here && other.kind == :arc && !split &&
+                    if smooth_here && other.kind == :arc && !split
+                        # Round 3 class (11), fix 11 (DESIGN-part-M 1.3, DESIGN R6; decisions 497 / 500 /
+                        # 510): a smooth joint of two DISTINCT arc runs builds when the two sides are ONE
+                        # circle (centre and radius within the arc-fit tolerance: the generator's chain
+                        # rebuild, fix 2a, writes identical digits), ONE metal side (sigma) and the turn
+                        # lies within the exactness bound of a part split (adopt_joint_tags! copies the
+                        # owner's section nodes by local index WITHOUT a tilt); the joint table names the
+                        # earlier tube in install order as the owner. A tangent joint of two DIFFERENT
+                        # circles (an S-bend, a nested fillet) or of opposite metal sides stays guarded by
+                        # name (untested; no acceptance coupon in the round-3 census, R6).
+                        describe = "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
+                                   "meets arc $(other.arc.id) part $(other.arc.part) at $point"
+                        slack = arc_fit_tolerance(max(side.arc.rho, other.arc.rho), tolerance)
+                        norm(side.arc.centre .- other.arc.centre) <= slack && abs(side.arc.rho - other.arc.rho) <= slack ||
                             scope_error("ArcArcJoint",
-                                        "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
-                                        "meets arc $(other.arc.id) part $(other.arc.part) at $point with a " *
-                                        "smooth-joint turn of $turn rad (two distinct arc runs: no joint owner)")
+                                        describe * " with a smooth-joint turn of $turn rad on DISTINCT circles " *
+                                        "(centres $(side.arc.centre) / $(other.arc.centre), radii $(side.arc.rho) / " *
+                                        "$(other.arc.rho), beyond the arc-fit tolerance $slack): an arc-arc joint " *
+                                        "of distinct circles is untested")
+                        side.arc.sigma == other.arc.sigma ||
+                            scope_error("ArcArcJoint",
+                                        describe * " with opposite metal sides (sigma $(side.arc.sigma) / " *
+                                        "$(other.arc.sigma)): an arc-arc joint of distinct circles is untested")
+                        turn <= ARC_JOINT_TURN_BOUND ||
+                            scope_error("ArcJointTilt",
+                                        describe * " with a smooth-joint turn of $turn rad above the part-split " *
+                                        "bound $(ARC_JOINT_TURN_BOUND) (two distinct arc runs of one circle share " *
+                                        "a section by local index, without a tilt)")
+                    elseif smooth_here || split
                         turn <= ARC_SMOOTH_JOINT_TURN_BOUND ||
                             scope_error("ArcJointTilt",
                                         "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
@@ -7259,9 +7282,20 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                 other = layer_segments[other_index]
                 other.untubed && error("a smooth joint with an untubed side")
                 point = segment_end == 1 ? segment.start : segment.stop
-                # Owner: the arc part; between two parts of one arc, the earlier part.
-                owner_is_other = other.kind == :arc && (segment.kind != :arc || other.arc.part < segment.arc.part)
+                # Owner: the arc part; between two parts of one arc, the earlier part; between two
+                # DISTINCT arc runs of one circle (round 3 class (11), fix 11; part M 1.3) the run whose
+                # tubes come first in `tubes` - the install order puts every ArcTube before every
+                # EdgeTube in that order, and the install check below asserts it.
+                owner_is_other = other.kind == :arc && (segment.kind != :arc ||
+                    (other.arc.id != segment.arc.id ?
+                     layer_tube_index[other_index] < layer_tube_index[segment_index] :
+                     other.arc.part < segment.arc.part))
                 owner_is_other || continue      # recorded from the adopting side only
+                if segment.kind == :arc && other.arc.id != segment.arc.id
+                    other.rings == segment.rings ||
+                        error("the arc-arc smooth joint at $point joins arcs $(other.arc.id) and $(segment.arc.id) " *
+                              "of $(other.rings) and $(segment.rings) rings: a shared section needs one ring count")
+                end
                 for placement in 1:placements_count
                     adopting = layer_tube_index[segment_index] + placement
                     owning = layer_tube_index[other_index] + placement

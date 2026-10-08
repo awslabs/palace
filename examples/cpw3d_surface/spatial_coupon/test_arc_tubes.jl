@@ -26,7 +26,12 @@ guard_message(f) =
 # (a semantic corner). Both arc joints are exactly tangent (smooth). The signature rows are
 # the straight edges and one chord row per chord; the boundary carries the arc tags of
 # generate_spatial_response.ARC_BOUNDARY_COLUMNS; the box is pinned by a process library.
-function write_strip_inputs(directory; chord_degrees=5.0, plane=0.0, kink_degrees=0.0)
+# Round 3 class (11) (fix 11; part M 1.5 S1 / S3): `split_chords` = the chord indices after which
+# a NEW ArcId starts (the arc serialised as several same-circle entries meeting at smooth joints,
+# turn 0, JointSmooth 1), `ids` the ArcId of each member in loop order (default 1, 2, ...: a
+# permutation exercises the owner rule "the earlier tube in install order", not the smaller id).
+function write_strip_inputs(directory; chord_degrees=5.0, plane=0.0, kink_degrees=0.0,
+                            split_chords=Int[], ids=nothing)
     centre = (0.0, 1.0)
     rho = 1.0
     sweep = 90.0
@@ -94,12 +99,20 @@ function write_strip_inputs(directory; chord_degrees=5.0, plane=0.0, kink_degree
     classes =
         [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
     # Arc tags on the chord rows (vertex 2 .. n + 1 of the polygon); joint tags at both ends.
+    all(1 <= k < n for k in split_chords) || error("split_chords must lie inside the arc")
+    members = length(split_chords) + 1
+    ids = ids === nothing ? collect(1:members) : collect(ids)
+    length(ids) == members || error("one id per arc member")
     arcs = Vector{Any}(nothing, m)
     for i = 2:(n + 1)
-        arcs[i] = (1, centre[1], centre[2], rho, 1)
+        member = 1 + count(k -> i - 1 > k, split_chords)
+        arcs[i] = (ids[member], centre[1], centre[2], rho, 1)
     end
     joints = Vector{Any}(nothing, m)
     joints[2] = (0.0, 1)
+    for k in split_chords
+        joints[k + 2] = (0.0, 1)                # the same-circle joint of two members
+    end
     joints[n + 2] = (deg2rad(kink_degrees), kink_degrees <= 1.0e-4 * 180 / pi ? 1 : 0)
     # Corners (decision 320 convention): the concave corner; the perpendicular box exits of
     # Physical class ((lower, 0) and (0, upper)) keep the legacy corner; a kinked arc end.
@@ -190,12 +203,16 @@ function build_strip_coupon(
     stem="strip",
     chord_degrees=5.0,
     kink_degrees=0.0,
-    labels_only=false
+    labels_only=false,
+    split_chords=Int[],
+    ids=nothing
 )
     inputs = write_strip_inputs(
         directory;
         chord_degrees=chord_degrees,
-        kink_degrees=kink_degrees
+        kink_degrees=kink_degrees,
+        split_chords=split_chords,
+        ids=ids
     )
     mesh = joinpath(directory, "coupon-$stem.msh")
     census = joinpath(directory, "census-$stem.json")
@@ -952,6 +969,56 @@ end
     end
 end
 
+@testset "round 3 class (11), fix 11 (decisions 497 / 500 / 510; part M 1.3 / 1.5 S1 / S3): one circle serialised as two or three tagged runs builds fab + thin with the earlier tube owning every arc-arc shared section" begin
+    mktempdir() do directory
+        # S1: the strip's 90-degree arc (18 chords) split at the non-cardinal angle -55 degrees (after
+        # chord 7) into ids 1 and 2 meeting at a smooth joint: the former ScopeGuard[ArcArcJoint]
+        # stop (B2) is lifted; the shared section is the owner's (install order), SharedSections
+        # gains TubesPerSide per arc-arc joint, every tube volume closes (no KeyError after the mesh).
+        census, mesh, _ = build_strip_coupon(mkpath(joinpath(directory, "s1-fab")); fabricated=true,
+                                             stem="s1-fab", split_chords=[7])
+        tubes = census["PrismTubes"]
+        @test tubes["ArcTubes"]["Count"] == 4                 # two runs x top / bottom
+        @test tubes["ArcTubes"]["SharedSections"] == 6        # 2 arc / straight joints + 1 arc-arc, x 2
+        @test tubes["ArcTubes"]["JointEnds"] == 4 && tubes["ArcTubes"]["PartSplits"] == 0
+        @test tubes["TubeCount"] == 12
+        loop = census["Scope"]["MetalLoops"][1]
+        @test loop["Sides"] == 6 && loop["ArcParts"] == 2 && length(loop["Arcs"]) == 2
+        @test [arc["ArcId"] for arc in loop["Arcs"]] == [1, 2] &&
+              [arc["Chords"] for arc in loop["Arcs"]] == [7, 11]
+        @test isapprox(sum(arc["SweepDegrees"] for arc in loop["Arcs"]), 90.0; atol=1.0e-9)
+        arc_rows = [row for row in tubes["Tubes"] if haskey(row, "Arc")]
+        @test length(arc_rows) == 4 && isapprox(sum(row["Length"] for row in arc_rows), 2 * 0.5 * pi; atol=1.0e-9)
+        @test tubes["Prisms"] > 0 && tubes["Pyramids"] > 0 && isfile(mesh)
+        thin, thin_mesh, _ = build_strip_coupon(mkpath(joinpath(directory, "s1-thin")); fabricated=false,
+                                                stem="s1-thin", split_chords=[7])
+        @test thin["PrismTubes"]["ArcTubes"]["Count"] == 2 &&
+              thin["PrismTubes"]["ArcTubes"]["SharedSections"] == 3 &&
+              thin["PrismTubes"]["TubeCount"] == 6 && isfile(thin_mesh)
+        # The control: the same chords under one id (the round-2b strip) - the split build carries
+        # the same straight tubes and the same total arc length; its element count is within 5 %.
+        control, _, _ = build_strip_coupon(mkpath(joinpath(directory, "control")); fabricated=true, stem="control")
+        @test control["PrismTubes"]["ArcTubes"]["SharedSections"] == 4
+        elements(c) = c["PrismTubes"]["FarFieldBudgetPolicy"]["Elements"]
+        @test abs(elements(census) - elements(control)) <= 0.05 * elements(control)
+        # S3: three members (splits after chords 6 and 12) with the ids PERMUTED in loop order
+        # (3, 1, 2): the owner of each arc-arc section is the earlier tube in install order (= loop
+        # order), whatever the ids; the build equals the (1, 2, 3) build byte for byte - the ids
+        # name the tubes, they do not order them.
+        ordered, ordered_mesh, _ = build_strip_coupon(mkpath(joinpath(directory, "s3")); fabricated=true,
+                                                      stem="s3", split_chords=[6, 12])
+        permuted, permuted_mesh, _ = build_strip_coupon(mkpath(joinpath(directory, "s3p")); fabricated=true,
+                                                        stem="s3p", split_chords=[6, 12], ids=[3, 1, 2])
+        for c in (ordered, permuted)
+            @test c["PrismTubes"]["ArcTubes"]["Count"] == 6 && c["PrismTubes"]["ArcTubes"]["SharedSections"] == 8
+        end
+        @test [arc["ArcId"] for arc in ordered["Scope"]["MetalLoops"][1]["Arcs"]] == [1, 2, 3]
+        @test [arc["ArcId"] for arc in permuted["Scope"]["MetalLoops"][1]["Arcs"]] == [3, 1, 2]
+        @test elements(ordered) == elements(permuted)
+        @test bytes2hex(open(sha256, ordered_mesh)) == bytes2hex(open(sha256, permuted_mesh))
+    end
+end
+
 @testset "chord-count independence (V2, design A7 MINOR-7): 5-degree and 2.5-degree chords give the same tubes" begin
     mktempdir() do directory
         censuses = Dict{Float64, Any}()
@@ -1032,8 +1099,11 @@ end
     )
     @test occursin("0.1 <= theta <= 70.0", scope_guard_statement("ArcFaceEnds")) &&
           occursin("inner node circle", scope_guard_statement("ArcFaceEnds"))
-    @test occursin("names no owner", scope_guard_statement("ArcArcJoint")) &&
-          occursin("32b0083dad90", scope_guard_statement("ArcArcJoint"))
+    # Round 3 B3 (fix 11): the ArcArcJoint guard keeps its id for the residual untested class
+    # (distinct circles / opposite sigma); two runs of ONE circle build.
+    @test occursin("NOT one circle", scope_guard_statement("ArcArcJoint")) &&
+          occursin("32b0083dad90", scope_guard_statement("ArcArcJoint")) &&
+          occursin("fix 11", scope_guard_statement("ArcArcJoint"))
     @test occursin("rho - h_face < 3 Radius", scope_guard_statement("CollarFaceEnd")) &&
           occursin("CORNER kink", scope_guard_statement("CollarFaceEnd"))
     @test occursin(
@@ -1276,11 +1346,14 @@ end
             )
         )
         @test occursin("ScopeGuard[ArcFaceEnds]", message)
-        # Round 3 class (11) interim (decisions 497 / 500 / 510; part M 1.3): two DISTINCT tagged arc
+        # Round 3 class (11), fix 11 (decisions 497 / 500 / 510; part M 1.3): two DISTINCT tagged arc
         # runs of ONE circle (ids 1 and 2, 4 chords each) meeting at a smooth joint (turn 0,
-        # JointSmooth 1) fail closed at ScopeGuard[ArcArcJoint] naming both arcs - before the joint
-        # table that has no owner for them. The same chords under ONE id (the exact part split of
-        # one arc) pass the guards: the control.
+        # JointSmooth 1) BUILD their sides (two arc sides, each with the joint vertex as a smooth
+        # joint: no FreeEdgeEnds, no guard) - the B2 interim ScopeGuard[ArcArcJoint] is lifted for
+        # one circle; the same chords under ONE id (the exact part split) stay the control. The
+        # residual guard: the second run on a DISTINCT circle (radius 1.001 through the joint and
+        # the face-end vertex) fails closed by name; an opposite ArcSign disagrees with the plan-view
+        # metal side before the joint is reached.
         split_points =
             [(cosd(-90.0 + 45.0 * k / 8), 1.0 + sind(-90.0 + 45.0 * k / 8)) for k = 0:8]
         x_split = split_points[end][1]            # the arc leaves the x1 face at a 45-degree tilt
@@ -1289,10 +1362,11 @@ end
         split_classes = [
             i == ms - 2 || i == ms - 1 || i == ms ? "Continuation" : "Physical" for i = 1:ms
         ]
-        function split_loop(ids)
+        function split_loop(ids; second=(centre=(0.0, 1.0), radius=1.0, sign=1), points=split_loop_points)
             split_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, ms)
             for i = 2:9
-                split_arcs[i] = (id=ids[i - 1], centre=(0.0, 1.0), radius=1.0, sign=1)
+                tag = ids[i - 1] == 2 ? second : (centre=(0.0, 1.0), radius=1.0, sign=1)
+                split_arcs[i] = (id=ids[i - 1], tag...)
             end
             split_joints = Vector{Union{Nothing, NamedTuple}}(nothing, ms)
             split_joints[2] = (turn=0.0, smooth=true)
@@ -1301,7 +1375,7 @@ end
                 conductor=1,
                 plane=0.0,
                 hole=false,
-                points=split_loop_points,
+                points=points,
                 classes=split_classes,
                 arcs=split_arcs,
                 joints=split_joints
@@ -1317,15 +1391,43 @@ end
             edge_size=0.01,
             corner_radius=0.1
         )
-        message =
-            guard_message(() -> split_segments(split_loop(vcat(fill(1, 4), fill(2, 4)))))
-        @test occursin("ScopeGuard[ArcArcJoint]", message) &&
-              occursin("arc 1 part 1", message) &&
-              occursin("meets arc 2 part 1", message) &&
-              occursin("no joint owner", message)
+        two_runs = split_segments(split_loop(vcat(fill(1, 4), fill(2, 4))))
+        arc_sides = [s for s in two_runs if s.kind == :arc]
+        @test length(arc_sides) == 2 && [s.arc.id for s in arc_sides] == [1, 2]
+        joint_vertex = split_loop_points[6]
+        @test norm(arc_sides[1].stop .- [joint_vertex...]) <= 1.0e-12 &&
+              norm(arc_sides[2].start .- [joint_vertex...]) <= 1.0e-12
+        @test arc_sides[1].joints[2] !== nothing && arc_sides[2].joints[1] !== nothing &&
+              arc_sides[1].face_ends[2] === nothing && arc_sides[2].face_ends[2] !== nothing
         control = split_segments(split_loop(fill(1, 8)))
         @test count(s.kind == :arc for s in control) == 1 &&
               only(s for s in control if s.kind == :arc).face_ends[2] !== nothing
+        # Distinct circles: the second run's vertices on the circle of radius 1.001 through the
+        # joint vertex and the face-end vertex (its centre on their bisector, towards (0, 1)).
+        end_vertex = split_loop_points[10]
+        mid = 0.5 .* (joint_vertex .+ end_vertex)
+        half = 0.5 * hypot((end_vertex .- joint_vertex)...)
+        towards = (0.0, 1.0) .- mid
+        towards = towards ./ hypot(towards...)
+        c2 = mid .+ sqrt(1.001^2 - half^2) .* towards
+        a_j = atan(joint_vertex[2] - c2[2], joint_vertex[1] - c2[1])
+        a_e = atan(end_vertex[2] - c2[2], end_vertex[1] - c2[1])
+        distinct_points = copy(split_loop_points)
+        for k = 1:3
+            angle = a_j + (a_e - a_j) * k / 4
+            distinct_points[6 + k] = (c2[1] + 1.001 * cos(angle), c2[2] + 1.001 * sin(angle))
+        end
+        message = guard_message(() -> split_segments(split_loop(vcat(fill(1, 4), fill(2, 4));
+                                                                 second=(centre=c2, radius=1.001, sign=1),
+                                                                 points=distinct_points)))
+        @test occursin("ScopeGuard[ArcArcJoint]", message) && occursin("DISTINCT circles", message) &&
+              occursin("arc 1 part 1", message) && occursin("meets arc 2 part 1", message)
+        # Opposite metal sides: the same circle tagged sign -1 on the second run disagrees with the
+        # plan-view metal side before the joint is reached (the ArcSign check); the sigma reading of
+        # the guard is exercised on the sides directly.
+        message = guard_message(() -> split_segments(split_loop(vcat(fill(1, 4), fill(2, 4));
+                                                                 second=(centre=(0.0, 1.0), radius=1.0, sign=-1))))
+        @test occursin("disagrees with the tagged ArcSign", message)
     end
 end
 
