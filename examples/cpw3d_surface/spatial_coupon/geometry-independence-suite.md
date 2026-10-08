@@ -764,10 +764,13 @@ build census (`build-census`, the bound build report):
         rho - (Radius + PyramidHeight) does not reach the face plane (rho (1 - sin theta) <= the
         envelope; part M 3.3) fails closed; `ScopeGuard[ArcJointTilt]` - a SMOOTH joint
         (JointSmooth) turning by at most `ARC_SMOOTH_JOINT_TURN_BOUND` (5e-5 rad; the loop
-        end's `ARC_JOINT_TURN_BOUND` 1.6e-6 inside) and a CORNER joint turning by
-        `ARC_CORNER_JOINT_TURN_RANGE` (2e-4 rad .. 30 degrees; A3 (3): ball, caps, the
-        clearance along the arc, the kinked arc end an invariant corner) build; a smooth
-        turn above the bound, a corner turn below the range or above it fails closed
+        end's `ARC_JOINT_TURN_BOUND` 1.6e-6 inside) and a CORNER joint turning by the coupon
+        kind's `ARC_CORNER_JOINT_TURN_RANGE` (round 3 class (6), decision 556: the BUILT range per
+        kind - thin 2e-4 rad .. 30 degrees from round 2b, fabricated 2e-4 rad .. 15 degrees from
+        the round-3 B4 production-size builds once the E4 stop was found to be the tube cap-ray
+        node order on the periodic trench wall, fixed in `install_tube_curves!`; A3 (3): ball,
+        caps, the clearance along the arc, the kinked arc end an invariant corner) build; a smooth
+        turn above the bound, a corner turn below the kind's range or above it fails closed
         (`mesh_stage_contract.py` spells the same bounds, bound to the Julia source by
         `test_mesh_stage_contract_arcs.py`). Also from round 2b: `polygon_union_boundary`'s
         side probe never reaches past another sub-segment of the collar arrangement (a chord

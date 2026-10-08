@@ -10,12 +10,14 @@ from pathlib import Path
 import re
 import unittest
 
-from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_TILT_RANGE_DEGREES,
+from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_BUILT_CASES,
+                                 ARC_FACE_END_FAILED_CASES, ARC_FACE_END_TILT_RANGE_DEGREES,
                                  ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS,
-                                 RECIPE_SCOPE_GUARDS, THIN_FACE_END_TILT_BOUND_DEGREES, arc_part_count,
-                                 boundary_arc_arc_joints, boundary_arc_runs, metal_loop_arc_parts,
-                                 metal_loop_side_points, read_csv_rows, scope_classes, scope_guard_in_text,
-                                 validate_arc_tubes)
+                                 FABRICATED_FACE_END_TILT_BOUND_DEGREES, FACE_END_DERIVED_APEX_ABOVE_DEGREES,
+                                 RECIPE_SCOPE_GUARDS, THIN_FACE_END_TILT_BOUND_DEGREES, arc_crossing_slope,
+                                 arc_face_end_dominating_case, arc_part_count, boundary_arc_arc_joints,
+                                 boundary_arc_runs, metal_loop_arc_parts, metal_loop_side_points, read_csv_rows,
+                                 scope_classes, scope_guard_in_text, validate_arc_tubes, validate_tube_face_ends)
 import json
 
 HERE = Path(__file__).resolve().parent
@@ -172,6 +174,168 @@ class ValidateArcTubesTest(unittest.TestCase):
         rejected(lambda c: c["ArcTubes"].__setitem__("Count", 1), "arc summary does not match")
         rejected(lambda c: c["Tubes"][2]["Joints"][0].__setitem__("PlaneCut", True), "joint record")
         rejected(lambda c: c.pop("ArcTubes"), "arc summary does not match")
+
+
+class ArcFaceEndCrossingSlopeTest(unittest.TestCase):
+    """Mesher design round 3 class (9) 9H (part M 3.3 Fact 2; decisions 491 / 510 O9): an arc row's
+    face-end formulas read the arc's crossing slope max_u |s'(u)| = rho h / (r sqrt(r^2 - h^2)) at the
+    inner node circle r = rho - (R + h_pyr) in place of |tan theta|; the record's CrossingSlope is
+    bound to it, recomputed from the row's Arc and the census CouponBox."""
+
+    def test_slope_formula(self):
+        for theta in (2.1, 45.0, 74.3):
+            for rho in (1.56, 58.5):
+                h = rho * math.sin(math.radians(theta))
+                self.assertAlmostEqual(arc_crossing_slope(rho, 0.0, h) / math.tan(math.radians(theta)), 1.0, places=12)
+                self.assertGreater(arc_crossing_slope(rho, 0.04, h), math.tan(math.radians(theta)))
+                self.assertAlmostEqual(arc_crossing_slope(1e9 * rho, 0.04, 1e9 * h) / math.tan(math.radians(theta)), 1.0, places=8)
+        # the mesher's value on the 32dc558f4810 geometry (rho 58.5, h 56.324, envelope 0.04)
+        self.assertAlmostEqual(arc_crossing_slope(58.5, 0.04, 56.324169260983396), 3.5997093489397574, places=12)
+        with self.assertRaisesRegex(ValueError, "does not reach the face plane"):
+            arc_crossing_slope(1.0, 0.04, 0.97)
+        with self.assertRaisesRegex(ValueError, "envelope"):
+            arc_crossing_slope(1.0, 1.0, 0.5)
+
+    def face_end_row(self, slope_scale=1.0, drop_slope=False, theta=45.0):
+        radius, h_pyr, lc = 0.03175, 0.0079375, 0.05
+        rho, centre = 1.5 / math.sin(math.radians(theta)), [0.0, 0.0]
+        box = ([-2.0, -1.0, -1.0], [1.5, 3.0, 1.0])      # the x1 face at 1.5 = rho sin theta from the centre
+        slope = arc_crossing_slope(rho, radius + h_pyr, 1.5)
+        lc_end = max(lc, 4.0 * h_pyr * slope)
+        m = max(1, math.ceil(2.0 * (radius + h_pyr) * slope / lc_end * (1.0 - 1e-9)))
+        shear = (radius + h_pyr) * slope
+        margin = (rho - 1.5) / (radius + h_pyr)
+        record = {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": m, "EndSpacing": lc_end,
+                  "EnvelopeShear": shear, "LayerThicknessRange": [lc_end - shear / m, lc_end + shear / m],
+                  "OverLength": shear + lc, "Kappa": [0.0, 0.0], "CrossingSlope": slope * slope_scale,
+                  "NodeCircleMargin": margin}
+        if drop_slope:
+            record.pop("CrossingSlope")
+        row = {"Arc": {"ArcId": 1, "Centre": centre, "Radius": rho, "Sign": 1, "Part": 1, "Parts": 1},
+               "FaceEnds": [record]}
+        return row, lc, {"Radius": radius, "PyramidHeight": h_pyr}, box, lc_end, slope
+
+    def test_arc_row_binds_the_node_circle_margin(self):
+        # Round 3 B4 review (decision 579): the margin is recorded, recomputed and bound; without the kind
+        # (`fabricated` None: the per-record reader) the dominance is not judged.
+        row, lc, section, box, lc_end, _ = self.face_end_row()
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box), lc_end)
+        row["FaceEnds"][0]["NodeCircleMargin"] *= 1.0 + 1e-9
+        with self.assertRaisesRegex(ValueError, "NodeCircleMargin does not follow"):
+            validate_tube_face_ends(row, lc, section, box=box)
+        row["FaceEnds"][0].pop("NodeCircleMargin")
+        with self.assertRaisesRegex(ValueError, "lacks its NodeCircleMargin"):
+            validate_tube_face_ends(row, lc, section, box=box)
+
+    def test_arc_row_must_be_dominated_by_a_built_case(self):
+        # The default 45-degree fixture row (rho 2.12, margin 15.6 fabricated envelopes at R 31.75 + 7.94 nm)
+        # is dominated (fe45 / fe70r13p3 / fe75p5r13p3 fabricated); the default fe70 geometry (rho 1.596,
+        # 2.4 envelopes) - the record run's measured failure - is dominated by nothing on either kind.
+        row, lc, section, box, lc_end, _ = self.face_end_row()
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box, fabricated=True), lc_end)
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box, fabricated=False), lc_end)
+        steep, lc, section, box, lc_end, _ = self.face_end_row(theta=70.0)
+        # (2.426 at this fixture's 7.94-nm pyramid height; 2.4218 at the production 8 nm)
+        self.assertAlmostEqual(steep["FaceEnds"][0]["NodeCircleMargin"], 2.4218, places=1)
+        for fabricated in (True, False):
+            with self.assertRaisesRegex(ValueError, "dominated by no built-and-passed case"):
+                validate_tube_face_ends(steep, lc, section, box=box, fabricated=fabricated)
+        self.assertEqual(validate_tube_face_ends(steep, lc, section, box=box), lc_end)   # kind unknown: not judged
+
+    def test_arc_row_binds_the_recomputed_slope(self):
+        row, lc, section, box, lc_end, slope = self.face_end_row()
+        self.assertEqual(validate_tube_face_ends(row, lc, section, box=box), lc_end)
+        self.assertGreater(slope, math.tan(math.radians(45.0)))
+        with self.assertRaisesRegex(ValueError, "CrossingSlope does not follow"):
+            validate_tube_face_ends(self.face_end_row(slope_scale=1.0 + 1e-9)[0], lc, section, box=box)
+        with self.assertRaisesRegex(ValueError, "lacks its CrossingSlope"):
+            validate_tube_face_ends(self.face_end_row(drop_slope=True)[0], lc, section, box=box)
+        with self.assertRaisesRegex(ValueError, "needs the census CouponBox"):
+            validate_tube_face_ends(row, lc, section)
+        # the straight law (tan theta) is NOT the arc's: at 74.3 degrees (the 32dc558f4810 tilt) the
+        # arc record's spacing / layers do not follow a straight row's formulas
+        steep, lc, section, box, lc_end, slope = self.face_end_row(theta=74.3)
+        self.assertEqual(validate_tube_face_ends(steep, lc, section, box=box), lc_end)
+        self.assertGreater(slope, 1.5 * math.tan(math.radians(74.3)))
+        steep.pop("Arc")
+        steep["FaceEnds"][0]["CrossingSlope"] = math.tan(math.radians(74.3))
+        with self.assertRaisesRegex(ValueError, "face-end rule"):
+            validate_tube_face_ends(steep, lc, section, box=box)
+
+    def test_straight_row_slope_is_tan_theta(self):
+        radius, h_pyr, lc, theta = 0.03175, 0.0079375, 0.05, 45.0
+        slope = math.tan(math.radians(theta))
+        lc_end = max(lc, 4.0 * h_pyr * slope)
+        m = max(1, math.ceil(2.0 * (radius + h_pyr) * slope / lc_end * (1.0 - 1e-9)))
+        shear = (radius + h_pyr) * slope
+        record = {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": m, "EndSpacing": lc_end,
+                  "EnvelopeShear": shear, "LayerThicknessRange": [lc_end - shear / m, lc_end + shear / m],
+                  "OverLength": shear + lc, "Kappa": [-slope, 0.0], "CrossingSlope": slope}
+        section = {"Radius": radius, "PyramidHeight": h_pyr}
+        self.assertEqual(validate_tube_face_ends({"FaceEnds": [record]}, lc, section), lc_end)
+        record.pop("CrossingSlope")          # a pre-9H straight record carries none
+        self.assertEqual(validate_tube_face_ends({"FaceEnds": [record]}, lc, section), lc_end)
+        record["CrossingSlope"] = 1.01 * slope
+        with self.assertRaisesRegex(ValueError, "CrossingSlope does not follow"):
+            validate_tube_face_ends({"FaceEnds": [record]}, lc, section)
+
+
+class FaceEndDerivedApexTest(unittest.TestCase):
+    """Mesher design round 3 class (8) 8A-bitwise (part M 5.2; decisions 510 O8 / 563): above the kind's largest
+    built face-end tilt the block's pyramids take h_pyr_end = min(h_pyr, TangentialSize / (4 s)); the
+    record's PyramidHeight is bound, and the apex / regime formulas read it. Production thin section:
+    EdgeSize 2 nm, 5 rings -> R 62 nm, h_pyr 16 nm; fabricated: R 31.75 nm, h_pyr 8 nm; lc 50 nm."""
+
+    def straight_record(self, theta, radius, h_pyr, lc, derived, drop=False):
+        slope = math.tan(math.radians(theta))
+        apex_height = min(h_pyr, lc / (4.0 * slope)) if derived else h_pyr
+        lc_end = max(lc, 4.0 * apex_height * slope)
+        m = max(1, math.ceil(2.0 * (radius + h_pyr) * slope / lc_end * (1.0 - 1e-9)))
+        shear = (radius + h_pyr) * slope
+        record = {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": m, "EndSpacing": lc_end,
+                  "EnvelopeShear": shear, "LayerThicknessRange": [lc_end - shear / m, lc_end + shear / m],
+                  "OverLength": shear + lc, "Kappa": [-slope, 0.0], "CrossingSlope": slope, "PyramidHeight": apex_height}
+        if drop:
+            record.pop("PyramidHeight")
+        return {"FaceEnds": [record]}, lc_end, apex_height
+
+    def test_thin_above_70_takes_the_derived_height(self):
+        radius, h_pyr, lc = 0.062, 0.016, 0.05
+        section = {"Radius": radius, "PyramidHeight": h_pyr}
+        self.assertEqual(FACE_END_DERIVED_APEX_ABOVE_DEGREES, {"fabricated": 70.0, "thin": 70.0})
+        # thin 74.3 degrees (the 32dc558f4810 crossing): h_pyr_end 3.49 nm, lc_end 50 nm, m 12 (E3's block
+        # read lc_end 247 nm, m 3)
+        row, lc_end, apex_height = self.straight_record(74.3, radius, h_pyr, lc, derived=True)
+        self.assertEqual(validate_tube_face_ends(row, lc, section, fabricated=False), lc_end)
+        self.assertEqual(lc_end, lc)
+        self.assertAlmostEqual(apex_height, lc / (4.0 * math.tan(math.radians(74.3))))
+        self.assertEqual(row["FaceEnds"][0]["Layers"], 12)
+        # the A2 (4) block (h_pyr) is refused there ...
+        with self.assertRaisesRegex(ValueError, "PyramidHeight does not follow"):
+            validate_tube_face_ends(self.straight_record(74.3, radius, h_pyr, lc, derived=False)[0], lc, section,
+                                    fabricated=False)
+        with self.assertRaisesRegex(ValueError, "lacks its PyramidHeight"):
+            validate_tube_face_ends(self.straight_record(74.3, radius, h_pyr, lc, derived=True, drop=True)[0], lc,
+                                    section, fabricated=False)
+        # ... and at 70 degrees (the V10 thin 70, the thin admission top), 45 (the stored O4 thin) and
+        # below, the A2 (4) block holds, with or without the field (decision 563: no built block changes)
+        for theta in (70.0, 45.0, 20.0):
+            row, lc_end, apex_height = self.straight_record(theta, radius, h_pyr, lc, derived=False)
+            self.assertEqual(apex_height, h_pyr)
+            self.assertEqual(validate_tube_face_ends(row, lc, section, fabricated=False), lc_end)
+            row, lc_end, _ = self.straight_record(theta, radius, h_pyr, lc, derived=False, drop=True)
+            self.assertEqual(validate_tube_face_ends(row, lc, section, fabricated=False), lc_end)
+        # the FABRICATED kind keeps the A2 (4) block at 70 and derives above it
+        fab = {"Radius": 0.03175, "PyramidHeight": 0.008}
+        row, lc_end, _ = self.straight_record(70.0, 0.03175, 0.008, lc, derived=False)
+        self.assertEqual(validate_tube_face_ends(row, lc, fab, fabricated=True), lc_end)
+        row, lc_end, apex_height = self.straight_record(75.5, 0.03175, 0.008, lc, derived=True)
+        self.assertEqual(validate_tube_face_ends(row, lc, fab, fabricated=True), lc_end)
+        self.assertEqual(row["FaceEnds"][0]["Layers"], 7)
+        self.assertLess(apex_height, 0.008)
+        # without the kind no derivation is assumed (a record's PyramidHeight = h_pyr is still bound)
+        row, lc_end, _ = self.straight_record(75.5, 0.03175, 0.008, lc, derived=False)
+        self.assertEqual(validate_tube_face_ends(row, lc, fab), lc_end)
 
 
 ARC_ARC = HERE / "testdata" / "arc-arc-joints"
@@ -369,19 +533,77 @@ class ArcScopeGuardsTest(unittest.TestCase):
         # Round 2b (decision 437 (3)): the tested ranges that lift the guards, parsed from the mesher.
         smooth = re.search(r"const ARC_SMOOTH_JOINT_TURN_BOUND = ([0-9.e+-]+)", source).group(1)
         self.assertEqual(float(smooth), ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
-        corner = re.search(r"const ARC_CORNER_JOINT_TURN_RANGE = \(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\)", source)
-        self.assertEqual(float(corner.group(1)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
-        self.assertAlmostEqual(math.radians(float(corner.group(2))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[1])
+        # Round 3 class (6) (decision 556): the corner range is the BUILT range PER KIND, one named
+        # constant with a fabricated and a thin field in both lists.
+        corner = re.search(r"const ARC_CORNER_JOINT_TURN_RANGE = \(fabricated=\(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\), "
+                           r"thin=\(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\)\)", source)
+        self.assertIsNotNone(corner)
+        self.assertEqual(float(corner.group(1)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["fabricated"][0])
+        self.assertAlmostEqual(math.radians(float(corner.group(2))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["fabricated"][1])
+        self.assertEqual(float(corner.group(3)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["thin"][0])
+        self.assertAlmostEqual(math.radians(float(corner.group(4))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["thin"][1])
+        self.assertEqual(set(ARC_CORNER_JOINT_TURN_RANGE_RADIANS), {"fabricated", "thin"})
+        self.assertEqual((float(corner.group(2)), float(corner.group(4))), (15.0, 30.0))
+        self.assertLess(ARC_CORNER_JOINT_TURN_RANGE_RADIANS["fabricated"][1], ARC_CORNER_JOINT_TURN_RANGE_RADIANS["thin"][1])
         # Round 3 (decisions 497 / 510 MAJOR-1 / O6): ONE range constant, (lowest built, largest built), in
         # both lists; the thin tested-range bound of 8B likewise.
-        tilt = re.search(r"const ARC_FACE_END_TILT_RANGE = \(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\)", source)
-        self.assertEqual((float(tilt.group(1)), float(tilt.group(2))), ARC_FACE_END_TILT_RANGE_DEGREES)
-        self.assertEqual(ARC_FACE_END_TILT_RANGE_DEGREES, (0.1, 70.0))
+        # (decisions 563 B / 566, the B4 record run: the top per kind - thin 70, fabricated 75.5)
+        tilt = re.search(r"const ARC_FACE_END_TILT_RANGE = \(fabricated=\(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\), "
+                         r"thin=\(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\)\)", source)
+        self.assertIsNotNone(tilt)
+        self.assertEqual({"fabricated": (float(tilt.group(1)), float(tilt.group(2))),
+                          "thin": (float(tilt.group(3)), float(tilt.group(4)))}, ARC_FACE_END_TILT_RANGE_DEGREES)
+        self.assertEqual(ARC_FACE_END_TILT_RANGE_DEGREES, {"fabricated": (0.1, 75.5), "thin": (0.1, 70.0)})
         thin = re.search(r"const THIN_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
         self.assertEqual(float(thin), THIN_FACE_END_TILT_BOUND_DEGREES)
-        self.assertLessEqual(ARC_FACE_END_TILT_RANGE_DEGREES[1], THIN_FACE_END_TILT_BOUND_DEGREES)
+        # Round 3 8A-bitwise (decision 510 O8): the per-kind thresholds of the derived face-end pyramid height.
+        # Round 3 B4 (decision 566): the fabricated tested-range bound, the kind's largest built straight tilt.
+        fab_bound = re.search(r"const FABRICATED_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
+        self.assertEqual(float(fab_bound), FABRICATED_FACE_END_TILT_BOUND_DEGREES)
+        self.assertEqual(FABRICATED_FACE_END_TILT_BOUND_DEGREES, 75.5)
+        # the derived apex applies in (70, 75.5]: the A2 block below, the record run's builds above
+        self.assertLess(FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"], FABRICATED_FACE_END_TILT_BOUND_DEGREES)
+        # (decision 563: each kind's largest BUILT tilt; the thin one IS the thin admission top)
+        apex = re.search(r"const FACE_END_DERIVED_APEX_ABOVE = \(fabricated=deg2rad\(([0-9.]+)\), thin=THIN_FACE_END_TILT_BOUND\)",
+                         source)
+        self.assertIsNotNone(apex)
+        self.assertEqual({"fabricated": float(apex.group(1)), "thin": float(thin)}, FACE_END_DERIVED_APEX_ABOVE_DEGREES)
+        self.assertLess(FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"], ARC_FACE_END_TILT_RANGE_DEGREES["fabricated"][1])
+        self.assertEqual(ARC_FACE_END_TILT_RANGE_DEGREES["fabricated"][1], FABRICATED_FACE_END_TILT_BOUND_DEGREES)
+        self.assertEqual(FACE_END_DERIVED_APEX_ABOVE_DEGREES["thin"], THIN_FACE_END_TILT_BOUND_DEGREES)
+        self.assertLessEqual(ARC_FACE_END_TILT_RANGE_DEGREES["thin"][1], THIN_FACE_END_TILT_BOUND_DEGREES)
         self.assertLess(ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
-        self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
+        # Round 3 B4 review (decision 579 MAJOR-3 (b)): the built-and-passed cases (case, tilt, margin) per
+        # kind and the two measured failures, spelled identically; the tilt range is the table's projection.
+        block = re.search(r"const ARC_FACE_END_BUILT_CASES = \((.*?)\n\)\n", source, re.S).group(1)
+        julia_cases = {}
+        for kind, body in re.findall(r"(fabricated|thin)=\[(.*?)\]", block, re.S):
+            julia_cases[kind] = tuple((m.group(1), float(m.group(2)), float(m.group(3))) for m in
+                                      re.finditer(r'\(case="([a-z0-9]+)", tilt=([0-9.]+), margin=([0-9.]+)\)', body))
+        self.assertEqual(julia_cases, ARC_FACE_END_BUILT_CASES)
+        failed = re.search(r"const ARC_FACE_END_FAILED_CASES = \[(.*?)\n\]\n", source, re.S).group(1)
+        self.assertEqual(tuple((m.group(1), m.group(2), float(m.group(3)), float(m.group(4))) for m in
+                               re.finditer(r'\(case="([a-z0-9]+)", kind="(fabricated|thin)", tilt=([0-9.]+), margin=([0-9.]+),',
+                                           failed)), ARC_FACE_END_FAILED_CASES)
+        for kind in ("fabricated", "thin"):
+            cases = ARC_FACE_END_BUILT_CASES[kind]
+            self.assertEqual((min(c[1] for c in cases), max(c[1] for c in cases)), ARC_FACE_END_TILT_RANGE_DEGREES[kind])
+            self.assertTrue(all(c[2] > 1.0 for c in cases))
+        for case, kind, tilt, margin in ARC_FACE_END_FAILED_CASES:
+            self.assertIsNone(arc_face_end_dominating_case(kind == "fabricated", tilt, margin))
+        # the admitted region: the 32dc558f4810 fabricated face end (74.32 deg, 54 envelopes) is dominated by
+        # fe75p5r13p3; a synthetic at 60 deg / 6.3 envelopes (the C1 0.5 R concave fixture) by nothing
+        self.assertEqual(arc_face_end_dominating_case(True, 74.32, 54.0)[0], "fe75p5r13p3")
+        self.assertIsNone(arc_face_end_dominating_case(True, 74.32, 10.0))
+        self.assertIsNone(arc_face_end_dominating_case(True, 59.0, 6.3))
+        self.assertIsNone(arc_face_end_dominating_case(False, 74.32, 54.0))
+        self.assertEqual(arc_face_end_dominating_case(False, 45.0, 8.0)[0], "fe45")
+        self.assertIsNone(arc_face_end_dominating_case(False, 46.0, 8.0))
+        for kind in (True, False):
+            for case in ARC_FACE_END_BUILT_CASES["fabricated" if kind else "thin"]:
+                self.assertIsNotNone(arc_face_end_dominating_case(kind, case[1], case[2]))   # each case dominates itself
+        for kind in ("fabricated", "thin"):
+            self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[kind][0])
 
 
 if __name__ == "__main__":
