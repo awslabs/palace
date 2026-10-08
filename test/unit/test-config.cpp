@@ -267,8 +267,12 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
 #endif
     json adaptive = uniform;
     adaptive["AdaptiveTol"] = 1.0e-3;
+#if defined(MFEM_USE_MUMPS)
+    CHECK_NOTHROW(IoData(make_config(adaptive, json::object()), false));
+#endif
+    adaptive["AdaptiveCircuitSynthesis"] = true;
     CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
-                      Catch::Matchers::ContainsSubstring("uniform frequency sweeps"));
+                      Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
     const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
     CHECK_THROWS_WITH(IoData(make_config(uniform, wave), false),
                       Catch::Matchers::ContainsSubstring("does not support wave ports"));
@@ -280,6 +284,11 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(saved, false));
     saved["Boundaries"]["Postprocessing"] = {
         {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {4}}, {"Type", "Electric"}}}}};
+    CHECK_THROWS_WITH(IoData(saved, false),
+                      Catch::Matchers::ContainsSubstring("does not compute surface flux"));
+    saved["Solver"]["Substructuring"].erase("Mode");
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-6;
     CHECK_THROWS_WITH(IoData(saved, false),
                       Catch::Matchers::ContainsSubstring("does not compute surface flux"));
 #endif

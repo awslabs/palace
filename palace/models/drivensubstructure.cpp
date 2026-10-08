@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <fstream>
+#include <limits>
 #include <utility>
+#include <Eigen/Dense>
 #include "fem/substructure.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
@@ -757,14 +760,7 @@ std::vector<double> DrivenSubstructure::SourceFingerprint(const ComplexVector &b
 namespace
 {
 
-constexpr int kDrivenModelMagic = 0x31565244;  // "DRV1"
-
-template <typename T>
-void WriteVec(std::ofstream &f, const std::vector<T> &v)
-{
-  f.write(reinterpret_cast<const char *>(v.data()),
-          static_cast<std::streamsize>(sizeof(T) * v.size()));
-}
+constexpr int kDrivenModelMagic = 0x31565244;  // "DRV1" (and later versions)
 
 template <typename T>
 void ReadVec(std::ifstream &f, std::vector<T> &v, std::size_t n)
@@ -812,77 +808,271 @@ bool DrivenSubstructureModel::SameSource(const double *a, const double *b)
   return diff <= tol * scale;
 }
 
-std::size_t DrivenSubstructureModel::HeaderBytes() const
+void BarycentricInterpolant::AddSample(double omega,
+                                       const std::vector<std::complex<double>> &x)
 {
-  return sizeof(int) * 8 + sizeof(double) * signatures.size() +
-         sizeof(double) * env_fp.size() + sizeof(int) * excitations.size() +
-         sizeof(double) * exc_fp.size() + sizeof(int) * ports.size() +
-         sizeof(double) * omega.size();
+  // Orthonormalize x against the previous samples (classical Gram-Schmidt, twice), for the
+  // factor R of the samples. The snapshots {x_j, iω_j x_j} are [Q 0; 0 Q] [R; R iΩ], so
+  // their MRI weights are the right singular vector of [R; R iΩ] of least singular value.
+  const std::size_t m = z.size(), n = x.size();
+  MFEM_VERIFY(m == 0 || Q[0].size() == n, "Samples of different sizes!");
+  std::vector<std::complex<double>> v(x), r(m + 1, 0.0);
+  for (int pass = 0; pass < 2; pass++)
+  {
+    for (std::size_t i = 0; i < m; i++)
+    {
+      std::complex<double> d = 0.0;
+      for (std::size_t q = 0; q < n; q++)
+      {
+        d += std::conj(Q[i][q]) * v[q];
+      }
+      for (std::size_t q = 0; q < n; q++)
+      {
+        v[q] -= d * Q[i][q];
+      }
+      r[i] += d;
+    }
+  }
+  double nv = 0.0;
+  for (const auto &c : v)
+  {
+    nv += std::norm(c);
+  }
+  r[m] = std::sqrt(nv);
+  for (auto &c : v)
+  {
+    c = (nv > 0.0) ? c / r[m].real() : 0.0;
+  }
+  Q.push_back(std::move(v));
+  std::vector<std::complex<double>> R1((m + 1) * (m + 1), 0.0);
+  for (std::size_t j = 0; j < m; j++)
+  {
+    std::copy(R.begin() + j * m, R.begin() + (j + 1) * m, R1.begin() + j * (m + 1));
+  }
+  std::copy(r.begin(), r.end(), R1.begin() + m * (m + 1));
+  R = std::move(R1);
+  z.push_back(omega);
+
+  const int k = static_cast<int>(m + 1);
+  Eigen::MatrixXcd A(2 * k, k);
+  for (int j = 0; j < k; j++)
+  {
+    for (int i = 0; i < k; i++)
+    {
+      A(i, j) = R[j * k + i];
+      A(k + i, j) = R[j * k + i] * std::complex<double>(0.0, z[j]);
+    }
+  }
+  Eigen::JacobiSVD<Eigen::MatrixXcd, Eigen::ComputeFullV> svd(A);
+  const auto q = svd.matrixV().col(k - 1);
+  w.assign(q.data(), q.data() + k);
 }
 
-std::size_t DrivenSubstructureModel::RecordBytes() const
+std::vector<std::complex<double>> BarycentricInterpolant::Coefficients(
+    const std::vector<double> &z, const std::vector<std::complex<double>> &w, double omega)
+{
+  std::vector<std::complex<double>> a(z.size(), 0.0);
+  std::complex<double> sum = 0.0;
+  for (std::size_t j = 0; j < z.size(); j++)
+  {
+    if (std::abs(omega - z[j]) <= 1.0e-14 * std::abs(z[j]))
+    {
+      std::fill(a.begin(), a.end(), 0.0);
+      a[j] = 1.0;
+      return a;
+    }
+    a[j] = w[j] / (omega - z[j]);
+    sum += a[j];
+  }
+  for (auto &c : a)
+  {
+    c /= sum;
+  }
+  return a;
+}
+
+std::vector<std::complex<double>> BarycentricInterpolant::Evaluate(double omega) const
+{
+  // x̃ = Q (R a).
+  const std::size_t m = z.size(), n = m ? Q[0].size() : 0;
+  const auto a = Coefficients(z, w, omega);
+  std::vector<std::complex<double>> y(m, 0.0), x(n, 0.0);
+  for (std::size_t j = 0; j < m; j++)
+  {
+    for (std::size_t i = 0; i <= j; i++)
+    {
+      y[i] += R[j * m + i] * a[j];
+    }
+  }
+  for (std::size_t i = 0; i < m; i++)
+  {
+    for (std::size_t q = 0; q < n; q++)
+    {
+      x[q] += Q[i][q] * y[i];
+    }
+  }
+  return x;
+}
+
+double BarycentricInterpolant::FindMaxError() const
+{
+  MFEM_VERIFY(z.size() >= 2, "The next sample needs two samples to bound the band!");
+  const auto [lo, hi] = std::ranges::minmax(z);
+  constexpr int n = 1000000;
+  double best = lo, dmin = std::numeric_limits<double>::infinity();
+  for (int i = 1; i < n; i++)
+  {
+    const double omega = lo + (hi - lo) * i / n;
+    std::complex<double> d = 0.0;
+    for (std::size_t j = 0; j < z.size(); j++)
+    {
+      d += w[j] / (omega - z[j]);
+    }
+    if (std::abs(d) < dmin)
+    {
+      dmin = std::abs(d);
+      best = omega;
+    }
+  }
+  return best;
+}
+
+std::array<std::size_t, 4> DrivenSubstructureModel::PartSizes() const
 {
   const std::size_t n = nG, ne = excitations.size(), np = ports.size();
-  return sizeof(std::complex<double>) * (n * (n + 1) / 2 + n * ne + n * np + np * ne);
+  return {n * (n + 1) / 2, n * ne, n * np, np * ne};
 }
 
-void DrivenSubstructureModel::WriteHeader(const std::string &path) const
-{
-  std::ofstream f(path, std::ios::binary | std::ios::trunc);
-  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
-  const int head[8] = {kDrivenModelMagic,
-                       1,
-                       nG,
-                       sig_w,
-                       static_cast<int>(env_fp.size()),
-                       static_cast<int>(excitations.size()),
-                       static_cast<int>(ports.size()),
-                       static_cast<int>(omega.size())};
-  f.write(reinterpret_cast<const char *>(head), sizeof(head));
-  WriteVec(f, signatures);
-  WriteVec(f, env_fp);
-  WriteVec(f, excitations);
-  WriteVec(f, exc_fp);
-  WriteVec(f, ports);
-  WriteVec(f, omega);
-}
-
-void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
+std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record &r) const
 {
   // S_E is symmetric: its lower triangle, by columns.
-  std::vector<std::complex<double>> lower;
-  lower.reserve(static_cast<std::size_t>(nG) * (nG + 1) / 2);
+  std::vector<std::complex<double>> x;
+  const auto sz = PartSizes();
+  x.reserve(sz[0] + sz[1] + sz[2] + sz[3]);
   for (int j = 0; j < nG; j++)
   {
     for (int i = j; i < nG; i++)
     {
-      lower.push_back(r.S[static_cast<std::size_t>(j) * nG + i]);
+      x.push_back(r.S[static_cast<std::size_t>(j) * nG + i]);
     }
   }
+  x.insert(x.end(), r.g.begin(), r.g.end());
+  x.insert(x.end(), r.h.begin(), r.h.end());
+  x.insert(x.end(), r.c.begin(), r.c.end());
+  return x;
+}
+
+DrivenSubstructureModel::Record
+DrivenSubstructureModel::Unflatten(const std::vector<std::complex<double>> &x) const
+{
+  const auto sz = PartSizes();
+  MFEM_VERIFY(x.size() == sz[0] + sz[1] + sz[2] + sz[3], "Wrong size of a record!");
+  Record r;
+  const std::size_t n = nG;
+  r.S.resize(n * n);
+  for (std::size_t c = 0, q = 0; c < n; c++)
+  {
+    for (std::size_t i = c; i < n; i++, q++)
+    {
+      r.S[c * n + i] = r.S[i * n + c] = x[q];
+    }
+  }
+  auto it = x.begin() + static_cast<std::ptrdiff_t>(sz[0]);
+  r.g.assign(it, it + static_cast<std::ptrdiff_t>(sz[1]));
+  it += static_cast<std::ptrdiff_t>(sz[1]);
+  r.h.assign(it, it + static_cast<std::ptrdiff_t>(sz[2]));
+  it += static_cast<std::ptrdiff_t>(sz[2]);
+  r.c.assign(it, it + static_cast<std::ptrdiff_t>(sz[3]));
+  return r;
+}
+
+std::size_t DrivenSubstructureModel::HeaderBytes() const
+{
+  // Version 1: 8 ints and the frequencies; version 2: 10 ints, and room for capacity
+  // frequencies and weights.
+  const std::size_t common = sizeof(double) * signatures.size() +
+                             sizeof(double) * env_fp.size() +
+                             sizeof(int) * excitations.size() +
+                             sizeof(double) * exc_fp.size() + sizeof(int) * ports.size();
+  return (version == 1) ? sizeof(int) * 8 + common + sizeof(double) * omega.size()
+                        : sizeof(int) * 10 + common +
+                              (sizeof(double) + sizeof(std::complex<double>)) * capacity;
+}
+
+std::size_t DrivenSubstructureModel::RecordBytes() const
+{
+  const auto sz = PartSizes();
+  return sizeof(std::complex<double>) * (sz[0] + sz[1] + sz[2] + sz[3]);
+}
+
+void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) const
+{
+  MFEM_VERIFY(version == 2 && capacity >= static_cast<int>(omega.size()) &&
+                  (weights.empty() || weights.size() == omega.size()),
+              "Invalid substructuring model header!");
+  std::fstream f(path, create ? (std::ios::binary | std::ios::out | std::ios::trunc)
+                              : (std::ios::binary | std::ios::in | std::ios::out));
+  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
+  const int head[10] = {kDrivenModelMagic,
+                        2,
+                        nG,
+                        sig_w,
+                        static_cast<int>(env_fp.size()),
+                        static_cast<int>(excitations.size()),
+                        static_cast<int>(ports.size()),
+                        capacity,
+                        static_cast<int>(omega.size()),
+                        weights.empty() ? 0 : 1};
+  std::vector<double> om(omega);
+  std::vector<std::complex<double>> wt(weights);
+  om.resize(capacity, 0.0);
+  wt.resize(capacity, 0.0);
+  f.write(reinterpret_cast<const char *>(head), sizeof(head));
+  for (const auto *v : {&signatures, &env_fp})
+  {
+    f.write(reinterpret_cast<const char *>(v->data()),
+            static_cast<std::streamsize>(sizeof(double) * v->size()));
+  }
+  f.write(reinterpret_cast<const char *>(excitations.data()),
+          static_cast<std::streamsize>(sizeof(int) * excitations.size()));
+  f.write(reinterpret_cast<const char *>(exc_fp.data()),
+          static_cast<std::streamsize>(sizeof(double) * exc_fp.size()));
+  f.write(reinterpret_cast<const char *>(ports.data()),
+          static_cast<std::streamsize>(sizeof(int) * ports.size()));
+  f.write(reinterpret_cast<const char *>(om.data()),
+          static_cast<std::streamsize>(sizeof(double) * om.size()));
+  f.write(reinterpret_cast<const char *>(wt.data()),
+          static_cast<std::streamsize>(sizeof(std::complex<double>) * wt.size()));
+  MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
+}
+
+void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
+{
   std::ofstream f(path, std::ios::binary | std::ios::app);
   MFEM_VERIFY(f.good(), "Cannot write the substructuring model \"" << path << "\"!");
-  WriteVec(f, lower);
-  WriteVec(f, r.g);
-  WriteVec(f, r.h);
-  WriteVec(f, r.c);
+  const auto x = Flatten(r);
+  f.write(reinterpret_cast<const char *>(x.data()),
+          static_cast<std::streamsize>(sizeof(std::complex<double>) * x.size()));
 }
 
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
 {
-  int head[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  int head[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
   std::ifstream f;
   if (Mpi::Root(comm))
   {
     f.open(path, std::ios::binary);
     if (f.good())
     {
-      f.read(reinterpret_cast<char *>(head), sizeof(head));
+      f.read(reinterpret_cast<char *>(head), sizeof(int) * 2);
+      f.read(reinterpret_cast<char *>(head + 2), sizeof(int) * ((head[1] == 1) ? 6 : 8));
     }
   }
-  Mpi::Broadcast(8, head, 0, comm);
-  MFEM_VERIFY(head[0] == kDrivenModelMagic && head[1] == 1,
+  Mpi::Broadcast(10, head, 0, comm);
+  MFEM_VERIFY(head[0] == kDrivenModelMagic && (head[1] == 1 || head[1] == 2),
               "Cannot read the driven substructuring model \""
                   << path << "\" (run in \"Offline\" mode with \"SaveModel\" first)!");
+  version = head[1];
   nG = head[2];
   sig_w = head[3];
   auto read = [&](auto &v, std::size_t n)
@@ -902,7 +1092,15 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   read(excitations, head[5]);
   read(exc_fp, kSourceFp * static_cast<std::size_t>(head[5]));
   read(ports, head[6]);
-  read(omega, head[7]);
+  capacity = head[7];
+  read(omega, capacity);
+  weights.clear();
+  if (version == 2)
+  {
+    read(weights, capacity);
+    omega.resize(head[8]);
+    weights.resize(head[9] ? head[8] : 0);
+  }
 }
 
 int DrivenSubstructureModel::NumRecords(const std::string &path) const
@@ -917,28 +1115,15 @@ int DrivenSubstructureModel::NumRecords(const std::string &path) const
                                 : static_cast<int>((size - HeaderBytes()) / RecordBytes());
 }
 
-DrivenSubstructureModel::Record DrivenSubstructureModel::ReadRecord(const std::string &path,
-                                                                    int j) const
+std::vector<std::complex<double>>
+DrivenSubstructureModel::ReadFlatRecord(const std::string &path, int j) const
 {
   std::ifstream f(path, std::ios::binary);
   f.seekg(static_cast<std::streamoff>(HeaderBytes() + RecordBytes() * j));
-  std::vector<std::complex<double>> lower;
-  Record r;
-  const std::size_t n = nG, ne = excitations.size(), np = ports.size();
-  ReadVec(f, lower, n * (n + 1) / 2);
-  ReadVec(f, r.g, n * ne);
-  ReadVec(f, r.h, n * np);
-  ReadVec(f, r.c, np * ne);
+  std::vector<std::complex<double>> x;
+  ReadVec(f, x, RecordBytes() / sizeof(std::complex<double>));
   MFEM_VERIFY(f.good(), "Truncated substructuring model \"" << path << "\"!");
-  r.S.resize(n * n);
-  for (std::size_t c = 0, q = 0; c < n; c++)
-  {
-    for (std::size_t i = c; i < n; i++, q++)
-    {
-      r.S[c * n + i] = r.S[i * n + c] = lower[q];
-    }
-  }
-  return r;
+  return x;
 }
 
 }  // namespace palace

@@ -2888,7 +2888,7 @@
     "Substructuring": {
       "type": "object",
       "title": "Substructuring",
-      "description": "Substructuring for electrostatic, magnetostatic and driven simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together; driven substructuring, uniform frequency sweeps.",
+      "description": "Substructuring for electrostatic, magnetostatic and driven simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together; driven substructuring, uniform and adaptive frequency sweeps.",
       "additionalProperties": false,
       "required": ["Region", "Environment"],
       "properties": {

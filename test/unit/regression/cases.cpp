@@ -1164,6 +1164,23 @@ TEST_CASE("substructuring_driven_online", "[Serial][Parallel][Regression]")
                                   opts);
 }
 
+// Adaptive driven substructuring: an offline adaptive sweep samples the environment
+// greedily for a rational model of its condensed data, and an online sweep at frequencies
+// between the samples solves the redesigned region of substructuring_driven_online against
+// it. The references are a regular simulation of the redesigned configuration, in the
+// online run's columns.
+TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_adaptive.json",
+                                  "online_adaptive", opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and

@@ -172,16 +172,25 @@ interface are unchanged. The online field is known in the region and on the inte
     the region, without the total energies and participation ratios (and the power of the
     environment's lumped ports, in `port-Z.csv`, is not available).
 
+An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain) (nonzero
+`"AdaptiveTol"`) instead condenses the environment at frequencies chosen greedily, as the
+adaptive fast frequency sweep chooses its samples, for a rational model of the condensed data: a
+barycentric interpolant with one denominator for all of it. Sampling stops when the model
+predicts `"AdaptiveConvergenceMemory"` consecutive new samples to `"AdaptiveTol"` (relative to
+the condensed data), or at `"AdaptiveMaxSamples"` samples. Every frequency of the sweep is then
+solved on the region against the model, with the outputs of an online sweep. Saved, such a model
+serves online sweeps at any frequency between its lowest and highest samples.
+
 A saved model needs the lumped ports away from the interface, since their excitation and
 voltage would then depend on both sides.
 
 !!! note
 
-    Driven substructuring needs MUMPS. Adaptive sweeps, wave ports, Floquet ports, periodic
-    boundaries, field output (`"Save"`) and restarts are not supported yet, nor, online,
-    surface flux, interface dielectric, far-field and probe postprocessing. The model holds one
-    dense ``|\Gamma| \times |\Gamma|`` matrix per frequency (16 bytes per entry of its lower
-    triangle).
+    Driven substructuring needs MUMPS. Wave ports, Floquet ports, periodic boundaries, field
+    output (`"Save"`), restarts and `"AdaptiveCircuitSynthesis"` are not supported yet, nor,
+    from a model, surface flux, interface dielectric, far-field and probe postprocessing. The
+    model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes
+    per entry of its lower triangle).
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

@@ -738,22 +738,23 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::DRIVEN)
     {
-      // Exact per-frequency condensation of a uniform sweep with a direct factorization.
+      // Direct factorizations, exact per frequency or at the samples of an adaptive sweep.
       // Wave and Floquet ports carry matrix-free terms a factorization cannot absorb.
-      MFEM_VERIFY(solver.driven.adaptive_tol <= 0.0,
-                  "Driven substructuring supports uniform frequency sweeps only!");
+      MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
+                  "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
       MFEM_VERIFY(boundaries.waveport.empty() && boundaries.floquetport.empty() &&
                       boundaries.periodic.boundary_pairs.empty(),
                   "Driven substructuring does not support wave ports, Floquet ports or "
                   "periodic boundaries!");
-      // Online, the field is known in the region and on Γ only.
-      MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE ||
-                      (boundaries.postpro.flux.empty() &&
-                       boundaries.postpro.dielectric.empty() &&
-                       boundaries.postpro.farfield.attributes.empty() &&
-                       domains.postpro.probe.empty()),
-                  "Online driven substructuring does not compute surface flux, interface "
-                  "dielectric, far-field or probe postprocessing yet!");
+      // From a model (online, or after an adaptive sweep's samples), the field is known in
+      // the region and on Γ only.
+      MFEM_VERIFY(
+          (sub.mode != SubstructuringMode::ONLINE && solver.driven.adaptive_tol <= 0.0) ||
+              (boundaries.postpro.flux.empty() && boundaries.postpro.dielectric.empty() &&
+               boundaries.postpro.farfield.attributes.empty() &&
+               domains.postpro.probe.empty()),
+          "Online or adaptive driven substructuring does not compute surface flux, "
+          "interface dielectric, far-field or probe postprocessing yet!");
       MFEM_VERIFY(solver.driven.save_indices.empty() && solver.driven.restart == 1,
                   "Driven substructuring does not write fields or restart a sweep yet!");
 #if !defined(MFEM_USE_MUMPS)

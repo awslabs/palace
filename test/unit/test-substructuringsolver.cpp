@@ -2414,6 +2414,84 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
   }
 }
 
+TEST_CASE("Barycentric interpolation of a rational vector function",
+          "[substructure][Serial]")
+{
+  // x(ω) = Σ_k r_k / (ω - p_k) + c_0 + c_1 ω on [1, 2], with two near-real poles in the
+  // band and one outside it: greedy sampling at the least denominator converges with a few
+  // samples, interpolates them, and the interpolant matches x between them. (Once the fit
+  // is exact to round-off, further samples leave the weights undetermined.)
+  constexpr int n = 40;
+  const std::complex<double> p[3] = {{1.3, 1.0e-3}, {1.7, 2.0e-3}, {2.5, 0.1}};
+  std::vector<std::complex<double>> r[3], c[2];
+  std::uint32_t seed = 7;
+  auto rnd = [&]()
+  {
+    seed = 1664525u * seed + 1013904223u;
+    return static_cast<double>(seed) / 4294967296.0 - 0.5;
+  };
+  for (auto *v : {&r[0], &r[1], &r[2], &c[0], &c[1]})
+  {
+    for (int q = 0; q < n; q++)
+    {
+      v->emplace_back(rnd(), rnd());
+    }
+  }
+  auto x = [&](double omega)
+  {
+    std::vector<std::complex<double>> y(n);
+    for (int q = 0; q < n; q++)
+    {
+      y[q] = c[0][q] + omega * c[1][q];
+      for (int k = 0; k < 3; k++)
+      {
+        y[q] += r[k][q] / (omega - p[k]);
+      }
+    }
+    return y;
+  };
+  auto rel = [](const std::vector<std::complex<double>> &a,
+                const std::vector<std::complex<double>> &b)
+  {
+    double d = 0.0, m = 0.0;
+    for (std::size_t q = 0; q < a.size(); q++)
+    {
+      d += std::norm(a[q] - b[q]);
+      m += std::norm(b[q]);
+    }
+    return std::sqrt(d / m);
+  };
+  BarycentricInterpolant fit;
+  fit.AddSample(1.0, x(1.0));
+  fit.AddSample(2.0, x(2.0));
+  int memory = 0;
+  while (fit.Samples().size() < 20 && memory < 2)
+  {
+    const double omega = fit.FindMaxError();
+    const auto exact = x(omega);
+    memory = (rel(fit.Evaluate(omega), exact) < 1.0e-8) ? memory + 1 : 0;
+    fit.AddSample(omega, exact);
+  }
+  CAPTURE(fit.Samples().size());
+  CHECK(memory == 2);
+  CHECK(fit.Samples().size() <= 12);
+  for (double omega : fit.Samples())
+  {
+    CHECK(rel(fit.Evaluate(omega), x(omega)) <= 1.0e-12);
+  }
+  double worst = 0.0;
+  for (int i = 0; i <= 1000; i++)
+  {
+    const double omega = 1.0 + i / 1000.0;
+    worst = std::max(worst, rel(fit.Evaluate(omega), x(omega)));
+  }
+  CAPTURE(worst);
+  CHECK(worst <= 1.0e-7);
+  const auto a =
+      BarycentricInterpolant::Coefficients(fit.Samples(), fit.Weights(), fit.Samples()[2]);
+  CHECK(a[2] == 1.0);
+}
+
 TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")
 {
   // Source fingerprints of a lumped port of the CPW resonator grid example (in the plane

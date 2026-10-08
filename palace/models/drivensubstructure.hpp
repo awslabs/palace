@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_DRIVEN_SUBSTRUCTURE_HPP
 #define PALACE_MODELS_DRIVEN_SUBSTRUCTURE_HPP
 
+#include <array>
 #include <complex>
 #include <memory>
 #include <string>
@@ -27,16 +28,62 @@ class SpaceOperator;
 // voltage functionals of the environment's lumped ports, V_j = c_jk + h_j^T u_Γ for
 // excitation k. Written and read on rank 0 (the header is broadcast).
 //
+//
+// Barycentric rational interpolation of a vector-valued function of the frequency from its
+// samples x_j = x(ω_j), with one set of weights w for all entries,
+//   x̃(ω) = Σ_j a_j(ω) x_j,   a_j(ω) = (w_j / (ω - ω_j)) / Σ_k w_k / (ω - ω_k),
+// which interpolates the samples. The weights are those of the minimal rational interpolant
+// (MRI) of the snapshots {x_j, iω_j x_j}, as for the error indicator of the adaptive driven
+// solver (MinimalRationalInterpolation). Serial: the samples are dense vectors on one rank.
+//
+class BarycentricInterpolant
+{
+public:
+  // Add a sample (scaled by the caller so that its parts weigh alike), updating the
+  // weights.
+  void AddSample(double omega, const std::vector<std::complex<double>> &x);
+
+  // The interpolant at ω.
+  std::vector<std::complex<double>> Evaluate(double omega) const;
+
+  // The frequency between the outermost samples where the denominator Σ_j w_j / (ω - ω_j)
+  // is smallest (near a pole, or far from the samples): the next sample.
+  double FindMaxError() const;
+
+  const std::vector<double> &Samples() const { return z; }
+  const std::vector<std::complex<double>> &Weights() const { return w; }
+
+  // The coefficients a_j(ω) of samples at z with weights w.
+  static std::vector<std::complex<double>>
+  Coefficients(const std::vector<double> &z, const std::vector<std::complex<double>> &w,
+               double omega);
+
+private:
+  std::vector<double> z;
+  std::vector<std::vector<std::complex<double>>> Q;  // orthonormal basis of the samples
+  std::vector<std::complex<double>> R;               // samples = Q R (m x m, column-major)
+  std::vector<std::complex<double>> w;
+};
+
+//
+// A model saved by an offline driven substructuring sweep: the header (interface
+// signatures, fingerprints, environment ports) and one record per frequency. An exact model
+// holds the frequencies of a uniform sweep. A rational one (with weights) holds the samples
+// of an adaptive sweep, interpolated at any frequency between them
+// (BarycentricInterpolant).
+//
 struct DrivenSubstructureModel
 {
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
-  int nG = 0, sig_w = 0;
-  std::vector<double> signatures;  // nG x sig_w
-  std::vector<double> env_fp;      // environment fingerprint
-  std::vector<int> excitations;    // excitations with environment sources
-  std::vector<double> exc_fp;      // their source fingerprints (kSourceFp each)
-  std::vector<int> ports;          // environment lumped ports
-  std::vector<double> omega;       // frequencies (nondimensional)
+  int version = 2, nG = 0, sig_w = 0;
+  std::vector<double> signatures;             // nG x sig_w
+  std::vector<double> env_fp;                 // environment fingerprint
+  std::vector<int> excitations;               // excitations with environment sources
+  std::vector<double> exc_fp;                 // their source fingerprints (kSourceFp each)
+  std::vector<int> ports;                     // environment lumped ports
+  std::vector<double> omega;                  // frequencies of the records (nondimensional)
+  std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
+  int capacity = 0;  // records the header has room for (at least omega.size())
 
   struct Record
   {
@@ -45,10 +92,21 @@ struct DrivenSubstructureModel
     std::vector<std::complex<double>> S, g, h, c;
   };
 
-  void WriteHeader(const std::string &path) const;
+  // A record as one vector, in the order of the file (S by its lower triangle), and the
+  // sizes of its parts.
+  std::vector<std::complex<double>> Flatten(const Record &r) const;
+  Record Unflatten(const std::vector<std::complex<double>> &x) const;
+  std::array<std::size_t, 4> PartSizes() const;
+
+  // The header, in a new file or rewritten in place (with the same capacity).
+  void WriteHeader(const std::string &path, bool create = true) const;
   void AppendRecord(const std::string &path, const Record &r) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
-  Record ReadRecord(const std::string &path, int j) const;
+  std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
+  Record ReadRecord(const std::string &path, int j) const
+  {
+    return Unflatten(ReadFlatRecord(path, j));
+  }
   // Number of complete records in the file.
   int NumRecords(const std::string &path) const;
 
