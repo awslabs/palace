@@ -1576,7 +1576,7 @@ ARC_CORNER_JOINT_TURN_RANGE_RADIANS = {"fabricated": (2.0e-4, math.radians(15.0)
 # Round 3 B4 (decisions 563 B / 566; the per-kind top): THIN 70 (the round-2b fe70 thin; the thin 74.3 / 75.5
 # fail the tetrahedral gate, a named follow-up), FABRICATED 75.5 = the B4 part-2 record run's fab 74.3 / 75.5
 # arc face ends on the rho-parametrised fixture under 9H + 8A (the raise rule: the largest fabricated tilt
-# that run builds and passes).
+# that run built and passed - PBS 59701, impl-B4/part2/records/record-59701.json).
 ARC_FACE_END_TILT_RANGE_DEGREES = {"fabricated": (0.1, 75.5), "thin": (0.1, 70.0)}
 # Round 3 class (8) interim 8B (part M 5.2; E3, decision 475 (7)): the largest BUILT thin face-end
 # tilt (the V10 thin 70-degree production-size build); a thin end above it fails closed at
@@ -1585,7 +1585,8 @@ THIN_FACE_END_TILT_BOUND_DEGREES = 70.0
 # Round 3 B4 (decision 566): the fabricated tested-range bound - the largest fabricated straight face-end
 # tilt BUILT under the code that runs (the V10 fabricated 70-degree production build; under 8A the derived
 # SteepFaceCrossing ceiling no longer binds for the fabricated kind, so this bound is the admission); the
-# B4 part-2 record run raises it to the largest fabricated tilt it builds and passes under 8A.
+# B4 part-2 record run raises it to the largest fabricated tilt it builds and passes under 8A: 75.5 = the V10
+# fabricated 74.3 / 75.5 straight crossings at R 1.9 rebuilt under 8A by PBS 59701 (min SJ 0.0178 / 0.0147).
 FABRICATED_FACE_END_TILT_BOUND_DEGREES = 75.5
 # Round 3 class (8), 8A-bitwise (part M 5.2; decisions 510 O8 / 563): above the kind's largest BUILT
 # face-end tilt the end block's pyramids take h_pyr_end = min(h_pyr, TangentialSize / (4 slope)) (the

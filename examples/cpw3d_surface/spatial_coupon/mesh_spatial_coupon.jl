@@ -5961,9 +5961,10 @@ arc_corner_joint_turn_range(fabricated::Bool) =
 # 57892; the thin 74.3 / 75.5 arc ends fail the tetrahedral gate before and after 8A, part M ERRATA
 # E-M6: a named follow-up); FABRICATED 75.5 degrees = the round-3 B4 part-2 record run of the
 # rho-parametrised steep fixture (fe74p3 / fe75p5 fab at rho 13.3 under 9H + 8A; prediction P5: the
-# max prism condition in [900, 1000]) - the RAISE RULE of decisions 563 (B) / 566: this top is the
-# largest fabricated arc tilt that record run BUILDS and PASSES (impl-B4/part2/REPORT: the job and
-# its shas), 70 otherwise. Below the low end, above the kind's high end and at theta == 0 exactly
+# the block under 8A is the derived regime-I one) - the RAISE RULE of decisions 563 (B) / 566: this
+# top is the largest fabricated arc tilt that record run BUILT and PASSED: PBS 59701 (mirror
+# 35a5b5a6e8; fe74p3r13p3 / fe75p5r13p3 fab min SJ 0.0153 / 0.0119, every gate; impl-B4/part2
+# records/record-59701.json), 70 otherwise. Below the low end, above the kind's high end and at theta == 0 exactly
 # (the legacy on-box end) the end fails closed at ScopeGuard[ArcFaceEnds]. Any derived ceiling
 # (SteepFaceCrossing) is a fail-closed cap INSIDE this range, never the admission bound.
 const ARC_FACE_END_TILT_RANGE = (fabricated=(deg2rad(0.1), deg2rad(75.5)), thin=(deg2rad(0.1), deg2rad(70.0)))
@@ -5986,7 +5987,8 @@ const THIN_FACE_END_TILT_BOUND = deg2rad(70.0)
 # run raises this bound to the largest fabricated tilt it BUILDS and PASSES under 8A (75.5 if P5
 # holds there), the same way it raises ARC_FACE_END_TILT_RANGE's fabricated top (decision 563 B).
 # 75.5 degrees = the V10 fabricated 74.3 (row B 6x) / 75.5 (row B 8x) straight crossings at R 1.9
-# rebuilt under 8A by that record run (impl-B4/part2/REPORT: the job and its shas).
+# rebuilt under 8A by that record run, PBS 59701 (min SJ 0.0178 / 0.0147, derived regime-I blocks
+# m 6 / 7; impl-B4/part2/records/record-59701.json; the fab 70 / thin 70 bitwise vs PBS 57505).
 const FABRICATED_FACE_END_TILT_BOUND = deg2rad(75.5)
 face_end_tilt_bound(fabricated::Bool) = fabricated ? FABRICATED_FACE_END_TILT_BOUND : THIN_FACE_END_TILT_BOUND
 # Mesher design round 3 class (8), fix 8A-bitwise (part M 5.2; decisions 491 / 510 O8 / 563): above
