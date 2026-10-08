@@ -69,11 +69,39 @@ and is available for eigenmode or frequency or time domain driven simulation typ
 second-order absorbing boundary condition is only available for frequency domain
 simulations.
 
-[Perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer)
-boundaries for frequency and time domain electromagnetic formulations are not yet
-implemented, but are
-[common](https://www.sciencedirect.com/science/article/abs/pii/S0021999112000344) in solvers
-for computational electromagnetics and will be a useful addition.
+## Perfectly matched layer
+
+A [perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer) is
+an absorbing region surrounding the physical domain, which typically reflects much less
+than an absorbing boundary condition, at the cost of additional mesh elements. In *Palace*,
+a PML is specified as a material property with the `"PML"` object under
+[`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials), and is
+available for frequency domain driven and eigenmode simulations. The domains of this
+material form the layer, while the material properties specified for it (relative
+permittivity and permeability, possibly anisotropic, and loss tangent) define the background
+medium matched by the layer. The waves are attenuated before they reach the outer boundary
+of the layer, which can be left as a PEC or natural (PMC) boundary.
+
+The uniaxial PML terminates an axis-aligned, box-shaped physical domain by stretching the
+coordinate normal to each face of the box with the complex factor
+``s = \kappa + \sigma / (\varepsilon_0 (\alpha + i\omega))``, where ``\kappa``,
+``\sigma``, and ``\alpha`` are graded polynomially from their values at the interface with
+the physical domain (1, 0, and 0) to `"KappaMax"`, `"SigmaMax"`, and ``2\pi`` `"AlphaMax"`
+at the outer edge of the layer. Layers on several faces, including the edge and corner
+regions of the box, are supported by one or several materials. By default, the faces and
+thicknesses of the layer are detected by comparing the bounding boxes of the physical
+(non-PML) region and of the whole mesh, and `"SigmaMax"` is computed from a target
+reflection coefficient. Alternatively, they can be specified using `"Direction"`,
+`"Thickness"`, and `"SigmaMax"`.
+
+By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"` (the center
+of the frequency range for driven simulations, or the target frequency for eigenmode
+simulations). This static PML keeps the system matrices independent of frequency, and so
+eigenmode problems remain linear, while the attenuation in the layer scales with frequency.
+With `"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
+frequency, for an attenuation independent of frequency. For eigenmode simulations, this is
+the complex eigenfrequency, and the resulting nonlinear eigenvalue problem is solved with
+the nonlinear eigenvalue solver as for other frequency-dependent boundary conditions.
 
 ## Finite conductivity boundary
 
