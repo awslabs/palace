@@ -18821,9 +18821,10 @@ std::string DescribeContinuationOwnershipSummary(const nlohmann::json &diagnosti
         diagnostics["ForeignContext"]["ExcludedEdgeLength"].get<double>());
   }
   return fmt::format(
-      "Continuation ownership (decision 236 (2)): {:d} translational cell(s) owned by the "
-      "spatial coupons whose claims they continue ({:d} wholly, {:d} clipped at a box "
-      "face; {:d} shared by two coupons), {:.6e} mesh units removed\n{}{}",
+      "Continuation ownership (decisions 236 (2) / 553 / 559): {:d} translational cell(s) "
+      "owned by the spatial coupons whose claims they continue or whose context edges they "
+      "lie on ({:d} wholly, {:d} clipped at a box face; {:d} shared by several coupons), "
+      "{:.6e} mesh units removed\n{}{}",
       diagnostics["Cells"].get<int>(), diagnostics["WhollyOwnedCells"].get<int>(),
       diagnostics["ClippedCells"].get<int>(), diagnostics["Shared"]["Cells"].get<int>(),
       diagnostics["OwnedLength"].get<double>(), lines, foreign_context);

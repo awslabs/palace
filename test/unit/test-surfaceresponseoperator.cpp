@@ -8576,7 +8576,8 @@ TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
     // Coupon B (patch 13) with a chain piece along y = 0 for x in [0, 1.5] (B's claims
     // are the x = -2.5 edge only, so the stretch continues none of them); the stretch
     // (15, 0) continues A's claim y = 0 through its cut x = 0 (segment 3) and is owned by A
-    // (one cell wholly, one clipped at A's face x = 1.5).
+    // (both cells wholly: [0, 1] and [1, 1.4] lie inside A's box, x <= 1.5, so B's
+    // foreign-context pass finds no remainder to own).
     std::vector<Patch> owned_elsewhere = {Spatial(), Cell(15, 0, 0.0, 1.0, 0.0),
                                           Cell(15, 0, 1.0, 1.4, 0.0)};
     owned_elsewhere[1].provenance.segment = owned_elsewhere[2].provenance.segment = 3;
