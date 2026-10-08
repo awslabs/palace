@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <numbers>
+#include <type_traits>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -70,6 +71,64 @@ public:
   void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
 };
 
+// The tridiagonal [-1, 2, -1] stencil on the local rows of each process, counting its
+// applications. The Jacobi-scaled spectrum is dense near its maximum, so an eigenvalue
+// estimate from a random start needs many applications.
+class CountingLaplacianOperator : public Operator
+{
+public:
+  mutable int applications = 0;
+
+  CountingLaplacianOperator(int n) : Operator(n) {}
+
+  void AssembleDiagonal(Vector &diag) const override
+  {
+    diag.SetSize(height);
+    diag = 2.0;
+  }
+
+  void Mult(const Vector &x, Vector &y) const override
+  {
+    applications++;
+    y.SetSize(height);
+    const auto *X = x.HostRead();
+    auto *Y = y.HostWrite();
+    for (int i = 0; i < height; i++)
+    {
+      Y[i] = 2.0 * X[i] - ((i > 0) ? X[i - 1] : 0.0) - ((i < height - 1) ? X[i + 1] : 0.0);
+    }
+  }
+
+  void MultTranspose(const Vector &x, Vector &y) const override { Mult(x, y); }
+};
+
+// Set the same operator twice: the second estimate starts from the dominant vector of the
+// first, so it needs fewer applications of the operator. Then compare with the result of a
+// smoother which has estimated once, from a random start.
+template <typename Smoother, typename OperType>
+void CheckWarmStart(Smoother &smoother, Smoother &reference, const OperType &op,
+                    const CountingLaplacianOperator &A)
+{
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
+  A.applications = 0;
+  smoother.SetOperator(op);
+  const int cold = A.applications;
+  A.applications = 0;
+  smoother.SetOperator(op);
+  const int warm = A.applications;
+  CAPTURE(cold, warm);
+  CHECK(warm < cold);
+
+  reference.SetOperator(op);
+  VecType x(op.Width()), y(op.Height()), y_ref(op.Height());
+  x = 1.0;
+  smoother.Mult(x, y);
+  reference.Mult(x, y_ref);
+  y -= y_ref;
+  CHECK(linalg::Norml2(Mpi::World(), y) <= 1.0e-3 * linalg::Norml2(Mpi::World(), y_ref));
+}
+
 template <typename Smoother>
 void Check(Smoother &smoother, const Operator &A, double expected)
 {
@@ -114,6 +173,30 @@ TEST_CASE("Smoother estimates use the Hermitian Jacobi similarity",
   Check(jacobi, A, 2.0 / lambda_max);
   JacobiSmoother<ComplexOperator> jacobi_c(Mpi::World(), 0.0);
   Check(jacobi_c, Ac, 2.0 / lambda_max);
+}
+
+TEST_CASE("Chebyshev estimates start from the previous dominant vector",
+          "[smoother][Serial][Parallel]")
+{
+  constexpr int n = 32;
+  CountingLaplacianOperator A(n);
+  // A real operator takes the Hermitian estimate, (1 + i) A the general complex one.
+  ComplexWrapperOperator Ar(&A, nullptr), Ac(&A, &A);
+  const auto comm = Mpi::World();
+  {
+    ChebyshevSmoother<Operator> smoother(comm, 1, 2, 1.0), reference(comm, 1, 2, 1.0);
+    CheckWarmStart(smoother, reference, static_cast<const Operator &>(A), A);
+  }
+  for (const auto *op : {&Ar, &Ac})
+  {
+    ChebyshevSmoother<ComplexOperator> smoother(comm, 1, 2, 1.0),
+        reference(comm, 1, 2, 1.0);
+    CheckWarmStart(smoother, reference, static_cast<const ComplexOperator &>(*op), A);
+    ChebyshevSmoother1stKind<ComplexOperator> smoother_1st(comm, 1, 2, 1.0, 0.0),
+        reference_1st(comm, 1, 2, 1.0, 0.0);
+    CheckWarmStart(smoother_1st, reference_1st, static_cast<const ComplexOperator &>(*op),
+                   A);
+  }
 }
 
 TEST_CASE("Smoother estimates reject nonpositive Jacobi diagonals",

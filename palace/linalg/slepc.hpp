@@ -42,9 +42,11 @@ void Initialize();
 void Finalize();
 
 // Compute and return the maximum singular value of the given operator, σₙ² = λₙ(Aᴴ A) .
+// If x0 is given, the solver starts from it when it has the size of the operator, and x0 is
+// set to the corresponding (right) singular vector on return.
 PetscReal GetMaxSingularValue(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
                               PetscReal tol = PETSC_DEFAULT,
-                              PetscInt max_it = PETSC_DEFAULT);
+                              PetscInt max_it = PETSC_DEFAULT, ComplexVector *x0 = nullptr);
 
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic

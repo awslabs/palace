@@ -100,6 +100,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - CSV output tables are now appended row by row instead of rewritten at every measurement,
     so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
     [PR 942](https://github.com/awslabs/palace/pull/942).
+  - The maximum eigenvalue estimate of each Chebyshev smoother now starts from the dominant
+    vector of the previous operator, which reduces the cost of rebuilding the multigrid
+    preconditioner at each frequency of a driven sweep.
 
 #### Build system
 
