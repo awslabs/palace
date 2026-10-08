@@ -973,3 +973,63 @@ end
             arcs=[arcs[mod1(n - j, n)] for j in 1:n], joints=Vector{Union{Nothing, NamedTuple}}(nothing, n))
     @test occursin("fewer than four chords", guard_message(() -> offset_hole_points(hole, -0.3, TOLERANCE)))
 end
+
+@testset "round 3 class (7) Option B (G.7.6 S-G7-c): a TAGGED concave 3-chord arc whose collar collapses it - the bridged path with a short-arc neighbour carries the surviving runs, none for the collapsed arc" begin
+    # The 2-um channel of the union testset with its semicircular end chorded 3 times and TAGGED
+    # (id 1, sign -1: the metal outside the circle) beside a tagged convex 3-chord corner fillet
+    # (id 2) on the metal's top-right corner: the collar (5.7) collapses the semicircle (radius 1)
+    # and bridges its neighbours (CollarUnion); the fillet (radius 1.0 convex) grows to 6.7 and is
+    # carried through the union as a 3-chord propagated run - the former >= 4-chord guard refused
+    # both arcs.
+    box = ([-10.0, -10.0], [10.0, 10.0])
+    radius = 1.9
+    collar = 3radius
+    half = 1.0
+    cy = 8.0 - half
+    chain = [(-half * cos(a), cy + half * sin(a)) for a in range(0.0, pi; length=4)]
+    fillet_r = 1.0
+    fillet_c = (10.0 - fillet_r, 10.0 - fillet_r)
+    fillet = [(fillet_c[1] + fillet_r * cos(a), fillet_c[2] + fillet_r * sin(a)) for a in range(0.0, pi / 2; length=4)]
+    points = vcat([(-10.0, 0.0), (-half, 0.0)], chain, [(half, 0.0), (10.0, 0.0)], fillet, [(-10.0, 10.0)])
+    n = length(points)
+    classes = fill("Physical", n)
+    classes[1] = "Continuation"                     # (-10, 0) -> (-1, 0): the y0 face
+    classes[n - 5] = "Continuation"                 # (10, 0) -> the fillet start: the x1 face
+    classes[n - 1] = "Continuation"                 # the fillet end -> (-10, 10): the y1 face
+    classes[n] = "Continuation"                     # (-10, 10) -> (-10, 0): the x0 face
+    arcs = Vector{Union{Nothing, NamedTuple}}(nothing, n)
+    for i = 3:5
+        arcs[i] = (id=1, centre=(0.0, cy), radius=half, sign=-1)
+    end
+    for i = (n - 4):(n - 2)
+        arcs[i] = (id=2, centre=fillet_c, radius=fillet_r, sign=1)
+    end
+    loop = (conductor=1, plane=0.0, hole=false, points=points, classes=classes, arcs=arcs,
+            joints=Vector{Union{Nothing, NamedTuple}}(nothing, n))
+    runs = tagged_arc_runs(loop, TOLERANCE)
+    @test [run.id for run in runs] == [1, 2] && [length(run.edge_indices) for run in runs] == [3, 3]
+    @test isempty(circular_arc_runs(points, TOLERANCE))          # the untagged fit sees no arc at all
+    offset = curved_offset_loop(loop, -collar, runs, TOLERANCE)
+    @test offset.bridged && offset.short && count(item -> item.collapsed, offset.items) == 1
+    @test [run.id for run in offset.runs] == [2] && length(offset.runs[1].edge_indices) == 3 &&
+          isapprox(offset.runs[1].radius, fillet_r + collar; atol=1.0e-12)
+    union, construction, record = collar_loop_points(loop, -collar, box, TOLERANCE;
+                                                     island_rule=collar_island_rule(loop, -collar, box, radius, TOLERANCE))
+    @test construction == "CollarUnion" && record.points == offset.points && record.runs == offset.runs && record.short
+    carried = carried_offset_runs(record, union, TOLERANCE)
+    @test carried.short
+    # The grown fillet is clipped by the box: whatever offset chord vertices survive inside the
+    # box are carried as pieces of its circle; the collapsed semicircle carries nothing.
+    @test all(run.id == 2 for run in carried.runs)
+    for run in carried.runs
+        fitted = fit_carried_run(union, run, TOLERANCE)
+        @test isapprox(fitted.radius, fillet_r + collar; atol=1.0e-9) && fitted.center == fillet_c
+    end
+    wire_runs = offset_wire_runs(union, carried, TOLERANCE)
+    @test length(wire_runs) == length(carried.runs)
+    # The island rule's primitives read the 3-chord arcs as exact arcs (physical_segments at 0).
+    primitives = physical_segments([loop], 0.0, TOLERANCE)
+    @test count(p -> p.kind == :arc, primitives) == 2
+    # The channel is etched throughout and the metal lies inside the union, as before.
+    @test all(point_in_polygon(p, union, TOLERANCE) for p in ((0.0, 3.0), (0.9, 7.5), (0.0, 7.99), (5.0, 5.0)))
+end

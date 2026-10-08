@@ -462,6 +462,85 @@ end
 # The full build of a fixture written by `writer` (write_strip_inputs / write_arc_face_end_inputs)
 # at the test sizes (R 0.5, EdgeSize 0.01: 2-ring tubes) with the production gates; `edge_size`
 # 0.00025 / 0.002 gives the production fabricated / thin tubes on the same coupon.
+# Round 3 class (7) (G.7.6 S-G7-a / S-G7-b; the C3 trio's and 0c94ec951e10's 3-chord claim arcs):
+# a vertical metal lead of width 1 (R 0.5) crossing the box from the y0 to the y1 face whose RIGHT
+# side carries a SHORT convex arc of radius `rho` = 52 (104 R) between (0.5, -0.5) and its end,
+# `chords` chords of equal angle over `sweep` (default 3 x 0.25 R chords: 7.2e-3 rad), both joints
+# exactly tangent (smooth): the lower straight side is vertical, the upper one continues at the
+# arc's end tangent (tilted inward by `sweep`) to the y1 face - a straight box-face CUT end. The
+# left side is straight; its ends and the right side's bottom end are legacy perpendicular box
+# corners (decision 320). Rows: the straight sides as claims of length 3 (the box follows:
+# [-1.5, 1.5 + ...] x [-3, 3]) and one row per chord; the boundary carries the arc tags.
+# `convex` false: the CONCAVE twin (sigma -1; the metal outside the circle, centre to the right,
+# the side turning right and the upper side tilted outward) - S-G7-b's shape, whose two straight
+# neighbours never read each other as facing across the metal (F6) around the tiny arc.
+function write_short_arc_lead_inputs(directory; chords=3, sweep=3 * 0.125 / 52.0, rho=52.0, plane=0.0, convex=true)
+    sign = convex ? 1 : -1
+    centre = (0.5 - sign * rho, -0.5)
+    angle(k) = convex ? sweep * k / chords : pi - sweep * k / chords
+    chord_points = [(centre[1] + rho * cos(angle(k)), centre[2] + rho * sin(angle(k))) for k = 0:chords]
+    chord_points[1] = (0.5, -0.5)
+    tilt = (-sign * sin(sweep), cos(sweep))             # the arc's end tangent (travel +y)
+    rows = NamedTuple[]
+    function straight!(a, b)
+        d = (b[1] - a[1], b[2] - a[2])
+        L = hypot(d...)
+        t = (d[1] / L, d[2] / L)
+        return push!(rows, (point=(0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), plane), tangent=(t[1], t[2], 0.0),
+                            gap=(t[2], -t[1], 0.0), interval=(-0.5 * L, 0.5 * L), normal_sign=1.0,
+                            vertex_arm=false, slot=0, conductor=1))
+    end
+    straight!((0.5, -1.5), (0.5, -0.5))                 # the right side below the arc
+    for k = 1:chords
+        straight!(chord_points[k], chord_points[k + 1])
+    end
+    p_end = chord_points[end]
+    upper_row_end = (p_end[1] + tilt[1] * (1.5 - p_end[2]) / tilt[2], 1.5)
+    straight!(p_end, upper_row_end)                     # the right side above the arc, tilted
+    straight!((-0.5, 1.5), (-0.5, -1.5))                # the left side (travelling down: metal to its left)
+    lower, upper = row_coupon_bounds(rows, 0.5, 0.1, 0.05)
+    top_right = (p_end[1] + tilt[1] * (upper[2] - p_end[2]) / tilt[2], upper[2])
+    polygon = vcat([(-0.5, lower[2]), (0.5, lower[2])], chord_points, [top_right, (-0.5, upper[2])])
+    m = length(polygon)
+    on_face(p, q) = any((abs(p[d] - lower[d]) <= 1.0e-9 && abs(q[d] - lower[d]) <= 1.0e-9) ||
+                        (abs(p[d] - upper[d]) <= 1.0e-9 && abs(q[d] - upper[d]) <= 1.0e-9) for d = 1:2)
+    classes = [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
+    arcs = Vector{Any}(nothing, m)
+    for i = 3:(2 + chords)                              # the chord sides: vertices 3 .. 2 + chords
+        arcs[i] = (1, centre[1], centre[2], rho, sign)
+    end
+    joints = Vector{Any}(nothing, m)
+    joints[3] = (0.0, 1)
+    joints[3 + chords] = (0.0, 1)
+    corners = [(-0.5, lower[2], plane), (0.5, lower[2], plane), (-0.5, upper[2], plane)]
+    open(joinpath(directory, "signature.csv"), "w") do io
+        println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
+        for (i, row) in enumerate(rows)
+            println(io, join([i, 0, 1, row.point..., row.gap..., row.tangent..., 1, row.interval..., 0], ","))
+        end
+    end
+    open(joinpath(directory, "boundary.csv"), "w") do io
+        println(io, "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y,ArcId,ArcCx,ArcCy,ArcR,ArcSign,JointTurn,JointSmooth")
+        for (i, point) in enumerate(polygon)
+            arc = arcs[i] === nothing ? ["", "", "", "", ""] : collect(arcs[i])
+            joint = joints[i] === nothing ? ["", ""] : collect(joints[i])
+            println(io, join(vcat([1, i, 1, plane, 0, classes[i], point[1], point[2]], arc, joint), ","))
+        end
+    end
+    open(joinpath(directory, "mask.csv"), "w") do io
+        println(io, "Facet,Conductor,Plane,X,Y")
+        for point in polygon
+            println(io, join([1, 1, plane, point[1], point[2]], ","))
+        end
+    end
+    open(joinpath(directory, "semantic.json"), "w") do io
+        return write_json(io, Dict{String, Any}("Version" => 1, "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]))
+    end
+    return (signature=joinpath(directory, "signature.csv"), boundary=joinpath(directory, "boundary.csv"),
+            mask=joinpath(directory, "mask.csv"), semantic=joinpath(directory, "semantic.json"), polygon=polygon,
+            classes=classes, corners=corners, chords=chords, lower=lower, upper=upper, centre=centre, rho=rho)
+end
+
 function build_arc_coupon(
     directory,
     writer;
@@ -1097,6 +1176,69 @@ end
         @test rows[5.0] == rows[2.5]
         @test counts[5.0] == counts[2.5]
         @test digests[5.0] == digests[2.5]
+    end
+end
+
+@testset "round 3 class (7) Option B (decision 510 O1; G.7.6 S-G7-a / S-G7-b = G.4.5 S-G4-a): a 3-chord and a 1-chord arc of a 104 R circle build fab + thin; the tag-seeded collar circle equals the refit's to 1e-10" begin
+    mktempdir() do directory
+        # S-G7-a: the lead's 3-chord convex arc (0.25 R chords, sweep 7.2e-3 rad on 104 R) - the
+        # former >= 4-chord guard refused it - builds fab + thin: one arc tube per placement, two
+        # smooth joints, every tube volume closed. The SAME arc chorded 6 times takes the untagged-
+        # fit collar path (>= 4 chords: today's spelling, asserted against the propagated circle):
+        # the thin meshes (no collar: one spelling) are byte-identical, the fabricated tubes equal
+        # and the fabricated element counts within 1 % (the two collar circles agree to ~1e-13 R_arc
+        # - G.7.3 - not to the last ulp, so the fabricated meshes are not byte-identical: Option B).
+        digests = Dict{Tuple{Int, Bool}, String}()
+        counts = Dict{Tuple{Int, Bool}, Any}()
+        elements = Dict{Tuple{Int, Bool}, Int}()
+        for fabricated in (true, false), chords in (3, 6)
+            sub = mkpath(joinpath(directory, "lead-$chords-$(fabricated ? "fab" : "thin")"))
+            census, mesh, inputs = build_arc_coupon(sub, write_short_arc_lead_inputs; fabricated=fabricated,
+                                                    stem="lead", chords=chords)
+            @test inputs.chords == chords
+            loop = census["Scope"]["MetalLoops"][1]
+            @test loop["Arcs"][1]["Chords"] == chords && loop["Arcs"][1]["Parts"] == 1 &&
+                  isapprox(loop["Arcs"][1]["Radius"], inputs.rho; atol=1.0e-12)
+            tubes = census["PrismTubes"]
+            @test tubes["ArcTubes"]["Count"] == (fabricated ? 2 : 1)
+            @test tubes["ArcTubes"]["SharedSections"] == (fabricated ? 4 : 2)
+            @test tubes["Prisms"] > 0 && tubes["Pyramids"] > 0 && isfile(mesh)
+            digests[(chords, fabricated)] = bytes2hex(open(sha256, mesh))
+            counts[(chords, fabricated)] = (tubes["Prisms"], tubes["Pyramids"], tubes["TubeCount"])
+            elements[(chords, fabricated)] = tubes["FarFieldBudgetPolicy"]["Elements"]
+            if chords == 3 && fabricated
+                # The collar record: the propagated circle under the 3-chord arc vs the refit of the
+                # 6-chord offset polygon of the same loop - one circle to 1e-10 R_arc (P-G7.2).
+                loops = read_boundary(inputs.boundary)
+                collar = -3 * 0.5
+                record = offset_loop(loops[1], collar, 1.0e-7 * 0.5)
+                @test record.short && length(record.runs) == 1 && record.runs[1].id == 1 &&
+                      length(record.runs[1].edge_indices) == 3
+                seeded = fit_carried_run(record.points, record.runs[1], 1.0e-7 * 0.5)
+                @test isapprox(seeded.radius, inputs.rho + 3 * 0.5; atol=1.0e-12) && seeded.center == inputs.centre
+                six = write_short_arc_lead_inputs(mkpath(joinpath(directory, "six-offset")); chords=6)
+                six_record = offset_loop(read_boundary(six.boundary)[1], collar, 1.0e-7 * 0.5)
+                @test !six_record.short
+                refit = only(circular_arc_runs(six_record.points, 1.0e-7 * 0.5))
+                @test hypot(refit.center[1] - seeded.center[1], refit.center[2] - seeded.center[2]) <= 1.0e-10 * inputs.rho
+                @test abs(refit.radius - seeded.radius) <= 1.0e-10 * inputs.rho
+            end
+        end
+        for fabricated in (true, false)
+            @test counts[(3, fabricated)] == counts[(6, fabricated)]
+            @test abs(elements[(3, fabricated)] - elements[(6, fabricated)]) <= 0.01 * elements[(6, fabricated)]
+        end
+        @test digests[(3, false)] == digests[(6, false)]
+        # S-G7-b: a 1-chord CONCAVE arc (sweep 0.1 degrees on 104 R: 0.18 R of chord; the collar
+        # shrinks its circle to 101 R) builds fab + thin.
+        for fabricated in (true, false)
+            sub = mkpath(joinpath(directory, "one-$(fabricated ? "fab" : "thin")"))
+            census, mesh, inputs = build_arc_coupon(sub, write_short_arc_lead_inputs; fabricated=fabricated,
+                                                    stem="one", chords=1, sweep=deg2rad(0.1), convex=false)
+            @test inputs.chords == 1 && census["Scope"]["MetalLoops"][1]["Arcs"][1]["Chords"] == 1 &&
+                  census["Scope"]["MetalLoops"][1]["Arcs"][1]["Sign"] == -1
+            @test census["PrismTubes"]["ArcTubes"]["Count"] == (fabricated ? 2 : 1) && isfile(mesh)
+        end
     end
 end
 
