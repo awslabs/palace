@@ -575,6 +575,21 @@ void MaterialOperator::SetUpPML(const std::vector<config::MaterialData> &materia
   has_pml_attr = !pml_profiles.empty();
 }
 
+mfem::DenseTensor MaterialOperator::GetBackgroundPermittivityReal() const
+{
+  mfem::DenseTensor T(mat_epsilon);
+  for (std::size_t i = 0; i < pml_attr_to_profile.size(); i++)
+  {
+    const int k = pml_attr_to_profile[i];
+    if (k >= 0 && attr_mat[static_cast<int>(i)] >= 0)
+    {
+      const auto &eps = pml_profiles[k].epsilon_real;
+      std::copy(eps.begin(), eps.end(), T(attr_mat[static_cast<int>(i)]).Data());
+    }
+  }
+  return T;
+}
+
 double MaterialOperator::GetMaxMuEpsilon() const
 {
   double mu_eps_max = mat_mu_eps_max.Size() > 0 ? mat_mu_eps_max.Max() : 0.0;

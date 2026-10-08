@@ -193,6 +193,9 @@ protected:
   // Asig_g_ below); has_other_A2 still gates the online SolvePROM fallback, which is
   // independent of synthesis.
   bool has_other_A2 = false;
+  // True iff there are frequency-dependent PML regions. Their A2(ω) terms are projected
+  // per frequency online (see GetExtraSystemPMLMatrix) and fit for circuit synthesis.
+  bool has_pml_A2 = false;
   // One-time self-check state for the factored online A2_other path (SolvePROM). On the
   // first factored online solve we verify that the factored sum (0.5/ω·M_ff_r +
   // Σ_g EvaluateScalar(g,ω)/i·Asig_g_r) reproduces the full HDM projection of A2_other(ω)
@@ -353,6 +356,10 @@ protected:
     // singular values: modal-correction residue matrices are generally indefinite.
     std::vector<double> weights;
     std::vector<Eigen::VectorXd> u_dirs;
+    // Complex directions used instead of u_dirs if nonempty, for the Takagi factorization
+    // M_proj = Σ_j weights[j] u_j u_jᵀ of a complex symmetric residue matrix (frequency-
+    // dependent PML).
+    std::vector<Eigen::VectorXcd> u_dirs_c;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
   };
@@ -480,6 +487,38 @@ protected:
                const std::vector<std::complex<double>> &residues, double rank_tol);
   static bool AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,
                                     double rank_tol);
+
+  // Frequency-dependent PML terms of the PROM, A2ᵣ(ω) = Vᵀ A2_pml(ω) V. They are sampled on
+  // the sweep band for the current basis and approximated by
+  //               A2ᵣ(ω) ≈ P₀ + ω P₁ + ω² P₂ + Σₖ Rₖ / (ω - pₖ) ,
+  // with poles pₖ on the positive imaginary axis (see AddPMLSynthesis), for circuit
+  // synthesis and the online phase of the sweep.
+  struct PMLSamples
+  {
+    std::vector<double> w_fit, w_check;
+    Eigen::MatrixXcd Y_fit, Y_check;  // Vectorized samples, one row per frequency
+    double scale = 0.0;               // Maximum Frobenius norm of the samples
+  };
+  struct PMLRationalFit
+  {
+    Eigen::MatrixXcd P0, P1, P2;
+    std::vector<std::complex<double>> poles;
+    std::vector<Eigen::MatrixXcd> residues;
+    double rel_err = 0.0;  // Relative error on the check grid
+    Eigen::MatrixXcd Evaluate(double omega) const;
+  };
+  mutable std::optional<PMLSamples> pml_samples;  // For the current basis
+  std::optional<PMLRationalFit> pml_online_fit;
+  Eigen::MatrixXcd ProjectPMLExtraSystem(double omega) const;
+  const PMLSamples &GetPMLSamples() const;
+  std::vector<std::complex<double>> GetPMLPoles(int num_poles) const;
+  PMLRationalFit FitPMLExtraSystem(const std::vector<std::complex<double>> &poles) const;
+
+  // Fold the frequency-dependent PML terms into the synthesized pencil: corrections to the
+  // reduced K, C, M and auxiliary states for their rational part.
+  void AddPMLSynthesis(Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr,
+                       Eigen::MatrixXcd &Mr_corr,
+                       std::vector<WavePortAuxBlock> &aux_blocks) const;
 
   // Append aux-state rows/columns for regime-2 wave ports onto an n×n base pencil
   // (Kr_total, Cr_total, Mr_total). Returns the (n+aux)×(n+aux) augmented matrices and

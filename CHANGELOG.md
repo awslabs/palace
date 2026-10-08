@@ -39,7 +39,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     evaluated at a fixed reference frequency (static PML, the default, which keeps the system
     matrices frequency-independent) or at the solve frequency (`"FrequencyDependent"`),
     which for eigenmode simulations is the complex eigenfrequency of the nonlinear
-    eigenvalue problem. SchemaVer 2-3-0 [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+    eigenvalue problem. Adaptive frequency sweeps and circuit synthesis support both
+    formulations: frequency-dependent PML terms are fit with matrix-valued rational functions
+    with poles on the imaginary axis, realized with decaying auxiliary states in the
+    synthesized circuit. SchemaVer 2-3-0 [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes
 
