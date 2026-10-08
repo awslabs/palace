@@ -1181,6 +1181,33 @@ TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][Regression]")
                                   "online_adaptive", opts);
 }
 
+// Driven substructuring with a wave port (a TM mode of a shorted circular waveguide, whose
+// modal terms border the factored side), in the region; and in the environment, with an
+// online sweep of a redesigned region (permittivity 2.08 -> 2.3) against a saved model.
+// The references are regular simulations, in the substructured runs' columns.
+TEST_CASE("substructuring_driven_wave", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave.json", "wave",
+                                  opts);
+}
+
+TEST_CASE("substructuring_driven_wave_online", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_wave_offline.json";
+  palace::test::RunRegressionCase("substructuring_driven_wave", "driven_wave_online.json",
+                                  "online", opts);
+}
+
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
 // flux integral over the current port's aperture (not energy-recoverable); that quadrature
 // is reduced over partitioner-split faces, so M[1][2] shifts ~1e-4 across partitions and

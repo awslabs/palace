@@ -6,12 +6,14 @@
 
 #include <array>
 #include <complex>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/waveportoperator.hpp"
 
 namespace palace
 {
@@ -76,12 +78,12 @@ struct DrivenSubstructureModel
 {
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   int version = 2, nG = 0, sig_w = 0;
-  std::vector<double> signatures;             // nG x sig_w
-  std::vector<double> env_fp;                 // environment fingerprint
-  std::vector<int> excitations;               // excitations with environment sources
-  std::vector<double> exc_fp;                 // their source fingerprints (kSourceFp each)
-  std::vector<int> ports;                     // environment lumped ports
-  std::vector<double> omega;                  // frequencies of the records (nondimensional)
+  std::vector<double> signatures;  // nG x sig_w
+  std::vector<double> env_fp;      // environment fingerprint
+  std::vector<int> excitations;    // excitations with environment sources
+  std::vector<double> exc_fp;      // their source fingerprints (kSourceFp each)
+  std::vector<int> ports;     // environment lumped ports (index) and wave ports (-index)
+  std::vector<double> omega;  // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
   int capacity = 0;  // records the header has room for (at least omega.size())
 
@@ -191,6 +193,9 @@ public:
   // Local true DOFs touched by the boundary elements with the given attributes.
   std::vector<char> BoundaryTrueDofs(const std::vector<int> &bdr_attributes) const;
 
+  // The wave ports in the environment (each wave port lies inside one side).
+  std::vector<int> EnvironmentWavePorts() const;
+
   // Fingerprint of the environment, independent of the region, of the partition and of the
   // DOF numbering: the global counts of environment-interior and interface DOFs, and
   // r_k^T A_E(ω) r_k for three fixed fields r_k, applied with the partially assembled
@@ -233,6 +238,15 @@ private:
     std::vector<int> irn_sys, jcn_sys;
     std::vector<std::complex<double>> val;
     std::unique_ptr<MumpsSchurSolverT<std::complex<double>>> schur;
+    // The rank-one modal terms g s sᵀ of the side's wave ports, bordering the system: an
+    // extra unknown y per term after its n_dofs DOFs, on the last rank, with the entries
+    // √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on its
+    // diagonal (eliminating y adds g s sᵀ), σ = border. The entries follow those of the
+    // pattern.
+    std::vector<int> wave_ports, term_ports;
+    std::vector<std::vector<int>> term_dofs;
+    HYPRE_BigInt n_dofs = 0;
+    double border = 1.0;
   };
   Side env, region;
   // On rank 0: S_E, and the factored interface system S_R + S_E with its pivots; the
@@ -240,8 +254,16 @@ private:
   std::vector<std::complex<double>> S, T, g_last, u_last;
   std::vector<int> T_piv;
 
+  // The local true DOFs of the wave ports (each in the wave_ports of its side).
+  std::map<int, std::vector<char>> wave_port_dofs;
+
   // Factor S_R + S_E on rank 0.
   void FactorInterface();
+
+  // The rank-one modal terms of a side's wave ports at ω with their ports, in a fixed
+  // order.
+  std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>>
+  ModalTerms(const Side &side, double omega);
 
   // The assembled parts of A2(ω) of a side, with the pinned DOFs eliminated.
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> ExtraParts(const Side &side,
@@ -253,9 +275,10 @@ private:
   // Factor a side (set up at ω), or refactor it at another frequency.
   void Factor(Side &side, double omega);
 
-  // The entries of a side at ω on its pattern, given its A2(ω).
+  // The entries of a side at ω on its pattern, given its A2(ω) and modal terms.
   void Fill(const Side &side, double omega,
             const std::vector<std::unique_ptr<mfem::HypreParMatrix>> &extra,
+            const std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>> &terms,
             std::vector<std::complex<double>> &val) const;
 };
 

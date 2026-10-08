@@ -156,21 +156,24 @@ the frequency, and substructuring condenses it exactly at each frequency of a un
 (`"Solver"/"Driven"` with `"MinFreq"`, `"MaxFreq"` and `"FreqStep"`): one partial
 factorization of the environment gives ``\bm{S}_E(\omega)``, and the region is factored against
 it once for all excitations. Lumped ports, impedance, absorbing and conductivity boundaries, and
-lossy materials may lie in the region, in the environment, or on both sides; the outputs are
-those of a regular simulation (port S-parameters, voltages and currents, and domain energies).
+lossy materials may lie in the region, in the environment, or on both sides, and wave ports
+inside either side, away from the interface (their modal terms border that side's
+factorization); the outputs are those of a regular simulation (port S-parameters, voltages and
+currents, domain energies and fields).
 
 With `"SaveModel"`, an offline sweep also saves, per frequency, ``\bm{S}_E(\omega)``, the
 condensation of the environment's sources onto the interface, and the condensed voltages of the
-environment's lumped ports. An `"Online"` sweep at saved frequencies (any subset of them, matched
+environment's lumped ports and wave port overlaps. An `"Online"` sweep at saved frequencies (any subset of them, matched
 by value) then factors only the region, which may be redesigned (materials, re-meshing) and run
 on a different number of processes, as long as the environment, its excitations and the
 interface are unchanged. The online field is known in the region and on the interface only:
 
-  - S-parameters, voltages and currents of all lumped ports, and the energies of lumped
-    elements, are those of a regular simulation;
+  - S-parameters of all ports, voltages and currents of the lumped ports, and the energies of
+    lumped elements, are those of a regular simulation;
   - domain energies are written for the `"Domains"/"Postprocessing"/"Energy"` entries inside
     the region, without the total energies and participation ratios (and the power of the
-    environment's lumped ports, in `port-Z.csv`, is not available).
+    environment's ports, and the voltage of its wave ports, are not available);
+  - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
 
 An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain) (nonzero
 `"AdaptiveTol"`) instead condenses the environment at frequencies chosen greedily, as the
@@ -186,9 +189,10 @@ voltage would then depend on both sides.
 
 !!! note
 
-    Driven substructuring needs MUMPS. Wave ports, Floquet ports, periodic boundaries, field
-    output (`"Save"`), restarts and `"AdaptiveCircuitSynthesis"` are not supported yet, nor,
-    from a model, surface flux, interface dielectric, far-field and probe postprocessing. The
+    Driven substructuring needs MUMPS. Floquet ports and periodic boundaries (which make the
+    system non-symmetric), inactive wave ports, restarts and `"AdaptiveCircuitSynthesis"` are
+    not supported yet, nor, from a model, surface flux, interface dielectric, far-field and
+    probe postprocessing. The
     model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes
     per entry of its lower triangle).
 

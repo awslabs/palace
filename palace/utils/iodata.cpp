@@ -738,14 +738,15 @@ void IoData::CheckConfiguration()
     }
     if (problem.type == ProblemType::DRIVEN)
     {
-      // Direct factorizations, exact per frequency or at the samples of an adaptive sweep.
-      // Wave and Floquet ports carry matrix-free terms a factorization cannot absorb.
+      // Complex symmetric direct factorizations, exact per frequency or at the samples of
+      // an adaptive sweep (wave ports border them with their modal terms). Floquet ports
+      // and periodic boundaries make the system non-symmetric.
       MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
                   "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
-      MFEM_VERIFY(boundaries.waveport.empty() && boundaries.floquetport.empty() &&
+      MFEM_VERIFY(boundaries.floquetport.empty() &&
                       boundaries.periodic.boundary_pairs.empty(),
-                  "Driven substructuring does not support wave ports, Floquet ports or "
-                  "periodic boundaries!");
+                  "Driven substructuring does not support Floquet ports or periodic "
+                  "boundaries!");
       // From a model (online, or after an adaptive sweep's samples), the field is known in
       // the region and on Γ only.
       MFEM_VERIFY(
@@ -755,8 +756,8 @@ void IoData::CheckConfiguration()
                domains.postpro.probe.empty()),
           "Online or adaptive driven substructuring does not compute surface flux, "
           "interface dielectric, far-field or probe postprocessing yet!");
-      MFEM_VERIFY(solver.driven.save_indices.empty() && solver.driven.restart == 1,
-                  "Driven substructuring does not write fields or restart a sweep yet!");
+      MFEM_VERIFY(solver.driven.restart == 1,
+                  "Driven substructuring does not restart a sweep yet!");
 #if !defined(MFEM_USE_MUMPS)
       MFEM_ABORT("Driven substructuring requires MUMPS!");
 #endif

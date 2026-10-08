@@ -273,9 +273,15 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     adaptive["AdaptiveCircuitSynthesis"] = true;
     CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
                       Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+#if defined(MFEM_USE_MUMPS)
     const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
-    CHECK_THROWS_WITH(IoData(make_config(uniform, wave), false),
-                      Catch::Matchers::ContainsSubstring("does not support wave ports"));
+    CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
+#endif
+    const json periodic = {
+        {"Periodic",
+         {{"BoundaryPairs", {{{"DonorAttributes", {5}}, {"ReceiverAttributes", {6}}}}}}}};
+    CHECK_THROWS_WITH(IoData(make_config(uniform, periodic), false),
+                      Catch::Matchers::ContainsSubstring("periodic boundaries"));
 #if defined(MFEM_USE_MUMPS)
     json saved = make_config(uniform, json::object());
     saved["Solver"]["Substructuring"]["SaveModel"] = "environment.model";
@@ -292,10 +298,11 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_THROWS_WITH(IoData(saved, false),
                       Catch::Matchers::ContainsSubstring("does not compute surface flux"));
 #endif
+#if defined(MFEM_USE_MUMPS)
     json fields = uniform;
     fields["Save"] = {1.0};
-    CHECK_THROWS_WITH(IoData(make_config(fields, json::object()), false),
-                      Catch::Matchers::ContainsSubstring("does not write fields"));
+    CHECK_NOTHROW(IoData(make_config(fields, json::object()), false));
+#endif
   }
 
   SECTION("Magnetostatic substructuring excitations")

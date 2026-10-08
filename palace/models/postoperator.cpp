@@ -1752,11 +1752,12 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
       auto &vi = measurement_cache.wave_port_vi[idx];
-      vi.S = data.GetSParameter(*E);
+      const auto given = wave_port_overlaps.find(idx);
+      vi.S = (given != wave_port_overlaps.end()) ? given->second : data.GetSParameter(*E);
       if (data.HasVoltageCoords())
       {
-        vi.P = data.GetPower(*E, *B);
-        vi.V = data.GetVoltage(*E);
+        vi.P = (given != wave_port_overlaps.end()) ? 0.0 : data.GetPower(*E, *B);
+        vi.V = (given != wave_port_overlaps.end()) ? 0.0 : data.GetVoltage(*E);
         vi.Z_PV = data.GetCharacteristicImpedance();
       }
     }

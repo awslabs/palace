@@ -288,6 +288,7 @@ protected:
 
   mutable Measurement measurement_cache;
   std::map<int, std::complex<double>> lumped_port_voltages;  // see SetLumpedPortVoltages
+  std::map<int, std::complex<double>> wave_port_overlaps;    // see SetWavePortOverlaps
 
   // Exact reduced-coordinate domain-energy forms for adaptive online postprocessing.
   bool reduced_postprocessing_ready = false;
@@ -459,6 +460,15 @@ public:
     requires(solver_t == ProblemType::DRIVEN)
   {
     lumped_port_voltages = std::move(voltages);
+  }
+
+  // Wave port overlaps of the field with the port mode (the S-parameter before its
+  // incident part is removed) given in the same way; their power and voltage are not
+  // available (zero).
+  void SetWavePortOverlaps(std::map<int, std::complex<double>> overlaps)
+    requires(solver_t == ProblemType::DRIVEN)
+  {
+    wave_port_overlaps = std::move(overlaps);
   }
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain

@@ -76,7 +76,8 @@ public:
 
   // From the local lower-triangle entries of A (n_loc local rows, in rank order). With
   // rows, the vectors of the solves are of a larger (parent) space: rows[i] is the local
-  // index of local row i in them (the other entries of a solution are 0).
+  // index of local row i in them, or -1 for a row of none (the other entries of a solution
+  // are 0).
   MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     int procs = 0, bool refactor = false, bool spd = true,

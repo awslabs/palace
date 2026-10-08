@@ -501,7 +501,7 @@ void MumpsSchurSolverT<T>::Gather(const std::vector<const VecType *> &X)
       for (int i = 0; i < n_loc; i++)
       {
         const int r = rows.empty() ? i : rows[i];
-        loc[i] = {xr[r], xi[r]};
+        loc[i] = (r >= 0) ? T(xr[r], xi[r]) : T(0.0);
       }
     }
     else
@@ -509,7 +509,8 @@ void MumpsSchurSolverT<T>::Gather(const std::vector<const VecType *> &X)
       const double *xr = x.HostRead();
       for (int i = 0; i < n_loc; i++)
       {
-        loc[i] = xr[rows.empty() ? i : rows[i]];
+        const int r = rows.empty() ? i : rows[i];
+        loc[i] = (r >= 0) ? xr[r] : 0.0;
       }
     }
     MPI_Gatherv(loc.data(), n_loc, MpiType<T>(),
@@ -549,8 +550,11 @@ void MumpsSchurSolverT<T>::Scatter(const std::vector<VecType *> &Y)
       for (int i = 0; i < n_loc; i++)
       {
         const int r = rows.empty() ? i : rows[i];
-        yr[r] = loc[i].real() / scale;
-        yi[r] = loc[i].imag() / scale;
+        if (r >= 0)
+        {
+          yr[r] = loc[i].real() / scale;
+          yi[r] = loc[i].imag() / scale;
+        }
       }
     }
     else
@@ -558,7 +562,11 @@ void MumpsSchurSolverT<T>::Scatter(const std::vector<VecType *> &Y)
       double *yr = y.HostReadWrite();
       for (int i = 0; i < n_loc; i++)
       {
-        yr[rows.empty() ? i : rows[i]] = loc[i] / scale;
+        const int r = rows.empty() ? i : rows[i];
+        if (r >= 0)
+        {
+          yr[r] = loc[i] / scale;
+        }
       }
     }
   }

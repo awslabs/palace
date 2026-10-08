@@ -128,6 +128,77 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   gamma_tdofs.resize(gamma_disp[nranks - 1] + gamma_cnt[nranks - 1]);
   MPI_Allgatherv(mine.data(), nloc, HYPRE_MPI_BIG_INT, gamma_tdofs.data(), gamma_cnt.data(),
                  gamma_disp.data(), HYPRE_MPI_BIG_INT, comm);
+
+  // Wave ports: each inside the region or the environment, away from Γ, so that its modal
+  // terms border one side's system.
+  for (const auto &[idx, data] : space_op.GetWavePortOp())
+  {
+    MFEM_VERIFY(data.active, "Driven substructuring does not support inactive wave ports "
+                             "(wave port "
+                                 << idx << ")!");
+    const auto &list = data.GetAttrList();
+    auto mark = BoundaryTrueDofs(std::vector<int>(list.begin(), list.end()));
+    double n[3] = {0.0, 0.0, 0.0};  // environment interior, interface, region interior
+    for (int i = 0; i < nt; i++)
+    {
+      n[0] += mark[i] && is_env_int[i];
+      n[1] += mark[i] && is_gamma[i];
+      n[2] += mark[i] && is_region_int[i];
+    }
+    Mpi::GlobalSum(3, n, comm);
+    MFEM_VERIFY(
+        n[1] == 0.0 && (n[0] == 0.0 || n[2] == 0.0),
+        "Wave port " << idx
+                     << " touches the substructuring interface: wave ports must lie "
+                        "inside the region or the environment!");
+    ((n[0] > 0.0) ? env : region).wave_ports.push_back(idx);
+    wave_port_dofs[idx] = std::move(mark);
+  }
+}
+
+std::vector<int> DrivenSubstructure::EnvironmentWavePorts() const
+{
+  return env.wave_ports;
+}
+
+std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>>
+DrivenSubstructure::ModalTerms(const Side &side, double omega)
+{
+  // The terms of all active wave ports, each assigned to the port that holds its support.
+  std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>> terms;
+  if (wave_port_dofs.empty())
+  {
+    return terms;
+  }
+  for (auto &term : space_op.GetModalCorrectionTerms(omega))
+  {
+    const double *sr = term.s->Real().HostRead(), *si = term.s->Imag().HostRead();
+    std::vector<double> count;  // per port: support inside, outside
+    for (const auto &[idx, mark] : wave_port_dofs)
+    {
+      double c[2] = {0.0, 0.0};
+      for (std::size_t i = 0; i < mark.size(); i++)
+      {
+        c[mark[i] ? 0 : 1] += (sr[i] != 0.0 || si[i] != 0.0);
+      }
+      count.insert(count.end(), c, c + 2);
+    }
+    Mpi::GlobalSum(static_cast<int>(count.size()), count.data(), space_op.GetComm());
+    int idx = -1;
+    for (std::size_t p = 0; p < wave_port_dofs.size(); p++)
+    {
+      if (count[2 * p] > 0.0 && count[2 * p + 1] == 0.0)
+      {
+        idx = std::next(wave_port_dofs.begin(), static_cast<std::ptrdiff_t>(p))->first;
+      }
+    }
+    MFEM_VERIFY(idx >= 0, "A wave-port modal term outside of its port!");
+    if (std::ranges::find(side.wave_ports, idx) != side.wave_ports.end())
+    {
+      terms.emplace_back(idx, std::move(term));
+    }
+  }
+  return terms;
 }
 
 DrivenSubstructure::~DrivenSubstructure() = default;
@@ -335,16 +406,69 @@ void DrivenSubstructure::Setup(Side &side, double omega)
       }
     }
   }
-  side.val.resize(side.jcn.size());
+  // The modal terms of the side's wave ports border the system, with an extra unknown per
+  // term on the last rank, against the DOFs of the term's port. Its diagonal is -σ and its
+  // entries √(gσ) s, with σ the largest diagonal entry of the side's operator at this
+  // frequency, so that the bordering does not change the scale of the factored matrix.
+  const auto terms = ModalTerms(side, omega);
+  {
+    const auto coef = Coefficients(omega);
+    side.border = 0.0;
+    for (int i = 0; i < nt; i++)
+    {
+      for (int q = side.row_ptr[i]; q < side.row_ptr[i + 1]; q++)
+      {
+        if (side.jcn[q] == tstart + i + 1)
+        {
+          std::complex<double> d = 0.0;
+          for (int p = 0; p < 6; p++)
+          {
+            d += side.parts[p].empty() ? 0.0 : coef[p] * side.parts[p][q];
+          }
+          side.border = std::max(side.border, std::abs(d));
+        }
+      }
+    }
+    Mpi::GlobalMax(1, &side.border, comm);
+    side.border = (side.border > 0.0) ? side.border : 1.0;
+  }
+  const int nterm = static_cast<int>(terms.size());
+  const bool last = (Mpi::Rank(comm) == Mpi::Size(comm) - 1);
+  side.n_dofs = side.n_sys;
+  side.n_sys += nterm;
+  side.term_ports.clear();
+  side.term_dofs.assign(nterm, {});
+  for (int t = 0; t < nterm; t++)
+  {
+    side.term_ports.push_back(terms[t].first);
+    const auto &mark = wave_port_dofs.at(terms[t].first);
+    for (int i = 0; i < nt; i++)
+    {
+      if (mark[i] && sys[i] >= 0)
+      {
+        side.term_dofs[t].push_back(i);
+        side.irn_sys.push_back(static_cast<int>(side.n_dofs + t + 1));
+        side.jcn_sys.push_back(static_cast<int>(sys[i] + 1));
+      }
+    }
+    if (last)
+    {
+      side.irn_sys.push_back(static_cast<int>(side.n_dofs + t + 1));
+      side.jcn_sys.push_back(static_cast<int>(side.n_dofs + t + 1));
+      side.rows.push_back(-1);
+    }
+  }
+  side.val.resize(side.irn_sys.size());
   auto extra = ExtraParts(side, omega);
   side.extra = extra[0] || extra[1];
-  Fill(side, omega, extra, side.val);
+  Fill(side, omega, extra, terms, side.val);
 #endif
 }
 
 void DrivenSubstructure::Fill(
     const Side &side, double omega,
     const std::vector<std::unique_ptr<mfem::HypreParMatrix>> &extra,
+    const std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>> &terms,
     std::vector<std::complex<double>> &val) const
 {
 #if defined(MFEM_USE_MUMPS)
@@ -362,6 +486,26 @@ void DrivenSubstructure::Fill(
     if (extra[p])
     {
       AddToPattern(*extra[p], coef[6 + p], side.row_ptr, side.jcn, val);
+    }
+  }
+  MFEM_VERIFY(terms.size() == side.term_dofs.size(),
+              "The modal terms of the wave ports changed between frequencies!");
+  const bool last = (Mpi::Rank(space_op.GetComm()) == Mpi::Size(space_op.GetComm()) - 1);
+  std::size_t q = side.jcn.size();
+  for (std::size_t t = 0; t < terms.size(); t++)
+  {
+    MFEM_VERIFY(terms[t].first == side.term_ports[t],
+                "The modal terms of the wave ports changed between frequencies!");
+    const std::complex<double> c = std::sqrt(terms[t].second.g * side.border);
+    const double *sr = terms[t].second.s->Real().HostRead(),
+                 *si = terms[t].second.s->Imag().HostRead();
+    for (int i : side.term_dofs[t])
+    {
+      val[q++] = c * std::complex<double>(sr[i], si[i]);
+    }
+    if (last)
+    {
+      val[q++] = -side.border;
     }
   }
 #endif
@@ -387,7 +531,7 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   auto extra = ExtraParts(side, omega);
   MFEM_VERIFY(side.extra == (extra[0] || extra[1]),
               "The frequency-dependent part of a substructure operator changed!");
-  Fill(side, omega, extra, side.schur->Values());
+  Fill(side, omega, extra, ModalTerms(side, omega), side.schur->Values());
   side.schur->Refactor();
 #endif
 }

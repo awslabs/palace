@@ -1,0 +1,15 @@
+{
+  "Problem": { "Type": "Driven", "Output": "postpro/offline" },
+  "Model": { "Mesh": "mesh/cylinder_split.msh", "L0": 1.0e-2 },
+  "Domains": { "Materials": [
+    { "Attributes": [1, 5], "Permittivity": 2.08, "LossTan": 1.0e-3 } ] },
+  "Boundaries": {
+    "PEC": { "Attributes": [3, 4] },
+    "WavePort": [ { "Index": 1, "Attributes": [2], "Mode": 3, "Excitation": true,
+      "KSPTol": 1e-8, "EigenTol": 1e-6 } ] },
+  "Solver": { "Order": 3, "Device": "CPU",
+    "Driven": { "MinFreq": 3.1, "MaxFreq": 3.6, "FreqStep": 0.25 },
+    "Linear": { "Type": "MUMPS", "KSPType": "GMRES", "Tol": 1e-12, "MaxIts": 200 },
+    "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [5] },
+      "SaveModel": "environment_model.bin" } }
+}

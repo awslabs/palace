@@ -85,8 +85,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 namespace
 {
 
-// The lumped ports on the environment side, and an abort for ports touching Γ (their
-// excitation and voltage would depend on both sides).
+// The lumped ports on the environment side (and its wave ports, as -index), and an abort
+// for lumped ports touching Γ (their excitation and voltage would depend on both sides).
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
                                   std::map<int, std::vector<char>> &port_dofs)
 {
@@ -117,7 +117,23 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
       port_dofs[idx] = std::move(mark);
     }
   }
+  for (int idx : ds.EnvironmentWavePorts())
+  {
+    env_ports.push_back(-idx);
+  }
   return env_ports;
+}
+
+// The functional of a wave port's overlap with its mode at ω as a true-DOF vector l (the
+// overlap is l^T E): -conj(s), with s the port's n×H mode vector.
+ComplexVector WaveOverlapFunctional(SpaceOperator &space_op, int idx, double omega)
+{
+  auto s = space_op.GetWavePortModeVector(idx, omega);
+  ComplexVector l(s->Size());
+  l.Real() = s->Real();
+  l.Real() *= -1.0;
+  l.Imag() = s->Imag();
+  return l;
 }
 
 // The voltage functional of a lumped port as a true-DOF vector l (V = l^T E), evaluated
@@ -276,12 +292,17 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
                                                "outside the region ({})",
                                                fmt::join(skipped, ", ")),
                  env_ports.empty() ? std::string()
-                                   : fmt::format(", and no power of the environment's "
-                                                 "lumped ports ({})",
-                                                 fmt::join(env_ports, ", ")));
+                                   : ", and no power (or wave port voltage) of the "
+                                     "environment's ports");
   }
   PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
                                             iodata.boundaries, iodata.units, space_op);
+  if (from_model && post_op.WillWriteFields())
+  {
+    Mpi::Warning("{} driven substructuring writes the fields in the region and on the "
+                 "interface only (zero in the environment)!\n",
+                 online ? "Online" : "Adaptive");
+  }
 
   // The model: header and environment ports.
   DrivenSubstructureModel model;
@@ -324,7 +345,8 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     }
     for (int p : env_ports)
     {
-      port_l.push_back(VoltageFunctional(space_op, p, port_dofs.at(p)));
+      port_l.push_back((p > 0) ? VoltageFunctional(space_op, p, port_dofs.at(p))
+                               : ComplexVector());
     }
     if (save && root)
     {
@@ -438,6 +460,10 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     std::vector<const ComplexVector *> L(np);
     for (int j = 0; j < np; j++)
     {
+      if (env_ports[j] < 0)
+      {
+        port_l[j] = WaveOverlapFunctional(space_op, -env_ports[j], omega);
+      }
       L[j] = &port_l[j];
     }
     rec.h = ds->CondenseEnvironment(L);
@@ -446,9 +472,12 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     {
       for (int j = 0; j < np; j++)
       {
+        const auto &l = port_l[j];
         lu[static_cast<std::size_t>(k) * np + j] = {
-            mfem::InnerProduct(port_l[j].Real(), E[k].Real()),
-            mfem::InnerProduct(port_l[j].Real(), E[k].Imag())};
+            mfem::InnerProduct(l.Real(), E[k].Real()) -
+                mfem::InnerProduct(l.Imag(), E[k].Imag()),
+            mfem::InnerProduct(l.Real(), E[k].Imag()) +
+                mfem::InnerProduct(l.Imag(), E[k].Real())};
       }
     }
     Mpi::GlobalSum(static_cast<int>(lu.size()), lu.data(), comm);
@@ -709,12 +738,14 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
       B *= -1.0 / (1i * omega);
       if (from_model)
       {
-        std::map<int, std::complex<double>> Vk;
+        std::map<int, std::complex<double>> Vk, Sk;
         for (int j = 0; j < np; j++)
         {
-          Vk[env_ports[j]] = V[static_cast<std::size_t>(k) * np + j];
+          const int p = env_ports[j];
+          ((p > 0) ? Vk[p] : Sk[-p]) = V[static_cast<std::size_t>(k) * np + j];
         }
         post_op.SetLumpedPortVoltages(std::move(Vk));
+        post_op.SetWavePortOverlaps(std::move(Sk));
       }
       post_op.MeasureAndPrintAll(ex_idx[k], int(omega_i), E[k], B, omega);
     }
