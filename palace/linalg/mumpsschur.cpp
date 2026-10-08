@@ -214,10 +214,9 @@ typename MumpsSchurSolverT<T>::Coo LowerTriangle(const mfem::HypreParMatrix &A)
 template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
-                                        double blr_tol, bool serial, bool refactor,
-                                        bool spd)
+                                        double blr_tol, int procs, bool refactor, bool spd)
   : MumpsSchurSolverT(A.GetComm(), A.GetGlobalNumRows(), A.Height(), LowerTriangle<T>(A),
-                      schur_vars, blr_tol, serial, refactor, spd)
+                      schur_vars, blr_tol, procs, refactor, spd)
 {
 }
 
@@ -225,9 +224,9 @@ template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc,
                                         Coo &&A,
                                         const std::vector<HYPRE_BigInt> &schur_vars,
-                                        double blr_tol, bool serial, bool refactor,
-                                        bool spd, std::vector<int> rows)
-  : comm(comm), serial(serial), refactor(refactor), spd(spd), n_glob(n_glob), n_loc(n_loc),
+                                        double blr_tol, int procs, bool refactor, bool spd,
+                                        std::vector<int> rows)
+  : comm(comm), procs(procs), refactor(refactor), spd(spd), n_glob(n_glob), n_loc(n_loc),
     n_schur(static_cast<int>(schur_vars.size())), rows(std::move(rows)),
     irn(std::move(A.irn)), jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
 {
@@ -240,9 +239,11 @@ template <typename T>
 void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
 {
   MPI_Comm_rank(comm, &rank);
-  active = !serial || rank == 0;
   int nranks;
   MPI_Comm_size(comm, &nranks);
+  const int stride = (procs > 0 && procs < nranks) ? (nranks + procs - 1) / procs : 1;
+  procs = (nranks + stride - 1) / stride;
+  active = (rank % stride == 0);
   row_cnt.assign(nranks, 0);
   row_disp.assign(nranks, 0);
   MPI_Allgather(&n_loc, 1, MPI_INT, row_cnt.data(), 1, MPI_INT, comm);
@@ -251,7 +252,6 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
     row_disp[r] = row_disp[r - 1] + row_cnt[r - 1];
   }
 
-  MFEM_VERIFY(!(refactor && serial), "MumpsSchurSolver: Refactor needs distributed input!");
   if (blr_tol > 0.0)
   {
     // The BLR dropping parameter CNTL(7) is absolute, and the Schur option excludes
@@ -273,31 +273,31 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
       v /= scale;
     }
   }
-  if (serial)
+  if (stride > 1)
   {
-    // Gather the entries on rank 0, which factors alone (centralized assembled input).
-    static_assert(sizeof(MUMPS_INT) == sizeof(int), "MUMPS_INT must be a 32-bit int!");
-    int nnz_loc = static_cast<int>(irn.size());
-    std::vector<int> cnt(nranks), disp(nranks, 0);
-    MPI_Gather(&nnz_loc, 1, MPI_INT, cnt.data(), 1, MPI_INT, 0, comm);
-    std::size_t total = 0;
-    for (int r = 0; rank == 0 && r < nranks; r++)
+    // Groups of stride consecutive ranks, whose first rank factors: the pattern of the
+    // group's entries on it.
+    MPI_Comm_split(comm, active ? 0 : MPI_UNDEFINED, rank, &sub);
+    MPI_Comm_split(comm, rank / stride, rank, &grp);
+    int ng, nnz_loc = static_cast<int>(irn.size());
+    MPI_Comm_size(grp, &ng);
+    grp_cnt.assign(active ? ng : 0, 0);
+    grp_disp.assign(active ? ng : 0, 0);
+    MPI_Gather(&nnz_loc, 1, MPI_INT, grp_cnt.data(), 1, MPI_INT, 0, grp);
+    for (int r = 1; r < static_cast<int>(grp_cnt.size()); r++)
     {
-      disp[r] = static_cast<int>(total);
-      total += cnt[r];
+      grp_disp[r] = grp_disp[r - 1] + grp_cnt[r - 1];
     }
+    const std::size_t total = active ? grp_disp.back() + grp_cnt.back() : 0;
     std::vector<MUMPS_INT> irn_g(total), jcn_g(total);
-    std::vector<T> val_g(total);
-    MPI_Gatherv(irn.data(), nnz_loc, MPI_INT, irn_g.data(), cnt.data(), disp.data(),
-                MPI_INT, 0, comm);
-    MPI_Gatherv(jcn.data(), nnz_loc, MPI_INT, jcn_g.data(), cnt.data(), disp.data(),
-                MPI_INT, 0, comm);
-    MPI_Gatherv(val.data(), nnz_loc, MpiType<T>(), val_g.data(), cnt.data(), disp.data(),
-                MpiType<T>(), 0, comm);
+    MPI_Gatherv(irn.data(), nnz_loc, MPI_INT, irn_g.data(), grp_cnt.data(), grp_disp.data(),
+                MPI_INT, 0, grp);
+    MPI_Gatherv(jcn.data(), nnz_loc, MPI_INT, jcn_g.data(), grp_cnt.data(), grp_disp.data(),
+                MPI_INT, 0, grp);
     irn.swap(irn_g);
     jcn.swap(jcn_g);
-    val.swap(val_g);
   }
+  GatherEntries();
   for (HYPRE_BigInt v : schur_vars)
   {
     listvar.push_back(static_cast<MUMPS_INT>(v + 1));
@@ -308,15 +308,16 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
   {
     id.sym = 2;  // symmetric (general)
     id.par = 1;  // the host takes part in the factorization
-    id.comm_fortran = static_cast<MUMPS_INT>(MPI_Comm_c2f(serial ? MPI_COMM_SELF : comm));
+    id.comm_fortran =
+        static_cast<MUMPS_INT>(MPI_Comm_c2f(sub != MPI_COMM_NULL ? sub : comm));
     id.job = -1;
     Call();
     icntl(1) = -1;  // silence errors / diagnostics / global info / printing
     icntl(2) = -1;
     icntl(3) = -1;
     icntl(4) = 0;
-    icntl(5) = 0;                // assembled input
-    icntl(18) = serial ? 0 : 3;  // centralized or distributed matrix entries
+    icntl(5) = 0;   // assembled input
+    icntl(18) = 3;  // distributed matrix entries
     // Complete Schur (if any Schur variables), 2D block cyclic on a 1 x 1 grid: centralized
     // on rank 0.
     icntl(19) = (n_schur > 0) ? 3 : 0;
@@ -336,20 +337,10 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
       id.cntl[6] = blr_tol;  // CNTL(7): dropping parameter (relative, after the scaling)
     }
     id.n = static_cast<MUMPS_INT>(n_glob);
-    if (serial)
-    {
-      id.nnz = static_cast<MUMPS_INT8>(irn.size());
-      id.irn = irn.data();
-      id.jcn = jcn.data();
-      id.a = Entries(val.data());
-    }
-    else
-    {
-      id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
-      id.irn_loc = irn.data();
-      id.jcn_loc = jcn.data();
-      id.a_loc = Entries(val.data());
-    }
+    id.nnz_loc = static_cast<MUMPS_INT8>(irn.size());
+    id.irn_loc = irn.data();
+    id.jcn_loc = jcn.data();
+    id.a_loc = Entries(grp != MPI_COMM_NULL ? grp_val.data() : val.data());
     id.size_schur = n_schur;
     id.listvar_schur = listvar.data();
     id.nprow = 1;
@@ -422,6 +413,7 @@ void MumpsSchurSolverT<T>::Factor()
     irn = {};
     jcn = {};
     val = {};
+    grp_val = {};
   }
   if (blr_tol > 0.0)
   {
@@ -436,9 +428,10 @@ void MumpsSchurSolverT<T>::Factor()
       auto big = [](MUMPS_INT v) { return v >= 0 ? static_cast<double>(v) : -1.0e6 * v; };
       Mpi::Print(comm,
                  " MUMPS BLR (tol = {:.1e}): factor entries {:.1f}% of full rank, memory "
-                 "{:.2f} GB ({:.2f} GB max per rank)\n",
+                 "{:.2f} GB on {:d} rank{} ({:.2f} GB max per rank)\n",
                  blr_tol, 100.0 * big(id.infog[34]) / big(id.infog[28]),
-                 id.infog[21] / 1024.0, id.infog[20] / 1024.0);
+                 id.infog[21] / 1024.0, procs, (procs > 1) ? "s" : "",
+                 id.infog[20] / 1024.0);
     }
   }
   factored = true;
@@ -452,7 +445,11 @@ void MumpsSchurSolverT<T>::Refactor()
   {
     v /= scale;
   }
-  id.a_loc = Entries(val.data());
+  GatherEntries();
+  if (active)
+  {
+    id.a_loc = Entries(grp != MPI_COMM_NULL ? grp_val.data() : val.data());
+  }
   Factor();
 }
 
@@ -463,6 +460,25 @@ MumpsSchurSolverT<T>::~MumpsSchurSolverT()
   {
     id.job = -2;
     Call();
+  }
+  for (MPI_Comm *c : {&sub, &grp})
+  {
+    if (*c != MPI_COMM_NULL)
+    {
+      MPI_Comm_free(c);
+    }
+  }
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::GatherEntries()
+{
+  // The values of the group's entries on its factoring rank.
+  if (grp != MPI_COMM_NULL)
+  {
+    grp_val.resize(active ? grp_disp.back() + grp_cnt.back() : 0);
+    MPI_Gatherv(val.data(), static_cast<int>(val.size()), MpiType<T>(), grp_val.data(),
+                grp_cnt.data(), grp_disp.data(), MpiType<T>(), 0, grp);
   }
 }
 
@@ -638,9 +654,9 @@ void MumpsSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<Vec
 template <typename T>
 void MumpsSchurSolverT<T>::Check(const char *phase) const
 {
-  // INFOG is global (identical on the ranks taking part); serially, rank 0 has it.
+  // INFOG is global (identical on the ranks taking part, rank 0 among them).
   int info[2] = {id.infog[0], id.infog[1]};
-  if (serial)
+  if (grp != MPI_COMM_NULL)
   {
     MPI_Bcast(info, 2, MPI_INT, 0, comm);
   }

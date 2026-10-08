@@ -126,8 +126,8 @@ public:
     const auto *A = dynamic_cast<const mfem::HypreParMatrix *>(&op);
     MFEM_VERIFY(A, "MumpsDirectSolver requires a HypreParMatrix operator!");
     height = width = A->Height();
-    mumps =
-        std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0, serial);
+    mumps = std::make_unique<MumpsSchurSolver>(*A, std::vector<HYPRE_BigInt>{}, 0.0,
+                                               serial ? 1 : 0);
   }
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {

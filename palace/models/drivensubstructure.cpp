@@ -39,6 +39,11 @@ namespace
 // without compression, at no loss of accuracy.
 constexpr double kBlrTol = 1.0e-14;
 
+// Rows of a side's system per factoring rank: MUMPS's per-rank workspace does not shrink
+// with a rank's share of a small system, whose factorization stops speeding up well before
+// every rank takes part.
+constexpr HYPRE_BigInt kRowsPerProc = 5000;
+
 // The assembled real (imag = false) or imaginary part of an operator, if any, owned.
 std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool imag)
 {
@@ -374,9 +379,12 @@ void DrivenSubstructure::Factor(Side &side, double omega)
     side.irn_sys = {};
     side.jcn_sys = {};
     side.val = {};
+    const HYPRE_BigInt nranks = Mpi::Size(space_op.GetComm());
+    const int procs = static_cast<int>(std::clamp<HYPRE_BigInt>(
+        (side.n_sys + kRowsPerProc - 1) / kRowsPerProc, 1, nranks));
     side.schur = std::make_unique<Solver>(
         space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
-        side.gamma_sys, kBlrTol, false, true, false, side.rows);
+        side.gamma_sys, kBlrTol, procs, true, false, side.rows);
     return;
   }
 

@@ -64,20 +64,22 @@ public:
   // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
   // Schur rows/columns should appear (replicated on all ranks); empty for a plain
   // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
-  // relative accuracy (0: exact). With serial, rank 0 factors alone (for a small system, it
-  // avoids MUMPS's per-rank workspace). With refactor, the entries are kept so that
-  // Refactor can factor new values with the same pattern, reusing the analysis. spd: A is
-  // positive definite, so the BLR factorization skips numerical pivoting.
+  // relative accuracy (0: exact). With procs > 0, about that many ranks factor (every
+  // ceil(size / procs)-th, rank 0 among them), the others sending them their entries: for a
+  // small system, it avoids MUMPS's per-rank workspace on every rank (0: all ranks). With
+  // refactor, the entries are kept so that Refactor can factor new values with the same
+  // pattern, reusing the analysis. spd: A is positive definite, so the BLR factorization
+  // skips numerical pivoting.
   MumpsSchurSolverT(const mfem::HypreParMatrix &A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    bool serial = false, bool refactor = false, bool spd = true);
+                    int procs = 0, bool refactor = false, bool spd = true);
 
   // From the local lower-triangle entries of A (n_loc local rows, in rank order). With
   // rows, the vectors of the solves are of a larger (parent) space: rows[i] is the local
   // index of local row i in them (the other entries of a solution are 0).
   MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    bool serial = false, bool refactor = false, bool spd = true,
+                    int procs = 0, bool refactor = false, bool spd = true,
                     std::vector<int> rows = {});
 
   ~MumpsSchurSolverT();
@@ -111,6 +113,7 @@ private:
   void Init(const std::vector<HYPRE_BigInt> &schur_vars);
   void Factor();
   void Check(const char *phase) const;
+  void GatherEntries();
   void Call();
   void Gather(const std::vector<const VecType *> &X);
   void Scatter(const std::vector<VecType *> &Y);
@@ -129,14 +132,19 @@ private:
   }
 
   MPI_Comm comm;
-  int rank = 0;
-  bool serial = false, refactor = false, spd = true, factored = false;
+  int rank = 0, procs = 0;
+  bool refactor = false, spd = true, factored = false;
   bool active = true;  // this rank takes part in the factorization
+  // With fewer ranks factoring: the ranks factoring, and the group of each (one factoring
+  // rank and the ranks sending it their entries, with the counts and offsets of their
+  // entries on the factoring rank).
+  MPI_Comm sub = MPI_COMM_NULL, grp = MPI_COMM_NULL;
+  std::vector<int> grp_cnt, grp_disp;
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
   std::vector<int> row_cnt, row_disp, rows;
   std::vector<MUMPS_INT> irn, jcn, listvar;
-  std::vector<T> val, schur, rhs, redrhs;
+  std::vector<T> val, grp_val, schur, rhs, redrhs;
   int reduced = 0;  // right-hand sides of the last Reduce, pending Expand
   double blr_tol = 0.0, scale = 1.0;
   Struc id{};
