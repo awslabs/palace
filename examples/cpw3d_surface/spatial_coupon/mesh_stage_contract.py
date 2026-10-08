@@ -2235,17 +2235,85 @@ def validate_tube_face_end_summary(tubes, rows):
 
 
 ARC_CURVATURE_BOUND = 0.25
+# Mesher design round 3 class (11), fix 11 (decisions 491 / 510 / 571 / 577; DESIGN-part-M 1.3): two DISTINCT
+# tagged arc runs of ONE circle meeting at a smooth joint share one tube section per placement (the earlier
+# tube in install order owns it; the adopting ArcTube carries no JointEnd row, unlike a straight tube).
+# The mesher admits the joint when the two runs' circles agree within its arc-fit tolerance
+# max(64 x 1e-7 R, 2e-7 rho) and share the metal side (sigma): the same test, spelled here on the bound
+# boundary's tags (the generator's chain rebuild writes identical digits on every member of a chain).
+ARC_ARC_SAME_CIRCLE_TOLERANCE_OVER_RADIUS = 2.0e-7
+ARC_ARC_SAME_CIRCLE_TOLERANCE_OVER_COUPON_RADIUS = 64.0 * 1.0e-7
+ARC_ARC_JOINT_RULE = ("mesher design round 3 class (11), fix 11 (decisions 491 / 510 / 577): a smooth joint (JointSmooth 1) of two "
+                      "consecutive tagged arc runs of ONE circle (centres and radii within max(64 x 1e-7 R, 2e-7 rho), the same "
+                      "ArcSign) shares one tube section per placement, owned by the earlier tube in install order; "
+                      "SharedSections = JointEnds + PartSplits + TubesPerSide x ArcArcJoints; the joints are DERIVED from the bound "
+                      "plan-view boundary (the ArcChain column, where present, must agree with the geometry)")
 
 
-def validate_arc_tubes(tubes, rows, boundary_rows):
-    """The arc tubes of a census (block (b) design 1.2 (3) / A3 (2)): PrismTubes.ArcTubes
-    {Count, JointEnds, PartSplits, SharedSections = JointEnds + PartSplits, TotalArcLength, Rule,
-    SmoothJointRule} against the rows
+def boundary_arc_arc_joints(boundary_rows, radius=None):
+    """The arc-arc smooth joints of the bound plan-view boundary (round 3 class (11), fix 11; decision 577):
+    per loop, every pair of CONSECUTIVE tagged arc runs (in loop order, the loop closing on itself) whose
+    shared vertex is tagged JointSmooth 1, whose circles agree within the mesher's arc-fit tolerance
+    max(64 x 1e-7 R, 2e-7 rho) (the 1e-7 R term only when the coupon `radius` is known) and whose ArcSign
+    agree.  Derived from data the stored sources carry: the tags, JointSmooth and - where the boundary
+    carries it - the ArcChain column, which must AGREE with the geometry (two consecutive smooth same-circle
+    runs in different chains, or a chain pair that is not one circle, fail closed: the term cannot be
+    derived).  Returns [(loop, arc id, arc id, vertex)] in loop order.  A boundary without arc columns, or
+    whose arc runs never meet smoothly, has none - the pre-B3 identity SharedSections = JointEnds + PartSplits."""
+    loops = {}
+    for row in boundary_rows:
+        loops.setdefault(int(row["Loop"]), []).append(row)
+    joints = []
+    for (loop_index, loop_rows), runs in zip(sorted(loops.items()), boundary_arc_runs(boundary_rows)):
+        if len(runs) < 2:
+            continue
+        loop_rows.sort(key=lambda row: int(row["Vertex"]))
+        n = len(loop_rows)
+        for k, run in enumerate(runs):
+            following = runs[(k + 1) % len(runs)]
+            vertex = (run["EdgeIndices"][-1] + 1) % n
+            if following is run or following["EdgeIndices"][0] != vertex:
+                continue                      # a straight side (or the box) lies between the two runs
+            row = loop_rows[vertex]
+            # JointSmooth read as the mesher does (Int(round(Float64(cell)))): a float spelling is accepted.
+            smooth = row.get("JointSmooth") not in (None, "") and int(round(float(row["JointSmooth"]))) == 1
+            rho = max(run["Radius"], following["Radius"])
+            slack = ARC_ARC_SAME_CIRCLE_TOLERANCE_OVER_RADIUS * rho
+            if radius is not None:
+                slack = max(slack, ARC_ARC_SAME_CIRCLE_TOLERANCE_OVER_COUPON_RADIUS * float(radius))
+            same_circle = (math.hypot(run["Centre"][0] - following["Centre"][0], run["Centre"][1] - following["Centre"][1]) <= slack and
+                           abs(run["Radius"] - following["Radius"]) <= slack and run["Sign"] == following["Sign"])
+            chains = (run.get("Chain", 0), following.get("Chain", 0))
+            chained = chains[0] > 0 and chains[0] == chains[1]
+            if smooth and same_circle:
+                if (chains[0] or chains[1]) and not chained:
+                    raise ValueError(f"Plan-view boundary loop {loop_index}: arcs {run['ArcId']} and {following['ArcId']} meet "
+                                     f"smoothly on one circle at vertex {vertex + 1} but their ArcChain columns disagree "
+                                     f"({chains[0]} / {chains[1]}): the arc-arc shared sections cannot be derived")
+                joints.append((loop_index, run["ArcId"], following["ArcId"], vertex + 1))
+            elif chained and smooth:
+                raise ValueError(f"Plan-view boundary loop {loop_index}: arcs {run['ArcId']} and {following['ArcId']} share "
+                                 f"ArcChain {chains[0]} at vertex {vertex + 1} but are not one circle (or one ArcSign): the arc-arc "
+                                 f"shared sections cannot be derived")
+    return joints
+
+
+def validate_arc_tubes(tubes, rows, boundary_rows, radius=None):
+    """The arc tubes of a census (block (b) design 1.2 (3) / A3 (2); round 3 class (11), decision 577):
+    PrismTubes.ArcTubes {Count, JointEnds, PartSplits, SharedSections = JointEnds + PartSplits +
+    TubesPerSide x ArcArcJoints, TotalArcLength, Rule, SmoothJointRule} against the rows
     carrying an Arc record (ArcId / Centre / Radius / Sign of a tagged run of the bound boundary,
     Part in 1..Parts = the run's parts, SweepDegrees = the run's sweep over its parts, Length =
     Radius x sweep of the tube's interval <= the part's), the section's envelope within
     ARC_CURVATURE_BOUND x Radius, and the rows' Joints records (TiltRadians >= 0, PlaneCut iff
-    tilt > 0); a census without arc rows carries no ArcTubes record (None).  Returns the arc row count."""
+    tilt > 0); a census without arc rows carries no ArcTubes record (None).  The arc-arc smooth
+    joints of same-circle chains (fix 11: one shared section per placement, no JointEnd row) are
+    DERIVED from the bound boundary by boundary_arc_arc_joints - a census written before the
+    explicit fields (ArcTubes.ArcArcJoints / ArcArcSections, optional) validates from its sources
+    alone; where present the fields must equal the derived counts; without `TubesPerSide` in the
+    section a non-zero arc-arc count cannot be derived (fail closed).  `radius` = the coupon
+    Radius (CouponBox.Radius) for the absolute term of the same-circle tolerance.  Returns the
+    arc row count."""
     arc_rows = [row for row in rows if isinstance(row, dict) and "Arc" in row]
     summary = tubes.get("ArcTubes")
     if not arc_rows:
@@ -2271,25 +2339,43 @@ def validate_arc_tubes(tubes, rows, boundary_rows):
         run = runs.get(arc.get("ArcId")) if isinstance(arc, dict) else None
         if run is None:
             raise ValueError("Prism tube arc row names an arc the bound boundary does not carry")
-        radius = _census_number(arc, "Radius", "Tube arc")
+        # The arc's own radius (rho); `radius` stays the coupon Radius for the arc-arc tolerance (decision 580 MAJOR-1).
+        arc_radius = _census_number(arc, "Radius", "Tube arc")
         parts = _count(arc.get("Parts"), "Tube arc parts")
         part = _count(arc.get("Part"), "Tube arc part")
         centre = arc.get("Centre")
         if (not isinstance(centre, list) or len(centre) != 2 or
-                any(abs(float(c) - r) > 1e-9 * max(1.0, radius) for c, r in zip(centre, run["Centre"])) or
-                abs(radius - run["Radius"]) > 1e-9 * run["Radius"] or arc.get("Sign") != run["Sign"] or
+                any(abs(float(c) - r) > 1e-9 * max(1.0, arc_radius) for c, r in zip(centre, run["Centre"])) or
+                abs(arc_radius - run["Radius"]) > 1e-9 * run["Radius"] or arc.get("Sign") != run["Sign"] or
                 parts != run["Parts"] or not 1 <= part <= parts or
                 abs(_census_number(arc, "SweepDegrees", "Tube arc") - math.degrees(abs(run["Sweep"])) / parts) > 1e-9 or
-                envelope > ARC_CURVATURE_BOUND * radius * (1.0 + 1e-12) or
-                _census_number(row, "Length", "Tube row") > radius * abs(run["Sweep"]) / parts * (1.0 + 1e-9)):
+                envelope > ARC_CURVATURE_BOUND * arc_radius * (1.0 + 1e-12) or
+                _census_number(row, "Length", "Tube row") > arc_radius * abs(run["Sweep"]) / parts * (1.0 + 1e-9)):
             raise ValueError("Prism tube arc row does not follow its tagged arc (centre, radius, sign, parts, sweep)")
     part_splits = sum(1 for row in arc_rows if _count(row["Arc"].get("Part"), "Tube arc part") <
                       _count(row["Arc"].get("Parts"), "Tube arc parts"))
+    arc_arc_joints = boundary_arc_arc_joints(boundary_rows, radius)
+    arc_arc_sections = 0
+    if arc_arc_joints:
+        # Every arc of a derived joint is built (an arc row of the census) and the shared sections are
+        # one per placement: the census section's TubesPerSide (fail closed without it).
+        built = {row["Arc"].get("ArcId") for row in arc_rows}
+        if any(a not in built or b not in built for _, a, b, _ in arc_arc_joints):
+            raise ValueError("Plan-view boundary arcs meeting at a derived arc-arc smooth joint are not all built as arc tubes")
+        tubes_per_side = section.get("TubesPerSide") if isinstance(section, dict) else None
+        if tubes_per_side not in (1, 2):
+            raise ValueError("Prism tube section lacks TubesPerSide: the arc-arc shared sections cannot be derived")
+        arc_arc_sections = tubes_per_side * len(arc_arc_joints)
+    if isinstance(summary, dict):
+        for name, expected in (("ArcArcJoints", len(arc_arc_joints)), ("ArcArcSections", arc_arc_sections)):
+            if summary.get(name) is not None and _count(summary.get(name), f"Arc tube {name}") != expected:
+                raise ValueError(f"Prism tube arc summary {name} {summary.get(name)} differs from the {expected} derived from the "
+                                 f"bound plan-view boundary")
     if (not isinstance(summary, dict) or
             _count(summary.get("Count"), "Arc tube count") != len(arc_rows) or
             _count(summary.get("JointEnds"), "Arc tube joint ends") != joint_ends or
             _count(summary.get("PartSplits"), "Arc tube part splits") != part_splits or
-            _count(summary.get("SharedSections"), "Arc tube shared sections") != joint_ends + part_splits or
+            _count(summary.get("SharedSections"), "Arc tube shared sections") != joint_ends + part_splits + arc_arc_sections or
             abs(_census_number(summary, "TotalArcLength", "Arc tubes") -
                 sum(float(row["Length"]) for row in arc_rows)) > 1e-9 * max(1.0, sum(float(row["Length"]) for row in arc_rows)) or
             not all(isinstance(summary.get(name), str) and summary[name] for name in ("Rule", "SmoothJointRule"))):
@@ -2420,7 +2506,9 @@ def validate_gmsh_build_census(build_report, census, semantic):
     spacing_bound = max([tubes["TangentialSize"]] + [bound * (1.0 + 1e-9) for bound in face_end_bound.values()])
     validate_tube_face_end_summary(tubes, rows)
     validate_tube_rings_per_side(tubes, rows, command)
-    validate_arc_tubes(tubes, rows, read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]))
+    validate_arc_tubes(tubes, rows, read_csv_rows(build_report["Inputs"]["source-boundary"]["Path"]),
+                       _census_number(census.get("CouponBox") or {}, "Radius", "Coupon box") if isinstance(census.get("CouponBox"), dict)
+                       and "Radius" in census["CouponBox"] else None)
     # Decision 40: the layers follow the composed size field on the tube axis. Every
     # tube records its layer thickness statistics (the largest layer is its Spacing,
     # the neighbour ratio within the growth ratio), the record names the layer rule
