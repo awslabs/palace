@@ -3562,28 +3562,43 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             cap = face_end_spacing_cap(ring_radii, rays, ceiling)
             self.assertAlmostEqual(cap, FACE_END_CONDITION_MARGIN * ceiling *
                                    min(s2 for _, s2 in section_frame_singular_values(ring_radii, rays)))
-            def regime_record(theta, regime):
+            # Round 3 8A-bitwise (decisions 510 O8 / 563 / 566): above the FABRICATED kind's largest built
+            # tilt (70 degrees) the block's pyramids take h_pyr_end = min(h_pyr, TangentialSize / (4 s)),
+            # recorded as PyramidHeight; the regime formulas read it. `derived=None` follows the rule,
+            # False forces the A2 (4) height (the pre-8A record).
+            from mesh_stage_contract import FACE_END_DERIVED_APEX_ABOVE_DEGREES
+            def apex_height_of(theta, derived=None):
                 slope = _math.tan(_math.radians(theta))
-                apex = 2.0 * section["PyramidHeight"] * slope
+                above = theta > FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"] * (1.0 + 1e-9)
+                if derived is None:
+                    derived = above
+                return min(section["PyramidHeight"], tubes["TangentialSize"] / (4.0 * slope)) if derived else section["PyramidHeight"]
+            def regime_record(theta, regime, derived=None, with_height=True):
+                slope = _math.tan(_math.radians(theta))
+                h_end = apex_height_of(theta, derived)
+                apex = 2.0 * h_end * slope
                 if regime == "I":
-                    lc = max(tubes["TangentialSize"], 4.0 * section["PyramidHeight"] * slope)
+                    lc = max(tubes["TangentialSize"], 4.0 * h_end * slope)
                     layers = max(1, _math.ceil(2.0 * r_env * slope / lc * (1.0 - 1e-9)))
                 else:
                     lc = cap
                     layers = max(_math.ceil(r_env * slope / (cap - apex)),
                                  max(1, _math.ceil(2.0 * r_env * slope / cap * (1.0 - 1e-9))))
                 shear = r_env * slope
-                return lc, layers, {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": layers,
-                                    "EndSpacing": lc, "EnvelopeShear": shear,
-                                    "LayerThicknessRange": [lc - shear / layers, lc + shear / layers],
-                                    "OverLength": shear + tubes["TangentialSize"], "Kappa": [-slope, 0.0],
-                                    "Regime": regime, "EndSpacingCap": cap, "ApexThickness": apex}
+                record = {"Face": "x1", "End": "end", "ThetaDegrees": theta, "Layers": layers,
+                          "EndSpacing": lc, "EnvelopeShear": shear,
+                          "LayerThicknessRange": [lc - shear / layers, lc + shear / layers],
+                          "OverLength": shear + tubes["TangentialSize"], "Kappa": [-slope, 0.0],
+                          "Regime": regime, "EndSpacingCap": cap, "ApexThickness": apex}
+                if with_height:
+                    record["PyramidHeight"] = h_end
+                return lc, layers, record
             # The two regimes of the fixture section: the boundary 4 h_pyr |tan theta| = cap.
             boundary = _math.degrees(_math.atan(cap / (4.0 * section["PyramidHeight"])))
             ceiling_theta = _math.degrees(_math.atan(cap / (2.0 * section["PyramidHeight"])))
             self.assertLess(boundary, ceiling_theta)
-            def face_ended_2b(c, theta, regime):
-                lc, layers, record = regime_record(theta, regime)
+            def face_ended_2b(c, theta, regime, **record_options):
+                lc, layers, record = regime_record(theta, regime, **record_options)
                 face_ended(c)
                 c["PrismTubes"]["Section"]["RingRadii"] = ring_radii
                 c["PrismTubes"]["Section"]["Top"] = {"Angles": rays, "Materials": [2] * 9}
@@ -3610,8 +3625,8 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             record_two = regime_two["PrismTubes"]["Tubes"][0]["FaceEnds"][0]
             self.assertEqual(record_two["EndSpacing"], cap)
             self.assertGreaterEqual(record_two["LayerThicknessRange"][0], record_two["ApexThickness"])
-            def rejected_2b(theta, regime, mutate, message, target="census"):
-                broken = face_ended_2b(copy.deepcopy(census), theta, regime)
+            def rejected_2b(theta, regime, mutate, message, target="census", **record_options):
+                broken = face_ended_2b(copy.deepcopy(census), theta, regime, **record_options)
                 broken_report = copy.deepcopy(report)
                 mutate(broken if target == "census" else broken_report)
                 with self.assertRaisesRegex(ValueError, message):
@@ -3640,7 +3655,22 @@ class GmshOnlyPipelineTest(FixtureMatrixMixin, unittest.TestCase):
             rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
                             "LayerThicknessRange", [0.5 * c["PrismTubes"]["Tubes"][0]["FaceEnds"][0]["ApexThickness"], cap]),
                         "apex rule")
-            rejected_2b(ceiling_theta + 0.5, "II", lambda c: None, "validity ceiling")
+            # Round 3 8A (decisions 563 / 566): above the fabricated threshold (70 degrees) the derived
+            # height makes the apex thickness TangentialSize / 2, so the round-2 validity ceiling no longer
+            # binds here: a record just past it with the derived PyramidHeight is a valid regime-II block,
+            # the pre-8A record there (the regular height, with or without the field) is refused by name.
+            # (the tested-range admission of such a tilt is the mesher's FABRICATED_FACE_END_TILT_BOUND)
+            self.assertGreater(ceiling_theta + 0.5, FACE_END_DERIVED_APEX_ABOVE_DEGREES["fabricated"])
+            beyond = face_ended_2b(copy.deepcopy(census), ceiling_theta + 0.5, "II")
+            self.assertLess(beyond["PrismTubes"]["Tubes"][0]["FaceEnds"][0]["PyramidHeight"], section["PyramidHeight"])
+            self.assertIs(validate_gmsh_build_census(report, beyond, semantic), beyond)
+            rejected_2b(ceiling_theta + 0.5, "II", lambda c: None, "lacks its PyramidHeight", derived=False, with_height=False)
+            rejected_2b(ceiling_theta + 0.5, "II", lambda c: None, "PyramidHeight does not follow", derived=False)
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Tubes"][0]["FaceEnds"][0].__setitem__(
+                            "PyramidHeight", 0.5 * section["PyramidHeight"]), "PyramidHeight does not follow")
+            # a kind's threshold recorded on the section must be the contract's
+            rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("FaceEndDerivedApexAboveDegrees", 45.0),
+                        "FaceEndDerivedApexAboveDegrees differs")
             rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].__setitem__("RingRadii", [ring_radii[0]]),
                         "FaceEndSpacingCap does not follow")
             rejected_2b(steep, "II", lambda c: c["PrismTubes"]["Section"].pop("Top"), "Top / Sheet rays")

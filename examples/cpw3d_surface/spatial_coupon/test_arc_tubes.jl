@@ -341,11 +341,15 @@ function write_arc_face_end_inputs(
     ]
     chord_points[end] = (x1, rho * (1.0 - cosd(theta_degrees)))   # exactly on the face
     # Chord rows while the row's transverse pad (+- R along its gap) and the box pad stay left
-    # of x1: max(x) + R |gap_x| + R <= x1.
+    # of x1: max(x) + R |gap_x| + R <= x1. With `rho` given (round 3 9H: the steep representative
+    # fixture, rho (1 - sin theta) >> the tube envelope) the LAST chord row carries the chain's
+    # outer end and is extended by 2 R along its tangent (extended_interval), so its longitudinal
+    # reach 2 R |t_x| joins the test; the default fixture keeps its round-2b rows byte for byte.
     for k = 1:n
         p, q = chord_points[k], chord_points[k + 1]
         t = (q[1] - p[1], q[2] - p[2]) ./ hypot(q[1] - p[1], q[2] - p[2])
-        max(p[1], q[1]) + radius * abs(t[2]) + radius <= x1 + 1.0e-12 || break
+        reach = radius * abs(t[2]) + radius + (notch ? 2.0 * radius * abs(t[1]) : 0.0)
+        max(p[1], q[1]) + reach <= x1 + 1.0e-12 || break
         straight!(p, q, 1.0)
     end
     lower, upper = row_coupon_bounds(rows, radius, 0.1, 0.05)
@@ -1166,6 +1170,71 @@ end
         point = tube_point(faced, u, w, s)
         @test isapprox(point[1], 0.3; atol=1.0e-12)
     end
+    # Round 3 9H (part M 3.3 Fact 2): the arc's crossing slope max_u |s'(u)| = rho h / (r sqrt(r^2 -
+    # h^2)) at the inner node circle r = rho - envelope. At the axis (envelope 0) it is tan theta
+    # exactly (h = rho sin theta: the face plane at distance h from the centre is crossed at the
+    # tilt theta); it grows with the envelope (the concave side shears more) and with h / rho, and
+    # tends to tan theta as rho -> inf at fixed theta and envelope. It is the per-node derivative
+    # of arc_face_station: a finite difference of the station across the inner node circle.
+    for theta in (deg2rad(2.1), deg2rad(45.0), deg2rad(74.3)), rho in (1.56, 58.5)
+        h = rho * sin(theta)
+        @test isapprox(arc_crossing_slope(rho, 0.0, h), tan(theta); rtol=1.0e-12)
+        slope = arc_crossing_slope(rho, 0.04, h)
+        @test slope > tan(theta) && slope > arc_crossing_slope(rho, 0.02, h)
+        @test isapprox(
+            arc_crossing_slope(1.0e9 * rho, 0.04, 1.0e9 * h),
+            tan(theta);
+            rtol=1.0e-8
+        )
+    end
+    @test isapprox(
+        arc_crossing_slope(58.5, 0.04, 56.324169260983396),
+        3.5997093489397574;
+        rtol=1.0e-12
+    )
+    @test_throws ErrorException arc_crossing_slope(1.0, 0.04, 0.97)          # the node circle misses the face
+    @test_throws ErrorException arc_crossing_slope(1.0, 1.0, 0.5)
+    # the finite difference of the face station across the inner node circle (u = -envelope .. -envelope + du)
+    inner = -0.04
+    du = 1.0e-6
+    s0 = arc_face_station(faced, face, inner, 0.0)
+    s1 = arc_face_station(faced, face, inner + du, 0.0)
+    @test isapprox(abs(s1 - s0) / du, arc_crossing_slope(1.0, 0.04, 0.3); rtol=1.0e-4)
+    # the FaceEnd carries the slope it was given (default |tan theta|) and refuses one below it
+    @test face.crossing_slope == abs(tan(0.3))
+    sloped = FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        0.3,
+        0.0,
+        0.0,
+        0.04,
+        0.01,
+        0.1;
+        spacing_cap=Inf,
+        face_axis=1,
+        face_value=0.3,
+        crossing_slope=arc_crossing_slope(1.0, 0.04, 0.3)
+    )
+    @test sloped.crossing_slope > face.crossing_slope &&
+          sloped.apex_thickness == 2.0 * 0.01 * sloped.crossing_slope &&
+          sloped.envelope_shear == 0.04 * sloped.crossing_slope &&
+          sloped.layers >= face.layers
+    @test face_end_record(sloped)["CrossingSlope"] == sloped.crossing_slope
+    @test_throws ErrorException FaceEnd(
+        1,
+        "x1",
+        [1.0, 0.0, 0.0],
+        0.3,
+        0.0,
+        0.0,
+        0.04,
+        0.01,
+        0.1;
+        spacing_cap=Inf,
+        crossing_slope=0.5 * tan(0.3)
+    )
 end
 
 @testset "synthetic rounded strip: fabricated and thin builds with one arc, two smooth joints and a concave corner" begin
@@ -1439,15 +1508,32 @@ end
     # bound of 8B the largest built thin tilt.
     @test "ArcArcJoint" in ids && "CollarFaceEnd" in ids
     @test ARC_JOINT_TURN_BOUND == 1.6e-6 < ARC_SMOOTH_JOINT_TURN_BOUND == 5.0e-5
-    @test ARC_CORNER_JOINT_TURN_RANGE == (2.0e-4, deg2rad(30.0)) &&
-          ARC_FACE_END_TILT_RANGE == (deg2rad(0.1), deg2rad(70.0)) &&
-          THIN_FACE_END_TILT_BOUND == deg2rad(70.0)
+    # Round 3 class (6) (decision 556): the corner range is the BUILT range PER KIND - thin 2e-4 rad
+    # .. 30 degrees (round 2b), fabricated 2e-4 rad .. 15 degrees (round 3 B4, production sizes).
+    @test ARC_CORNER_JOINT_TURN_RANGE ==
+          (fabricated=(2.0e-4, deg2rad(15.0)), thin=(2.0e-4, deg2rad(30.0))) &&
+          arc_corner_joint_turn_range(true) == ARC_CORNER_JOINT_TURN_RANGE.fabricated &&
+          arc_corner_joint_turn_range(false) == ARC_CORNER_JOINT_TURN_RANGE.thin &&
+          ARC_FACE_END_TILT_RANGE ==
+          (fabricated=(deg2rad(0.1), deg2rad(75.5)), thin=(deg2rad(0.1), deg2rad(70.0))) &&
+          arc_face_end_tilt_range(true) == ARC_FACE_END_TILT_RANGE.fabricated &&
+          arc_face_end_tilt_range(false) == ARC_FACE_END_TILT_RANGE.thin &&
+          THIN_FACE_END_TILT_BOUND == deg2rad(70.0) == ARC_FACE_END_TILT_RANGE.thin[2]
+    @test occursin(
+        "0.0002 .. 0.2617993877991494 rad on a FABRICATED",
+        scope_guard_statement("ArcJointTilt")
+    ) && occursin(
+        "0.0002 .. 0.5235987755982988 rad on a THIN",
+        scope_guard_statement("ArcJointTilt")
+    )
     @test occursin(
         string(ARC_SMOOTH_JOINT_TURN_BOUND),
         scope_guard_statement("ArcJointTilt")
     )
-    @test occursin("0.1 <= theta <= 70.0", scope_guard_statement("ArcFaceEnds")) &&
-          occursin("inner node circle", scope_guard_statement("ArcFaceEnds"))
+    @test occursin(
+        "0.1 <= theta <= 70.0 degrees THIN / <= 75.5 degrees FABRICATED",
+        scope_guard_statement("ArcFaceEnds")
+    ) && occursin("inner node circle", scope_guard_statement("ArcFaceEnds"))
     # Round 3 B3 (fix 11): the ArcArcJoint guard keeps its id for the residual untested class
     # (distinct circles / opposite sigma); two runs of ONE circle build.
     @test occursin("NOT one circle", scope_guard_statement("ArcArcJoint")) &&
@@ -1455,10 +1541,8 @@ end
           occursin("fix 11", scope_guard_statement("ArcArcJoint"))
     @test occursin("rho - h_face < 3 Radius", scope_guard_statement("CollarFaceEnd")) &&
           occursin("CORNER kink", scope_guard_statement("CollarFaceEnd"))
-    @test occursin(
-        "largest BUILT thin tilt 70.0",
-        scope_guard_statement("SteepFaceCrossing")
-    )
+    @test occursin("THIN 70.0 degrees", scope_guard_statement("SteepFaceCrossing")) &&
+          occursin("FABRICATED 75.5 degrees", scope_guard_statement("SteepFaceCrossing"))
     clearance(angle) = 0.03 / tan(0.5 * angle) + 0.02
     segments_of(inputs; lower=inputs.lower, upper=inputs.upper, fabricated=false) =
         metal_edge_segments(
@@ -1499,9 +1583,10 @@ end
             6.0e-5;
             rtol=1.0e-6
         )
-        # CORNER joints: 2e-4 rad and 30 degrees (the tested ends of the range) pass, with the
+        # CORNER joints: 2e-4 rad and 30 degrees (the built ends of the THIN range) pass, with the
         # kinked arc end a corner retracted along the arc (A3 (3)); 1.5e-4 rad (a corner below the
-        # tested range) and 31 degrees fail closed.
+        # range) and 31 degrees fail closed. Round 3 class (6) (decision 556): the FABRICATED range
+        # is its own built range, 2e-4 rad .. 15 degrees - 15 passes, 16 fails closed naming the kind.
         for turn in (2.0e-4, deg2rad(30.0))
             kinked = write_strip_inputs(
                 mkpath(joinpath(directory, "c$turn"));
@@ -1510,10 +1595,32 @@ end
             arc = only(s for s in segments_of(kinked) if s.kind == :arc)
             @test arc.corners == (false, true) && arc.s_end < arc.span
             @test isapprox(arc.corner_angles[2], pi - turn; atol=1.0e-9)
-            # The corner joint is tested on THIN coupons only: fabricated fails closed.
-            message = guard_message(() -> segments_of(kinked; fabricated=true))
-            @test occursin("ScopeGuard[ArcJointTilt]", message) &&
-                  occursin("FABRICATED", message)
+        end
+        for (turn, builds) in (
+            (2.0e-4, true),
+            (deg2rad(15.0), true),
+            (deg2rad(16.0), false),
+            (deg2rad(30.0), false)
+        )
+            kinked = write_strip_inputs(
+                mkpath(joinpath(directory, "cfab$turn"));
+                kink_degrees=rad2deg(turn)
+            )
+            if builds
+                arc =
+                    only(s for s in segments_of(kinked; fabricated=true) if s.kind == :arc)
+                @test arc.corners == (false, true) && arc.s_end < arc.span
+            else
+                message = guard_message(() -> segments_of(kinked; fabricated=true))
+                @test occursin("ScopeGuard[ArcJointTilt]", message) &&
+                      occursin("corner-joint turn", message) &&
+                      occursin("built FABRICATED range", message)
+                @test isapprox(
+                    parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1]),
+                    turn;
+                    rtol=1.0e-6
+                )
+            end
         end
         # Smooth joints and face ends build on both kinds.
         @test count(
@@ -1535,7 +1642,8 @@ end
                 )
             )
             @test occursin("ScopeGuard[ArcJointTilt]", message) &&
-                  occursin("corner-joint turn", message)
+                  occursin("corner-joint turn", message) &&
+                  occursin("built THIN range", message)
             @test isapprox(
                 parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1]),
                 turn;
@@ -1583,6 +1691,9 @@ end
                   isapprox(rad2deg(arc.face_ends[2].theta), theta; atol=1.0e-9)
             @test arc.joints[1] !== nothing && arc.corners == (false, false)
         end
+        # the tops per kind (decisions 563 B / 566; the B4 record run): THIN 70, FABRICATED 75.5 - the
+        # 71-degree thin end and the 76-degree fabricated end fail closed, the 74.3-degree fabricated
+        # end (32dc558f4810's tilt) is a face end of the arc side
         message = guard_message(
             () -> segments_of(
                 write_arc_face_end_inputs(
@@ -1592,7 +1703,31 @@ end
             )
         )
         @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
-              occursin("above the largest built 70.0", message)
+              occursin("above the largest built THIN 70.0", message)
+        message = guard_message(
+            () -> segments_of(
+                write_arc_face_end_inputs(
+                    mkpath(joinpath(directory, "fe76"));
+                    theta_degrees=76.0,
+                    rho=13.3
+                );
+                fabricated=true
+            )
+        )
+        @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+              occursin("above the largest built FABRICATED 75.5", message)
+        steep_fab = only(
+            s for s in segments_of(
+                write_arc_face_end_inputs(
+                    mkpath(joinpath(directory, "fe74p3-fab"));
+                    theta_degrees=74.3,
+                    rho=13.3
+                );
+                fabricated=true
+            ) if s.kind == :arc
+        )
+        @test steep_fab.face_ends[2] !== nothing &&
+              isapprox(rad2deg(steep_fab.face_ends[2].theta), 74.3; atol=1.0e-9)
         message = guard_message(
             () -> segments_of(
                 write_arc_face_end_inputs(
@@ -1812,14 +1947,24 @@ end
         # 0.1 / 0.5 / 2.1 / 8 degrees (4 chords each; 0.1 = the admitted floor, 2.1 = the 32b0083dad90
         # angle), fab + thin; regime I with one sheared layer, continuous towards theta -> 0+ (the
         # production-size record is the round-3 B2 cluster run).
-        for (theta, chord) in (
-                (0.1, 0.025),
-                (0.5, 0.125),
-                (2.1, 0.5),
-                (8.0, 2.0),
-                (15.0, 2.5),
-                (45.0, 5.0),
-                (70.0, 5.0)
+        # Round 3 9H (part M 3.3 Fact 2; decisions 491 / 510 O9): the arc face end's formulas read
+        # the arc's CROSSING SLOPE (FaceEnds[].CrossingSlope = max |s'(u)| over the section, >= tan
+        # theta, -> tan theta as rho -> inf). The default fixture ties rho = 3 R / sin theta, which
+        # at 70 degrees leaves the inner node circle only 2.4 envelopes from the face (part M 3.3
+        # Fact 1: a fixture artefact) and, with the slope-aware block, fails the tetrahedral gate
+        # (0.0094 < 0.01): the 70-degree case takes the rho-parametrised (notch) fixture. Round 3 B4
+        # review (decision 579 MAJOR-3 (b)): the fixture must be DOMINATED by a built-and-passed case
+        # (ARC_FACE_END_BUILT_CASES: tilt >= 70 and margin <= the fixture's) - rho 3.5 (5.3 envelopes)
+        # is not (the floor is fe75p5r13p3's 10.66 fabricated / fe70r13p3's 10.28 thin), rho 8 (12.1
+        # envelopes at the test-size envelope 0.04; slope 1.05 tan theta) is.
+        for (theta, chord, rho) in (
+                (0.1, 0.025, nothing),
+                (0.5, 0.125, nothing),
+                (2.1, 0.5, nothing),
+                (8.0, 2.0, nothing),
+                (15.0, 2.5, nothing),
+                (45.0, 5.0, nothing),
+                (70.0, 5.0, 8.0)
             ),
             fabricated in (true, false)
 
@@ -1829,7 +1974,8 @@ end
                 fabricated=fabricated,
                 stem="fe",
                 theta_degrees=theta,
-                chord_degrees=chord
+                chord_degrees=chord,
+                rho=rho
             )
             tubes = census["PrismTubes"]
             arc_rows = [row for row in tubes["Tubes"] if haskey(row, "Arc")]
@@ -1840,6 +1986,28 @@ end
                 @test record["Face"] == "x1" &&
                       isapprox(record["ThetaDegrees"], theta; atol=1.0e-9)
                 @test record["Regime"] == "I"
+                # 9H: the recorded crossing slope is the arc's (rho, envelope, face distance), above
+                # tan theta by the concave side's excess (5.9 % on the default fixture at 45, 5.3 % at
+                # 70 / rho 8, within 1.5 % below 15 degrees), and the block's apex / shear read it.
+                slope = arc_crossing_slope(
+                    row["Arc"]["Radius"],
+                    tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"],
+                    abs(inputs.upper[1] - row["Arc"]["Centre"][1])
+                )
+                @test record["CrossingSlope"] == slope &&
+                      tand(theta) * (1.0 - 1.0e-12) <= slope <= 1.13 * tand(theta)
+                theta <= 15.0 && @test slope <= 1.015 * tand(theta)
+                # (decision 579: the node-circle margin is recorded and dominated by a built case)
+                margin = (row["Arc"]["Radius"] - abs(inputs.upper[1] - row["Arc"]["Centre"][1])) /
+                         (tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"])
+                @test record["NodeCircleMargin"] == margin &&
+                      arc_face_end_dominating_case(fabricated, deg2rad(theta), margin) !== nothing
+                # (8A, decision 563: at or below 70 degrees the block's pyramid height is the regular one)
+                @test record["PyramidHeight"] == tubes["Section"]["PyramidHeight"] &&
+                      record["ApexThickness"] == 2.0 * record["PyramidHeight"] * slope &&
+                      record["EnvelopeShear"] ==
+                      (tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"]) *
+                      slope
                 # The arc tube travels against the loop here (orientation -sigma Nz): the face
                 # end is the tube's START station; its axis point lies on the face.
                 face_point = record["End"] == "end" ? row["EndPoint"] : row["StartPoint"]
@@ -1891,7 +2059,13 @@ end
               tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
         # (the 2e-4-rad thin corner at these test sizes meets the lottery at a legacy corner, 4.34 > 4.0:
         # its full build is the production-size record)
-        for (fabricated, turn, stem) in ((false, deg2rad(30.0), "kink"),)
+        # Round 3 class (6) (decisions 491 / 556): the FABRICATED kinked arc / line joint builds too,
+        # once the E4 root cause is fixed (install_tube_curves!: a cap ray on the periodic trench wall
+        # gets its nodes in increasing curve parameter) - here the top of the built fabricated range,
+        # 15 degrees (the production-size builds at 2e-4 rad / 0.1 / 5.33 / 8.53 / 15 degrees are the
+        # round-3 B4 record).
+        for (fabricated, turn, stem) in
+            ((false, deg2rad(30.0), "kink"), (true, deg2rad(15.0), "kink-fab"))
             census, _, _ = build_strip_coupon(
                 mkpath(joinpath(directory, stem));
                 fabricated=fabricated,
@@ -1914,6 +2088,122 @@ end
                 @test isapprox(row["CornerAngles"][2], pi - turn; atol=1.0e-9)
             end
             @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        end
+    end
+end
+
+@testset "round 3 B4 review (decision 579 MAJOR-3 (b)): an arc face end is admitted only where a built-and-passed case of its kind dominates it (tilt and node-circle margin)" begin
+    # The table is PBS 59701's built cases with the margins measured on the identical fixture geometry
+    # (every case dominates itself: the margins are rounded DOWN); the tilt range is its projection.
+    for fabricated in (true, false)
+        cases = arc_face_end_built_cases(fabricated)
+        range = arc_face_end_tilt_range(fabricated)
+        @test minimum(c.tilt for c in cases) == rad2deg(range[1]) &&
+              isapprox(maximum(c.tilt for c in cases), rad2deg(range[2]); atol=1.0e-12)
+        @test all(c.margin > 1.0 for c in cases)
+        for c in cases
+            @test arc_face_end_dominating_case(fabricated, deg2rad(c.tilt), c.margin) === c
+        end
+    end
+    @test length(ARC_FACE_END_BUILT_CASES.fabricated) == 9 &&
+          length(ARC_FACE_END_BUILT_CASES.thin) == 7
+    # The two measured failures (the default fe70 fixture, 2.42 fabricated / 1.23 thin envelopes) are
+    # dominated by nothing; the record's rho-13.3 cases are; a dominated synthetic (45 degrees, 16
+    # envelopes: fe45) is admitted, an undominated one (59 degrees, 6.3 envelopes: the C1 0.5 R concave
+    # fixture, part M 2.4) and a 74.32-degree end at 10 envelopes (below fe75p5r13p3's 10.66) refused.
+    for failed in ARC_FACE_END_FAILED_CASES
+        @test arc_face_end_dominating_case(failed.kind == "fabricated", deg2rad(failed.tilt), failed.margin) ===
+              nothing
+    end
+    @test arc_face_end_dominating_case(true, deg2rad(45.0), 16.0).case == "fe45"
+    @test arc_face_end_dominating_case(true, deg2rad(74.32), 54.0).case == "fe75p5r13p3"   # 32dc558f4810 fab
+    @test arc_face_end_dominating_case(true, deg2rad(74.32), 10.0) === nothing
+    @test arc_face_end_dominating_case(true, deg2rad(59.0), 6.3) === nothing
+    @test arc_face_end_dominating_case(false, deg2rad(59.0), 6.3) === nothing
+    @test arc_face_end_dominating_case(false, deg2rad(45.0), 8.0).case == "fe45"
+    @test arc_face_end_dominating_case(false, deg2rad(46.0), 8.0) === nothing
+    @test arc_face_end_dominating_case(false, deg2rad(70.0), 10.3).case == "fe70r13p3"
+    @test arc_face_end_dominating_case(false, deg2rad(70.0), 10.2) === nothing
+    # FaceEnd carries the margin (NaN on a straight tube's end: not recorded, bitwise record); an arc
+    # margin at or below 1 is rejected (the Fact-1 condition).
+    straight = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 0.0, 0.0, 0.04, 0.01, 0.1; spacing_cap=Inf)
+    @test isnan(straight.node_circle_margin) && !haskey(face_end_record(straight), "NodeCircleMargin")
+    arc_end = FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 0.0, 0.0, 0.04, 0.01, 0.1; spacing_cap=Inf,
+                      crossing_slope=1.06, node_circle_margin=15.5)
+    @test face_end_record(arc_end)["NodeCircleMargin"] == 15.5
+    @test_throws ErrorException FaceEnd(1, "x1", [1.0, 0.0, 0.0], deg2rad(45.0), 0.0, 0.0, 0.04, 0.01, 0.1;
+                                        spacing_cap=Inf, crossing_slope=1.06, node_circle_margin=0.9)
+    mktempdir() do directory
+        # The default fe70 fixture (rho 1.596 um) is refused BY NAME on both kinds before any CAD - the
+        # record run's two gate failures fail closed at the guard; the record's rho-13.3 fe70 builds
+        # pass the guard on both kinds (labels-only census with the margin recorded).
+        for fabricated in (true, false)
+            message = guard_message(
+                () -> build_arc_coupon(
+                    mkpath(joinpath(directory, "fe70-default-$fabricated")),
+                    write_arc_face_end_inputs;
+                    fabricated=fabricated,
+                    stem="fe70",
+                    labels_only=true,
+                    theta_degrees=70.0,
+                    chord_degrees=5.0
+                )
+            )
+            @test occursin("ScopeGuard[ArcFaceEnds]", message) &&
+                  occursin("dominated by no built-and-passed $(fabricated ? "FABRICATED" : "THIN") case", message) &&
+                  occursin("decision 579", message) &&
+                  occursin("FAILED fe70 fabricated 70.0 / 2.4218", message)
+            margin_text = match(r"margin rho \(1 - sin theta\) / envelope of ([0-9.e+-]+) envelopes", message)
+            @test margin_text !== nothing && 2.3 < parse(Float64, margin_text[1]) < 2.5
+            census, _, _ = build_arc_coupon(
+                mkpath(joinpath(directory, "fe70-rho13p3-$fabricated")),
+                write_arc_face_end_inputs;
+                fabricated=fabricated,
+                stem="fe70r13p3",
+                labels_only=true,
+                theta_degrees=70.0,
+                chord_degrees=5.0,
+                rho=13.3
+            )
+            records = [f for t in census["PrismTubeFaceEnds"]["Tubes"] for f in t["FaceEnds"]]
+            @test length(records) == (fabricated ? 2 : 1) &&
+                  all(19.0 < f["NodeCircleMargin"] < 21.0 && f["ThetaDegrees"] == 70.0 for f in records)
+        end
+    end
+end
+
+@testset "round 3 class (6) (decision 556): the E4 regression fixture - a fabricated arc corner whose cap ray on the periodic trench wall carries two or more interior nodes builds" begin
+    # The E4 root cause (round3 B4 REPORT; Gmsh meshGFace.cpp buildConsecutiveListOfVertices): the
+    # periodic surface mesher reads a bounding curve's nodes in storage order and assumes it increases
+    # with the curve parameter; the ring-ordered cap-ray nodes ran against it on the fabricated arc
+    # corner's trench wall, a zigzag that fails edge recovery as soon as the ray has TWO interior nodes
+    # (three rings). The suite's EdgeSize 0.01 gives two rings (one interior node: no zigzag), so this
+    # fixture takes EdgeSize 0.004 (three rings under the 0.05 transverse bound) with a 5-degree kink;
+    # it fails on the unsorted order ("Impossible to mesh periodic surface") and builds with the rule.
+    mktempdir() do directory
+        census, _, _ = build_arc_coupon(
+            directory,
+            write_strip_inputs;
+            fabricated=true,
+            stem="e4",
+            edge_size=0.004,
+            kink_degrees=5.0
+        )
+        tubes = census["PrismTubes"]
+        @test tubes["Section"]["Rings"] == 3
+        @test tubes["ArcTubes"]["SharedSections"] == 2
+        kinked = only(
+            r for r in census["SeedQualityOptimization"]["CornerMeasures"] if
+            r["Point"] == [1.0, 1.0, 0.0]
+        )
+        @test kinked["Kind"] == "Invariant" && kinked["Passed"]
+        @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01 &&
+              tubes["Quality"]["Prism"]["PositiveOrientation"] &&
+              tubes["Quality"]["Pyramid"]["PositiveOrientation"]
+        for row in tubes["Tubes"]
+            haskey(row, "Arc") || continue
+            # the kinked end is retracted along the arc by the corner clearance
+            @test row["Length"] < 0.5 * pi - 1.0e-6
         end
     end
 end

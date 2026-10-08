@@ -236,6 +236,33 @@ end
 #             fails closed (ScopeGuard[SteepFaceCrossing], checked by the caller).
 # A tube end with theta == 0 exactly (every rectilinear coupon) has no FaceEnd and
 # takes the unchanged path.
+# Mesher design round 3 class (9) HIGH end, fix 9H (part M 3.3 Fact 2; decisions 491 / 510 O9): the
+# regime formulas read a CROSSING SLOPE in place of |tan theta|. A straight tube's end plane is
+# sheared linearly, s(u) = u tan theta; an ARC tube's end block meets the face per node where
+# the node's own circle (radius rho + sigma u) crosses the face plane (arc_face_station), s(u) =
+# rho (theta_face(u) - theta_0), whose slope |s'(u)| = rho h / (r sqrt(r^2 - h^2)) (r = rho +
+# sigma u, h = the distance from the arc centre to the face plane) equals tan theta at the axis
+# and GROWS towards the concave side, so the straight cap under-reads the arc's shear (the
+# 74.3-degree fixture: prism condition 1028 > 1000). `crossing_slope` = max over the section's
+# radial extent, at r = rho - (Radius + PyramidHeight) (arc_crossing_slope); the straight tube
+# passes nothing and keeps |tan theta| bitwise; the slope reduces to tan theta as rho -> inf.
+# It is a DERIVED fail-closed ceiling inside the admitted range, never the admission bound
+# (510 MAJOR-1); recorded as FaceEnds[].CrossingSlope and bound by mesh_stage_contract.py.
+# Mesher design round 3 class (8), fix 8A-bitwise (part M 5.1 / 5.2; decisions 491 / 510 O8): the
+# apex rule t_min >= 2 h_pyr s with the thin h_pyr / r_env = 0.26 forces 12-envelope sheared
+# layers at the steep thin crossings (E3: sliver tetrahedra to the face; the h_pyr / 4 probe lifted
+# the thin SJ 0.0075 -> 0.0325). The end block's lateral pyramids therefore take their OWN height
+# `apex_height` = h_pyr_end = min(h_pyr, lc_tangent / (4 s)) (derived_face_end_pyramid_height: the
+# regular spacing then satisfies the apex rule by construction, lc_end = lc_tangent, m = ceil(2
+# r_env s / lc_tangent)) - applied by the caller ONLY above the largest BUILT tilt of the coupon
+# kind (8A-bitwise, decision 563: 70 degrees fabricated and 70 degrees thin - every built end
+# block keeps the A2 (4) formulas bitwise); below it apex_height = h_pyr. Regime II and the SteepFaceCrossing
+# ceiling stay as the fail-closed cap where lc_tangent > lc_cap (never at the production sizes).
+# The regular layers keep h_pyr (TubeMesh.layer_pyramid_heights); recorded as FaceEnds[].PyramidHeight.
+# Round 3 B4 review (decision 579 MAJOR-3 (b)): an ARC face end also carries its NODE-CIRCLE MARGIN
+# rho (1 - sin theta) / (Radius + PyramidHeight) = (rho - h) / envelope, the second parameter of
+# the dominance rule the caller checks (mesh_spatial_coupon.jl ARC_FACE_END_BUILT_CASES) and the
+# record of FaceEnds[].NodeCircleMargin; a straight tube's end has none (NaN, not recorded).
 struct FaceEnd
     end_index::Int            # 0: the tube start (s_start) lies on the face, 1: the end
     face::String              # "x0" / "x1" / "y0" / "y1"
@@ -251,7 +278,31 @@ struct FaceEnd
     face_value::Float64       # the face coordinate on that axis (an ArcTube crosses it per node)
     regime::Int               # 1 or 2 (design round 2 F2b)
     spacing_cap::Float64      # lc_cap of the tube's section
-    apex_thickness::Float64   # 2 h_pyr |tan theta|: the thinnest layer the apex rule admits
+    apex_thickness::Float64   # 2 h_pyr_end x slope: the thinnest layer the apex rule admits
+    crossing_slope::Float64   # the slope of the regime formulas: |tan theta|, or the arc's max |s'(u)| (9H)
+    apex_height::Float64      # h_pyr_end, the end block's lateral pyramid height (8A: <= h_pyr)
+    node_circle_margin::Float64  # an arc end's (rho - h) / envelope (decision 579); NaN on a straight tube
+end
+
+# The end block's pyramid height under 8A: the regular spacing's apex rule, lc_tangent / 2 >= 2
+# h_pyr_end s, i.e. h_pyr_end = min(h_pyr, lc_tangent / (4 s)); never above the regular height.
+derived_face_end_pyramid_height(pyramid_height, lc_tangent, slope) =
+    min(pyramid_height, lc_tangent / (4.0 * slope))
+
+# The largest crossing slope of an arc tube's end block over its section (round 3 9H): |s'(u)| =
+# rho h / (r sqrt(r^2 - h^2)) decreases with the node radius r = rho + sigma u, so its maximum
+# over |u| <= Radius + PyramidHeight sits at r = rho - envelope_radius; the node circle there
+# must reach the face (r > h: the caller's ScopeGuard[ArcFaceEnds] node-circle condition).
+# At the axis (r = rho) the expression is tan theta exactly, cos theta = sqrt(1 - (h / rho)^2).
+function arc_crossing_slope(rho, envelope_radius, face_distance)
+    rho > 0.0 && 0.0 <= envelope_radius < rho ||
+        error("an arc crossing slope needs 0 <= envelope < rho")
+    r = rho - envelope_radius
+    r > face_distance >= 0.0 || error(
+        "the inner node circle of radius $r does not reach the face plane at distance " *
+        "$face_distance from the arc centre (ScopeGuard[ArcFaceEnds] guards this before any CAD)"
+    )
+    return rho * face_distance / (r * sqrt((r - face_distance) * (r + face_distance)))
 end
 
 function FaceEnd(
@@ -266,23 +317,34 @@ function FaceEnd(
     lc_tangent;
     spacing_cap,
     face_axis=0,
-    face_value=NaN
+    face_value=NaN,
+    crossing_slope=abs(tan(theta)),
+    apex_height=pyramid_height,
+    node_circle_margin=NaN
 )
     theta > 0.0 || error("a face end needs a positive tilt")
+    isnan(node_circle_margin) || node_circle_margin > 1.0 ||
+        error("an arc face end's node-circle margin exceeds 1 (the inner node circle reaches the face)")
     spacing_cap > 0.0 || error("a face end needs a positive end-spacing cap")
-    slope = abs(tan(theta))
-    apex_thickness = 2.0 * pyramid_height * slope
-    regime_one_spacing = max(lc_tangent, 4.0 * pyramid_height * slope)
+    isfinite(crossing_slope) && crossing_slope >= abs(tan(theta)) * (1.0 - 1.0e-12) ||
+        error("a face end's crossing slope is at least |tan theta| (the axis value)")
+    0.0 < apex_height <= pyramid_height ||
+        error("a face end's pyramid height lies in (0, the regular pyramid height]")
+    slope = crossing_slope
+    apex_thickness = 2.0 * apex_height * slope
+    regime_one_spacing = max(lc_tangent, 4.0 * apex_height * slope)
     regime_one_layers(spacing) =
         max(1, ceil(Int, 2.0 * envelope_radius * slope / spacing * (1.0 - 1.0e-9)))
-    if 4.0 * pyramid_height * slope <= spacing_cap
+    if 4.0 * apex_height * slope <= spacing_cap
         regime = 1
         spacing = regime_one_spacing
         layers = regime_one_layers(spacing)
     else
         apex_thickness < spacing_cap || error(
             "face end at $(rad2deg(theta)) degrees lies beyond the validity ceiling of the " *
-            "capped end block: 2 h_pyr |tan theta| = $apex_thickness >= lc_cap $spacing_cap"
+            "capped end block: 2 h_pyr_end x slope = $apex_thickness >= lc_cap $spacing_cap " *
+            "(slope $slope: |tan theta| of a straight tube, the arc's crossing slope; h_pyr_end " *
+            "$apex_height)"
         )
         regime = 2
         spacing = spacing_cap
@@ -311,7 +373,10 @@ function FaceEnd(
         face_value,
         regime,
         spacing_cap,
-        apex_thickness
+        apex_thickness,
+        slope,
+        apex_height,
+        node_circle_margin
     )
 end
 
@@ -319,7 +384,13 @@ end
 # envelope lies in EndSpacing -+ EnvelopeShear / Layers (within [lc_end / 2, 3 lc_end / 2]
 # and at or above ApexThickness, the exact apex rule); Regime "I" / "II" and the section's
 # EndSpacingCap bind lc_end <= lc_cap (design round 2 F2b).
-face_end_record(face_end::FaceEnd) = Dict{String, Any}(
+function face_end_record(face_end::FaceEnd)
+    record = face_end_record_common(face_end)
+    # An arc end records its node-circle margin (decision 579); a straight end's record is bitwise.
+    isnan(face_end.node_circle_margin) || (record["NodeCircleMargin"] = face_end.node_circle_margin)
+    return record
+end
+face_end_record_common(face_end::FaceEnd) = Dict{String, Any}(
     "End" => face_end.end_index == 0 ? "start" : "end",
     "Face" => face_end.face,
     "ThetaDegrees" => rad2deg(face_end.theta),
@@ -334,7 +405,9 @@ face_end_record(face_end::FaceEnd) = Dict{String, Any}(
     "Kappa" => [face_end.kappa_u, face_end.kappa_w],
     "Regime" => face_end.regime == 1 ? "I" : "II",
     "EndSpacingCap" => face_end.spacing_cap,
-    "ApexThickness" => face_end.apex_thickness
+    "ApexThickness" => face_end.apex_thickness,
+    "CrossingSlope" => face_end.crossing_slope,
+    "PyramidHeight" => face_end.apex_height
 )
 
 # A SMOOTH joint of a straight tube with an arc tube (block (b) design A3 (2), decision
@@ -1780,7 +1853,8 @@ mutable struct TubeMesh
     tube::AbstractTube
     section::TubeSection
     volumes::Vector{Tuple{Int32, Tuple{Int, Int, Int}, Dict}}   # (OCC volume, group, matched)
-    pyramid_height::Float64                                     # apex distance above each lateral quad
+    pyramid_height::Float64                                     # apex distance above each lateral quad (the regular layers)
+    layer_pyramid_heights::Vector{Float64}                      # per layer: h_pyr, or a face-end block's h_pyr_end (8A)
     tags::Dict{Tuple{Int, Int}, Int}                            # (local section node, station) -> node tag
     coordinates::Dict{Int, Vector{Float64}}
     apex::Dict{Tuple{Int, Int}, Int}                            # (sector j, station i) -> apex node tag
@@ -1827,6 +1901,17 @@ end
 # had to close quadrangles with its own pyramids).
 function TubeMesh(tube::AbstractTube, section::TubeSection, volumes; pyramid_height)
     pyramid_height > 0.0 || error("pyramid height must be positive")
+    # Round 3 8A: the layers of a face-end block carry the block's own pyramid height (= h_pyr
+    # wherever the end keeps the A2 (4) formulas: every regular layer and every built end block).
+    layer_pyramid_heights = fill(Float64(pyramid_height), tube.layers)
+    for face_end in tube.face_ends
+        face_end.apex_height <= pyramid_height * (1.0 + 1.0e-12) ||
+            error("a face-end pyramid height above the regular one")
+        block =
+            face_end.end_index == 0 ? (1:(face_end.layers)) :
+            ((tube.layers - face_end.layers + 1):(tube.layers))
+        layer_pyramid_heights[block] .= face_end.apex_height
+    end
     faces = Dict{Int32, Vector{Int32}}()
     for (volume, _, _) in volumes
         faces[volume] = unique(
@@ -1839,6 +1924,7 @@ function TubeMesh(tube::AbstractTube, section::TubeSection, volumes; pyramid_hei
         section,
         volumes,
         pyramid_height,
+        layer_pyramid_heights,
         Dict{Tuple{Int, Int}, Int}(),
         Dict{Int, Vector{Float64}}(),
         Dict{Tuple{Int, Int}, Int}(),
@@ -1851,10 +1937,11 @@ end
 function apex_node!(state::TubeMesh, next_node, j, i)
     get!(state.apex, (j, i)) do
         theta = deg2rad(0.5 * (state.section.angles[j + 1] + state.section.angles[j + 2]))
+        # the apex of layer i (station i + 1/2) lies the LAYER's pyramid height outside the quad
         radius =
             tube_radius(state.section) *
             cos(0.5 * deg2rad(state.section.angles[j + 2] - state.section.angles[j + 1])) +
-            state.pyramid_height
+            state.layer_pyramid_heights[clamp(floor(Int, i), 0, state.tube.layers - 1) + 1]
         next_node[] += 1
         u = radius * cos(theta)
         w = radius * sin(theta)
@@ -1878,7 +1965,13 @@ end
 # are shared with the caller's explicit curve meshes through next_node and
 # point_nodes (CAD point tag -> node tag). `meshed` (shared across the tubes of one
 # build) keeps a CAD curve two jointed tubes share meshed once.
-function install_tube_curves!(state::TubeMesh, next_node, point_nodes; meshed=Set{Int32}())
+function install_tube_curves!(
+    state::TubeMesh,
+    next_node,
+    point_nodes;
+    meshed=Set{Int32}(),
+    periodic_faces=Set{Int32}()
+)
     adopt_joint_tags!(state)
     section = state.section
     K = ring_count(section)
@@ -1958,6 +2051,26 @@ function install_tube_curves!(state::TubeMesh, next_node, point_nodes; meshed=Se
         parameters = [
             gmsh.model.getParametrization(1, curve, state.coordinates[t])[1] for t in nodes
         ]
+        # RULE (mesher design round 3 class (6), decision 556; the E4 root cause found by the B4
+        # lane): a curve that bounds a non-planar face Gmsh itself meshes gets its nodes installed
+        # in increasing curve parameter, because Gmsh's periodic surface mesher assumes it -
+        # meshGFace.cpp meshGeneratorPeriodic / buildConsecutiveListOfVertices read a bounding
+        # curve's `mesh_vertices` in storage order (their own 1D mesher's order), whereas the planar
+        # face mesher reads the line elements. The ring-ordered nodes of a tube cap ray run against
+        # the OCC parameter on some curves; where such a ray lies on a cylindrical wall (the
+        # fabricated arc corner clearance: the trench / sidewall cylinder) the boundary list
+        # zigzags, its first edge passes through the interior nodes and edge recovery fails
+        # ("Impossible to mesh periodic surface") as soon as the ray carries two interior nodes.
+        # `periodic_faces` = the model's non-planar faces that are not tube faces (the tubes' own
+        # revolved faces are hidden from the surface pass and meshed explicitly). Bitwise elsewhere:
+        # a straight coupon has no such face (the stored order within an entity also fixes the .msh
+        # node order, so an unconditional sort would not be bitwise), and every arc coupon that
+        # built already has those curves in increasing order (a decreasing one fails as above).
+        if any(face in periodic_faces for face in gmsh.model.getAdjacencies(1, curve)[1])
+            order = sortperm(parameters)
+            nodes = nodes[order]
+            parameters = parameters[order]
+        end
         gmsh.model.mesh.addNodes(
             1,
             curve,

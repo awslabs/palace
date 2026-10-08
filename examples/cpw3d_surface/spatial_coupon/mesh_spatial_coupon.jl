@@ -3649,7 +3649,8 @@ function collar_face_end_guard(before, after, distance)
                     "sign $(arc.convex_sign)) of the plan-view boundary ends at $vertex on a box-face " *
                     "line $h_face from its centre; its collar circle offset by $distance (radius " *
                     "$(arc.radius)) misses that line: rho - h_face = $(arc.original_radius - h_face) " *
-                    "< the collar width $(abs(distance))")
+                    "< the collar width $(abs(distance)) (fix 5A builds this collar as the box slab " *
+                    "when the offset is computed with the coupon box: this offset was asked without it)")
     end
     scope_error("CollarFaceEnd",
                 "the shifted straight side meeting the circular arc (centre $(arc.center), radius " *
@@ -3657,13 +3658,112 @@ function collar_face_end_guard(before, after, distance)
                 "$(arc.radius)): a line-arc corner kink whose offsets do not meet (untested)")
 end
 
+# Mesher design round 3 class (5), fix 5A (DESIGN section 1 row (5), R3, R11; part M 2.1 / 2.2;
+# decisions 491 / 510): a Physical arc ending on a box face whose offset circle misses the
+# face line - a CONCAVE metal arc (the metal outside its circle) leaving the box by less than
+# the collar width, rho - h_face < |distance| (the 32dc558f4810 refusal) - has a DEFERRED
+# junction with its Continuation neighbour: no junction point, the loop is never a simple
+# offset (it takes the collar union, like a bridged one), and the arc's annular piece is
+# CONTINUED along its circle past the face-end vertex, in its travel direction, to the first
+# angle at which BOTH the circle and its offset circle have left the box (the exits are the
+# circle / box-edge intersections, exact), then clipped to the box as every piece is: the
+# collar is the box slab between the face and the offset circle, the real overetch of the
+# exposed substrate (decision 246 (B)). No new constant: the extension angle is derived from
+# the box, the circle and the collar width; its chord vertices sit at the item's own chord
+# step so that polygon_wire rebuilds one OCC arc; the propagated run (R3) is EXTENDED on the
+# same circle (centre and radius unchanged, the end moved to the box exit), never refitted.
+# Returns the extension's vertices on the metal circle and on the offset circle, in order
+# AWAY from the face-end vertex (empty when both circles are outside the box already there).
+function deferred_arc_extension(arc, at_stop::Bool, lower, upper, tolerance)
+    vertex = at_stop ? arc.stop : arc.start
+    centre = arc.center
+    theta_vertex = atan(vertex[2] - centre[2], vertex[1] - centre[1])
+    # the angular direction leaving the arc at this end (+1 counterclockwise)
+    direction = at_stop ? arc.orientation : -arc.orientation
+    inside(p) = all(lower[d] - tolerance <= p[d] <= upper[d] + tolerance for d in 1:2)
+    at(radius, delta) = (centre[1] + radius * cos(theta_vertex + direction * delta),
+                         centre[2] + radius * sin(theta_vertex + direction * delta))
+    radii = (min(arc.original_radius, arc.radius), max(arc.original_radius, arc.radius))
+    # Whether the radial segment between the two circles at angle delta meets the box (the
+    # parametric clip of the segment against the four half-planes).
+    function annulus_meets_box(delta)
+        p, q = at(radii[1], delta), at(radii[2], delta)
+        t0, t1 = 0.0, 1.0
+        for d in 1:2
+            dp = q[d] - p[d]
+            for (bound, sign) in ((lower[d] - tolerance, 1.0), (upper[d] + tolerance, -1.0))
+                f = sign * (p[d] - bound)                 # f + g t >= 0 inside this half-plane
+                g = sign * dp
+                if g == 0.0
+                    f >= 0.0 || return false
+                elseif g < 0.0
+                    t1 = min(t1, -f / g)
+                else
+                    t0 = max(t0, -f / g)
+                end
+            end
+        end
+        return t0 <= t1
+    end
+    # Every angle (beyond this vertex, within one turn) at which either circle crosses a box
+    # edge, and of every box corner inside the annulus: the candidate exits.
+    candidates = Float64[]
+    for radius in radii, (axis, bound) in
+        ((1, lower[1]), (1, upper[1]), (2, lower[2]), (2, upper[2]))
+        offset = (bound - centre[axis]) / radius
+        abs(offset) <= 1.0 || continue
+        for theta in (axis == 1 ? (acos(offset), -acos(offset)) : (asin(offset), pi - asin(offset)))
+            p = (centre[1] + radius * cos(theta), centre[2] + radius * sin(theta))
+            inside(p) || continue
+            delta = mod(direction * (theta - theta_vertex), 2pi)
+            delta > tolerance / radius && push!(candidates, delta)
+        end
+    end
+    for corner in ((lower[1], lower[2]), (lower[1], upper[2]), (upper[1], lower[2]), (upper[1], upper[2]))
+        r = hypot(corner[1] - centre[1], corner[2] - centre[2])
+        radii[1] - tolerance <= r <= radii[2] + tolerance || continue
+        delta = mod(direction * (atan(corner[2] - centre[2], corner[1] - centre[1]) - theta_vertex), 2pi)
+        delta > tolerance / r && push!(candidates, delta)
+    end
+    sort!(candidates)
+    unique!(c -> round(c; digits=12), candidates)
+    push!(candidates, 2pi)
+    # The first candidate beyond which the annulus misses the box (the probe is the midpoint
+    # of the following interval); delta 0 when it misses right at the vertex.
+    exit = 0.0
+    found = false
+    previous = 0.0
+    for candidate in candidates
+        if !annulus_meets_box(0.5 * (previous + candidate))
+            exit = previous
+            found = true
+            break
+        end
+        previous = candidate
+    end
+    found || error("the deferred collar junction of the circular arc (centre $centre, radius " *
+                   "$(arc.original_radius)) at $vertex finds no angle at which its collar annulus " *
+                   "has left the coupon box")
+    exit <= 0.0 && return (metal=NTuple{2, Float64}[], offset=NTuple{2, Float64}[], exit=0.0)
+    step = arc.angle / length(arc.edges)
+    count = max(1, ceil(Int, exit / step * (1.0 - 1.0e-9)))
+    deltas = [j < count ? j * step : exit for j in 1:count]
+    return (metal=[at(arc.original_radius, delta) for delta in deltas],
+            offset=[at(arc.radius, delta) for delta in deltas], exit=exit)
+end
+
 # The offset polygon of a curved loop: `points` (the miter polygon with exact arc
-# vertices), `bridged` (a collapsed arc's neighbours did not meet: not a simple
-# offset), `items` (offset_item_geometry per item) and `junctions`, one per pair of
-# consecutive non-collapsed items: (before, after) item indices, `vertex` (the
-# loop vertex, or the two vertices of the collapsed arcs between them), `point`
-# (nothing when bridged), `tangent` (the items join within JUNCTION_TANGENT_ANGLE)
-# and `convex` (the metal turns convexly there).
+# vertices), `bridged` (a collapsed arc's neighbours did not meet, or a junction was
+# deferred: not a simple offset), `items` (offset_item_geometry per item) and `junctions`,
+# one per pair of consecutive non-collapsed items: (before, after) item indices, `vertex`
+# (the loop vertex, or the two vertices of the collapsed arcs between them), `point`
+# (nothing when bridged or deferred), `tangent` (the items join within
+# JUNCTION_TANGENT_ANGLE), `convex` (the metal turns convexly there) and `deferred` (fix
+# 5A: a Continuation line and an arc whose offsets do not meet; the arc's extension to the
+# box exit is in `extensions[arc item] = (at_stop, metal, offset, exit)`, and the offset
+# polygon carries the extension's offset-circle vertices so that the propagated run spans
+# them). `deferred` records the deferred junctions for the footprint census. The coupon
+# `box` = (lower, upper) is needed for a deferred junction (fail closed by name without it).
 # Mesher design round 3 class (7) Option B (DESIGN-part-G G.7.3, DESIGN R3; decision 510 O1):
 # the record also carries `runs`, the metal runs PROPAGATED through the offset - per
 # non-collapsed arc item one record (center, radius, id, sign, point_indices, edge_indices)
@@ -3676,7 +3776,7 @@ end
 # against these). `offset_loop` / `collar_loop_points` carry the record to
 # `loft_mask_offsets` / `physical_segments`; fix 5A (round 3 B4) extends a propagated run
 # along its circle to the box exit, never refits.
-function curved_offset_loop(loop, distance, runs, tolerance)
+function curved_offset_loop(loop, distance, runs, tolerance; box=nothing)
     points = loop.points
     n = length(points)
     metal_side = loop_orientation(points) * (loop.hole ? -1.0 : 1.0)
@@ -3703,7 +3803,8 @@ function curved_offset_loop(loop, distance, runs, tolerance)
                   for p in points]
         whole = propagated(vcat(collect(1:n), 1), run.center, radius, run)
         return (points=offset, bridged=false, items=NamedTuple[], junctions=NamedTuple[],
-                metal_side=metal_side, runs=[whole], short=short)
+                metal_side=metal_side, runs=[whole], short=short,
+                extensions=Dict{Int, NamedTuple}(), deferred=Dict{String, Any}[])
     end
     items = [offset_item_geometry(item, loop, runs, distance, metal_side, tolerance)
              for item in loop_edge_items(points, runs)]
@@ -3718,6 +3819,12 @@ function curved_offset_loop(loop, distance, runs, tolerance)
     start_index = Dict{Int, Int}()
     stop_index = Dict{Int, Int}()
     interior_indices = Dict{Int, Vector{Int}}()
+    # Fix 5A: the deferred junctions' arc extensions and the offset polygon's indices of their
+    # offset-circle vertices (after the arc's stop / before its start).
+    extensions = Dict{Int, NamedTuple}()
+    extension_after = Dict{Int, Vector{Int}}()
+    extension_before = Dict{Int, Vector{Int}}()
+    deferred_records = Dict{String, Any}[]
     for (position, k) in enumerate(live)
         before = items[k]
         next = live[mod1(position + 1, length(live))]
@@ -3734,13 +3841,37 @@ function curved_offset_loop(loop, distance, runs, tolerance)
         resolved = point !== nothing && any(
             hypot(point[1] - v[1], point[2] - v[2]) <= 8.0 * max(abs(distance), tolerance)
             for v in vertices)
+        deferred = false
         if !resolved && !collapsed_between
             if point === nothing && before.kind == :line && after.kind == :line
                 error("Plan-view taper has a singular boundary vertex at $(before.stop)")
             elseif point === nothing
-                collar_face_end_guard(before, after, distance)
+                # Fix 5A: a Continuation line (zero shift: the box face) and an arc whose offsets
+                # do not meet - the arc leaves the box by less than the collar - defer the
+                # junction and continue the arc's annular piece to the box exit; the Physical
+                # line-arc corner kink and the box-less offset stay guarded by name.
+                line, arc = before.kind == :line ? (before, after) : (after, before)
+                (box !== nothing && line.shift == (0.0, 0.0)) ||
+                    collar_face_end_guard(before, after, distance)
+                arc_index = before.kind == :arc ? k : next
+                at_stop = before.kind == :arc
+                extension = deferred_arc_extension(arc, at_stop, box[1], box[2], tolerance)
+                extensions[arc_index] = (at_stop=at_stop, extension...)
+                push!(deferred_records, Dict{String, Any}(
+                    "Vertex" => [before.stop[1], before.stop[2]], "ArcId" => runs[arc.run] isa NamedTuple &&
+                                haskey(runs[arc.run], :id) ? runs[arc.run].id : 0,
+                    "Centre" => [arc.center[1], arc.center[2]], "Radius" => arc.original_radius,
+                    "OffsetRadius" => arc.radius, "ArcEnd" => at_stop ? "stop" : "start",
+                    "ExitAngleDegrees" => rad2deg(extension.exit),
+                    "ExtensionChords" => length(extension.offset),
+                    "Rule" => "round 3 fix 5A (part M 2.2, DESIGN R3): the arc's collar annulus is " *
+                              "continued along its circle past the face-end vertex to the first angle " *
+                              "at which both the circle and its offset circle have left the box, then " *
+                              "clipped to the box; the propagated run is extended on the same circle"))
+                deferred = true
+            else
+                error("Plan-view taper produces an unresolved miter at $(before.stop)")
             end
-            error("Plan-view taper produces an unresolved miter at $(before.stop)")
         end
         turn = metal_side * atan(cross2d(before.tangent_stop, after.tangent_start),
                                  before.tangent_stop[1] * after.tangent_start[1] +
@@ -3757,12 +3888,22 @@ function curved_offset_loop(loop, distance, runs, tolerance)
             bridged = true
             push!(offset, before.shifted_stop)
             stop_index[k] = length(offset)
+            # Fix 5A: the deferred arc's extension vertices on the offset circle, in travel order
+            # (beyond the stop of `before`, or ahead of the start of `after`), so that the
+            # propagated run spans the slab's curved side.
+            if deferred && before.kind == :arc
+                append!(offset, extensions[k].offset)
+                extension_after[k] = collect((length(offset) - length(extensions[k].offset) + 1):length(offset))
+            elseif deferred
+                append!(offset, reverse(extensions[next].offset))
+                extension_before[next] = collect((length(offset) - length(extensions[next].offset) + 1):length(offset))
+            end
             push!(offset, after.shifted_start)
             start_index[next] = length(offset)
         end
         push!(junctions, (before=k, after=next, vertices=vertices,
                           point=resolved ? point : nothing, tangent=tangent, convex=convex,
-                          collapsed=skipped))
+                          collapsed=skipped, deferred=deferred))
     end
     offset_runs = NamedTuple[]
     for k in live
@@ -3770,13 +3911,15 @@ function curved_offset_loop(loop, distance, runs, tolerance)
         item.kind == :arc || continue
         # The first live item's start vertex is the closing junction (the last point pushed):
         # its run wraps around the end of the polygon, like a run of a loop may.
-        point_indices = vcat([start_index[k]], interior_indices[k], [stop_index[k]])
+        point_indices = vcat(get(extension_before, k, Int[]), [start_index[k]], interior_indices[k],
+                             [stop_index[k]], get(extension_after, k, Int[]))
         push!(offset_runs, propagated(point_indices, item.center, item.radius, runs[item.run]))
     end
     # The cycle [interior_1, J_12, interior_2, ..., interior_m, J_m1] is the offset
     # polygon in loop order (J_m1 closes onto interior_1).
     return (points=offset, bridged=bridged, items=items, junctions=junctions,
-            metal_side=metal_side, runs=offset_runs, short=short)
+            metal_side=metal_side, runs=offset_runs, short=short, extensions=extensions,
+            deferred=deferred_records)
 end
 
 # A closed plan-view polygon is simple when no side is degenerate (shorter than
@@ -3942,6 +4085,7 @@ function curved_collar_pieces(loop, distance, offset, lower, upper, tolerance)
         end
     end
     pieces = [[(Float64(p[1]), Float64(p[2])) for p in points]]
+    extensions = get(offset, :extensions, Dict{Int, NamedTuple}())
     for (k, item) in enumerate(items)
         chords = [points[edge] for edge in item.edges[2:end]]
         if item.kind == :line
@@ -3951,8 +4095,17 @@ function curved_collar_pieces(loop, distance, offset, lower, upper, tolerance)
             push!(pieces, vcat([item.start], chords, [item.stop, get(apex, k, item.center)]))
         else
             abs(item.radius - item.original_radius) > tolerance || continue
-            push!(pieces, vcat([item.start], chords, [item.stop, stop_corner[k]],
-                               reverse(item.interior), [start_corner[k]]))
+            # Fix 5A: the annular piece continued past a deferred face end along both circles
+            # (the metal side forward, the offset side back), clipped to the box below.
+            extension = get(extensions, k, nothing)
+            at_stop = extension !== nothing && extension.at_stop
+            at_start = extension !== nothing && !extension.at_stop
+            push!(pieces, vcat(at_start ? reverse(extension.metal) : NTuple{2, Float64}[],
+                               [item.start], chords, [item.stop],
+                               at_stop ? extension.metal : NTuple{2, Float64}[],
+                               at_stop ? reverse(extension.offset) : NTuple{2, Float64}[],
+                               [stop_corner[k]], reverse(item.interior), [start_corner[k]],
+                               at_start ? extension.offset : NTuple{2, Float64}[]))
         end
     end
     append!(pieces, kites)
@@ -4243,7 +4396,7 @@ end
 function collar_loop_points(loop, distance, box, tolerance; island_rule=nothing,
                             absorbed=nothing)
     runs = abs(distance) <= tolerance ? NamedTuple[] : loop_arc_runs(loop, tolerance)
-    offset = isempty(runs) ? nothing : curved_offset_loop(loop, distance, runs, tolerance)
+    offset = isempty(runs) ? nothing : curved_offset_loop(loop, distance, runs, tolerance; box=box)
     miter = offset === nothing ? offset_loop_points(loop, distance, tolerance) : offset.points
     (offset === nothing || !offset.bridged) && polygon_is_simple(miter, tolerance) &&
         return miter, "MiterOffset", offset
@@ -4446,21 +4599,26 @@ end
 # (offset_hole_points) or "EdgeStrip" (loft_strip); a CollarUnion polygon records
 # the un-etched islands absorbed by the island rule (absorb_collar_islands!).
 function footprint_record(conductor, plane, hole, points, record, construction;
-                          absorbed_islands=nothing)
+                          absorbed_islands=nothing, deferred_face_ends=nothing)
     footprint = Dict{String, Any}(
         "Conductor" => conductor, "Plane" => plane, "Hole" => hole,
         "Points" => [collect(point) for point in points], "Simplification" => record,
         "Construction" => construction)
-    construction == "CollarUnion" &&
-        (footprint["AbsorbedIslands"] = absorbed_islands === nothing ? Dict{String, Any}[] :
-                                        absorbed_islands)
+    if construction == "CollarUnion"
+        footprint["AbsorbedIslands"] = absorbed_islands === nothing ? Dict{String, Any}[] :
+                                       absorbed_islands
+        # Round 3 fix 5A: the deferred face-end junctions of this collar (none on every
+        # coupon built before; recorded only on the collar union).
+        footprint["DeferredFaceEnds"] = deferred_face_ends === nothing ? Dict{String, Any}[] :
+                                        deferred_face_ends
+    end
     return footprint
 end
 
 # Simplify the bottom and top polygons of a footprint loft; when `footprint` is a
 # vector, the loft must be prismatic (one polygon) and the polygon is recorded.
 function simplified_loft_polygons(bottom_points, top_points, footprint, conductor, plane, hole,
-                                  construction; absorbed_islands=nothing)
+                                  construction; absorbed_islands=nothing, deferred_face_ends=nothing)
     bottom_points, bottom_record =
         simplify_footprint_polygon(bottom_points, FOOTPRINT_COLLINEAR_TOLERANCE)
     top_points, _ = simplify_footprint_polygon(top_points, FOOTPRINT_COLLINEAR_TOLERANCE)
@@ -4468,7 +4626,8 @@ function simplified_loft_polygons(bottom_points, top_points, footprint, conducto
         bottom_points == top_points ||
             error("Footprint recording requires a prismatic (vertical-wall) loft")
         push!(footprint, footprint_record(conductor, plane, hole, bottom_points, bottom_record,
-                                          construction; absorbed_islands=absorbed_islands))
+                                          construction; absorbed_islands=absorbed_islands,
+                                          deferred_face_ends=deferred_face_ends))
     end
     return bottom_points, top_points
 end
@@ -4631,7 +4790,9 @@ function loft_mask_offsets(occ, loops, z0, z1, bottom_offset, top_offset, tolera
                       "constructions")
             bottom_points, top_points = simplified_loft_polygons(
                 bottom_points, top_points, footprint, outer.conductor, z0, false,
-                bottom_construction; absorbed_islands=bottom_islands)
+                bottom_construction; absorbed_islands=bottom_islands,
+                deferred_face_ends=bottom_offset_record === nothing ? nothing :
+                                   bottom_offset_record.deferred)
         end
         volume = loft_polygon(occ, bottom_points, top_points, z0, z1;
                               runs=loop_wire_runs(outer, bottom_points, tolerance),
@@ -5772,32 +5933,155 @@ const ARC_JOINT_TURN_BOUND = 1.6e-6
 # 1e-4 rad) builds when its turn is at most ARC_SMOOTH_JOINT_TURN_BOUND (the 5e-5-rad synthetic
 # joint; the loop end's <= 1.6e-6 lies inside); a CORNER joint of an arc with another side
 # (kinked arc / line; A3 (3): ball, caps, the clearance along the arc) builds when its turn lies
-# in ARC_CORNER_JOINT_TURN_RANGE (the 2e-4-rad corner joint and the 30-degree kinked joint);
-# an arc end on a box face builds when it is a CUT end whose tilt lies in ARC_FACE_END_TILT_RANGE
-# (below). The corner joint is tested on THIN coupons only (the fabricated kinked arc end fails in
-# Gmsh's surface mesher at the production sizes: every fabricated corner joint stays guarded).
-# Everything beyond fails closed at the same guards (ScopeGuard[ArcJointTilt] / [ArcFaceEnds]: an
-# exactly perpendicular arc end, an arc at a box-vertex corner, a smooth turn in (5e-5, 1e-4], a
-# corner turn in (1e-4, 2e-4) or above 30 degrees). Recorded scope rules, not physics thresholds.
+# in the coupon kind's ARC_CORNER_JOINT_TURN_RANGE; an arc end on a box face builds when it is a
+# CUT end whose tilt lies in ARC_FACE_END_TILT_RANGE (below). The corner range is the BUILT range
+# PER KIND (decisions 466 / 556; round 3 class (6)). Provenance: THIN 2e-4 rad .. 30 degrees =
+# the round-2b corner2e-4 / kink30 strip builds at the production sizes (PBS 57706 / 57892);
+# FABRICATED 2e-4 rad .. 15 degrees = the round-3 B4 strip builds at the production sizes (the
+# CORNER 2e-4 rad and the KINK 0.1 / 5.33 / 8.53 / 15-degree fixtures: every gate; the census
+# values 0.109 / 5.33 / 8.53 degrees of 448693d60a6f / 32dc558f4810 / the C3 trio lie inside),
+# buildable since the E4 root cause was fixed (install_tube_curves!: the cap-ray node order on a
+# periodic face). The fabricated 20 / 25 / 30-degree kinks FAIL the quality gates at the production
+# sizes (tetrahedron scaled Jacobian 0.0034 at 20; invariant-corner kappa_reg 6.45 / 5.29 at 25 /
+# 30 against the gate 5.0): a named follow-up, not admitted (decision 556). Everything beyond fails
+# closed at the same guards (ScopeGuard[ArcJointTilt] / [ArcFaceEnds]: an exactly perpendicular arc
+# end, an arc at a box-vertex corner, a smooth turn in (5e-5, 1e-4], a corner turn in (1e-4, 2e-4)
+# or above the kind's top). Recorded scope rules, not physics thresholds.
 const ARC_SMOOTH_JOINT_TURN_BOUND = 5.0e-5
-const ARC_CORNER_JOINT_TURN_RANGE = (2.0e-4, deg2rad(30.0))
+const ARC_CORNER_JOINT_TURN_RANGE = (fabricated=(2.0e-4, deg2rad(15.0)), thin=(2.0e-4, deg2rad(30.0)))
+arc_corner_joint_turn_range(fabricated::Bool) =
+    fabricated ? ARC_CORNER_JOINT_TURN_RANGE.fabricated : ARC_CORNER_JOINT_TURN_RANGE.thin
 # Mesher design round 3 (decisions 497 ERRATUM / 510 MAJOR-1 / 510 O6; DESIGN R9, part M 3.2): the
 # admitted tilt range of an arc box-face CUT end is the BUILT range, (lowest built, largest built),
 # the same rule at both ends (decision 466: no credit beyond the largest measured). Provenance:
 # LOW end 0.1 degrees = fe0p1 of the round-3 B2 record run (fe0p1 / fe0p5 / fe2p1 / fe8 fab + thin
 # at the production sizes; `test_arc_tubes.jl` at the test sizes) - round 2b had built 15 / 45 / 70
-# only and admitted (0, 15) untested (the 497 erratum); HIGH end 70 degrees = fe70 fab + thin of the
-# round-2b record run (PBS 57706 / 57892; the largest built angle of BOTH kinds: the thin top is
-# the largest built THIN angle). Below the low end, above the high end and at theta == 0 exactly
+# only and admitted (0, 15) untested (the 497 erratum); HIGH end per KIND (the thin top is the
+# largest built THIN angle): THIN 70 degrees = fe70r13p3 thin of the round-3 B4 part-2 record run
+# (PBS 59701: the rho-13.3 fixture, regime I, min SJ 0.0171, every gate; the round-2b fe70 thin
+# build at the default rho 1.596, PBS 57706 / 57892, FAILS under 9H + 8A and is a measured failure of
+# the dominance table below; the thin 74.3 / 75.5 arc ends fail the tetrahedral gate before and
+# after 8A, part M ERRATA E-M6: a named follow-up); FABRICATED 75.5 degrees = the same record run's
+# rho-parametrised steep fixture (fe74p3 / fe75p5 fab at rho 13.3 under 9H + 8A) - the RAISE RULE of
+# decisions 563 (B) / 566: this top is the largest fabricated arc tilt that record run BUILT and
+# PASSED: PBS 59701 (mirror 35a5b5a6e8; fe74p3r13p3 / fe75p5r13p3 fab min SJ 0.0153 / 0.0119, every
+# gate; impl-B4/part2/records/record-59701.json), 70 otherwise. RATIFIED by decision 579 (MAJOR-1):
+# under 8A those blocks are derived regime-I ones, so part M 3.3 P5's pre-8A prism-condition bracket
+# [900, 1000] does not apply (measured 595.7 / 595.6); the raise is CONDITIONED on the dominance
+# guard of decision 579 MAJOR-3 (b) (ARC_FACE_END_BUILT_CASES below). Below the low end, above the kind's high end and at theta == 0 exactly
 # (the legacy on-box end) the end fails closed at ScopeGuard[ArcFaceEnds]. Any derived ceiling
 # (SteepFaceCrossing) is a fail-closed cap INSIDE this range, never the admission bound.
-const ARC_FACE_END_TILT_RANGE = (deg2rad(0.1), deg2rad(70.0))
+const ARC_FACE_END_TILT_RANGE = (fabricated=(deg2rad(0.1), deg2rad(75.5)), thin=(deg2rad(0.1), deg2rad(70.0)))
+arc_face_end_tilt_range(fabricated::Bool) =
+    fabricated ? ARC_FACE_END_TILT_RANGE.fabricated : ARC_FACE_END_TILT_RANGE.thin
 # Mesher design round 3 class (8) interim (part M 5.2, 8B; decisions 475 (7) E3 / 497 / 466): a THIN
 # tube end on a box face is admitted up to the largest built THIN tilt, 70 degrees (the V10 thin
 # 70-degree production-size build, PBS 57505; the thin 74.3 / 75.5-degree crossings FAIL the
 # tetrahedral scaled-Jacobian gate after the build: E3). Above it the thin end fails closed at
 # ScopeGuard[SteepFaceCrossing] before any CAD tube, until the class-8 fix (8A) builds it.
 const THIN_FACE_END_TILT_BOUND = deg2rad(70.0)
+# Round 3 B4 (decision 566; the 466 / 497 rule for the FABRICATED kind): a fabricated straight tube
+# end on a box face is admitted up to the largest fabricated tilt BUILT under the code that runs -
+# 70 degrees (the V10 fabricated 70-degree production-size build, regime II, PBS 57505, bitwise under
+# 8A). Before 8A the derived SteepFaceCrossing ceiling (78.77 degrees at the production sizes) was the
+# de-facto fabricated cap; under 8A the block above 70 degrees takes h_pyr_end = lc / (4 s), whose
+# apex thickness lc / 2 never reaches lc_cap, so that ceiling no longer binds for the fabricated kind
+# and this bound is the admission. The V10 fabricated 74.3 / 75.5-degree builds were made under the
+# A2 regime-II block, which 8A changes above 70: they do not count. RAISE RULE: the B4 part-2 record
+# run raises this bound to the largest fabricated tilt it BUILDS and PASSES under 8A (75.5 if P5
+# holds there), the same way it raises ARC_FACE_END_TILT_RANGE's fabricated top (decision 563 B).
+# 75.5 degrees = the V10 fabricated 74.3 (row B 6x) / 75.5 (row B 8x) straight crossings at R 1.9
+# rebuilt under 8A by that record run, PBS 59701 (min SJ 0.0178 / 0.0147, derived regime-I blocks
+# m 6 / 7; impl-B4/part2/records/record-59701.json; the fab 70 / thin 70 bitwise vs PBS 57505);
+# RATIFIED by decision 579 (MAJOR-1) under the 566 reading, conditioned on the arc face ends'
+# dominance guard (579 MAJOR-3 (b)).
+const FABRICATED_FACE_END_TILT_BOUND = deg2rad(75.5)
+face_end_tilt_bound(fabricated::Bool) = fabricated ? FABRICATED_FACE_END_TILT_BOUND : THIN_FACE_END_TILT_BOUND
+# Mesher design round 3 class (8), fix 8A-bitwise (part M 5.2; decisions 491 / 510 O8 / 563): above
+# the largest BUILT face-end tilt of the coupon kind, the end block's lateral pyramids take the
+# derived height h_pyr_end = min(h_pyr, TangentialSize / (4 slope)) (prism_edge_tubes.jl
+# derived_face_end_pyramid_height), so the regular spacing satisfies the apex rule and the sheared
+# layers stay regular (E3: the thin 74.3 / 75.5-degree slivers; the pre-score lifted the thin SJ
+# 0.0023 -> 0.0075 at 74.3 and 0.0032 -> 0.0125 at 75.5). The thresholds are each kind's largest
+# BUILT tilt: 70 degrees fabricated = the V10 fabricated 70-degree production-size build (regime
+# II, PBS 57505; the library's fabricated face ends reach 45); 70 degrees thin = the V10 thin
+# 70-degree production-size build = B2's THIN_FACE_END_TILT_BOUND (decision 563: part M 5.2's "45"
+# predates B2's 70; under 45 the ADMITTED thin 70-degree block changed and failed the tetrahedral
+# gate, 0.0089 < 0.01). At or below the threshold (slack 1e-9 relative, as the thin bound's) the
+# A2 (4) block is bitwise: no built end block changes - 8A-bitwise in the strict sense.
+const FACE_END_DERIVED_APEX_ABOVE = (fabricated=deg2rad(70.0), thin=THIN_FACE_END_TILT_BOUND)
+face_end_derived_apex_above(fabricated::Bool) =
+    fabricated ? FACE_END_DERIVED_APEX_ABOVE.fabricated : FACE_END_DERIVED_APEX_ABOVE.thin
+# Round 3 B4 review (decision 579 MAJOR-3 (b); the 466 / 497 built-range rule extended to the SECOND
+# parameter of an arc face end): an arc box-face cut end is admitted only if a BUILT-AND-PASSED case of
+# its kind DOMINATES it - a case of tilt >= its tilt AND node-circle margin rho (1 - sin theta) /
+# (Radius + PyramidHeight) <= its margin (a smaller margin is the harder configuration: the inner
+# node circle lies closer to the face and the crossing slope grows above tan theta, 9H). The tilt
+# range above is the projection of this table; the table is the measured provenance: the B4 part-2
+# record run PBS 59701 (mirror 35a5b5a6e8; impl-B4/part2/records/record-59701.json, every gate at
+# the production sizes), the margins read on the identical fixture geometry at the branch head
+# (labels-only, CrossingSlope equal to the record's; impl-B4/part3/local/margins-stub), rounded DOWN
+# to 4 decimals so each case dominates itself. The two MEASURED FAILURES of that run - the default
+# fe70 fixture (rho 1.596 um, 2.4 fabricated / 1.2 thin envelopes), built in round 2b (PBS 57892 /
+# 58336) and failing under 9H + 8A (fabricated prism Jacobian condition 1009.6 > 1000; thin 10
+# non-positive pyramids, tetrahedron scaled Jacobian 0.00045) - are the band this guard closes;
+# a lower floor comes only from MORE BUILDS in a later record run (named follow-up 5), never from
+# a local build (decision 510 MAJOR-1; 581 (3): the C1 synthetics below the floors are candidates).
+# The thin fe74p3r13p3 / fe75p5r13p3 twins stopped at the thin tilt top (not built): absent.
+const ARC_FACE_END_BUILT_CASES = (
+    fabricated=[
+        (case="fe0p1", tilt=0.1, margin=21583.3240),
+        (case="fe0p5", tilt=0.5, margin=4286.5288),
+        (case="fe2p1", tilt=2.1, margin=992.0684),
+        (case="fe8", tilt=8.0, margin=233.4074),
+        (case="fe15", tilt=15.0, margin=108.0642),
+        (case="fe45", tilt=45.0, margin=15.6307),
+        (case="fe70r13p3", tilt=70.0, margin=20.1783),
+        (case="fe74p3r13p3", tilt=74.3, margin=12.4830),
+        (case="fe75p5r13p3", tilt=75.5, margin=10.6575)
+    ],
+    thin=[
+        (case="fe0p1", tilt=0.1, margin=10999.1939),
+        (case="fe0p5", tilt=0.5, margin=2184.4810),
+        (case="fe2p1", tilt=2.1, margin=505.5733),
+        (case="fe8", tilt=8.0, margin=118.9480),
+        (case="fe15", tilt=15.0, margin=55.0712),
+        (case="fe45", tilt=45.0, margin=7.9656),
+        (case="fe70r13p3", tilt=70.0, margin=10.2831)
+    ]
+)
+const ARC_FACE_END_FAILED_CASES = [
+    (case="fe70", kind="fabricated", tilt=70.0, margin=2.4218,
+     failure="prism Jacobian condition 1009.6 > 1000"),
+    (case="fe70", kind="thin", tilt=70.0, margin=1.2341,
+     failure="10 non-positive pyramids, tetrahedron scaled Jacobian 0.00045 < 0.01")
+]
+arc_face_end_built_cases(fabricated::Bool) =
+    fabricated ? ARC_FACE_END_BUILT_CASES.fabricated : ARC_FACE_END_BUILT_CASES.thin
+# The built-and-passed case of the kind dominating (theta, margin), or nothing: tilt >= theta and
+# margin <= the end's (slack 1e-9 relative on both, the tilt range's own rounding slack).
+function arc_face_end_dominating_case(fabricated::Bool, theta, margin)
+    for case in arc_face_end_built_cases(fabricated)
+        deg2rad(case.tilt) >= theta * (1.0 - 1.0e-9) && case.margin <= margin * (1.0 + 1.0e-9) &&
+            return case
+    end
+    return nothing
+end
+arc_face_end_provenance_text() =
+    "built and passed (PBS 59701; case: tilt degrees / margin envelopes) FABRICATED " *
+    join(["$(c.case) $(c.tilt) / $(c.margin)" for c in ARC_FACE_END_BUILT_CASES.fabricated], ", ") *
+    "; THIN " * join(["$(c.case) $(c.tilt) / $(c.margin)" for c in ARC_FACE_END_BUILT_CASES.thin], ", ") *
+    "; FAILED " * join(["$(c.case) $(c.kind) $(c.tilt) / $(c.margin): $(c.failure)" for c in ARC_FACE_END_FAILED_CASES], ", ")
+function guard_arc_face_end_dominance(fabricated, arc, conductor, face, margin)
+    arc_face_end_dominating_case(fabricated, face.theta, margin) === nothing || return
+    kind = fabricated ? "FABRICATED" : "THIN"
+    scope_error("ArcFaceEnds",
+                "arc $(arc.id) of conductor $conductor ends on face $(face.face) at a tilt of " *
+                "$(rad2deg(face.theta)) degrees with a node-circle margin rho (1 - sin theta) / envelope of " *
+                "$margin envelopes on a $kind coupon, dominated by no built-and-passed $kind case (a " *
+                "case of tilt >= this tilt and margin <= this margin; decision 579): " *
+                arc_face_end_provenance_text())
+end
 const RECIPE_SCOPE_GUARDS = [
     ("ArcTubeRadiusVsCurvature", "build",
      "an arc metal side whose radius is below four times the tube envelope (Radius + " *
@@ -5805,25 +6089,35 @@ const RECIPE_SCOPE_GUARDS = [
     ("ArcFaceEnds", "build",
      "an arc metal side with an end on the outer box outside the BUILT range (mesher design " *
      "round 2b, decision 437 (3), and round 3, decisions 497 / 510 MAJOR-1: a box-face cut end " *
-     "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE[1])) <= theta <= " *
-     "$(rad2deg(ARC_FACE_END_TILT_RANGE[2])) degrees builds - the synthetic arc face ends built " *
-     "fab + thin at the production sizes: 0.1 / 0.5 / 2.1 / 8 degrees (round 3 B2), 15 / 45 / 70 " *
-     "degrees (round 2b)): an arc end exactly perpendicular to the face, an arc at a box-vertex " *
+     "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE.thin[1])) <= theta <= " *
+     "$(rad2deg(ARC_FACE_END_TILT_RANGE.thin[2])) degrees THIN / <= " *
+     "$(rad2deg(ARC_FACE_END_TILT_RANGE.fabricated[2])) degrees FABRICATED builds - the synthetic " *
+     "arc face ends built at the production sizes: 0.1 / 0.5 / 2.1 / 8 degrees (round 3 B2), 15 / " *
+     "45 / 70 degrees (round 2b), fab 74.3 / 75.5 degrees on the rho-parametrised fixture (round 3 " *
+     "B4, 9H + 8A)): an arc end exactly perpendicular to the face, an arc at a box-vertex " *
      "corner, a tilt below the lowest built angle or above the largest built angle, or an end " *
      "whose inner node circle (rho - the tube envelope) does not reach the face plane (rho (1 - " *
      "sin theta) <= Radius + PyramidHeight: no face station exists for every node; mesher design " *
-     "round 3 part M 3.3) fails closed (supervisor decisions 391 MAJOR-2 (ii) / 466 / 497)"),
+     "round 3 part M 3.3) fails closed (supervisor decisions 391 MAJOR-2 (ii) / 466 / 497); " *
+     "round 3 B4 review (decision 579 MAJOR-3 (b)): an arc cut end is admitted only if a built-" *
+     "and-passed case of its kind DOMINATES it (tilt >= its tilt and node-circle margin rho (1 - " *
+     "sin theta) / envelope <= its margin: ARC_FACE_END_BUILT_CASES, FaceEnds[].NodeCircleMargin), " *
+     "the measured provenance being " * arc_face_end_provenance_text()),
     ("ArcJointTilt", "build",
      "an arc metal side meeting another side (straight or arc) at a joint whose turn (the " *
      "angle between the arc's end tangent and the other side's direction) lies outside the " *
-     "TESTED ranges (mesher design round 2b, decision 437 (3)): a SMOOTH joint (JointSmooth) " *
-     "turning by at most $(ARC_SMOOTH_JOINT_TURN_BOUND) rad (the synthetic 5e-5-rad smooth " *
-     "joint; the loop end's <= $(ARC_JOINT_TURN_BOUND)) or a CORNER joint turning by " *
-     "$(ARC_CORNER_JOINT_TURN_RANGE[1]) .. $(ARC_CORNER_JOINT_TURN_RANGE[2]) rad on a THIN coupon (the " *
-     "synthetic 2e-4-rad corner and 30-degree kinked arc / line joints) builds; a smooth turn above " *
-     "the bound, a corner turn below the range or above it, or any corner joint on a FABRICATED " *
-     "coupon (untested: it fails in the surface mesher of the trench wall) fails closed " *
-     "(supervisor decision 391 MAJOR-2 (ii))"),
+     "BUILT ranges (mesher design round 2b, decision 437 (3); round 3 class (6), decisions 491 / " *
+     "510 / 556): a SMOOTH joint (JointSmooth) turning by at most $(ARC_SMOOTH_JOINT_TURN_BOUND) " *
+     "rad (the synthetic 5e-5-rad smooth joint; the loop end's <= $(ARC_JOINT_TURN_BOUND)) or a " *
+     "CORNER joint turning by $(ARC_CORNER_JOINT_TURN_RANGE.thin[1]) .. " *
+     "$(ARC_CORNER_JOINT_TURN_RANGE.thin[2]) rad on a THIN coupon (the synthetic 2e-4-rad corner " *
+     "and 30-degree kinked arc / line joints of round 2b) or by " *
+     "$(ARC_CORNER_JOINT_TURN_RANGE.fabricated[1]) .. $(ARC_CORNER_JOINT_TURN_RANGE.fabricated[2]) " *
+     "rad on a FABRICATED coupon (the 2e-4-rad corner and the 0.1 / 5.33 / 8.53 / 15-degree kinks " *
+     "built at the production sizes in round 3 B4, once the cap-ray node order on the periodic " *
+     "trench wall was fixed) builds; a smooth turn above the bound, or a corner turn below the " *
+     "kind's range or above it (the fabricated 20-30-degree kinks fail the quality gates: a named " *
+     "follow-up), fails closed (supervisor decisions 391 MAJOR-2 (ii) / 466 / 556)"),
     ("ArcArcJoint", "build",
      "an arc metal side meeting a DIFFERENT arc side at a smooth joint (JointSmooth; two tagged " *
      "arc runs) that are NOT one circle - centres or radii apart by more than the arc-fit " *
@@ -5866,15 +6160,21 @@ const RECIPE_SCOPE_GUARDS = [
      "NarrowMetal guard of decision 347 retired into the per-side bound)"),
     ("SteepFaceCrossing", "build",
      "a tube end on a box face whose tilt lies beyond the validity ceiling of the capped end " *
-     "block, 2 PyramidHeight |tan theta| >= the section's end-spacing cap lc_cap (the largest " *
+     "block, 2 PyramidHeight x slope >= the section's end-spacing cap lc_cap (the largest " *
      "axial spacing at which the section's own prism frames read <= 0.95 x the Jacobian-" *
-     "condition ceiling): no sheared layer can keep its pyramid apex inside the box within " *
-     "the cap (mesher design round 2 F2b 3.2, supervisor decisions 358 / 363 / 437); or a THIN " *
-     "tube end whose tilt exceeds the largest BUILT thin tilt $(rad2deg(THIN_FACE_END_TILT_BOUND)) " *
-     "degrees (the V10 thin 70-degree production-size build): the thin 74.3 / 75.5-degree " *
-     "crossings fail the tetrahedral scaled-Jacobian gate after the build (E3, decision 475 (7)), " *
-     "so the end fails closed before any CAD tube until mesher design round 3 class (8) builds it " *
-     "(part M 5.2 8B; the decision 466 / 497 rule: no credit beyond the largest built angle)"),
+     "condition ceiling; the slope = |tan theta| for a straight tube, the arc's own crossing " *
+     "slope max |s'(u)| over the section for an arc tube: round 3 9H, FaceEnds[].CrossingSlope): " *
+     "no sheared layer can keep its pyramid apex inside the box within the cap (mesher design " *
+     "round 2 F2b 3.2, supervisor decisions 358 / 363 / 437; a derived ceiling INSIDE the " *
+     "admitted range, never the admission bound: decision 510 MAJOR-1); or a tube end whose tilt " *
+     "exceeds the largest BUILT tilt of its kind - THIN $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees " *
+     "(the V10 thin 70-degree production-size build: the thin 74.3 / 75.5-degree crossings fail the " *
+     "tetrahedral scaled-Jacobian gate after the build, E3, decision 475 (7); under the class-8 fix 8A " *
+     "the thin 74.3-degree crossing still reads 0.0075 < 0.01: a named follow-up, decision 563), " *
+     "FABRICATED $(rad2deg(FABRICATED_FACE_END_TILT_BOUND)) degrees (the V10 fabricated 70-degree " *
+     "build; decision 566: under 8A the derived ceiling no longer binds for the fabricated kind, the " *
+     "record run raises this bound to the largest tilt built under 8A) - fails closed before any CAD " *
+     "tube (part M 5.2 8B; the decision 466 / 497 rule: no credit beyond the largest built angle)"),
     ("FreeEdgeEnds", "build",
      "a metal edge end that is neither a semantic corner nor on the outer box"),
     ("FootprintWithoutEdge", "build",
@@ -5892,11 +6192,15 @@ const RECIPE_SCOPE_GUARDS = [
      "rho - h_face < 3 Radius with h_face the distance from the arc centre to the face line, so " *
      "the shrunk collar circle never meets the Continuation side and the offset loop has no " *
      "junction there (the 32dc558f4810 refusal; mesher design round 3 class (5), part M 2.1); " *
-     "the physically right collar is the box slab between the face and the offset circle " *
-     "(fix 5A, a deferred junction continued to the box exit) - refused by name until it lands " *
-     "(interim guard 5B of round 3 B2). The same guard names a line-arc CORNER kink whose " *
-     "shifted line misses the shrunk concave circle (untested; unreachable for the admitted " *
-     "corner turns, 510 MINOR-8 (b))")]
+     "the physically right collar is the box slab between the face and the offset circle, " *
+     "which fix 5A (round 3 B4, DESIGN R3 / part M 2.2) BUILDS: the junction is deferred, the " *
+     "arc's annular piece is continued along its circle past the face-end vertex to the first " *
+     "angle at which both the circle and its offset circle have left the box and clipped to the " *
+     "box, the loop takes the collar union (CollarUnion, FootprintPolygons[].DeferredFaceEnds) " *
+     "and the propagated run is extended on the same circle, never refitted - so this reading " *
+     "fires only where the collar is computed without the coupon box (interim guard 5B of " *
+     "round 3 B2). The same guard names a line-arc CORNER kink whose shifted line misses the " *
+     "shrunk concave circle (untested; unreachable for the admitted corner turns, 510 MINOR-8 (b))")]
 const RECIPE_SCOPE_RULE =
     "the prism-tube recipe builds every input whose classes are all in SupportedClasses; " *
     "an input exhibiting a class in GuardedClasses fails closed at the guard whose " *
@@ -6274,12 +6578,14 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                 abs(tangent[d]) == 1.0 &&
                     scope_error("ArcFaceEnds", describe * " exactly perpendicular to the face (untested)")
                 theta = acos(clamp(abs(tangent[d]), 0.0, 1.0))
-                theta >= ARC_FACE_END_TILT_RANGE[1] * (1.0 - 1.0e-12) ||
+                tilt_range = arc_face_end_tilt_range(fabricated)
+                theta >= tilt_range[1] * (1.0 - 1.0e-12) ||
                     scope_error("ArcFaceEnds", describe * " at a tilt of $(rad2deg(theta)) degrees below the " *
-                                               "lowest built $(rad2deg(ARC_FACE_END_TILT_RANGE[1])) degrees")
-                theta <= ARC_FACE_END_TILT_RANGE[2] * (1.0 + 1.0e-12) ||
+                                               "lowest built $(rad2deg(tilt_range[1])) degrees")
+                theta <= tilt_range[2] * (1.0 + 1.0e-12) ||
                     scope_error("ArcFaceEnds", describe * " at a tilt of $(rad2deg(theta)) degrees above the " *
-                                               "largest built $(rad2deg(ARC_FACE_END_TILT_RANGE[2])) degrees")
+                                               "largest built $(fabricated ? "FABRICATED" : "THIN") " *
+                                               "$(rad2deg(tilt_range[2])) degrees")
             end
             smooth_here = (point[1], point[2], side.plane) in smooth_vertices
             for other in sides
@@ -6328,21 +6634,16 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                                         "meets a $kind side at $point with a smooth-joint turn of $turn rad " *
                                         "above the tested $(ARC_SMOOTH_JOINT_TURN_BOUND)")
                     else
-                        # Round 2b: the corner joint is TESTED on THIN coupons only; the fabricated
-                        # kinked arc end (production sizes) stops in Gmsh's surface mesher on the
-                        # cylindrical trench wall behind the cap ("Impossible to mesh periodic
-                        # surface"; round2b-impl REPORT section 3) and stays guarded.
-                        fabricated &&
+                        # The corner joint builds within the coupon KIND's built range (round 2b thin;
+                        # round 3 class (6) fabricated, decision 556: the E4 stop was the cap-ray node
+                        # order on the periodic trench wall, fixed in install_tube_curves!).
+                        corner_range = arc_corner_joint_turn_range(fabricated)
+                        corner_range[1] <= turn <= corner_range[2] * (1.0 + 1.0e-12) ||
                             scope_error("ArcJointTilt",
                                         "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
                                         "meets a $kind side at $point with a corner-joint turn of $turn rad " *
-                                        "on a FABRICATED coupon (untested: the thin corner joint builds, the " *
-                                        "fabricated one fails in the surface mesher of the trench wall)")
-                        ARC_CORNER_JOINT_TURN_RANGE[1] <= turn <= ARC_CORNER_JOINT_TURN_RANGE[2] * (1.0 + 1.0e-12) ||
-                            scope_error("ArcJointTilt",
-                                        "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
-                                        "meets a $kind side at $point with a corner-joint turn of $turn rad " *
-                                        "outside the tested $(ARC_CORNER_JOINT_TURN_RANGE) rad")
+                                        "outside the built $(fabricated ? "FABRICATED" : "THIN") range " *
+                                        "$corner_range rad")
                     end
                 end
             end
@@ -6986,20 +7287,39 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # too (E3: the thin 74.3 / 75.5-degree crossings fail the tetrahedral gate after the build).
     # (slack 1e-9 relative: the built V10 thin 70-degree tip fixture itself reads its tilt as
     # 70.0000000014 degrees from its rows' directions)
-    function guard_steep_face_crossing(face, K)
-        fabricated || face.theta <= THIN_FACE_END_TILT_BOUND * (1.0 + 1.0e-9) ||
+    # Round 3 class (9) HIGH end, 9H (part M 3.3 Fact 2; 510 O9 / MAJOR-1): the ceiling reads the
+    # CROSSING SLOPE - |tan theta| for a straight tube, the arc's max |s'(u)| over the section
+    # (arc_crossing_slope) for an ArcTube - a derived fail-closed cap INSIDE the admitted range.
+    # Round 3 class (8), 8A-bitwise (part M 5.2; 510 O8): the end block's pyramid height - the
+    # regular h_pyr at or below the kind's largest built tilt (the A2 (4) block, bitwise), the
+    # derived h_pyr_end = min(h_pyr, TangentialSize / (4 slope)) above it (FaceEnds[].PyramidHeight).
+    function face_end_apex_height(face, K, slope)
+        derived = face.theta > face_end_derived_apex_above(fabricated) * (1.0 + 1.0e-9)
+        return derived ? derived_face_end_pyramid_height(sections_of(K).pyramid_height, lc_tangent, slope) :
+                         sections_of(K).pyramid_height
+    end
+    function guard_steep_face_crossing(face, K; slope=abs(tan(face.theta)))
+        # The tested-range reading per kind (8B thin, decision 566 fabricated): no credit beyond
+        # the largest built tilt of the kind (decisions 466 / 497).
+        face.theta <= face_end_tilt_bound(fabricated) * (1.0 + 1.0e-9) ||
             scope_error("SteepFaceCrossing",
-                        "the THIN tube end on face $(face.face) at $(rad2deg(face.theta)) degrees lies " *
-                        "above the largest built thin tilt $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees " *
-                        "(E3: untested until the class-8 fix)")
+                        "the $(fabricated ? "FABRICATED" : "THIN") tube end on face $(face.face) at " *
+                        "$(rad2deg(face.theta)) degrees lies above the largest built " *
+                        "$(fabricated ? "fabricated" : "thin") tilt $(rad2deg(face_end_tilt_bound(fabricated))) " *
+                        "degrees (untested: " *
+                        (fabricated ? "the record run raises the bound to the largest tilt built under 8A)" :
+                                      "E3; the thin steep crossing above 70 degrees is a named follow-up)"))
         cap = face_end_spacing_cap_of(K)
-        apex = 2.0 * sections_of(K).pyramid_height * abs(tan(face.theta))
+        apex_height = face_end_apex_height(face, K, slope)
+        apex = 2.0 * apex_height * slope
         apex < cap ||
             scope_error("SteepFaceCrossing",
                         "the tube end on face $(face.face) at $(rad2deg(face.theta)) degrees " *
-                        "needs a thinnest layer 2 PyramidHeight |tan theta| = $apex at or above " *
-                        "the end-spacing cap $cap of the tube section (the validity ceiling is " *
-                        "$(rad2deg(atan(cap / (2.0 * sections_of(K).pyramid_height)))) degrees)")
+                        "(crossing slope $slope; |tan theta| = $(abs(tan(face.theta)))) needs a thinnest " *
+                        "layer 2 PyramidHeight x slope = $apex (the block's pyramid height $apex_height) at " *
+                        "or above the end-spacing cap $cap of the tube section (the validity ceiling is a " *
+                        "slope of $(cap / (2.0 * apex_height)), " *
+                        "$(rad2deg(atan(cap / (2.0 * apex_height)))) degrees for a straight tube)")
         return cap
     end
     fabricated && (radius + pyramid_height < overetch ||
@@ -7184,10 +7504,22 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                     "face: rho (1 - sin theta) = $(arc.rho - h_face) <= the tube envelope " *
                                     "$(own.envelope_radius) (Radius + PyramidHeight; rho $(arc.rho), face " *
                                     "distance $h_face)")
+                    # Round 3 9H (part M 3.3 Fact 2): the arc's own crossing slope, max |s'(u)| over the
+                    # section (at the inner node circle rho - envelope), replaces |tan theta| in the
+                    # ceiling and the regime formulas (recorded as FaceEnds[].CrossingSlope).
+                    slope = arc_crossing_slope(arc.rho, own.envelope_radius, h_face)
+                    # Round 3 B4 review (decision 579 MAJOR-3 (b)): the node-circle margin rho (1 - sin
+                    # theta) / envelope is the second admission parameter - the end builds only where a
+                    # BUILT-AND-PASSED case of its kind dominates it (recorded as FaceEnds[].NodeCircleMargin).
+                    margin = (arc.rho - h_face) / own.envelope_radius
+                    guard_arc_face_end_dominance(fabricated, arc, segment.conductor, face, margin)
                     push!(face_ends, FaceEnd(end_index, face.face, normal, face.theta, 0.0, 0.0,
                                              own.envelope_radius, own.pyramid_height, lc_tangent;
-                                             spacing_cap=guard_steep_face_crossing(face, segment.rings),
-                                             face_axis=face.axis, face_value=face.value))
+                                             spacing_cap=guard_steep_face_crossing(face, segment.rings; slope=slope),
+                                             face_axis=face.axis, face_value=face.value,
+                                             crossing_slope=slope,
+                                             apex_height=face_end_apex_height(face, segment.rings, slope),
+                                             node_circle_margin=margin))
                 end
                 for (z, section) in placements
                     s_start, s_end = along > 0.0 ? (segment.s_start, segment.s_end) :
@@ -7224,7 +7556,9 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                                              dot(normal, n) / along_normal, dot(normal, b) / along_normal,
                                              own.envelope_radius, own.pyramid_height, lc_tangent;
                                              spacing_cap=guard_steep_face_crossing(face, segment.rings),
-                                             face_axis=face.axis, face_value=face.value))
+                                             face_axis=face.axis, face_value=face.value,
+                                             apex_height=face_end_apex_height(face, segment.rings,
+                                                                              abs(tan(face.theta)))))
                 end
                 for (z, section) in placements
                     # Smooth joints (design A3 (2)): the straight tube's end section at a joint
@@ -7360,6 +7694,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         "SectorDegrees" => sector_degrees, "Sectors" => sectors,
         "PyramidHeight" => pyramid_height,
         "PyramidHeightOverOuterRing" => TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING,
+        "FaceEndDerivedApexAboveDegrees" => rad2deg(face_end_derived_apex_above(fabricated)),
         "CornerClearanceRule" => "R / tan(phi / 2) + max(h_K, 1.25 h_pyr / sin(phi / 2)) before " *
                                  "a semantic corner, phi the smallest in-plane angle between the " *
                                  "tube edges meeting there (h_K alone for a single tube edge; the " *
@@ -7371,17 +7706,29 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                          "solid is extruded over-long by (R + h_pyr) |tan theta| + TangentialSize " *
                          "and intersected with the coupon box before the fragment; the mesh ends " *
                          "with m sheared layers of axial spacing lc_end whose last station is the " *
-                         "face plane (Tubes[].FaceEnds). Regime I (4 h_pyr |tan theta| <= lc_cap): " *
-                         "lc_end = max(TangentialSize, 4 h_pyr |tan theta|), m = ceil(2 (R + h_pyr) " *
-                         "|tan theta| / lc_end) (block (b) design A2 (4), bitwise); regime II (4 h_pyr " *
-                         "|tan theta| > lc_cap): lc_end = lc_cap, m = max(ceil((R + h_pyr) |tan theta| / " *
-                         "(lc_cap - 2 h_pyr |tan theta|)), the regime-I count at lc_cap), so the " *
-                         "thinnest layer keeps the apex rule t_min >= 2 h_pyr |tan theta| (mesher " *
-                         "design round 2 F2b 3.2); lc_cap = FaceEndSpacingCap (FaceEndSpacingCapRule); " *
-                         "2 h_pyr |tan theta| >= lc_cap fails closed at ScopeGuard[SteepFaceCrossing], as " *
-                         "does a THIN end above $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees (the largest " *
-                         "built thin tilt; round 3 8B); " *
-                         "theta == 0 keeps the unchanged perpendicular end (decisions 302 / 320)",
+                         "face plane (Tubes[].FaceEnds). The formulas read the crossing SLOPE s = " *
+                         "|tan theta| for a straight tube and, for an ARC tube, the arc's own max_u |s'(u)| " *
+                         "= rho h / (r sqrt(r^2 - h^2)) at the inner node circle r = rho - (R + h_pyr), h the " *
+                         "distance from the arc centre to the face plane (round 3 9H, part M 3.3: the " *
+                         "per-node face crossing shears more than the straight law towards the concave " *
+                         "side; = tan theta at the axis and as rho -> inf; FaceEnds[].CrossingSlope). " *
+                         "Regime I (4 h_pyr s <= lc_cap): lc_end = max(TangentialSize, 4 h_pyr s), m = " *
+                         "ceil(2 (R + h_pyr) s / lc_end) (block (b) design A2 (4), bitwise for every " *
+                         "straight tube); regime II (4 h_pyr s > lc_cap): lc_end = lc_cap, m = max(ceil((R + " *
+                         "h_pyr) s / (lc_cap - 2 h_pyr s)), the regime-I count at lc_cap), so the thinnest " *
+                         "layer keeps the apex rule t_min >= 2 h_pyr s (mesher design round 2 F2b 3.2); " *
+                         "lc_cap = FaceEndSpacingCap (FaceEndSpacingCapRule); 2 h_pyr s >= lc_cap fails " *
+                         "closed at ScopeGuard[SteepFaceCrossing] (a derived ceiling INSIDE the admitted " *
+                         "tilt range, never the admission bound: 510 MAJOR-1), as does an end above the " *
+                         "largest built tilt of its kind, THIN $(rad2deg(THIN_FACE_END_TILT_BOUND)) / " *
+                         "FABRICATED $(rad2deg(FABRICATED_FACE_END_TILT_BOUND)) degrees (round 3 8B / " *
+                         "decision 566); theta == 0 keeps the unchanged perpendicular end (decisions 302 / 320). " *
+                         "Round 3 class (8) 8A-bitwise (part M 5.2, decision 510 O8): ABOVE the kind's largest " *
+                         "built tilt FaceEndDerivedApexAboveDegrees ($(rad2deg(face_end_derived_apex_above(fabricated))) " *
+                         "degrees for this kind) the end block's lateral pyramids take h_pyr_end = min(h_pyr, " *
+                         "TangentialSize / (4 s)) in every formula above (FaceEnds[].PyramidHeight; the regular " *
+                         "layers keep h_pyr), so lc_end = TangentialSize and m = ceil(2 (R + h_pyr) s / " *
+                         "TangentialSize): the sheared layers stay regular (E3); at or below it h_pyr_end = h_pyr",
         "FaceEndSpacingCapRule" => "the largest axial spacing at which the section's own prism " *
                                    "corner frames (every sector triangle of the section at each " *
                                    "vertex, the axial edge orthogonal: singular values {lc, " *
@@ -7407,12 +7754,15 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
                            "there): consistent in effect, recorded here (mesher review R2 MINOR-5, " *
                            "decision 391); the exactly perpendicular arc end and an arc at a box " *
                            "vertex fail closed at ScopeGuard[ArcFaceEnds] (untested); an arc cut end " *
-                           "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE[1])) <= theta <= " *
-                           "$(rad2deg(ARC_FACE_END_TILT_RANGE[2])) degrees (the BUILT range: round 2b " *
-                           "15 / 45 / 70, round 3 B2 0.1 / 0.5 / 2.1 / 8 degrees; decisions 437 (3) / " *
-                           "497 / 510 MAJOR-1) builds, below or above it fails closed likewise; a THIN " *
-                           "end above $(rad2deg(THIN_FACE_END_TILT_BOUND)) degrees (the largest built " *
-                           "thin tilt) fails closed at ScopeGuard[SteepFaceCrossing] (round 3 8B)",
+                           "of tilt $(rad2deg(ARC_FACE_END_TILT_RANGE.thin[1])) <= theta <= " *
+                           "$(rad2deg(ARC_FACE_END_TILT_RANGE.thin[2])) degrees THIN / " *
+                           "$(rad2deg(ARC_FACE_END_TILT_RANGE.fabricated[2])) degrees FABRICATED (the BUILT " *
+                           "range per kind: round 2b 15 / 45 / 70, round 3 B2 0.1 / 0.5 / 2.1 / 8 degrees, " *
+                           "round 3 B4 fab 74.3 / 75.5; decisions 437 (3) / " *
+                           "497 / 510 MAJOR-1) builds, below or above it fails closed likewise; a straight " *
+                           "end above the largest built tilt of its kind (THIN $(rad2deg(THIN_FACE_END_TILT_BOUND)) " *
+                           "/ FABRICATED $(rad2deg(FABRICATED_FACE_END_TILT_BOUND)) degrees) fails closed at " *
+                           "ScopeGuard[SteepFaceCrossing] (round 3 8B / decision 566)",
         "EnvelopeRadius" => envelope_radius,
         "MetalFacingRule" => "two tubed metal sides of one plane whose tube intervals face each " *
                              "other across the metal (each on the metal side of the other's " *
@@ -7448,6 +7798,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     end
     return tools, records, tubes, segments, description, untubed_edges, joints
 end
+
 
 const ARC_TUBE_RULE =
     "block (b) design 1.2 (3) (decision 303): the tube of an arc metal side is the revolve of " *
@@ -9002,9 +9353,19 @@ function generate_spatial_coupon(;
     next_node = Ref(0)
     point_nodes = Dict{Int32, Int}()
     tube_curve_meshes = Vector{Dict{String, Any}}(undef, length(tube_states))
+    # Round 3 class (6) (E4 root cause, B4): the model's NON-PLANAR faces that Gmsh's periodic
+    # surface mesher will mesh - every non-planar face that is not a tube face (the tubes' own
+    # revolved faces are hidden from the surface pass and meshed explicitly). A straight coupon
+    # has none (its tubes are planar extrusions, its walls planes): the set is empty and
+    # install_tube_curves! keeps every node order unchanged.
+    tube_own_faces = Set{Int32}(face for state in tube_states for faces in values(state.faces)
+                                for face in faces)
+    model_periodic_faces = Set{Int32}(tag for (dim, tag) in gmsh.model.getEntities(2)
+                                      if !(tag in tube_own_faces) && gmsh.model.getType(2, tag) != "Plane")
     for i in tube_install_order
         tube_curve_meshes[i] = install_tube_curves!(tube_states[i], next_node, point_nodes;
-                                                    meshed=tube_meshed_curves)
+                                                    meshed=tube_meshed_curves,
+                                                    periodic_faces=model_periodic_faces)
     end
     # Interior ridge node parameters and coordinates (curve order) of every
     # longitudinal curve; the mesh is assigned after the edge layer curves are
