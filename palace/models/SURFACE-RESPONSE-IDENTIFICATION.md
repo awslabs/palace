@@ -1044,9 +1044,50 @@ smaller endpoint.
    sides of each 2-um strip (features 0 / 1, 4 x 0.869 um from the 3-edge clusters' claim
    cut at y = 540.131 to the feature split at y = 541.0, x = +-43) and the two 4.9-um
    isolated edges (features 70 / 73, y = 12) continuing the 10-edge cluster's claims from
-   x = +-5.2, ending 0.8 um inside its box face at +-10.9 = 5.2 + 3R) — and Foreign
-   otherwise (metal absent from the coupon's twins: a second-order model mismatch, not a
-   double count). The record runs in the operator constructor (metadata
+   x = +-5.2, ending 0.8 um inside its box face at +-10.9 = 5.2 + 3R) — and otherwise
+   judged against the coupon's Box + Context (decision 553, 2026-10-08, the rerun-2
+   diagnosis review MAJOR-1; CORRECTS the decision-236 premise "foreign metal inside a box
+   is absent from both twins", which held for the legacy claims-only coupons only: under
+   contract v3 the twins CONTAIN the context metal inside the box). Each CELL of a Foreign
+   stretch is classed by the context piece it lies on (its own-edge ends and midpoint within
+   1e-3 R of a piece in the spatial patch frame — the rule-B5 `EdgeExcludeSegments` form,
+   `ClassifyForeignContext`) and treated PER CELL (decision 559 (1); the classification is
+   read ONCE on the intact cells, before the continuation pass, by the records and the
+   treatment alike, decision 559 MINOR-1): a cell on a `Chain: false` piece (the library's
+   `ForeignEdges` = the qualification's `EdgeExcludeSegments`, so the coupon's within-R
+   SURFACES leave that edge to the cell while its DOMAIN matrices integrate the whole box)
+   keeps its surface matrices and drops its domain correction (`domain_weight` 0 in the ft
+   domain correction, the ff transform and the self-consistent operator; the rerun-2 loop end
+   on S1 / S4 / S2p / S3p, 17.41 um of 33 device-run isolated-edge cells — 20 dry-run cells —
+   on the 22-um ForeignEdge x = 14.6, whose domain defect entered the sc operator twice); a
+   cell on a `Chain: true` piece, or any context piece of a coupon without ForeignEdges (the
+   group-C exact coupons exclude nothing), is OWNED by the coupon — the coupon carries the
+   edge WITH its within-R surfaces (MEASURED on the C2 junction-lead coupon's
+   `-p4-local-edge` qualification record: every Chain: true piece tagged like the claims, the
+   Chain: false pieces 0 segments) — weight 0 for both matrices, as a wholly owned
+   continuation cell, listed under `ContinuationOwnership.OwnedCells` with
+   `Class: ForeignContextEdge` (rerun 2: C1 x 3, C2, C2p, C3, S1b, whose cells' fabricated
+   surface energy — 1.64 / 1.93 / 2.06 % of E_ft on C1 (SA / MS / MA), 0.47 / 0.56 / 0.55 %
+   C2, 0.29 / 0.35 / 0.29 % C3, 0.17-0.19 % C2p, 0.02 % S1b — was counted twice); a cell on
+   no piece is untouched. A cell inside two coupons' boxes takes the stronger class (owned
+   over domain-dropped) and lists every coupon of that class as an owner (ascending, the
+   owned length split equally). The stretch record's `Class` summarises its cells, with
+   its `Treatment` and the three cell counts (never silent): **ForeignExcludedEdge** (every
+   cell on a `Chain: false` piece; `KeepSurfaceDropDomain`), **ForeignContextEdge** (every
+   cell on a `Chain: true` piece; `OwnedByCoupon`), **ForeignMixedEdges** (cells of different
+   classes, each treated by its own; `PerCell` — the whole-stretch sub-rule of the first
+   553 implementation would have zeroed the SURFACE of a cell on an excluded ForeignEdge, a
+   surface the coupon does not carry; no such stretch exists in the rerun-2 windows), and
+   **Foreign** (no cell on any context piece, or inside a legacy claims-only coupon: metal
+   absent from the coupon's twins, a second-order model mismatch, not a double count;
+   `Untouched`). The `ContinuationOwnership.ForeignContext` entry lists the excluded-edge
+   cells with their owners and both lengths; the spatial patch provenance carries the
+   `Chain: false` pieces as `Foreign` beside `Chain` (geometry cache version 16: the stacks
+   own-cell pre-image, the fillet corner-arm extension records and the foreign pieces,
+   decision 559 (3); either version-15 schema is refused). The Maxwell operator path
+   (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
+   inert there (it multiplies the Maxwell domain terms for uniformity only). The record
+   runs in the operator constructor (metadata
    `SurfaceResponse.Diagnostics`, with the warning) and in the preflight on the spatial
    models whose basis points the library provides (manifest `Identification.Diagnostics`
    and the same warning; a signature placeholder of a Missing key has none and is listed
@@ -1063,7 +1104,8 @@ smaller endpoint.
    the portion [S0, S1) stays, so a portion's quadrature weights sum to 1 - owned /
    portion length, which the A7 audit reconciles from the record), the origin moves to the
    kept interval's midpoint with the cell symmetric about it (the clipped cell equals a cell
-   built directly on the kept interval), the Maxwell anchors move with it. Foreign cells,
+   built directly on the kept interval), the Maxwell anchors move with it. Foreign cells
+   (on no context piece: see the sub-classes above for the cells on a context piece),
    the cells of a continuing stretch outside the box and the stack-end cells of a stretch
    that continues no claim are untouched; a curved cell never continues a claim (parallel
    within the signature angle tolerance), so an arc continuing an arc claim keeps its
@@ -1754,8 +1796,9 @@ bound it fails closed. Near-collinear line / line joints (|turn| <= `JUNCTION_TA
 
 **Placement of a contract-3 (device-plan) model (decision 285 (4), R1b).** The cluster patch of
 a model whose Signature carries `Box` + `Context` records in its provenance the model's
-`SupportBox` and its chain pieces (the `Chain: true` context entries, arcs chorded) in the
-patch's local frame in units of R (geometry cache version 7), and the placement verifies A10
+`SupportBox`, its chain pieces (the `Chain: true` context entries, arcs chorded) and its
+foreign pieces (the `Chain: false` entries = `ForeignEdges`, decision 553) in the
+patch's local frame in units of R (geometry cache versions 7 / 16), and the placement verifies A10
 EXTENDED TO THE CONTEXT: the model's `Context` must equal the matched feature's and the two
 ends of every context entry, placed by the patch frame, must lie within 1e-3 R of a device
 edge (`DevicePerimeterDistance` on the identification's segments; an arc entry's ends are
@@ -2081,6 +2124,90 @@ decision-244 class); a FIRST-arm cell beginning before R (a snapped claim bounda
 its sub-R part inside the vertex window — ~0.18 um over C3's 17 corners, a change that
 would also touch 90-deg corners and therefore the transmon, recorded as a separate
 follow-up (decision 399 MINOR-5), not done here.
+
+**Corner-arm extension (decision 511 O2 (i), 2026-10-07; `ApplyCornerArmExtension`; the F1
+rule completed in the other direction).** A ROUNDED corner's site claims the arc runs plus R
+along each arm from its TANGENT point (`BuildArcSites`), i.e. up to t_d + R from the virtual
+corner (t_d = r / tan(theta / 2): 1.0 um of each arm for S7's r = 0.526 R fillets at 90
+deg), while its coupon is calibrated on the square |u|, |v| <= R about the virtual corner
+(the arc plus R - t_d of each arm). For a MATCHED rounded corner the stretch [s_k, t_d + R)
+of each arm (s_0 = R on the first arm, s_1 = R / max(|cos theta|, |sin theta|) on the
+second) was therefore claimed (no straight cell, not uncovered) yet outside the coupon: its
+within-R energy was dropped with nothing added back (the fillet-basis design's FINDING 7.1;
+S7: 22 um of its 11 rounded corners, ~3.9 / 4.4 / 1.5 points of the window's SA / MS / MA;
+harmless until now because no rounded model was ever matched). RULE (generic in theta and
+r; every matched corner, sharp or rounded): the own-arm straight cells begin where the arm
+exits the square. On every arm whose identification claim end (the farthest end of the
+feature's real portions on the arm's line, `CornerArmClaimEnd`) lies beyond s_k by more
+than `kSignatureParameterToleranceOverRadius` x R, the translational cells whose own-edge
+near end is the claim end are extended back to s_k — re-expressed as the continuation
+ownership does (`ClipLongitudinalCell` with the new interval: the cell at its new
+midpoint, weight and provenance quadrature weight scaled by new / old; the co-located
+patches of a first-order split each extended) — and an unmatched neighbour's uncovered
+portion beginning at the claim end gains the stretch (added as uncovered portions under
+that neighbour's feature and type, one per identification segment of the corner's claimed
+portions, so F2 keeps its raw energy). A stretch with neither host (the arm ends in the
+next feature's claim at the claim end — the lead's short arm cut by the domain face in the
+unit test; a short cap between two fillets is instead joined into one spatial cluster that
+owns its fillets as arc portions) is recorded as unhosted (`Hosted` false,
+`UnhostedLength`) with a warning, never silently dropped: decision 310's "short edges vs
+corner clearances" generality item. The extension never passes the claim end, which the
+identification bounded by the neighbouring claims. A VIRTUAL (mirror-formed) corner placed
+HalfByMirror — the placement's own predicate, a mirror record whose Status is not Continued,
+an Unmerged-touched corner following it (decision 520 MAJOR-1) — has its real arm's exit at
+s_half = (R + s) / 2, where `ApplyMirrorArmTrim` (which runs after the extension and only
+shortens) starts that arm's cells; its image arm carries no real portion and has no claim
+end; the record carries `HalfByMirror`. A sharp corner's claim end is R <= s_k:
+never extended, never listed (the 90-deg lead's dry run stays byte-identical to the
+trim-disabled golden; the stage-2 bitwise windows and the transmon are unchanged). For a
+rounded NON-90 corner whose claim ends before s_1 (t_d + R < s_1), the F1 trim applies as
+written (the cells before s_1 are cut) and the vertex coupon's raw claim of the stretch
+starts at the claim end rather than at R (`FillVertexRawClaims`; likewise the mirror trim's
+raw stretch of a rounded virtual corner starts at the claim end, and is absent when the
+claim reaches s_half); F1's `TrimmedLength`
+keeps its sharp definition s - R (no census instance: every rounded corner is 90 deg). The
+vertex coupon's raw claims (F-DB-a) are clipped at s_k on every hosted arm, the stretch
+having gone to the extended cell or portion. Applied after the F1 trim and before the
+mirror trim at the end of `BuildFeaturePatches`; the geometry cache (version 16) carries
+the extended cells and the records. RECORD, one entry per extended corner, in
+`Identification.Diagnostics.CornerArmExtension` of the preflight manifest
+(`Summary.CornerArmExtension` = `Corners` / `StretchLength` / `ExtendedCellLength` /
+`UnhostedLength`), the operator's `Diagnostics.CornerArmExtension` (palace.json) and the
+cache: `AngleDegrees`, `CornerRadiusOverR`, per `Arms` entry `Arm` (0 / 1), `Direction`,
+`ExitDistanceOverR` = s_k / R, `ClaimEndOverR`, `StretchLength` = claim end - s_k,
+`ExtendedCellLength` (model-weighted), `ExtendedUncoveredLength`, `Hosted`; per corner
+`HalfByMirror`; `Cells` lists
+(`Patch`, `ExtendedLength` = the full length added to that patch's cell) in mesh units for
+the A7 audit (`audit.py` subtracts them from the owned lengths: a portion's quadrature x
+model weights sum to 1 - (owned + removed - extended) / portion). Unit tests
+(`test-cornerarmtrim.cpp`): `SurfaceResponseOperator corner-arm extension` — the 16 x 16 x
+16 unit-cube lead with r = 0.125 = 0.625 R fillets on both cap corners (the island
+fixture's rounding; 4-chord polylines on the arc) matched to the rounded_library_3d model:
+2 corners x 2 arms extended by t_d = r, every straight cell at least R from the virtual
+corners with exactly one cell end per arm at R, the portion sums 1 + extended / portion
+(4 t_d in total), the operator record = the manifest's (1 and 2 ranks), no F1 trim, and the
+short-arm lead (cap at z = 0.25: each long arm 0.125 < R from its tangent point to the
+domain cut) with its two unhosted stretches recorded; the 90-deg sharp lead has no record.
+`SurfaceResponseOperator corner-arm extension of a virtual rounded corner` (decision 520
+MAJOR-1) — the lead sheared by tan 30 deg whose cap ends in a HALF fillet on the tilted
+wall (the virtual corner on the wall, the arc meeting it perpendicularly): the 120-deg
+rounded virtual corner is Matched and HalfByMirror, its one real arm extended from the
+claim end 1.361 R back to s_half = 1.077 R (hosted by the cap's cell, which then ends
+exactly at s_half; the mirror trim removes nothing from it), the vertex coupon's raw claims
+within s_half (the geometry cache). `SurfaceResponseOperator corner-arm extension of a
+non-90 rounded corner` (decision 520 MINOR-1) — the sheared lead with a true circular
+fillet at a 120- / 135-deg convex corner: at 120 deg both arms are extended (arm 1 from s_1
+= 1.155 R) and the F1 record removes nothing; at 135 deg arm 0 is extended, arm 1 is
+F1-trimmed from the claim end 1.259 R to s_1 = 1.414 R and the vertex coupon's raw stretch
+runs from the CLAIM END to s_1.
+`Electrostatic corner-arm extension keeps the stretch energy once` (design review MINOR-4)
+— the same lead solved with the rounded corner model alone (the straight runs Missing): the
+uncovered portions run from the square exits, and the uncovered raw energy equals the raw
+within-R energy of the straight runs INCLUDING the four stretches (decision-366 Region
+entries on the same quadrature; each stretch positive and counted once; before the fix the
+portions stopped at the claim ends and the stretches were in no term); with the full
+library the fixed-trace energy is outside + models (+ the F-DB-a raw claims of the cut
+lead) exactly, the extended cells in the record.
 
 **Uncovered requirements keep their raw within-R energy (decision 394 F2, 2026-10-06).**
 The corrected interface energy of a target is E_out (the raw energy beyond R of EVERY metal
@@ -2659,12 +2786,15 @@ The transmon's two 90-deg corner models carry 1.5-1.6 % of its fabricated MA sur
 (T p5; the concave 90 ~0), so a 3 % corner MA h-error moves the transmon MA by ~0.05 % — below
 its error bars. The
 planner (`prepare_surface_response_coupons.py --corner-trace-basis`) builds the refined rule
-by default on SHARP corners only; a rounded corner (`CornerRadius` > 0) keeps the legacy rule
-(the refined rule is qualified on sharp corners only; a refined request there is refused). The library load checks
+by default on every corner, sharp or rounded (decision 511; until then a rounded corner,
+`CornerRadius` > 0, was forced onto the legacy rule, which fails the (c) self-check on every
+90-deg corner — S7's rounded corners read -16.9 / +205 %, decision 310 — while the box basis
+never sees the fillet: the rounded coupon's basis files are byte-identical to the sharp
+90-deg node's). The library load checks
 every AllRingsFollowMetal coupon against the rule at its own angle (`CheckCornerRuleCouponFiles`:
 the outer ring levels, every basis point, every knot's zero flag against `ZeroTraceIndices`,
 the trace mesh's vertices / slave parents /
-triangle set; fail closed; skipped for rounded corners, which carry no refined rule). The runtime constructs the basis of an interpolated corner by the
+triangle set; fail closed; rounded refined coupons included, the check reads the angle only). The runtime constructs the basis of an interpolated corner by the
 rule at the device angle as before (all rings, the centre slaves; the SurfaceMortar lift
 through `MortarVertex::ForEachBasis`). Cost: 176 knots (72 before); the coupon's trace solves
 are one operator with many right-hand sides. Recorded Phase-1 measurements (worst |error| of

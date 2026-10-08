@@ -1524,9 +1524,10 @@ RECIPE_SCOPE_GUARDS = {
     # ARC_FACE_END_TILT_RANGE_DEGREES; the loop end's ARC_JOINT_TURN_BOUND_RADIANS inside) fail
     # closed (mesh_spatial_coupon.jl spells the same list).
     "ArcFaceEnds": "build", "ArcJointTilt": "build",
-    # Mesher design round 3 class (11) interim (decisions 497 / 500 / 510; part M 1.3): a smooth
-    # joint of two DISTINCT arc runs has no joint owner (the 32b0083dad90 build failure) - refused
-    # by name before any CAD until fix 11 lands.
+    # Mesher design round 3 class (11) (decisions 497 / 500 / 510; part M 1.3, DESIGN R6): a smooth
+    # joint of two DISTINCT arc runs that are not one circle (within the arc-fit tolerance) or
+    # carry opposite metal sides - untested; two runs of ONE circle build since fix 11 (B3: the
+    # earlier tube in install order owns the shared section; the B2 interim guard refused all).
     "ArcArcJoint": "build",
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
@@ -1706,7 +1707,9 @@ def boundary_arc_runs(rows):
                 sweep = orientation * (2.0 * math.pi if first == last else travel)
                 runs.append({"ArcId": ids[index], "Centre": centre, "Radius": float(row["ArcR"]),
                              "Sign": int(row["ArcSign"]), "Chords": len(edges), "Sweep": sweep,
-                             "Parts": arc_part_count(sweep), "EdgeIndices": edges})
+                             "Parts": arc_part_count(sweep), "EdgeIndices": edges,
+                             # Round 3 R7: the optional ArcChain column (0 without it).
+                             "Chain": int(row["ArcChain"]) if row.get("ArcChain") not in (None, "") else 0})
         result.append(runs)
     return result
 
@@ -1894,6 +1897,7 @@ def validate_recipe_scope(build_report, census):
                 any(not isinstance(arc, dict) or arc.get("ArcId") != run["ArcId"] or
                     _count(arc.get("Parts"), "Metal loop arc parts") != run["Parts"] or
                     _count(arc.get("Chords"), "Metal loop arc chords") != run["Chords"] or
+                    _count(arc.get("Chain", 0), "Metal loop arc chain") != run["Chain"] or
                     abs(_census_number(arc, "Radius", "Metal loop arc") - run["Radius"]) > 1e-9 * run["Radius"] or
                     abs(_census_number(arc, "SweepDegrees", "Metal loop arc") - math.degrees(run["Sweep"])) > 1e-9
                     for arc, run in zip(arcs, runs))):

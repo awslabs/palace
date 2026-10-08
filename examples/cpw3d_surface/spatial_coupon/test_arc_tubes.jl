@@ -26,7 +26,18 @@ guard_message(f) =
 # (a semantic corner). Both arc joints are exactly tangent (smooth). The signature rows are
 # the straight edges and one chord row per chord; the boundary carries the arc tags of
 # generate_spatial_response.ARC_BOUNDARY_COLUMNS; the box is pinned by a process library.
-function write_strip_inputs(directory; chord_degrees=5.0, plane=0.0, kink_degrees=0.0)
+# Round 3 class (11) (fix 11; part M 1.5 S1 / S3): `split_chords` = the chord indices after which
+# a NEW ArcId starts (the arc serialised as several same-circle entries meeting at smooth joints,
+# turn 0, JointSmooth 1), `ids` the ArcId of each member in loop order (default 1, 2, ...: a
+# permutation exercises the owner rule "the earlier tube in install order", not the smaller id).
+function write_strip_inputs(
+    directory;
+    chord_degrees=5.0,
+    plane=0.0,
+    kink_degrees=0.0,
+    split_chords=Int[],
+    ids=nothing
+)
     centre = (0.0, 1.0)
     rho = 1.0
     sweep = 90.0
@@ -94,12 +105,20 @@ function write_strip_inputs(directory; chord_degrees=5.0, plane=0.0, kink_degree
     classes =
         [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
     # Arc tags on the chord rows (vertex 2 .. n + 1 of the polygon); joint tags at both ends.
+    all(1 <= k < n for k in split_chords) || error("split_chords must lie inside the arc")
+    members = length(split_chords) + 1
+    ids = ids === nothing ? collect(1:members) : collect(ids)
+    length(ids) == members || error("one id per arc member")
     arcs = Vector{Any}(nothing, m)
     for i = 2:(n + 1)
-        arcs[i] = (1, centre[1], centre[2], rho, 1)
+        member = 1 + count(k -> i - 1 > k, split_chords)
+        arcs[i] = (ids[member], centre[1], centre[2], rho, 1)
     end
     joints = Vector{Any}(nothing, m)
     joints[2] = (0.0, 1)
+    for k in split_chords
+        joints[k + 2] = (0.0, 1)                # the same-circle joint of two members
+    end
     joints[n + 2] = (deg2rad(kink_degrees), kink_degrees <= 1.0e-4 * 180 / pi ? 1 : 0)
     # Corners (decision 320 convention): the concave corner; the perpendicular box exits of
     # Physical class ((lower, 0) and (0, upper)) keep the legacy corner; a kinked arc end.
@@ -190,12 +209,16 @@ function build_strip_coupon(
     stem="strip",
     chord_degrees=5.0,
     kink_degrees=0.0,
-    labels_only=false
+    labels_only=false,
+    split_chords=Int[],
+    ids=nothing
 )
     inputs = write_strip_inputs(
         directory;
         chord_degrees=chord_degrees,
-        kink_degrees=kink_degrees
+        kink_degrees=kink_degrees,
+        split_chords=split_chords,
+        ids=ids
     )
     mesh = joinpath(directory, "coupon-$stem.msh")
     census = joinpath(directory, "census-$stem.json")
@@ -445,6 +468,154 @@ end
 # The full build of a fixture written by `writer` (write_strip_inputs / write_arc_face_end_inputs)
 # at the test sizes (R 0.5, EdgeSize 0.01: 2-ring tubes) with the production gates; `edge_size`
 # 0.00025 / 0.002 gives the production fabricated / thin tubes on the same coupon.
+# Round 3 class (7) (G.7.6 S-G7-a / S-G7-b; the C3 trio's and 0c94ec951e10's 3-chord claim arcs):
+# a vertical metal lead of width 1 (R 0.5) crossing the box from the y0 to the y1 face whose RIGHT
+# side carries a SHORT convex arc of radius `rho` = 52 (104 R) between (0.5, -0.5) and its end,
+# `chords` chords of equal angle over `sweep` (default 3 x 0.25 R chords: 7.2e-3 rad), both joints
+# exactly tangent (smooth): the lower straight side is vertical, the upper one continues at the
+# arc's end tangent (tilted inward by `sweep`) to the y1 face - a straight box-face CUT end. The
+# left side is straight; its ends and the right side's bottom end are legacy perpendicular box
+# corners (decision 320). Rows: the straight sides as claims of length 3 (the box follows:
+# [-1.5, 1.5 + ...] x [-3, 3]) and one row per chord; the boundary carries the arc tags.
+# `convex` false: the CONCAVE twin (sigma -1; the metal outside the circle, centre to the right,
+# the side turning right and the upper side tilted outward) - S-G7-b's shape, whose two straight
+# neighbours never read each other as facing across the metal (F6) around the tiny arc.
+function write_short_arc_lead_inputs(
+    directory;
+    chords=3,
+    sweep=3 * 0.125 / 52.0,
+    rho=52.0,
+    plane=0.0,
+    convex=true
+)
+    sign = convex ? 1 : -1
+    centre = (0.5 - sign * rho, -0.5)
+    angle(k) = convex ? sweep * k / chords : pi - sweep * k / chords
+    chord_points = [
+        (centre[1] + rho * cos(angle(k)), centre[2] + rho * sin(angle(k))) for k = 0:chords
+    ]
+    chord_points[1] = (0.5, -0.5)
+    tilt = (-sign * sin(sweep), cos(sweep))             # the arc's end tangent (travel +y)
+    rows = NamedTuple[]
+    function straight!(a, b)
+        d = (b[1] - a[1], b[2] - a[2])
+        L = hypot(d...)
+        t = (d[1] / L, d[2] / L)
+        return push!(
+            rows,
+            (
+                point=(0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), plane),
+                tangent=(t[1], t[2], 0.0),
+                gap=(t[2], -t[1], 0.0),
+                interval=(-0.5 * L, 0.5 * L),
+                normal_sign=1.0,
+                vertex_arm=false,
+                slot=0,
+                conductor=1
+            )
+        )
+    end
+    straight!((0.5, -1.5), (0.5, -0.5))                 # the right side below the arc
+    for k = 1:chords
+        straight!(chord_points[k], chord_points[k + 1])
+    end
+    p_end = chord_points[end]
+    upper_row_end = (p_end[1] + tilt[1] * (1.5 - p_end[2]) / tilt[2], 1.5)
+    straight!(p_end, upper_row_end)                     # the right side above the arc, tilted
+    straight!((-0.5, 1.5), (-0.5, -1.5))                # the left side (travelling down: metal to its left)
+    lower, upper = row_coupon_bounds(rows, 0.5, 0.1, 0.05)
+    top_right = (p_end[1] + tilt[1] * (upper[2] - p_end[2]) / tilt[2], upper[2])
+    polygon = vcat(
+        [(-0.5, lower[2]), (0.5, lower[2])],
+        chord_points,
+        [top_right, (-0.5, upper[2])]
+    )
+    m = length(polygon)
+    on_face(p, q) = any(
+        (abs(p[d] - lower[d]) <= 1.0e-9 && abs(q[d] - lower[d]) <= 1.0e-9) ||
+            (abs(p[d] - upper[d]) <= 1.0e-9 && abs(q[d] - upper[d]) <= 1.0e-9) for
+        d = 1:2
+    )
+    classes =
+        [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
+    arcs = Vector{Any}(nothing, m)
+    for i = 3:(2 + chords)                              # the chord sides: vertices 3 .. 2 + chords
+        arcs[i] = (1, centre[1], centre[2], rho, sign)
+    end
+    joints = Vector{Any}(nothing, m)
+    joints[3] = (0.0, 1)
+    joints[3 + chords] = (0.0, 1)
+    corners = [(-0.5, lower[2], plane), (0.5, lower[2], plane), (-0.5, upper[2], plane)]
+    open(joinpath(directory, "signature.csv"), "w") do io
+        println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
+        for (i, row) in enumerate(rows)
+            println(
+                io,
+                join(
+                    [
+                        i,
+                        0,
+                        1,
+                        row.point...,
+                        row.gap...,
+                        row.tangent...,
+                        1,
+                        row.interval...,
+                        0
+                    ],
+                    ","
+                )
+            )
+        end
+    end
+    open(joinpath(directory, "boundary.csv"), "w") do io
+        println(
+            io,
+            "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y,ArcId,ArcCx,ArcCy,ArcR,ArcSign,JointTurn,JointSmooth"
+        )
+        for (i, point) in enumerate(polygon)
+            arc = arcs[i] === nothing ? ["", "", "", "", ""] : collect(arcs[i])
+            joint = joints[i] === nothing ? ["", ""] : collect(joints[i])
+            println(
+                io,
+                join(
+                    vcat([1, i, 1, plane, 0, classes[i], point[1], point[2]], arc, joint),
+                    ","
+                )
+            )
+        end
+    end
+    open(joinpath(directory, "mask.csv"), "w") do io
+        println(io, "Facet,Conductor,Plane,X,Y")
+        for point in polygon
+            println(io, join([1, 1, plane, point[1], point[2]], ","))
+        end
+    end
+    open(joinpath(directory, "semantic.json"), "w") do io
+        return write_json(
+            io,
+            Dict{String, Any}(
+                "Version" => 1,
+                "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners]
+            )
+        )
+    end
+    return (
+        signature=joinpath(directory, "signature.csv"),
+        boundary=joinpath(directory, "boundary.csv"),
+        mask=joinpath(directory, "mask.csv"),
+        semantic=joinpath(directory, "semantic.json"),
+        polygon=polygon,
+        classes=classes,
+        corners=corners,
+        chords=chords,
+        lower=lower,
+        upper=upper,
+        centre=centre,
+        rho=rho
+    )
+end
+
 function build_arc_coupon(
     directory,
     writer;
@@ -791,7 +962,39 @@ end
         legacy_loop = read_boundary(legacy)[1]
         @test !loop_has_arcs(legacy_loop)
         @test isempty(tagged_arc_runs(legacy_loop, 1.0e-7 * 0.5))
-        # A corrupted tag (another centre) fails closed.
+        # Round 3 R7 (decision 510 MINOR-6): the optional ArcChain column. The fixture (every stored
+        # arc coupon) has none: chain 0, no "Chain" key in the census record; a boundary carrying it
+        # reads the chain on every tag and run and records it.
+        @test all(arc === nothing || arc.chain == 0 for arc in loop.arcs) && run.chain == 0
+        records = metal_loop_records([loop], inputs.lower, inputs.upper, 1.0e-7 * 0.5)
+        @test length(records) == 1 && !haskey(records[1]["Arcs"][1], "Chain")
+        chained = joinpath(directory, "chained.csv")
+        open(chained, "w") do io
+            for (i, line) in enumerate(readlines(inputs.boundary))
+                cells = split(line, ",")
+                println(
+                    io,
+                    join(
+                        vcat(cells, [i == 1 ? "ArcChain" : (cells[9] == "" ? "" : "2")]),
+                        ","
+                    )
+                )
+            end
+        end
+        chained_loop = read_boundary(chained)[1]
+        @test all(arc === nothing || arc.chain == 2 for arc in chained_loop.arcs) &&
+              count(arc !== nothing for arc in chained_loop.arcs) == inputs.chords
+        chained_runs = tagged_arc_runs(chained_loop, 1.0e-7 * 0.5)
+        @test length(chained_runs) == 1 &&
+              chained_runs[1].chain == 2 &&
+              chained_runs[1].point_indices == run.point_indices &&
+              chained_runs[1].center == run.center
+        records =
+            metal_loop_records([chained_loop], inputs.lower, inputs.upper, 1.0e-7 * 0.5)
+        @test records[1]["Arcs"][1]["Chain"] == 2
+        # A corrupted tag (another centre) fails closed at the residual test (round 3 class (4),
+        # G.4.3 Option A: the tagged circle IS the circle; the former three-point-fit comparison
+        # is a printed diagnostic).
         broken = joinpath(directory, "broken.csv")
         open(broken, "w") do io
             for line in readlines(inputs.boundary)
@@ -800,9 +1003,116 @@ end
         end
         message =
             guard_message(() -> tagged_arc_runs(read_boundary(broken)[1], 1.0e-7 * 0.5))
-        @test occursin("disagrees with the tagged circle", message) ||
-              occursin("do not lie on the tagged circle", message)
+        @test occursin("do not lie on the tagged circle", message)
+        @test !occursin("disagrees with the tagged circle", message)
     end
+    # Round 3 class (4) (DESIGN-part-G G.4.2 / G.4.5, decision 510): a 3-chord arc of 134 R on
+    # the 1e-9 R grid (2bc3d927fda6's context arc 2: R_arc 255.02 um, chords 0.224 R, sagitta
+    # 7.98e-4 um, conditioning R_arc / sagitta 3.2e5) is ACCEPTED - every vertex lies within one
+    # grid quantum of the tagged circle - although the three-point fit through its quantised
+    # vertices is off the tag by ~1e-4 um (> the 5.1e-5 um tolerance): the former check refused it.
+    R = 1.9
+    rho = 255.02107
+    centre = (-246.39, -4.77)
+    quantum = 1.0e-9 * R
+    quantise(v) = round(v / quantum) * quantum
+    theta0 = 0.3
+    step = 0.224 * R / rho
+    arc_points = [
+        (
+            quantise(centre[1] + rho * cos(theta0 + step * k)),
+            quantise(centre[2] + rho * sin(theta0 + step * k))
+        ) for k = 0:3
+    ]
+    short_points = vcat(
+        arc_points,
+        [
+            (arc_points[end][1] - 3.0, arc_points[end][2] + 1.0),
+            (arc_points[1][1] - 3.0, arc_points[1][2] - 1.0)
+        ]
+    )
+    short_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, 6)
+    for i = 1:3
+        short_arcs[i] = (id=2, centre=centre, radius=rho, sign=1)
+    end
+    short_loop = (
+        conductor=1,
+        plane=0.0,
+        hole=false,
+        points=short_points,
+        classes=fill("Physical", 6),
+        arcs=short_arcs,
+        joints=Vector{Union{Nothing, NamedTuple}}(nothing, 6)
+    )
+    tolerance = 1.0e-9 * R
+    fit_tolerance = arc_fit_tolerance(rho, tolerance)
+    residual =
+        maximum(abs(hypot(p[1] - centre[1], p[2] - centre[2]) - rho) for p in arc_points)
+    @test residual <= quantum * (1.0 + 1.0e-6) && residual <= fit_tolerance
+    fit = circle_through(arc_points[1], arc_points[2], arc_points[4], tolerance)
+    @test fit !== nothing &&
+          hypot(fit.center[1] - centre[1], fit.center[2] - centre[2]) > fit_tolerance
+    short_runs = tagged_arc_runs(short_loop, tolerance)
+    @test length(short_runs) == 1 &&
+          short_runs[1].id == 2 &&
+          length(short_runs[1].edge_indices) == 3 &&
+          short_runs[1].center == centre &&
+          short_runs[1].radius == rho
+    diagnostic = arc_fit_diagnostic(
+        short_points,
+        [1, 2, 3, 4],
+        short_arcs[1],
+        fit_tolerance,
+        tolerance
+    )
+    @test diagnostic !== nothing &&
+          occursin("conditioning factor R_arc / sagitta", diagnostic) &&
+          occursin("diagnostic only", diagnostic)
+    # One vertex displaced off the tagged circle by three residual tolerances: refused by the
+    # residual test (the guard that remains).
+    displaced = copy(short_points)
+    displaced[2] = (displaced[2][1] + 3.0 * fit_tolerance, displaced[2][2])
+    displaced_loop = merge(short_loop, (points=displaced,))
+    @test occursin(
+        "do not lie on the tagged circle",
+        guard_message(() -> tagged_arc_runs(displaced_loop, tolerance))
+    )
+    # A two-vertex run (one chord) on the circle is admitted; off it (3 tolerances) refused.
+    one_chord_points = vcat(
+        arc_points[1:2],
+        [
+            (arc_points[2][1] - 3.0, arc_points[2][2] + 1.0),
+            (arc_points[1][1] - 3.0, arc_points[1][2] - 1.0)
+        ]
+    )
+    one_chord_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, 4)
+    one_chord_arcs[1] = (id=2, centre=centre, radius=rho, sign=1)
+    one_chord_loop = (
+        conductor=1,
+        plane=0.0,
+        hole=false,
+        points=one_chord_points,
+        classes=fill("Physical", 4),
+        arcs=one_chord_arcs,
+        joints=Vector{Union{Nothing, NamedTuple}}(nothing, 4)
+    )
+    one_chord = tagged_arc_runs(one_chord_loop, tolerance)
+    @test length(one_chord) == 1 && length(one_chord[1].edge_indices) == 1
+    @test arc_fit_diagnostic(
+        one_chord_points,
+        [1, 2],
+        one_chord_arcs[1],
+        fit_tolerance,
+        tolerance
+    ) === nothing
+    off_points = copy(one_chord_points)
+    off_points[2] = (off_points[2][1] + 3.0 * fit_tolerance, off_points[2][2])
+    @test occursin(
+        "do not lie on the tagged circle",
+        guard_message(
+            () -> tagged_arc_runs(merge(one_chord_loop, (points=off_points,)), tolerance)
+        )
+    )
 end
 
 @testset "ArcTube geometry: frame, revolved centroids against OCC, face crossing" begin
@@ -894,6 +1204,80 @@ end
     end
 end
 
+@testset "round 3 class (11), fix 11 (decisions 497 / 500 / 510; part M 1.3 / 1.5 S1 / S3): one circle serialised as two or three tagged runs builds fab + thin with the earlier tube owning every arc-arc shared section" begin
+    mktempdir() do directory
+        # S1: the strip's 90-degree arc (18 chords) split at the non-cardinal angle -55 degrees (after
+        # chord 7) into ids 1 and 2 meeting at a smooth joint: the former ScopeGuard[ArcArcJoint]
+        # stop (B2) is lifted; the shared section is the owner's (install order), SharedSections
+        # gains TubesPerSide per arc-arc joint, every tube volume closes (no KeyError after the mesh).
+        census, mesh, _ = build_strip_coupon(
+            mkpath(joinpath(directory, "s1-fab"));
+            fabricated=true,
+            stem="s1-fab",
+            split_chords=[7]
+        )
+        tubes = census["PrismTubes"]
+        @test tubes["ArcTubes"]["Count"] == 4                 # two runs x top / bottom
+        @test tubes["ArcTubes"]["SharedSections"] == 6        # 2 arc / straight joints + 1 arc-arc, x 2
+        @test tubes["ArcTubes"]["JointEnds"] == 4 && tubes["ArcTubes"]["PartSplits"] == 0
+        @test tubes["TubeCount"] == 12
+        loop = census["Scope"]["MetalLoops"][1]
+        @test loop["Sides"] == 6 && loop["ArcParts"] == 2 && length(loop["Arcs"]) == 2
+        @test [arc["ArcId"] for arc in loop["Arcs"]] == [1, 2] && [arc["Chords"] for arc in loop["Arcs"]] == [7, 11]
+        @test isapprox(sum(arc["SweepDegrees"] for arc in loop["Arcs"]), 90.0; atol=1.0e-9)
+        arc_rows = [row for row in tubes["Tubes"] if haskey(row, "Arc")]
+        @test length(arc_rows) == 4 &&
+              isapprox(sum(row["Length"] for row in arc_rows), 2 * 0.5 * pi; atol=1.0e-9)
+        @test tubes["Prisms"] > 0 && tubes["Pyramids"] > 0 && isfile(mesh)
+        thin, thin_mesh, _ = build_strip_coupon(
+            mkpath(joinpath(directory, "s1-thin"));
+            fabricated=false,
+            stem="s1-thin",
+            split_chords=[7]
+        )
+        @test thin["PrismTubes"]["ArcTubes"]["Count"] == 2 &&
+              thin["PrismTubes"]["ArcTubes"]["SharedSections"] == 3 &&
+              thin["PrismTubes"]["TubeCount"] == 6 &&
+              isfile(thin_mesh)
+        # The control: the same chords under one id (the round-2b strip) - the split build carries
+        # the same straight tubes and the same total arc length; its element count is within 5 %.
+        control, _, _ = build_strip_coupon(
+            mkpath(joinpath(directory, "control"));
+            fabricated=true,
+            stem="control"
+        )
+        @test control["PrismTubes"]["ArcTubes"]["SharedSections"] == 4
+        elements(c) = c["PrismTubes"]["FarFieldBudgetPolicy"]["Elements"]
+        @test abs(elements(census) - elements(control)) <= 0.05 * elements(control)
+        # S3: three members (splits after chords 6 and 12) with the ids PERMUTED in loop order
+        # (3, 1, 2): the owner of each arc-arc section is the earlier tube in install order (= loop
+        # order), whatever the ids; the build equals the (1, 2, 3) build byte for byte - the ids
+        # name the tubes, they do not order them.
+        ordered, ordered_mesh, _ = build_strip_coupon(
+            mkpath(joinpath(directory, "s3"));
+            fabricated=true,
+            stem="s3",
+            split_chords=[6, 12]
+        )
+        permuted, permuted_mesh, _ = build_strip_coupon(
+            mkpath(joinpath(directory, "s3p"));
+            fabricated=true,
+            stem="s3p",
+            split_chords=[6, 12],
+            ids=[3, 1, 2]
+        )
+        for c in (ordered, permuted)
+            @test c["PrismTubes"]["ArcTubes"]["Count"] == 6 &&
+                  c["PrismTubes"]["ArcTubes"]["SharedSections"] == 8
+        end
+        @test [arc["ArcId"] for arc in ordered["Scope"]["MetalLoops"][1]["Arcs"]] == [1, 2, 3]
+        @test [arc["ArcId"] for arc in permuted["Scope"]["MetalLoops"][1]["Arcs"]] == [3, 1, 2]
+        @test elements(ordered) == elements(permuted)
+        @test bytes2hex(open(sha256, ordered_mesh)) ==
+              bytes2hex(open(sha256, permuted_mesh))
+    end
+end
+
 @testset "chord-count independence (V2, design A7 MINOR-7): 5-degree and 2.5-degree chords give the same tubes" begin
     mktempdir() do directory
         censuses = Dict{Float64, Any}()
@@ -954,6 +1338,96 @@ end
     end
 end
 
+@testset "round 3 class (7) Option B (decision 510 O1; G.7.6 S-G7-a / S-G7-b = G.4.5 S-G4-a): a 3-chord and a 1-chord arc of a 104 R circle build fab + thin; the tag-seeded collar circle equals the refit's to 1e-10" begin
+    mktempdir() do directory
+        # S-G7-a: the lead's 3-chord convex arc (0.25 R chords, sweep 7.2e-3 rad on 104 R) - the
+        # former >= 4-chord guard refused it - builds fab + thin: one arc tube per placement, two
+        # smooth joints, every tube volume closed. The SAME arc chorded 6 times takes the untagged-
+        # fit collar path (>= 4 chords: today's spelling, asserted against the propagated circle):
+        # the thin meshes (no collar: one spelling) are byte-identical, the fabricated tubes equal
+        # and the fabricated element counts within 1 % (the two collar circles agree to ~1e-13 R_arc
+        # - G.7.3 - not to the last ulp, so the fabricated meshes are not byte-identical: Option B).
+        digests = Dict{Tuple{Int, Bool}, String}()
+        counts = Dict{Tuple{Int, Bool}, Any}()
+        elements = Dict{Tuple{Int, Bool}, Int}()
+        for fabricated in (true, false), chords in (3, 6)
+            sub = mkpath(joinpath(directory, "lead-$chords-$(fabricated ? "fab" : "thin")"))
+            census, mesh, inputs = build_arc_coupon(
+                sub,
+                write_short_arc_lead_inputs;
+                fabricated=fabricated,
+                stem="lead",
+                chords=chords
+            )
+            @test inputs.chords == chords
+            loop = census["Scope"]["MetalLoops"][1]
+            @test loop["Arcs"][1]["Chords"] == chords &&
+                  loop["Arcs"][1]["Parts"] == 1 &&
+                  isapprox(loop["Arcs"][1]["Radius"], inputs.rho; atol=1.0e-12)
+            tubes = census["PrismTubes"]
+            @test tubes["ArcTubes"]["Count"] == (fabricated ? 2 : 1)
+            @test tubes["ArcTubes"]["SharedSections"] == (fabricated ? 4 : 2)
+            @test tubes["Prisms"] > 0 && tubes["Pyramids"] > 0 && isfile(mesh)
+            digests[(chords, fabricated)] = bytes2hex(open(sha256, mesh))
+            counts[(chords, fabricated)] =
+                (tubes["Prisms"], tubes["Pyramids"], tubes["TubeCount"])
+            elements[(chords, fabricated)] = tubes["FarFieldBudgetPolicy"]["Elements"]
+            if chords == 3 && fabricated
+                # The collar record: the propagated circle under the 3-chord arc vs the refit of the
+                # 6-chord offset polygon of the same loop - one circle to 1e-10 R_arc (P-G7.2).
+                loops = read_boundary(inputs.boundary)
+                collar = -3 * 0.5
+                record = offset_loop(loops[1], collar, 1.0e-7 * 0.5)
+                @test record.short &&
+                      length(record.runs) == 1 &&
+                      record.runs[1].id == 1 &&
+                      length(record.runs[1].edge_indices) == 3
+                seeded = fit_carried_run(record.points, record.runs[1], 1.0e-7 * 0.5)
+                @test isapprox(seeded.radius, inputs.rho + 3 * 0.5; atol=1.0e-12) &&
+                      seeded.center == inputs.centre
+                six = write_short_arc_lead_inputs(
+                    mkpath(joinpath(directory, "six-offset"));
+                    chords=6
+                )
+                six_record =
+                    offset_loop(read_boundary(six.boundary)[1], collar, 1.0e-7 * 0.5)
+                @test !six_record.short
+                refit = only(circular_arc_runs(six_record.points, 1.0e-7 * 0.5))
+                @test hypot(
+                    refit.center[1] - seeded.center[1],
+                    refit.center[2] - seeded.center[2]
+                ) <= 1.0e-10 * inputs.rho
+                @test abs(refit.radius - seeded.radius) <= 1.0e-10 * inputs.rho
+            end
+        end
+        for fabricated in (true, false)
+            @test counts[(3, fabricated)] == counts[(6, fabricated)]
+            @test abs(elements[(3, fabricated)] - elements[(6, fabricated)]) <=
+                  0.01 * elements[(6, fabricated)]
+        end
+        @test digests[(3, false)] == digests[(6, false)]
+        # S-G7-b: a 1-chord CONCAVE arc (sweep 0.1 degrees on 104 R: 0.18 R of chord; the collar
+        # shrinks its circle to 101 R) builds fab + thin.
+        for fabricated in (true, false)
+            sub = mkpath(joinpath(directory, "one-$(fabricated ? "fab" : "thin")"))
+            census, mesh, inputs = build_arc_coupon(
+                sub,
+                write_short_arc_lead_inputs;
+                fabricated=fabricated,
+                stem="one",
+                chords=1,
+                sweep=deg2rad(0.1),
+                convex=false
+            )
+            @test inputs.chords == 1 &&
+                  census["Scope"]["MetalLoops"][1]["Arcs"][1]["Chords"] == 1 &&
+                  census["Scope"]["MetalLoops"][1]["Arcs"][1]["Sign"] == -1
+            @test census["PrismTubes"]["ArcTubes"]["Count"] == (fabricated ? 2 : 1) &&
+                  isfile(mesh)
+        end
+    end
+end
+
 @testset "decision 391 MAJOR-2 (ii) lifted by round 2b (decision 437 (3)): arc face ends and arc joints build inside the TESTED ranges, fail closed beyond" begin
     # Both guards stay in the recipe scope list (mesh_stage_contract.py spells the same list and
     # the same bounds); the loop end's tested turn bound lies inside the smooth range.
@@ -974,8 +1448,11 @@ end
     )
     @test occursin("0.1 <= theta <= 70.0", scope_guard_statement("ArcFaceEnds")) &&
           occursin("inner node circle", scope_guard_statement("ArcFaceEnds"))
-    @test occursin("names no owner", scope_guard_statement("ArcArcJoint")) &&
-          occursin("32b0083dad90", scope_guard_statement("ArcArcJoint"))
+    # Round 3 B3 (fix 11): the ArcArcJoint guard keeps its id for the residual untested class
+    # (distinct circles / opposite sigma); two runs of ONE circle build.
+    @test occursin("NOT one circle", scope_guard_statement("ArcArcJoint")) &&
+          occursin("32b0083dad90", scope_guard_statement("ArcArcJoint")) &&
+          occursin("fix 11", scope_guard_statement("ArcArcJoint"))
     @test occursin("rho - h_face < 3 Radius", scope_guard_statement("CollarFaceEnd")) &&
           occursin("CORNER kink", scope_guard_statement("CollarFaceEnd"))
     @test occursin(
@@ -1218,11 +1695,14 @@ end
             )
         )
         @test occursin("ScopeGuard[ArcFaceEnds]", message)
-        # Round 3 class (11) interim (decisions 497 / 500 / 510; part M 1.3): two DISTINCT tagged arc
+        # Round 3 class (11), fix 11 (decisions 497 / 500 / 510; part M 1.3): two DISTINCT tagged arc
         # runs of ONE circle (ids 1 and 2, 4 chords each) meeting at a smooth joint (turn 0,
-        # JointSmooth 1) fail closed at ScopeGuard[ArcArcJoint] naming both arcs - before the joint
-        # table that has no owner for them. The same chords under ONE id (the exact part split of
-        # one arc) pass the guards: the control.
+        # JointSmooth 1) BUILD their sides (two arc sides, each with the joint vertex as a smooth
+        # joint: no FreeEdgeEnds, no guard) - the B2 interim ScopeGuard[ArcArcJoint] is lifted for
+        # one circle; the same chords under ONE id (the exact part split) stay the control. The
+        # residual guard: the second run on a DISTINCT circle (radius 1.001 through the joint and
+        # the face-end vertex) fails closed by name; an opposite ArcSign disagrees with the plan-view
+        # metal side before the joint is reached.
         split_points =
             [(cosd(-90.0 + 45.0 * k / 8), 1.0 + sind(-90.0 + 45.0 * k / 8)) for k = 0:8]
         x_split = split_points[end][1]            # the arc leaves the x1 face at a 45-degree tilt
@@ -1231,10 +1711,15 @@ end
         split_classes = [
             i == ms - 2 || i == ms - 1 || i == ms ? "Continuation" : "Physical" for i = 1:ms
         ]
-        function split_loop(ids)
+        function split_loop(
+            ids;
+            second=(centre=(0.0, 1.0), radius=1.0, sign=1),
+            points=split_loop_points
+        )
             split_arcs = Vector{Union{Nothing, NamedTuple}}(nothing, ms)
             for i = 2:9
-                split_arcs[i] = (id=ids[i - 1], centre=(0.0, 1.0), radius=1.0, sign=1)
+                tag = ids[i - 1] == 2 ? second : (centre=(0.0, 1.0), radius=1.0, sign=1)
+                split_arcs[i] = (id=ids[i - 1], tag...)
             end
             split_joints = Vector{Union{Nothing, NamedTuple}}(nothing, ms)
             split_joints[2] = (turn=0.0, smooth=true)
@@ -1243,7 +1728,7 @@ end
                 conductor=1,
                 plane=0.0,
                 hole=false,
-                points=split_loop_points,
+                points=points,
                 classes=split_classes,
                 arcs=split_arcs,
                 joints=split_joints
@@ -1259,15 +1744,60 @@ end
             edge_size=0.01,
             corner_radius=0.1
         )
-        message =
-            guard_message(() -> split_segments(split_loop(vcat(fill(1, 4), fill(2, 4)))))
-        @test occursin("ScopeGuard[ArcArcJoint]", message) &&
-              occursin("arc 1 part 1", message) &&
-              occursin("meets arc 2 part 1", message) &&
-              occursin("no joint owner", message)
+        two_runs = split_segments(split_loop(vcat(fill(1, 4), fill(2, 4))))
+        arc_sides = [s for s in two_runs if s.kind == :arc]
+        @test length(arc_sides) == 2 && [s.arc.id for s in arc_sides] == [1, 2]
+        joint_vertex = split_loop_points[6]
+        @test norm(arc_sides[1].stop .- [joint_vertex...]) <= 1.0e-12 &&
+              norm(arc_sides[2].start .- [joint_vertex...]) <= 1.0e-12
+        @test arc_sides[1].joints[2] !== nothing &&
+              arc_sides[2].joints[1] !== nothing &&
+              arc_sides[1].face_ends[2] === nothing &&
+              arc_sides[2].face_ends[2] !== nothing
         control = split_segments(split_loop(fill(1, 8)))
         @test count(s.kind == :arc for s in control) == 1 &&
               only(s for s in control if s.kind == :arc).face_ends[2] !== nothing
+        # Distinct circles: the second run's vertices on the circle of radius 1.001 through the
+        # joint vertex and the face-end vertex (its centre on their bisector, towards (0, 1)).
+        end_vertex = split_loop_points[10]
+        mid = 0.5 .* (joint_vertex .+ end_vertex)
+        half = 0.5 * hypot((end_vertex .- joint_vertex)...)
+        towards = (0.0, 1.0) .- mid
+        towards = towards ./ hypot(towards...)
+        c2 = mid .+ sqrt(1.001^2 - half^2) .* towards
+        a_j = atan(joint_vertex[2] - c2[2], joint_vertex[1] - c2[1])
+        a_e = atan(end_vertex[2] - c2[2], end_vertex[1] - c2[1])
+        distinct_points = copy(split_loop_points)
+        for k = 1:3
+            angle = a_j + (a_e - a_j) * k / 4
+            distinct_points[6 + k] =
+                (c2[1] + 1.001 * cos(angle), c2[2] + 1.001 * sin(angle))
+        end
+        message = guard_message(
+            () -> split_segments(
+                split_loop(
+                    vcat(fill(1, 4), fill(2, 4));
+                    second=(centre=c2, radius=1.001, sign=1),
+                    points=distinct_points
+                )
+            )
+        )
+        @test occursin("ScopeGuard[ArcArcJoint]", message) &&
+              occursin("DISTINCT circles", message) &&
+              occursin("arc 1 part 1", message) &&
+              occursin("meets arc 2 part 1", message)
+        # Opposite metal sides: the same circle tagged sign -1 on the second run disagrees with the
+        # plan-view metal side before the joint is reached (the ArcSign check); the sigma reading of
+        # the guard is exercised on the sides directly.
+        message = guard_message(
+            () -> split_segments(
+                split_loop(
+                    vcat(fill(1, 4), fill(2, 4));
+                    second=(centre=(0.0, 1.0), radius=1.0, sign=-1)
+                )
+            )
+        )
+        @test occursin("disagrees with the tagged ArcSign", message)
     end
 end
 
@@ -1554,9 +2084,21 @@ end
         # and a JSON boolean is not a count (Bool <: Integer in Julia), as on the Python side.
         for (name, broken) in (
             ("wrong-rule.json", replace(record, rule => "another rule")),
-            ("boolean-count.json", replace(record, "\"SmoothJoints\": 4" => "\"SmoothJoints\": true")),
-            ("negative-count.json", replace(record, "\"BoxFaceCutEnds\": 4" => "\"BoxFaceCutEnds\": -1")),
-            ("float-count.json", replace(record, "\"ArcInteriorVertices\": 34" => "\"ArcInteriorVertices\": 34.0"))
+            (
+                "boolean-count.json",
+                replace(record, "\"SmoothJoints\": 4" => "\"SmoothJoints\": true")
+            ),
+            (
+                "negative-count.json",
+                replace(record, "\"BoxFaceCutEnds\": 4" => "\"BoxFaceCutEnds\": -1")
+            ),
+            (
+                "float-count.json",
+                replace(
+                    record,
+                    "\"ArcInteriorVertices\": 34" => "\"ArcInteriorVertices\": 34.0"
+                )
+            )
         )
             path = joinpath(directory, name)
             write(path, "{\"Version\": 1, \"SemanticCorners\": [], $broken}")

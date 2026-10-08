@@ -1948,9 +1948,20 @@ def classified_continuation_segments(geometry, frame, radius):
 
 
 def plan_view_boundary_loops(
-    facets, radius, lower, upper, continuation_segments=None
+    facets, radius, lower, upper, continuation_segments=None, protected=None
 ):
+    """The boundary loops of the plan-view mask facets on the 1e-9 R grid, every ring simplified
+    by the near-collinear merge (design A3 (1): a vertex whose two sides share a Class and turn
+    by at most JUNCTION_TANGENT_ANGLE is popped). `protected` (mesher design round 3 classes (2) /
+    (3), fix 2b = R1; decision 510): the grid keys of every chord vertex and both ends of every
+    KEPT rebuilt arc (protected_arc_vertex_keys, computed once by the caller from the same arcs
+    tag_arc_boundary_loops reads), never popped - the chord-based merge is blind to the tags and
+    would otherwise drop the same-circle joint vertex of two arc entries (efe678516aa0: a
+    chord-to-chord turn of 3.26e-5 rad at a signature turn of 1.49e-8) or every interior vertex of
+    a nearly straight arc (per-chord turns below 1e-4 beyond R_arc ~ 2440 R). None (every straight
+    coupon, every legacy caller) is the unprotected merge, bitwise."""
     tolerance = 1.0e-9 * radius
+    protected = frozenset() if protected is None else protected
 
     def quantize(value):
         scaled = value / tolerance
@@ -2136,6 +2147,7 @@ def plan_view_boundary_loops(
                     )
                     if (
                         classes[index - 1] == classes[index]
+                        and current not in protected
                         and near_collinear(first, second)
                     ):
                         ring.pop(index)
@@ -2220,32 +2232,75 @@ def reconcile_mask_with_boundary(facets, loops, radius):
 # JointSmooth (1 iff |turn| <= JUNCTION_TANGENT_ANGLE, design A3 (1)).  A chord vertex
 # strictly inside one arc has both adjacent rows on the same ArcId (the mesher's ArcInterior
 # class); the columns are empty on every straight row (a legacy coupon: no column at all).
-ARC_BOUNDARY_COLUMNS = ("ArcId", "ArcCx", "ArcCy", "ArcR", "ArcSign", "JointTurn", "JointSmooth")
+# Mesher design round 3 (DESIGN R7, decision 510 MINOR-6): ArcChain, an integer naming the
+# same-circle chain the arc belongs to (cluster_signature_geometry fix 2a; 0 = no chain), joins
+# the tagged columns - written ONLY when the boundary is tagged, so every straight CSV is
+# byte-identical; every reader accepts a tagged CSV with or without it. A demoted arc (fix (3)(ii))
+# is a straight side: no tag.
+ARC_BOUNDARY_COLUMNS = ("ArcId", "ArcCx", "ArcCy", "ArcR", "ArcSign", "JointTurn", "JointSmooth", "ArcChain")
 
 
-def tag_arc_boundary_loops(loops, coupon, frame, radius):
-    """Attach the arc tags (ARC_BOUNDARY_COLUMNS) to the boundary loops of a SpatialEdgeCluster
-    coupon whose Geometry.Signature carries arc entries: loop["Arcs"][i] = the tag dict of the
-    side from vertex i to i + 1 (None on a straight side), loop["Joints"][i] = (turn, smooth)
-    at vertex i (None away from an arc end).  Every chord vertex of every rebuilt arc must be a
-    loop vertex and every chord a loop side (fail closed: the merge or the arrangement dropped
-    one); loops without any arc carry no tags (byte-identical CSV).  Returns the arc count."""
+def signature_arcs(coupon, radius):
+    """The rebuilt arcs (cluster_signature_geometry.rebuilt_arcs) of a SpatialEdgeCluster coupon
+    whose Geometry.Signature carries arc entries; [] otherwise (every straight coupon). Computed
+    ONCE in main and handed to both plan_view_boundary_loops (the protected vertex set) and
+    tag_arc_boundary_loops, so the two cannot disagree (DESIGN R1 / part M 1.3 fix 2b)."""
     signature = coupon.get("Geometry", {}).get("Signature")
     if coupon.get("Topology") != "SpatialEdgeCluster" or not signature:
-        return 0
+        return []
     if not any("Arc" in entry for key in ("Portions", "Context") for entry in signature.get(key, [])):
-        return 0
+        return []
     import cluster_signature_geometry  # noqa: E402  (imports this module; resolved at call time)
     arcs, _ = cluster_signature_geometry.rebuilt_arcs(signature, radius)
-    tolerance = 1.0e-9 * radius
+    return arcs
+
+
+def _arc_vertex_rotation(frame):
     rotation = np.asarray(frame, dtype=float)[:2, :2]
+
+    def rotate(point):
+        # The 2 x 2 rotation by scalar arithmetic (the scalar rule; the identity for every
+        # SupportBox coupon).
+        return np.asarray([float(rotation[0, 0]) * float(point[0]) + float(rotation[0, 1]) * float(point[1]),
+                           float(rotation[1, 0]) * float(point[0]) + float(rotation[1, 1]) * float(point[1])])
+
+    return rotate
+
+
+def _arc_vertex_key(point, radius):
+    tolerance = 1.0e-9 * radius
 
     def quantize(value):
         scaled = value / tolerance
         return math.floor(scaled + 0.5) if scaled >= 0.0 else math.ceil(scaled - 0.5)
 
+    return (quantize(float(point[0])), quantize(float(point[1])))
+
+
+def protected_arc_vertex_keys(arcs, frame, radius):
+    """The 1e-9 R grid keys (the loop builder's quantisation, in its frame) of every chord vertex
+    and both ends of every KEPT rebuilt arc - the vertices plan_view_boundary_loops' near-
+    collinear merge never pops (fix 2b, DESIGN R1). A demoted arc (R2: a straight entry) and a
+    coupon without arcs contribute none: the empty set is the unprotected merge, bitwise."""
+    rotate = _arc_vertex_rotation(frame)
+    return frozenset(_arc_vertex_key(rotate(v), radius) for arc in arcs if not arc.get("Demoted")
+                     for v in arc["Vertices"])
+
+
+def tag_arc_boundary_loops(loops, coupon, frame, radius, arcs=None):
+    """Attach the arc tags (ARC_BOUNDARY_COLUMNS) to the boundary loops of a SpatialEdgeCluster
+    coupon whose Geometry.Signature carries arc entries: loop["Arcs"][i] = the tag dict of the
+    side from vertex i to i + 1 (None on a straight side), loop["Joints"][i] = (turn, smooth)
+    at vertex i (None away from an arc end).  Every chord vertex of every rebuilt arc must be a
+    loop vertex and every chord a loop side (fail closed: the merge or the arrangement dropped
+    one); loops without any arc carry no tags (byte-identical CSV).  `arcs` = signature_arcs
+    (main computes them once; None recomputes them here).  Returns the arc count."""
+    arcs = signature_arcs(coupon, radius) if arcs is None else arcs
+    if not any(not arc.get("Demoted") for arc in arcs):
+        return 0
+
     def key(point):
-        return (quantize(float(point[0])), quantize(float(point[1])))
+        return _arc_vertex_key(point, radius)
 
     vertex_index = {}
     for loop_index, loop in enumerate(loops):
@@ -2253,17 +2308,15 @@ def tag_arc_boundary_loops(loops, coupon, frame, radius):
             vertex_index.setdefault(key(point), []).append((loop_index, i))
         loop["Arcs"] = [None] * len(loop["Points"])
         loop["Joints"] = [None] * len(loop["Points"])
-    def rotate(point):
-        # The 2 x 2 rotation by scalar arithmetic (the scalar rule; the identity for every
-        # SupportBox coupon).
-        return np.asarray([float(rotation[0, 0]) * float(point[0]) + float(rotation[0, 1]) * float(point[1]),
-                           float(rotation[1, 0]) * float(point[0]) + float(rotation[1, 1]) * float(point[1])])
+    rotate = _arc_vertex_rotation(frame)
 
     for arc in arcs:
+        if arc.get("Demoted"):
+            continue            # a straight side of the boundary (R2): no tag, no joint record
         local = [rotate(v) for v in arc["Vertices"]]
         centre = rotate(arc["Centre"])
         tag = {"ArcId": arc["ArcId"], "ArcCx": float(centre[0]), "ArcCy": float(centre[1]),
-               "ArcR": float(arc["Radius"]), "ArcSign": int(arc["Sign"])}
+               "ArcR": float(arc["Radius"]), "ArcSign": int(arc["Sign"]), "ArcChain": int(arc.get("ChainId", 0))}
         n = len(local) - 1
         for k in range(n):
             a, b = key(local[k]), key(local[k + 1])
@@ -2288,7 +2341,7 @@ def tag_arc_boundary_loops(loops, coupon, frame, radius):
                 if loop["Joints"][i] is not None and turn is not None and loop["Joints"][i][0] is not None:
                     turn = min(turn, loop["Joints"][i][0])
                 loop["Joints"][i] = (turn, turn is not None and abs(turn) <= JUNCTION_TANGENT_ANGLE)
-    return len(arcs)
+    return sum(not arc.get("Demoted") for arc in arcs)
 
 
 def write_plan_view_boundary(path, loops):
@@ -2314,7 +2367,8 @@ def write_plan_view_boundary(path, loops):
                     arc["ArcId"], repr(arc["ArcCx"]), repr(arc["ArcCy"]), repr(arc["ArcR"]), arc["ArcSign"])
                 joint_values = ("", "") if joint is None else (
                     "" if joint[0] is None else repr(float(joint[0])), int(bool(joint[1])))
-                values = values + arc_values + joint_values
+                chain_values = ("",) if arc is None else (arc.get("ArcChain", 0),)
+                values = values + arc_values + joint_values + chain_values
             lines.append(",".join(str(value) for value in values))
     path.write_text("\n".join(lines) + "\n")
 
@@ -2563,6 +2617,9 @@ def main():
     # conductor_at_points label against the reconciled mask), so that the mask and the
     # boundary bound the same metal; a rectilinear coupon moves nothing.
     loops, moved_mask_vertices = [], []
+    # The signature's rebuilt arcs, once (round 3 fix 2b, DESIGN R1): their chord vertices are
+    # protected from the merge below and tagged by tag_arc_boundary_loops from the SAME list.
+    arcs = signature_arcs(coupon, args.radius)
     if facets:
         loops = plan_view_boundary_loops(
             facets,
@@ -2572,6 +2629,7 @@ def main():
             classified_continuation_segments(
                 coupon.get("Geometry", {}), frame, args.radius
             ),
+            protected=protected_arc_vertex_keys(arcs, frame, args.radius),
         )
         moved_mask_vertices = reconcile_mask_with_boundary(facets, loops, args.radius)
     # The frame check precedes the first output so a mis-framed mask leaves
@@ -2600,7 +2658,7 @@ def main():
     if facets:
         # The signature's arcs tag their chords and joints (design A1 (4)); a coupon without
         # an arc entry writes the unchanged columns.
-        tag_arc_boundary_loops(loops, coupon, frame, args.radius)
+        tag_arc_boundary_loops(loops, coupon, frame, args.radius, arcs=arcs)
         write_plan_view_mask(mask_path, facets)
         write_plan_view_boundary(boundary_path, loops)
     else:

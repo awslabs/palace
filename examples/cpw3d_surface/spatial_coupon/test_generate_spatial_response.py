@@ -117,5 +117,116 @@ class MaskFrameTest(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in (Path(tmp) / "out").iterdir()), ["generation-failure.json"])
 
 
+CENSUS_B = HERE / "testdata" / "census-b-signatures" / "signatures.json"
+
+
+def census_loops(prefix, radius=RADIUS):
+    """main's path on a census-b signature: cluster_coupon -> normalize_geometry -> the boundary
+    loops with the protected set of signature_arcs -> tag_arc_boundary_loops from the same arcs."""
+    record = json.loads(CENSUS_B.read_text())[prefix]
+    coupon, _ = csg.cluster_coupon(record, radius, THICKNESS, 0.05)
+    frame, edges, facets = gsr.normalize_geometry(coupon, radius)
+    lower, upper = gsr.coupon_bounds(edges, radius, THICKNESS, 0.05, coupon["Geometry"].get("SupportBox"))
+    arcs = gsr.signature_arcs(coupon, radius)
+    loops = gsr.plan_view_boundary_loops(facets, radius, lower, upper,
+                                         gsr.classified_continuation_segments(coupon["Geometry"], frame, radius),
+                                         protected=gsr.protected_arc_vertex_keys(arcs, frame, radius))
+    moved = gsr.reconcile_mask_with_boundary(facets, loops, radius)
+    count = gsr.tag_arc_boundary_loops(loops, coupon, frame, radius, arcs=arcs)
+    return coupon, arcs, loops, moved, count
+
+
+class ProtectedArcVerticesTest(unittest.TestCase):
+    """Round 3 classes (2) / (3), fix 2b = R1 (DESIGN-part-M 1.3, part G G.3.3 (i); decision 510):
+    the near-collinear merge of plan_view_boundary_loops never pops a chord vertex or an end of
+    a kept rebuilt arc; an unprotected vertex within JUNCTION_TANGENT_ANGLE is popped as before
+    (every straight loop bitwise)."""
+
+    def facets_with_kink(self, kink):
+        # Conductor 1 covers [-1, 0] x [-1, 1] with the right side bent at (kink, 0): a turn of
+        # ~2 kink rad between the two halves of that side.
+        return [{"Conductor": 1, "Plane": 0.0, "Points": [[-1.0, -1.0], [0.0, -1.0], [kink, 0.0]]},
+                {"Conductor": 1, "Plane": 0.0, "Points": [[-1.0, -1.0], [kink, 0.0], [0.0, 1.0]]},
+                {"Conductor": 1, "Plane": 0.0, "Points": [[-1.0, -1.0], [0.0, 1.0], [-1.0, 1.0]]}]
+
+    def test_unprotected_small_turn_is_popped_and_a_protected_one_kept(self):
+        lower, upper = np.array([-3.0, -3.0, -1.0]), np.array([3.0, 3.0, 1.0])
+        facets = self.facets_with_kink(5.0e-6)             # turn 1e-5 rad <= JUNCTION_TANGENT_ANGLE
+        loops = gsr.plan_view_boundary_loops(facets, RADIUS, lower, upper)
+        self.assertEqual(len(loops), 1)
+        self.assertEqual(len(loops[0]["Points"]), 4)        # popped: the straight loop of today
+        self.assertEqual(loops, gsr.plan_view_boundary_loops(facets, RADIUS, lower, upper, protected=frozenset()))
+        kink_key = gsr._arc_vertex_key((5.0e-6, 0.0), RADIUS)
+        kept = gsr.plan_view_boundary_loops(facets, RADIUS, lower, upper, protected=frozenset([kink_key]))
+        self.assertEqual(len(kept[0]["Points"]), 5)
+        self.assertIn(kink_key, {gsr._arc_vertex_key(p, RADIUS) for p in kept[0]["Points"]})
+        # A protected key elsewhere protects nothing; a turn above the angle is kept either way.
+        other = gsr.plan_view_boundary_loops(facets, RADIUS, lower, upper,
+                                             protected=frozenset([gsr._arc_vertex_key((0.5, 0.5), RADIUS)]))
+        self.assertEqual(len(other[0]["Points"]), 4)
+        corner = gsr.plan_view_boundary_loops(self.facets_with_kink(1.0e-3), RADIUS, lower, upper)
+        self.assertEqual(len(corner[0]["Points"]), 5)
+
+    def test_straight_coupons_have_no_protected_keys(self):
+        self.assertEqual(gsr.signature_arcs({"Topology": "SpatialEdgeCluster", "Geometry": {}}, RADIUS), [])
+        self.assertEqual(gsr.protected_arc_vertex_keys([], np.identity(3), RADIUS), frozenset())
+
+    def test_efe678516aa0_same_circle_joint_vertex_is_kept_and_tagged(self):
+        # Class (2) (part M 1.1): the joint vertex of claim arc 2 and context arc 6 (one circle of
+        # 2240 R; chord-to-chord turn 3.26e-5 rad at a signature turn of 1.49e-8) was popped by the
+        # merge and tag_arc_boundary_loops failed closed ("chord 8 is not exactly one side"); under
+        # the protected set every chord of every arc is a loop side.
+        coupon, arcs, loops, moved, count = census_loops("efe678516aa0")
+        self.assertEqual(count, 6)
+        tagged = sum(arc is not None for loop in loops for arc in loop["Arcs"])
+        self.assertEqual(tagged, sum(len(arc["Vertices"]) - 1 for arc in arcs))
+        # The merge still pops the device plan's straight-straight pseudo-corners (the 1e-6 R
+        # grid's sub-1e-4 turns, reconciled into the mask as before); no arc vertex is among them.
+        protected = gsr.protected_arc_vertex_keys(arcs, np.identity(3), RADIUS)
+        self.assertGreater(len(moved), 0)
+        self.assertFalse({gsr._arc_vertex_key(source, RADIUS) for source, _ in moved} & protected)
+
+    def test_baf9dacceb51_demoted_context_arcs_are_straight_sides_of_the_boundary(self):
+        # Class (3) (part G G.3.1): the C3 trio's context arcs 9 / 10 (R_arc 1.1e5 .. 1.4e5 R) are
+        # DEMOTED by rebuilt_arcs (fix (3)(ii)): no tag, their chords straight boundary sides; the
+        # eight device arcs are protected and tagged. The generator of record stops earlier at the
+        # MINOR-5 margin (test_cluster_signature_geometry.ChainAndDemotionTest); the boundary is
+        # read here with the bound lifted (a probe of the geometry).
+        bound = csg.ARC_SMOOTH_JOINT_TURN_BOUND
+        try:
+            csg.ARC_SMOOTH_JOINT_TURN_BOUND = 1.0
+            coupon, arcs, loops, moved, count = census_loops("baf9dacceb51")
+        finally:
+            csg.ARC_SMOOTH_JOINT_TURN_BOUND = bound
+        self.assertEqual(count, 8)
+        self.assertEqual([arc["ArcId"] for arc in arcs if arc["Demoted"]], [9, 10])
+        tagged = sum(arc is not None for loop in loops for arc in loop["Arcs"])
+        self.assertEqual(tagged, sum(len(arc["Vertices"]) - 1 for arc in arcs if not arc["Demoted"]))
+        self.assertFalse({tag["ArcId"] for loop in loops for tag in loop["Arcs"] if tag is not None} & {9, 10})
+        self.assertEqual({tag["ArcChain"] for loop in loops for tag in loop["Arcs"] if tag is not None}, {1, 2, 3, 4})
+        # A demoted arc's chord is a straight side: its ends are loop vertices.
+        keys = {gsr._arc_vertex_key(p, RADIUS) for loop in loops for p in loop["Points"]}
+        for arc in arcs:
+            if arc["Demoted"]:
+                self.assertTrue(all(gsr._arc_vertex_key(v, RADIUS) in keys for v in arc["Vertices"]))
+
+    def test_boundary_csv_carries_the_arc_chain_column_only_when_tagged(self):
+        # R7 (510 MINOR-6): ArcChain joins the tagged columns; a straight boundary's CSV is unchanged.
+        self.assertEqual(gsr.ARC_BOUNDARY_COLUMNS[-1], "ArcChain")
+        coupon, arcs, loops, _, count = census_loops("efe678516aa0")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "plan-view-boundary.csv"
+            gsr.write_plan_view_boundary(path, loops)
+            lines = path.read_text().splitlines()
+            self.assertEqual(lines[0], "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y,ArcId,ArcCx,ArcCy,ArcR,ArcSign,JointTurn,JointSmooth,ArcChain")
+            chains = {line.split(",")[-1] for line in lines[1:] if line.split(",")[8] != ""}
+            self.assertEqual(chains, {"0", "1", "2"})
+            self.assertTrue(all(line.endswith(",") for line in lines[1:] if line.split(",")[8] == ""))
+            straight = [{"Conductor": 1, "Plane": 0.0, "Hole": False, "Classes": ["Physical"] * 4,
+                         "Points": [[-1.0, -1.0], [0.0, -1.0], [0.0, 1.0], [-1.0, 1.0]]}]
+            gsr.write_plan_view_boundary(path, straight)
+            self.assertEqual(path.read_text().splitlines()[0], "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y")
+
+
 if __name__ == "__main__":
     unittest.main()
