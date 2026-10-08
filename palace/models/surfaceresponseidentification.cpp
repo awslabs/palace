@@ -1421,6 +1421,77 @@ std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature
   return {key, Sha256HexImpl(key)};
 }
 
+double DistanceToSerializedPortion(const nlohmann::json &portion,
+                                   const std::array<double, 2> &q)
+{
+  const auto P = portion.at("P").get<std::array<double, 4>>();
+  const std::array<double, 2> a = {P[0], P[1]}, b = {P[2], P[3]};
+  if (!portion.contains("Arc"))
+  {
+    const double dx = b[0] - a[0], dy = b[1] - a[1];
+    const double length2 = dx * dx + dy * dy;
+    double s = length2 > 0.0 ? ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / length2 : 0.0;
+    s = std::clamp(s, 0.0, 1.0);
+    return std::hypot(q[0] - (a[0] + s * dx), q[1] - (a[1] + s * dy));
+  }
+  const auto arc = portion.at("Arc").get<std::array<double, 4>>();
+  const std::array<double, 2> c = {arc[0], arc[1]}, m = {arc[2], arc[3]};
+  const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
+  const double radial = std::abs(std::hypot(q[0] - c[0], q[1] - c[1]) - r);
+  const bool closed = std::hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * std::max(r, 1.0);
+  if (closed)
+  {
+    return radial;
+  }
+  const double two_pi = 2.0 * std::acos(-1.0);
+  auto Angle = [&](const std::array<double, 2> &p)
+  { return std::atan2(p[1] - c[1], p[0] - c[0]); };
+  const double ta = Angle(a);
+  // The arc runs from a to b through m: counterclockwise when m lies on the
+  // counterclockwise sweep from a to b, clockwise otherwise.
+  const double ccw = std::fmod(Angle(b) - ta + two_pi, two_pi);
+  const bool counterclockwise = std::fmod(Angle(m) - ta + two_pi, two_pi) <= ccw + 1.0e-12;
+  const double sweep = counterclockwise ? ccw : ccw - two_pi;
+  double tq = std::fmod(Angle(q) - ta + two_pi, two_pi);
+  if (!counterclockwise)
+  {
+    tq = tq > 0.0 ? tq - two_pi : tq;
+  }
+  const bool within = counterclockwise ? tq <= sweep + 1.0e-12 : tq >= sweep - 1.0e-12;
+  if (within)
+  {
+    return radial;
+  }
+  return std::min(std::hypot(q[0] - a[0], q[1] - a[1]),
+                  std::hypot(q[0] - b[0], q[1] - b[1]));
+}
+
+nlohmann::json FrameToJson(const std::array<double, 3> &origin,
+                           const std::array<std::array<double, 3>, 3> &axes, double radius,
+                           double length_scale)
+{
+  const double scaled_radius = radius * length_scale;
+  const double tolerance =
+      std::max(1.0e-10 * scaled_radius, 64.0 * std::numeric_limits<double>::epsilon());
+  const double step = std::pow(10.0, std::floor(std::log10(tolerance)));
+  auto L = [&](double value)
+  {
+    const double snapped = std::round(value * length_scale / step) * step;
+    return snapped == 0.0 ? 0.0 : snapped;
+  };
+  auto D = [](const std::array<double, 3> &v)
+  {
+    auto S = [](double x)
+    {
+      const double s = std::round(x * 1.0e12) * 1.0e-12;
+      return s == 0.0 ? 0.0 : s;
+    };
+    return nlohmann::json{S(v[0]), S(v[1]), S(v[2])};
+  };
+  return {{"Origin", {L(origin[0]), L(origin[1]), L(origin[2])}},
+          {"Axes", {D(axes[0]), D(axes[1]), D(axes[2])}}};
+}
+
 namespace
 {
 
@@ -14196,9 +14267,7 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"Length", L(feature.length)},
         {"Portions", portions},
         {"Vertices", feature.vertices},
-        {"Frame",
-         {{"Origin", P(feature.origin)},
-          {"Axes", {D(feature.axes[0]), D(feature.axes[1]), D(feature.axes[2])}}}},
+        {"Frame", FrameToJson(feature.origin, feature.axes, radius, length_scale)},
         {"BendRadiusOverR",
          feature.bend_radius_over_R
              ? nlohmann::json(std::round(*feature.bend_radius_over_R /
@@ -14233,8 +14302,15 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
     {
       // The feature touches a mirror image across a natural truncation plane (boundary-cut
       // DESIGN 2.2.2; decisions 442 / 454): {Planes, RealLength, ImageLength, Status}; its
-      // portions on image segments (never placed, never counted) listed apart.
+      // portions on image segments (never placed, never counted) listed apart. An unmerged
+      // mirror-formed configuration's Contract (decision 557) carries its Frame in the
+      // manifest's units like Features[].Frame (the record keeps the identification's).
       entry["Mirror"] = feature.mirror;
+      if (feature.mirror.contains("Contract") && feature.mirror["Contract"].is_object())
+      {
+        entry["Mirror"]["Contract"]["Frame"] =
+            FrameToJson(feature.origin, feature.axes, radius, length_scale);
+      }
       if (!image_portions.empty())
       {
         entry["ImagePortions"] = image_portions;

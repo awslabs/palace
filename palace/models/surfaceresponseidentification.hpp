@@ -628,6 +628,23 @@ nlohmann::json CanonicalJunctionSignature(const std::vector<std::string> &interf
 std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature,
                                                         const std::string &type);
 
+// Distance (units of R) from a point q of the canonical frame to a serialised cluster
+// signature portion (`Signature.Portions[i]` / `Context[i]`): a straight portion is the
+// segment P; an arc portion the arc from P[0] through the midpoint Arc[2..3] to P[1] on the
+// circle about Arc[0..1] (a closed circle when the ends coincide). Shared by the library
+// load (VerifySpatialEdgesInSignatureFrame: every model Edge lies on one portion) and the
+// mirror-formed contract (MergeMirrorIdentification: every world portion of an unmerged
+// configuration lies on one portion), so both sides read one geometry.
+double DistanceToSerializedPortion(const nlohmann::json &portion,
+                                   const std::array<double, 2> &q);
+
+// The manifest form of a feature frame, exactly as Features[].Frame is written: Origin in
+// the manifest's length units (`length_scale` x the identification's units) snapped to the
+// 1e-10 R step of IdentificationResult::ToJson, Axes rounded to 1e-12.
+nlohmann::json FrameToJson(const std::array<double, 3> &origin,
+                           const std::array<std::array<double, 3>, 3> &axes, double radius,
+                           double length_scale);
+
 // Parameter tolerance of the signature contract (decision 85(1)). Every continuous
 // parameter of a signature is an exact geometric reading where the geometry allows one
 // (parallel straight runs, concentric fitted arcs, arm directions) and a chord reading with

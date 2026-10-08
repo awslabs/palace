@@ -182,7 +182,16 @@ struct MirrorMergeSummary
   std::vector<int> mirror_formed_ids;  // feature ids in the merged result
   // Mirror-formed features of a topology without a mirror placement (stacks, clusters,
   // curved pairs): not merged, recorded {Feature, Type, Key, RealLength, ImageLength,
-  // Planes, Status "Unmerged"} for the discovery.
+  // Planes, Status "Unmerged"} for the discovery. A SpatialEdgeCluster / CurvedEdge
+  // configuration is ALSO emitted as a merged feature of its own (decision 557 (1) / 562,
+  // impl-B5 CONTRACT.md: the mirror-formed cluster REQUIREMENT CONTRACT): every portion,
+  // real and image, its real length, its canonical frame, Mirror {Status "Unmerged",
+  // ExtendedFeature, UnmergedIndex, RealFeatures, Contract {Version 1, Planes, Frame,
+  // RealPortions, RealLengthOverR, ImageLengthOverR, RealFeatures, ExtendedFeature, Rule}}
+  // or ContractRefused (by name; recorded on the Unmerged record too), numbered after every
+  // real and formed feature (`MergedFeature` on the record), never in the segments' portion
+  // tables; the operator's requirement records carry it as a Missing / Exact requirement
+  // with the contract and the placement applies a matched model on its real half.
   nlohmann::json unmerged_features = nlohmann::json::array();
   // The real features an unmerged configuration touches (ascending ids; a portion whose
   // identification DIFFERS between the unextended and the extended run overlapped, or a
@@ -199,6 +208,23 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
                                              const MirrorExtension &extension,
                                              const std::vector<MirrorPlane> &planes,
                                              IdentificationResult &merged);
+
+// Whether a merged feature is an unmerged mirror-formed CONFIGURATION emitted by the merge
+// (Mirror Status "Unmerged" with its ExtendedFeature; decision 557) - as opposed to a REAL
+// feature touched by one (Mirror Status "Unmerged" with UnmergedType, decision 481).
+inline bool IsUnmergedMirrorConfiguration(const IdentifiedFeature &feature)
+{
+  return !feature.mirror.is_null() && feature.mirror.value("Status", "") == "Unmerged" &&
+         feature.mirror.contains("ExtendedFeature");
+}
+
+// The configuration's contract (null when refused or not a configuration).
+inline nlohmann::json MirrorFormedContractOf(const IdentifiedFeature &feature)
+{
+  return IsUnmergedMirrorConfiguration(feature) && feature.mirror.contains("Contract")
+             ? feature.mirror.at("Contract")
+             : nlohmann::json(nullptr);
+}
 
 // The Identification.Diagnostics.MirrorBand record.
 nlohmann::json DescribeMirrorBand(const std::vector<MirrorPlane> &planes,

@@ -1108,6 +1108,13 @@ struct LibrarySpatialEdge
   int conductor = 0;
   int interface_slot = 0;
   MetalBoundaryLaw boundary_condition;
+  // The ENTRY's per-Edge weight of a mirror-formed coupon (impl-B5 CONTRACT.md section 3:
+  // 1.0 a real edge, 0.0 an image edge; `stamp_signature_model`); nullopt when the Edge
+  // carries no Weight (every ordinary coupon).
+  std::optional<double> weight;
+  // The Signature.Portions index the Edge lies on (VerifySpatialEdgesInSignatureFrame, a
+  // Signature-keyed model); -1 for a legacy model without a Signature.
+  int portion = -1;
 };
 
 struct LibraryModel
@@ -1140,6 +1147,12 @@ struct LibraryModel
   // Version-2 identification signature (the feature's canonical Signature object,
   // dimensionless parameters) which the key-based matching pass looks up directly.
   std::optional<nlohmann::json> identification_signature;
+  // The ENTRY's `MirrorFormed` record of a mirror-formed coupon (impl-B5 CONTRACT.md
+  // section 3: {Version, RealPortions, EdgePortions, Planes, RealLengthOverR,
+  // ImageLengthOverR, RealLengthFraction, ...}); null for every ordinary coupon. The
+  // placement of a mirror-formed configuration (decision 557 (4)) verifies it against the
+  // identification's contract and fails closed on a disagreement.
+  nlohmann::json mirror_formed_entry;
   // Legacy-contract aliases (USER decision 283): contract-3 keys this legacy model serves.
   std::vector<LegacyContractAlias> legacy_contract_aliases;
 
@@ -1910,7 +1923,7 @@ bool IsBoundaryLawVerified(const LibraryModel &model)
 }
 
 std::string TopologyIdentifier(LibraryTopology topology);
-void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius);
+void VerifySpatialEdgesInSignatureFrame(LibraryModel &model, double radius);
 
 std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path);
 std::vector<std::string> ModelInterfaceNames(const LibraryModel &model);
@@ -2295,6 +2308,24 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                          "true): no coupon exists for such a key!");
       model.identification_signature = *signature;
     }
+    if (auto mirror_formed = entry.find("MirrorFormed"); mirror_formed != entry.end())
+    {
+      // The ENTRY stamp of a mirror-formed coupon (impl-B5 CONTRACT.md section 3).
+      MFEM_VERIFY(mirror_formed->is_object() && mirror_formed->value("Version", 0) == 1 &&
+                      mirror_formed->contains("RealPortions") &&
+                      mirror_formed->at("RealPortions").is_array(),
+                  "Fabrication-process response model "
+                      << model.name
+                      << "\" MirrorFormed must be the ENTRY record of impl-B5 CONTRACT.md "
+                         "section 3 (Version 1 with RealPortions)!");
+      MFEM_VERIFY(model.identification_signature &&
+                      model.topology == LibraryTopology::SPATIAL_EDGE_CLUSTER,
+                  "Fabrication-process response model "
+                      << model.name
+                      << "\" carries a MirrorFormed ENTRY record but is not a "
+                         "Signature-keyed SpatialEdgeCluster!");
+      model.mirror_formed_entry = *mirror_formed;
+    }
     if (auto aliases = entry.find("LegacyContractAliases"); aliases != entry.end())
     {
       MFEM_VERIFY(aliases->is_array(), "Fabrication-process response model \""
@@ -2452,6 +2483,15 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
           spatial_edge.boundary_condition = ParseLibraryBoundaryCondition(
               edge.value("BoundaryCondition", nlohmann::json("PEC")), units,
               nondimensionalize);
+          if (auto weight = edge.find("Weight"); weight != edge.end())
+          {
+            // The ENTRY's per-Edge weight of a mirror-formed coupon (1.0 real / 0.0 image).
+            MFEM_VERIFY(weight->is_number() &&
+                            (weight->get<double>() == 1.0 || weight->get<double>() == 0.0),
+                        "SpatialEdgeCluster edge Weight must be 1.0 (a real edge) or 0.0 "
+                        "(an image edge of a mirror-formed coupon)!");
+            spatial_edge.weight = weight->get<double>();
+          }
           for (double &value : spatial_edge.point)
           {
             value /= coordinate_scale;
@@ -7209,7 +7249,7 @@ ModelClusterSignature(const LibraryModel &model, double radius,
 // edge's Conductor and whose interface set is the set of the edge's InterfaceSlot — a
 // geometrically mirror-symmetric cluster with asymmetric labels lands on the portions but
 // would attach its coupons to the wrong conductors / interfaces.
-void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius)
+void VerifySpatialEdgesInSignatureFrame(LibraryModel &model, double radius)
 {
   MFEM_VERIFY(model.identification_signature && !model.spatial_edges.empty(),
               "VerifySpatialEdgesInSignatureFrame needs a Signature and Edges!");
@@ -7260,56 +7300,9 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
     }
     return joined + "]";
   };
-  // Distance (in units of R) from a point q to a portion: a straight portion is the
-  // segment P; an arc portion the arc from P[0] through the midpoint to P[1] (a closed
-  // circle when the ends coincide).
-  auto PortionDistance = [&](const nlohmann::json &portion, const std::array<double, 2> &q)
-  {
-    const auto P = portion.at("P").get<std::array<double, 4>>();
-    const std::array<double, 2> a = {P[0], P[1]}, b = {P[2], P[3]};
-    if (!portion.contains("Arc"))
-    {
-      const double dx = b[0] - a[0], dy = b[1] - a[1];
-      const double length2 = dx * dx + dy * dy;
-      double s = length2 > 0.0 ? ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / length2 : 0.0;
-      s = std::clamp(s, 0.0, 1.0);
-      return std::hypot(q[0] - (a[0] + s * dx), q[1] - (a[1] + s * dy));
-    }
-    const auto arc = portion.at("Arc").get<std::array<double, 4>>();
-    const std::array<double, 2> c = {arc[0], arc[1]}, m = {arc[2], arc[3]};
-    const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
-    const double radial = std::abs(std::hypot(q[0] - c[0], q[1] - c[1]) - r);
-    const bool closed = std::hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * std::max(r, 1.0);
-    if (closed)
-    {
-      return radial;
-    }
-    const double two_pi = 2.0 * std::acos(-1.0);
-    auto Angle = [&](const std::array<double, 2> &p)
-    { return std::atan2(p[1] - c[1], p[0] - c[0]); };
-    const double ta = Angle(a);
-    // The arc runs from a to b through m: counterclockwise when m lies on the
-    // counterclockwise sweep from a to b, clockwise otherwise.
-    const double ccw = std::fmod(Angle(b) - ta + two_pi, two_pi);
-    const bool counterclockwise =
-        std::fmod(Angle(m) - ta + two_pi, two_pi) <= ccw + 1.0e-12;
-    const double sweep = counterclockwise ? ccw : ccw - two_pi;
-    double tq = std::fmod(Angle(q) - ta + two_pi, two_pi);
-    if (!counterclockwise)
-    {
-      tq = tq > 0.0 ? tq - two_pi : tq;
-    }
-    const bool within = counterclockwise ? tq <= sweep + 1.0e-12 : tq >= sweep - 1.0e-12;
-    if (within)
-    {
-      return radial;
-    }
-    return std::min(std::hypot(q[0] - a[0], q[1] - a[1]),
-                    std::hypot(q[0] - b[0], q[1] - b[1]));
-  };
   for (std::size_t e = 0; e < model.spatial_edges.size(); e++)
   {
-    const auto &edge = model.spatial_edges[e];
+    auto &edge = model.spatial_edges[e];
     MFEM_VERIFY(std::abs(edge.process_normal[2] - 1.0) <= 1.0e-9 &&
                     std::abs(edge.process_normal[0]) <= 1.0e-9 &&
                     std::abs(edge.process_normal[1]) <= 1.0e-9,
@@ -7346,7 +7339,7 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
       for (const auto &endpoint : endpoints)
       {
         const std::array<double, 2> q = {endpoint[0] / radius, endpoint[1] / radius};
-        distance = std::max(distance, PortionDistance(portion, q));
+        distance = std::max(distance, DistanceToSerializedPortion(portion, q));
       }
       if (distance < nearest)
       {
@@ -7380,6 +7373,67 @@ void VerifySpatialEdgesInSignatureFrame(const LibraryModel &model, double radius
                     << JoinSet(PortionInterfaceSet(portion))
                     << "): a version-2 model's Edges carry their portion's relabelled "
                        "Conductor and the InterfaceSlot mapped to its interface set!");
+    edge.portion = static_cast<int>(nearest_portion);
+  }
+  // The ENTRY stamp of a mirror-formed coupon (impl-B5 CONTRACT.md section 3): every Edge
+  // carries a Weight, 1.0 exactly on the RealPortions' edges and 0.0 on every other; the
+  // record's EdgePortions (when present) are the edges' portions read above. A stamped
+  // library that disagrees with its own Edges fails closed here, before any placement.
+  if (!model.mirror_formed_entry.is_null())
+  {
+    std::set<int> real_portions;
+    for (const auto &index : model.mirror_formed_entry.at("RealPortions"))
+    {
+      real_portions.insert(index.get<int>());
+    }
+    MFEM_VERIFY(
+        !real_portions.empty() && real_portions.size() < signature["Portions"].size() &&
+            *real_portions.begin() >= 0 &&
+            *real_portions.rbegin() < static_cast<int>(signature["Portions"].size()),
+        "SpatialEdgeCluster model \""
+            << model.name
+            << "\" MirrorFormed.RealPortions must be a non-empty proper subset of "
+               "the Signature's portion indices!");
+    for (std::size_t e = 0; e < model.spatial_edges.size(); e++)
+    {
+      const auto &edge = model.spatial_edges[e];
+      const double expected = real_portions.count(edge.portion) ? 1.0 : 0.0;
+      MFEM_VERIFY(edge.weight && *edge.weight == expected,
+                  "SpatialEdgeCluster model \""
+                      << model.name << "\" carries a MirrorFormed ENTRY record but edge "
+                      << e << " (Signature portion " << edge.portion << ") carries "
+                      << (edge.weight ? std::to_string(*edge.weight) : std::string("no"))
+                      << " Weight where the record's RealPortions imply " << expected
+                      << " (impl-B5 CONTRACT.md section 3: 1.0 real / 0.0 image)!");
+    }
+    if (model.mirror_formed_entry.contains("EdgePortions"))
+    {
+      const auto &edge_portions = model.mirror_formed_entry.at("EdgePortions");
+      MFEM_VERIFY(edge_portions.is_array() &&
+                      edge_portions.size() == model.spatial_edges.size(),
+                  "SpatialEdgeCluster model \""
+                      << model.name
+                      << "\" MirrorFormed.EdgePortions must list one portion per Edge!");
+      for (std::size_t e = 0; e < model.spatial_edges.size(); e++)
+      {
+        MFEM_VERIFY(edge_portions[e].get<int>() == model.spatial_edges[e].portion,
+                    "SpatialEdgeCluster model \""
+                        << model.name << "\" MirrorFormed.EdgePortions[" << e << "] = "
+                        << edge_portions[e].get<int>() << " but the Edge lies on portion "
+                        << model.spatial_edges[e].portion << "!");
+      }
+    }
+  }
+  else
+  {
+    for (std::size_t e = 0; e < model.spatial_edges.size(); e++)
+    {
+      MFEM_VERIFY(!model.spatial_edges[e].weight || *model.spatial_edges[e].weight == 1.0,
+                  "SpatialEdgeCluster model \""
+                      << model.name << "\" edge " << e
+                      << " carries Weight 0 (an image edge) without a MirrorFormed ENTRY "
+                         "record!");
+    }
   }
 }
 
@@ -8212,6 +8266,76 @@ IdentificationResult RunGeometryIdentification(
   // model or off its plane fails closed to Missing.
   for (auto &feature : result.features)
   {
+    if (IsUnmergedMirrorConfiguration(feature))
+    {
+      // An unmerged mirror-formed CONFIGURATION emitted with its requirement contract
+      // (decision 557 (4)): a SpatialEdgeCluster with a contract keeps its key match and is
+      // placed on its real half by a Signature-keyed model (BuildFeaturePatches); a
+      // CurvedEdge (the 2D curvature family's consumer: no mirror placement in this
+      // version), a refused contract, a legacy (claims-only) model or a legacy-contract
+      // alias fail closed to today's raw reading (decision 481: its own cells
+      // DomainBoundary, raw kept), named.
+      std::string reason;
+      if (feature.type != "SpatialEdgeCluster")
+      {
+        reason = "mirror-formed " + feature.type +
+                 " configuration: no mirror placement in this version (the 2D curvature "
+                 "family's consumer, decision 557); the DomainBoundary raw fallback stays";
+      }
+      else if (!feature.mirror.contains("Contract"))
+      {
+        reason = "mirror-formed cluster configuration whose contract was refused (" +
+                 feature.mirror.value("ContractRefused", std::string("unknown")) +
+                 "): no placement (fail closed to the raw reading, decision 557)";
+      }
+      else if (feature.matched_model)
+      {
+        const auto model = std::find_if(library.models.begin(), library.models.end(),
+                                        [&](const LibraryModel &m)
+                                        { return m.name == *feature.matched_model; });
+        MFEM_VERIFY(model != library.models.end(),
+                    "A matched mirror-formed configuration names an unknown model!");
+        if (!feature.legacy_contract.is_null())
+        {
+          reason = "mirror-formed cluster configuration matched through a legacy-contract "
+                   "alias: no real-half placement in the claims-only frame (fail closed "
+                   "to the raw reading, decision 557)";
+        }
+        else if (!model->identification_signature || model->spatial_edges.empty())
+        {
+          reason = "mirror-formed cluster configuration matched by a model without "
+                   "Signature-keyed Edges: the real / image split cannot be mapped onto "
+                   "its Edges (fail closed to the raw reading, decision 557)";
+        }
+      }
+      if (!reason.empty())
+      {
+        feature.matched_model.reset();
+        feature.match_deviation.reset();
+        feature.quantum_near_match = nullptr;
+        feature.legacy_contract = nullptr;
+        feature.match_note = reason;
+        curvature_records.erase(feature.id);
+        corner_records.erase(feature.id);
+        if (curved_matches)
+        {
+          curved_matches->erase(feature.id);
+        }
+        if (corner_matches)
+        {
+          corner_matches->erase(feature.id);
+        }
+      }
+      else if (feature.matched_model)
+      {
+        feature.match_note =
+            "mirror-formed cluster configuration placed on its REAL half by its contract "
+            "(decision 557 (4)): the model's edges on the contract's RealPortions, no "
+            "image "
+            "edge applied to any cell, weight = the real length fraction";
+      }
+      continue;
+    }
     if (feature.mirror.is_null() || feature.mirror.value("Status", "") == "Continued" ||
         feature.mirror.value("Status", "") == "Unmerged")
     {
@@ -8372,6 +8496,12 @@ IdentificationResult RunGeometryIdentification(
     nlohmann::json legacy_contract;     // the alias record (USER decision 283) + Features
     nlohmann::json span_cap_allowance;  // SpatialSupport.SpanCapAllowance (block (b) A4)
     bool mirror_formed = false;         // a key formed with a mirror image (DESIGN 2.2.2)
+    // The mirror-formed cluster REQUIREMENT CONTRACT of an unmerged configuration instance
+    // (decision 557 / impl-B5 CONTRACT.md section 2; the Frame in the manifest's units):
+    // the first configuration's; `contract_refusal` names a disagreement between the
+    // configurations of one key (RealPortions / Planes) or the identification's refusal.
+    nlohmann::json mirror_formed_contract;
+    std::string contract_refusal;
   };
   struct GroupBase
   {
@@ -8455,6 +8585,41 @@ IdentificationResult RunGeometryIdentification(
     instance->second.mirror_formed =
         instance->second.mirror_formed ||
         (!feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued");
+    if (IsUnmergedMirrorConfiguration(feature))
+    {
+      // The configuration's contract (decision 557 (1)), its Frame in the manifest's units
+      // exactly as Features[].Frame; the configurations of one key must agree on the real
+      // / image split and the planes (the Frame is each instance's own: the first is kept).
+      nlohmann::json contract = MirrorFormedContractOf(feature);
+      if (contract.is_null())
+      {
+        instance->second.contract_refusal =
+            "MirrorFormedContractRefused: " +
+            feature.mirror.value("ContractRefused", std::string("unknown"));
+      }
+      else
+      {
+        contract["Frame"] =
+            FrameToJson(feature.origin, feature.axes, R, requirements->CoordinateScale());
+        if (instance->second.mirror_formed_contract.is_null())
+        {
+          instance->second.mirror_formed_contract = std::move(contract);
+        }
+        else if (instance->second.mirror_formed_contract.at("RealPortions") !=
+                     contract.at("RealPortions") ||
+                 instance->second.mirror_formed_contract.at("Planes") !=
+                     contract.at("Planes"))
+        {
+          instance->second.contract_refusal =
+              "MirrorFormedContractRefused: the mirror-formed configurations of this key "
+              "disagree on RealPortions / Planes (" +
+              instance->second.mirror_formed_contract.at("RealPortions").dump() + " / " +
+              instance->second.mirror_formed_contract.at("Planes").dump() + " vs " +
+              contract.at("RealPortions").dump() + " / " + contract.at("Planes").dump() +
+              "): no contract on the record (fail closed, decision 557)";
+        }
+      }
+    }
     if (feature.matched_model)
     {
       instance->second.models.insert(*feature.matched_model);
@@ -8534,11 +8699,38 @@ IdentificationResult RunGeometryIdentification(
       nlohmann::json curvature_family, corner_family, span_cap_allowance;
       nlohmann::json legacy_contract = nlohmann::json::array();
       bool exact = true, mirror_formed = false;
+      nlohmann::json mirror_formed_contract;
+      std::string contract_refusal;
+      int contract_instances = 0;
       for (const std::size_t i : members)
       {
         const Instance &instance = base.instances.at(base.order[i]);
         signatures.push_back(instance.signature);
         mirror_formed = mirror_formed || instance.mirror_formed;
+        if (!instance.contract_refusal.empty() && contract_refusal.empty())
+        {
+          contract_refusal = instance.contract_refusal;
+        }
+        if (!instance.mirror_formed_contract.is_null())
+        {
+          contract_instances++;
+          if (mirror_formed_contract.is_null())
+          {
+            mirror_formed_contract = instance.mirror_formed_contract;
+          }
+          else if (mirror_formed_contract.at("RealPortions") !=
+                       instance.mirror_formed_contract.at("RealPortions") ||
+                   mirror_formed_contract.at("Planes") !=
+                       instance.mirror_formed_contract.at("Planes"))
+          {
+            contract_refusal =
+                "MirrorFormedContractRefused: the near-key members of this group disagree "
+                "on RealPortions / Planes (" +
+                mirror_formed_contract.at("RealPortions").dump() + " vs " +
+                instance.mirror_formed_contract.at("RealPortions").dump() +
+                "): no contract on the record (fail closed, decision 557)";
+          }
+        }
         if (span_cap_allowance.is_null() && !instance.span_cap_allowance.is_null())
         {
           span_cap_allowance = instance.span_cap_allowance;
@@ -8607,8 +8799,28 @@ IdentificationResult RunGeometryIdentification(
       {
         // A key formed with a mirror image across a natural truncation plane (boundary-cut
         // DESIGN 2.2.2): exported so that the discovery lists it, built only by explicit
-        // decision (decision 315 class).
+        // decision (decision 315 class). The flag is formed OR touched (decision 562
+        // MAJOR-1): the CONTRACT below marks a mirror-formed cluster record.
         record["MirrorFormed"] = true;
+      }
+      if (!contract_refusal.empty())
+      {
+        // The configuration's contract was refused by the identification or the key's
+        // configurations disagree: no contract (the consumer then reads a flag-only key),
+        // the reason on the record (never silent).
+        notes.insert(contract_refusal);
+      }
+      else if (!mirror_formed_contract.is_null())
+      {
+        // The mirror-formed cluster REQUIREMENT CONTRACT (decision 557 (1) / 562; impl-B5
+        // CONTRACT.md sections 1-2): emitted for the configuration's OWN key only.
+        record["MirrorFormedContract"] = mirror_formed_contract;
+        if (contract_instances > 1)
+        {
+          notes.insert("MirrorFormedContract: " + std::to_string(contract_instances) +
+                       " mirror-formed configurations of this key agree on RealPortions / "
+                       "Planes; the Frame is the first instance's");
+        }
       }
       if (!span_cap_allowance.is_null())
       {
@@ -10042,6 +10254,13 @@ FeaturePatchSummary BuildFeaturePatches(
     }
     if (!feature.matched_model)
     {
+      if (IsUnmergedMirrorConfiguration(feature))
+      {
+        // A Missing mirror-formed configuration (decision 557): its real perimeter is read
+        // through the real features it touches (decision 481: their own cells
+        // DomainBoundary, raw kept); counted nowhere twice.
+        continue;
+      }
       summary.unmatched_features++;
       summary.unmatched_length += feature_length;
       auto &entry = summary.unmatched_by_type[feature.type];
@@ -10480,11 +10699,74 @@ FeaturePatchSummary BuildFeaturePatches(
         patch.maxwell_conductor_anchors.push_back(
             TransformLocalPoint(patch.origin, axes, reference));
       }
+      // An unmerged mirror-formed configuration placed by its REQUIREMENT CONTRACT
+      // (decision 557 (4); impl-B5 CONTRACT.md section 4): the model's Edges on the
+      // contract's RealPortions are the real edges (weight 1.0), every other Edge an image
+      // edge (weight 0.0) never applied to a cell - the claims below list the real portions
+      // only; the patch weight is the real length fraction (the library counts the real
+      // half: the half-domain solution is the restriction of the mirror-symmetric full
+      // problem); the coupon's image half is evaluated by even extension within the
+      // coupon's own reach (mirror_reach). A model carrying the ENTRY's MirrorFormed record
+      // must agree with the contract (fail closed by name: a mis-stamped library).
+      const nlohmann::json contract = MirrorFormedContractOf(feature);
+      if (!contract.is_null())
+      {
+        const auto &portions = model.identification_signature->at("Portions");
+        MFEM_VERIFY(
+            feature.signature.contains("Portions") &&
+                feature.signature["Portions"].size() == portions.size(),
+            "Mirror-formed configuration "
+                << feature.id << ": model \"" << model.name << "\" serialises "
+                << portions.size() << " portions, the configuration "
+                << feature.signature.value("Portions", nlohmann::json::array()).size()
+                << " (the real / image split cannot be mapped onto the Edges)!");
+        std::vector<int> edge_portions;
+        std::vector<std::optional<double>> edge_weights;
+        for (const auto &edge : model.spatial_edges)
+        {
+          edge_portions.push_back(edge.portion);
+          edge_weights.push_back(edge.weight);
+        }
+        const auto weights =
+            MirrorFormedEdgeWeightsOf(contract, edge_portions, edge_weights,
+                                      model.mirror_formed_entry, model.name, feature.id);
+        patch.weight = weights.real_length_fraction;
+        patch.provenance.mirror_edge_weights = weights.weights;
+        patch.provenance.mirror_formed_topology =
+            feature.mirror.at("UnmergedIndex").get<int>();
+        // The coupon's reach from its origin (mesh units): the farthest SupportPoint (the
+        // matching volume's corners) or, without them, the Signature's Box diagonal, plus
+        // R.
+        double reach = 0.0;
+        if (!model.support_points.empty())
+        {
+          for (const auto &corner : model.support_points)
+          {
+            reach = std::max(reach, Norm(Subtract(corner, model_origin)));
+          }
+        }
+        else if (model.identification_signature->contains("Box"))
+        {
+          const auto box =
+              model.identification_signature->at("Box").get<std::array<double, 4>>();
+          reach = std::hypot(box[2] - box[0], box[3] - box[1]) * R;
+        }
+        MFEM_VERIFY(reach > 0.0, "Mirror-formed configuration "
+                                     << feature.id << ": model \"" << model.name
+                                     << "\" has neither SupportPoints nor a Signature Box "
+                                        "to bound its even-extension reach!");
+        patch.provenance.mirror_reach = reach + R;
+      }
       // The cluster's claimed portions (mesh segment and global ends): the ownership
       // record's continuation class (a translational stretch inside the box that continues
-      // one of them through the claim cut).
+      // one of them through the claim cut). A mirror-formed configuration claims its REAL
+      // portions only (no image claim is ever applied).
       for (const auto &portion : feature.portions)
       {
+        if (!contract.is_null() && IsImage(portion))
+        {
+          continue;
+        }
         const auto fp = Frame(portion);
         patch.provenance.claims.push_back({static_cast<int>(fp.geometry_index),
                                            Interpolate(*fp.segment, fp.a),
@@ -10557,8 +10839,10 @@ FeaturePatchSummary BuildFeaturePatches(
   result.uncovered_portions.clear();
   for (const auto &feature : identification.features)
   {
-    if (feature.matched_model)
+    if (feature.matched_model || IsUnmergedMirrorConfiguration(feature))
     {
+      // A Missing mirror-formed configuration's real perimeter is the touched real
+      // features' (decision 481 / 512 (c)): never listed twice.
       continue;
     }
     for (const auto &portion : feature.portions)
@@ -16560,7 +16844,10 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                                        ? nlohmann::json(patch.provenance.own_cell)
                                        : nlohmann::json(nullptr)},
                        {"Claims", claims},
-                       {"RawClaims", raw_claims}});
+                       {"RawClaims", raw_claims},
+                       {"MirrorFormedTopology", patch.provenance.mirror_formed_topology},
+                       {"MirrorReach", patch.provenance.mirror_reach},
+                       {"MirrorEdgeWeights", patch.provenance.mirror_edge_weights}});
   }
   if (path.has_parent_path())
   {
@@ -16569,7 +16856,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 16},
+  nlohmann::json cache = {{"Version", 17},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -16723,10 +17010,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 16,
+      data.value("Version", 0) == 17,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 16 carries the feature, mesh segment, chain stretch, own-edge "
+          << " (version 17 carries the feature, mesh segment, chain stretch, own-edge "
              "offset and own-cell pre-image (decision 537) of every patch, the claims, "
              "support box, chain and foreign (Chain: false, decision 553) context pieces "
              "of every spatial cluster patch, the raw claims of every vertex coupon "
@@ -16743,7 +17030,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "537), the fillet lane's corner-arm extension records (decisions 511 / 512, "
              "527) and the foreign-context lane's Chain: false context pieces (decision "
              "553) - either version-15 schema (stacks + fillet, decision 552 (3); stacks + "
-             "foreign) lacks one of them, decision 559 (3); delete a stale cache)!");
+             "foreign) lacks one of them, decision 559 (3); version 17 adds the "
+             "mirror-formed contract placement of every spatial patch "
+             "(MirrorFormedTopology, "
+             "MirrorReach, MirrorEdgeWeights; decision 557 (4)); delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -16940,6 +17230,10 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
       patch.provenance.raw_claims.push_back(
           {claim.at("Segment"), claim.at("P0"), claim.at("P1")});
     }
+    patch.provenance.mirror_formed_topology = entry.at("MirrorFormedTopology").get<int>();
+    patch.provenance.mirror_reach = entry.at("MirrorReach").get<double>();
+    patch.provenance.mirror_edge_weights =
+        entry.at("MirrorEdgeWeights").get<std::vector<double>>();
     if (const auto box = entry.find("SupportBox"); box != entry.end() && !box->is_null())
     {
       patch.provenance.support_box = box->get<std::array<double, 4>>();
@@ -16999,9 +17293,13 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
   {
     models.emplace(model.idx, &model);
   }
+  // DomainWeight (decision 559 MINOR-3 / rerun-3 plan O-14): the factor on the patch's
+  // DOMAIN correction only (0 for a cell on an excluded ForeignEdge of a Box + Context
+  // coupon, decision 553 sub-class (i)); information for the tabulation.
   output << "Patch,Feature,Topology,Model,ModelIndex,Weight,ModelWeight,QuadratureWeight,"
             "SideFactor,CouponDepth,Segment,S0,S1,OriginX,OriginY,OriginZ,AxisUX,AxisUY,"
-            "AxisUZ,AxisVX,AxisVY,AxisVZ,AxisWX,AxisWY,AxisWZ,StripBegin,StripEnd\n";
+            "AxisUZ,AxisVX,AxisVY,AxisVZ,AxisWX,AxisWY,AxisWZ,StripBegin,StripEnd,"
+            "DomainWeight\n";
   output << std::setprecision(17);
   for (std::size_t i = 0; i < data.patches.size(); i++)
   {
@@ -17035,7 +17333,7 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
     {
       output << ',' << requirements.ScaleLength(value);
     }
-    output << '\n';
+    output << ',' << patch.domain_weight << '\n';
   }
   MFEM_VERIFY(output.good(), "Failed writing the surface-response patch dry run!");
 }
@@ -17139,6 +17437,26 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         patches.corner_arm_extensions, patches, coordinate_scale);
     diagnostics["MirrorArmTrim"] =
         DescribeMirrorArmTrims(patches.mirror_arm_trims, patches, coordinate_scale);
+    // The mirror-formed contract placement (decision 557 (4)): the dry run's coupons on
+    // the unmerged configurations' real halves (recorded only where one is placed: a
+    // window without one keeps its manifest bytes).
+    if (nlohmann::json placements =
+            DescribeMirrorFormedPlacements(patches, coordinate_scale);
+        placements["Count"].get<int>() > 0)
+    {
+      diagnostics["MirrorFormedPlacement"] = placements;
+      manifest["Summary"]["MirrorFormedPlacement"] = {{"Count", placements["Count"]}};
+      for (const auto &entry : placements["Patches"])
+      {
+        Mpi::Print("Mirror-formed contract placement (decision 557 (4)): patch {:d} "
+                   "(feature {:d}, model {}) on its REAL half, weight {:.6f}, {:d} real / "
+                   "{:d} image edge(s), reach {:.6e}\n",
+                   entry["Patch"].get<std::size_t>(), entry["Feature"].get<int>(),
+                   entry["Model"].get<std::string>(), entry["Weight"].get<double>(),
+                   entry["RealEdges"].get<int>(), entry["ImageEdges"].get<int>(),
+                   entry["Reach"].get<double>());
+      }
+    }
     auto placed_uncovered = patches.uncovered_portions;
     const auto uncovered_clipping =
         ClipUncoveredPortionsBySpatialSupport(placed_uncovered, boxes, 3);
@@ -19418,6 +19736,162 @@ DescribeMirrorArmTrims(const std::vector<ResponseCorrectionData::MirrorArmTrimDa
        "(E[R, s_half] - E[s_half, s]) / 2, exactly zero at 90 degrees"}};
 }
 
+MirrorFormedEdgeWeights MirrorFormedEdgeWeightsOf(
+    const nlohmann::json &contract, const std::vector<int> &edge_portions,
+    const std::vector<std::optional<double>> &edge_weights, const nlohmann::json &entry,
+    const std::string &model_name, int feature_id)
+{
+  MFEM_VERIFY(contract.is_object() && contract.value("Version", 0) == 1 &&
+                  contract.contains("RealPortions") &&
+                  contract.at("RealPortions").is_array(),
+              "Mirror-formed configuration "
+                  << feature_id
+                  << ": the contract is not a version-1 MirrorFormedContract object!");
+  MFEM_VERIFY(edge_portions.size() == edge_weights.size(),
+              "Mirror-formed configuration " << feature_id << ": model \"" << model_name
+                                             << "\" lists " << edge_portions.size()
+                                             << " edge portions and " << edge_weights.size()
+                                             << " edge weights!");
+  std::set<int> real_portions;
+  for (const auto &index : contract.at("RealPortions"))
+  {
+    real_portions.insert(index.get<int>());
+  }
+  MFEM_VERIFY(!real_portions.empty(), "Mirror-formed configuration "
+                                          << feature_id
+                                          << ": the contract's RealPortions are empty!");
+  const double real_over_R = contract.at("RealLengthOverR").get<double>();
+  const double image_over_R = contract.at("ImageLengthOverR").get<double>();
+  MFEM_VERIFY(std::isfinite(real_over_R) && std::isfinite(image_over_R) &&
+                  real_over_R > 0.0 && image_over_R > 0.0,
+              "Mirror-formed configuration "
+                  << feature_id << ": the contract's lengths are not positive!");
+  MirrorFormedEdgeWeights result;
+  result.real_length_fraction = real_over_R / (real_over_R + image_over_R);
+  int real_edges = 0;
+  for (std::size_t e = 0; e < edge_portions.size(); e++)
+  {
+    MFEM_VERIFY(edge_portions[e] >= 0, "Mirror-formed configuration "
+                                           << feature_id << ": model \"" << model_name
+                                           << "\" edge " << e
+                                           << " lies on no Signature portion!");
+    const double weight = real_portions.count(edge_portions[e]) ? 1.0 : 0.0;
+    MFEM_VERIFY(!edge_weights[e] || *edge_weights[e] == weight,
+                "Mirror-formed configuration "
+                    << feature_id << ": model \"" << model_name << "\" ENTRY stamps edge "
+                    << e << " (Signature portion " << edge_portions[e] << ") with Weight "
+                    << *edge_weights[e]
+                    << " but the identification's contract reads the portion as "
+                    << (weight > 0.0 ? "REAL" : "an IMAGE") << " (RealPortions "
+                    << contract.at("RealPortions").dump()
+                    << "): an inconsistent MirrorFormed record (fail closed, decision 557 "
+                       "(4))!");
+    real_edges += weight > 0.0 ? 1 : 0;
+    result.weights.push_back(weight);
+  }
+  MFEM_VERIFY(real_edges > 0 && real_edges < static_cast<int>(edge_portions.size()),
+              "Mirror-formed configuration "
+                  << feature_id << ": model \"" << model_name << "\" has " << real_edges
+                  << " real edge(s) of " << edge_portions.size()
+                  << " under the contract's RealPortions "
+                  << contract.at("RealPortions").dump()
+                  << " (a mirror-formed coupon has both real and image edges)!");
+  if (!entry.is_null())
+  {
+    MFEM_VERIFY(entry.is_object() && entry.value("Version", 0) == 1 &&
+                    entry.contains("RealPortions"),
+                "Mirror-formed configuration "
+                    << feature_id << ": model \"" << model_name
+                    << "\" MirrorFormed is not a version-1 ENTRY record!");
+    MFEM_VERIFY(entry.at("RealPortions") == contract.at("RealPortions"),
+                "Mirror-formed configuration "
+                    << feature_id << ": model \"" << model_name << "\" ENTRY RealPortions "
+                    << entry.at("RealPortions").dump()
+                    << " differ from the identification's contract "
+                    << contract.at("RealPortions").dump()
+                    << " (an inconsistent MirrorFormed record, fail closed)!");
+    if (entry.contains("RealLengthFraction"))
+    {
+      MFEM_VERIFY(
+          std::abs(entry.at("RealLengthFraction").get<double>() -
+                   result.real_length_fraction) <= kSignatureParameterToleranceOverRadius,
+          "Mirror-formed configuration "
+              << feature_id << ": model \"" << model_name << "\" ENTRY RealLengthFraction "
+              << entry.at("RealLengthFraction").get<double>()
+              << " differs from the contract's " << result.real_length_fraction
+              << " (an inconsistent MirrorFormed record, fail closed)!");
+    }
+  }
+  return result;
+}
+
+nlohmann::json DescribeMirrorFormedPlacements(const ResponseCorrectionData &config,
+                                              double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  nlohmann::json entries = nlohmann::json::array();
+  for (std::size_t i = 0; i < config.patches.size(); i++)
+  {
+    const auto &patch = config.patches[i];
+    const auto &provenance = patch.provenance;
+    if (provenance.mirror_formed_topology < 0)
+    {
+      continue;
+    }
+    int real_edges = 0, image_edges = 0;
+    for (const double weight : provenance.mirror_edge_weights)
+    {
+      (weight > 0.0 ? real_edges : image_edges)++;
+    }
+    nlohmann::json claims = nlohmann::json::array();
+    for (const auto &claim : provenance.claims)
+    {
+      claims.push_back({{"Segment", claim.segment},
+                        {"P0",
+                         {claim.p0[0] * coordinate_scale, claim.p0[1] * coordinate_scale,
+                          claim.p0[2] * coordinate_scale}},
+                        {"P1",
+                         {claim.p1[0] * coordinate_scale, claim.p1[1] * coordinate_scale,
+                          claim.p1[2] * coordinate_scale}}});
+    }
+    entries.push_back({{"Patch", i},
+                       {"Feature", provenance.feature},
+                       {"Model", models.at(patch.model)->name},
+                       {"Topology", models.at(patch.model)->topology},
+                       {"UnmergedTopology", provenance.mirror_formed_topology},
+                       {"Weight", patch.weight},
+                       {"RealLengthFraction", patch.weight},
+                       {"EdgeWeights", provenance.mirror_edge_weights},
+                       {"RealEdges", real_edges},
+                       {"ImageEdges", image_edges},
+                       {"RealClaims", std::move(claims)},
+                       {"Reach", provenance.mirror_reach * coordinate_scale}});
+  }
+  return {
+      {"Count", static_cast<int>(entries.size())},
+      {"Patches", std::move(entries)},
+      {"Rule",
+       "decision 557 (4) / impl-B5 CONTRACT.md section 4: an unmerged mirror-formed "
+       "SpatialEdgeCluster configuration whose key has a Signature-keyed model is placed "
+       "ONCE in its canonical frame on its REAL half: the model's Edges on the "
+       "contract's RealPortions are the real edges (EdgeWeights 1.0), every other Edge "
+       "an image edge (0.0) never applied to a cell (RealClaims lists the real portions "
+       "only); the patch Weight is the real length fraction RealLengthOverR / "
+       "(RealLengthOverR + ImageLengthOverR) (the library counts the real half: the "
+       "half-domain solution is the restriction of the mirror-symmetric full problem); "
+       "the coupon's image half is evaluated by even extension within Reach (the "
+       "matching volume's farthest corner + R) instead of the global band; the touched "
+       "real features' cells inside the box are owned by the coupon (continuation "
+       "ownership, weight 0) and leave the DomainBoundary raw term; a model carrying "
+       "the ENTRY's MirrorFormed record must agree with the contract (fail closed by "
+       "name); a Missing key, a refused contract, a CurvedEdge or a legacy model keep "
+       "decision 481's raw reading (UnmergedTopology)"}};
+}
+
 nlohmann::json
 DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
                        const ResponseCorrectionData &config, double coordinate_scale)
@@ -19752,7 +20226,7 @@ MirrorPlanesOf(const std::vector<ResponseCorrectionData::MirrorPlaneData> &plane
 int ReflectPointsIntoDomain(
     mfem::Vector &xyz, int dimension,
     const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
-    double mirror_band, double tolerance)
+    double mirror_band, double tolerance, const std::vector<double> *point_band)
 {
   if (mirror_planes.empty() || mirror_band <= 0.0)
   {
@@ -19760,9 +20234,14 @@ int ReflectPointsIntoDomain(
   }
   const auto planes = MirrorPlanesOf(mirror_planes);
   const int count = xyz.Size() / dimension;
+  MFEM_VERIFY(!point_band || static_cast<int>(point_band->size()) == count,
+              "Mirror-point evaluation: one band per point is required!");
   int reflected = 0;
   for (int i = 0; i < count; i++)
   {
+    const double band =
+        point_band ? std::max(mirror_band, (*point_band)[static_cast<std::size_t>(i)])
+                   : mirror_band;
     Point3D point{};
     for (int d = 0; d < dimension; d++)
     {
@@ -19777,7 +20256,7 @@ int ReflectPointsIntoDomain(
     {
       continue;
     }
-    if (const auto image = ReflectIntoDomain(point, planes, mirror_band, tolerance))
+    if (const auto image = ReflectIntoDomain(point, planes, band, tolerance))
     {
       for (int d = 0; d < dimension; d++)
       {
@@ -19818,6 +20297,9 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   // coupon, never a domain cut, and fails closed below (decision 260).
   std::vector<std::size_t> origin_references;
   std::vector<std::array<double, 3>> points;
+  // Per point, the band of its reflection: the global band, widened to the coupon's own
+  // reach for a mirror-formed configuration's coupon (decision 557 (4)).
+  std::vector<double> point_band;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
     const auto &patch = patches[patch_idx];
@@ -19826,6 +20308,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
     {
       continue;
     }
+    const double patch_band = std::max(mirror_band, patch.provenance.mirror_reach);
     origin_references.push_back(patch.conductor_references.empty()
                                     ? no_reference
                                     : points.size() + local_points->size());
@@ -19866,6 +20349,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       }
     }
     candidates.push_back(patch_idx);
+    point_band.resize(points.size(), patch_band);
     point_offsets.push_back(points.size());
   }
   result.tested_patches = static_cast<long long int>(candidates.size());
@@ -19924,7 +20408,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   std::vector<unsigned char> unreflected_reason(points.size(), 0);
   const auto planes = MirrorPlanesOf(mirror_planes);
   const double tolerance = kSignatureParameterToleranceOverRadius * matching_radius;
-  auto ReasonOf = [&](const std::array<double, 3> &point)
+  auto ReasonOf = [&](const std::array<double, 3> &point, double band)
   {
     unsigned char reason = 1;
     for (const auto &plane : planes)
@@ -19938,9 +20422,32 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       {
         return static_cast<unsigned char>(2);
       }
-      reason = -inside > mirror_band ? 3 : 4;
+      reason = -inside > band ? 3 : 4;
     }
     return reason;
+  };
+  // The on-plane tolerance of a mirror-formed coupon's points (below): 1e-8 of the mesh
+  // scale, far above the element inversion's reference tolerance and far below any cell.
+  const double on_plane_tolerance = 1.0e-8 * std::max(1.0, locator_scale);
+  auto OnPlaneInside = [&](const std::array<double, 3> &point, int &element,
+                           mfem::IntegrationPoint &reference, std::vector<int> &candidates)
+  {
+    std::array<double, 3> nudged = point;
+    bool on_plane = false;
+    for (const auto &plane : planes)
+    {
+      if (!plane.Mirrors() || !plane.NearFaces(point, tolerance) ||
+          std::abs(plane.Inside(point)) > on_plane_tolerance)
+      {
+        continue;
+      }
+      on_plane = true;
+      for (int d = 0; d < 3; d++)
+      {
+        nudged[d] -= on_plane_tolerance * plane.normal[d];
+      }
+    }
+    return on_plane && locator.Find(nudged, box_tolerance, element, reference, candidates);
   };
   if (!mirror_planes.empty() && mirror_band > 0.0)
   {
@@ -19953,15 +20460,26 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       {
         continue;
       }
-      const auto image = ReflectIntoDomain(points[i], planes, mirror_band, tolerance);
+      const auto image = ReflectIntoDomain(points[i], planes, point_band[i], tolerance);
       if (image && !image->planes.empty() &&
           locator.Find(image->point, box_tolerance, element, reference, element_candidates))
       {
         reflected[i] = 1;
       }
+      else if (point_band[i] > mirror_band && image && !image->planes.empty() &&
+               OnPlaneInside(image->point, element, reference, element_candidates))
+      {
+        // A point of a mirror-formed coupon ON one of its planes (the configuration's
+        // canonical origin, the centroid of a symmetric configuration, lies on the plane to
+        // roundoff): beyond it by ~1e-11 and reflected to ~1e-11 inside, where the element
+        // inversion's reference tolerance can still refuse it. Located at the plane
+        // (nudged inward by the on-plane tolerance along the planes' inward normals) it is
+        // a point of the closed domain: applied with its reflection like any other.
+        reflected[i] = 1;
+      }
       else
       {
-        unreflected_reason[i] = ReasonOf(points[i]);
+        unreflected_reason[i] = ReasonOf(points[i], point_band[i]);
       }
     }
     Mpi::GlobalMax(static_cast<int>(reflected.size()), reflected.data(), comm);
@@ -20074,8 +20592,11 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       {
         // Image portions are never own; a real portion the unextended run identifies
         // exactly as the extended run does is not the configuration's own either
-        // (decision 512 (c)): its cells keep their models.
-        if (portion.image || portion.identical)
+        // (decision 512 (c)): its cells keep their models. The configuration's OWN coupon
+        // (placed by its contract, decision 557 (4): its claims ARE these real portions)
+        // is not a cell of the configuration.
+        if (portion.image || portion.identical ||
+            patch.provenance.mirror_formed_topology == portion.topology)
         {
           continue;
         }
@@ -20551,11 +21072,17 @@ DomainBoundaryPortions CollectDomainBoundaryPortions(
     if (!provenance.claims.empty() || provenance.has_support_box)
     {
       // A spatial cluster coupon: its claims, the continuation-owned cell parts attributed
-      // to it and the uncovered portions clipped by its box.
-      for (const auto &claim : provenance.claims)
+      // to it and the uncovered portions clipped by its box. A mirror-formed
+      // configuration's coupon (decision 557 (4)) claims the REAL portions the touched real
+      // features' cells tile (decision 481): those cells, owned by the coupon, carry the
+      // raw footprint; its claims would count it twice.
+      if (provenance.mirror_formed_topology < 0)
       {
-        Append(exclusion.patch, provenance.feature, topology, claim.segment, claim.p0,
-               claim.p1, false);
+        for (const auto &claim : provenance.claims)
+        {
+          Append(exclusion.patch, provenance.feature, topology, claim.segment, claim.p0,
+                 claim.p1, false);
+        }
       }
       for (const auto &cell : ownership.cells)
       {
@@ -21848,6 +22375,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         config->corner_arm_extensions, *config, coordinate_scale);
     ownership_diagnostics["MirrorArmTrim"] =
         DescribeMirrorArmTrims(config->mirror_arm_trims, *config, coordinate_scale);
+    if (nlohmann::json placements =
+            DescribeMirrorFormedPlacements(*config, coordinate_scale);
+        placements["Count"].get<int>() > 0)
+    {
+      ownership_diagnostics["MirrorFormedPlacement"] = placements;
+    }
     uncovered_portions = config->uncovered_portions;
     mirror_planes = config->mirror_planes;
     mirror_band = config->mirror_band_over_radius * config->matching_radius;
@@ -22178,12 +22711,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   if (global_mortar_patch_count > 0)
   {
     mfem::Vector centers(dimension * mortar_patch_indices.size());
+    std::vector<double> center_band(mortar_patch_indices.size(), 0.0);
     for (std::size_t i = 0; i < mortar_patch_indices.size(); i++)
     {
       const std::size_t patch_idx = mortar_patch_indices[i];
       const auto &patch = patches[patch_idx];
       const auto &patch_config = placed_patches[local_patch_indices[patch_idx]];
       const auto &point = basis_points[patch.model].front();
+      center_band[i] = patch_config.provenance.mirror_reach;
       for (int d = 0; d < dimension; d++)
       {
         centers(d * mortar_patch_indices.size() + i) =
@@ -22197,7 +22732,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // A Mirrored patch's first basis point may lie beyond a natural truncation plane: the
     // probe reads the resolution at its reflection (boundary-cut DESIGN 2.2.3).
     ReflectPointsIntoDomain(centers, dimension, mirror_planes, mirror_band,
-                            mirror_tolerance);
+                            mirror_tolerance, &center_band);
     // The owning element's size (the smallest singular value of its Jacobian).
     const std::function<double(int)> element_size = [&](int element)
     { return response_mesh.GetElementSize(element, 1); };
@@ -22340,6 +22875,10 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
   }
   SetupStamp("mortar resolution probe");
+  // Per sample point, the band of its even-extension reflection: the global band, widened
+  // to the coupon's own reach for a mirror-formed configuration's coupon (decision 557
+  // (4)).
+  std::vector<double> point_band(static_cast<std::size_t>(point_count), 0.0);
   int point = 0;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -22347,6 +22886,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     const auto &patch_config = placed_patches[local_patch_indices[patch_idx]];
     const auto &model = models[patch.model];
     const auto &local_points = basis_points[patch.model];
+    if (patch_config.provenance.mirror_reach > 0.0)
+    {
+      std::fill(point_band.begin() + patch.point_offset,
+                point_band.begin() + patch.point_offset + patch.point_count,
+                patch_config.provenance.mirror_reach);
+    }
     auto axis_w = patch_config.axis_w;
     if (model.surface_mortar && dimension == 3 &&
         std::all_of(axis_w.begin(), axis_w.end(),
@@ -22579,7 +23124,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   SetupStamp("trace quadrature and overlap check");
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
-    ConfigurePointCommunication(point_locator, xyz, dimension);
+    ConfigurePointCommunication(point_locator, xyz, dimension, nullptr, &point_band);
   }
   SetupStamp("point communication");
 
@@ -23587,7 +24132,8 @@ void SurfaceResponseOperator::ConfigureMaxwellLines(
 
 void SurfaceResponseOperator::ConfigurePointCommunication(
     DistributedPointLocator &locator, const mfem::Vector &xyz_in, int dimension,
-    const std::vector<std::array<double, 3>> *weighted_tangents)
+    const std::vector<std::array<double, 3>> *weighted_tangents,
+    const std::vector<double> *point_band)
 {
   MFEM_VERIFY(dimension == 2 || dimension == 3,
               "Surface response points require dimension two or three!");
@@ -23620,8 +24166,8 @@ void SurfaceResponseOperator::ConfigurePointCommunication(
     }
     else
     {
-      mirrored_point_count = ReflectPointsIntoDomain(xyz, dimension, mirror_planes,
-                                                     mirror_band, mirror_tolerance);
+      mirrored_point_count = ReflectPointsIntoDomain(
+          xyz, dimension, mirror_planes, mirror_band, mirror_tolerance, point_band);
       if (mirrored_point_count > 0)
       {
         Mpi::Print(fespace.GetComm(),
