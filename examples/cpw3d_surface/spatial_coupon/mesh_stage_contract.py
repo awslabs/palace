@@ -2275,7 +2275,8 @@ def boundary_arc_arc_joints(boundary_rows, radius=None):
             if following is run or following["EdgeIndices"][0] != vertex:
                 continue                      # a straight side (or the box) lies between the two runs
             row = loop_rows[vertex]
-            smooth = row.get("JointSmooth") not in (None, "") and int(row["JointSmooth"]) == 1
+            # JointSmooth read as the mesher does (Int(round(Float64(cell)))): a float spelling is accepted.
+            smooth = row.get("JointSmooth") not in (None, "") and int(round(float(row["JointSmooth"]))) == 1
             rho = max(run["Radius"], following["Radius"])
             slack = ARC_ARC_SAME_CIRCLE_TOLERANCE_OVER_RADIUS * rho
             if radius is not None:
@@ -2338,17 +2339,18 @@ def validate_arc_tubes(tubes, rows, boundary_rows, radius=None):
         run = runs.get(arc.get("ArcId")) if isinstance(arc, dict) else None
         if run is None:
             raise ValueError("Prism tube arc row names an arc the bound boundary does not carry")
-        radius = _census_number(arc, "Radius", "Tube arc")
+        # The arc's own radius (rho); `radius` stays the coupon Radius for the arc-arc tolerance (decision 580 MAJOR-1).
+        arc_radius = _census_number(arc, "Radius", "Tube arc")
         parts = _count(arc.get("Parts"), "Tube arc parts")
         part = _count(arc.get("Part"), "Tube arc part")
         centre = arc.get("Centre")
         if (not isinstance(centre, list) or len(centre) != 2 or
-                any(abs(float(c) - r) > 1e-9 * max(1.0, radius) for c, r in zip(centre, run["Centre"])) or
-                abs(radius - run["Radius"]) > 1e-9 * run["Radius"] or arc.get("Sign") != run["Sign"] or
+                any(abs(float(c) - r) > 1e-9 * max(1.0, arc_radius) for c, r in zip(centre, run["Centre"])) or
+                abs(arc_radius - run["Radius"]) > 1e-9 * run["Radius"] or arc.get("Sign") != run["Sign"] or
                 parts != run["Parts"] or not 1 <= part <= parts or
                 abs(_census_number(arc, "SweepDegrees", "Tube arc") - math.degrees(abs(run["Sweep"])) / parts) > 1e-9 or
-                envelope > ARC_CURVATURE_BOUND * radius * (1.0 + 1e-12) or
-                _census_number(row, "Length", "Tube row") > radius * abs(run["Sweep"]) / parts * (1.0 + 1e-9)):
+                envelope > ARC_CURVATURE_BOUND * arc_radius * (1.0 + 1e-12) or
+                _census_number(row, "Length", "Tube row") > arc_radius * abs(run["Sweep"]) / parts * (1.0 + 1e-9)):
             raise ValueError("Prism tube arc row does not follow its tagged arc (centre, radius, sign, parts, sweep)")
     part_splits = sum(1 for row in arc_rows if _count(row["Arc"].get("Part"), "Tube arc part") <
                       _count(row["Arc"].get("Parts"), "Tube arc parts"))

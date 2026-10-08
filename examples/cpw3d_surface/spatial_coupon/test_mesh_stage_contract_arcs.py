@@ -289,6 +289,43 @@ class ArcArcJointsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not all built as arc tubes"):
             self.validate(unbuilt, boundary)
 
+    def perturbed_arc_14(self, delta):
+        """R1's thin excerpt + boundary with arc 14's radius moved by `delta` (um) in BOTH the boundary tags and the
+        census arc rows (so the arc-row check keeps passing): the chain pair 24 / 14 then disagrees by `delta`."""
+        boundary = copy.deepcopy(read_csv_rows(ARC_ARC / "r1-32b0083dad90-plan-view-boundary.csv"))
+        census = excerpt("r1-32b0083dad90-thin")
+        for row in boundary:
+            if row["ArcId"] == "14":
+                row["ArcR"] = repr(float(row["ArcR"]) + delta)
+        for row in census["PrismTubes"]["Tubes"]:
+            if "Arc" in row and row["Arc"]["ArcId"] == 14:
+                row["Arc"]["Radius"] += delta
+        return census, boundary
+
+    def test_same_circle_tolerance_is_the_mesher_s_with_the_coupon_radius(self):
+        # Decision 580 MAJOR-1: the coupon Radius (1.9 um) reaches the arc-arc tolerance through validate_arc_tubes -
+        # max(64 x 1e-7 R, 2e-7 rho) = max(1.216e-5, 3.94e-5) um on R1's 197-um chain 24 / 14 - not the last arc row's
+        # radius. A 5e-4 um perturbation of arc 14 is REFUSED through the validator (and by the derivation alone);
+        # one inside the tolerance (3e-5 um) is ACCEPTED.
+        census, boundary = self.perturbed_arc_14(5.0e-4)
+        with self.assertRaisesRegex(ValueError, "share ArcChain 4 .* not one circle .* cannot be derived"):
+            boundary_arc_arc_joints(boundary, 1.9)
+        with self.assertRaisesRegex(ValueError, "share ArcChain 4 .* not one circle .* cannot be derived"):
+            self.validate(census, boundary)
+        with self.assertRaisesRegex(ValueError, "not one circle"):
+            validate_arc_tubes(census["PrismTubes"], census["PrismTubes"]["Tubes"], boundary)          # radius None too
+        census, boundary = self.perturbed_arc_14(3.0e-5)
+        self.assertEqual(boundary_arc_arc_joints(boundary, 1.9), self.R1_JOINTS)
+        self.assertEqual(self.validate(census, boundary), 28)
+        # The absolute term 64 x 1e-7 R binds only for rho < 32 R: a perturbation of 2e-5 um on the 197-um circle lies
+        # inside the relative term whatever R; with R = 1.9 the same 2e-5 on a hypothetical 50-um circle would not.
+        self.assertGreater(64.0e-7 * 1.9, 2.0e-7 * 50.0)
+        self.assertLess(64.0e-7 * 1.9, 2.0e-7 * 197.0)
+        # A float-spelled JointSmooth (the mesher reads Int(round(Float64(cell)))) is accepted (MINOR-1).
+        spelled = [dict(row, JointSmooth="1.0" if row["JointSmooth"] == "1" else row["JointSmooth"])
+                   for row in read_csv_rows(ARC_ARC / "r1-32b0083dad90-plan-view-boundary.csv")]
+        self.assertEqual(boundary_arc_arc_joints(spelled), self.R1_JOINTS)
+
     def test_pre_b3_identity_unchanged_without_arc_arc_joints(self):
         # No consecutive runs (the one-arc fixtures): the term is 0 and the pre-B3 identity stands bitwise; two
         # consecutive runs whose joint vertex is NOT smooth-tagged, or of distinct circles, add nothing.
