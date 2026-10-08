@@ -2167,6 +2167,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         mfem::Mesh serial = MakeSerialMirrorPadMesh(s, false, wedge_pads, 8, {});
         Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
         WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+        Mpi::Barrier(Mpi::World());
+        // The manifest is written on the root; every rank returns (a non-root rank reading
+        // a file the root writes would desynchronise the ranks).
+        if (!Mpi::Root(Mpi::World()))
+        {
+          return json();
+        }
         std::ifstream manifest_input(manifest_path);
         return json::parse(manifest_input);
       };
