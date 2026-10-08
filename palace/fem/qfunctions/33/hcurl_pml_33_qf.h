@@ -4,120 +4,96 @@
 #ifndef PALACE_LIBCEED_HCURL_PML_33_QF_H
 #define PALACE_LIBCEED_HCURL_PML_33_QF_H
 
-#include "../coeff/coeff_qf.h"
 #include "../coeff/pml_qf.h"
 #include "utils_33_qf.h"
 
-// PML QFunctions for 3D Cartesian UPML. The basic entry points are:
+// QFunctions for the Cartesian PML terms in 3D, with the material tensors evaluated at each
+// quadrature point from the physical coordinate (see coeff/pml_qf.h for the context layout
+// and the tensor definitions). Each QFunction computes one part (real, imaginary, or
+// magnitude) of a complex prefactor times the PML tensor:
 //
-//   muinv_{re,im} : active input is the curl of u, which lives in H(div). The transform
-//                   from reference to physical for H(div) is J / |J| (contravariant), so
-//                   the QFunction computes v = J^T · coeff · J · u (up to |J| weights).
-//                   Mirrors f_apply_hdiv_33.
+//   curl          : c μ̃⁻¹ (curl u, curl v), the curl lives in H(div) and is pulled back
+//                   with J / |J| (mirrors f_apply_hdiv_33).
+//   mass          : c ε̃ (u, v) for u in H(curl), pulled back with adj(J)ᵀ / |J| (mirrors
+//                   f_apply_hcurl_33). With the gradient evaluation mode this is also the
+//                   H1 diffusion form c ε̃ (∇u, ∇v), since gradients pull back the same way.
+//   curlmass      : the sum of the two above, with separate prefactors.
+//   floquet_mass  : c [k ×]ᵀ μ̃⁻¹ [k ×] (u, v) (or the corresponding H1 diffusion form).
+//   floquet_cross : c ([k ×]ᵀ μ̃⁻¹ curl u, v) - c (μ̃⁻¹ [k ×] u, curl v).
 //
-//   eps_{re,im}   : active input is u in H(curl), pulled back by adj(J)^T / |J|
-//                   (covariant). Mirrors f_apply_hcurl_33.
+// The build variants assemble the quadrature data for the generic f_apply_3 / f_apply_33
+// QFunctions so that the PML tensors are only evaluated once per quadrature point.
 //
-// Floquet variants add the missing quasi-periodic terms inside PML regions:
-//
-//   floquet_mass_{re,im}  : Kᵀ μ̃⁻¹ K, active input/output is u in H(curl).
-//   floquet_cross_{re,im} : (Kᵀ μ̃⁻¹ curl u, v) − (μ̃⁻¹ K u, curl v),
-//                           active input/output uses both interp and curl.
-//
-// In all variants, `coeff` is a diagonal per-QP 3×3 matrix; scale is applied per region.
-// The Floquet variants prepend the 3×3 cross-product matrix K to the normal PML context.
-//
-// geom_data layout: {attr, w|J|, adj(J)^T/|J|, x}, size (2 + 3*3 + 3) = 14 components.
+// geom_data layout: {attr, w|J|, adj(J)ᵀ / |J|, x}, (2 + 9 + 3) components.
 
-enum
+CEED_QFUNCTION_HELPER void PMLGeomUnpack33(const CeedScalar *geom, CeedInt Q, CeedInt i,
+                                           CeedScalar adjJt[9], CeedScalar x[3])
 {
-  PML_TENSOR_MUINV = 0,
-  PML_TENSOR_EPS = 1
-};
-
-enum
-{
-  PML_PART_RE = 0,
-  PML_PART_IM = 1
-};
-
-// Build the diagonal PML coefficient matrix for attr `a` at physical point `x`. Writes
-// 9 entries in column-major order; non-PML attrs or an out-of-range pidx leave coeff at
-// zero. TENSOR selects μ̃⁻¹ vs ε̃; PART selects the real or imaginary part.
-template <int TENSOR, int PART>
-CEED_QFUNCTION_HELPER void BuildPMLDiag33(const CeedIntScalar *pml_ctx, CeedInt num_attr,
-                                          CeedInt a, const CeedScalar x[3],
-                                          CeedScalar scale, CeedScalar coeff[9])
-{
-  coeff[0] = coeff[1] = coeff[2] = coeff[3] = coeff[4] = coeff[5] = coeff[6] = coeff[7] =
-      coeff[8] = 0.0;
-  const CeedInt pidx = (a >= 1 && a <= num_attr) ? PMLAttrToProfile(pml_ctx, a) : -1;
-  if (pidx < 0)
-  {
-    return;
-  }
-  CeedScalar mi_re[3], mi_im[3], e_re[3], e_im[3];
-  PMLEvalStretchTensors(PMLRegion(pml_ctx, num_attr, pidx), x, mi_re, mi_im, e_re, e_im);
-  const CeedScalar *diag = (TENSOR == PML_TENSOR_EPS)
-                               ? (PART == PML_PART_RE ? e_re : e_im)
-                               : (PART == PML_PART_RE ? mi_re : mi_im);
-  coeff[0] = scale * diag[0];
-  coeff[4] = scale * diag[1];
-  coeff[8] = scale * diag[2];
+  MatUnpack33(geom + 2 * Q + i, Q, adjJt);
+  x[0] = geom[11 * Q + i];
+  x[1] = geom[12 * Q + i];
+  x[2] = geom[13 * Q + i];
 }
 
-CEED_QFUNCTION_HELPER void UnpackFloquetCross33(const CeedIntScalar *ctx,
-                                                CeedScalar K[9])
-{
-  K[0] = ctx[0].second;
-  K[1] = ctx[1].second;
-  K[2] = ctx[2].second;
-  K[3] = ctx[3].second;
-  K[4] = ctx[4].second;
-  K[5] = ctx[5].second;
-  K[6] = ctx[6].second;
-  K[7] = ctx[7].second;
-  K[8] = ctx[8].second;
-}
-
-CEED_QFUNCTION_HELPER void MultAtx33(const CeedScalar A[9], const CeedScalar x[3],
-                                     CeedScalar y[3])
+// Compute y = Aᵀ x for a 3x3 matrix A stored column-major.
+CEED_QFUNCTION_HELPER void PMLMultAtx33(const CeedScalar A[9], const CeedScalar x[3],
+                                        CeedScalar y[3])
 {
   y[0] = A[0] * x[0] + A[1] * x[1] + A[2] * x[2];
   y[1] = A[3] * x[0] + A[4] * x[1] + A[5] * x[2];
   y[2] = A[6] * x[0] + A[7] * x[1] + A[8] * x[2];
 }
 
-// Apply the PML operator v = T^T · coeff · T · u at each QP, with T = J (curl-curl) or
-// T = adj(J)^T (mass/diffusion). Unified across the four entry points below.
-template <int TENSOR, int PART, bool USE_J>
+// Coefficient [k ×]ᵀ (c μ̃⁻¹) [k ×] for the Floquet mass term.
+CEED_QFUNCTION_HELPER bool PMLFloquetMassCoeff(const CeedIntScalar *ctx, CeedInt attr,
+                                               const CeedScalar x[3], CeedScalar coeff[9])
+{
+  CeedScalar mu_inv[9], K[9];
+  if (!PMLMuInvCoeff(ctx, attr, x, mu_inv))
+  {
+    return false;
+  }
+  const CeedIntScalar *kx = PMLWaveVectorCross(ctx);
+  for (CeedInt k = 0; k < 9; k++)
+  {
+    K[k] = kx[k].second;
+  }
+  MultAtBC33(K, mu_inv, K, coeff);
+  return true;
+}
+
+template <int FORM>
 CEED_QFUNCTION_HELPER int f_apply_hcurl_pml_33_impl(void *__restrict__ ctx, CeedInt Q,
                                                     const CeedScalar *const *in,
                                                     CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q,
-                   *xqp = in[0] + 11 * Q, *u = in[1];
+  // FORM: 0 = curl (J), 1 = mass (adj(J)ᵀ), 2 = Floquet mass (adj(J)ᵀ).
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1];
   CeedScalar *v = out[0];
   const CeedIntScalar *pml_ctx = (const CeedIntScalar *)ctx;
-  const CeedScalar scale = PMLScale(pml_ctx);
-  const CeedInt num_attr = PMLNumProfiles(pml_ctx);
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-    CeedScalar adjJt_loc[9], J_loc[9], coeff[9];
-    MatUnpack33(adjJt + i, Q, adjJt_loc);
-    if (USE_J)
+    CeedScalar adjJt_loc[9], x_loc[3], coeff[9], v_loc[3] = {0.0, 0.0, 0.0};
+    PMLGeomUnpack33(in[0], Q, i, adjJt_loc, x_loc);
+    const bool active = (FORM == 0) ? PMLMuInvCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff)
+                        : (FORM == 1)
+                            ? PMLEpsCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff)
+                            : PMLFloquetMassCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff);
+    if (active)
     {
-      AdjJt33(adjJt_loc, J_loc);
+      const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+      if (FORM == 0)
+      {
+        CeedScalar J_loc[9];
+        AdjJt33(adjJt_loc, J_loc);
+        MultAtBCx33(J_loc, coeff, J_loc, u_loc, v_loc);
+      }
+      else
+      {
+        MultAtBCx33(adjJt_loc, coeff, adjJt_loc, u_loc, v_loc);
+      }
     }
-    const CeedScalar *T_loc = USE_J ? J_loc : adjJt_loc;
-
-    const CeedScalar x_loc[3] = {xqp[i + Q * 0], xqp[i + Q * 1], xqp[i + Q * 2]};
-    BuildPMLDiag33<TENSOR, PART>(pml_ctx, num_attr, (CeedInt)attr[i], x_loc, scale, coeff);
-
-    CeedScalar v_loc[3];
-    MultAtBCx33(T_loc, coeff, T_loc, u_loc, v_loc);
     v[i + Q * 0] = wdetJ[i] * v_loc[0];
     v[i + Q * 1] = wdetJ[i] * v_loc[1];
     v[i + Q * 2] = wdetJ[i] * v_loc[2];
@@ -125,128 +101,112 @@ CEED_QFUNCTION_HELPER int f_apply_hcurl_pml_33_impl(void *__restrict__ ctx, Ceed
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurl_pml_muinv_re_33)(void *__restrict__ ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
+template <int FORM>
+CEED_QFUNCTION_HELPER int f_build_hcurl_pml_33_impl(void *__restrict__ ctx, CeedInt Q,
+                                                    const CeedScalar *const *in,
+                                                    CeedScalar *const *out)
 {
-  return f_apply_hcurl_pml_33_impl<PML_TENSOR_MUINV, PML_PART_RE, true>(ctx, Q, in, out);
-}
-
-CEED_QFUNCTION(f_apply_hcurl_pml_muinv_im_33)(void *__restrict__ ctx, CeedInt Q,
-                                              const CeedScalar *const *in,
-                                              CeedScalar *const *out)
-{
-  return f_apply_hcurl_pml_33_impl<PML_TENSOR_MUINV, PML_PART_IM, true>(ctx, Q, in, out);
-}
-
-CEED_QFUNCTION(f_apply_hcurl_pml_eps_re_33)(void *__restrict__ ctx, CeedInt Q,
-                                            const CeedScalar *const *in,
-                                            CeedScalar *const *out)
-{
-  return f_apply_hcurl_pml_33_impl<PML_TENSOR_EPS, PML_PART_RE, false>(ctx, Q, in, out);
-}
-
-CEED_QFUNCTION(f_apply_hcurl_pml_eps_im_33)(void *__restrict__ ctx, CeedInt Q,
-                                            const CeedScalar *const *in,
-                                            CeedScalar *const *out)
-{
-  return f_apply_hcurl_pml_33_impl<PML_TENSOR_EPS, PML_PART_IM, false>(ctx, Q, in, out);
-}
-
-template <int PART>
-CEED_QFUNCTION_HELPER int f_apply_hcurl_pml_floquet_mass_33_impl(
-    void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
-    CeedScalar *const *out)
-{
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q,
-                   *xqp = in[0] + 11 * Q, *u = in[1];
-  CeedScalar *v = out[0];
-  const CeedIntScalar *floquet_ctx = (const CeedIntScalar *)ctx;
-  const CeedIntScalar *pml_ctx = floquet_ctx + 9;
-  const CeedScalar scale = PMLScale(pml_ctx);
-  const CeedInt num_attr = PMLNumProfiles(pml_ctx);
-  CeedScalar K[9];
-  UnpackFloquetCross33(floquet_ctx, K);
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q;
+  CeedScalar *qd = out[0];
+  const CeedIntScalar *pml_ctx = (const CeedIntScalar *)ctx;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-    CeedScalar adjJt_loc[9], coeff[9], kTcoeffk[9], v_loc[3];
-    MatUnpack33(adjJt + i, Q, adjJt_loc);
-
-    const CeedScalar x_loc[3] = {xqp[i + Q * 0], xqp[i + Q * 1], xqp[i + Q * 2]};
-    BuildPMLDiag33<PML_TENSOR_MUINV, PART>(pml_ctx, num_attr, (CeedInt)attr[i], x_loc,
-                                           scale, coeff);
-
-    MultAtBC33(K, coeff, K, kTcoeffk);
-    MultAtBCx33(adjJt_loc, kTcoeffk, adjJt_loc, u_loc, v_loc);
-    v[i + Q * 0] = wdetJ[i] * v_loc[0];
-    v[i + Q * 1] = wdetJ[i] * v_loc[1];
-    v[i + Q * 2] = wdetJ[i] * v_loc[2];
+    CeedScalar adjJt_loc[9], x_loc[3], coeff[9],
+        qd_loc[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    PMLGeomUnpack33(in[0], Q, i, adjJt_loc, x_loc);
+    const bool active = (FORM == 0) ? PMLMuInvCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff)
+                        : (FORM == 1)
+                            ? PMLEpsCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff)
+                            : PMLFloquetMassCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff);
+    if (active)
+    {
+      if (FORM == 0)
+      {
+        CeedScalar J_loc[9];
+        AdjJt33(adjJt_loc, J_loc);
+        MultAtBA33(J_loc, coeff, qd_loc);
+      }
+      else
+      {
+        MultAtBA33(adjJt_loc, coeff, qd_loc);
+      }
+    }
+    for (CeedInt k = 0; k < 9; k++)
+    {
+      qd[i + Q * k] = wdetJ[i] * qd_loc[k];
+    }
   }
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurl_pml_floquet_mass_re_33)(void *__restrict__ ctx, CeedInt Q,
-                                                     const CeedScalar *const *in,
-                                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurl_pml_curl_33)(void *__restrict__ ctx, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
 {
-  return f_apply_hcurl_pml_floquet_mass_33_impl<PML_PART_RE>(ctx, Q, in, out);
+  return f_apply_hcurl_pml_33_impl<0>(ctx, Q, in, out);
 }
 
-CEED_QFUNCTION(f_apply_hcurl_pml_floquet_mass_im_33)(void *__restrict__ ctx, CeedInt Q,
-                                                     const CeedScalar *const *in,
-                                                     CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurl_pml_curl_33)(void *__restrict__ ctx, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
 {
-  return f_apply_hcurl_pml_floquet_mass_33_impl<PML_PART_IM>(ctx, Q, in, out);
+  return f_build_hcurl_pml_33_impl<0>(ctx, Q, in, out);
 }
 
-template <int PART>
-CEED_QFUNCTION_HELPER int f_apply_hcurl_pml_floquet_cross_33_impl(
-    void *__restrict__ ctx, CeedInt Q, const CeedScalar *const *in,
-    CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurl_pml_mass_33)(void *__restrict__ ctx, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
 {
-  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *adjJt = in[0] + 2 * Q,
-                   *xqp = in[0] + 11 * Q, *u = in[1], *curl_u = in[2];
+  return f_apply_hcurl_pml_33_impl<1>(ctx, Q, in, out);
+}
+
+CEED_QFUNCTION(f_build_hcurl_pml_mass_33)(void *__restrict__ ctx, CeedInt Q,
+                                          const CeedScalar *const *in,
+                                          CeedScalar *const *out)
+{
+  return f_build_hcurl_pml_33_impl<1>(ctx, Q, in, out);
+}
+
+CEED_QFUNCTION(f_apply_hcurl_pml_floquet_mass_33)(void *__restrict__ ctx, CeedInt Q,
+                                                  const CeedScalar *const *in,
+                                                  CeedScalar *const *out)
+{
+  return f_apply_hcurl_pml_33_impl<2>(ctx, Q, in, out);
+}
+
+CEED_QFUNCTION(f_build_hcurl_pml_floquet_mass_33)(void *__restrict__ ctx, CeedInt Q,
+                                                  const CeedScalar *const *in,
+                                                  CeedScalar *const *out)
+{
+  return f_build_hcurl_pml_33_impl<2>(ctx, Q, in, out);
+}
+
+CEED_QFUNCTION(f_apply_hcurl_pml_curlmass_33)(void *__restrict__ ctx, CeedInt Q,
+                                              const CeedScalar *const *in,
+                                              CeedScalar *const *out)
+{
+  // Active inputs/outputs are ordered as (interp, curl).
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1], *curl_u = in[2];
   CeedScalar *v = out[0], *curl_v = out[1];
-  const CeedIntScalar *floquet_ctx = (const CeedIntScalar *)ctx;
-  const CeedIntScalar *pml_ctx = floquet_ctx + 9;
-  const CeedScalar scale = PMLScale(pml_ctx);
-  const CeedInt num_attr = PMLNumProfiles(pml_ctx);
-  CeedScalar K[9];
-  UnpackFloquetCross33(floquet_ctx, K);
+  const CeedIntScalar *pml_ctx = (const CeedIntScalar *)ctx;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
-    const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
-    const CeedScalar curl_u_loc[3] = {curl_u[i + Q * 0], curl_u[i + Q * 1],
-                                      curl_u[i + Q * 2]};
-    CeedScalar adjJt_loc[9], J_loc[9], coeff[9];
-    MatUnpack33(adjJt + i, Q, adjJt_loc);
-    AdjJt33(adjJt_loc, J_loc);
+    CeedScalar adjJt_loc[9], x_loc[3], mu_coeff[9], eps_coeff[9],
+        v_loc[3] = {0.0, 0.0, 0.0}, curl_v_loc[3] = {0.0, 0.0, 0.0};
+    PMLGeomUnpack33(in[0], Q, i, adjJt_loc, x_loc);
+    if (PMLMuInvEpsCoeff(pml_ctx, (CeedInt)attr[i], x_loc, mu_coeff, eps_coeff))
+    {
+      const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+      MultAtBCx33(adjJt_loc, eps_coeff, adjJt_loc, u_loc, v_loc);
 
-    const CeedScalar x_loc[3] = {xqp[i + Q * 0], xqp[i + Q * 1], xqp[i + Q * 2]};
-    BuildPMLDiag33<PML_TENSOR_MUINV, PART>(pml_ctx, num_attr, (CeedInt)attr[i], x_loc,
-                                           scale, coeff);
-
-    // Curl-to-field half: (K^T μ̃⁻¹ curl u, v), matching the transposed
-    // MixedVectorCurlIntegrator used by the non-PML Floquet path.
-    CeedScalar curl_phys[3], mu_curl[3], kt_mu_curl[3], v_loc[3];
-    MultBx33(J_loc, curl_u_loc, curl_phys);
-    MultBx33(coeff, curl_phys, mu_curl);
-    MultAtx33(K, mu_curl, kt_mu_curl);
-    MultAtx33(adjJt_loc, kt_mu_curl, v_loc);
-
-    // Field-to-curl half: −(μ̃⁻¹ K u, curl v), matching MixedVectorWeakCurlIntegrator.
-    CeedScalar u_phys[3], ku_phys[3], mu_ku[3], curl_v_loc[3];
-    MultBx33(adjJt_loc, u_loc, u_phys);
-    MultBx33(K, u_phys, ku_phys);
-    MultBx33(coeff, ku_phys, mu_ku);
-    mu_ku[0] = -mu_ku[0];
-    mu_ku[1] = -mu_ku[1];
-    mu_ku[2] = -mu_ku[2];
-    MultAtx33(J_loc, mu_ku, curl_v_loc);
-
+      CeedScalar J_loc[9];
+      const CeedScalar curl_u_loc[3] = {curl_u[i + Q * 0], curl_u[i + Q * 1],
+                                        curl_u[i + Q * 2]};
+      AdjJt33(adjJt_loc, J_loc);
+      MultAtBCx33(J_loc, mu_coeff, J_loc, curl_u_loc, curl_v_loc);
+    }
     v[i + Q * 0] = wdetJ[i] * v_loc[0];
     v[i + Q * 1] = wdetJ[i] * v_loc[1];
     v[i + Q * 2] = wdetJ[i] * v_loc[2];
@@ -257,18 +217,90 @@ CEED_QFUNCTION_HELPER int f_apply_hcurl_pml_floquet_cross_33_impl(
   return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurl_pml_floquet_cross_re_33)(void *__restrict__ ctx, CeedInt Q,
-                                                      const CeedScalar *const *in,
-                                                      CeedScalar *const *out)
+CEED_QFUNCTION(f_build_hcurl_pml_curlmass_33)(void *__restrict__ ctx, CeedInt Q,
+                                              const CeedScalar *const *in,
+                                              CeedScalar *const *out)
 {
-  return f_apply_hcurl_pml_floquet_cross_33_impl<PML_PART_RE>(ctx, Q, in, out);
+  // Quadrature data for f_apply_33: the mass block (interp) followed by the curl block.
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q;
+  CeedScalar *qd1 = out[0], *qd2 = out[0] + 9 * Q;
+  const CeedIntScalar *pml_ctx = (const CeedIntScalar *)ctx;
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar adjJt_loc[9], x_loc[3], mu_coeff[9], eps_coeff[9],
+        qd1_loc[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+        qd2_loc[9] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    PMLGeomUnpack33(in[0], Q, i, adjJt_loc, x_loc);
+    if (PMLMuInvEpsCoeff(pml_ctx, (CeedInt)attr[i], x_loc, mu_coeff, eps_coeff))
+    {
+      MultAtBA33(adjJt_loc, eps_coeff, qd1_loc);
+
+      CeedScalar J_loc[9];
+      AdjJt33(adjJt_loc, J_loc);
+      MultAtBA33(J_loc, mu_coeff, qd2_loc);
+    }
+    for (CeedInt k = 0; k < 9; k++)
+    {
+      qd1[i + Q * k] = wdetJ[i] * qd1_loc[k];
+      qd2[i + Q * k] = wdetJ[i] * qd2_loc[k];
+    }
+  }
+  return 0;
 }
 
-CEED_QFUNCTION(f_apply_hcurl_pml_floquet_cross_im_33)(void *__restrict__ ctx, CeedInt Q,
-                                                      const CeedScalar *const *in,
-                                                      CeedScalar *const *out)
+CEED_QFUNCTION(f_apply_hcurl_pml_floquet_cross_33)(void *__restrict__ ctx, CeedInt Q,
+                                                   const CeedScalar *const *in,
+                                                   CeedScalar *const *out)
 {
-  return f_apply_hcurl_pml_floquet_cross_33_impl<PML_PART_IM>(ctx, Q, in, out);
+  // Active inputs/outputs are ordered as (interp, curl). The two halves match the
+  // transposed MixedVectorCurlIntegrator and the MixedVectorWeakCurlIntegrator used for the
+  // Floquet terms outside of the PML.
+  const CeedScalar *attr = in[0], *wdetJ = in[0] + Q, *u = in[1], *curl_u = in[2];
+  CeedScalar *v = out[0], *curl_v = out[1];
+  const CeedIntScalar *pml_ctx = (const CeedIntScalar *)ctx;
+
+  CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
+  {
+    CeedScalar adjJt_loc[9], x_loc[3], coeff[9], v_loc[3] = {0.0, 0.0, 0.0},
+                                                 curl_v_loc[3] = {0.0, 0.0, 0.0};
+    PMLGeomUnpack33(in[0], Q, i, adjJt_loc, x_loc);
+    if (PMLMuInvCoeff(pml_ctx, (CeedInt)attr[i], x_loc, coeff))
+    {
+      CeedScalar J_loc[9], K[9], t1[3], t2[3], t3[3];
+      AdjJt33(adjJt_loc, J_loc);
+      const CeedIntScalar *kx = PMLWaveVectorCross(pml_ctx);
+      for (CeedInt k = 0; k < 9; k++)
+      {
+        K[k] = kx[k].second;
+      }
+
+      // Curl-to-field half: ([k ×]ᵀ μ̃⁻¹ curl u, v).
+      const CeedScalar curl_u_loc[3] = {curl_u[i + Q * 0], curl_u[i + Q * 1],
+                                        curl_u[i + Q * 2]};
+      MultAx33(J_loc, curl_u_loc, t1);
+      MultAx33(coeff, t1, t2);
+      PMLMultAtx33(K, t2, t3);
+      PMLMultAtx33(adjJt_loc, t3, v_loc);
+
+      // Field-to-curl half: -(μ̃⁻¹ [k ×] u, curl v).
+      const CeedScalar u_loc[3] = {u[i + Q * 0], u[i + Q * 1], u[i + Q * 2]};
+      MultAx33(adjJt_loc, u_loc, t1);
+      MultAx33(K, t1, t2);
+      MultAx33(coeff, t2, t3);
+      PMLMultAtx33(J_loc, t3, curl_v_loc);
+      curl_v_loc[0] = -curl_v_loc[0];
+      curl_v_loc[1] = -curl_v_loc[1];
+      curl_v_loc[2] = -curl_v_loc[2];
+    }
+    v[i + Q * 0] = wdetJ[i] * v_loc[0];
+    v[i + Q * 1] = wdetJ[i] * v_loc[1];
+    v[i + Q * 2] = wdetJ[i] * v_loc[2];
+    curl_v[i + Q * 0] = wdetJ[i] * curl_v_loc[0];
+    curl_v[i + Q * 1] = wdetJ[i] * curl_v_loc[1];
+    curl_v[i + Q * 2] = wdetJ[i] * curl_v_loc[2];
+  }
+  return 0;
 }
 
 #endif  // PALACE_LIBCEED_HCURL_PML_33_QF_H

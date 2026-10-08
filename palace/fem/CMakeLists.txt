@@ -27,7 +27,6 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/output_functionals.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/point_field_evaluator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurl.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurl_pml.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurlmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusion.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusionmass.cpp
@@ -37,6 +36,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedveccurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedvecgrad.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/integ/pml.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/vecfemass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/basis.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/libceed/ceed.cpp
