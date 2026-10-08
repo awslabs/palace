@@ -1489,6 +1489,49 @@ public:
     };
     std::vector<CornerArmTrimData> corner_arm_trims;
 
+    // Corner-arm extension (decision 511 O2 (i); fillet-basis design 2026-10-07 section
+    // 7.1): the F1 rule completed in the other direction. A matched corner's own-arm
+    // straight cells begin where the arm exits the coupon's matching square, s_arm = R on
+    // the first arm (u) and R / max(|cos theta|, |sin theta|) on the second, whether the
+    // identification's claim ends before s_arm (non-90 sharp: the F1 trim) or after it: a
+    // ROUNDED corner claims R along each arm from the TANGENT point, i.e. up to t_d + R
+    // from the virtual corner (t_d = r / tan(theta / 2)), while the coupon's square ends at
+    // s_arm, so the stretch [s_arm, t_d + R) was claimed (no straight cell, not uncovered)
+    // and outside the coupon: its within-R energy was dropped. The straight cell (or the
+    // unmatched neighbour's uncovered portion) that begins at the claim end is extended
+    // back to s_arm; a stretch with no such host (the arm ends in the next feature's claim
+    // at the claim end: the short-arm case, decision 310's "short edges vs corner
+    // clearances" generality item) is recorded as unhosted, with a warning; a virtual
+    // (mirror-formed, HalfByMirror) corner's real arm exits at s_half = (R + s) / 2, the
+    // mirror arm trim's start (decision 520 MAJOR-1). One record per
+    // corner with at least one extended arm, lengths in patch units; sharp corners (claim
+    // end = R <= s_arm) are never listed, so every identification record and every sharp
+    // placement stays byte-identical.
+    struct CornerArmExtensionData
+    {
+      int feature = -1;
+      std::string topology;
+      double angle_degrees = 0.0;
+      double corner_radius_over_radius = 0.0;
+      // A virtual (mirror-formed) corner placed at weight 1 / 2: its real arm's exit is
+      // s_half = (R + s) / 2 (decision 520 MAJOR-1); the image arm has no claim end.
+      bool half_by_mirror = false;
+      struct Arm
+      {
+        int arm = 0;                        // 0 = the first arm (u), 1 = the second (theta)
+        std::array<double, 3> direction{};  // unit, away from the (virtual) corner
+        double exit_over_radius = 1.0;      // s_arm / R
+        double claim_end_over_radius = 1.0;      // the identification's claim end / R
+        double stretch_length = 0.0;             // claim end - s_arm
+        double extended_cell_length = 0.0;       // cell length added, model-weighted
+        double extended_uncovered_length = 0.0;  // uncovered-portion length added
+        bool hosted = false;  // a cell or an uncovered portion began at the claim end
+      };
+      std::vector<Arm> arms;
+      std::vector<std::pair<std::size_t, double>> cells;  // (patch, extended length)
+    };
+    std::vector<CornerArmExtensionData> corner_arm_extensions;
+
     // Uncovered requirements (decision 394, F2): the portions of every feature the
     // library has no model for (Status Missing), as global sub-segments of the metal
     // perimeter (patch units, after the corner-arm trim) with the feature's id and type.

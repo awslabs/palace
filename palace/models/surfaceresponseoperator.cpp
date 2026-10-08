@@ -3036,14 +3036,16 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                   "Fabrication-process corner response model \""
                       << model.name << "\" fails the trace basis gate: " << reason << "!");
     }
-    if (corner && spatial_response && model.trace_basis && model.trace_basis->AllRings() &&
-        model.corner_radius == 0.0)
+    if (corner && spatial_response && model.trace_basis && model.trace_basis->AllRings())
     {
       // The coupon's files against its trace basis rule at its own angle (fail closed at
       // load; corner-basis refinement 2026-09-30): the outer ring levels, the basis points
-      // and the trace mesh (the rule fixes all three under AllRingsFollowMetal). The
-      // MetalRingsOnly coupons keep their recorded checks: the segment structure at load
-      // below, the files at match time (MatchCornerFamily).
+      // and the trace mesh (the rule fixes all three under AllRingsFollowMetal). Rounded
+      // corners included (decision 511): the box basis does not depend on CornerRadius (the
+      // fillet lies inside the matching box, the arms are straight where they cross it), so
+      // the rule's files at the coupon's angle are the same for every radius and the check
+      // reads the angle only. The MetalRingsOnly coupons keep their recorded checks: the
+      // segment structure at load below, the files at match time (MatchCornerFamily).
       const std::string reason = CheckCornerRuleCouponFiles(
           model, 1.0e-9 * library.matching_radius * coordinate_scale);
       MFEM_VERIFY(reason.empty(),
@@ -8777,6 +8779,41 @@ void ClipLongitudinalCell(ResponsePatchData &patch, double kept_lo, double kept_
   patch.provenance.quadrature_weight *= fraction;
 }
 
+// The REAL arm of a virtual corner: the direction from the vertex along the feature's
+// first real STRAIGHT portion (a segment that is no fitted-arc chord); a rounded virtual
+// corner's arc chords (decision 511) point off the arm, so they are skipped — without any
+// straight real portion the first real portion stands (the pre-fillet reading; decision 533
+// MINOR-3 / 552 (3)). Empty without a real portion.
+std::optional<std::array<double, 3>>
+MirrorArmDirection(const IdentificationResult &identification,
+                   const IdentifiedFeature &feature, std::size_t real_segments)
+{
+  const Point3D &vertex = feature.origin;
+  std::optional<Point3D> arm, chord;
+  for (const auto &portion : feature.portions)
+  {
+    if (portion.segment >= real_segments)
+    {
+      continue;
+    }
+    const auto &segment = identification.segments[portion.segment];
+    const Point3D far = Distance(segment.key[0], vertex) > Distance(segment.key[1], vertex)
+                            ? segment.key[0]
+                            : segment.key[1];
+    const Point3D direction = Normalize(Subtract(far, vertex));
+    if (segment.arc < 0)
+    {
+      arm = direction;
+      break;
+    }
+    if (!chord)
+    {
+      chord = direction;
+    }
+  }
+  return arm ? arm : chord;
+}
+
 namespace
 {
 
@@ -8951,6 +8988,258 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
       ++it;
     }
     records.push_back(std::move(record));
+  }
+  return records;
+}
+
+// The along-arm coordinate of a point on a corner arm's line (the arm's unit direction
+// from the vertex in the plane of normal n; nullopt off the line or off the plane beyond
+// the tolerance).
+std::optional<double> AlongCornerArm(const Point3D &point, const Point3D &vertex,
+                                     const Point3D &arm, const Point3D &n, double tolerance)
+{
+  const Point3D r = Subtract(point, vertex);
+  const double w = Dot(r, n);
+  const double a = Dot(r, arm);
+  const Point3D transverse = Subtract(r, Add(Scale(a, arm), Scale(w, n)));
+  if (std::abs(w) > tolerance || Norm(transverse) > tolerance)
+  {
+    return std::nullopt;
+  }
+  return a;
+}
+
+// A point of an identification segment at arc length s from its key start.
+Point3D IdentificationSegmentPoint(const IdentifiedSegment &segment, double s)
+{
+  const double fraction = segment.length > 0.0 ? s / segment.length : 0.0;
+  return Add(segment.key[0], Scale(fraction, Subtract(segment.key[1], segment.key[0])));
+}
+
+// The identification's claim end along a matched corner's arm (patch units from the
+// vertex): the farthest end of the feature's real portions lying on the arm's line; a sharp
+// corner's is R (its vertex window), a rounded corner's t_d + min(R, arm length) (R along
+// the arm from the TANGENT point, BuildArcSites). nullopt when no portion lies on the line.
+std::optional<double> CornerArmClaimEnd(const IdentificationResult &identification,
+                                        const IdentifiedFeature &feature,
+                                        const Point3D &arm, double tolerance)
+{
+  const std::size_t real_segments = identification.real_segments > 0
+                                        ? identification.real_segments
+                                        : identification.segments.size();
+  std::optional<double> claim_end;
+  for (const auto &portion : feature.portions)
+  {
+    if (portion.s1 <= portion.s0 || portion.segment >= real_segments)
+    {
+      continue;
+    }
+    const auto &segment = identification.segments[portion.segment];
+    const auto a0 = AlongCornerArm(IdentificationSegmentPoint(segment, portion.s0),
+                                   feature.origin, arm, feature.axes[2], tolerance);
+    const auto a1 = AlongCornerArm(IdentificationSegmentPoint(segment, portion.s1),
+                                   feature.origin, arm, feature.axes[2], tolerance);
+    if (!a0 || !a1)
+    {
+      continue;
+    }
+    const double far = std::max(*a0, *a1);
+    if (far > tolerance && (!claim_end || far > *claim_end))
+    {
+      claim_end = far;
+    }
+  }
+  return claim_end;
+}
+
+// Corner-arm extension (decision 511 O2 (i); fillet-basis design 2026-10-07 section 7.1):
+// the F1 rule completed in the other direction. A matched corner's coupon is calibrated on
+// the matching square |u|, |v| <= R about its (virtual) corner, which contains the first
+// arm up to s_0 = R and the second up to s_1 = R / max(|cos theta|, |sin theta|); the
+// identification's claim along an arm ends at R from the vertex for a sharp corner (the F1
+// trim handles s_1 > R) but at t_d + R from the virtual corner for a ROUNDED one (R along
+// the arm from the tangent point, t_d = r / tan(theta / 2); BuildArcSites), so the stretch
+// [s_k, claim end) is claimed (no straight cell, not uncovered) yet outside the coupon's
+// square: its within-R energy was dropped. RULE: on every arm whose claim ends beyond the
+// square exit, the own-edge straight cells beginning at the claim end (every translational
+// cell within kSignatureParameterToleranceOverRadius x R of the arm's line and plane whose
+// near end is the claim end; the co-located patches of a first-order split share one cell)
+// are extended back to s_k, re-expressed as the continuation ownership does (the cell
+// symmetric about its new midpoint, weight and quadrature weight scaled by new / old), and
+// an unmatched neighbour's uncovered portion beginning at the claim end gains the same
+// stretch (its raw within-R energy then kept by F2); a stretch with neither host (the arm
+// ends in the next feature's claim at the claim end: the short-arm case) is recorded as
+// unhosted and warned about, never silently dropped. The extension never passes the claim
+// end, which the identification bounded by the neighbouring claims. A virtual
+// (mirror-formed) corner placed HalfByMirror has its real arm's exit at s_half = (R + s) /
+// 2, where ApplyMirrorArmTrim starts that arm's cells (decision 520 MAJOR-1). A sharp
+// corner's claim end is R <= s_k: never extended, never listed (bitwise). One record per
+// extended corner, lengths in patch units.
+std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtension(
+    const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
+    std::vector<ResponseCorrectionData::UncoveredPortionData> &uncovered, double R)
+{
+  std::vector<ResponseCorrectionData::CornerArmExtensionData> records;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  constexpr double pi = 3.14159265358979323846;
+  std::set<int> patched_corners;
+  for (const auto &patch : patches)
+  {
+    if (patch.provenance.coupon_depth == 0.0 && patch.provenance.claims.empty() &&
+        patch.provenance.stretch < 0 && !patch.provenance.has_support_box &&
+        patch.weight > 0.0)
+    {
+      patched_corners.insert(patch.provenance.feature);
+    }
+  }
+  for (const auto &feature : identification.features)
+  {
+    if ((feature.type != "ConvexCorner" && feature.type != "ConcaveCorner") ||
+        !feature.matched_model || patched_corners.find(feature.id) == patched_corners.end())
+    {
+      continue;
+    }
+    // A virtual (mirror-formed) corner placed HalfByMirror — the placement's own predicate
+    // (a mirror record whose Status is not Continued; an Unmerged-touched corner follows
+    // it, decision 520): its REAL arm's cells begin at s_half = (R + s) / 2
+    // (ApplyMirrorArmTrim, which runs after this and only shortens), so a rounded virtual
+    // corner's stretch is [s_half, t_d + R) on the real arm (decision 520 MAJOR-1); its
+    // image arm carries no real portion, hence no claim end, and is skipped below.
+    const bool half_by_mirror =
+        !feature.mirror.is_null() && feature.mirror.value("Status", "") != "Continued";
+    MFEM_VERIFY(feature.signature.contains("AngleDegrees"),
+                "Corner feature " << feature.id << " carries no AngleDegrees!");
+    const double angle_degrees = feature.signature.at("AngleDegrees").get<double>();
+    const double theta = angle_degrees * pi / 180.0;
+    const double cos_theta = std::cos(theta), sin_theta = std::sin(theta);
+    const double s_half = HalfCornerArmStart(angle_degrees, R);
+    const Point3D &vertex = feature.origin;
+    const Point3D &u = feature.axes[0];
+    const Point3D &v = feature.axes[1];
+    const Point3D &n = feature.axes[2];
+    ResponseCorrectionData::CornerArmExtensionData record;
+    record.feature = feature.id;
+    record.topology = feature.type;
+    record.angle_degrees = angle_degrees;
+    record.corner_radius_over_radius = feature.signature.value("CornerRadiusOverR", 0.0);
+    record.half_by_mirror = half_by_mirror;
+    for (int k = 0; k < 2; k++)
+    {
+      const Point3D arm =
+          k == 0 ? u : Normalize(Add(Scale(cos_theta, u), Scale(sin_theta, v)));
+      const double exit = half_by_mirror ? s_half
+                          : k == 0       ? R
+                                   : R / std::max(std::abs(cos_theta), std::abs(sin_theta));
+      const auto claim_end = CornerArmClaimEnd(identification, feature, arm, tolerance);
+      if (!claim_end || *claim_end - exit <= tolerance)
+      {
+        continue;  // the claim ends at or before the square exit (sharp: F1's domain)
+      }
+      ResponseCorrectionData::CornerArmExtensionData::Arm extension;
+      extension.arm = k;
+      extension.direction = arm;
+      extension.exit_over_radius = exit / R;
+      extension.claim_end_over_radius = *claim_end / R;
+      extension.stretch_length = *claim_end - exit;
+      for (std::size_t p = 0; p < patches.size(); p++)
+      {
+        auto &patch = patches[p];
+        const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+        if (patch.provenance.coupon_depth <= 0.0 || patch.weight <= 0.0 || c1 <= c0)
+        {
+          continue;
+        }
+        // The own-edge cell ends (the cell shifted by the provenance edge offset along
+        // AxisU: a pair's cells sit on the midline, a stack's on the first side).
+        std::array<std::optional<double>, 2> along;
+        for (int e = 0; e < 2; e++)
+        {
+          Point3D end = patch.origin;
+          for (int d = 0; d < 3; d++)
+          {
+            end[d] += patch.provenance.edge_offset * patch.axis_u[d] +
+                      (e == 0 ? c0 : c1) * patch.axis_w[d];
+          }
+          along[e] = AlongCornerArm(end, vertex, arm, n, tolerance);
+        }
+        if (!along[0] || !along[1])
+        {
+          continue;
+        }
+        const double a0 = *along[0], a1 = *along[1];
+        const double a_lo = std::min(a0, a1);
+        if (std::abs(a_lo - *claim_end) > tolerance)
+        {
+          continue;  // not the cell beginning at the claim end
+        }
+        // The new near end at the exit in the cell's own offsets: a(c) is linear in c with
+        // slope AxisW . arm = +-1.
+        const double slope = (a1 - a0) / (c1 - c0);
+        const double c_exit = c0 + (exit - a0) / slope;
+        const double extended = a_lo - exit;
+        ClipLongitudinalCell(patch, slope > 0.0 ? c_exit : c0, slope > 0.0 ? c1 : c_exit);
+        extension.extended_cell_length += extended * patch.provenance.model_weight;
+        extension.hosted = true;
+        record.cells.emplace_back(p, extended);
+      }
+      // An unmatched neighbour's uncovered portion beginning at the claim end: the
+      // stretch joins the uncovered portions under that neighbour's feature and type (F2
+      // then keeps its raw energy), cut per identification segment of the corner's own
+      // claimed portions on the arm (the postprocessor maps every portion onto one
+      // perimeter segment).
+      const ResponseCorrectionData::UncoveredPortionData *host = nullptr;
+      for (const auto &portion : uncovered)
+      {
+        const auto along0 = AlongCornerArm(portion.p0, vertex, arm, n, tolerance);
+        const auto along1 = AlongCornerArm(portion.p1, vertex, arm, n, tolerance);
+        if (along0 && along1 &&
+            std::abs(std::min(*along0, *along1) - *claim_end) <= tolerance)
+        {
+          host = &portion;
+          break;
+        }
+      }
+      if (host)
+      {
+        const int host_feature = host->feature;
+        const std::string host_topology = host->topology;
+        const std::size_t real_segments = identification.real_segments > 0
+                                              ? identification.real_segments
+                                              : identification.segments.size();
+        for (const auto &portion : feature.portions)
+        {
+          if (portion.s1 <= portion.s0 || portion.segment >= real_segments)
+          {
+            continue;
+          }
+          const auto &segment = identification.segments[portion.segment];
+          const Point3D q0 = IdentificationSegmentPoint(segment, portion.s0);
+          const Point3D q1 = IdentificationSegmentPoint(segment, portion.s1);
+          const auto a0 = AlongCornerArm(q0, vertex, arm, n, tolerance);
+          const auto a1 = AlongCornerArm(q1, vertex, arm, n, tolerance);
+          if (!a0 || !a1)
+          {
+            continue;
+          }
+          const double lo = std::max(std::min(*a0, *a1), exit);
+          const double hi = std::min(std::max(*a0, *a1), *claim_end);
+          if (hi - lo <= tolerance)
+          {
+            continue;
+          }
+          uncovered.push_back({host_feature, host_topology,
+                               static_cast<int>(portion.segment),
+                               Add(vertex, Scale(lo, arm)), Add(vertex, Scale(hi, arm))});
+          extension.extended_uncovered_length += hi - lo;
+        }
+        extension.hosted = true;
+      }
+      record.arms.push_back(std::move(extension));
+    }
+    if (!record.arms.empty())
+    {
+      records.push_back(std::move(record));
+    }
   }
   return records;
 }
@@ -9150,22 +9439,7 @@ ApplyMirrorArmTrim(const IdentificationResult &identification,
     const double s_half = HalfCornerArmStart(angle_degrees, R);
     const Point3D &vertex = feature.origin;
     const Point3D &n = feature.axes[2];
-    // The real arm: the direction from the vertex along a real portion of the feature.
-    std::optional<Point3D> arm;
-    for (const auto &portion : feature.portions)
-    {
-      if (portion.segment >= real_segments)
-      {
-        continue;
-      }
-      const auto &segment = identification.segments[portion.segment];
-      const Point3D far =
-          Distance(segment.key[0], vertex) > Distance(segment.key[1], vertex)
-              ? segment.key[0]
-              : segment.key[1];
-      arm = Normalize(Subtract(far, vertex));
-      break;
-    }
+    const auto arm = MirrorArmDirection(identification, feature, real_segments);
     if (!arm)
     {
       continue;
@@ -9242,14 +9516,19 @@ ApplyMirrorArmTrim(const IdentificationResult &identification,
 // The within-R raw footprint of every vertex coupon (corner / junction / endpoint patch) as
 // perimeter sub-segments (F-DB-a, DESIGN 2.1): the feature's claimed portions (R along each
 // arm, as the identification cut them) and, for a corner trimmed by ApplyCornerArmTrim, the
-// second arm's [R, s) that the arm cells lost to the coupon. Kept in the patch provenance
-// so that a DomainBoundary-excluded vertex coupon keeps exactly this region's raw energy.
+// second arm's [R, s) that the arm cells lost to the coupon; for a corner extended by
+// ApplyCornerArmExtension (a rounded corner, decision 511) the claimed portions on a hosted
+// arm are clipped at the square exit s_k, the stretch [s_k, claim end) having gone to the
+// extended cell (or uncovered portion). Kept in the patch provenance so that a
+// DomainBoundary-excluded vertex coupon keeps exactly this region's raw energy.
 void FillVertexRawClaims(
     const IdentificationResult &identification, std::vector<ResponsePatchData> &patches,
     const std::vector<ResponseCorrectionData::CornerArmTrimData> &trims,
+    const std::vector<ResponseCorrectionData::CornerArmExtensionData> &extensions,
     const std::vector<ResponseCorrectionData::MirrorArmTrimData> &mirror_trims, double R)
 {
   constexpr double pi = 3.14159265358979323846;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
   std::map<int, const IdentifiedFeature *> features;
   for (const auto &feature : identification.features)
   {
@@ -9297,9 +9576,57 @@ void FillVertexRawClaims(
       const double theta = trim->angle_degrees * pi / 180.0;
       const Point3D arm = Normalize(Add(Scale(std::cos(theta), feature.axes[0]),
                                         Scale(std::sin(theta), feature.axes[1])));
-      provenance.raw_claims.push_back(
-          {-1, Add(feature.origin, Scale(R, arm)),
-           Add(feature.origin, Scale(trim->exit_distance_over_radius * R, arm))});
+      // The stretch the arm cells lost: from the claim end (R for a sharp corner; a rounded
+      // corner's claim already reaches t_d + R from the virtual corner) to the exit s.
+      double start = R;
+      if (feature.signature.value("CornerRadiusOverR", 0.0) > 0.0)
+      {
+        const auto claim_end = CornerArmClaimEnd(identification, feature, arm, tolerance);
+        start = std::max(R, claim_end.value_or(R));
+      }
+      const double exit = trim->exit_distance_over_radius * R;
+      if (exit - start > tolerance)
+      {
+        provenance.raw_claims.push_back({-1, Add(feature.origin, Scale(start, arm)),
+                                         Add(feature.origin, Scale(exit, arm))});
+      }
+    }
+    // An extended corner (decision 511): on every hosted arm the claimed portions end at
+    // the square exit; their part beyond it is the extended cell's (or portion's).
+    const auto extension =
+        std::find_if(extensions.begin(), extensions.end(),
+                     [&](const auto &record) { return record.feature == feature.id; });
+    if (extension != extensions.end())
+    {
+      for (const auto &arm : extension->arms)
+      {
+        if (!arm.hosted)
+        {
+          continue;
+        }
+        const double exit = arm.exit_over_radius * R;
+        for (auto it = provenance.raw_claims.begin(); it != provenance.raw_claims.end();)
+        {
+          const auto along0 = AlongCornerArm(it->p0, feature.origin, arm.direction,
+                                             feature.axes[2], tolerance);
+          const auto along1 = AlongCornerArm(it->p1, feature.origin, arm.direction,
+                                             feature.axes[2], tolerance);
+          if (!along0 || !along1 || std::max(*along0, *along1) <= exit + tolerance)
+          {
+            ++it;
+            continue;
+          }
+          if (std::min(*along0, *along1) >= exit - tolerance)
+          {
+            it = provenance.raw_claims.erase(it);  // wholly beyond the exit
+            continue;
+          }
+          Point3D &far = *along0 > *along1 ? it->p0 : it->p1;
+          const double a_far = std::max(*along0, *along1);
+          far = Add(far, Scale(exit - a_far, arm.direction));
+          ++it;
+        }
+      }
     }
     // A virtual corner: the real arm's [R, s_half) that its cells begin after.
     const auto mirror_trim =
@@ -9307,10 +9634,23 @@ void FillVertexRawClaims(
                      [&](const auto &record) { return record.feature == feature.id; });
     if (mirror_trim != mirror_trims.end() && mirror_trim->trimmed_length > 0.0)
     {
-      provenance.raw_claims.push_back(
-          {-1, Add(feature.origin, Scale(R, mirror_trim->arm)),
-           Add(feature.origin,
-               Scale(mirror_trim->half_start_over_radius * R, mirror_trim->arm))});
+      // From the claim end (R for a sharp corner; a rounded virtual corner's claim already
+      // reaches t_d + R from the virtual corner) to s_half; nothing when the claim reaches
+      // s_half (the extension's domain).
+      double start = R;
+      if (feature.signature.value("CornerRadiusOverR", 0.0) > 0.0)
+      {
+        const auto claim_end =
+            CornerArmClaimEnd(identification, feature, mirror_trim->arm, tolerance);
+        start = std::max(R, claim_end.value_or(R));
+      }
+      const double s_half = mirror_trim->half_start_over_radius * R;
+      if (s_half - start > tolerance)
+      {
+        provenance.raw_claims.push_back(
+            {-1, Add(feature.origin, Scale(start, mirror_trim->arm)),
+             Add(feature.origin, Scale(s_half, mirror_trim->arm))});
+      }
     }
   }
 }
@@ -10254,13 +10594,19 @@ FeaturePatchSummary BuildFeaturePatches(
   // square.
   result.corner_arm_trims =
       ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R);
+  // Corner-arm extension (decision 511 O2 (i)): the arm cells of a matched corner whose
+  // claim ends beyond the square exit (a rounded corner: t_d + R from the virtual corner)
+  // begin at the exit.
+  result.corner_arm_extensions =
+      ApplyCornerArmExtension(identification, result.patches, result.uncovered_portions, R);
   // Mirror arm trim (boundary-cut DESIGN 2.2.3): the real arm's cells of every virtual
   // corner begin at s_half = (R + s) / 2.
   result.mirror_arm_trims = ApplyMirrorArmTrim(identification, result.patches, R);
   // The within-R raw footprint of every vertex coupon (F-DB-a, DESIGN 2.1): the feature's
-  // claimed portions and a trimmed corner's second-arm stretch [R, s).
+  // claimed portions, a trimmed corner's second-arm stretch [R, s), an extended corner's
+  // claims clipped at the exit.
   FillVertexRawClaims(identification, result.patches, result.corner_arm_trims,
-                      result.mirror_arm_trims, R);
+                      result.corner_arm_extensions, result.mirror_arm_trims, R);
   return summary;
 }
 
@@ -16223,7 +16569,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 15},
+  nlohmann::json cache = {{"Version", 16},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -16247,6 +16593,37 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"Cells", std::move(cells)}});
     }
     cache["CornerArmTrims"] = std::move(trims);
+    // Corner-arm extension records (decision 511 O2 (i)): the cached patches are the
+    // extended ones.
+    nlohmann::json extensions = nlohmann::json::array();
+    for (const auto &extension : config.corner_arm_extensions)
+    {
+      nlohmann::json arms = nlohmann::json::array();
+      for (const auto &arm : extension.arms)
+      {
+        arms.push_back({{"Arm", arm.arm},
+                        {"Direction", arm.direction},
+                        {"ExitDistanceOverR", arm.exit_over_radius},
+                        {"ClaimEndOverR", arm.claim_end_over_radius},
+                        {"StretchLength", arm.stretch_length},
+                        {"ExtendedCellLength", arm.extended_cell_length},
+                        {"ExtendedUncoveredLength", arm.extended_uncovered_length},
+                        {"Hosted", arm.hosted}});
+      }
+      nlohmann::json cells = nlohmann::json::array();
+      for (const auto &[patch, extended] : extension.cells)
+      {
+        cells.push_back({{"Patch", patch}, {"ExtendedLength", extended}});
+      }
+      extensions.push_back({{"Feature", extension.feature},
+                            {"Topology", extension.topology},
+                            {"AngleDegrees", extension.angle_degrees},
+                            {"CornerRadiusOverR", extension.corner_radius_over_radius},
+                            {"HalfByMirror", extension.half_by_mirror},
+                            {"Arms", std::move(arms)},
+                            {"Cells", std::move(cells)}});
+    }
+    cache["CornerArmExtensions"] = std::move(extensions);
     // Uncovered requirements (decision 394 F2).
     nlohmann::json uncovered = nlohmann::json::array();
     for (const auto &portion : config.uncovered_portions)
@@ -16346,21 +16723,27 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 15,
+      data.value("Version", 0) == 16,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 15 carries the feature, mesh segment, chain stretch, own-edge "
+          << " (version 16 carries the feature, mesh segment, chain stretch, own-edge "
              "offset and own-cell pre-image (decision 537) of every patch, the claims, "
              "support box, chain and foreign (Chain: false, decision 553) context pieces "
              "of every spatial cluster patch, the raw claims of every vertex coupon "
              "(F-DB-a, decisions 442 "
              "/ 454), the matching radius for the continuation and vertex ownership, the "
              "quantum near-match records of the matching pass, the corner-arm trim records "
-             "and the uncovered portions of decision 394, the consistent-mortar band "
-             "vertices and rule of every model (decision 404 D1), and the mirror planes, "
-             "mirror band record, mirror arm trims and unmerged-configuration portions "
-             "(each real one flagged Identical, decision 512) of the boundary-cut rule; "
-             "delete a stale cache)!");
+             "and the uncovered portions of decision 394, the corner-arm extension records "
+             "of decision 511 (rounded corners' arm cells from the square exit), the "
+             "consistent-mortar band vertices and rule of every model (decision 404 D1), "
+             "and the mirror planes, mirror band record, mirror arm trims and "
+             "unmerged-configuration portions (each real one flagged Identical, decision "
+             "512) of the boundary-cut rule; version 16 = all three lanes' additions over "
+             "version 13 (the 527 rule): the stacks lane's own-cell pre-image (decision "
+             "537), the fillet lane's corner-arm extension records (decisions 511 / 512, "
+             "527) and the foreign-context lane's Chain: false context pieces (decision "
+             "553) - either version-15 schema (stacks + fillet, decision 552 (3); stacks + "
+             "foreign) lacks one of them, decision 559 (3); delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -16368,6 +16751,7 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   result.legacy_contract.clear();
   result.quantum_near_match.clear();
   result.corner_arm_trims.clear();
+  result.corner_arm_extensions.clear();
   result.uncovered_portions.clear();
   result.matching_radius = data.at("MatchingRadius");
   for (const auto &entry : data.at("CornerArmTrims"))
@@ -16386,6 +16770,34 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
                               cell.at("RemovedLength").get<double>());
     }
     result.corner_arm_trims.push_back(std::move(trim));
+  }
+  for (const auto &entry : data.at("CornerArmExtensions"))
+  {
+    ResponseCorrectionData::CornerArmExtensionData extension;
+    extension.feature = entry.at("Feature");
+    extension.topology = entry.at("Topology");
+    extension.angle_degrees = entry.at("AngleDegrees");
+    extension.corner_radius_over_radius = entry.at("CornerRadiusOverR");
+    extension.half_by_mirror = entry.at("HalfByMirror");
+    for (const auto &arm_entry : entry.at("Arms"))
+    {
+      ResponseCorrectionData::CornerArmExtensionData::Arm arm;
+      arm.arm = arm_entry.at("Arm");
+      arm.direction = arm_entry.at("Direction");
+      arm.exit_over_radius = arm_entry.at("ExitDistanceOverR");
+      arm.claim_end_over_radius = arm_entry.at("ClaimEndOverR");
+      arm.stretch_length = arm_entry.at("StretchLength");
+      arm.extended_cell_length = arm_entry.at("ExtendedCellLength");
+      arm.extended_uncovered_length = arm_entry.at("ExtendedUncoveredLength");
+      arm.hosted = arm_entry.at("Hosted");
+      extension.arms.push_back(std::move(arm));
+    }
+    for (const auto &cell : entry.at("Cells"))
+    {
+      extension.cells.emplace_back(cell.at("Patch").get<std::size_t>(),
+                                   cell.at("ExtendedLength").get<double>());
+    }
+    result.corner_arm_extensions.push_back(std::move(extension));
   }
   for (const auto &entry : data.at("UncoveredPortions"))
   {
@@ -16723,6 +17135,8 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
     // inventory summary carries both.
     diagnostics["CornerArmTrim"] =
         DescribeCornerArmTrims(patches.corner_arm_trims, patches, coordinate_scale);
+    diagnostics["CornerArmExtension"] = DescribeCornerArmExtensions(
+        patches.corner_arm_extensions, patches, coordinate_scale);
     diagnostics["MirrorArmTrim"] =
         DescribeMirrorArmTrims(patches.mirror_arm_trims, patches, coordinate_scale);
     auto placed_uncovered = patches.uncovered_portions;
@@ -16743,6 +17157,11 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
         {"Corners", diagnostics["CornerArmTrim"]["Count"]},
         {"TrimmedLength", diagnostics["CornerArmTrim"]["TrimmedLength"]},
         {"RemovedCellLength", diagnostics["CornerArmTrim"]["RemovedCellLength"]}};
+    manifest["Summary"]["CornerArmExtension"] = {
+        {"Corners", diagnostics["CornerArmExtension"]["Count"]},
+        {"StretchLength", diagnostics["CornerArmExtension"]["StretchLength"]},
+        {"ExtendedCellLength", diagnostics["CornerArmExtension"]["ExtendedCellLength"]},
+        {"UnhostedLength", diagnostics["CornerArmExtension"]["UnhostedLength"]}};
     manifest["Summary"]["Uncovered"] = {
         {"Features", diagnostics["Uncovered"]["Features"]},
         {"Portions", diagnostics["Uncovered"]["Count"]},
@@ -16767,6 +17186,16 @@ void WriteSurfaceResponseRequirements(const IoData &iodata, const Mesh &mesh,
                  diagnostics["CornerArmTrim"]["Count"].get<int>(),
                  diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
                  diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
+    }
+    if (diagnostics["CornerArmExtension"]["Count"].get<int>() > 0)
+    {
+      Mpi::Print("{}",
+                 DescribeCornerArmExtensionSummary(diagnostics["CornerArmExtension"]));
+    }
+    if (diagnostics["CornerArmExtension"]["UnhostedLength"].get<double>() > 0.0)
+    {
+      Mpi::Warning("{}", DescribeCornerArmExtensionUnhostedWarning(
+                             diagnostics["CornerArmExtension"]));
     }
     diagnostics["TranslationalStretchesInsideSpatialSupport"] =
         DescribeTranslationalOwnershipRecords(records, boxes, patches, coordinate_scale,
@@ -19054,6 +19483,140 @@ DescribeCornerArmTrims(const std::vector<ResponseCorrectionData::CornerArmTrimDa
        "arms: s = R) is untouched and not listed. Lengths in mesh units"}};
 }
 
+nlohmann::json DescribeCornerArmExtensions(
+    const std::vector<ResponseCorrectionData::CornerArmExtensionData> &extensions,
+    const ResponseCorrectionData &config, double coordinate_scale)
+{
+  std::unordered_map<int, const ResponseModelData *> models;
+  for (const auto &model : config.models)
+  {
+    models.emplace(model.idx, &model);
+  }
+  nlohmann::json corners = nlohmann::json::array(), cells = nlohmann::json::array();
+  double stretch = 0.0, extended_cells = 0.0, extended_uncovered = 0.0, unhosted = 0.0;
+  int arms_extended = 0, arms_unhosted = 0;
+  for (const auto &extension : extensions)
+  {
+    nlohmann::json arms = nlohmann::json::array();
+    for (const auto &arm : extension.arms)
+    {
+      stretch += arm.stretch_length;
+      extended_cells += arm.extended_cell_length;
+      extended_uncovered += arm.extended_uncovered_length;
+      (arm.hosted ? arms_extended : arms_unhosted)++;
+      if (!arm.hosted)
+      {
+        unhosted += arm.stretch_length;
+      }
+      arms.push_back(
+          {{"Arm", arm.arm},
+           {"Direction", arm.direction},
+           {"ExitDistanceOverR", arm.exit_over_radius},
+           {"ClaimEndOverR", arm.claim_end_over_radius},
+           {"StretchLength", arm.stretch_length * coordinate_scale},
+           {"ExtendedCellLength", arm.extended_cell_length * coordinate_scale},
+           {"ExtendedUncoveredLength", arm.extended_uncovered_length * coordinate_scale},
+           {"Hosted", arm.hosted}});
+    }
+    nlohmann::json patches = nlohmann::json::array();
+    for (const auto &[patch, extended] : extension.cells)
+    {
+      patches.push_back(patch);
+      const auto &data = config.patches[patch];
+      cells.push_back({{"Patch", patch},
+                       {"Corner", extension.feature},
+                       {"Feature", data.provenance.feature},
+                       {"Stretch", data.provenance.stretch},
+                       {"Segment", data.provenance.segment},
+                       {"Model", models.at(data.model)->name},
+                       {"ExtendedLength", extended * coordinate_scale}});
+    }
+    corners.push_back({{"Feature", extension.feature},
+                       {"Topology", extension.topology},
+                       {"AngleDegrees", extension.angle_degrees},
+                       {"CornerRadiusOverR", extension.corner_radius_over_radius},
+                       {"HalfByMirror", extension.half_by_mirror},
+                       {"Arms", std::move(arms)},
+                       {"Patches", std::move(patches)}});
+  }
+  return {
+      {"Count", static_cast<int>(extensions.size())},
+      {"ArmsExtended", arms_extended},
+      {"ArmsUnhosted", arms_unhosted},
+      {"StretchLength", stretch * coordinate_scale},
+      {"ExtendedCellLength", extended_cells * coordinate_scale},
+      {"ExtendedUncoveredLength", extended_uncovered * coordinate_scale},
+      {"UnhostedLength", unhosted * coordinate_scale},
+      {"ToleranceOverR", kSignatureParameterToleranceOverRadius},
+      {"Corners", std::move(corners)},
+      {"Cells", std::move(cells)},
+      {"Rule",
+       "decision 511 O2 (i) (fillet-basis design 2026-10-07 section 7.1; the F1 rule "
+       "completed in the other direction): a matched corner's coupon is calibrated on the "
+       "matching square |u|, |v| <= R about its (virtual) corner, which contains the first "
+       "arm up to s_0 = R and the second up to s_1 = R / max(|cos theta|, |sin theta|); "
+       "the "
+       "identification's claim along an arm ends at R from the vertex for a sharp corner "
+       "but at t_d + R from the virtual corner for a rounded one (R along the arm from the "
+       "tangent point, t_d = r / tan(theta / 2)), so the stretch [s_k, claim end) was "
+       "claimed yet modelled by nothing. On every arm whose claim ends beyond the exit by "
+       "more than ToleranceOverR x R, the own-edge translational cells beginning at the "
+       "claim end (within ToleranceOverR x R of the arm's line and plane) are extended "
+       "back "
+       "to s_k (the cell re-expressed at its new midpoint, weight and quadrature weight "
+       "scaled by new / old; the co-located patches of a first-order split each extended, "
+       "ExtendedCellLength model-weighted, Cells listing the full length per patch), and "
+       "an "
+       "unmatched neighbour's uncovered portion beginning at the claim end gains the same "
+       "stretch (ExtendedUncoveredLength; its raw energy kept by F2). An arm with neither "
+       "host (the arm ends in the next feature's claim: the short-arm case) is Hosted "
+       "false and its stretch counted in UnhostedLength (warned; the decision-310 'short "
+       "edges vs corner clearances' generality item). A virtual (mirror-formed) corner "
+       "placed HalfByMirror (decision 520): its real arm's exit is s_half = (R + s) / 2 "
+       "(the mirror arm trim's start), the image arm has no claim end. A sharp corner "
+       "(claim end R <= s_k) is never listed. Lengths in mesh units"}};
+}
+
+std::string DescribeCornerArmExtensionSummary(const nlohmann::json &diagnostics)
+{
+  return fmt::format(
+      "Corner-arm extension (decision 511): {:d} corner(s), {:d} arm(s) extended to the "
+      "square exit, {:.6e} mesh units of cells added ({:.6e} geometric stretch, {:.6e} on "
+      "uncovered portions)\n",
+      diagnostics["Count"].get<int>(), diagnostics["ArmsExtended"].get<int>(),
+      diagnostics["ExtendedCellLength"].get<double>(),
+      diagnostics["StretchLength"].get<double>(),
+      diagnostics["ExtendedUncoveredLength"].get<double>());
+}
+
+std::string DescribeCornerArmExtensionUnhostedWarning(const nlohmann::json &diagnostics)
+{
+  std::string lines;
+  for (const auto &corner : diagnostics["Corners"])
+  {
+    for (const auto &arm : corner["Arms"])
+    {
+      if (arm["Hosted"].get<bool>())
+      {
+        continue;
+      }
+      lines +=
+          fmt::format("  feature {} ({}) arm {}: {:.6e} mesh units claimed beyond the "
+                      "square exit with no straight cell or uncovered portion to "
+                      "extend\n",
+                      corner["Feature"].get<int>(), corner["Topology"].get<std::string>(),
+                      arm["Arm"].get<int>(), arm["StretchLength"].get<double>());
+    }
+  }
+  return fmt::format(
+      "Corner-arm extension (decision 511): {:d} arm(s) of matched rounded corners end in "
+      "a neighbouring claim before the square exit's stretch finds a host; {:.6e} mesh "
+      "units of claimed perimeter are modelled by nothing (recorded under "
+      "Diagnostics.CornerArmExtension; the short-arm generality item of decision 310)\n{}",
+      diagnostics["ArmsUnhosted"].get<int>(), diagnostics["UnhostedLength"].get<double>(),
+      lines);
+}
+
 nlohmann::json DescribeUncoveredPortions(
     const std::vector<ResponseCorrectionData::UncoveredPortionData> &portions,
     const UncoveredSpatialSupportClipping *clipping, const ResponseCorrectionData &config,
@@ -21281,6 +21844,8 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // (GetUncoveredPortions).
     ownership_diagnostics["CornerArmTrim"] =
         DescribeCornerArmTrims(config->corner_arm_trims, *config, coordinate_scale);
+    ownership_diagnostics["CornerArmExtension"] = DescribeCornerArmExtensions(
+        config->corner_arm_extensions, *config, coordinate_scale);
     ownership_diagnostics["MirrorArmTrim"] =
         DescribeMirrorArmTrims(config->mirror_arm_trims, *config, coordinate_scale);
     uncovered_portions = config->uncovered_portions;
@@ -21299,6 +21864,18 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                  ownership_diagnostics["CornerArmTrim"]["Count"].get<int>(),
                  ownership_diagnostics["CornerArmTrim"]["RemovedCellLength"].get<double>(),
                  ownership_diagnostics["CornerArmTrim"]["TrimmedLength"].get<double>());
+    }
+    if (!config->corner_arm_extensions.empty())
+    {
+      Mpi::Print(
+          fespace.GetComm(), "{}",
+          DescribeCornerArmExtensionSummary(ownership_diagnostics["CornerArmExtension"]));
+      if (ownership_diagnostics["CornerArmExtension"]["UnhostedLength"].get<double>() > 0.0)
+      {
+        Mpi::Warning(fespace.GetComm(), "{}",
+                     DescribeCornerArmExtensionUnhostedWarning(
+                         ownership_diagnostics["CornerArmExtension"]));
+      }
     }
     if (!uncovered_portions.empty())
     {
