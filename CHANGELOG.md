@@ -73,6 +73,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cache version 16 (the stacks own-cell pre-image, the corner-arm extension records and
     the foreign-context lane's `Chain: false` context pieces; a version-15 cache of either
     earlier schema is refused).
+  - The mirror-formed cluster REQUIREMENT CONTRACT of the automatic surface-response
+    correction (`SURFACE-RESPONSE-IDENTIFICATION.md` (e); impl-B5 CONTRACT.md v3): an Unmerged
+    mirror-formed SpatialEdgeCluster / CurvedEdge configuration across a natural truncation
+    plane is emitted as a merged feature with its contract (the canonical Frame with its
+    Chirality, the real / image split of the serialised portions mapped exactly by geometry,
+    the lengths over R; refused by name otherwise) and as a Missing / Exact requirement
+    carrying `MirrorFormedContract`; a Signature-keyed model of its key is placed on the
+    configuration's REAL half only (weight = the real length fraction, the model's edges on
+    the real portions, the image half evaluated by even extension within the coupon's reach,
+    the touched real cells owned by the coupon and no longer DomainBoundary raw); a model
+    carrying the consumer's `MirrorFormed` ENTRY stamp must agree with the contract (fail
+    closed). The patch dry run `surface-response-patches.csv` gains a `DomainWeight` column.
+    Response-geometry cache version 17 (the mirror-formed placement of every spatial patch;
+    a version-16 cache is refused).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

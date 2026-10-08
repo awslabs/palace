@@ -6097,3 +6097,316 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBandChains",
     }
   }
 }
+
+TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
+          "[surfaceresponseidentification][mirror][contract][Serial]")
+{
+  // Decision 557 (1) / (4), 562 (impl-B5 CONTRACT.md sections 1-2): an unmerged
+  // mirror-formed SpatialEdgeCluster / CurvedEdge configuration is emitted as a merged
+  // feature of its own carrying the REQUIREMENT CONTRACT - the Frame, RealPortions mapped
+  // EXACTLY from the Image flags onto the serialised Signature.Portions, the lengths over R
+  // - or ContractRefused by name. On the code before this lane no such feature exists
+  // (the configuration lived only in the Unmerged diagnostics record): the REQUIREs below
+  // fail there.
+  const double R = 2.0;
+  std::vector<MirrorPlane> planes(1);
+  planes[0].attribute = 7;
+  planes[0].normal = {1.0, 0.0, 0.0};
+  planes[0].offset = 0.0;
+  planes[0].faces = 1;
+  planes[0].status = "Natural";
+  planes[0].box_min = {-1.0e9, -1.0e9, -1.0e9};
+  planes[0].box_max = {1.0e9, 1.0e9, 1.0e9};
+  auto Configurations = [](const IdentificationResult &merged)
+  {
+    std::vector<const IdentifiedFeature *> configurations;
+    for (const auto &feature : merged.features)
+    {
+      if (IsUnmergedMirrorConfiguration(feature))
+      {
+        configurations.push_back(&feature);
+      }
+    }
+    return configurations;
+  };
+
+  SECTION("the O1 wedge class: a lead at 22.5 degrees to the wall forms two 2-edge "
+          "clusters with their images (a convex and a concave 45-degree wedge), each "
+          "emitted with its contract")
+  {
+    // The lead's long edges have direction (sin 22.5, cos 22.5): 22.5 degrees to the wall
+    // x = 0, so each edge and its image meet at the wall in a 45-degree wedge - the metal
+    // inside the wedge at the lower edge (convex), the gap inside at the upper edge
+    // (concave). The identification reads each wedge as a SpatialEdgeCluster of EdgeCount
+    // 2 (the O1 f17 class, decision 557): a topology without a mirror placement, Unmerged.
+    const double theta = 22.5 * M_PI / 180.0, w = 10.0, L = 30.0;
+    const Point2 d = {std::sin(theta), std::cos(theta)};
+    LoopSpec lead{{{-L * d[0], -L * d[1]},
+                   {0.0, 0.0},
+                   {0.0, w / std::cos(theta)},
+                   {-L * d[0], -L * d[1] + w / std::cos(theta)}},
+                  0,
+                  1.0};
+    lead.truncation_edges = {1};
+    const auto input = MakeInput({lead}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    INFO(summary.unmerged_features.dump(1));
+    REQUIRE(summary.unmerged_features.size() == 2);
+    const auto configurations = Configurations(merged);
+    REQUIRE(configurations.size() == 2);
+    // Each wedge is a virtual 45-degree corner (formed, mergeable: R of each arm at the
+    // apex) plus the cluster of the two arms beyond the corner window, where they are
+    // within 2 R of each other. Numbered after every real feature; the real features keep
+    // the unextended reading except the R the two virtual corners clip off the long edges.
+    CHECK(summary.mirror_formed_features == 2);
+    int max_real_id = -1, clipped = 0;
+    for (const auto &feature : real.features)
+    {
+      max_real_id = std::max(max_real_id, feature.id);
+      const auto it =
+          std::find_if(merged.features.begin(), merged.features.end(),
+                       [&](const IdentifiedFeature &f) { return f.id == feature.id; });
+      REQUIRE(it != merged.features.end());
+      CHECK(it->type == feature.type);
+      CHECK(it->signature_key == feature.signature_key);
+      if (std::abs(it->length - feature.length) > 1.0e-9)
+      {
+        CHECK(feature.type == "IsolatedEdge");
+        CHECK_THAT(feature.length - it->length, WithinAbs(R, 1.0e-9));
+        clipped++;
+      }
+    }
+    CHECK(clipped == 2);
+    std::set<std::vector<int>> real_portion_sets;
+    std::set<int> gap_signs;
+    for (const auto *configuration : configurations)
+    {
+      const auto &feature = *configuration;
+      CHECK(feature.id > max_real_id);
+      CHECK(feature.type == "SpatialEdgeCluster");
+      CHECK(feature.signature.at("EdgeCount").get<int>() == 2);
+      REQUIRE(feature.mirror.contains("Contract"));
+      const auto &contract = feature.mirror.at("Contract");
+      const nlohmann::json &unmerged =
+          summary.unmerged_features[feature.mirror.at("UnmergedIndex").get<std::size_t>()];
+      // The Unmerged diagnostics record stays and names the merged feature; its Key is
+      // the configuration's and hashes to the feature's Hash (the requirement Hash).
+      CHECK(unmerged.at("Type") == "SpatialEdgeCluster");
+      CHECK(unmerged.at("MergedFeature").get<int>() == feature.id);
+      CHECK(unmerged.at("Key") == feature.signature_key);
+      CHECK(Sha256Hex(unmerged.at("Key").get<std::string>()) == feature.hash);
+      CHECK(SignatureKeyAndHash(feature.signature, feature.type).second == feature.hash);
+      CHECK(!unmerged.contains("ContractRefused"));
+      // The contract (CONTRACT.md section 2).
+      CHECK(contract.at("Version").get<int>() == 1);
+      CHECK(contract.at("Planes") == std::vector<int>{0});
+      CHECK(contract.at("ExtendedFeature").get<int>() == unmerged.at("Feature").get<int>());
+      CHECK(contract.at("RealFeatures") == unmerged.at("RealFeatures"));
+      CHECK(contract.at("Frame").at("Origin").get<std::array<double, 3>>() ==
+            feature.origin);
+      // CONTRACT.md v3 (decision 584 (2)): the frame is the identification's with its
+      // handedness explicit, Axes[2] = Chirality x (Axes[0] x Axes[1]); Frame.Chirality =
+      // Features[].Chirality for a chiral key, the recorded frame's handedness (never 0)
+      // for a mirror-symmetric one.
+      const int handedness = contract.at("Frame").at("Chirality").get<int>();
+      CHECK(handedness == FrameHandedness(feature.axes));
+      CHECK((handedness == 1 || handedness == -1));
+      CHECK((feature.chirality == 0 || handedness == feature.chirality));
+      {
+        const auto &x = feature.axes[0], &y = feature.axes[1];
+        const std::array<double, 3> cross = {x[1] * y[2] - x[2] * y[1],
+                                             x[2] * y[0] - x[0] * y[2],
+                                             x[0] * y[1] - x[1] * y[0]};
+        for (int d = 0; d < 3; d++)
+        {
+          CHECK_THAT(handedness * cross[d], WithinAbs(feature.axes[2][d], 1.0e-9));
+        }
+      }
+      CHECK(contract.at("Frame").at("Axes").get<std::array<std::array<double, 3>, 3>>() ==
+            feature.axes);
+      // Straight portions: the serialised chords equal the mesh-chord sums up to the
+      // serialisation quantum (decision 585: the contract's lengths are the serialised
+      // geometry's; the Unmerged record's RealLength / ImageLength stay the mesh-chord
+      // sums).
+      CHECK_THAT(contract.at("RealLengthOverR").get<double>(),
+                 WithinAbs(unmerged.at("RealLength").get<double>() / R, 1.0e-5));
+      CHECK_THAT(contract.at("ImageLengthOverR").get<double>(),
+                 WithinAbs(unmerged.at("ImageLength").get<double>() / R, 1.0e-5));
+      CHECK_THAT(contract.at("RealLengthOverR").get<double>(),
+                 WithinAbs(contract.at("ImageLengthOverR").get<double>(), 1.0e-5));
+      CHECK_THAT(feature.length,
+                 WithinAbs(unmerged.at("RealLength").get<double>(), 1.0e-12));
+      CHECK_THAT(contract.at("Rule").get<std::string>(), ContainsSubstring("557"));
+      // RealPortions: EXACTLY the serialised portion the real world portions lie on, read
+      // independently here - every real world portion's midpoint lies on
+      // Signature.Portions[RealPortions[0]] and far from the other entry, every image
+      // portion's on the other entry.
+      const auto real_portions = contract.at("RealPortions").get<std::vector<int>>();
+      REQUIRE(real_portions.size() == 1);
+      real_portion_sets.insert(real_portions);
+      const int real_entry = real_portions.front(), image_entry = 1 - real_entry;
+      const auto &entries = feature.signature.at("Portions");
+      REQUIRE(entries.size() == 2);
+      int real_count = 0, image_count = 0;
+      for (const auto &portion : feature.portions)
+      {
+        const auto &segment = merged.segments[portion.segment];
+        std::array<double, 3> midpoint{};
+        for (int k = 0; k < 3; k++)
+        {
+          midpoint[k] =
+              segment.key[0][k] + (segment.key[1][k] - segment.key[0][k]) *
+                                      (0.5 * (portion.s0 + portion.s1) / segment.length);
+          midpoint[k] -= feature.origin[k];
+        }
+        const std::array<double, 2> q = {
+            (midpoint[0] * feature.axes[0][0] + midpoint[1] * feature.axes[0][1] +
+             midpoint[2] * feature.axes[0][2]) /
+                R,
+            (midpoint[0] * feature.axes[1][0] + midpoint[1] * feature.axes[1][1] +
+             midpoint[2] * feature.axes[1][2]) /
+                R};
+        const bool image = portion.segment >= merged.real_segments;
+        (image ? image_count : real_count)++;
+        const int own = image ? image_entry : real_entry,
+                  other = image ? real_entry : image_entry;
+        CHECK(DistanceToSerializedPortion(entries[own], q) <= 2.0e-3);
+        CHECK(DistanceToSerializedPortion(entries[other], q) > 0.1);
+      }
+      CHECK(real_count > 0);
+      CHECK(image_count > 0);
+      // The convexity: the real edge's gap direction along the plane normal (toward the
+      // wedge interior at x > 0) is negative for the convex wedge (metal inside) and
+      // positive for the concave one (gap inside).
+      for (const auto &portion : feature.portions)
+      {
+        if (portion.segment < merged.real_segments)
+        {
+          const double gap_x = extension.input.segments[portion.segment].gap_direction[0];
+          CHECK(std::abs(gap_x) > 0.3);
+          gap_signs.insert(gap_x > 0.0 ? 1 : -1);
+        }
+      }
+      // Never in the segments' portion tables (the real reading's).
+      for (const auto &segment : merged.segments)
+      {
+        for (const auto &entry : segment.portions)
+        {
+          CHECK(static_cast<int>(entry[2]) != feature.id);
+        }
+      }
+      // The manifest entry: the Mirror record with the Contract, its Frame written exactly
+      // as Features[].Frame (manifest units), the image portions listed apart.
+      const auto manifest = merged.ToJson(1525.0);
+      const auto entry =
+          std::find_if(manifest.at("Features").begin(), manifest.at("Features").end(),
+                       [&](const nlohmann::json &f) { return f.at("Id") == feature.id; });
+      REQUIRE(entry != manifest.at("Features").end());
+      CHECK(entry->at("Mirror").at("Status") == "Unmerged");
+      {
+        nlohmann::json frame = entry->at("Mirror").at("Contract").at("Frame");
+        CHECK(frame.at("Chirality").get<int>() == FrameHandedness(feature.axes));
+        frame.erase("Chirality");
+        CHECK(frame == entry->at("Frame"));
+      }
+      CHECK(entry->at("Mirror").at("Contract").at("RealPortions") == real_portions);
+      CHECK(entry->contains("ImagePortions"));
+      CHECK(entry->at("Hash") == feature.hash);
+    }
+    // Both convexities, the real arm on the first serialised portion of one key and on the
+    // second of the other (the chirality / sort of each wedge's own frame).
+    CHECK(real_portion_sets == std::set<std::vector<int>>{{0}, {1}});
+    CHECK(gap_signs == std::set<int>{-1, 1});
+    // The MirrorBand record lists the configurations' Unmerged records with MergedFeature.
+    const auto band = DescribeMirrorBand(planes, extension, summary, merged, 3.0, 1.0);
+    CHECK(band.at("UnmergedFeatures").size() == 2);
+  }
+
+  SECTION("the contract's lengths are the SERIALISED geometry's (decision 585): an arc "
+          "portion's length on its circle, not its chord sum - both convexities")
+  {
+    // The contract's RealLengthOverR / ImageLengthOverR sum SerializedPortionLengthOverR
+    // over the real / image entries (BuildMirrorFormedContract), the consumer's own reading
+    // (`signature_portion_lengths_over_R`): a straight entry its chord, an arc entry the
+    // |sweep| x radius on the serialised circle through the serialised midpoint - on either
+    // side of the chord (a convex arc bulging toward the gap, a concave one toward the
+    // metal: the midpoint decides the side, the length is the same |sweep| x r), 2 pi r for
+    // a closed circle. O4's 03fa3fb9166c real arm (a 90-degree arc of radius 5.26 R in four
+    // 2.01-R chords) read 8.5958 as a mesh-chord sum against 8.8067 on its circle: the two
+    // definitions of CONTRACT.md v2 disagreed by 0.21 R and the consumer refused the
+    // production contract by name (the M7 gate-4 seam test, 15 / 16).
+    const nlohmann::json straight = {{"P", {0.0, 0.0, 3.0, 4.0}}};
+    CHECK_THAT(SerializedPortionLengthOverR(straight), WithinAbs(5.0, 1.0e-12));
+    // A quarter circle of radius 2 from (2, 0) to (0, 2): the convex midpoint (sqrt 2, sqrt
+    // 2) on the short side, the concave one (-sqrt 2, -sqrt 2) on the long (270-degree)
+    // side.
+    const double s2 = std::sqrt(2.0);
+    const nlohmann::json convex = {{"P", {2.0, 0.0, 0.0, 2.0}},
+                                   {"Arc", {0.0, 0.0, s2, s2}}};
+    const nlohmann::json concave = {{"P", {2.0, 0.0, 0.0, 2.0}},
+                                    {"Arc", {0.0, 0.0, -s2, -s2}}};
+    CHECK_THAT(SerializedPortionLengthOverR(convex), WithinAbs(M_PI, 1.0e-12));
+    CHECK_THAT(SerializedPortionLengthOverR(concave), WithinAbs(3.0 * M_PI, 1.0e-12));
+    // Both differ from the chord (2 sqrt 2 = 2.828) by far more than the 1e-3 R tolerance.
+    CHECK(SerializedPortionLengthOverR(convex) - 2.0 * s2 > 0.3);
+    // The reversed traversal (b to a) gives the same length with the sweep's sign flipped.
+    const nlohmann::json reversed = {{"P", {0.0, 2.0, 2.0, 0.0}},
+                                     {"Arc", {0.0, 0.0, s2, s2}}};
+    CHECK_THAT(SerializedPortionLengthOverR(reversed), WithinAbs(M_PI, 1.0e-12));
+    // A closed circle (equal ends): 2 pi r.
+    const nlohmann::json circle = {{"P", {3.0, 0.0, 3.0, 0.0}},
+                                   {"Arc", {0.0, 0.0, -3.0, 0.0}}};
+    CHECK_THAT(SerializedPortionLengthOverR(circle), WithinAbs(6.0 * M_PI, 1.0e-12));
+    // O4's production entry (gate 4, both arcs of the key): a 90-degree arc, radius
+    // |a - c| = 5.263 R, length pi / 2 x r = 8.267 R; its four 2.014-R chords sum to 8.056
+    // R.
+    const nlohmann::json o4 = {{"P", {-3.7958, 1.4674, 1.4674, -3.7958}},
+                               {"Arc", {-3.7958, -3.7958, -0.07376, -0.07376}}};
+    const double r = std::hypot(-3.7958 + 3.7958, 1.4674 + 3.7958);
+    CHECK_THAT(SerializedPortionLengthOverR(o4), WithinAbs(0.5 * M_PI * r, 1.0e-3));
+    CHECK(SerializedPortionLengthOverR(o4) - 4.0 * 2.0141 > 0.2);  // the gate-4 chords
+  }
+
+  SECTION("a serialised portion straddling the plane (a jog whose perpendicular run joins "
+          "its image straight): ContractRefused MixedPortion, no contract")
+  {
+    // A lead along -x ending at the wall with a 2-long jog 1 before the wall: the run from
+    // (-1, -1) to the wall continues STRAIGHT into its image, so the extended run's cluster
+    // (the two 90-degree corners and their images within 2 R) serialises that run as ONE
+    // portion with the plane vertex interior to it: the real / image split cannot be
+    // mapped exactly onto the signature's edges (never a length heuristic).
+    LoopSpec lead{
+        {{-20.0, -3.0}, {-1.0, -3.0}, {-1.0, -1.0}, {0.0, -1.0}, {0.0, 3.0}, {-20.0, 3.0}},
+        0,
+        0.5};
+    lead.truncation_edges = {3};
+    const auto input = MakeInput({lead}, R);
+    const auto real = IdentifyMetalPerimeter(input);
+    const auto extension = ExtendIdentificationInputAcrossMirrorPlanes(input, planes);
+    const auto extended = IdentifyMetalPerimeter(extension.input);
+    IdentificationResult merged;
+    const auto summary =
+        MergeMirrorIdentification(real, extended, extension, planes, merged);
+    INFO(summary.unmerged_features.dump(1));
+    REQUIRE(summary.unmerged_features.size() == 1);
+    const auto &unmerged = summary.unmerged_features[0];
+    CHECK(unmerged.at("Type") == "SpatialEdgeCluster");
+    REQUIRE(unmerged.contains("ContractRefused"));
+    CHECK_THAT(unmerged.at("ContractRefused").get<std::string>(),
+               ContainsSubstring("MixedPortion"));
+    const auto configurations = Configurations(merged);
+    REQUIRE(configurations.size() == 1);
+    CHECK(configurations[0]->id == unmerged.at("MergedFeature").get<int>());
+    CHECK(!configurations[0]->mirror.contains("Contract"));
+    CHECK(configurations[0]->mirror.at("ContractRefused") ==
+          unmerged.at("ContractRefused"));
+    CHECK(MirrorFormedContractOf(*configurations[0]).is_null());
+    CHECK_THAT(configurations[0]->length,
+               WithinAbs(unmerged.at("RealLength").get<double>(), 1.0e-12));
+  }
+}

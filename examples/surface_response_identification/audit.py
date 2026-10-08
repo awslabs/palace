@@ -636,11 +636,22 @@ def patch_gates(identification, patches, radius):
                 weight_defects.append({"Feature": feature_id, "Defect": "model weights do not sum to 1", "Sum": model_weight})
             # A virtual (mirror-formed) corner on a natural truncation plane carries half the
             # model weight (HalfByMirror, boundary-cut DESIGN 2.2.3): the half-energy identity.
-            half_by_mirror = feature.get("Mirror", {}).get("Status") in ("Modelled", "Missing")
+            # An unmerged mirror-formed CONFIGURATION placed by its REQUIREMENT CONTRACT (decision
+            # 557 (4), impl-B5 CONTRACT.md s4; Mirror.Status Unmerged with Mirror.Contract) carries
+            # the real length fraction RealLengthOverR / (RealLengthOverR + ImageLengthOverR) (the
+            # library counts the real half; Diagnostics.MirrorFormedPlacement records it).
+            mirror = feature.get("Mirror") or {}
+            half_by_mirror = mirror.get("Status") in ("Modelled", "Missing")
+            contract = mirror.get("Contract") if mirror.get("Status") == "Unmerged" else None
+            real_fraction = None
+            if isinstance(contract, dict) and contract.get("RealLengthOverR") and contract.get("ImageLengthOverR"):
+                real_fraction = contract["RealLengthOverR"] / (contract["RealLengthOverR"] + contract["ImageLengthOverR"])
             for r in rows:
-                expected_vertex = r["ModelWeight"] * (0.5 if half_by_mirror else 1.0)
+                factor = real_fraction if real_fraction is not None else (0.5 if half_by_mirror else 1.0)
+                expected_vertex = r["ModelWeight"] * factor
                 if abs(r["Weight"] - expected_vertex) > 1.0e-12 or r["CouponDepth"] != 0.0:
-                    weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "vertex weight is not the model weight" + (" / 2 (HalfByMirror)" if half_by_mirror else ""), "Weight": r["Weight"], "ModelWeight": r["ModelWeight"]})
+                    label = " x RealLengthFraction (the mirror-formed contract)" if real_fraction is not None else (" / 2 (HalfByMirror)" if half_by_mirror else "")
+                    weight_defects.append({"Feature": feature_id, "Patch": r["Patch"], "Defect": "vertex weight is not the model weight" + label, "Weight": r["Weight"], "ModelWeight": r["ModelWeight"]})
         else:
             coverage_defects.append({"Feature": feature_id, "Type": feature["Type"], "Defect": "type without a patch construction"})
     matched_length = sum(float(features[f]["Length"]) for f in matched)

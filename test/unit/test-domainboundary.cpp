@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <memory>
 #include <set>
@@ -1288,6 +1289,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       temp.temp_dir / "fabrication-process-mirror-pad-stack.json";
   const auto curved_library_path =
       temp.temp_dir / "fabrication-process-mirror-pad-curved.json";
+  // A FOURTH library, written by the decision-557 wedge section from the half mesh's own
+  // identification: the curved library plus a Signature-keyed SpatialEdgeCluster model per
+  // mirror-formed wedge key (the real-half placement by the contract).
+  const auto wedge_library_path =
+      temp.temp_dir / "fabrication-process-mirror-pad-wedge.json";
   if (Mpi::Root(Mpi::World()))
   {
     {
@@ -1478,9 +1484,16 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
     const fs::path &variant_library_path =
-        library_variant == 2 ? stack_library_path
-                             : (library_variant == 1 ? curved_library_path : library_path);
+        library_variant == 3 ? wedge_library_path
+        : library_variant == 2
+            ? stack_library_path
+            : (library_variant == 1 ? curved_library_path : library_path);
     correction["Library"] = variant_library_path.string();
+    if (library_variant == 3)
+    {
+      // The wedge library's radius (the decision-557 section).
+      config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {0.1};
+    }
     correction["UnmatchedPolicy"] = "Warn";
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
@@ -1731,6 +1744,587 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       {
         CHECK_THAT(2.0 * half.corrected[2], WithinRel(full.corrected[2], 1.0e-5));
       }
+    }
+  }
+
+  SECTION("S-22.5-wedge (decision 557 (4)): the mirror-formed 2-edge wedge clusters are "
+          "emitted with their contract and placed on their real half, half = full / 2")
+  {
+    // The pad's short edges meet the walls at theta = 22.5 degrees (s = 1 / tan theta):
+    // each edge and its image form a 45-degree wedge - a virtual corner (R of each arm at
+    // the apex, formed, Missing here: no 45-degree model) plus the two arms beyond the
+    // corner window, within 2 R of each other: a SpatialEdgeCluster that no mirror
+    // placement merges (Unmerged; the O1 f17 class). The top edge's wedge is a 2-edge
+    // cluster (the concave wedge, RealPortions one of two); the bottom edge's wedge joins
+    // the pad's left-end corners into a 4-edge cluster (two real portions of four). Both
+    // are EMITTED as Missing requirements with their contract, then PLACED on their real
+    // half once the library carries a Signature-keyed model of their key: the coupon's own
+    // energy on the half is exactly half the full's (the full's real wedge clusters carry
+    // the same keys), the touched real cells leave the DomainBoundary raw term (owned by
+    // the coupon).
+    const double s = 1.0 / std::tan(22.5 * M_PI / 180.0);
+    // The pad [0.5, 1] x [0.75, 1.25] at R = 0.1 (the wedge library's radius): the corner
+    // windows R and the wedge clusters' arms 2.8 R from the apex leave an isolated stretch
+    // before the real corners of the left end; the left end's perpendicular distance 0.5 /
+    // sqrt(1 + s^2) = 0.19 from the sheared wall x = 0 is beyond R and its corners' images
+    // beyond 2 R: that wall forms nothing.
+    const std::vector<PadRectangle> wedge_pads = {{0.5, 0.75, 1.0, 1.25}};
+    constexpr double R_wedge = 0.1;
+    auto WriteWedgeLibrary = [&](const std::map<std::string, json> &wedge_keys)
+    {
+      std::ifstream input(curved_library_path);
+      REQUIRE(input);
+      json library = json::parse(input);
+      library["Name"] = "unit-test-process-mirror-pad-wedge";
+      library["MatchingRadius"] = R_wedge;
+      library["CouponDepth"] = R_wedge;
+      json corner;
+      // The fixtures' surface matrices carry their within-R rows at R = 0.2 m: the same
+      // rows re-keyed at R_wedge (the symmetric placement is the test, not the physics).
+      auto RekeyedSurfaceMatrix = [&](const std::string &source)
+      {
+        const fs::path target =
+            temp.temp_dir / (fs::path(source).stem().string() + "-R0.1.csv");
+        std::ifstream matrix(source);
+        REQUIRE(matrix);
+        std::ofstream output(target);
+        std::string line;
+        std::getline(matrix, line);
+        output << line << "\n";
+        while (std::getline(matrix, line))
+        {
+          // interface,edge,R (m),... : the third field.
+          std::size_t first = line.find(','), second = line.find(',', first + 1),
+                      third = line.find(',', second + 1);
+          REQUIRE(third != std::string::npos);
+          output << line.substr(0, second + 1) << R_wedge << line.substr(third) << "\n";
+        }
+        return target.string();
+      };
+      for (auto &model : library["Models"])
+      {
+        if (model.contains("CouponDepth"))
+        {
+          model["CouponDepth"] = R_wedge;
+        }
+        for (const char *key : {"FabricatedSurfaceMatrix", "ThinSurfaceMatrix"})
+        {
+          if (model.contains(key))
+          {
+            model[key] = RekeyedSurfaceMatrix(model[key].get<std::string>());
+          }
+        }
+        if (model["Name"] == "convex-corner-90")
+        {
+          corner = model;
+        }
+      }
+      REQUIRE(!corner.is_null());
+      // The 45-degree wedge corners (convex at the top edge, concave at the bottom):
+      // relabelled corner coupons, so that the apex virtual corners are Modelled
+      // (HalfByMirror weight 1 / 2) and their ownership by the wedge coupons (rule B4,
+      // decision 584 (2) MINOR-7) is exercised: on the half the virtual corner, on the full
+      // the real one, owned alike.
+      for (const auto &[topology, name] : std::vector<std::pair<std::string, std::string>>{
+               {"ConvexCorner", "convex-corner-45"},
+               {"ConcaveCorner", "concave-corner-45"}})
+      {
+        json wedge_corner = corner;
+        wedge_corner["Name"] = name;
+        wedge_corner["Topology"] = topology;
+        wedge_corner["Angle"] = 45.0;
+        library["Models"].push_back(wedge_corner);
+      }
+      // One Signature-keyed model per wedge key: its Edges the Signature's portions in the
+      // canonical frame (ChordedSignatureEdges), its matching volume the Signature's Box (R
+      // above and below the plane), on the corner coupon's matrices with its 12 knots
+      // (three rings of four) on the box's corners at z = -R, 0, R - the matching surface
+      // spans the box as a built coupon's does, so the continuation ownership (the box =
+      // the bbox of the basis points) and the domain-boundary test (the image half's
+      // corners beyond the plane) read the box. No ENTRY stamp (an ordinary coupon of the
+      // key, as the O1 model b0b764b21b95 is): the per-Edge weights come from the
+      // identification's contract.
+      for (const auto &[hash, signature] : wedge_keys)
+      {
+        json wedge = corner;
+        wedge["Name"] = "wedge-cluster-" + hash.substr(0, 12);
+        wedge["Topology"] = "SpatialEdgeCluster";
+        wedge.erase("Angle");
+        wedge.erase("AngleTolerance");
+        wedge["Signature"] = signature;
+        wedge["Interfaces"] = SignatureInterfaces(signature);
+        wedge["Edges"] = ChordedSignatureEdges(signature, R_wedge);
+        wedge["EdgePositionTolerance"] = 1.0e-6;
+        wedge["EdgeAngleTolerance"] = 1.0e-6;
+        const auto box = signature.at("Box").get<std::array<double, 4>>();
+        json support = json::array();
+        for (const double x : {box[0], box[2]})
+        {
+          for (const double y : {box[1], box[3]})
+          {
+            for (const double z : {-1.0, 1.0})
+            {
+              support.push_back({x * R_wedge, y * R_wedge, z * R_wedge});
+            }
+          }
+        }
+        wedge["SupportPoints"] = support;
+        const fs::path basis =
+            temp.temp_dir / (wedge["Name"].get<std::string>() + "-basis.csv");
+        {
+          std::ofstream points(basis);
+          points << "x,y,z\n";
+          for (const double z : {-1.0, 0.0, 1.0})
+          {
+            for (const auto &[x, y] :
+                 std::vector<std::pair<double, double>>{{box[0], box[1]},
+                                                        {box[2], box[1]},
+                                                        {box[2], box[3]},
+                                                        {box[0], box[3]}})
+            {
+              points << x * R_wedge << "," << y * R_wedge << "," << z * R_wedge << "\n";
+            }
+          }
+        }
+        wedge["BasisPoints"] = basis.string();
+        library["Models"].push_back(wedge);
+      }
+      std::ofstream output(wedge_library_path);
+      output << library.dump(2) << "\n";
+    };
+    auto IsConfiguration = [](const json &feature)
+    {
+      return feature.contains("Mirror") && feature.at("Mirror").is_object() &&
+             feature.at("Mirror").value("Status", "") == "Unmerged" &&
+             feature.at("Mirror").contains("ExtendedFeature");
+    };
+    // Step 1: the half without a wedge model: the configurations are Missing requirements
+    // WITH their contract; their own cells are DomainBoundary (UnmergedTopology, decision
+    // 481), the raw term positive.
+    if (Mpi::Root(Mpi::World()))
+    {
+      WriteWedgeLibrary({});
+    }
+    Mpi::Barrier(Mpi::World());
+    const Energies missing =
+        Run("mirror-pad-wedge-half-missing", s, false, "Natural", wedge_pads, 8, {}, 3);
+    std::map<std::string, json> keys;  // hash -> the configuration's Signature
+    std::set<int> touched_ids;         // the real features the configurations touch
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(missing);
+      INFO(missing.diagnostics.at("MirrorBand").dump());
+      std::map<int, int> edge_counts;
+      for (const auto &feature : missing.manifest_features)
+      {
+        if (!IsConfiguration(feature))
+        {
+          if (feature.contains("Mirror") && feature.at("Mirror").is_object() &&
+              feature.at("Mirror").value("Status", "") == "Unmerged" &&
+              feature.at("Type") == "IsolatedEdge")
+          {
+            // The touched real features with cells (a touched real cluster, Missing, has
+            // uncovered portions clipped by the coupon's box instead).
+            touched_ids.insert(feature.at("Id").get<int>());
+          }
+          continue;
+        }
+        CHECK(feature.at("Type") == "SpatialEdgeCluster");
+        CHECK(feature.at("Match").at("Status") == "Missing");
+        REQUIRE(feature.at("Mirror").contains("Contract"));
+        const auto &contract = feature.at("Mirror").at("Contract");
+        const int edge_count = feature.at("Signature").at("EdgeCount").get<int>();
+        edge_counts[edge_count] = static_cast<int>(contract.at("RealPortions").size());
+        CHECK(contract.at("RealPortions").size() > 0);
+        CHECK(contract.at("RealPortions").size() <
+              feature.at("Signature").at("Portions").size());
+        {
+          nlohmann::json frame = contract.at("Frame");
+          // the recorded frame's handedness (= Features[].Chirality for a chiral key)
+          CHECK((frame.at("Chirality").get<int>() == 1 ||
+                 frame.at("Chirality").get<int>() == -1));
+          CHECK((feature.at("Chirality").get<int>() == 0 ||
+                 frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>()));
+          frame.erase("Chirality");
+          CHECK(frame == feature.at("Frame"));
+        }
+        CHECK_THAT(contract.at("RealLengthOverR").get<double>(),
+                   WithinRel(contract.at("ImageLengthOverR").get<double>(), 1.0e-6));
+        keys[feature.at("Hash").get<std::string>()] = feature.at("Signature");
+      }
+      CHECK(keys.size() == 2);
+      CHECK(edge_counts == std::map<int, int>{{2, 1}, {4, 2}});
+      // The apex virtual 45-degree corners are Modelled at weight 1 / 2 (HalfByMirror) and
+      // owned by nothing while the configurations are Missing.
+      int half_corners = 0;
+      for (const auto &feature : missing.manifest_features)
+      {
+        if ((feature.at("Type") == "ConvexCorner" ||
+             feature.at("Type") == "ConcaveCorner") &&
+            feature.contains("Mirror") && feature.at("Mirror").is_object() &&
+            feature.at("Mirror").value("Status", "") == "Modelled")
+        {
+          half_corners++;
+          CHECK_THAT(feature.at("Signature").at("AngleDegrees").get<double>(),
+                     WithinAbs(45.0, 1.0e-6));
+        }
+      }
+      // ONE apex corner feature: the top edge's convex 45-degree wedge; the bottom edge's
+      // concave wedge apex is absorbed into the 4-edge cluster (its corner sites joined the
+      // cluster: no corner feature of its own).
+      CHECK(half_corners == 1);
+      CHECK(missing.diagnostics.at("ContinuationOwnership")
+                .at("Vertices")
+                .at("Count")
+                .get<int>() == 0);
+      CHECK(!touched_ids.empty());
+      CHECK(missing.domain_boundary_ft > 0.0);
+      const auto &exclusions = missing.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Reasons").contains("UnmergedTopology"));
+      for (const auto &patch : exclusions.at("Patches"))
+      {
+        CHECK(patch.at("Reason") == "UnmergedTopology");
+        CHECK(touched_ids.count(patch.at("Feature").get<int>()) == 1);
+      }
+      CHECK(!missing.diagnostics.contains("MirrorFormedPlacement"));
+      WriteWedgeLibrary(keys);
+    }
+    Mpi::Barrier(Mpi::World());
+    // Step 2: the half and the full with the wedge library.
+    const Energies full =
+        Run("mirror-pad-wedge-full", s, true, "Natural", wedge_pads, 8, {}, 3);
+    const Energies half =
+        Run("mirror-pad-wedge-half", s, false, "Natural", wedge_pads, 8, {}, 3);
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(full);
+      CheckIdentity(half);
+      INFO(half.diagnostics.at("DomainBoundaryExclusions").dump());
+      CHECK_THAT(2.0 * half.raw, WithinRel(full.raw, 1.0e-9));
+      CHECK_THAT(2.0 * half.outside, WithinRel(full.outside, 1.0e-9));
+      // The configurations are Matched (the note names the real-half placement); the full's
+      // real wedge clusters carry the same keys.
+      std::set<std::string> half_models, full_models;
+      for (const auto &feature : half.manifest_features)
+      {
+        if (IsConfiguration(feature))
+        {
+          CHECK(feature.at("Match").at("Status") == "Matched");
+          CHECK_THAT(feature.at("Match").at("Note").get<std::string>(),
+                     ContainsSubstring("REAL half"));
+          half_models.insert(feature.at("Match").at("Model").get<std::string>());
+        }
+      }
+      for (const auto &feature : full.manifest_features)
+      {
+        if (feature.at("Type") == "SpatialEdgeCluster")
+        {
+          CHECK(feature.at("Match").at("Status") == "Matched");
+          CHECK(!IsConfiguration(feature));
+          full_models.insert(feature.at("Match").at("Model").get<std::string>());
+        }
+      }
+      CHECK(half_models.size() == 2);
+      CHECK(half_models == full_models);
+      // The placement record: one coupon per configuration at weight 1 / 2 (the real length
+      // fraction of a symmetric key), its edges split real / image, its claims real only.
+      REQUIRE(half.diagnostics.contains("MirrorFormedPlacement"));
+      const auto &placement = half.diagnostics.at("MirrorFormedPlacement");
+      REQUIRE(placement.at("Count").get<int>() == 2);
+      std::set<std::size_t> coupon_patches;
+      for (const auto &entry : placement.at("Patches"))
+      {
+        coupon_patches.insert(entry.at("Patch").get<std::size_t>());
+        CHECK_THAT(entry.at("Weight").get<double>(), WithinAbs(0.5, 1.0e-6));
+        CHECK(entry.at("RealEdges").get<int>() > 0);
+        CHECK(entry.at("ImageEdges").get<int>() > 0);
+        CHECK(entry.at("RealEdges").get<int>() == entry.at("ImageEdges").get<int>());
+        CHECK(entry.at("RealClaims").size() >=
+              static_cast<std::size_t>(entry.at("RealEdges").get<int>()));
+        CHECK(entry.at("Reach").get<double>() > 3.0 * R_wedge);
+        CHECK(half_models.count(entry.at("Model").get<std::string>()) == 1);
+      }
+      CHECK(!full.diagnostics.contains("MirrorFormedPlacement"));
+      // Nothing is DomainBoundary any more: the coupons are Mirrored (their image half
+      // evaluated by even extension within their reach), the touched real features' cells
+      // inside the box are owned by the coupon (weight 0), the raw term is zero.
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      CHECK(exclusions.at("Count").get<int>() == 0);
+      CHECK(half.domain_boundary_ft == 0.0);
+      CHECK(full.domain_boundary_ft == 0.0);
+      std::set<std::size_t> mirrored;
+      for (const auto &entry : exclusions.at("Mirrored").at("Patches"))
+      {
+        mirrored.insert(entry.at("Patch").get<std::size_t>());
+      }
+      for (const std::size_t patch : coupon_patches)
+      {
+        CHECK(mirrored.count(patch) == 1);
+      }
+      std::set<int> owned_features;
+      for (const auto &cell : half.diagnostics.at("ContinuationOwnership").at("OwnedCells"))
+      {
+        owned_features.insert(cell.at("Feature").get<int>());
+        REQUIRE(cell.at("Owners").size() == 1);
+        CHECK(coupon_patches.count(
+                  cell.at("Owners")[0].at("SpatialPatch").get<std::size_t>()) == 1);
+      }
+      for (const int id : touched_ids)
+      {
+        CHECK(owned_features.count(id) == 1);
+      }
+      // MINOR-7 (decision 584 (2)): the apex virtual corners (HalfByMirror 0.5) are owned
+      // by the wedge coupons under rule B4 (their vertex is the coupon's chain-piece end on
+      // the plane inside its box; the full symmetric signature models the apex) - weight 0
+      // in the dry run - exactly as the FULL owns its two real 45-degree corners by its
+      // real wedge clusters: the identity half = full / 2 holds with the corners owned
+      // alike (their model energy 0 on both). Predicted on O1 f35 (the virtual 22.5-degree
+      // apex corner owned by the b0b764b21b95 coupon, as the real instance's apex corner
+      // f16 is by the real coupon).
+      auto OwnedVertices = [&](const Energies &e)
+      {
+        std::map<std::string, std::set<std::size_t>>
+            owners;  // corner model -> owner patches
+        for (const auto &record :
+             e.diagnostics.at("ContinuationOwnership").at("Vertices").at("Records"))
+        {
+          CHECK(record.at("Kind") == "Vertex");
+          for (const auto &owner : record.at("Owners"))
+          {
+            owners[record.at("Model").get<std::string>()].insert(
+                owner.at("SpatialPatch").get<std::size_t>());
+          }
+        }
+        return owners;
+      };
+      const auto half_owned = OwnedVertices(half), full_owned = OwnedVertices(full);
+      // ONE apex corner feature (the top edge's convex wedge; the bottom edge's apex is
+      // inside the 4-edge cluster): owned on the half by the configuration's coupon, on the
+      // full by the real wedge cluster's, its model energy 0 on both.
+      CHECK(half.diagnostics.at("ContinuationOwnership")
+                .at("Vertices")
+                .at("Count")
+                .get<int>() == 1);
+      CHECK(full.diagnostics.at("ContinuationOwnership")
+                .at("Vertices")
+                .at("Count")
+                .get<int>() == 1);
+      REQUIRE(half_owned.count("convex-corner-45") == 1);
+      REQUIRE(full_owned.count("convex-corner-45") == 1);
+      for (const std::size_t owner : half_owned.at("convex-corner-45"))
+      {
+        CHECK(coupon_patches.count(owner) == 1);
+      }
+      REQUIRE(half.model_energy.count("convex-corner-45") == 1);
+      REQUIRE(full.model_energy.count("convex-corner-45") == 1);
+      CHECK(half.model_energy.at("convex-corner-45") == 0.0);
+      CHECK(full.model_energy.at("convex-corner-45") == 0.0);
+      // THE IDENTITY on the coupons: each wedge model's energy on the half is half the
+      // full's (the full's real cluster at weight 1 against the half's configuration at
+      // weight 1 / 2 with its image half sampled by even extension). The isolated model's
+      // energy is not compared: the 4-edge key's box (grown on the device plan in its
+      // canonical frame) is not symmetric about the plane, so the full itself owns the two
+      // mirrored left edges' cells unequally - the full's own treatment, not the half's.
+      for (const auto &name : half_models)
+      {
+        INFO("model " << name);
+        REQUIRE(half.model_energy.count(name) == 1);
+        REQUIRE(full.model_energy.count(name) == 1);
+        CHECK(half.model_energy.at(name) > 0.0);
+        // The half's coupon carries the real length fraction f (exactly 1 / 2 for an
+        // exactly symmetric key; the 4-edge key's serialised lengths differ by a few
+        // quanta): the half's energy = f x the full's. 1e-8: the model energies are read
+        // back from the energy CSV's printed digits.
+        double fraction = 0.0;
+        for (const auto &entry : placement.at("Patches"))
+        {
+          if (entry.at("Model") == name)
+          {
+            fraction = entry.at("Weight").get<double>();
+          }
+        }
+        CHECK_THAT(fraction, WithinAbs(0.5, 1.0e-5));
+        CHECK_THAT(half.model_energy.at(name),
+                   WithinRel(fraction * full.model_energy.at(name), 1.0e-8));
+      }
+      // The patch dry run carries the DomainWeight column (decision 559 MINOR-3 / O-14).
+      std::ifstream dry_run(temp.temp_dir / "mirror-pad-wedge-half-dryrun" /
+                            "surface-response-patches.csv");
+      REQUIRE(dry_run);
+      std::string header;
+      std::getline(dry_run, header);
+      CHECK_THAT(header, EndsWith(",StripBegin,StripEnd,DomainWeight"));
+      std::string row;
+      int rows = 0;
+      while (std::getline(dry_run, row))
+      {
+        rows++;
+        CHECK_THAT(row, EndsWith(",1"));
+      }
+      CHECK(rows > 0);
+    }
+    Mpi::Barrier(Mpi::World());
+    // Step 3 (the ENTRY stamp, impl-B5 CONTRACT.md section 3; the dry run alone): the wedge
+    // models stamped with the consumer's MirrorFormed record and per-Edge Weights. A stamp
+    // that agrees with the identification's contract places exactly as the unstamped
+    // coupon; a stamp whose RealPortions are the IMAGE portions (self-consistent with its
+    // own Weights, so it loads) fails closed at the placement by name; an Edge Weight
+    // disagreeing with the stamp's RealPortions fails closed at the library load.
+    {
+      // The contracts of the half's configurations by key (from step 1's manifest: the
+      // identification is library-independent).
+      std::map<std::string, json> contracts;
+      if (Mpi::Root(Mpi::World()))
+      {
+        for (const auto &feature : missing.manifest_features)
+        {
+          if (IsConfiguration(feature))
+          {
+            contracts[feature.at("Hash").get<std::string>()] =
+                feature.at("Mirror").at("Contract");
+          }
+        }
+        REQUIRE(contracts.size() == 2);
+      }
+      auto StampedLibrary = [&](const std::string &variant)
+      {
+        // The path on every rank (the config below is built on every rank); written on
+        // the root.
+        const fs::path path =
+            temp.temp_dir / ("fabrication-process-mirror-pad-wedge-" + variant + ".json");
+        if (!Mpi::Root(Mpi::World()))
+        {
+          return path;
+        }
+        std::ifstream input(wedge_library_path);
+        REQUIRE(input);
+        json library = json::parse(input);
+        for (auto &model : library["Models"])
+        {
+          if (model["Topology"] != "SpatialEdgeCluster")
+          {
+            continue;
+          }
+          const std::string hash =
+              SignatureKeyAndHash(model["Signature"], "SpatialEdgeCluster").second;
+          REQUIRE(contracts.count(hash) == 1);
+          const auto &contract = contracts.at(hash);
+          std::vector<int> real_portions =
+              contract.at("RealPortions").get<std::vector<int>>();
+          const std::size_t portions = model["Signature"]["Portions"].size();
+          if (variant == "image-portions")
+          {
+            // The complement: the stamp claims the image portions as real.
+            std::vector<int> complement;
+            for (std::size_t i = 0; i < portions; i++)
+            {
+              if (std::find(real_portions.begin(), real_portions.end(),
+                            static_cast<int>(i)) == real_portions.end())
+              {
+                complement.push_back(static_cast<int>(i));
+              }
+            }
+            real_portions = complement;
+          }
+          // ChordedSignatureEdges: one Edge per straight portion, in portion order.
+          REQUIRE(model["Edges"].size() == portions);
+          json edge_portions = json::array();
+          for (std::size_t e = 0; e < portions; e++)
+          {
+            const bool real = std::find(real_portions.begin(), real_portions.end(),
+                                        static_cast<int>(e)) != real_portions.end();
+            model["Edges"][e]["Weight"] = real ? 1.0 : 0.0;
+            edge_portions.push_back(e);
+          }
+          if (variant == "flipped-weight")
+          {
+            model["Edges"][0]["Weight"] = 1.0 - model["Edges"][0]["Weight"].get<double>();
+          }
+          const double real_over_R = contract.at("RealLengthOverR").get<double>();
+          const double image_over_R = contract.at("ImageLengthOverR").get<double>();
+          model["MirrorFormed"] = {
+              {"Version", 1},
+              {"RealPortions", real_portions},
+              {"EdgePortions", edge_portions},
+              {"Planes", contract.at("Planes")},
+              {"RealLengthOverR", real_over_R},
+              {"ImageLengthOverR", image_over_R},
+              {"RealLengthFraction", real_over_R / (real_over_R + image_over_R)},
+              {"Rule", "unit test: the consumer's ENTRY stamp (impl-B5 CONTRACT.md s3)"}};
+        }
+        std::ofstream output(path);
+        output << library.dump(2) << "\n";
+        return path;
+      };
+      auto Preflight = [&](const fs::path &library, const std::string &name)
+      {
+        json config = IslandConfig();
+        const fs::path mesh_path = temp.temp_dir / "mirror-pad-wedge-half.mesh";
+        config["Model"]["Mesh"] = mesh_path.string();
+        config["Model"]["L0"] = 1.0;
+        config["Boundaries"]["Ground"]["Attributes"] = {4};
+        config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {
+            R_wedge};
+        auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+        correction.erase("PatchConstruction");
+        correction["Library"] = library.string();
+        correction["UnmatchedPolicy"] = "Warn";
+        correction["TraceCoupling"] = "SurfaceMortar";
+        correction["DomainBoundary"] = {{"Mirror", "Natural"}};
+        config["Problem"]["Output"] = (temp.temp_dir / name).string();
+        const fs::path manifest_path = temp.temp_dir / name / "requirements.json";
+        fs::create_directories(manifest_path.parent_path());
+        IoData iodata(config, false);
+        mfem::Mesh serial = MakeSerialMirrorPadMesh(s, false, wedge_pads, 8, {});
+        Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
+        WriteSurfaceResponseRequirements(iodata, mesh, manifest_path.string());
+        Mpi::Barrier(Mpi::World());
+        // The manifest is written on the root; every rank returns (a non-root rank reading
+        // a file the root writes would desynchronise the ranks).
+        if (!Mpi::Root(Mpi::World()))
+        {
+          return json();
+        }
+        std::ifstream manifest_input(manifest_path);
+        return json::parse(manifest_input);
+      };
+      const fs::path consistent = StampedLibrary("consistent");
+      const fs::path image_portions = StampedLibrary("image-portions");
+      const fs::path flipped = StampedLibrary("flipped-weight");
+      Mpi::Barrier(Mpi::World());
+      {
+        const json manifest = Preflight(consistent, "mirror-pad-wedge-stamped-consistent");
+        if (Mpi::Root(Mpi::World()))
+        {
+          const auto &placement =
+              manifest.at("Identification").at("Diagnostics").at("MirrorFormedPlacement");
+          CHECK(placement.at("Count").get<int>() == 2);
+          for (const auto &entry : placement.at("Patches"))
+          {
+            CHECK_THAT(entry.at("Weight").get<double>(), WithinAbs(0.5, 1.0e-6));
+          }
+          int contract_requirements = 0;
+          for (const auto &requirement : manifest.at("Requirements"))
+          {
+            if (!requirement.contains("MirrorFormedContract"))
+            {
+              continue;
+            }
+            contract_requirements++;
+            CHECK(requirement.at("Status") == "Exact");
+            CHECK(requirement.at("MirrorFormed").get<bool>());
+            CHECK(requirement.at("Topology") == "SpatialEdgeCluster");
+            CHECK(requirement.at("MirrorFormedContract").at("Version").get<int>() == 1);
+          }
+          CHECK(contract_requirements == 2);
+        }
+      }
+      CHECK_THROWS_WITH(Preflight(image_portions, "mirror-pad-wedge-stamped-image"),
+                        ContainsSubstring("the identification's contract reads the portion "
+                                          "as an IMAGE") &&
+                            ContainsSubstring("inconsistent MirrorFormed record"));
+      CHECK_THROWS_WITH(Preflight(flipped, "mirror-pad-wedge-stamped-flipped"),
+                        ContainsSubstring("carries a MirrorFormed ENTRY record but edge"));
     }
   }
 
@@ -2245,10 +2839,42 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       // The unextended reading: per edge one IsolatedEdge (the run from the far wall and
       // the sliver) and one CurvedEdge on the curved family; the virtual 120-degree
       // corners.
-      std::set<int> isolated_ids, curved_ids;
+      std::set<int> isolated_ids, curved_ids, configuration_ids;
       for (const auto &feature : half.manifest_features)
       {
         const std::string type = feature.at("Type").get<std::string>();
+        const bool configuration = feature.contains("Mirror") &&
+                                   feature.at("Mirror").is_object() &&
+                                   feature.at("Mirror").value("Status", "") == "Unmerged" &&
+                                   feature.at("Mirror").contains("ExtendedFeature");
+        if (configuration)
+        {
+          // The unmerged joined bend emitted as a feature with its contract (decision 557
+          // (1)): a CurvedEdge key carries no Portions (RealPortions empty), no mirror
+          // placement in this version (Missing, the note names the 2D family's consumer),
+          // its image portions listed apart.
+          configuration_ids.insert(feature.at("Id").get<int>());
+          CHECK(type == "CurvedEdge");
+          CHECK(feature.at("Match").at("Status") == "Missing");
+          CHECK_THAT(feature.at("Match").at("Note").get<std::string>(),
+                     ContainsSubstring("no mirror placement in this version"));
+          const auto &contract = feature.at("Mirror").at("Contract");
+          CHECK(contract.at("Version").get<int>() == 1);
+          CHECK(contract.at("RealPortions").empty());
+          CHECK(contract.at("RealLengthOverR").get<double>() > 0.0);
+          CHECK(contract.at("ImageLengthOverR").get<double>() > 0.0);
+          {
+            nlohmann::json frame = contract.at("Frame");
+            CHECK((frame.at("Chirality").get<int>() == 1 ||
+                   frame.at("Chirality").get<int>() == -1));
+            CHECK((feature.at("Chirality").get<int>() == 0 ||
+                   frame.at("Chirality").get<int>() == feature.at("Chirality").get<int>()));
+            frame.erase("Chirality");
+            CHECK(frame == feature.at("Frame"));
+          }
+          CHECK(feature.contains("ImagePortions"));
+          continue;
+        }
         if (type == "IsolatedEdge")
         {
           isolated_ids.insert(feature.at("Id").get<int>());
@@ -2265,6 +2891,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
       CHECK(isolated_ids.size() == 2);
       CHECK(curved_ids.size() == 2);
+      CHECK(configuration_ids.size() == 2);
       std::map<std::string, int> formed;
       for (const auto &entry : band.at("MirrorFormedFeatures"))
       {
@@ -2380,6 +3007,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {
           full_curved_length += feature.at("Length").get<double>();
         }
+      }
+      // The unmerged configurations are listed with their contract and a MergedFeature.
+      for (const auto &entry : band.at("UnmergedFeatures"))
+      {
+        CHECK(configuration_ids.count(entry.at("MergedFeature").get<int>()) == 1);
+        CHECK(!entry.contains("ContractRefused"));
       }
       REQUIRE(full_curved_length > 0.0);
       const double expected_residual =

@@ -1824,7 +1824,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 16);
+      CHECK(cache["Version"] == 17);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3114,7 +3114,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 16);
+      CHECK(cache["Version"] == 17);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -3329,7 +3329,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::set<std::array<double, 3>> corner_origins;
     for (const auto &row : rows)
     {
-      REQUIRE(row.size() == 27);
+      REQUIRE(row.size() == 28);  // ..., StripBegin, StripEnd, DomainWeight (O-14)
+      CHECK(row[27] == "1");
       const int feature = std::stoi(row[1]);
       patched_features.insert(feature);
       const double weight = std::stod(row[5]);
@@ -7866,7 +7867,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 16);
+    CHECK(stale["Version"] == 17);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
@@ -7888,7 +7889,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(thirteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 13") &&
-                          Catch::Matchers::ContainsSubstring("version 16"));
+                          Catch::Matchers::ContainsSubstring("version 17"));
     // Two version-14 caches existed before the fillet merge (decision 552 (3), the 527
     // rule): main's (the decision-537 own-cell pre-image WITHOUT the corner-arm extension
     // records) and the fillet lane's (the extension records WITHOUT the own-cell
@@ -7915,7 +7916,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fourteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 14") &&
-                            Catch::Matchers::ContainsSubstring("version 16"));
+                            Catch::Matchers::ContainsSubstring("version 17"));
     }
     // Two version-15 caches existed before the foreign-context merge (decision 559 (3), the
     // 527 rule): main's (the stacks + fillet additions of decision 552 (3) WITHOUT the
@@ -7943,8 +7944,27 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fifteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 15") &&
-                            Catch::Matchers::ContainsSubstring("version 16"));
+                            Catch::Matchers::ContainsSubstring("version 17"));
     }
+    // A version-16 cache (main before the mirror-formed contract merge: no
+    // MirrorFormedTopology / MirrorReach / MirrorEdgeWeights on the patches, decision 557
+    // (4)) is refused by the version message, never misread for its missing records.
+    nlohmann::json sixteen = stale;
+    sixteen["Version"] = 16;
+    for (auto &patch : sixteen["Patches"])
+    {
+      patch.erase("MirrorFormedTopology");
+      patch.erase("MirrorReach");
+      patch.erase("MirrorEdgeWeights");
+    }
+    const auto sixteen_path = temp.temp_dir / "response-geometry-ownership-v16.json";
+    {
+      std::ofstream output(sixteen_path);
+      output << sixteen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(sixteen_path, data),
+                      Catch::Matchers::ContainsSubstring("cache version 16") &&
+                          Catch::Matchers::ContainsSubstring("version 17"));
   }
   SECTION("vertex ownership (rule B4): a corner patch on a chain piece end inside a "
           "contract-3 box is owned once; interior chain points, other planes, other boxes "
@@ -8862,3 +8882,81 @@ TEST_CASE("SurfaceResponseOperatorSpatialSupportMarginOverlaps",
 }
 
 }  // namespace palace
+
+TEST_CASE("SurfaceResponseOperatorMirrorFormedEdgeWeights",
+          "[surfaceresponseoperator][mirror][contract][Serial]")
+{
+  // Decision 557 (4) / impl-B5 CONTRACT.md sections 2-4: the per-Edge weights of a model
+  // placed on a mirror-formed configuration come from the identification's contract (1.0 on
+  // the RealPortions' edges, 0.0 on the image edges); an ENTRY stamp (per-Edge Weight, the
+  // MirrorFormed record) must agree with it or the placement fails closed by name.
+  const nlohmann::json contract = {{"Version", 1},
+                                   {"Planes", {0}},
+                                   {"RealPortions", {0, 3}},
+                                   {"RealLengthOverR", 3.977843},
+                                   {"ImageLengthOverR", 3.981844},
+                                   {"RealFeatures", {45}},
+                                   {"ExtendedFeature", 0},
+                                   {"Rule", "test"}};
+  // An arc portion chorded into three edges (portion 0), then portions 1, 2, 3.
+  const std::vector<int> edge_portions = {0, 0, 0, 1, 2, 3};
+  const std::vector<std::optional<double>> unstamped(6, std::nullopt);
+  SECTION("an ordinary coupon of the key (no stamp, the O1 b0b764b21b95 case): the "
+          "contract alone decides")
+  {
+    const auto weights = palace::MirrorFormedEdgeWeightsOf(contract, edge_portions,
+                                                           unstamped, nullptr, "model", 7);
+    CHECK(weights.weights == std::vector<double>{1.0, 1.0, 1.0, 0.0, 0.0, 1.0});
+    CHECK_THAT(weights.real_length_fraction,
+               Catch::Matchers::WithinAbs(3.977843 / (3.977843 + 3.981844), 1.0e-15));
+  }
+  SECTION("a consistent ENTRY stamp places exactly as the unstamped coupon")
+  {
+    const std::vector<std::optional<double>> stamped = {1.0, 1.0, 1.0, 0.0, 0.0, 1.0};
+    const nlohmann::json entry = {{"Version", 1},
+                                  {"RealPortions", {0, 3}},
+                                  {"RealLengthFraction", 3.977843 / (3.977843 + 3.981844)}};
+    const auto weights = palace::MirrorFormedEdgeWeightsOf(contract, edge_portions, stamped,
+                                                           entry, "model", 7);
+    CHECK(weights.weights == std::vector<double>{1.0, 1.0, 1.0, 0.0, 0.0, 1.0});
+  }
+  SECTION("inconsistent records fail closed by name")
+  {
+    // A stamped Weight disagreeing with the contract.
+    std::vector<std::optional<double>> flipped = {1.0, 1.0, 1.0, 1.0, 0.0, 1.0};
+    CHECK_THROWS_WITH(
+        palace::MirrorFormedEdgeWeightsOf(contract, edge_portions, flipped, nullptr,
+                                          "model", 7),
+        Catch::Matchers::ContainsSubstring("ENTRY stamps edge 3") &&
+            Catch::Matchers::ContainsSubstring("inconsistent MirrorFormed record"));
+    // ENTRY RealPortions differing from the contract's.
+    const nlohmann::json other = {{"Version", 1}, {"RealPortions", {1, 2}}};
+    CHECK_THROWS_WITH(
+        palace::MirrorFormedEdgeWeightsOf(contract, edge_portions, unstamped, other,
+                                          "model", 7),
+        Catch::Matchers::ContainsSubstring("ENTRY RealPortions [1,2] differ"));
+    // An ENTRY RealLengthFraction off the contract's by more than the signature tolerance.
+    const nlohmann::json fraction = {
+        {"Version", 1}, {"RealPortions", {0, 3}}, {"RealLengthFraction", 0.6}};
+    CHECK_THROWS_WITH(palace::MirrorFormedEdgeWeightsOf(contract, edge_portions, unstamped,
+                                                        fraction, "model", 7),
+                      Catch::Matchers::ContainsSubstring("ENTRY RealLengthFraction") &&
+                          Catch::Matchers::ContainsSubstring("differs from the contract"));
+    // An Edge on no Signature portion (a legacy model).
+    const std::vector<int> legacy = {0, 0, 0, 1, 2, -1};
+    CHECK_THROWS_WITH(
+        palace::MirrorFormedEdgeWeightsOf(contract, legacy, unstamped, nullptr, "model", 7),
+        Catch::Matchers::ContainsSubstring("lies on no Signature portion"));
+    // A contract whose RealPortions cover every edge (not mirror-formed) or none.
+    nlohmann::json all = contract;
+    all["RealPortions"] = {0, 1, 2, 3};
+    CHECK_THROWS_WITH(palace::MirrorFormedEdgeWeightsOf(all, edge_portions, unstamped,
+                                                        nullptr, "model", 7),
+                      Catch::Matchers::ContainsSubstring("both real and image edges"));
+    nlohmann::json none = contract;
+    none["RealPortions"] = nlohmann::json::array();
+    CHECK_THROWS_WITH(palace::MirrorFormedEdgeWeightsOf(none, edge_portions, unstamped,
+                                                        nullptr, "model", 7),
+                      Catch::Matchers::ContainsSubstring("RealPortions are empty"));
+  }
+}

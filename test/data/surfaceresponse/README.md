@@ -13,4 +13,8 @@
     2026-10-06). Serial and 2-rank runs wrote identical bytes (sha256
     aa7703a0215b21dc2490484cd04c62aa21430fe7b56ea3e04a5890081b75cf25). The test compares the
     trimming build's dry run against it byte for byte (decision 399 MINOR-6): at 90 degrees
-    the trim must leave the legacy layout untouched.
+    the trim must leave the legacy layout untouched. The `DomainWeight` column (decision 559
+    MINOR-3 / rerun-3 plan O-14, the mirror-formed contract lane `simlapointe/mirror-formed-
+    contract`, 2026-10-08) was appended to every row of the golden (`,DomainWeight` in the
+    header, `,1` per patch: the dry run's domain weights are all 1 here) when the patch dry
+    run gained it; no other byte changed.

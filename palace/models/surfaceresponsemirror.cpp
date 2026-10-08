@@ -692,6 +692,205 @@ double Overlap(const Interval &a, const Interval &b)
   return std::max(0.0, std::min(a.second, b.second) - std::max(a.first, b.first));
 }
 
+// The mirror-formed cluster REQUIREMENT CONTRACT (decision 557 (1) / 562; impl-B5
+// CONTRACT.md section 2, version 1) of an unmerged mirror-formed SpatialEdgeCluster /
+// CurvedEdge configuration of the extended run: {Version, Planes, Frame, RealPortions,
+// RealLengthOverR, ImageLengthOverR, RealFeatures, ExtendedFeature, Rule}. RealPortions are
+// the indices of the serialised Signature.Portions whose world portions (the feature's
+// IdentifiedPortions on the extended segments) are ALL real (segment < real_segments),
+// mapped EXACTLY by geometry: every world portion longer than the signature tolerance is
+// projected into the signature's canonical frame and must lie on exactly one serialised
+// portion: both ends within the arc-fit tolerance widened by the serialisation quanta (as
+// VerifySpatialEdgesInSignatureFrame reads a model Edge) on a straight segment, and on a
+// mesh chord of a fitted arc (IdentifiedSegment::arc) within that bound plus the arc's
+// recorded largest chord sagitta (IdentifiedArc::max_sagitta_over_R: a world portion is a
+// piece of a chord whose joints lie on the fitted circle within the fit tolerance, so any
+// point of it lies within the sagitta of the circle - the geometry's own bound, no
+// heuristic); every serialised portion must receive world portions of ONE class (the chain
+// vertex on the plane is a vertex of the extended chain, never interior to a serialised
+// portion). Anything else REFUSES the contract by name (`refused`): never a length
+// heuristic. The Frame is the feature's canonical frame in the identification's units (the
+// manifest writers scale it). A CurvedEdge key carries no Portions: RealPortions is empty
+// and the Rule says so.
+nlohmann::json BuildMirrorFormedContract(
+    const IdentifiedFeature &feature, const IdentificationResult &extended,
+    std::size_t real_segments, double R, const std::vector<int> &planes, double real_length,
+    double image_length, const nlohmann::json &real_ids, std::string &refused)
+{
+  refused.clear();
+  const auto &segments = extended.segments;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  // Units of R: the arc-fit tolerance widened by two signature quanta and read inclusive
+  // (the library load's reading of a model Edge against the Signature's portions).
+  const double straight_tolerance =
+      kSignatureParameterToleranceOverRadius + 2.5 * kSignatureLengthQuantumOverRadius;
+  std::vector<int> real_portions;
+  // The contract's lengths over R (decision 585: ONE definition): the SERIALISED geometry's
+  // - a straight portion's chord, an arc portion's length on the serialised circle - summed
+  // over the real / image entries, as the consumer and the library read them; the Unmerged
+  // diagnostics record keeps the mesh-chord sums RealLength / ImageLength. A CurvedEdge key
+  // (no serialised portions) keeps the mesh-chord sums over R.
+  double real_over_R = real_length / R, image_over_R = image_length / R;
+  std::string rule =
+      "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster "
+      "requirement; RealPortions index Signature.Portions (0-based) whose world portions "
+      "lie on real segments (segment < real_segments); every other portion is an image; "
+      "Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = "
+      "Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the "
+      "serialised "
+      "portions' lengths over R (a straight portion its chord, an arc its length on the "
+      "serialised circle), summed over the real / image entries";
+  if (feature.type == "CurvedEdge")
+  {
+    rule += "; a CurvedEdge key carries no Portions (RealPortions empty): the real / image "
+            "split is RealLengthOverR / ImageLengthOverR along the one arc (the 2D "
+            "curvature family's consumer, decision 557)";
+  }
+  else
+  {
+    const auto portions = feature.signature.find("Portions");
+    if (portions == feature.signature.end() || !portions->is_array() || portions->empty())
+    {
+      refused = "NoSerialisedPortions: the " + feature.type +
+                " signature carries no Portions to map the real / image split onto";
+      return nullptr;
+    }
+    auto Local = [&](const std::array<double, 3> &p)
+    {
+      const Point3D r = Sub(p, feature.origin);
+      return std::array<double, 3>{Dot(r, feature.axes[0]) / R, Dot(r, feature.axes[1]) / R,
+                                   Dot(r, feature.axes[2]) / R};
+    };
+    // Per serialised portion: 0 unclaimed, 1 real, 2 image, 3 mixed.
+    std::vector<int> classes(portions->size(), 0);
+    for (std::size_t p = 0; p < feature.portions.size(); p++)
+    {
+      const auto &portion = feature.portions[p];
+      if (portion.s1 - portion.s0 <= tolerance)
+      {
+        continue;  // a sub-tolerance piece carries no class of its own
+      }
+      const auto &segment = segments[portion.segment];
+      const double mapping_tolerance =
+          straight_tolerance +
+          (segment.arc >= 0 && static_cast<std::size_t>(segment.arc) < extended.arcs.size()
+               ? extended.arcs[static_cast<std::size_t>(segment.arc)].max_sagitta_over_R
+               : 0.0);
+      std::array<std::array<double, 2>, 2> ends{};
+      for (int k = 0; k < 2; k++)
+      {
+        const double s = k == 0 ? portion.s0 : portion.s1;
+        std::array<double, 3> world{};
+        for (int d = 0; d < 3; d++)
+        {
+          const double direction =
+              segment.length > 0.0
+                  ? (segment.key[1][d] - segment.key[0][d]) / segment.length
+                  : 0.0;
+          world[d] = segment.key[0][d] + direction * s;
+        }
+        const auto local = Local(world);
+        if (std::abs(local[2]) > straight_tolerance)
+        {
+          refused = "PortionOffPlane: world portion " + std::to_string(p) + " lies " +
+                    std::to_string(std::abs(local[2])) +
+                    " R off the signature's canonical plane";
+          return nullptr;
+        }
+        ends[k] = {local[0], local[1]};
+      }
+      std::vector<std::size_t> candidates;
+      for (std::size_t i = 0; i < portions->size(); i++)
+      {
+        double distance = 0.0;
+        for (const auto &q : ends)
+        {
+          distance = std::max(distance, DistanceToSerializedPortion((*portions)[i], q));
+        }
+        if (distance <= mapping_tolerance)
+        {
+          candidates.push_back(i);
+        }
+      }
+      if (candidates.empty())
+      {
+        refused = "PortionUnmapped: world portion " + std::to_string(p) + " (segment " +
+                  std::to_string(portion.segment) +
+                  ") lies on no serialised Signature.Portions entry within " +
+                  std::to_string(mapping_tolerance) + " R";
+        return nullptr;
+      }
+      if (candidates.size() > 1)
+      {
+        refused = "PortionAmbiguous: world portion " + std::to_string(p) + " (segment " +
+                  std::to_string(portion.segment) + ") lies on " +
+                  std::to_string(candidates.size()) +
+                  " serialised Signature.Portions entries";
+        return nullptr;
+      }
+      const int cls = portion.segment >= real_segments ? 2 : 1;
+      int &entry = classes[candidates.front()];
+      entry = entry == 0 ? cls : (entry == cls ? cls : 3);
+    }
+    for (std::size_t i = 0; i < classes.size(); i++)
+    {
+      if (classes[i] == 0)
+      {
+        refused = "PortionUnclaimed: serialised Signature.Portions[" + std::to_string(i) +
+                  "] receives no world portion of the configuration";
+        return nullptr;
+      }
+      if (classes[i] == 3)
+      {
+        refused = "MixedPortion: serialised Signature.Portions[" + std::to_string(i) +
+                  "] receives real AND image world portions (the plane vertex is interior "
+                  "to it)";
+        return nullptr;
+      }
+      if (classes[i] == 1)
+      {
+        real_portions.push_back(static_cast<int>(i));
+      }
+    }
+    if (real_portions.empty())
+    {
+      refused = "NoRealPortion: every serialised portion is an image";
+      return nullptr;
+    }
+    if (real_portions.size() == classes.size())
+    {
+      refused = "NoImagePortion: every serialised portion is real (not mirror-formed)";
+      return nullptr;
+    }
+    real_over_R = image_over_R = 0.0;
+    for (std::size_t i = 0; i < classes.size(); i++)
+    {
+      (classes[i] == 1 ? real_over_R : image_over_R) +=
+          SerializedPortionLengthOverR((*portions)[i]);
+    }
+  }
+  // The Frame is the identification's canonical frame AS IS (Features[].Frame: Axes[2] =
+  // the process normal n for both handedness values) with its handedness made explicit
+  // (CONTRACT.md v3, decision 584 (2)): Frame.Chirality = FrameHandedness(axes), so that
+  // Axes[2] = Chirality x (Axes[0] x Axes[1]) and a left-handed triple is a valid frame,
+  // read by the consumer with the same rule; the placement uses this very frame (M =
+  // identity for a Signature-keyed model). It equals Features[].Chirality for a chiral key;
+  // a mirror-symmetric configuration (chirality 0 - the O1 wedge, S2p's clusters) records
+  // the first minimal frame, whose own handedness is written (never 0).
+  return nlohmann::json{{"Version", 1},
+                        {"Planes", planes},
+                        {"Frame",
+                         {{"Origin", feature.origin},
+                          {"Axes", {feature.axes[0], feature.axes[1], feature.axes[2]}},
+                          {"Chirality", FrameHandedness(feature.axes)}}},
+                        {"RealPortions", real_portions},
+                        {"RealLengthOverR", real_over_R},
+                        {"ImageLengthOverR", image_over_R},
+                        {"RealFeatures", real_ids},
+                        {"ExtendedFeature", feature.id},
+                        {"Rule", rule}};
+}
+
 }  // namespace
 
 MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
@@ -748,6 +947,14 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
     double real_length = 0.0, image_length = 0.0;
   };
   std::vector<Formed> formed;
+  // Unmerged mirror-formed configurations emitted as merged features with their contract
+  // (decision 557): appended after the formed features, numbered after them.
+  struct Configuration
+  {
+    IdentifiedFeature feature;
+    std::size_t unmerged_index = 0;
+  };
+  std::vector<Configuration> configurations;
   std::map<std::size_t, nlohmann::json> continued;  // real feature index -> record
   // Whether a REAL portion of a feature of the extended run is identified IDENTICALLY by
   // the unextended run (decision 512 (b) / (c), DESIGN ERRATA-7), piece by piece: the
@@ -1045,6 +1252,7 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
           world_portions.push_back(std::move(entry));
         }
       }
+      const std::size_t unmerged_index = summary.unmerged_features.size();
       summary.unmerged_features.push_back({{"Feature", feature.id},
                                            {"Type", feature.type},
                                            {"Key", feature.signature_key},
@@ -1056,6 +1264,46 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
                                            {"RealFeatures", real_ids},
                                            {"Portions", world_portions},
                                            {"Status", "Unmerged"}});
+      // The REQUIREMENT CONTRACT (decision 557 (1) / (4), 562; impl-B5 CONTRACT.md): the
+      // configuration itself becomes a merged feature of its own type with ALL its
+      // portions (real and image), its real length, its real vertices and its canonical
+      // frame, carrying Mirror Status "Unmerged" and the contract (or the refusal, by
+      // name), so that the operator's requirement records emit it as an ordinary Missing /
+      // Exact requirement WITH the Frame and the real / image split and the placement can
+      // apply a matched model on its real half. The real features it touches keep the
+      // unextended reading (above); the configuration is never registered in the segments'
+      // portion tables (the real reading's) and is numbered after every real and formed
+      // feature.
+      if (feature.type == "SpatialEdgeCluster" || feature.type == "CurvedEdge")
+      {
+        std::string refused;
+        nlohmann::json contract = BuildMirrorFormedContract(
+            feature, extended, n_real_segments, R, PlanesOfFeature(feature), real_length,
+            image_length, real_ids, refused);
+        IdentifiedFeature copy = feature;
+        copy.length = real_length;
+        copy.vertices.erase(std::remove_if(copy.vertices.begin(), copy.vertices.end(),
+                                           [&](std::size_t v)
+                                           { return v >= n_real_vertices; }),
+                            copy.vertices.end());
+        copy.mirror = {{"Planes", PlanesOfFeature(feature)},
+                       {"RealLength", real_length},
+                       {"ImageLength", image_length},
+                       {"Status", "Unmerged"},
+                       {"ExtendedFeature", feature.id},
+                       {"UnmergedIndex", unmerged_index},
+                       {"RealFeatures", real_ids}};
+        if (refused.empty())
+        {
+          copy.mirror["Contract"] = std::move(contract);
+        }
+        else
+        {
+          copy.mirror["ContractRefused"] = refused;
+          summary.unmerged_features.back()["ContractRefused"] = refused;
+        }
+        configurations.push_back({std::move(copy), unmerged_index});
+      }
       continue;
     }
     formed.push_back({&feature, PlanesOfFeature(feature), real_length, image_length});
@@ -1119,7 +1367,7 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
               [](const IdentifiedVertex &a, const IdentifiedVertex &b)
               { return a.vertex < b.vertex; });
   };
-  if (formed.empty())
+  if (formed.empty() && configurations.empty())
   {
     UpdateJointVertices({});
     return summary;
@@ -1133,6 +1381,7 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
   }
   std::vector<std::size_t> emptied;
   std::vector<IdentifiedFeature> added;
+  std::map<int, int> extended_to_merged;
   for (const auto &item : formed)
   {
     const auto &feature = *item.feature;
@@ -1213,7 +1462,8 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
     summary.mirror_formed_features++;
     added.push_back(std::move(copy));
   }
-  // Drop the emptied real features (their Ids were lent), append the formed ones.
+  // Drop the emptied real features (their Ids were lent), append the formed ones, then the
+  // unmerged configurations (decision 557) numbered after them.
   std::sort(emptied.begin(), emptied.end());
   for (auto it = emptied.rbegin(); it != emptied.rend(); ++it)
   {
@@ -1223,13 +1473,31 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
   {
     merged.features.push_back(std::move(feature));
   }
-  // The segments' portion lists ({s0, s1, feature}) rebuilt from the merged features.
+  for (std::size_t i = 0; i < formed.size(); i++)
+  {
+    extended_to_merged[formed[i].feature->id] = summary.mirror_formed_ids[i];
+  }
+  for (auto &configuration : configurations)
+  {
+    auto &feature = configuration.feature;
+    extended_to_merged[feature.id] = next_id;
+    feature.id = next_id++;
+    summary.unmerged_features[configuration.unmerged_index]["MergedFeature"] = feature.id;
+    merged.features.push_back(std::move(feature));
+  }
+  // The segments' portion lists ({s0, s1, feature}) rebuilt from the merged features: the
+  // REAL reading (an unmerged configuration's portions overlap the real features' and are
+  // not registered).
   for (auto &segment : merged.segments)
   {
     segment.portions.clear();
   }
   for (const auto &feature : merged.features)
   {
+    if (IsUnmergedMirrorConfiguration(feature))
+    {
+      continue;
+    }
     for (const auto &portion : feature.portions)
     {
       merged.segments[portion.segment].portions.push_back(
@@ -1239,11 +1507,6 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
   for (auto &segment : merged.segments)
   {
     std::sort(segment.portions.begin(), segment.portions.end());
-  }
-  std::map<int, int> extended_to_merged;
-  for (std::size_t i = 0; i < formed.size(); i++)
-  {
-    extended_to_merged[formed[i].feature->id] = summary.mirror_formed_ids[i];
   }
   UpdateJointVertices(extended_to_merged);
   return summary;

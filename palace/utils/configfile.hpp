@@ -1153,6 +1153,19 @@ public:
       // DESIGN 2.1) keeps the raw within-R energy of these portions when the coupon is a
       // DomainBoundary exclusion (closing the decision-399 MINOR-7 known limit).
       std::vector<Claim> raw_claims;
+      // A spatial cluster patch placed on an unmerged mirror-formed configuration by its
+      // REQUIREMENT CONTRACT (decision 557 (4); impl-B5 CONTRACT.md section 4): the index
+      // of the configuration in the geometry's unmerged-portion topologies
+      // (ResponseCorrectionData::mirror_unmerged_portions[].topology; -1 for every other
+      // patch), the coupon's reach beyond its planes for the even-extension evaluation of
+      // its image half (mesh length units; 0 = the global band) and the per-Edge weights
+      // of the model (1.0 a real edge placed on the real portions, 0.0 an image edge never
+      // applied to a cell), parallel to the model's Edges. The patch `weight` is the real
+      // length fraction RealLengthOverR / (RealLengthOverR + ImageLengthOverR) (the library
+      // counts the real half) and `claims` lists the real portions only.
+      int mirror_formed_topology = -1;
+      double mirror_reach = 0.0;
+      std::vector<double> mirror_edge_weights;
     };
     Provenance provenance;
   };

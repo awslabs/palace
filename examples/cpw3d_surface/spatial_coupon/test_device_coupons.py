@@ -212,8 +212,11 @@ class MirrorFormedContractTest(unittest.TestCase):
 
     def test_fixture_requirements_validate_and_hash_to_their_keys(self):
         fixture = json.loads(MIRROR_FORMED_FIXTURE.read_text())
-        self.assertEqual(sorted(fixture["Requirements"]), ["o1-f17-b0b764b21b95", "o3-f45-d7c875318447", "s2p-f11-613e6f656498"])
-        expected = {"o1-f17-b0b764b21b95": ([0], [1]), "o3-f45-d7c875318447": ([0, 3], [1, 2]), "s2p-f11-613e6f656498": ([0, 1], [2, 3])}
+        self.assertEqual(sorted(fixture["Requirements"]),
+                         ["c3-02db9a314b1b", "o1-f17-b0b764b21b95", "o3-f45-d7c875318447", "s2p-f11-613e6f656498"])
+        expected = {"o1-f17-b0b764b21b95": ([0], [1]), "o3-f45-d7c875318447": ([0, 3], [1, 2]), "s2p-f11-613e6f656498": ([0, 1], [2, 3]),
+                    # the IDENTIFICATION-emitted C3 record (M7 gate 2): an 18-portion cluster, 8 real, chirality -1
+                    "c3-02db9a314b1b": ([0, 1, 2, 3, 4, 5, 10, 11], [6, 7, 8, 9, 12, 13, 14, 15, 16, 17])}
         for name, requirement in fixture["Requirements"].items():
             coupon = {"Id": name, **requirement}
             # the requirement Hash is sha256 of the identification's Key = the compact sorted dump of the signature
@@ -225,6 +228,15 @@ class MirrorFormedContractTest(unittest.TestCase):
             lengths = device_coupons.signature_portion_lengths_over_R(requirement["Signature"])
             self.assertAlmostEqual(sum(lengths[i] for i in contract["RealPortions"]), contract["RealLengthOverR"], delta=1e-3)
             self.assertAlmostEqual(sum(lengths[i] for i in contract["ImagePortions"]), contract["ImageLengthOverR"], delta=1e-3)
+            # CONTRACT.md v3 (decision 584 (2)): the Frame is the identification's with its Chirality explicit
+            frame = requirement["MirrorFormedContract"]["Frame"]
+            self.assertEqual(contract["Frame"]["Chirality"], frame["Chirality"])
+            self.assertEqual(frame["Chirality"], -1 if name.startswith("c3-") else 1)
+        # the C3 production frame is LEFT-handed as a plain triple (Axes[2] = the process normal): valid under v3
+        c3 = fixture["Requirements"]["c3-02db9a314b1b"]["MirrorFormedContract"]["Frame"]
+        x, y, z = c3["Axes"]
+        cross = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]
+        self.assertTrue(all(abs(-cross[d] - z[d]) < 1e-9 for d in range(3)))
         # the O3 real arm is the ARC portion 0 (R_arc 157.9 R) + the straight 3; its context arc 0 shares the circle
         o3 = fixture["Requirements"]["o3-f45-d7c875318447"]["Signature"]
         self.assertIn("Arc", o3["Portions"][0])
@@ -257,10 +269,16 @@ class MirrorFormedContractTest(unittest.TestCase):
                  ("sorted list of distinct", mutated(**{"contract.RealPortions": [0, 0]})),
                  ("Planes", mutated(**{"contract.Planes": []})),
                  ("Frame must carry", mutated(**{"contract.Frame": {"Origin": [0, 0, 0]}})),
-                 ("not a unit vector", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[2, 0, 0], [0, 1, 0], [0, 0, 1]]}})),
-                 ("not orthogonal", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0.6, 0.8, 0], [0, 0, 1]]}})),
-                 ("not right-handed", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, -1]]}})),
-                 ("Frame is not finite", mutated(**{"contract.Frame": {"Origin": [0, 0, float("nan")], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}})),
+                 ("not a unit vector", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[2, 0, 0], [0, 1, 0], [0, 0, 1]], "Chirality": 1}})),
+                 ("not orthogonal", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0.6, 0.8, 0], [0, 0, 1]], "Chirality": 1}})),
+                 # CONTRACT.md v3: a frame without Chirality, with a Chirality outside {1, -1}, or whose triple disagrees
+                 # with its Chirality (both handedness values) is refused by name
+                 ("Frame.Chirality None", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]]}})),
+                 ("Frame.Chirality 2", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "Chirality": 2}})),
+                 ("Frame.Chirality True", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "Chirality": True}})),
+                 ("disagree with Chirality 1", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, -1]], "Chirality": 1}})),
+                 ("disagree with Chirality -1", mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "Chirality": -1}})),
+                 ("Frame is not finite", mutated(**{"contract.Frame": {"Origin": [0, 0, float("nan")], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "Chirality": 1}})),
                  ("RealLengthOverR", mutated(**{"contract.RealLengthOverR": 5.3})),
                  ("ImageLengthOverR", mutated(**{"contract.ImageLengthOverR": -1.0})),
                  ("RealFeatures", mutated(**{"contract.RealFeatures": "17"})),
@@ -273,6 +291,9 @@ class MirrorFormedContractTest(unittest.TestCase):
         for text, coupon in cases:
             with self.assertRaisesRegex(device_coupons.DeviceAdapterError, text, msg=text):
                 device_coupons.validate_mirror_formed_contract(coupon)
+        # a left-handed triple (Axes[2] = -(Axes[0] x Axes[1])) with Chirality -1 is a valid v3 frame
+        left = mutated(**{"contract.Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, -1]], "Chirality": -1}})
+        self.assertEqual(device_coupons.validate_mirror_formed_contract(left)["Frame"]["Chirality"], -1)
         # the length check tolerates the serialisation quantum but not a wrong arm
         within = mutated(**{"contract.RealLengthOverR": base["MirrorFormedContract"]["RealLengthOverR"] + 5e-4})
         self.assertEqual(device_coupons.validate_mirror_formed_contract(within)["RealPortions"], [0])

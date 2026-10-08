@@ -450,7 +450,8 @@ private:
 
   void ConfigurePointCommunication(
       DistributedPointLocator &locator, const mfem::Vector &xyz, int dimension,
-      const std::vector<std::array<double, 3>> *weighted_tangents = nullptr);
+      const std::vector<std::array<double, 3>> *weighted_tangents = nullptr,
+      const std::vector<double> *point_band = nullptr);
   void ConfigureMaxwellLines(const std::vector<MaxwellLineGeometry> &line_geometry);
   void EvaluatePointValues(const Vector &x, Vector &values) const;
   void EvaluatePointValues(const Vector &xr, const Vector &xi, Vector &vr,
@@ -1092,6 +1093,34 @@ nlohmann::json DescribeMirrorArmTrims(
         config::ElectrostaticSolverData::ResponseCorrectionData::MirrorArmTrimData> &trims,
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     double coordinate_scale);
+// The per-Edge weights of a model placed on an unmerged mirror-formed configuration by its
+// REQUIREMENT CONTRACT (decision 557 (4); impl-B5 CONTRACT.md sections 2-4): 1.0 for an
+// Edge on one of the contract's RealPortions (a real edge), 0.0 for every other Edge (an
+// image edge, never applied to a cell). `edge_portions` are the model Edges' Signature
+// portion indices (VerifySpatialEdgesInSignatureFrame), `edge_weights` the ENTRY's per-Edge
+// Weight when stamped (nullopt otherwise), `entry` the model's MirrorFormed ENTRY record
+// (null for an ordinary coupon of the same key, e.g. a real coupon of a symmetric key).
+// Fails closed by name (MFEM_ABORT) on an inconsistent record: an Edge on no portion, a
+// stamped Weight disagreeing with the contract, ENTRY RealPortions differing from the
+// contract's, an ENTRY RealLengthFraction off the contract's by more than the signature
+// tolerance. Returns the weights (parallel to the Edges) and the real length fraction.
+struct MirrorFormedEdgeWeights
+{
+  std::vector<double> weights;
+  double real_length_fraction = 1.0;
+};
+MirrorFormedEdgeWeights MirrorFormedEdgeWeightsOf(
+    const nlohmann::json &contract, const std::vector<int> &edge_portions,
+    const std::vector<std::optional<double>> &edge_weights, const nlohmann::json &entry,
+    const std::string &model_name, int feature_id);
+
+// The Diagnostics entry of the mirror-formed contract placement (decision 557 (4); impl-B5
+// CONTRACT.md section 4): every spatial patch placed on an unmerged mirror-formed
+// configuration by its contract - the model, the weight (the real length fraction), the
+// per-Edge weights (1 real / 0 image), the real claims, the even-extension reach.
+nlohmann::json DescribeMirrorFormedPlacements(
+    const config::ElectrostaticSolverData::ResponseCorrectionData &config,
+    double coordinate_scale);
 // The trimmed corners whose vertex coupon the placement does not apply (decision 399
 // MINOR-7): excluded_reason names the exclusion of a patch index (nullopt: applied). Their
 // second arm's [R, s) is then modelled by nothing (a recorded KNOWN LIMIT).
@@ -1235,13 +1264,17 @@ std::vector<MirrorPlane> MirrorPlanesOf(
 // Reflect every point outside the mesh's Natural mirror planes into the domain (the even
 // extension of the trace; boundary-cut DESIGN 2.2.3): returns the number of reflected
 // points; a point beyond a plane that does not mirror or beyond the band is left in place
-// (the locator then fails closed naming the patch).
+// (the locator then fails closed naming the patch). `point_band` (optional, one entry per
+// point, mesh units) widens the band for the points of a mirror-formed cluster coupon
+// placed by its contract (decision 557 (4)): the coupon straddles its planes and its image
+// half, the exact reflection of its real half, reaches the coupon's own extent (the
+// patch's Provenance::mirror_reach); 0 keeps the global band.
 int ReflectPointsIntoDomain(
     mfem::Vector &xyz, int dimension,
     const std::vector<
         config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
         &mirror_planes,
-    double mirror_band, double tolerance);
+    double mirror_band, double tolerance, const std::vector<double> *point_band = nullptr);
 
 // The Diagnostics entry of the exclusions (per patch: feature, model, cell and portion
 // with their lengths, outside-point count, the nearest outside point; totals: the CELL
