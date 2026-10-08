@@ -168,7 +168,16 @@ def rebuilt_arc(a, b, c, m, radius, step_degrees=signature_library.CLUSTER_ARC_C
         bisector = np.asarray([-chord[1], chord[0]]) / _norm2(chord)
         centre = midpoint + _dot2(c - midpoint, bisector) * bisector
         r = _norm2(a - centre)
-        sweep, _ = _arc_sweep(a, b, centre, m)
+    vertices, sweep = _arc_chord_vertices(a, b, centre, r, m, radius, step_degrees, max_chord_over_R)
+    return vertices, centre, r, sweep
+
+
+def _arc_chord_vertices(a, b, centre, r, m, radius, step_degrees=signature_library.CLUSTER_ARC_CHORD_STEP_DEGREES,
+                        max_chord_over_R=signature_library.CLUSTER_ARC_CHORD_MAX_LENGTH_OVER_R):
+    """The chord vertices of the arc a -> b of the circle (centre, r) on the side of m, at equal
+    angular steps (rebuilt_arc's rule; a and b exact); (vertices, signed sweep). The chording of
+    one member of a same-circle chain (fix 2a): the circle is the chain's, the ends the member's."""
+    sweep, closed = _arc_sweep(a, b, centre, m)
     ta = deterministic_math.atan2(a[1] - centre[1], a[0] - centre[0])
     n = max(int(math.ceil(abs(sweep) / math.radians(step_degrees) - 1.0e-9)),
             int(math.ceil(r * abs(sweep) / (max_chord_over_R * radius) - 1.0e-9)), 1)
@@ -177,7 +186,7 @@ def rebuilt_arc(a, b, c, m, radius, step_degrees=signature_library.CLUSTER_ARC_C
         t = ta + sweep * k / n
         vertices.append(np.asarray([centre[0] + r * deterministic_math.cos(t), centre[1] + r * deterministic_math.sin(t)]))
     vertices.append(a.copy() if closed else b.copy())
-    return vertices, centre, r, sweep
+    return vertices, sweep
 
 
 def _serialised_entries(signature, radius):
@@ -286,6 +295,26 @@ def arc_end_snaps(signature, radius):
 # shared tube section) or a CORNER (the ball, the caps and the clearance rule). One constant,
 # one concept; the mesher reads the classification from the plan-view boundary tags.
 JUNCTION_TANGENT_ANGLE = 1.0e-4
+# Mesher design round 3 class (3) (DESIGN R2, decision 510 O2 / MINOR-5): an arc entry whose
+# same-circle CHAIN sweeps by at most JUNCTION_TANGENT_ANGLE is indistinguishable from its
+# chord by the joint logic above (each half-sweep is a smooth joint with the chord) and its
+# sagitta lies below the signature quantum: it is DEMOTED to a straight entry (one chord between
+# its fixed ends, no tag) and recorded in Geometry.StraightenedArcs. The mesher admits a smooth
+# arc joint up to ARC_SMOOTH_JOINT_TURN_BOUND = JUNCTION_TANGENT_ANGLE / 2 (mesh_spatial_coupon.jl
+# spells 5.0e-5; one concept, asserted equal by test): every smooth joint of a demoted entry must
+# read a chord turn strictly below that bound with the mesher's relative slack, else the
+# generator stops naming the joint (never a mesher ScopeGuard later).
+ARC_SMOOTH_JOINT_TURN_BOUND = 0.5 * JUNCTION_TANGENT_ANGLE
+STRAIGHTENED_ARC_RULE = ("mesher design round 3 class (3), DESIGN R2 (decision 510 O2): an arc entry whose same-circle "
+                         "chain sweeps by at most JUNCTION_TANGENT_ANGLE = 1e-4 rad is read as its chord (the fixed ends "
+                         "exactly, the perpendicular gap with the serialised sign, no arc tag): its end tangents lie "
+                         "within the joint tolerance of the chord and its sagitta below the signature quantum; every "
+                         "smooth joint of a demoted entry turns by less than ARC_SMOOTH_JOINT_TURN_BOUND = 5e-5 rad")
+CHAIN_JOINT_RULE = ("mesher design round 3 class (2), fix 2a (DESIGN-part-M 1.3): arc entries of one conductor on one "
+                    "serialised circle (centres and radii within COINCIDENCE_OVER_R, the same GapRadial) whose fixed ends "
+                    "meet within the joint tolerance form a CHAIN rebuilt on ONE circle through the chain's outer ends; "
+                    "every interior joint vertex is projected radially onto it and every member carries the chain's "
+                    "centre and radius (identical digits)")
 
 
 def _entry_tangent_at(entry, point, radius):
@@ -310,60 +339,249 @@ def rebuilt_arcs(signature, radius):
     (arc_end_snaps + rebuilt_arc), in mesh units of the canonical frame: a list of
     {ArcId (1-based, in entry order), Kind, Index, Vertices (the chord vertices, ends exact),
     Centre, Radius, Sweep (signed, the travel A -> B), Sign (GapRadial), Conductor,
-    Joints [turn at A, turn at B]} with the JointSnaps records (arc_end_snaps' plus one ``Arc``
-    record per rebuilt arc {Piece, ArcDeviationOverR, CentreShiftOverR, RadiusShiftOverR,
-    Chords, Centre, RadiusOverR}); a rebuilt arc farther than ARC_REBUILD_TOLERANCE_OVER_R
-    from the signature's circle fails closed.  The joint turn at an end is the angle between
-    the arc's serialised tangent there and the serialised tangent of the neighbouring entry
-    of the same conductor whose end lies within ARC_JOINT_SNAP_OVER_R (design A3 (1): read on
-    the signature, before any snap); None at an end without a neighbour (a box face, a free
-    end).  A closed circle has no joints and keeps its serialised circle."""
+    Joints [turn at A, turn at B], Closed, Demoted, ChainId} with the JointSnaps records
+    (arc_end_snaps' plus one ``Arc`` record per kept rebuilt arc {Piece, ArcDeviationOverR,
+    CentreShiftOverR, RadiusShiftOverR, Chords, Centre, RadiusOverR[, ChainId]}, one
+    ``ChainJoint`` record per projected chain joint end and one ``StraightenedArc`` record per
+    demoted entry); a rebuilt arc farther than ARC_REBUILD_TOLERANCE_OVER_R from the signature's
+    circle fails closed.  The joint turn at an end is the angle between the arc's serialised
+    tangent there and the tangent of the neighbouring entry of the same conductor whose end lies
+    within ARC_JOINT_SNAP_OVER_R (design A3 (1): read on the signature, before any snap; a
+    demoted neighbour contributes its chord direction); None at an end without a neighbour (a
+    box face, a free end).  A closed circle has no joints and keeps its serialised circle.
+
+    Mesher design round 3 (DESIGN R2, decision 510), in this order: (a) the end snaps; (b) the
+    same-circle CHAINS (fix 2a, CHAIN_JOINT_RULE): one circle through the chain's outer fixed
+    ends nearest the first member's serialised centre, the interior joint vertices projected
+    onto it, every member chorded on it; (c) a chain whose total sweep is at most
+    JUNCTION_TANGENT_ANGLE is DEMOTED whole (fix (3)(ii), STRAIGHTENED_ARC_RULE: each member one
+    chord between its fixed ends, Demoted True, no tag); (d) the joint classification, which
+    never sees a demoted entry as an arc, and the MINOR-5 assertion on every smooth joint of a
+    demoted entry.  A chain of one member is today's rebuild, bitwise."""
     fixed, records = arc_end_snaps(signature, radius)
     entries = _serialised_entries(signature, radius)
     tolerance = (ARC_REBUILD_TOLERANCE_OVER_R + HALF_QUANTUM_OVER_R) * radius
     joint_tolerance = (ARC_JOINT_SNAP_OVER_R + HALF_QUANTUM_OVER_R) * radius
-    arcs = []
-    for i, entry in enumerate(entries):
-        if entry["Arc"] is None:
+    coincidence = COINCIDENCE_OVER_R * radius
+
+    def circle_of(entry):
+        # The serialised circle: its centre and the radius read at the serialised MIDPOINT (always
+        # on the circle; an END may sit off it by the fit tolerance and is what the snaps move).
+        c = np.asarray(entry["Arc"][:2])
+        return c, _norm2(np.asarray(entry["Arc"][2:]) - c)
+
+    def snap_radius(entry):
+        return _norm2(entry["A"] - np.asarray(entry["Arc"][:2]))      # arc_end_snaps' radius_of
+
+    def is_closed(entry):
+        return entry["Arc"] is not None and _norm2(entry["A"] - entry["B"]) <= 1.0e-9 * max(snap_radius(entry), 1.0)
+
+    def piece(i):
+        return [entries[i]["Kind"], entries[i]["Index"]]
+
+    arc_indices = [i for i, entry in enumerate(entries) if entry["Arc"] is not None]
+    ends = {i: list(fixed.get((entries[i]["Kind"], entries[i]["Index"]), (entries[i]["A"], entries[i]["B"])))
+            for i in arc_indices}
+    # (b) the chains: pairs of open arc entries of one conductor and one serialised circle whose
+    # fixed ends meet within the joint tolerance.
+    parent = {i: i for i in arc_indices}
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    chain_joints = []
+    for position, i in enumerate(arc_indices):
+        if is_closed(entries[i]):
             continue
+        for j in arc_indices[position + 1:]:
+            if is_closed(entries[j]) or entries[j]["Conductor"] != entries[i]["Conductor"]:
+                continue
+            if int(entries[j]["Entry"]["GapRadial"]) != int(entries[i]["Entry"]["GapRadial"]):
+                continue
+            (ci, ri), (cj, rj) = circle_of(entries[i]), circle_of(entries[j])
+            if _norm2(ci - cj) > coincidence or abs(ri - rj) > coincidence:
+                continue
+            for end_i, p in enumerate(ends[i]):
+                for end_j, q in enumerate(ends[j]):
+                    if _norm2(p - q) <= joint_tolerance:
+                        chain_joints.append((i, end_i, j, end_j))
+                        parent[root(i)] = root(j)
+    chains = {}
+    for i in arc_indices:
+        chains.setdefault(root(i), []).append(i)
+    chain_of = {}
+    chain_id = 0
+    for members in sorted(chains.values(), key=min):
+        if len(members) > 1:
+            chain_id += 1
+            for i in members:
+                chain_of[i] = chain_id
+
+    rebuilt = {}
+    demoted = set()
+    straightened = []
+    for members in sorted(chains.values(), key=min):
+        members = sorted(members)
+        first = entries[members[0]]
+        if len(members) == 1:
+            i = members[0]
+            c, m = np.asarray(first["Arc"][:2]), np.asarray(first["Arc"][2:])
+            vertices, centre, r, sweep = rebuilt_arc(ends[i][0], ends[i][1], c, m, radius)
+            chain_sweep = sweep
+            member_geometry = {i: (vertices, sweep)}
+        else:
+            joints_of = {(i, end): (j, end_j) for i, end, j, end_j in chain_joints}
+            joints_of.update({(j, end_j): (i, end) for i, end, j, end_j in chain_joints})
+            joint_ends = {key for key in joints_of if key[0] in members}
+            for i in members:
+                for end in (0, 1):
+                    partners = [(a, b, c, d) for a, b, c, d in chain_joints if (a, b) == (i, end) or (c, d) == (i, end)]
+                    len(partners) <= 1 or _refuse(f"{first['Kind'].lower()} {first['Index']}: the same-circle chain end "
+                                                 f"{piece(i)} end {end} meets {len(partners)} other entries (a chain is a path)")
+            free = [(i, end) for i in members for end in (0, 1) if (i, end) not in joint_ends]
+            len(free) == 2 or _refuse(f"{first['Kind'].lower()} {first['Index']}: a same-circle chain of {len(members)} entries "
+                                      f"with {len(free)} free ends (a closed chain - a full circle in several entries - is not "
+                                      f"supported; a branched chain is not a chain)")
+            free.sort()
+            a_outer, b_outer = ends[free[0][0]][free[0][1]], ends[free[1][0]][free[1][1]]
+            c_ref, m_ref = np.asarray(first["Arc"][:2]), np.asarray(first["Arc"][2:])
+            _, centre, r, chain_sweep = rebuilt_arc(a_outer, b_outer, c_ref, m_ref, radius)
+            # The interior joints: the end kept by the snap rule (the smaller serialised radius,
+            # then the earlier entry), projected radially onto the chain's circle, becomes the
+            # joint vertex of both members.
+            for i, end_i, j, end_j in chain_joints:
+                if i not in members:
+                    continue
+                winner, loser = ((i, end_i), (j, end_j)) if (snap_radius(entries[i]), i) <= (snap_radius(entries[j]), j) \
+                    else ((j, end_j), (i, end_i))
+                p = ends[winner[0]][winner[1]]
+                radial = p - centre
+                q = centre + (r / _norm2(radial)) * radial
+                for own, other in ((winner, loser), (loser, winner)):
+                    distance = _norm2(q - ends[own[0]][own[1]])
+                    if distance > tolerance:
+                        _refuse(f"{entries[own[0]]['Kind'].lower()} {entries[own[0]]['Index']} end {own[1]}: the same-circle "
+                                f"chain joint moves {distance / radius:.3e} R onto the chain's circle, beyond "
+                                f"{ARC_REBUILD_TOLERANCE_OVER_R:g} R")
+                    if distance > 0.0:
+                        records.append({"Piece": piece(own[0]), "End": own[1], "Class": "ChainJoint",
+                                        "To": piece(other[0]) + [other[1]], "ChainId": chain_of[own[0]],
+                                        "DistanceOverR": distance / radius})
+                    ends[own[0]][own[1]] = q.copy()
+            member_geometry = {}
+            for i in members:
+                m_i = np.asarray(entries[i]["Arc"][2:])
+                member_geometry[i] = _arc_chord_vertices(ends[i][0], ends[i][1], centre, r, m_i, radius)
+        # (c) the demotion, judged on the chain's sweep.
+        if abs(chain_sweep) <= JUNCTION_TANGENT_ANGLE and not is_closed(first):
+            for i in members:
+                _, sweep_i = member_geometry[i]
+                half_sine = deterministic_math.sin(0.25 * abs(sweep_i))
+                straightened.append({"Piece": piece(i), "Class": "StraightenedArc", "ArcId": arc_indices.index(i) + 1,
+                                     "ChainId": chain_of.get(i, 0), "RadiusOverR": r / radius, "SweepRad": sweep_i,
+                                     "ChainSweepRad": chain_sweep,
+                                     "SagittaOverR": 2.0 * r * half_sine * half_sine / radius,
+                                     "Rule": STRAIGHTENED_ARC_RULE})
+                demoted.add(i)
+                rebuilt[i] = ([ends[i][0].copy(), ends[i][1].copy()], centre, r, sweep_i)
+            continue
+        for i in members:
+            vertices, sweep_i = member_geometry[i]
+            c_i = np.asarray(entries[i]["Arc"][:2])
+            r_i = snap_radius(entries[i])                  # the serialised radius at A (as before)
+            deviation = max(abs(_norm2(q - c_i) - r_i) for q in vertices)
+            if deviation > tolerance:
+                raise SignatureGeometryError(f"{entries[i]['Kind'].lower()} {entries[i]['Index']}: arc rebuild outside the fit "
+                                             f"tolerance (the rebuilt chord vertices deviate {deviation / radius:.3e} R from the "
+                                             f"signature's circle, tolerance {ARC_REBUILD_TOLERANCE_OVER_R:g} R: a snap bent a "
+                                             f"short arc too far)")
+            record = {"Piece": piece(i), "Class": "Arc", "ArcDeviationOverR": deviation / radius,
+                      "CentreShiftOverR": _norm2(centre - c_i) / radius,
+                      "RadiusShiftOverR": abs(r - r_i) / radius, "Chords": len(vertices) - 1,
+                      "Centre": [float(centre[0]) / radius, float(centre[1]) / radius], "RadiusOverR": r / radius}
+            if i in chain_of:
+                record["ChainId"] = chain_of[i]
+            records.append(record)
+            rebuilt[i] = (vertices, centre, r, sweep_i)
+
+    def chord_direction(i):
+        d = ends[i][1] - ends[i][0]
+        return d / _norm2(d)
+
+    def signature_tangent(i, point):
+        # The travel direction of entry i at its serialised end `point` as the joint
+        # classification reads it (design A3 (1): on the signature): the chord of a straight
+        # entry, the circle tangent of a kept arc, the chord of a DEMOTED arc (fixed ends).
+        return chord_direction(i) if i in demoted else _entry_tangent_at(entries[i], point, radius)
+
+    def built_tangent(i, point):
+        # The travel direction the MESHER reads from the boundary at the joint nearest `point`:
+        # the chord of a straight or demoted entry, the REBUILT (chain) circle's tangent at the
+        # kept arc's fixed end (its tag) - the tangent arc_end_guards tests the chord against.
+        if entries[i]["Arc"] is None or i in demoted:
+            return signature_tangent(i, point)
+        _, centre, _, sweep = rebuilt[i]
+        q = min(ends[i], key=lambda end: _norm2(end - point))
+        rad = q - centre
+        tangent = np.asarray([-rad[1], rad[0]]) / _norm2(rad)
+        return tangent if sweep > 0.0 else -tangent
+
+    def neighbours(i, point):
+        for j, other in enumerate(entries):
+            if j == i or other["Conductor"] != entries[i]["Conductor"]:
+                continue
+            for other_point in (other["A"], other["B"]):
+                if _norm2(point - other_point) > joint_tolerance:
+                    continue
+                if other["Arc"] is not None and _norm2(other["A"] - other["B"]) <= 1.0e-9 * radius:
+                    continue
+                yield j, other_point
+
+    def turn_between(own, neighbour):
+        # The two travel directions meet head-on or tail-to-head at the joint: the turn is the
+        # angle between the lines of travel through it.
+        return deterministic_math.acos(min(1.0, abs(_dot2(own, neighbour))))
+
+    # (d) the joint classification of the kept arcs (and the MINOR-5 assertion of the demoted).
+    arcs = []
+    for i in arc_indices:
+        entry = entries[i]
         kind, index = entry["Kind"], entry["Index"]
+        vertices, centre, r, sweep = rebuilt[i]
         a, b = entry["A"], entry["B"]
-        c, m = np.asarray(entry["Arc"][:2]), np.asarray(entry["Arc"][2:])
-        a_fixed, b_fixed = fixed.get((kind, index), (a, b))
-        vertices, centre, r, sweep = rebuilt_arc(a_fixed, b_fixed, c, m, radius)
-        r_signature = _norm2(a - c)
-        deviation = max(abs(_norm2(q - c) - r_signature) for q in vertices)
-        if deviation > tolerance:
-            raise SignatureGeometryError(f"{kind.lower()} {index}: arc rebuild outside the fit tolerance (the rebuilt chord "
-                                         f"vertices deviate {deviation / radius:.3e} R from the signature's circle, tolerance "
-                                         f"{ARC_REBUILD_TOLERANCE_OVER_R:g} R: a snap bent a short arc too far)")
-        records.append({"Piece": [kind, index], "Class": "Arc", "ArcDeviationOverR": deviation / radius,
-                        "CentreShiftOverR": _norm2(centre - c) / radius,
-                        "RadiusShiftOverR": abs(r - r_signature) / radius, "Chords": len(vertices) - 1,
-                        "Centre": [float(centre[0]) / radius, float(centre[1]) / radius], "RadiusOverR": r / radius})
-        closed = _norm2(a - b) <= 1.0e-9 * max(r_signature, 1.0)
+        closed = is_closed(entry)
         joints = [None, None]
         if not closed:
             for end_index, point in enumerate((a, b)):
-                own = _entry_tangent_at(entry, point, radius)
-                for j, other in enumerate(entries):
-                    if j == i or other["Conductor"] != entry["Conductor"]:
-                        continue
-                    for other_point in (other["A"], other["B"]):
-                        if _norm2(point - other_point) > joint_tolerance:
-                            continue
-                        if other["Arc"] is not None and _norm2(other["A"] - other["B"]) <= 1.0e-9 * radius:
-                            continue
-                        neighbour = _entry_tangent_at(other, other_point, radius)
-                        # The two travel directions meet head-on or tail-to-head at the joint:
-                        # the turn is the angle between the lines of travel through it.
-                        cosine = abs(_dot2(own, neighbour))
-                        turn = deterministic_math.acos(min(1.0, cosine))
-                        joints[end_index] = turn if joints[end_index] is None else min(joints[end_index], turn)
+                own = signature_tangent(i, point)
+                for j, other_point in neighbours(i, point):
+                    turn = turn_between(own, signature_tangent(j, other_point))
+                    joints[end_index] = turn if joints[end_index] is None else min(joints[end_index], turn)
+                    if i in demoted:
+                        # MINOR-5: a joint smooth on the SIGNATURE must read, on the boundary the
+                        # mesher sees (the chord against the neighbour's built direction), a turn
+                        # strictly below the mesher's smooth bound with its relative slack.
+                        signature_turn = turn_between(_entry_tangent_at(entry, point, radius),
+                                                      _entry_tangent_at(entries[j], other_point, radius))
+                        built = turn_between(chord_direction(i), built_tangent(j, other_point))
+                        if signature_turn <= JUNCTION_TANGENT_ANGLE and \
+                                not built < ARC_SMOOTH_JOINT_TURN_BOUND * (1.0 - 1.0e-12):
+                            _refuse(f"{kind.lower()} {index} (demoted to its chord) meets {entries[j]['Kind'].lower()} "
+                                    f"{entries[j]['Index']} at a smooth joint whose chord turn {built:.6e} rad is not below "
+                                    f"ARC_SMOOTH_JOINT_TURN_BOUND {ARC_SMOOTH_JOINT_TURN_BOUND:g} rad (mesher design round 3 "
+                                    f"R2, decision 510 MINOR-5)")
         arcs.append({"ArcId": len(arcs) + 1, "Kind": kind, "Index": index, "Vertices": vertices, "Centre": centre,
                      "Radius": r, "Sweep": sweep, "Sign": int(entry["Entry"]["GapRadial"]), "Conductor": entry["Conductor"],
-                     "Joints": joints, "Closed": closed})
+                     "Joints": joints, "Closed": closed, "Demoted": i in demoted, "ChainId": chain_of.get(i, 0)})
+    records.extend(straightened)
     return arcs, records
+
+
+def _refuse(message):
+    raise SignatureGeometryError(message)
 
 
 def chorded_entries(signature, radius, include_context=False):
@@ -391,6 +609,20 @@ def chorded_entries(signature, radius, include_context=False):
             continue
         arc = rebuilt[("Context" if context else "Claim", index)]
         vertices, centre, sweep, sign = arc["Vertices"], arc["Centre"], arc["Sweep"], arc["Sign"]
+        if arc["Demoted"]:
+            # Round 3 class (3) (R2): ONE straight edge between the fixed ends, its gap the exact
+            # perpendicular of the chord on the serialised (GapRadial) side - the straight-entry
+            # encoding (no Chord / Chords): the mask facets, the rows and the boundary carry a line.
+            a, b = vertices[0], vertices[-1]
+            d = b - a
+            t = d / _norm2(d)
+            perpendicular = np.asarray([t[1], -t[0]])
+            midpoint = 0.5 * (a + b)
+            outward = sign * (midpoint - centre)
+            g = perpendicular if _dot2(perpendicular, outward) >= 0.0 else -perpendicular
+            edges.append(dict(common, P0=(float(a[0]), float(a[1])), P1=(float(b[0]), float(b[1])),
+                              Gap=(float(g[0]) + 0.0, float(g[1]) + 0.0)))
+            continue
         n = len(vertices) - 1
         ta = deterministic_math.atan2(vertices[0][1] - centre[1], vertices[0][0] - centre[0])
         for k in range(n):
@@ -1003,12 +1235,19 @@ def cluster_coupon(record, radius, metal_thickness, overetch):
     coupon["Geometry"]["PlanViewFacets"] = facets
     coupon["Geometry"]["PlanViewBoundary"] = planner.canonical_plan_view_boundary(facets, radius, 2)
     coupon["Geometry"]["MaskRegularization"] = dict(MASK_REGULARIZATION)
-    _, joint_snaps = chorded_entries(signature, radius, include_context=True)
+    _, records = chorded_entries(signature, radius, include_context=True)
+    joint_snaps = [record for record in records if record["Class"] != "StraightenedArc"]
+    straightened = [{key: value for key, value in record.items() if key != "Class"}
+                    for record in records if record["Class"] == "StraightenedArc"]
     if joint_snaps:
-        # Block (b) DESIGN A1 (3) / 2 (b): the arc end snaps (face / joint) and the rebuilt
-        # circles' deviations from the signature's (recorded; a legacy straight coupon has
-        # none, so its coupon.json is unchanged).
+        # Block (b) DESIGN A1 (3) / 2 (b): the arc end snaps (face / joint), the round-3 chain
+        # joint projections (fix 2a) and the rebuilt circles' deviations from the signature's
+        # (recorded; a legacy straight coupon has none, so its coupon.json is unchanged).
         coupon["Geometry"]["JointSnaps"] = joint_snaps
+    if straightened:
+        # Round 3 class (3) (R2 / G.3.3 (ii)): the arc entries demoted to their chords, recorded
+        # only where the demotion acts; every float by the scalar rule and deterministic_math.
+        coupon["Geometry"]["StraightenedArcs"] = straightened
     if bridges:
         coupon["Geometry"]["InteriorCuts"] = [
             {"Portions": [portions[i]["Portion"], portions[j]["Portion"]],
