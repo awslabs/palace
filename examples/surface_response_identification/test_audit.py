@@ -781,6 +781,31 @@ class PatchGateTest(unittest.TestCase):
         self.assertAlmostEqual(summary["CoveredLength"], 11.0)  # the unmatched edge (1.0) is not covered
         self.assertAlmostEqual(summary["CoveredFractionOfAssigned"], 11.0 / 12.0)
 
+    def test_mirror_formed_configuration_weight_is_the_real_length_fraction(self):
+        # An unmerged mirror-formed CONFIGURATION placed by its REQUIREMENT CONTRACT (decision 557 (4); impl-B5
+        # CONTRACT.md s4): a cluster patch of weight RealLengthOverR / (RealLengthOverR + ImageLengthOverR), not the
+        # model weight (a real cluster) nor its half (a HalfByMirror virtual corner).
+        ident = self.identification()
+        contract = {"Version": 1, "Planes": [0], "RealPortions": [0], "RealLengthOverR": 5.2262518595303336,
+                    "ImageLengthOverR": 5.22625185953033, "RealFeatures": [0], "ExtendedFeature": 0, "Rule": "test",
+                    "Frame": {"Origin": [0, 0, 0], "Axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]], "Chirality": 1}}
+        ident["Features"].append({"Id": 4, "Type": "SpatialEdgeCluster", "Length": 2.0, "Portions": [[0, 0.0, 2.0]], "Vertices": [],
+                                  "Match": {"Status": "Matched", "Model": "wedge"},
+                                  "Mirror": {"Status": "Unmerged", "ExtendedFeature": 0, "UnmergedIndex": 0, "RealFeatures": [0],
+                                             "Contract": contract}})
+        fraction = contract["RealLengthOverR"] / (contract["RealLengthOverR"] + contract["ImageLengthOverR"])
+        rows = self.patches()
+        rows.append({"Patch": len(rows), "Feature": 4, "Topology": "spatial edge cluster", "Model": "wedge", "ModelIndex": 3, "Weight": fraction,
+                     "ModelWeight": 1.0, "QuadratureWeight": 1.0, "SideFactor": 1.0, "CouponDepth": 0.0, "Segment": -1, "S0": 0.0, "S1": 0.0})
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "PASS")
+        # the model weight (1) or the HalfByMirror half (0.5 exactly, here off the fraction by 2.5e-13 -> still 1e-12 close:
+        # use a clearly wrong weight) fail by name
+        rows[-1]["Weight"] = 1.0
+        status, detail, _ = self.gates(ident, rows)
+        self.assertEqual(status["A7-patch-weights"], "FAIL")
+        self.assertIn("RealLengthFraction", detail["A7-patch-weights"]["Examples"][0]["Defect"])
+
     def test_defects_fail(self):
         ident = self.identification()
         rows = self.patches()

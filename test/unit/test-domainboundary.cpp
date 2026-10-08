@@ -1820,6 +1820,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
       }
       REQUIRE(!corner.is_null());
+      // The 45-degree wedge corners (convex at the top edge, concave at the bottom):
+      // relabelled corner coupons, so that the apex virtual corners are Modelled
+      // (HalfByMirror weight 1 / 2) and their ownership by the wedge coupons (rule B4,
+      // decision 584 (2) MINOR-7) is exercised: on the half the virtual corner, on the full
+      // the real one, owned alike.
+      for (const auto &[topology, name] : std::vector<std::pair<std::string, std::string>>{
+               {"ConvexCorner", "convex-corner-45"},
+               {"ConcaveCorner", "concave-corner-45"}})
+      {
+        json wedge_corner = corner;
+        wedge_corner["Name"] = name;
+        wedge_corner["Topology"] = topology;
+        wedge_corner["Angle"] = 45.0;
+        library["Models"].push_back(wedge_corner);
+      }
       // One Signature-keyed model per wedge key: its Edges the Signature's portions in the
       // canonical frame (ChordedSignatureEdges), its matching volume the Signature's Box (R
       // above and below the plane), on the corner coupon's matrices with its 12 knots
@@ -1935,6 +1950,29 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
       CHECK(keys.size() == 2);
       CHECK(edge_counts == std::map<int, int>{{2, 1}, {4, 2}});
+      // The apex virtual 45-degree corners are Modelled at weight 1 / 2 (HalfByMirror) and
+      // owned by nothing while the configurations are Missing.
+      int half_corners = 0;
+      for (const auto &feature : missing.manifest_features)
+      {
+        if ((feature.at("Type") == "ConvexCorner" ||
+             feature.at("Type") == "ConcaveCorner") &&
+            feature.contains("Mirror") && feature.at("Mirror").is_object() &&
+            feature.at("Mirror").value("Status", "") == "Modelled")
+        {
+          half_corners++;
+          CHECK_THAT(feature.at("Signature").at("AngleDegrees").get<double>(),
+                     WithinAbs(45.0, 1.0e-6));
+        }
+      }
+      // ONE apex corner feature: the top edge's convex 45-degree wedge; the bottom edge's
+      // concave wedge apex is absorbed into the 4-edge cluster (its corner sites joined the
+      // cluster: no corner feature of its own).
+      CHECK(half_corners == 1);
+      CHECK(missing.diagnostics.at("ContinuationOwnership")
+                .at("Vertices")
+                .at("Count")
+                .get<int>() == 0);
       CHECK(!touched_ids.empty());
       CHECK(missing.domain_boundary_ft > 0.0);
       const auto &exclusions = missing.diagnostics.at("DomainBoundaryExclusions");
@@ -2031,6 +2069,52 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       {
         CHECK(owned_features.count(id) == 1);
       }
+      // MINOR-7 (decision 584 (2)): the apex virtual corners (HalfByMirror 0.5) are owned
+      // by the wedge coupons under rule B4 (their vertex is the coupon's chain-piece end on
+      // the plane inside its box; the full symmetric signature models the apex) - weight 0
+      // in the dry run - exactly as the FULL owns its two real 45-degree corners by its
+      // real wedge clusters: the identity half = full / 2 holds with the corners owned
+      // alike (their model energy 0 on both). Predicted on O1 f35 (the virtual 22.5-degree
+      // apex corner owned by the b0b764b21b95 coupon, as the real instance's apex corner
+      // f16 is by the real coupon).
+      auto OwnedVertices = [&](const Energies &e)
+      {
+        std::map<std::string, std::set<std::size_t>>
+            owners;  // corner model -> owner patches
+        for (const auto &record :
+             e.diagnostics.at("ContinuationOwnership").at("Vertices").at("Records"))
+        {
+          CHECK(record.at("Kind") == "Vertex");
+          for (const auto &owner : record.at("Owners"))
+          {
+            owners[record.at("Model").get<std::string>()].insert(
+                owner.at("SpatialPatch").get<std::size_t>());
+          }
+        }
+        return owners;
+      };
+      const auto half_owned = OwnedVertices(half), full_owned = OwnedVertices(full);
+      // ONE apex corner feature (the top edge's convex wedge; the bottom edge's apex is
+      // inside the 4-edge cluster): owned on the half by the configuration's coupon, on the
+      // full by the real wedge cluster's, its model energy 0 on both.
+      CHECK(half.diagnostics.at("ContinuationOwnership")
+                .at("Vertices")
+                .at("Count")
+                .get<int>() == 1);
+      CHECK(full.diagnostics.at("ContinuationOwnership")
+                .at("Vertices")
+                .at("Count")
+                .get<int>() == 1);
+      REQUIRE(half_owned.count("convex-corner-45") == 1);
+      REQUIRE(full_owned.count("convex-corner-45") == 1);
+      for (const std::size_t owner : half_owned.at("convex-corner-45"))
+      {
+        CHECK(coupon_patches.count(owner) == 1);
+      }
+      REQUIRE(half.model_energy.count("convex-corner-45") == 1);
+      REQUIRE(full.model_energy.count("convex-corner-45") == 1);
+      CHECK(half.model_energy.at("convex-corner-45") == 0.0);
+      CHECK(full.model_energy.at("convex-corner-45") == 0.0);
       // THE IDENTITY on the coupons: each wedge model's energy on the half is half the
       // full's (the full's real cluster at weight 1 against the half's configuration at
       // weight 1 / 2 with its image half sampled by even extension). The isolated model's

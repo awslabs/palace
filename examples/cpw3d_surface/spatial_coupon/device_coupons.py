@@ -392,10 +392,21 @@ def validate_mirror_formed_contract(coupon):
         for j in range(i):
             if abs(dot3(axes[j], axis)) > MIRROR_FORMED_FRAME_TOLERANCE:
                 raise _contract_error(coupon, f"Frame.Axes[{j}] and [{i}] are not orthogonal")
+    # CONTRACT.md v3 (decision 584 (2)): the Frame is the identification's canonical frame AS
+    # IS - Axes[2] is the process normal for BOTH handedness values (Features[].Chirality) -
+    # with its Chirality explicit: Axes[2] = Chirality x (Axes[0] x Axes[1]). A record without
+    # Chirality, or whose triple disagrees with it, is refused by name (4 of the 15 production
+    # cluster keys of the rerun-2 windows are chirality -1: C3 02db9a314b1b, O4 03fa3fb9166c,
+    # S1b cb82f37fe3ba / 95e080429eb9).
+    chirality = frame.get("Chirality")
+    if isinstance(chirality, bool) or chirality not in (1, -1):
+        raise _contract_error(coupon, f"Frame.Chirality {chirality!r} must be 1 or -1 (CONTRACT.md v3: Axes[2] = Chirality x "
+                                      "(Axes[0] x Axes[1]))")
     x, y = axes[0], axes[1]
     cross = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]]
-    if any(abs(cross[d] - axes[2][d]) > MIRROR_FORMED_FRAME_TOLERANCE for d in range(3)):
-        raise _contract_error(coupon, "Frame.Axes is not right-handed (Axes[2] must be Axes[0] x Axes[1])")
+    if any(abs(chirality * cross[d] - axes[2][d]) > MIRROR_FORMED_FRAME_TOLERANCE for d in range(3)):
+        raise _contract_error(coupon, f"Frame.Axes disagree with Chirality {chirality} (Axes[2] must be Chirality x (Axes[0] x "
+                                      "Axes[1]))")
     lengths = signature_portion_lengths_over_R(signature)
     recorded = {}
     for key, indices in (("RealLengthOverR", real), ("ImageLengthOverR", image)):
@@ -416,7 +427,7 @@ def validate_mirror_formed_contract(coupon):
     if not isinstance(contract.get("Rule"), str) or not contract["Rule"].strip():
         raise _contract_error(coupon, "Rule text is missing")
     return {"Version": MIRROR_FORMED_CONTRACT_VERSION, "RealPortions": list(real), "ImagePortions": image, "Planes": list(planes),
-            "Frame": {"Origin": origin, "Axes": axes}, "RealLengthOverR": recorded["RealLengthOverR"],
+            "Frame": {"Origin": origin, "Axes": axes, "Chirality": int(chirality)}, "RealLengthOverR": recorded["RealLengthOverR"],
             "ImageLengthOverR": recorded["ImageLengthOverR"], "RealFeatures": list(features), "ExtendedFeature": extended}
 
 

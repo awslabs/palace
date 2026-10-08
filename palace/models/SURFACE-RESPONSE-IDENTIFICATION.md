@@ -1084,7 +1084,9 @@ smaller endpoint.
    cells with their owners and both lengths; the spatial patch provenance carries the
    `Chain: false` pieces as `Foreign` beside `Chain` (geometry cache version 16: the stacks
    own-cell pre-image, the fillet corner-arm extension records and the foreign pieces,
-   decision 559 (3); either version-15 schema is refused). The Maxwell operator path
+   decision 559 (3); either version-15 schema is refused; version 17 adds the mirror-formed
+   contract placement of every spatial patch — `MirrorFormedTopology`, `MirrorReach`,
+   `MirrorEdgeWeights`, decision 557 (4) — and refuses a version-16 cache). The Maxwell operator path
    (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
    inert there (it multiplies the Maxwell domain terms for uniformity only). The record
    runs in the operator constructor (metadata
@@ -2168,8 +2170,8 @@ claim reaches s_half); F1's `TrimmedLength`
 keeps its sharp definition s - R (no census instance: every rounded corner is 90 deg). The
 vertex coupon's raw claims (F-DB-a) are clipped at s_k on every hosted arm, the stretch
 having gone to the extended cell or portion. Applied after the F1 trim and before the
-mirror trim at the end of `BuildFeaturePatches`; the geometry cache (version 16) carries
-the extended cells and the records. RECORD, one entry per extended corner, in
+mirror trim at the end of `BuildFeaturePatches`; the geometry cache (version 16, now 17)
+carries the extended cells and the records. RECORD, one entry per extended corner, in
 `Identification.Diagnostics.CornerArmExtension` of the preflight manifest
 (`Summary.CornerArmExtension` = `Corners` / `StretchLength` / `ExtendedCellLength` /
 `UnhostedLength`), the operator's `Diagnostics.CornerArmExtension` (palace.json) and the
@@ -2853,19 +2855,77 @@ slot; slot k = the k-th distinct target map of the feature's portions in sorted 
 **Patch dry run.** `palace --surface-response-preflight` builds the same patches without a
 field solve and writes `surface-response-patches.csv` next to the manifest: `Patch, Feature,
 Topology, Model, ModelIndex, Weight, ModelWeight, QuadratureWeight, SideFactor, CouponDepth,
-Segment, S0, S1, Origin, AxisU, AxisV, AxisW, StripBegin, StripEnd` (manifest units;
-`Segment` = the manifest segment index, `[S0, S1)` the portion from the segment's canonical
-key origin; vertex and cluster patches carry `Segment` -1 and `CouponDepth` 0;
+Segment, S0, S1, Origin, AxisU, AxisV, AxisW, StripBegin, StripEnd, DomainWeight` (manifest
+units; `Segment` = the manifest segment index, `[S0, S1)` the portion from the segment's
+canonical key origin; vertex and cluster patches carry `Segment` -1 and `CouponDepth` 0;
 `[StripBegin, StripEnd]` the longitudinal cell as offsets along AxisW from the origin, the
-cells of one portion tiling it, 0 / 0 for patches without a strip). The audit's gates A7: the patched
+cells of one portion tiling it, 0 / 0 for patches without a strip; `DomainWeight` the factor
+on the patch's DOMAIN correction alone — 1, or 0 for a cell on an excluded ForeignEdge of a
+Box + Context coupon, decision 553 sub-class (i) / 559 MINOR-3; information for the
+tabulation). The audit's gates A7: the patched
 feature set equals the matched set; every portion of a matched longitudinal feature is exactly
 one quadrature interval (sum of quadrature x model weights = 1) and `Weight = ModelWeight x
 QuadratureWeight x (S1 - S0) x SideFactor / CouponDepth` with `SideFactor` = 1 / claimed chains;
-vertex / cluster features carry patches without a portion whose model weights sum to 1; no
-patch on an unmatched feature, an excluded segment or an excluded portion. With the
+vertex / cluster features carry patches without a portion whose model weights sum to 1 (a
+virtual corner's `Weight` = ModelWeight / 2, HalfByMirror; an unmerged mirror-formed
+configuration's = ModelWeight x RealLengthOverR / (RealLengthOverR + ImageLengthOverR), its
+contract's real length fraction); no patch on an unmatched feature, an excluded segment or an
+excluded portion. With the
 signature-only library built from the manifest's own features
 (`examples/surface_response_identification/signature_library.py`) the covered length equals
 `Totals.AssignedLength`: the whole perimeter minus the recorded exclusions.
+
+**The mirror-formed cluster REQUIREMENT CONTRACT (decisions 557 (4) / 562 / 584 (2);
+`coupon-accuracy-assessment-20260913/mesher-design-round3-20261007/impl-B5/CONTRACT.md` v3).**
+An Unmerged mirror-formed SpatialEdgeCluster / CurvedEdge configuration of the extended run
+(a topology without a mirror placement, boundary-cut DESIGN 2.2.5) is emitted by
+`MergeMirrorIdentification` as a merged feature of its own type: every portion (real and
+image), `Length` = the real length, the real vertices, the extended run's canonical frame,
+numbered after the real and formed features, never in the segments' portion tables (the
+real reading's), with `Mirror {Status Unmerged, ExtendedFeature, UnmergedIndex, RealFeatures,
+Contract | ContractRefused}` (the touched real features keep their decision-481
+`UnmergedType` record; `MirrorBand.UnmergedFeatures[]` names it under `MergedFeature`). The
+`Contract` {Version 1, Planes, Frame, RealPortions, RealLengthOverR, ImageLengthOverR,
+RealFeatures, ExtendedFeature, Rule}: `RealPortions` are the serialised `Signature.Portions`
+indices whose world portions are real, mapped EXACTLY by geometry (every world portion longer
+than 1e-3 R projected into the canonical frame must lie on one serialised entry — both ends
+within the arc-fit tolerance + 2.5 quanta on a straight segment, + the arc's recorded largest
+chord sagitta on a chord of a fitted arc — and every entry must be wholly real or wholly
+image); anything else refuses the contract by name (`ContractRefused`: PortionUnmapped /
+PortionAmbiguous / PortionUnclaimed / MixedPortion / NoRealPortion / NoImagePortion /
+PortionOffPlane), never a length heuristic; the `Frame` is the identification's canonical
+frame AS IS (`Features[].Frame`, `Axes[2]` = the process normal for both handedness values)
+with `Frame.Chirality` = `Features[].Chirality` explicit, `Axes[2]` = Chirality x (`Axes[0]` x
+`Axes[1]`) (CONTRACT.md v3); a CurvedEdge key carries the contract with `RealPortions` []
+(no Portions in its key; the 2D curvature family's consumer). The requirement record of the
+key (`Requirements[]`) carries `MirrorFormed: true` and `MirrorFormedContract` (the Frame in
+manifest units, as `Features[].Frame`); the configurations of one key / near-key group must
+agree on RealPortions / Planes, else a `MirrorFormedContractRefused` Note and no contract.
+PLACEMENT (section (e)): a SpatialEdgeCluster configuration whose key has a Signature-keyed
+model is placed ONCE in its canonical frame on its REAL half — the patch `Weight` = the real
+length fraction RealLengthOverR / (RealLengthOverR + ImageLengthOverR) (the library counts the
+real half: the half-domain solution is the restriction of the mirror-symmetric full problem),
+the model's Edges on the contract's RealPortions are the real edges (provenance
+`MirrorEdgeWeights` 1.0), every other Edge an image edge (0.0) never applied to a cell (the
+patch `Claims` list the real portions only), the coupon's image half evaluated by even
+extension within the coupon's own reach (`MirrorReach` = the farthest SupportPoint + R,
+widening the mirror band for that patch's points in the containment test, the mortar probe
+and the sample points), the touched real features' cells inside its box owned by the coupon
+(the continuation ownership, decision 236 (2): weight 0 / clipped; they leave the
+DomainBoundary raw term) and a virtual corner at its apex owned under rule B4 (its vertex is
+the coupon's chain-piece end inside the box — exactly as the full mesh owns its real apex
+corner by its real cluster); the coupon is exempt from the UnmergedTopology own-cell test and
+its claims from the F-DB-a raw collection (the owned cells carry the raw); an on-plane point
+of such a coupon (its centroid origin) is located by an inward nudge of 1e-8 x the mesh scale
+in the containment test. A model carrying the consumer's ENTRY `MirrorFormed` stamp (per-Edge
+`Weight`, RealPortions, EdgePortions, RealLengthFraction) must agree with its own Edges at
+library load and with the identification's contract at the placement
+(`MirrorFormedEdgeWeightsOf`), fail closed by name; a CurvedEdge configuration, a refused
+contract, a legacy (claims-only) model or a legacy-contract alias keep decision 481's raw
+reading, named in the Match Note. RECORD: `Diagnostics.MirrorFormedPlacement` {Count,
+Patches[] {Patch, Feature, Model, UnmergedTopology, Weight, RealLengthFraction, EdgeWeights,
+RealEdges, ImageEdges, RealClaims, Reach}, Rule} and `Summary.MirrorFormedPlacement.Count`
+(written only where a placement exists), the patch provenance in geometry cache version 17.
 
 **Placement audit (gates A10, `placement_check.py`; geometry only).** The coverage gates see
 where a coupon is applied, not how it is oriented: a misplaced coupon (a version-2 cluster
