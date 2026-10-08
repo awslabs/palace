@@ -1745,6 +1745,14 @@ cluster is recorded under `Diagnostics.Uncovered.ClippedBySpatialSupport` and in
 column above; without a matched cluster nothing changes. Trimmed corners whose coupon is
 then not applied (domain boundary, vertex ownership) are counted under
 `Diagnostics.CornerArmTrim.ExcludedCoupons` (their trimmed stretch is modelled by nothing).
+The same rule in the other direction (decision 511): a matched ROUNDED corner's claim runs
+`R` along each arm from the fillet's tangent point, `t_d = r / tan(t / 2)` beyond the
+square exit, so its arm cells (or an unmatched neighbour's uncovered portion) beginning at
+the claim end are extended back to the exit — the stretch was modelled by nothing — and
+recorded per corner under `Diagnostics.CornerArmExtension` (`Summary.CornerArmExtension`;
+a stretch with no cell or portion to extend is counted in `UnhostedLength` with a warning;
+a virtual corner on a natural truncation plane exits at the mirror arm trim's `s_half`,
+flagged `HalfByMirror`); sharp corners are unchanged.
 The single-transmon plotting helper can overlay these assignments on the chip-plane metal mesh:
 
 ```text
