@@ -39,9 +39,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
     must be updated. SchemaVer 2-0-0.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Solver.Eigenmode.NonlinearMaxIts` (default 100), the maximum number of
+    quasi-Newton iterations of each attempt to converge an eigenpair in the hybrid nonlinear
+    eigenvalue solver. `Solver.Eigenmode.MaxIts` no longer limits these iterations, and
+    only applies to the linear or quadratic eigenvalue solver computing the initial guesses
+    of the hybrid solver. SchemaVer 2-2-0
+    [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Bug Fixes
 
+  - Fixed the quasi-Newton refinement of the hybrid nonlinear eigenvalue solver iterating
+    up to 1,000,000 times on an eigenpair which does not converge when
+    `Solver.Eigenmode.MaxIts` is not specified (since 0.17.0, where the default of `MaxIts`
+    became 1,000,000 for the linear eigenvalue solvers), instead of restarting or moving on
+    to the next initial guess after 100 iterations as before. A stagnating eigenpair could
+    make the simulation run indefinitely. The limit is set by the new
+    `Solver.Eigenmode.NonlinearMaxIts` [PR XXX](https://github.com/awslabs/palace/pull/XXX).
   - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
     quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
     error since fewer eigenmodes than requested were found
