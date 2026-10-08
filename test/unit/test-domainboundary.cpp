@@ -23,8 +23,12 @@
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/fespace.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "models/laplaceoperator.hpp"
+#include "models/materialoperator.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -1280,6 +1284,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   constexpr double R = 0.2;
   const auto basis_path = temp.temp_dir / "mirror-pad-basis-points.csv";
   const auto library_path = temp.temp_dir / "fabrication-process-mirror-pad.json";
+  const auto stack_library_path =
+      temp.temp_dir / "fabrication-process-mirror-pad-stack.json";
   const auto curved_library_path =
       temp.temp_dir / "fabrication-process-mirror-pad-curved.json";
   if (Mpi::Root(Mpi::World()))
@@ -1370,6 +1376,62 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     std::ofstream curved_output(curved_library_path);
     curved_output << library.dump(2) << "\n";
+    // A THIRD library for the decision-536 / 537 stack section: the first library plus a
+    // relabelled four-edge ParallelEdgeCluster (two strips 0.125 wide separated by a
+    // 0.125 gap: edges at lateral offsets 0 / 0.125 / 0.25 / 0.375 from the first side,
+    // gap directions alternating, two conductors) on the isolated model's matrices: the
+    // symmetric PLACEMENT and the F-DB-a raw-claim mapping are the test, not the coupon
+    // physics.
+    json stack_library = library;
+    stack_library["Name"] = "unit-test-process-mirror-pad-stack";
+    {
+      json stack = isolated;
+      stack["Name"] = "stack-4edge-0.125";
+      stack["Topology"] = "ParallelEdgeCluster";
+      // 2e-3 (1e-2 R): the bent stack of the decision-545 section tilts its chords by up
+      // to 0.13 rad, so the sides' perpendicular offsets read 0.125 cos(theta) = 0.1240.
+      stack["EdgeOffsetTolerance"] = 2.0e-3;
+      stack["Edges"] = {{{"Offset", 0.0}, {"GapDirection", -1}, {"Conductor", 1}},
+                        {{"Offset", 0.125}, {"GapDirection", 1}, {"Conductor", 1}},
+                        {{"Offset", 0.25}, {"GapDirection", -1}, {"Conductor", 2}},
+                        {{"Offset", 0.375}, {"GapDirection", 1}, {"Conductor", 2}}};
+      stack["ConductorReferences"] = {{0.0625, 0.0, 0.0}, {0.3125, 0.0, 0.0}};
+      // Its response matrices: the four basis points + one conductor state (two
+      // conductors), a diagonal (PSD) matrix in the fixtures' CSV forms (domain: basis_i,
+      // basis_j, Q_ij; surface: per interface 1 and edge, Q_ij and the whole-box
+      // Q_total_ij).
+      const auto stack_domain = temp.temp_dir / "mirror-pad-stack-domain.csv";
+      const auto stack_surface = temp.temp_dir / "mirror-pad-stack-surface.csv";
+      {
+        std::ofstream domain(stack_domain), surface(stack_surface);
+        domain << "basis_i,basis_j,Q_ij (J)\n";
+        surface << "interface,edge,R (m),basis_i,basis_j,Q_ij (J),Q_total_ij (J)\n";
+        for (int i = 1; i <= 5; i++)
+        {
+          for (int j = i; j <= 5; j++)
+          {
+            const double value = i == j ? 1.0e-12 : 0.0;
+            domain << i << "," << j << "," << value << "\n";
+            for (int edge = 1; edge <= 4; edge++)
+            {
+              surface << "1," << edge << "," << R << "," << i << "," << j << ","
+                      << 0.25 * value << "," << 0.25 * value << "\n";
+            }
+          }
+        }
+      }
+      for (const char *key : {"FabricatedMatrix", "ThinMatrix"})
+      {
+        stack[key] = stack_domain.string();
+      }
+      for (const char *key : {"FabricatedSurfaceMatrix", "ThinSurfaceMatrix"})
+      {
+        stack[key] = stack_surface.string();
+      }
+      stack_library["Models"].push_back(stack);
+    }
+    std::ofstream stack_output(stack_library_path);
+    stack_output << stack_library.dump(2) << "\n";
   }
   Mpi::Barrier(Mpi::World());
 
@@ -1387,12 +1449,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::map<std::string, double> model_energy;
     json diagnostics;
     json manifest_summary;
-    // The identification manifest's Features (the dry run of the case).
+    // The identification manifest's Features and Segments (the dry run of the case).
     json manifest_features;
+    json manifest_segments;
   };
   auto Run = [&](const std::string &name, double s, bool full, const std::string &mirror,
                  const std::vector<PadRectangle> &pads = kDefaultPads, int nz = 8,
-                 const PadBend &bend = {}, bool curved_library = false)
+                 const PadBend &bend = {}, int library_variant = 0)
   {
     const fs::path mesh_path = temp.temp_dir / (name + ".mesh");
     if (Mpi::Root(Mpi::World()))
@@ -1414,7 +1477,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     config["Boundaries"]["Ground"]["Attributes"] = {4};
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
-    correction["Library"] = (curved_library ? curved_library_path : library_path).string();
+    const fs::path &variant_library_path =
+        library_variant == 2 ? stack_library_path
+                             : (library_variant == 1 ? curved_library_path : library_path);
+    correction["Library"] = variant_library_path.string();
     correction["UnmatchedPolicy"] = "Warn";
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
@@ -1427,15 +1493,28 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     // The identification manifest of the case (the dry run; its Features are read by the
     // decision-512 sections, which run on the curved library, and exported as evidence),
     // beside the output directory.
-    const fs::path manifest_path = temp.temp_dir / (name + "-requirements.json");
-    if (curved_library || std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+    const fs::path manifest_path = temp.temp_dir / (name + "-dryrun") / "requirements.json";
+    if (library_variant != 0 || std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
     {
+      fs::create_directories(manifest_path.parent_path());
+      Mpi::Barrier(Mpi::World());
       IoData iodata(config, false);
       std::vector<std::unique_ptr<Mesh>> meshes;
       mfem::Mesh serial_manifest = MakeSerialMirrorPadMesh(s, full, pads, nz, bend);
       meshes.push_back(std::make_unique<Mesh>(
           std::make_unique<mfem::ParMesh>(Mpi::World(), serial_manifest)));
       WriteSurfaceResponseRequirements(iodata, *meshes.front(), manifest_path.string());
+      if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR");
+          debug_dir && Mpi::Root(Mpi::World()))
+      {
+        // The dry run before the solve (a failing solve still leaves its record).
+        fs::create_directories(fs::path(debug_dir) / name);
+        fs::copy_file(manifest_path, fs::path(debug_dir) / name / "requirements.json",
+                      fs::copy_options::overwrite_existing);
+        fs::copy_file(manifest_path.parent_path() / "surface-response-patches.csv",
+                      fs::path(debug_dir) / name / "dryrun-patches.csv",
+                      fs::copy_options::overwrite_existing);
+      }
     }
     if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
     {
@@ -1448,8 +1527,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         fs::copy_file(manifest_path, debug / "requirements.json",
                       fs::copy_options::overwrite_existing);
         fs::copy_file(mesh_path, debug / "mesh.mesh", fs::copy_options::overwrite_existing);
-        fs::copy_file(curved_library ? curved_library_path : library_path,
-                      debug / "library.json", fs::copy_options::overwrite_existing);
+        fs::copy_file(variant_library_path, debug / "library.json",
+                      fs::copy_options::overwrite_existing);
         fs::copy_file(basis_path, debug / "basis.csv",
                       fs::copy_options::overwrite_existing);
         json debug_config = config;
@@ -1545,6 +1624,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         std::ifstream manifest_input(manifest_path);
         const json manifest = json::parse(manifest_input);
         e.manifest_features = manifest.at("Identification").at("Features");
+        e.manifest_segments = manifest.at("Identification").at("Segments");
       }
       {
         std::map<int, std::string> names;
@@ -2006,9 +2086,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const PadBend bend = {slope,       slope,       0.6 * slope, 0.6 * slope,
                           0.2 * slope, 0.2 * slope, 0.0,         0.0};
     const Energies full =
-        Run("mirror-pad-bent-full", 0.0, true, "Natural", kDefaultPads, 8, bend, true);
+        Run("mirror-pad-bent-full", 0.0, true, "Natural", kDefaultPads, 8, bend, 1);
     const Energies half =
-        Run("mirror-pad-bent-half", 0.0, false, "Natural", kDefaultPads, 8, bend, true);
+        Run("mirror-pad-bent-half", 0.0, false, "Natural", kDefaultPads, 8, bend, 1);
     if (Mpi::Root(Mpi::World()))
     {
       CheckIdentity(full);
@@ -2150,10 +2230,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       auto Circle = [](double x) { return -std::sqrt(1.0 - (1.0 - x) * (1.0 - x)); };
       bend[i] = (Circle((i + 1) * 0.125) - Circle(i * 0.125)) / 0.125;
     }
-    const Energies full = Run("mirror-pad-curved-end-full", 0.0, true, "Natural",
-                              kDefaultPads, 8, bend, true);
-    const Energies half = Run("mirror-pad-curved-end-half", 0.0, false, "Natural",
-                              kDefaultPads, 8, bend, true);
+    const Energies full =
+        Run("mirror-pad-curved-end-full", 0.0, true, "Natural", kDefaultPads, 8, bend, 1);
+    const Energies half =
+        Run("mirror-pad-curved-end-half", 0.0, false, "Natural", kDefaultPads, 8, bend, 1);
     if (Mpi::Root(Mpi::World()))
     {
       CheckIdentity(full);
@@ -2329,6 +2409,393 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
 
+  // Decisions 536 / 537 (the boundary-cut STACKS lane; DESIGN ERRATA-8): the rerun-2 J2
+  // solves of C2p / C2 / S1b / C3 aborted in the first postprocessing - "an uncovered
+  // perimeter portion of feature N (parallel-edge cluster) lies within the tolerance of a
+  // perimeter segment at its midpoint but not at its ends". A DomainBoundary translational
+  // cell's raw claim (F-DB-a) was rebuilt from the patch FRAME, origin + EdgeOffset AxisU +
+  // cell AxisW; for a pair / stack AxisW follows the partner / last side's chord (the far
+  // foot clamped at a side's end next to an oblique plane), so the interval left the member
+  // edge by cell x sin(angle) - 8-75 nm against the postprocessor's 1e-3 R. The raw claim
+  // is now the cell's recorded pre-image on its OWN segment (Provenance::own_cell).
+  SECTION("S-45-stack: a four-edge stack meeting the plane obliquely - its Unmerged "
+          "cells are raw-kept on their member edges, the accounting exact")
+  {
+    // Two strips along x (z in [1.5, 1.625] and [1.75, 1.875]: edges 0.125 = 0.625 R apart,
+    // a four-edge two-conductor ParallelEdgeCluster on the stack-4edge-0.125 model) meeting
+    // both walls at 45 degrees: with its image the stack is a bent stack (no mirror
+    // placement) -> an Unmerged SpatialEdgeCluster at each wall whose own cells (the stack
+    // cells on the differing pieces) are DomainBoundary, raw kept; the same configuration
+    // on both meshes at x = 0.
+    // The default pad lowered to z in [0.5, 1.0] (0.5 = 2.5 R below the stack: outside the
+    // stack rule's reach; the S-45 configuration: its cells and virtual corners are the
+    // applied patches the fail-closed exclusion test requires) and the stack z in [1.5,
+    // 1.625] / [1.75, 1.875] (its top edge 0.125 below the z = 2 wall: the z image joins
+    // the configuration, Unmerged too). The stack, 5 R long between two oblique walls, is
+    // wholly within its clusters' reach: every stack cell is a DomainBoundary own cell.
+    const std::vector<PadRectangle> pads = {
+        {0.0, 0.5, 1.0, 1.0}, {0.0, 1.5, 1.0, 1.625}, {0.0, 1.75, 1.0, 1.875}};
+    const Energies half =
+        Run("mirror-pad-stack-half", 1.0, false, "Natural", pads, 16, {}, 2);
+    if (Mpi::Root(Mpi::World()))
+    {
+      // The accounting identity: ft = E_out + models + uncovered + domainboundary (the
+      // DomainBoundary term integrated by the postprocessor over the raw claims, which the
+      // verification at surfacepostoperator.cpp UncoveredEdgeIntervals accepted: every
+      // claim end on a perimeter segment).
+      CheckIdentity(half);
+      const auto &band = half.diagnostics.at("MirrorBand");
+      const auto &exclusions = half.diagnostics.at("DomainBoundaryExclusions");
+      INFO(band.dump());
+      INFO(exclusions.dump());
+      // The stack feature, matched, and the Unmerged configurations touching it.
+      // The MATCHED four-edge stack (at the oblique walls the sides end staggered, so the
+      // stack rule also reads short three-edge / pair pieces there: Missing, raw
+      // uncovered).
+      int stack_id = -1;
+      for (const auto &feature : half.manifest_features)
+      {
+        if (feature.at("Type") == "ParallelEdgeCluster" &&
+            feature.at("Match").at("Status") == "Matched")
+        {
+          REQUIRE(stack_id < 0);
+          stack_id = feature.at("Id").get<int>();
+          CHECK(feature.at("Match").at("Model") == "stack-4edge-0.125");
+          CHECK(feature.at("Signature").at("Edges").size() == 4);
+          CHECK(feature.at("Length").get<double>() > 2.0);
+        }
+      }
+      REQUIRE(stack_id >= 0);
+      bool stack_unmerged = false;
+      for (const auto &entry : band.at("UnmergedFeatures"))
+      {
+        for (const auto &id : entry.at("RealFeatures"))
+        {
+          stack_unmerged = stack_unmerged || id.get<int>() == stack_id;
+        }
+      }
+      CHECK(stack_unmerged);
+      // Its own cells are DomainBoundary (Reason UnmergedTopology), raw kept: the raw
+      // portions of the parallel-edge cluster type exist and EVERY raw portion's ends lie
+      // on its own identification segment (the pre-image), none dropped or skipped.
+      CHECK(exclusions.at("Count").get<int>() > 0);
+      CHECK(exclusions.at("Reasons").contains("UnmergedTopology"));
+      const auto &raw = exclusions.at("RawPortions");
+      CHECK(raw.at("ByType").contains("parallel-edge cluster"));
+      double stack_raw_length = 0.0;
+      int stack_raw_portions = 0;
+      for (const auto &portion : raw.at("Portions"))
+      {
+        const int segment = portion.at("Segment").get<int>();
+        REQUIRE(segment >= 0);
+        const auto &key =
+            half.manifest_segments.at(static_cast<std::size_t>(segment)).at("Key");
+        auto Off = [&](const json &p)
+        {
+          std::array<double, 3> a = key[0], b = key[1], q = p;
+          double ab2 = 0.0, t = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+            t += (q[d] - a[d]) * (b[d] - a[d]);
+          }
+          t = std::clamp(t / ab2, 0.0, 1.0);
+          double off2 = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            const double r = q[d] - (a[d] + t * (b[d] - a[d]));
+            off2 += r * r;
+          }
+          return std::sqrt(off2);
+        };
+        CHECK(Off(portion.at("P0")) <= 1.0e-9);
+        CHECK(Off(portion.at("P1")) <= 1.0e-9);
+        if (portion.at("Type") == "parallel-edge cluster")
+        {
+          stack_raw_length += portion.at("Length").get<double>();
+          stack_raw_portions++;
+        }
+      }
+      CHECK(stack_raw_portions > 0);
+      INFO("stack raw portions " << stack_raw_portions << ", length " << stack_raw_length);
+      // On this fixture the stack's member edges are exactly parallel and its sides end
+      // together, so the frame reconstruction of record coincides with the pre-image (the
+      // defect needs a skewed frame: the S-bent-stack section next reproduces it end to
+      // end, the synthetic case "Domain-boundary raw claim of a pair / stack cell" below at
+      // the production skew); here the dry run's first-side cells confirm the two readings
+      // agree on a parallel stack.
+      const auto rows = ReadDryRun(temp.temp_dir / "mirror-pad-stack-half-dryrun" /
+                                   "surface-response-patches.csv");
+      double worst_frame_offset = 0.0;
+      for (const auto &patch : exclusions.at("Patches"))
+      {
+        if (patch.at("Topology") != "parallel-edge cluster")
+        {
+          continue;
+        }
+        const std::size_t index = patch.at("Patch").get<std::size_t>();
+        const auto row = std::find_if(rows.begin(), rows.end(),
+                                      [&](const DryRunRow &r) { return r.patch == index; });
+        REQUIRE(row != rows.end());
+        const int segment = patch.at("Segment").get<int>();
+        const auto &key =
+            half.manifest_segments.at(static_cast<std::size_t>(segment)).at("Key");
+        std::array<double, 3> a = key[0], b = key[1];
+        double origin_off = 0.0, ab2 = 0.0, t = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+          t += (row->origin[d] - a[d]) * (b[d] - a[d]);
+        }
+        t = std::clamp(t / ab2, 0.0, 1.0);
+        for (int d = 0; d < 3; d++)
+        {
+          const double r = row->origin[d] - (a[d] + t * (b[d] - a[d]));
+          origin_off += r * r;
+        }
+        if (std::sqrt(origin_off) > 1.0e-9)
+        {
+          continue;  // another side (EdgeOffset != 0): the frame formula needs it
+        }
+        for (const double c : row->strip)
+        {
+          double off2 = 0.0, tt = 0.0;
+          std::array<double, 3> q{};
+          for (int d = 0; d < 3; d++)
+          {
+            q[d] = row->origin[d] + c * row->axis_w[d];
+            tt += (q[d] - a[d]) * (b[d] - a[d]);
+          }
+          tt = std::clamp(tt / ab2, 0.0, 1.0);
+          for (int d = 0; d < 3; d++)
+          {
+            const double r = q[d] - (a[d] + tt * (b[d] - a[d]));
+            off2 += r * r;
+          }
+          worst_frame_offset = std::max(worst_frame_offset, std::sqrt(off2));
+        }
+      }
+      INFO("worst frame-reconstruction offset of a first-side stack cell: "
+           << worst_frame_offset);
+      CHECK(worst_frame_offset <= 1.0e-9);
+      CHECK(half.domain_boundary_ft > 0.0);
+      if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR"))
+      {
+        std::ofstream record(fs::path(debug_dir) / "symmetry-stack.json");
+        record << json{{"Case", "stack"},
+                       {"StackFeature", stack_id},
+                       {"StackRawPortions", stack_raw_portions},
+                       {"StackRawLength", stack_raw_length},
+                       {"WorstFrameOffset", worst_frame_offset},
+                       {"HalfDomainBoundary", half.domain_boundary_ft},
+                       {"Ft", half.corrected[0]},
+                       {"Reasons", exclusions.at("Reasons")}}
+                      .dump(2)
+               << "\n";
+      }
+    }
+  }
+
+  // Decision 545 MAJOR-2: the defect of record end to end. A BENT four-edge stack (the C2 /
+  // C3 / S1b class: a CPW stack meandering through sub-noise joints, its sides' chords
+  // staggered): t(x) with the slopes 0.13 / 0.10 / 0.07 / 0 on the quarter runs (kinks of
+  // 0.03 rad at x = 0.25 and 0.5, 0.07 at x = 0.75; one chain per edge, windowed bend
+  // radius 17.9 R). With its images at both walls the stack is a bent stack (no mirror
+  // placement: Unmerged at both planes), so EVERY cell of the matched stack (x in [0.275,
+  // 1]; the steeper piece next to x = 0 reads as Missing bent clusters, raw uncovered) is
+  // the configuration's own, DomainBoundary raw. The stack bends TOWARD its first side
+  // (slopes decreasing), so a first-side sample just past a joint has its far foot on the
+  // LAST side's PREVIOUS chord (the perpendicular foot onto it is nearer than onto the own
+  // chord's partner): AxisW follows that chord, skewed from the own segment by the kink.
+  // The frame reconstruction of record (origin + c AxisW, EdgeOffset 0 on the first side)
+  // then puts the cell's midpoint ON its segment (|c_mid| ~ 0.005 x 0.03 = 1.5e-4 < 1e-3
+  // R = 2e-4) and its ends OFF it (0.036 x 0.03 = 1.1e-3 > 2e-4): exactly the acceptance
+  // UncoveredEdgeIntervals (surfacepostoperator.cpp) refuses with "lies within the
+  // tolerance of a perimeter segment at its midpoint but not at its ends" - the J2 abort.
+  // (The first Gauss point after the x = 0.5 joint: the foot's shift 0.375 x 0.10 = 0.037
+  // exceeds its 0.026 from the joint; at x = 0.75 the previous slope 0.07 shifts the foot
+  // by 0.026, clamped at the joint, no stagger.) The solve passes with the pre-image
+  // claims; the OLD claims (the placement's frames from the dry run of the SAME case, the
+  // formula of record) are then handed to the real postprocessor
+  // (SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies on the fixture mesh) and
+  // refused with that message; the new claims (the solve's RawPortions) are accepted.
+  SECTION("S-bent-stack (decision 545): a bent four-edge stack oblique at the plane - the "
+          "frame claims of record abort the postprocessor, the pre-image claims pass")
+  {
+    const std::vector<PadRectangle> pads = {
+        {0.0, 0.5, 1.0, 1.0}, {0.0, 1.5, 1.0, 1.625}, {0.0, 1.75, 1.0, 1.875}};
+    const PadBend bend = {0.13, 0.13, 0.10, 0.10, 0.07, 0.07, 0.0, 0.0};
+    const std::string name = "mirror-pad-bent-stack-half";
+    const Energies half = Run(name, 0.0, false, "Natural", pads, 16, bend, 2);
+    // The claims, read from the case's records on every rank (the postprocessor call below
+    // is collective): the dry run's placement (frames and cells) and the solve's manifest
+    // (the identification segments, the DomainBoundary patches and raw portions).
+    std::vector<SurfacePostOperator::UncoveredPerimeterPortion> frame_claims, record_claims;
+    double worst_frame_offset = 0.0, worst_frame_midpoint = 0.0, worst_record_offset = 0.0;
+    int stack_raw_portions = 0, skewed_cells = 0;
+    {
+      std::ifstream metadata_input(temp.temp_dir / name / "palace.json");
+      REQUIRE(metadata_input);
+      const json metadata = json::parse(metadata_input);
+      const json &exclusions =
+          metadata.at("SurfaceResponse").at("Diagnostics").at("DomainBoundaryExclusions");
+      std::ifstream manifest_input(temp.temp_dir / (name + "-dryrun") /
+                                   "requirements.json");
+      REQUIRE(manifest_input);
+      const json manifest = json::parse(manifest_input);
+      const json &segments = manifest.at("Identification").at("Segments");
+      const auto rows =
+          ReadDryRun(temp.temp_dir / (name + "-dryrun") / "surface-response-patches.csv");
+      auto Off = [&](int segment, const std::array<double, 3> &q)
+      {
+        const auto &key = segments.at(static_cast<std::size_t>(segment)).at("Key");
+        std::array<double, 3> a = key[0], b = key[1];
+        double ab2 = 0.0, t = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+          t += (q[d] - a[d]) * (b[d] - a[d]);
+        }
+        t = std::clamp(t / ab2, 0.0, 1.0);
+        double off2 = 0.0;
+        for (int d = 0; d < 3; d++)
+        {
+          const double r = q[d] - (a[d] + t * (b[d] - a[d]));
+          off2 += r * r;
+        }
+        return std::sqrt(off2);
+      };
+      for (const auto &portion : exclusions.at("RawPortions").at("Portions"))
+      {
+        if (portion.at("Type") != "parallel-edge cluster")
+        {
+          continue;
+        }
+        const int segment = portion.at("Segment").get<int>();
+        REQUIRE(segment >= 0);
+        const std::array<double, 3> p0 = portion.at("P0"), p1 = portion.at("P1");
+        worst_record_offset =
+            std::max({worst_record_offset, Off(segment, p0), Off(segment, p1)});
+        record_claims.push_back({p0, p1, "parallel-edge cluster", portion.at("Feature")});
+        stack_raw_portions++;
+      }
+      for (const auto &patch : exclusions.at("Patches"))
+      {
+        if (patch.at("Topology") != "parallel-edge cluster")
+        {
+          continue;
+        }
+        const std::size_t index = patch.at("Patch").get<std::size_t>();
+        const auto row = std::find_if(rows.begin(), rows.end(),
+                                      [&](const DryRunRow &r) { return r.patch == index; });
+        REQUIRE(row != rows.end());
+        const int segment = patch.at("Segment").get<int>();
+        if (Off(segment, row->origin) > 1.0e-9)
+        {
+          continue;  // another side (EdgeOffset != 0): its frame claim needs the offset
+        }
+        std::array<double, 3> p0{}, p1{}, midpoint{};
+        for (int d = 0; d < 3; d++)
+        {
+          p0[d] = row->origin[d] + row->strip[0] * row->axis_w[d];
+          p1[d] = row->origin[d] + row->strip[1] * row->axis_w[d];
+          midpoint[d] = 0.5 * (p0[d] + p1[d]);
+        }
+        const double off = std::max(Off(segment, p0), Off(segment, p1));
+        worst_frame_offset = std::max(worst_frame_offset, off);
+        if (off > 1.0e-3 * R)
+        {
+          skewed_cells++;
+          worst_frame_midpoint = std::max(worst_frame_midpoint, Off(segment, midpoint));
+        }
+        frame_claims.push_back({p0, p1, "parallel-edge cluster", patch.at("Feature")});
+      }
+    }
+    INFO("stack raw portions " << stack_raw_portions << ", first-side frame claims "
+                               << frame_claims.size() << " of which skewed beyond 1e-3 R: "
+                               << skewed_cells << " (worst ends " << worst_frame_offset
+                               << ", their midpoints at most " << worst_frame_midpoint
+                               << "); record claims at most " << worst_record_offset
+                               << " off their segments");
+    // The solve passed the postprocessor's acceptance with the pre-image claims (the
+    // identity holds on its raw-kept DomainBoundary term); every record claim on its
+    // segment; the frame claims of the first side skewed beyond the tolerance with their
+    // midpoints inside it (the J2 configuration).
+    if (Mpi::Root(Mpi::World()))
+    {
+      CheckIdentity(half);
+      CHECK(half.domain_boundary_ft > 0.0);
+    }
+    CHECK(stack_raw_portions > 0);
+    CHECK(worst_record_offset <= 1.0e-9);
+    CHECK(skewed_cells > 0);
+    CHECK(worst_frame_offset > 1.0e-3 * R);
+    CHECK(worst_frame_midpoint <= 1.0e-3 * R);
+    // The real postprocessor on the fixture mesh (the pad's interface 4 with its edge
+    // distance R, a smooth nonzero field): the frame claims of record are REFUSED by
+    // UncoveredEdgeIntervals, the pre-image claims accepted.
+    {
+      mfem::Mesh serial = MakeSerialMirrorPadMesh(0.0, false, pads, 16, bend);
+      Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial));
+      mfem::H1_FECollection h1(1, 3);
+      mfem::ND_FECollection nd(1, 3);
+      FiniteElementSpace h1_space(mesh, &h1), nd_space(mesh, &nd);
+      config::MaterialData material;
+      material.attributes = {1};
+      config::PeriodicBoundaryData periodic;
+      MaterialOperator materials({material}, periodic, ProblemType::ELECTROSTATIC, mesh);
+      GridFunction field(nd_space, false);
+      mfem::VectorFunctionCoefficient coefficient(3,
+                                                  [](const mfem::Vector &x, mfem::Vector &E)
+                                                  {
+                                                    E.SetSize(3);
+                                                    E = 0.0;
+                                                    E(1) = 1.0 + 0.5 * x(0) + 0.25 * x(2);
+                                                  });
+      field.Real().ProjectCoefficient(coefficient);
+      config::InterfaceDielectricData data;
+      data.attributes = {9};
+      data.type = InterfaceDielectric::MA;
+      data.t = 0.002;
+      data.epsilon_r = 4.0;
+      data.edge_attributes = {9};
+      data.edge_distances = {R};
+      config::BoundaryPostData postpro;
+      postpro.dielectric.emplace(4, data);
+      SurfacePostOperator surf_post_op(postpro, ProblemType::ELECTROSTATIC, materials,
+                                       h1_space, nd_space);
+      CHECK_THROWS_WITH(
+          surf_post_op.GetInterfaceUncoveredEdgeEnergies({4}, field, nullptr, frame_claims),
+          Catch::Matchers::ContainsSubstring(
+              "lies within the tolerance of a perimeter segment at its midpoint but not "
+              "at its ends"));
+      const auto accepted = surf_post_op.GetInterfaceUncoveredEdgeEnergies(
+          {4}, field, nullptr, record_claims);
+      REQUIRE(accepted.size() == 1);
+      CHECK(accepted.at(4).energy > 0.0);
+      CHECK(accepted.at(4).by_type.count("parallel-edge cluster") == 1);
+    }
+    if (const char *debug_dir = std::getenv("PALACE_SYMMETRY_DEBUG_DIR");
+        debug_dir && Mpi::Root(Mpi::World()))
+    {
+      std::ofstream record(fs::path(debug_dir) / "symmetry-bent-stack.json");
+      record << json{{"Case", "bent-stack"},
+                     {"StackRawPortions", stack_raw_portions},
+                     {"FirstSideFrameClaims", frame_claims.size()},
+                     {"SkewedCells", skewed_cells},
+                     {"WorstFrameOffset", worst_frame_offset},
+                     {"WorstFrameMidpoint", worst_frame_midpoint},
+                     {"WorstRecordOffset", worst_record_offset},
+                     {"Tolerance", 1.0e-3 * R},
+                     {"HalfDomainBoundary", half.domain_boundary_ft},
+                     {"Ft", half.corrected[0]},
+                     {"Reasons",
+                      half.diagnostics.at("DomainBoundaryExclusions").at("Reasons")}}
+                    .dump(2)
+             << "\n";
+    }
+  }
+
   SECTION("S-off (control): Mirror Off keeps the raw claims and the identity, not the half")
   {
     const Energies full = Run("mirror-pad-45-full-off", 1.0, true, "Natural");
@@ -2360,6 +2827,270 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 // coordinate scale 2): x - z = 0 (attribute 3, Natural), -x + z = 1 (5, Natural), z = 0 (1)
 // and z = 2 (6) (vertical to the process normal y: Natural), y = 0 (2) Unsupported. Run at
 // 1 and 2 ranks ([Serial][Parallel]): the same assertions on the same constants.
+// Decisions 536 / 537 (DESIGN ERRATA-8): the F-DB-a raw claim of a DomainBoundary
+// translational cell is its recorded pre-image on its own segment, not the frame
+// reconstruction origin + EdgeOffset AxisU + cell AxisW. A pair's / stack's frame follows
+// the PARTNER side (AxisU to the sample's foot on the partner, AxisW = AxisU x AxisV):
+// where the foot is clamped at the partner's end or the chords differ, AxisW is skewed off
+// the own segment and the frame ends leave it by cell x sin(angle) - the rerun-2 J2 abort
+// (8-75 nm against the postprocessor's 1e-3 R tolerance on C2p / C2 / S1b / C3). Reproduced
+// here on a synthetic stack cell: the frame reconstruction (a legacy patch without the
+// record) fails the postprocessor's acceptance, the pre-image lies on the segment exactly.
+TEST_CASE("Domain-boundary raw claim of a pair / stack cell lies on its own segment",
+          "[surfaceresponseoperator][domainboundary][stacks][Serial]")
+{
+  using config::ElectrostaticSolverData;
+  constexpr double R = 1.9;                 // um
+  constexpr double tolerance = 1.0e-3 * R;  // the postprocessor's acceptance
+  // The own segment: along x at z = 0 (the metal plane), the sample at s = 5.0 on it.
+  const std::array<double, 3> p0 = {100.0, 20.0, 0.0}, tangent = {1.0, 0.0, 0.0};
+  const double sample_s = 5.0;
+  // The stack frame of a second-side cell: AxisU points from the first side's foot
+  // (EdgeOffset -3.9 away along it) to the far side's foot, clamped 0.4 along the edge at
+  // the far side's end next to an oblique plane: AxisU = (0.4, 3.9 x 2, 0) normalised,
+  // AxisV the process normal, AxisW = AxisU x AxisV (skewed off the tangent by atan(0.4
+  // / 7.8)).
+  const double skew = std::atan2(0.4, 7.8);
+  const std::array<double, 3> axis_u = {std::sin(skew), std::cos(skew), 0.0};
+  const std::array<double, 3> axis_v = {0.0, 0.0, 1.0};
+  const std::array<double, 3> axis_w = {axis_u[1] * axis_v[2] - axis_u[2] * axis_v[1],
+                                        axis_u[2] * axis_v[0] - axis_u[0] * axis_v[2],
+                                        axis_u[0] * axis_v[1] - axis_u[1] * axis_v[0]};
+  const double edge_offset = 3.9;  // the own edge from the origin along AxisU
+  const std::array<double, 2> cell = {-0.9, 0.9};  // the cell about the sample along AxisW
+  ElectrostaticSolverData::ResponseCorrectionData config;
+  ElectrostaticSolverData::ResponseCorrectionModelData model;
+  model.idx = 1;
+  model.topology = "parallel-edge cluster";
+  config.models.push_back(model);
+  ElectrostaticSolverData::ResponseCorrectionPatchData patch;
+  patch.model = 1;
+  // The origin: the sample's foot on the first side, EdgeOffset away from the sample.
+  const std::array<double, 3> sample = {p0[0] + sample_s * tangent[0],
+                                        p0[1] + sample_s * tangent[1],
+                                        p0[2] + sample_s * tangent[2]};
+  for (int d = 0; d < 3; d++)
+  {
+    patch.origin[d] = sample[d] - edge_offset * axis_u[d];
+  }
+  patch.axis_u = axis_u;
+  patch.axis_v = axis_v;
+  patch.axis_w = axis_w;
+  patch.weight = 1.0;
+  patch.longitudinal_cell = cell;
+  patch.provenance.feature = 2;
+  patch.provenance.segment = 7;
+  patch.provenance.s0 = 0.0;
+  patch.provenance.s1 = 12.0;
+  patch.provenance.edge_offset = edge_offset;
+  patch.provenance.coupon_depth = 1.9;
+  const double projection = tangent[0] * axis_w[0] + tangent[1] * axis_w[1];
+  // The pre-image of the cell on the own segment: the cell offsets along AxisW are the
+  // arc offsets projected by Dot(tangent, AxisW) (LongitudinalCellOffsets).
+  for (int k = 0; k < 2; k++)
+  {
+    const double s = sample_s + cell[k] / projection;
+    for (int d = 0; d < 3; d++)
+    {
+      patch.provenance.own_cell[k][d] = p0[d] + s * tangent[d];
+    }
+  }
+  auto Off = [&](const std::array<double, 3> &q)
+  {
+    double t = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      t += (q[d] - p0[d]) * tangent[d];
+    }
+    double off2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      const double r = q[d] - (p0[d] + t * tangent[d]);
+      off2 += r * r;
+    }
+    return std::sqrt(off2);
+  };
+  DomainBoundaryExclusions exclusions;
+  DomainBoundaryExclusion exclusion;
+  exclusion.patch = 0;
+  exclusion.reason = "UnmergedTopology";
+  exclusions.patches.push_back(exclusion);
+  ContinuationOwnership ownership;
+  UncoveredSpatialSupportClipping clipping;
+
+  SECTION("the frame reconstruction (a legacy patch without the record) leaves the edge")
+  {
+    patch.provenance.has_own_cell = false;
+    const auto portions =
+        CollectDomainBoundaryPortions(exclusions, {patch}, config, ownership, clipping, R);
+    REQUIRE(portions.portions.size() == 1);
+    const auto &portion = portions.portions.front();
+    CHECK(portion.feature == 2);
+    CHECK(portion.topology == "parallel-edge cluster");
+    // The midpoint is on the edge (the own point), the ends 0.9 x sin(skew) = 46 nm off it:
+    // the postprocessor's UncoveredEdgeIntervals accepts the midpoint and refuses the ends
+    // ("lies within the tolerance of a perimeter segment at its midpoint but not at its
+    // ends") - the J2 abort.
+    std::array<double, 3> midpoint{};
+    for (int d = 0; d < 3; d++)
+    {
+      midpoint[d] = 0.5 * (portion.p0[d] + portion.p1[d]);
+    }
+    CHECK(Off(midpoint) <= tolerance);
+    CHECK(Off(portion.p0) > tolerance);
+    CHECK(Off(portion.p1) > tolerance);
+    CHECK_THAT(Off(portion.p0), WithinRel(0.9 * std::sin(skew), 1.0e-9));
+  }
+
+  SECTION("the recorded pre-image lies on the own segment: the whole cell, once")
+  {
+    patch.provenance.has_own_cell = true;
+    const auto portions =
+        CollectDomainBoundaryPortions(exclusions, {patch}, config, ownership, clipping, R);
+    REQUIRE(portions.portions.size() == 1);
+    const auto &portion = portions.portions.front();
+    CHECK(portion.feature == 2);
+    CHECK(portion.segment == 7);
+    CHECK(Off(portion.p0) <= 1.0e-12);
+    CHECK(Off(portion.p1) <= 1.0e-12);
+    // The interval is the cell's arc length on the segment (the frame cell projected by
+    // Dot(tangent, AxisW)), about the sample.
+    double length = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length += (portion.p1[d] - portion.p0[d]) * (portion.p1[d] - portion.p0[d]);
+    }
+    CHECK_THAT(std::sqrt(length), WithinRel((cell[1] - cell[0]) / projection, 1.0e-12));
+    CHECK_THAT(portions.length, WithinRel((cell[1] - cell[0]) / projection, 1.0e-12));
+    CHECK(portions.geometric_cells == 1);
+    // A co-located first-order split patch of the same cell maps to the same interval,
+    // counted once.
+    auto split = patch;
+    split.weight = 0.3;
+    exclusions.patches.push_back(exclusion);
+    exclusions.patches.back().patch = 1;
+    const auto both = CollectDomainBoundaryPortions(exclusions, {patch, split}, config,
+                                                    ownership, clipping, R);
+    CHECK(both.portions.size() == 1);
+    CHECK(both.duplicate_patches == 1);
+    CHECK_THAT(both.length, WithinRel(portions.length, 1.0e-12));
+  }
+
+  SECTION(
+      "the part of a cell attributed to a spatial coupon maps like the cell (decision 545 "
+      "MAJOR-1): OwnEdgePointAt on the record vs the frame")
+  {
+    // ApplyContinuationOwnership attributes the owned part [removed_lo, removed_hi] of a
+    // cell to its owning spatial coupon through OwnEdgePointAt; a DomainBoundary coupon
+    // keeps those parts raw (CollectDomainBoundaryPortions). Without the record the frame
+    // reconstruction leaves the segment by the skew; with it the points lie on the segment
+    // and agree with the clip of the same offsets.
+    const double removed_lo = cell[0], removed_hi = cell[0] + 0.5;
+    patch.provenance.has_own_cell = false;
+    const auto frame_lo = OwnEdgePointAt(patch, removed_lo);
+    const auto frame_hi = OwnEdgePointAt(patch, removed_hi);
+    CHECK(Off(frame_lo) > tolerance);
+    CHECK_THAT(Off(frame_lo), WithinRel(0.9 * std::sin(skew), 1.0e-9));
+    CHECK(Off(frame_hi) > tolerance);
+    patch.provenance.has_own_cell = true;
+    const auto record_lo = OwnEdgePointAt(patch, removed_lo);
+    const auto record_hi = OwnEdgePointAt(patch, removed_hi);
+    CHECK(Off(record_lo) <= 1.0e-12);
+    CHECK(Off(record_hi) <= 1.0e-12);
+    // The attributed part's arc length is the offsets' length over the projection.
+    double length2 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      length2 += (record_hi[d] - record_lo[d]) * (record_hi[d] - record_lo[d]);
+    }
+    CHECK_THAT(std::sqrt(length2), WithinRel(0.5 / projection, 1.0e-12));
+    // The same affine rule as the clip: clipping the cell to [removed_lo, removed_hi]
+    // records exactly these two points.
+    auto clipped = patch;
+    ClipLongitudinalCell(clipped, removed_lo, removed_hi);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(clipped.provenance.own_cell[0][d], WithinAbs(record_lo[d], 1.0e-12));
+      CHECK_THAT(clipped.provenance.own_cell[1][d], WithinAbs(record_hi[d], 1.0e-12));
+    }
+  }
+
+  SECTION("a cell whose segment runs against AxisW: the record follows the cell's offsets")
+  {
+    // The placement orders own_cell as the cell offsets (own_cell[k] = the pre-image of
+    // longitudinal_cell[k]); with the segment running against AxisW (projection < 0) the
+    // far-arc end is own_cell[0]. A clip of the cell's LOW offsets must then move that
+    // end, not the other (the first gate run's 78-nm shifts on trimmed reversed cells).
+    patch.provenance.has_own_cell = true;
+    for (int d = 0; d < 3; d++)
+    {
+      patch.axis_w[d] = -patch.axis_w[d];
+      patch.axis_u[d] = -patch.axis_u[d];  // keep AxisW = AxisU x AxisV
+    }
+    const double reversed_projection = -projection;
+    for (int k = 0; k < 2; k++)
+    {
+      const double s = sample_s + cell[k] / reversed_projection;
+      for (int d = 0; d < 3; d++)
+      {
+        patch.provenance.own_cell[k][d] = p0[d] + s * tangent[d];
+      }
+    }
+    for (int d = 0; d < 3; d++)
+    {
+      patch.origin[d] = sample[d] + edge_offset * axis_u[d];  // EdgeOffset along -AxisU
+    }
+    const auto before = patch.provenance.own_cell;
+    ClipLongitudinalCell(patch, cell[0] + 0.3, cell[1]);
+    const auto portions =
+        CollectDomainBoundaryPortions(exclusions, {patch}, config, ownership, clipping, R);
+    REQUIRE(portions.portions.size() == 1);
+    const auto &portion = portions.portions.front();
+    CHECK(Off(portion.p0) <= 1.0e-12);
+    CHECK(Off(portion.p1) <= 1.0e-12);
+    CHECK_THAT(portions.length, WithinRel((cell[1] - cell[0] - 0.3) / projection, 1.0e-12));
+    // own_cell[0] (the low offset's pre-image, the far-arc end here) moved by 0.3 /
+    // |projection|; own_cell[1] stayed.
+    double moved0 = 0.0, moved1 = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      moved0 += (portion.p0[d] - before[0][d]) * (portion.p0[d] - before[0][d]);
+      moved1 += (portion.p1[d] - before[1][d]) * (portion.p1[d] - before[1][d]);
+    }
+    CHECK_THAT(std::sqrt(moved0), WithinRel(0.3 / projection, 1.0e-12));
+    CHECK(std::sqrt(moved1) <= 1.0e-12);
+  }
+
+  SECTION("a clipped cell (an arm trim, an ownership clip) keeps the kept part's pre-image")
+  {
+    // The clip keeps [c0 + 0.3, c1] of the cell: the record follows (ClipOwnCell through
+    // ClipLongitudinalCell), so the raw claim is the kept part on the segment, not the
+    // whole cell nor the frame reconstruction about the moved origin.
+    patch.provenance.has_own_cell = true;
+    const auto before = patch.provenance.own_cell;
+    ClipLongitudinalCell(patch, cell[0] + 0.3, cell[1]);
+    CHECK_THAT(patch.longitudinal_cell[1] - patch.longitudinal_cell[0],
+               WithinRel(cell[1] - cell[0] - 0.3, 1.0e-12));
+    const auto portions =
+        CollectDomainBoundaryPortions(exclusions, {patch}, config, ownership, clipping, R);
+    REQUIRE(portions.portions.size() == 1);
+    const auto &portion = portions.portions.front();
+    CHECK(Off(portion.p0) <= 1.0e-12);
+    CHECK(Off(portion.p1) <= 1.0e-12);
+    // The kept end is the recorded far end; the clipped end moved 0.3 / projection along
+    // the segment.
+    CHECK_THAT(portions.length, WithinRel((cell[1] - cell[0] - 0.3) / projection, 1.0e-12));
+    double far_end_moved = 0.0, near_end_moved = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      far_end_moved += (portion.p1[d] - before[1][d]) * (portion.p1[d] - before[1][d]);
+      near_end_moved += (portion.p0[d] - before[0][d]) * (portion.p0[d] - before[0][d]);
+    }
+    CHECK(std::sqrt(far_end_moved) <= 1.0e-12);
+    CHECK_THAT(std::sqrt(near_end_moved), WithinRel(0.3 / projection, 1.0e-12));
+  }
+}
+
 TEST_CASE("Truncation planes are deterministic across rank counts",
           "[surfaceresponsemirror][mirror][mirrorplanes][3d][Serial][Parallel]")
 {

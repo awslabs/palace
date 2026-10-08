@@ -780,10 +780,74 @@ struct ZStack
     gap_midpoint::Float64 # two planes: the level halfway between the metal tops (else NaN)
 end
 
-function z_levels(spec::PolygonSet, metal_layers::Int, trench_layers::Int)
+const STEP_FACE_Z_GRADINGS = (:legacy, :mirrored)
+
+"""
+    step_face_z_levels(spec, radial_um) -> Vector{Float64}
+
+The `step_face_z_grading = :mirrored` levels (D1 of the reference-quality lane, supervisor
+decision 406): the plan band's row heights r (2^k - 1), k = 1, 2, ..., mirrored into z beyond
+BOTH faces of every plane's fabricated step (the metal top plus r, 3r, 7r, ... and the trench
+bottom minus r, 3r, 7r, ...) while they stay strictly inside the first fixed cell beyond that
+face (the first of `VACUUM_SIDE_OFFSETS_UM` above the surface, of `SUBSTRATE_SIDE_OFFSETS_UM`
+below), inside the plane's substrate and, with two planes, on the plane's own side of the gap
+midpoint. The legacy stack (`:legacy`, the recorded stage-1 / S2.1 reference family) resolves
+z in r only inside the step, so the air cell at the metal top corner and the substrate cell
+under the trench foot are r x 50 nm at every r and only p resolves the corner singularities
+there (the measured MA / SA under-read of the window references). The graded sweep thins
+these levels away from the edge like any level (they are not interfaces).
+"""
+function step_face_z_levels(spec::PolygonSet, radial_um::Float64)
+    radial_um > 0.0 || error("step_face_z_levels needs a positive radial size")
     m, o = spec.metal_thickness, spec.overetch
     planes = spec.planes
+    midpoint =
+        length(planes) == 2 ?
+        0.5 * sum(plane.surface_z + plane.facing * m for plane in planes) : NaN
     levels = Float64[]
+    for plane in planes
+        s, f = plane.surface_z, plane.facing
+        faces = (
+            # (face z, outward sign, room to the first fixed level beyond the face)
+            (s + f * m, f, VACUUM_SIDE_OFFSETS_UM[1] - m),
+            (
+                s - f * o,
+                -f,
+                min(SUBSTRATE_SIDE_OFFSETS_UM[1], plane.substrate_thickness) - o
+            )
+        )
+        for (face, sign, room) in faces
+            k = 1
+            while true
+                offset = radial_um * (2.0^k - 1.0)
+                offset < room - 1.0e-9 || break
+                z = face + sign * offset
+                # Two planes: the vacuum side stops at the gap midpoint like the fixed offsets.
+                (isnan(midpoint) || sign != f || f * (midpoint - z) > 0.0) || break
+                push!(levels, z)
+                k += 1
+            end
+        end
+    end
+    return sort!(levels)
+end
+
+"""
+    z_levels(spec, metal_layers, trench_layers; step_face_levels=Float64[]) -> ZStack
+
+The production z stack: the r-resolved trench and metal bands of every plane, the fixed
+substrate- and vacuum-side offsets, the backsides, the box ends and, with two planes, the gap
+midpoint; `step_face_levels` (`step_face_z_levels`) are merged in as plain levels.
+"""
+function z_levels(
+    spec::PolygonSet,
+    metal_layers::Int,
+    trench_layers::Int;
+    step_face_levels::Vector{Float64}=Float64[]
+)
+    m, o = spec.metal_thickness, spec.overetch
+    planes = spec.planes
+    levels = copy(step_face_levels)
     backsides = Float64[]
     metal_tops = Float64[]
     midpoint = NaN
@@ -1036,12 +1100,17 @@ function mesh_plan(
     band_mode::Symbol=:own,
     fan_turn_angle_deg::Float64=DEFAULT_FAN_TURN_ANGLE_DEG,
     region_grading::Bool=false,
+    vertex_column_grading::Bool=false,
+    vertex_grading_min_turn_deg::Float64=DEFAULT_VERTEX_GRADING_MIN_TURN_DEG,
     verbose::Bool=true
 )
     band_cap in (:none, :partition, :curve) ||
         error("band_cap must be :none, :partition or :curve")
     band_mode in (:own, :gmsh) || error("band_mode must be :own or :gmsh")
     region_grading && band_mode != :own && error("region_grading needs band_mode own")
+    vertex_column_grading &&
+        band_mode != :own &&
+        error("vertex_column_grading needs band_mode own")
     0.0 <= fan_turn_angle_deg <= MAX_FAN_TURN_ANGLE_DEG || error(
         "fan_turn_angle_deg must lie in [0, $(MAX_FAN_TURN_ANGLE_DEG)]: above it the mitre " *
         "column 1 / cos(turn / 2) exceeds twice the band"
@@ -1128,10 +1197,32 @@ function mesh_plan(
     if band_mode == :own
         heights = band_heights(radial_um, radial_growth, radial_layers)
         curves = plan_curves(surfaces, metal_edge_curves)
-        nodes_by_curve = Dict(
-            k => curve_transfinite_nodes(curve, tangential_um) for
-            (k, curve) in enumerate(curves) if curve.metal
-        )
+        0.0 <= vertex_grading_min_turn_deg < 180.0 ||
+            error("vertex_grading_min_turn_deg must lie in [0, 180)")
+        vertex_angles =
+            vertex_column_grading ?
+            plan_vertex_angles(
+                curves,
+                spec.box,
+                deg2rad(vertex_grading_min_turn_deg);
+                planes_by_curve=metal_curve_planes(curves, class_by_surface)
+            ) : Dict{Int32, Float64}()
+        ladder_stations = 0
+        graded_curve_ends = 0
+        nodes_by_curve = Dict{Int, Vector{Point2}}()
+        for (k, curve) in enumerate(curves)
+            curve.metal || continue
+            if vertex_column_grading
+                phi_a = get(vertex_angles, curve.points[1], NaN)
+                phi_b = get(vertex_angles, curve.points[2], NaN)
+                nodes_by_curve[k], added =
+                    vertex_graded_curve_nodes(curve, tangential_um, radial_um, phi_a, phi_b)
+                ladder_stations += added
+                graded_curve_ends += !isnan(phi_a) + !isnan(phi_b)
+            else
+                nodes_by_curve[k] = curve_transfinite_nodes(curve, tangential_um)
+            end
+        end
         statistics = BandStatistics()
         band_triangles = 0
         for (index, surface) in enumerate(surfaces)
@@ -1214,6 +1305,18 @@ function mesh_plan(
                             REGION_GRADING_SLOPE
                     ) : false,
                 "wall_end_columns" => statistics.wall_end_columns,
+                "vertex_column_grading" =>
+                    vertex_column_grading ?
+                    Dict{String, Any}(
+                        "min_turn_deg" => vertex_grading_min_turn_deg,
+                        "vertices" => length(vertex_angles),
+                        "graded_curve_ends" => graded_curve_ends,
+                        "ladder_stations" => ladder_stations,
+                        "min_wedge_angle_deg" =>
+                            isempty(vertex_angles) ? nothing :
+                            rad2deg(minimum(values(vertex_angles))),
+                        "first_station_rule" => "s_1 = r (2^j - 1) >= 2 r / tan(phi / 2)"
+                    ) : false,
                 "segments_below_2p5r" => statistics.segments_below_2p5r,
                 "quad_min_abs_sin" => statistics.quad_min_abs_sin,
                 "triangle_min_angle_deg" => statistics.triangle_min_angle_deg,
@@ -1588,7 +1691,9 @@ end
                         exact_band_thickness=false, cross_plane_snap_um=NaN,
                         band_cap=:none, sweep=:tensor, alpha=1.0, beta=3.0,
                         region_grading=(sweep == :graded), region_ring=true,
-                        region_z_grading=false) -> manifest
+                        region_z_grading=false, step_face_z_grading=:legacy,
+                        vertex_column_grading=false,
+                        vertex_grading_min_turn_deg=30.0) -> manifest
 
 Generate the fabricated reference mesh of a polygon set and write `output` (ASCII MSH2) with
 its JSON manifest next to it. `band_mode=:own` (default) builds the structured boundary-layer
@@ -1605,7 +1710,15 @@ the band tops with the slope `REGION_GRADING_SLOPE` up to `REGION_MESH_SIZE_MAX_
 sweep's plan is the recorded family's and cannot be graded); `region_ring` puts the region
 nodes adjacent to the band on the band's outermost stack Z_K instead of their plan-size ladder
 step; `region_z_grading` (decision 276 option (ii)) puts every region node on the geometric
-stack grown from the fabricated steps' faces (`region_z_graded_levels`). Gmsh mode only: `exact_band_thickness=true` passes
+stack grown from the fabricated steps' faces (`region_z_graded_levels`). Both sweeps
+(reference-quality lane, decision 406; both default to the recorded family):
+`step_face_z_grading=:mirrored` (D1) adds the band row heights r (2^k - 1) as z levels beyond
+both faces of every plane's fabricated step (`step_face_z_levels`; `:legacy` leaves the first
+cell beyond each face at 50 nm); `vertex_column_grading=true` (D3, own band only) grades the
+band's column stations along every metal curve toward its plan vertices (joints turning by at
+least `vertex_grading_min_turn_deg` on one plane; plan crossings of the two planes' edges are
+not vertices) with the same r (2^k - 1) ladder
+(`vertex_graded_curve_nodes`). Gmsh mode only: `exact_band_thickness=true` passes
 the exact geometric sum as the boundary-layer Thickness (the recorded transmon generator's
 formula; see the header); `band_cap` applies the local band cap rule (`:none`: the rule is only
 recorded; `:partition`: one band per partition, the minimum over its curves; `:curve`: one
@@ -1630,10 +1743,18 @@ function mesh_polygon_window(
     beta::Float64=DEFAULT_GRADED_BETA,
     region_grading::Bool=(sweep == :graded),
     region_ring::Bool=true,
-    region_z_grading::Bool=false
+    region_z_grading::Bool=false,
+    step_face_z_grading::Symbol=:legacy,
+    vertex_column_grading::Bool=false,
+    vertex_grading_min_turn_deg::Float64=DEFAULT_VERTEX_GRADING_MIN_TURN_DEG
 )
     output = abspath(output)
     sweep in (:tensor, :graded) || error("sweep must be :tensor or :graded")
+    step_face_z_grading in STEP_FACE_Z_GRADINGS ||
+        error("step_face_z_grading must be one of $(STEP_FACE_Z_GRADINGS)")
+    !vertex_column_grading ||
+        band_mode == :own ||
+        error("vertex_column_grading needs the own structured band (band_mode own)")
     sweep == :tensor ||
         band_mode == :own ||
         error("The graded sweep needs the own structured band (band_mode own)")
@@ -1671,6 +1792,8 @@ function mesh_polygon_window(
             band_mode=band_mode,
             fan_turn_angle_deg=fan_turn_angle_deg,
             region_grading=region_grading,
+            vertex_column_grading=vertex_column_grading,
+            vertex_grading_min_turn_deg=vertex_grading_min_turn_deg,
             verbose=verbose
         )
     finally
@@ -1703,7 +1826,9 @@ function mesh_polygon_window(
         "\nConductor components: ",
         components
     )
-    stack = z_levels(spec, metal_layers, trench_layers)
+    step_face_levels =
+        step_face_z_grading == :mirrored ? step_face_z_levels(spec, radial_um) : Float64[]
+    stack = z_levels(spec, metal_layers, trench_layers; step_face_levels=step_face_levels)
     zs = stack.levels
     manifest = Dict{String, Any}(
         "mesh" => output,
@@ -1746,6 +1871,8 @@ function mesh_polygon_window(
         "substrate_backsides_z_um" => stack.backsides,
         "z_levels" => zs,
         "sweep" => string(sweep),
+        "step_face_z_grading" => string(step_face_z_grading),
+        "step_face_z_levels_um" => step_face_levels,
         "attributes" => Dict(
             name => Dict("dimension" => d, "attribute" => a) for
             (d, a, name) in physical_names(spec)

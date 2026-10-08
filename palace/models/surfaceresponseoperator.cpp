@@ -8709,8 +8709,47 @@ double SegmentDistance(const std::array<double, 3> &q, const std::array<double, 
   return Norm(Subtract(q, Add(a, Scale(t, ab))));
 }
 
-namespace
+// The own-edge point of a translational patch at the cell offset c (mesh units): the
+// recorded pre-image on the own segment (Provenance::own_cell, decision 537) mapped
+// linearly from the cell [c0, c1] (the pre-image is affine in the cell offset); without the
+// record (a legacy placement) the frame reconstruction origin + EdgeOffset AxisU + c AxisW,
+// which leaves a pair's / stack's member edge wherever AxisW follows the partner's chord.
+std::array<double, 3> OwnEdgePointAt(const ResponsePatchData &patch, double c)
 {
+  const auto &provenance = patch.provenance;
+  const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+  if (provenance.has_own_cell && c1 > c0)
+  {
+    const double fraction = (c - c0) / (c1 - c0);
+    std::array<double, 3> point{};
+    for (int d = 0; d < 3; d++)
+    {
+      point[d] = provenance.own_cell[0][d] +
+                 fraction * (provenance.own_cell[1][d] - provenance.own_cell[0][d]);
+    }
+    return point;
+  }
+  std::array<double, 3> point = patch.origin;
+  for (int d = 0; d < 3; d++)
+  {
+    point[d] += provenance.edge_offset * patch.axis_u[d] + c * patch.axis_w[d];
+  }
+  return point;
+}
+
+// The recorded pre-image follows a clip: the kept offsets [kept_lo, kept_hi] of the cell
+// map onto the recorded segment interval by the same affine rule.
+void ClipOwnCell(ResponsePatchData &patch, double kept_lo, double kept_hi)
+{
+  auto &provenance = patch.provenance;
+  if (!provenance.has_own_cell || patch.longitudinal_cell[1] <= patch.longitudinal_cell[0])
+  {
+    return;
+  }
+  const std::array<std::array<double, 3>, 2> clipped = {OwnEdgePointAt(patch, kept_lo),
+                                                        OwnEdgePointAt(patch, kept_hi)};
+  provenance.own_cell = clipped;
+}
 
 // Clip the longitudinal cell of a translational patch to the kept interval [kept_lo,
 // kept_hi] of its cell offsets (the continuation ownership's clipping, decision 236 (2)):
@@ -8724,6 +8763,7 @@ void ClipLongitudinalCell(ResponsePatchData &patch, double kept_lo, double kept_
   const bool wholly = kept_length <= 1.0e-12 * std::max(1.0, cell_length);
   const double fraction = wholly ? 0.0 : kept_length / cell_length;
   const double shift = wholly ? 0.0 : 0.5 * (kept_lo + kept_hi);
+  ClipOwnCell(patch, kept_lo, kept_hi);
   for (int d = 0; d < 3; d++)
   {
     patch.origin[d] += shift * patch.axis_w[d];
@@ -8738,6 +8778,44 @@ void ClipLongitudinalCell(ResponsePatchData &patch, double kept_lo, double kept_
   patch.weight *= fraction;
   patch.provenance.quadrature_weight *= fraction;
 }
+
+// The REAL arm of a virtual corner: the direction from the vertex along the feature's
+// first real STRAIGHT portion (a segment that is no fitted-arc chord); a rounded virtual
+// corner's arc chords (decision 511) point off the arm, so they are skipped — without any
+// straight real portion the first real portion stands (the pre-fillet reading; decision 533
+// MINOR-3 / 552 (3)). Empty without a real portion.
+std::optional<std::array<double, 3>>
+MirrorArmDirection(const IdentificationResult &identification,
+                   const IdentifiedFeature &feature, std::size_t real_segments)
+{
+  const Point3D &vertex = feature.origin;
+  std::optional<Point3D> arm, chord;
+  for (const auto &portion : feature.portions)
+  {
+    if (portion.segment >= real_segments)
+    {
+      continue;
+    }
+    const auto &segment = identification.segments[portion.segment];
+    const Point3D far = Distance(segment.key[0], vertex) > Distance(segment.key[1], vertex)
+                            ? segment.key[0]
+                            : segment.key[1];
+    const Point3D direction = Normalize(Subtract(far, vertex));
+    if (segment.arc < 0)
+    {
+      arm = direction;
+      break;
+    }
+    if (!chord)
+    {
+      chord = direction;
+    }
+  }
+  return arm ? arm : chord;
+}
+
+namespace
+{
 
 // Corner-arm trim (decision 394, F1). A matched corner's coupon is calibrated on the
 // matching square |u|, |v| <= R of its canonical frame (u = the first arm away from the
@@ -9361,22 +9439,7 @@ ApplyMirrorArmTrim(const IdentificationResult &identification,
     const double s_half = HalfCornerArmStart(angle_degrees, R);
     const Point3D &vertex = feature.origin;
     const Point3D &n = feature.axes[2];
-    // The real arm: the direction from the vertex along a real portion of the feature.
-    std::optional<Point3D> arm;
-    for (const auto &portion : feature.portions)
-    {
-      if (portion.segment >= real_segments)
-      {
-        continue;
-      }
-      const auto &segment = identification.segments[portion.segment];
-      const Point3D far =
-          Distance(segment.key[0], vertex) > Distance(segment.key[1], vertex)
-              ? segment.key[0]
-              : segment.key[1];
-      arm = Normalize(Subtract(far, vertex));
-      break;
-    }
+    const auto arm = MirrorArmDirection(identification, feature, real_segments);
     if (!arm)
     {
       continue;
@@ -9866,6 +9929,20 @@ FeaturePatchSummary BuildFeaturePatches(
             model_weight * side_factor * (fp.b - fp.a) * ip.weight / term.coupon_depth;
         patch.longitudinal_cell = LongitudinalCellOffsets(
             quadrature_cells[q], fp.a, fp.b, t, fp.segment->tangent, patch.axis_w);
+        // The cell's pre-image on the side's own segment (its F-DB-a raw claim, decision
+        // 537): the segment points at the quadrature cell's arc-length ends, ordered as
+        // the cell's offsets along AxisW (the segment runs against AxisW when the
+        // projection is negative), so that own_cell[k] is the pre-image of
+        // longitudinal_cell[k] - the convention ClipOwnCell and the raw-claim record rely
+        // on.
+        patch.provenance.own_cell = {
+            Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][0]),
+            Interpolate(*fp.segment, fp.a + (fp.b - fp.a) * quadrature_cells[q][1])};
+        if (Dot(fp.segment->tangent, patch.axis_w) < 0.0)
+        {
+          std::swap(patch.provenance.own_cell[0], patch.provenance.own_cell[1]);
+        }
+        patch.provenance.has_own_cell = true;
         patch.provenance.segment = static_cast<int>(fp.geometry_index);
         patch.provenance.s0 = fp.s0;
         patch.provenance.s1 = fp.s1;
@@ -15626,14 +15703,60 @@ struct DomainResponseMatrices
   mfem::DenseMatrix fixed_flux_defect;
 };
 
+// The parsed response matrix files of this process, keyed by the file's path, size and
+// last write time and the reading parameters (decision 538: the operator is rebuilt every
+// AMR cycle and read every model's files again - on the 316-edge loop-end coupon 460 MB
+// of surface tables per rank per cycle; the parsed matrices are identical by construction,
+// so the cache changes no output). A rewritten file (another size or time) is read anew; a
+// same-size rewrite within the file system's time stamp granularity during one process is
+// not detected (the library's matrix files are immutable records; decision 545 MINOR-5).
+struct ResponseMatrixFileKey
+{
+  std::string path;
+  std::uintmax_t size = 0;
+  std::filesystem::file_time_type::rep time = 0;
+  int expected_size = 0;
+  double within_radius = -1.0;  // the within-R selection, -1 for whole-box
+  bool operator<(const ResponseMatrixFileKey &other) const
+  {
+    return std::tie(path, size, time, expected_size, within_radius) <
+           std::tie(other.path, other.size, other.time, other.expected_size,
+                    other.within_radius);
+  }
+};
+
+ResponseMatrixFileKey MakeResponseMatrixFileKey(const std::string &path, int expected_size,
+                                                std::optional<double> within_radius)
+{
+  ResponseMatrixFileKey key;
+  key.path = path;
+  std::error_code error;
+  key.size = std::filesystem::file_size(path, error);
+  if (error)
+  {
+    key.size = 0;
+  }
+  const auto time = std::filesystem::last_write_time(path, error);
+  key.time = error ? 0 : time.time_since_epoch().count();
+  key.expected_size = expected_size;
+  key.within_radius = within_radius.value_or(-1.0);
+  return key;
+}
+
 // Read one domain response matrix file as a dense matrix of the expected size.
 mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
 {
+  static std::map<ResponseMatrixFileKey, mfem::DenseMatrix> cache;
+  const auto key = MakeResponseMatrixFileKey(path, expected_size, std::nullopt);
+  if (const auto it = cache.find(key); it != cache.end())
+  {
+    return it->second;
+  }
   auto [size, entries] = ReadDomainResponseMatrix(path);
   MFEM_VERIFY(size == expected_size,
               "Response matrix \"" << path
                                    << "\" and basis point file have inconsistent sizes!");
-  return BuildDenseMatrix(entries, expected_size, path);
+  return cache.emplace(key, BuildDenseMatrix(entries, expected_size, path)).first->second;
 }
 
 // A model's domain response matrix: the file itself, or for an interpolated model (config
@@ -15747,8 +15870,8 @@ DomainResponseMatrices BuildDomainResponseMatrices(
 // units) instead: adding Q_total counted the box energy outside R twice (lane J, decision
 // 112(a)).
 std::map<int, mfem::DenseMatrix>
-ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
-                            std::optional<double> within_radius = std::nullopt)
+ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
+                                    std::optional<double> within_radius)
 {
   const Table table = ReadTable(path);
   const auto &interface_col = FindColumn(table, "interface", path);
@@ -15828,7 +15951,19 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
                   << *within_radius << " m: a spatial (3D box) response model adds its "
                   << "energy within R of its edges (Q_ij), not the whole-box Q_total!");
 
-  std::map<int, std::vector<MatrixEntry>> entries;
+  // The per-interface sum over the coupon edges, accumulated per (i, j) in the order of
+  // the unique keys (interface, edge, i, j): the first edge's value, then each further
+  // edge's added in edge order - the same floating-point sequence as a search for the
+  // (i, j) entry would follow, so the matrices are bitwise those of the earlier linear
+  // search, which cost O(entries x unique keys) and dominated the setup of a 316-edge
+  // coupon (decision 538: 363 s per AMR cycle on the loop-end model).
+  struct InterfaceSum
+  {
+    std::vector<double> sum;
+    std::vector<bool> seen;
+    std::vector<MatrixEntry> entries;  // (i, j) in first-appearance order
+  };
+  std::map<int, InterfaceSum> sums;
   std::map<std::pair<int, int>, std::vector<bool>> have;
   for (const auto &[key, value] : unique)
   {
@@ -15841,21 +15976,36 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
     edge_have[i * expected_size + j] = true;
     edge_have[j * expected_size + i] = true;
 
-    auto &interface_entries = entries[interface];
-    const int basis_row = i;
-    const int basis_col = j;
-    auto it = std::find_if(
-        interface_entries.begin(), interface_entries.end(),
-        [basis_row, basis_col](const auto &entry)
-        { return std::get<0>(entry) == basis_row && std::get<1>(entry) == basis_col; });
-    if (it == interface_entries.end())
+    auto &interface_sum = sums[interface];
+    if (interface_sum.sum.empty())
     {
-      interface_entries.emplace_back(i, j, value);
+      interface_sum.sum.assign(static_cast<std::size_t>(expected_size) * expected_size,
+                               0.0);
+      interface_sum.seen.assign(static_cast<std::size_t>(expected_size) * expected_size,
+                                false);
+    }
+    const std::size_t index = static_cast<std::size_t>(i) * expected_size + j;
+    if (!interface_sum.seen[index])
+    {
+      interface_sum.seen[index] = true;
+      interface_sum.sum[index] = value;
+      interface_sum.entries.emplace_back(i, j, 0.0);
     }
     else
     {
-      std::get<2>(*it) += value;
+      interface_sum.sum[index] += value;
     }
+  }
+  std::map<int, std::vector<MatrixEntry>> entries;
+  for (auto &[interface, interface_sum] : sums)
+  {
+    for (auto &entry : interface_sum.entries)
+    {
+      std::get<2>(entry) =
+          interface_sum.sum[static_cast<std::size_t>(std::get<0>(entry)) * expected_size +
+                            std::get<1>(entry)];
+    }
+    entries.emplace(interface, std::move(interface_sum.entries));
   }
   for (const auto &[key, edge_have] : have)
   {
@@ -15870,6 +16020,22 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
     matrices.emplace(interface, BuildDenseMatrix(interface_entries, expected_size, path));
   }
   return matrices;
+}
+
+// The cached reading (ResponseMatrixFileKey: the same file, size, time and parameters).
+const std::map<int, mfem::DenseMatrix> &
+ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
+                            std::optional<double> within_radius = std::nullopt)
+{
+  static std::map<ResponseMatrixFileKey, std::map<int, mfem::DenseMatrix>> cache;
+  const auto key = MakeResponseMatrixFileKey(path, expected_size, within_radius);
+  if (const auto it = cache.find(key); it != cache.end())
+  {
+    return it->second;
+  }
+  return cache
+      .emplace(key, ReadSurfaceResponseMatricesFromFile(path, expected_size, within_radius))
+      .first->second;
 }
 
 // A model's per-coupon-interface surface response matrices: the file itself, or for an
@@ -15888,11 +16054,11 @@ std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
   std::set<int> interfaces;
   for (const auto &source : config.blend)
   {
-    auto matrices = ReadSurfaceResponseMatrices(
+    const auto &matrices = ReadSurfaceResponseMatrices(
         fabricated ? source.fabricated_surface_matrix : source.thin_surface_matrix,
         expected_size, within_radius);
     std::set<int> source_interfaces;
-    for (auto &[interface, matrix] : matrices)
+    for (const auto &[interface, matrix] : matrices)
     {
       source_interfaces.insert(interface);
       auto [it, inserted] = result.emplace(interface, mfem::DenseMatrix(expected_size));
@@ -16391,6 +16557,9 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"Segment", patch.provenance.segment},
                        {"Stretch", patch.provenance.stretch},
                        {"EdgeOffset", patch.provenance.edge_offset},
+                       {"OwnCell", patch.provenance.has_own_cell
+                                       ? nlohmann::json(patch.provenance.own_cell)
+                                       : nlohmann::json(nullptr)},
                        {"Claims", claims},
                        {"RawClaims", raw_claims}});
   }
@@ -16401,7 +16570,7 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   std::ofstream output(path);
   MFEM_VERIFY(output,
               "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 14},
+  nlohmann::json cache = {{"Version", 15},
                           {"MatchingRadius", config.matching_radius},
                           {"Models", std::move(models)},
                           {"Patches", std::move(patches)}};
@@ -16555,11 +16724,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
   nlohmann::json data;
   input >> data;
   MFEM_VERIFY(
-      data.value("Version", 0) == 14,
+      data.value("Version", 0) == 15,
       "Unsupported response-geometry cache version "
           << data.value("Version", 0)
-          << " (version 14 carries the feature, mesh segment, chain stretch and own-edge "
-             "offset of every patch, the claims, support box and chain of every spatial "
+          << " (version 15 carries the feature, mesh segment, chain stretch, own-edge "
+             "offset and own-cell pre-image (decision 537) of every patch, the claims, "
+             "support box and chain of every spatial "
              "cluster patch, the raw claims of every vertex coupon (F-DB-a, decisions 442 "
              "/ 454), the matching radius for the continuation and vertex ownership, the "
              "quantum near-match records of the matching pass, the corner-arm trim records "
@@ -16568,8 +16738,11 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "consistent-mortar band vertices and rule of every model (decision 404 D1), "
              "and the mirror planes, mirror band record, mirror arm trims and "
              "unmerged-configuration portions (each real one flagged Identical, decision "
-             "512) of the boundary-cut rule; version 14 = both the decision-511 and the "
-             "decision-512 additions, decision 527; delete a stale cache)!");
+             "512) of the boundary-cut rule; version 15 = both the fillet lane's version "
+             "14 "
+             "(the decision-511 and decision-512 additions, decision 527) and the stacks "
+             "lane's version 14 (the decision-537 own-cell pre-image), decision 552 (3); "
+             "delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -16750,6 +16923,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
     patch.provenance.segment = entry.at("Segment");
     patch.provenance.stretch = entry.at("Stretch");
     patch.provenance.edge_offset = entry.at("EdgeOffset");
+    if (const auto own_cell = entry.find("OwnCell");
+        own_cell != entry.end() && !own_cell->is_null())
+    {
+      patch.provenance.own_cell = own_cell->get<std::array<std::array<double, 3>, 2>>();
+      patch.provenance.has_own_cell = true;
+    }
     for (const auto &claim : entry.at("Claims"))
     {
       patch.provenance.claims.push_back(
@@ -17852,16 +18031,11 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       cell.stretch = key.second;
       cell.cell_length = cell_length;
       cell.owned_length = owned_length;
-      // The own-edge point at a cell offset (the cell line shifted by the edge offset).
-      auto OwnEdgePoint = [&](double c)
-      {
-        std::array<double, 3> point = patch.origin;
-        for (int d = 0; d < 3; d++)
-        {
-          point[d] += patch.provenance.edge_offset * patch.axis_u[d] + c * patch.axis_w[d];
-        }
-        return point;
-      };
+      // The own-edge point at a cell offset: the recorded pre-image on the own segment
+      // (decision 545 MAJOR-1: the parts attributed to a DomainBoundary spatial coupon are
+      // its raw claims, mapped like the cell itself), the frame reconstruction only without
+      // the record.
+      auto OwnEdgePoint = [&](double c) { return OwnEdgePointAt(patch, c); };
       if (inside.size() == 1)
       {
         cell.owners.push_back(supports[inside.front().support].patch);
@@ -17910,9 +18084,11 @@ ApplyContinuationOwnership(std::vector<ResponsePatchData> &patches,
       }
       ownership.owned_length += owned_length;
       // Clip: the kept interval becomes the cell of a patch at its midpoint (the quadrature
-      // point of the kept piece), weight and quadrature weight scaled by kept / cell.
+      // point of the kept piece), weight and quadrature weight scaled by kept / cell; the
+      // recorded own-segment pre-image follows (decision 537).
       const double fraction = wholly ? 0.0 : kept_length / cell_length;
       const double shift = wholly ? 0.0 : 0.5 * (kept_lo + kept_hi);
+      ClipOwnCell(patch, kept_lo, kept_hi);
       for (int d = 0; d < 3; d++)
       {
         patch.origin[d] += shift * patch.axis_w[d];
@@ -19227,7 +19403,14 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
 
   // Every rank locates every point in its local mesh with the operator's locator and its
   // tolerances; the found flags are OR-reduced, so the decision is the partition's union.
+  // Phase times (decision 538 diagnosis): recorded in the result, printed by the caller.
+  auto Elapsed = [&]()
+  {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  };
+  result.phase_times["points"] = Elapsed();
   ElementPointLocator locator(mesh, dimension);
+  result.phase_times["locator"] = Elapsed();
   double locator_scale = 0.0;
   for (int d = 0; d < dimension; d++)
   {
@@ -19252,10 +19435,12 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       }
     }
   }
+  result.phase_times["find"] = Elapsed();
   if (!found.empty())
   {
     Mpi::GlobalMax(static_cast<int>(found.size()), found.data(), comm);
   }
+  result.phase_times["reduce"] = Elapsed();
   // Mirror (boundary-cut DESIGN 2.2.3): every outside point beyond a Natural plane within
   // the band is reflected into the domain (canonical plane order) and located again; its
   // found flag is OR-reduced like the original's (the same arithmetic on every rank).
@@ -19332,6 +19517,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
       MFEM_ABORT(DescribeMisplacedPatch(c, reference, "its metal-edge reference"));
     }
   }
+  result.phase_times["reflect"] = Elapsed();
   // The distance of every outside point to the nearest element box, over the ranks.
   std::vector<std::size_t> outside;
   for (std::size_t i = 0; i < points.size(); i++)
@@ -19350,6 +19536,7 @@ DomainBoundaryExclusions FindDomainBoundaryExclusions(
   {
     Mpi::GlobalMin(static_cast<int>(distances.size()), distances.data(), comm);
   }
+  result.phase_times["distances"] = Elapsed();
 
   std::size_t k = 0;
   for (std::size_t c = 0; c < candidates.size(); c++)
@@ -19863,15 +20050,26 @@ DomainBoundaryPortions CollectDomainBoundaryPortions(
     const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
     if (provenance.coupon_depth > 0.0 && c1 > c0)
     {
-      // A translational cell: its own-edge interval.
+      // A translational cell: its own-edge interval = the cell's recorded pre-image on the
+      // side's own segment (decision 537, DESIGN ERRATA-8; every features-path patch). The
+      // frame reconstruction origin + EdgeOffset AxisU + cell AxisW (kept for a legacy
+      // patch without the record) leaves a pair's / stack's member edge wherever the sides
+      // are not exactly parallel: AxisW follows the partner side's chord.
       std::array<Point3D, 2> ends;
-      for (int k = 0; k < 2; k++)
+      if (provenance.has_own_cell)
       {
-        ends[k] = patch.origin;
-        for (int d = 0; d < 3; d++)
+        ends = provenance.own_cell;
+      }
+      else
+      {
+        for (int k = 0; k < 2; k++)
         {
-          ends[k][d] += provenance.edge_offset * patch.axis_u[d] +
-                        (k == 0 ? c0 : c1) * patch.axis_w[d];
+          ends[k] = patch.origin;
+          for (int d = 0; d < 3; d++)
+          {
+            ends[k][d] += provenance.edge_offset * patch.axis_u[d] +
+                          (k == 0 ? c0 : c1) * patch.axis_w[d];
+          }
         }
       }
       Append(exclusion.patch, provenance.feature, topology, provenance.segment, ends[0],
@@ -20399,6 +20597,20 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     basis_size(0)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
+  // Setup phase stamps (decision 538 diagnosis): printed only with
+  // PALACE_RESPONSE_SETUP_TIMING set, so the default log is byte-identical.
+  const bool setup_timing = std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr;
+  const auto setup_start = std::chrono::steady_clock::now();
+  auto SetupStamp = [&](const char *phase)
+  {
+    if (setup_timing)
+    {
+      Mpi::Print(
+          fespace.GetComm(), " Response setup phase: {} at {:.3f} s\n", phase,
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - setup_start)
+              .count());
+    }
+  };
   const auto &request = iodata.solver.electrostatic.response_correction;
   MFEM_VERIFY(request, "Missing electrostatic surface response correction configuration!");
   const int dimension = fespace.Dimension();
@@ -20480,6 +20692,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   MFEM_VERIFY(!config->models.empty() && !config->patches.empty(),
               "Surface response correction requires at least one model and patch!");
+  SetupStamp("geometry");
 
 #if defined(MFEM_USE_GSLIB)
   std::unordered_map<int, int> model_indices;
@@ -21041,6 +21254,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   }
   // The consistent mortar (decision 404 D1): the constrained metal-band vertices of every
   // translational model's surface-mortar hat basis and the rule that produced them.
+  SetupStamp("model matrices and mortars");
   ownership_diagnostics["ConsistentMortar"] = DescribeConsistentMortar(*config);
   if (config->trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR &&
       ownership_diagnostics["ConsistentMortar"]["WithInsertedBandVertices"].get<int>() > 0)
@@ -21363,6 +21577,14 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           fespace.GetComm(),
           " Domain-boundary containment test: {:d} patches / {:d} points in {:.3f} s\n",
           exclusions.tested_patches, exclusions.tested_points, exclusions.wall_time);
+      if (setup_timing)
+      {
+        for (const auto &[phase, seconds] : exclusions.phase_times)
+        {
+          Mpi::Print(fespace.GetComm(), "  containment phase {} at {:.3f} s\n", phase,
+                     seconds);
+        }
+      }
       if (!exclusions.patches.empty())
       {
         Mpi::Print(fespace.GetComm(), "{}",
@@ -21402,6 +21624,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
   }
 
+  SetupStamp("ownership and domain-boundary classification");
   const int rank = Mpi::Rank(fespace.GetComm());
   const int size = Mpi::Size(fespace.GetComm());
   int point_count = 0;
@@ -21639,6 +21862,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
       }
     }
   }
+  SetupStamp("mortar resolution probe");
   int point = 0;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -21875,10 +22099,12 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     }
   }
 
+  SetupStamp("trace quadrature and overlap check");
   {
     BlockTimer point_timer(Timer::CONSTRUCT_RESPONSE_POINTS);
     ConfigurePointCommunication(point_locator, xyz, dimension);
   }
+  SetupStamp("point communication");
 
   Mpi::Print(
       "\nConfigured surface response correction:\n"

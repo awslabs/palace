@@ -116,6 +116,183 @@ function curve_transfinite_nodes(curve::PlanCurve, tangential_um::Float64)
     ]
 end
 
+# ---------------------------------------------------------------------------------------------
+# Vertex column grading (D3 of the reference-quality lane, supervisor decision 406): the
+# tangential analogue of the band rows. The vertex (corner) singularity of the MA / MS / SA
+# layers is resolved by the band's t-spaced columns only, so at every PLAN VERTEX — an end
+# point of a metal curve off the window wall where the incident metal curves are not one
+# collinear pair (a corner of one or both planes, a T / X junction of the cross-plane snap) —
+# the column stations along every incident curve follow the row ladder s_j = r (2^j - 1)
+# from the vertex until the spacing reaches t, then the regular t spacing over the rest of the
+# curve (both ends independently; a curve shorter than the ladders keeps half the last spacing
+# on either side of its middle). The first station is the first s_j >= 2 r / tan(phi / 2),
+# phi the smallest wedge angle at the vertex: on the inward side the clearance rule
+# h_k <= 0.5 s tan(phi / 2) then keeps the first row at every graded column (a station closer
+# to the vertex than the mitre's row-1 node, h_1 / tan(phi / 2) along the arm, would cross
+# it), so a graded column at s_j carries j - 1 rows at a right angle and the band's quads stay
+# convex. The stations are shared by both sides of the curve (the band is one plan). A joint
+# of exactly two metal curves is a vertex only if it turns by at least `min_turn` (default
+# DEFAULT_VERTEX_GRADING_MIN_TURN_DEG): the joints of a polyline arc (the device windows' CPW
+# bends and loop ends turn by 3-16 deg per chord) are the curve they discretise, not corners
+# (decision 121 / 122), while every corner class of the library (turns of 45-165 deg) is
+# graded; a junction of three or more metal curves OF ONE PLANE always is, a plan crossing of
+# the two planes' edges never (`plan_vertex_angles`).
+
+const VERTEX_COLLINEAR_SIN = 1.0e-7
+const VERTEX_WALL_TOLERANCE_UM = 1.0e-5
+const DEFAULT_VERTEX_GRADING_MIN_TURN_DEG = 30.0
+
+# Whether two outward unit directions at a point are one collinear pair (a curve split by an
+# inserted point: turn 0) and, if not, the turn of their joint (pi - the wedge angle).
+function joint_turn(u::Point2, v::Point2)
+    cross = u[1] * v[2] - u[2] * v[1]
+    dot = u[1] * v[1] + u[2] * v[2]
+    abs(cross) <= VERTEX_COLLINEAR_SIN && dot < 0.0 && return 0.0
+    return pi - acos(clamp(dot, -1.0, 1.0))
+end
+
+# The smallest wedge angle (rad) at every plan vertex, by point tag; a point that is no plan
+# vertex is absent. A point is a vertex when, on SOME plane, the incident metal curves OF THAT
+# PLANE (`planes_by_curve`: curve index -> plane indices; `nothing` = every metal curve on one
+# plane) are three or more, or two turning by at least `min_turn` rad; a point on the window
+# wall never is. With two planes a crossing of an L1 edge with an L2 edge in plan (four
+# incident curves, two per plane, each pair collinear) is therefore NOT a vertex: the planes
+# are apart in z and neither has a corner there; an L2 polygon corner snapped onto an L1 edge
+# is one (L2's own two curves turn). The wedge angle is the smallest over ALL incident metal
+# curves: the band's clearance rule concerns the plan's wedges, whichever plane.
+function plan_vertex_angles(
+    curves::Vector{PlanCurve},
+    box,
+    min_turn::Float64;
+    planes_by_curve::Union{Nothing, Dict{Int, Vector{Int}}}=nothing
+)
+    directions = Dict{Int32, Vector{Point2}}()
+    plane_directions = Dict{Int32, Dict{Int, Vector{Point2}}}()
+    coordinates = Dict{Int32, Point2}()
+    for (k, curve) in enumerate(curves)
+        curve.metal || continue
+        planes = planes_by_curve === nothing ? [1] : planes_by_curve[k]
+        for (point, from, to) in
+            ((curve.points[1], curve.a, curve.b), (curve.points[2], curve.b, curve.a))
+            direction = unit((to[1] - from[1], to[2] - from[2]))
+            push!(get!(directions, point, Point2[]), direction)
+            by_plane = get!(plane_directions, point, Dict{Int, Vector{Point2}}())
+            for plane in planes
+                push!(get!(by_plane, plane, Point2[]), direction)
+            end
+            coordinates[point] = from
+        end
+    end
+    on_wall(p) =
+        abs(p[1] - box[1]) <= VERTEX_WALL_TOLERANCE_UM ||
+        abs(p[1] - box[2]) <= VERTEX_WALL_TOLERANCE_UM ||
+        abs(p[2] - box[3]) <= VERTEX_WALL_TOLERANCE_UM ||
+        abs(p[2] - box[4]) <= VERTEX_WALL_TOLERANCE_UM
+    angles = Dict{Int32, Float64}()
+    for (point, incident) in directions
+        on_wall(coordinates[point]) && continue
+        length(incident) >= 2 || continue
+        vertex = any(
+            length(own) >= 3 ||
+            (length(own) == 2 && joint_turn(own[1], own[2]) >= min_turn - 1.0e-12) for
+            own in values(plane_directions[point])
+        )
+        vertex || continue
+        bearings = sort([atan(d[2], d[1]) for d in incident])
+        gaps = [bearings[i + 1] - bearings[i] for i = 1:(length(bearings) - 1)]
+        push!(gaps, 2.0 * pi - (bearings[end] - bearings[1]))
+        angles[point] = minimum(gaps)
+    end
+    return angles
+end
+
+# The planes a metal curve is a CONDUCTOR edge of: those on which the conductor differs across
+# it. A bump footprint edge (bump membership differs, the conductors do not) has none: the
+# bump is a metal column between the two grounds, its footprint corners are not corners of a
+# plane's metal and belong to no corner class, so D3 does not grade toward them.
+function metal_curve_planes(curves::Vector{PlanCurve}, class_by_surface::Dict)
+    planes_by_curve = Dict{Int, Vector{Int}}()
+    for (k, curve) in enumerate(curves)
+        curve.metal || continue
+        upward, _ = gmsh.model.get_adjacencies(1, curve.tag)
+        owners = [
+            class_by_surface[(Int32(2), Int32(s))] for
+            s in upward if haskey(class_by_surface, (Int32(2), Int32(s)))
+        ]
+        length(owners) == 2 ||
+            error("Metal curve $(curve.tag) bounds $(length(owners)) partitions")
+        a, b = owners
+        planes_by_curve[k] =
+            [j for j in eachindex(a.conductors) if a.conductors[j] != b.conductors[j]]
+    end
+    return planes_by_curve
+end
+
+# Ladder stations (distances from the vertex) along a curve of length `length_um` toward a
+# vertex of wedge angle `phi`: s_j = r (2^j - 1) from the first s_j >= 2 r / tan(phi / 2) while
+# the spacing stays within t and the station leaves half its spacing to the curve's middle.
+function vertex_ladder_stations(
+    length_um::Float64,
+    tangential_um::Float64,
+    radial_um::Float64,
+    phi::Float64
+)
+    stations = Float64[]
+    first = 2.0 / tan(0.5 * phi)
+    j = 1
+    while 2.0^j - 1.0 < first - 1.0e-9
+        j += 1
+    end
+    previous = 0.0
+    while true
+        s = radial_um * (2.0^j - 1.0)
+        spacing = s - previous
+        spacing <= tangential_um * (1.0 + 1.0e-6) || break
+        s + 0.5 * spacing <= 0.5 * length_um || break
+        push!(stations, s)
+        previous = s
+        j += 1
+    end
+    return stations
+end
+
+# The column stations of a metal curve with the vertex ladders at its ends (`phi_a` / `phi_b`
+# the wedge angles at points[1] / points[2], NaN where the end is no plan vertex); a curve
+# without a vertex end keeps the legacy transfinite nodes bit for bit.
+function vertex_graded_curve_nodes(
+    curve::PlanCurve,
+    tangential_um::Float64,
+    radial_um::Float64,
+    phi_a::Float64,
+    phi_b::Float64
+)
+    isnan(phi_a) && isnan(phi_b) && return curve_transfinite_nodes(curve, tangential_um), 0
+    length_um = point_distance(curve.a, curve.b)
+    ladder_a =
+        isnan(phi_a) ? Float64[] :
+        vertex_ladder_stations(length_um, tangential_um, radial_um, phi_a)
+    ladder_b =
+        isnan(phi_b) ? Float64[] :
+        vertex_ladder_stations(length_um, tangential_um, radial_um, phi_b)
+    start = isempty(ladder_a) ? 0.0 : ladder_a[end]
+    stop = isempty(ladder_b) ? length_um : length_um - ladder_b[end]
+    remaining = stop - start
+    remaining > 0.0 || error("Vertex ladders overlap on plan curve $(curve.tag)")
+    m = max(1, ceil(Int, remaining / tangential_um - 1.0e-6))
+    distances = Float64[0.0]
+    append!(distances, ladder_a)
+    append!(distances, start + remaining * i / m for i = 1:(m - 1))
+    append!(distances, length_um .- reverse(ladder_b))
+    push!(distances, length_um)
+    nodes = [
+        (
+            curve.a[1] + (curve.b[1] - curve.a[1]) * d / length_um,
+            curve.a[2] + (curve.b[2] - curve.a[2]) * d / length_um
+        ) for d in distances
+    ]
+    return nodes, length(ladder_a) + length(ladder_b)
+end
+
 # A loop of a partition: vertex point tags and the curve (index into the plan curves) joining
 # vertex i to vertex i + 1, walked with the partition's interior on the left.
 struct PartitionLoop

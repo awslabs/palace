@@ -13,8 +13,8 @@ import re
 from edge_volume_metric import (COPLANAR_TOLERANCE, EDGE_LAYER_ORIENTATION_FLOOR,
                                 EDGE_LAYER_QUALITY_RULE)
 from trace_basis import NEEDLE_ALTITUDE_OVER_SHORTEST_EDGE
-from semantic_mesh_contract import (boundary_attributes, cut_surface_attributes, invariant_corners,
-                                    material_interface_attributes)
+from semantic_mesh_contract import (boundary_attributes, contract_is_corner_free, cut_surface_attributes,
+                                    invariant_corners, material_interface_attributes)
 
 
 # Two canonical-build pipelines share the source validation, the Gmsh publication
@@ -545,7 +545,8 @@ def validate_protected_corner_balls(recipe):
     of every semantic corner. Counts are reported, not gated."""
     balls = recipe.get("ProtectedCornerBalls")
     corners = recipe.get("TruePhysicalCorners")
-    if (not isinstance(balls, dict) or not isinstance(corners, list) or not corners or
+    if (not isinstance(balls, dict) or not isinstance(corners, list) or
+            (not corners and not contract_is_corner_free(recipe.get("SemanticContract"))) or
             not isinstance(balls.get("PerCorner"), list)):
         raise ValueError("Restoration recipe lacks the protected corner balls")
     if _recipe_number(balls, "Radius") != _recipe_number(recipe, "CornerIsotropyRadius"):
@@ -763,7 +764,7 @@ def validate_seed_corner_isotropy(seed_report, recipe_path):
             _recipe_number(recipe, "CornerIsotropyRadius")):
         raise ValueError("Seed corner census size or radius differs from the recipe")
     corners = recipe.get("TruePhysicalCorners")
-    if (not isinstance(corners, list) or not corners or
+    if (not isinstance(corners, list) or (not corners and not contract_is_corner_free(semantic)) or
             sorted(census.get("SemanticCorners", [])) != sorted(corners) or
             len(census["Corners"]) != len(corners)):
         raise ValueError("Seed corner census corners differ from the recipe semantic corners")
@@ -978,7 +979,8 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
     """
     record = recipe.get("RequiredTetrahedra")
     corners = recipe.get("TruePhysicalCorners")
-    if (not isinstance(record, dict) or not isinstance(corners, list) or not corners or
+    if (not isinstance(record, dict) or not isinstance(corners, list) or
+            (not corners and not contract_is_corner_free(recipe.get("SemanticContract"))) or
             not isinstance(record.get("PerCorner"), list) or
             not isinstance(record.get("PerSpan"), list) or record.get("IndexBase") != 1):
         raise ValueError("Restoration recipe lacks the required-tetrahedra record")
@@ -1038,7 +1040,12 @@ def validate_required_region(seed_report, restoration_report, recipe, census, re
                 not math.isfinite(value) or value > gates["--maximum-corner-aspect"]
                 for value in quality["CornerAspectsAfter"])):
         raise ValueError("Seed census does not record a gated required-region optimization")
-    if (_recipe_number(quality, "RequiredMinimumScaledJacobianAfter") <
+    # Round 3 class (1): the seed records null when no cell is scaled-Jacobian-gated (a
+    # corner-free coupon under the layer rule); accepted only with ScaledJacobianGateCells 0.
+    if quality.get("RequiredMinimumScaledJacobianAfter") is None:
+        if _count(quality.get("ScaledJacobianGateCells"), "Scaled-Jacobian-gated cells") != 0:
+            raise ValueError("Seed required region lacks RequiredMinimumScaledJacobianAfter with gated cells")
+    elif (_recipe_number(quality, "RequiredMinimumScaledJacobianAfter") <
             gates["--minimum-scaled-jacobian"]):
         raise ValueError("Seed required region is below the scaled-Jacobian gate")
     if (_recipe_number(quality, "RequiredMaximumJacobianConditionAfter") >
@@ -1367,6 +1374,13 @@ def validate_tube_rings_per_side(tubes, rows, command):
 CORNER_SHAPE_GATE = "CornerShapeGate"
 CORNER_MEASURES = {"Legacy": "VertexFrameCondition", "Invariant": "RegularCondition"}
 INVARIANT_CORNER_TARGET = 3.8
+# Round 3 class (1) (decision 510): a corner-free build (the contract's Derivation.CornerFree,
+# SemanticCorners []) has no corner ball and no corner to judge - MaximumCornerAspect /
+# CornerShapeGate are NOT applicable and the census says so explicitly (the mesher's
+# CORNER_GATES_NOT_APPLICABLE, one spelling); 0 CornerMeasures rows, 0 seed corner census
+# rows and 0 tube cap regions are accepted only under it.
+CORNER_GATES_RECORD = "CornerGates"
+CORNER_GATES_NOT_APPLICABLE = "NotApplicable (0 semantic corners, Derivation.CornerFree)"
 # The round-2 census records (F5-A / F5-B / SEAM; decisions 363 / 365 / 368) and the rule
 # round of a census (supervisor decision 392 MINOR-6 ruling, the 4.1 / 4.2 convention): a
 # census declaring NONE of them is a PRE-RULE census and validates only as one - judged by
@@ -1506,10 +1520,14 @@ RECIPE_SCOPE_SUPPORTED_CLASSES = ("ArcSides", "ContinuationVertices", "DeviceFoo
 RECIPE_SCOPE_GUARDS = {
     "ArcTubeRadiusVsCurvature": "build",
     # Decision 391 MAJOR-2 (ii) / decision 437 (3): arc face ends and arc joints beyond the
-    # TESTED ranges (ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS,
-    # ARC_FACE_END_TILT_BOUND_DEGREES; the loop end's ARC_JOINT_TURN_BOUND_RADIANS inside) fail
+    # BUILT ranges (ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS,
+    # ARC_FACE_END_TILT_RANGE_DEGREES; the loop end's ARC_JOINT_TURN_BOUND_RADIANS inside) fail
     # closed (mesh_spatial_coupon.jl spells the same list).
     "ArcFaceEnds": "build", "ArcJointTilt": "build",
+    # Mesher design round 3 class (11) interim (decisions 497 / 500 / 510; part M 1.3): a smooth
+    # joint of two DISTINCT arc runs has no joint owner (the 32b0083dad90 build failure) - refused
+    # by name before any CAD until fix 11 lands.
+    "ArcArcJoint": "build",
     "TopRounding": "inputs", "TrenchRounding": "inputs", "SlopedSidewalls": "inputs",
     "NoTrench": "inputs", "ShallowTrench": "build",
     "NarrowTransverseBound": "build", "NarrowHoles": "build", "NarrowLayerGap": "build",
@@ -1518,23 +1536,40 @@ RECIPE_SCOPE_GUARDS = {
     # per-side bound).
     "UnqualifiedRingCount": "build",
     # Mesher design round 2 F2b (decisions 358 / 363 / 437): a face end beyond the validity
-    # ceiling of the capped end block (2 h_pyr |tan theta| >= lc_cap).
+    # ceiling of the capped end block (2 h_pyr |tan theta| >= lc_cap); round 3 class (8) interim
+    # 8B (part M 5.2): a THIN end above THIN_FACE_END_TILT_BOUND_DEGREES (the largest built thin
+    # tilt) fails closed at the same guard.
     "SteepFaceCrossing": "build",
     "FreeEdgeEnds": "build", "FootprintWithoutEdge": "build",
-    "FootprintTopology": "build"}
+    "FootprintTopology": "build",
+    # Mesher design round 3 class (5) interim 5B (part M 2.2): a concave Physical arc of a
+    # fabricated coupon leaving the box by less than the trench-collar width (its shrunk collar
+    # circle misses the box-face line; the 32dc558f4810 refusal) and the untested line-arc corner
+    # kink whose offsets do not meet.
+    "CollarFaceEnd": "build"}
 # The largest arc-joint turn any full build has exercised: the loop end 1b26671c9080's
 # smooth arc / line joints (3.0e-8 .. 1.6e-6 rad on the signature); the mesher's
 # ScopeGuard[ArcJointTilt] bound (decision 391 MAJOR-2 (ii)).
 ARC_JOINT_TURN_BOUND_RADIANS = 1.6e-6
 # Mesher design round 2b (decision 437 (3)): the guards are LIFTED to the ranges the four synthetic
 # full builds tested (the mesher's ARC_SMOOTH_JOINT_TURN_BOUND / ARC_CORNER_JOINT_TURN_RANGE /
-# ARC_FACE_END_TILT_BOUND, spelled identically): a smooth arc joint turning by <= 5e-5 rad, a corner
+# ARC_FACE_END_TILT_RANGE, spelled identically): a smooth arc joint turning by <= 5e-5 rad, a corner
 # arc joint turning by 2e-4 rad .. 30 degrees on a THIN coupon (the fabricated corner joint stays
-# guarded: untested), an arc box-face cut end of tilt <= 70 degrees build; everything beyond fails
-# closed at the same guards.
+# guarded: untested), an arc box-face cut end whose tilt lies in the BUILT range build; everything
+# beyond fails closed at the same guards.
 ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS = 5.0e-5
 ARC_CORNER_JOINT_TURN_RANGE_RADIANS = (2.0e-4, math.radians(30.0))
-ARC_FACE_END_TILT_BOUND_DEGREES = 70.0
+# Mesher design round 3 (decisions 497 ERRATUM / 510 MAJOR-1 / 510 O6; DESIGN R9): the admitted arc
+# face-end tilt range is the BUILT range (lowest built, largest built) in degrees - ONE constant, the
+# mesher's ARC_FACE_END_TILT_RANGE in radians. Provenance: 0.1 degrees = fe0p1 of the round-3 B2
+# record run (fe0p1 / fe0p5 / fe2p1 / fe8 fab + thin at the production sizes); 70 degrees = fe70 fab
+# + thin of the round-2b record run (PBS 57706 / 57892; the thin top is the largest built THIN
+# angle). Round 2b had built 15 / 45 / 70 only and admitted (0, 15) untested (the 497 erratum).
+ARC_FACE_END_TILT_RANGE_DEGREES = (0.1, 70.0)
+# Round 3 class (8) interim 8B (part M 5.2; E3, decision 475 (7)): the largest BUILT thin face-end
+# tilt (the V10 thin 70-degree production-size build); a thin end above it fails closed at
+# ScopeGuard[SteepFaceCrossing] until the class-8 fix builds it.
+THIN_FACE_END_TILT_BOUND_DEGREES = 70.0
 # Metal thickness option of the mesher command with its default; the top tube of a
 # process layer with normal Nz lies at plane + Nz x MetalThickness (decision 48).
 GMSH_BUILD_THICKNESS_OPTION = ("--metal-thickness", 0.1)
@@ -2285,9 +2320,15 @@ def validate_gmsh_build_census(build_report, census, semantic):
             not isinstance(census.get("LongitudinalFaces"), list)):
         raise ValueError("Build census has an unsupported schema")
     corners = census.get("SemanticCorners")
-    if (not isinstance(corners, list) or not corners or len(census["Corners"]) != len(corners) or
+    corner_free = contract_is_corner_free(semantic)
+    if (not isinstance(corners, list) or (not corners and not corner_free) or len(census["Corners"]) != len(corners) or
             sorted(corners) != sorted(semantic.get("SemanticCorners", []))):
         raise ValueError("Build census corners differ from the canonical semantic contract")
+    corner_gates = census.get(CORNER_GATES_RECORD)
+    if corner_gates is not None and corner_gates != CORNER_GATES_NOT_APPLICABLE:
+        raise ValueError(f"Build census {CORNER_GATES_RECORD} record is not {CORNER_GATES_NOT_APPLICABLE!r}")
+    if corner_free != (corner_gates is not None):
+        raise ValueError(f"Build census {CORNER_GATES_RECORD} record differs from the contract's Derivation.CornerFree")
     normal = _option_or_default(command, "--lc-fine", None)
     radius = _option_or_default(command, "--corner-isotropy-radius", None)
     if (_census_number(census, "IsotropicSize", "Build census") != normal or
@@ -2532,8 +2573,14 @@ def validate_gmsh_build_census(build_report, census, semantic):
             _census_number(budget, "EffectiveFarSize", "Far-field budget") != tubes["FarSize"]):
         raise ValueError("Build census element budget differs from the build command cap")
     caps = tubes.get("CapRegions")
-    if (not isinstance(caps, dict) or _count(caps.get("Caps"), "Cap regions") <= 0 or
-            _census_number(caps, "MinimumScaledJacobian", "Cap regions") < gates["MinimumScaledJacobian"] or
+    if not isinstance(caps, dict) or (_count(caps.get("Caps"), "Cap regions") == 0) != corner_free:
+        raise ValueError("Build census tube cap regions differ from the contract's corners (a cap centre before "
+                         "every corner; none on a corner-free coupon)")
+    if corner_free:
+        if (caps.get("MinimumScaledJacobian") is not None or caps.get("MaximumJacobianCondition") is not None or
+                caps.get("Regions") != []):
+            raise ValueError("Build census records tube cap region statistics on a corner-free coupon")
+    elif (_census_number(caps, "MinimumScaledJacobian", "Cap regions") < gates["MinimumScaledJacobian"] or
             _census_number(caps, "MaximumJacobianCondition", "Cap regions") > gates["MaximumJacobianCondition"]):
         raise ValueError("Build census tube cap regions fail the tetrahedral gates")
     optimization = census.get("SeedQualityOptimization")

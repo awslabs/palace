@@ -1089,6 +1089,17 @@ public:
       // first side). The edge identity of the placement's continuation ownership
       // (decision 252): a side's stretch continues a claim only through its own edge.
       double edge_offset = 0.0;
+      // The longitudinal cell's pre-image on the side's OWN segment (decision 537, DESIGN
+      // ERRATA-8): the two segment points at the cell's arc-length ends, global
+      // coordinates in patch length units. The F-DB-a raw claim of a DomainBoundary
+      // translational cell is exactly this interval - the frame reconstruction origin +
+      // EdgeOffset AxisU + cell AxisW leaves a pair's / stack's member edge by cell x
+      // sin(angle) wherever the sides are not exactly parallel (AxisW follows the partner
+      // side's chord, LongitudinalCellOffsets), 8-75 nm on the rerun-2 stack windows
+      // against the postprocessor's 1e-3 R tolerance. Set by the features-path placement
+      // (has_own_cell); the legacy construction keeps the frame reconstruction.
+      std::array<std::array<double, 3>, 2> own_cell{};
+      bool has_own_cell = false;
       double quadrature_weight = 1.0;
       double model_weight = 1.0;
       // Longitudinal patches: weight = model_weight x quadrature_weight x (s1 - s0) x

@@ -1015,6 +1015,361 @@ end
     end
 end
 
+# A square hole in a ground: four plan vertices, each a 90-degree outward corner of the gap
+# partition and an inward corner of the ground partition (every incident curve graded from
+# both sides); the box corners lie on the window wall (no vertices).
+hole_window() = one_plane_window(
+    "hole",
+    [0.0, 30.0],
+    [0.0, 30.0],
+    [
+        Dict(
+            "Conductor" => "ground",
+            "Outer" => [[0, 0], [30, 0], [30, 30], [0, 30]],
+            "Holes" => [[[10, 10], [20, 10], [20, 20], [10, 20]]]
+        )
+    ];
+    substrate=50.0,
+    above=50.0
+)
+
+@testset "D1: step_face_z_levels and the mirrored z stack (decision 406; legacy default)" begin
+    spec = strip_window()
+    # r10: metal top 0.1 + 0.01 / 0.03 (0.07 reaches the fixed 0.15 level), trench bottom
+    # -0.05 - 0.01 / 0.03; r5: the probe variant's levels 0.105 / 0.115 / 0.135 and -0.055 /
+    # -0.065 / -0.085 (reference-quality REPORT section 4); r50: the first cell is already r.
+    @test PWM.step_face_z_levels(spec, 0.01) ≈ [-0.08, -0.06, 0.11, 0.13]
+    @test PWM.step_face_z_levels(spec, 0.005) ≈
+          [-0.085, -0.065, -0.055, 0.105, 0.115, 0.135]
+    @test isempty(PWM.step_face_z_levels(spec, 0.05))
+    # Facing down: mirrored about the surface (metal top -0.1, trench bottom +0.05).
+    @test PWM.step_face_z_levels(strip_down_window(), 0.01) ≈ [-0.13, -0.11, 0.06, 0.08]
+    # Two planes: both steps, the L2 (z 4.8, facing down) levels mirrored; none beyond the
+    # gap midpoint (2.4) or the fixed offsets.
+    two = PWM.step_face_z_levels(two_plane_window(), 0.01)
+    @test two ≈ [-0.08, -0.06, 0.11, 0.13, 4.67, 4.69, 4.86, 4.88]
+    # The legacy stack is untouched by the keyword's default; the mirrored stack merges the
+    # levels (sorted, unique) and keeps every legacy level.
+    legacy = PWM.z_levels(spec, 10, 5)
+    mirrored =
+        PWM.z_levels(spec, 10, 5; step_face_levels=PWM.step_face_z_levels(spec, 0.01))
+    @test legacy.levels == PWM.z_levels(spec, 10, 5; step_face_levels=Float64[]).levels
+    @test length(mirrored.levels) == length(legacy.levels) + 4
+    @test all(any(z -> abs(z - w) <= 1.0e-9, mirrored.levels) for w in legacy.levels)
+    @test issorted(mirrored.levels) && all(diff(mirrored.levels) .> 1.0e-9)
+    @test (mirrored.z_bottom, mirrored.z_top, mirrored.backsides) ==
+          (legacy.z_bottom, legacy.z_top, legacy.backsides)
+    @test isequal(mirrored.gap_midpoint, legacy.gap_midpoint)
+    @test_throws ErrorException mesh_polygon_window(
+        spec,
+        0.01,
+        5.0,
+        joinpath(mktempdir(), "bad.msh2");
+        verbose=false,
+        step_face_z_grading=:graded
+    )
+end
+
+@testset "D1: the mirrored stack in both sweeps; legacy named explicitly = the default bytes" begin
+    directory = mktempdir()
+    for (sweep, kwargs) in ((:tensor, (;)), (:graded, (;)))
+        default = mesh_polygon_window(
+            strip_window(),
+            0.01,
+            5.0,
+            joinpath(directory, "$(sweep)_default.msh2");
+            verbose=false,
+            sweep=sweep
+        )
+        legacy = mesh_polygon_window(
+            strip_window(),
+            0.01,
+            5.0,
+            joinpath(directory, "$(sweep)_legacy.msh2");
+            verbose=false,
+            sweep=sweep,
+            step_face_z_grading=:legacy,
+            vertex_column_grading=false
+        )
+        mirrored = mesh_polygon_window(
+            strip_window(),
+            0.01,
+            5.0,
+            joinpath(directory, "$(sweep)_mirrored.msh2");
+            verbose=false,
+            sweep=sweep,
+            step_face_z_grading=:mirrored
+        )
+        # The options named at their defaults reproduce the default bytes (the S2.1 family).
+        @test legacy["sha256"] == default["sha256"] && legacy["bytes"] == default["bytes"]
+        @test default["step_face_z_grading"] == "legacy" &&
+              isempty(default["step_face_z_levels_um"])
+        @test default["band"]["vertex_column_grading"] == false
+        @test mirrored["step_face_z_grading"] == "mirrored"
+        @test mirrored["step_face_z_levels_um"] ≈ [-0.08, -0.06, 0.11, 0.13]
+        @test mirrored["sha256"] != default["sha256"]
+        # The z stack gains exactly the mirrored levels; the plan is unchanged.
+        @test length(mirrored["z_levels"]) == length(default["z_levels"]) + 4
+        @test all(
+            any(z -> abs(z - w) <= 1.0e-9, mirrored["z_levels"]) for w in [0.11, 0.13]
+        )
+        @test mirrored["plan_triangles"] == default["plan_triangles"]
+        # The first cell beyond the metal top is now r tall (it was 50 nm).
+        above = sort(filter(z -> z > 0.1 + 1.0e-9, mirrored["z_levels"]))
+        @test above[1] ≈ 0.11
+        @test sort(filter(z -> z > 0.1 + 1.0e-9, default["z_levels"]))[1] ≈ 0.15
+        # Areas and volumes are the default's; the mesh is closed, tagged and non-degenerate.
+        for (attribute, area) in default["surface_area_um2"]
+            @test mirrored["surface_area_um2"][attribute] ≈ area rtol = 1.0e-9
+        end
+        for (attribute, volume) in default["volume_um3"]
+            @test mirrored["volume_um3"][attribute] ≈ volume rtol = 1.0e-9
+        end
+        @test mirrored["nonpositive"] == 0
+        checks = mesh_checks(
+            joinpath(directory, "$(sweep)_mirrored.msh2"),
+            step_slabs(strip_window()),
+            metal_substrate_attributes(mirrored)
+        )
+        @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
+        # Cost: the tensor sweep pays four full plan layers; the graded sweep thins the levels
+        # away from the edge (the probe variant: +3.7 % at r20, +1.5 % at r5, -3.7 % at r1.25).
+        if sweep == :tensor
+            # Four more intervals of 3 tets per plan triangle (less the excluded metal).
+            @test default["tetrahedra"] <
+                  mirrored["tetrahedra"] <=
+                  default["tetrahedra"] + 4 * 3 * default["plan_triangles"]
+        else
+            @test 0.9 * default["tetrahedra"] <
+                  mirrored["tetrahedra"] <
+                  1.15 * default["tetrahedra"]
+            @test mirrored["graded_sweep"]["stack_sizes"][1] ==
+                  default["graded_sweep"]["stack_sizes"][1] + 4
+        end
+    end
+end
+
+@testset "D3: vertex ladder stations and the graded curve nodes" begin
+    r, t = 0.02, 5.0
+    # A right angle: the first station is 3r (2 r / tan(45 deg) = 2 r, the row-1 node of the
+    # inward mitre lies r along the arm), then 7r, 15r, ... while the spacing stays within t
+    # and half of it fits before the curve's middle (L = 10: 2.54 + 1.28 <= 5, 5.1 + 2.56 > 5).
+    right = PWM.vertex_ladder_stations(10.0, t, r, pi / 2)
+    @test right ≈ r .* [3, 7, 15, 31, 63, 127]
+    @test PWM.vertex_ladder_stations(100.0, t, r, pi / 2) ≈
+          r .* [3, 7, 15, 31, 63, 127, 255]
+    # An acute wedge (52.8 deg, the S5 tip): 2 / tan(26.4) = 4.03 -> the first station 7r; an
+    # obtuse one (135 deg): 2 / tan(67.5) = 0.83 -> r.
+    @test PWM.vertex_ladder_stations(100.0, t, r, deg2rad(52.8))[1] ≈ 7r
+    @test PWM.vertex_ladder_stations(100.0, t, r, deg2rad(135.0))[1] ≈ r
+    # A curve too short for any station keeps none.
+    @test isempty(PWM.vertex_ladder_stations(0.1, t, r, pi / 2))
+    # Every graded column at a right angle carries j - 1 rows under the clearance rule.
+    heights = PWM.band_heights(r, 2.0, 7)
+    for (j, s) in enumerate(right)
+        rows, clamped = PWM.rows_within(heights, PWM.CORNER_CLEARANCE_FRACTION * s)
+        @test rows == j && !clamped
+    end
+    # The curve nodes: both ends graded, the middle uniform within t, the legacy nodes when
+    # neither end is a vertex (bit for bit).
+    curve = PWM.PlanCurve(Int32(1), (0.0, 0.0), (12.0, 0.0), (Int32(1), Int32(2)), true)
+    legacy = PWM.curve_transfinite_nodes(curve, t)
+    nodes, added = PWM.vertex_graded_curve_nodes(curve, t, r, NaN, NaN)
+    @test nodes == legacy && added == 0
+    nodes, added = PWM.vertex_graded_curve_nodes(curve, t, r, pi / 2, pi / 2)
+    xs = [n[1] for n in nodes]
+    @test added == 12 && length(nodes) == 2 + 12 + 1
+    @test xs[1] == 0.0 && xs[end] == 12.0 && issorted(xs) && all(diff(xs) .> 0.0)
+    @test xs[2:7] ≈ r .* [3, 7, 15, 31, 63, 127]
+    @test xs[(end - 6):(end - 1)] ≈ 12.0 .- r .* [127, 63, 31, 15, 7, 3]
+    @test maximum(diff(xs)) <= t * (1.0 + 1.0e-6)
+    # Only one vertex end: the other end keeps the regular spacing.
+    nodes, added = PWM.vertex_graded_curve_nodes(curve, t, r, NaN, pi / 2)
+    @test added == 6 && nodes[1] == (0.0, 0.0) && length(nodes) == 2 + 1 + 6
+    # The middle (0 .. 12 - 2.54 = 9.46) in two segments of 4.73 <= t.
+    @test nodes[2][1] ≈ 4.73 && nodes[3][1] ≈ 9.46
+end
+
+@testset "D3: vertex column grading on the hole, the spike and the two-plane window" begin
+    directory = mktempdir()
+    # The hole: 4 vertices, 8 graded curve ends, 6 stations each (r 0.02, t 5, L 10).
+    legacy = mesh_polygon_window(
+        hole_window(),
+        0.02,
+        5.0,
+        joinpath(directory, "hole_legacy.msh2");
+        verbose=false,
+        sweep=:graded
+    )
+    graded = mesh_polygon_window(
+        hole_window(),
+        0.02,
+        5.0,
+        joinpath(directory, "hole_d3.msh2");
+        verbose=false,
+        sweep=:graded,
+        vertex_column_grading=true
+    )
+    @test legacy["band"]["vertex_column_grading"] == false
+    record = graded["band"]["vertex_column_grading"]
+    @test record["vertices"] == 4 && record["graded_curve_ends"] == 8
+    @test record["ladder_stations"] == 48 && record["min_wedge_angle_deg"] ≈ 90.0
+    @test record["min_turn_deg"] == PWM.DEFAULT_VERTEX_GRADING_MIN_TURN_DEG
+    # Columns on both sides of every curve: 2 + 12 ladder nodes and no middle node (the
+    # remaining 4.92 um is one segment), 13 segments per curve instead of 2.
+    @test graded["graded_sweep"]["columns"] ==
+          2 * 4 * 13 ==
+          legacy["graded_sweep"]["columns"] + 2 * 48 - 2 * 4
+    # The inward side's clearance rule caps the graded columns (j - 1 rows), the outward
+    # side's mitres are unchanged; no clamped column, no fan.
+    @test graded["band"]["clearance_capped_columns"] >
+          legacy["band"]["clearance_capped_columns"]
+    @test graded["band"]["clearance_clamped_columns"] == 0 && graded["band"]["fans"] == 0
+    @test graded["band"]["inward_corners"] == 4 &&
+          graded["band"]["mitre_outward_corners"] == 4
+    @test graded["graded_sweep"]["capped_columns"] >
+          legacy["graded_sweep"]["capped_columns"]
+    @test graded["band"]["quad_min_abs_sin"] > 0.0 && graded["nonpositive"] == 0
+    # Same geometry: areas and volumes equal the legacy mesh's; the z stack is untouched.
+    for (attribute, area) in legacy["surface_area_um2"]
+        @test graded["surface_area_um2"][attribute] ≈ area rtol = 1.0e-9
+    end
+    for (attribute, volume) in legacy["volume_um3"]
+        @test graded["volume_um3"][attribute] ≈ volume rtol = 1.0e-9
+    end
+    @test graded["z_levels"] == legacy["z_levels"]
+    checks = mesh_checks(
+        joinpath(directory, "hole_d3.msh2"),
+        step_slabs(hole_window()),
+        metal_substrate_attributes(graded)
+    )
+    @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
+    # Below the turn threshold nothing is graded (the hole's corners turn by 90 deg).
+    coarse = mesh_polygon_window(
+        hole_window(),
+        0.02,
+        5.0,
+        joinpath(directory, "hole_t95.msh2");
+        verbose=false,
+        sweep=:graded,
+        vertex_column_grading=true,
+        vertex_grading_min_turn_deg=95.0
+    )
+    @test coarse["band"]["vertex_column_grading"]["vertices"] == 0
+    @test coarse["sha256"] == legacy["sha256"]
+    # The spike (an acute 28-degree tip: 15r first station; a fan on the vacuum side) and the
+    # two-plane window (16 vertices of 90 deg; the bump's 16-gon joints turn by 22.5 deg and are
+    # not vertices) with D1 and D3 together: built, closed, volumes equal to the tensor's.
+    for (name, spec, r) in
+        (("spike", spike_window(), 0.02), ("two_plane", two_plane_window(), 0.02))
+        tensor = mesh_polygon_window(
+            spec,
+            r,
+            5.0,
+            joinpath(directory, "$(name)_tensor.msh2");
+            verbose=false
+        )
+        both = mesh_polygon_window(
+            spec,
+            r,
+            5.0,
+            joinpath(directory, "$(name)_d1d3.msh2");
+            verbose=false,
+            sweep=:graded,
+            step_face_z_grading=:mirrored,
+            vertex_column_grading=true
+        )
+        record = both["band"]["vertex_column_grading"]
+        if name == "spike"
+            @test record["vertices"] == 3
+            @test record["min_wedge_angle_deg"] ≈ 28.07 atol = 0.01
+            @test both["band"]["fans"] == 1
+        else
+            @test record["vertices"] == 16 && record["min_wedge_angle_deg"] ≈ 90.0
+            @test length(both["step_face_z_levels_um"]) == 4 # r20: 0.02 / 0.06 beyond each face
+        end
+        @test both["nonpositive"] == 0
+        for (attribute, volume) in tensor["volume_um3"]
+            @test both["volume_um3"][attribute] ≈ volume rtol = 1.0e-9
+        end
+        for (attribute, area) in tensor["surface_area_um2"]
+            @test both["surface_area_um2"][attribute] ≈ area rtol = 1.0e-9
+        end
+        checks = mesh_checks(
+            joinpath(directory, "$(name)_d1d3.msh2"),
+            step_slabs(spec),
+            metal_substrate_attributes(both)
+        )
+        @test checks.untagged == 0 && checks.inconsistent == 0 && checks.unused_nodes == 0
+    end
+    # Two planes whose edges CROSS in plan (the synthetic two-level window): a crossing is four
+    # incident curves, two collinear per plane — no plane has a corner there, so it is not a
+    # vertex; the vertices are exactly the off-wall polygon corners of both planes (turn >= 30).
+    crossing = read_polygon_set(synthetic_two_level_window())
+    corners = 0
+    for plane in crossing.planes,
+        polygon in plane.polygons,
+        ring in (polygon.outer, polygon.holes...)
+
+        n = length(ring)
+        for i = 1:n
+            a, b, c = ring[mod1(i - 1, n)], ring[i], ring[mod1(i + 1, n)]
+            any(
+                abs(b[j] - crossing.box[k]) <= 1.0e-5 for
+                (j, k) in ((1, 1), (1, 2), (2, 3), (2, 4))
+            ) && continue
+            u = PWM.unit((b[1] - a[1], b[2] - a[2]))
+            v = PWM.unit((c[1] - b[1], c[2] - b[2]))
+            acos(clamp(u[1] * v[1] + u[2] * v[2], -1.0, 1.0)) >= deg2rad(30.0) - 1.0e-9 &&
+                (corners += 1)
+        end
+    end
+    plan = mesh_polygon_window(
+        crossing,
+        0.05,
+        5.0,
+        joinpath(directory, "crossing.msh2");
+        verbose=false,
+        sweep=:graded,
+        plan_only=true,
+        vertex_column_grading=true
+    )
+    # 16 polygon corners; the L1 and L2 traces share the corners (40, 28) and (40, 32) -> one
+    # plan point each: 14 vertices.
+    @test corners == 16 && plan["band"]["vertex_column_grading"]["vertices"] == 14
+    # A bump with a SQUARE footprint (90-deg joints) adds no vertex: its footprint edges are no
+    # plane's conductor edges (the bump is a column between the grounds, not a corner class).
+    square_bump = synthetic_two_level_window()
+    square_bump["Bumps"] = [
+        Dict(
+            "Conductor" => "ground",
+            "Footprint" => [[11.0, 4.0], [19.0, 4.0], [19.0, 12.0], [11.0, 12.0]]
+        )
+    ]
+    bumped = mesh_polygon_window(
+        read_polygon_set(square_bump),
+        0.05,
+        5.0,
+        joinpath(directory, "square_bump.msh2");
+        verbose=false,
+        sweep=:graded,
+        plan_only=true,
+        vertex_column_grading=true
+    )
+    @test bumped["bumps"] == 1 && bumped["band"]["vertex_column_grading"]["vertices"] == 14
+    @test plan["band"]["inward_corners"] > 2 * corners # the crossings are band corners, not vertices
+    # The option needs the own band.
+    @test_throws ErrorException mesh_polygon_window(
+        hole_window(),
+        0.05,
+        5.0,
+        joinpath(directory, "gmsh.msh2");
+        verbose=false,
+        band_mode=:gmsh,
+        vertex_column_grading=true
+    )
+end
+
 # The production entry point (the stage-1 lanes and the PBS scripts call it, no suite loads
 # it otherwise): the CLI must load and build the plan in both sweeps, and its printed manifest
 # must match the in-process one. --plan-only keeps each subprocess to the Julia start-up plus
@@ -1025,7 +1380,25 @@ end
     open(io -> JSON.print(io, strip_window_data()), window, "w")
     julia = `$(Base.julia_cmd()) --project=$(@__DIR__)`
     script = joinpath(@__DIR__, "mesh_polygon_window.jl")
-    for (sweep, options) in (("tensor", String[]), ("graded", ["--sweep", "graded"]))
+    for (sweep, options) in (
+        ("tensor", String[]),
+        ("graded", ["--sweep", "graded"]),
+        (
+            "graded_d1d3",
+            [
+                "--sweep",
+                "graded",
+                "--step-face-z-grading",
+                "mirrored",
+                "--vertex-column-grading",
+                "on",
+                "--vertex-grading-min-turn-deg",
+                "45"
+            ]
+        )
+    )
+        d1d3 = sweep == "graded_d1d3"
+        sweep = d1d3 ? "graded" : sweep
         output = joinpath(directory, "$sweep.msh2")
         log = joinpath(directory, "$sweep.log")
         command = `$julia $script $window 0.05 5.0 $output --plan-only $options`
@@ -1045,9 +1418,19 @@ end
             output;
             verbose=false,
             plan_only=true,
-            sweep=Symbol(sweep)
+            sweep=Symbol(sweep),
+            step_face_z_grading=d1d3 ? :mirrored : :legacy,
+            vertex_column_grading=d1d3,
+            vertex_grading_min_turn_deg=d1d3 ? 45.0 : 30.0
         )
         @test printed["sweep"] == sweep == expected["sweep"]
+        @test printed["step_face_z_grading"] ==
+              expected["step_face_z_grading"] ==
+              (d1d3 ? "mirrored" : "legacy")
+        @test printed["step_face_z_levels_um"] == expected["step_face_z_levels_um"]
+        @test printed["band"]["vertex_column_grading"] ==
+              expected["band"]["vertex_column_grading"]
+        d1d3 && @test printed["band"]["vertex_column_grading"]["min_turn_deg"] == 45.0
         # The region size grading is on for the graded sweep only (a record of its parameters)
         # and off (false) for the tensor sweep.
         if sweep == "graded"

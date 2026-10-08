@@ -2254,4 +2254,72 @@ TEST_CASE("SurfaceResponseOperator uncovered portions clipped by spatial support
   }
 }
 
+TEST_CASE("SurfaceResponseOperator mirror arm direction of a rounded virtual corner",
+          "[surfaceresponseoperator][cornerarmtrim][mirror][Serial][Parallel]")
+{
+  // A rounded 90-degree virtual corner at the vertex (0, 0) with the arms +x and +y and the
+  // fillet radius 0.1 (arc centre (0.1, 0.1)): the real half is the chord of arc 0 between
+  // the arc points at 22.5 and 45 degrees (whose far end from the vertex, (0.0617, 0.0076),
+  // points 7 degrees off the arm) and the straight arm along +x from the tangent point
+  // (0.1, 0) (segment 1); the image arm (segment 2, at or beyond real_segments) along +y.
+  // The portions list the chord FIRST (the perimeter order from the vertex): the arm must
+  // still be +x (decision 533 MINOR-3), the chord's direction never taken while a straight
+  // real portion exists.
+  IdentificationResult identification;
+  IdentifiedSegment chord, straight, image;
+  const double phi_a = 22.5 * M_PI / 180.0, phi_b = 45.0 * M_PI / 180.0;
+  const std::array<double, 3> arc_a = {0.1 - 0.1 * std::sin(phi_a),
+                                       0.1 - 0.1 * std::cos(phi_a), 0.0};
+  const std::array<double, 3> arc_b = {0.1 - 0.1 * std::sin(phi_b),
+                                       0.1 - 0.1 * std::cos(phi_b), 0.0};
+  chord.key = {arc_b, arc_a};  // lexicographic: arc_b.x < arc_a.x
+  chord.arc = 0;
+  straight.key = {{{0.1, 0.0, 0.0}, {0.9, 0.0, 0.0}}};
+  image.key = {{{0.0, 0.1, 0.0}, {0.0, 0.9, 0.0}}};
+  identification.segments = {chord, straight, image};
+  identification.real_segments = 2;
+  IdentifiedFeature feature;
+  feature.origin = {0.0, 0.0, 0.0};
+  feature.axes = {{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+  IdentifiedPortion on_chord, on_straight, on_image;
+  on_chord.segment = 0;
+  on_straight.segment = 1;
+  on_image.segment = 2;
+  feature.portions = {on_chord, on_straight, on_image};
+  SECTION("the chord listed first: the straight real portion gives the arm")
+  {
+    const auto arm =
+        MirrorArmDirection(identification, feature, identification.real_segments);
+    REQUIRE(arm);
+    CHECK_THAT((*arm)[0], Catch::Matchers::WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT((*arm)[1], Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+    CHECK_THAT((*arm)[2], Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  }
+  SECTION("the straight listed first: the same arm")
+  {
+    feature.portions = {on_straight, on_chord, on_image};
+    const auto arm =
+        MirrorArmDirection(identification, feature, identification.real_segments);
+    REQUIRE(arm);
+    CHECK_THAT((*arm)[0], Catch::Matchers::WithinAbs(1.0, 1.0e-12));
+    CHECK_THAT((*arm)[1], Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  }
+  SECTION("only the chord is real: the chord's far end gives the direction (the pre-fillet "
+          "reading)")
+  {
+    feature.portions = {on_chord, on_image};
+    const auto arm =
+        MirrorArmDirection(identification, feature, identification.real_segments);
+    REQUIRE(arm);
+    const double norm = std::hypot(arc_a[0], arc_a[1]);
+    CHECK_THAT((*arm)[0], Catch::Matchers::WithinAbs(arc_a[0] / norm, 1.0e-12));
+    CHECK_THAT((*arm)[1], Catch::Matchers::WithinAbs(arc_a[1] / norm, 1.0e-12));
+  }
+  SECTION("no real portion: empty")
+  {
+    feature.portions = {on_image};
+    CHECK_FALSE(MirrorArmDirection(identification, feature, identification.real_segments));
+  }
+}
+
 }  // namespace palace

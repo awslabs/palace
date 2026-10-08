@@ -1357,7 +1357,8 @@ def topology_record(base, mesh_path, contract_path, recipe_path, process_path,
     report, _ = analyze(simplicial, contract, require_material_names=True)
     points = np.asarray(mesh.points)
     matrix = np.asarray(base["Transform"], dtype=float).reshape(4, 4)
-    corners = np.asarray(contract["SemanticCorners"], dtype=float)
+    # reshape(-1, 3): a corner-free contract (round 3 class (1)) carries SemanticCorners [].
+    corners = np.asarray(contract["SemanticCorners"], dtype=float).reshape(-1, 3)
     transformed_corners = (np.column_stack((corners, np.ones(len(corners)))) @
                            matrix.T)[:, :3]
     for corner in transformed_corners:
