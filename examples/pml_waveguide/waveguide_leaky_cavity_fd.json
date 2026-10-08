@@ -1,0 +1,75 @@
+{
+  // Leaky cavity: the waveguide of waveguide_pml.json with its port face closed by PEC, so that
+  // the standing waves leak into the PML at +z (with PEC in place of the PML, these are the
+  // TE_10p modes of the closed 0.1 m × 0.05 m × 0.4 m box at f = 1.545, 1.676, 1.874, ...
+  // GHz). The eigenvalues are complex, with Q ~ 25 for the first mode.
+  // Frequency-dependent stretch, evaluated at the complex eigenfrequency: the eigenvalue problem
+  // is nonlinear and solved with the hybrid (polynomial seed with the stretch frozen at the target,
+  // Quasi-Newton refinement) nonlinear eigensolver.
+  "Problem": {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/waveguide_leaky_cavity_fd",
+    "OutputFormats": {
+      "Paraview": false
+    }
+  },
+  "Model": {
+    "Mesh": "mesh/waveguide.msh",
+    "L0": 1.0
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permeability": 1.0,
+        "Permittivity": 1.0,
+        "PML": {
+          "Direction": [
+            "+Z"
+          ],
+          "Thickness": 0.1,
+          "Order": 3,
+          "FrequencyDependent": true
+        }
+      }
+    ]
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        3,
+        4,
+        5
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode": {
+      "Target": 1.5,
+      "N": 2,
+      "Tol": 1e-06,
+      "Save": 0,
+      "RefineNonlinear": true
+    },
+    "Linear": {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1e-10,
+      "MaxIts": 100,
+      "MGMaxLevels": 1,
+      "ComplexCoarseSolve": true
+    }
+  }
+}

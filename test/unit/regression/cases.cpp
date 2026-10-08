@@ -16,6 +16,7 @@
 #include <map>
 #include <numbers>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -213,6 +214,53 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
         INFO("row " << row + 1 << " " << id << ": |ΔS|=" << error
                     << " tolerance=" << tolerance);
         CHECK(error <= tolerance);
+      }
+    }
+    CHECK(num_s_columns > 0);
+  };
+}
+
+// Reflection check for PML cases: every "|S[...]| (dB)" column of the actual output must be
+// below max_db at every frequency (the PML absorbs the wave: a broken PML reflects, e.g. at
+// -18 dB for a second-order ABC versus -62 dB for the PML), and must match the reference in
+// linear magnitude within atol (a difference in dB is meaningless for |S| ~ 1e-3 that is
+// dominated by the solver tolerances). Cross-polarization entries of Floquet ports below
+// -200 dB in the reference are negligible and skipped.
+palace::test::CustomCheck TestPMLReflection(double max_db, double atol)
+{
+  return [max_db, atol](palace::Table &actual, palace::Table &reference,
+                        const std::filesystem::path &)
+  {
+    CHECK(actual.n_rows() == reference.n_rows());
+    const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+    std::size_t num_s_columns = 0;
+    for (auto &mag_r : reference)
+    {
+      const std::string &hdr = mag_r.header_text;
+      if (hdr.find("|S[") == std::string::npos || hdr.find("(dB)") == std::string::npos)
+      {
+        continue;
+      }
+      palace::Column *mag_a = nullptr;
+      for (auto &c : actual)
+      {
+        if (c.header_text == hdr)
+        {
+          mag_a = &c;
+        }
+      }
+      REQUIRE(mag_a != nullptr);
+      num_s_columns++;
+      for (std::size_t r = 0; r < n_rows; r++)
+      {
+        if (mag_r.data[r] < -200.0)
+        {
+          continue;
+        }
+        INFO("row " << r + 1 << " column '" << hdr << "': " << mag_a->data[r] << " dB");
+        CHECK(mag_a->data[r] < max_db);
+        CHECK_THAT(std::pow(10.0, mag_a->data[r] / 20.0),
+                   Catch::Matchers::WithinAbs(std::pow(10.0, mag_r.data[r] / 20.0), atol));
       }
     }
     CHECK(num_s_columns > 0);
@@ -1263,6 +1311,139 @@ TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave.json", "floquet_wave",
                                   opts);
+}
+
+// --- PML: perfectly matched layer absorbing regions. ---
+//
+// Rectangular waveguide (TE10 at 3 GHz, |S11| = -18 dB with a second-order ABC) terminated
+// by a PML on +z, as static, auto-detected, complex frequency shifted, and
+// frequency-dependent profiles. The PML terms are evaluated at the quadrature points (per
+// element, per rank), so the reflection is partition independent to solver tolerance; the
+// absolute tolerance of 1e-4 on |S11| ~ 8e-4 (-62 dB) catches a PML regressing to a
+// partially reflecting layer, while the max_db threshold is reference free.
+void RunPMLDrivenCase(std::string_view case_dir, const std::string &config,
+                      const std::string &s_file, double max_db)
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks[s_file] = TestPMLReflection(max_db, /*atol=*/1.0e-4);
+  palace::test::RunRegressionCase(case_dir, config + ".json", config, opts);
+}
+
+TEST_CASE("pml_waveguide", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
+}
+
+TEST_CASE("pml_waveguide_auto", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_auto", "port-S.csv", -55.0);
+}
+
+TEST_CASE("pml_waveguide_cfs", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_cfs", "port-S.csv", -55.0);
+}
+
+TEST_CASE("pml_waveguide_fd", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_waveguide", "waveguide_pml_fd", "port-S.csv", -55.0);
+}
+
+// Leaky cavity: the same waveguide closed by PEC on the port face, with the standing waves
+// leaking into the PML. With the static stretch the eigenvalue problem is linear; with the
+// frequency-dependent stretch (evaluated at the complex eigenfrequency) it is nonlinear and
+// solved by the hybrid eigensolver seeded with the stretch frozen at the target. The
+// complex eigenvalues (Q ~ 25, 7, 3.7) are diffed against the reference.
+void RunPMLCavityCase(const std::string &config)
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("pml_waveguide", config + ".json", config, opts);
+}
+
+TEST_CASE("pml_waveguide_leaky_cavity", "[Serial][Parallel][Regression]")
+{
+  RunPMLCavityCase("waveguide_leaky_cavity");
+}
+
+TEST_CASE("pml_waveguide_leaky_cavity_fd", "[Serial][Parallel][Regression]")
+{
+  RunPMLCavityCase("waveguide_leaky_cavity_fd");
+}
+
+// Adaptive fast frequency sweep and circuit synthesis with a frequency-dependent PML on a
+// dielectric-filled waveguide stepping into the vacuum PML region (|S11| ~ -13 dB). The PML
+// terms of the PROM are projected per frequency during the greedy sampling, fit with a
+// rational function (poles on the imaginary axis) for the online sweep, and realized with
+// auxiliary states in the synthesized circuit. The swept S-parameters match the reference
+// to the adaptive tolerance, and the synthesized S round-trips to the PROM S.
+TEST_CASE("pml_waveguide_fd_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  // Partition-dependent pencil matrices and eigenvectors consumed by no check here.
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H",
+                         "rom-eigenvectors"};
+  opts.excluded_files = {"rom-eigenvalues", "error-indicators.csv", "rom-port-reference",
+                         "domain-E.csv"};
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(1.0e-3);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("pml_waveguide", "waveguide_pml_fd_synth.json",
+                                  "waveguide_pml_fd_synth", opts);
+}
+
+// Layered parallel-plate waveguide (substrate and vacuum) whose material interface crosses
+// the +z PML: the stretch must be the same in both PML materials (σ_max from the smallest
+// refractive index on the face), otherwise the quasi-TEM mode reflects at -23 dB from the
+// interface inside the layer, versus below -65 dB (static) / -85 dB (frequency-dependent
+// and CFS) over 2-8 GHz here.
+TEST_CASE("pml_layered", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_layered", "pml_layered", "port-S.csv", -60.0);
+}
+
+TEST_CASE("pml_layered_fd", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_layered", "pml_layered_fd", "port-S.csv", -60.0);
+}
+
+TEST_CASE("pml_layered_cfs", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_layered", "pml_layered_cfs", "port-S.csv", -60.0);
+}
+
+// Plane wave absorption at oblique incidence (Floquet port on a periodic vacuum cell):
+// 45° TM (|S11| ~ -81 dB) and grazing 80° TE (|S11| ~ -42 dB). The PML reflection
+// coefficient grows towards grazing incidence like that of a continuous PML.
+TEST_CASE("pml_oblique_45_tm", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_oblique", "oblique_45_tm", "port-floquet-S.csv", -70.0);
+}
+
+TEST_CASE("pml_oblique_grazing_80_te", "[Serial][Parallel][Regression]")
+{
+  RunPMLDrivenCase("pml_oblique", "grazing_80_te", "port-floquet-S.csv", -38.0);
 }
 
 // --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
