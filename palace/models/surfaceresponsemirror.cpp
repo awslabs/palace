@@ -700,23 +700,29 @@ double Overlap(const Interval &a, const Interval &b)
 // IdentifiedPortions on the extended segments) are ALL real (segment < real_segments),
 // mapped EXACTLY by geometry: every world portion longer than the signature tolerance is
 // projected into the signature's canonical frame and must lie on exactly one serialised
-// portion (both ends within the arc-fit tolerance widened by the serialisation quanta, as
-// VerifySpatialEdgesInSignatureFrame reads a model Edge); every serialised portion must
-// receive world portions of ONE class (the chain vertex on the plane is a vertex of the
-// extended chain, never interior to a serialised portion). Anything else REFUSES the
-// contract by name (`refused`): never a length heuristic. The Frame is the feature's
-// canonical frame in the identification's units (the manifest writers scale it). A
-// CurvedEdge key carries no Portions: RealPortions is empty and the Rule says so.
+// portion: both ends within the arc-fit tolerance widened by the serialisation quanta (as
+// VerifySpatialEdgesInSignatureFrame reads a model Edge) on a straight segment, and on a
+// mesh chord of a fitted arc (IdentifiedSegment::arc) within that bound plus the arc's
+// recorded largest chord sagitta (IdentifiedArc::max_sagitta_over_R: a world portion is a
+// piece of a chord whose joints lie on the fitted circle within the fit tolerance, so any
+// point of it lies within the sagitta of the circle - the geometry's own bound, no
+// heuristic); every serialised portion must receive world portions of ONE class (the chain
+// vertex on the plane is a vertex of the extended chain, never interior to a serialised
+// portion). Anything else REFUSES the contract by name (`refused`): never a length
+// heuristic. The Frame is the feature's canonical frame in the identification's units (the
+// manifest writers scale it). A CurvedEdge key carries no Portions: RealPortions is empty
+// and the Rule says so.
 nlohmann::json BuildMirrorFormedContract(
-    const IdentifiedFeature &feature, const std::vector<IdentifiedSegment> &segments,
+    const IdentifiedFeature &feature, const IdentificationResult &extended,
     std::size_t real_segments, double R, const std::vector<int> &planes, double real_length,
     double image_length, const nlohmann::json &real_ids, std::string &refused)
 {
   refused.clear();
+  const auto &segments = extended.segments;
   const double tolerance = kSignatureParameterToleranceOverRadius * R;
   // Units of R: the arc-fit tolerance widened by two signature quanta and read inclusive
   // (the library load's reading of a model Edge against the Signature's portions).
-  const double mapping_tolerance =
+  const double straight_tolerance =
       kSignatureParameterToleranceOverRadius + 2.5 * kSignatureLengthQuantumOverRadius;
   std::vector<int> real_portions;
   std::string rule =
@@ -755,6 +761,11 @@ nlohmann::json BuildMirrorFormedContract(
         continue;  // a sub-tolerance piece carries no class of its own
       }
       const auto &segment = segments[portion.segment];
+      const double mapping_tolerance =
+          straight_tolerance +
+          (segment.arc >= 0 && static_cast<std::size_t>(segment.arc) < extended.arcs.size()
+               ? extended.arcs[static_cast<std::size_t>(segment.arc)].max_sagitta_over_R
+               : 0.0);
       std::array<std::array<double, 2>, 2> ends{};
       for (int k = 0; k < 2; k++)
       {
@@ -769,7 +780,7 @@ nlohmann::json BuildMirrorFormedContract(
           world[d] = segment.key[0][d] + direction * s;
         }
         const auto local = Local(world);
-        if (std::abs(local[2]) > mapping_tolerance)
+        if (std::abs(local[2]) > straight_tolerance)
         {
           refused = "PortionOffPlane: world portion " + std::to_string(p) + " lies " +
                     std::to_string(std::abs(local[2])) +
@@ -1242,8 +1253,8 @@ MirrorMergeSummary MergeMirrorIdentification(const IdentificationResult &real,
       {
         std::string refused;
         nlohmann::json contract = BuildMirrorFormedContract(
-            feature, extended.segments, n_real_segments, R, PlanesOfFeature(feature),
-            real_length, image_length, real_ids, refused);
+            feature, extended, n_real_segments, R, PlanesOfFeature(feature), real_length,
+            image_length, real_ids, refused);
         IdentifiedFeature copy = feature;
         copy.length = real_length;
         copy.vertices.erase(std::remove_if(copy.vertices.begin(), copy.vertices.end(),
