@@ -15,9 +15,10 @@ from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_E
                                  ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS,
                                  FABRICATED_FACE_END_TILT_BOUND_DEGREES, FACE_END_DERIVED_APEX_ABOVE_DEGREES,
                                  RECIPE_SCOPE_GUARDS, THIN_FACE_END_TILT_BOUND_DEGREES, arc_crossing_slope,
-                                 arc_face_end_dominating_case, arc_part_count, boundary_arc_runs,
-                                 metal_loop_arc_parts, metal_loop_side_points, scope_classes, scope_guard_in_text,
-                                 validate_arc_tubes, validate_tube_face_ends)
+                                 arc_face_end_dominating_case, arc_part_count, boundary_arc_arc_joints,
+                                 boundary_arc_runs, metal_loop_arc_parts, metal_loop_side_points, read_csv_rows,
+                                 scope_classes, scope_guard_in_text, validate_arc_tubes, validate_tube_face_ends)
+import json
 
 HERE = Path(__file__).resolve().parent
 
@@ -335,6 +336,173 @@ class FaceEndDerivedApexTest(unittest.TestCase):
         # without the kind no derivation is assumed (a record's PyramidHeight = h_pyr is still bound)
         row, lc_end, _ = self.straight_record(75.5, 0.03175, 0.008, lc, derived=False)
         self.assertEqual(validate_tube_face_ends(row, lc, fab), lc_end)
+
+
+ARC_ARC = HERE / "testdata" / "arc-arc-joints"
+
+
+def excerpt(name):
+    """A reduced REAL excerpt of a stored build census (its Provenance names the full census's sha256)."""
+    return json.loads((ARC_ARC / f"{name}-census.excerpt.json").read_text())
+
+
+class ArcArcJointsTest(unittest.TestCase):
+    """Round 3 class (11), fix 11 (decisions 491 / 510 / 577): the stage contract's arc-arc shared-section term.
+    Under fix 11 two DISTINCT tagged arc runs of ONE circle meeting at a smooth joint share one tube section per
+    placement (owned by the earlier tube, no JointEnd row), so the census identity reads SharedSections =
+    JointEnds + PartSplits + TubesPerSide x ArcArcJoints; the joints are DERIVED from the bound boundary
+    (consecutive tagged runs, JointSmooth 1, one circle within the arc-fit tolerance, one ArcSign; the ArcChain
+    column, where present, must agree), so the STORED census of R1 (32b0083dad90, PBS 59700 on main
+    931f8be05a: the census that stopped the per-entry verification at the pre-B3 identity, decision 577)
+    validates with NO mesher change; an explicit ArcTubes.ArcArcJoints / ArcArcSections field is optional."""
+
+    R1_JOINTS = [(1, 24, 14, 42), (1, 13, 23, 180), (1, 22, 12, 213), (1, 11, 21, 433)]
+
+    def validate(self, census, boundary):
+        tubes = census["PrismTubes"]
+        return validate_arc_tubes(tubes, tubes["Tubes"], boundary, census["CouponBox"]["Radius"])
+
+    def test_r1_stored_censuses_validate_with_the_derived_arc_arc_term(self):
+        boundary = read_csv_rows(ARC_ARC / "r1-32b0083dad90-plan-view-boundary.csv")
+        self.assertEqual(boundary[0].get("ArcChain"), "")
+        self.assertEqual(boundary_arc_arc_joints(boundary), self.R1_JOINTS)      # the four claim / context chains
+        for kind, expected in (("thin", (46, 40, 2, 1, 28)), ("fab", (92, 80, 4, 2, 56))):
+            census = excerpt(f"r1-32b0083dad90-{kind}")
+            summary = census["PrismTubes"]["ArcTubes"]
+            shared, joint_ends, part_splits, per_side, arc_rows = expected
+            self.assertEqual((summary["SharedSections"], summary["JointEnds"], summary["PartSplits"],
+                              census["PrismTubes"]["Section"]["TubesPerSide"]), (shared, joint_ends, part_splits, per_side))
+            self.assertNotIn("ArcArcJoints", summary)                           # the stored census predates the field
+            self.assertEqual(self.validate(census, boundary), arc_rows)
+            self.assertEqual(shared, joint_ends + part_splits + per_side * len(self.R1_JOINTS))
+            # The pre-B3 identity (SharedSections = JointEnds + PartSplits) is what stopped R1: a census
+            # written to it would now be refused - the term is derived, not assumed.
+            narrowed = copy.deepcopy(census)
+            narrowed["PrismTubes"]["ArcTubes"]["SharedSections"] = joint_ends + part_splits
+            with self.assertRaisesRegex(ValueError, "arc summary does not match"):
+                self.validate(narrowed, boundary)
+        # Without the ArcChain column (a tagged boundary of the B2 era) the joints derive from the geometry alone.
+        legacy = [{k: v for k, v in row.items() if k != "ArcChain"} for row in boundary]
+        self.assertEqual(boundary_arc_arc_joints(legacy), self.R1_JOINTS)
+        self.assertEqual(self.validate(excerpt("r1-32b0083dad90-thin"), legacy), 28)
+
+    def test_b3_synthetics_s1_s3(self):
+        # S1: the strip arc split at -55 degrees into ids 1 / 2 (one joint): fab 6 = 4 + 0 + 2 x 1, thin 3 = 2 + 0 + 1 x 1.
+        # S3: three members (two joints), ids ordered (1, 2, 3) and permuted (3, 1, 2): fab 8 = 4 + 0 + 2 x 2 either way.
+        for name, joints, shared in (("s1-fab", [(1, 1, 2, 9)], 6), ("s1-thin", [(1, 1, 2, 9)], 3),
+                                     ("s3-fab", [(1, 1, 2, 8), (1, 2, 3, 14)], 8), ("s3p-fab", [(1, 3, 1, 8), (1, 1, 2, 14)], 8)):
+            boundary = read_csv_rows(ARC_ARC / f"{name}-boundary.csv")
+            self.assertNotIn("ArcChain", boundary[0])                           # the Julia fixtures write the 7 columns
+            self.assertEqual(boundary_arc_arc_joints(boundary), joints, name)
+            census = excerpt(name)
+            self.assertEqual(census["PrismTubes"]["ArcTubes"]["SharedSections"], shared, name)
+            self.assertEqual(self.validate(census, boundary), census["PrismTubes"]["ArcTubes"]["Count"], name)
+
+    def test_optional_explicit_fields(self):
+        boundary = read_csv_rows(ARC_ARC / "s1-fab-boundary.csv")
+        census = excerpt("s1-fab")
+        census["PrismTubes"]["ArcTubes"].update({"ArcArcJoints": 1, "ArcArcSections": 2})
+        self.assertEqual(self.validate(census, boundary), 4)
+        for name, wrong in (("ArcArcJoints", 2), ("ArcArcSections", 1)):
+            bad = copy.deepcopy(census)
+            bad["PrismTubes"]["ArcTubes"][name] = wrong
+            with self.assertRaisesRegex(ValueError, f"{name} {wrong} differs from the .* derived"):
+                self.validate(bad, boundary)
+
+    def test_fail_closed(self):
+        boundary = read_csv_rows(ARC_ARC / "r1-32b0083dad90-plan-view-boundary.csv")
+        census = excerpt("r1-32b0083dad90-thin")
+        joint_row = next(row for row in boundary if int(row["Vertex"]) == 42)
+        self.assertEqual((joint_row["ArcId"], joint_row["ArcChain"], joint_row["JointSmooth"]), ("14", "4", "1"))
+        # (a) ArcChain disagreeing with the geometry (one run of the pair un-chained).
+        broken = copy.deepcopy(boundary)
+        for row in broken:
+            if row["ArcId"] == "14":
+                row["ArcChain"] = "0"
+        with self.assertRaisesRegex(ValueError, "ArcChain columns disagree .* cannot be derived"):
+            boundary_arc_arc_joints(broken)
+        # (b) a chain pair that is not one circle (the second run's radius off by 1e-3 relative).
+        broken = copy.deepcopy(boundary)
+        for row in broken:
+            if row["ArcId"] == "14":
+                row["ArcR"] = repr(float(row["ArcR"]) * (1.0 + 1.0e-3))
+        with self.assertRaisesRegex(ValueError, "share ArcChain 4 .* not one circle .* cannot be derived"):
+            boundary_arc_arc_joints(broken)
+        # (c) the same circle but opposite ArcSign: not a joint by geometry, and the chain claims one -> fail closed.
+        broken = copy.deepcopy(boundary)
+        for row in broken:
+            if row["ArcId"] == "14":
+                row["ArcSign"] = "-1"
+        with self.assertRaisesRegex(ValueError, "cannot be derived"):
+            boundary_arc_arc_joints(broken)
+        # (d) a joint vertex not tagged smooth is no shared section: the identity then wants 45, the census says 46.
+        unsmooth = copy.deepcopy(boundary)
+        next(row for row in unsmooth if int(row["Vertex"]) == 42)["JointSmooth"] = "0"
+        self.assertEqual(len(boundary_arc_arc_joints(unsmooth)), 3)
+        with self.assertRaisesRegex(ValueError, "arc summary does not match"):
+            self.validate(census, unsmooth)
+        # (e) a section without TubesPerSide cannot carry the term.
+        no_side = copy.deepcopy(census)
+        del no_side["PrismTubes"]["Section"]["TubesPerSide"]
+        with self.assertRaisesRegex(ValueError, "lacks TubesPerSide"):
+            self.validate(no_side, boundary)
+        # (f) a derived joint whose arc is not built.
+        unbuilt = copy.deepcopy(census)
+        unbuilt["PrismTubes"]["Tubes"] = [row for row in unbuilt["PrismTubes"]["Tubes"]
+                                          if not ("Arc" in row and row["Arc"]["ArcId"] == 14)]
+        with self.assertRaisesRegex(ValueError, "not all built as arc tubes"):
+            self.validate(unbuilt, boundary)
+
+    def perturbed_arc_14(self, delta):
+        """R1's thin excerpt + boundary with arc 14's radius moved by `delta` (um) in BOTH the boundary tags and the
+        census arc rows (so the arc-row check keeps passing): the chain pair 24 / 14 then disagrees by `delta`."""
+        boundary = copy.deepcopy(read_csv_rows(ARC_ARC / "r1-32b0083dad90-plan-view-boundary.csv"))
+        census = excerpt("r1-32b0083dad90-thin")
+        for row in boundary:
+            if row["ArcId"] == "14":
+                row["ArcR"] = repr(float(row["ArcR"]) + delta)
+        for row in census["PrismTubes"]["Tubes"]:
+            if "Arc" in row and row["Arc"]["ArcId"] == 14:
+                row["Arc"]["Radius"] += delta
+        return census, boundary
+
+    def test_same_circle_tolerance_is_the_mesher_s_with_the_coupon_radius(self):
+        # Decision 580 MAJOR-1: the coupon Radius (1.9 um) reaches the arc-arc tolerance through validate_arc_tubes -
+        # max(64 x 1e-7 R, 2e-7 rho) = max(1.216e-5, 3.94e-5) um on R1's 197-um chain 24 / 14 - not the last arc row's
+        # radius. A 5e-4 um perturbation of arc 14 is REFUSED through the validator (and by the derivation alone);
+        # one inside the tolerance (3e-5 um) is ACCEPTED.
+        census, boundary = self.perturbed_arc_14(5.0e-4)
+        with self.assertRaisesRegex(ValueError, "share ArcChain 4 .* not one circle .* cannot be derived"):
+            boundary_arc_arc_joints(boundary, 1.9)
+        with self.assertRaisesRegex(ValueError, "share ArcChain 4 .* not one circle .* cannot be derived"):
+            self.validate(census, boundary)
+        with self.assertRaisesRegex(ValueError, "not one circle"):
+            validate_arc_tubes(census["PrismTubes"], census["PrismTubes"]["Tubes"], boundary)          # radius None too
+        census, boundary = self.perturbed_arc_14(3.0e-5)
+        self.assertEqual(boundary_arc_arc_joints(boundary, 1.9), self.R1_JOINTS)
+        self.assertEqual(self.validate(census, boundary), 28)
+        # The absolute term 64 x 1e-7 R binds only for rho < 32 R: a perturbation of 2e-5 um on the 197-um circle lies
+        # inside the relative term whatever R; with R = 1.9 the same 2e-5 on a hypothetical 50-um circle would not.
+        self.assertGreater(64.0e-7 * 1.9, 2.0e-7 * 50.0)
+        self.assertLess(64.0e-7 * 1.9, 2.0e-7 * 197.0)
+        # A float-spelled JointSmooth (the mesher reads Int(round(Float64(cell)))) is accepted (MINOR-1).
+        spelled = [dict(row, JointSmooth="1.0" if row["JointSmooth"] == "1" else row["JointSmooth"])
+                   for row in read_csv_rows(ARC_ARC / "r1-32b0083dad90-plan-view-boundary.csv")]
+        self.assertEqual(boundary_arc_arc_joints(spelled), self.R1_JOINTS)
+
+    def test_pre_b3_identity_unchanged_without_arc_arc_joints(self):
+        # No consecutive runs (the one-arc fixtures): the term is 0 and the pre-B3 identity stands bitwise; two
+        # consecutive runs whose joint vertex is NOT smooth-tagged, or of distinct circles, add nothing.
+        rows = tagged_loop(135.0, 27)
+        self.assertEqual(boundary_arc_arc_joints(rows), [])
+        tubes, tube_rows = arc_census(rows, 2, 135.0)
+        self.assertEqual(validate_arc_tubes(tubes, tube_rows, rows), 2)
+        self.assertEqual(validate_arc_tubes(tubes, tube_rows, rows, 1.0), 2)
+        boundary = read_csv_rows(ARC_ARC / "s1-fab-boundary.csv")
+        corner = [dict(row, JointSmooth="0" if int(row["Vertex"]) == 9 else row["JointSmooth"]) for row in boundary]
+        self.assertEqual(boundary_arc_arc_joints(corner), [])
+        distinct = [dict(row, ArcR=repr(1.001) if row["ArcId"] == "2" else row["ArcR"]) for row in boundary]
+        self.assertEqual(boundary_arc_arc_joints(distinct), [])
 
 
 class ArcScopeGuardsTest(unittest.TestCase):

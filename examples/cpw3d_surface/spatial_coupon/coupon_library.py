@@ -174,6 +174,8 @@ def main(argv=None):
         parser.error("--support-span-cap / --element-cap apply to the --device coupons only")
     if (args.nearkey_reuse != "off" or args.nearkey_fallback_stop_record or args.nearkey_fallback_approval) and args.device is None:
         parser.error("--nearkey-reuse and its options apply to the --device coupons only")
+    if args.mirror_formed != "refuse" and args.device is None:
+        parser.error("--mirror-formed applies to the --device coupons only")
     registered = []
     extra = None
     if args.device is not None:

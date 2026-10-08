@@ -1,0 +1,1296 @@
+{
+ "Provenance": {
+  "Rule": "a reduced REAL excerpt of the stored build census: the fields mesh_stage_contract.validate_arc_tubes reads (CouponBox.Radius; PrismTubes.Section Radius / PyramidHeight / TubesPerSide / Kind; PrismTubes.ArcTubes; the Tubes rows reduced to Arc / Length / Joints), nothing else; the full census is identified by its sha256",
+  "Source": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/rerun-3/R1/registration/ctx003-C2/build/spatial-42-edge-978faf7620d6-thin/build-census.json (R1 PBS 59700, main 931f8be05a; decision 577)",
+  "FullCensusSHA256": "cedbd4c38838e74da34b926d935463b06444da48c323e42dc932c1497d238aeb",
+  "FullCensusBytes": 721562,
+  "TubeRows": 53
+ },
+ "CouponBox": {
+  "Radius": 1.9
+ },
+ "PrismTubes": {
+  "Section": {
+   "Radius": 0.062,
+   "PyramidHeight": 0.016,
+   "TubesPerSide": 1,
+   "Kind": "thin"
+  },
+  "ArcTubes": {
+   "Count": 28,
+   "JointEnds": 40,
+   "PartSplits": 2,
+   "Rule": "block (b) design 1.2 (3) (decision 303): the tube of an arc metal side is the revolve of the section (the same rings, sectors and pyramids as a straight tube) about the vertical axis through the tagged arc centre; the axis coordinate is the arc length on the edge circle, the layers follow the composed size field along it (LayerRule); the sidewall rays are the cylinder of radius rho about the centre - the exact metal / trench wall - so the fragment splits the sectors at the wall; an arc is split into ceil(sweep / 90 degrees) parts of equal angular fraction (the same radial planes as the metal loft and the trench wall of polygon_wire), consecutive parts sharing one section; the guard ScopeGuard[ArcTubeRadiusVsCurvature] requires Radius + PyramidHeight <= ArcCurvatureBound x rho",
+   "SharedSections": 46,
+   "SmoothJointRule": "block (b) design A3 (1)-(2) (decision 303): a joint whose signature turn is at most 1e-4 rad (JointSmooth) is no corner - no ball, no caps, clearance 0 - and the two tubes share ONE cross-section owned by the arc (its radial plane through the joint vertex, its frame): the straight tube's end nodes are the arc tube's nodes, its CAD solid is extruded over-long and cut by that radial plane when the post-snap tilt is positive (Tubes[].Joints: TiltRadians, PlaneCut); a kinked joint is a corner under CornerClearanceRule (the arc tube retracts by the clearance along its arc)",
+   "TotalArcLength": 128.19827357271365
+  },
+  "Tubes": [
+   {
+    "Length": 3.727090685678139,
+    "Joints": [
+     {
+      "End": "start",
+      "Normal": [
+       0.7253401144184511,
+       -0.688390672812632,
+       0.0
+      ],
+      "Origin": [
+       13.336782099999999,
+       -12.096477299999998,
+       0.0
+      ],
+      "OverLength": 0.05000002782223576,
+      "PlaneCut": true,
+      "TiltRadians": 3.566953302498426e-07
+     }
+    ]
+   },
+   {
+    "Length": 17.44365138056991,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.9996586303546685,
+       0.026127050300948248,
+       0.0
+      ],
+      "Origin": [
+       14.845534099999998,
+       -8.1666294,
+       0.0
+      ],
+      "OverLength": 0.05000002522465116,
+      "PlaneCut": true,
+      "TiltRadians": 3.2339296362118123e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.9996586231884664,
+       0.02612732448873428,
+       0.0
+      ],
+      "Origin": [
+       14.389777299999999,
+       9.2710671,
+       0.0
+      ],
+      "OverLength": 0.05000000385488173,
+      "PlaneCut": true,
+      "TiltRadians": 4.942156062059701e-08
+     }
+    ]
+   },
+   {
+    "Length": 3.043640446752888,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.6883905491485917,
+       0.7253402317829203,
+       0.0
+      ],
+      "Origin": [
+       12.677803199999998,
+       13.1167374,
+       0.0
+      ],
+      "OverLength": 0.050000009930615014,
+      "PlaneCut": true,
+      "TiltRadians": 1.2731557704981472e-07
+     }
+    ]
+   },
+   {
+    "Length": 1.9999995812361386,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.02612729680706348,
+       -0.999658623911961,
+       0.0
+      ],
+      "Origin": [
+       -8.900449300000018,
+       0.9378855999999871,
+       0.0
+      ],
+      "OverLength": 0.05000004359751785,
+      "PlaneCut": true,
+      "TiltRadians": 5.589425365183144e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.026126897848204843,
+       -0.9996586343391576,
+       0.0
+      ],
+      "Origin": [
+       -6.9011325,
+       0.9901412999999999,
+       0.0
+      ],
+      "OverLength": 0.05000007472181598,
+      "PlaneCut": true,
+      "TiltRadians": 9.579719996718195e-07
+     }
+    ]
+   },
+   {
+    "Length": 1.999999531594115,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.9996586177975668,
+       0.026127530749348767,
+       0.0
+      ],
+      "Origin": [
+       -3.9805379999999992,
+       4.0674991,
+       0.0
+      ],
+      "OverLength": 0.05000004874697102,
+      "PlaneCut": true,
+      "TiltRadians": 6.249611668441031e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.9996586334744838,
+       0.02612693093204087,
+       -0.0
+      ],
+      "Origin": [
+       -4.0327918,
+       6.0668159,
+       0.0
+      ],
+      "OverLength": 0.050000002013146326,
+      "PlaneCut": true,
+      "TiltRadians": 2.580956827951785e-08
+     }
+    ]
+   },
+   {
+    "Length": 8.500000032730497,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.026128829635373236,
+       -0.9996585838484485,
+       -0.0
+      ],
+      "Origin": [
+       -3.0592622,
+       7.092601200000001,
+       0.0
+      ],
+      "OverLength": 0.05000010696862679,
+      "PlaneCut": true,
+      "TiltRadians": 1.3713926511817504e-06
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.02612780584478402,
+       -0.9996586106075099,
+       -0.0
+      ],
+      "Origin": [
+       5.4378361,
+       7.3146846,
+       0.0
+      ],
+      "OverLength": 0.05000002710904168,
+      "PlaneCut": true,
+      "TiltRadians": 3.4755181639464677e-07
+     }
+    ]
+   },
+   {
+    "Length": 12.000001137192172,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.9996586093104503,
+       -0.026127855470677905,
+       -0.0
+      ],
+      "Origin": [
+       6.4636233,
+       6.3411531000000005,
+       0.0
+      ],
+      "OverLength": 0.050000037662519106,
+      "PlaneCut": true,
+      "TiltRadians": 4.828528090125265e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.9996586595830724,
+       -0.026125931956102466,
+       -0.0
+      ],
+      "Origin": [
+       6.7771517999999995,
+       -5.654751500000001,
+       0.0
+      ],
+      "OverLength": 0.05000011240016908,
+      "PlaneCut": true,
+      "TiltRadians": 1.4410278086349521e-06
+     }
+    ]
+   },
+   {
+    "Length": 8.500000032730497,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.02612788028186908,
+       0.9996586086619653,
+       -0.0
+      ],
+      "Origin": [
+       5.8036203,
+       -6.6805368,
+       0.0
+      ],
+      "OverLength": 0.05000003287454184,
+      "PlaneCut": true,
+      "TiltRadians": 4.2146848510894346e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.026127805844783476,
+       0.99965861060751,
+       -0.0
+      ],
+      "Origin": [
+       -2.6934780000000003,
+       -6.902620199999999,
+       0.0
+      ],
+      "OverLength": 0.05000002708411382,
+      "PlaneCut": true,
+      "TiltRadians": 3.4723222844991394e-07
+     }
+    ]
+   },
+   {
+    "Length": 2.0000014309455207,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.9996586093104503,
+       0.026127855470676916,
+       -0.0
+      ],
+      "Origin": [
+       -3.7192651999999993,
+       -5.9290887,
+       0.0
+      ],
+      "OverLength": 0.05000007600349501,
+      "PlaneCut": true,
+      "TiltRadians": 9.744037821455278e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.9996586175813976,
+       0.026127539020141418,
+       0.0
+      ],
+      "Origin": [
+       -3.7715189999999996,
+       -3.92977,
+       0.0
+      ],
+      "OverLength": 0.050000051312199964,
+      "PlaneCut": true,
+      "TiltRadians": 6.578487174106989e-07
+     }
+    ]
+   },
+   {
+    "Length": 1.999999531594115,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.026127539020141366,
+       0.9996586175813976,
+       0.0
+      ],
+      "Origin": [
+       -6.8488768,
+       -1.0091774000000004,
+       0.0
+      ],
+      "OverLength": 0.05000004939393074,
+      "PlaneCut": true,
+      "TiltRadians": 6.3325552227724e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.026127307098213804,
+       0.9996586236429893,
+       -0.0
+      ],
+      "Origin": [
+       -8.848193600000013,
+       -1.0614312000000155,
+       0.0
+      ],
+      "OverLength": 0.05000003129563145,
+      "PlaneCut": true,
+      "TiltRadians": 4.0122604423273654e-07
+     }
+    ]
+   },
+   {
+    "Length": 1.999999531594116,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.026127400941656862,
+       -0.999658621190271,
+       0.0
+      ],
+      "Origin": [
+       -8.795939800000014,
+       -3.060748000000018,
+       0.0
+      ],
+      "OverLength": 0.050000038618842446,
+      "PlaneCut": true,
+      "TiltRadians": 4.9511336463202e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.026128780009388095,
+       -0.999658585145559,
+       -0.0
+      ],
+      "Origin": [
+       -6.796623,
+       -3.0084942,
+       0.0
+      ],
+      "OverLength": 0.05000014621781715,
+      "PlaneCut": true,
+      "TiltRadians": 1.8745873992813923e-06
+     }
+    ]
+   },
+   {
+    "Length": 1.999999531594115,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.9996586347715002,
+       -0.026126881306049614,
+       -0.0
+      ],
+      "Origin": [
+       -5.7708357999999995,
+       -3.9820257000000003,
+       0.0
+      ],
+      "OverLength": 0.050000002013146326,
+      "PlaneCut": true,
+      "TiltRadians": 2.580956827951785e-08
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.9996586258522456,
+       -0.026127222569571156,
+       0.0
+      ],
+      "Origin": [
+       -5.718581999999999,
+       -5.9813425,
+       0.0
+      ],
+      "OverLength": 0.05000002471063654,
+      "PlaneCut": true,
+      "TiltRadians": 3.1680303253932877e-07
+     }
+    ]
+   },
+   {
+    "Length": 8.500000032730497,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.026127206027985638,
+       -0.9996586262845788,
+       0.0
+      ],
+      "Origin": [
+       -2.6412242,
+       -8.901936999999998,
+       0.0
+      ],
+      "OverLength": 0.050000019724725106,
+      "PlaneCut": true,
+      "TiltRadians": 2.5288109106536486e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.026127222569571316,
+       -0.9996586258522456,
+       0.0
+      ],
+      "Origin": [
+       5.8558741,
+       -8.6798536,
+       0.0
+      ],
+      "OverLength": 0.050000018414145746,
+      "PlaneCut": true,
+      "TiltRadians": 2.3607879158489252e-07
+     }
+    ]
+   },
+   {
+    "Length": 11.99999923784079,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.9996586262845788,
+       0.026127206027985798,
+       0.0
+      ],
+      "Origin": [
+       8.776468599999998,
+       -5.6024958,
+       0.0
+      ],
+      "OverLength": 0.05000001330302366,
+      "PlaneCut": true,
+      "TiltRadians": 1.7055158529072421e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.9996586258522456,
+       0.02612722256957133,
+       0.0
+      ],
+      "Origin": [
+       8.462940099999999,
+       6.3934069000000004,
+       0.0
+      ],
+      "OverLength": 0.050000012022827174,
+      "PlaneCut": true,
+      "TiltRadians": 1.541388099311085e-07
+     }
+    ]
+   },
+   {
+    "Length": 8.500000032730497,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.02612720602798574,
+       0.9996586262845788,
+       0.0
+      ],
+      "Origin": [
+       5.3855823,
+       9.314001399999999,
+       0.0
+      ],
+      "OverLength": 0.050000019724725106,
+      "PlaneCut": true,
+      "TiltRadians": 2.5288109106536486e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.026127222569571194,
+       0.9996586258522456,
+       0.0
+      ],
+      "Origin": [
+       -3.1115160000000004,
+       9.091918,
+       0.0
+      ],
+      "OverLength": 0.050000018414145746,
+      "PlaneCut": true,
+      "TiltRadians": 2.3607879158489252e-07
+     }
+    ]
+   },
+   {
+    "Length": 1.9999995812361386,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.9996586262845788,
+       -0.026127206027985454,
+       0.0
+      ],
+      "Origin": [
+       -6.0321105,
+       6.0145602,
+       0.0
+      ],
+      "OverLength": 0.05000005067640215,
+      "PlaneCut": true,
+      "TiltRadians": 6.49697463410855e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.9996586341229935,
+       -0.0261269061189987,
+       -0.0
+      ],
+      "Origin": [
+       -5.9798548,
+       4.0152434,
+       0.0
+      ],
+      "OverLength": 0.050000074077219896,
+      "PlaneCut": true,
+      "TiltRadians": 9.49707947321462e-07
+     }
+    ]
+   },
+   {
+    "Length": 1.90599957969721,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.026126906118997862,
+       0.9996586341229935,
+       -0.0
+      ],
+      "Origin": [
+       -6.9533863,
+       2.9894581,
+       0.0
+      ],
+      "OverLength": 0.05000007408633765,
+      "PlaneCut": true,
+      "TiltRadians": 9.498248416473798e-07
+     }
+    ]
+   },
+   {
+    "Length": 1.8120014217075646
+   },
+   {
+    "Length": 0.811999708456056
+   },
+   {
+    "Length": 0.9059997657970579,
+    "Joints": [
+     {
+      "End": "start",
+      "Normal": [
+       0.9996586244574852,
+       0.026127275934710037,
+       -0.0
+      ],
+      "Origin": [
+       -8.031427299999999,
+       5.962306399999999,
+       0.0
+      ],
+      "OverLength": 0.050000028870698904,
+      "PlaneCut": true,
+      "TiltRadians": 3.7013716543836273e-07
+     }
+    ]
+   },
+   {
+    "Length": 8.49999998308854,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.026127275934709655,
+       -0.9996586244574852,
+       -0.0
+      ],
+      "Origin": [
+       -3.163769799999998,
+       11.0912367,
+       0.0
+      ],
+      "OverLength": 0.05000000328745419,
+      "PlaneCut": true,
+      "TiltRadians": 4.2146848510894035e-08
+     },
+     {
+      "End": "start",
+      "Normal": [
+       0.02612709102689231,
+       -0.9996586292902555,
+       -0.0
+      ],
+      "Origin": [
+       5.3333285,
+       11.3133182,
+       0.0
+      ],
+      "OverLength": 0.0500000112688252,
+      "PlaneCut": true,
+      "TiltRadians": 1.444721179430584e-07
+     }
+    ]
+   },
+   {
+    "Length": 12.000001137192172,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.9996586191058745,
+       -0.026127480692482115,
+       -0.0
+      ],
+      "Origin": [
+       10.462256899999998,
+       6.4456626,
+       0.0
+      ],
+      "OverLength": 0.05000000854105651,
+      "PlaneCut": true,
+      "TiltRadians": 1.0950072449966577e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.9996586243277837,
+       -0.026127280897234654,
+       -0.0
+      ],
+      "Origin": [
+       10.7757854,
+       -5.550242,
+       0.0
+      ],
+      "OverLength": 0.050000007164840286,
+      "PlaneCut": true,
+      "TiltRadians": 9.185692672385244e-08
+     }
+    ]
+   },
+   {
+    "Length": 8.49999998308854,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       -0.026127660637768852,
+       0.9996586144027357,
+       -0.0
+      ],
+      "Origin": [
+       5.9081298,
+       -10.679172299999998,
+       0.0
+      ],
+      "OverLength": 0.05000003322199769,
+      "PlaneCut": true,
+      "TiltRadians": 4.2592304730285883e-07
+     },
+     {
+      "End": "start",
+      "Normal": [
+       -0.0261274658049775,
+       0.9996586194949802,
+       -0.0
+      ],
+      "Origin": [
+       -2.5889685,
+       -10.9012538,
+       0.0
+      ],
+      "OverLength": 0.05000001800612813,
+      "PlaneCut": true,
+      "TiltRadians": 2.3084779657169732e-07
+     }
+    ]
+   },
+   {
+    "Length": 0.9060015443107929,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       0.9996586192355753,
+       0.026127475730027147,
+       -0.0
+      ],
+      "Origin": [
+       -7.717898799999999,
+       -6.033598199999999,
+       0.0
+      ],
+      "OverLength": 0.05000004830152962,
+      "PlaneCut": true,
+      "TiltRadians": 6.192503796571637e-07
+     }
+    ]
+   },
+   {
+    "Length": 0.9059996946023114,
+    "Joints": [
+     {
+      "End": "start",
+      "Normal": [
+       -0.02612722441376983,
+       0.9996586258040454,
+       -0.0
+      ],
+      "Origin": [
+       -8.74368410000002,
+       -5.060066699999993,
+       0.0
+      ],
+      "OverLength": 0.050000123312402056,
+      "PlaneCut": true,
+      "TiltRadians": 1.5809282314629823e-06
+     }
+    ]
+   },
+   {
+    "Arc": {
+     "ArcId": 26,
+     "Centre": [
+      9.34741104141816,
+      -8.310328192118071
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 5.500000591833195,
+     "RunSweepDegrees": 44.99999137864967,
+     "Sign": 1,
+     "SweepDegrees": 44.99999137864967,
+     "ThetaStartDegrees": 1.497140076640017
+    },
+    "Length": 4.31968953592036
+   },
+   {
+    "Arc": {
+     "ArcId": 25,
+     "Centre": [
+      8.89165585911918,
+      9.12736684109944
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 5.499999013007317,
+     "RunSweepDegrees": 45.000002674602854,
+     "Sign": 1,
+     "SweepDegrees": 45.000002674602854,
+     "ThetaStartDegrees": 46.497158466410546
+    },
+    "Length": 4.319689380247122
+   },
+   {
+    "Arc": {
+     "ArcId": 24,
+     "Centre": [
+      -14.047526759169038,
+      197.87063405831526
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 196.99999954750447,
+     "RunSweepDegrees": 2.147850916378085,
+     "Sign": 1,
+     "SweepDegrees": 2.147850916378085,
+     "ThetaStartDegrees": -90.00000213501845
+    },
+    "Length": 7.38495283859394
+   },
+   {
+    "Arc": {
+     "ArcId": 14,
+     "Centre": [
+      -14.047526759169038,
+      197.87063405831526
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 196.99999954750447,
+     "RunSweepDegrees": 1.4971563402416024,
+     "Sign": 1,
+     "SweepDegrees": 1.4971563402416024,
+     "ThetaStartDegrees": -88.50284579477685
+    },
+    "Length": 5.147670576378067
+   },
+   {
+    "Arc": {
+     "ArcId": 9,
+     "Centre": [
+      -6.979513175836118,
+      3.9891165254608794
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 2,
+     "Radius": 2.9999993222120334,
+     "RunSweepDegrees": 90.00003627494772,
+     "Sign": 1,
+     "SweepDegrees": 45.00001813747386,
+     "ThetaStartDegrees": -43.50285052376773
+    },
+    "Length": 2.3561949075346167
+   },
+   {
+    "Arc": {
+     "ArcId": 9,
+     "Centre": [
+      -6.979513175836118,
+      3.9891165254608794
+     ],
+     "Orientation": -1.0,
+     "Part": 2,
+     "Parts": 2,
+     "Radius": 2.9999993222120334,
+     "RunSweepDegrees": 90.00003627494772,
+     "Sign": 1,
+     "SweepDegrees": 45.00001813747386,
+     "ThetaStartDegrees": 1.4971676137061318
+    },
+    "Length": 2.3561949075346167
+   },
+   {
+    "Arc": {
+     "ArcId": 4,
+     "Centre": [
+      -3.03313337583552,
+      6.092942825461545
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 0.9999997906185205,
+     "RunSweepDegrees": 89.99989117516063,
+     "Sign": -1,
+     "SweepDegrees": 89.99989117516066,
+     "ThetaStartDegrees": -268.50275794019075
+    },
+    "Length": 1.5707940985478808
+   },
+   {
+    "Arc": {
+     "ArcId": 15,
+     "Centre": [
+      5.463963925835565,
+      6.315025224538504
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.000000765115188,
+     "RunSweepDegrees": 89.9999971556747,
+     "Sign": -1,
+     "SweepDegrees": 89.9999971556747,
+     "ThetaStartDegrees": 1.4971862252215282
+    },
+    "Length": 1.5707974789921442
+   },
+   {
+    "Arc": {
+     "ArcId": 18,
+     "Centre": [
+      5.777492400375824,
+      -5.680877451296968
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0000007402937956,
+     "RunSweepDegrees": 89.99988833103649,
+     "Sign": -1,
+     "SweepDegrees": 89.99988833103649,
+     "ThetaStartDegrees": -88.50281235271646
+    },
+    "Length": 1.570795540653143
+   },
+   {
+    "Arc": {
+     "ArcId": 1,
+     "Centre": [
+      -2.719605825835565,
+      -5.902960824538504
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0000007651151872,
+     "RunSweepDegrees": 89.99999715567473,
+     "Sign": -1,
+     "SweepDegrees": 89.99999715567473,
+     "ThetaStartDegrees": -178.50281377477853
+    },
+    "Length": 1.5707974789921433
+   },
+   {
+    "Arc": {
+     "ArcId": 7,
+     "Centre": [
+      -6.7704942,
+      -4.008152600000001
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 2.999999347032896,
+     "RunSweepDegrees": 90.0,
+     "Sign": 1,
+     "SweepDegrees": 90.0,
+     "ThetaStartDegrees": 91.49716808774947
+    },
+    "Length": 4.712387954706362
+   },
+   {
+    "Arc": {
+     "ArcId": 13,
+     "Centre": [
+      -14.047527690586401,
+      197.87063406481226
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 198.9999991595705,
+     "RunSweepDegrees": 1.4971566404526957,
+     "Sign": -1,
+     "SweepDegrees": 1.4971566404526957,
+     "ThetaStartDegrees": -90.00000184538871
+    },
+    "Length": 5.199932224044612
+   },
+   {
+    "Arc": {
+     "ArcId": 23,
+     "Centre": [
+      -14.047527690586401,
+      197.87063406481226
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 198.9999991595705,
+     "RunSweepDegrees": 2.1262545136737327,
+     "Sign": -1,
+     "SweepDegrees": 2.1262545136737327,
+     "ThetaStartDegrees": -92.12625635906244
+    },
+    "Length": 7.3849182266120295
+   },
+   {
+    "Arc": {
+     "ArcId": 22,
+     "Centre": [
+      -14.047547371269353,
+      197.8706341704066
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 200.99999931092688,
+     "RunSweepDegrees": 2.1050881740754224,
+     "Sign": 1,
+     "SweepDegrees": 2.1050881740754224,
+     "ThetaStartDegrees": -89.9999962169765
+    },
+    "Length": 7.384884630847702
+   },
+   {
+    "Arc": {
+     "ArcId": 12,
+     "Centre": [
+      -14.047547371269353,
+      197.8706341704066
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 200.99999931092688,
+     "RunSweepDegrees": 1.4971563907098682,
+     "Sign": 1,
+     "SweepDegrees": 1.4971563907098682,
+     "ThetaStartDegrees": -88.50283982626662
+    },
+    "Length": 5.2521919774618375
+   },
+   {
+    "Arc": {
+     "ArcId": 8,
+     "Centre": [
+      -6.770494225461495,
+      -4.008152575835565
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 2,
+     "Radius": 0.99999979061852,
+     "RunSweepDegrees": 90.00010882483956,
+     "Sign": -1,
+     "SweepDegrees": 45.00005441241978,
+     "ThetaStartDegrees": 46.497184803058865
+    },
+    "Length": 0.7853989486252987
+   },
+   {
+    "Arc": {
+     "ArcId": 8,
+     "Centre": [
+      -6.770494225461495,
+      -4.008152575835565
+     ],
+     "Orientation": 1.0,
+     "Part": 2,
+     "Parts": 2,
+     "Radius": 0.99999979061852,
+     "RunSweepDegrees": 90.00010882483956,
+     "Sign": -1,
+     "SweepDegrees": 45.00005441241978,
+     "ThetaStartDegrees": 1.4971303906390807
+    },
+    "Length": 0.7853989486252987
+   },
+   {
+    "Arc": {
+     "ArcId": 2,
+     "Centre": [
+      -2.719605825836119,
+      -5.90296082453912
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 3.000000296708431,
+     "RunSweepDegrees": 89.99999905191332,
+     "Sign": 1,
+     "SweepDegrees": 89.99999905191332,
+     "ThetaStartDegrees": -88.50285099781105
+    },
+    "Length": 4.712389396811496
+   },
+   {
+    "Arc": {
+     "ArcId": 19,
+     "Centre": [
+      5.777492424539119,
+      -5.68087742583612
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 3.000000296708431,
+     "RunSweepDegrees": 89.99999905191332,
+     "Sign": 1,
+     "SweepDegrees": 89.99999905191332,
+     "ThetaStartDegrees": 1.4971490021889542
+    },
+    "Length": 4.712389396811496
+   },
+   {
+    "Arc": {
+     "ArcId": 16,
+     "Centre": [
+      5.4639639258361195,
+      6.315025224539119
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 3.0000002967084316,
+     "RunSweepDegrees": 89.99999905191332,
+     "Sign": 1,
+     "SweepDegrees": 89.99999905191332,
+     "ThetaStartDegrees": 91.49714900218895
+    },
+    "Length": 4.7123893968114965
+   },
+   {
+    "Arc": {
+     "ArcId": 5,
+     "Centre": [
+      -3.0331343245391196,
+      6.092941825836118
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 3.0000002967084325,
+     "RunSweepDegrees": 89.99999905191329,
+     "Sign": 1,
+     "SweepDegrees": 89.9999990519133,
+     "ThetaStartDegrees": 181.49714900218893
+    },
+    "Length": 4.712389396811497
+   },
+   {
+    "Arc": {
+     "ArcId": 10,
+     "Centre": [
+      -6.9795131999999995,
+      3.9891164999999997
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 0.9999997657970575,
+     "RunSweepDegrees": 90.00000000000006,
+     "Sign": -1,
+     "SweepDegrees": 90.00000000000006,
+     "ThetaStartDegrees": -88.50286818719823
+    },
+    "Length": 1.5707959589097757
+   },
+   {
+    "Arc": {
+     "ArcId": 6,
+     "Centre": [
+      -3.0331333999999996,
+      6.092942799999999
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 5.000000777978156,
+     "RunSweepDegrees": 90.0,
+     "Sign": -1,
+     "SweepDegrees": 90.00000000000003,
+     "ThetaStartDegrees": -268.502846991083
+    },
+    "Length": 7.853982856019714
+   },
+   {
+    "Arc": {
+     "ArcId": 17,
+     "Centre": [
+      5.463963951297005,
+      6.3150252003751035
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 4.999999853123479,
+     "RunSweepDegrees": 89.99997766618206,
+     "Sign": -1,
+     "SweepDegrees": 89.99997766618206,
+     "ThetaStartDegrees": 1.4971647446795042
+    },
+    "Length": 7.853979454268153
+   },
+   {
+    "Arc": {
+     "ArcId": 20,
+     "Centre": [
+      5.777491475835889,
+      -5.680878425461135
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 5.000000802799248,
+     "RunSweepDegrees": 89.99997823503995,
+     "Sign": -1,
+     "SweepDegrees": 89.99997823503995,
+     "ThetaStartDegrees": -88.50282494169413
+    },
+    "Length": 7.853980995657216
+   },
+   {
+    "Arc": {
+     "ArcId": 3,
+     "Centre": [
+      -2.719605825835888,
+      -5.902960824538864
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 4.999999877944567,
+     "RunSweepDegrees": 89.99999943114236,
+     "Sign": -1,
+     "SweepDegrees": 89.99999943114236,
+     "ThetaStartDegrees": -178.50283553974532
+    },
+    "Length": 7.853981392608063
+   },
+   {
+    "Arc": {
+     "ArcId": 11,
+     "Centre": [
+      -14.047510646628016,
+      197.870633979818
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 202.99999964147437,
+     "RunSweepDegrees": 1.4971566755786527,
+     "Sign": -1,
+     "SweepDegrees": 1.4971566755786527,
+     "ThetaStartDegrees": -90.00000661960213
+    },
+    "Length": 5.304453612264807
+   },
+   {
+    "Arc": {
+     "ArcId": 21,
+     "Centre": [
+      -14.047510646628016,
+      197.870633979818
+     ],
+     "Orientation": 1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 202.99999964147437,
+     "RunSweepDegrees": 2.0843391930802966,
+     "Sign": -1,
+     "SweepDegrees": 2.0843391930802966,
+     "ThetaStartDegrees": -92.08434581268243
+    },
+    "Length": 7.384852061422782
+   }
+  ]
+ }
+}

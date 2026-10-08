@@ -1,0 +1,235 @@
+{
+ "Provenance": {
+  "Rule": "a reduced REAL excerpt of the stored build census: the fields mesh_stage_contract.validate_arc_tubes reads (CouponBox.Radius; PrismTubes.Section Radius / PyramidHeight / TubesPerSide / Kind; PrismTubes.ArcTubes; the Tubes rows reduced to Arc / Length / Joints), nothing else; the full census is identified by its sha256",
+  "Source": "B3 fix-11 synthetic s3-fab (test_arc_tubes.jl strip, build_strip_coupon split_chords; impl-B3-fu1/tools/build_s1_s3_synthetics.jl at 931f8be05a)",
+  "FullCensusSHA256": "9dc02c8354ae4f8e2c476d3fa8c0515f7ff90ca52117f57761421daff5adb52c",
+  "FullCensusBytes": 142201,
+  "TubeRows": 14
+ },
+ "CouponBox": {
+  "Radius": 0.5
+ },
+ "PrismTubes": {
+  "Section": {
+   "Radius": 0.03,
+   "PyramidHeight": 0.009999999999999998,
+   "TubesPerSide": 2,
+   "Kind": "fabricated"
+  },
+  "ArcTubes": {
+   "Count": 6,
+   "JointEnds": 4,
+   "PartSplits": 0,
+   "Rule": "block (b) design 1.2 (3) (decision 303): the tube of an arc metal side is the revolve of the section (the same rings, sectors and pyramids as a straight tube) about the vertical axis through the tagged arc centre; the axis coordinate is the arc length on the edge circle, the layers follow the composed size field along it (LayerRule); the sidewall rays are the cylinder of radius rho about the centre - the exact metal / trench wall - so the fragment splits the sectors at the wall; an arc is split into ceil(sweep / 90 degrees) parts of equal angular fraction (the same radial planes as the metal loft and the trench wall of polygon_wire), consecutive parts sharing one section; the guard ScopeGuard[ArcTubeRadiusVsCurvature] requires Radius + PyramidHeight <= ArcCurvatureBound x rho",
+   "SharedSections": 8,
+   "SmoothJointRule": "block (b) design A3 (1)-(2) (decision 303): a joint whose signature turn is at most 1e-4 rad (JointSmooth) is no corner - no ball, no caps, clearance 0 - and the two tubes share ONE cross-section owned by the arc (its radial plane through the joint vertex, its frame): the straight tube's end nodes are the arc tube's nodes, its CAD solid is extruded over-long and cut by that radial plane when the post-snap tilt is positive (Tubes[].Joints: TiltRadians, PlaneCut); a kinked joint is a corner under CornerClearanceRule (the arc tube retracts by the clearance along its arc)",
+   "TotalArcLength": 3.141592653589793
+  },
+  "Tubes": [
+   {
+    "Length": 2.48,
+    "Joints": [
+     {
+      "End": "start",
+      "Normal": [
+       6.123233995736766e-17,
+       -1.0,
+       0.0
+      ],
+      "Origin": [
+       6.123233995736766e-17,
+       0.0,
+       0.1
+      ],
+      "OverLength": 0.0,
+      "PlaneCut": false,
+      "TiltRadians": 0.0
+     }
+    ]
+   },
+   {
+    "Length": 2.48,
+    "Joints": [
+     {
+      "End": "start",
+      "Normal": [
+       6.123233995736766e-17,
+       -1.0,
+       0.0
+      ],
+      "Origin": [
+       6.123233995736766e-17,
+       0.0,
+       0.0
+      ],
+      "OverLength": 0.0,
+      "PlaneCut": false,
+      "TiltRadians": 0.0
+     }
+    ]
+   },
+   {
+    "Length": 2.5,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "Origin": [
+       1.0,
+       1.0,
+       0.1
+      ],
+      "OverLength": 0.0,
+      "PlaneCut": false,
+      "TiltRadians": 0.0
+     }
+    ]
+   },
+   {
+    "Length": 2.5,
+    "Joints": [
+     {
+      "End": "end",
+      "Normal": [
+       1.0,
+       0.0,
+       0.0
+      ],
+      "Origin": [
+       1.0,
+       1.0,
+       0.0
+      ],
+      "OverLength": 0.0,
+      "PlaneCut": false,
+      "TiltRadians": 0.0
+     }
+    ]
+   },
+   {
+    "Length": 2.43
+   },
+   {
+    "Length": 2.43
+   },
+   {
+    "Length": 2.45
+   },
+   {
+    "Length": 2.45
+   },
+   {
+    "Arc": {
+     "ArcId": 1,
+     "Centre": [
+      0.0,
+      1.0
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0,
+     "RunSweepDegrees": 30.000000000000004,
+     "Sign": 1,
+     "SweepDegrees": 30.000000000000004,
+     "ThetaStartDegrees": -59.99999999999999
+    },
+    "Length": 0.5235987755982989
+   },
+   {
+    "Arc": {
+     "ArcId": 1,
+     "Centre": [
+      0.0,
+      1.0
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0,
+     "RunSweepDegrees": 30.000000000000004,
+     "Sign": 1,
+     "SweepDegrees": 30.000000000000004,
+     "ThetaStartDegrees": -59.99999999999999
+    },
+    "Length": 0.5235987755982989
+   },
+   {
+    "Arc": {
+     "ArcId": 2,
+     "Centre": [
+      0.0,
+      1.0
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0,
+     "RunSweepDegrees": 29.999999999999993,
+     "Sign": 1,
+     "SweepDegrees": 29.999999999999993,
+     "ThetaStartDegrees": -30.000000000000004
+    },
+    "Length": 0.5235987755982987
+   },
+   {
+    "Arc": {
+     "ArcId": 2,
+     "Centre": [
+      0.0,
+      1.0
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0,
+     "RunSweepDegrees": 29.999999999999993,
+     "Sign": 1,
+     "SweepDegrees": 29.999999999999993,
+     "ThetaStartDegrees": -30.000000000000004
+    },
+    "Length": 0.5235987755982987
+   },
+   {
+    "Arc": {
+     "ArcId": 3,
+     "Centre": [
+      0.0,
+      1.0
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0,
+     "RunSweepDegrees": 30.000000000000004,
+     "Sign": 1,
+     "SweepDegrees": 30.000000000000004,
+     "ThetaStartDegrees": 0.0
+    },
+    "Length": 0.5235987755982989
+   },
+   {
+    "Arc": {
+     "ArcId": 3,
+     "Centre": [
+      0.0,
+      1.0
+     ],
+     "Orientation": -1.0,
+     "Part": 1,
+     "Parts": 1,
+     "Radius": 1.0,
+     "RunSweepDegrees": 30.000000000000004,
+     "Sign": 1,
+     "SweepDegrees": 30.000000000000004,
+     "ThetaStartDegrees": 0.0
+    },
+    "Length": 0.5235987755982989
+   }
+  ]
+ }
+}
