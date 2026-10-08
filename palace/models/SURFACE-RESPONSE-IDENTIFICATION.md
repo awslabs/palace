@@ -2893,7 +2893,10 @@ within the arc-fit tolerance + 2.5 quanta on a straight segment, + the arc's rec
 chord sagitta on a chord of a fitted arc — and every entry must be wholly real or wholly
 image); anything else refuses the contract by name (`ContractRefused`: PortionUnmapped /
 PortionAmbiguous / PortionUnclaimed / MixedPortion / NoRealPortion / NoImagePortion /
-PortionOffPlane), never a length heuristic; the `Frame` is the identification's canonical
+PortionOffPlane), never a length heuristic; `RealLengthOverR` / `ImageLengthOverR` sum the
+SERIALISED portions' lengths (a straight entry's chord, an arc entry's length on the serialised
+circle: `SerializedPortionLengthOverR`, the consumer's own reading — decision 585; the Unmerged
+diagnostics record keeps the mesh-chord sums); the `Frame` is the identification's canonical
 frame AS IS (`Features[].Frame`, `Axes[2]` = the process normal for both handedness values)
 with `Frame.Chirality` = the recorded frame's handedness explicit (`FrameHandedness`: =
 `Features[].Chirality` for a chiral key, the first minimal frame's for a mirror-symmetric

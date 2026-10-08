@@ -725,12 +725,21 @@ nlohmann::json BuildMirrorFormedContract(
   const double straight_tolerance =
       kSignatureParameterToleranceOverRadius + 2.5 * kSignatureLengthQuantumOverRadius;
   std::vector<int> real_portions;
+  // The contract's lengths over R (decision 585: ONE definition): the SERIALISED geometry's
+  // - a straight portion's chord, an arc portion's length on the serialised circle - summed
+  // over the real / image entries, as the consumer and the library read them; the Unmerged
+  // diagnostics record keeps the mesh-chord sums RealLength / ImageLength. A CurvedEdge key
+  // (no serialised portions) keeps the mesh-chord sums over R.
+  double real_over_R = real_length / R, image_over_R = image_length / R;
   std::string rule =
       "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster "
       "requirement; RealPortions index Signature.Portions (0-based) whose world portions "
       "lie on real segments (segment < real_segments); every other portion is an image; "
       "Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = "
-      "Chirality x (Axes[0] x Axes[1])); lengths over R";
+      "Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the "
+      "serialised "
+      "portions' lengths over R (a straight portion its chord, an arc its length on the "
+      "serialised circle), summed over the real / image entries";
   if (feature.type == "CurvedEdge")
   {
     rule += "; a CurvedEdge key carries no Portions (RealPortions empty): the real / image "
@@ -853,6 +862,12 @@ nlohmann::json BuildMirrorFormedContract(
       refused = "NoImagePortion: every serialised portion is real (not mirror-formed)";
       return nullptr;
     }
+    real_over_R = image_over_R = 0.0;
+    for (std::size_t i = 0; i < classes.size(); i++)
+    {
+      (classes[i] == 1 ? real_over_R : image_over_R) +=
+          SerializedPortionLengthOverR((*portions)[i]);
+    }
   }
   // The Frame is the identification's canonical frame AS IS (Features[].Frame: Axes[2] =
   // the process normal n for both handedness values) with its handedness made explicit
@@ -869,8 +884,8 @@ nlohmann::json BuildMirrorFormedContract(
                           {"Axes", {feature.axes[0], feature.axes[1], feature.axes[2]}},
                           {"Chirality", FrameHandedness(feature.axes)}}},
                         {"RealPortions", real_portions},
-                        {"RealLengthOverR", real_length / R},
-                        {"ImageLengthOverR", image_length / R},
+                        {"RealLengthOverR", real_over_R},
+                        {"ImageLengthOverR", image_over_R},
                         {"RealFeatures", real_ids},
                         {"ExtendedFeature", feature.id},
                         {"Rule", rule}};

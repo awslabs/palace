@@ -1466,6 +1466,31 @@ double DistanceToSerializedPortion(const nlohmann::json &portion,
                   std::hypot(q[0] - b[0], q[1] - b[1]));
 }
 
+double SerializedPortionLengthOverR(const nlohmann::json &portion)
+{
+  const auto P = portion.at("P").get<std::array<double, 4>>();
+  const std::array<double, 2> a = {P[0], P[1]}, b = {P[2], P[3]};
+  if (!portion.contains("Arc"))
+  {
+    return std::hypot(b[0] - a[0], b[1] - a[1]);
+  }
+  const auto arc = portion.at("Arc").get<std::array<double, 4>>();
+  const std::array<double, 2> c = {arc[0], arc[1]}, m = {arc[2], arc[3]};
+  const double r = std::hypot(a[0] - c[0], a[1] - c[1]);
+  const double two_pi = 2.0 * std::acos(-1.0);
+  if (std::hypot(a[0] - b[0], a[1] - b[1]) <= 1.0e-9 * std::max(r, 1.0))
+  {
+    return two_pi * r;  // a closed circle
+  }
+  auto Angle = [&](const std::array<double, 2> &p)
+  { return std::atan2(p[1] - c[1], p[0] - c[0]); };
+  const double ta = Angle(a);
+  const double ccw = std::fmod(std::fmod(Angle(b) - ta, two_pi) + two_pi, two_pi);
+  const double through = std::fmod(std::fmod(Angle(m) - ta, two_pi) + two_pi, two_pi);
+  const double sweep = through <= ccw + 1.0e-12 ? ccw : ccw - two_pi;
+  return std::abs(sweep) * r;
+}
+
 int FrameHandedness(const std::array<std::array<double, 3>, 3> &axes)
 {
   const auto &x = axes[0], &y = axes[1], &n = axes[2];

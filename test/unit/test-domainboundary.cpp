@@ -2131,9 +2131,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         REQUIRE(half.model_energy.count(name) == 1);
         REQUIRE(full.model_energy.count(name) == 1);
         CHECK(half.model_energy.at(name) > 0.0);
-        // 1e-8: the model energies are read back from the energy CSV's printed digits.
-        CHECK_THAT(2.0 * half.model_energy.at(name),
-                   WithinRel(full.model_energy.at(name), 1.0e-8));
+        // The half's coupon carries the real length fraction f (exactly 1 / 2 for an
+        // exactly symmetric key; the 4-edge key's serialised lengths differ by a few
+        // quanta): the half's energy = f x the full's. 1e-8: the model energies are read
+        // back from the energy CSV's printed digits.
+        double fraction = 0.0;
+        for (const auto &entry : placement.at("Patches"))
+        {
+          if (entry.at("Model") == name)
+          {
+            fraction = entry.at("Weight").get<double>();
+          }
+        }
+        CHECK_THAT(fraction, WithinAbs(0.5, 1.0e-5));
+        CHECK_THAT(half.model_energy.at(name),
+                   WithinRel(fraction * full.model_energy.at(name), 1.0e-8));
       }
       // The patch dry run carries the DomainWeight column (decision 559 MINOR-3 / O-14).
       std::ifstream dry_run(temp.temp_dir / "mirror-pad-wedge-half-dryrun" /

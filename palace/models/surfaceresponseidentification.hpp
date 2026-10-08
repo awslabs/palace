@@ -638,6 +638,14 @@ std::pair<std::string, std::string> SignatureKeyAndHash(nlohmann::json signature
 double DistanceToSerializedPortion(const nlohmann::json &portion,
                                    const std::array<double, 2> &q);
 
+// The length (units of R) of a serialised cluster signature portion: a straight portion its
+// chord |P[2..3] - P[0..1]|, an arc portion its arc length on the serialised circle (the
+// |sweep| from P[0..1] to P[2..3] through the midpoint Arc[2..3] about Arc[0..1], times the
+// radius |P[0..1] - Arc[0..1]|; 2 pi r for a closed circle) - the consumer's
+// `signature_portion_lengths_over_R` reading (decision 585: ONE definition of the
+// mirror-formed contract's RealLengthOverR / ImageLengthOverR, the serialised geometry's).
+double SerializedPortionLengthOverR(const nlohmann::json &portion);
+
 // The handedness of a feature frame: +1 when Axes[2] = Axes[0] x Axes[1], -1 when Axes[2] =
 // -(Axes[0] x Axes[1]) (the canonical cluster frame is {x, y, n} with n the process normal
 // for both handedness values). Equal to IdentifiedFeature::chirality for a chiral key; a

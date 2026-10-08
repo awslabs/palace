@@ -6229,12 +6229,16 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
       }
       CHECK(contract.at("Frame").at("Axes").get<std::array<std::array<double, 3>, 3>>() ==
             feature.axes);
+      // Straight portions: the serialised chords equal the mesh-chord sums up to the
+      // serialisation quantum (decision 585: the contract's lengths are the serialised
+      // geometry's; the Unmerged record's RealLength / ImageLength stay the mesh-chord
+      // sums).
       CHECK_THAT(contract.at("RealLengthOverR").get<double>(),
-                 WithinAbs(unmerged.at("RealLength").get<double>() / R, 1.0e-12));
+                 WithinAbs(unmerged.at("RealLength").get<double>() / R, 1.0e-5));
       CHECK_THAT(contract.at("ImageLengthOverR").get<double>(),
-                 WithinAbs(unmerged.at("ImageLength").get<double>() / R, 1.0e-12));
+                 WithinAbs(unmerged.at("ImageLength").get<double>() / R, 1.0e-5));
       CHECK_THAT(contract.at("RealLengthOverR").get<double>(),
-                 WithinAbs(contract.at("ImageLengthOverR").get<double>(), 1.0e-9));
+                 WithinAbs(contract.at("ImageLengthOverR").get<double>(), 1.0e-5));
       CHECK_THAT(feature.length,
                  WithinAbs(unmerged.at("RealLength").get<double>(), 1.0e-12));
       CHECK_THAT(contract.at("Rule").get<std::string>(), ContainsSubstring("557"));
@@ -6321,6 +6325,51 @@ TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",
     // The MirrorBand record lists the configurations' Unmerged records with MergedFeature.
     const auto band = DescribeMirrorBand(planes, extension, summary, merged, 3.0, 1.0);
     CHECK(band.at("UnmergedFeatures").size() == 2);
+  }
+
+  SECTION("the contract's lengths are the SERIALISED geometry's (decision 585): an arc "
+          "portion's length on its circle, not its chord sum - both convexities")
+  {
+    // The contract's RealLengthOverR / ImageLengthOverR sum SerializedPortionLengthOverR
+    // over the real / image entries (BuildMirrorFormedContract), the consumer's own reading
+    // (`signature_portion_lengths_over_R`): a straight entry its chord, an arc entry the
+    // |sweep| x radius on the serialised circle through the serialised midpoint - on either
+    // side of the chord (a convex arc bulging toward the gap, a concave one toward the
+    // metal: the midpoint decides the side, the length is the same |sweep| x r), 2 pi r for
+    // a closed circle. O4's 03fa3fb9166c real arm (a 90-degree arc of radius 5.26 R in four
+    // 2.01-R chords) read 8.5958 as a mesh-chord sum against 8.8067 on its circle: the two
+    // definitions of CONTRACT.md v2 disagreed by 0.21 R and the consumer refused the
+    // production contract by name (the M7 gate-4 seam test, 15 / 16).
+    const nlohmann::json straight = {{"P", {0.0, 0.0, 3.0, 4.0}}};
+    CHECK_THAT(SerializedPortionLengthOverR(straight), WithinAbs(5.0, 1.0e-12));
+    // A quarter circle of radius 2 from (2, 0) to (0, 2): the convex midpoint (sqrt 2, sqrt
+    // 2) on the short side, the concave one (-sqrt 2, -sqrt 2) on the long (270-degree)
+    // side.
+    const double s2 = std::sqrt(2.0);
+    const nlohmann::json convex = {{"P", {2.0, 0.0, 0.0, 2.0}},
+                                   {"Arc", {0.0, 0.0, s2, s2}}};
+    const nlohmann::json concave = {{"P", {2.0, 0.0, 0.0, 2.0}},
+                                    {"Arc", {0.0, 0.0, -s2, -s2}}};
+    CHECK_THAT(SerializedPortionLengthOverR(convex), WithinAbs(M_PI, 1.0e-12));
+    CHECK_THAT(SerializedPortionLengthOverR(concave), WithinAbs(3.0 * M_PI, 1.0e-12));
+    // Both differ from the chord (2 sqrt 2 = 2.828) by far more than the 1e-3 R tolerance.
+    CHECK(SerializedPortionLengthOverR(convex) - 2.0 * s2 > 0.3);
+    // The reversed traversal (b to a) gives the same length with the sweep's sign flipped.
+    const nlohmann::json reversed = {{"P", {0.0, 2.0, 2.0, 0.0}},
+                                     {"Arc", {0.0, 0.0, s2, s2}}};
+    CHECK_THAT(SerializedPortionLengthOverR(reversed), WithinAbs(M_PI, 1.0e-12));
+    // A closed circle (equal ends): 2 pi r.
+    const nlohmann::json circle = {{"P", {3.0, 0.0, 3.0, 0.0}},
+                                   {"Arc", {0.0, 0.0, -3.0, 0.0}}};
+    CHECK_THAT(SerializedPortionLengthOverR(circle), WithinAbs(6.0 * M_PI, 1.0e-12));
+    // O4's production entry (gate 4, both arcs of the key): a 90-degree arc, radius
+    // |a - c| = 5.263 R, length pi / 2 x r = 8.267 R; its four 2.014-R chords sum to 8.056
+    // R.
+    const nlohmann::json o4 = {{"P", {-3.7958, 1.4674, 1.4674, -3.7958}},
+                               {"Arc", {-3.7958, -3.7958, -0.07376, -0.07376}}};
+    const double r = std::hypot(-3.7958 + 3.7958, 1.4674 + 3.7958);
+    CHECK_THAT(SerializedPortionLengthOverR(o4), WithinAbs(0.5 * M_PI * r, 1.0e-3));
+    CHECK(SerializedPortionLengthOverR(o4) - 4.0 * 2.0141 > 0.2);  // the gate-4 chords
   }
 
   SECTION("a serialised portion straddling the plane (a jog whose perpendicular run joins "
