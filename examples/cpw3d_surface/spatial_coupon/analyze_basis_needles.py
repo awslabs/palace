@@ -309,7 +309,10 @@ def attribute_actual(census_path, mesh_path, ratio, chunk=50000):
     for start in range(0, len(tets), chunk):
         centroids = mesh.points[tets[start:start + chunk]].mean(axis=1)
         tube = np.minimum(far, normal + growth * np.maximum(segment_distance(centroids, axes) - offset, 0.0))
-        ball = corner_law(np.min(np.stack([np.linalg.norm(centroids - np.asarray(b), axis=1) for b in balls]), axis=0))
+        # A corner-free build (round 3 class (1): no semantic corner, no cap) has no ball: the
+        # law at infinite distance is the far size.
+        ball = corner_law(np.min(np.stack([np.linalg.norm(centroids - np.asarray(b), axis=1) for b in balls]), axis=0)
+                          if balls else np.full(len(centroids), np.inf))
         band = cost.band_law(segment_distance(centroids, bands), normal, far, growth)
         needle = np.full(len(centroids), far)
         sliver = np.full(len(centroids), far)

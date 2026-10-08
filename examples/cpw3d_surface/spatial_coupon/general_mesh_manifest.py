@@ -19,8 +19,8 @@ from mesh_stage_contract import (GMSH_ONLY_PIPELINE, LEGACY_MMG_PIPELINE, PIPELI
                                  PLACEMENT_STAGE_ORDER, STAGE_TOOLS, TRACE_BASIS_RATIO_OPTION,
                                  canonical_stage_order, pipeline_of, scope_classes_of_case_inputs,
                                  stage_order, unsupported_scope_classes, validate_stage_dag)
-from semantic_mesh_contract import (REQUIRED_ROLES, invariant_corners, load_semantic_contract,
-                                    validate_feature_topology)
+from semantic_mesh_contract import (REQUIRED_ROLES, contract_is_corner_free, invariant_corners,
+                                    load_semantic_contract, validate_feature_topology)
 
 
 def sha256(path):
@@ -1468,8 +1468,13 @@ def audit_manifest_evidence(evidence, gates, contract, binding):
             diagnostics.get("AuthoritativeForResponseOwnership") is not False):
         failures.append("ownership-exhaustive-closure")
     expected_corners = _transform_points(contract["SemanticCorners"], binding["Transform"])
-    if not _same_points(expected_corners, evidence.get("ActualSemanticCorners"),
-                        float(gates["CornerTolerance"])):
+    actual_corners = evidence.get("ActualSemanticCorners")
+    # Round 3 class (1): a corner-free contract (Derivation.CornerFree) expects the empty
+    # list exactly; _same_points reads two empty lists as a mismatch (fail closed otherwise).
+    if contract_is_corner_free(contract):
+        if actual_corners != []:
+            failures.append("semantic-corners")
+    elif not _same_points(expected_corners, actual_corners, float(gates["CornerTolerance"])):
         failures.append("semantic-corners")
     def neighborhood_failure(name, expected, maximum=None, minimum=None, invariant=(),
                              invariant_maximum=None):

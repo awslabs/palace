@@ -496,6 +496,265 @@ function build_arc_coupon(
     return parse_json(read(census, String)), mesh, inputs
 end
 
+# Round 3 class (1) (decisions 491 / 510; DESIGN-part-G G.1.6): the CORNER-FREE synthetics.
+# S-G1-a: a metal band of width 0.5 (R 0.5) entering through the x0 face and leaving through
+# the y1 face with ONE exactly tangent 90-degree bend: its outer edge a convex arc of radius
+# 0.75 (1.5 R) and its inner edge the concentric CONCAVE arc of radius 0.25 (0.5 R, below the
+# 3 R collar: the fabricated collar offset collapses it) about C = (0, 0.75); every joint is
+# tangent (turn 0.0, smooth), every straight end is a box-face cut end: 0 semantic corners.
+# S-G1-b (510 MINOR-2; 24be6e90570f's twin): the same band plus a ground region beyond a 0.25
+# gap whose edge follows the band with a second CONCAVE arc of radius 1.0 (2 R, below the
+# collar too): two collapsed concave arcs in one collar union around the convex one.
+function write_bent_band_inputs(
+    directory;
+    ground=false,
+    chord_degrees=5.0,
+    plane=0.0,
+    tilt_degrees=2.5
+)
+    radius = 0.5
+    centre = (0.0, 0.75)
+    inner, outer, ground_radius = 0.25, 0.75, 1.0
+    sweep = 90.0
+    n = ceil(Int, sweep / chord_degrees - 1.0e-9)
+    # The whole outline is rotated by tilt_degrees about the arc centre, so that every
+    # straight leg crosses its box face obliquely: a box-face CUT END (decision 320), not the
+    # exactly perpendicular legacy corner (24be6e90570f's legs cross at ~2.5 degrees).
+    rotate(p) = (
+        centre[1] + cosd(tilt_degrees) * (p[1] - centre[1]) -
+        sind(tilt_degrees) * (p[2] - centre[2]),
+        centre[2] +
+        sind(tilt_degrees) * (p[1] - centre[1]) +
+        cosd(tilt_degrees) * (p[2] - centre[2])
+    )
+    west = (-cosd(tilt_degrees), -sind(tilt_degrees))      # the rotated (-1, 0): the x0-face legs
+    north = (-sind(tilt_degrees), cosd(tilt_degrees))      # the rotated (0, 1): the y1-face legs
+    rows = NamedTuple[]
+    function straight!(a, b)
+        d = (b[1] - a[1], b[2] - a[2])
+        L = hypot(d...)
+        t = (d[1] / L, d[2] / L)
+        # The metal lies to the LEFT of every side (counterclockwise loops), the gap to the right.
+        return push!(
+            rows,
+            (
+                point=(0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), plane),
+                tangent=(t[1], t[2], 0.0),
+                gap=(t[2], -t[1], 0.0),
+                interval=(-0.5 * L, 0.5 * L),
+                normal_sign=1.0,
+                vertex_arm=false,
+                slot=0,
+                conductor=1
+            )
+        )
+    end
+    # Chord points of a 90-degree arc about the centre from angle -90 (below C) to 0 (right of
+    # C), rotated by the tilt.
+    arc_points(rho) = [
+        rotate((
+            centre[1] + rho * cosd(-90.0 + sweep * k / n),
+            centre[2] + rho * sind(-90.0 + sweep * k / n)
+        )) for k = 0:n
+    ]
+    outer_points, inner_points, ground_points =
+        arc_points(outer), reverse(arc_points(inner)), reverse(arc_points(ground_radius))
+    along(p, direction, s) = (p[1] + s * direction[1], p[2] + s * direction[2])
+    # The band (loop 1): outer edge east along y = 0, the convex arc counterclockwise, north
+    # along x = 0.75; inner edge south along x = 0.25, the concave arc clockwise, west along
+    # y = 0.5 (before the tilt); every straight leg's claim is 1.0 = 2 R long.
+    straight!(along(outer_points[1], west, 1.0), outer_points[1])
+    for k = 1:n
+        straight!(outer_points[k], outer_points[k + 1])
+    end
+    straight!(outer_points[end], along(outer_points[end], north, 1.0))
+    straight!(along(inner_points[1], north, 1.0), inner_points[1])
+    for k = 1:n
+        straight!(inner_points[k], inner_points[k + 1])
+    end
+    straight!(inner_points[end], along(inner_points[end], west, 1.0))
+    if ground
+        # The ground (loop 2): south along x = 1.0, the concave arc clockwise, west along y = -0.25.
+        straight!(along(ground_points[1], north, 1.0), ground_points[1])
+        for k = 1:n
+            straight!(ground_points[k], ground_points[k + 1])
+        end
+        straight!(ground_points[end], along(ground_points[end], west, 1.0))
+    end
+    lower, upper = row_coupon_bounds(rows, radius, 0.1, 0.05)
+    # The legs meet their box faces where their lines cross x = x0 (west legs) / y = y1 (north legs).
+    x0_face(p) = (lower[1], p[2] + (lower[1] - p[1]) * west[2] / west[1])
+    y1_face(p) = (p[1] + (upper[2] - p[2]) * north[1] / north[2], upper[2])
+    loops = Vector{Tuple{Float64, Float64}}[]
+    band = Tuple{Float64, Float64}[x0_face(outer_points[1])]
+    append!(band, outer_points)                          # (0, 0) ... (0.75, 0.75) before the tilt
+    push!(band, y1_face(outer_points[end]))
+    push!(band, y1_face(inner_points[1]))
+    append!(band, inner_points)                          # (0.25, 0.75) ... (0, 0.5) before the tilt
+    push!(band, x0_face(inner_points[end]))
+    push!(loops, band)
+    if ground
+        region = Tuple{Float64, Float64}[y1_face(ground_points[1])]
+        append!(region, ground_points)                   # (1, 0.75) ... (0, -0.25) before the tilt
+        push!(region, x0_face(ground_points[end]))
+        push!(region, (lower[1], lower[2]))
+        push!(region, (upper[1], lower[2]))
+        push!(region, (upper[1], upper[2]))
+        push!(loops, region)
+    end
+    on_face(p, q) = any(
+        (abs(p[d] - lower[d]) <= 1.0e-9 && abs(q[d] - lower[d]) <= 1.0e-9) ||
+            (abs(p[d] - upper[d]) <= 1.0e-9 && abs(q[d] - upper[d]) <= 1.0e-9) for
+        d = 1:2
+    )
+    # Arc tags (ArcSign +1: the dielectric outside the circle) on the chord rows, joint tags
+    # (turn 0.0, smooth) at both ends of every arc; the band's arcs are 1 (outer) / 2 (inner),
+    # the ground's arc 3.
+    arcs_of(points, first, rho, sign, id) =
+        Dict(first + k - 1 => (id, centre[1], centre[2], rho, sign) for k = 1:n)
+    tags = [arcs_of(outer_points, 2, outer, 1, 1)]
+    merge!(tags[1], arcs_of(inner_points, n + 5, inner, -1, 2))
+    joints = [Set([2, n + 2, n + 5, 2n + 5])]
+    if ground
+        push!(tags, arcs_of(ground_points, 2, ground_radius, -1, 3))
+        push!(joints, Set([2, n + 2]))
+    end
+    open(joinpath(directory, "signature.csv"), "w") do io
+        println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
+        for (i, row) in enumerate(rows)
+            println(
+                io,
+                join(
+                    [
+                        i,
+                        row.slot,
+                        row.conductor,
+                        row.point...,
+                        row.gap...,
+                        row.tangent...,
+                        1,
+                        row.interval...,
+                        0
+                    ],
+                    ","
+                )
+            )
+        end
+    end
+    classes = Vector{String}[]
+    open(joinpath(directory, "boundary.csv"), "w") do io
+        println(
+            io,
+            "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y,ArcId,ArcCx,ArcCy,ArcR,ArcSign,JointTurn,JointSmooth"
+        )
+        for (l, polygon) in enumerate(loops)
+            m = length(polygon)
+            loop_classes = [
+                on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical"
+                for i = 1:m
+            ]
+            push!(classes, loop_classes)
+            for (i, point) in enumerate(polygon)
+                arc = haskey(tags[l], i) ? collect(tags[l][i]) : ["", "", "", "", ""]
+                joint = i in joints[l] ? [0.0, 1] : ["", ""]
+                println(
+                    io,
+                    join(
+                        vcat(
+                            [l, i, 1, plane, 0, loop_classes[i], point[1], point[2]],
+                            arc,
+                            joint
+                        ),
+                        ","
+                    )
+                )
+            end
+        end
+    end
+    open(joinpath(directory, "mask.csv"), "w") do io
+        println(io, "Facet,Conductor,Plane,X,Y")
+        for (l, polygon) in enumerate(loops), point in polygon
+            println(io, join([l, 1, plane, point[1], point[2]], ","))
+        end
+    end
+    arc_count = ground ? 3 : 2
+    contract = Dict{String, Any}(
+        "Version" => 1,
+        "SemanticCorners" => [],
+        "Derivation" => Dict{String, Any}(
+            "CornerFree" => Dict{String, Any}(
+                "Rule" => CORNER_FREE_RULE,
+                "ArcInteriorVertices" => arc_count * (n - 1),
+                "SmoothJoints" => 2 * arc_count,
+                "BoxFaceCutEnds" => ground ? 6 : 4
+            )
+        )
+    )
+    open(joinpath(directory, "semantic.json"), "w") do io
+        return write_json(io, contract)
+    end
+    return (
+        signature=joinpath(directory, "signature.csv"),
+        boundary=joinpath(directory, "boundary.csv"),
+        mask=joinpath(directory, "mask.csv"),
+        semantic=joinpath(directory, "semantic.json"),
+        loops=loops,
+        classes=classes,
+        chords=n,
+        lower=lower,
+        upper=upper,
+        centre=centre,
+        radii=(inner, outer, ground_radius),
+        tilt_degrees=tilt_degrees
+    )
+end
+
+function build_bent_band_coupon(
+    directory;
+    ground=false,
+    fabricated=true,
+    stem="band",
+    labels_only=false,
+    tilt_degrees=2.5
+)
+    inputs = write_bent_band_inputs(directory; ground=ground, tilt_degrees=tilt_degrees)
+    mesh = joinpath(directory, "coupon-$stem.msh")
+    census = joinpath(directory, "census-$stem.json")
+    generate_spatial_coupon(;
+        signature=inputs.signature,
+        mask=inputs.mask,
+        boundary=inputs.boundary,
+        fabricated=fabricated,
+        filename=mesh,
+        radius=0.5,
+        metal_thickness=0.1,
+        overetch=0.05,
+        sidewall_angle=90.0,
+        top_rounding=0.0,
+        trench_rounding=0.0,
+        lc_fine=0.05,
+        lc_tangent=0.1,
+        lc_far=0.3,
+        max_nodes=3_000_000,
+        max_elements=3_000_000,
+        semantic_contract=inputs.semantic,
+        corner_isotropy_radius=0.1,
+        corner_census=census,
+        edge_size=0.01,
+        edge_growth_ratio=2.0,
+        corner_size=0.01,
+        prism_tubes=true,
+        far_growth=0.5,
+        maximum_corner_aspect=4.0,
+        minimum_scaled_jacobian=0.01,
+        maximum_jacobian_condition=1000.0,
+        quality_displacement_over_normal=0.75,
+        corner_shape_gate=5.0,
+        labels_only=labels_only ? census : nothing
+    )
+    return parse_json(read(census, String)), mesh, inputs
+end
+
 @testset "tagged arc runs: seeded by the tags, cross-checked against the fit, fail closed" begin
     mktempdir() do directory
         inputs = write_strip_inputs(directory; chord_degrees=5.0)
@@ -1253,4 +1512,130 @@ end
     @test metal_facing_widths([outer, leg], 1.0e-9)[1] == [Inf, Inf]
     untubed_inner = (inner..., untubed=true)
     @test metal_facing_widths([outer, untubed_inner], 1.0e-9)[1] == [Inf, Inf]
+end
+
+@testset "round 3 class (1) (decisions 491 / 510): corner-free coupons build with 0 semantic corners, the corner gates NotApplicable" begin
+    # The contract gate (S-G1-c on the Julia side): [] is admitted iff Derivation.CornerFree is
+    # recorded; a legacy contract keeps the >= 1 rule; a record beside corners fails closed.
+    mktempdir() do directory
+        contract = joinpath(directory, "legacy-empty.json")
+        write(contract, "{\"Version\": 1, \"SemanticCorners\": []}")
+        @test occursin(
+            "at least one semantic corner",
+            guard_message(() -> read_semantic_corners(contract, IDENTITY_RIGID_TRANSFORM))
+        )
+        # The record as derive_semantic_contract writes it: the exact rule text and integer counts.
+        rule = escape_string(CORNER_FREE_RULE)
+        record =
+            "\"Derivation\": {\"CornerFree\": {\"Rule\": \"$rule\", \"ArcInteriorVertices\": 34, " *
+            "\"SmoothJoints\": 4, \"BoxFaceCutEnds\": 4}}"
+        mixed = joinpath(directory, "mixed.json")
+        write(mixed, "{\"Version\": 1, \"SemanticCorners\": [[0.0, 0.0, 0.0]], $record}")
+        @test occursin(
+            "Derivation.CornerFree with 1 semantic corners",
+            guard_message(() -> read_semantic_corners(mixed, IDENTITY_RIGID_TRANSFORM))
+        )
+        free = joinpath(directory, "free.json")
+        write(free, "{\"Version\": 1, \"SemanticCorners\": [], $record}")
+        @test read_semantic_corners(free, IDENTITY_RIGID_TRANSFORM) == NTuple{3, Float64}[]
+        @test contract_is_corner_free(parse_json(read(free, String)))
+        @test !contract_is_corner_free(parse_json(read(contract, String)))
+        bad = joinpath(directory, "bad.json")
+        write(
+            bad,
+            "{\"Version\": 1, \"SemanticCorners\": [], \"Derivation\": {\"CornerFree\": " *
+            "{\"Rule\": \"$rule\", \"ArcInteriorVertices\": 0, \"SmoothJoints\": 0, \"BoxFaceCutEnds\": 4}}}"
+        )
+        @test occursin(
+            "at least one arc vertex",
+            guard_message(() -> read_semantic_corners(bad, IDENTITY_RIGID_TRANSFORM))
+        )
+        # Decision 524 MINOR-2: the Rule text is pinned (one spelling with the Python validator)
+        # and a JSON boolean is not a count (Bool <: Integer in Julia), as on the Python side.
+        for (name, broken) in (
+            ("wrong-rule.json", replace(record, rule => "another rule")),
+            ("boolean-count.json", replace(record, "\"SmoothJoints\": 4" => "\"SmoothJoints\": true")),
+            ("negative-count.json", replace(record, "\"BoxFaceCutEnds\": 4" => "\"BoxFaceCutEnds\": -1")),
+            ("float-count.json", replace(record, "\"ArcInteriorVertices\": 34" => "\"ArcInteriorVertices\": 34.0"))
+        )
+            path = joinpath(directory, name)
+            write(path, "{\"Version\": 1, \"SemanticCorners\": [], $broken}")
+            @test occursin(
+                "CornerFree must record the rule and the non-negative integer counts",
+                guard_message(() -> read_semantic_corners(path, IDENTITY_RIGID_TRANSFORM))
+            )
+        end
+    end
+    # The empty-safe size laws (G.1.2 sites 5 and 8): the corner law is the identity without
+    # corners (lc_tangent, the value it takes far from every corner) and no ball boundary exists.
+    grading = CornerGrading(0.01, 2.0, 0.05, 0.1)
+    @test corner_curve_size((0.3, 0.2, 0.0), NTuple{3, Float64}[], grading, 0.1, 0.675) ==
+          0.1
+    @test corner_curve_size((0.3, 0.2, 0.0), [(0.3, 0.2, 0.0)], grading, 0.1, 0.675) == 0.01
+    # S-G1-a (the bent band, fab + thin) and S-G1-b (+ the ground's concave arc, fab + thin):
+    # every build reaches its census with 0 corners, 0 CornerMeasures rows, 0 cap regions,
+    # every joint smooth (one shared section per joint and placement), every straight end a
+    # 2.5-degree box-face cut end, the concave arcs collapsed in the fabricated collar.
+    mktempdir() do directory
+        for (variant, ground) in (("a", false), ("b", true)), fabricated in (true, false)
+            kind = fabricated ? "fab" : "thin"
+            sub = joinpath(directory, "$variant-$kind")
+            mkpath(sub)
+            census, mesh, inputs = build_bent_band_coupon(
+                sub;
+                ground=ground,
+                fabricated=fabricated,
+                stem="$variant-$kind"
+            )
+            arcs = ground ? 3 : 2
+            placements = fabricated ? 2 : 1
+            @test census["SemanticCorners"] == [] &&
+                  census["SemanticCornerKinds"] == [] &&
+                  census["Corners"] == [] &&
+                  census["InvariantCorners"]["Points"] == []
+            @test census["CornerGates"] == CORNER_GATES_NOT_APPLICABLE
+            optimization = census["SeedQualityOptimization"]
+            @test optimization["CornerMeasures"] == [] &&
+                  optimization["CornerAspectsAfter"] == [] &&
+                  optimization["InvariantCorners"] == 0 &&
+                  optimization["RequiredTetrahedra"] == 0 &&
+                  optimization["RequiredMinimumScaledJacobianAfter"] === nothing &&
+                  optimization["RequiredCellsBelowGateAfter"] == 0
+            tubes = census["PrismTubes"]
+            @test tubes["ArcTubes"]["Count"] == placements * arcs
+            @test tubes["ArcTubes"]["SharedSections"] == 2 * placements * arcs
+            @test tubes["TubeCount"] == 3 * placements * arcs
+            @test tubes["CapRegions"]["Caps"] == 0 &&
+                  tubes["CapRegions"]["Regions"] == [] &&
+                  tubes["CapRegions"]["MinimumScaledJacobian"] === nothing
+            face_ends = [f for row in tubes["Tubes"] for f in get(row, "FaceEnds", [])]
+            @test length(face_ends) == placements * 2 * arcs
+            @test all(
+                isapprox(f["ThetaDegrees"], inputs.tilt_degrees; atol=1.0e-9) for
+                f in face_ends
+            )
+            @test all(
+                j["TiltRadians"] == 0.0 && !j["PlaneCut"] for
+                row in tubes["Tubes"] if haskey(row, "Joints") for j in row["Joints"]
+            )
+            exterior = tubes["SizeLaws"]["Achieved"]["CornerExterior"]
+            @test exterior["Corners"] == 0 &&
+                  all(shell["Cells"] == 0 for shell in exterior["Shells"])
+            @test tubes["Section"]["ReducedSides"] == 0
+            @test census["Scope"]["ExhibitedClasses"] == vcat(
+                ["ArcSides", "ContinuationVertices", "ExteriorLoops"],
+                fabricated ? [] : ["ThinMetal"]
+            )
+            if fabricated
+                # The concave arcs (0.5 R and 2 R, below the 3 R collar) collapse onto the miter of
+                # their neighbours' offsets: a simple MiterOffset polygon per loop, no bridge.
+                @test [
+                    polygon["Construction"] for polygon in census["FootprintPolygons"]
+                ] == fill("MiterOffset", ground ? 2 : 1)
+            else
+                @test census["ThinSheetSeams"]["Count"] == 0
+            end
+            @test isfile(mesh)
+        end
+    end
 end

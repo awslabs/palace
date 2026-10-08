@@ -601,14 +601,59 @@ function json_point(value)
     return (Float64(value[1]), Float64(value[2]), Float64(value[3]))
 end
 
-# Contract semantic corners pulled back into the seed's source-local frame.
+# Round 3 class (1) (supervisor decision 510): a contract whose arc classification left no
+# semantic corner records Derivation.CornerFree (derive_semantic_contract; integer vertex
+# counts only) and lists SemanticCorners []; the record is the ONE condition under which the
+# mesher takes its corner-free branches (no corner ball, no graded corner point, no cap
+# centre before a corner, the corner gates NotApplicable). A legacy contract keeps the >= 1
+# corner rule bitwise. The same spelling as semantic_mesh_contract.contract_is_corner_free.
+function contract_is_corner_free(contract)
+    derivation = get(contract, "Derivation", nothing)
+    derivation isa AbstractDict && haskey(derivation, "CornerFree") || return false
+    record = derivation["CornerFree"]
+    # The record's shape as the Python validator pins it (decision 524 MINOR-2): the exact
+    # Rule text and non-negative INTEGER counts (a JSON boolean is not a count).
+    count_ok(name) = (value = get(record, name, nothing);
+                      value isa Integer && !(value isa Bool) && value >= 0)
+    record isa AbstractDict && get(record, "Rule", nothing) == CORNER_FREE_RULE &&
+        all(count_ok(name) for name in ("ArcInteriorVertices", "SmoothJoints", "BoxFaceCutEnds")) &&
+        record["ArcInteriorVertices"] + record["SmoothJoints"] > 0 ||
+        error("Semantic contract Derivation.CornerFree must record the rule and the non-negative " *
+              "integer counts ArcInteriorVertices / SmoothJoints / BoxFaceCutEnds with at least one arc vertex")
+    return true
+end
+
+# The rule text of Derivation.CornerFree, one spelling with semantic_mesh_contract.CORNER_FREE_RULE.
+const CORNER_FREE_RULE =
+    "mesher design round 3 class (1) (supervisor decisions 491 / 510): a plan-view boundary whose " *
+    "every Physical vertex is an ArcInterior vertex, a smooth ArcJoint (ARC_VERTEX_RULE) or a " *
+    "box-face cut end (BOX_FACE_CUT_END_RULE) has NO semantic corner - a C1-continuous metal " *
+    "outline; the edge singularity is carried by the tubes (one shared section at every smooth " *
+    "joint) and the corner isotropy ball and the corner gates have nothing to judge, so the " *
+    "contract records SemanticCorners [] with this Derivation.CornerFree record (integer vertex " *
+    "counts only) and every consumer takes its corner-free branch - the empty-safe minima, no " *
+    "graded corner points, CornerGates NotApplicable - only under it; a boundary that classifies " *
+    "no Physical vertex at all is still malformed, and a legacy contract without the record " *
+    "keeps the >= 1 corner rule bitwise"
+
+# The census record of the corner gates on a corner-free build (mesh_stage_contract.
+# CORNER_GATES_NOT_APPLICABLE): MaximumCornerAspect / CornerShapeGate have nothing to judge.
+const CORNER_GATES_NOT_APPLICABLE = "NotApplicable (0 semantic corners, Derivation.CornerFree)"
+
+# Contract semantic corners pulled back into the seed's source-local frame. An empty list
+# is admitted iff the contract records Derivation.CornerFree (round 3 class (1)); a record
+# beside a non-empty list fails closed.
 function read_semantic_corners(path, transform)
     contract = parse_json(read(path, String))
     contract isa AbstractDict && haskey(contract, "SemanticCorners") ||
         error("Semantic contract lacks SemanticCorners")
     corners = contract["SemanticCorners"]
-    corners isa AbstractVector && !isempty(corners) ||
+    corners isa AbstractVector || error("Semantic contract must list at least one semantic corner")
+    corner_free = contract_is_corner_free(contract)
+    isempty(corners) && !corner_free &&
         error("Semantic contract must list at least one semantic corner")
+    corner_free && !isempty(corners) &&
+        error("Semantic contract records Derivation.CornerFree with $(length(corners)) semantic corners")
     placement = haskey(contract, "RigidTransform") ?
         rigid_transform(Float64.(contract["RigidTransform"])) : copy(IDENTITY_RIGID_TRANSFORM)
     isapprox(placement, transform; atol=1.0e-12, rtol=0.0) ||
@@ -692,7 +737,11 @@ end
 
 # Tangential size of a longitudinal curve through the corner balls: the corner
 # law inside a ball, the process-band grading slope up to lc_tangent outside.
+# Without corners (round 3 class (1)) the law is the identity: lc_tangent, the value it
+# takes far from every corner, so the composed field is continuous with the
+# corner-bearing case.
 function corner_curve_size(point, corners, grading::CornerGrading, lc_tangent, slope)
+    isempty(corners) && return lc_tangent
     distance = minimum(norm(point .- corner) for corner in corners)
     return min(lc_tangent, corner_ball_size(grading, distance) +
                            slope * max(distance - grading.radius, 0.0))
@@ -720,6 +769,9 @@ end
 # metal-thickness vertical corner edge when the thickness equals the radius) would
 # otherwise get a node at roundoff distance and degenerate cells.
 function ball_boundary_parameters(curve, from, to, corners, grading::CornerGrading)
+    # No corners, no ball boundary to cross (round 3 class (1); the production caller
+    # passes `nothing` for an empty graded point list and never reaches this).
+    isempty(corners) && return Float64[]
     radius = grading.radius
     samples = 256
     parameters = collect(range(from, to; length=samples + 1))
@@ -2506,8 +2558,8 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         "RequiredSetRecomputations" => recomputations,
         "CornerAspectsBefore" => corner_before, "CornerAspectsAfter" => corner_after,
         "CornerMoves" => corner_moves,
-        "RequiredMinimumScaledJacobianBefore" => required_before,
-        "RequiredMinimumScaledJacobianAfter" => required_after,
+        "RequiredMinimumScaledJacobianBefore" => isfinite(required_before) ? required_before : nothing,
+        "RequiredMinimumScaledJacobianAfter" => isfinite(required_after) ? required_after : nothing,
         "RequiredCellsBelowTargetBefore" => below_before,
         "RequiredCellsBelowTargetAfter" => below_after,
         "RequiredCellsBelowGateAfter" => below_gate,
@@ -2564,7 +2616,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         centroid = sum(points[:, i] for i in cell) ./ 4
         lengths = [norm(points[:, cell[i]] .- points[:, cell[j]]) for i in 1:4 for j in (i + 1):4]
         println("  $label cell $k: $(value), centroid $(centroid), " *
-                "corner distance $(minimum(norm(centroid .- collect(c)) for c in corners)), " *
+                "corner distance $(minimum((norm(centroid .- collect(c)) for c in corners); init=Inf)), " *
                 "span distance $(minimum(span_distance[i] for i in cell)), " *
                 "surface vertices $(count(surface[i] for i in cell)), edges $(sort(lengths)), " *
                 "vertices $([(points[:, i], surface[i], i in moved_set) for i in cell])")
@@ -7608,7 +7660,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "Corners" => length(semantic_corners), "Law" => "CornerExteriorRule",
             "Shells" => shell_size_statistics(
                 points, index,
-                c -> minimum(norm(c .- collect(corner)) for corner in semantic_corners),
+                c -> minimum((norm(c .- collect(corner)) for corner in semantic_corners); init=Inf),
                 corner_radius, corner_radius .+ [2lc_fine, 4lc_fine, 8lc_fine],
                 (c, d) -> corner_exterior_size(d, lc_fine, lc_far, far_growth))),
         "JunctionLines" => Dict{String, Any}(
@@ -7901,6 +7953,9 @@ function generate_spatial_coupon(;
     # semantic corner, graded to the far size with the process-band slope.
     semantic_corners = corner_isotropy ? read_semantic_corners(semantic_contract, transform) :
                        NTuple{3, Float64}[]
+    # Round 3 class (1): the contract's Derivation.CornerFree admits the empty list above and
+    # is the one condition for the corner-free branches below (tube ends, census record).
+    corner_free = corner_isotropy && contract_is_corner_free(parse_json(read(semantic_contract, String)))
     trace_basis_paths = (trace_basis_contract, trace_vertices, trace_triangles, process_library)
     trace_basis_bound = all(path -> path !== nothing, trace_basis_paths)
     trace_basis_bound || all(path -> path === nothing, trace_basis_paths) ||
@@ -8620,7 +8675,10 @@ function generate_spatial_coupon(;
         end
         sort!(unique!(tube_axis_curves))
         sort!(unique!(tube_cap_points))
-        isempty(tube_cap_points) && error("No tube ends before a semantic corner")
+        # On a corner-free coupon every tube end is a smooth joint or on the outer box: no cap
+        # centre before a corner (round 3 class (1)); otherwise the list is never empty.
+        isempty(tube_cap_points) && !corner_free && error("No tube ends before a semantic corner")
+        corner_free && println("TubeCapPoints: $(length(tube_cap_points)) (CornerFree)")
     end
     graded_points = copy(semantic_corners)
     graded_point_tags = copy(corner_point_tags)
@@ -8759,7 +8817,10 @@ function generate_spatial_coupon(;
                 curve_spacing = band_curve ? lc_fine : lc_tangent
                 placed = composed_curve_nodes(
                     curve, curve_spacing, point -> curve_size_law(point, curve_spacing),
-                    edge_growth_ratio, corner_isotropy ? graded_points : nothing, corner_grading)
+                    edge_growth_ratio,
+                    # No graded point (corner-free): no ball boundary to cross.
+                    corner_isotropy && !isempty(graded_points) ? graded_points : nothing,
+                    corner_grading)
                 curve_record = Dict{String, Any}(
                     "Curve" => Int(curve),
                     "Kind" => curve in junction_set ? "junction" : band_curve ? "band" : "metal",
@@ -8829,8 +8890,8 @@ function generate_spatial_coupon(;
             any(surface_family(first(record)) in METAL_SURFACE_FAMILIES
                 for record in records) || continue
             xyz = ridge_nodes[curve]
-            corner_distance = [minimum(norm(xyz[:, i] .- collect(corner))
-                                       for corner in semantic_corners) for i in axes(xyz, 2)]
+            corner_distance = [minimum((norm(xyz[:, i] .- collect(corner))
+                                        for corner in semantic_corners); init=Inf) for i in axes(xyz, 2)]
             # Without corner grading the rows lie on the lc_tangent grid outside the
             # corner size law, after the taper intervals; with corner grading
             # (decision 33) the span starts at the ball boundary node (the graded
@@ -9235,8 +9296,7 @@ function generate_spatial_coupon(;
     if corner_isotropy
         # Recorded seed-stage artifact, source-local frame, no pass/fail gate.
         ispath(corner_census) && error("Corner census output already exists")
-        open(corner_census, "w") do stream
-            write_json(stream, Dict{String, Any}(
+        census_record = Dict{String, Any}(
                 "Version" => 1, "Frame" => "SourceLocal",
                 "Purpose" => "Seed corner-ball census, longitudinal-face census and interface areas; reported, not a qualification gate",
                 "Scope" => prism_tubes ?
@@ -9454,7 +9514,12 @@ function generate_spatial_coupon(;
                     "UnrefinedTips" => length(unrefined_tips)),
                 "ThinSheetSeams" => thin_sheet_seams,
                 "InterfaceAreas" => area_rows,
-                "Corners" => census_rows))
+                "Corners" => census_rows)
+        # Round 3 class (1): recorded only where the rule acts (a corner-free build has no
+        # corner to judge); every corner-bearing census is unchanged.
+        corner_free && (census_record["CornerGates"] = CORNER_GATES_NOT_APPLICABLE)
+        open(corner_census, "w") do stream
+            write_json(stream, census_record)
             println(stream)
         end
         println("Seed corner census: $corner_census")

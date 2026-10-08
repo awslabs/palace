@@ -2,15 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """derive_semantic_contract reproduces the frozen four-/ten-edge contracts from their
 immutable inputs and a label census, and fails closed on inconsistent inputs."""
+import copy
+import csv
 import json
+import math
 from pathlib import Path
 import shutil
 import tempfile
 import unittest
 
 from derive_semantic_contract import coupon_radius, derive, semantic_corners
-from semantic_mesh_contract import (INVARIANT_CORNER_RULE, box_face_cut_end, boundary_semantic_corners,
-                                    invariant_corner, plan_view_quantum, quantised_side_dot)
+from semantic_mesh_contract import (CORNER_FREE_RULE, INVARIANT_CORNER_RULE, box_face_cut_end,
+                                    boundary_semantic_corners, contract_is_corner_free, invariant_corner,
+                                    plan_view_quantum, quantised_side_dot, validate_semantic_contract)
 
 HERE = Path(__file__).resolve().parent
 TEN_EDGE = HERE / "testdata" / "ten-edge-6791f1c84123"
@@ -331,3 +335,181 @@ class ExactQuantisedPredicateTest(unittest.TestCase):
         self.assertIn("integer arithmetic", INVARIANT_CORNER_RULE)
         self.assertIn("1e-9 R", INVARIANT_CORNER_RULE)
         self.assertIn("rigidly rotated perpendicular corner", INVARIANT_CORNER_RULE)
+
+
+def write_bent_band_source(directory, *, ground=False, tilt_degrees=2.5, chord_degrees=5.0):
+    """The corner-free synthetics of mesher design round 3 class (1) (G.1.6), the Python twin of
+    test_arc_tubes.jl write_bent_band_inputs: a metal band of width 0.5 (R 0.5) with one exactly
+    tangent 90-degree bend (outer convex arc 0.75, inner CONCAVE arc 0.25 about (0, 0.75)) entering
+    through the x0 face and leaving through the y1 face, rotated by `tilt_degrees` so that every
+    straight leg crosses its face obliquely (a box-face cut end, decision 320); `ground` adds the
+    region beyond a 0.25 gap whose edge carries a second concave arc of radius 1.0 (S-G1-b).
+    Writes signature.csv / boundary.csv; returns (signature, boundary, chords)."""
+    centre, inner, outer, ground_radius, sweep = (0.0, 0.75), 0.25, 0.75, 1.0, 90.0
+    n = math.ceil(sweep / chord_degrees - 1e-9)
+    c, s = math.cos(math.radians(tilt_degrees)), math.sin(math.radians(tilt_degrees))
+    rotate = lambda p: (centre[0] + c * (p[0] - centre[0]) - s * (p[1] - centre[1]),
+                        centre[1] + s * (p[0] - centre[0]) + c * (p[1] - centre[1]))
+    west, north = (-c, -s), (-s, c)
+    rows = []
+
+    def straight(a, b):
+        d = (b[0] - a[0], b[1] - a[1]); L = math.hypot(*d); t = (d[0] / L, d[1] / L)
+        rows.append({"Slot": 0, "Conductor": 1, "Px": 0.5 * (a[0] + b[0]), "Py": 0.5 * (a[1] + b[1]), "Pz": 0.0,
+                     "Gx": t[1], "Gy": -t[0], "Gz": 0.0, "Tx": t[0], "Ty": t[1], "Tz": 0.0, "Nz": 1,
+                     "S0": -0.5 * L, "S1": 0.5 * L, "VertexArm": 0})
+
+    def arc_points(rho):
+        return [rotate((centre[0] + rho * math.cos(math.radians(-90.0 + sweep * k / n)),
+                        centre[1] + rho * math.sin(math.radians(-90.0 + sweep * k / n)))) for k in range(n + 1)]
+    outer_points, inner_points = arc_points(outer), arc_points(inner)[::-1]
+    ground_points = arc_points(ground_radius)[::-1]
+    along = lambda p, d, length: (p[0] + length * d[0], p[1] + length * d[1])
+    chains = [(outer_points, west, north, outer, 1, 1), (inner_points, north, west, inner, -1, 2)]
+    if ground:
+        chains.append((ground_points, north, west, ground_radius, -1, 3))
+    for points, before, after, _, _, _ in chains:
+        straight(along(points[0], before, 1.0), points[0])
+        for k in range(n):
+            straight(points[k], points[k + 1])
+        straight(points[-1], along(points[-1], after, 1.0))
+    # The box of the mesher's row rule (row_coupon_bounds: every straight claim of length 2 R
+    # extended by 2 R at both ends, padded by R transversally, then R): the legs reach the faces.
+    xs, ys = [], []
+    for row in rows:
+        for end in (row["S0"] - 1.0 if row["S0"] <= -0.5 else row["S0"], row["S1"] + 1.0 if row["S1"] >= 0.5 else row["S1"]):
+            for side in (-0.5, 0.5):
+                xs.append(row["Px"] + end * row["Tx"] + side * row["Gx"])
+                ys.append(row["Py"] + end * row["Ty"] + side * row["Gy"])
+    lower, upper = (min(xs) - 0.5, min(ys) - 0.5), (max(xs) + 0.5, max(ys) + 0.5)
+    x0_face = lambda p: (lower[0], p[1] + (lower[0] - p[0]) * west[1] / west[0])
+    y1_face = lambda p: (p[0] + (upper[1] - p[1]) * north[0] / north[1], upper[1])
+    band = [x0_face(outer_points[0]), *outer_points, y1_face(outer_points[-1]), y1_face(inner_points[0]),
+            *inner_points, x0_face(inner_points[-1])]
+    tags = {1: {**{2 + k: (1, outer, 1) for k in range(n)}, **{n + 5 + k: (2, inner, -1) for k in range(n)}}}
+    joints = {1: {2, n + 2, n + 5, 2 * n + 5}}
+    loops = [band]
+    if ground:
+        loops.append([y1_face(ground_points[0]), *ground_points, x0_face(ground_points[-1]), lower,
+                      (upper[0], lower[1]), upper])
+        tags[2] = {2 + k: (3, ground_radius, -1) for k in range(n)}
+        joints[2] = {2, n + 2}
+    on_face = lambda p, q: any(abs(p[d] - bound[d]) <= 1e-9 and abs(q[d] - bound[d]) <= 1e-9
+                               for d in range(2) for bound in (lower, upper))
+    signature = Path(directory) / "signature.csv"
+    with signature.open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=["Index", *rows[0]])
+        writer.writeheader()
+        for index, row in enumerate(rows, start=1):
+            writer.writerow({"Index": index, **row})
+    boundary = Path(directory) / "boundary.csv"
+    with boundary.open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["Loop", "Vertex", "Conductor", "Plane", "Hole", "Class", "X", "Y", "ArcId", "ArcCx", "ArcCy",
+                         "ArcR", "ArcSign", "JointTurn", "JointSmooth"])
+        for loop_index, polygon in enumerate(loops, start=1):
+            m = len(polygon)
+            for i, point in enumerate(polygon, start=1):
+                cls = "Continuation" if on_face(point, polygon[i % m]) else "Physical"
+                tag = tags[loop_index].get(i)
+                arc = [tag[0], repr(centre[0]), repr(centre[1]), repr(tag[1]), tag[2]] if tag else [""] * 5
+                joint = ["0.0", "1"] if i in joints[loop_index] else ["", ""]
+                writer.writerow([loop_index, i, 1, "0.0", 0, cls, repr(point[0]), repr(point[1]), *arc, *joint])
+    return signature, boundary, n
+
+
+class CornerFreeContractTest(unittest.TestCase):
+    """Mesher design round 3 class (1) (decisions 491 / 510; DESIGN-part-G G.1.3 Option A): a
+    boundary whose every Physical vertex is an arc vertex or a box-face cut end derives an EMPTY
+    corner list with Derivation.CornerFree (integer counts only); the validator admits the empty
+    list iff the record is present; a boundary with no Physical vertex at all keeps the legacy
+    stop (S-G1-c)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def test_corner_free_band_derives_an_empty_corner_list_with_the_record(self):
+        for ground in (False, True):
+            signature, boundary, chords = write_bent_band_source(self.tmp, ground=ground)
+            contract = derive(self.tmp, signature=signature, boundary=boundary, radius=0.5)
+            arcs = 3 if ground else 2
+            self.assertEqual(contract["SemanticCorners"], [])
+            self.assertEqual(contract["Derivation"]["CornerFree"],
+                             {"Rule": CORNER_FREE_RULE, "ArcInteriorVertices": arcs * (chords - 1),
+                              "SmoothJoints": 2 * arcs, "BoxFaceCutEnds": arcs})
+            # One cut end per face crossing: the vertex LEAVING the face (its incoming side the
+            # box side; the arriving vertex carries the Continuation class of its outgoing side).
+            self.assertTrue(contract_is_corner_free(contract))
+            self.assertEqual(len(contract["Derivation"]["BoxFaceCutEnds"]["Points"]), arcs)
+            self.assertNotIn("InvariantCorners", contract["Derivation"])
+            topology = contract["FeatureTopology"]
+            self.assertEqual(topology["ArcFeatureCount"], arcs)
+            self.assertEqual(topology["PhysicalFeatureCount"], 3 * arcs)
+            self.assertEqual(len(topology["CutEndpoints"]), 2 * arcs)
+            self.assertEqual(len(topology["CADSubdivisionEndpoints"]), 2 * arcs)
+            self.assertEqual(topology["BoundaryContinuationVertexCount"], 2 if not ground else 6)
+            # The whole record is integers and the rule: nothing platform-dependent (class (10)).
+            self.assertTrue(all(isinstance(v, int) for k, v in contract["Derivation"]["CornerFree"].items()
+                                if k != "Rule"))
+        # The same outline crossing the faces exactly perpendicularly (tilt 0) keeps decision 320's
+        # legacy corners at the face vertices: not corner-free, no record.
+        signature, boundary, _ = write_bent_band_source(self.tmp, tilt_degrees=0.0)
+        perpendicular = derive(self.tmp, signature=signature, boundary=boundary, radius=0.5)
+        self.assertEqual(len(perpendicular["SemanticCorners"]), 2)
+        self.assertNotIn("CornerFree", perpendicular["Derivation"])
+        self.assertFalse(contract_is_corner_free(perpendicular))
+
+    def test_validator_admits_the_empty_list_only_under_the_record_and_never_beside_corners(self):
+        signature, boundary, _ = write_bent_band_source(self.tmp)
+        contract = derive(self.tmp, signature=signature, boundary=boundary, radius=0.5)
+        self.assertIs(validate_semantic_contract(contract), contract)
+        legacy = copy.deepcopy(contract)
+        del legacy["Derivation"]["CornerFree"]
+        with self.assertRaisesRegex(ValueError, "at least one 3D point"):
+            validate_semantic_contract(legacy)
+        mixed = copy.deepcopy(contract)
+        mixed["SemanticCorners"] = [[0.0, 0.0, 0.0]]
+        with self.assertRaisesRegex(ValueError, "CornerFree is recorded on a contract with semantic corners"):
+            validate_semantic_contract(mixed)
+        for name, value in (("ArcInteriorVertices", -1), ("SmoothJoints", 2.0), ("BoxFaceCutEnds", True)):
+            broken = copy.deepcopy(contract)
+            broken["Derivation"]["CornerFree"][name] = value
+            with self.assertRaisesRegex(ValueError, "CornerFree must record"):
+                contract_is_corner_free(broken)
+        no_arc = copy.deepcopy(contract)
+        no_arc["Derivation"]["CornerFree"].update(ArcInteriorVertices=0, SmoothJoints=0)
+        with self.assertRaisesRegex(ValueError, "at least one arc vertex"):
+            contract_is_corner_free(no_arc)
+        wrong_rule = copy.deepcopy(contract)
+        wrong_rule["Derivation"]["CornerFree"]["Rule"] = "another rule"
+        with self.assertRaisesRegex(ValueError, "CornerFree must record"):
+            contract_is_corner_free(wrong_rule)
+        # Every frozen fixture contract is corner-bearing: no record, the rule inert.
+        for fixture in (TEN_EDGE, FOUR_EDGE):
+            frozen = json.loads((fixture / "semantic-contract.json").read_text())
+            self.assertFalse(contract_is_corner_free(frozen))
+            self.assertIs(validate_semantic_contract(frozen), frozen)
+
+    def test_boundary_without_any_physical_vertex_keeps_the_legacy_stop(self):
+        # S-G1-c: a boundary of box sides only (no Physical vertex, no arc vertex) is malformed;
+        # so is a straight oblique strip whose only Physical vertices are cut ends - the empty
+        # set is admitted only when the ARC classification produced it.
+        header = ["Loop", "Vertex", "Conductor", "Plane", "Hole", "Class", "X", "Y"]
+        def write(rows, name):
+            path = self.tmp / name
+            with path.open("w", newline="") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(header)
+                writer.writerows(rows)
+            return path
+        box_only = write([[1, i + 1, 1, "0.0", 0, "Continuation", repr(x), repr(y)]
+                          for i, (x, y) in enumerate(((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)))],
+                         "box-only.csv")
+        with self.assertRaisesRegex(ValueError, "classifies no Physical vertex"):
+            semantic_corners(box_only, QUANTUM_2)
+        oblique = write([[1, 1, 1, "0.0", 0, "Physical", "-1.0", "-0.5"], [1, 2, 1, "0.0", 0, "Continuation", "1.0", "-0.3"],
+                         [1, 3, 1, "0.0", 0, "Physical", "1.0", "0.3"], [1, 4, 1, "0.0", 0, "Continuation", "-1.0", "0.5"]],
+                        "oblique-strip.csv")
+        with self.assertRaisesRegex(ValueError, "classifies no Physical vertex"):
+            semantic_corners(oblique, QUANTUM_2)

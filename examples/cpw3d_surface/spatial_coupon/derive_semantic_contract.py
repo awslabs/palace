@@ -32,6 +32,12 @@ executable):
   perpendicular corner is legacy, decision 416): recorded under
   Derivation.InvariantCorners only where the rule acts, so every rectilinear contract is
   unchanged; the mesher evaluates the same predicate and fails closed on a disagreement;
+- a boundary whose every Physical vertex is an arc vertex (ArcInterior or a smooth ArcJoint,
+  ARC_VERTEX_RULE) or a box-face cut end has NO semantic corner (mesher design round 3
+  class (1), decision 510, semantic_mesh_contract.CORNER_FREE_RULE): SemanticCorners is []
+  and Derivation.CornerFree records the integer vertex counts - only where the rule acts,
+  so every stored contract is unchanged; a boundary classifying no Physical vertex at all
+  (no arc vertex either) is still malformed and fails closed with the legacy message;
 - FeatureTopology is semantic_mesh_contract.derive_feature_topology (the finite
   oriented signature segments against the corners and the boundary classes);
 - whether a slot's un-etched plane (3000 + s) exists is a producer outcome of the
@@ -73,7 +79,7 @@ import json
 from pathlib import Path
 import tomllib
 
-from semantic_mesh_contract import (ARC_VERTEX_RULE, BOX_FACE_CUT_END_RULE, INVARIANT_CORNER_RULE,
+from semantic_mesh_contract import (ARC_VERTEX_RULE, BOX_FACE_CUT_END_RULE, CORNER_FREE_RULE, INVARIANT_CORNER_RULE,
                                     boundary_arc_vertices, boundary_semantic_corners,
                                     derive_feature_topology, plan_view_quantum, validate_semantic_contract)
 
@@ -183,7 +189,10 @@ def semantic_corners(boundary, quantum):
     if any(row["Class"] not in ("Physical", "Continuation") for row in rows):
         raise ValueError("plan-view boundary has an unknown vertex class")
     corners, cut_ends, invariant = boundary_semantic_corners(rows, quantum)
-    if not corners:
+    # Round 3 class (1): an empty corner list is the CORRECT classification of a boundary
+    # whose Physical vertices are all arc vertices or cut ends (recorded by derive as
+    # Derivation.CornerFree); a boundary with no Physical vertex at all is malformed.
+    if not corners and not any(boundary_arc_vertices(rows).values()):
         raise ValueError("plan-view boundary classifies no Physical vertex")
     return corners, cut_ends, invariant
 
@@ -278,6 +287,13 @@ def derive(source, build_census=None, *, signature=None, boundary=None, process_
     if any(excluded_arc_vertices.values()):
         # Block (b) design 1.2 (1) / A3 (1): the arc vertices that are not corners.
         derivation["ArcVertices"] = {"Rule": ARC_VERTEX_RULE, **excluded_arc_vertices}
+    if not corners:
+        # Round 3 class (1) (decision 510): the arc classification left no corner; integer
+        # counts only (platform-neutral), recorded only where the rule acts.
+        derivation["CornerFree"] = {"Rule": CORNER_FREE_RULE,
+                                    "ArcInteriorVertices": len(excluded_arc_vertices["Interior"]),
+                                    "SmoothJoints": len(excluded_arc_vertices["SmoothJoints"]),
+                                    "BoxFaceCutEnds": len(box_face_cut_ends)}
     if build_census is not None:
         derivation["BuildCensusSHA256"] = sha256(build_census)
         derivation["BuildCensusInterfaceLabels"] = labels
