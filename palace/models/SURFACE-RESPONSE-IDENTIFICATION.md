@@ -1044,9 +1044,50 @@ smaller endpoint.
    sides of each 2-um strip (features 0 / 1, 4 x 0.869 um from the 3-edge clusters' claim
    cut at y = 540.131 to the feature split at y = 541.0, x = +-43) and the two 4.9-um
    isolated edges (features 70 / 73, y = 12) continuing the 10-edge cluster's claims from
-   x = +-5.2, ending 0.8 um inside its box face at +-10.9 = 5.2 + 3R) — and Foreign
-   otherwise (metal absent from the coupon's twins: a second-order model mismatch, not a
-   double count). The record runs in the operator constructor (metadata
+   x = +-5.2, ending 0.8 um inside its box face at +-10.9 = 5.2 + 3R) — and otherwise
+   judged against the coupon's Box + Context (decision 553, 2026-10-08, the rerun-2
+   diagnosis review MAJOR-1; CORRECTS the decision-236 premise "foreign metal inside a box
+   is absent from both twins", which held for the legacy claims-only coupons only: under
+   contract v3 the twins CONTAIN the context metal inside the box). Each CELL of a Foreign
+   stretch is classed by the context piece it lies on (its own-edge ends and midpoint within
+   1e-3 R of a piece in the spatial patch frame — the rule-B5 `EdgeExcludeSegments` form,
+   `ClassifyForeignContext`) and treated PER CELL (decision 559 (1); the classification is
+   read ONCE on the intact cells, before the continuation pass, by the records and the
+   treatment alike, decision 559 MINOR-1): a cell on a `Chain: false` piece (the library's
+   `ForeignEdges` = the qualification's `EdgeExcludeSegments`, so the coupon's within-R
+   SURFACES leave that edge to the cell while its DOMAIN matrices integrate the whole box)
+   keeps its surface matrices and drops its domain correction (`domain_weight` 0 in the ft
+   domain correction, the ff transform and the self-consistent operator; the rerun-2 loop end
+   on S1 / S4 / S2p / S3p, 17.41 um of 33 device-run isolated-edge cells — 20 dry-run cells —
+   on the 22-um ForeignEdge x = 14.6, whose domain defect entered the sc operator twice); a
+   cell on a `Chain: true` piece, or any context piece of a coupon without ForeignEdges (the
+   group-C exact coupons exclude nothing), is OWNED by the coupon — the coupon carries the
+   edge WITH its within-R surfaces (MEASURED on the C2 junction-lead coupon's
+   `-p4-local-edge` qualification record: every Chain: true piece tagged like the claims, the
+   Chain: false pieces 0 segments) — weight 0 for both matrices, as a wholly owned
+   continuation cell, listed under `ContinuationOwnership.OwnedCells` with
+   `Class: ForeignContextEdge` (rerun 2: C1 x 3, C2, C2p, C3, S1b, whose cells' fabricated
+   surface energy — 1.64 / 1.93 / 2.06 % of E_ft on C1 (SA / MS / MA), 0.47 / 0.56 / 0.55 %
+   C2, 0.29 / 0.35 / 0.29 % C3, 0.17-0.19 % C2p, 0.02 % S1b — was counted twice); a cell on
+   no piece is untouched. A cell inside two coupons' boxes takes the stronger class (owned
+   over domain-dropped) and lists every coupon of that class as an owner (ascending, the
+   owned length split equally). The stretch record's `Class` summarises its cells, with
+   its `Treatment` and the three cell counts (never silent): **ForeignExcludedEdge** (every
+   cell on a `Chain: false` piece; `KeepSurfaceDropDomain`), **ForeignContextEdge** (every
+   cell on a `Chain: true` piece; `OwnedByCoupon`), **ForeignMixedEdges** (cells of different
+   classes, each treated by its own; `PerCell` — the whole-stretch sub-rule of the first
+   553 implementation would have zeroed the SURFACE of a cell on an excluded ForeignEdge, a
+   surface the coupon does not carry; no such stretch exists in the rerun-2 windows), and
+   **Foreign** (no cell on any context piece, or inside a legacy claims-only coupon: metal
+   absent from the coupon's twins, a second-order model mismatch, not a double count;
+   `Untouched`). The `ContinuationOwnership.ForeignContext` entry lists the excluded-edge
+   cells with their owners and both lengths; the spatial patch provenance carries the
+   `Chain: false` pieces as `Foreign` beside `Chain` (geometry cache version 16: the stacks
+   own-cell pre-image, the fillet corner-arm extension records and the foreign pieces,
+   decision 559 (3); either version-15 schema is refused). The Maxwell operator path
+   (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
+   inert there (it multiplies the Maxwell domain terms for uniformity only). The record
+   runs in the operator constructor (metadata
    `SurfaceResponse.Diagnostics`, with the warning) and in the preflight on the spatial
    models whose basis points the library provides (manifest `Identification.Diagnostics`
    and the same warning; a signature placeholder of a Missing key has none and is listed
@@ -1063,7 +1104,8 @@ smaller endpoint.
    the portion [S0, S1) stays, so a portion's quadrature weights sum to 1 - owned /
    portion length, which the A7 audit reconciles from the record), the origin moves to the
    kept interval's midpoint with the cell symmetric about it (the clipped cell equals a cell
-   built directly on the kept interval), the Maxwell anchors move with it. Foreign cells,
+   built directly on the kept interval), the Maxwell anchors move with it. Foreign cells
+   (on no context piece: see the sub-classes above for the cells on a context piece),
    the cells of a continuing stretch outside the box and the stack-end cells of a stretch
    that continues no claim are untouched; a curved cell never continues a claim (parallel
    within the signature angle tolerance), so an arc continuing an arc claim keeps its
@@ -1754,8 +1796,9 @@ bound it fails closed. Near-collinear line / line joints (|turn| <= `JUNCTION_TA
 
 **Placement of a contract-3 (device-plan) model (decision 285 (4), R1b).** The cluster patch of
 a model whose Signature carries `Box` + `Context` records in its provenance the model's
-`SupportBox` and its chain pieces (the `Chain: true` context entries, arcs chorded) in the
-patch's local frame in units of R (geometry cache version 7), and the placement verifies A10
+`SupportBox`, its chain pieces (the `Chain: true` context entries, arcs chorded) and its
+foreign pieces (the `Chain: false` entries = `ForeignEdges`, decision 553) in the
+patch's local frame in units of R (geometry cache versions 7 / 16), and the placement verifies A10
 EXTENDED TO THE CONTEXT: the model's `Context` must equal the matched feature's and the two
 ends of every context entry, placed by the patch frame, must lie within 1e-3 R of a device
 edge (`DevicePerimeterDistance` on the identification's segments; an arc entry's ends are
@@ -2125,7 +2168,7 @@ claim reaches s_half); F1's `TrimmedLength`
 keeps its sharp definition s - R (no census instance: every rounded corner is 90 deg). The
 vertex coupon's raw claims (F-DB-a) are clipped at s_k on every hosted arm, the stretch
 having gone to the extended cell or portion. Applied after the F1 trim and before the
-mirror trim at the end of `BuildFeaturePatches`; the geometry cache (version 15) carries
+mirror trim at the end of `BuildFeaturePatches`; the geometry cache (version 16) carries
 the extended cells and the records. RECORD, one entry per extended corner, in
 `Identification.Diagnostics.CornerArmExtension` of the preflight manifest
 (`Summary.CornerArmExtension` = `Corners` / `StretchLength` / `ExtendedCellLength` /

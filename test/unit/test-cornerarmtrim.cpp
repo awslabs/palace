@@ -924,7 +924,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
     std::ifstream cache_input(cache_path);
     REQUIRE(cache_input);
     const json cache = json::parse(cache_input);
-    CHECK(cache["Version"] == 15);
+    CHECK(cache["Version"] == 16);
     const auto &cached_patches = cache["Patches"];
     for (const std::size_t p : extended)
     {

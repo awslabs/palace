@@ -346,6 +346,9 @@ private:
     int mortar_longitudinal_subdivisions = 1;
     double mortar_resolution = 0.0;
     double weight = 1.0;
+    // Factor on the domain correction only (ResponseCorrectionPatchData::domain_weight): 0
+    // for a ForeignExcludedEdge cell (decision 553), whose surface matrices keep `weight`.
+    double domain_weight = 1.0;
     // Conductor-consistency probes (decision 277): the device potential at the conductor
     // vertices of a spatial surface-mortar trace mesh, sampled as the last
     // probe_point_count points of the patch (after the quadrature points and the
@@ -768,8 +771,19 @@ config::ElectrostaticSolverData::ResponseCorrectionData ReadResponseGeometryCach
 // warning), never an abort: the coupon is calibrated on the cluster's claims and their
 // straight continuations to the box face, so a stretch that continues one of the cluster's
 // claims through its claim cut (class Continuation) is corrected by both the coupon and its
-// own patches, while any other stretch (class Foreign) is absent from the coupon's twins —
-// a model mismatch, not a double count. A stretch continues a claim only through the
+// own patches. Any other stretch is Foreign to the claims; under spatial-support contract
+// v3 (Box + Context, decisions 281 / 282 / 285 / 286) the coupon's twins CONTAIN the
+// context metal inside the box, so a Foreign stretch lying on a context piece of the coupon
+// is a double count too (decision 553, the rerun-2 diagnosis review): on a Chain: false
+// piece (the library's ForeignEdges = the qualification's EdgeExcludeSegments, rule B5) the
+// coupon's within-R SURFACES leave that edge to the cells but its DOMAIN matrices integrate
+// the whole box (sub-class ForeignExcludedEdge: the cells keep their surface matrices and
+// drop their domain correction); on a Chain: true piece, or any context piece of a coupon
+// without ForeignEdges, surface AND domain are both in the coupon (sub-class
+// ForeignContextEdge: the cells are owned by the coupon, weight 0, as a continuation). A
+// Foreign stretch on no context piece of a legacy (claims-only) coupon is absent from the
+// coupon's twins — a model mismatch, not a double count (the decision-236 premise, true for
+// legacy coupons only). A stretch continues a claim only through the
 // side's OWN edge (decision 252): when one of its cells lies on the claim's mesh segment
 // (the claim boundary cut that segment) or when it runs parallel to the claim (within the
 // signature angle tolerance), one of its cell ends ON ITS OWN EDGE (the cell ends shifted
@@ -787,6 +801,22 @@ config::ElectrostaticSolverData::ResponseCorrectionData ReadResponseGeometryCach
 // (patch units); boxes are (spatial patch index, min, max, claims) in patch units;
 // continuation_tolerance is the abutment tolerance along the chain (the signature parameter
 // tolerance 1e-3 R). Records in (feature, stretch, spatial patch) order.
+// The foreign-context class of a Foreign stretch inside a contract-3 support (the B5 test
+// at placement: a CELL lies on a context piece when its OWN-edge ends and midpoint lie
+// within continuation_tolerance of one piece of that class, the EdgeExcludeSegments form;
+// decision 559 (1): the treatment is PER CELL by piece class, the stretch class summarises
+// its cells): NONE (not Foreign, or no cell on any context piece: the legacy class, every
+// cell untouched), EXCLUDED_EDGE (every cell on a Chain: false piece: every cell keeps its
+// surface matrices and drops its domain correction), CONTEXT_EDGE (every cell on a Chain:
+// true piece: every cell owned by the coupon), MIXED_EDGES (cells of different classes:
+// each treated by its own class, a cell on no piece untouched; the three counts recorded).
+enum class ForeignContextClass
+{
+  NONE,
+  EXCLUDED_EDGE,
+  CONTEXT_EDGE,
+  MIXED_EDGES
+};
 struct TranslationalOwnershipRecord
 {
   int feature = -1;
@@ -797,6 +827,12 @@ struct TranslationalOwnershipRecord
   double length = 0.0;               // sum of the stretch's cell lengths
   std::array<double, 3> lo{}, hi{};  // extent of the stretch's cell ends
   bool continuation = false;
+  ForeignContextClass foreign_context = ForeignContextClass::NONE;
+  // Cells of the stretch whose own-edge ends and midpoint lie on a Chain: false / Chain:
+  // true context piece of the support (the per-cell classes the treatment applies; a cell
+  // on no piece counts in neither: patch_count - both).
+  std::size_t cells_on_excluded_edges = 0;
+  std::size_t cells_on_chain_edges = 0;
 };
 struct SpatialSupportBounds
 {
@@ -805,12 +841,21 @@ struct SpatialSupportBounds
   std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionPatchData::Provenance::Claim>
       claims;
-  // A contract-3 model's support box and chain pieces in the patch's local frame (units of
-  // the matching radius; rule B4), copied from the patch provenance; empty for a legacy
-  // model.
+  // A contract-3 model's support box, chain pieces (Chain: true) and foreign pieces
+  // (Chain: false = ForeignEdges, rule B5) in the patch's local frame (units of the
+  // matching radius; rules B4 / decision 553), copied from the patch provenance; empty for
+  // a legacy model.
   bool has_support_box = false;
   std::array<double, 4> support_box{};
   std::vector<std::array<double, 4>> chain;
+  std::vector<std::array<double, 4>> foreign;
+  // The matching radius R in patch units (the scale of `support_box` / `chain` / `foreign`;
+  // CollectSpatialSupports copies the configuration's); 0 for a legacy model. REQUIRED
+  // (> 0) for a contract-3 support that carries context pieces: the foreign-context
+  // classification fails closed (MFEM_VERIFY) without it, so a hand-built support of a unit
+  // fixture with `chain` / `foreign` pieces must set it (the B4 vertex ownership scales by
+  // the explicit `matching_radius` argument instead).
+  double matching_radius = 0.0;
   // The bounds come from the Signature's box (a placeholder without basis points).
   bool from_signature_box = false;
 };
@@ -819,6 +864,10 @@ std::vector<TranslationalOwnershipRecord> FindTranslationalStretchInsideSpatialS
         &patches,
     const std::vector<SpatialSupportBounds> &supports, int dimension,
     double continuation_tolerance);
+
+// The Diagnostics "Class" of a record: Continuation, Foreign, ForeignExcludedEdge or
+// ForeignContextEdge.
+const char *TranslationalOwnershipClassName(const TranslationalOwnershipRecord &record);
 
 // The spatial supports of a response configuration: the bounding box of every spatial
 // model's basis points (mesh units) placed by its patch frame, with the cluster's claims;
@@ -863,7 +912,18 @@ std::string DescribeTranslationalOwnershipWarning(const nlohmann::json &diagnost
 // direction is no translational cell of a coupon library). Curved cells never continue a
 // claim (the Continuation criterion is parallel within the signature angle tolerance), so
 // an arc continuing an arc claim keeps its patches: a residual double count the record
-// lengths show. Lengths in patch units.
+// lengths show. FOREIGN-CONTEXT OWNERSHIP (decisions 553 / 559, the same pass): the cells
+// of a Foreign stretch wholly inside a contract-3 support (the record above) are classified
+// ONCE on the intact patches, before the continuation pass (the same classification the
+// stretch records carry), and treated PER CELL by piece class after it — a cell on a
+// Chain: true piece is owned by the coupon (weight 0, quadrature weight 0, cell {0, 0},
+// listed under `cells` like a wholly owned continuation cell so the portion audit
+// reconciles); a cell on a Chain: false piece (an excluded ForeignEdge) keeps its weight
+// and sets `domain_weight` 0 (listed under `foreign_excluded_cells`); a cell on no piece is
+// untouched. A cell inside two supports takes the stronger class (owned over
+// domain-dropped) and lists every support of that class as an owner (ascending spatial
+// patch; the owned length split equally): deterministic in the support order. A cell
+// already at weight 0 (owned by the continuation pass) is skipped. Lengths in patch units.
 struct ContinuationOwnership
 {
   struct Cell
@@ -879,8 +939,27 @@ struct ContinuationOwnership
     // shifted by the provenance edge offset; mesh units, parallel to `owners`): the F-DB-a
     // footprint of an owner that is a DomainBoundary exclusion (DESIGN 2.1).
     std::vector<std::array<std::array<double, 3>, 2>> attributed_intervals;
+    // The cell is owned as a ForeignContextEdge cell (decision 553 sub-class (ii)), not
+    // as the continuation of a claim.
+    bool foreign_context = false;
   };
   std::vector<Cell> cells;  // in patch order
+  // Cells on an excluded ForeignEdge (decision 553 sub-class (i)): weight kept,
+  // domain_weight 0.
+  struct ForeignExcludedCell
+  {
+    std::size_t patch = 0;
+    int feature = -1;
+    int stretch = -1;
+    // The spatial patches whose ForeignEdge the cell lies on (ascending; every support that
+    // classes the cell so, decision 559 MINOR-6).
+    std::vector<std::size_t> owners;
+    double cell_length = 0.0;
+  };
+  std::vector<ForeignExcludedCell> foreign_excluded_cells;  // in patch order
+  double foreign_excluded_length = 0.0;
+  double foreign_context_length = 0.0;  // the ForeignContextEdge part of owned_length
+  int foreign_context_cells = 0;
   // Owned length per (feature, stretch, spatial patch) and per spatial patch.
   std::map<std::tuple<int, int, std::size_t>, double> owned_by_stretch;
   std::map<std::size_t, double> owned_by_support;
