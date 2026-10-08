@@ -5,8 +5,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <utility>
+#include <mfem.hpp>
 #include "fem/libceed/ceed.hpp"
 #include "fem/qfunctions/coeff/pml_qf.h"
+#include "linalg/densematrix.hpp"
 
 namespace palace::pml
 {
@@ -50,8 +54,28 @@ LayerGeometry ConfiguredLayerGeometry(const config::PMLData &data,
   return geometry;
 }
 
+double RefractiveIndex(const std::array<double, 9> &mu_inv,
+                       const std::array<double, 9> &epsilon_real)
+{
+  // Smallest refractive index n = √(λ_min(ε) λ_min(μ)) over the principal directions of the
+  // (symmetric positive definite) background tensors, with λ_min(μ) = 1 / λ_max(μ⁻¹). The
+  // eigenvalues are the singular values.
+  auto ToDenseMatrix = [](const std::array<double, 9> &A)
+  {
+    mfem::DenseMatrix M(3, 3);
+    std::copy(A.begin(), A.end(), M.Data());
+    return M;
+  };
+  const double eps_min = linalg::SingularValueMin(ToDenseMatrix(epsilon_real));
+  const double mu_inv_max = linalg::SingularValueMax(ToDenseMatrix(mu_inv));
+  MFEM_VERIFY(eps_min > 0.0 && mu_inv_max > 0.0,
+              "Invalid background material properties for PML!");
+  return std::sqrt(eps_min / mu_inv_max);
+}
+
 std::array<double, 6> ResolveSigmaMax(const config::PMLData &data,
-                                      const LayerGeometry &geometry, double n_r)
+                                      const LayerGeometry &geometry,
+                                      const std::array<double, 6> &n_r)
 {
   std::array<double, 6> sigma_max{};
   for (int f = 0; f < 6; f++)
@@ -64,18 +88,19 @@ std::array<double, 6> ResolveSigmaMax(const config::PMLData &data,
     sigma_max[f] =
         (data.sigma_max[f / 2] >= 0.0)
             ? data.sigma_max[f / 2]
-            : -(data.order + 1) * std::log(data.reflection_target) / (2.0 * t * n_r);
+            : -(data.order + 1) * std::log(data.reflection_target) / (2.0 * t * n_r[f]);
   }
   return sigma_max;
 }
 
 Profile BuildProfile(const config::PMLData &data, const LayerGeometry &geometry,
-                     const std::array<double, 9> &mu_inv,
+                     const std::array<double, 6> &n_r, const std::array<double, 9> &mu_inv,
                      const std::array<double, 9> &epsilon_real,
                      const std::array<double, 9> &epsilon_imag)
 {
   Profile profile;
   profile.geometry = geometry;
+  profile.sigma_max = ResolveSigmaMax(data, geometry, n_r);
   profile.kappa_max = data.kappa_max;
   profile.alpha_max = data.alpha_max;
   profile.order = data.order;
@@ -84,13 +109,48 @@ Profile BuildProfile(const config::PMLData &data, const LayerGeometry &geometry,
   profile.mu_inv = mu_inv;
   profile.epsilon_real = epsilon_real;
   profile.epsilon_imag = epsilon_imag;
-
-  // Refractive index of the background material for the default σ_max, from the averages
-  // of the principal permittivity and permeability values (exact for isotropic materials).
-  const double eps_r = (epsilon_real[0] + epsilon_real[4] + epsilon_real[8]) / 3.0;
-  const double mu_r = 3.0 / (mu_inv[0] + mu_inv[4] + mu_inv[8]);
-  profile.sigma_max = ResolveSigmaMax(data, geometry, std::sqrt(eps_r * mu_r));
   return profile;
+}
+
+std::string CheckStretchConsistency(const Profile &p, const Profile &q, double tol)
+{
+  // The stretch factors of all profiles must be the same functions of position on the faces
+  // they share: the PML is only reflectionless if it is a coordinate transformation, also
+  // across material interfaces inside the layer.
+  auto Differ = [](double a, double b, double tol)
+  { return std::abs(a - b) > tol * std::max({std::abs(a), std::abs(b), 1.0e-300}); };
+  if (p.frequency_dependent != q.frequency_dependent ||
+      Differ(p.reference_frequency, q.reference_frequency, 1.0e-12))
+  {
+    return "\"FrequencyDependent\" and \"ReferenceFrequency\"";
+  }
+  for (int f = 0; f < 6; f++)
+  {
+    if (p.geometry.thickness[f] <= 0.0 || q.geometry.thickness[f] <= 0.0)
+    {
+      continue;
+    }
+    const int a = f / 2;
+    if (std::abs(p.geometry.inner[f] - q.geometry.inner[f]) > tol ||
+        std::abs(p.geometry.thickness[f] - q.geometry.thickness[f]) > tol)
+    {
+      return "\"Thickness\"";
+    }
+    if (p.order != q.order)
+    {
+      return "\"Order\"";
+    }
+    if (Differ(p.sigma_max[f], q.sigma_max[f], 1.0e-12))
+    {
+      return "\"SigmaMax\" and \"ReflectionTarget\"";
+    }
+    if (Differ(p.kappa_max[a], q.kappa_max[a], 1.0e-12) ||
+        Differ(p.alpha_max[a], q.alpha_max[a], 1.0e-12))
+    {
+      return "\"KappaMax\" and \"AlphaMax\"";
+    }
+  }
+  return {};
 }
 
 std::array<double, 3> ComputeDepthFraction(const Profile &profile,

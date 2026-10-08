@@ -94,6 +94,13 @@ thicknesses of the layer are detected by comparing the bounding boxes of the phy
 reflection coefficient. Alternatively, they can be specified using `"Direction"`,
 `"Thickness"`, and `"SigmaMax"`.
 
+The PML is only reflectionless if the coordinate stretch is the same function of position in
+the whole layer. All materials crossing the layer, for example a substrate and the vacuum
+above it, must therefore be PML materials with the same stretch parameters (which is checked),
+each with its own background material properties. The default `"SigmaMax"` of a face is
+computed for the smallest refractive index among the PML materials on the face, so that all
+of them meet the reflection target.
+
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"` (the center
 of the frequency range for driven simulations, or the target frequency for eigenmode
 simulations). This static PML keeps the system matrices independent of frequency, and so

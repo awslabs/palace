@@ -725,7 +725,7 @@
               "default": 3
             },
             "SigmaMax": {
-              "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Negative values or `null` compute the value per face from `\"ReflectionTarget\"`, the layer thickness, and the refractive index of the background material.",
+              "description": "Maximum PML conductivity at the outer edge of the layer, S/m. Scalar or vector of 3 coefficients for the `x`, `y`, and `z` axes. Negative values or `null` compute the value per face from `\"ReflectionTarget\"`, the layer thickness, and the smallest refractive index of the PML materials on the face. The stretch (`\"Thickness\"`, `\"Order\"`, `\"SigmaMax\"`, `\"KappaMax\"`, `\"AlphaMax\"`, `\"FrequencyDependent\"`, `\"ReferenceFrequency\"`) must be the same for all PML materials sharing a face.",
               "oneOf": [
                 {
                   "type": "null"
