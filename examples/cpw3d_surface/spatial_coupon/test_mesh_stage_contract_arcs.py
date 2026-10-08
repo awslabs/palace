@@ -10,11 +10,11 @@ from pathlib import Path
 import re
 import unittest
 
-from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_TILT_BOUND_DEGREES,
+from mesh_stage_contract import (ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_TILT_RANGE_DEGREES,
                                  ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS,
-                                 RECIPE_SCOPE_GUARDS, arc_part_count, boundary_arc_runs,
-                                 metal_loop_arc_parts, metal_loop_side_points, scope_classes, scope_guard_in_text,
-                                 validate_arc_tubes)
+                                 RECIPE_SCOPE_GUARDS, THIN_FACE_END_TILT_BOUND_DEGREES, arc_part_count,
+                                 boundary_arc_runs, metal_loop_arc_parts, metal_loop_side_points, scope_classes,
+                                 scope_guard_in_text, validate_arc_tubes)
 
 HERE = Path(__file__).resolve().parent
 
@@ -162,7 +162,9 @@ class ArcScopeGuardsTest(unittest.TestCase):
         return [(m.group(1), m.group(2)) for m in re.finditer(r'\("([A-Za-z]+)", "(inputs|build)",', block)]
 
     def test_guards_present_and_parsed(self):
-        for guard in ("ArcFaceEnds", "ArcJointTilt"):
+        # Round 3 B2 (decision 510): the interim guards ArcArcJoint (class 11) and CollarFaceEnd (class 5)
+        # join the list; SteepFaceCrossing also names the thin tested-range rule (class 8, 8B).
+        for guard in ("ArcFaceEnds", "ArcJointTilt", "ArcArcJoint", "CollarFaceEnd", "SteepFaceCrossing"):
             self.assertEqual(RECIPE_SCOPE_GUARDS[guard], "build")
             self.assertEqual(scope_guard_in_text(f"ERROR: ScopeGuard[{guard}]: an arc ...; arc 1 part 1"), guard)
         self.assertEqual(ARC_JOINT_TURN_BOUND_RADIANS, 1.6e-6)
@@ -180,8 +182,14 @@ class ArcScopeGuardsTest(unittest.TestCase):
         corner = re.search(r"const ARC_CORNER_JOINT_TURN_RANGE = \(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\)", source)
         self.assertEqual(float(corner.group(1)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
         self.assertAlmostEqual(math.radians(float(corner.group(2))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[1])
-        tilt = re.search(r"const ARC_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
-        self.assertEqual(float(tilt), ARC_FACE_END_TILT_BOUND_DEGREES)
+        # Round 3 (decisions 497 / 510 MAJOR-1 / O6): ONE range constant, (lowest built, largest built), in
+        # both lists; the thin tested-range bound of 8B likewise.
+        tilt = re.search(r"const ARC_FACE_END_TILT_RANGE = \(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\)", source)
+        self.assertEqual((float(tilt.group(1)), float(tilt.group(2))), ARC_FACE_END_TILT_RANGE_DEGREES)
+        self.assertEqual(ARC_FACE_END_TILT_RANGE_DEGREES, (0.1, 70.0))
+        thin = re.search(r"const THIN_FACE_END_TILT_BOUND = deg2rad\(([0-9.]+)\)", source).group(1)
+        self.assertEqual(float(thin), THIN_FACE_END_TILT_BOUND_DEGREES)
+        self.assertLessEqual(ARC_FACE_END_TILT_RANGE_DEGREES[1], THIN_FACE_END_TILT_BOUND_DEGREES)
         self.assertLess(ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
         self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
 
