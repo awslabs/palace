@@ -179,9 +179,18 @@ class ArcScopeGuardsTest(unittest.TestCase):
         # Round 2b (decision 437 (3)): the tested ranges that lift the guards, parsed from the mesher.
         smooth = re.search(r"const ARC_SMOOTH_JOINT_TURN_BOUND = ([0-9.e+-]+)", source).group(1)
         self.assertEqual(float(smooth), ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
-        corner = re.search(r"const ARC_CORNER_JOINT_TURN_RANGE = \(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\)", source)
-        self.assertEqual(float(corner.group(1)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
-        self.assertAlmostEqual(math.radians(float(corner.group(2))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS[1])
+        # Round 3 class (6) (decision 556): the corner range is the BUILT range PER KIND, one named
+        # constant with a fabricated and a thin field in both lists.
+        corner = re.search(r"const ARC_CORNER_JOINT_TURN_RANGE = \(fabricated=\(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\), "
+                           r"thin=\(([0-9.e+-]+), deg2rad\(([0-9.]+)\)\)\)", source)
+        self.assertIsNotNone(corner)
+        self.assertEqual(float(corner.group(1)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["fabricated"][0])
+        self.assertAlmostEqual(math.radians(float(corner.group(2))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["fabricated"][1])
+        self.assertEqual(float(corner.group(3)), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["thin"][0])
+        self.assertAlmostEqual(math.radians(float(corner.group(4))), ARC_CORNER_JOINT_TURN_RANGE_RADIANS["thin"][1])
+        self.assertEqual(set(ARC_CORNER_JOINT_TURN_RANGE_RADIANS), {"fabricated", "thin"})
+        self.assertEqual((float(corner.group(2)), float(corner.group(4))), (15.0, 30.0))
+        self.assertLess(ARC_CORNER_JOINT_TURN_RANGE_RADIANS["fabricated"][1], ARC_CORNER_JOINT_TURN_RANGE_RADIANS["thin"][1])
         # Round 3 (decisions 497 / 510 MAJOR-1 / O6): ONE range constant, (lowest built, largest built), in
         # both lists; the thin tested-range bound of 8B likewise.
         tilt = re.search(r"const ARC_FACE_END_TILT_RANGE = \(deg2rad\(([0-9.]+)\), deg2rad\(([0-9.]+)\)\)", source)
@@ -191,7 +200,8 @@ class ArcScopeGuardsTest(unittest.TestCase):
         self.assertEqual(float(thin), THIN_FACE_END_TILT_BOUND_DEGREES)
         self.assertLessEqual(ARC_FACE_END_TILT_RANGE_DEGREES[1], THIN_FACE_END_TILT_BOUND_DEGREES)
         self.assertLess(ARC_JOINT_TURN_BOUND_RADIANS, ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS)
-        self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[0])
+        for kind in ("fabricated", "thin"):
+            self.assertLess(ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS[kind][0])
 
 
 if __name__ == "__main__":

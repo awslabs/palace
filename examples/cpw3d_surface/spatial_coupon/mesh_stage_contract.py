@@ -1519,10 +1519,10 @@ RECIPE_SCOPE_SUPPORTED_CLASSES = ("ArcSides", "ContinuationVertices", "DeviceFoo
                                   "UntubedShortEdges")
 RECIPE_SCOPE_GUARDS = {
     "ArcTubeRadiusVsCurvature": "build",
-    # Decision 391 MAJOR-2 (ii) / decision 437 (3): arc face ends and arc joints beyond the
-    # BUILT ranges (ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, ARC_CORNER_JOINT_TURN_RANGE_RADIANS,
-    # ARC_FACE_END_TILT_RANGE_DEGREES; the loop end's ARC_JOINT_TURN_BOUND_RADIANS inside) fail
-    # closed (mesh_spatial_coupon.jl spells the same list).
+    # Decision 391 MAJOR-2 (ii) / decision 437 (3) / round 3 decision 556: arc face ends and arc
+    # joints beyond the BUILT ranges (ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS, the per-kind
+    # ARC_CORNER_JOINT_TURN_RANGE_RADIANS, ARC_FACE_END_TILT_RANGE_DEGREES; the loop end's
+    # ARC_JOINT_TURN_BOUND_RADIANS inside) fail closed (mesh_spatial_coupon.jl spells the same list).
     "ArcFaceEnds": "build", "ArcJointTilt": "build",
     # Mesher design round 3 class (11) interim (decisions 497 / 500 / 510; part M 1.3): a smooth
     # joint of two DISTINCT arc runs has no joint owner (the 32b0083dad90 build failure) - refused
@@ -1554,11 +1554,17 @@ ARC_JOINT_TURN_BOUND_RADIANS = 1.6e-6
 # Mesher design round 2b (decision 437 (3)): the guards are LIFTED to the ranges the four synthetic
 # full builds tested (the mesher's ARC_SMOOTH_JOINT_TURN_BOUND / ARC_CORNER_JOINT_TURN_RANGE /
 # ARC_FACE_END_TILT_RANGE, spelled identically): a smooth arc joint turning by <= 5e-5 rad, a corner
-# arc joint turning by 2e-4 rad .. 30 degrees on a THIN coupon (the fabricated corner joint stays
-# guarded: untested), an arc box-face cut end whose tilt lies in the BUILT range build; everything
-# beyond fails closed at the same guards.
+# arc joint turning within the coupon KIND's built range, an arc box-face cut end whose tilt lies in
+# the BUILT range build; everything beyond fails closed at the same guards.
 ARC_SMOOTH_JOINT_TURN_BOUND_RADIANS = 5.0e-5
-ARC_CORNER_JOINT_TURN_RANGE_RADIANS = (2.0e-4, math.radians(30.0))
+# Round 3 class (6) (decisions 491 / 556): the corner-joint range is the BUILT range PER KIND. THIN
+# 2e-4 rad .. 30 degrees = the round-2b corner2e-4 / kink30 production-size builds (PBS 57706 /
+# 57892); FABRICATED 2e-4 rad .. 15 degrees = the round-3 B4 production-size builds of the 2e-4-rad
+# corner and the 0.1 / 5.33 / 8.53 / 15-degree kinks, once the E4 root cause (the tube cap-ray node
+# order on a periodic trench-wall face) was fixed in the mesher; the fabricated 20 / 25 / 30-degree
+# kinks fail the quality gates (a named follow-up, not admitted).
+ARC_CORNER_JOINT_TURN_RANGE_RADIANS = {"fabricated": (2.0e-4, math.radians(15.0)),
+                                       "thin": (2.0e-4, math.radians(30.0))}
 # Mesher design round 3 (decisions 497 ERRATUM / 510 MAJOR-1 / 510 O6; DESIGN R9): the admitted arc
 # face-end tilt range is the BUILT range (lowest built, largest built) in degrees - ONE constant, the
 # mesher's ARC_FACE_END_TILT_RANGE in radians. Provenance: 0.1 degrees = fe0p1 of the round-3 B2

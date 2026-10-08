@@ -254,6 +254,7 @@ struct FaceEnd
     apex_thickness::Float64   # 2 h_pyr |tan theta|: the thinnest layer the apex rule admits
 end
 
+
 function FaceEnd(
     end_index,
     face,
@@ -1878,7 +1879,13 @@ end
 # are shared with the caller's explicit curve meshes through next_node and
 # point_nodes (CAD point tag -> node tag). `meshed` (shared across the tubes of one
 # build) keeps a CAD curve two jointed tubes share meshed once.
-function install_tube_curves!(state::TubeMesh, next_node, point_nodes; meshed=Set{Int32}())
+function install_tube_curves!(
+    state::TubeMesh,
+    next_node,
+    point_nodes;
+    meshed=Set{Int32}(),
+    periodic_faces=Set{Int32}()
+)
     adopt_joint_tags!(state)
     section = state.section
     K = ring_count(section)
@@ -1958,6 +1965,26 @@ function install_tube_curves!(state::TubeMesh, next_node, point_nodes; meshed=Se
         parameters = [
             gmsh.model.getParametrization(1, curve, state.coordinates[t])[1] for t in nodes
         ]
+        # RULE (mesher design round 3 class (6), decision 556; the E4 root cause found by the B4
+        # lane): a curve that bounds a non-planar face Gmsh itself meshes gets its nodes installed
+        # in increasing curve parameter, because Gmsh's periodic surface mesher assumes it -
+        # meshGFace.cpp meshGeneratorPeriodic / buildConsecutiveListOfVertices read a bounding
+        # curve's `mesh_vertices` in storage order (their own 1D mesher's order), whereas the planar
+        # face mesher reads the line elements. The ring-ordered nodes of a tube cap ray run against
+        # the OCC parameter on some curves; where such a ray lies on a cylindrical wall (the
+        # fabricated arc corner clearance: the trench / sidewall cylinder) the boundary list
+        # zigzags, its first edge passes through the interior nodes and edge recovery fails
+        # ("Impossible to mesh periodic surface") as soon as the ray carries two interior nodes.
+        # `periodic_faces` = the model's non-planar faces that are not tube faces (the tubes' own
+        # revolved faces are hidden from the surface pass and meshed explicitly). Bitwise elsewhere:
+        # a straight coupon has no such face (the stored order within an entity also fixes the .msh
+        # node order, so an unconditional sort would not be bitwise), and every arc coupon that
+        # built already has those curves in increasing order (a decreasing one fails as above).
+        if any(face in periodic_faces for face in gmsh.model.getAdjacencies(1, curve)[1])
+            order = sortperm(parameters)
+            nodes = nodes[order]
+            parameters = parameters[order]
+        end
         gmsh.model.mesh.addNodes(
             1,
             curve,

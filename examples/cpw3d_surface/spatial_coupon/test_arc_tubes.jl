@@ -965,9 +965,21 @@ end
     # bound of 8B the largest built thin tilt.
     @test "ArcArcJoint" in ids && "CollarFaceEnd" in ids
     @test ARC_JOINT_TURN_BOUND == 1.6e-6 < ARC_SMOOTH_JOINT_TURN_BOUND == 5.0e-5
-    @test ARC_CORNER_JOINT_TURN_RANGE == (2.0e-4, deg2rad(30.0)) &&
+    # Round 3 class (6) (decision 556): the corner range is the BUILT range PER KIND - thin 2e-4 rad
+    # .. 30 degrees (round 2b), fabricated 2e-4 rad .. 15 degrees (round 3 B4, production sizes).
+    @test ARC_CORNER_JOINT_TURN_RANGE ==
+          (fabricated=(2.0e-4, deg2rad(15.0)), thin=(2.0e-4, deg2rad(30.0))) &&
+          arc_corner_joint_turn_range(true) == ARC_CORNER_JOINT_TURN_RANGE.fabricated &&
+          arc_corner_joint_turn_range(false) == ARC_CORNER_JOINT_TURN_RANGE.thin &&
           ARC_FACE_END_TILT_RANGE == (deg2rad(0.1), deg2rad(70.0)) &&
           THIN_FACE_END_TILT_BOUND == deg2rad(70.0)
+    @test occursin(
+        "0.0002 .. 0.2617993877991494 rad on a FABRICATED",
+        scope_guard_statement("ArcJointTilt")
+    ) && occursin(
+        "0.0002 .. 0.5235987755982988 rad on a THIN",
+        scope_guard_statement("ArcJointTilt")
+    )
     @test occursin(
         string(ARC_SMOOTH_JOINT_TURN_BOUND),
         scope_guard_statement("ArcJointTilt")
@@ -1022,9 +1034,10 @@ end
             6.0e-5;
             rtol=1.0e-6
         )
-        # CORNER joints: 2e-4 rad and 30 degrees (the tested ends of the range) pass, with the
+        # CORNER joints: 2e-4 rad and 30 degrees (the built ends of the THIN range) pass, with the
         # kinked arc end a corner retracted along the arc (A3 (3)); 1.5e-4 rad (a corner below the
-        # tested range) and 31 degrees fail closed.
+        # range) and 31 degrees fail closed. Round 3 class (6) (decision 556): the FABRICATED range
+        # is its own built range, 2e-4 rad .. 15 degrees - 15 passes, 16 fails closed naming the kind.
         for turn in (2.0e-4, deg2rad(30.0))
             kinked = write_strip_inputs(
                 mkpath(joinpath(directory, "c$turn"));
@@ -1033,10 +1046,32 @@ end
             arc = only(s for s in segments_of(kinked) if s.kind == :arc)
             @test arc.corners == (false, true) && arc.s_end < arc.span
             @test isapprox(arc.corner_angles[2], pi - turn; atol=1.0e-9)
-            # The corner joint is tested on THIN coupons only: fabricated fails closed.
-            message = guard_message(() -> segments_of(kinked; fabricated=true))
-            @test occursin("ScopeGuard[ArcJointTilt]", message) &&
-                  occursin("FABRICATED", message)
+        end
+        for (turn, builds) in (
+            (2.0e-4, true),
+            (deg2rad(15.0), true),
+            (deg2rad(16.0), false),
+            (deg2rad(30.0), false)
+        )
+            kinked = write_strip_inputs(
+                mkpath(joinpath(directory, "cfab$turn"));
+                kink_degrees=rad2deg(turn)
+            )
+            if builds
+                arc =
+                    only(s for s in segments_of(kinked; fabricated=true) if s.kind == :arc)
+                @test arc.corners == (false, true) && arc.s_end < arc.span
+            else
+                message = guard_message(() -> segments_of(kinked; fabricated=true))
+                @test occursin("ScopeGuard[ArcJointTilt]", message) &&
+                      occursin("corner-joint turn", message) &&
+                      occursin("built FABRICATED range", message)
+                @test isapprox(
+                    parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1]),
+                    turn;
+                    rtol=1.0e-6
+                )
+            end
         end
         # Smooth joints and face ends build on both kinds.
         @test count(
@@ -1058,7 +1093,8 @@ end
                 )
             )
             @test occursin("ScopeGuard[ArcJointTilt]", message) &&
-                  occursin("corner-joint turn", message)
+                  occursin("corner-joint turn", message) &&
+                  occursin("built THIN range", message)
             @test isapprox(
                 parse(Float64, match(r"turn of ([0-9.e+-]+) rad", message)[1]),
                 turn;
@@ -1361,7 +1397,13 @@ end
               tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
         # (the 2e-4-rad thin corner at these test sizes meets the lottery at a legacy corner, 4.34 > 4.0:
         # its full build is the production-size record)
-        for (fabricated, turn, stem) in ((false, deg2rad(30.0), "kink"),)
+        # Round 3 class (6) (decisions 491 / 556): the FABRICATED kinked arc / line joint builds too,
+        # once the E4 root cause is fixed (install_tube_curves!: a cap ray on the periodic trench wall
+        # gets its nodes in increasing curve parameter) - here the top of the built fabricated range,
+        # 15 degrees (the production-size builds at 2e-4 rad / 0.1 / 5.33 / 8.53 / 15 degrees are the
+        # round-3 B4 record).
+        for (fabricated, turn, stem) in
+            ((false, deg2rad(30.0), "kink"), (true, deg2rad(15.0), "kink-fab"))
             census, _, _ = build_strip_coupon(
                 mkpath(joinpath(directory, stem));
                 fabricated=fabricated,
@@ -1384,6 +1426,42 @@ end
                 @test isapprox(row["CornerAngles"][2], pi - turn; atol=1.0e-9)
             end
             @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01
+        end
+    end
+end
+
+@testset "round 3 class (6) (decision 556): the E4 regression fixture - a fabricated arc corner whose cap ray on the periodic trench wall carries two or more interior nodes builds" begin
+    # The E4 root cause (round3 B4 REPORT; Gmsh meshGFace.cpp buildConsecutiveListOfVertices): the
+    # periodic surface mesher reads a bounding curve's nodes in storage order and assumes it increases
+    # with the curve parameter; the ring-ordered cap-ray nodes ran against it on the fabricated arc
+    # corner's trench wall, a zigzag that fails edge recovery as soon as the ray has TWO interior nodes
+    # (three rings). The suite's EdgeSize 0.01 gives two rings (one interior node: no zigzag), so this
+    # fixture takes EdgeSize 0.004 (three rings under the 0.05 transverse bound) with a 5-degree kink;
+    # it fails on the unsorted order ("Impossible to mesh periodic surface") and builds with the rule.
+    mktempdir() do directory
+        census, _, _ = build_arc_coupon(
+            directory,
+            write_strip_inputs;
+            fabricated=true,
+            stem="e4",
+            edge_size=0.004,
+            kink_degrees=5.0
+        )
+        tubes = census["PrismTubes"]
+        @test tubes["Section"]["Rings"] == 3
+        @test tubes["ArcTubes"]["SharedSections"] == 2
+        kinked = only(
+            r for r in census["SeedQualityOptimization"]["CornerMeasures"] if
+            r["Point"] == [1.0, 1.0, 0.0]
+        )
+        @test kinked["Kind"] == "Invariant" && kinked["Passed"]
+        @test tubes["Quality"]["Tetrahedron"]["MinimumScaledJacobian"] >= 0.01 &&
+              tubes["Quality"]["Prism"]["PositiveOrientation"] &&
+              tubes["Quality"]["Pyramid"]["PositiveOrientation"]
+        for row in tubes["Tubes"]
+            haskey(row, "Arc") || continue
+            # the kinked end is retracted along the arc by the corner clearance
+            @test row["Length"] < 0.5 * pi - 1.0e-6
         end
     end
 end
@@ -1554,9 +1632,21 @@ end
         # and a JSON boolean is not a count (Bool <: Integer in Julia), as on the Python side.
         for (name, broken) in (
             ("wrong-rule.json", replace(record, rule => "another rule")),
-            ("boolean-count.json", replace(record, "\"SmoothJoints\": 4" => "\"SmoothJoints\": true")),
-            ("negative-count.json", replace(record, "\"BoxFaceCutEnds\": 4" => "\"BoxFaceCutEnds\": -1")),
-            ("float-count.json", replace(record, "\"ArcInteriorVertices\": 34" => "\"ArcInteriorVertices\": 34.0"))
+            (
+                "boolean-count.json",
+                replace(record, "\"SmoothJoints\": 4" => "\"SmoothJoints\": true")
+            ),
+            (
+                "negative-count.json",
+                replace(record, "\"BoxFaceCutEnds\": 4" => "\"BoxFaceCutEnds\": -1")
+            ),
+            (
+                "float-count.json",
+                replace(
+                    record,
+                    "\"ArcInteriorVertices\": 34" => "\"ArcInteriorVertices\": 34.0"
+                )
+            )
         )
             path = joinpath(directory, name)
             write(path, "{\"Version\": 1, \"SemanticCorners\": [], $broken}")

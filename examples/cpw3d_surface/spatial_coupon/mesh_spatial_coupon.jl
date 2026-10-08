@@ -5568,15 +5568,24 @@ const ARC_JOINT_TURN_BOUND = 1.6e-6
 # 1e-4 rad) builds when its turn is at most ARC_SMOOTH_JOINT_TURN_BOUND (the 5e-5-rad synthetic
 # joint; the loop end's <= 1.6e-6 lies inside); a CORNER joint of an arc with another side
 # (kinked arc / line; A3 (3): ball, caps, the clearance along the arc) builds when its turn lies
-# in ARC_CORNER_JOINT_TURN_RANGE (the 2e-4-rad corner joint and the 30-degree kinked joint);
-# an arc end on a box face builds when it is a CUT end whose tilt lies in ARC_FACE_END_TILT_RANGE
-# (below). The corner joint is tested on THIN coupons only (the fabricated kinked arc end fails in
-# Gmsh's surface mesher at the production sizes: every fabricated corner joint stays guarded).
-# Everything beyond fails closed at the same guards (ScopeGuard[ArcJointTilt] / [ArcFaceEnds]: an
-# exactly perpendicular arc end, an arc at a box-vertex corner, a smooth turn in (5e-5, 1e-4], a
-# corner turn in (1e-4, 2e-4) or above 30 degrees). Recorded scope rules, not physics thresholds.
+# in the coupon kind's ARC_CORNER_JOINT_TURN_RANGE; an arc end on a box face builds when it is a
+# CUT end whose tilt lies in ARC_FACE_END_TILT_RANGE (below). The corner range is the BUILT range
+# PER KIND (decisions 466 / 556; round 3 class (6)). Provenance: THIN 2e-4 rad .. 30 degrees =
+# the round-2b corner2e-4 / kink30 strip builds at the production sizes (PBS 57706 / 57892);
+# FABRICATED 2e-4 rad .. 15 degrees = the round-3 B4 strip builds at the production sizes (the
+# CORNER 2e-4 rad and the KINK 0.1 / 5.33 / 8.53 / 15-degree fixtures: every gate; the census
+# values 0.109 / 5.33 / 8.53 degrees of 448693d60a6f / 32dc558f4810 / the C3 trio lie inside),
+# buildable since the E4 root cause was fixed (install_tube_curves!: the cap-ray node order on a
+# periodic face). The fabricated 20 / 25 / 30-degree kinks FAIL the quality gates at the production
+# sizes (tetrahedron scaled Jacobian 0.0034 at 20; invariant-corner kappa_reg 6.45 / 5.29 at 25 /
+# 30 against the gate 5.0): a named follow-up, not admitted (decision 556). Everything beyond fails
+# closed at the same guards (ScopeGuard[ArcJointTilt] / [ArcFaceEnds]: an exactly perpendicular arc
+# end, an arc at a box-vertex corner, a smooth turn in (5e-5, 1e-4], a corner turn in (1e-4, 2e-4)
+# or above the kind's top). Recorded scope rules, not physics thresholds.
 const ARC_SMOOTH_JOINT_TURN_BOUND = 5.0e-5
-const ARC_CORNER_JOINT_TURN_RANGE = (2.0e-4, deg2rad(30.0))
+const ARC_CORNER_JOINT_TURN_RANGE = (fabricated=(2.0e-4, deg2rad(15.0)), thin=(2.0e-4, deg2rad(30.0)))
+arc_corner_joint_turn_range(fabricated::Bool) =
+    fabricated ? ARC_CORNER_JOINT_TURN_RANGE.fabricated : ARC_CORNER_JOINT_TURN_RANGE.thin
 # Mesher design round 3 (decisions 497 ERRATUM / 510 MAJOR-1 / 510 O6; DESIGN R9, part M 3.2): the
 # admitted tilt range of an arc box-face CUT end is the BUILT range, (lowest built, largest built),
 # the same rule at both ends (decision 466: no credit beyond the largest measured). Provenance:
@@ -5612,14 +5621,18 @@ const RECIPE_SCOPE_GUARDS = [
     ("ArcJointTilt", "build",
      "an arc metal side meeting another side (straight or arc) at a joint whose turn (the " *
      "angle between the arc's end tangent and the other side's direction) lies outside the " *
-     "TESTED ranges (mesher design round 2b, decision 437 (3)): a SMOOTH joint (JointSmooth) " *
-     "turning by at most $(ARC_SMOOTH_JOINT_TURN_BOUND) rad (the synthetic 5e-5-rad smooth " *
-     "joint; the loop end's <= $(ARC_JOINT_TURN_BOUND)) or a CORNER joint turning by " *
-     "$(ARC_CORNER_JOINT_TURN_RANGE[1]) .. $(ARC_CORNER_JOINT_TURN_RANGE[2]) rad on a THIN coupon (the " *
-     "synthetic 2e-4-rad corner and 30-degree kinked arc / line joints) builds; a smooth turn above " *
-     "the bound, a corner turn below the range or above it, or any corner joint on a FABRICATED " *
-     "coupon (untested: it fails in the surface mesher of the trench wall) fails closed " *
-     "(supervisor decision 391 MAJOR-2 (ii))"),
+     "BUILT ranges (mesher design round 2b, decision 437 (3); round 3 class (6), decisions 491 / " *
+     "510 / 556): a SMOOTH joint (JointSmooth) turning by at most $(ARC_SMOOTH_JOINT_TURN_BOUND) " *
+     "rad (the synthetic 5e-5-rad smooth joint; the loop end's <= $(ARC_JOINT_TURN_BOUND)) or a " *
+     "CORNER joint turning by $(ARC_CORNER_JOINT_TURN_RANGE.thin[1]) .. " *
+     "$(ARC_CORNER_JOINT_TURN_RANGE.thin[2]) rad on a THIN coupon (the synthetic 2e-4-rad corner " *
+     "and 30-degree kinked arc / line joints of round 2b) or by " *
+     "$(ARC_CORNER_JOINT_TURN_RANGE.fabricated[1]) .. $(ARC_CORNER_JOINT_TURN_RANGE.fabricated[2]) " *
+     "rad on a FABRICATED coupon (the 2e-4-rad corner and the 0.1 / 5.33 / 8.53 / 15-degree kinks " *
+     "built at the production sizes in round 3 B4, once the cap-ray node order on the periodic " *
+     "trench wall was fixed) builds; a smooth turn above the bound, or a corner turn below the " *
+     "kind's range or above it (the fabricated 20-30-degree kinks fail the quality gates: a named " *
+     "follow-up), fails closed (supervisor decisions 391 MAJOR-2 (ii) / 466 / 556)"),
     ("ArcArcJoint", "build",
      "an arc metal side meeting a DIFFERENT arc side at a smooth joint (JointSmooth; two tagged " *
      "arc runs, e.g. one circle serialised as a claim and a context entry or split at a cardinal " *
@@ -6098,21 +6111,16 @@ function metal_edge_segments(loops, corners, clearance_of_angle, lower, upper, t
                                         "meets a $kind side at $point with a smooth-joint turn of $turn rad " *
                                         "above the tested $(ARC_SMOOTH_JOINT_TURN_BOUND)")
                     else
-                        # Round 2b: the corner joint is TESTED on THIN coupons only; the fabricated
-                        # kinked arc end (production sizes) stops in Gmsh's surface mesher on the
-                        # cylindrical trench wall behind the cap ("Impossible to mesh periodic
-                        # surface"; round2b-impl REPORT section 3) and stays guarded.
-                        fabricated &&
+                        # The corner joint builds within the coupon KIND's built range (round 2b thin;
+                        # round 3 class (6) fabricated, decision 556: the E4 stop was the cap-ray node
+                        # order on the periodic trench wall, fixed in install_tube_curves!).
+                        corner_range = arc_corner_joint_turn_range(fabricated)
+                        corner_range[1] <= turn <= corner_range[2] * (1.0 + 1.0e-12) ||
                             scope_error("ArcJointTilt",
                                         "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
                                         "meets a $kind side at $point with a corner-joint turn of $turn rad " *
-                                        "on a FABRICATED coupon (untested: the thin corner joint builds, the " *
-                                        "fabricated one fails in the surface mesher of the trench wall)")
-                        ARC_CORNER_JOINT_TURN_RANGE[1] <= turn <= ARC_CORNER_JOINT_TURN_RANGE[2] * (1.0 + 1.0e-12) ||
-                            scope_error("ArcJointTilt",
-                                        "arc $(side.arc.id) part $(side.arc.part) of conductor $(side.conductor) " *
-                                        "meets a $kind side at $point with a corner-joint turn of $turn rad " *
-                                        "outside the tested $(ARC_CORNER_JOINT_TURN_RANGE) rad")
+                                        "outside the built $(fabricated ? "FABRICATED" : "THIN") range " *
+                                        "$corner_range rad")
                     end
                 end
             end
@@ -7207,6 +7215,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     end
     return tools, records, tubes, segments, description, untubed_edges, joints
 end
+
 
 const ARC_TUBE_RULE =
     "block (b) design 1.2 (3) (decision 303): the tube of an arc metal side is the revolve of " *
@@ -8761,9 +8770,19 @@ function generate_spatial_coupon(;
     next_node = Ref(0)
     point_nodes = Dict{Int32, Int}()
     tube_curve_meshes = Vector{Dict{String, Any}}(undef, length(tube_states))
+    # Round 3 class (6) (E4 root cause, B4): the model's NON-PLANAR faces that Gmsh's periodic
+    # surface mesher will mesh - every non-planar face that is not a tube face (the tubes' own
+    # revolved faces are hidden from the surface pass and meshed explicitly). A straight coupon
+    # has none (its tubes are planar extrusions, its walls planes): the set is empty and
+    # install_tube_curves! keeps every node order unchanged.
+    tube_own_faces = Set{Int32}(face for state in tube_states for faces in values(state.faces)
+                                for face in faces)
+    model_periodic_faces = Set{Int32}(tag for (dim, tag) in gmsh.model.getEntities(2)
+                                      if !(tag in tube_own_faces) && gmsh.model.getType(2, tag) != "Plane")
     for i in tube_install_order
         tube_curve_meshes[i] = install_tube_curves!(tube_states[i], next_node, point_nodes;
-                                                    meshed=tube_meshed_curves)
+                                                    meshed=tube_meshed_curves,
+                                                    periodic_faces=model_periodic_faces)
     end
     # Interior ridge node parameters and coordinates (curve order) of every
     # longitudinal curve; the mesh is assigned after the edge layer curves are
