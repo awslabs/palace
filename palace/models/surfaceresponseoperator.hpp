@@ -1104,6 +1104,9 @@ struct DomainBoundaryExclusions
   long long int tested_points = 0;
   long long int reflected_points = 0;  // outside points reflected into the mesh
   double wall_time = 0.0;              // of the containment test, seconds
+  // Cumulative phase stamps of the test (seconds since its start: points, locator, find,
+  // reduce, reflect, distances), printed with PALACE_RESPONSE_SETUP_TIMING (decision 538).
+  std::map<std::string, double> phase_times;
 };
 // `mirror_planes` (empty: no mirror, every cut-crossing patch is DomainBoundary) and the
 // band (mesh units) classify the outside points: a point beyond a Natural plane within the
@@ -1172,6 +1175,25 @@ std::string DescribeDomainBoundaryExclusionSummary(const nlohmann::json &diagnos
 // and the uncovered portions clipped by its box. Overlaps are excluded by construction (a
 // DB cell is a kept part outside every matched box; a vertex claim ends where the arm cells
 // start). Portions in mesh units; `types` names each portion's type (the model topology).
+// Clip the longitudinal cell of a translational patch to the kept offsets [kept_lo,
+// kept_hi] of its cell (the corner / mirror arm trims and the continuation ownership): the
+// origin moves to the kept midpoint, the cell becomes symmetric about it, the weight and
+// the provenance quadrature weight scale by kept / cell, the Maxwell anchors move with the
+// origin, the recorded own-segment pre-image (Provenance::own_cell, decision 537) maps
+// linearly onto the kept part; an empty kept interval leaves weight 0 and cell {0, 0}.
+void ClipLongitudinalCell(
+    config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch, double kept_lo,
+    double kept_hi);
+
+// The own-edge point of a translational patch at the cell offset c: the recorded pre-image
+// on the own segment (Provenance::own_cell) mapped linearly from the cell, the frame
+// reconstruction origin + EdgeOffset AxisU + c AxisW without the record (decisions 537 /
+// 545: the raw claims of a DomainBoundary cell and the parts of a cell attributed to a
+// DomainBoundary spatial coupon are built from it).
+std::array<double, 3>
+OwnEdgePointAt(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch,
+               double c);
+
 DomainBoundaryPortions CollectDomainBoundaryPortions(
     const DomainBoundaryExclusions &exclusions,
     const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
