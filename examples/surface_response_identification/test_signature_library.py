@@ -250,3 +250,128 @@ class ClusterQuantumNearMatchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# The three-lexeme KeyText fixture (decision 605 (2) F-4 (c); the R2-failure diagnosis F-4): the
+# nlohmann (Grisu2) key text of a signature whose doubles 7.378134999999999 / -2.953708 /
+# -2.732016 are written as 17-digit lexemes, pinned together with the C++ unit test
+# (test-signaturekeytext.cpp "SignatureKeyAndHash key text carries the hashed lexemes").
+KEYTEXT_FIXTURE = '{"EdgeCount":2,"Portions":[{"P":[7.3781349999999994,-2.9537079999999998,-2.7320159999999998,0.5]}],"Type":"SpatialEdgeCluster"}'
+KEYTEXT_FIXTURE_HASH = "95423956626c93e2982f74f01c7a119a57a8cd44495a054243071caffa1b3779"
+KEYTEXT_FIXTURE_FLOAT_HASH = "5e30744232102a28c1997259012c6465418308055fcdb63cb055f9f1fd99da83"
+
+
+class SignatureKeyTextTest(unittest.TestCase):
+    """verify_signature_key: KeyText path (sha256(KeyText) == key and json.loads(KeyText) == Signature), the
+    legacy float-hash path for a record without KeyText, and fail-closed by name on every inconsistency."""
+
+    def setUp(self):
+        import hashlib
+        import json
+        self.signature = json.loads(KEYTEXT_FIXTURE)
+        self.assertEqual(hashlib.sha256(KEYTEXT_FIXTURE.encode()).hexdigest(), KEYTEXT_FIXTURE_HASH)
+
+    def test_keytext_path_reproduces_the_cpp_digest_and_the_float_hash_does_not(self):
+        # T13: the verbatim text hashes to the C++ key; Python's shortest-repr re-dump does not.
+        self.assertEqual(L.signature_hash(self.signature), KEYTEXT_FIXTURE_FLOAT_HASH)
+        self.assertNotEqual(L.signature_hash(self.signature), KEYTEXT_FIXTURE_HASH)
+        record = L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH, KEYTEXT_FIXTURE)
+        self.assertEqual(record, {"Path": L.KEY_PATH_KEYTEXT, "KeyText": KEYTEXT_FIXTURE, "SignatureHash": KEYTEXT_FIXTURE_HASH,
+                                  "RequirementKey": KEYTEXT_FIXTURE_HASH, "Equal": True})
+        # the >= 12-hex prefix form of the key (the 438 (3) rule) and no key at all
+        self.assertEqual(L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH[:12], KEYTEXT_FIXTURE)["SignatureHash"],
+                         KEYTEXT_FIXTURE_HASH)
+        self.assertEqual(L.verify_signature_key(self.signature, None, KEYTEXT_FIXTURE)["SignatureHash"], KEYTEXT_FIXTURE_HASH)
+        # the same key WITHOUT KeyText takes the legacy path and fails by name: the record-era defect, unchanged
+        with self.assertRaises(L.SignatureKeyError) as context:
+            L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH, None)
+        self.assertIn("legacy float-hash path", str(context.exception))
+        self.assertIn("!= the requirement key", str(context.exception))
+
+    def test_legacy_path_without_keytext_is_the_float_hash(self):
+        signature = {"Type": "SpatialEdgeCluster", "EdgeCount": 2, "Portions": [{"P": [0.5, -1.25, 2.0, 0.0]}]}
+        key = L.signature_hash(signature)
+        record = L.verify_signature_key(signature, key, None)
+        self.assertEqual(record, {"Path": L.KEY_PATH_LEGACY, "KeyText": None, "SignatureHash": key, "RequirementKey": key,
+                                  "Equal": True})
+        self.assertEqual(L.verify_signature_key(signature, key[:12], None)["Path"], L.KEY_PATH_LEGACY)
+        self.assertEqual(L.verify_signature_key(signature, None, None)["SignatureHash"], key)
+        with self.assertRaises(L.SignatureKeyError):
+            L.verify_signature_key(signature, "0" * 64, None)
+        with self.assertRaises(L.SignatureKeyError):
+            L.verify_signature_key(signature, key[:11], None)  # a prefix shorter than 12 hex is not a key
+
+    def test_inconsistent_keytext_fails_closed_by_name(self):
+        import json
+        # sha256(KeyText) != the key
+        with self.assertRaises(L.SignatureKeyError) as context:
+            L.verify_signature_key(self.signature, "0" * 64, KEYTEXT_FIXTURE)
+        self.assertIn("sha256(KeyText)", str(context.exception))
+        # the text hashes to the key but names another signature
+        other = dict(self.signature, EdgeCount=3)
+        with self.assertRaises(L.SignatureKeyError) as context:
+            L.verify_signature_key(other, KEYTEXT_FIXTURE_HASH, KEYTEXT_FIXTURE)
+        self.assertIn("json.loads(KeyText) != Signature", str(context.exception))
+        # the float re-dump offered as KeyText: it parses equal but is not the hashed text
+        shortest = json.dumps(self.signature, separators=(",", ":"), sort_keys=True)
+        with self.assertRaises(L.SignatureKeyError) as context:
+            L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH, shortest)
+        self.assertIn("sha256(KeyText)", str(context.exception))
+        # not JSON / not a string / empty
+        import hashlib
+        broken = KEYTEXT_FIXTURE[:-1]
+        with self.assertRaises(L.SignatureKeyError) as context:
+            L.verify_signature_key(self.signature, hashlib.sha256(broken.encode()).hexdigest(), broken)
+        self.assertIn("not JSON", str(context.exception))
+        for bad in (self.signature, 12, ""):
+            with self.assertRaises(L.SignatureKeyError):
+                L.verify_signature_key(self.signature, KEYTEXT_FIXTURE_HASH, bad)
+
+    def test_feature_signature_key_and_the_library_model_name(self):
+        # A manifest feature carrying KeyText names its signature-only model by the recorded (C++) key;
+        # without KeyText (a record-era manifest) the legacy re-derivation is unchanged. The fixture is the
+        # S1p census signature (boxable copy) with ONE lexeme of its key text written in a parse-equal
+        # 17-digit form (as nlohmann writes some doubles): the float re-dump then hashes elsewhere.
+        import hashlib
+        import json
+        census = json.load(open(ClusterQuantumNearMatchTest.FIXTURE))
+        signature = {k: v for k, v in census["284d6c2b5b66"]["Signature"].items() if k != "Unboxable"}
+        float_text = json.dumps(signature, separators=(",", ":"), sort_keys=True)
+        self.assertIn("90.0,", float_text)
+        key_text = float_text.replace("90.0,", "90.000000000000000,", 1)
+        self.assertNotEqual(key_text, float_text)
+        self.assertEqual(json.loads(key_text), signature)
+        key = hashlib.sha256(key_text.encode()).hexdigest()
+        float_hash = L.signature_hash(signature)
+        self.assertNotEqual(key, float_hash)
+        feature = {"Id": 1, "Type": "SpatialEdgeCluster", "Hash": key, "KeyText": key_text, "Signature": signature}
+        self.assertEqual(L.feature_signature_key(feature), key)
+        legacy = {k: v for k, v in feature.items() if k != "KeyText"}
+        self.assertEqual(L.feature_signature_key(legacy), float_hash)
+        with self.assertRaises(L.SignatureKeyError):
+            L.feature_signature_key({**feature, "Hash": float_hash})
+        manifest = {"Identification": {"MatchingRadius": 1.9, "Features": [feature]}}
+        self.assertEqual(L.build_signature_library(manifest)["Models"][0]["Name"], f"SpatialEdgeCluster-{key[:12]}")
+        legacy_manifest = {"Identification": {"MatchingRadius": 1.9, "Features": [legacy]}}
+        self.assertEqual(L.build_signature_library(legacy_manifest)["Models"][0]["Name"],
+                         f"SpatialEdgeCluster-{float_hash[:12]}")
+        # two features of one key: still the recorded key, no NearKeys; an inconsistent KeyText on a member
+        # fails the library build by name
+        manifest["Identification"]["Features"].append({**feature, "Id": 2})
+        model = L.build_signature_library(manifest)["Models"][0]
+        self.assertEqual((model["Name"], model["Instances"], model.get("NearKeys")), (f"SpatialEdgeCluster-{key[:12]}", 2, None))
+        manifest["Identification"]["Features"][1]["Hash"] = "0" * 64
+        with self.assertRaises(L.SignatureKeyError):
+            L.build_signature_library(manifest)
+        # a group of several distinct signatures (the S1p / S2p / S4 near-match group) is re-derived as before:
+        # the representative is not any member's signature; the members' NearKeys use their recorded keys
+        others = [{k: v for k, v in census[prefix]["Signature"].items() if k != "Unboxable"} for prefix in ("9e103a0f291c", "20ac3e14a128")]
+        group = [feature] + [{"Id": 2 + i, "Type": "SpatialEdgeCluster", "Hash": L.signature_hash(o), "Signature": o}
+                             for i, o in enumerate(others)]
+        model = L.build_signature_library({"Identification": {"MatchingRadius": 1.9, "Features": group}})["Models"][0]
+        representative = L.group_features(group)[0][0]
+        self.assertEqual(model["Name"], f"SpatialEdgeCluster-{L.signature_hash(representative)[:12]}")
+        self.assertEqual(model["NearKeys"], sorted({key} | {L.signature_hash(o) for o in others}))
+
+if __name__ == "__main__":
+    unittest.main()

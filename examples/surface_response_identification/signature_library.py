@@ -447,10 +447,74 @@ def signature_hash(signature):
     return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
 
 
+class SignatureKeyError(ValueError):
+    """A requirement's key does not agree with its Signature / KeyText (fail closed, by name)."""
+
+
+KEY_PATH_KEYTEXT = "KeyText"
+KEY_PATH_LEGACY = "LegacyFloatHash"
+KEY_PREFIX_MIN_HEX = 12
+
+
+def verify_signature_key(signature, requirement_key, key_text=None, *, name="requirement"):
+    """The key of a Signature-bearing requirement, verified against its Signature (decision 605
+    (2) F-4 (c); the 438 (3) rule): returns {"Path", "KeyText", "SignatureHash", "RequirementKey",
+    "Equal": True} or raises SignatureKeyError.
+
+    - ``key_text`` present (a manifest written by a binary that records KeyText, the exact text
+      palace hashed, Type included): sha256(key_text) must equal the requirement key (or carry
+      it as a >= 12-hex prefix) AND json.loads(key_text) must equal ``signature`` (parsed-dict
+      equality; no float is re-serialised, so nlohmann's Grisu2 lexemes never matter).
+    - ``key_text`` None (a record-era manifest of the older binaries): the legacy float hash
+      ``signature_hash(signature)`` is compared with the key, unchanged behaviour.
+    - ``requirement_key`` None: no digest comparison (there is no key to compare); the parse
+      check still runs and the record's SignatureHash is the digest of the text (or the legacy
+      hash). Palace always writes Hash beside KeyText, so this is the "no key" caller's path
+      (e.g. a generated basis), not a manifest record's.
+    """
+    import hashlib
+    key = None if requirement_key is None else str(requirement_key)
+
+    def matches(digest):
+        return key is None or digest == key or (len(key) >= KEY_PREFIX_MIN_HEX and digest.startswith(key))
+
+    if key_text is None:
+        digest = signature_hash(signature)
+        if not matches(digest):
+            raise SignatureKeyError(f"{name}: signature_hash(Signature) {digest[:16]}… != the requirement key {key[:16]}… "
+                                    f"(legacy float-hash path: the record carries no KeyText)")
+        return {"Path": KEY_PATH_LEGACY, "KeyText": None, "SignatureHash": digest, "RequirementKey": key, "Equal": True}
+    if not isinstance(key_text, str) or not key_text:
+        raise SignatureKeyError(f"{name}: KeyText must be a non-empty string, not {type(key_text).__name__}")
+    digest = hashlib.sha256(key_text.encode()).hexdigest()
+    if not matches(digest):
+        raise SignatureKeyError(f"{name}: sha256(KeyText) {digest[:16]}… != the requirement key {key[:16]}…")
+    try:
+        parsed = json.loads(key_text)
+    except ValueError as error:
+        raise SignatureKeyError(f"{name}: KeyText is not JSON ({error})") from error
+    if parsed != signature:
+        raise SignatureKeyError(f"{name}: json.loads(KeyText) != Signature (the key text names another signature)")
+    return {"Path": KEY_PATH_KEYTEXT, "KeyText": key_text, "SignatureHash": digest, "RequirementKey": key, "Equal": True}
+
+
+def feature_signature_key(feature):
+    """The key of a manifest feature / requirement record: its verified Hash when the record
+    carries KeyText (verify_signature_key, fail closed), else the legacy float hash of its
+    Signature (a record-era manifest)."""
+    if feature.get("KeyText") is None:
+        return signature_hash(feature["Signature"])
+    return verify_signature_key(feature["Signature"], feature.get("Hash"), feature["KeyText"],
+                                name=f"feature {feature.get('Id', feature.get('Hash'))}")["SignatureHash"]
+
+
 def context_digest(signature):
     """sha256 of the serialised {"Box", "Context"} of a contract-3 SpatialEdgeCluster signature
     (surfaceresponseidentification SpatialSupportContextDigest; the manifest records it as
-    SpatialSupport.ContextDigest); '' for a claims-only signature."""
+    SpatialSupport.ContextDigest); '' for a claims-only signature. A Python float re-dump of
+    the C++-hashed text (the same class as the pre-KeyText signature_hash): the manifest records
+    no ContextText, so legacy_contract_alias cross-checks this digest against the recorded one
+    and fails closed by name when a double's lexeme differs."""
     import hashlib
     if "Box" not in signature:
         return ""
@@ -530,13 +594,22 @@ def build_signature_library(manifest, name="signature-only", matrix_directory="s
                 if f["Type"] not in UNMODELLED_TYPES and not f.get("Signature", {}).get("Unboxable")]
     for representative, members, spread in group_features(modelled):
         feature_type = members[0]["Type"]
-        model_name = f"{feature_type}-{signature_hash(representative)[:12]}"
+        # The model key: a group whose representative IS its members' signature, on a manifest
+        # carrying KeyText, takes the members' recorded key verified against that text (the C++
+        # key, never a float re-dump; decision 605 (2) F-4 (c)); otherwise (a record-era manifest,
+        # or a representative formed over several distinct signatures) the key is re-derived here
+        # as before (legacy float hash).
+        if members[0].get("KeyText") is not None and all(f["Signature"] == representative for f in members):
+            representative_key = feature_signature_key(members[0])
+        else:
+            representative_key = signature_hash(representative)
+        model_name = f"{feature_type}-{representative_key[:12]}"
         model = signature_model(feature_type, representative, radius, model_name, matrix_directory)
         model["Instances"] = len(members)
         model["DistinctSignatures"] = len({json.dumps(f["Signature"], sort_keys=True) for f in members})
         model["ParameterSpread"] = spread
         if feature_type == "SpatialEdgeCluster":
-            near_keys = sorted({signature_hash(dict(f["Signature"])) for f in members} - {signature_hash(representative)})
+            near_keys = sorted({feature_signature_key(f) for f in members} - {representative_key})
             if near_keys:
                 # The members' keys the matcher resolves to this model by the quantum
                 # near-match (block (b) DESIGN section 4): recorded, never compared.

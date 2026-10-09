@@ -8762,8 +8762,12 @@ IdentificationResult RunGeometryIdentification(
         spread =
             std::max(spread, SignatureDeviation(representative, signature).value_or(0.0));
       }
+      // KeyText is the exact text the Hash is the sha256 of (the signature with its Type,
+      // nlohmann's dump): a consumer verifies sha256(KeyText) == Hash and parse(KeyText) ==
+      // Signature without re-serialising floats (decision 605 (2) F-4 (c): nlohmann's
+      // Grisu2 and Python's repr differ on some doubles, so a float re-dump is not the
+      // key).
       const auto [key, hash] = SignatureKeyAndHash(representative, base.type);
-      (void)key;
       // The keys of a near-matching cluster group's other members (block (b) DESIGN
       // section 4): the record's Hash is the lexicographically smallest member's.
       nlohmann::json near_keys = nlohmann::json::array();
@@ -8787,6 +8791,7 @@ IdentificationResult RunGeometryIdentification(
                                {"Interfaces", base.interfaces},
                                {"BoundaryCondition", base.law},
                                {"Hash", hash},
+                               {"KeyText", key},
                                {"Signature", representative},
                                {"Instances", feature_instances},
                                {"DistinctSignatures", signatures.size()},
