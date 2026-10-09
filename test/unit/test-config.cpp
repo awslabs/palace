@@ -1183,6 +1183,19 @@ TEST_CASE("Config material permittivity models", "[config][Serial]")
                   {"LowerFrequency", 2.0},
                   {"UpperFrequency", 1.0}});
     CheckInvalid({{"Type", "Unknown"}});
+
+    // Terms whose residues cancel at a common pole are a configuration error.
+    json lorentz = {{"Type", "Lorentz"},
+                    {"DeltaPermittivity", 0.5},
+                    {"ResonanceFrequency", 3.0},
+                    {"DampingFrequency", 0.0}};
+    json cancelling = lorentz;
+    cancelling["DeltaPermittivity"] = -0.5;
+    const json material = {
+        {"Attributes", {1}},
+        {"Permittivity", {{"HighFrequency", 1.0}, {"Terms", {lorentz, cancelling}}}}};
+    CHECK_THROWS_WITH(config::MaterialData(material),
+                      Catch::Matchers::ContainsSubstring("cancel exactly"));
   }
 }
 

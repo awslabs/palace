@@ -16,6 +16,7 @@
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/labels.hpp"
@@ -25,24 +26,6 @@ namespace palace
 {
 namespace
 {
-
-struct IntegrationSettingsGuard
-{
-  int pa_order_threshold = BilinearForm::pa_order_threshold;
-  int p_trial = fem::DefaultIntegrationOrder::p_trial;
-  bool q_order_jac = fem::DefaultIntegrationOrder::q_order_jac;
-  int q_order_extra_pk = fem::DefaultIntegrationOrder::q_order_extra_pk;
-  int q_order_extra_qk = fem::DefaultIntegrationOrder::q_order_extra_qk;
-
-  ~IntegrationSettingsGuard()
-  {
-    BilinearForm::pa_order_threshold = pa_order_threshold;
-    fem::DefaultIntegrationOrder::p_trial = p_trial;
-    fem::DefaultIntegrationOrder::q_order_jac = q_order_jac;
-    fem::DefaultIntegrationOrder::q_order_extra_pk = q_order_extra_pk;
-    fem::DefaultIntegrationOrder::q_order_extra_qk = q_order_extra_qk;
-  }
-};
 
 struct ImaginaryHierarchyData
 {
@@ -104,7 +87,7 @@ TEST_CASE("SpaceOperator retains coarse support while omitting fine exact zeros"
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
 
-  IntegrationSettingsGuard settings_guard;
+  test::IntegrationSettingsGuard settings_guard;
   config::SolverData solver;
   solver.order = 2;
   solver.pa_order_threshold = 2;
@@ -169,7 +152,7 @@ TEST_CASE("CPU preconditioner quadrature data preserves the multigrid operators"
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
 
-  IntegrationSettingsGuard settings_guard;
+  test::IntegrationSettingsGuard settings_guard;
   config::SolverData solver;
   solver.order = 3;
   solver.pa_order_threshold = 2;

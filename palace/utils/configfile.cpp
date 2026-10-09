@@ -436,6 +436,16 @@ MaterialData::MaterialData(const json &domain)
       MFEM_ABORT("Unknown material permittivity term Type \"" << type << "\"!");
     }
   }
+  for (const auto &term : permittivity_pole_terms)
+  {
+    std::complex<double> residue = 0.0;
+    for (const auto &other : permittivity_pole_terms)
+    {
+      residue += (other.pole == term.pole) ? other.residue : 0.0;
+    }
+    MFEM_VERIFY(residue != 0.0, "Material permittivity terms with a common pole cancel "
+                                "exactly; remove them!");
+  }
 }
 
 DomainEnergyData::DomainEnergyData(const json &domain)
