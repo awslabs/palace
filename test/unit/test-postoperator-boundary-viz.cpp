@@ -1042,10 +1042,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
   mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
   BdrSurfaceCurrentVectorCoefficient J_real_legacy(B.Real(), mat_op, invmu_scaling);
   BdrSurfaceCurrentVectorCoefficient J_imag_legacy(B.Imag(), mat_op, invmu_scaling);
+  // Q_s carries the factor eps_scaling relative to the E fields atol was sized for.
+  const double q_atol = atol * eps_scaling;
   CheckStats("Q_s_real", CompareScalarField(ReadBoundaryChecked("Q_s_real", 1), pmesh, lod,
-                                            Q_real_legacy, rtol, atol));
+                                            Q_real_legacy, rtol, q_atol));
   CheckStats("Q_s_imag", CompareScalarField(ReadBoundaryChecked("Q_s_imag", 1), pmesh, lod,
-                                            Q_imag_legacy, rtol, atol));
+                                            Q_imag_legacy, rtol, q_atol));
   CheckStats("J_s_real", CompareVectorField(ReadBoundaryChecked("J_s_real", 3), pmesh, lod,
                                             J_real_legacy, rtol, atol));
   CheckStats("J_s_imag", CompareVectorField(ReadBoundaryChecked("J_s_imag", 3), pmesh, lod,
@@ -1186,12 +1188,14 @@ TEST_CASE_METHOD(test::SharedTempDir,
       &E.Imag(), nullptr, mat_op, true, unused_x0, eps_scaling, /*imag_permittivity*/ true);
   mfem::SumCoefficient Q_real_legacy(Q_real_re, Q_imag_im, 1.0, -1.0);
   mfem::SumCoefficient Q_imag_legacy(Q_imag_re, Q_real_im, 1.0, 1.0);
+  // Q_s carries the factor eps_scaling relative to the E fields atol was sized for.
+  const double q_atol = atol * eps_scaling;
   CheckStats("Q_s_real boundary 2D",
              CompareScalarField(ReadBoundaryChecked("Q_s_real", 1), pmesh, lod,
-                                Q_real_legacy, rtol, atol));
+                                Q_real_legacy, rtol, q_atol));
   CheckStats("Q_s_imag boundary 2D",
              CompareScalarField(ReadBoundaryChecked("Q_s_imag", 1), pmesh, lod,
-                                Q_imag_legacy, rtol, atol));
+                                Q_imag_legacy, rtol, q_atol));
 
   BdrSurfaceCurrentVectorCoefficient J_real_legacy(B.Real(), mat_op, invmu_scaling);
   BdrSurfaceCurrentVectorCoefficient J_imag_legacy(B.Imag(), mat_op, invmu_scaling);

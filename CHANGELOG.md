@@ -90,6 +90,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     use the complex permittivity `ε(1 − i tanδ)` of the material model, consistent with the
     solver. Also corrected the documented `Q_s` units to C/m².
     [PR 953](https://github.com/awslabs/palace/pull/953).
+  - Fixed a heap overflow in 2D surface flux postprocessing with an explicit `"Center"`.
+    [PR 953](https://github.com/awslabs/palace/pull/953).
 
 #### Performance Improvements
 

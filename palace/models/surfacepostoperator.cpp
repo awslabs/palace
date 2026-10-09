@@ -3,6 +3,7 @@
 
 #include "surfacepostoperator.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <set>
 #include <string>
@@ -122,7 +123,7 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
     }
     else
     {
-      std::ranges::copy(data.center, center.begin());
+      std::copy_n(data.center.begin(), mesh.SpaceDimension(), center.begin());
     }
   }
 }

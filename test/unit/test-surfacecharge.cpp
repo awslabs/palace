@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <array>
 #include <complex>
 #include <memory>
 #include <mfem.hpp>
@@ -99,6 +100,84 @@ TEST_CASE("Electric surface flux of a lossy dielectric uses the complex permitti
   // Φ = ∫ D ⋅ n dS with D = ε_r (1 - i tan δ) E and n = +z on the top face.
   const std::complex<double> eps(eps_r, -eps_r * tandelta);
   const std::complex<double> expected = eps * Ez * sx * sy;
+  const auto flux_value = surf_post_op.GetSurfaceFlux(1, &E, nullptr);
+  CHECK_THAT(flux_value.real(), WithinRel(expected.real(), 1.0e-10));
+  CHECK_THAT(flux_value.imag(), WithinRel(expected.imag(), 1.0e-10));
+}
+
+// 2D surface flux goes through the legacy coefficient path rather than libCEED. On an edge
+// with outward normal n of a 2D domain in a uniform field, Φ = ε_nn (1 - i tan δ_nn) E_n L
+// for diagonal anisotropic ε_r and tan δ. Giving an explicit "Center" also covers copying
+// the three-component center into the two-component vector of a 2D mesh.
+TEST_CASE("2D electric surface flux of a lossy anisotropic dielectric",
+          "[surfacepostoperator][Serial][Parallel]")
+{
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+
+  const bool two_sided = GENERATE(false, true);
+  // MakeCartesian2D boundary attributes: 2 is the right edge x = sx, 3 the top edge y = sy.
+  const int edge_attr = GENERATE(2, 3);
+  CAPTURE(two_sided, edge_attr);
+
+  // A 2D mesh uses the leading 2 x 2 block of the material tensors, so the z components
+  // of the material below are unused.
+  constexpr double sx = 1.1, sy = 2.5;
+  const std::array<double, 2> eps_r = {2.0, 3.0}, tandelta = {0.1, 0.2};
+  const std::array<std::complex<double>, 2> E0 = {{{1.0, 0.5}, {-0.7, 0.2}}};
+
+  MPI_Comm comm = Mpi::World();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL, true, sx, sy));
+  const int dim = serial_mesh->Dimension();
+  Mesh mesh(std::make_unique<mfem::ParMesh>(comm, *serial_mesh));
+  serial_mesh.reset();
+
+  config::MaterialData material;
+  material.attributes = {1};
+  material.epsilon_r.s = {eps_r[0], eps_r[1], 4.0};
+  material.tandelta.s = {tandelta[0], tandelta[1], 0.3};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, mesh);
+
+  mfem::H1_FECollection h1_fec(order, dim);
+  mfem::ND_FECollection nd_fec(order, dim);
+  FiniteElementSpace h1_fespace(mesh, &h1_fec), nd_fespace(mesh, &nd_fec);
+
+  GridFunction E(nd_fespace, true);
+  {
+    mfem::Vector vr(dim), vi(dim);
+    for (int d = 0; d < dim; d++)
+    {
+      vr(d) = E0[d].real();
+      vi(d) = E0[d].imag();
+    }
+    mfem::VectorConstantCoefficient cr(vr), ci(vi);
+    E.Real().ProjectCoefficient(cr);
+    E.Imag().ProjectCoefficient(ci);
+  }
+
+  config::BoundaryPostData postpro;
+  config::SurfaceFluxData flux;
+  flux.type = SurfaceFlux::ELECTRIC;
+  flux.two_sided = two_sided;
+  flux.center = {0.5 * sx, 0.5 * sy, 0.0};
+  flux.no_center = false;
+  flux.attributes = {edge_attr};
+  postpro.flux.emplace(1, flux);
+  SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace,
+                                   nd_fespace);
+
+  // Outward normal x on the right edge (length sy), y on the top edge (length sx). With
+  // "TwoSided" the center is unused and the normal points into the element, so inward here.
+  const int n = (edge_attr == 2) ? 0 : 1;
+  const double length = (edge_attr == 2) ? sy : sx;
+  const double sign = two_sided ? -1.0 : 1.0;
+  const std::complex<double> eps(eps_r[n], -eps_r[n] * tandelta[n]);
+  const std::complex<double> expected = sign * eps * E0[n] * length;
   const auto flux_value = surf_post_op.GetSurfaceFlux(1, &E, nullptr);
   CHECK_THAT(flux_value.real(), WithinRel(expected.real(), 1.0e-10));
   CHECK_THAT(flux_value.imag(), WithinRel(expected.imag(), 1.0e-10));
