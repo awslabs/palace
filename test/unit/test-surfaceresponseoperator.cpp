@@ -8169,6 +8169,186 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
   }
 }
 
+TEST_CASE("SurfaceResponseOperatorSignatureBoxSupport",
+          "[surfaceresponseoperator][seamscale][Serial]")
+{
+  // Decision 627 (2) (the rerun-3b seam gap): a contract-3 placeholder without basis
+  // points (the discovery / dry-run preflight of a Missing key) gets its support from the
+  // Signature's box placed by the patch frame. CollectSpatialSupports divides every local
+  // point by coordinate_scale = Lc / L0 (its basis-points contract: the file is in mesh
+  // units), and `config.matching_radius` is already nondimensional, so the box corners must
+  // be built in mesh units too — otherwise the placeholder's support is 1 / Lc too small
+  // (1 / 1055 on the ctx003-C3 window) and a claimed cell through the frame origin reads as
+  // strictly containing the box (the pass-02 abort of record). The fixture is the C3
+  // record in patch units: R = 1.9, Lc = 1055 um, the 02db9a314b1b Signature Box, a cell of
+  // 0.256 R on a claimed segment whose line passes 0.0018 R from the frame origin.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Claim = Patch::Provenance::Claim;
+  const double R = 1.9;
+  const double tolerance = kSignatureParameterToleranceOverRadius * R;
+  const double theta = 30.0 * M_PI / 180.0;
+  const std::array<double, 3> origin = {-3900.2866, -541.4623, 0.0};
+  const std::array<double, 3> axis_u = {std::cos(theta), std::sin(theta), 0.0};
+  const std::array<double, 3> axis_v = {-std::sin(theta), std::cos(theta), 0.0};
+  const std::array<double, 3> axis_w = {0.0, 0.0, 1.0};
+  const std::array<double, 4> signature_box = {-4.273, -7.094, 8.548, 7.600};
+  // The expected bounds: the 8 corners (box x R, +-R normal) placed by the frame, in the
+  // patch units of the origin — independent of the coordinate scale.
+  std::array<double, 3> expected_min{}, expected_max{};
+  {
+    bool first = true;
+    for (const double x : {signature_box[0], signature_box[2]})
+    {
+      for (const double y : {signature_box[1], signature_box[3]})
+      {
+        for (const double z : {-1.0, 1.0})
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            const double c =
+                origin[d] + R * (x * axis_u[d] + y * axis_v[d] + z * axis_w[d]);
+            expected_min[d] = first ? c : std::min(expected_min[d], c);
+            expected_max[d] = first ? c : std::max(expected_max[d], c);
+          }
+          first = false;
+        }
+      }
+    }
+  }
+  // The cell of the placeholder's own real feature (patch 952 of the record): a claimed
+  // segment through the frame origin, the cell [-0.128 R, 0.128 R] about a point 0.0018 R
+  // off the origin, perpendicular to the cell's direction.
+  const double cell_half = 0.128 * R;
+  const std::array<double, 3> cell_direction = {0.8562, 0.5167, 0.0};
+  const double cell_norm = std::hypot(cell_direction[0], cell_direction[1]);
+  const std::array<double, 3> cell_axis_w = {cell_direction[0] / cell_norm,
+                                             cell_direction[1] / cell_norm, 0.0};
+  const std::array<double, 3> cell_axis_u = {-cell_axis_w[1], cell_axis_w[0], 0.0};
+  std::array<double, 3> cell_origin{};
+  Claim claim;
+  claim.segment = 4611;
+  for (int d = 0; d < 3; d++)
+  {
+    cell_origin[d] = origin[d] + 0.0018 * R * cell_axis_u[d];
+    claim.p0[d] = cell_origin[d] - 0.3 * R * cell_axis_w[d];
+    claim.p1[d] = cell_origin[d] + 0.3 * R * cell_axis_w[d];
+  }
+  auto Fixture = [&]()
+  {
+    config::ElectrostaticSolverData::ResponseCorrectionData data;
+    data.matching_radius = R;
+    data.models.emplace_back().idx = 1;
+    data.models.back().name = "gap";
+    data.models.emplace_back().idx = 2;
+    data.models.back().name = "__preflight_placeholder_02db9a314b1b09d5";
+    data.models.back().spatial_basis = true;
+    Patch cell;
+    cell.model = 1;
+    cell.origin = cell_origin;
+    cell.axis_u = cell_axis_u;
+    cell.axis_v = {0.0, 0.0, 1.0};
+    cell.axis_w = cell_axis_w;
+    cell.longitudinal_cell = {-cell_half, cell_half};
+    cell.weight = 0.1 * 2.0 * cell_half;
+    cell.provenance.feature = 1;
+    cell.provenance.stretch = 0;
+    cell.provenance.segment = claim.segment;
+    cell.provenance.s0 = 0.0;
+    cell.provenance.s1 = 2.0 * cell_half;
+    cell.provenance.quadrature_weight = 1.0;
+    cell.maxwell_conductor_anchors = {cell.origin};
+    data.patches.push_back(cell);
+    Patch placeholder;
+    placeholder.model = 2;
+    placeholder.origin = origin;
+    placeholder.axis_u = axis_u;
+    placeholder.axis_v = axis_v;
+    placeholder.axis_w = axis_w;
+    placeholder.provenance.feature = 85;
+    placeholder.provenance.claims = {claim};
+    placeholder.provenance.has_support_box = true;
+    placeholder.provenance.support_box = signature_box;
+    data.patches.push_back(placeholder);
+    return data;
+  };
+  auto NoBasisPoints = [](int) -> const std::vector<std::array<double, 3>> *
+  { return nullptr; };
+  SECTION("the from-signature-box support is the Signature Box through the Frame, "
+          "independent of the coordinate scale")
+  {
+    const auto data = Fixture();
+    for (const double coordinate_scale : {1055.0, 1.0})
+    {
+      std::vector<std::string> skipped;
+      const auto supports =
+          CollectSpatialSupports(data, NoBasisPoints, coordinate_scale, 3, &skipped);
+      REQUIRE(supports.size() == 1);
+      CHECK(skipped.empty());
+      const auto &support = supports.front();
+      CHECK(support.patch == 1);
+      CHECK(support.from_signature_box);
+      CHECK(support.has_support_box);
+      CHECK(support.support_box == signature_box);
+      CHECK_THAT(support.matching_radius, WithinAbs(R, 1.0e-12));
+      REQUIRE(support.claims.size() == 1);
+      for (int d = 0; d < 3; d++)
+      {
+        CHECK_THAT(support.min[d], WithinAbs(expected_min[d], 1.0e-9));
+        CHECK_THAT(support.max[d], WithinAbs(expected_max[d], 1.0e-9));
+      }
+      // The box extent is the Signature's (12.821 R x 14.694 R x 2 R), not 1 / Lc of it.
+      CHECK_THAT(support.max[2] - support.min[2], WithinAbs(2.0 * R, 1.0e-9));
+    }
+  }
+  SECTION("a basis-points model in mesh units gives the same bounds (the shared "
+          "division is the basis-points contract)")
+  {
+    const double coordinate_scale = 1055.0;
+    const auto data = Fixture();
+    std::vector<std::array<double, 3>> points;
+    for (const double x : {signature_box[0], signature_box[2]})
+    {
+      for (const double y : {signature_box[1], signature_box[3]})
+      {
+        for (const double z : {-1.0, 1.0})
+        {
+          points.push_back({x * R * coordinate_scale, y * R * coordinate_scale,
+                            z * R * coordinate_scale});
+        }
+      }
+    }
+    const auto supports = CollectSpatialSupports(
+        data, [&](int) -> const std::vector<std::array<double, 3>> * { return &points; },
+        coordinate_scale, 3);
+    REQUIRE(supports.size() == 1);
+    CHECK_FALSE(supports.front().from_signature_box);
+    for (int d = 0; d < 3; d++)
+    {
+      CHECK_THAT(supports.front().min[d], WithinAbs(expected_min[d], 1.0e-9));
+      CHECK_THAT(supports.front().max[d], WithinAbs(expected_max[d], 1.0e-9));
+    }
+  }
+  SECTION("the claimed cell through the frame origin is wholly owned by the placeholder")
+  {
+    auto data = Fixture();
+    const auto supports = CollectSpatialSupports(data, NoBasisPoints, 1055.0, 3);
+    REQUIRE(supports.size() == 1);
+    const auto ownership =
+        ApplyContinuationOwnership(data.patches, supports, 3, tolerance, R);
+    REQUIRE(ownership.cells.size() == 1);
+    CHECK(ownership.wholly_owned_cells == 1);
+    CHECK(ownership.clipped_cells == 0);
+    CHECK(ownership.cells.front().patch == 0);
+    CHECK(ownership.cells.front().feature == 1);
+    CHECK_THAT(ownership.owned_length, WithinAbs(2.0 * cell_half, 1.0e-12));
+    // owned_by_support is keyed by the owning SPATIAL PATCH index (the placeholder's, 1).
+    CHECK(ownership.cells.front().owners == std::vector<std::size_t>{1});
+    CHECK_THAT(ownership.owned_by_support.at(1), WithinAbs(2.0 * cell_half, 1.0e-12));
+    CHECK(data.patches.front().weight == 0.0);
+    CHECK(data.patches.front().longitudinal_cell == std::array<double, 2>{0.0, 0.0});
+  }
+}
+
 TEST_CASE("SurfaceResponseOperatorForeignContextOwnership",
           "[surfaceresponseoperator][foreignctx][Serial]")
 {

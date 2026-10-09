@@ -872,7 +872,11 @@ const char *TranslationalOwnershipClassName(const TranslationalOwnershipRecord &
 
 // The spatial supports of a response configuration: the bounding box of every spatial
 // model's basis points (mesh units) placed by its patch frame, with the cluster's claims;
-// models without basis points (preflight placeholders) are reported by name in skipped.
+// a contract-3 placeholder without basis points gets the Signature's support box placed by
+// the patch frame (its corners `support_box` x R, built in mesh units like the basis
+// points, so the bounds come out in the same patch units as every other support); models
+// without basis points and without a support box (legacy preflight placeholders) are
+// reported by name in skipped.
 std::vector<SpatialSupportBounds> CollectSpatialSupports(
     const config::ElectrostaticSolverData::ResponseCorrectionData &config,
     const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
