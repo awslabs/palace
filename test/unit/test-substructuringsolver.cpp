@@ -2912,6 +2912,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
         }
       }
       const auto h = ds.CondenseEnvironment({&l});
+      CHECK(ds.CondenseEnvironment({}).empty());  // an environment without ports
       std::complex<double> V[2];
       for (int k = 0; k < 2; k++)
       {

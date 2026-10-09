@@ -746,6 +746,10 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
   MFEM_VERIFY(!online && env.schur, "CondenseEnvironment needs the environment factor!");
   std::vector<std::complex<double>> red;
 #if defined(MFEM_USE_MUMPS)
+  if (b.empty())
+  {
+    return red;  // (MUMPS rejects an empty batch)
+  }
   std::vector<ComplexVector> x(b.size());
   std::vector<const ComplexVector *> X(b.size());
   std::vector<ComplexVector *> Xo(b.size());
