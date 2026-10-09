@@ -1703,6 +1703,88 @@ const CORNER_RECONNECTION_RULE =
     "round 2 F5-B, decisions 363 / 365 / 392)"
 const CORNER_RECONNECTION_ROUNDS = 4
 
+# ---------------------------------------------------------------------------
+# Confined below-gate slivers (round 4 F-3, supervisor decisions 605 / 606; the R2-failure
+# diagnosis of 0c94ec951e10 / c08bcd8f3057). On a REVOLVED arc tube the apex / outer-ring
+# quartet {apex_k, apex_k+1, ring_k+1, ring_k+2} (coplanar on a straight tube, where it
+# never forms a cell) is a sliver of volume ~ lc^2 x dz x lc / 2R inside the thin trench slab
+# below the tube envelope; Gmsh's Delaunay realises it, its optimizer cannot swap it (every
+# vertex is a boundary vertex) and the descent keeps surface vertices in their planes, so
+# the cell fails the scaled-Jacobian / condition gates. The F5-B reconnection (a 2-3 flip or
+# an edge removal, CORNER_RECONNECTION_RULE) repairs such a cell but its trigger was the
+# corner bridging-sliver predicate only. This rule extends the trigger: a tetrahedron below
+# the gates whose four vertices are all CONFINED - on a CAD surface (a vertex of a surface
+# triangle) or a tube-envelope node (ring / apex / cap: a node of a prism or pyramid, never
+# moved) - is a bridging sliver wherever it lies and takes the better of its 2-3 flip and
+# edge removal, every new cell clearing BOTH gates (the floor max(the cell's recorded floor,
+# MinimumScaledJacobian), the ceiling min(the cell's recorded ceiling,
+# MaximumJacobianCondition)) and improving on the cell's kappa_reg, under the same positivity
+# / same-entity / no-surface-face constraints. It runs at BOTH gate sites: inside
+# optimize_required_region! after the descent and before its gates (the seed-region site;
+# 0c94's stop) and over the whole mesh before gate_mixed_volume_quality (the global site;
+# c08b's stop). A cell with a FREE (interior) vertex is never touched (recorded as
+# UnconfinedBelowGate: not this class); an unrepaired cell still fails the gate (fail
+# closed, as before). The pass fires only on cells below the gates, so a build that passed
+# them is bitwise unchanged; its census gains the rows reading 0.
+const ENVELOPE_SLIVER_RECONNECTION_RULE =
+    "a tetrahedron below the quality gates (scaled Jacobian < MinimumScaledJacobian or " *
+    "Jacobian condition > MaximumJacobianCondition) after the descent whose four vertices are " *
+    "all confined (a vertex of a surface triangle, a CAD point or a tube-envelope prism / " *
+    "pyramid node) is a bridging sliver wherever it lies; it is replaced by the better of its " *
+    "2-3 flip and its edge removal (CORNER_RECONNECTION_RULE's operations and constraints) " *
+    "whose every new cell has scaled Jacobian >= max(the cell's floor, MinimumScaledJacobian) " *
+    "and Jacobian condition <= min(the cell's ceiling, MaximumJacobianCondition) and whose " *
+    "maximum kappa_reg improves on the cell's; at BOTH gate sites (the seed required region " *
+    "before its gates, the whole mesh before the mixed-element gates); a below-gate cell with a " *
+    "free vertex is not touched (UnconfinedBelowGate); an unrepaired cell still fails the gate " *
+    "(supervisor decisions 605 / 606, round-4 F-3)"
+
+# The vertices confined to a surface or an envelope: those of any surface triangle plus the
+# `fixed` ones (CAD points, the tube prism / pyramid nodes).
+function confined_vertices(point_count, triangles, fixed)
+    confined = copy(fixed)
+    for triangle in triangles, i in triangle
+        confined[i] = true
+    end
+    return confined
+end
+
+# The best gate-clearing reconnection of a confined sliver cell k (ENVELOPE_SLIVER_RECONNECTION_RULE):
+# (kind, replaced cells, new cells, quality, element) or nothing; `excluded(j)` tells a cell the
+# operations may not replace (a collapse-remapped cell).
+function best_sliver_reconnection(points, tetrahedra, incident, surface_faces, surface_edges,
+                                  cell_entity, k, scaled_floor, condition_ceiling, excluded)
+    before = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
+    flip = best_two_three_flip(points, tetrahedra, incident, surface_faces, cell_entity, k,
+                               scaled_floor, condition_ceiling)
+    removal = best_edge_removal(points, tetrahedra, incident, surface_edges, cell_entity, k,
+                                scaled_floor, condition_ceiling)
+    flip !== nothing && excluded(flip.neighbour) && (flip = nothing)
+    removal !== nothing && any(excluded(j) for j in removal.ring) && (removal = nothing)
+    flip === nothing && removal === nothing && return nothing
+    use_removal = removal !== nothing && (flip === nothing || removal.quality <= flip.quality)
+    quality = use_removal ? removal.quality : flip.quality
+    quality < before || return nothing
+    return use_removal ?
+           (kind="edge-removal", replaced=collect(removal.ring), cells=removal.cells, quality=quality,
+            before=before, element=collect(removal.edge)) :
+           (kind="2-3", replaced=[k, flip.neighbour], cells=flip.cells, quality=quality, before=before,
+            element=collect(flip.face))
+end
+
+# The census row of one sliver-reconnection site.
+function sliver_reconnection_record(site, candidates, unconfined, reconnections, unrepaired,
+                                    scaled_gate, condition_gate)
+    return Dict{String, Any}(
+        "Site" => site, "Rule" => ENVELOPE_SLIVER_RECONNECTION_RULE,
+        "MinimumScaledJacobian" => scaled_gate, "MaximumJacobianCondition" => condition_gate,
+        "Cells" => length(candidates), "UnconfinedBelowGate" => length(unconfined),
+        "Flips" => count(row -> row["Kind"] == "2-3", reconnections),
+        "Removals" => count(row -> row["Kind"] == "edge-removal", reconnections),
+        "Unrepaired" => length(unrepaired),
+        "Reconnections" => reconnections)
+end
+
 function oriented_tetrahedron(points, cell)
     xyz = [points[:, i] for i in cell]
     volume = dot(xyz[2] .- xyz[1], cross(xyz[3] .- xyz[1], xyz[4] .- xyz[1]))
@@ -2250,6 +2332,70 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     end
     above_gate(cells, gate) = [k for k in cells
                                if tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]]) > gate]
+    # A reconnection (F5-B, and the F-3 sliver pass below): the replaced cells leave the
+    # incidence and the bookkeeping; the new cells take the replaced slots (extra slots die,
+    # extra cells append) with the fresh floor / ceiling of the rule.
+    function install_reconnection!(replaced, new_cells, entity)
+        for p in replaced
+            for i in tetrahedra[p]
+                filter!(!=(p), incident[i])
+            end
+            origin[p] > 0 && push!(reconnection_replaced, origin[p])
+            origin[p] = 0
+            delete!(reconnection_added, p)
+        end
+        for (index, new_cell) in enumerate(new_cells)
+            if index <= length(replaced)
+                p = replaced[index]
+                tetrahedra[p] = new_cell
+                scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
+                floors[p] = min(scaled_new, scaled_target); ceilings[p] = Inf
+                condition_ceilings[p] = max(tetrahedron_aspect([points[:, i] for i in new_cell]),
+                                            condition_target)
+            else
+                push!(tetrahedra, new_cell)
+                p = length(tetrahedra)
+                push!(origin, 0); push!(entity_of, entity)
+                scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
+                push!(floors, min(scaled_new, scaled_target)); push!(ceilings, Inf)
+                push!(condition_ceilings,
+                      max(tetrahedron_aspect([points[:, i] for i in new_cell]), condition_target))
+            end
+            reconnection_added[p] = (entity, new_cell)
+            for i in new_cell
+                push!(incident[i], p)
+            end
+        end
+        for p in replaced[(length(new_cells) + 1):end]
+            push!(dead, p)
+        end
+        return nothing
+    end
+    # The reconnections changed the cell list: the dead slots (an edge removal replaces n
+    # cells by 2 (n - 2)) are compacted out of every per-cell array, the incidence rebuilt
+    # and the required set recomputed on the new list.
+    function compact_reconnected_cells!()
+        if !isempty(dead)
+            keep = [p for p in eachindex(tetrahedra) if !(p in dead)]
+            remap = Dict(p => q for (q, p) in enumerate(keep))
+            tetrahedra_kept = tetrahedra[keep]
+            empty!(tetrahedra); append!(tetrahedra, tetrahedra_kept)
+            floors = floors[keep]; ceilings = ceilings[keep]
+            condition_ceilings = condition_ceilings[keep]
+            origin = origin[keep]; entity_of = entity_of[keep]
+            reconnection_added = Dict(remap[p] => value for (p, value) in reconnection_added if haskey(remap, p))
+            empty!(dead)
+            for list in incident
+                empty!(list)
+            end
+            for (k, cell) in enumerate(tetrahedra), i in cell
+                push!(incident[i], k)
+            end
+        end
+        required, span_distance, in_layer = required_region_cells(points, tetrahedra, corners,
+                                                                  radius, spans, reach)
+        return nothing
+    end
     for (corner, kind, sides) in zip(corners, corner_kinds, corner_sides)
         center = collect(corner)
         targets = corner_incident(center)
@@ -2308,43 +2454,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                 quality < before_flip || continue
                 replaced = use_removal ? removal.ring : [k, flip.neighbour]
                 new_cells = use_removal ? removal.cells : flip.cells
-                entity = entity_of[k]
-                for p in replaced
-                    for i in tetrahedra[p]
-                        filter!(!=(p), incident[i])
-                    end
-                    origin[p] > 0 && push!(reconnection_replaced, origin[p])
-                    origin[p] = 0
-                    delete!(reconnection_added, p)
-                end
-                # The new cells take the replaced slots; extra slots die, extra cells append.
-                slots = Int[]
-                for (index, new_cell) in enumerate(new_cells)
-                    if index <= length(replaced)
-                        p = replaced[index]
-                        tetrahedra[p] = new_cell
-                        scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
-                        floors[p] = min(scaled_new, scaled_target); ceilings[p] = Inf
-                        condition_ceilings[p] = max(tetrahedron_aspect([points[:, i] for i in new_cell]),
-                                                    condition_target)
-                    else
-                        push!(tetrahedra, new_cell)
-                        p = length(tetrahedra)
-                        push!(origin, 0); push!(entity_of, entity)
-                        scaled_new = tetrahedron_scaled_jacobian([points[:, i] for i in new_cell])
-                        push!(floors, min(scaled_new, scaled_target)); push!(ceilings, Inf)
-                        push!(condition_ceilings,
-                              max(tetrahedron_aspect([points[:, i] for i in new_cell]), condition_target))
-                    end
-                    push!(slots, p)
-                    reconnection_added[p] = (entity, new_cell)
-                    for i in new_cell
-                        push!(incident[i], p)
-                    end
-                end
-                for p in replaced[(length(new_cells) + 1):end]
-                    push!(dead, p)
-                end
+                install_reconnection!(replaced, new_cells, entity_of[k])
                 flips += 1
                 push!(reconnections, Dict{String, Any}(
                     "Round" => round, "Kind" => use_removal ? "edge-removal" : "2-3",
@@ -2381,30 +2491,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             "Information" => corner_information(targets),
             "Passed" => after <= gate))
     end
-    if !isempty(reconnection_added)
-        # The reconnections changed the cell list: the dead slots (an edge removal replaces
-        # n cells by 2 (n - 2)) are compacted out of every per-cell array, the incidence
-        # rebuilt and the required set recomputed on the new list.
-        if !isempty(dead)
-            keep = [p for p in eachindex(tetrahedra) if !(p in dead)]
-            remap = Dict(p => q for (q, p) in enumerate(keep))
-            tetrahedra_kept = tetrahedra[keep]
-            empty!(tetrahedra); append!(tetrahedra, tetrahedra_kept)
-            floors = floors[keep]; ceilings = ceilings[keep]
-            condition_ceilings = condition_ceilings[keep]
-            origin = origin[keep]; entity_of = entity_of[keep]
-            reconnection_added = Dict(remap[p] => value for (p, value) in reconnection_added if haskey(remap, p))
-            empty!(dead)
-            for list in incident
-                empty!(list)
-            end
-            for (k, cell) in enumerate(tetrahedra), i in cell
-                push!(incident[i], k)
-            end
-        end
-        required, span_distance, in_layer = required_region_cells(points, tetrahedra, corners,
-                                                                  radius, spans, reach)
-    end
+    isempty(reconnection_added) || compact_reconnected_cells!()
     scaled_of(k) = tetrahedron_scaled_jacobian([points[:, i] for i in tetrahedra[k]])
     edge_aspect_of(k) = tetrahedron_edge_aspect([points[:, i] for i in tetrahedra[k]])
     condition_of(k) = tetrahedron_aspect([points[:, i] for i in tetrahedra[k]])
@@ -2458,6 +2545,50 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         gated_cells = scaled_gated(required_cells, in_layer)
         changed || break
     end
+    # F-3 (ENVELOPE_SLIVER_RECONNECTION_RULE, the seed-region site): every gated cell still
+    # below a gate whose four vertices are confined takes its best gate-clearing reconnection;
+    # a below-gate cell with a free vertex is recorded, never touched.
+    confined = confined_vertices(size(points, 2), triangles, fixed)
+    below_gates(k) = scaled_of(k) < minimum_scaled_jacobian || condition_of(k) > maximum_jacobian_condition
+    sliver_candidates = [k for k in gated_cells if below_gates(k)]
+    sliver_confined = [k for k in sliver_candidates if all(confined[i] for i in tetrahedra[k])]
+    sliver_unconfined = setdiff(sliver_candidates, sliver_confined)
+    sliver_reconnections = Dict{String, Any}[]
+    sliver_unrepaired = Int[]
+    sliver_cells = [tetrahedra[k] for k in sliver_confined]
+    for (slot, k) in enumerate(sliver_confined)
+        # A slot an earlier reconnection of this pass reused holds a new cell: judged by the gates
+        # on the final set, never reconnected again here.
+        (k in dead || tetrahedra[k] != sliver_cells[slot]) && continue
+        reconnection = origin[k] in remapped_by_collapse ? nothing :
+            best_sliver_reconnection(points, tetrahedra, incident, surface_faces, surface_edges,
+                                     p -> entity_of[p], k, max(floors[k], minimum_scaled_jacobian),
+                                     min(condition_ceilings[k], maximum_jacobian_condition),
+                                     j -> origin[j] in remapped_by_collapse)
+        if reconnection === nothing
+            push!(sliver_unrepaired, k)
+            continue
+        end
+        centroid = sum(points[:, i] for i in tetrahedra[k]) ./ 4
+        push!(sliver_reconnections, Dict{String, Any}(
+            "Kind" => reconnection.kind, "Element" => reconnection.element,
+            "Centroid" => centroid,
+            "CornerDistance" => minimum((norm(centroid .- collect(c)) for c in corners); init=Inf),
+            "ScaledJacobian" => scaled_of(k), "JacobianCondition" => condition_of(k),
+            "Before" => reconnection.before, "After" => reconnection.quality,
+            "ReplacedCells" => length(reconnection.replaced), "AddedCells" => length(reconnection.cells)))
+        install_reconnection!(reconnection.replaced, reconnection.cells, entity_of[k])
+    end
+    if !isempty(sliver_reconnections)
+        compact_reconnected_cells!()
+        required_cells = findall(required)
+        layer_cells = layer_rule ? findall(in_layer) : Int[]
+        gated_cells = scaled_gated(required_cells, in_layer)
+        recomputations += 1
+    end
+    sliver_record = sliver_reconnection_record("required-region", sliver_candidates, sliver_unconfined,
+                                               sliver_reconnections, sliver_unrepaired,
+                                               minimum_scaled_jacobian, maximum_jacobian_condition)
     required_after = minimum(scaled_of(k) for k in gated_cells; init=Inf)
     below_after = count(k -> scaled_of(k) < scaled_target, gated_cells)
     below_gate = count(k -> scaled_of(k) < minimum_scaled_jacobian, gated_cells)
@@ -2555,6 +2686,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         "CornerReconnectionRule" => CORNER_RECONNECTION_RULE,
         "CornerReconnectionRounds" => CORNER_RECONNECTION_ROUNDS,
         "CornerReconnections" => sum(length(row["Reconnections"]) for row in corner_measures; init=0),
+        "EnvelopeSliverReconnections" => sliver_record,
         "ReconnectionReplacedCells" => length(reconnection_replaced),
         "ReconnectionAddedCells" => length(reconnection_added),
         "CornerShapeGate" => corner_shape_gate > 0.0 ? corner_shape_gate : nothing,
@@ -2604,6 +2736,16 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                 "kappa_reg $(row["Information"]["KappaRegMax"]) " *
                 "kappa_v0 $(row["Information"]["KappaV0Max"]) kappa_min $(row["Information"]["KappaMinMax"]) " *
                 "kappa_max $(row["Information"]["KappaMaxMax"]) eta $(row["Information"]["EtaMin"])")
+    end
+    println("Seed confined-sliver reconnection (required region): $(sliver_record["Cells"]) below-gate cells, " *
+            "$(sliver_record["UnconfinedBelowGate"]) with a free vertex (not touched), " *
+            "$(sliver_record["Flips"]) 2-3 flips, $(sliver_record["Removals"]) edge removals, " *
+            "$(sliver_record["Unrepaired"]) unrepaired")
+    for row in sliver_reconnections
+        println("  reconnected confined sliver ($(row["Kind"])) at $(row["Centroid"]) (corner distance " *
+                "$(row["CornerDistance"])): scaled Jacobian $(row["ScaledJacobian"]), condition " *
+                "$(row["JacobianCondition"]), kappa_reg $(row["Before"]) -> $(row["After"]), " *
+                "$(row["ReplacedCells"]) cells -> $(row["AddedCells"])")
     end
     println("Seed required-region optimization: corners $(corner_before) -> $(corner_after), " *
             "required cells $(required_before_moves) -> $(length(required_cells)) " *
@@ -2861,6 +3003,118 @@ function apply_seed_cell_reconnection!(node_tags, tags, entities, replaced, adde
         next_tag += count
     end
     return length(added)
+end
+
+# F-3, the GLOBAL site (ENVELOPE_SLIVER_RECONNECTION_RULE): every tetrahedron of the Gmsh
+# model below the mixed-element gates whose four vertices are confined (a surface-triangle
+# vertex, a CAD point or a node of `fixed_node_tags` - the tube prisms' and pyramids') takes
+# its best gate-clearing reconnection (floor MinimumScaledJacobian, ceiling
+# MaximumJacobianCondition), applied to the model as a seed reconnection; a below-gate cell
+# with a free vertex is recorded and left to the gate. Returns the census row. A model with no
+# below-gate tetrahedron is left untouched (no incidence is built).
+function reconnect_confined_slivers!(minimum_scaled_jacobian, maximum_jacobian_condition;
+                                     fixed_node_tags=UInt[])
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(copy(coordinates), 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    tetrahedra, tags, entities = gmsh_volume_cells(index)
+    scaled_of(k) = tetrahedron_scaled_jacobian([points[:, i] for i in tetrahedra[k]])
+    condition_of(k) = tetrahedron_aspect([points[:, i] for i in tetrahedra[k]])
+    candidates = [k for k in eachindex(tetrahedra)
+                  if abs(scaled_of(k)) < minimum_scaled_jacobian || condition_of(k) > maximum_jacobian_condition]
+    if isempty(candidates)
+        return sliver_reconnection_record("global", candidates, Int[], Dict{String, Any}[], Int[],
+                                          minimum_scaled_jacobian, maximum_jacobian_condition)
+    end
+    triangles, _, _ = gmsh_entity_cells(index, 2, Val(3))
+    fixed = gmsh_point_nodes(index, size(points, 2))
+    for tag in fixed_node_tags
+        fixed[index[tag]] = true
+    end
+    confined = confined_vertices(size(points, 2), triangles, fixed)
+    confined_candidates = [k for k in candidates if all(confined[i] for i in tetrahedra[k])]
+    unconfined = setdiff(candidates, confined_candidates)
+    incident = [Int[] for _ in axes(points, 2)]
+    for (k, cell) in enumerate(tetrahedra), i in cell
+        push!(incident[i], k)
+    end
+    surface_faces = Set(Tuple(sort!(collect(triangle))) for triangle in triangles)
+    surface_edges = Set(minmax(triangle[i], triangle[mod1(i + 1, 3)]) for triangle in triangles for i in 1:3)
+    original_count = length(tetrahedra)
+    origin = collect(1:original_count)           # the original index of a slot's cell, 0 for a new cell
+    entity_of = Int.(entities)
+    replaced_original = Int[]
+    added = Dict{Int, Tuple{Int, NTuple{4, Int}}}()
+    dead = Set{Int}()
+    reconnections = Dict{String, Any}[]
+    unrepaired = Int[]
+    candidate_cells = [tetrahedra[k] for k in confined_candidates]
+    for (slot, k) in enumerate(confined_candidates)
+        (k in dead || tetrahedra[k] != candidate_cells[slot]) && continue
+        reconnection = best_sliver_reconnection(points, tetrahedra, incident, surface_faces, surface_edges,
+                                                p -> entity_of[p], k, minimum_scaled_jacobian,
+                                                maximum_jacobian_condition, j -> false)
+        if reconnection === nothing
+            push!(unrepaired, k)
+            continue
+        end
+        centroid = sum(points[:, i] for i in tetrahedra[k]) ./ 4
+        push!(reconnections, Dict{String, Any}(
+            "Kind" => reconnection.kind, "Element" => reconnection.element, "Centroid" => centroid,
+            "ScaledJacobian" => scaled_of(k), "JacobianCondition" => condition_of(k),
+            "Before" => reconnection.before, "After" => reconnection.quality,
+            "ReplacedCells" => length(reconnection.replaced), "AddedCells" => length(reconnection.cells)))
+        entity = entity_of[k]
+        for p in reconnection.replaced
+            for i in tetrahedra[p]
+                filter!(!=(p), incident[i])
+            end
+            origin[p] > 0 && push!(replaced_original, origin[p])
+            origin[p] = 0
+            delete!(added, p)
+        end
+        for (position, new_cell) in enumerate(reconnection.cells)
+            if position <= length(reconnection.replaced)
+                p = reconnection.replaced[position]
+                tetrahedra[p] = new_cell
+            else
+                push!(tetrahedra, new_cell)
+                p = length(tetrahedra)
+                push!(origin, 0); push!(entity_of, entity)
+            end
+            added[p] = (entity, new_cell)
+            for i in new_cell
+                push!(incident[i], p)
+            end
+        end
+        for p in reconnection.replaced[(length(reconnection.cells) + 1):end]
+            push!(dead, p)
+        end
+    end
+    apply_seed_cell_reconnection!(node_tags, tags, entities, replaced_original,
+                                  [(entity, cell) for (entity, cell) in values(added)])
+    record = sliver_reconnection_record("global", candidates, unconfined, reconnections, unrepaired,
+                                        minimum_scaled_jacobian, maximum_jacobian_condition)
+    println("Confined-sliver reconnection (global): $(record["Cells"]) below-gate tetrahedra, " *
+            "$(record["UnconfinedBelowGate"]) with a free vertex (not touched), $(record["Flips"]) 2-3 flips, " *
+            "$(record["Removals"]) edge removals, $(record["Unrepaired"]) unrepaired")
+    for row in reconnections
+        println("  reconnected confined sliver ($(row["Kind"])) at $(row["Centroid"]): scaled Jacobian " *
+                "$(row["ScaledJacobian"]), condition $(row["JacobianCondition"]), kappa_reg $(row["Before"]) -> " *
+                "$(row["After"]), $(row["ReplacedCells"]) cells -> $(row["AddedCells"])")
+    end
+    surface = falses(size(points, 2))
+    for triangle in triangles, i in triangle
+        surface[i] = true
+    end
+    for k in vcat(unrepaired, unconfined)[1:min(10, end)]
+        cell = tetrahedra[k]
+        println("  $(k in unrepaired ? "unrepaired confined" : "free-vertex") below-gate cell $k: scaled Jacobian " *
+                "$(scaled_of(k)), condition $(condition_of(k)), centroid $(sum(points[:, i] for i in cell) ./ 4), " *
+                "surface vertices $(count(surface[i] for i in cell)), fixed vertices $(count(fixed[i] for i in cell)), " *
+                "vertices $([points[:, i] for i in cell])")
+    end
+    return record
 end
 
 function sorted_median(values)
@@ -9775,6 +10029,12 @@ function generate_spatial_coupon(;
     # Per-type quality of the mixed mesh, gated after the corner-ball optimization
     # (fail closed): positive orientation and Jacobian condition for every type,
     # scaled Jacobian for the tetrahedra.
+    # F-3, the global site (ENVELOPE_SLIVER_RECONNECTION_RULE): the confined below-gate
+    # tetrahedra of the whole mesh are reconnected before the mixed-element gates judge it.
+    global_sliver_record = prism_tubes ?
+        reconnect_confined_slivers!(minimum_scaled_jacobian, maximum_jacobian_condition;
+                                    fixed_node_tags=non_simplex_volume_nodes()) :
+        nothing
     mixed_quality = prism_tubes ? mixed_volume_quality() : nothing
     prism_tubes && gate_mixed_volume_quality(mixed_quality, minimum_scaled_jacobian,
                                              maximum_jacobian_condition)
@@ -10100,6 +10360,7 @@ function generate_spatial_coupon(;
                     "RidgeNodesAdded" => edge_layer_ridge_nodes),
                 "TraceBasisSizing" => trace_basis_record,
                 "SeedQualityOptimization" => seed_quality,
+                "EnvelopeSliverReconnections" => global_sliver_record,
                 "TipBisectors" => Dict{String, Any}(
                     "Rule" => TIP_BISECTOR_RULE, "Count" => length(tip_bisectors),
                     "Curves" => tip_bisectors,

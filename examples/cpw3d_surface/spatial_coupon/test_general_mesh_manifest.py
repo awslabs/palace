@@ -42,7 +42,7 @@ from general_mesh_manifest import (_physical_comparison_failures,
                                    validate_case_element_cap_override, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
-from mesh_stage_contract import (CANONICAL_STAGE_ORDER, canonical_stage_order,
+from mesh_stage_contract import (CANONICAL_STAGE_ORDER, canonical_stage_order, validate_envelope_sliver_reconnections,
                                  validate_stage_report, validate_tool_invocation)
 from normalize_general_mesh_evidence import normalize
 from semantic_mesh_contract import (derive_feature_topology, load_semantic_contract,
@@ -2147,6 +2147,148 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
             component = next(item for item in report["LongShortEdgeComponents"] if item["Attribute"] == 6001)
             self.assertEqual(component["AlignedWithArcSidewall"], expected == 0)
 
+    def test_diagonal_detector_judges_arc_facet_components_against_the_sidewall_union(self):
+        """Decisions 605 / 606 F-1 (the R2 fab arc-joint corners 448693 / 56e7 / d7c8): the
+        corner-law tube layer on a tagged arc's cylinder wall is one 7-ring x 2-station grid of
+        short edges per 25-nm FACET; the coplanar clustering makes every facet its own patch, so
+        the span filter (span > 0.5 x the patch diameter) was vacuous there and every grid
+        became a band - while the identical grid on a straight (planar) sidewall is one patch
+        of microns and is filtered.  ARC_SIDEWALL_SUPPORT_RULE judges a patch whose every vertex
+        lies on the tagged circle (inside a part's sweep) against the diameter of the
+        (Attribute, ArcId) sidewall union: on main the cylinder fixture fails (>= 1 band), after
+        it passes; the same grid on a planar wall passes on both; a true diagonal band across
+        the planar support still fails."""
+        R, overetch, centre = 225.0, 0.05, np.array([3.0, -2.0])
+        facets, chord = 30, 0.016        # 0.48 um of sidewall in 16-nm facets (the corner-law layers nearest the corner)
+        turn = chord / R
+        theta0 = math.radians(-20.0)
+        rings = np.cumsum([0.00025 * 2 ** k for k in range(7)])  # RingRadii 0.00025 .. 0.03175 (the corner law 0.25 nm x 2^k)
+        circle = lambda theta: centre + R * np.array([math.cos(theta), math.sin(theta)])
+        label = 6001
+
+        def coarse_grid(points, triangles, labels, spacing=0.1, columns=150):
+            # A coarse grid far from the wall sets the median edge: 0.6 x 0.1 > 2 x NormalSize,
+            # so ShortEdgeThreshold = 0.05 and only the wall grid's edges are short.
+            base = len(points)
+            points += [np.array([index * spacing + 20.0, transverse * spacing + 20.0, 0.0])
+                       for transverse in range(3) for index in range(columns)]
+            for row in range(2):
+                for index in range(columns - 1):
+                    first = base + row * columns + index; last = first + columns
+                    triangles.extend([[first, first + 1, last + 1], [first, last + 1, last]])
+            labels.extend([3000] * (len(triangles) - len(labels)))
+
+        def strip_grid(points, triangles, labels, stations):
+            # The wall between consecutive stations (plan-view points) with the 7 ring heights:
+            # one 2 x 7 grid of short edges per facet.
+            for a, b in zip(stations[:-1], stations[1:]):
+                base = len(points)
+                for station in (a, b):
+                    points += [np.array([station[0], station[1], -z]) for z in rings]
+                for k in range(6):
+                    triangles.extend([[base + k, base + 7 + k, base + 7 + k + 1], [base + k, base + 7 + k + 1, base + k + 1]])
+                labels.extend([label] * 12)
+
+        def cylinder_mesh():
+            points, triangles, labels = [], [], []
+            strip_grid(points, triangles, labels, [circle(theta0 + k * turn) for k in range(facets + 1)])
+            coarse_grid(points, triangles, labels)
+            return meshio.Mesh(np.asarray(points), [("triangle", np.asarray(triangles))],
+                               cell_data={"gmsh:physical": [np.asarray(labels, int)]})
+
+        def planar_mesh(diagonal=False):
+            points, triangles, labels = [], [], []
+            start = np.array([3.0, 5.0])
+            strip_grid(points, triangles, labels, [start + np.array([k * chord, 0.0]) for k in range(facets + 1)])
+            # The rest of the planar wall: two large coplanar triangles (y = 5, z in [-0.5, 0])
+            # make the patch microns wide.
+            base = len(points)
+            points += [np.array([2.0, 5.0, -0.5]), np.array([4.0, 5.0, -0.5]), np.array([4.0, 5.0, -0.4]),
+                       np.array([2.0, 5.0, -0.4])]
+            triangles.extend([[base, base + 1, base + 2], [base, base + 2, base + 3]])
+            labels.extend([label, label])
+            if diagonal:
+                # A line of seven 45-nm short edges climbing the wall at 30 deg off every feature:
+                # a true diagonal band of span 0.315 um > 0.5 x the wall's diameter? No - the wall
+                # is 2 um wide, so the band spans less than half; make it span 1.2 um instead.
+                base = len(points)
+                line = [np.array([2.2 + k * 0.045 * math.cos(math.radians(30.0)), 5.0, -0.1 - k * 0.045 * math.sin(math.radians(30.0))])
+                        for k in range(27)]
+                points += line + [np.array([2.8, 5.0, -0.02]), np.array([2.8, 5.0, -0.6])]
+                triangles.extend([[base + k, base + k + 1, base + 27] for k in range(26)] +
+                                 [[base + k, base + 28, base + k + 1] for k in range(26)])
+                labels.extend([label] * 52)
+            coarse_grid(points, triangles, labels)
+            return meshio.Mesh(np.asarray(points), [("triangle", np.asarray(triangles))],
+                               cell_data={"gmsh:physical": [np.asarray(labels, int)]})
+
+        sweep = math.degrees(facets * turn)
+        census = {"PrismTubes": {"Tubes": [
+            {"Arc": {"ArcId": 1, "Centre": centre.tolist(), "Radius": R, "Orientation": 1.0, "Part": 1, "Parts": 1,
+                     "ThetaStartDegrees": math.degrees(theta0), "SweepDegrees": sweep, "Sign": 1}, "Length": R * math.radians(sweep)}]}}
+        signature = [[[*circle(theta0), 0.0], [*circle(theta0 + facets * turn), 0.0]]]   # one chord over the sidewall
+        arcs = _census_arc_sidewalls(census, signature, overetch, 90.0, np.eye(4))
+        self.assertEqual(arcs[0][0]["Chords"], 1)
+        wall = cylinder_mesh()
+        # Without the arc records (the straight pipeline's inputs) every facet grid is a band
+        # (its axis climbs the 32-nm-tall, 16-nm-wide strip at ~63 deg: outside the resolvability
+        # of every feature direction): the pre-fix reading of the fab arc-joint corners (448693:
+        # 8, 56e7: 6, d7c8: 5 - their failing layers were 16-22 nm wide).
+        plain = _global_diagonal_bands(wall, signature, .025)
+        self.assertAlmostEqual(plain["ShortEdgeThreshold"], .05, places=12)
+        self.assertGreaterEqual(plain["GlobalDiagonalBands"], 1)
+        components = [item for item in plain["LongShortEdgeComponents"] if item["Attribute"] == label]
+        self.assertEqual(len(components), facets)
+        self.assertEqual(plain["GlobalDiagonalBands"], facets)
+        # 12 of the 14 grid nodes: the two nodes joined only by the strip's boundary edges (one
+        # owner) are not in the short-edge graph of the patch.
+        self.assertTrue(all(item["Vertices"] == 12 and item["LineLike"] and not item["Degenerate"] for item in components))
+        self.assertTrue(all(0.03 < item["Span"] < 0.04 and not item["AlignedWithFeature"] for item in components))
+        self.assertNotIn("SidewallSupports", plain["ArcSidewallBands"])
+        # With them the 20 facets form the sidewall support (6001, ArcId 1) of 0.5 um and every
+        # grid is filtered by the span rule before any classification.
+        fixed = _global_diagonal_bands(wall, signature, .025, arc_sidewalls=arcs)
+        self.assertEqual(fixed["GlobalDiagonalBands"], 0)
+        self.assertEqual(fixed["DegenerateComponents"], 0)
+        self.assertEqual(fixed["ArcSidewallBands"]["Count"], 0)
+        self.assertEqual([item for item in fixed["LongShortEdgeComponents"] if item["Attribute"] == label], [])
+        supports = fixed["ArcSidewallBands"]["SidewallSupports"]
+        self.assertIn("decision", supports["Rule"]); self.assertIn("sidewall support", supports["Rule"])
+        self.assertEqual([(item["Attribute"], item["ArcId"], item["Patches"], item["Vertices"]) for item in supports["Supports"]],
+                         [(label, 1, facets, 14 * facets)])    # the fixture's facets carry their own 14 nodes
+        self.assertAlmostEqual(supports["Supports"][0]["Diameter"], math.hypot(facets * chord, rings[-1]), delta=1e-4)
+        # Every other field is as without the records (the components were filtered, not
+        # reclassified): the same threshold, median and short-edge count.
+        for key in ("ShortInternalEdges", "MedianSurfaceEdgeLength", "ShortEdgeThreshold", "SizeFieldEvidence"):
+            self.assertEqual(fixed[key], plain[key])
+        # The same grid on a PLANAR wall is one patch of 2 um: filtered with and without the
+        # arc records (the fix changes nothing on a plane) ...
+        for records in (None, arcs):
+            planar = _global_diagonal_bands(planar_mesh(), signature, .025, arc_sidewalls=records)
+            self.assertEqual(planar["GlobalDiagonalBands"], 0)
+            self.assertEqual([item for item in planar["LongShortEdgeComponents"] if item["Attribute"] == label], [])
+            if records is not None:
+                self.assertEqual(planar["ArcSidewallBands"]["SidewallSupports"]["Supports"], [])
+        # ... and a true diagonal band across that planar support still fails on both.
+        for records in (None, arcs):
+            diagonal = _global_diagonal_bands(planar_mesh(diagonal=True), signature, .025, arc_sidewalls=records)
+            self.assertEqual(diagonal["GlobalDiagonalBands"], 1)
+            band = next(item for item in diagonal["LongShortEdgeComponents"] if item["Attribute"] == label)
+            self.assertTrue(band["LineLike"]); self.assertFalse(band["AlignedWithFeature"])
+            self.assertGreater(band["Span"], 1.0)
+        # The rotate-z placement maps the facets back onto the same circle: the support and
+        # the verdict are placement-invariant.
+        angle = 0.63
+        rotation = np.eye(4)
+        rotation[:2, :2] = [[math.cos(angle), -math.sin(angle)], [math.sin(angle), math.cos(angle)]]
+        rotated = meshio.Mesh((np.column_stack((wall.points, np.ones(len(wall.points)))) @ rotation.T)[:, :3],
+                              wall.cells, cell_data=wall.cell_data)
+        rotated_signature = [[(rotation @ np.array(p + [1.0]))[:3].tolist() for p in segment] for segment in signature]
+        report = _global_diagonal_bands(rotated, rotated_signature, .025,
+                                        arc_sidewalls=_census_arc_sidewalls(census, signature, overetch, 90.0, rotation))
+        self.assertEqual(report["GlobalDiagonalBands"], 0)
+        self.assertEqual(report["ArcSidewallBands"]["SidewallSupports"]["Supports"][0]["Patches"], facets)
+
     def test_diagonal_detector_alignment_within_the_band_resolvability(self):
         # Supervisor decision 36: a band's direction is resolvable only to RMSWidth /
         # Span, so alignment with a feature segment is judged within that ratio (the
@@ -2539,6 +2681,40 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         broken["Gates"][MINIMUM_QUALIFIED_RINGS]["Thin"] = 0
         with self.assertRaisesRegex(ValueError, "positive integers"):
             validate_manifest(broken, HERE / "geometry-independence-suite.json", check_available_files=False)
+
+    def test_census_envelope_sliver_reconnection_rows_validate_at_both_sites(self):
+        """Round 4 F-3 (decisions 605 / 606): the mesher records the confined-sliver reconnection
+        row at both gate sites; the validator mirrors the fail-closed reading (Unrepaired 0, the
+        counts adding up, every reconnection listed, both rows or neither)."""
+        def row(site, **override):
+            base = {"Site": site, "Rule": "r", "MinimumScaledJacobian": 0.01, "MaximumJacobianCondition": 1000.0,
+                    "Cells": 3, "UnconfinedBelowGate": 0, "Flips": 2, "Removals": 1, "Unrepaired": 0,
+                    "Reconnections": [{"Kind": "2-3"}, {"Kind": "2-3"}, {"Kind": "edge-removal"}]}
+            base.update(override)
+            return base
+        census = {"EnvelopeSliverReconnections": row("global")}
+        optimization = {"EnvelopeSliverReconnections": row("required-region")}
+        self.assertEqual(validate_envelope_sliver_reconnections(census, optimization), (optimization["EnvelopeSliverReconnections"],
+                                                                                        census["EnvelopeSliverReconnections"]))
+        # An earlier mesher's census: neither row, accepted as before.
+        self.assertIsNone(validate_envelope_sliver_reconnections({}, {"CornerMeasures": []}))
+        self.assertIsNone(validate_envelope_sliver_reconnections({}, None))
+        def rejected(census_row, seed_row, message):
+            with self.assertRaisesRegex(ValueError, message):
+                validate_envelope_sliver_reconnections({"EnvelopeSliverReconnections": census_row} if census_row is not None else {},
+                                                       {"EnvelopeSliverReconnections": seed_row} if seed_row is not None else {})
+        rejected(row("global"), None, "lacks the required-region")
+        rejected(None, row("required-region"), "lacks the global")
+        rejected(row("required-region"), row("required-region"), "lacks the global")
+        rejected(row("global"), row("required-region", Unrepaired=1, Cells=4), "1 unrepaired confined slivers at the required-region")
+        rejected(row("global", Cells=5), row("required-region"), "global EnvelopeSliverReconnections counts do not add up")
+        rejected(row("global", Reconnections=[]), row("required-region"), "do not list every reconnection")
+        rejected(row("global", Flips=-1, Cells=0), row("required-region"), "global sliver reconnections Flips")
+        rejected(row("global", Flips=None), row("required-region"), "global sliver reconnections Flips")
+        # The zero row of a build with no below-gate cell (every stored V3 build after the merge).
+        zero = {"Cells": 0, "UnconfinedBelowGate": 0, "Flips": 0, "Removals": 0, "Unrepaired": 0, "Reconnections": []}
+        self.assertIsNotNone(validate_envelope_sliver_reconnections({"EnvelopeSliverReconnections": row("global", **zero)},
+                                                                    {"EnvelopeSliverReconnections": row("required-region", **zero)}))
 
     def test_calibration_manifest_gate_relaxation_never_reaches_production(self):
         # Supervisor decision 22: the MA/MS calibration manifest, and only it, carries
