@@ -50,17 +50,22 @@ def plane_deviation(normal,point,scale,normals,points,scales):
     return np.maximum(angle,np.max(np.abs(delta@normal)/reach,axis=1))
 
 
-def cluster_coplanar_triangles(groups,normals,xyz,tolerance=COPLANAR_TOLERANCE):
+def cluster_coplanar_triangles(groups,normals,xyz,tolerance=COPLANAR_TOLERANCE,with_vertices=False):
     """First-fit clustering of triangles into equivalent planes within each group.
 
     Every triangle joins the earliest cluster of its group whose representative
     (the cluster's first triangle: unit normal, first vertex, diameter) it
-    deviates from by at most `tolerance` under plane_deviation; otherwise it
-    starts a cluster.  This is the single plane-equivalence rule for CAD-support
-    clustering and every planar-patch audit key; rounding coordinates is not.
+    deviates from by at most `tolerance` under plane_deviation, the offset
+    maximized over the triangle's THREE vertices; otherwise it starts a cluster.
+    This is the single plane-equivalence rule for CAD-support clustering and
+    every planar-patch audit key; rounding coordinates is not.
     Returns (representatives, patch): representatives is (k, 8) rows
     [group, nx, ny, nz, px, py, pz, diameter] in first-appearance order and
-    patch the cluster index of every triangle.
+    patch the cluster index of every triangle.  With `with_vertices` the
+    representative triangles' three vertices come beside as a parallel (k, 3, 3)
+    array (representatives, patch, vertices): match_equivalent_planes judges
+    representatives by the same three-vertex deviation with them (decision 605
+    F-2; the (k, 8) row layout is unchanged).
     """
     groups=np.asarray(groups);normals=np.asarray(normals,dtype=float).reshape(-1,3)
     xyz=np.asarray(xyz,dtype=float).reshape(-1,3,3)
@@ -72,7 +77,7 @@ def cluster_coplanar_triangles(groups,normals,xyz,tolerance=COPLANAR_TOLERANCE):
                               for i,j in ((0,1),(1,2),(2,0))]),axis=0) if len(xyz) else np.zeros(0)
     if np.any(np.linalg.norm(np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]),axis=1)<=0):
         raise ValueError('Degenerate triangle in plane clustering')
-    patch=np.full(len(groups),-1,dtype=np.int64);representatives=[]
+    patch=np.full(len(groups),-1,dtype=np.int64);representatives=[];first_triangles=[]
     while True:
         remaining=np.flatnonzero(patch<0)
         if not len(remaining):break
@@ -82,26 +87,54 @@ def cluster_coplanar_triangles(groups,normals,xyz,tolerance=COPLANAR_TOLERANCE):
                                   normals[same],xyz[same],diameter[same])
         patch[same[deviation<=tolerance]]=len(representatives)
         representatives.append([groups[first],*normals[first],*xyz[first,0],diameter[first]])
-    return np.asarray(representatives,dtype=float).reshape(-1,8),patch
+        first_triangles.append(first)
+    representatives=np.asarray(representatives,dtype=float).reshape(-1,8)
+    if with_vertices:
+        return representatives,patch,xyz[np.asarray(first_triangles,dtype=np.int64)].reshape(-1,3,3)
+    return representatives,patch
 
 
-def match_equivalent_planes(reference,candidate,tolerance=COPLANAR_TOLERANCE):
+def match_equivalent_planes(reference,candidate,tolerance=COPLANAR_TOLERANCE,
+                            reference_vertices=None,candidate_vertices=None):
     """One-to-one correspondence of cluster representatives by plane equivalence.
 
     Returns the candidate row index of every reference row when each reference
     plane is equivalent (same group, mutual plane_deviation <= tolerance) to
     exactly one candidate plane and vice versa; otherwise None.
+
+    With the representatives' three vertices (`reference_vertices`,
+    `candidate_vertices`: the parallel (k, 3, 3) arrays of
+    cluster_coplanar_triangles(with_vertices=True)) the deviation of a plane from
+    another is the CLUSTERING deviation (the offset maximized over the three
+    vertices), so the matching and the clustering are one predicate and a
+    clustering matches itself one-to-one by construction: a later representative
+    was separated because its three-vertex deviation from every earlier one
+    exceeded the tolerance, and the mutual deviation here reads at least that
+    value (decision 605 F-2: the first-vertex form called two separated sub-nm
+    facets on a cylinder wall equivalent at 7.8e-7 against 1.02e-6 and failed the
+    self-match).  Without them the rows' first vertices are judged, as before.
     """
     reference=np.asarray(reference,dtype=float).reshape(-1,8)
     candidate=np.asarray(candidate,dtype=float).reshape(-1,8)
+    if (reference_vertices is None)!=(candidate_vertices is None):
+        raise ValueError('Plane matching needs the representative vertices of both sides or of neither')
     if len(reference)!=len(candidate):return None
     if not len(reference):return []
+    if reference_vertices is None:
+        reference_points=reference[:,4:7];candidate_points=candidate[:,4:7]
+    else:
+        reference_points=np.asarray(reference_vertices,dtype=float).reshape(-1,3,3)
+        candidate_points=np.asarray(candidate_vertices,dtype=float).reshape(-1,3,3)
+        if (len(reference_points)!=len(reference) or len(candidate_points)!=len(candidate) or
+                not np.allclose(reference_points[:,0],reference[:,4:7],rtol=0,atol=0) or
+                not np.allclose(candidate_points[:,0],candidate[:,4:7],rtol=0,atol=0)):
+            raise ValueError('Representative vertices must be one triangle per row whose first vertex is the row point')
     forward=np.zeros((len(reference),len(candidate)))
     backward=np.zeros((len(candidate),len(reference)))
     for i,row in enumerate(reference):
-        forward[i]=plane_deviation(row[1:4],row[4:7],row[7],candidate[:,1:4],candidate[:,4:7],candidate[:,7])
+        forward[i]=plane_deviation(row[1:4],row[4:7],row[7],candidate[:,1:4],candidate_points,candidate[:,7])
     for j,row in enumerate(candidate):
-        backward[j]=plane_deviation(row[1:4],row[4:7],row[7],reference[:,1:4],reference[:,4:7],reference[:,7])
+        backward[j]=plane_deviation(row[1:4],row[4:7],row[7],reference[:,1:4],reference_points,reference[:,7])
     equivalent=((np.maximum(forward,backward.T)<=tolerance)&
                 (reference[:,:1]==candidate[:,0][None,:]))
     if np.any(equivalent.sum(axis=1)!=1) or np.any(equivalent.sum(axis=0)!=1):return None

@@ -536,6 +536,58 @@ class ReuseRecords(unittest.TestCase):
                 with self.assertRaises((transplant.TransplantError, OSError)):
                     reuse.reuse_requirement(requirement_key=given, **common)
 
+    def test_requirement_key_text_verifies_the_key_without_re_dumping_floats(self):
+        """Decision 605 (2) F-4 (c): with the requirement's KeyText the 438 (3) check is sha256(KeyText) == key and
+        json.loads(KeyText) == Signature (the three-lexeme fixture: the float re-dump hashes elsewhere); a record-era
+        requirement without KeyText keeps the legacy float-hash path; an inconsistent KeyText fails closed by name."""
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            library = {"Name": "x", "Version": 3, "MatchingRadius": RADIUS, "Models": [FIXTURE["Donor"]]}
+            library_path = Path(tmp) / "process-library.json"
+            library_path.write_text(json.dumps(library))
+            signature = FIXTURE["Exact"]["Signature"]
+            float_text = json.dumps(signature, separators=(",", ":"), sort_keys=True)
+            float_hash = detection.signature_library.signature_hash(signature)
+            # the key text of a binary writing a 17-digit lexeme for one double (parse-equal, different text)
+            self.assertIn("90.0,", float_text)
+            key_text = float_text.replace("90.0,", "90.000000000000000,", 1)
+            key = hashlib.sha256(key_text.encode()).hexdigest()
+            self.assertNotEqual(key, float_hash)
+            self.assertEqual(json.loads(key_text), signature)
+            common = {"exact_signature": signature, "exact_basis_dir": Path(tmp) / "no-basis",
+                      "exact_model_entry": FIXTURE["Exact"], "library": library, "library_path": library_path, "rule": rule(),
+                      "mode": "measurement-only", "output": Path(tmp) / "out", "log": lambda *_: None}
+            # the C++ key WITHOUT KeyText: the legacy path, which stops exactly as the 7fd4 registration did (R2 F-4)
+            with self.assertRaises(reuse.NearKeyReuseError) as context:
+                reuse.reuse_requirement(requirement_key=key, **common)
+            self.assertIn("legacy float-hash path", str(context.exception))
+            # WITH KeyText the assertion passes (the call fails later on the absent basis), the full key or its prefix
+            for given in (key, key[:12]):
+                with self.assertRaises((transplant.TransplantError, OSError)):
+                    reuse.reuse_requirement(requirement_key=given, requirement_key_text=key_text, **common)
+            # a refusal record (an uncalibrated structure key) carries the KeyText verification too: FeatureKey = sha256(KeyText), KeyPath KeyText
+            uncalibrated = {**signature, "Portions": signature["Portions"][:1]}
+            uncal_text = json.dumps(uncalibrated, separators=(",", ":"), sort_keys=True)
+            uncal_key = hashlib.sha256(uncal_text.encode()).hexdigest()
+            refused = reuse.reuse_requirement(requirement_key=uncal_key, requirement_key_text=uncal_text,
+                                              **{**common, "exact_signature": uncalibrated,
+                                                 "exact_model_entry": {**FIXTURE["Exact"], "Signature": uncalibrated}})
+            self.assertFalse(refused["Reused"])
+            self.assertIn("StructureKeyNotCalibrated", refused["Refused"]["Reason"])
+            self.assertEqual((refused["FeatureKey"], refused["KeyCheck"]["KeyPath"], refused["KeyCheck"]["Equal"]), (uncal_key, "KeyText", True))
+            # inconsistent KeyText fails closed by name: wrong digest; parse-equal float text; another signature's text
+            for bad_key, bad_text, message in ((float_hash, key_text, "sha256(KeyText)"), (key, float_text, "sha256(KeyText)"),
+                                               (hashlib.sha256(key_text.replace("90.0", "91.0", 1).encode()).hexdigest(),
+                                                key_text.replace("90.0", "91.0", 1), "json.loads(KeyText) != Signature")):
+                with self.assertRaises(reuse.NearKeyReuseError) as context:
+                    reuse.reuse_requirement(requirement_key=bad_key, requirement_key_text=bad_text, **common)
+                self.assertIn(message, str(context.exception))
+            # the generated basis's stamped Signature must BE the requirement's (dict equality, no hash)
+            stamped = {**FIXTURE["Exact"], "Signature": {**signature, "EdgeCount": int(signature["EdgeCount"]) + 1}}
+            with self.assertRaises(reuse.NearKeyReuseError) as context:
+                reuse.reuse_requirement(requirement_key=key, requirement_key_text=key_text, **{**common, "exact_model_entry": stamped})
+            self.assertIn("generated basis's Signature differs", str(context.exception))
+
     def test_donor_stored_record_required_and_sha_checked(self):
         """Decision 438 (2): in Default / Fallback the donor's stored (F) record is required and must re-hash to the
         library's SpatialQualification.RecordSHA256."""

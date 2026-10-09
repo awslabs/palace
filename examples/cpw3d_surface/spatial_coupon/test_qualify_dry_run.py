@@ -383,6 +383,68 @@ class RemoteFailClosedTest(unittest.TestCase):
         self.assertTrue(parser.parse_args(["--build-record", "b", "--reference", "none", "--adopt-remote-case"]).adopt_remote_case)
 
 
+class BinaryOfRecordTest(unittest.TestCase):
+    """Decision 605 F-5 (R2 PBS 60101 / 60448: the plan's executable path was a name pattern that
+    only a hand-made symlink satisfied, unchecked before qsub): the plan names the binary of record
+    by --frozen-binary-remote-path (and the wrapper by --mpiexec-remote-path); without them the
+    cluster profile's pattern under the remote root stands, byte-identical, and the executables
+    are verified on the host before any qsub - a missing path or another digest fails closed
+    with the seeding message."""
+
+    PROFILE = {"BinaryPattern": "palace-archive-estimate-{sha256}.bin", "MPIExecWrapper": "mpiexec_bound.sh"}
+    SHA = "81b345087bec60c9715b88af7d98ababa85ea2cb5d42e9f9691f612521d41c3a"
+
+    def test_the_pattern_default_and_the_named_paths(self):
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        args = parser.parse_args(["--build-record", "b", "--reference", "none", "--dry-run"])
+        self.assertIsNone(args.frozen_binary_remote_path); self.assertIsNone(args.mpiexec_remote_path)
+        binary, mpiexec = qualify_library.executables_of(args, self.PROFILE, "/root/lane", self.SHA)
+        self.assertEqual(binary, f"/root/lane/palace-archive-estimate-{self.SHA}.bin")      # the R2 plan's string
+        self.assertEqual(mpiexec, "/root/lane/mpiexec_bound.sh")
+        args = parser.parse_args(["--build-record", "b", "--reference", "none", "--dry-run",
+                                  "--frozen-binary-remote-path", "/shared/palace-02393de-81b345087bec.bin",
+                                  "--mpiexec-remote-path", "/shared/mpiexec_bound.sh"])
+        self.assertEqual(qualify_library.executables_of(args, self.PROFILE, "/root/lane", self.SHA),
+                         ("/shared/palace-02393de-81b345087bec.bin", "/shared/mpiexec_bound.sh"))
+        self.assertIn("seed <root>/<BinaryPattern>", qualify_library.BINARY_OF_RECORD_RULE)
+
+    def test_executables_are_verified_on_the_host_before_any_qsub(self):
+        pattern = f"/root/lane/palace-archive-estimate-{self.SHA}.bin"
+        shared = "/shared/palace-02393de-81b345087bec.bin"
+        files = {shared: self.SHA, "/shared/mpiexec_bound.sh": None}
+        calls = []
+        def path_exists(host, path):
+            calls.append(("exists", host, path)); return path in files
+        def remote_sha256(host, paths):
+            calls.append(("sha256", host, tuple(paths))); return {path: files[path] for path in paths if files.get(path)}
+        verify = lambda triples: qualify_library.verify_remote_executables(
+            "localhost", triples, profile=self.PROFILE, remote_root="/root/lane", path_exists=path_exists, remote_sha256=remote_sha256)
+        # (T15) the EMPTY lane root: the pattern path does not exist -> fail closed with the seeding message.
+        with self.assertRaisesRegex(RuntimeError, rf"does not exist on localhost: seed {pattern} .*--frozen-binary-remote-path") as stop:
+            verify([(pattern, self.SHA, "/root/lane/mpiexec_bound.sh")])
+        self.assertIn("nothing was submitted", str(stop.exception))
+        self.assertIn("decision 605 F-5", str(stop.exception))
+        # The named binary of record with the frozen digest, but the lane's wrapper missing.
+        with self.assertRaisesRegex(RuntimeError, "MPI wrapper /root/lane/mpiexec_bound.sh, which does not exist.*--mpiexec-remote-path"):
+            verify([(shared, self.SHA, "/root/lane/mpiexec_bound.sh")])
+        # A seeded pattern path whose digest is another binary's.
+        files[pattern] = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, f"has digest {'0' * 64}, the plans pin {self.SHA}"):
+            verify([(pattern, self.SHA, "/shared/mpiexec_bound.sh")])
+        # (T14) the binary of record by its own path and the shared wrapper: verified once per
+        # distinct triple, recorded with the host and the digest.
+        calls.clear()
+        record = verify([(shared, self.SHA, "/shared/mpiexec_bound.sh")] * 3)
+        self.assertEqual(record["Executables"], [{"Binary": shared, "SHA256": self.SHA, "MPIExec": "/shared/mpiexec_bound.sh"}])
+        self.assertEqual(record["Host"], "localhost"); self.assertEqual(record["Rule"], qualify_library.BINARY_OF_RECORD_RULE)
+        self.assertEqual(calls, [("exists", "localhost", shared), ("sha256", "localhost", (shared,)),
+                                 ("exists", "localhost", "/shared/mpiexec_bound.sh")])
+        # The seeded pattern path at the right digest passes too (the symlink form of record).
+        files[pattern] = self.SHA; files["/root/lane/mpiexec_bound.sh"] = None
+        self.assertEqual(verify([(pattern, self.SHA, "/root/lane/mpiexec_bound.sh")])["Executables"][0]["Binary"], pattern)
+
+
 class ReusedMainTest(unittest.TestCase):
     """--controls-only --reuse-main ROOT (decisions 474 (A) / 479 / 485 (c)): the stored run's main stage is
     reused only when this run's inputs are identical to it - the identity mesh digest, the run config apart
@@ -1693,9 +1755,22 @@ class Batch1ReplayTest(unittest.TestCase):
                     status_path.write_text(json.dumps(stamped(status_path, status_path.parent)))
             return ["rsync", "fake"]
 
+        # The fake remote carries the executables of record under the remote root (decision 605
+        # F-5: the driver verifies them before its first qsub): the profile's pattern path at the
+        # digest its name carries, and the wrapper.
+        def is_executable(path):
+            return Path(path).name.startswith("palace-archive-estimate-") or Path(path).name == "mpiexec_bound.sh"
+
+        def fake_path_exists(host, path):
+            events.append(("exists", Path(path).name))
+            return is_executable(path)
+
         def fake_remote_sha256(host, paths):
             digests = {}
             for path in paths:
+                if is_executable(path):
+                    digests[path] = Path(path).name[len("palace-archive-estimate-"):-len(".bin")]
+                    continue
                 case = next(case for case in results_of if f"/{case}/main/" in path)
                 digests[path] = sha256(Path(self.run_root) / case / "results" / "main" / path.split("/main/", 1)[1])
             return digests
@@ -1713,7 +1788,7 @@ class Batch1ReplayTest(unittest.TestCase):
             return {"Commands": [], "UTC": "fake"}
         fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
                  "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F", "job_exit": fake_job_exit,
-                 "read_json": fake_read_json, "count_archive_potentials": fake_count}
+                 "read_json": fake_read_json, "count_archive_potentials": fake_count, "path_exists": fake_path_exists}
         saved = {name: getattr(remote_side, name) for name in fakes}
         saved_upload = qualify_library.upload_case
         for name, fake in fakes.items():
@@ -1856,6 +1931,12 @@ class Batch1ReplayTest(unittest.TestCase):
         args.resume = True
         resumed = qualify_library.run_qualify(args, log=lambda message: None)
         kinds = [kind for kind, _ in first_events]
+        # Decision 605 F-5: the executables of record are verified on the host ONCE before the first
+        # qsub (the binary's existence, its digest, the wrapper's existence), then the jobs go.
+        self.assertEqual(kinds[:2], ["exists", "exists"], first_events)
+        self.assertEqual(first_events[0][1], f"palace-archive-estimate-{BATCH1_BINARY_SHA256}.bin")
+        self.assertEqual(first_events[1][1], "mpiexec_bound.sh")
+        kinds = kinds[2:]
         self.assertEqual(kinds[:4], ["upload", "submit", "upload", "submit"], first_events)
         self.assertLess(kinds.index("submit", kinds.index("submit") + 1), kinds.index("fetch"), "both jobs queued before any fetch")
         self.assertEqual([case for kind, case in first_events if kind == "fetch"], [fab, thin])
@@ -1923,7 +2004,8 @@ class Batch1ReplayTest(unittest.TestCase):
         blocks = [json.loads((Path(case["Root"]) / "main" / f"{case_id}-p4" / f"worker-block{k}.json").read_text()) for k in (1, 2)]
         self.assertEqual([entry["Index"] for block in blocks for entry in block["Boundaries"]["PrescribedPotential"]], list(range(1, spec["Sources"] + 1)))
         kinds = [kind for kind, _ in events]
-        self.assertEqual(events[:3], [("upload", case_id), ("submit", "worker-1"), ("submit", "worker-2")])
+        self.assertEqual([kind for kind, _ in events[:2]], ["exists", "exists"])    # decision 605 F-5: verified before the first qsub
+        self.assertEqual(events[2:5], [("upload", case_id), ("submit", "worker-1"), ("submit", "worker-2")])
         self.assertLess(kinds.index("poll"), kinds.index("archive-count"))
         self.assertEqual([name for kind, name in events if kind == "status"], ["worker-1", "worker-2"])
         self.assertEqual(events.index(("archive-count", f"{case_id}-p4")) + 1, events.index(("submit", "reducer")))

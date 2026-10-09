@@ -259,6 +259,103 @@ ARC_SIDEWALL_RULE = (
 # Chord ends are the plan-view boundary's vertices quantised to its 1e-9 R grid.
 ARC_CHORD_MATCH_TOLERANCE = 1.0e-6
 
+# F-1 (decision 605; the R2 failures 448693 / 56e7 / d7c8): on a tagged arc's CYLINDER the
+# coplanar-patch clustering yields one patch per mesh facet (the facet turn, 1e-5..1e-4 rad,
+# is far above COPLANAR_TOLERANCE), so the span filter `span > 0.5 x the patch's diameter`
+# of _global_diagonal_bands was judged against a ~0.04-um facet and every corner-law
+# short-edge grid near an arc-joint corner became a "band"; on a straight sidewall the
+# same grid is filtered against the whole plane.  The support the mesher built is the
+# sidewall: a patch whose EVERY vertex lies on a tagged arc's circle (plan view, build
+# frame: within the chord sagitta + ARC_CHORD_MATCH_TOLERANCE x Radius of the circle -
+# the measured cylinder patches sit at 1e-9..6e-7 um - and inside one tube part's sweep
+# with one ChordTurn of slack) belongs to the sidewall support (Attribute, ArcId), and
+# its span filter uses the diameter of the UNION of that support's patch vertices (the
+# 3-D point-set diameter).  The LateralEnvelope term stays with the band DIRECTION rule
+# (ARC_SIDEWALL_RULE) only, so a straight tangent patch inside the sweep slack is
+# excluded by the radial test (its far vertices leave the circle).  Components stay per
+# planar patch, every other rule is unchanged, and a mesh without tagged arcs takes no
+# new code path (fix-up MINOR-5; no new threshold).
+ARC_SIDEWALL_SUPPORT_RULE = (
+    "a coplanar patch whose every vertex lies, in the build frame's plan view, within the "
+    "chord sagitta Radius x (1 - cos(ChordTurn / 2)) + ARC_CHORD_MATCH_TOLERANCE x Radius of a "
+    "tagged arc's circle and inside the angular sweep of one of its tube parts (one ChordTurn "
+    "of slack) is a member of the sidewall support (Attribute, ArcId); the span filter of its "
+    "short-edge components (span > 0.5 x SurfaceDiameter) uses the diameter of the union of the "
+    "support's patch vertices instead of the facet patch's own; membership is by the circle "
+    "alone (no LateralEnvelope term); components stay per planar patch (supervisor decisions "
+    "605 / 606, R2-failure diagnosis F-1)")
+
+
+def _point_set_diameter(points):
+    """Largest pairwise distance of a 3-D point set (its convex hull's vertices, else the
+    points themselves when the hull is degenerate); 0 for fewer than two points."""
+    points = np.asarray(points, dtype=float).reshape(-1, 3)
+    if len(points) < 2:
+        return 0.0
+    hull = points
+    if len(points) >= 5:
+        try:
+            hull = points[ConvexHull(points).vertices]
+        except QhullError:
+            hull = points
+    best = 0.0
+    for start in range(0, len(hull), 2048):
+        block = hull[start:start + 2048]
+        best = max(best, float(np.sqrt(((block[:, None, :] - hull[None, :, :]) ** 2).sum(axis=2)).max()))
+    return best
+
+
+def _arc_sidewall_supports(points, triangles, labels, patch, patch_count, arc_sidewalls):
+    """ARC_SIDEWALL_SUPPORT_RULE: the sidewall support of every coplanar patch on a tagged
+    arc's cylinder.  Returns ({patch id: support diameter}, [support records]) - both empty
+    without tagged arcs (`arc_sidewalls` None: no new code path).  A support record reads
+    {Attribute, ArcId, Patches, Vertices, Diameter}; the diameter is the 3-D point-set
+    diameter of the union of the member patches' vertices (mesh frame; rigid-motion
+    invariant)."""
+    if arc_sidewalls is None:
+        return {}, []
+    arcs, _, inverse = arc_sidewalls
+    points = np.asarray(points, dtype=float)
+    members = {}
+    order = np.argsort(patch, kind="stable")
+    starts = np.searchsorted(patch[order], np.arange(patch_count + 1))
+    for patch_id in range(patch_count):
+        owners = order[starts[patch_id]:starts[patch_id + 1]]
+        if not len(owners):
+            continue
+        vertices = np.unique(triangles[owners])
+        build = (np.column_stack((points[vertices], np.ones(len(vertices)))) @ inverse.T)[:, :3]
+        plan = build[:, :2]
+        for arc in arcs:
+            offsets = plan - np.asarray(arc["Centre"])
+            radial = np.abs(np.linalg.norm(offsets, axis=1) - arc["Radius"])
+            if np.any(radial > arc["Sagitta"] + ARC_CHORD_MATCH_TOLERANCE * arc["Radius"]):
+                continue
+            angles = np.arctan2(offsets[:, 1], offsets[:, 0])
+            slack = arc["ChordTurn"]
+            inside = False
+            for part in arc["Parts"]:
+                travel = _plan_view_angle_travel(angles, part["ThetaStart"], part["Orientation"])
+                if np.all((travel <= part["Sweep"] + slack) | (travel >= 2.0 * math.pi - slack)):
+                    inside = True
+                    break
+            if not inside:
+                continue
+            key = (int(labels[owners[0]]), int(arc["ArcId"]))
+            support = members.setdefault(key, {"patches": [], "vertices": []})
+            support["patches"].append(patch_id)
+            support["vertices"].append(vertices)
+            break
+    diameters, records = {}, []
+    for (attribute, arc_id), support in sorted(members.items()):
+        vertices = np.unique(np.concatenate(support["vertices"]))
+        diameter = _point_set_diameter(points[vertices])
+        for patch_id in support["patches"]:
+            diameters[patch_id] = diameter
+        records.append({"Attribute": attribute, "ArcId": arc_id, "Patches": len(support["patches"]),
+                        "Vertices": int(len(vertices)), "Diameter": diameter})
+    return diameters, records
+
 
 def _plan_view_angle_travel(angles, start, orientation):
     """Angular travel (radians, in [0, 2 pi)) from `start` to each of `angles` in the
@@ -457,7 +554,11 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     than 2R from every feature; reported under ContinuationBoundaryBands).  A band on
     a tagged arc sidewall whose full direction follows the circle's horizontal tangent
     within the MESH facet turn 2 asin(ShortEdgeThreshold / 2 Radius) (ARC_SIDEWALL_RULE;
-    `arc_sidewalls` from _census_arc_sidewalls) is a feature band;
+    `arc_sidewalls` from _census_arc_sidewalls) is a feature band; the span filter of a
+    component on a patch of a tagged arc's cylinder is judged against the diameter of the
+    (Attribute, ArcId) sidewall union, not the facet patch (ARC_SIDEWALL_SUPPORT_RULE,
+    decision 605 F-1; recorded under ArcSidewallBands.SidewallSupports, a key present only
+    with tagged arcs);
     a component of fewer than three vertices is degenerate (DEGENERATE_COMPONENT_RULE):
     recorded, never counted.
     """
@@ -471,6 +572,8 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
     planes = np.column_stack((representatives[:, 1:4], np.einsum(
         "ij,ij->i", representatives[:, 1:4], representatives[:, 4:7])))
     planes[planes == 0] = 0.0
+    support_diameters, support_records = _arc_sidewall_supports(mesh.points, triangles, labels, patch,
+                                                                len(representatives), arc_sidewalls)
     owners_by_edge, all_lengths = {}, []
     for owner, triangle in enumerate(triangles):
         for a, b in ((triangle[0], triangle[1]), (triangle[1], triangle[2]),
@@ -509,8 +612,8 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
             adjacency.setdefault(first, set()).add(last)
             adjacency.setdefault(last, set()).add(first)
         patch_vertices = np.unique(triangles[patch == patch_id])
-        surface_diameter = max(_planar_diameter(mesh.points[patch_vertices],
-                                                planes[patch_id][:3]), 1e-300)
+        surface_diameter = max(support_diameters.get(patch_id, 0.0),
+                               _planar_diameter(mesh.points[patch_vertices], planes[patch_id][:3]), 1e-300)
         visited = set()
         for start in adjacency:
             if start in visited:
@@ -618,7 +721,9 @@ def _global_diagonal_bands(mesh, physical_segments, normal_size, footprint_segme
                          [{key: arc[key] for key in ("ArcId", "Centre", "Radius", "Chords", "ChordTurn", "Sagitta")}
                           for arc in arc_sidewalls[0]]),
                 "LateralEnvelope": None if arc_sidewalls is None else arc_sidewalls[1],
-                "Rule": ARC_SIDEWALL_RULE},
+                "Rule": ARC_SIDEWALL_RULE,
+                **({} if arc_sidewalls is None else
+                   {"SidewallSupports": {"Supports": support_records, "Rule": ARC_SIDEWALL_SUPPORT_RULE}})},
             "ContinuationBoundaryBands": {
                 "Count": len(continuation_bands), "Bands": continuation_bands,
                 "SideOverRadius": CONTINUATION_BAND_SIDE_OVER_RADIUS,
@@ -999,7 +1104,8 @@ def _protected_surface_report(reference, candidate, contract):
     """Compare the protected planar patches of the candidate with the reference.
 
     Patches are the label/plane equivalence classes of analyze(), paired across
-    the two meshes by the same plane-equivalence rule (match_equivalent_planes):
+    the two meshes by the same plane-equivalence rule (match_equivalent_planes with
+    the representatives' three vertices = the clustering predicate, decision 605 F-2):
     a reference plane must correspond to exactly one candidate plane and vice
     versa, otherwise the supports do not match.  Protected labels that share one
     plane and are joined by coplanar label seams whose roles differ only in the
@@ -1009,27 +1115,29 @@ def _protected_surface_report(reference, candidate, contract):
     and a per-triangle partition is not reproducible to 1e-8 by another
     triangulation.  The per-label areas and seam length of a union are recorded
     as diagnostics; measure, boundary and topology thresholds are unchanged."""
-    before, (before_planes, before_patch) = analyze(reference, contract,
-                                                    require_material_names=True)
-    after, (after_planes, after_patch) = analyze(candidate, contract,
-                                                 require_material_names=True)
+    before, (before_planes, before_patch, before_vertices) = analyze(reference, contract,
+                                                                     require_material_names=True)
+    after, (after_planes, after_patch, after_vertices) = analyze(candidate, contract,
+                                                                  require_material_names=True)
     protected_attributes = {item["Attribute"]: item["Role"]
                             for item in contract["BoundaryLabels"]
                             if item.get("Protected") is True}
 
-    def patches(mesh, report, planes, patch):
+    def patches(mesh, report, planes, patch, vertices):
         triangles, _ = blocks(mesh, "triangle")
         xyz = mesh.points[triangles]
         selected = [index for index, row in enumerate(planes)
                     if int(row[0]) in protected_attributes]
-        return (planes[selected], selected,
+        return (planes[selected], vertices[selected], selected,
                 [(protected_attributes[int(planes[index][0])],
                   float(report["PlanarPatchAreas"][planar_patch_key(planes[index])]),
                   xyz[patch == index]) for index in selected])
 
-    left_planes, left_indices, left = patches(reference, before, before_planes, before_patch)
-    right_planes, _, right = patches(candidate, after, after_planes, after_patch)
-    mapping = match_equivalent_planes(left_planes, right_planes)
+    left_planes, left_vertices, left_indices, left = patches(reference, before, before_planes, before_patch,
+                                                             before_vertices)
+    right_planes, right_vertices, _, right = patches(candidate, after, after_planes, after_patch, after_vertices)
+    mapping = match_equivalent_planes(left_planes, right_planes, reference_vertices=left_vertices,
+                                      candidate_vertices=right_vertices)
     if mapping is None:
         return {"Actual": sorted(protected_attributes.values()),
                 "PlaneSupportsMatch": False, "MaximumRelativeMeasureError": math.inf,
