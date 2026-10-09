@@ -73,6 +73,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cache version 16 (the stacks own-cell pre-image, the corner-arm extension records and
     the foreign-context lane's `Chain: false` context pieces; a version-15 cache of either
     earlier schema is refused).
+  - The surface-response requirements manifest writes `KeyText` beside `Hash` on every
+    Signature-bearing record (the version-2 `Requirements[]` records and the
+    `Identification.Features[]` entries): the exact text the key is the SHA-256 of (the
+    signature with its `Type`, nlohmann's compact dump), so a consumer verifies
+    `sha256(KeyText) == Hash` and `parse(KeyText) == Signature` without re-serialising doubles
+    (nlohmann's Grisu2 writes some doubles with 17 digits where Python's repr is shorter; the
+    Python key checks of the coupon tooling use `KeyText` when present and keep the legacy
+    float hash for manifests without it).
   - The mirror-formed cluster REQUIREMENT CONTRACT of the automatic surface-response
     correction (`SURFACE-RESPONSE-IDENTIFICATION.md` (e); impl-B5 CONTRACT.md v3): an Unmerged
     mirror-formed SpatialEdgeCluster / CurvedEdge configuration across a natural truncation

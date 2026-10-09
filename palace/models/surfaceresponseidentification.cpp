@@ -14297,6 +14297,10 @@ nlohmann::json IdentificationResult::ToJson(double length_scale) const
         {"Type", feature.type},
         {"Signature", feature.signature},
         {"Hash", feature.hash},
+        // The exact hashed text (Type included; SignatureKeyAndHash), so a consumer
+        // verifies sha256(KeyText) == Hash and parse(KeyText) == Signature without
+        // re-serialising floats (decision 605 (2) F-4 (c)).
+        {"KeyText", feature.signature_key},
         {"Chirality", feature.chirality},
         {"Length", L(feature.length)},
         {"Portions", portions},

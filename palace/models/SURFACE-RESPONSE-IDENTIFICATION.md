@@ -40,8 +40,13 @@ Its output is:
    appearance in the canonical order), metal boundary law. The signature is translation and
    rotation invariant; mirror images produce the same signature and differ only in the
    `Chirality` flag (+1 / -1), which is *not* part of the signature hash. Every feature carries
-   `Hash` = SHA-256 of its canonical signature string, its claimed length, and its members
-   (segment portions, vertices) in mesh coordinates for the audit.
+   `Hash` = SHA-256 of its canonical signature string, `KeyText` = that string itself (the
+   signature with its `Type`, nlohmann's compact dump: the exact bytes hashed, so a consumer
+   verifies `sha256(KeyText) == Hash` and `parse(KeyText) == Signature` without re-serialising
+   any double — nlohmann's Grisu2 and Python's repr differ on some doubles, decision 605 (2) F-4
+   (c); the version-2 `Requirements[]` records carry the same pair for their representative),
+   its claimed length, and its members (segment portions, vertices) in mesh coordinates for the
+   audit.
 4. **Exclusions** with class, reason, count and length, so that
    `sum(assigned) + sum(excluded) = total perimeter length` to roundoff.
 5. **GeometryDigest**: SHA-256 over the sorted feature signatures (with multiplicity) and the
@@ -2995,7 +3000,7 @@ matching pass). The new top-level `Identification` object carries the contract:
                   "PlaneRule": "...", "PortRule": "...",
                   "Comparison": "strict less on the quantized grid"},
   "ReferenceProcessNormal": [nx, ny, nz],
-  "Features": [ {"Id": k, "Type": "...", "Signature": {...}, "Hash": "sha256", "Chirality": +-1,
+  "Features": [ {"Id": k, "Type": "...", "Signature": {...}, "Hash": "sha256", "KeyText": "the hashed text", "Chirality": +-1,
                  "BendRadiusOverR": r | null, "ExactParameters": true | false,
                  "Length": L, "Portions": [[segment, s0, s1], ...], "Vertices": [v, ...],
                  "PortionTurns": [t, ...] (features with a bend: signed turn toward the metal per portion, radians),

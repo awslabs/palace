@@ -221,10 +221,13 @@ def candidate_summary(evaluation, chosen):
 
 
 def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, library, library_path, rule, mode, output,
-                      requirement_key=None, donors=None, matrices_root=None, shelled_paths=None, record_paths=None, record_roots=None,
-                      stop_record=None, approval=None, exact_interfaces=None, exact_boundary_condition=None, log=print, generator=None):
+                      requirement_key=None, requirement_key_text=None, donors=None, matrices_root=None, shelled_paths=None,
+                      record_paths=None, record_roots=None, stop_record=None, approval=None, exact_interfaces=None,
+                      exact_boundary_condition=None, log=print, generator=None):
     """The reuse decision for one requirement; writes the model directory and returns the record
-    {"Reused": bool, "Model": entry | None, "Refused": {...} | None, "Candidates": [...]}."""
+    {"Reused": bool, "Model": entry | None, "Refused": {...} | None, "Candidates": [...]}.
+    ``requirement_key_text`` is the requirement's KeyText (the exact text palace hashed into the
+    key; None on a record-era manifest, which takes the legacy float-hash check)."""
     if mode not in MODES:
         raise NearKeyReuseError(f"--nearkey-reuse mode {mode!r} is not one of {MODES}")
     if mode == "default":
@@ -245,22 +248,26 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
     library_root = Path(library_path).resolve().parent
     radius = float(library["MatchingRadius"])
     exact_name = exact_model_entry["Name"]
-    signature_hash = detection.signature_library.signature_hash
-    exact_hash = signature_hash(exact_signature)
-    # decision 438 (3) / DESIGN 4.1 item 1: the requirement key IS the signature hash (the manifest records it, possibly as a
-    # prefix); the generated basis's stamped Signature must hash to it too; both comparisons recorded on the model
-    if requirement_key is not None and not (str(requirement_key) == exact_hash or
-                                            (len(str(requirement_key)) >= 12 and exact_hash.startswith(str(requirement_key)))):
-        raise NearKeyReuseError(f"{exact_name}: signature_hash(requirement Signature) {exact_hash[:16]}… != the requirement key "
-                                f"{str(requirement_key)[:16]}…")
+    # decision 438 (3) / DESIGN 4.1 item 1: the requirement key IS the signature's key (the manifest records it, possibly as a
+    # prefix); the generated basis's stamped Signature must be the requirement's too; both comparisons recorded on the model.
+    # With KeyText (decision 605 (2) F-4 (c)) the key is verified as sha256(KeyText) == key and json.loads(KeyText) == Signature,
+    # never by re-serialising floats; a record-era requirement without KeyText takes the legacy float-hash path unchanged.
+    try:
+        verified = detection.signature_library.verify_signature_key(exact_signature, requirement_key, requirement_key_text,
+                                                                    name=exact_name)
+    except detection.signature_library.SignatureKeyError as error:
+        raise NearKeyReuseError(str(error)) from error
+    exact_hash = verified["SignatureHash"]
     key_hash = exact_hash
     stamped = exact_model_entry.get("Signature")
-    if stamped is not None and signature_hash(stamped) != exact_hash:
-        raise NearKeyReuseError(f"{exact_name}: the generated basis's Signature differs from the requirement's (hash mismatch)")
-    key_check = {"RequirementKey": None if requirement_key is None else str(requirement_key), "SignatureHash": exact_hash,
-                 "GeneratedSignatureHash": None if stamped is None else signature_hash(stamped), "Equal": True,
-                 "Rule": "decision 438 (3): signature_hash(requirement Signature) == the requirement key (or its >= 12-hex prefix) and == "
-                         "the generated basis's stamped Signature; asserted before any transplant"}
+    if stamped is not None and stamped != exact_signature:
+        raise NearKeyReuseError(f"{exact_name}: the generated basis's Signature differs from the requirement's")
+    key_check = {"RequirementKey": verified["RequirementKey"], "SignatureHash": exact_hash, "KeyPath": verified["Path"],
+                 "GeneratedSignatureHash": None if stamped is None else exact_hash, "Equal": True,
+                 "Rule": "decision 438 (3): the requirement Signature's key == the requirement key (or its >= 12-hex prefix) and the "
+                         "generated basis's stamped Signature == the requirement Signature; asserted before any transplant. "
+                         "KeyPath KeyText (decision 605 (2) F-4 (c)): sha256(KeyText) == key and json.loads(KeyText) == Signature; "
+                         "KeyPath LegacyFloatHash (no KeyText on the record): signature_hash(Signature) == key"}
     records = detection.candidate_donors(exact_signature, library, rule=rule, exact_interfaces=exact_interfaces,
                                          exact_boundary_condition=exact_boundary_condition)
     record = {"Requirement": exact_name, "FeatureKey": key_hash, "Mode": mode, "RuleVersion": rule["RuleVersion"],
