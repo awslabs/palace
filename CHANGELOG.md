@@ -88,6 +88,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
     conditions of the cross-section.
     [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed integer range expansion in configuration files rewriting brackets inside strings,
+    so a path such as `"mesh[1-3].msh"` is no longer read as `"mesh[1,2,3].msh"`, in both
+    Palace and `scripts/validate-config`. [PR 970](https://github.com/awslabs/palace/pull/970).
+  - Fixed the electric surface flux (`surface-F.csv`) and boundary surface charge (`Q_s`)
+    of complex fields in lossy dielectrics, which used the real permittivity only; they now
+    use the complex permittivity `ε(1 − i tanδ)` of the material model, consistent with the
+    solver. Also corrected the documented `Q_s` units to C/m².
+    [PR 953](https://github.com/awslabs/palace/pull/953).
+  - Fixed a heap overflow in 2D surface flux postprocessing with an explicit `"Center"`.
+    [PR 953](https://github.com/awslabs/palace/pull/953).
   - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
     quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
     error since fewer eigenmodes than requested were found
