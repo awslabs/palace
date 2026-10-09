@@ -42,7 +42,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     eigenvalue problem. Adaptive frequency sweeps and circuit synthesis support both
     formulations: frequency-dependent PML terms are fit with matrix-valued rational functions
     with poles on the imaginary axis, realized with decaying auxiliary states in the
-    synthesized circuit. SchemaVer 2-3-0 [PR XXX](https://github.com/awslabs/palace/pull/XXX).
+    synthesized circuit. For iterative solvers, the geometric multigrid preconditioner can
+    be complemented with a sparse direct solve on the PML subdomain
+    (`config["Solver"]["Linear"]["PMLSubdomainSolver"]`), since its polynomial smoothers do
+    not converge on the PML equations of strongly absorbing layers.
+    SchemaVer 2-3-0 [PR XXX](https://github.com/awslabs/palace/pull/XXX).
 
 #### Interface Changes
 

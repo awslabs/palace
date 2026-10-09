@@ -410,6 +410,96 @@ TEST_CASE("SpaceOperator frequency-dependent PML at complex frequency",
   }
 }
 
+TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitioning",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  using namespace std::complex_literals;
+
+  // Box [0, 1] x [0, 1] x [0, 2] with a PML layer z > 1.5 (attribute 2), with the PML
+  // elements on the last process and the others on the remaining processes, so that the
+  // true DOFs on the interface with the PML layer are owned by a process without PML
+  // elements.
+  MPI_Comm comm = Mpi::World();
+  const int np = Mpi::Size(comm);
+  constexpr int order = 2, nz = 8;
+  if (np > nz - 1)
+  {
+    SKIP("Test requires at most " << nz - 1 << " processes");
+  }
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(2, 2, nz, mfem::Element::HEXAHEDRON, 1.0, 1.0, 2.0);
+  std::vector<int> partitioning(serial_mesh.GetNE());
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    const bool is_pml = (center(2) > 1.5);
+    serial_mesh.SetAttribute(i, is_pml ? 2 : 1);
+    const int layer = static_cast<int>(center(2) / (2.0 / nz));
+    partitioning[i] = (np == 1) ? 0 : (is_pml ? np - 1 : (layer * (np - 1)) / (nz - 2));
+  }
+  serial_mesh.SetAttributes();
+
+  // Expected number of PML subdomain unknowns: the DOFs of the PML elements.
+  mfem::ND_FECollection fec(order, serial_mesh.Dimension());
+  mfem::FiniteElementSpace serial_fespace(&serial_mesh, &fec);
+  std::vector<char> marker(serial_fespace.GetVSize(), 0);
+  mfem::Array<int> vdofs;
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    if (serial_mesh.GetAttribute(i) == 2)
+    {
+      serial_fespace.GetElementVDofs(i, vdofs);
+      for (const int vdof : vdofs)
+      {
+        marker[(vdof >= 0) ? vdof : -1 - vdof] = 1;
+      }
+    }
+  }
+  const auto n_pml_expected = std::ranges::count(marker, 1);
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh, partitioning.data()));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = order;
+  solver.linear.mg_max_levels = 2;
+  solver.linear.mg_coarsening = MultigridCoarsening::LINEAR;
+  solver.linear.pml_subdomain_solver = PMLSubdomainSolver::DIRECT;
+  solver.linear.pc_mat_real = false;
+  solver.linear.pc_mat_shifted = 0;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  config::MaterialData vacuum, pml;
+  vacuum.attributes = {1};
+  pml.attributes = {2};
+  pml.pml = config::PMLData();
+  pml.pml->autodetect_geometry = false;
+  pml.pml->direction_signs = {0, 0, 0, 0, 0, 1};
+  pml.pml->thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 0.5};
+  pml.pml->reference_frequency = 2.0;
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {vacuum, pml};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+
+  constexpr double omega = 2.0;
+  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                             -omega * omega + 0.0i, omega);
+  const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+  REQUIRE(mg);
+  REQUIRE(mg->GetNumLevels() > 1);
+  const auto &tdofs = mg->GetPMLTrueDofs();
+  CHECK(std::ranges::is_sorted(tdofs));
+  CHECK(std::ranges::adjacent_find(tdofs) == tdofs.end());
+  long long n_pml = static_cast<long long>(tdofs.size());
+  Mpi::GlobalSum(1, &n_pml, comm);
+  CHECK(n_pml == n_pml_expected);
+}
+
 TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",
           "[spaceoperator][pml][Serial][Parallel]")
 {

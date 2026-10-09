@@ -127,6 +127,83 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
       linear.complex_coarse_solve, linear.drop_small_entries, linear.reorder_reuse);
 }
 
+// Sparse direct solver for the PML subdomain correction of the geometric multigrid
+// preconditioner: the solver specified by the "Type" option if it is a sparse direct
+// solver, otherwise the default sparse direct solver. The PML subdomain matrix is always
+// factored in complex form, and is symmetric (but indefinite) unless the system matrix is
+// not. The factorization is never compressed or in mixed precision, and the accuracy of
+// SuperLU_DIST factorizations is checked (its static pivoting can be unstable for this
+// indefinite matrix, in which case tiny pivot replacement and iterative refinement are
+// used): approximate solves can lead the (left-preconditioned) Krylov solver to converge to
+// an inaccurate solution.
+std::unique_ptr<Solver<ComplexOperator>>
+ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
+                            MatrixSymmetry pc_mat_sym, int verbose, MPI_Comm comm)
+{
+  auto type =
+      (linear.type == LinearSolver::STRUMPACK_MP) ? LinearSolver::STRUMPACK : linear.type;
+  if (type != LinearSolver::SUPERLU && type != LinearSolver::STRUMPACK &&
+      type != LinearSolver::MUMPS && type != LinearSolver::CUDSS)
+  {
+#if defined(MFEM_USE_SUPERLU)
+    type = LinearSolver::SUPERLU;
+#elif defined(MFEM_USE_STRUMPACK)
+    type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_MUMPS)
+    type = LinearSolver::MUMPS;
+#else
+    MFEM_ABORT("PML subdomain correction requires building with SuperLU_DIST, STRUMPACK, "
+               "or MUMPS!");
+#endif
+  }
+  auto linear_pml = linear;
+  linear_pml.complex_coarse_solve = true;
+  linear_pml.strumpack_compression_type = SparseCompression::NONE;
+  const auto sym =
+      (pc_mat_sym == MatrixSymmetry::UNSYMMETRIC) ? pc_mat_sym : MatrixSymmetry::SYMMETRIC;
+  const int print = verbose - 1;
+  std::unique_ptr<Solver<ComplexOperator>> pc;
+  switch (type)
+  {
+    case LinearSolver::SUPERLU:
+#if defined(MFEM_USE_SUPERLU)
+      pc = MakeWrapperSolver<ComplexOperator, SuperLUSolver>(
+          linear_pml, comm, linear.sym_factorization, linear.superlu_3d,
+          linear.reorder_reuse, print, true);
+#endif
+      break;
+    case LinearSolver::STRUMPACK:
+#if defined(MFEM_USE_STRUMPACK)
+      pc = MakeWrapperSolver<ComplexOperator, StrumpackSolver>(
+          linear_pml, comm, linear.sym_factorization, linear_pml.strumpack_compression_type,
+          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+#endif
+      break;
+    case LinearSolver::MUMPS:
+#if defined(MFEM_USE_MUMPS)
+      pc = MakeWrapperSolver<ComplexOperator, MumpsSolver>(
+          linear_pml, comm, sym, linear.sym_factorization,
+          (linear_pml.strumpack_compression_type == SparseCompression::BLR)
+              ? linear.strumpack_lr_tol
+              : 0.0,
+          linear.reorder_reuse, print);
+#endif
+      break;
+    case LinearSolver::CUDSS:
+#if defined(MFEM_USE_CUDSS)
+      pc = MakeWrapperSolver<ComplexOperator, CuDSSSolver>(
+          linear_pml, comm, sym, linear.sym_factorization, linear.reorder_reuse, print);
+#endif
+      break;
+    default:
+      break;
+  }
+  MFEM_VERIFY(pc, "Unable to construct the sparse direct solver for the PML subdomain "
+                  "correction!");
+  return pc;
+}
+
 template <OperatorType OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
@@ -231,6 +308,14 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      if (linear.pml_subdomain_solver == PMLSubdomainSolver::DIRECT)
+      {
+        gmg->SetPMLSubdomainSolver(
+            ConfigurePMLSubdomainSolver(linear, pc_mat_sym, verbose, comm));
+      }
+    }
     return gmg;
   }
   else
