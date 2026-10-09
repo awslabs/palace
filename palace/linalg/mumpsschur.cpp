@@ -17,6 +17,13 @@ namespace palace
 namespace
 {
 
+// Free a vector's storage (v = {} empties it but keeps its capacity).
+template <typename V>
+void Release(V &v)
+{
+  V().swap(v);
+}
+
 // f(i, j, a) for the entries of local row i of A with global column j <= global row.
 template <typename F>
 void ForEachLowerEntry(const mfem::HypreParMatrix &A, int i, F &&f)
@@ -410,10 +417,10 @@ void MumpsSchurSolverT<T>::Factor()
   // refactored with new values.
   if (!refactor)
   {
-    irn = {};
-    jcn = {};
-    val = {};
-    grp_val = {};
+    Release(irn);
+    Release(jcn);
+    Release(val);
+    Release(grp_val);
   }
   if (blr_tol > 0.0)
   {
@@ -570,7 +577,7 @@ void MumpsSchurSolverT<T>::Scatter(const std::vector<VecType *> &Y)
       }
     }
   }
-  rhs = {};
+  Release(rhs);
 }
 
 template <typename T>
@@ -617,7 +624,7 @@ void MumpsSchurSolverT<T>::Reduce(const std::vector<const VecType *> &B,
     Call();
   }
   Check("condensation");
-  rhs = {};
+  Release(rhs);
   if (rank == 0)
   {
     red.swap(redrhs);
@@ -654,7 +661,7 @@ void MumpsSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<Vec
     Call();
   }
   Check("expansion");
-  redrhs = {};
+  Release(redrhs);
   reduced = 0;
   Scatter(X);
 }

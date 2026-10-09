@@ -46,6 +46,13 @@ namespace
 // without compression, at no loss of accuracy.
 constexpr double kBlrTol = 1.0e-14;
 
+// Free a vector's storage (v = {} empties it but keeps its capacity).
+template <typename V>
+void Release(V &v)
+{
+  V().swap(v);
+}
+
 // The assembled real (imag = false) or imaginary part of an operator, if any, owned.
 std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool imag)
 {
@@ -522,9 +529,9 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   if (!side.schur)
   {
     Solver::Coo coo{std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)};
-    side.irn_sys = {};
-    side.jcn_sys = {};
-    side.val = {};
+    Release(side.irn_sys);
+    Release(side.jcn_sys);
+    Release(side.val);
     side.schur = std::make_unique<Solver>(
         space_op.GetComm(), side.n_sys, static_cast<int>(side.rows.size()), std::move(coo),
         side.gamma_sys, kBlrTol, 0, true, false, side.rows);
