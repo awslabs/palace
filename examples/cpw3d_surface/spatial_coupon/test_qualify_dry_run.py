@@ -383,6 +383,68 @@ class RemoteFailClosedTest(unittest.TestCase):
         self.assertTrue(parser.parse_args(["--build-record", "b", "--reference", "none", "--adopt-remote-case"]).adopt_remote_case)
 
 
+class BinaryOfRecordTest(unittest.TestCase):
+    """Decision 605 F-5 (R2 PBS 60101 / 60448: the plan's executable path was a name pattern that
+    only a hand-made symlink satisfied, unchecked before qsub): the plan names the binary of record
+    by --frozen-binary-remote-path (and the wrapper by --mpiexec-remote-path); without them the
+    cluster profile's pattern under the remote root stands, byte-identical, and the executables
+    are verified on the host before any qsub - a missing path or another digest fails closed
+    with the seeding message."""
+
+    PROFILE = {"BinaryPattern": "palace-archive-estimate-{sha256}.bin", "MPIExecWrapper": "mpiexec_bound.sh"}
+    SHA = "81b345087bec60c9715b88af7d98ababa85ea2cb5d42e9f9691f612521d41c3a"
+
+    def test_the_pattern_default_and_the_named_paths(self):
+        parser = argparse.ArgumentParser()
+        qualify_library.add_arguments(parser)
+        args = parser.parse_args(["--build-record", "b", "--reference", "none", "--dry-run"])
+        self.assertIsNone(args.frozen_binary_remote_path); self.assertIsNone(args.mpiexec_remote_path)
+        binary, mpiexec = qualify_library.executables_of(args, self.PROFILE, "/root/lane", self.SHA)
+        self.assertEqual(binary, f"/root/lane/palace-archive-estimate-{self.SHA}.bin")      # the R2 plan's string
+        self.assertEqual(mpiexec, "/root/lane/mpiexec_bound.sh")
+        args = parser.parse_args(["--build-record", "b", "--reference", "none", "--dry-run",
+                                  "--frozen-binary-remote-path", "/shared/palace-02393de-81b345087bec.bin",
+                                  "--mpiexec-remote-path", "/shared/mpiexec_bound.sh"])
+        self.assertEqual(qualify_library.executables_of(args, self.PROFILE, "/root/lane", self.SHA),
+                         ("/shared/palace-02393de-81b345087bec.bin", "/shared/mpiexec_bound.sh"))
+        self.assertIn("seed <root>/<BinaryPattern>", qualify_library.BINARY_OF_RECORD_RULE)
+
+    def test_executables_are_verified_on_the_host_before_any_qsub(self):
+        pattern = f"/root/lane/palace-archive-estimate-{self.SHA}.bin"
+        shared = "/shared/palace-02393de-81b345087bec.bin"
+        files = {shared: self.SHA, "/shared/mpiexec_bound.sh": None}
+        calls = []
+        def path_exists(host, path):
+            calls.append(("exists", host, path)); return path in files
+        def remote_sha256(host, paths):
+            calls.append(("sha256", host, tuple(paths))); return {path: files[path] for path in paths if files.get(path)}
+        verify = lambda triples: qualify_library.verify_remote_executables(
+            "localhost", triples, profile=self.PROFILE, remote_root="/root/lane", path_exists=path_exists, remote_sha256=remote_sha256)
+        # (T15) the EMPTY lane root: the pattern path does not exist -> fail closed with the seeding message.
+        with self.assertRaisesRegex(RuntimeError, rf"does not exist on localhost: seed {pattern} .*--frozen-binary-remote-path") as stop:
+            verify([(pattern, self.SHA, "/root/lane/mpiexec_bound.sh")])
+        self.assertIn("nothing was submitted", str(stop.exception))
+        self.assertIn("decision 605 F-5", str(stop.exception))
+        # The named binary of record with the frozen digest, but the lane's wrapper missing.
+        with self.assertRaisesRegex(RuntimeError, "MPI wrapper /root/lane/mpiexec_bound.sh, which does not exist.*--mpiexec-remote-path"):
+            verify([(shared, self.SHA, "/root/lane/mpiexec_bound.sh")])
+        # A seeded pattern path whose digest is another binary's.
+        files[pattern] = "0" * 64
+        with self.assertRaisesRegex(RuntimeError, f"has digest {'0' * 64}, the plans pin {self.SHA}"):
+            verify([(pattern, self.SHA, "/shared/mpiexec_bound.sh")])
+        # (T14) the binary of record by its own path and the shared wrapper: verified once per
+        # distinct triple, recorded with the host and the digest.
+        calls.clear()
+        record = verify([(shared, self.SHA, "/shared/mpiexec_bound.sh")] * 3)
+        self.assertEqual(record["Executables"], [{"Binary": shared, "SHA256": self.SHA, "MPIExec": "/shared/mpiexec_bound.sh"}])
+        self.assertEqual(record["Host"], "localhost"); self.assertEqual(record["Rule"], qualify_library.BINARY_OF_RECORD_RULE)
+        self.assertEqual(calls, [("exists", "localhost", shared), ("sha256", "localhost", (shared,)),
+                                 ("exists", "localhost", "/shared/mpiexec_bound.sh")])
+        # The seeded pattern path at the right digest passes too (the symlink form of record).
+        files[pattern] = self.SHA; files["/root/lane/mpiexec_bound.sh"] = None
+        self.assertEqual(verify([(pattern, self.SHA, "/root/lane/mpiexec_bound.sh")])["Executables"][0]["Binary"], pattern)
+
+
 class ReusedMainTest(unittest.TestCase):
     """--controls-only --reuse-main ROOT (decisions 474 (A) / 479 / 485 (c)): the stored run's main stage is
     reused only when this run's inputs are identical to it - the identity mesh digest, the run config apart
