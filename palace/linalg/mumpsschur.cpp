@@ -187,9 +187,9 @@ MumpsSchurSolver::MumpsSchurSolver(const mfem::HypreParMatrix &A,
   }
   Check("factorization");
   // The factors do not need the input entries (no iterative refinement).
-  irn = {};
-  jcn = {};
-  val = {};
+  std::vector<MUMPS_INT>().swap(irn);
+  std::vector<MUMPS_INT>().swap(jcn);
+  std::vector<double>().swap(val);
   if (blr_tol > 0.0)
   {
     for (auto &v : schur)
