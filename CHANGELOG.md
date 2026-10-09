@@ -117,6 +117,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
     error since fewer eigenmodes than requested were found
     [PR 1036](https://github.com/awslabs/palace/pull/1036).
+  - Fixed numeric wave-port and boundary-mode mode ordering on lossy cross-sections (e.g. with
+    absorbing or finite-conductivity boundaries) that could select a strongly evanescent
+    mode instead of the intended propagating mode. Exact and reduced (adaptive sweep) mode
+    solves now rank modes by the complex distance of the propagation constant from the target.
+    [PR 1019](https://github.com/awslabs/palace/pull/1019).
 
 #### Performance Improvements
 
