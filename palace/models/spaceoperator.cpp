@@ -40,6 +40,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
+    pml_subdomain(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE),
     print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -1739,6 +1740,54 @@ void SpaceOperator::AssemblePreconditioner(
   }
 }
 
+namespace
+{
+
+// Local true DOFs of the elements of the PML regions, sorted and unique. The DOFs of the
+// local PML elements are mapped to true DOFs on all processes, since a true DOF of a PML
+// element may be owned by a process which has no PML element containing it (and, for
+// nonconforming meshes, the DOFs of a PML element may be constrained by true DOFs of other
+// elements).
+std::vector<int> GetPMLTrueDofs(const FiniteElementSpace &fespace,
+                                const MaterialOperator &mat_op)
+{
+  const auto &pfes = fespace.Get();
+  const auto &mesh = fespace.GetMesh();
+  const auto &loc_attr = mesh.GetCeedAttributes();
+  const auto &pml_attr_to_profile = mat_op.GetPMLAttrToProfile();
+  mfem::Array<int> ldof_marker(pfes.GetVSize()), marker(pfes.GetTrueVSize());
+  ldof_marker = 0;
+  mfem::Array<int> vdofs;
+  for (int e = 0; e < mesh.Get().GetNE(); e++)
+  {
+    const auto it = loc_attr.find(mesh.Get().GetAttribute(e));
+    if (it == loc_attr.end() || it->second <= 0 ||
+        static_cast<std::size_t>(it->second) > pml_attr_to_profile.size() ||
+        pml_attr_to_profile[it->second - 1] < 0)
+    {
+      continue;
+    }
+    pfes.GetElementVDofs(e, vdofs);
+    for (const int vdof : vdofs)
+    {
+      ldof_marker[(vdof >= 0) ? vdof : -1 - vdof] = 1;
+    }
+  }
+  pfes.Dof_TrueDof_Matrix()->BooleanMultTranspose(1, ldof_marker.HostRead(), 0,
+                                                  marker.HostWrite());
+  std::vector<int> tdofs;
+  for (int i = 0; i < marker.Size(); i++)
+  {
+    if (marker[i])
+    {
+      tdofs.push_back(i);
+    }
+  }
+  return tdofs;
+}
+
+}  // namespace
+
 template <typename OperType, typename ScalarType, typename A3Type>
 std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
                                                                  ScalarType a1,
@@ -1808,6 +1857,14 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       {
         B->AddOperator(std::move(B_l));
       }
+    }
+  }
+
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    if (pml_subdomain && mat_op.HasPML())
+    {
+      B->SetPMLTrueDofs(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op));
     }
   }
 

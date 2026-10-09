@@ -50,6 +50,7 @@ class SpaceOperator
 private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
+  const bool pml_subdomain;   // Provide the PML true DOFs for the PML subdomain correction
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;

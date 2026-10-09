@@ -1185,6 +1185,11 @@ public:
   // solver.
   bool drop_small_entries = false;
 
+  // For problems with PML regions, solver for the subdomain correction on the true DOFs of
+  // the PML elements, applied at the finest level of the geometric multigrid
+  // preconditioner.
+  PMLSubdomainSolver pml_subdomain_solver = PMLSubdomainSolver::NONE;
+
   // Reuse the sparsity pattern (reordering) for repeated factorizations.
   bool reorder_reuse = true;
 

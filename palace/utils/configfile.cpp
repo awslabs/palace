@@ -54,6 +54,7 @@ PALACE_JSON_SERIALIZE_ENUM(LinearSolver)
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver)
 PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening)
 PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
+PALACE_JSON_SERIALIZE_ENUM(PMLSubdomainSolver)
 PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
 PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
@@ -1606,6 +1607,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
+  pml_subdomain_solver = linear.value("PMLSubdomainSolver", pml_subdomain_solver);
   reorder_reuse = linear.value("ReorderingReuse", reorder_reuse);
   pc_side = linear.value("PCSide", pc_side);
   sym_factorization = linear.value("ColumnOrdering", sym_factorization);

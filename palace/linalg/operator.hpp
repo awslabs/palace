@@ -430,6 +430,10 @@ class BaseMultigridOperator : public OperType
 private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
 
+  // Local true DOFs of the PML elements at the finest level, for the PML subdomain
+  // correction of the multigrid preconditioner (empty if none).
+  std::vector<int> pml_tdofs;
+
 public:
   BaseMultigridOperator(std::size_t l) : OperType(0)
   {
@@ -450,6 +454,9 @@ public:
   }
 
   bool HasAuxiliaryOperators() const { return !aux_ops.empty(); }
+
+  void SetPMLTrueDofs(std::vector<int> &&tdofs) { pml_tdofs = std::move(tdofs); }
+  const std::vector<int> &GetPMLTrueDofs() const { return pml_tdofs; }
   auto GetNumLevels() const { return ops.size(); }
   auto GetNumAuxiliaryLevels() const { return aux_ops.size(); }
 

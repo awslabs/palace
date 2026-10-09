@@ -711,6 +711,20 @@ void IoData::CheckConfiguration()
   // aliases for the concrete values, so default-constructed fields are already at
   // their resolved values and no runtime resolution is needed here.
 
+  // The PML subdomain correction is part of the geometric multigrid preconditioner, and
+  // uses a sparse direct solver.
+  if (solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE &&
+      solver.linear.mg_max_levels == 1)
+  {
+    Mpi::Warning("config[\"Solver\"][\"Linear\"][\"PMLSubdomainSolver\"] is only used with "
+                 "geometric multigrid preconditioning (\"MGMaxLevels\" > 1)!\n");
+  }
+#if !defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS)
+  MFEM_VERIFY(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::DIRECT,
+              "PML subdomain solver \"Direct\" requested but Palace was not built with a "
+              "sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS)!");
+#endif
+
   // Validate build-availability of requested solver backends. Centralized here so
   // downstream code never encounters an unavailable backend at runtime.
 #if !defined(PALACE_WITH_SLEPC)

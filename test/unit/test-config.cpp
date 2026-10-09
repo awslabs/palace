@@ -769,6 +769,18 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Linear PML subdomain solver", "[config][Serial]")
+{
+  CHECK(config::LinearSolverData(json::object()).pml_subdomain_solver ==
+        PMLSubdomainSolver::NONE);
+  CHECK(config::LinearSolverData(json{{"PMLSubdomainSolver", "Direct"}})
+            .pml_subdomain_solver == PMLSubdomainSolver::DIRECT);
+  CHECK(
+      config::LinearSolverData(json{{"PMLSubdomainSolver", "None"}}).pml_subdomain_solver ==
+      PMLSubdomainSolver::NONE);
+  CHECK_THROWS(config::LinearSolverData(json{{"PMLSubdomainSolver", "Iterative"}}));
+}
+
 TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
 {
   CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 3}, {"Save", 2}}).n_post == 2);

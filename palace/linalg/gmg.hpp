@@ -16,6 +16,7 @@ namespace mfem
 
 template <typename T>
 class Array;
+class HypreParMatrix;
 
 }  // namespace mfem
 
@@ -53,8 +54,19 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
+  // Optional subdomain correction on the true DOFs of the PML elements at the finest level,
+  // Y += S A_PML⁻¹ Sᵀ (X - A Y), with S the selection of the PML true DOFs and A_PML = Sᵀ A
+  // S the corresponding principal submatrix (frequency domain problems only).
+  std::unique_ptr<Solver<OperType>> pml_solver;
+  std::unique_ptr<mfem::HypreParMatrix> pml_S;
+  mutable VecType pml_r, pml_x;
+
   // Internal function to perform a single V-cycle iteration.
   void VCycle(int l, bool initial_guess) const;
+
+  // Set up and apply the PML subdomain correction.
+  void SetUpPMLSubdomain(const BaseMultigridOperator<OperType> &mg_op);
+  void PMLSubdomainCorrection(int l) const;
 
 public:
   GeometricMultigridSolver(MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
@@ -72,6 +84,15 @@ public:
           iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
           iodata.solver.linear.mg_smooth_cheby_4th)
   {
+  }
+
+  ~GeometricMultigridSolver() override;
+
+  // Set the solver for the PML subdomain correction, configured with the PML true DOFs of
+  // the multigrid operator at the next call to SetOperator.
+  void SetPMLSubdomainSolver(std::unique_ptr<Solver<OperType>> &&solver)
+  {
+    pml_solver = std::move(solver);
   }
 
   void SetOperator(const OperType &op) override;

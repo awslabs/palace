@@ -2425,6 +2425,20 @@
         }
       ]
     },
+    "PMLSubdomainSolver": {
+      "type": "string",
+      "default": "None",
+      "oneOf": [
+        {
+          "const": "None",
+          "description": "No PML subdomain correction."
+        },
+        {
+          "const": "Direct",
+          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`, and in double precision for `\"STRUMPACK-MP\"`), in complex arithmetic."
+        }
+      ]
+    },
     "PreconditionerSide": {
       "type": "string",
       "oneOf": [
@@ -3138,6 +3152,10 @@
           "type": "boolean",
           "description": "When `true`, drops entries smaller than double-precision machine epsilon from the system matrix used in the sparse direct solver.",
           "default": false
+        },
+        "PMLSubdomainSolver": {
+          "$ref": "#/$defs/PMLSubdomainSolver",
+          "description": "For frequency domain problems with PML regions, solver for a subdomain correction on the unknowns of the PML elements, applied once per cycle at the finest level of the geometric multigrid preconditioner. The polynomial multigrid smoothers do not converge on the PML equations for strongly absorbing layers (when the PML conductivity σ exceeds about ωε₀), so that multigrid preconditioning without this correction can require many iterations. A direct solve on the PML subdomain is affordable when the PML regions hold a small fraction of the unknowns. Only used when geometric multigrid is enabled."
         },
         "ReorderingReuse": {
           "type": "boolean",
