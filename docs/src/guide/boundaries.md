@@ -115,6 +115,20 @@ approximated by a quadratic polynomial in frequency and, if required by the tole
 on the imaginary frequency axis, which add decaying auxiliary states to the synthesized
 circuit.
 
+The PML equations are difficult for the iterative solvers of *Palace*. In a strongly absorbing
+layer, where the conductivity exceeds about ``\omega \varepsilon_0``, the anisotropic PML
+tensors have components with complex phases of opposite signs, for which the polynomial
+smoothers of the geometric multigrid preconditioner do not converge: the number of linear
+solver iterations then grows quickly with the conductivity and with the mesh resolution in the
+layer. With
+[`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)
+set to `"Direct"`, the multigrid preconditioner is complemented by a sparse direct solve of the
+equations of the unknowns of the PML elements, which restores the convergence of the
+multigrid preconditioner without PML. This is affordable when the PML regions hold a small
+fraction of the unknowns, as is typical when the mesh is coarse in the layer compared to the
+physical region. Otherwise, a sparse direct solve of the whole system (`"MGMaxLevels": 1`) can
+be more efficient.
+
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),
 [`examples/pml_layered`](https://github.com/awslabs/palace/blob/main/examples/pml_layered),
