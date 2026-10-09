@@ -467,6 +467,10 @@ def verify_signature_key(signature, requirement_key, key_text=None, *, name="req
       equality; no float is re-serialised, so nlohmann's Grisu2 lexemes never matter).
     - ``key_text`` None (a record-era manifest of the older binaries): the legacy float hash
       ``signature_hash(signature)`` is compared with the key, unchanged behaviour.
+    - ``requirement_key`` None: no digest comparison (there is no key to compare); the parse
+      check still runs and the record's SignatureHash is the digest of the text (or the legacy
+      hash). Palace always writes Hash beside KeyText, so this is the "no key" caller's path
+      (e.g. a generated basis), not a manifest record's.
     """
     import hashlib
     key = None if requirement_key is None else str(requirement_key)
@@ -507,7 +511,10 @@ def feature_signature_key(feature):
 def context_digest(signature):
     """sha256 of the serialised {"Box", "Context"} of a contract-3 SpatialEdgeCluster signature
     (surfaceresponseidentification SpatialSupportContextDigest; the manifest records it as
-    SpatialSupport.ContextDigest); '' for a claims-only signature."""
+    SpatialSupport.ContextDigest); '' for a claims-only signature. A Python float re-dump of
+    the C++-hashed text (the same class as the pre-KeyText signature_hash): the manifest records
+    no ContextText, so legacy_contract_alias cross-checks this digest against the recorded one
+    and fails closed by name when a double's lexeme differs."""
     import hashlib
     if "Box" not in signature:
         return ""

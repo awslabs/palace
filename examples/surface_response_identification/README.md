@@ -50,7 +50,9 @@ The classifier now runs the pure-geometry identification of
 in the preflight: `surface-response-requirements.json` carries `Version: 2`, the version-1
 `Requirements` derived from the features (aggregated by signature, `Hash` per record with its
 `KeyText` — the exact hashed text, so `sha256(KeyText) == Hash` and `json.loads(KeyText) ==
-Signature` are checked without re-serialising doubles; `signature_library.verify_signature_key`
+Signature` are checked without re-serialising doubles; `signature_library.verify_signature_key`;
+the `SpatialSupport.ContextDigest` of a contract-3 feature has no such text beside it and is
+still cross-checked by a Python re-dump, `signature_library.context_digest`, fail closed by name
 — `Status` from the key-based matching pass), the legacy per-pass records under
 `LegacyRequirements` (comparison only) and the contract under `Identification` (`Features` with
 canonical `Signature` / `Hash` / `KeyText` / `Chirality` / `Portions` / `Vertices` / `Frame` /
