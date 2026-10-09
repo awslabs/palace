@@ -1755,9 +1755,22 @@ class Batch1ReplayTest(unittest.TestCase):
                     status_path.write_text(json.dumps(stamped(status_path, status_path.parent)))
             return ["rsync", "fake"]
 
+        # The fake remote carries the executables of record under the remote root (decision 605
+        # F-5: the driver verifies them before its first qsub): the profile's pattern path at the
+        # digest its name carries, and the wrapper.
+        def is_executable(path):
+            return Path(path).name.startswith("palace-archive-estimate-") or Path(path).name == "mpiexec_bound.sh"
+
+        def fake_path_exists(host, path):
+            events.append(("exists", Path(path).name))
+            return is_executable(path)
+
         def fake_remote_sha256(host, paths):
             digests = {}
             for path in paths:
+                if is_executable(path):
+                    digests[path] = Path(path).name[len("palace-archive-estimate-"):-len(".bin")]
+                    continue
                 case = next(case for case in results_of if f"/{case}/main/" in path)
                 digests[path] = sha256(Path(self.run_root) / case / "results" / "main" / path.split("/main/", 1)[1])
             return digests
@@ -1775,7 +1788,7 @@ class Batch1ReplayTest(unittest.TestCase):
             return {"Commands": [], "UTC": "fake"}
         fakes = {"submit": fake_submit, "poll": fake_poll, "fetch": fake_fetch, "remote_sha256": fake_remote_sha256,
                  "delete_archives": fake_delete, "qstat_history": lambda host, pbs_bin, job: "job_state = F", "job_exit": fake_job_exit,
-                 "read_json": fake_read_json, "count_archive_potentials": fake_count}
+                 "read_json": fake_read_json, "count_archive_potentials": fake_count, "path_exists": fake_path_exists}
         saved = {name: getattr(remote_side, name) for name in fakes}
         saved_upload = qualify_library.upload_case
         for name, fake in fakes.items():
@@ -1918,6 +1931,12 @@ class Batch1ReplayTest(unittest.TestCase):
         args.resume = True
         resumed = qualify_library.run_qualify(args, log=lambda message: None)
         kinds = [kind for kind, _ in first_events]
+        # Decision 605 F-5: the executables of record are verified on the host ONCE before the first
+        # qsub (the binary's existence, its digest, the wrapper's existence), then the jobs go.
+        self.assertEqual(kinds[:2], ["exists", "exists"], first_events)
+        self.assertEqual(first_events[0][1], f"palace-archive-estimate-{BATCH1_BINARY_SHA256}.bin")
+        self.assertEqual(first_events[1][1], "mpiexec_bound.sh")
+        kinds = kinds[2:]
         self.assertEqual(kinds[:4], ["upload", "submit", "upload", "submit"], first_events)
         self.assertLess(kinds.index("submit", kinds.index("submit") + 1), kinds.index("fetch"), "both jobs queued before any fetch")
         self.assertEqual([case for kind, case in first_events if kind == "fetch"], [fab, thin])
@@ -1985,7 +2004,8 @@ class Batch1ReplayTest(unittest.TestCase):
         blocks = [json.loads((Path(case["Root"]) / "main" / f"{case_id}-p4" / f"worker-block{k}.json").read_text()) for k in (1, 2)]
         self.assertEqual([entry["Index"] for block in blocks for entry in block["Boundaries"]["PrescribedPotential"]], list(range(1, spec["Sources"] + 1)))
         kinds = [kind for kind, _ in events]
-        self.assertEqual(events[:3], [("upload", case_id), ("submit", "worker-1"), ("submit", "worker-2")])
+        self.assertEqual([kind for kind, _ in events[:2]], ["exists", "exists"])    # decision 605 F-5: verified before the first qsub
+        self.assertEqual(events[2:5], [("upload", case_id), ("submit", "worker-1"), ("submit", "worker-2")])
         self.assertLess(kinds.index("poll"), kinds.index("archive-count"))
         self.assertEqual([name for kind, name in events if kind == "status"], ["worker-1", "worker-2"])
         self.assertEqual(events.index(("archive-count", f"{case_id}-p4")) + 1, events.index(("submit", "reducer")))
