@@ -318,6 +318,49 @@ class MirrorFormedContractTest(unittest.TestCase):
         with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "no real / image split"):
             device_coupons.mirror_formed_entry(contract, [1, 2], radius)
 
+    def test_contract_hash_check_uses_keytext_and_the_planner_carries_it(self):
+        """Decision 605 (2) F-4 (c): a requirement carrying KeyText (a manifest of a binary writing the hashed key text)
+        has its Hash verified as sha256(KeyText) == Hash and json.loads(KeyText) == Signature, never by re-dumping
+        floats (the three-lexeme class of 7fd482e5adfc: the float re-dump hashes elsewhere); a record-era requirement
+        without KeyText keeps the legacy signature_key_hash check unchanged; an inconsistent KeyText fails closed by
+        name; the planner carries KeyText as an opaque string into the coupon plan."""
+        import hashlib
+        base = mirror_formed_fixture("o1-f17-b0b764b21b95")
+        float_text = json.dumps(base["Signature"], separators=(",", ":"), sort_keys=True)
+        self.assertEqual(hashlib.sha256(float_text.encode()).hexdigest(), base["Hash"])  # the record-era fixture: legacy path
+        self.assertIn("-1.0,", float_text)
+        key_text = float_text.replace("-1.0,", "-1.0000000000000000,", 1)  # a 17-digit lexeme, as nlohmann writes some doubles
+        key = hashlib.sha256(key_text.encode()).hexdigest()
+        self.assertNotEqual(key, base["Hash"])
+        self.assertEqual(json.loads(key_text), base["Signature"])
+        with_text = {"Id": "o1", **base, "Hash": key, "KeyText": key_text}
+        self.assertEqual(device_coupons.validate_mirror_formed_contract(with_text)["RealPortions"], [0])
+        self.assertEqual(device_coupons.verify_requirement_key(with_text)["Path"], "KeyText")
+        # the same key WITHOUT KeyText: the legacy float-hash path stops (the R2 7fd4 stop), by name
+        with self.assertRaisesRegex(device_coupons.DeviceAdapterError, "Hash .* is not sha256.*legacy float-hash path"):
+            device_coupons.validate_mirror_formed_contract({"Id": "o1", **base, "Hash": key})
+        self.assertEqual(device_coupons.verify_requirement_key({"Id": "o1", **base})["Path"], "LegacyFloatHash")
+        # inconsistent KeyText: wrong digest / the float text offered as the key text / another signature's text / a prefix Hash
+        for text, record in (("sha256\(KeyText\)", {**with_text, "Hash": base["Hash"]}),
+                             ("sha256\(KeyText\)", {**with_text, "KeyText": float_text}),
+                             ("json.loads\(KeyText\) != Signature",
+                              {**with_text, "KeyText": key_text.replace('"EdgeCount":2', '"EdgeCount":3', 1),
+                               "Hash": hashlib.sha256(key_text.replace('"EdgeCount":2', '"EdgeCount":3', 1).encode()).hexdigest()}),
+                             ("not a full sha256 hex key", {**with_text, "Hash": key[:12]}),
+                             ("KeyText must be a non-empty string", {**with_text, "KeyText": ""})):
+            with self.assertRaisesRegex(device_coupons.DeviceAdapterError, text, msg=text):
+                device_coupons.validate_mirror_formed_contract(record)
+        # the planner copies KeyText verbatim (an opaque string); a requirement without it has no KeyText on its coupon
+        legacy = mirror_formed_fixture("o3-f45-d7c875318447")
+        closure = synthetic_closure(self.tmp, [{k: v for k, v in with_text.items() if k != "Id"}, legacy])
+        manifest = json.loads(closure.read_text())
+        library = json.loads(Path(manifest["Library"]["Path"]).read_text())
+        coupons = planner.plan_from_manifest(closure, manifest, manifest["Library"]["Path"], library, include_matched=False)["Coupons"]
+        by_hash = {coupon["Hash"]: coupon for coupon in coupons}
+        self.assertEqual(sorted(by_hash), sorted([key, legacy["Hash"]]))
+        self.assertEqual(by_hash[key]["KeyText"], key_text)
+        self.assertNotIn("KeyText", by_hash[legacy["Hash"]])
+
     def test_planner_carries_the_contract_and_the_option_is_a_device_option(self):
         requirement = mirror_formed_fixture("o1-f17-b0b764b21b95")
         closure = synthetic_closure(self.tmp, [requirement])

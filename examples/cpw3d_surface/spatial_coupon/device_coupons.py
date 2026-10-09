@@ -74,6 +74,7 @@ import nearkey_predictor  # noqa: E402
 import nearkey_reuse  # noqa: E402
 import prepare_surface_response_coupons as planner  # noqa: E402
 import register_case  # noqa: E402
+import signature_library  # noqa: E402  (surface_response_identification, on sys.path through cluster_signature_geometry)
 from refreeze_manifest_tools import PRODUCTION_MANIFEST  # noqa: E402
 
 DISCOVERY = CPW2D / "discover_surface_response_requirements.py"
@@ -305,9 +306,23 @@ MIRROR_FORMED_ENTRY_RULE = ("decision 557 / round-3 DESIGN 4.4 (MF): the library
 
 
 def signature_key_hash(signature):
-    """sha256 of the identification's Key of a signature (the nlohmann compact dump with sorted
-    keys = json.dumps(signature, separators=(',', ':'), sort_keys=True)): the requirement Hash."""
+    """The LEGACY float re-dump of the identification's Key of a signature (json.dumps(signature,
+    separators=(',', ':'), sort_keys=True) hashed): equal to the requirement Hash only when every
+    double's nlohmann (Grisu2) lexeme is Python's shortest repr — NOT always (the R2-failure
+    diagnosis F-4: 7fd482e5adfc differs on three lexemes). The check of a key against its
+    Signature is verify_requirement_key, which uses the record's KeyText when it carries one."""
     return hashlib.sha256(json.dumps(signature, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
+
+
+def verify_requirement_key(requirement, signature=None, *, name=None):
+    """A requirement record's Hash verified against its Signature (decision 605 (2) F-4 (c)):
+    KeyText present -> sha256(KeyText) == Hash and json.loads(KeyText) == Signature; KeyText
+    absent (a record-era manifest) -> the legacy signature_key_hash(Signature) == Hash. Returns
+    signature_library's record {Path, KeyText, SignatureHash, RequirementKey, Equal}; raises
+    signature_library.SignatureKeyError (named) on any inconsistency."""
+    return signature_library.verify_signature_key(requirement.get("Signature") if signature is None else signature,
+                                                  requirement.get("Hash"), requirement.get("KeyText"),
+                                                  name=name or f"requirement {str(requirement.get('Hash'))[:12]}")
 
 
 def signature_portion_lengths_over_R(signature):
@@ -354,9 +369,12 @@ def validate_mirror_formed_contract(coupon):
     portion_count = len(signature["Portions"])
     if int(geometry.get("EdgeCount", -1)) != portion_count:
         raise _contract_error(coupon, f"Geometry.EdgeCount {geometry.get('EdgeCount')!r} is not the portion count {portion_count}")
-    expected_hash = signature_key_hash(signature)
-    if coupon.get("Hash") != expected_hash:
-        raise _contract_error(coupon, f"Hash {str(coupon.get('Hash'))[:12]} is not sha256(Key) {expected_hash[:12]}")
+    if not isinstance(coupon.get("Hash"), str) or len(coupon["Hash"]) != 64:
+        raise _contract_error(coupon, f"Hash {coupon.get('Hash')!r} is not a full sha256 hex key")
+    try:
+        verify_requirement_key(coupon, signature, name=f"coupon {coupon.get('Id')}")
+    except signature_library.SignatureKeyError as error:
+        raise _contract_error(coupon, f"Hash {coupon['Hash'][:12]} is not sha256(Key): {error}") from error
     real = contract.get("RealPortions")
     if (not isinstance(real, list) or not real or any(isinstance(i, bool) or not isinstance(i, int) for i in real)
             or sorted(set(real)) != real):
@@ -825,7 +843,8 @@ def nearkey_reuse_for_coupon(coupon, work, case_id, *, library, library_path, ru
         stop = nearkey_reuse.stop_record_from_path(stop_record_path, entry["Name"], case_id) if stop_record_path else None
         result = nearkey_reuse.reuse_requirement(
             exact_signature=signature, exact_basis_dir=work, exact_model_entry=entry, library=library, library_path=library_path, rule=rule,
-            mode=mode, output=output, requirement_key=coupon.get("Hash"), stop_record=stop, approval=approval, record_roots=record_roots,
+            mode=mode, output=output, requirement_key=coupon.get("Hash"), requirement_key_text=coupon.get("KeyText"), stop_record=stop,
+            approval=approval, record_roots=record_roots,
             exact_interfaces=coupon.get("Interfaces"), exact_boundary_condition=coupon.get("BoundaryCondition"), log=log)
     except (nearkey_reuse.NearKeyReuseError, nearkey_predictor.NearKeyRuleError, nearkey_reuse.detection.NearKeyDetectionError,
             nearkey_reuse.transplant.TransplantError) as error:
