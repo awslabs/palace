@@ -136,12 +136,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `GRID` points with a nonzero coordinate system (`CP`, or a `GRDSET` default) now abort,
     since coordinate systems are not applied.
     [PR 951](https://github.com/awslabs/palace/pull/951).
-  - Fixed driven frequency sampling edge cases: `"NSample": 1` now samples the interval
-    start instead of producing a NaN frequency, the deprecated `"FreqStep"` is validated
-    to be positive (previously `0` crashed and negative values silently swept downward),
-    and degenerate adaptive sweeps (fewer than two distinct samples with circuit
-    synthesis, or `"AdaptiveCircuitSynthesis"` without a positive `"AdaptiveTol"`, which
-    silently disabled synthesis) are rejected at parse time instead of failing later.
+  - Fixed driven frequency sampling edge cases: `"NSample": 1` now samples `"MinFreq"`
+    instead of producing a NaN frequency, a `"FreqStep"` sweep with `"MaxFreq"` below
+    `"MinFreq"` (which sampled only `"MinFreq"`) or with too many steps for an `int` now
+    aborts, and the deprecated top-level `"FreqStep"` must be positive (previously `0`
+    crashed and negative values swept below `"MinFreq"`). An adaptive sweep with circuit
+    synthesis now needs two distinct samples, and `validate-config` checks that it has a
+    positive `"AdaptiveTol"`, as *Palace* already did.
     SchemaVer 2-2-1 [PR 952](https://github.com/awslabs/palace/pull/952).
 
 #### Performance Improvements
