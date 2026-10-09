@@ -1,0 +1,937 @@
+{
+ "Version": 1,
+ "Copyright": "Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.",
+ "SPDX-License-Identifier": "Apache-2.0",
+ "Rule": "PRODUCTION MirrorFormedContract requirement records (impl-B5 CONTRACT.md v3.1, decisions 557 / 584 / 585) of the rerun-3 R3 registration jobs' pass-01 discovery closures (decision 599: the closure stalled at pass-02 on the signature-only placeholder of these keys): the identification's own records, verbatim, written by the M7 binary of record palace-2921886-01e30d2fbe5f.bin (main c95769cd28) with the s2-r1p9-v3-c library (MatchingRadius 1.9 um) on the osc003-O3 / sct002-S2p thin windows (PBS 60209 / 60210, 2026-10-09; stage2-20261004/rerun-3/R3/records/cluster/<key>/register/device/discovery/pass-01/postpro/surface-response-requirements.json). Fixture of test_discover_surface_response_requirements.py.",
+ "MatchingRadius": 1.9,
+ "Requirements": {
+  "o3-f45-d7c875318447": {
+   "BoundaryCondition": {
+    "Type": "PEC"
+   },
+   "Count": 1,
+   "Dimension": 3,
+   "DistinctSignatures": 1,
+   "ExactParameters": true,
+   "Geometry": {
+    "EdgeCount": 4,
+    "Signature": {
+     "Box": [
+      -3.421937,
+      -5.528427,
+      5.0609519999999995,
+      5.851121
+     ],
+     "Context": [
+      {
+       "Arc": [
+        137.93591,
+        78.421678,
+        2.9381909999999998,
+        -3.5415379999999996
+       ],
+       "Chain": true,
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.741177,
+        -1.536733,
+        4.164714,
+        -5.528427
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -0.997849,
+        0.06555
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.9796469999999999,
+        -5.528427,
+        -0.86601,
+        -3.7985469999999997
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -0.999462,
+        0.032792
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.86601,
+        -3.7985469999999997,
+        -0.812794,
+        -2.1766199999999998
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.696156,
+        1.8031199999999998,
+        -0.696156,
+        2.803209
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.8814019999999999,
+        0.47236799999999995
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.6961569999999999,
+        2.803209,
+        -0.223776,
+        1.921783
+       ]
+      }
+     ],
+     "EdgeCount": 4,
+     "Portions": [
+      {
+       "Arc": [
+        137.93591,
+        78.421678,
+        0.850371,
+        0.000329
+       ],
+       "Conductor": 1,
+       "GapRadial": -1,
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.023087999999999997,
+        1.5473139999999999,
+        1.741177,
+        -1.536733
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -0.999462,
+        0.032792
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.812794,
+        -2.1766199999999998,
+        -0.696156,
+        1.378325
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.696156,
+        1.378325,
+        -0.696156,
+        1.8031199999999998
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.8814019999999999,
+        0.47236799999999995
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.223776,
+        1.921783,
+        -0.023087999999999997,
+        1.5473139999999999
+       ]
+      }
+     ],
+     "Type": "SpatialEdgeCluster",
+     "Vertices": []
+    }
+   },
+   "Hash": "d7c875318447e0b6f59cec6ed288a617212f19fe4c522377ced1ad72662a0273",
+   "Instances": 1,
+   "Interfaces": [
+    {
+     "Slot": 0,
+     "Target": 3,
+     "Type": "MA"
+    },
+    {
+     "Slot": 0,
+     "Target": 2,
+     "Type": "MS"
+    },
+    {
+     "Slot": 0,
+     "Target": 1,
+     "Type": "SA"
+    }
+   ],
+   "MirrorFormed": true,
+   "MirrorFormedContract": {
+    "ExtendedFeature": 0,
+    "Frame": {
+     "Axes": [
+      [
+       0.96989732325,
+       -0.243514234393,
+       0.0
+      ],
+      [
+       0.243514234393,
+       0.96989732325,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Chirality": 1,
+     "Origin": [
+      -830.0140994065,
+      -2080.6960750081003,
+      0.0
+     ]
+    },
+    "ImageLengthOverR": 3.9816529358851263,
+    "Planes": [
+     0
+    ],
+    "RealFeatures": [
+     45
+    ],
+    "RealLengthOverR": 3.9779546647798947,
+    "RealPortions": [
+     0,
+     3
+    ],
+    "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster requirement; RealPortions index Signature.Portions (0-based) whose world portions lie on real segments (segment < real_segments); every other portion is an image; Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the serialised portions' lengths over R (a straight portion its chord, an arc its length on the serialised circle), summed over the real / image entries",
+    "Version": 1
+   },
+   "ParameterSpread": 0.0,
+   "Signature": {
+    "Box": [
+     -3.421937,
+     -5.528427,
+     5.0609519999999995,
+     5.851121
+    ],
+    "Context": [
+     {
+      "Arc": [
+       137.93591,
+       78.421678,
+       2.9381909999999998,
+       -3.5415379999999996
+      ],
+      "Chain": true,
+      "Conductor": 1,
+      "GapRadial": -1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.741177,
+       -1.536733,
+       4.164714,
+       -5.528427
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -0.997849,
+       0.06555
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.9796469999999999,
+       -5.528427,
+       -0.86601,
+       -3.7985469999999997
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -0.999462,
+       0.032792
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.86601,
+       -3.7985469999999997,
+       -0.812794,
+       -2.1766199999999998
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.696156,
+       1.8031199999999998,
+       -0.696156,
+       2.803209
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       0.8814019999999999,
+       0.47236799999999995
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.6961569999999999,
+       2.803209,
+       -0.223776,
+       1.921783
+      ]
+     }
+    ],
+    "EdgeCount": 4,
+    "Portions": [
+     {
+      "Arc": [
+       137.93591,
+       78.421678,
+       0.850371,
+       0.000329
+      ],
+      "Conductor": 1,
+      "GapRadial": -1,
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.023087999999999997,
+       1.5473139999999999,
+       1.741177,
+       -1.536733
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -0.999462,
+       0.032792
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.812794,
+       -2.1766199999999998,
+       -0.696156,
+       1.378325
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.696156,
+       1.378325,
+       -0.696156,
+       1.8031199999999998
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.8814019999999999,
+       0.47236799999999995
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.223776,
+       1.921783,
+       -0.023087999999999997,
+       1.5473139999999999
+      ]
+     }
+    ],
+    "Type": "SpatialEdgeCluster",
+    "Vertices": []
+   },
+   "Status": "Missing",
+   "Topology": "SpatialEdgeCluster",
+   "TotalEdgeLength": 7.5578633614
+  },
+  "s2p-f11-613e6f656498": {
+   "BoundaryCondition": {
+    "Type": "PEC"
+   },
+   "Count": 1,
+   "Dimension": 3,
+   "DistinctSignatures": 1,
+   "ExactParameters": true,
+   "Geometry": {
+    "EdgeCount": 4,
+    "Signature": {
+     "Box": [
+      -3.0686649999999998,
+      -5.814137,
+      3.6564509999999997,
+      5.8805629999999995
+     ],
+     "Context": [
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -0.9807849999999999,
+        0.19508999999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.263123,
+        2.723902,
+        0.364776,
+        5.8805629999999995
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.6977,
+        -3.507573,
+        -0.6977,
+        -2.507573
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.9238799999999999,
+        -0.382683
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.6977,
+        -3.507573,
+        -0.31501599999999996,
+        -2.583694
+       ]
+      },
+      {
+       "Chain": true,
+       "Conductor": 1,
+       "Gap": [
+        0.9807849999999999,
+        -0.19508999999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        1.285486,
+        2.4158649999999997,
+        1.9746569999999999,
+        5.8805629999999995
+       ]
+      }
+     ],
+     "EdgeCount": 4,
+     "Portions": [
+      {
+       "Conductor": 1,
+       "Gap": [
+        -0.9807849999999999,
+        0.19508999999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.6977,
+        0.539135,
+        -0.263123,
+        2.723902
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        -1.0,
+        0.0
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.6977,
+        -2.507573,
+        -0.6977,
+        0.539135
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.9238799999999999,
+        -0.382683
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        -0.31501599999999996,
+        -2.583694,
+        0.8509089999999999,
+        0.231098
+       ]
+      },
+      {
+       "Conductor": 1,
+       "Gap": [
+        0.9807849999999999,
+        -0.19508999999999999
+       ],
+       "Interfaces": [
+        "MA",
+        "MS",
+        "SA"
+       ],
+       "Law": "{\"Type\":\"PEC\"}",
+       "P": [
+        0.8509089999999999,
+        0.231098,
+        1.285486,
+        2.4158649999999997
+       ]
+      }
+     ],
+     "Type": "SpatialEdgeCluster",
+     "Vertices": [
+      {
+       "P": [
+        -0.6977,
+        0.539135
+       ],
+       "TurnDegrees": 11.25,
+       "Type": "ConvexCorner"
+      },
+      {
+       "P": [
+        0.8509089999999999,
+        0.231098
+       ],
+       "TurnDegrees": 11.25,
+       "Type": "ConvexCorner"
+      }
+     ]
+    }
+   },
+   "Hash": "613e6f6564985cd2cbc7ed3d03ab351f490c06c947510f8df394d8ff34302d84",
+   "Instances": 1,
+   "Interfaces": [
+    {
+     "Slot": 0,
+     "Target": 3,
+     "Type": "MA"
+    },
+    {
+     "Slot": 0,
+     "Target": 2,
+     "Type": "MS"
+    },
+    {
+     "Slot": 0,
+     "Target": 1,
+     "Type": "SA"
+    }
+   ],
+   "MirrorFormed": true,
+   "MirrorFormedContract": {
+    "ExtendedFeature": 11,
+    "Frame": {
+     "Axes": [
+      [
+       0.980785280403,
+       0.195090322016,
+       0.0
+      ],
+      [
+       -0.195090322016,
+       0.980785280403,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "Chirality": 1,
+     "Origin": [
+      1050.0,
+      144.2539431977,
+      0.0
+     ]
+    },
+    "ImageLengthOverR": 5.2742779795383115,
+    "Planes": [
+     5
+    ],
+    "RealFeatures": [
+     32,
+     83,
+     84
+    ],
+    "RealLengthOverR": 5.274277081581534,
+    "RealPortions": [
+     0,
+     1
+    ],
+    "Rule": "decision 557 / round-3 DESIGN 4.4 (MF): the identification's mirror-formed cluster requirement; RealPortions index Signature.Portions (0-based) whose world portions lie on real segments (segment < real_segments); every other portion is an image; Frame = the signature's canonical frame in mesh units with its Chirality (Axes[2] = Chirality x (Axes[0] x Axes[1])); RealLengthOverR / ImageLengthOverR = the serialised portions' lengths over R (a straight portion its chord, an arc its length on the serialised circle), summed over the real / image entries",
+    "Version": 1
+   },
+   "ParameterSpread": 0.0,
+   "Signature": {
+    "Box": [
+     -3.0686649999999998,
+     -5.814137,
+     3.6564509999999997,
+     5.8805629999999995
+    ],
+    "Context": [
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -0.9807849999999999,
+       0.19508999999999999
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.263123,
+       2.723902,
+       0.364776,
+       5.8805629999999995
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.6977,
+       -3.507573,
+       -0.6977,
+       -2.507573
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       0.9238799999999999,
+       -0.382683
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.6977,
+       -3.507573,
+       -0.31501599999999996,
+       -2.583694
+      ]
+     },
+     {
+      "Chain": true,
+      "Conductor": 1,
+      "Gap": [
+       0.9807849999999999,
+       -0.19508999999999999
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       1.285486,
+       2.4158649999999997,
+       1.9746569999999999,
+       5.8805629999999995
+      ]
+     }
+    ],
+    "EdgeCount": 4,
+    "Portions": [
+     {
+      "Conductor": 1,
+      "Gap": [
+       -0.9807849999999999,
+       0.19508999999999999
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.6977,
+       0.539135,
+       -0.263123,
+       2.723902
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       -1.0,
+       0.0
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.6977,
+       -2.507573,
+       -0.6977,
+       0.539135
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.9238799999999999,
+       -0.382683
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       -0.31501599999999996,
+       -2.583694,
+       0.8509089999999999,
+       0.231098
+      ]
+     },
+     {
+      "Conductor": 1,
+      "Gap": [
+       0.9807849999999999,
+       -0.19508999999999999
+      ],
+      "Interfaces": [
+       "MA",
+       "MS",
+       "SA"
+      ],
+      "Law": "{\"Type\":\"PEC\"}",
+      "P": [
+       0.8509089999999999,
+       0.231098,
+       1.285486,
+       2.4158649999999997
+      ]
+     }
+    ],
+    "Type": "SpatialEdgeCluster",
+    "Vertices": [
+     {
+      "P": [
+       -0.6977,
+       0.539135
+      ],
+      "TurnDegrees": 11.25,
+      "Type": "ConvexCorner"
+     },
+     {
+      "P": [
+       0.8509089999999999,
+       0.231098
+      ],
+      "TurnDegrees": 11.25,
+      "Type": "ConvexCorner"
+     }
+    ]
+   },
+   "Status": "Missing",
+   "Topology": "SpatialEdgeCluster",
+   "TotalEdgeLength": 10.0211272624
+  }
+ }
+}
