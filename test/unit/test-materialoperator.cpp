@@ -20,6 +20,7 @@
 #include "linalg/vector.hpp"
 #include "models/materialoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/constants.hpp"
@@ -32,18 +33,6 @@ using namespace Catch;
 
 namespace
 {
-
-class PaOrderThresholdGuard
-{
-private:
-  int threshold;
-
-public:
-  PaOrderThresholdGuard() : threshold(BilinearForm::pa_order_threshold) {}
-  ~PaOrderThresholdGuard() { BilinearForm::pa_order_threshold = threshold; }
-  PaOrderThresholdGuard(const PaOrderThresholdGuard &) = delete;
-  PaOrderThresholdGuard &operator=(const PaOrderThresholdGuard &) = delete;
-};
 
 }  // namespace
 
@@ -559,10 +548,7 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
   config::SolverData solver;
   solver.order = 1;
   solver.linear.mg_max_levels = 1;
-  fem::DefaultIntegrationOrder::p_trial = solver.order;
-  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+  test::IntegrationSettingsGuard settings_guard(solver);
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
 
@@ -576,7 +562,6 @@ TEST_CASE("SpaceOperator direct dispersive A2 action", "[materialoperator][Seria
   config::DomainData reference_domains;
   reference_domains.materials = {reference_material};
 
-  PaOrderThresholdGuard threshold_guard;
   for (int threshold : {1, 2})
   {
     BilinearForm::pa_order_threshold = threshold;  // Partial, then full assembly.
@@ -762,13 +747,9 @@ TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
   config::SolverData solver;
   solver.order = 1;
   solver.linear.mg_max_levels = 1;
-  fem::DefaultIntegrationOrder::p_trial = solver.order;
-  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+  test::IntegrationSettingsGuard settings_guard(solver);
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
-  PaOrderThresholdGuard threshold_guard;
   BilinearForm::pa_order_threshold = 1;
   auto named_mesh = MakeMesh();
   auto canonical_mesh = MakeMesh();
@@ -823,10 +804,7 @@ TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
   config::SolverData solver;
   solver.order = 1;
   solver.linear.mg_max_levels = 1;
-  fem::DefaultIntegrationOrder::p_trial = solver.order;
-  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+  test::IntegrationSettingsGuard settings_guard(solver);
 
   config::MaterialData pole_material;
   pole_material.attributes = {1};
@@ -844,7 +822,6 @@ TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
 
   config::BoundaryData boundaries;
   Units units(1.0, 1.0);
-  PaOrderThresholdGuard threshold_guard;
   BilinearForm::pa_order_threshold = 1;
   auto pole_mesh = MakeMesh();
   auto conductivity_mesh = MakeMesh();
@@ -875,6 +852,42 @@ TEST_CASE("SpaceOperator zero permittivity poles are ordinary conductivity",
   y.Add(-1.0, expected);
   CHECK(linalg::Norml2(Mpi::World(), y) <
         1.0e-12 * std::max(1.0, linalg::Norml2(Mpi::World(), expected)));
+}
+
+TEST_CASE("SpaceOperator does not evaluate dispersive materials without mesh support",
+          "[materialoperator][Serial]")
+{
+  // Attribute 2 is not on the mesh. Its undamped pole at s = i must not be evaluated when
+  // assembling the system or preconditioner at that frequency.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
+  auto par_mesh = std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  test::IntegrationSettingsGuard settings_guard(solver);
+
+  config::MaterialData material, absent_material;
+  material.attributes = {1};
+  absent_material.attributes = {2};
+  absent_material.permittivity_pole_terms.push_back({{0.0, 1.0}, {0.0, -0.5}});
+  config::DomainData domains;
+  domains.materials = {material, absent_material};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units, mesh);
+  REQUIRE_FALSE(space_op.GetMaterialOp().HasFrequencyDependentPermittivitySupport(1));
+
+  const double omega = 1.0;  // s = iω at the pole
+  CHECK_NOTHROW(space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO));
+  CHECK_NOTHROW(space_op.GetPreconditionerMatrix<ComplexOperator>(
+      std::complex<double>(1.0, 0.0), std::complex<double>(0.0, omega),
+      std::complex<double>(-omega * omega, 0.0), std::complex<double>(omega, 0.0)));
+  CHECK_NOTHROW(
+      space_op.GetPreconditionerMatrix<Operator>(1.0, omega, -omega * omega, omega));
 }
 
 TEST_CASE("SpaceOperator dispersive mass action across partitioned material support",
@@ -916,11 +929,7 @@ TEST_CASE("SpaceOperator dispersive mass action across partitioned material supp
   solver.linear.mg_max_levels = 1;
   solver.linear.pc_mat_real = false;
   solver.linear.pc_mat_shifted = 0;
-  fem::DefaultIntegrationOrder::p_trial = solver.order;
-  fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
-  fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
-  fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
-  PaOrderThresholdGuard threshold_guard;
+  test::IntegrationSettingsGuard settings_guard(solver);
   BilinearForm::pa_order_threshold = 1;  // Exercise the partially assembled cache path.
 
   config::MaterialData material1;

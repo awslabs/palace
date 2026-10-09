@@ -198,8 +198,12 @@ void SpaceOperator::GetFrequencyDependentPermittivityA2Coefficients(
   const std::complex<double> s = 1i * omega;
   for (std::size_t i = 0; i < real.size(); i++)
   {
+    // A material without mesh support contributes nothing and is not evaluated, since it
+    // may be singular at this frequency.
     const std::complex<double> value =
-        mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
+        mat_op.HasFrequencyDependentPermittivitySupport(i)
+            ? mat_op.EvaluateFrequencyDependentPermittivityA2(i, s)
+            : 0.0;
     real[i] = value.real();
     imag[i] = value.imag();
   }
@@ -215,6 +219,10 @@ void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
     // The real part is mass-like (s²χ), so it follows the same shift as the ε∞ mass; a
     // strongly dispersive material (Re χ > ε∞) would otherwise make the shifted
     // preconditioner indefinite. The imaginary part is loss-like and is left as is.
+    if (!mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      continue;
+    }
     const std::complex<double> g = mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
     AddFrequencyDependentPermittivityA2Coefficient(
         i, pc_mat_shifted ? std::abs(g.real()) : g.real(), fr);
@@ -230,6 +238,10 @@ void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
   {
     // Real preconditioners accumulate the real and imaginary slots into the same form, as
     // for other A2 terms, with the mass-like real part shifted like the ε∞ mass.
+    if (!mat_op.HasFrequencyDependentPermittivitySupport(i))
+    {
+      continue;
+    }
     const std::complex<double> g = mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
     AddFrequencyDependentPermittivityA2Coefficient(
         i, (pc_mat_shifted ? std::abs(g.real()) : g.real()) + g.imag(), f);
