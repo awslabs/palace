@@ -1772,6 +1772,82 @@ function best_sliver_reconnection(points, tetrahedra, incident, surface_faces, s
             element=collect(flip.face))
 end
 
+# Why no gate-clearing reconnection of the confined sliver k was found (printed for the
+# unrepaired cells only: the fail-closed path; no record): per face whether it is a surface
+# face, how many cells share it and in which entities, whether the 2-3 flip fills the pair and
+# the (minimum scaled Jacobian, maximum condition, maximum kappa_reg) of its three cells; per
+# edge whether it is a surface edge, the ring size / entities / closure and the best fan's
+# (minimum scaled Jacobian, maximum condition) against the floor / ceiling.
+function describe_sliver_reconnection_failure(points, tetrahedra, incident, surface_faces,
+                                              surface_edges, cell_entity, k, scaled_floor,
+                                              condition_ceiling)
+    cell = tetrahedra[k]
+    xyz_of(c) = [points[:, i] for i in c]
+    volume(c) = (xyz = xyz_of(c); dot(xyz[2] .- xyz[1], cross(xyz[3] .- xyz[1], xyz[4] .- xyz[1])) / 6.0)
+    for opposite in 1:4
+        face = Tuple(sort!([cell[i] for i in 1:4 if i != opposite]))
+        if face in surface_faces
+            println("    face $(face): SURFACE face (no 2-3 flip)")
+            continue
+        end
+        neighbours = [j for j in incident[face[1]] if j != k && all(v in tetrahedra[j] for v in face)]
+        entities = [cell_entity(j) for j in neighbours]
+        if length(neighbours) != 1
+            println("    face $(face): $(length(neighbours)) neighbours (entities $(entities)); no 2-3 flip")
+            continue
+        end
+        j = neighbours[1]
+        if cell_entity(j) != cell_entity(k)
+            println("    face $(face): the neighbour is in entity $(cell_entity(j)), the cell in $(cell_entity(k)); no 2-3 flip")
+            continue
+        end
+        apex_k = cell[opposite]
+        apex_j = only(v for v in tetrahedra[j] if !(v in face))
+        candidates = [oriented_tetrahedron(points, (apex_k, apex_j, a, b))
+                      for (a, b) in ((face[1], face[2]), (face[2], face[3]), (face[3], face[1]))]
+        if any(c -> c === nothing, candidates)
+            println("    face $(face): a flat flip cell (the segment apex-apex lies in the face plane); no 2-3 flip")
+            continue
+        end
+        pair = abs(volume(cell)) + abs(volume(tetrahedra[j]))
+        total = sum(abs(volume(c)) for c in candidates)
+        scaled = minimum(tetrahedron_scaled_jacobian(xyz_of(c)) for c in candidates)
+        condition = maximum(tetrahedron_aspect(xyz_of(c)) for c in candidates)
+        quality = maximum(tetrahedron_regular_condition(xyz_of(c)) for c in candidates)
+        println("    face $(face): 2-3 flip fills the pair $(abs(total - pair) <= 1.0e-9 * pair) " *
+                "(volumes $(total) vs $(pair)); new cells min SJ $(scaled) (floor $(scaled_floor)), " *
+                "max condition $(condition) (ceiling $(condition_ceiling)), max kappa_reg $(quality)")
+    end
+    for a in 1:4, b in (a + 1):4
+        u, v = minmax(cell[a], cell[b])
+        if (u, v) in surface_edges
+            println("    edge $((u, v)): SURFACE edge (no removal)")
+            continue
+        end
+        ring = [j for j in incident[u] if v in tetrahedra[j]]
+        entities = unique(cell_entity(j) for j in ring)
+        others = Dict(j => Tuple(w for w in tetrahedra[j] if w != u && w != v) for j in ring)
+        # the ring polygon closes when every ring vertex is shared by exactly two ring cells
+        counts = Dict{Int, Int}()
+        for j in ring, w in others[j]
+            counts[w] = get(counts, w, 0) + 1
+        end
+        closed = length(ring) >= 3 && all(==(2), values(counts))
+        if length(ring) < 3 || length(entities) != 1 || !closed
+            println("    edge $((u, v)): ring of $(length(ring)) cells, entities $(entities), closed $(closed); no removal")
+            continue
+        end
+        removal = best_edge_removal(points, tetrahedra, incident, surface_edges, cell_entity, k, 0.0, Inf)
+        best = removal === nothing || removal.edge != (u, v) ? nothing : removal
+        println("    edge $((u, v)): ring of $(length(ring)) cells closed; best fan " *
+                (best === nothing ? "none (no positively oriented fan fills the ring)" :
+                 "min SJ $(minimum(tetrahedron_scaled_jacobian(xyz_of(c)) for c in best.cells)) (floor $(scaled_floor)), " *
+                 "max condition $(maximum(tetrahedron_aspect(xyz_of(c)) for c in best.cells)) (ceiling $(condition_ceiling)), " *
+                 "max kappa_reg $(best.quality)"))
+    end
+    return nothing
+end
+
 # The census row of one sliver-reconnection site.
 function sliver_reconnection_record(site, candidates, unconfined, reconnections, unrepaired,
                                     scaled_gate, condition_gate)
@@ -2579,6 +2655,8 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             "ReplacedCells" => length(reconnection.replaced), "AddedCells" => length(reconnection.cells)))
         install_reconnection!(reconnection.replaced, reconnection.cells, entity_of[k])
     end
+    # The unrepaired cells by their vertices: the compaction below renumbers the slots.
+    sliver_unrepaired_cells = Set(tetrahedra[k] for k in sliver_unrepaired)
     if !isempty(sliver_reconnections)
         compact_reconnected_cells!()
         required_cells = findall(required)
@@ -2828,6 +2906,11 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                        by=scaled_of)
         for k in failing[1:min(10, end)]
             describe("below-gate", k, "scaled Jacobian $(scaled_of(k))")
+            if tetrahedra[k] in sliver_unrepaired_cells
+                describe_sliver_reconnection_failure(points, tetrahedra, incident, surface_faces, surface_edges,
+                                                     p -> entity_of[p], k, max(floors[k], minimum_scaled_jacobian),
+                                                     min(condition_ceilings[k], maximum_jacobian_condition))
+            end
         end
         push!(failures, "Seed required region keeps $(below_gate) cells below the " *
                         "scaled-Jacobian gate $(minimum_scaled_jacobian) after optimization " *
@@ -3113,6 +3196,9 @@ function reconnect_confined_slivers!(minimum_scaled_jacobian, maximum_jacobian_c
                 "$(scaled_of(k)), condition $(condition_of(k)), centroid $(sum(points[:, i] for i in cell) ./ 4), " *
                 "surface vertices $(count(surface[i] for i in cell)), fixed vertices $(count(fixed[i] for i in cell)), " *
                 "vertices $([points[:, i] for i in cell])")
+        k in unrepaired && describe_sliver_reconnection_failure(points, tetrahedra, incident, surface_faces, surface_edges,
+                                                                p -> entity_of[p], k, minimum_scaled_jacobian,
+                                                                maximum_jacobian_condition)
     end
     return record
 end
