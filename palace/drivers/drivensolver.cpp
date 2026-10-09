@@ -612,6 +612,49 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
         "memory = {:d}/{:d}\n",
         (memory < memory_size) ? " reached maximum" : " converged with", model.omega.size(),
         errors.back(), tol, memory, memory_size);
+    // Passivity between the samples (Im S_E positive semidefinite, §10.4): a violation
+    // beyond the tolerance adds a sample where it is largest.
+    double passivity = 0.0;
+    while (true)
+    {
+      double at = 0.0;
+      passivity = std::numeric_limits<double>::infinity();
+      if (root)
+      {
+        auto z = model.omega;
+        std::ranges::sort(z);
+        for (std::size_t j = 0; j + 1 < z.size(); j++)
+        {
+          const double mid = 0.5 * (z[j] + z[j + 1]);
+          const double p = DrivenSubstructureModel::Passivity(fit.Evaluate(mid).data(), nG);
+          if (p < passivity)
+          {
+            passivity = p;
+            at = mid;
+          }
+        }
+      }
+      Mpi::Broadcast(1, &passivity, 0, comm);
+      Mpi::Broadcast(1, &at, 0, comm);
+      if (passivity >= -tol || model.omega.size() >= max_samples)
+      {
+        break;
+      }
+      errors.push_back(sample(at));
+      Mpi::Print(" Passivity sample: ω = {:.6e} GHz (least eigenvalue of Im S_E / ‖S_E‖ = "
+                 "{:.3e}), error = {:.3e}\n",
+                 at * unit_GHz, passivity, errors.back());
+    }
+    Mpi::Print(
+        " Passivity between the samples: least eigenvalue of Im S_E / ‖S_E‖ = {:.3e}\n",
+        passivity);
+    if (passivity < -tol)
+    {
+      Mpi::Warning("The rational environment model is not passive between its samples "
+                   "(least eigenvalue of Im S_E / ‖S_E‖ = {:.3e}): raise "
+                   "\"AdaptiveMaxSamples\"!\n",
+                   passivity);
+    }
     utils::PrettyPrint(model.omega, unit_GHz, " Sampled frequencies (GHz):");
     utils::PrettyPrint(errors, 1.0, " Sample errors:");
 
@@ -621,16 +664,19 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
                                               sub.environment_attributes, true);
   }
 
-  // The model's record at a frequency of the sweep (on rank 0).
+  // The model's record at a frequency of the sweep, on the current interface (on rank 0;
+  // online, dual quantities transform as x_cur = M^-T x): S_E, the condensed environment
+  // sources g of the excitations (|Γ| x n), and the environment ports' h and c.
   auto model_record = [&](double omega, std::size_t omega_i)
   {
+    DrivenSubstructureModel::Record rec, out;
     if (adaptive)
     {
       auto x = fit.Evaluate(omega);
       scale_record(x, true);
-      return model.Unflatten(x);
+      rec = model.Unflatten(x);
     }
-    if (!model.weights.empty())
+    else if (!model.weights.empty())
     {
       const auto a =
           BarycentricInterpolant::Coefficients(model.omega, model.weights, omega);
@@ -642,10 +688,347 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
           x[q] += a[j] * records[j][q];
         }
       }
-      return model.Unflatten(x);
+      rec = model.Unflatten(x);
     }
-    return model.ReadRecord(model_path, record[omega_i]);
+    else
+    {
+      rec = model.ReadRecord(model_path, record[omega_i]);
+    }
+    auto dual = [&](const std::complex<double> *x)
+    {
+      std::vector<std::complex<double>> y(x, x + nG);
+      return online ? gamma_map.DualRows(y, 1) : y;
+    };
+    out.S = online ? gamma_map.DualMatrix(rec.S) : std::move(rec.S);
+    out.g.assign(static_cast<std::size_t>(nG) * n, 0.0);
+    for (int k = 0; k < n; k++)
+    {
+      if (ex_col[k] >= 0)
+      {
+        const auto gk = dual(rec.g.data() + static_cast<std::size_t>(ex_col[k]) * nG);
+        std::copy(gk.begin(), gk.end(),
+                  out.g.begin() + static_cast<std::ptrdiff_t>(k) * nG);
+      }
+    }
+    for (int j = 0; j < np; j++)
+    {
+      const auto hj = dual(rec.h.data() + static_cast<std::size_t>(j) * nG);
+      out.h.insert(out.h.end(), hj.begin(), hj.end());
+    }
+    out.c = std::move(rec.c);
+    return out;
   };
+
+  // From the model at ω: the region condensed against S_E, and all excitations solved.
+  auto solve_region = [&](double omega, DrivenSubstructureModel::Record &rec)
+  {
+    for (int k = 0; k < n; k++)
+    {
+      space_op.GetExcitationVector(ex_idx[k], omega, rhs[k]);
+    }
+    ds->Condense(omega, std::move(rec.S));
+    ds->Solve(rhs_ptr, E, &rec.g);
+  };
+
+  // The environment's port values V_jk = c_jk + h_j^T u_Γ,k (replicated), from the model's
+  // record and the interface solution on rank 0.
+  auto port_values = [&](const DrivenSubstructureModel::Record &rec,
+                         const std::vector<std::complex<double>> &uG)
+  {
+    std::vector<std::complex<double>> V(static_cast<std::size_t>(np) * n, 0.0);
+    for (int k = 0; root && k < n; k++)
+    {
+      for (int j = 0; j < np; j++)
+      {
+        std::complex<double> v =
+            (ex_col[k] >= 0) ? rec.c[static_cast<std::size_t>(ex_col[k]) * np + j] : 0.0;
+        for (int a = 0; a < nG; a++)
+        {
+          v += rec.h[static_cast<std::size_t>(j) * nG + a] *
+               uG[static_cast<std::size_t>(k) * nG + a];
+        }
+        V[static_cast<std::size_t>(k) * np + j] = v;
+      }
+    }
+    Mpi::Broadcast(static_cast<int>(V.size()), V.data(), 0, comm);
+    return V;
+  };
+
+  // From a rational model with an adaptive sweep, the region is reduced: Galerkin
+  // projection onto its fields at frequencies chosen greedily, as in the adaptive driven
+  // solver (the next one where the minimal rational interpolant of the fields has its least
+  // denominator).
+  const bool region_adaptive =
+      from_model && iodata.solver.driven.adaptive_tol > 0.0 &&
+      (adaptive || !model.weights.empty()) &&
+      omega_sample.size() > iodata.solver.driven.prom_indices.size();
+  if (online && iodata.solver.driven.adaptive_tol > 0.0 && model.weights.empty())
+  {
+    Mpi::Warning("An adaptive online sweep needs a model saved by an adaptive sweep: every "
+                 "frequency is solved!\n");
+  }
+
+  // The environment model as Σ_i c_i(ω) x_i over records x_i in the saved interface basis
+  // (on rank 0): the basis of the adaptive fit (scaled part by part), or the records of a
+  // saved rational model.
+  const auto &env_x = adaptive ? fit.Basis() : records;
+  auto env_coef = [&](double omega)
+  {
+    return adaptive
+               ? fit.BasisCoefficients(omega)
+               : BarycentricInterpolant::Coefficients(model.omega, model.weights, omega);
+  };
+  auto part_factor = [&](int p) { return adaptive ? 1.0 / part_scale[p] : 1.0; };
+  const auto part_size = model.PartSizes();
+  const std::size_t g_off = part_size[0], h_off = g_off + part_size[1],
+                    c_off = h_off + part_size[2];
+
+  // Interface values in the saved basis, u_saved = M^-1 u (online; M^-T has rows rows[g]).
+  auto to_saved = [&](const auto *x)
+  {
+    std::vector<std::complex<double>> y(nG, 0.0);
+    for (int g = 0; g < nG; g++)
+    {
+      if (!online)
+      {
+        y[g] = x[g];
+        continue;
+      }
+      for (const auto &[a, c] : gamma_map.rows[g])
+      {
+        y[a] += c * x[g];
+      }
+    }
+    return y;
+  };
+
+  // The environment's reduced terms on rank 0, with W = M^-1 V_Γ: W^T S_i W and W^T g_i per
+  // record (and S_i W, to extend them as the basis grows).
+  std::vector<std::complex<double>> W;
+  std::vector<std::vector<std::complex<double>>> SW(env_x.size()), RS(env_x.size()),
+      RG(env_x.size());
+  auto update_env_terms = [&]()
+  {
+    const int r = ds->ReducedDimension(), r0 = static_cast<int>(W.size()) / std::max(nG, 1);
+    const auto &VG = ds->ReducedInterfaceBasis();
+    for (int j = r0; j < r; j++)
+    {
+      const auto w = to_saved(VG.data() + static_cast<std::size_t>(j) * nG);
+      W.insert(W.end(), w.begin(), w.end());
+    }
+    for (std::size_t i = 0; i < env_x.size(); i++)
+    {
+      const auto *S = env_x[i].data();
+      SW[i].resize(static_cast<std::size_t>(nG) * r, 0.0);
+      for (int j = r0; j < r; j++)
+      {
+        // S_i (symmetric, by its lower triangle) times column j of W.
+        const auto *wj = W.data() + static_cast<std::size_t>(j) * nG;
+        auto *y = SW[i].data() + static_cast<std::size_t>(j) * nG;
+        for (int c = 0, q = 0; c < nG; c++)
+        {
+          for (int a = c; a < nG; a++, q++)
+          {
+            y[a] += S[q] * wj[c];
+            if (a != c)
+            {
+              y[c] += S[q] * wj[a];
+            }
+          }
+        }
+      }
+      std::vector<std::complex<double>> R(static_cast<std::size_t>(r) * r, 0.0),
+          G(static_cast<std::size_t>(r) * ne, 0.0);
+      for (int j = 0; j < r0; j++)
+      {
+        std::copy(RS[i].begin() + static_cast<std::ptrdiff_t>(j) * r0,
+                  RS[i].begin() + static_cast<std::ptrdiff_t>(j + 1) * r0,
+                  R.begin() + static_cast<std::ptrdiff_t>(j) * r);
+        for (int e = 0; e < ne; e++)
+        {
+          G[static_cast<std::size_t>(e) * r + j] =
+              RG[i][static_cast<std::size_t>(e) * r0 + j];
+        }
+      }
+      for (int j = r0; j < r; j++)
+      {
+        for (int a = 0; a < r; a++)
+        {
+          std::complex<double> d = 0.0;
+          for (int q = 0; q < nG; q++)
+          {
+            d += W[static_cast<std::size_t>(a) * nG + q] *
+                 SW[i][static_cast<std::size_t>(j) * nG + q];
+          }
+          R[static_cast<std::size_t>(j) * r + a] = R[static_cast<std::size_t>(a) * r + j] =
+              d;
+        }
+        for (int e = 0; e < ne; e++)
+        {
+          std::complex<double> d = 0.0;
+          for (int q = 0; q < nG; q++)
+          {
+            d += W[static_cast<std::size_t>(j) * nG + q] *
+                 env_x[i][g_off + static_cast<std::size_t>(e) * nG + q];
+          }
+          G[static_cast<std::size_t>(e) * r + j] = d;
+        }
+      }
+      RS[i] = std::move(R);
+      RG[i] = std::move(G);
+    }
+  };
+
+  // At ω, the environment's reduced terms (rank 0), and its port values from the interface
+  // solution (replicated).
+  auto env_terms = [&](double omega, std::vector<std::complex<double>> &A_env,
+                       std::vector<std::complex<double>> &b_env)
+  {
+    const int r = ds->ReducedDimension();
+    A_env.assign(static_cast<std::size_t>(r) * r, 0.0);
+    b_env.assign(static_cast<std::size_t>(r) * n, 0.0);
+    if (!root)
+    {
+      return;
+    }
+    const auto c = env_coef(omega);
+    for (std::size_t i = 0; i < env_x.size(); i++)
+    {
+      for (std::size_t q = 0; q < A_env.size(); q++)
+      {
+        A_env[q] += c[i] * part_factor(0) * RS[i][q];
+      }
+      for (int k = 0; k < n; k++)
+      {
+        for (int a = 0; ex_col[k] >= 0 && a < r; a++)
+        {
+          b_env[static_cast<std::size_t>(k) * r + a] +=
+              c[i] * part_factor(1) * RG[i][static_cast<std::size_t>(ex_col[k]) * r + a];
+        }
+      }
+    }
+  };
+  auto env_port_values = [&](double omega, const std::vector<std::complex<double>> &uG)
+  {
+    std::vector<std::complex<double>> V(static_cast<std::size_t>(np) * n, 0.0);
+    if (root)
+    {
+      const auto c = env_coef(omega);
+      std::vector<std::complex<double>> h(static_cast<std::size_t>(nG) * np, 0.0),
+          cc(static_cast<std::size_t>(np) * ne, 0.0);
+      for (std::size_t i = 0; i < env_x.size(); i++)
+      {
+        for (std::size_t q = 0; q < h.size(); q++)
+        {
+          h[q] += c[i] * part_factor(2) * env_x[i][h_off + q];
+        }
+        for (std::size_t q = 0; q < cc.size(); q++)
+        {
+          cc[q] += c[i] * part_factor(3) * env_x[i][c_off + q];
+        }
+      }
+      for (int k = 0; k < n; k++)
+      {
+        const auto us = to_saved(uG.data() + static_cast<std::size_t>(k) * nG);
+        for (int j = 0; j < np; j++)
+        {
+          std::complex<double> v =
+              (ex_col[k] >= 0) ? cc[static_cast<std::size_t>(ex_col[k]) * np + j] : 0.0;
+          for (int a = 0; a < nG; a++)
+          {
+            v += h[static_cast<std::size_t>(j) * nG + a] * us[a];
+          }
+          V[static_cast<std::size_t>(k) * np + j] = v;
+        }
+      }
+    }
+    Mpi::Broadcast(static_cast<int>(V.size()), V.data(), 0, comm);
+    return V;
+  };
+
+  BarycentricInterpolant field(comm);  // the fields' minimal rational interpolant
+  const int nt = static_cast<int>(Curl.Width());
+  if (region_adaptive)
+  {
+    BlockTimer bt(Timer::KSP);
+    const double tol = iodata.solver.driven.adaptive_tol;
+    const std::size_t max_samples = iodata.solver.driven.adaptive_max_size,
+                      memory_size = iodata.solver.driven.adaptive_memory;
+    Mpi::Print(
+        "\nAdaptive sampling of the region (tol = {:.3e}, at most {:d} frequencies):\n",
+        tol, max_samples);
+    // The relative error of the reduced region at a new sample, before adding it.
+    auto sample = [&](double omega)
+    {
+      auto rec = root ? model_record(omega, 0) : DrivenSubstructureModel::Record();
+      solve_region(omega, rec);
+      double err = std::numeric_limits<double>::infinity();
+      if (ds->ReducedDimension() > 0)
+      {
+        std::vector<std::complex<double>> A_env, b_env;
+        std::vector<ComplexVector> Eh;
+        env_terms(omega, A_env, b_env);
+        ds->SolveReduced(omega, rhs_ptr, A_env, b_env, Eh);
+        double d[2] = {0.0, 0.0};
+        for (int k = 0; k < n; k++)
+        {
+          ComplexVector diff(Eh[k]);
+          diff -= E[k];
+          d[0] += std::pow(linalg::Norml2(comm, diff), 2);
+          d[1] += std::pow(linalg::Norml2(comm, E[k]), 2);
+        }
+        err = std::sqrt(d[0] / d[1]);
+      }
+      ds->AddReducedBasis(E);
+      if (root)
+      {
+        update_env_terms();
+      }
+      std::vector<std::complex<double>> x;
+      x.reserve(static_cast<std::size_t>(n) * nt);
+      for (int k = 0; k < n; k++)
+      {
+        const double *er = E[k].Real().HostRead(), *ei = E[k].Imag().HostRead();
+        for (int i = 0; i < nt; i++)
+        {
+          x.emplace_back(er[i], ei[i]);
+        }
+      }
+      field.AddSample(omega, x);
+      return err;
+    };
+    std::vector<double> errors;
+    for (auto i : iodata.solver.driven.prom_indices)
+    {
+      errors.push_back(sample(omega_sample[i]));
+    }
+    errors[0] = errors[1] = std::numeric_limits<double>::infinity();
+    std::size_t memory = 0;
+    for (auto it = errors.rbegin(); it != errors.rend() && *it < tol; ++it)
+    {
+      memory++;
+    }
+    while (field.Samples().size() < max_samples && memory < memory_size)
+    {
+      double omega = field.FindMaxError();
+      Mpi::Broadcast(1, &omega, 0, comm);
+      errors.push_back(sample(omega));
+      memory = (errors.back() < tol) ? memory + 1 : 0;
+      Mpi::Print(
+          " Greedy iteration {:d} (n = {:d}): ω* = {:.6e} GHz, error = {:.3e}, memory "
+          "= {:d}/{:d}\n",
+          field.Samples().size() - iodata.solver.driven.prom_indices.size(),
+          ds->ReducedDimension(), omega * unit_GHz, errors.back(), memory, memory_size);
+    }
+    Mpi::Print(
+        "\nAdaptive sampling{} {:d} frequency samples: n = {:d}, error = {:.3e}, tol = "
+        "{:.3e}, memory = {:d}/{:d}\n",
+        (memory < memory_size) ? " reached maximum" : " converged with",
+        field.Samples().size(), ds->ReducedDimension(), errors.back(), tol, memory,
+        memory_size);
+    utils::PrettyPrint(field.Samples(), unit_GHz, " Sampled frequencies (GHz):");
+    utils::PrettyPrint(errors, 1.0, " Sample errors:");
+  }
 
   ComplexVector B(Curl.Height());
   B.UseDevice(true);
@@ -656,7 +1039,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
                omega_i + 1, omega_sample.size(), omega * unit_GHz,
                Timer::Duration(Timer::Now() - t0).count());
-    std::vector<std::complex<double>> V(static_cast<std::size_t>(np) * n);  // port voltages
+    std::vector<std::complex<double>> V;  // the environment's port values
     {
       BlockTimer bt(Timer::KSP);
       if (!from_model)
@@ -667,66 +1050,23 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
           model.AppendRecord(model_path, rec);
         }
       }
-      else
+      else if (region_adaptive)
       {
-        // The model's record on the current interface (online, dual quantities transform
-        // as x_cur = M^-T x).
+        // The fields and interface solution from the reduced region.
         for (int k = 0; k < n; k++)
         {
           space_op.GetExcitationVector(ex_idx[k], omega, rhs[k]);
         }
-        DrivenSubstructureModel::Record rec;
-        std::vector<std::complex<double>> S, g;
-        auto dual = [&](const std::complex<double> *x)
-        {
-          std::vector<std::complex<double>> y(x, x + nG);
-          return online ? gamma_map.DualRows(y, 1) : y;
-        };
-        if (root)
-        {
-          rec = model_record(omega, omega_i);
-          S = online ? gamma_map.DualMatrix(rec.S) : std::move(rec.S);
-          g.assign(static_cast<std::size_t>(nG) * n, 0.0);
-          for (int k = 0; k < n; k++)
-          {
-            if (ex_col[k] >= 0)
-            {
-              const auto gk = dual(rec.g.data() + static_cast<std::size_t>(ex_col[k]) * nG);
-              std::copy(gk.begin(), gk.end(),
-                        g.begin() + static_cast<std::ptrdiff_t>(k) * nG);
-            }
-          }
-          std::vector<std::complex<double>> h;
-          for (int j = 0; j < np; j++)
-          {
-            const auto hj = dual(rec.h.data() + static_cast<std::size_t>(j) * nG);
-            h.insert(h.end(), hj.begin(), hj.end());
-          }
-          rec.h = std::move(h);
-        }
-        ds->Condense(omega, std::move(S));
-        ds->Solve(rhs_ptr, E, &g);
-        // The environment's port voltages, V_jk = c_jk + h_j^T u_Γ,k.
-        if (root)
-        {
-          const auto &uG = ds->InterfaceSolution();
-          for (int k = 0; k < n; k++)
-          {
-            for (int j = 0; j < np; j++)
-            {
-              std::complex<double> v =
-                  (ex_col[k] >= 0) ? rec.c[static_cast<std::size_t>(ex_col[k]) * np + j]
-                                   : 0.0;
-              for (int a = 0; a < nG; a++)
-              {
-                v += rec.h[static_cast<std::size_t>(j) * nG + a] *
-                     uG[static_cast<std::size_t>(k) * nG + a];
-              }
-              V[static_cast<std::size_t>(k) * np + j] = v;
-            }
-          }
-        }
-        Mpi::Broadcast(static_cast<int>(V.size()), V.data(), 0, comm);
+        std::vector<std::complex<double>> A_env, b_env;
+        env_terms(omega, A_env, b_env);
+        ds->SolveReduced(omega, rhs_ptr, A_env, b_env, E);
+        V = env_port_values(omega, ds->InterfaceSolution());
+      }
+      else
+      {
+        auto rec = root ? model_record(omega, omega_i) : DrivenSubstructureModel::Record();
+        solve_region(omega, rec);
+        V = port_values(rec, ds->InterfaceSolution());
       }
     }
     for (int k = 0; k < n; k++)

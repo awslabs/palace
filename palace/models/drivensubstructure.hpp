@@ -36,17 +36,24 @@ class SpaceOperator;
 //   x̃(ω) = Σ_j a_j(ω) x_j,   a_j(ω) = (w_j / (ω - ω_j)) / Σ_k w_k / (ω - ω_k),
 // which interpolates the samples. The weights are those of the minimal rational interpolant
 // (MRI) of the snapshots {x_j, iω_j x_j}, as for the error indicator of the adaptive driven
-// solver (MinimalRationalInterpolation). Serial: the samples are dense vectors on one rank.
+// solver (MinimalRationalInterpolation). The samples are distributed by rows over comm (the
+// local rows of each rank), and the weights are replicated.
 //
 class BarycentricInterpolant
 {
 public:
+  explicit BarycentricInterpolant(MPI_Comm comm = MPI_COMM_SELF) : comm(comm) {}
+
   // Add a sample (scaled by the caller so that its parts weigh alike), updating the
   // weights.
   void AddSample(double omega, const std::vector<std::complex<double>> &x);
 
-  // The interpolant at ω.
+  // The interpolant at ω (the local rows).
   std::vector<std::complex<double>> Evaluate(double omega) const;
+
+  // The interpolant over an orthonormal basis q_i of the samples, x̃(ω) = Σ_i y_i(ω) q_i.
+  const std::vector<std::vector<std::complex<double>>> &Basis() const { return Q; }
+  std::vector<std::complex<double>> BasisCoefficients(double omega) const;
 
   // The frequency between the outermost samples where the denominator Σ_j w_j / (ω - ω_j)
   // is smallest (near a pole, or far from the samples): the next sample.
@@ -61,6 +68,7 @@ public:
                double omega);
 
 private:
+  MPI_Comm comm;
   std::vector<double> z;
   std::vector<std::vector<std::complex<double>>> Q;  // orthonormal basis of the samples
   std::vector<std::complex<double>> R;               // samples = Q R (m x m, column-major)
@@ -119,6 +127,12 @@ struct DrivenSubstructureModel
   // source in a plane where a fingerprint field is normal to it).
   static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
   static bool SameSource(const double *a, const double *b);
+
+  // The passivity of a condensed environment S_E (n x n, complex symmetric, by its lower
+  // triangle in the order of a record): the least eigenvalue of Im S_E, which is positive
+  // semidefinite for a passive environment (Im u_Γ^H S_E u_Γ is the power it absorbs),
+  // relative to ‖S_E‖_F. A negative value is a violation.
+  static double Passivity(const std::complex<double> *lower, int n);
 
 private:
   std::size_t HeaderBytes() const;
@@ -196,6 +210,27 @@ public:
   // The wave ports in the environment (each wave port lies inside one side).
   std::vector<int> EnvironmentWavePorts() const;
 
+  // A reduced model of the region against a given environment (online): Galerkin projection
+  // onto the real span of field snapshots, as in the adaptive driven solver. The
+  // environment enters through its reduced terms on Γ, which the caller forms from the
+  // interface rows of the basis.
+  //
+  // Add the real and imaginary parts of the fields u (true DOFs, zero in the environment
+  // interior) to the orthonormal basis (collective).
+  void AddReducedBasis(const std::vector<ComplexVector> &u);
+  int ReducedDimension() const { return static_cast<int>(red_basis.size()); }
+
+  // The interface rows of the basis on rank 0 (|Γ| x r, column-major, in interface order).
+  const std::vector<double> &ReducedInterfaceBasis() const { return red_gamma; }
+
+  // Solve the reduced system at ω for the region parts of rhs, with the environment's
+  // terms A_env (r x r) and b_env (r x |rhs|), column-major on rank 0, and expand: u = V y,
+  // and the interface solution (InterfaceSolution) on rank 0. Collective.
+  void SolveReduced(double omega, const std::vector<const ComplexVector *> &rhs,
+                    const std::vector<std::complex<double>> &A_env,
+                    const std::vector<std::complex<double>> &b_env,
+                    std::vector<ComplexVector> &u);
+
   // Fingerprint of the environment, independent of the region, of the partition and of the
   // DOF numbering: the global counts of environment-interior and interface DOFs, and
   // r_k^T A_E(ω) r_k for three fixed fields r_k, applied with the partially assembled
@@ -256,6 +291,14 @@ private:
 
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
+
+  // The reduced region: its operator parts (Kr, Ki, Cr, Ci, Mr, Mi on the region, with the
+  // pinned DOFs eliminated), the basis V, the parts' projections V^T P V (r x r,
+  // column-major), and the interface rows of V on rank 0.
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> red_ops;
+  std::vector<Vector> red_basis;
+  std::vector<std::vector<double>> red_parts;
+  std::vector<double> red_gamma;
 
   // Factor S_R + S_E on rank 0.
   void FactorInterface();

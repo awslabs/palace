@@ -180,9 +180,14 @@ An [adaptive sweep](../guide/problem.md#Driven-problems-in-the-frequency-domain)
 adaptive fast frequency sweep chooses its samples, for a rational model of the condensed data: a
 barycentric interpolant with one denominator for all of it. Sampling stops when the model
 predicts `"AdaptiveConvergenceMemory"` consecutive new samples to `"AdaptiveTol"` (relative to
-the condensed data), or at `"AdaptiveMaxSamples"` samples. Every frequency of the sweep is then
-solved on the region against the model, with the outputs of an online sweep. Saved, such a model
-serves online sweeps at any frequency between its lowest and highest samples.
+the condensed data), or at `"AdaptiveMaxSamples"` samples. The model's passivity is then checked
+between the samples (the imaginary part of the condensed environment operator, the power the
+environment absorbs, is positive semidefinite), and a violation beyond `"AdaptiveTol"` adds a
+sample there. The region is then reduced as the adaptive fast frequency sweep reduces a whole
+device, by Galerkin projection onto its fields at greedily chosen frequencies, which gives every
+frequency of the sweep with the outputs of an online sweep. Saved, such a model serves online
+sweeps at any frequency between its lowest and highest samples, reduced the same way with a
+nonzero `"AdaptiveTol"`, or solved frequency by frequency.
 
 A saved model needs the lumped ports away from the interface, since their excitation and
 voltage would then depend on both sides.

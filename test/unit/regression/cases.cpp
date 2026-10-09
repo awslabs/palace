@@ -1181,6 +1181,22 @@ TEST_CASE("substructuring_driven_adaptive", "[Serial][Parallel][Regression]")
                                   "online_adaptive", opts);
 }
 
+// Adaptive online driven substructuring: the redesigned region of
+// substructuring_driven_adaptive reduced by Galerkin projection onto its fields at greedily
+// chosen frequencies, against the saved rational model. The references are a regular
+// simulation of the redesigned configuration, in the online run's columns.
+TEST_CASE("substructuring_driven_adaptive_online", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.linear_solver_policy = force_default_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_adaptive.json";
+  palace::test::RunRegressionCase("substructuring_driven", "driven_online_reduced.json",
+                                  "online_reduced", opts);
+}
+
 // Driven substructuring with a wave port (a TM mode of a shorted circular waveguide, whose
 // modal terms border the factored side), in the region; and in the environment, with an
 // online sweep of a redesigned region (permittivity 2.08 -> 2.3) against a saved model.

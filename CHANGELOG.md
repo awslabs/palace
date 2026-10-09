@@ -44,7 +44,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sweeps condense the environment exactly at each frequency, with lumped ports and lossy
     boundaries and materials on either side, and an online sweep at saved frequencies solves a
     redesigned region against the saved environment. Adaptive sweeps condense it at frequencies
-    chosen greedily for a rational model, which online sweeps evaluate anywhere in its band.
+    chosen greedily for a rational model, checked for passivity, which online sweeps evaluate
+    anywhere in its band, with the region reduced as in the adaptive fast frequency sweep.
     Wave ports may lie in either side, and fields are written. Adds substructuring examples in
     `examples/transmon` and `examples/substructuring` (5 x 5 lattices of qubits and of flux
     loops, on separate rings and on one plate, and a driven 3 x 4 grid of CPW resonators).

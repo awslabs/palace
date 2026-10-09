@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -2490,6 +2491,32 @@ TEST_CASE("Barycentric interpolation of a rational vector function",
   const auto a =
       BarycentricInterpolant::Coefficients(fit.Samples(), fit.Weights(), fit.Samples()[2]);
   CHECK(a[2] == 1.0);
+}
+
+TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
+{
+  // S = Re + i Im with Im = Q diag(d) Q^T (Q a rotation): the least eigenvalue of Im,
+  // relative to ‖S‖_F, for any scaling of S.
+  const double c = std::cos(0.3), s = std::sin(0.3);
+  auto lower = [&](double d0, double d1, double scale)
+  {
+    // Lower triangle by columns of the 2 x 2 S: (0,0), (1,0), (1,1).
+    const double i00 = c * c * d0 + s * s * d1, i10 = c * s * (d0 - d1),
+                 i11 = s * s * d0 + c * c * d1;
+    return std::vector<std::complex<double>>{scale * std::complex<double>(2.0, i00),
+                                             scale * std::complex<double>(0.5, i10),
+                                             scale * std::complex<double>(1.0, i11)};
+  };
+  auto norm = [](const std::vector<std::complex<double>> &S)
+  { return std::sqrt(std::norm(S[0]) + 2.0 * std::norm(S[1]) + std::norm(S[2])); };
+  for (double scale : {1.0, 1.0e-6})
+  {
+    const auto passive = lower(0.3, 0.1, scale), active = lower(0.3, -0.2, scale);
+    CHECK(DrivenSubstructureModel::Passivity(passive.data(), 2) ==
+          Catch::Approx(0.1 * scale / norm(passive)).epsilon(1.0e-12));
+    CHECK(DrivenSubstructureModel::Passivity(active.data(), 2) ==
+          Catch::Approx(-0.2 * scale / norm(active)).epsilon(1.0e-12));
+  }
 }
 
 TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")

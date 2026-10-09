@@ -22,6 +22,10 @@ extern "C"
                std::complex<double> *, const int *, int *);
   void zsytrs_(const char *, const int *, const int *, const std::complex<double> *,
                const int *, const int *, std::complex<double> *, const int *, int *);
+  void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
+               const double *, const double *, const int *, const int *, const double *,
+               int *, double *, double *, const int *, int *, double *, const int *, int *,
+               const int *, int *);
 }
 
 namespace palace
@@ -740,6 +744,248 @@ void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
 #endif
 }
 
+void DrivenSubstructure::AddReducedBasis(const std::vector<ComplexVector> &u)
+{
+  MPI_Comm comm = space_op.GetComm();
+  const int nt = static_cast<int>(is_gamma.size());
+  if (red_ops.empty())
+  {
+    // The region's frequency-independent parts, as in Setup.
+    red_ops.resize(6);
+    for (int op = 0; op < 3; op++)
+    {
+      std::unique_ptr<ComplexOperator> A;
+      {
+        SpaceOperator::AssemblyRestriction restriction(space_op, region.attrs);
+        A = (op == 0)   ? space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+            : (op == 1) ? space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO)
+                        : space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+      }
+      for (int p = 0; p < 2; p++)
+      {
+        red_ops[2 * op + p] = StealPart(A.get(), p == 1);
+        if (red_ops[2 * op + p])
+        {
+          red_ops[2 * op + p]->EliminateBC(region.pinned, Operator::DIAG_ZERO);
+        }
+      }
+    }
+    red_parts.assign(6, {});
+  }
+
+  // Orthonormalize the real and imaginary parts (classical Gram-Schmidt, twice), dropping
+  // the ones already in the span.
+  const std::size_t r0 = red_basis.size();
+  for (const auto &uk : u)
+  {
+    for (const Vector *part : {&uk.Real(), &uk.Imag()})
+    {
+      Vector v(*part);
+      const double nrm0 = linalg::Norml2(comm, v);
+      if (nrm0 == 0.0)
+      {
+        continue;
+      }
+      for (int pass = 0; pass < 2; pass++)
+      {
+        std::vector<double> d(red_basis.size());
+        for (std::size_t i = 0; i < red_basis.size(); i++)
+        {
+          d[i] = mfem::InnerProduct(red_basis[i], v);
+        }
+        Mpi::GlobalSum(static_cast<int>(d.size()), d.data(), comm);
+        for (std::size_t i = 0; i < red_basis.size(); i++)
+        {
+          v.Add(-d[i], red_basis[i]);
+        }
+      }
+      const double nrm = linalg::Norml2(comm, v);
+      if (nrm > 1.0e-10 * nrm0)
+      {
+        v *= 1.0 / nrm;
+        red_basis.push_back(std::move(v));
+      }
+    }
+  }
+
+  // The projections of the parts on the new columns (the parts are symmetric).
+  const std::size_t r = red_basis.size();
+  for (int p = 0; p < 6; p++)
+  {
+    if (!red_ops[p])
+    {
+      continue;
+    }
+    std::vector<double> P(r * r, 0.0);
+    for (std::size_t j = 0; j < r0; j++)
+    {
+      std::copy(red_parts[p].begin() + j * r0, red_parts[p].begin() + (j + 1) * r0,
+                P.begin() + j * r);
+    }
+    Vector w(nt);
+    for (std::size_t j = r0; j < r; j++)
+    {
+      red_ops[p]->Mult(red_basis[j], w);
+      std::vector<double> d(j + 1);
+      for (std::size_t i = 0; i <= j; i++)
+      {
+        d[i] = mfem::InnerProduct(red_basis[i], w);
+      }
+      Mpi::GlobalSum(static_cast<int>(d.size()), d.data(), comm);
+      for (std::size_t i = 0; i <= j; i++)
+      {
+        P[j * r + i] = P[i * r + j] = d[i];
+      }
+    }
+    red_parts[p] = std::move(P);
+  }
+
+  // The interface rows of the new columns on rank 0, in interface order.
+  const int nG = InterfaceSize();
+  for (std::size_t j = r0; j < r; j++)
+  {
+    std::vector<double> mine;
+    for (int i = 0; i < nt; i++)
+    {
+      if (is_gamma[i])
+      {
+        mine.push_back(red_basis[j](i));
+      }
+    }
+    const bool root = Mpi::Root(comm);
+    red_gamma.resize(root ? (j + 1) * nG : 0);
+    MPI_Gatherv(mine.data(), static_cast<int>(mine.size()), MPI_DOUBLE,
+                root ? red_gamma.data() + j * nG : nullptr, gamma_cnt.data(),
+                gamma_disp.data(), MPI_DOUBLE, 0, comm);
+  }
+}
+
+void DrivenSubstructure::SolveReduced(double omega,
+                                      const std::vector<const ComplexVector *> &rhs,
+                                      const std::vector<std::complex<double>> &A_env,
+                                      const std::vector<std::complex<double>> &b_env,
+                                      std::vector<ComplexVector> &u)
+{
+  MPI_Comm comm = space_op.GetComm();
+  const int nt = static_cast<int>(is_gamma.size()), r = ReducedDimension(),
+            n = static_cast<int>(rhs.size()), nG = InterfaceSize();
+  const auto coef = Coefficients(omega);
+
+  // V^T A_R(ω) V: the parts, A2(ω) and the wave-port terms of the region, and V^T b for
+  // the region interior of the right-hand sides.
+  std::vector<std::complex<double>> A(static_cast<std::size_t>(r) * r, 0.0),
+      b(static_cast<std::size_t>(r) * n, 0.0);
+  for (int p = 0; p < 6; p++)
+  {
+    for (std::size_t q = 0; q < red_parts[p].size(); q++)
+    {
+      A[q] += coef[p] * red_parts[p][q];
+    }
+  }
+  std::vector<std::complex<double>> loc(static_cast<std::size_t>(r) * r, 0.0);
+  const auto extra = ExtraParts(region, omega);
+  Vector w(nt);
+  for (int p = 0; p < 2; p++)
+  {
+    for (int j = 0; extra[p] && j < r; j++)
+    {
+      extra[p]->Mult(red_basis[j], w);
+      for (int i = 0; i < r; i++)
+      {
+        loc[static_cast<std::size_t>(j) * r + i] +=
+            coef[6 + p] * mfem::InnerProduct(red_basis[i], w);
+      }
+    }
+  }
+  for (const auto &[idx, term] : ModalTerms(region, omega))
+  {
+    // g (V^T s)(V^T s)^T, with the local parts of V^T s summed below.
+    std::vector<std::complex<double>> z(r);
+    for (int i = 0; i < r; i++)
+    {
+      z[i] = {mfem::InnerProduct(red_basis[i], term.s->Real()),
+              mfem::InnerProduct(red_basis[i], term.s->Imag())};
+    }
+    Mpi::GlobalSum(r, z.data(), comm);
+    if (Mpi::Root(comm))
+    {
+      for (int j = 0; j < r; j++)
+      {
+        for (int i = 0; i < r; i++)
+        {
+          loc[static_cast<std::size_t>(j) * r + i] += term.g * z[i] * z[j];
+        }
+      }
+    }
+  }
+  for (int k = 0; k < n; k++)
+  {
+    const auto y = Masked(*rhs[k], is_region_int);
+    for (int i = 0; i < r; i++)
+    {
+      b[static_cast<std::size_t>(k) * r + i] = {mfem::InnerProduct(red_basis[i], y.Real()),
+                                                mfem::InnerProduct(red_basis[i], y.Imag())};
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(loc.size()), loc.data(), comm);
+  Mpi::GlobalSum(static_cast<int>(b.size()), b.data(), comm);
+
+  // The reduced system with the environment's terms, on rank 0 (complex symmetric).
+  if (Mpi::Root(comm))
+  {
+    for (std::size_t q = 0; q < A.size(); q++)
+    {
+      A[q] += loc[q] + A_env[q];
+    }
+    for (std::size_t q = 0; q < b.size(); q++)
+    {
+      b[q] += b_env[q];
+    }
+    std::vector<int> piv(r);
+    int info = 0, lwork = -1;
+    std::complex<double> wq;
+    zsytrf_("L", &r, A.data(), &r, piv.data(), &wq, &lwork, &info);
+    lwork = std::max(1, static_cast<int>(wq.real()));
+    std::vector<std::complex<double>> work(lwork);
+    zsytrf_("L", &r, A.data(), &r, piv.data(), work.data(), &lwork, &info);
+    MFEM_VERIFY(info == 0, "Factorization of the reduced system failed: info = " << info);
+    zsytrs_("L", &r, &n, A.data(), &r, piv.data(), b.data(), &r, &info);
+    MFEM_VERIFY(info == 0, "Solve of the reduced system failed: info = " << info);
+  }
+  Mpi::Broadcast(static_cast<int>(b.size()), b.data(), 0, comm);
+
+  // u = V y, and the interface solution on rank 0.
+  u.resize(n);
+  for (int k = 0; k < n; k++)
+  {
+    u[k].SetSize(nt);
+    u[k].UseDevice(true);
+    u[k] = 0.0;
+    for (int i = 0; i < r; i++)
+    {
+      const auto y = b[static_cast<std::size_t>(k) * r + i];
+      u[k].Real().Add(y.real(), red_basis[i]);
+      u[k].Imag().Add(y.imag(), red_basis[i]);
+    }
+  }
+  if (Mpi::Root(comm))
+  {
+    u_last.assign(static_cast<std::size_t>(nG) * n, 0.0);
+    for (int k = 0; k < n; k++)
+    {
+      for (int i = 0; i < r; i++)
+      {
+        const auto y = b[static_cast<std::size_t>(k) * r + i];
+        for (int a = 0; a < nG; a++)
+        {
+          u_last[static_cast<std::size_t>(k) * nG + a] +=
+              y * red_gamma[static_cast<std::size_t>(i) * nG + a];
+        }
+      }
+    }
+  }
+}
+
 std::vector<std::complex<double>>
 DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *> &b)
 {
@@ -964,21 +1210,25 @@ void BarycentricInterpolant::AddSample(double omega,
   // their MRI weights are the right singular vector of [R; R iΩ] of least singular value.
   const std::size_t m = z.size(), n = x.size();
   MFEM_VERIFY(m == 0 || Q[0].size() == n, "Samples of different sizes!");
-  std::vector<std::complex<double>> v(x), r(m + 1, 0.0);
+  std::vector<std::complex<double>> v(x), r(m + 1, 0.0), d(m);
   for (int pass = 0; pass < 2; pass++)
   {
     for (std::size_t i = 0; i < m; i++)
     {
-      std::complex<double> d = 0.0;
+      d[i] = 0.0;
       for (std::size_t q = 0; q < n; q++)
       {
-        d += std::conj(Q[i][q]) * v[q];
+        d[i] += std::conj(Q[i][q]) * v[q];
       }
+    }
+    Mpi::GlobalSum(static_cast<int>(m), d.data(), comm);
+    for (std::size_t i = 0; i < m; i++)
+    {
       for (std::size_t q = 0; q < n; q++)
       {
-        v[q] -= d * Q[i][q];
+        v[q] -= d[i] * Q[i][q];
       }
-      r[i] += d;
+      r[i] += d[i];
     }
   }
   double nv = 0.0;
@@ -986,6 +1236,7 @@ void BarycentricInterpolant::AddSample(double omega,
   {
     nv += std::norm(c);
   }
+  Mpi::GlobalSum(1, &nv, comm);
   r[m] = std::sqrt(nv);
   for (auto &c : v)
   {
@@ -1039,12 +1290,13 @@ std::vector<std::complex<double>> BarycentricInterpolant::Coefficients(
   return a;
 }
 
-std::vector<std::complex<double>> BarycentricInterpolant::Evaluate(double omega) const
+std::vector<std::complex<double>>
+BarycentricInterpolant::BasisCoefficients(double omega) const
 {
-  // x̃ = Q (R a).
-  const std::size_t m = z.size(), n = m ? Q[0].size() : 0;
+  // y = R a.
+  const std::size_t m = z.size();
   const auto a = Coefficients(z, w, omega);
-  std::vector<std::complex<double>> y(m, 0.0), x(n, 0.0);
+  std::vector<std::complex<double>> y(m, 0.0);
   for (std::size_t j = 0; j < m; j++)
   {
     for (std::size_t i = 0; i <= j; i++)
@@ -1052,14 +1304,51 @@ std::vector<std::complex<double>> BarycentricInterpolant::Evaluate(double omega)
       y[i] += R[j * m + i] * a[j];
     }
   }
-  for (std::size_t i = 0; i < m; i++)
+  return y;
+}
+
+std::vector<std::complex<double>> BarycentricInterpolant::Evaluate(double omega) const
+{
+  const auto y = BasisCoefficients(omega);
+  std::vector<std::complex<double>> x(Q.empty() ? 0 : Q[0].size(), 0.0);
+  for (std::size_t i = 0; i < Q.size(); i++)
   {
-    for (std::size_t q = 0; q < n; q++)
+    for (std::size_t q = 0; q < x.size(); q++)
     {
       x[q] += Q[i][q] * y[i];
     }
   }
   return x;
+}
+
+double DrivenSubstructureModel::Passivity(const std::complex<double> *lower, int n)
+{
+  std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
+  double f = 0.0;
+  for (int j = 0, q = 0; j < n; j++)
+  {
+    for (int i = j; i < n; i++, q++)
+    {
+      A[static_cast<std::size_t>(j) * n + i] = lower[q].imag();
+      f += ((i == j) ? 1.0 : 2.0) * std::norm(lower[q]);
+    }
+  }
+  // The least eigenvalue only (LAPACK dsyevr).
+  const int one = 1;
+  const double zero = 0.0;
+  int found = 0, info = 0, lwork = -1, liwork = -1, iwq = 0;
+  double w = 0.0, wq = 0.0, z = 0.0;
+  std::vector<int> isuppz(2);
+  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found, &w, &z,
+          &one, isuppz.data(), &wq, &lwork, &iwq, &liwork, &info);
+  lwork = static_cast<int>(wq);
+  liwork = iwq;
+  std::vector<double> work(lwork);
+  std::vector<int> iwork(liwork);
+  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found, &w, &z,
+          &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork, &info);
+  MFEM_VERIFY(info == 0 && found == 1, "Eigenvalue of Im S_E failed: info = " << info);
+  return (f > 0.0) ? w / std::sqrt(f) : 0.0;
 }
 
 double BarycentricInterpolant::FindMaxError() const
