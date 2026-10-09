@@ -1104,8 +1104,9 @@ TEST_CASE("BoundaryModeOperator interior PEC on a nonconforming mesh",
 // BoundaryMode cross-section extracted from a nonconforming 3D mesh: the wave port of
 // cpw_wave_2dmode on the uncracked mesh, with the elements next to the port refined on
 // one side of the traces (as an adapted mesh can be). The 2D mesh must keep its boundary
-// elements through partitioning and uniform refinement, and the DoFs on the PEC edges
-// (master edges included) must be essential, and no others.
+// elements through partitioning and uniform refinement, the DoFs on the PEC edges (master
+// edges included) must be essential, and no others, and the sides of the traces must be
+// identified for error estimation.
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "BoundaryMode cross-section of a nonconforming 3D mesh",
                  "[boundarymodeoperator][Serial][Parallel]")
@@ -1212,6 +1213,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   REQUIRE(pmesh.Nonconforming());
   REQUIRE(pmesh.GetGlobalNE() == 4 * ne);
   CHECK(CountPEC(pmesh, nullptr) == std::array<int, 2>{2 * nbe_pec[0], 2 * nbe_pec[1]});
+  CHECK(mesh.back()->GetCrackSides(iodata.boundaries.GetSheetAttributes()).Any());
   MaterialOperator mat_op(iodata, *mesh.back());
   BoundaryModeOperator mode_op(iodata, mesh, mat_op);
 

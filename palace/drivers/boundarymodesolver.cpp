@@ -4,7 +4,10 @@
 #include "boundarymodesolver.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <complex>
+#include <map>
 #include <numbers>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
@@ -53,6 +56,151 @@ ExtractBoundary2DSubmesh(mfem::Mesh &parent, const mfem::Array<int> &surface_att
   mesh::RemapSubMeshBdrAttributes(*sub, surface_attrs);
   mesh::AddSubMeshInternalBoundaryElements(*sub, surface_attrs, internal_bdr_attrs);
   return sub;
+}
+
+// Centroid and area of a face of the cross-section.
+struct CrossSectionFace
+{
+  mfem::Vector x;
+  double area;
+};
+
+// The faces of the cross-section of a 3D mesh: its boundary elements with the given
+// attributes.
+std::vector<CrossSectionFace> GetCrossSectionFaces(const mfem::Mesh &mesh,
+                                                   const mfem::Array<int> &surface_attrs)
+{
+  std::vector<CrossSectionFace> faces;
+  mfem::IsoparametricTransformation T;
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    if (surface_attrs.Find(mesh.GetBdrAttribute(be)) < 0)
+    {
+      continue;
+    }
+    mesh.GetBdrElementTransformation(be, &T);
+    auto &face = faces.emplace_back();
+    T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), face.x);
+    face.area = 0.0;
+    const auto &ir = mfem::IntRules.Get(T.GetGeometryType(), 2 * T.OrderJ());
+    for (int q = 0; q < ir.GetNPoints(); q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      T.SetIntPoint(&ip);
+      face.area += ip.weight * T.Weight();
+    }
+  }
+  return faces;
+}
+
+// Derefine a nonconforming 3D mesh until it has no hanging entities, one level of its
+// refinement hierarchy at a time as in mesh::ReconstructCrackSides, and return whether it
+// was derefined. The mesh is not modified if its refinements cannot be derefined (pyramids,
+// anisotropic refinements), and only partially derefined if the coarsest mesh of the
+// hierarchy has hanging entities.
+bool DerefineToConforming(mfem::Mesh &mesh)
+{
+  auto Hanging = [&mesh]()
+  {
+    auto &ncmesh = *mesh.ncmesh;
+    return ncmesh.GetEdgeList().slaves.Size() > 0 || ncmesh.GetFaceList().slaves.Size() > 0;
+  };
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    const int depth = mesh.ncmesh->GetElementDepth(e);
+    if (mesh.GetElementGeometry(e) == mfem::Geometry::PYRAMID || depth > 10 ||
+        mesh.ncmesh->GetElementSizeReduction(e) != (1 << (3 * depth)))
+    {
+      return false;
+    }
+  }
+  bool derefined = false;
+  while (Hanging())
+  {
+    mfem::Vector zero(mesh.GetNE());
+    zero = 0.0;
+    if (!mesh.DerefineByError(zero, 1.0))
+    {
+      break;
+    }
+    derefined = true;
+  }
+  return derefined;
+}
+
+// Refine a 2D mesh until its elements are the given faces (with centroids in the plane of
+// the mesh), which must refine its elements isotropically, as the faces of the boundary
+// of an isotropically refined 3D mesh do.
+void RefineToFaces(mfem::Mesh &mesh, const std::vector<CrossSectionFace> &faces)
+{
+  mesh.EnsureNCMesh(true);
+
+  // Look the faces up by the cell of their centroid in a grid with the size of the
+  // smallest face. Faces match an element with the same centroid and area (a refined
+  // triangle has the centroid of its middle child).
+  constexpr double tol = 1.0e-6;
+  double h = mfem::infinity();
+  for (const auto &face : faces)
+  {
+    h = std::min(h, std::sqrt(face.area));
+  }
+  auto Cell = [h](const mfem::Vector &x)
+  { return std::array<long long, 2>{std::llround(x(0) / h), std::llround(x(1) / h)}; };
+  std::map<std::array<long long, 2>, std::vector<int>> grid;
+  for (int i = 0; i < static_cast<int>(faces.size()); i++)
+  {
+    grid[Cell(faces[i].x)].push_back(i);
+  }
+  auto IsFace = [&](const mfem::Vector &x, double area)
+  {
+    const auto cell = Cell(x);
+    for (long long i = cell[0] - 1; i <= cell[0] + 1; i++)
+    {
+      for (long long j = cell[1] - 1; j <= cell[1] + 1; j++)
+      {
+        auto it = grid.find({i, j});
+        if (it == grid.end())
+        {
+          continue;
+        }
+        for (int f : it->second)
+        {
+          if (std::abs(area - faces[f].area) < tol * faces[f].area &&
+              x.DistanceTo(faces[f].x) < tol * std::sqrt(faces[f].area))
+          {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  mfem::IsoparametricTransformation T;
+  mfem::Vector x;
+  for (int level = 0;; level++)
+  {
+    mfem::Array<int> marked;
+    for (int e = 0; e < mesh.GetNE(); e++)
+    {
+      mesh.GetElementTransformation(e, &T);
+      T.Transform(mfem::Geometries.GetCenter(T.GetGeometryType()), x);
+      if (!IsFace(x, mesh.GetElementVolume(e)))
+      {
+        marked.Append(e);
+      }
+    }
+    if (marked.Size() == 0)
+    {
+      break;
+    }
+    MFEM_VERIFY(level < 30, "Failed to refine the cross-section into the faces of the "
+                            "nonconforming 3D mesh!");
+    mesh.GeneralRefinement(marked, 1, 0);
+  }
+  MFEM_VERIFY(mesh.GetNE() == static_cast<int>(faces.size()),
+              "Failed to refine the cross-section into the faces of the nonconforming 3D "
+              "mesh!");
 }
 
 // Project each 3D point in `path` onto the 2D local frame (centroid, e1, e2). Leaves
@@ -144,6 +292,21 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
       }
     }
 
+    // On a mesh with hanging entities, for example from a previous adaptive simulation,
+    // extract the cross-section from the coarsest conforming mesh of its refinement
+    // hierarchy, and refine it into the faces of the cross-section of the given mesh. MFEM
+    // then manages the boundary elements of the cross-section through its refinements (the
+    // nonconforming mesh of a SubMesh of a nonconforming mesh has no boundary at all), and
+    // the sides of its interior boundaries can be identified for error estimation, as for
+    // the refined cross-section of a conforming mesh.
+    std::vector<CrossSectionFace> faces;
+    bool derefined = false;
+    if (smesh->Nonconforming())
+    {
+      faces = GetCrossSectionFaces(*smesh, attr_list);
+      derefined = DerefineToConforming(*smesh);
+    }
+
     auto extracted = ExtractBoundary2DSubmesh(*smesh, attr_list, internal_bdr_attrs, frame);
 
     // Relabel other-waveport edges as PEC on this cross-section: for the
@@ -171,12 +334,26 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
       }
     }
 
-    // The boundary elements of the submesh of a nonconforming mesh, including those added
-    // or relabelled above, are not in its mfem::NCMesh, and would be lost when the mesh is
-    // distributed.
+    // The boundary elements of the submesh of a mesh which is still nonconforming (its
+    // refinement hierarchy could not be derefined to a conforming mesh), including those
+    // added or relabelled above, are not in its mfem::NCMesh, and would be lost when the
+    // mesh is distributed: rebuild it from its elements. With hanging entities, the sides
+    // of its interior boundaries then cannot be identified.
     if (extracted->Nonconforming())
     {
       extracted = mesh::RebuildNonconformingMesh(*extracted);
+    }
+    if (derefined)
+    {
+      if (!extracted->Nonconforming())
+      {
+        extracted = std::make_unique<mfem::Mesh>(*extracted);
+      }
+      for (auto &face : faces)
+      {
+        face.x = mesh::Project3Dto2D(face.x, frame.centroid, frame.e1, frame.e2);
+      }
+      RefineToFaces(*extracted, faces);
     }
 
     smesh = std::move(extracted);
