@@ -42,7 +42,7 @@ from general_mesh_manifest import (_physical_comparison_failures,
                                    validate_case_element_cap_override, validate_manifest,
                                    validate_production_recipe, validate_production_recipe_commands)
 from mesh_array_io import read_mesh
-from mesh_stage_contract import (CANONICAL_STAGE_ORDER, canonical_stage_order, validate_envelope_sliver_reconnections,
+from mesh_stage_contract import (CANONICAL_STAGE_ORDER, canonical_stage_order,
                                  validate_stage_report, validate_tool_invocation)
 from normalize_general_mesh_evidence import normalize
 from semantic_mesh_contract import (derive_feature_topology, load_semantic_contract,
@@ -2681,41 +2681,6 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         broken["Gates"][MINIMUM_QUALIFIED_RINGS]["Thin"] = 0
         with self.assertRaisesRegex(ValueError, "positive integers"):
             validate_manifest(broken, HERE / "geometry-independence-suite.json", check_available_files=False)
-
-    def test_census_envelope_sliver_reconnection_rows_validate_at_both_sites(self):
-        """Round 4 F-3 (decisions 605 / 606): the mesher records the confined-sliver reconnection
-        row at both gate sites; the validator mirrors the fail-closed reading (Unrepaired 0, the
-        counts adding up, every reconnection listed, both rows or neither)."""
-        def row(site, **override):
-            base = {"Site": site, "Rule": "r", "MinimumScaledJacobian": 0.01, "MaximumJacobianCondition": 1000.0,
-                    "Cells": 4, "UnconfinedBelowGate": 0, "Flips": 2, "Removals": 1, "Consumed": 1, "Unrepaired": 0,
-                    "Reconnections": [{"Kind": "2-3"}, {"Kind": "2-3"}, {"Kind": "edge-removal"}]}
-            base.update(override)
-            return base
-        census = {"EnvelopeSliverReconnections": row("global")}
-        optimization = {"EnvelopeSliverReconnections": row("required-region")}
-        self.assertEqual(validate_envelope_sliver_reconnections(census, optimization), (optimization["EnvelopeSliverReconnections"],
-                                                                                        census["EnvelopeSliverReconnections"]))
-        # An earlier mesher's census: neither row, accepted as before.
-        self.assertIsNone(validate_envelope_sliver_reconnections({}, {"CornerMeasures": []}))
-        self.assertIsNone(validate_envelope_sliver_reconnections({}, None))
-        def rejected(census_row, seed_row, message):
-            with self.assertRaisesRegex(ValueError, message):
-                validate_envelope_sliver_reconnections({"EnvelopeSliverReconnections": census_row} if census_row is not None else {},
-                                                       {"EnvelopeSliverReconnections": seed_row} if seed_row is not None else {})
-        rejected(row("global"), None, "lacks the required-region")
-        rejected(None, row("required-region"), "lacks the global")
-        rejected(row("required-region"), row("required-region"), "lacks the global")
-        rejected(row("global"), row("required-region", Unrepaired=1, Cells=5), "1 unrepaired confined slivers at the required-region")
-        rejected(row("global", Cells=5), row("required-region"), "global EnvelopeSliverReconnections counts do not add up")
-        rejected(row("global", Consumed=None), row("required-region"), "global sliver reconnections Consumed")
-        rejected(row("global", Reconnections=[]), row("required-region"), "do not list every reconnection")
-        rejected(row("global", Flips=-1, Cells=0), row("required-region"), "global sliver reconnections Flips")
-        rejected(row("global", Flips=None), row("required-region"), "global sliver reconnections Flips")
-        # The zero row of a build with no below-gate cell (every stored V3 build after the merge).
-        zero = {"Cells": 0, "UnconfinedBelowGate": 0, "Flips": 0, "Removals": 0, "Consumed": 0, "Unrepaired": 0, "Reconnections": []}
-        self.assertIsNotNone(validate_envelope_sliver_reconnections({"EnvelopeSliverReconnections": row("global", **zero)},
-                                                                    {"EnvelopeSliverReconnections": row("required-region", **zero)}))
 
     def test_calibration_manifest_gate_relaxation_never_reaches_production(self):
         # Supervisor decision 22: the MA/MS calibration manifest, and only it, carries

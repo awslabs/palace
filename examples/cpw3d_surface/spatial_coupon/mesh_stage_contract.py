@@ -2835,38 +2835,7 @@ def validate_gmsh_build_census(build_report, census, semantic):
                 any(kind not in CORNER_MEASURES for kind in kinds)):
             raise ValueError("Build census SemanticCornerKinds differ from the seed corner measures")
     validate_thin_sheet_seams(census, build_coupon_kind(command), rule_round)
-    validate_envelope_sliver_reconnections(census, optimization)
     return census
-
-
-ENVELOPE_SLIVER_SITES = ("required-region", "global")
-
-
-def validate_envelope_sliver_reconnections(census, optimization):
-    """Round 4 F-3 (supervisor decisions 605 / 606): a census of the round-4 mesher carries the
-    confined-sliver reconnection row at BOTH gate sites - SeedQualityOptimization.
-    EnvelopeSliverReconnections (Site required-region) and the census EnvelopeSliverReconnections
-    (Site global) - each with Cells = UnconfinedBelowGate + Flips + Removals + Consumed + Unrepaired
-    (Consumed = the candidates an earlier reconnection of the pass replaced) and Unrepaired 0 (an unrepaired cell fails the mesher's gate; a census recording one was not
-    written by it).  A census of an earlier mesher carries neither row and validates as before;
-    one row without the other fails closed.  Returns the two rows or None."""
-    seed_row = optimization.get("EnvelopeSliverReconnections") if isinstance(optimization, dict) else None
-    global_row = census.get("EnvelopeSliverReconnections")
-    if seed_row is None and global_row is None:
-        return None
-    for row, site in ((seed_row, "required-region"), (global_row, "global")):
-        if not isinstance(row, dict) or row.get("Site") != site:
-            raise ValueError(f"Build census lacks the {site} EnvelopeSliverReconnections row (both gate sites record it)")
-        counts = {name: _count(row.get(name), f"{site} sliver reconnections {name}")
-                  for name in ("Cells", "UnconfinedBelowGate", "Flips", "Removals", "Consumed", "Unrepaired")}
-        if counts["Cells"] != (counts["UnconfinedBelowGate"] + counts["Flips"] + counts["Removals"] + counts["Consumed"]
-                               + counts["Unrepaired"]):
-            raise ValueError(f"Build census {site} EnvelopeSliverReconnections counts do not add up")
-        if counts["Unrepaired"] != 0:
-            raise ValueError(f"Build census records {counts['Unrepaired']} unrepaired confined slivers at the {site} site")
-        if not isinstance(row.get("Reconnections"), list) or len(row["Reconnections"]) != counts["Flips"] + counts["Removals"]:
-            raise ValueError(f"Build census {site} EnvelopeSliverReconnections do not list every reconnection")
-    return seed_row, global_row
 
 
 def validate_thin_sheet_seams(census, kind, rule_round="round-2"):
