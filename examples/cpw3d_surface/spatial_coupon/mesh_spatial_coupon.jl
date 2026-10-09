@@ -1703,33 +1703,6 @@ const CORNER_RECONNECTION_RULE =
     "round 2 F5-B, decisions 363 / 365 / 392)"
 const CORNER_RECONNECTION_ROUNDS = 4
 
-# CORNER RESCUE (round-4 lane F fix-up, supervisor decision 635; the 56e7 diagnostic PBS
-# 60933): at a fixed CAD corner the kappa_reg descent can stall on a sub-nm wedge whose
-# movable vertices are locked by the edge-floor guard on edges already below the collapse
-# threshold (edges the collapse cannot remove at a CAD corner) - a guard-locked wedge that
-# bounded smoothing cannot repair by construction, while the F5-B reconnection above
-# triggers only on bridging-sliver candidates. The rescue widens decision 365's trigger to
-# EVERY corner-incident cell above CornerShapeGate, but ONLY where the bridging-sliver path
-# has already failed closed (the corner still above the gate after its descent and rounds):
-# a build that passes without it runs no rescue and is bitwise unchanged. The operations,
-# their must-improve rule, floors, ceilings, round count and re-descent are F5-B's; the
-# gate (CornerShapeGate), the target (INVARIANT_CORNER_TARGET) and the edge floor are
-# untouched; a corner the rescue cannot bring under the gate still fails closed. Invariant
-# corners only (the F5-B operations are defined by kappa_reg; a legacy perpendicular corner
-# failing its vertex-0 gate is a named follow-up). Recorded as CornerRescue on the corner's
-# CornerMeasures row and CornerRescues / CornerRescueReconnections in the optimization record,
-# present only when a rescue ran.
-const CORNER_RESCUE_RULE =
-    "an invariant corner still above CornerShapeGate after its kappa_reg descent and " *
-    "bridging-sliver reconnection rounds (the fail-closed path) takes up to " *
-    "CornerReconnectionRounds further rounds whose trigger is EVERY corner-incident cell " *
-    "above the gate, each cell replaced by the better of its 2-3 flip and its edge removal " *
-    "under the CornerReconnectionRule's operations, must-improve rule, floors and ceilings, " *
-    "the descent running again after each round; the corner is then judged by the SAME " *
-    "CornerShapeGate and fails closed if still above it; a corner under the gate without the " *
-    "rescue runs none and is unchanged (round-4 lane F fix-up, decision 635: the guard-locked " *
-    "sub-nm wedge at a fixed CAD corner, an extension of decision 365's trigger scope)"
-
 function oriented_tetrahedron(points, cell)
     xyz = [points[:, i] for i in cell]
     volume = dot(xyz[2] .- xyz[1], cross(xyz[3] .- xyz[1], xyz[4] .- xyz[1]))
@@ -2257,7 +2230,6 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     # the reconnection trigger = a candidate still above the gate) as information.
     corner_before = Float64[]; corner_after = Float64[]; corner_moves = Int[]
     corner_measures = Dict{String, Any}[]
-    corner_rescues = 0
     corner_incident(center) = [k for (k, cell) in enumerate(tetrahedra)
                                if !(k in dead) && any(norm(points[:, i] .- center) <= tolerance for i in cell)]
     function corner_information(targets)
@@ -2308,10 +2280,8 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         trigger = invariant ? above_gate(bridging_after, gate) : Int[]
         reconnections = Dict{String, Any}[]
         after_descent = after
-        # One reconnection round over `trigger` (the F5-B operations on every trigger cell;
-        # the records appended to `records`); returns the number of reconnections. Shared by
-        # the bridging-sliver rounds below and the CORNER RESCUE (decision 635).
-        function reconnection_round!(trigger, round, records)
+        for round in 1:CORNER_RECONNECTION_ROUNDS
+            isempty(trigger) && break
             flips = 0
             # The trigger cells as they were when the round started (decision 392 MINOR-7): an
             # earlier reconnection of this round may reuse a later trigger's slot for a NEW
@@ -2376,17 +2346,12 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                     push!(dead, p)
                 end
                 flips += 1
-                push!(records, Dict{String, Any}(
+                push!(reconnections, Dict{String, Any}(
                     "Round" => round, "Kind" => use_removal ? "edge-removal" : "2-3",
                     "Element" => use_removal ? collect(removal.edge) : collect(flip.face),
                     "Before" => before_flip, "After" => quality,
                     "ReplacedCells" => length(replaced), "AddedCells" => length(new_cells)))
             end
-            return flips
-        end
-        for round in 1:CORNER_RECONNECTION_ROUNDS
-            isempty(trigger) && break
-            flips = reconnection_round!(trigger, round, reconnections)
             flips == 0 && break
             targets = corner_incident(center)
             after, descent_moves = optimize_seed_cells!(points, original, tetrahedra, incident,
@@ -2398,41 +2363,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             bridging_after = bridging_slivers(center, sides, targets)
             trigger = above_gate(bridging_after, gate)
         end
-        # CORNER RESCUE (decision 635; CORNER_RESCUE_RULE): entered ONLY where the path above
-        # fails closed - an invariant corner still above CornerShapeGate after its descent and
-        # bridging-sliver rounds - so every build that passes without it is untouched. The
-        # trigger widens to EVERY corner-incident cell above the gate (the guard-locked sub-nm
-        # wedge at a fixed CAD corner, which bounded smoothing cannot repair by construction);
-        # the operations, their quality rule, floors, ceilings and the re-descent are F5-B's.
-        rescue = nothing
-        if invariant && after > gate
-            rescue_before = after
-            rescue_rows = Dict{String, Any}[]
-            rescue_rounds = 0
-            rescue_trigger = above_gate(targets, gate)
-            for round in 1:CORNER_RECONNECTION_ROUNDS
-                isempty(rescue_trigger) && break
-                flips = reconnection_round!(rescue_trigger, round, rescue_rows)
-                flips == 0 && break
-                rescue_rounds = round
-                targets = corner_incident(center)
-                after, descent_moves = optimize_seed_cells!(points, original, tetrahedra, incident,
-                                                            bases, floors, bounds, targets, objective,
-                                                            target; ceilings=ceilings,
-                                                            condition_ceilings=condition_ceilings,
-                                                            edge_floors=edge_floors)
-                moves += descent_moves
-                rescue_trigger = above_gate(targets, gate)
-            end
-            bridging_after = bridging_slivers(center, sides, targets)
-            trigger = above_gate(bridging_after, gate)
-            rescue = Dict{String, Any}(
-                "Rule" => CORNER_RESCUE_RULE, "Before" => rescue_before, "After" => after,
-                "Rounds" => rescue_rounds, "Reconnections" => rescue_rows,
-                "CellsAboveGateAfter" => length(rescue_trigger))
-        end
         push!(corner_after, after); push!(corner_moves, moves)
-        rescue === nothing || (corner_rescues += 1)
         push!(corner_measures, Dict{String, Any}(
             "Point" => center, "Kind" => invariant ? "Invariant" : "Legacy",
             "Measure" => invariant ? "RegularCondition" : "VertexFrameCondition",
@@ -2448,8 +2379,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
             "Reconnections" => reconnections,
             "InformationBefore" => information_before,
             "Information" => corner_information(targets),
-            "Passed" => after <= gate,
-            (rescue === nothing ? () : ("CornerRescue" => rescue,))...))
+            "Passed" => after <= gate))
     end
     if !isempty(reconnection_added)
         # The reconnections changed the cell list: the dead slots (an edge removal replaces
@@ -2625,10 +2555,6 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         "CornerReconnectionRule" => CORNER_RECONNECTION_RULE,
         "CornerReconnectionRounds" => CORNER_RECONNECTION_ROUNDS,
         "CornerReconnections" => sum(length(row["Reconnections"]) for row in corner_measures; init=0),
-        (corner_rescues == 0 ? () :
-         ("CornerRescueRule" => CORNER_RESCUE_RULE, "CornerRescues" => corner_rescues,
-          "CornerRescueReconnections" => sum(length(row["CornerRescue"]["Reconnections"])
-                                             for row in corner_measures if haskey(row, "CornerRescue"))))...,
         "ReconnectionReplacedCells" => length(reconnection_replaced),
         "ReconnectionAddedCells" => length(reconnection_added),
         "CornerShapeGate" => corner_shape_gate > 0.0 ? corner_shape_gate : nothing,
@@ -2678,13 +2604,6 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                 "kappa_reg $(row["Information"]["KappaRegMax"]) " *
                 "kappa_v0 $(row["Information"]["KappaV0Max"]) kappa_min $(row["Information"]["KappaMinMax"]) " *
                 "kappa_max $(row["Information"]["KappaMaxMax"]) eta $(row["Information"]["EtaMin"])")
-        haskey(row, "CornerRescue") || continue
-        rescue = row["CornerRescue"]
-        println("Seed corner rescue $(row["Point"]) (decision 635): kappa_reg $(rescue["Before"]) -> " *
-                "$(rescue["After"]) (gate $(row["Gate"])), $(rescue["Rounds"]) rounds, " *
-                "$(length(rescue["Reconnections"])) reconnections " *
-                "$([(r["Kind"], r["Before"], r["After"]) for r in rescue["Reconnections"]]), " *
-                "cells above the gate after $(rescue["CellsAboveGateAfter"])")
     end
     println("Seed required-region optimization: corners $(corner_before) -> $(corner_after), " *
             "required cells $(required_before_moves) -> $(length(required_cells)) " *
