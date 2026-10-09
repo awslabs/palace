@@ -65,6 +65,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   { return space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, a3); };
   const double target = iodata.solver.eigenmode.target;
   auto A2 = funcA2(1i * target);
+  // Known poles of A2(λ), which the nonlinear eigensolvers clear from their local models.
+  const auto a2_poles = space_op.GetMaterialOp().GetFrequencyDependentPermittivityPoles();
   // A2 is non-null whenever a frequency-dependent material is present, even if its
   // contribution cancels at the target, so it alone selects the nonlinear solver path.
   bool has_A2 = (A2 != nullptr);
@@ -257,6 +259,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
     eigen->SetExtraSystemMatrix(funcA2_full);
+    eigen->SetExtraSystemPoles(a2_poles);
     eigen->SetPreconditionerUpdate(funcP);
   }
   else
@@ -481,6 +484,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       qn->SetOperators(*K, *M, EigenvalueSolver::ScaleType::NONE);
     }
     qn->SetExtraSystemMatrix(funcA2_full);
+    qn->SetExtraSystemPoles(a2_poles);
     qn->SetPreconditionerUpdate(funcP);
     qn->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
     qn->SetPreconditionerLag(iodata.solver.eigenmode.preconditioner_lag,

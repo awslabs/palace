@@ -208,6 +208,9 @@ public:
   // deliberately frequency independent: valid additive contributions can cancel at an
   // interpolation or ROM probe frequency without ceasing to be nonlinear.
   bool HasFrequencyDependentPermittivityA2() const;
+  // Distinct poles (in s = iω) of the nonlinear permittivity terms of all globally
+  // supported materials, i.e. the poles of their contribution to A2(s).
+  std::vector<std::complex<double>> GetFrequencyDependentPermittivityPoles() const;
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
   const mfem::Vector &GetWaveVector() const { return wave_vector; }

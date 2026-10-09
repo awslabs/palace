@@ -524,6 +524,27 @@ MaterialOperator::EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_id
   return value;
 }
 
+std::vector<std::complex<double>>
+MaterialOperator::GetFrequencyDependentPermittivityPoles() const
+{
+  std::vector<std::complex<double>> poles;
+  for (std::size_t i = 0; i < permittivity_pole_terms.size(); i++)
+  {
+    if (!frequency_dependent_permittivity_support[i])
+    {
+      continue;
+    }
+    for (const auto &term : permittivity_pole_terms[i])
+    {
+      if (std::ranges::find(poles, term.pole) == poles.end())
+      {
+        poles.push_back(term.pole);
+      }
+    }
+  }
+  return poles;
+}
+
 bool MaterialOperator::HasFrequencyDependentPermittivityA2() const
 {
   for (std::size_t i = 0; i < permittivity_pole_terms.size(); i++)

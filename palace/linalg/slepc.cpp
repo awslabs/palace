@@ -2108,6 +2108,10 @@ PetscErrorCode __mat_apply_NEP_J(Mat J, Vec x, Vec y)
   MFEM_VERIFY(ctx, "Invalid PETSc shell matrix context for SLEPc!");
   PetscCall(FromPetscVec(x, ctx->x1));
   ctx->opJ->Mult(ctx->x1, ctx->y1);
+  if (ctx->opA_jac)
+  {
+    ctx->opA_jac->AddMult(ctx->x1, ctx->y1, ctx->logd_J);
+  }
   PetscCall(ToPetscVec(ctx->y1, y));
   PetscFunctionReturn(PETSC_SUCCESS);
 }
@@ -2199,6 +2203,13 @@ PetscErrorCode __form_NEP_jacobian(NEP nep, PetscScalar lambda, Mat fun, void *c
   ctxF->opJ =
       palace::BuildOperatorWithA2({0.0 + 0.0i, 1.0 + 0.0i, 2.0 * lambda},
                                   {ctxF->opK, ctxF->opC, ctxF->opM}, ctxF->opAJ.get());
+  if (!ctxF->poles.Empty())
+  {
+    ctxF->opA_jac = palace::BuildOperatorWithA2({1.0 + 0.0i, lambda, lambda * lambda},
+                                                {ctxF->opK, ctxF->opC, ctxF->opM},
+                                                ctxF->opA2_jac.get());
+    ctxF->logd_J = ctxF->poles.LogDerivative(lambda);
+  }
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
