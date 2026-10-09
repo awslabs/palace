@@ -43,7 +43,8 @@ void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
 // one partial factorization instead of |Gamma| back-solves. The same factorization then
 // solves the internal problem (A_EE, the Schur variables fixed at 0), which serves every
 // other environment solve. T = double (DMUMPS) for a real symmetric A, std::complex<double>
-// (ZMUMPS) for a complex symmetric A = Ar + i Ai.
+// (ZMUMPS) for a complex symmetric A = Ar + i Ai. The right-hand sides and solutions of the
+// solves stay distributed by rows; only the condensed (Schur) parts are on rank 0.
 template <typename T>
 class MumpsSchurSolverT
 {
@@ -118,8 +119,11 @@ private:
   void Check(const char *phase) const;
   void GatherEntries();
   void Call();
-  void Gather(const std::vector<const VecType *> &X);
-  void Scatter(const std::vector<VecType *> &Y);
+  // The right-hand sides distributed by rows, room for the distributed solution, and the
+  // solution on the local rows.
+  void SetRhs(const std::vector<const VecType *> &X);
+  void SetSolution(int nb);
+  void ScatterSolution(const std::vector<VecType *> &Y);
 
   // MUMPS's entry type (std::complex<double> has the layout of ZMUMPS_COMPLEX).
   static auto *Entries(T *v)
@@ -142,12 +146,12 @@ private:
   // rank and the ranks sending it their entries, with the counts and offsets of their
   // entries on the factoring rank).
   MPI_Comm sub = MPI_COMM_NULL, grp = MPI_COMM_NULL;
-  std::vector<int> grp_cnt, grp_disp;
+  std::vector<int> grp_cnt, grp_disp, grp_row_cnt, grp_row_disp;
   HYPRE_BigInt n_glob;
   int n_loc, n_schur;
   std::vector<int> row_cnt, row_disp, rows;
-  std::vector<MUMPS_INT> irn, jcn, listvar;
-  std::vector<T> val, grp_val, schur, rhs, redrhs;
+  std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;
+  std::vector<T> val, grp_val, schur, redrhs, rhs_loc, sol_loc;
   int reduced = 0;  // right-hand sides of the last Reduce, pending Expand
   double blr_tol = 0.0, scale = 1.0;
   Struc id{};

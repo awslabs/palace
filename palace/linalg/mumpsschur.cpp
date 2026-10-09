@@ -305,6 +305,24 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
     jcn.swap(jcn_g);
   }
   GatherEntries();
+  // The rows of the right-hand sides each factoring rank passes to MUMPS (1-based): those
+  // of its group of consecutive ranks, contiguous.
+  if (active)
+  {
+    const int g1 = std::min(rank + stride, nranks);
+    grp_row_cnt.assign(row_cnt.begin() + rank, row_cnt.begin() + g1);
+    grp_row_disp.assign(grp_row_cnt.size(), 0);
+    for (std::size_t r = 1; r < grp_row_cnt.size(); r++)
+    {
+      grp_row_disp[r] = grp_row_disp[r - 1] + grp_row_cnt[r - 1];
+    }
+    const int m = grp_row_disp.back() + grp_row_cnt.back();
+    irhs_loc.resize(std::max(m, 1), 1);
+    for (int i = 0; i < m; i++)
+    {
+      irhs_loc[i] = static_cast<MUMPS_INT>(row_disp[rank] + i + 1);
+    }
+  }
   for (HYPRE_BigInt v : schur_vars)
   {
     listvar.push_back(static_cast<MUMPS_INT>(v + 1));
@@ -330,8 +348,6 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
     icntl(19) = (n_schur > 0) ? 3 : 0;
     icntl(28) = 1;   // sequential analysis (the Schur option excludes parallel analysis)
     icntl(7) = 5;    // METIS ordering
-    icntl(20) = 0;   // dense, centralized right-hand sides
-    icntl(21) = 0;   // centralized solution
     icntl(14) = 50;  // workspace relaxation (%); raised on a workspace failure below
     if (blr_tol > 0.0)
     {
@@ -503,17 +519,15 @@ void MumpsSchurSolverT<T>::GatherEntries()
 }
 
 template <typename T>
-void MumpsSchurSolverT<T>::Gather(const std::vector<const VecType *> &X)
+void MumpsSchurSolverT<T>::SetRhs(const std::vector<const VecType *> &X)
 {
-  // The right-hand sides on rank 0 (n_glob x |X|, column-major).
+  // The right-hand sides distributed by rows (ICNTL(20) = 10): each factoring rank passes
+  // the rows of its group, column-major.
   const int nb = static_cast<int>(X.size());
-  std::vector<T> loc(n_loc);
-  if (rank == 0)
-  {
-    rhs.assign(static_cast<std::size_t>(n_glob) * nb, T(0.0));
-  }
+  std::vector<T> loc(static_cast<std::size_t>(n_loc) * nb);
   for (int k = 0; k < nb; k++)
   {
+    T *l = loc.data() + static_cast<std::size_t>(k) * n_loc;
     const VecType &x = *X[k];
     if constexpr (kComplex)
     {
@@ -521,7 +535,7 @@ void MumpsSchurSolverT<T>::Gather(const std::vector<const VecType *> &X)
       for (int i = 0; i < n_loc; i++)
       {
         const int r = rows.empty() ? i : rows[i];
-        loc[i] = (r >= 0) ? T(xr[r], xi[r]) : T(0.0);
+        l[i] = (r >= 0) ? T(xr[r], xi[r]) : T(0.0);
       }
     }
     else
@@ -530,67 +544,142 @@ void MumpsSchurSolverT<T>::Gather(const std::vector<const VecType *> &X)
       for (int i = 0; i < n_loc; i++)
       {
         const int r = rows.empty() ? i : rows[i];
-        loc[i] = (r >= 0) ? xr[r] : 0.0;
+        l[i] = (r >= 0) ? xr[r] : 0.0;
       }
     }
-    MPI_Gatherv(loc.data(), n_loc, MpiType<T>(),
-                rank == 0 ? rhs.data() + static_cast<std::size_t>(k) * n_glob : nullptr,
-                row_cnt.data(), row_disp.data(), MpiType<T>(), 0, comm);
   }
-  if (rank == 0)
+  const int m = active ? grp_row_disp.back() + grp_row_cnt.back() : 0;
+  if (grp != MPI_COMM_NULL)
   {
-    id.rhs = Entries(rhs.data());
+    rhs_loc.assign(static_cast<std::size_t>(std::max(m, 1)) * nb, T(0.0));
+    for (int k = 0; k < nb; k++)
+    {
+      MPI_Gatherv(loc.data() + static_cast<std::size_t>(k) * n_loc, n_loc, MpiType<T>(),
+                  active ? rhs_loc.data() + static_cast<std::size_t>(k) * m : nullptr,
+                  grp_row_cnt.data(), grp_row_disp.data(), MpiType<T>(), 0, grp);
+    }
+  }
+  else
+  {
+    loc.resize(static_cast<std::size_t>(std::max(m, 1)) * nb);
+    rhs_loc.swap(loc);
+  }
+  if (active)
+  {
+    id.icntl[19] = 10;  // ICNTL(20): distributed right-hand sides
     id.nrhs = nb;
-    id.lrhs = static_cast<MUMPS_INT>(n_glob);
+    id.nloc_rhs = m;
+    id.lrhs_loc = std::max(m, 1);
+    id.rhs_loc = Entries(rhs_loc.data());
+    id.irhs_loc = irhs_loc.data();
   }
 }
 
 template <typename T>
-void MumpsSchurSolverT<T>::Scatter(const std::vector<VecType *> &Y)
+void MumpsSchurSolverT<T>::SetSolution(int nb)
 {
-  // The solutions from rank 0, unscaled: (A / s)^-1 b = s A^-1 b.
-  std::vector<T> loc(n_loc);
-  for (std::size_t k = 0; k < Y.size(); k++)
+  // Room for the solution distributed as MUMPS leaves it (ICNTL(21) = 1): INFO(23) rows on
+  // each rank after the factorization.
+  if (active)
   {
-    MPI_Scatterv(rank == 0 ? rhs.data() + k * static_cast<std::size_t>(n_glob) : nullptr,
-                 row_cnt.data(), row_disp.data(), MpiType<T>(), loc.data(), n_loc,
-                 MpiType<T>(), 0, comm);
+    const int ns = std::max<MUMPS_INT>(id.info[22], 1);
+    sol_loc.assign(static_cast<std::size_t>(ns) * nb, T(0.0));
+    isol_loc.assign(ns, 0);
+    id.icntl[20] = 1;  // ICNTL(21): distributed solution
+    id.nrhs = nb;
+    id.lsol_loc = ns;
+    id.sol_loc = Entries(sol_loc.data());
+    id.isol_loc = isol_loc.data();
+  }
+}
+
+template <typename T>
+void MumpsSchurSolverT<T>::ScatterSolution(const std::vector<VecType *> &Y)
+{
+  // The entries of MUMPS's distributed solution, with the Schur variables (0 for the
+  // internal problem, u_S for an expansion), to the ranks owning their rows, unscaled:
+  // (A / s)^-1 b = s A^-1 b.
+  const int nb = static_cast<int>(Y.size()), nranks = static_cast<int>(row_cnt.size());
+  const int ns = active ? id.info[22] : 0;
+  std::vector<int> owner(ns), scnt(nranks, 0), rcnt(nranks), sdsp(nranks, 0),
+      rdsp(nranks, 0);
+  for (int q = 0; q < ns; q++)
+  {
+    const int g = isol_loc[q] - 1;
+    owner[q] = static_cast<int>(std::upper_bound(row_disp.begin(), row_disp.end(), g) -
+                                row_disp.begin()) -
+               1;
+    scnt[owner[q]]++;
+  }
+  MPI_Alltoall(scnt.data(), 1, MPI_INT, rcnt.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nranks; r++)
+  {
+    sdsp[r] = sdsp[r - 1] + scnt[r - 1];
+    rdsp[r] = rdsp[r - 1] + rcnt[r - 1];
+  }
+  const int nrecv = rdsp.back() + rcnt.back();
+  std::vector<int> sidx(ns), ridx(nrecv), pos(sdsp);
+  std::vector<T> sval(static_cast<std::size_t>(ns) * nb);
+  for (int q = 0; q < ns; q++)
+  {
+    const int r = owner[q], e = pos[r]++;
+    sidx[e] = isol_loc[q] - 1 - row_disp[r];
+    for (int k = 0; k < nb; k++)
+    {
+      sval[static_cast<std::size_t>(e) * nb + k] =
+          sol_loc[static_cast<std::size_t>(k) * id.lsol_loc + q] / scale;
+    }
+  }
+  Release(sol_loc);
+  Release(isol_loc);
+  MPI_Alltoallv(sidx.data(), scnt.data(), sdsp.data(), MPI_INT, ridx.data(), rcnt.data(),
+                rdsp.data(), MPI_INT, comm);
+  for (int r = 0; r < nranks; r++)
+  {
+    scnt[r] *= nb;
+    sdsp[r] *= nb;
+    rcnt[r] *= nb;
+    rdsp[r] *= nb;
+  }
+  std::vector<T> rval(static_cast<std::size_t>(nrecv) * nb);
+  MPI_Alltoallv(sval.data(), scnt.data(), sdsp.data(), MpiType<T>(), rval.data(),
+                rcnt.data(), rdsp.data(), MpiType<T>(), comm);
+  Release(sval);
+  for (int k = 0; k < nb; k++)
+  {
     VecType &y = *Y[k];
     if (rows.empty())
     {
       y.SetSize(n_loc);
     }
-    else
-    {
-      y = 0.0;
-    }
+    y = 0.0;
     if constexpr (kComplex)
     {
       double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
-      for (int i = 0; i < n_loc; i++)
+      for (int e = 0; e < nrecv; e++)
       {
-        const int r = rows.empty() ? i : rows[i];
+        const int r = rows.empty() ? ridx[e] : rows[ridx[e]];
         if (r >= 0)
         {
-          yr[r] = loc[i].real() / scale;
-          yi[r] = loc[i].imag() / scale;
+          const T v = rval[static_cast<std::size_t>(e) * nb + k];
+          yr[r] = v.real();
+          yi[r] = v.imag();
         }
       }
     }
     else
     {
       double *yr = y.HostReadWrite();
-      for (int i = 0; i < n_loc; i++)
+      for (int e = 0; e < nrecv; e++)
       {
-        const int r = rows.empty() ? i : rows[i];
+        const int r = rows.empty() ? ridx[e] : rows[ridx[e]];
         if (r >= 0)
         {
-          yr[r] = loc[i] / scale;
+          yr[r] = rval[static_cast<std::size_t>(e) * nb + k];
         }
       }
     }
   }
-  Release(rhs);
 }
 
 template <typename T>
@@ -603,7 +692,8 @@ void MumpsSchurSolverT<T>::SolveInternal(const std::vector<const VecType *> &X,
   for (int c0 = 0; c0 < n; c0 += B)
   {
     const int nb = std::min(B, n - c0);
-    Gather({X.begin() + c0, X.begin() + c0 + nb});
+    SetRhs({X.begin() + c0, X.begin() + c0 + nb});
+    SetSolution(nb);
     if (active)
     {
       id.icntl[25] = 0;  // ICNTL(26): the internal problem (Schur variables held at 0)
@@ -611,7 +701,8 @@ void MumpsSchurSolverT<T>::SolveInternal(const std::vector<const VecType *> &X,
       Call();
     }
     Check("solve");
-    Scatter({Y.begin() + c0, Y.begin() + c0 + nb});
+    Release(rhs_loc);
+    ScatterSolution({Y.begin() + c0, Y.begin() + c0 + nb});
   }
 }
 
@@ -623,7 +714,8 @@ void MumpsSchurSolverT<T>::Reduce(const std::vector<const VecType *> &B,
   // condensed in one solve. The condensation is independent of the scaling of A.
   MFEM_VERIFY(n_schur > 0 && !reduced, "MumpsSchurSolver: invalid Reduce!");
   const int nb = static_cast<int>(B.size());
-  Gather(B);
+  SetRhs(B);
+  SetSolution(nb);
   if (rank == 0)
   {
     redrhs.assign(static_cast<std::size_t>(n_schur) * std::max(nb, 1), T(0.0));
@@ -637,7 +729,9 @@ void MumpsSchurSolverT<T>::Reduce(const std::vector<const VecType *> &B,
     Call();
   }
   Check("condensation");
-  Release(rhs);
+  Release(rhs_loc);
+  Release(sol_loc);
+  Release(isol_loc);
   if (rank == 0)
   {
     red.swap(redrhs);
@@ -662,13 +756,13 @@ void MumpsSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<Vec
     }
     id.redrhs = Entries(redrhs.data());
     id.lredrhs = n_schur;
-    rhs.assign(static_cast<std::size_t>(n_glob) * nb, T(0.0));
-    id.rhs = Entries(rhs.data());
-    id.nrhs = nb;
-    id.lrhs = static_cast<MUMPS_INT>(n_glob);
   }
+  SetSolution(nb);
   if (active)
   {
+    // The right-hand sides are those of the condensation (kept by MUMPS).
+    id.icntl[19] = 0;  // ICNTL(20)
+    id.rhs = nullptr;
     id.icntl[25] = 2;  // ICNTL(26): expansion from the Schur part of the solution
     id.job = 3;
     Call();
@@ -676,7 +770,7 @@ void MumpsSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<Vec
   Check("expansion");
   Release(redrhs);
   reduced = 0;
-  Scatter(X);
+  ScatterSolution(X);
 }
 
 template <typename T>
