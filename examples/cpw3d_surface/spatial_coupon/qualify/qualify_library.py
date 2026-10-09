@@ -69,7 +69,10 @@ Per passed coupon of the build record:
     the decision-479 records passed (job_split.CONTROLS_ONLY_USAGE_RECORD, recorded in every
     ReusedMain record and library model);
  5. --dry-run stops here (plans / configs / estimates / qualification-gates.json written,
-    nothing contacted); otherwise up to --max-jobs of the run's jobs are queued / running
+    nothing contacted); otherwise, BEFORE any qsub, the executables every plan names are
+    verified on the host once (verify_remote_executables, BINARY_OF_RECORD_RULE: the frozen
+    binary exists with the pinned digest and the MPI wrapper exists; a missing pattern path
+    fails closed with the seeding message - decision 605 F-5), then up to --max-jobs of the run's jobs are queued / running
     at once (each qsub under the user job cap, recorded and counted at submission): a
     coupon's worker jobs, then - every worker status.json complete and the archive union
     counted (sources x ranks potential files) - its reducer job; every active job is
@@ -618,8 +621,9 @@ def prepare_case(case_record, *, manifest_path, manifest, args, root, remote, pr
                          "ReferenceConfigRole": reference["ConfigRole"] if reference else None,
                          "ReferenceOrder": reference_order, "LinearTol": physics_run["LinearTol"], "Order": physics_run["Order"]}
     trace_pins = {f"{remote_traces}/{source['Name']}": source["SHA256"] for source in sources}
-    binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=frozen_binary['SHA256'])}"
-    mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}"
+    binary, mpiexec = executables_of(args, profile, remote_root, frozen_binary["SHA256"])
+    if getattr(args, "frozen_binary_remote_path", None) or getattr(args, "mpiexec_remote_path", None):
+        record["FrozenExecutable"]["RemotePath"] = {"Binary": binary, "MPIExec": mpiexec, "Rule": BINARY_OF_RECORD_RULE}
     purpose = (f"coupon-library qualify of {case_id} (identity mesh {identity['SHA256']}, {len(indices)} sources, "
                f"{len(zero_trace)} contract zero-trace knots; config derived from the case's sources at the recipe Order "
                f"{physics_run['Order']}, Linear.Tol {physics_run['LinearTol']}) "
@@ -872,6 +876,53 @@ def frozen_binary_of(args, physics_run):
     if not isinstance(value, str) or not value:
         raise CaseStop("FrozenExecutable", f"the frozen executable digest must be a non-empty string, not {value!r} ({origin})")
     return {"SHA256": value, "Origin": origin, "Rule": build_plan.FROZEN_BINARY_RULE}
+
+
+BINARY_OF_RECORD_RULE = (
+    "decision 605 F-5: the plan names the executable of record by its remote path - --frozen-binary-remote-path PATH (the "
+    "binary of record on the cluster, verified on the host against the frozen digest before any qsub) and --mpiexec-remote-path "
+    "PATH (the MPI wrapper); without them the cluster profile's BinaryPattern / MPIExecWrapper under the remote root stand "
+    "(byte-identical plans), and verify_remote_executables fails closed BEFORE the first qsub when that path does not exist "
+    "or its digest differs: seed <root>/<BinaryPattern> for the digest (a symlink to the binary of record) and "
+    "<root>/<MPIExecWrapper>, or pass the paths; run_stages verifies the digest on the node as before")
+
+
+def executables_of(args, profile, remote_root, binary_sha256):
+    """(binary, mpiexec) remote paths the plans name: --frozen-binary-remote-path / --mpiexec-remote-path
+    when given, else the cluster profile's BinaryPattern / MPIExecWrapper under the remote root
+    (BINARY_OF_RECORD_RULE)."""
+    binary = getattr(args, "frozen_binary_remote_path", None) or \
+        f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
+    mpiexec = getattr(args, "mpiexec_remote_path", None) or f"{remote_root}/{profile['MPIExecWrapper']}"
+    return binary, mpiexec
+
+
+def verify_remote_executables(host, executables, *, profile, remote_root, path_exists=None, remote_sha256=None):
+    """BINARY_OF_RECORD_RULE: every (binary, binary sha256, mpiexec) triple the plans of a run name must
+    exist on `host` with the binary at its digest - checked ONCE before the first qsub (the job
+    script would otherwise die in seconds with FileNotFoundError on the node: R2 PBS 60101 / 60448).
+    Returns the verification record; raises RuntimeError with the seeding message otherwise.
+    `path_exists` / `remote_sha256` default to remote.path_exists / remote.remote_sha256."""
+    path_exists = path_exists or remote_side.path_exists
+    remote_sha256 = remote_sha256 or remote_side.remote_sha256
+    pattern = f"{remote_root}/{profile['BinaryPattern']}"
+    checked = []
+    for binary, digest, mpiexec in sorted(set(executables)):
+        if not path_exists(host, binary):
+            raise RuntimeError(f"the plans name the frozen binary {binary}, which does not exist on {host}: seed "
+                               f"{pattern.format(sha256=digest)} (a symlink to the binary of record, digest {digest}) or pass "
+                               f"--frozen-binary-remote-path PATH; nothing was submitted ({BINARY_OF_RECORD_RULE})")
+        actual = remote_sha256(host, [binary]).get(binary)
+        if actual != digest:
+            raise RuntimeError(f"the frozen binary {binary} on {host} has digest {actual}, the plans pin {digest}: seed "
+                               f"{pattern.format(sha256=digest)} for the binary of record or pass --frozen-binary-remote-path PATH; "
+                               f"nothing was submitted ({BINARY_OF_RECORD_RULE})")
+        if not path_exists(host, mpiexec):
+            raise RuntimeError(f"the plans name the MPI wrapper {mpiexec}, which does not exist on {host}: seed "
+                               f"{remote_root}/{profile['MPIExecWrapper']} or pass --mpiexec-remote-path PATH; nothing was submitted "
+                               f"({BINARY_OF_RECORD_RULE})")
+        checked.append({"Binary": binary, "SHA256": digest, "MPIExec": mpiexec})
+    return {"Host": host, "Executables": checked, "UTC": remote_side.utc(), "Rule": BINARY_OF_RECORD_RULE}
 
 
 def job_policy_of(args, physics_run, profile):
@@ -2031,6 +2082,21 @@ def run_qualify(args, *, log=log_line):
             else:
                 waiting.append((record, context, job))
     checkpoint()
+    # F-5 (decision 605): the executables the plans name are verified on the host ONCE, before
+    # the first qsub of the run (a resumed job was submitted by an earlier driver; its plan's
+    # executables are verified all the same).
+    executables_verified = None
+    if pending:
+        try:
+            executables_verified = verify_remote_executables(
+                remote["Host"], [(record["Remote"]["Binary"], record["FrozenExecutable"]["SHA256"], record["Remote"]["MPIExec"])
+                                 for record, _ in pending],
+                profile=profile, remote_root=remote["Root"])
+        except RuntimeError as error:
+            log(f"STOP before any submission: {error}")
+            raise
+        log(f"executables of record verified on {remote['Host']}: "
+            f"{[(item['Binary'], item['SHA256'][:12]) for item in executables_verified['Executables']]}")
 
     def ready(record, context, job):
         done = {j["Name"] for j in context["jobs"] if j.get("Status", {}).get("State") == "complete"}
@@ -2112,6 +2178,8 @@ def run_qualify(args, *, log=log_line):
               "Library": library_totals(records, args=args, remote=remote, profile=profile, wall_seconds=time.time() - start,
                                         first_submission=first_submission, last_fetch=last_fetch, jobs=jobs,
                                         cap=profile["UserJobCap"])}
+    if executables_verified is not None:
+        record["ExecutablesVerified"] = executables_verified
     library = process_library_entries(records, contexts, manifest_path=manifest_path, manifest=manifest, root=root,
                                       merge_into=args.merge_into)
     write_json(root / PROCESS_LIBRARY_RECORD, library)
@@ -2159,6 +2227,13 @@ def add_arguments(parser):
     parser.add_argument("--frozen-binary-sha256", default=None,
                         help="SHA-256 of the frozen Palace executable under ROOT (decision 63); default: the manifest's "
                              f"ProductionRecipe.PhysicsRun.FrozenExecutable, else {build_plan.DEFAULT_FROZEN_BINARY_SHA256[:12]}...")
+    parser.add_argument("--frozen-binary-remote-path", default=None, metavar="PATH",
+                        help="the frozen Palace executable's path on the cluster (the binary of record), named by every plan and "
+                             "verified against --frozen-binary-sha256 on the host before any qsub; default: the cluster profile's "
+                             "BinaryPattern under ROOT, which must then exist there (BINARY_OF_RECORD_RULE, decision 605 F-5)")
+    parser.add_argument("--mpiexec-remote-path", default=None, metavar="PATH",
+                        help="the bounded MPI wrapper's path on the cluster named by every plan; default: the cluster profile's "
+                             "MPIExecWrapper under ROOT, which must then exist there")
     parser.add_argument("--stage-prefix", help="stage name prefix (default: the case id)")
     parser.add_argument("--case", action="append", default=None, help="case id (repeatable; default: every case of the build record)")
     parser.add_argument("--root", type=Path, help="local run root (default /tmp/coupon-library-qualify-<commit>-<ts>)")

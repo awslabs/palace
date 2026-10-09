@@ -122,12 +122,12 @@
     {
       "Name": "audit_edge_metric_mesh.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/audit_edge_metric_mesh.py",
-      "SHA256": "54105cf6e09e5758560ab7d03ca20a522b7d94237a654b84194462a4548125b0"
+      "SHA256": "34da9ed29ba00503fbbeeef0e67762058882b2a63aa3686a9170e21bc0dcd6f1"
     },
     {
       "Name": "edge_volume_metric.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/edge_volume_metric.py",
-      "SHA256": "61ba70ad5299f16d678812b21da78d12754e33e590d00f04db43aef320b5f78c"
+      "SHA256": "42d78a78b284475671b808fcb7768917fa7eaf933012d43b2ac742f33a0af1cd"
     },
     {
       "Name": "mesh_array_io.py",
@@ -147,7 +147,7 @@
     {
       "Name": "general_mesh_audit_producer.py",
       "Path": "examples/cpw3d_surface/spatial_coupon/general_mesh_audit_producer.py",
-      "SHA256": "7980432df8da0cb9d7fbd04907760bd5ff4ee6d393e6f6a43823009536f37ad6"
+      "SHA256": "0c2e67c9b06dc6a96081ce02d0174aa114955a0aa93b71494a26e5e78a751116"
     },
     {
       "Name": "mesh_stage_contract.py",
