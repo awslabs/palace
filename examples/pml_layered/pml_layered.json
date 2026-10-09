@@ -4,7 +4,9 @@
   // is computed for the smallest refractive index among the PML materials (vacuum), so that
   // the stretch is the same in both PML materials and the quasi-TEM mode is absorbed without
   // reflection at the interface inside the layer.
-  // Static stretch at the reference frequency of 5 GHz.
+  // Static stretch with the default PML parameters: the stretch is evaluated at the lowest
+  // frequency of the sweep (2 GHz), where the absorption, which grows with frequency, is the
+  // weakest.
   "Problem": {
     "Type": "Driven",
     "Verbose": 2,
@@ -39,9 +41,7 @@
         ],
         "Permeability": 1.0,
         "Permittivity": 9.8,
-        "PML": {
-          "ReferenceFrequency": 5.0
-        }
+        "PML": {}
       },
       {
         "Attributes": [
@@ -49,9 +49,7 @@
         ],
         "Permeability": 1.0,
         "Permittivity": 1.0,
-        "PML": {
-          "ReferenceFrequency": 5.0
-        }
+        "PML": {}
       }
     ]
   },
