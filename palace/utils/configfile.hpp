@@ -241,9 +241,6 @@ public:
 struct PMLData
 {
 public:
-  // Coordinate system for the stretch. Only Cartesian is supported.
-  PMLCoordinateType coordinate_type = PMLCoordinateType::CARTESIAN;
-
   // Active absorption directions: per-face signs. Each entry is +1 (absorb on the positive
   // side of the physical domain), −1 (negative side), or 0 (no absorption in that
   // direction). Layout: [x_neg, x_pos, y_neg, y_pos, z_neg, z_pos].
@@ -272,7 +269,8 @@ public:
   std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
 
   // Peak complex frequency shift α_max per axis for CFS-PML, as a frequency in GHz
-  // (nondimensionalized to the angular frequency 2π α_max at load time).
+  // (nondimensionalized to the angular frequency 2π α_max at load time). Only for
+  // frequency-dependent profiles.
   std::array<double, 3> alpha_max{{0.0, 0.0, 0.0}};
 
   // Target normal-incidence reflection coefficient for the computed σ_max.
@@ -285,8 +283,9 @@ public:
   bool frequency_dependent = false;
 
   // Reference frequency f₀ in GHz for static profiles (nondimensionalized to the angular
-  // frequency ω₀ = 2π f₀ at load time). Negative means use the solver default (center of
-  // the driven frequency range or the eigenmode target). Ignored when frequency_dependent.
+  // frequency ω₀ = 2π f₀ at load time). Negative means use the solver default (the lowest
+  // driven frequency or the eigenmode target, so that the absorption, which grows with
+  // frequency, meets the target at all frequencies). Ignored when frequency_dependent.
   double reference_frequency = -1.0;
 
   // If false, adaptive mesh refinement is disabled inside this PML region (the error
@@ -1187,8 +1186,9 @@ public:
 
   // For problems with PML regions, solver for the subdomain correction on the true DOFs of
   // the PML elements, applied at the finest level of the geometric multigrid
-  // preconditioner.
-  PMLSubdomainSolver pml_subdomain_solver = PMLSubdomainSolver::NONE;
+  // preconditioner. The default is resolved in IoData (direct for frequency domain
+  // problems with PML regions and multigrid enabled).
+  PMLSubdomainSolver pml_subdomain_solver = PMLSubdomainSolver::DEFAULT;
 
   // Reuse the sparsity pattern (reordering) for repeated factorizations.
   bool reorder_reuse = true;

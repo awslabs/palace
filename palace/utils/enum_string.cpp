@@ -112,7 +112,8 @@ PALACE_ENUM_STRING_DEFINE(MultigridCoarsening,
                           {{MultigridCoarsening::LINEAR, "Linear"},
                            {MultigridCoarsening::LOGARITHMIC, "Logarithmic"}})
 
-PALACE_ENUM_STRING_DEFINE(PMLSubdomainSolver, {{PMLSubdomainSolver::NONE, "None"},
+PALACE_ENUM_STRING_DEFINE(PMLSubdomainSolver, {{PMLSubdomainSolver::DEFAULT, "Default"},
+                                               {PMLSubdomainSolver::NONE, "None"},
                                                {PMLSubdomainSolver::DIRECT, "Direct"}})
 
 PALACE_ENUM_STRING_DEFINE(PreconditionerSide, {{PreconditionerSide::DEFAULT, "Default"},
@@ -154,8 +155,6 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
 
 PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
-
-PALACE_ENUM_STRING_DEFINE(PMLCoordinateType, {{PMLCoordinateType::CARTESIAN, "Cartesian"}})
 
 #undef PALACE_ENUM_STRING_DEFINE
 

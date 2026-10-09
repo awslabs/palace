@@ -61,7 +61,6 @@ PALACE_JSON_SERIALIZE_ENUM(Orthogonalization)
 PALACE_JSON_SERIALIZE_ENUM(DomainOrthogonalizationWeight)
 PALACE_JSON_SERIALIZE_ENUM(Device)
 PALACE_JSON_SERIALIZE_ENUM(InactivePortMode)
-PALACE_JSON_SERIALIZE_ENUM(PMLCoordinateType)
 }  // namespace palace
 
 namespace palace::config
@@ -358,10 +357,6 @@ void ParseScalarOrArray3(const json &pml, const std::string &key,
 
 PMLData::PMLData(const json &pml)
 {
-  coordinate_type = pml.value("CoordinateType", coordinate_type);
-  MFEM_VERIFY(coordinate_type == PMLCoordinateType::CARTESIAN,
-              "Only \"Cartesian\" PML CoordinateType is supported in this version!");
-
   const bool has_direction = pml.find("Direction") != pml.end();
   const bool has_thickness = pml.find("Thickness") != pml.end();
   autodetect_geometry = !has_direction && !has_thickness;
@@ -413,6 +408,14 @@ PMLData::PMLData(const json &pml)
 
   frequency_dependent = pml.value("FrequencyDependent", frequency_dependent);
   reference_frequency = pml.value("ReferenceFrequency", reference_frequency);
+
+  // For a static stretch, the complex frequency shift only changes the constant stretch
+  // factor κ + σ / (α + iω₀), which is the same as the one of different κ and σ.
+  MFEM_VERIFY(frequency_dependent ||
+                  std::ranges::all_of(alpha_max, [](double a) { return a == 0.0; }),
+              "\"PML.AlphaMax\" requires \"PML.FrequencyDependent\": for a static PML, the "
+              "complex frequency shift is equivalent to a different \"KappaMax\" and "
+              "\"SigmaMax\"!");
 
   if (frequency_dependent && pml.find("ReferenceFrequency") != pml.end())
   {

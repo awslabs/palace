@@ -40,12 +40,11 @@
   {
     "Order": 2, "Device": "CPU",
     "Driven": { "MinFreq": 3.0, "MaxFreq": 3.0, "FreqStep": 0.5, "SaveStep": 1 },
-    // Geometric multigrid preconditioning with a sparse direct solve on the PML subdomain
-    // (the multigrid smoothers alone do not converge on the PML equations).
+    // Geometric multigrid preconditioning, with (by default) a sparse direct solve on the
+    // PML subdomain (the multigrid smoothers alone do not converge on the PML equations).
     "Linear":
     {
-      "Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 100,
-      "PMLSubdomainSolver": "Direct"
+      "Type": "Default", "KSPType": "GMRES", "Tol": 1.0e-8, "MaxIts": 100
     }
   }
 }

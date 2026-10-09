@@ -3,7 +3,8 @@
   // outer face (attribute 5). The PML absorbs the TE10 mode; |S11| should be
   // orders of magnitude smaller than the 2nd-order ABC baseline.
   //
-  // Reference frequency = 3 GHz (matches MinFreq/MaxFreq).
+  // Complex frequency shifted (CFS) PML, with a real stretch and a frequency shift (which
+  // requires the frequency-dependent stretch).
   "Problem":
   {
     "Type": "Driven",
@@ -24,7 +25,7 @@
           "Thickness": 0.1,
           "Order": 3,
           "KappaMax": 2.0, "AlphaMax": 0.1,
-          "ReferenceFrequency": 3.0
+          "FrequencyDependent": true
         }
       }
     ]

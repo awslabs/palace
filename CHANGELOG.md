@@ -33,17 +33,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 734](https://github.com/awslabs/palace/pull/734).
   - Added perfectly matched layer (PML) absorbing regions for frequency domain driven and
     eigenmode simulations, configured with the `"PML"` object of
-    `config["Domains"]["Materials"]`. The uniaxial PML supports anisotropic and lossy
-    background materials, graded conductivity, real stretch, and complex frequency shift
-    (CFS-PML) profiles, and automatic detection of the layer geometry. The stretch can be
-    evaluated at a fixed reference frequency (static PML, the default, which keeps the system
-    matrices frequency-independent) or at the solve frequency (`"FrequencyDependent"`),
-    which for eigenmode simulations is the complex eigenfrequency of the nonlinear
-    eigenvalue problem. Adaptive frequency sweeps and circuit synthesis support both
-    formulations: frequency-dependent PML terms are fit with matrix-valued rational functions
-    with poles on the imaginary axis, realized with decaying auxiliary states in the
-    synthesized circuit. For iterative solvers, the geometric multigrid preconditioner can
-    be complemented with a sparse direct solve on the PML subdomain
+    `config["Domains"]["Materials"]`; an empty object `{}` uses suitable defaults. The
+    uniaxial PML supports anisotropic and lossy background materials, graded conductivity,
+    real stretch, and complex frequency shift (CFS-PML) profiles, and automatic detection of
+    the layer geometry. The stretch can be evaluated at a fixed reference frequency (static
+    PML, the default, at the lowest frequency of interest, which keeps the system matrices
+    frequency-independent) or at the solve frequency (`"FrequencyDependent"`), which for
+    eigenmode simulations is the complex eigenfrequency of the nonlinear eigenvalue
+    problem. Adaptive frequency sweeps and circuit synthesis support both formulations:
+    frequency-dependent PML terms are fit with matrix-valued rational functions with poles
+    on the imaginary axis, realized with decaying auxiliary states in the synthesized
+    circuit. For iterative solvers, the geometric multigrid preconditioner is by default
+    complemented with a sparse direct solve on the PML subdomain
     (`config["Solver"]["Linear"]["PMLSubdomainSolver"]`), since its polynomial smoothers do
     not converge on the PML equations of strongly absorbing layers.
     SchemaVer 2-3-0 [PR XXX](https://github.com/awslabs/palace/pull/XXX).

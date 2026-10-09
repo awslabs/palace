@@ -1416,8 +1416,8 @@ TEST_CASE("pml_waveguide_fd_synth", "[Serial][Parallel][Regression]")
 // Layered parallel-plate waveguide (substrate and vacuum) whose material interface crosses
 // the +z PML: the stretch must be the same in both PML materials (σ_max from the smallest
 // refractive index on the face), otherwise the quasi-TEM mode reflects at -23 dB from the
-// interface inside the layer, versus below -65 dB (static) / -85 dB (frequency-dependent
-// and CFS) over 2-8 GHz here.
+// interface inside the layer, versus below -85 dB over 2-8 GHz here (static with the
+// default parameters, frequency-dependent, and CFS).
 TEST_CASE("pml_layered", "[Serial][Parallel][Regression]")
 {
   RunPMLDrivenCase("pml_layered", "pml_layered", "port-S.csv", -60.0);
