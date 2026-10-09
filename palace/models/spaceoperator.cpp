@@ -42,7 +42,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
     pc_mat_amg(solver.linear.type == LinearSolver::AMS ||
                solver.linear.type == LinearSolver::BOOMER_AMG),
-    pml_subdomain(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE),
+    pml_subdomain(solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DIRECT),
     print_hdr(true), print_prec_hdr(true),
     dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(

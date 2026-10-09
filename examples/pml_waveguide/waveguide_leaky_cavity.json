@@ -4,8 +4,8 @@
   // TE_10p modes of the closed 0.1 m × 0.05 m × 0.4 m box at f = 1.545, 1.676, 1.874, ...
   // GHz). The eigenvalues are complex, with Q ~ 25 for the first mode.
   // Static stretch at 1.7 GHz: the eigenvalue problem is linear. The shift-and-invert linear
-  // systems are solved with geometric multigrid preconditioning and a sparse direct solve on
-  // the PML subdomain.
+  // systems are solved with geometric multigrid preconditioning, with (by default) a sparse
+  // direct solve on the PML subdomain.
   "Problem": {
     "Type": "Eigenmode",
     "Verbose": 2,
@@ -66,8 +66,7 @@
       "Type": "Default",
       "KSPType": "GMRES",
       "Tol": 1e-10,
-      "MaxIts": 100,
-      "PMLSubdomainSolver": "Direct"
+      "MaxIts": 100
     }
   }
 }

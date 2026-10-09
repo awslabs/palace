@@ -149,6 +149,7 @@ enum class MultigridCoarsening : char
 // Solver for the PML subdomain correction of the multigrid preconditioner.
 enum class PMLSubdomainSolver : char
 {
+  DEFAULT,
   NONE,
   DIRECT
 };
@@ -226,13 +227,6 @@ enum class InactivePortMode : char
   OPEN,
   SHORT,
   DEFAULT = OPEN
-};
-
-// Coordinate system for PML stretching. v1 supports Cartesian only; the enum is reserved
-// for future cylindrical / spherical variants.
-enum class PMLCoordinateType : char
-{
-  CARTESIAN
 };
 
 }  // namespace palace
