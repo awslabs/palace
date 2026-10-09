@@ -2846,8 +2846,8 @@ def validate_envelope_sliver_reconnections(census, optimization):
     """Round 4 F-3 (supervisor decisions 605 / 606): a census of the round-4 mesher carries the
     confined-sliver reconnection row at BOTH gate sites - SeedQualityOptimization.
     EnvelopeSliverReconnections (Site required-region) and the census EnvelopeSliverReconnections
-    (Site global) - each with Cells = UnconfinedBelowGate + Flips + Removals + Unrepaired and
-    Unrepaired 0 (an unrepaired cell fails the mesher's gate; a census recording one was not
+    (Site global) - each with Cells = UnconfinedBelowGate + Flips + Removals + Consumed + Unrepaired
+    (Consumed = the candidates an earlier reconnection of the pass replaced) and Unrepaired 0 (an unrepaired cell fails the mesher's gate; a census recording one was not
     written by it).  A census of an earlier mesher carries neither row and validates as before;
     one row without the other fails closed.  Returns the two rows or None."""
     seed_row = optimization.get("EnvelopeSliverReconnections") if isinstance(optimization, dict) else None
@@ -2858,8 +2858,9 @@ def validate_envelope_sliver_reconnections(census, optimization):
         if not isinstance(row, dict) or row.get("Site") != site:
             raise ValueError(f"Build census lacks the {site} EnvelopeSliverReconnections row (both gate sites record it)")
         counts = {name: _count(row.get(name), f"{site} sliver reconnections {name}")
-                  for name in ("Cells", "UnconfinedBelowGate", "Flips", "Removals", "Unrepaired")}
-        if counts["Cells"] != counts["UnconfinedBelowGate"] + counts["Flips"] + counts["Removals"] + counts["Unrepaired"]:
+                  for name in ("Cells", "UnconfinedBelowGate", "Flips", "Removals", "Consumed", "Unrepaired")}
+        if counts["Cells"] != (counts["UnconfinedBelowGate"] + counts["Flips"] + counts["Removals"] + counts["Consumed"]
+                               + counts["Unrepaired"]):
             raise ValueError(f"Build census {site} EnvelopeSliverReconnections counts do not add up")
         if counts["Unrepaired"] != 0:
             raise ValueError(f"Build census records {counts['Unrepaired']} unrepaired confined slivers at the {site} site")

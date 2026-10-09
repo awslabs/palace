@@ -2688,7 +2688,7 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         counts adding up, every reconnection listed, both rows or neither)."""
         def row(site, **override):
             base = {"Site": site, "Rule": "r", "MinimumScaledJacobian": 0.01, "MaximumJacobianCondition": 1000.0,
-                    "Cells": 3, "UnconfinedBelowGate": 0, "Flips": 2, "Removals": 1, "Unrepaired": 0,
+                    "Cells": 4, "UnconfinedBelowGate": 0, "Flips": 2, "Removals": 1, "Consumed": 1, "Unrepaired": 0,
                     "Reconnections": [{"Kind": "2-3"}, {"Kind": "2-3"}, {"Kind": "edge-removal"}]}
             base.update(override)
             return base
@@ -2706,13 +2706,14 @@ class GeneralMeshManifestTest(FixtureMatrixMixin, unittest.TestCase):
         rejected(row("global"), None, "lacks the required-region")
         rejected(None, row("required-region"), "lacks the global")
         rejected(row("required-region"), row("required-region"), "lacks the global")
-        rejected(row("global"), row("required-region", Unrepaired=1, Cells=4), "1 unrepaired confined slivers at the required-region")
+        rejected(row("global"), row("required-region", Unrepaired=1, Cells=5), "1 unrepaired confined slivers at the required-region")
         rejected(row("global", Cells=5), row("required-region"), "global EnvelopeSliverReconnections counts do not add up")
+        rejected(row("global", Consumed=None), row("required-region"), "global sliver reconnections Consumed")
         rejected(row("global", Reconnections=[]), row("required-region"), "do not list every reconnection")
         rejected(row("global", Flips=-1, Cells=0), row("required-region"), "global sliver reconnections Flips")
         rejected(row("global", Flips=None), row("required-region"), "global sliver reconnections Flips")
         # The zero row of a build with no below-gate cell (every stored V3 build after the merge).
-        zero = {"Cells": 0, "UnconfinedBelowGate": 0, "Flips": 0, "Removals": 0, "Unrepaired": 0, "Reconnections": []}
+        zero = {"Cells": 0, "UnconfinedBelowGate": 0, "Flips": 0, "Removals": 0, "Consumed": 0, "Unrepaired": 0, "Reconnections": []}
         self.assertIsNotNone(validate_envelope_sliver_reconnections({"EnvelopeSliverReconnections": row("global", **zero)},
                                                                     {"EnvelopeSliverReconnections": row("required-region", **zero)}))
 

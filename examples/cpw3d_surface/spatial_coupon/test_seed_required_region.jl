@@ -1275,7 +1275,7 @@ end
     row = record["EnvelopeSliverReconnections"]
     @test row["Site"] == "required-region"
     @test row["Cells"] == 1 && row["UnconfinedBelowGate"] == 0
-    @test row["Flips"] == 1 && row["Removals"] == 0 && row["Unrepaired"] == 0
+    @test row["Flips"] == 1 && row["Removals"] == 0 && row["Consumed"] == 0 && row["Unrepaired"] == 0
     @test row["MinimumScaledJacobian"] == 0.01 && row["MaximumJacobianCondition"] == 1000.0
     @test row["Rule"] == ENVELOPE_SLIVER_RECONNECTION_RULE
     @test length(row["Reconnections"]) == 1
@@ -1345,7 +1345,7 @@ end
         1e-9
     )
     row0 = record0["EnvelopeSliverReconnections"]
-    @test row0["Cells"] == 0 && row0["Flips"] == 0 && row0["Removals"] == 0 && row0["Unrepaired"] == 0
+    @test row0["Cells"] == 0 && row0["Flips"] == 0 && row0["Removals"] == 0 && row0["Consumed"] == 0 && row0["Unrepaired"] == 0
     @test row0["UnconfinedBelowGate"] == 0 && isempty(row0["Reconnections"])
     @test tetrahedra0 == cells0
 end
@@ -1370,7 +1370,7 @@ end
         record = reconnect_confined_slivers!(0.01, 1000.0; fixed_node_tags=UInt[p4])
         @test record["Site"] == "global"
         @test record["Cells"] == 1 && record["UnconfinedBelowGate"] == 0
-        @test record["Flips"] == 1 && record["Removals"] == 0 && record["Unrepaired"] == 0
+        @test record["Flips"] == 1 && record["Removals"] == 0 && record["Consumed"] == 0 && record["Unrepaired"] == 0
         @test record["Reconnections"][1]["Kind"] == "2-3"
         after = mixed_volume_quality()
         @test after["Tetrahedron"]["Count"] == length(tetrahedra) + 1

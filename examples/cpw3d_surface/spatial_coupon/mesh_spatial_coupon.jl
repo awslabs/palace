@@ -1854,7 +1854,9 @@ function describe_sliver_reconnection_failure(points, tetrahedra, incident, surf
 end
 
 # The census row of one sliver-reconnection site.
-function sliver_reconnection_record(site, candidates, unconfined, reconnections, unrepaired,
+# `consumed` = the confined candidates an EARLIER reconnection of the pass replaced (their slot
+# holds a new cell): Cells = UnconfinedBelowGate + Flips + Removals + Consumed + Unrepaired.
+function sliver_reconnection_record(site, candidates, unconfined, reconnections, consumed, unrepaired,
                                     scaled_gate, condition_gate)
     return Dict{String, Any}(
         "Site" => site, "Rule" => ENVELOPE_SLIVER_RECONNECTION_RULE,
@@ -1862,6 +1864,7 @@ function sliver_reconnection_record(site, candidates, unconfined, reconnections,
         "Cells" => length(candidates), "UnconfinedBelowGate" => length(unconfined),
         "Flips" => count(row -> row["Kind"] == "2-3", reconnections),
         "Removals" => count(row -> row["Kind"] == "edge-removal", reconnections),
+        "Consumed" => consumed,
         "Unrepaired" => length(unrepaired),
         "Reconnections" => reconnections)
 end
@@ -2636,11 +2639,15 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     sliver_unconfined = setdiff(sliver_candidates, sliver_confined)
     sliver_reconnections = Dict{String, Any}[]
     sliver_unrepaired = Int[]
+    sliver_consumed = 0
     sliver_cells = [tetrahedra[k] for k in sliver_confined]
     for (slot, k) in enumerate(sliver_confined)
-        # A slot an earlier reconnection of this pass reused holds a new cell: judged by the gates
-        # on the final set, never reconnected again here.
-        (k in dead || tetrahedra[k] != sliver_cells[slot]) && continue
+        # A candidate an earlier reconnection of this pass replaced (its slot holds a new cell, or
+        # died): consumed; the new cells are judged by the gates on the final set.
+        if k in dead || tetrahedra[k] != sliver_cells[slot]
+            sliver_consumed += 1
+            continue
+        end
         reconnection = origin[k] in remapped_by_collapse ? nothing :
             best_sliver_reconnection(points, tetrahedra, incident, surface_faces, surface_edges,
                                      p -> entity_of[p], k, max(floors[k], minimum_scaled_jacobian),
@@ -2670,7 +2677,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
         recomputations += 1
     end
     sliver_record = sliver_reconnection_record("required-region", sliver_candidates, sliver_unconfined,
-                                               sliver_reconnections, sliver_unrepaired,
+                                               sliver_reconnections, sliver_consumed, sliver_unrepaired,
                                                minimum_scaled_jacobian, maximum_jacobian_condition)
     required_after = minimum(scaled_of(k) for k in gated_cells; init=Inf)
     below_after = count(k -> scaled_of(k) < scaled_target, gated_cells)
@@ -2823,7 +2830,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
     println("Seed confined-sliver reconnection (required region): $(sliver_record["Cells"]) below-gate cells, " *
             "$(sliver_record["UnconfinedBelowGate"]) with a free vertex (not touched), " *
             "$(sliver_record["Flips"]) 2-3 flips, $(sliver_record["Removals"]) edge removals, " *
-            "$(sliver_record["Unrepaired"]) unrepaired")
+            "$(sliver_record["Consumed"]) consumed by an earlier reconnection, $(sliver_record["Unrepaired"]) unrepaired")
     for row in sliver_reconnections
         println("  reconnected confined sliver ($(row["Kind"])) at $(row["Centroid"]) (corner distance " *
                 "$(row["CornerDistance"])): scaled Jacobian $(row["ScaledJacobian"]), condition " *
@@ -3111,7 +3118,7 @@ function reconnect_confined_slivers!(minimum_scaled_jacobian, maximum_jacobian_c
     candidates = [k for k in eachindex(tetrahedra)
                   if abs(scaled_of(k)) < minimum_scaled_jacobian || condition_of(k) > maximum_jacobian_condition]
     if isempty(candidates)
-        return sliver_reconnection_record("global", candidates, Int[], Dict{String, Any}[], Int[],
+        return sliver_reconnection_record("global", candidates, Int[], Dict{String, Any}[], 0, Int[],
                                           minimum_scaled_jacobian, maximum_jacobian_condition)
     end
     triangles, _, _ = gmsh_entity_cells(index, 2, Val(3))
@@ -3136,9 +3143,13 @@ function reconnect_confined_slivers!(minimum_scaled_jacobian, maximum_jacobian_c
     dead = Set{Int}()
     reconnections = Dict{String, Any}[]
     unrepaired = Int[]
+    consumed = 0
     candidate_cells = [tetrahedra[k] for k in confined_candidates]
     for (slot, k) in enumerate(confined_candidates)
-        (k in dead || tetrahedra[k] != candidate_cells[slot]) && continue
+        if k in dead || tetrahedra[k] != candidate_cells[slot]
+            consumed += 1
+            continue
+        end
         reconnection = best_sliver_reconnection(points, tetrahedra, incident, surface_faces, surface_edges,
                                                 p -> entity_of[p], k, minimum_scaled_jacobian,
                                                 maximum_jacobian_condition, j -> false)
@@ -3181,11 +3192,12 @@ function reconnect_confined_slivers!(minimum_scaled_jacobian, maximum_jacobian_c
     end
     apply_seed_cell_reconnection!(node_tags, tags, entities, replaced_original,
                                   [(entity, cell) for (entity, cell) in values(added)])
-    record = sliver_reconnection_record("global", candidates, unconfined, reconnections, unrepaired,
+    record = sliver_reconnection_record("global", candidates, unconfined, reconnections, consumed, unrepaired,
                                         minimum_scaled_jacobian, maximum_jacobian_condition)
     println("Confined-sliver reconnection (global): $(record["Cells"]) below-gate tetrahedra, " *
             "$(record["UnconfinedBelowGate"]) with a free vertex (not touched), $(record["Flips"]) 2-3 flips, " *
-            "$(record["Removals"]) edge removals, $(record["Unrepaired"]) unrepaired")
+            "$(record["Removals"]) edge removals, $(record["Consumed"]) consumed by an earlier reconnection, " *
+            "$(record["Unrepaired"]) unrepaired")
     for row in reconnections
         println("  reconnected confined sliver ($(row["Kind"])) at $(row["Centroid"]): scaled Jacobian " *
                 "$(row["ScaledJacobian"]), condition $(row["JacobianCondition"]), kappa_reg $(row["Before"]) -> " *
