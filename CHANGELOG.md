@@ -54,6 +54,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
+    <<<<<<< HEAD
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
+    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
+    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
+    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
   - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
     metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
     the Spack package sets it from the resolved commit (`v<version>` for releases, from the
@@ -92,6 +100,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 953](https://github.com/awslabs/palace/pull/953).
   - Fixed a heap overflow in 2D surface flux postprocessing with an explicit `"Center"`.
     [PR 953](https://github.com/awslabs/palace/pull/953).
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
+    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
+    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
+    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
 
 #### Performance Improvements
 
