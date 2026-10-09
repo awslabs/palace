@@ -76,6 +76,17 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
     port_excitation_helper(lumped_port_op, wave_port_op, floquet_port_op, surf_j_op,
                            current_dipole_op)
 {
+  // The PML is only available in 3D. MaterialOperator treats PML regions as regular
+  // materials on 2D meshes (as is required for the wave port cross-section submeshes), and
+  // for other simulation types (with a warning).
+  MFEM_VERIFY(
+      (problem_type != ProblemType::DRIVEN && problem_type != ProblemType::EIGENMODE) ||
+          (mesh.back()->Dimension() == 3 && mesh.back()->SpaceDimension() == 3) ||
+          std::none_of(domains.materials.begin(), domains.materials.end(),
+                       [](const config::MaterialData &data)
+                       { return data.pml.has_value(); }),
+      "PML regions are only supported for 3D simulations!");
+
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
   // Must use INTEGRAL map type so the discrete interpolator recognizes this as the curl
   // target space.
