@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -498,6 +499,52 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   long long n_pml = static_cast<long long>(tdofs.size());
   Mpi::GlobalSum(1, &n_pml, comm);
   CHECK(n_pml == n_pml_expected);
+}
+
+TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  // Rectangle [0, 2] x [0, 1] with a PML layer x > 1.5 (attribute 2).
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian2D(8, 4, mfem::Element::QUADRILATERAL, true, 2.0, 1.0);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(0) > 1.5) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+
+  config::MaterialData vacuum, pml;
+  vacuum.attributes = {1};
+  pml.attributes = {2};
+  pml.pml = config::PMLData();
+  pml.pml->reference_frequency = 2.0;
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {vacuum, pml};
+  config::BoundaryData boundaries;
+  Units units(1.0, 1.0);
+  for (auto problem_type : {ProblemType::DRIVEN, ProblemType::EIGENMODE})
+  {
+    CHECK_THROWS_WITH(SpaceOperator(solver, domains, boundaries, problem_type, units, mesh),
+                      Catch::Matchers::ContainsSubstring(
+                          "PML regions are only supported for 3D simulations"));
+  }
+
+  // Other simulation types treat the PML regions as regular materials.
+  SpaceOperator transient_op(solver, domains, boundaries, ProblemType::TRANSIENT, units,
+                             mesh);
+  CHECK(!transient_op.GetMaterialOp().HasPML());
 }
 
 TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",

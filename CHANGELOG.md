@@ -63,8 +63,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     magnetostatic solution space is broken across the film, so the mesh is not cracked.
     Requires a 3D mesh and an interior film. SchemaVer 4-1-0.
     [PR 992](https://github.com/awslabs/palace/pull/992).
-  - Added perfectly matched layer (PML) absorbing regions for frequency domain driven and
-    eigenmode simulations, configured with the `"PML"` object of
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven
+    and eigenmode simulations, configured with the `"PML"` object of
     `config["Domains"]["Materials"]`; an empty object `{}` uses suitable defaults. The
     uniaxial PML supports anisotropic and lossy background materials, graded conductivity,
     real stretch, and complex frequency shift (CFS-PML) profiles, and automatic detection of

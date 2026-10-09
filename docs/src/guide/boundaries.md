@@ -76,7 +76,7 @@ an absorbing region surrounding the physical domain, which typically reflects mu
 than an absorbing boundary condition, at the cost of additional mesh elements. In *Palace*,
 a PML is specified as a material property with the `"PML"` object under
 [`config["Domains"]["Materials"]`](../config/reference.md#config-domains-materials), and is
-available for frequency domain driven and eigenmode simulations. The domains of this
+available for 3D frequency domain driven and eigenmode simulations. The domains of this
 material form the layer, while the material properties specified for it (relative
 permittivity and permeability, possibly anisotropic, and loss tangent) define the background
 medium matched by the layer. The waves are attenuated before they reach the outer boundary
