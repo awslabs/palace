@@ -5493,6 +5493,19 @@ TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
     input.close();
     CHECK(cache["Version"] == 18);
     CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
+    CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
+    CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
+    // A version-18 cache written before decision 632 (no ProbeSnapsComputed) is refused by
+    // name, never read as computed.
+    nlohmann::json uncomputed = cache;
+    uncomputed["Patches"][0].erase("ProbeSnapsComputed");
+    const auto uncomputed_path = dir / "geometry-v18-no-computed.json";
+    {
+      std::ofstream output(uncomputed_path);
+      output << uncomputed.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(uncomputed_path, data),
+                      ContainsSubstring("ProbeSnapsComputed"));
     // A version-17 cache (main before this lane: no ProbeSnaps on the patches) is refused
     // by the version message (decision 527), never misread for its missing records.
     nlohmann::json seventeen = cache;

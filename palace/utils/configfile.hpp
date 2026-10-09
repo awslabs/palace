@@ -1186,6 +1186,13 @@ public:
         double distance = 0.0;  // |displacement|
       };
       std::vector<ProbeSnap> probe_snaps;
+      // Whether the snaps above were computed: true when the model's trace data (its
+      // TraceMesh files, BasisPoints file or constructed basis) was readable at the
+      // placement; false for a placed spatial model without it - a discovery PLACEHOLDER
+      // (its BasisPoints name a file that does not exist; the geometry-only preflight
+      // places it and never solves it). A solve refuses a spatial patch with false: the
+      // gate never runs on un-snapped probes silently. True for every other patch.
+      bool probe_snaps_computed = true;
     };
     Provenance provenance;
   };

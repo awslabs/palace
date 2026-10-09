@@ -2440,7 +2440,13 @@ cache version 18; a version-17 cache is refused), the gate record carries `Probe
 {Count, MaxDisplacement, Knots[{Knot, Segment, Arc, Displacement}]}` per patch and
 excitation (mesh-file units), a snap naming a knot that is not a conductor vertex (a stale
 cache) fails closed on every rank alike, and the tolerance, the floor and the Python bar
-(1e-4) are UNCHANGED. FAIL CLOSED: a conductor of the trace mesh without a
+(1e-4) are UNCHANGED. A placed spatial model whose trace data is NOT readable at the
+placement — a discovery PLACEHOLDER (`discover_surface_response_requirements.placeholder_model`:
+its `BasisPoints` name a file that is never written; the geometry-only preflight places it
+and never solves it) — is placed with `ProbeSnapsComputed: false` (no snaps; the preflight
+and the discovery closure proceed, a log line names the models) and a SOLVE refuses such a
+patch on every rank alike (decision 632): the gate never runs on un-snapped probes silently.
+FAIL CLOSED: a conductor of the trace mesh without a
 vertex on the process plane aborts at construction naming the model and conductor (its
 cross-section cannot be probed). RECORDED UNTESTABLE (`UnprobedModels` [{Model, ModelIndex,
 Reason}] in the record + a warning naming the model; decision 279, MINOR-2): a spatial

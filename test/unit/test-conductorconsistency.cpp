@@ -9,8 +9,10 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -649,6 +651,34 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
   }
 
+  SECTION("a patch placed without its probe snaps (ProbeSnapsComputed false) is refused "
+          "at solve on every rank alike (decision 632)")
+  {
+    // The placement records ProbeSnapsComputed = false when the model's trace data was not
+    // readable (a discovery placeholder: the geometry-only preflight places it and never
+    // solves it, test "placement without readable trace data" below); a SOLVE on such a
+    // cache fails closed by the model's name, collectively (the 617 form), never reading
+    // the gate on un-snapped probes.
+    const auto files = WriteCoupon(temp.temp_dir, CouponVariant::CHORD_OFFSET_SNAPPED);
+    auto data = ReadResponseGeometryCache(files.cache,
+                                          *iodata.solver.electrostatic.response_correction);
+    REQUIRE(data.patches.size() == 1);
+    REQUIRE(data.patches[0].provenance.probe_snaps_computed);
+    data.patches[0].provenance.probe_snaps.clear();
+    data.patches[0].provenance.probe_snaps_computed = false;
+    const auto uncomputed = temp.temp_dir / "conductor-consistency-chord-uncomputed.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      WriteResponseGeometryCache(uncomputed, data);
+    }
+    Mpi::Barrier(Mpi::World());
+    test::GeometryCacheEnvGuard cache_env(uncomputed.string(), false);
+    CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
+                      ContainsSubstring("carries no conductor probe snaps") &&
+                          ContainsSubstring("gap-junction-chord-snapped") &&
+                          ContainsSubstring("decision 632"));
+  }
+
   SECTION("a spatial coupon without any conductor vertex is recorded untestable")
   {
     const auto files = WriteCoupon(temp.temp_dir, CouponVariant::NO_CONDUCTOR);
@@ -684,6 +714,107 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                           ContainsSubstring("gap-junction-off-plane") &&
                           ContainsSubstring("no vertex on the process plane"));
   }
+#endif
+}
+
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator conductor-consistency placement without readable "
+                 "trace data",
+                 "[surfaceresponseoperator][conductorconsistency][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // Decision 632: a discovery PLACEHOLDER - a Signature-keyed spatial model whose
+  // BasisPoints name a file that is never written (discover_surface_response_requirements
+  // .placeholder_model) - is placed by the geometry-only preflight exactly as a real model
+  // is; the probe snaps are simply not computed (ProbeSnapsComputed false), so the
+  // discovery closure proceeds, and a SOLVE refuses such a patch (the gate case above). The
+  // form of the high-order spatial round-trip case: the island's cluster feature keyed by
+  // its canonical Signature; the same model with the real basis-points file is the control
+  // - the two preflights write the SAME patches CSV (the placement reads no basis; the
+  // snaps are no CSV column).
+  json config = HighOrderSpatialConfig();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  Mesh island_mesh(MakeIslandMesh(false, false, false, true));
+  auto Preflight = [&](const fs::path &library, const std::string &tag)
+  {
+    auto preflight_config = config;
+    preflight_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        library.string();
+    IoData iodata(preflight_config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    const auto dir = temp.temp_dir / ("preflight-" + tag);
+    if (Mpi::Root(Mpi::World()))
+    {
+      fs::create_directories(dir);
+    }
+    Mpi::Barrier(Mpi::World());
+    WriteSurfaceResponseRequirements(iodata, island_mesh,
+                                     (dir / "surface-response-requirements.json").string());
+    Mpi::Barrier(Mpi::World());
+    std::ifstream manifest_input(dir / "surface-response-requirements.json");
+    REQUIRE(manifest_input);
+    std::ifstream csv(dir / "surface-response-patches.csv");
+    REQUIRE(csv);
+    return std::pair<json, std::string>(json::parse(manifest_input),
+                                        std::string((std::istreambuf_iterator<char>(csv)),
+                                                    std::istreambuf_iterator<char>()));
+  };
+  // 1. The identification: the island's cluster feature and its Signature (Missing against
+  //    the fixture library, whose cluster model is Edges-keyed for another geometry).
+  const auto [identified, identified_csv] =
+      Preflight(spatial_cluster_library_3d_path, "id");
+  const auto &features = identified["Identification"]["Features"];
+  const auto cluster =
+      std::find_if(features.begin(), features.end(), [](const auto &feature)
+                   { return feature["Type"] == "SpatialEdgeCluster"; });
+  REQUIRE(cluster != features.end());
+  REQUIRE((*cluster)["Match"]["Status"] == "Missing");
+  // 2. The Signature-keyed model: the placeholder (BasisPoints absent) and its control (the
+  //    fixture's real basis-points file).
+  const auto absent_basis = temp.temp_dir / "placeholder-absent-basis-points.csv";
+  REQUIRE_FALSE(fs::exists(absent_basis));
+  const auto placeholder_library = temp.temp_dir / "spatial-cluster-placeholder-3d.json";
+  const auto control_library = temp.temp_dir / "spatial-cluster-signature-control-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ifstream input(spatial_cluster_library_3d_path);
+    REQUIRE(input);
+    auto library = json::parse(input);
+    auto &model = library["Models"].back();
+    REQUIRE(model["Topology"] == "SpatialEdgeCluster");
+    model["Name"] = "v2-signature-placeholder";
+    model["Signature"] = (*cluster)["Signature"];
+    model.erase("Edges");  // keyed and built by the Signature alone, as a placeholder is
+    {
+      std::ofstream output(control_library);
+      output << library.dump(2) << "\n";
+    }
+    model["BasisPoints"] = absent_basis.string();
+    std::ofstream output(placeholder_library);
+    output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  auto Placed = [](const json &manifest)
+  {
+    return std::any_of(manifest["Requirements"].begin(), manifest["Requirements"].end(),
+                       [](const auto &requirement)
+                       {
+                         return requirement["Topology"] == "SpatialEdgeCluster" &&
+                                requirement["Status"] == "Exact";
+                       });
+  };
+  const auto [control, control_csv] = Preflight(control_library, "control");
+  REQUIRE(Placed(control));
+  REQUIRE(control_csv.find("v2-signature-placeholder") != std::string::npos);
+  // 3. The placeholder preflight neither throws nor changes a byte of the placement.
+  std::pair<json, std::string> placeholder;
+  REQUIRE_NOTHROW(placeholder = Preflight(placeholder_library, "placeholder"));
+  CHECK(Placed(placeholder.first));
+  CHECK(placeholder.second == control_csv);
 #endif
 }
 

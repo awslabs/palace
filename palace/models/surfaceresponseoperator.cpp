@@ -8918,6 +8918,10 @@ struct FeaturePatchSummary
   // (mesh units).
   std::size_t probe_snaps = 0;
   double max_probe_snap = 0.0;
+  // Spatial cluster patches placed WITHOUT the probe snaps (the model's trace data not
+  // readable: a discovery placeholder; a solve refuses them, decision 632).
+  std::size_t probe_snaps_not_computed = 0;
+  std::set<std::string> probe_snaps_not_computed_models;
 };
 
 }  // namespace
@@ -9965,6 +9969,8 @@ std::vector<std::array<double, 3>> ModelBasisPoints(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config);
 bool HasExplicitTraceMesh(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config);
+bool ModelTraceDataReadable(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config);
 TraceMeshData ModelTraceMesh(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config);
 
@@ -10938,7 +10944,19 @@ FeaturePatchSummary BuildFeaturePatches(
       // read the gap potential, 1.05e-4 at p5). Straight edges leave every probe where it
       // is; the snaps travel with the patch (the geometry cache) and are recorded by the
       // gate (ProbeSnaps). The trace mesh is in library units (coordinate_scale to mesh
-      // units); its vertex order is the gate's knot index.
+      // units); its vertex order is the gate's knot index. A model whose trace data is not
+      // readable here - a discovery PLACEHOLDER, whose BasisPoints name a file that does
+      // not exist (the geometry-only preflight places it and never solves it; the dry-run
+      // ownership record below reads the same predicate) - is placed with
+      // probe_snaps_computed = false, which a solve refuses (decision 632): the snaps are
+      // never skipped silently on a solved patch.
+      if (!ModelTraceDataReadable(model.response))
+      {
+        patch.provenance.probe_snaps_computed = false;
+        summary.probe_snaps_not_computed++;
+        summary.probe_snaps_not_computed_models.insert(model.name);
+      }
+      else
       {
         auto trace_it = trace_meshes.find(model_index);
         if (trace_it == trace_meshes.end())
@@ -12261,6 +12279,18 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
           " Conductor probes (decision 611): {:d} knot(s) of the spatial cluster "
           "patches snapped onto the device arc chords, largest displacement {:.6e}\n",
           static_cast<int>(summary.probe_snaps), summary.max_probe_snap * coordinate_scale);
+    }
+    if (summary.probe_snaps_not_computed > 0)
+    {
+      std::string names;
+      for (const auto &name : summary.probe_snaps_not_computed_models)
+      {
+        names += (names.empty() ? "" : ", ") + name;
+      }
+      Mpi::Print(" Conductor probes (decision 632): {:d} spatial cluster patch(es) placed "
+                 "without probe snaps - the trace data of model(s) {} is not readable "
+                 "(a discovery placeholder); a solve refuses them\n",
+                 static_cast<int>(summary.probe_snaps_not_computed), names);
     }
     if (summary.first_order_missing_features > 0)
     {
@@ -15995,6 +16025,27 @@ bool HasExplicitTraceMesh(
          !model_config.constructed_trace_vertices.empty();
 }
 
+// Whether ModelTraceMesh / ModelBasisPoints can read the model's trace data: a constructed
+// basis or mesh, or TraceMesh / BasisPoints files that exist. False for a discovery
+// placeholder (its BasisPoints name a file that is never written; the dry-run ownership
+// record of WriteSurfaceResponseRequirements uses the same predicate for the basis).
+bool ModelTraceDataReadable(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &model_config)
+{
+  if (!model_config.constructed_trace_vertices.empty())
+  {
+    return true;
+  }
+  if (!model_config.trace_vertices.empty())
+  {
+    return std::filesystem::is_regular_file(model_config.trace_vertices) &&
+           !model_config.trace_triangles.empty() &&
+           std::filesystem::is_regular_file(model_config.trace_triangles);
+  }
+  return !model_config.constructed_basis_points.empty() ||
+         std::filesystem::is_regular_file(model_config.basis_points);
+}
+
 // A model's explicit trace mesh: the constructed mesh of an angle-interpolated corner
 // model, else the TraceMesh files.
 TraceMeshData ModelTraceMesh(
@@ -17030,7 +17081,8 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
                        {"MirrorFormedTopology", patch.provenance.mirror_formed_topology},
                        {"MirrorReach", patch.provenance.mirror_reach},
                        {"MirrorEdgeWeights", patch.provenance.mirror_edge_weights},
-                       {"ProbeSnaps", std::move(probe_snaps)}});
+                       {"ProbeSnaps", std::move(probe_snaps)},
+                       {"ProbeSnapsComputed", patch.provenance.probe_snaps_computed}});
   }
   if (path.has_parent_path())
   {
@@ -17218,8 +17270,9 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
              "(MirrorFormedTopology, "
              "MirrorReach, MirrorEdgeWeights; decision 557 (4)); version 18 adds the "
              "conductor-consistency probe snaps of every spatial patch (ProbeSnaps: the "
-             "conductor knots read on the device arc chords, decision 611 (2)); delete a "
-             "stale cache)!");
+             "conductor knots read on the device arc chords, decision 611 (2); "
+             "ProbeSnapsComputed: false for a placed model without readable trace data, "
+             "which a solve refuses, decision 632); delete a stale cache)!");
   ResponseCorrectionData result = request;
   result.library.clear();
   result.models.clear();
@@ -17427,6 +17480,12 @@ ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &pa
            snap.at("Arc").get<int>(), snap.at("Displacement").get<std::array<double, 3>>(),
            snap.at("Distance").get<double>()});
     }
+    MFEM_VERIFY(entry.contains("ProbeSnapsComputed"),
+                "Response-geometry cache version 18 patch of model "
+                    << patch.model
+                    << " carries no ProbeSnapsComputed (a cache written before decision "
+                       "632); delete the stale cache!");
+    patch.provenance.probe_snaps_computed = entry.at("ProbeSnapsComputed").get<bool>();
     if (const auto box = entry.find("SupportBox"); box != entry.end() && !box->is_null())
     {
       patch.provenance.support_box = box->get<std::array<double, 4>>();
@@ -21526,7 +21585,11 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
         "MaxDisplacement and the Knots (Knot = trace vertex, Segment / Arc of the "
         "identification, Displacement in mesh-file units) are recorded per patch; the "
         "snaps are computed at the placement and travel with the geometry cache "
-        "(version 18). Tolerance and AmplitudeFloor are unchanged";
+        "(version 18); a spatial patch placed WITHOUT them (the model's trace data not "
+        "readable at the placement - a discovery placeholder, which the geometry-only "
+        "preflight places and never solves; ProbeSnapsComputed false) is refused by a "
+        "solve on every rank alike (decision 632). Tolerance and AmplitudeFloor are "
+        "unchanged";
   }
   return diagnostics;
 }
@@ -23148,12 +23211,15 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // to the coupon's own reach for a mirror-formed configuration's coupon (decision 557
   // (4)).
   std::vector<double> point_band(static_cast<std::size_t>(point_count), 0.0);
-  // Probe snaps recorded on knots that are not conductor vertices (rank-local; judged
-  // collectively after the loop): the FIRST such patch of this rank {model idx, recorded,
-  // applied} and the count of such patches on this rank (so the reported record is one
-  // patch's, never a mix of fields across patches or ranks).
-  std::array<int, 3> probe_snap_mismatch = {-1, 0, 0};
-  int probe_snap_mismatch_patches = 0;
+  // Probe-snap faults of the placed spatial patches (rank-local; judged collectively after
+  // the loop): the FIRST faulty patch of this rank {kind, model idx, recorded, applied} -
+  // kind 1 = snaps recorded on knots that are not conductor vertices (a stale cache or a
+  // mismatched library), kind 2 = the snaps were NOT computed at the placement (the model's
+  // trace data was not readable there: a discovery placeholder; decision 632) - and the
+  // count of faulty patches on this rank (so the reported record is one patch's, never a
+  // mix of fields across patches or ranks).
+  std::array<int, 4> probe_snap_fault = {0, -1, 0, 0};
+  int probe_snap_fault_patches = 0;
   int point = 0;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -23266,6 +23332,17 @@ SurfaceResponseOperator::SurfaceResponseOperator(
         probes.clear();
         snaps.clear();
         patches[patch_idx].max_probe_snap = 0.0;
+        if (!patch_config.provenance.probe_snaps_computed)
+        {
+          // The placement computed no snaps for this patch (its model's trace data was not
+          // readable: a placeholder, or a library whose files are gone): the gate must not
+          // run on un-snapped probes - judged COLLECTIVELY after the loop (decision 632).
+          if (probe_snap_fault_patches == 0)
+          {
+            probe_snap_fault = {2, model.idx, 0, 0};
+          }
+          probe_snap_fault_patches++;
+        }
         std::map<int, const ResponsePatchData::Provenance::ProbeSnap *> snap_by_vertex;
         for (const auto &snap : patch_config.provenance.probe_snaps)
         {
@@ -23310,13 +23387,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           // A snap naming a knot that is not a conductor vertex of the trace mesh: judged
           // COLLECTIVELY after the loop (the patches are distributed, so a rank-local
           // failure would leave the other ranks in the following collectives).
-          if (probe_snap_mismatch_patches == 0)
+          if (probe_snap_fault_patches == 0)
           {
-            probe_snap_mismatch = {
-                model.idx, static_cast<int>(patch_config.provenance.probe_snaps.size()),
+            probe_snap_fault = {
+                1, model.idx, static_cast<int>(patch_config.provenance.probe_snaps.size()),
                 static_cast<int>(snaps.size())};
           }
-          probe_snap_mismatch_patches++;
+          probe_snap_fault_patches++;
         }
       }
       else
@@ -23416,36 +23493,49 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 "Incorrect surface-response patch point count!");
   }
   // The probe-snap consistency of every placed spatial patch, failing closed on every rank
-  // alike (decision 611 (2); a stale geometry cache or a mismatched library): the patch
-  // count summed over the ranks, the reported record = the first mismatching patch of the
-  // lowest rank that has one (broadcast, so every rank names the same patch).
+  // alike (decisions 611 (2) / 632; a stale geometry cache, a mismatched library or a
+  // placement without the snaps): the faulty patch count summed over the ranks, the
+  // reported record = the first faulty patch of the lowest rank that has one (broadcast, so
+  // every rank names the same patch and the same kind).
   {
     const MPI_Comm comm = fespace.GetComm();
-    int probe_snap_mismatch_rank =
-        probe_snap_mismatch_patches > 0 ? Mpi::Rank(comm) : Mpi::Size(comm);
-    Mpi::GlobalMin(1, &probe_snap_mismatch_rank, comm);
-    Mpi::GlobalSum(1, &probe_snap_mismatch_patches, comm);
-    if (probe_snap_mismatch_patches > 0)
+    int probe_snap_fault_rank =
+        probe_snap_fault_patches > 0 ? Mpi::Rank(comm) : Mpi::Size(comm);
+    Mpi::GlobalMin(1, &probe_snap_fault_rank, comm);
+    Mpi::GlobalSum(1, &probe_snap_fault_patches, comm);
+    if (probe_snap_fault_patches > 0)
     {
-      Mpi::Broadcast(static_cast<int>(probe_snap_mismatch.size()),
-                     probe_snap_mismatch.data(), probe_snap_mismatch_rank, comm);
+      Mpi::Broadcast(static_cast<int>(probe_snap_fault.size()), probe_snap_fault.data(),
+                     probe_snap_fault_rank, comm);
     }
   }
-  if (probe_snap_mismatch_patches > 0)
+  if (probe_snap_fault_patches > 0)
   {
     std::string model_name = "?";
     for (const auto &model : models)
     {
-      if (model.idx == probe_snap_mismatch[0])
+      if (model.idx == probe_snap_fault[1])
       {
         model_name = model.name;
       }
     }
+    if (probe_snap_fault[0] == 2)
+    {
+      MFEM_ABORT("The placed patch of response model \""
+                 << model_name
+                 << "\" carries no conductor probe snaps: its trace data was not readable "
+                    "at the placement (a discovery placeholder, or a library whose "
+                    "basis-points / trace-mesh files are absent), so the "
+                    "conductor-consistency gate cannot read its probes on the device "
+                    "chords ("
+                 << probe_snap_fault_patches
+                 << " such patch(es); decision 632: such a patch is never solved)!");
+    }
     MFEM_ABORT("The placed patch of response model \""
-               << model_name << "\" records " << probe_snap_mismatch[1]
-               << " conductor probe snaps, " << probe_snap_mismatch[2]
+               << model_name << "\" records " << probe_snap_fault[2]
+               << " conductor probe snaps, " << probe_snap_fault[3]
                << " of them on conductor vertices of its trace mesh ("
-               << probe_snap_mismatch_patches
+               << probe_snap_fault_patches
                << " such patch(es): a stale geometry cache or a mismatched library)!");
   }
   for (std::size_t i = 0; i < polygons.size(); i++)
