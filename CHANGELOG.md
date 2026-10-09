@@ -31,8 +31,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
     an absolute tolerance when defining convergence. SchemaVer 2-1-0
     [PR 734](https://github.com/awslabs/palace/pull/734).
-  - Added perfectly matched layer (PML) absorbing regions for frequency domain driven and
-    eigenmode simulations, configured with the `"PML"` object of
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven
+    and eigenmode simulations, configured with the `"PML"` object of
     `config["Domains"]["Materials"]`; an empty object `{}` uses suitable defaults. The
     uniaxial PML supports anisotropic and lossy background materials, graded conductivity,
     real stretch, and complex frequency shift (CFS-PML) profiles, and automatic detection of
