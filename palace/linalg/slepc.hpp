@@ -493,6 +493,12 @@ public:
   std::unique_ptr<ComplexOperator> opA2_jac, opA2p, opAJ, opJ;  // Jacobian T′(λ)
   std::unique_ptr<ComplexOperator> opA2_pc, opA_pc, opP_pc;     // Preconditioner
 
+  // Known poles of A2(λ): the Jacobian shell applies T′ + L(λ) T, the derivative of the
+  // pole-cleared d T (see nleps::PoleTerms). opA_jac is T at the Jacobian's λ.
+  nleps::PoleTerms poles;
+  std::unique_ptr<ComplexOperator> opA_jac;
+  std::complex<double> logd_J = 0.0;
+
   // Function to compute the A2 operator.
   std::optional<std::function<std::unique_ptr<ComplexOperator>(std::complex<double>)>>
       funcA2;
@@ -540,6 +546,12 @@ public:
   void SetPreconditionerUpdate(std::function<std::unique_ptr<ComplexOperator>(
                                    std::complex<double>, std::complex<double>,
                                    std::complex<double>, std::complex<double>)>) override;
+
+  // Set the known poles of A2(λ).
+  void SetExtraSystemPoles(const std::vector<std::complex<double>> &p) override
+  {
+    poles.poles = p;
+  }
 };
 
 }  // namespace slepc

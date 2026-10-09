@@ -46,6 +46,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nondimensionalize.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
