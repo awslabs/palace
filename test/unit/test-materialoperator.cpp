@@ -327,6 +327,42 @@ TEST_CASE("MaterialOperator anisotropic wave-number bound", "[materialoperator][
   CHECK(mat_op.GetMaxMuEpsilon() == Approx(16.0));
 }
 
+TEST_CASE("MaterialOperator wave-number bound is global", "[materialoperator][Parallel]")
+{
+  // The boundary-mode shift target, and with it the mode ranking, derives from this bound,
+  // so every rank must see the same value. A rank-local bound made wave-port results
+  // depend on the partition (awslabs/palace#565).
+  MPI_Comm comm = Mpi::World();
+  REQUIRE(Mpi::Size(comm) >= 2);
+
+  // A row of four elements with the dielectric at one end. Rank 1 owns the two elements at
+  // the other end, whose shared-face neighbor is vacuum, so the dielectric is not among its
+  // local or ghost attributes. Any further ranks own no elements.
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(4, 1, 1, mfem::Element::HEXAHEDRON, 4.0, 1.0, 1.0));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    serial_mesh->SetAttribute(i, (i == 0) ? 2 : 1);
+  }
+  serial_mesh->SetAttributes();
+  int partitioning[4] = {0, 0, 1, 1};
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning);
+  Mesh palace_mesh(std::move(par_mesh));
+
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s = {9.0, 9.0, 9.0};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, palace_mesh);
+  // Reduce so that rank 0, the only rank that prints, also reports a mismatch elsewhere.
+  double bound_min = mat_op.GetMaxMuEpsilon(), bound_max = bound_min;
+  Mpi::GlobalMin(1, &bound_min, comm);
+  Mpi::GlobalMax(1, &bound_max, comm);
+  CHECK(bound_min == Approx(9.0));
+  CHECK(bound_max == Approx(9.0));
+}
+
 TEST_CASE("MaterialOperator utility functions", "[materialoperator][Serial]")
 {
   SECTION("IsOrthonormal")

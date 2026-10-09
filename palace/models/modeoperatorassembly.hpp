@@ -99,6 +99,18 @@ ComplexHypreParMatrix BuildSystemMatrixA(
 void ApplyVDBackTransform(ComplexVector &e0, std::complex<double> kn, int nd_size,
                           int h1_size, ComplexVector &et, ComplexVector &en);
 
+// Ranking key of a boundary mode with propagation constant kₙ relative to the real shift
+// target kₙ,target = √(−σ): the complex distance |kₙ − kₙ,target|. The exact and reduced
+// mode solves both rank modes by ascending distance, so they select the same mode. Unlike
+// |Re{kₙ} − kₙ,target|, the distance accounts for attenuation: it is at least |Im{kₙ}|, so
+// a strongly evanescent mode of a lossy cross-section ranks behind the low-loss propagating
+// modes below the target (distance < kₙ,target) even when its real part lies close to the
+// target. For lossless propagating modes below the target, ascending distance is descending
+// Re{kₙ}. The distance is invariant under kₙ → conj(kₙ), so it does not depend on the side
+// of the branch cut on which the principal square root places a near-cutoff mode. NaN maps
+// to +∞ so the key always defines a strict weak ordering.
+double TargetDistance(std::complex<double> kn, double kn_target);
+
 }  // namespace mode_assembly
 }  // namespace palace
 
