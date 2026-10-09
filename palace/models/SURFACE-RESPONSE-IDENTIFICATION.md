@@ -1086,7 +1086,9 @@ smaller endpoint.
    own-cell pre-image, the fillet corner-arm extension records and the foreign pieces,
    decision 559 (3); either version-15 schema is refused; version 17 adds the mirror-formed
    contract placement of every spatial patch — `MirrorFormedTopology`, `MirrorReach`,
-   `MirrorEdgeWeights`, decision 557 (4) — and refuses a version-16 cache). The Maxwell operator path
+   `MirrorEdgeWeights`, decision 557 (4) — and refuses a version-16 cache; version 18 adds the
+   conductor-consistency probe snaps of every spatial patch — `ProbeSnaps`, the knots the
+   gate reads on the device's arc chord, decision 611 (2) — and refuses a version-17 cache). The Maxwell operator path
    (`ConfigureMaxwellResponse`) runs no ownership pass, so the `domain_weight` factor is
    inert there (it multiplies the Maxwell domain terms for uniformity only). The record
    runs in the operator constructor (metadata
@@ -2417,7 +2419,23 @@ discriminate real metal from the S1p blocks' 0.21-0.36 and are information). The
 row is load-bearing: the OffPlaneMaxRatio of real metal (1.3-4.8 % on S1p) already sits
 above the tolerance, so a coupon frame whose w = 0 did not coincide with the device's
 metal sheet (a thick-metal device keyed on its metal top) would be excluded wholesale —
-loudly and recorded, not silently. FAIL CLOSED: a conductor of the trace mesh without a
+loudly and recorded, not silently. PROBE SNAPS (decision 611 (2), 2026-10-09; the R1
+conductor diagnosis: 32b0's 1.05e-4 at p5 was a GATE PROBE artefact, four x0 arc face-end
+knots built on the fitted circle 7-8 nm outside the device's chord polyline reading the
+gap potential): at the placement of a spatial cluster patch (`BuildFeaturePatches`, the
+identification in scope) every conductor knot of the trace mesh (plane and off-plane) is
+placed by the patch frame and, when its nearest REAL device perimeter segment (of any
+conductor of the device; the segments carry no conductor) is a chord of a fitted arc
+within that arc's recorded largest chord sagitta (`MaxChordSagittaOverR` x R) plus the
+arc-fit tolerance (1e-3 R) of the chord in the arc's plane, it is read at its in-plane
+foot on the chord — the device the solve has. Straight device edges never move a knot,
+nor does a knot already on the chord at the signature's resolution (1e-6 R, a device
+joint). The snaps travel with the placed patch (`Provenance.ProbeSnaps`, response-geometry
+cache version 18; a version-17 cache is refused), the gate record carries `ProbeSnaps
+{Count, MaxDisplacement, Knots[{Knot, Segment, Arc, Displacement}]}` per patch and
+excitation (mesh-file units), a snap naming a knot that is not a conductor vertex (a stale
+cache) fails closed on every rank alike, and the tolerance, the floor and the Python bar
+(1e-4) are UNCHANGED. FAIL CLOSED: a conductor of the trace mesh without a
 vertex on the process plane aborts at construction naming the model and conductor (its
 cross-section cannot be probed). RECORDED UNTESTABLE (`UnprobedModels` [{Model, ModelIndex,
 Reason}] in the record + a warning naming the model; decision 279, MINOR-2): a spatial

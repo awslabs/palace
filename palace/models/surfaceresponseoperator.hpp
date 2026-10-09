@@ -776,7 +776,10 @@ double DevicePerimeterDistance(const IdentificationResult &identification,
 
 // The conductor-consistency probe snap (decision 611 (2); the R1 conductor diagnosis
 // section 6): the nearest REAL device perimeter segment to q (every segment read as the
-// straight chord of its key, the image segments of a mirror band excluded). When that
+// straight chord of its key, the image segments of a mirror band excluded; a segment of
+// ANY conductor of the device - the identified segments carry no conductor, and a segment
+// of another conductor within the bound below would need a device gap smaller than the
+// arc's sagitta, so the patch's own conductor is the one found in practice). When that
 // segment is a chord of a fitted arc (Segments[].Arc) and q's in-plane distance to the
 // chord - in the arc's plane, the out-of-plane offset set aside - lies within the arc's
 // recorded largest chord sagitta (MaxChordSagittaOverR x R) plus the arc-fit tolerance

@@ -87,6 +87,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     closed). The patch dry run `surface-response-patches.csv` gains a `DomainWeight` column.
     Response-geometry cache version 17 (the mirror-formed placement of every spatial patch;
     a version-16 cache is refused).
+  - The conductor-consistency gate's probes of a spatial cluster patch snap onto the nearest
+    device arc chord when within the identified arc's recorded largest chord sagitta (plus
+    the arc-fit tolerance); straight edges are unmoved; the snaps are recorded as
+    `ProbeSnaps` per patch and excitation and travel with the placed patch; the tolerance
+    is unchanged. Response-geometry cache version 18 (the `ProbeSnaps` of every spatial
+    patch; a version-17 cache is refused).
   - Added a `RationalImpedance` boundary condition: a surface (Robin) impedance boundary
     whose per-square impedance is an arbitrary rational function of frequency,
     `Zs(s) = N(s)/D(s)` with `s = iω`, given by numerator and denominator polynomial

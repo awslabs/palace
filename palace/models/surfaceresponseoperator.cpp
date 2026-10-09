@@ -21507,7 +21507,10 @@ nlohmann::json &SurfaceResponseOperator::ConductorConsistencyDiagnostics()
         "trace). Lengths and coordinates in mesh-file units (the device coordinates: the "
         "mesh coordinates x the mesh coordinate scale), like the DomainBoundary record. "
         "ProbeSnaps (decision 611 (2), 2026-10-09): a conductor knot of a spatial cluster "
-        "patch whose nearest device perimeter segment is a chord of a fitted arc, within "
+        "patch whose nearest REAL device perimeter segment (of any conductor of the "
+        "device: the segments carry no conductor, and a segment of another conductor "
+        "within the bound would need a device gap below the arc's sagitta) is a chord "
+        "of a fitted arc, within "
         "that arc's recorded largest chord sagitta (MaxChordSagittaOverR x R) plus the "
         "arc-fit tolerance (1e-3 R) of the chord in the arc's plane, is read at its "
         "in-plane foot on the chord (the device the solve has: a coupon arc face end built "
@@ -23141,8 +23144,11 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // (4)).
   std::vector<double> point_band(static_cast<std::size_t>(point_count), 0.0);
   // Probe snaps recorded on knots that are not conductor vertices (rank-local; judged
-  // collectively after the loop): {model idx, recorded, applied, patches}.
-  std::array<int, 4> probe_snap_mismatch = {0, 0, 0, 0};
+  // collectively after the loop): the FIRST such patch of this rank {model idx, recorded,
+  // applied} and the count of such patches on this rank (so the reported record is one
+  // patch's, never a mix of fields across patches or ranks).
+  std::array<int, 3> probe_snap_mismatch = {-1, 0, 0};
+  int probe_snap_mismatch_patches = 0;
   int point = 0;
   for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
   {
@@ -23299,12 +23305,13 @@ SurfaceResponseOperator::SurfaceResponseOperator(
           // A snap naming a knot that is not a conductor vertex of the trace mesh: judged
           // COLLECTIVELY after the loop (the patches are distributed, so a rank-local
           // failure would leave the other ranks in the following collectives).
-          probe_snap_mismatch = {
-              std::max(probe_snap_mismatch[0], model.idx),
-              std::max(probe_snap_mismatch[1],
-                       static_cast<int>(patch_config.provenance.probe_snaps.size())),
-              std::max(probe_snap_mismatch[2], static_cast<int>(snaps.size())),
-              probe_snap_mismatch[3] + 1};
+          if (probe_snap_mismatch_patches == 0)
+          {
+            probe_snap_mismatch = {
+                model.idx, static_cast<int>(patch_config.provenance.probe_snaps.size()),
+                static_cast<int>(snaps.size())};
+          }
+          probe_snap_mismatch_patches++;
         }
       }
       else
@@ -23404,10 +23411,22 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                 "Incorrect surface-response patch point count!");
   }
   // The probe-snap consistency of every placed spatial patch, failing closed on every rank
-  // alike (decision 611 (2); a stale geometry cache or a mismatched library).
-  Mpi::GlobalMax(static_cast<int>(probe_snap_mismatch.size()), probe_snap_mismatch.data(),
-                 fespace.GetComm());
-  if (probe_snap_mismatch[3] > 0)
+  // alike (decision 611 (2); a stale geometry cache or a mismatched library): the patch
+  // count summed over the ranks, the reported record = the first mismatching patch of the
+  // lowest rank that has one (broadcast, so every rank names the same patch).
+  {
+    const MPI_Comm comm = fespace.GetComm();
+    int probe_snap_mismatch_rank =
+        probe_snap_mismatch_patches > 0 ? Mpi::Rank(comm) : Mpi::Size(comm);
+    Mpi::GlobalMin(1, &probe_snap_mismatch_rank, comm);
+    Mpi::GlobalSum(1, &probe_snap_mismatch_patches, comm);
+    if (probe_snap_mismatch_patches > 0)
+    {
+      Mpi::Broadcast(static_cast<int>(probe_snap_mismatch.size()),
+                     probe_snap_mismatch.data(), probe_snap_mismatch_rank, comm);
+    }
+  }
+  if (probe_snap_mismatch_patches > 0)
   {
     std::string model_name = "?";
     for (const auto &model : models)
@@ -23421,7 +23440,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                << model_name << "\" records " << probe_snap_mismatch[1]
                << " conductor probe snaps, " << probe_snap_mismatch[2]
                << " of them on conductor vertices of its trace mesh ("
-               << probe_snap_mismatch[3]
+               << probe_snap_mismatch_patches
                << " such patch(es): a stale geometry cache or a mismatched library)!");
   }
   for (std::size_t i = 0; i < polygons.size(); i++)
