@@ -116,7 +116,7 @@ inline void Apply(const ComplexVector &dinv, const ComplexVector &x, ComplexVect
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 void JacobiSmoother<OperType>::SetOperator(const OperType &op)
 {
   dinv.SetSize(op.Height());
@@ -147,7 +147,7 @@ void JacobiSmoother<OperType>::SetOperator(const OperType &op)
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void JacobiSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
   MFEM_ASSERT(!this->initial_guess, "JacobiSmoother does not use initial guess!");

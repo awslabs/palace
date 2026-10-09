@@ -442,7 +442,7 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
 {
@@ -473,7 +473,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
     ki =
         AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, nullptr, &fc, skip_zeros);
   }
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto K =
         std::make_unique<ComplexParOperator>(std::move(kr), std::move(ki), GetNDSpace());
@@ -489,7 +489,7 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
 {
@@ -511,7 +511,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   }
   constexpr bool skip_zeros = false;
   auto c = AssembleOperator(GetNDSpace(), nullptr, &f, nullptr, &fb, &fp, skip_zeros);
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto C = std::make_unique<ComplexParOperator>(std::move(c), nullptr, GetNDSpace());
     C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -525,7 +525,7 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy diag_policy)
 {
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
@@ -537,7 +537,7 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     AddRealPeriodicCoefficients(-1.0, fr);
   }
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     AddImagMassCoefficients(1.0, fi);
   }
@@ -557,7 +557,7 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     mi = AssembleOperator(GetNDSpace(), nullptr, &fi, nullptr, &fbi, nullptr, skip_zeros);
   }
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M =
         std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
@@ -572,14 +572,14 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy)
 {
   return GetExtraSystemMatrix<OperType>(omega, diag_policy, /*include_wave_ports=*/true);
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy,
                                     bool include_wave_ports)
@@ -605,7 +605,7 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   {
     ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros);
   }
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto A =
         std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
@@ -656,7 +656,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
   return A;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
                                              Operator::DiagonalPolicy diag_policy)
@@ -676,7 +676,7 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
   constexpr bool skip_zeros = false;
   auto m =
       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -690,7 +690,7 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_policy,
                                                  bool imag_slot)
@@ -715,7 +715,7 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   constexpr bool skip_zeros = false;
   auto m =
       AssembleOperator(GetNDSpace(), nullptr, nullptr, &df, nullptr, nullptr, skip_zeros);
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op =
         imag_slot
@@ -735,7 +735,7 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
                                                     Operator::DiagonalPolicy diag_policy)
@@ -757,7 +757,7 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
   constexpr bool skip_zeros = false;
   auto m =
       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -771,7 +771,7 @@ SpaceOperator::GetSurfaceConductivityBoundaryMatrix(int group_idx,
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
     int idx, Operator::DiagonalPolicy diag_policy, bool imag_slot)
 {
@@ -796,7 +796,7 @@ std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
   constexpr bool skip_zeros = false;
   auto m =
       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op =
         imag_slot
@@ -816,7 +816,7 @@ std::unique_ptr<OperType> SpaceOperator::GetRationalImpedanceBoundaryMassMatrix(
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
                                                  Operator::DiagonalPolicy diag_policy)
@@ -843,7 +843,7 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
   constexpr bool skip_zeros = false;
   auto m =
       AssembleOperator(GetNDSpace(), nullptr, nullptr, nullptr, &fb, nullptr, skip_zeros);
-  if constexpr (std::is_same<OperType, ComplexOperator>::value)
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
     M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
@@ -969,7 +969,7 @@ std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double
 namespace
 {
 
-template <typename OperType>
+template <OperatorType OperType>
 auto BuildLevelParOperator(std::unique_ptr<Operator> &&br, std::unique_ptr<Operator> &&bi,
                            const FiniteElementSpace &fespace);
 
@@ -1237,7 +1237,7 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   const auto n_levels = GetNDSpaces().GetNumLevels();
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
-  if (std::is_same<OperType, ComplexOperator>::value && !pc_mat_real)
+  if (std::is_same_v<OperType, ComplexOperator> && !pc_mat_real)
   {
     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec);
   }

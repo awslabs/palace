@@ -202,7 +202,7 @@ inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &d
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
                                                double sf_max)
   : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
@@ -211,7 +211,7 @@ ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
@@ -232,7 +232,7 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r) const
 {
   // Apply smoother: y = y + p(A) (x - A y) .
@@ -264,7 +264,7 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it,
                                                              int poly_order, double sf_max,
                                                              double sf_min)
@@ -274,7 +274,7 @@ ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int 
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
@@ -302,7 +302,7 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
                                                VecType &r) const
 {

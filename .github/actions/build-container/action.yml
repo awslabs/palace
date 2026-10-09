@@ -8,7 +8,7 @@ inputs:
   spack-packages-commit:
     description: 'spack-packages commit used by the builtin Spack repository'
     required: false
-    default: '0ec478de0ec43571366def16bad549d6e4287abf'
+    default: 'ef05700808eb32fe932a76de9254a3c4a5f94f2c'
   target:
     description: >-
       Spack microarchitecture to build for (e.g. x86_64_v3, neoverse_v2).
@@ -21,6 +21,16 @@ inputs:
 runs:
   using: composite
   steps:
+    # .git is excluded from the build context, so describe the version here and
+    # pass it to the build. Runs first: later steps edit tracked files (e.g. the
+    # target pin rewrites spack.yaml), which would mark the version -dirty.
+    - name: Describe Palace version
+      shell: bash
+      run: |
+        PALACE_GIT_COMMIT_ID="$(git describe --tags --always --dirty)"
+        echo "Palace version: $PALACE_GIT_COMMIT_ID"
+        echo "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" >> "$GITHUB_ENV"
+
     - name: Setup environment
       uses: ./.github/actions/setup-runner
       with:
@@ -168,6 +178,7 @@ runs:
             --secret "id=github_token,src=$GITHUB_TOKEN_FILE" \
             --build-arg "PALACE_CUDA=$PALACE_CUDA" \
             --build-arg "SPACK_PACKAGES_COMMIT=$SPACK_PACKAGES_COMMIT" \
+            --build-arg "PALACE_GIT_COMMIT_ID=$PALACE_GIT_COMMIT_ID" \
             -t "$IMAGE_NAME" .
         }
 

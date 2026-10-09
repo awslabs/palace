@@ -17,6 +17,29 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added total (geometric + kinetic) inductance extraction for thin-film superconductors. A
+    `Boundaries.Superconductor` sheet carries the one-sided London kinetic sheet inductance
+    `L_ksq = mu0 * lambda * coth(d/lambda)` (via `PenetrationDepth`/`Thickness`, or directly
+    via `KineticInductance`); a `FluxLoop` over such a film imposes a prescribed fluxoid and
+    the total inductance is read from the field energy.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Solver.Linear.LondonPCShift`, a preconditioner-only gauge shift that keeps the
+    London magnetostatic solve SPD-solvable by AMS.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Introduced the `"AbsTol"` option for linear solvers, defaulting to 0.0, to allow using
+    an absolute tolerance when defining convergence. SchemaVer 2-1-0
+    [PR 734](https://github.com/awslabs/palace/pull/734).
+
+#### Interface Changes
+
+  - Renamed the `FluxLoop` keys `FluxLoopPEC` to `FilmAttributes` and `Regularization` to
+    `PecPenetrationDepth`, and limited each `FluxLoop` to a single hole (the schema still
+    accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
+    must be updated. SchemaVer 2-0-0.
+    [PR 929](https://github.com/awslabs/palace/pull/929).
+
 #### Bug Fixes
 
   - Fixed boundary coefficient terms being added to attributes outside their boundary when
@@ -31,6 +54,52 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
+    <<<<<<< HEAD
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
+    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
+    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
+    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
+    metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
+    the Spack package sets it from the resolved commit (`v<version>` for releases, from the
+    next release on), and the containers embed the `git describe` of the built commit.
+    [PR 974](https://github.com/awslabs/palace/pull/974).
+  - Corrected the `FluxLoop` hole inductance, which was low in 0.18 (e.g. the `circular_hole`
+    PEC limit moves from 2.00 to 2.85 pH): 0.18 pinned the film's tangential field to a
+    regularized 2D surface-curl solution, whereas the film is now driven by a curl-free cut
+    generator and relaxes freely. Re-run existing `FluxLoop` cases; the regression references
+    were re-baselined. [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Fixed CG, GMRES, and FGMRES returning NaN when the initial residual is exactly zero
+    (e.g. a zero right-hand side) and no absolute tolerance is set.
+    [PR 941](https://github.com/awslabs/palace/pull/941).
+  - Fixed driven-sweep restarts (`"Restart"` > 1) aborting with
+    `Column ... not found in table`, because reloaded CSV tables kept stale column-name
+    indices.
+    [PR 944](https://github.com/awslabs/palace/pull/944).
+  - Fixed the sign of the London penetration depth term for the out-of-plane field component
+    in `"BoundaryMode"` simulations and wave ports.
+    [PR 1025](https://github.com/awslabs/palace/pull/1025).
+  - Fixed issues affecting non-cracked 2D nonconformal meshes, and the wave ports of
+    non-cracked 3D nonconformal meshes, where the edges on the unrefined side were not
+    constrained.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed boundary mode simulations extracting their cross-section from a nonconformal 3D
+    mesh (such as a mesh saved by an adaptive mesh refinement run), which lost all boundary
+    conditions of the cross-section.
+    [PR 1023](https://github.com/awslabs/palace/pull/1023).
+  - Fixed integer range expansion in configuration files rewriting brackets inside strings,
+    so a path such as `"mesh[1-3].msh"` is no longer read as `"mesh[1,2,3].msh"`, in both
+    Palace and `scripts/validate-config`. [PR 970](https://github.com/awslabs/palace/pull/970).
+  - Fixed the electric surface flux (`surface-F.csv`) and boundary surface charge (`Q_s`)
+    of complex fields in lossy dielectrics, which used the real permittivity only; they now
+    use the complex permittivity `ε(1 − i tanδ)` of the material model, consistent with the
+    solver. Also corrected the documented `Q_s` units to C/m².
+    [PR 953](https://github.com/awslabs/palace/pull/953).
+  - Fixed a heap overflow in 2D surface flux postprocessing with an explicit `"Center"`.
+    [PR 953](https://github.com/awslabs/palace/pull/953).
   - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
     aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
     estimates now accept any finite, nonzero diagonal, scaling by its absolute value
@@ -53,9 +122,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and assemble the per-frequency wave-port mode forms (S-parameter projection and modal
     reactions) in a single sweep over the port elements.
     [PR 909](https://github.com/awslabs/palace/pull/909).
+  - CSV output tables are now appended row by row instead of rewritten at every measurement,
+    so long transient and single-excitation driven runs write O(N) rather than O(N²) bytes.
+    [PR 942](https://github.com/awslabs/palace/pull/942).
 
 #### Build system
 
+  - *Palace* now requires a C++20 compiler, including for CUDA and HIP device code, so
+    CUDA builds need CUDA 12.0 and CMake 3.25.2 or later. The Spack recipe keeps
+    `cxxstd=17` available for 0.16 to 0.18.
+    [PR 654](https://github.com/awslabs/palace/pull/654).
+  - GPU Spack builds from 0.19 no longer cap Umpire at 2025.12; MFEM is built as C++20 to
+    match. 0.16 to 0.18 keep Umpire 2025.12 as C++17.
+    [PR 654](https://github.com/awslabs/palace/pull/654).
   - Bumped the MFEM dependency to v4.10 and dropped the backport patches merged
     upstream (PRs 4983, 5246, 5415, 5124, and the Gmsh reader rewrite), keeping
     only the still-unmerged patches (PRs 3847, 5353, 5494, 5502).

@@ -539,21 +539,23 @@ void BenchmarkCeedIntegrator(FiniteElementSpace &fespace, T1 AssembleTest,
     // Rough estimate for memory consumption as quadrature data + offsets for element
     // restriction.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
-    std::size_t mem_test = (Q * q_data_size * 8 + P * 4) * (std::size_t)mesh.GetNE();
+    std::size_t mem_test =
+        (Q * q_data_size * 8 + P * 4) * static_cast<std::size_t>(mesh.GetNE());
     std::stringstream msg;
     msg << "benchmark memory estimate:\n"
         << "  N = " << fespace.GetVSize() << " (NE = " << mesh.GetNE() << ", P = " << P
         << ", Q = " << Q << ")\n";
     if (nnz > 0)
     {
-      msg << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
-          << " NNZ)\n";
+      msg << "  Full Assembly = " << mem_ref / static_cast<double>(1024 * 1024) << " MB ("
+          << nnz << " NNZ)\n";
     }
     else
     {
       msg << "  Full Assembly = N/A (skipped)\n";
     }
-    msg << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n";
+    msg << "  Partial Assembly = " << mem_test / static_cast<double>(1024 * 1024)
+        << " MB\n";
     WARN(msg.str());
   }
 }
@@ -666,21 +668,23 @@ void BenchmarkCeedInterpolator(FiniteElementSpace &trial_fespace,
     // Rough estimate for memory consumption as quadrature data + offsets for element
     // restriction.
     std::size_t mem_ref = nnz * (8 + 4) + (y_ref.Size() + 1) * 4;
-    std::size_t mem_test = (trial_P * 4 + test_P * 4) * (std::size_t)mesh.GetNE();
+    std::size_t mem_test =
+        (trial_P * 4 + test_P * 4) * static_cast<std::size_t>(mesh.GetNE());
     std::stringstream msg;
     msg << "benchmark memory estimate:\n"
         << "  N = " << trial_fespace.GetVSize() << ", " << test_fespace.GetVSize()
         << " (NE = " << mesh.GetNE() << ", P = " << trial_P << ", " << test_P << ")\n";
     if (nnz > 0)
     {
-      msg << "  Full Assembly = " << mem_ref / (double)(1024 * 1024) << " MB (" << nnz
-          << " NNZ)\n";
+      msg << "  Full Assembly = " << mem_ref / static_cast<double>(1024 * 1024) << " MB ("
+          << nnz << " NNZ)\n";
     }
     else
     {
       msg << "  Full Assembly = N/A (skipped)\n";
     }
-    msg << "  Partial Assembly = " << mem_test / (double)(1024 * 1024) << " MB\n";
+    msg << "  Partial Assembly = " << mem_test / static_cast<double>(1024 * 1024)
+        << " MB\n";
     WARN(msg.str());
   }
 }
@@ -1754,7 +1758,7 @@ bool PackedTestBackend()
   Ceed ceed = ceed::internal::GetCeedObjects()[0];
   REQUIRE(CeedGetResource(ceed, &resource) == 0);
   REQUIRE(CeedGetPreferredMemType(ceed, &mem) == 0);
-  return mem == CEED_MEM_HOST && std::string(resource).find("/cpu/") == 0;
+  return mem == CEED_MEM_HOST && std::string(resource).starts_with("/cpu/");
 }
 
 bool IsOriginalComplexWrapper(const ComplexOperator &op)
@@ -2252,8 +2256,8 @@ TEST_CASE("CPU complex preconditioner benchmark",
 {
   const auto *config = Catch::getCurrentContext().getConfig();
   const auto &selectors = config->getTestsOrTags();
-  const bool requested = std::any_of(
-      selectors.begin(), selectors.end(),
+  const bool requested = std::ranges::any_of(
+      selectors,
       [](const std::string &selector)
       {
         return selector.find("[ComplexPreconditionerBenchmark]") != std::string::npos ||

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cmath>
+#include <numbers>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -135,7 +136,7 @@ TEST_CASE("Smoother estimates use the Hermitian Jacobi similarity",
 {
   // D⁻¹A is not symmetric, while D⁻¹ᐟ²AD⁻¹ᐟ² has eigenvalues 1 ± 1/√2.
   TestOperator A;
-  CheckSmoothers(A, 1.0 + 1.0 / std::sqrt(2.0));
+  CheckSmoothers(A, 1.0 + 1.0 / std::numbers::sqrt2);
 }
 
 TEST_CASE("Smoother estimates support negative definite operators",
@@ -146,7 +147,7 @@ TEST_CASE("Smoother estimates support negative definite operators",
   // adds the eigenvalue 1 to D⁻¹A without changing its maximum, also when the diagonal then
   // has mixed signs. The smoothed values change sign with D⁻¹, which the check absorbs by
   // applying the smoother to D [1, ..., 1]ᵀ.
-  const double lambda_max = 1.0 + 1.0 / std::sqrt(2.0);
+  const double lambda_max = 1.0 + 1.0 / std::numbers::sqrt2;
   TestOperator A(-1.0), A_ess(-1.0, true), A_spd_ess(1.0, true);
   CheckSmoothers(A, lambda_max);
   CheckSmoothers(A_ess, lambda_max);

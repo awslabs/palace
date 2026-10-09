@@ -3,6 +3,8 @@
 
 #include "rap.hpp"
 
+#include <array>
+
 #include "fem/bilinearform.hpp"
 #include "linalg/hypre.hpp"
 
@@ -759,6 +761,44 @@ bool ReferencesSameMemory(const C &c1, const C &c2)
          (m1.DeviceIsValid() && m2.DeviceIsValid() && c1.Read() == c2.Read());
 }
 
+// Apply the essential dofs shared by the operators to their sum, with the highest diagonal
+// policy among them in enum order.
+template <typename Ops, typename SumOperType>
+void SetSumEssentialTrueDofs(const Ops &ops, SumOperType &O)
+{
+  // Extract essential dof pointer from first operator with one.
+  auto it_ess = std::ranges::find_if(ops, [](auto p)
+                                     { return p != nullptr && p->GetEssentialTrueDofs(); });
+  if (it_ess == ops.end())
+  {
+    return;
+  }
+  const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
+
+  // Check other existent essential dof arrays are references.
+  MFEM_VERIFY(std::ranges::all_of(ops,
+                                  [&](auto p)
+                                  {
+                                    if (p == nullptr)
+                                    {
+                                      return true;
+                                    }
+                                    auto p_ess_dofs = p->GetEssentialTrueDofs();
+                                    return p_ess_dofs == nullptr ||
+                                           ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
+                                  }),
+              "If essential dofs are set, all suboperators must agree on them!");
+
+  // Use implied ordering of enumeration.
+  Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
+  for (auto p : ops)
+  {
+    policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
+                                              : policy;
+  }
+  O.SetEssentialTrueDofs(*ess_dofs, policy);
+}
+
 // Combine a collection of ParOperator into a weighted summation. If set_essential is true,
 // extract the essential dofs from the operator array, and apply to the summed operator.
 template <std::size_t N>
@@ -766,15 +806,15 @@ std::unique_ptr<ParOperator>
 BuildParSumOperator(const std::array<double, N> &coeff,
                     const std::array<const ParOperator *, N> &ops, bool set_essential)
 {
-  auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
+  auto it = std::ranges::find_if(ops, [](auto p) { return p != nullptr; });
   MFEM_VERIFY(it != ops.end(),
               "BuildParSumOperator requires at least one valid ParOperator!");
   const auto first_op = *it;
   const auto &fespace = first_op->TrialFiniteElementSpace();
-  MFEM_VERIFY(
-      std::all_of(ops.begin(), ops.end(), [&fespace](auto p)
+  MFEM_VERIFY(std::ranges::all_of(
+                  ops, [&fespace](auto p)
                   { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
-      "All ComplexParOperators must have the same FiniteElementSpace!");
+              "All ComplexParOperators must have the same FiniteElementSpace!");
 
   auto sum = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
                                            first_op->LocalOperator().Width());
@@ -789,39 +829,8 @@ BuildParSumOperator(const std::array<double, N> &coeff,
   auto O = std::make_unique<ParOperator>(std::move(sum), fespace);
   if (set_essential)
   {
-    // Extract essential dof pointer from first operator with one.
-    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
-                               { return p != nullptr && p->GetEssentialTrueDofs(); });
-    if (it_ess == ops.end())
-    {
-      return O;
-    }
-    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
-
-    // Check other existent essential dof arrays are references.
-    MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
-                            [&](auto p)
-                            {
-                              if (p == nullptr)
-                              {
-                                return true;
-                              }
-                              auto p_ess_dofs = p->GetEssentialTrueDofs();
-                              return p_ess_dofs == nullptr ||
-                                     ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
-                            }),
-                "If essential dofs are set, all suboperators must agree on them!");
-
-    // Use implied ordering of enumeration.
-    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
-    for (auto p : ops)
-    {
-      policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
-                                                : policy;
-    }
-    O->SetEssentialTrueDofs(*ess_dofs, policy);
+    SetSumEssentialTrueDofs(ops, *O);
   }
-
   return O;
 }
 
@@ -846,15 +855,15 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
 {
   MFEM_VERIFY(coeff.size() == ops.size(),
               "BuildParSumOperator requires matching coefficient and operator counts!");
-  auto it = std::find_if(ops.begin(), ops.end(), [](auto p) { return p != nullptr; });
+  auto it = std::ranges::find_if(ops, [](auto p) { return p != nullptr; });
   MFEM_VERIFY(it != ops.end(),
               "BuildParSumOperator requires at least one valid ComplexParOperator!");
   const auto first_op = *it;
   const auto &fespace = first_op->TrialFiniteElementSpace();
-  MFEM_VERIFY(
-      std::all_of(ops.begin(), ops.end(), [&fespace](auto p)
+  MFEM_VERIFY(std::ranges::all_of(
+                  ops, [&fespace](auto p)
                   { return p == nullptr || &p->TrialFiniteElementSpace() == &fespace; }),
-      "All ComplexParOperators must have the same FiniteElementSpace!");
+              "All ComplexParOperators must have the same FiniteElementSpace!");
 
   auto sumr = std::make_unique<SumOperator>(first_op->LocalOperator().Height(),
                                             first_op->LocalOperator().Width());
@@ -888,32 +897,7 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
   auto O = std::make_unique<ComplexParOperator>(std::move(sumr), std::move(sumi), fespace);
   if (set_essential)
   {
-    auto it_ess = std::find_if(ops.begin(), ops.end(), [](auto p)
-                               { return p != nullptr && p->GetEssentialTrueDofs(); });
-    if (it_ess == ops.end())
-    {
-      return O;
-    }
-    const auto *ess_dofs = (*it_ess)->GetEssentialTrueDofs();
-    MFEM_VERIFY(std::all_of(ops.begin(), ops.end(),
-                            [&](auto p)
-                            {
-                              if (p == nullptr)
-                              {
-                                return true;
-                              }
-                              auto p_ess_dofs = p->GetEssentialTrueDofs();
-                              return p_ess_dofs == nullptr ||
-                                     ReferencesSameMemory(*ess_dofs, *p_ess_dofs);
-                            }),
-                "If essential dofs are set, all suboperators must agree on them!");
-    Operator::DiagonalPolicy policy = Operator::DiagonalPolicy::DIAG_ZERO;
-    for (auto p : ops)
-    {
-      policy = (p && p->GetEssentialTrueDofs()) ? std::max(policy, p->GetDiagonalPolicy())
-                                                : policy;
-    }
-    O->SetEssentialTrueDofs(*ess_dofs, policy);
+    SetSumEssentialTrueDofs(ops, *O);
   }
   return O;
 }
@@ -923,8 +907,8 @@ BuildParSumOperator(const std::vector<std::complex<double>> &coeff,
                     const std::vector<const ComplexOperator *> &ops, bool set_essential)
 {
   std::vector<const ComplexParOperator *> par_ops(ops.size());
-  std::transform(ops.begin(), ops.end(), par_ops.begin(), [](const ComplexOperator *op)
-                 { return dynamic_cast<const ComplexParOperator *>(op); });
+  std::ranges::transform(ops, par_ops.begin(), [](const ComplexOperator *op)
+                         { return dynamic_cast<const ComplexParOperator *>(op); });
   return BuildParSumOperator(coeff, par_ops, set_essential);
 }
 
@@ -945,32 +929,14 @@ BuildOperatorWithA2(const std::vector<std::complex<double>> &coeff,
   return BuildParSumOperator(c, o, true);
 }
 
-// TODO: replace with std::to_array in c++20.
-namespace detail
-{
-// Helper for conversion to std::array.
-template <class T, std::size_t N, std::size_t... I>
-constexpr std::array<std::remove_cv_t<T>, N> to_array_impl(T (&&a)[N],
-                                                           std::index_sequence<I...>)
-{
-  return {{std::move(a[I])...}};
-}
-}  // namespace detail
-
-template <class T, std::size_t N>
-constexpr std::array<std::remove_cv_t<T>, N> to_array(T (&&a)[N])
-{
-  return detail::to_array_impl(std::move(a), std::make_index_sequence<N>{});
-}
-
 template <std::size_t N>
 std::unique_ptr<ComplexParOperator>
 BuildParSumOperator(std::complex<double> (&&coeff_in)[N],
                     const ComplexParOperator *(&&ops_in)[N], bool set_essential)
 {
-  return BuildParSumOperator(
-      palace::to_array<std::complex<double>>(std::move(coeff_in)),
-      palace::to_array<const ComplexParOperator *>(std::move(ops_in)), set_essential);
+  return BuildParSumOperator(std::to_array<std::complex<double>>(std::move(coeff_in)),
+                             std::to_array<const ComplexParOperator *>(std::move(ops_in)),
+                             set_essential);
 }
 
 template <std::size_t N, typename ScalarType, typename OperType>
@@ -987,7 +953,7 @@ BuildParSumOperator(ScalarType (&&coeff_in)[N], const OperType *(&&ops_in)[N],
   std::transform(ops_in, ops_in + N, par_ops.begin(),
                  [](const OperType *op) { return dynamic_cast<const ParOperType *>(op); });
 
-  return BuildParSumOperator(palace::to_array<ScalarType>(std::move(coeff_in)),
+  return BuildParSumOperator(std::to_array<ScalarType>(std::move(coeff_in)),
                              std::move(par_ops), set_essential);
 }
 

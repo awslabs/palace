@@ -56,7 +56,7 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
         for (const auto &path : entries)
         {
           const auto &fname = path.filename().string();
-          if (fname.rfind("iteration") == 0)
+          if (fname.starts_with("iteration"))
           {
             continue;
           }
@@ -89,8 +89,7 @@ void SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int widt
               fs::copy(path, dest, fs::copy_options::overwrite_existing);
             }
           }
-          else if (fname.size() >= 14 &&
-                   fname.compare(fname.size() - 14, 14, "_resolved.json") == 0)
+          else if (fname.ends_with("_resolved.json"))
           {
             // The resolved configuration is a global record of the run, not per-iteration
             // output. Leave it in the top-level output folder rather than moving it into an
@@ -236,6 +235,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
+  MFEM_VERIFY(solve_converged_,
+              "Initial solve did not converge; no converged result to fall back on!");
   double err = indicators.Norml2(comm);
 
   // Record the initial solve as iteration 1 (matching the "iteration01" archive
@@ -332,7 +333,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       mesh.back()->Update();
     }
 
-    // Record the adapted mesh's true topology into palace.json.
+    // Record the adapted mesh's topology now, paired with the mesh file RebalanceMesh
+    // wrote, so it matches even if the following solve does not converge (SavedAdaptedMesh
+    // contract).
     if (refinement.save_adapt_mesh)
     {
       mesh::CompleteMeshEntityCounts(*mesh.back(), mesh_counts);
@@ -348,7 +351,20 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
 
     // Solve + estimate.
     Mpi::Print("\nProceeding with solve/estimate iteration {}...\n", it + 1);
+    const auto prev_ntdof = ntdof;
     std::tie(indicators, ntdof) = Solve(mesh);
+    if (!solve_converged_)
+    {
+      // Keep the previous converged iteration for the summary/CSVs (restore its DOF count);
+      // the refined mesh file and its topology (recorded above) describe the failed solve.
+      Mpi::Warning(
+          comm,
+          "Solve did not converge after refinement iteration {:d}; halting AMR and "
+          "keeping the last converged iteration!\n",
+          it);
+      ntdof = prev_ntdof;
+      break;
+    }
     err = indicators.Norml2(comm);
 
     // Record that this AMR iteration has completed; the Solve above has already written all
@@ -455,9 +471,9 @@ void BaseSolver::SaveMetadata(const Timer &timer) const
     for (int i = Timer::INIT; i < Timer::NUM_TIMINGS; i++)
     {
       auto key = Timer::descriptions[i];
-      key.erase(std::remove_if(key.begin(), key.end(), isspace), key.end());
-      meta["ElapsedTime"]["Durations"][key] = timer.Data((Timer::Index)i);
-      meta["ElapsedTime"]["Counts"][key] = timer.Counts((Timer::Index)i);
+      std::erase_if(key, isspace);
+      meta["ElapsedTime"]["Durations"][key] = timer.Data(static_cast<Timer::Index>(i));
+      meta["ElapsedTime"]["Counts"][key] = timer.Counts(static_cast<Timer::Index>(i));
       meta["PeakMemoryGrowthMegabytes"]["Min"][key] = red.rank_mem.min[i] * to_mb;
       meta["PeakMemoryGrowthMegabytes"]["Max"][key] = red.rank_mem.max[i] * to_mb;
       meta["PeakMemoryGrowthMegabytes"]["Sum"][key] = red.rank_mem.sum[i] * to_mb;

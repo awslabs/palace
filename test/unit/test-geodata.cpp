@@ -3,6 +3,7 @@
 
 #include <array>
 #include <memory>
+#include <numbers>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -203,7 +204,7 @@ TEST_CASE("TwoDimensionalDiagonalSquarePort", "[geodata][Serial]")
   auto box = mesh::BoundingBoxFromPointCloud(comm, vertices, 0);
 
   // True box at 45 degrees
-  auto invsqrt2 = 1.0 / std::sqrt(2);
+  auto invsqrt2 = 1.0 / std::numbers::sqrt2;
   std::array<double, 3> ax0{invsqrt2, -invsqrt2, 0.0}, ax1{invsqrt2, invsqrt2, 0.0};
 
   // Find the bounding points from knowing its at 45.
@@ -333,7 +334,7 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
     // comparison).
     for (int i = 0; i < single_tet.GetNodes()->Size(); i++)
     {
-      (*single_tet.GetNodes())(i) += 0.05 * (1.0 + (double)rand() / RAND_MAX);
+      (*single_tet.GetNodes())(i) += 0.05 * (1.0 + static_cast<double>(rand()) / RAND_MAX);
     }
 
     auto four_hex = mesh::MeshTetToHex(single_tet);

@@ -287,28 +287,20 @@ void QuasiNewtonSolver::SetInitialGuess()
   std::iota(indices.begin(), indices.end(), 0);
   if (nev_linear > nev)
   {
-    double min_error = res.get()[0];
-    for (int i = 0; i < nev_linear; i++)
-    {
-      min_error = std::min(min_error, res.get()[i]);
-    }
+    const double min_error = *std::min_element(res.get(), res.get() + nev_linear);
     const double threshold = 100.0 * min_error;
-    std::sort(indices.begin(), indices.end(),
-              [&](const auto i, const auto j)
-              {
-                if (res.get()[i] < threshold && res.get()[j] > threshold)
-                {
-                  return true;
-                }
-                else if (res.get()[i] > threshold && res.get()[j] < threshold)
-                {
-                  return false;
-                }
-                else
-                {
-                  return eigenvalues[i].imag() < eigenvalues[j].imag();
-                }
-              });
+    // One partition key keeps a strict weak ordering when residuals equal the threshold.
+    std::ranges::sort(indices,
+                      [&](const auto i, const auto j)
+                      {
+                        const bool i_small = res.get()[i] <= threshold;
+                        const bool j_small = res.get()[j] <= threshold;
+                        if (i_small != j_small)
+                        {
+                          return i_small;
+                        }
+                        return eigenvalues[i].imag() < eigenvalues[j].imag();
+                      });
   }
   for (int i = 0; i < nev_linear; i++)
   {
@@ -771,13 +763,10 @@ int QuasiNewtonSolver::Solve()
   std::iota(order.begin(), order.end(), 0);
   std::iota(order_eigen.begin(), order_eigen.end(), 0);
   std::iota(order2.begin(), order2.end(), 0);
-  std::sort(order.begin(), order.end(),
-            [&](auto l, auto r) { return eigs[l].imag() < eigs[r].imag(); });
-  std::sort(order_eigen.begin(), order_eigen.end(),
-            [&epseig = eps.eigenvalues()](auto l, auto r)
-            { return epseig(l).imag() < epseig(r).imag(); });
-  std::sort(order2.begin(), order2.end(),
-            [&](auto l, auto r) { return order[l] < order[r]; });
+  std::ranges::sort(order, [&](auto l, auto r) { return eigs[l].imag() < eigs[r].imag(); });
+  std::ranges::sort(order_eigen, [&epseig = eps.eigenvalues()](auto l, auto r)
+                    { return epseig(l).imag() < epseig(r).imag(); });
+  std::ranges::sort(order2, [&](auto l, auto r) { return order[l] < order[r]; });
 
   // Sort Eigen eigenvectors.
   std::vector<Eigen::VectorXcd> Xeig;
@@ -884,9 +873,10 @@ void NewtonInterpolationOperator::Interpolate(const std::complex<double> sigma_m
   frozen_ops.clear();
 
   // Linearly spaced sample points.
+  const auto n_intervals = static_cast<double>(num_points - 1);
   for (int j = 0; j < num_points; j++)
   {
-    points[j] = sigma_min + (double)j * (sigma_max - sigma_min) / (double)(num_points - 1);
+    points[j] = sigma_min + static_cast<double>(j) * (sigma_max - sigma_min) / n_intervals;
   }
 
   // Build divided difference matrices.
@@ -1043,12 +1033,13 @@ bool NewtonInterpolationOperator::DetermineFrozen(
   // plus the frozen value f_frozen(lambda_target).
   const std::complex<double> frozen_target = f_frozen(lambda_target);
   constexpr int n_samples = 101;
+  const auto n_intervals = static_cast<double>(n_samples - 1);
   fit_err = freeze_err = 0.0;
   for (int i = 0; i < n_samples; i++)
   {
     const std::complex<double> lambda =
         points.front() +
-        (double)i * (points.back() - points.front()) / (double)(n_samples - 1);
+        static_cast<double>(i) * (points.back() - points.front()) / n_intervals;
     const std::complex<double> f_exact = f_full(lambda);
     const double scale = std::max(std::abs(f_exact), 1.0e-300);
     fit_err = std::max(fit_err, std::abs(eval(q_full, lambda) - f_exact) / scale);

@@ -51,6 +51,7 @@ set(PALACE_BUILD_WITH_SANITIZERS OFF CACHE BOOL "Compile Palace with sanitizers 
 set(PALACE_TESTS_NUMPROC 2 CACHE STRING "MPI ranks per [Parallel] unit-test case")
 set(PALACE_REGRESSION_NUMPROC 2 CACHE STRING "MPI ranks per [Regression]/[Long] case")
 set(PALACE_TESTS_OMP_THREADS 1 CACHE STRING "OpenMP threads per test process")
+set(PALACE_GIT_COMMIT_ID "" CACHE STRING "Version string to embed instead of git describe")
 
 # Enable Fortran if required
 if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS OR PALACE_WITH_ARPACK)
@@ -88,6 +89,17 @@ if(PALACE_WITH_CUDA)
   endif()
   enable_language(CUDA)
   find_package(CUDAToolkit REQUIRED)
+  # Fail before building dependencies: Palace's C++20 device code needs nvcc 12.0, and
+  # CMake knows its -std=c++20 flag from 3.25.2
+  if(CMAKE_VERSION VERSION_LESS 3.25.2)
+    message(FATAL_ERROR
+      "PALACE_WITH_CUDA requires CMake 3.25.2 or later (found ${CMAKE_VERSION})")
+  endif()
+  if(CMAKE_CUDA_COMPILER_ID STREQUAL "NVIDIA" AND
+     CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 12.0)
+    message(FATAL_ERROR
+      "PALACE_WITH_CUDA requires CUDA 12.0 or later (found ${CMAKE_CUDA_COMPILER_VERSION})")
+  endif()
 elseif(PALACE_WITH_HIP)
   enable_language(HIP)
   get_filename_component(HIPCC_DIR ${CMAKE_HIP_COMPILER} DIRECTORY)

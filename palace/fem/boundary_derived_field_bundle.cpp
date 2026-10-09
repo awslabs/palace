@@ -3,7 +3,7 @@
 
 #include "fem/boundary_derived_field_bundle.hpp"
 
-#include <cstring>
+#include <bit>
 #include <deque>
 #include <map>
 #include <utility>
@@ -35,23 +35,15 @@ namespace
 
 using RouteKey = std::vector<long long>;
 
-long long EncodeDouble(double x)
-{
-  static_assert(sizeof(long long) == sizeof(double));
-  long long bits;
-  std::memcpy(&bits, &x, sizeof(bits));
-  return bits;
-}
-
 void AppendRule(RouteKey &key, const std::vector<mfem::IntegrationPoint> &points)
 {
   key.push_back(static_cast<long long>(points.size()));
   for (const auto &ip : points)
   {
-    key.push_back(EncodeDouble(ip.x));
-    key.push_back(EncodeDouble(ip.y));
-    key.push_back(EncodeDouble(ip.z));
-    key.push_back(EncodeDouble(ip.weight));
+    key.push_back(std::bit_cast<long long>(ip.x));
+    key.push_back(std::bit_cast<long long>(ip.y));
+    key.push_back(std::bit_cast<long long>(ip.z));
+    key.push_back(std::bit_cast<long long>(ip.weight));
   }
 }
 
@@ -183,12 +175,18 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
                                       mat_op->GetPermittivityReal());
   MaterialPropertyCoefficient invmu(mat_op->GetAttributeToMaterial(),
                                     mat_op->GetCurlCurlInvPermeability());
+  // Im{ε} enters only the surface charge of complex fields (D = ε E with the complex
+  // permittivity of a lossy dielectric); energies keep Re{ε}.
+  MaterialPropertyCoefficient epsilon_imag(mat_op->GetAttributeToMaterial(),
+                                           mat_op->GetPermittivityImag());
   const auto epsilon_ctx = ceed::PopulateCoefficientContext(3, &epsilon);
   const auto invmu_ctx = ceed::PopulateCoefficientContext(3, &invmu);
+  const auto epsilon_imag_ctx = ceed::PopulateCoefficientContext(3, &epsilon_imag);
 
   for (const auto &item : routes)
   {
-    const auto &route = item.second;  // Remove in C++20.
+    // Not a structured binding: Clang does not yet support capturing one under OpenMP.
+    const auto &route = item.second;
     const std::size_t num_elem = route.entries.size();
     MFEM_VERIFY(num_elem > 0, "Empty boundary derived route!");
     const auto &first = *route.entries.front();
@@ -300,7 +298,7 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
                     CEED_COPY_VALUES, out_offsets.data(), &out_restriction));
       scratch.restrictions.push_back(out_restriction);
 
-      std::vector<CeedIntScalar> ctx(9);
+      std::vector<CeedIntScalar> ctx(10);
       ctx[0].second = route.normal_sign;
       ctx[1].second = electric_scaling;  // Surface charge.
       ctx[2].second = magnetic_scaling;  // Surface current.
@@ -308,10 +306,12 @@ BoundaryDerivedFieldBundle::BoundaryDerivedFieldBundle(
       ctx[4].second = magnetic_scaling;  // Magnetic energy.
       ctx[5].second = magnetic_scaling;  // Poynting vector.
       ctx[6].second = route.average_scale;
-      ctx[7].first = 9;
+      ctx[7].first = 10;
       ctx.insert(ctx.end(), epsilon_ctx.begin(), epsilon_ctx.end());
       ctx[8].first = static_cast<CeedInt>(ctx.size());
       ctx.insert(ctx.end(), invmu_ctx.begin(), invmu_ctx.end());
+      ctx[9].first = static_cast<CeedInt>(ctx.size());
+      ctx.insert(ctx.end(), epsilon_imag_ctx.begin(), epsilon_imag_ctx.end());
 
       ceed::CeedQFunctionInfo info;
       info.apply_qf = batched_complex ? f_eval_bdr_derived_trace_complex_32

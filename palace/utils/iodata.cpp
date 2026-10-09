@@ -6,6 +6,7 @@
 #include <charconv>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 #include <regex>
 #include <set>
 #include <sstream>
@@ -106,7 +107,24 @@ std::stringstream PreprocessFile(const char *filename)
     bool inside = false;
     for (auto it = start; it != file.end(); ++it)
     {
-      if (inside)
+      if (*it == '"')
+      {
+        // Skip string literals: brackets inside strings (e.g. file paths) are not arrays. A
+        // quote also ends any candidate array, which then passes through unexpanded.
+        inside = false;
+        while (++it != file.end() && *it != '"')
+        {
+          if (*it == '\\' && it + 1 != file.end())
+          {
+            ++it;
+          }
+        }
+        if (it == file.end())
+        {
+          break;
+        }
+      }
+      else if (inside)
       {
         if (*it == ']')
         {
@@ -453,6 +471,15 @@ void IoData::CheckConfiguration()
     }
   }
 
+  // Superconductor sheet boundaries (kinetic inductance) are only meaningful for the
+  // magnetostatic total-inductance extraction.
+  if (!boundaries.superconductor.empty() && problem.type != ProblemType::MAGNETOSTATIC)
+  {
+    Mpi::Warning(
+        "Only the Magnetostatic problem type supports Superconductor sheet boundary "
+        "conditions!\n");
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -570,9 +597,41 @@ void IoData::CheckConfiguration()
   {
     solver.linear.mg_smooth_order = std::max(2 * solver.order, 4);
   }
+  // A FilmAttributes boundary not declared a Superconductor is the λ→0 London limit:
+  // register it as a sheet with small effective L_ksq = λ⊥ = pec_lperp. The sheet
+  // inductance is L_ksq = λ·coth(d/λ); take λ = pec_lperp in its thick-film limit d ≫ λ
+  // (coth → 1) so L_ksq = pec_lperp independent of the finite-thickness correction. Must
+  // run before the ams_singular_op default below.
+  if (problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    std::set<int> sc_attrs;
+    for (const auto &sc : boundaries.superconductor)
+    {
+      sc_attrs.insert(sc.attributes.begin(), sc.attributes.end());
+    }
+    for (const auto &[idx, fl] : boundaries.fluxloop)
+    {
+      for (auto attr : fl.film_attributes)
+      {
+        if (sc_attrs.insert(attr).second)
+        {
+          config::SuperconductorData sc;
+          sc.lambda_L = fl.pec_lperp;
+          sc.thickness = 50.0 * fl.pec_lperp;  // d >> λ: coth(d/λ) → 1, L_ksq → pec_lperp
+          sc.attributes = {attr};
+          boundaries.superconductor.push_back(sc);
+        }
+      }
+    }
+  }
   if (solver.linear.ams_singular_op < 0)
   {
-    solver.linear.ams_singular_op = (problem.type == ProblemType::MAGNETOSTATIC);
+    // A Superconductor sheet's (1/L_ksq) M_sheet penalty leaves a residual gradient null
+    // space, so K̃ is not the pure singular curl-curl operator; use full AMS (G-space
+    // corrections) rather than singular-AMS, which stalls in parallel.
+    const bool has_london_film = !boundaries.superconductor.empty();
+    solver.linear.ams_singular_op =
+        (problem.type == ProblemType::MAGNETOSTATIC && !has_london_film);
   }
   if (solver.linear.amg_agg_coarsen < 0)
   {
@@ -718,6 +777,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   {
     config::Nondimensionalize(units, data);
   }
+  for (auto &data : boundaries.superconductor)
+  {
+    config::Nondimensionalize(units, data);
+  }
   for (auto &[idx, data] : boundaries.lumpedport)
   {
     config::Nondimensionalize(units, data);
@@ -786,7 +849,7 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
   if (boundaries.periodic.floquet_reference_freq > 0.0)
   {
     boundaries.periodic.floquet_reference_freq =
-        2 * M_PI *
+        2 * std::numbers::pi *
         units.Nondimensionalize<Units::ValueType::FREQUENCY>(
             boundaries.periodic.floquet_reference_freq);
   }

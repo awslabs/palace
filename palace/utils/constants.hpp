@@ -19,19 +19,19 @@ namespace palace::electromagnetics
 
 // Speed of light in free space [m/s].
 // Exact.
-static constexpr double c0_ = 299'792'458;
+inline constexpr double c0_ = 299'792'458;
 
 // Permeability of free space [H/m].
 // CODATA value with error: 1.256 637 061 27(20) * 10^(−6)
-static constexpr double mu0_ = 1.256'637'061'27e-6;
+inline constexpr double mu0_ = 1.256'637'061'27e-6;
 
 // Permittivity of free space [F/m].
 // CODATA value with error: 8.854 187 8188(14) * 10^(−12)
-static constexpr double epsilon0_ = 1.0 / (mu0_ * c0_ * c0_);
+inline constexpr double epsilon0_ = 1.0 / (mu0_ * c0_ * c0_);
 
 // Impedance of free space [Ω].
 // CODATA value with error: 376.730 313 412(59)
-static constexpr double Z0_ = mu0_ * c0_;  // = sqrt(mu0 / epsilon0)
+inline constexpr double Z0_ = mu0_ * c0_;  // = sqrt(mu0 / epsilon0)
 
 }  // namespace palace::electromagnetics
 

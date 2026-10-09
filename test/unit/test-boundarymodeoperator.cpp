@@ -7,14 +7,19 @@
 #include <complex>
 #include <functional>
 #include <memory>
+#include <numbers>
 #include <tuple>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "drivers/boundarymodesolver.hpp"
 
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/farfieldboundaryoperator.hpp"
@@ -26,6 +31,7 @@
 #include "models/surfacerationalimpedanceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -121,8 +127,8 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
     dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
   }
 
-  double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  double omega = 2.0 * std::numbers::pi *
+                 iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
 
   // ModeEigenSolver requires a positive Krylov subspace size (num_vec). Mirror the
   // formula used by IoData::CheckConfiguration for eigenmode.max_size.
@@ -398,6 +404,159 @@ public:
     return {linalg::Dot(comm, x.Real(), y.Real()), linalg::Dot(comm, x.Real(), y.Imag())};
   }
 };
+// Exact mode index of the TM0 mode of a parallel plate guide with a PEC plate at y = 0, a
+// vacuum gap of height h, and a London slab of thickness d and penetration depth lambda,
+// whose back face is PEC or free (PMC), at free-space wavenumber k0 (all lengths in um).
+// With p^2 = k0^2 (n^2 - 1) and q^2 = 1/lambda^2 + p^2, H_x = cosh(p y) in the gap and cosh
+// or sinh of q (h + d - y) in the slab, and continuity of H_x and of (1/eps) dH_x/dy at y =
+// h, where eps = 1 - 1/(k0 lambda)^2 is the effective permittivity of the slab, give p
+// tanh(p h) = -(q/eps) coth(q d) (free back face) or -(q/eps) tanh(q d) (PEC back face). In
+// the quasi-static limit, n^2 = 1 + (lambda/h) coth(d/lambda) or tanh(d/lambda) (Swihart).
+double ExactLondonSlabIndex(double h, double d, double lambda, double k0, bool pec_back)
+{
+  const double eps = 1.0 - 1.0 / (k0 * k0 * lambda * lambda);
+  auto F = [&](double n)
+  {
+    const double p = k0 * std::sqrt(n * n - 1.0);
+    const double q = std::sqrt(1.0 / (lambda * lambda) + p * p);
+    const double g = pec_back ? std::tanh(q * d) : 1.0 / std::tanh(q * d);
+    return p * std::tanh(p * h) + q * g / eps;
+  };
+  double lo = 1.0 + 1.0e-12, hi = 10.0;
+  for (int it = 0; it < 200; it++)
+  {
+    const double mid = 0.5 * (lo + hi);
+    ((F(mid) < 0.0) ? lo : hi) = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+// Propagation constant normalized by the free-space wavenumber (n_eff) of a mode of a 2D
+// cross-section of width w, in um: a PEC plate at y = 0 (attribute 1), a vacuum gap of
+// height h, and a London superconductor slab of thickness d with penetration depth lambda
+// above it, whose back face y = h + d (attribute 2) is PEC or left free (PMC). The sides x
+// = 0, w (attribute 3) are PEC or free.
+double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec_back,
+                           bool pec_sides, double freq_ghz, double n_target, int order,
+                           int ny_gap = 8)
+{
+  MPI_Comm comm = Mpi::World();
+  Units units(1.0e-6, 1.0e-6);
+  IoData iodata(units);
+  iodata.model.Lc = 1.0;
+  auto &vacuum = iodata.domains.materials.emplace_back();
+  vacuum.attributes = {1};
+  auto &london = iodata.domains.materials.emplace_back();
+  london.attributes = {2};
+  london.lambda_L = lambda;
+  iodata.boundaries.pec.attributes = {1};
+  if (pec_back)
+  {
+    iodata.boundaries.pec.attributes.push_back(2);
+  }
+  if (pec_sides)
+  {
+    iodata.boundaries.pec.attributes.push_back(3);
+  }
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = freq_ghz;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.solver.boundary_mode.tol = 1.0e-12;
+  iodata.solver.linear.tol = 1.0e-12;
+  iodata.solver.linear.max_it = 200;
+
+  // Structured quadrilaterals: 2 across the width, ny_gap across the gap, and enough across
+  // the slab to resolve the penetration depth.
+  constexpr int nx = 2;
+  const int ny_slab = std::max(8, static_cast<int>(std::ceil(8.0 * d / lambda)));
+  std::vector<double> y;
+  for (int j = 0; j <= ny_gap; j++)
+  {
+    y.push_back(h * j / ny_gap);
+  }
+  for (int j = 1; j <= ny_slab; j++)
+  {
+    y.push_back(h + d * j / ny_slab);
+  }
+  const int ny = static_cast<int>(y.size()) - 1;
+  auto serial_mesh =
+      std::make_unique<mfem::Mesh>(2, (nx + 1) * (ny + 1), nx * ny, 2 * (nx + ny));
+  for (int j = 0; j <= ny; j++)
+  {
+    for (int i = 0; i <= nx; i++)
+    {
+      serial_mesh->AddVertex(w * i / nx, y[j]);
+    }
+  }
+  auto v = [&](int i, int j) { return i + (nx + 1) * j; };
+  for (int j = 0; j < ny; j++)
+  {
+    for (int i = 0; i < nx; i++)
+    {
+      serial_mesh->AddQuad(v(i, j), v(i + 1, j), v(i + 1, j + 1), v(i, j + 1),
+                           (j < ny_gap) ? 1 : 2);
+    }
+  }
+  for (int i = 0; i < nx; i++)
+  {
+    serial_mesh->AddBdrSegment(v(i, 0), v(i + 1, 0), 1);
+    serial_mesh->AddBdrSegment(v(i + 1, ny), v(i, ny), 2);
+  }
+  for (int j = 0; j < ny; j++)
+  {
+    serial_mesh->AddBdrSegment(v(0, j + 1), v(0, j), 3);
+    serial_mesh->AddBdrSegment(v(nx, j), v(nx, j + 1), 3);
+  }
+  serial_mesh->FinalizeQuadMesh(1, 1, true);
+
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  Mesh palace_mesh(std::move(par_mesh));
+
+  auto nd_fec = std::make_unique<mfem::ND_FECollection>(order, palace_mesh.Dimension());
+  auto h1_fec = std::make_unique<mfem::H1_FECollection>(order, palace_mesh.Dimension());
+  FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
+  FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
+  MaterialOperator mat_op(iodata, palace_mesh);
+  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
+  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+
+  mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
+  {
+    const auto &pmesh = palace_mesh.Get();
+    int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+    auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, iodata.boundaries.pec.attributes);
+    nd_fespace.Get().GetEssentialTrueDofs(dbc_marker, nd_dbc_tdof_list);
+    h1_fespace.Get().GetEssentialTrueDofs(dbc_marker, h1_dbc_tdof_list);
+  }
+  const int nd_size = nd_fespace.GetTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(nd_dbc_tdof_list);
+  for (int i = 0; i < h1_dbc_tdof_list.Size(); i++)
+  {
+    dbc_tdof_list.Append(nd_size + h1_dbc_tdof_list[i]);
+  }
+
+  const double omega =
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  // Shift-and-invert about the target, as in BoundaryModeSolver with a target n_eff.
+  const int num_vec = 16;
+  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
+                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec,
+                              1.0e-12, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
+                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
+                              nd_fespace.GetComm());
+  const double kn_target = omega * n_target;
+  auto result = mode_solver.Solve(omega, -kn_target * kn_target);
+  REQUIRE(result.num_converged >= 1);
+  const auto kn = mode_solver.GetPropagationConstant(0);
+  CHECK(std::abs(kn.imag()) < 1.0e-6 * std::abs(kn.real()));
+  return kn.real() / omega;
+}
 
 }  // namespace
 
@@ -740,6 +899,394 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
     CHECK_THAT(pair_n.real(), WithinRel(-RMM::H, 1.0e-12));
     CHECK(pair_n.imag() == 0.0);
   }
+}
+
+TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Parallel]")
+{
+  // London superconductor slabs of thickness d, compared to exact solutions.
+  constexpr double lambda = 0.1;
+  SECTION("Out-of-plane current")
+  {
+    // TM0 mode of a parallel plate guide with gap h, with the slab carrying the current
+    // along the propagation direction, compared to the exact dispersion relation. The
+    // frequency is high enough for the propagation constant to be well conditioned.
+    constexpr double h = 0.5, freq_ghz = 500.0;
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
+    for (double d : {0.01, 0.1, 1.0})
+    {
+      for (bool pec_back : {false, true})
+      {
+        const double n_exact = ExactLondonSlabIndex(h, d, lambda, k0, pec_back);
+        const double n_eff =
+            SolveLondonSlabMode(1.0, h, d, lambda, pec_back, false, freq_ghz, n_exact, 3);
+        CAPTURE(d, pec_back, n_exact, n_eff);
+        CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-8));
+      }
+    }
+  }
+  SECTION("In-plane current")
+  {
+    // TE1 mode between the PEC plate and the slab (PEC sides), with E_x = sin(k_y y) in
+    // the gap and the current along the slab, perpendicular to the propagation direction.
+    // In the slab, q^2 = 1/lambda^2 - k_y^2 and k_y cot(k_y h) = -q tanh(q d) (free back
+    // face).
+    constexpr double h = 500.0, d = 0.5, freq_ghz = 500.0;
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
+    auto F = [&](double ky)
+    {
+      const double q = std::sqrt(1.0 / (lambda * lambda) - ky * ky);
+      return ky / std::tan(ky * h) + q * std::tanh(q * d);
+    };
+    double lo = 0.9 * std::numbers::pi / h, hi = (1.0 - 1.0e-12) * std::numbers::pi / h;
+    for (int it = 0; it < 200; it++)
+    {
+      const double mid = 0.5 * (lo + hi);
+      ((F(lo) * F(mid) <= 0.0) ? hi : lo) = mid;
+    }
+    const double ky = 0.5 * (lo + hi);
+    const double n_exact = std::sqrt(1.0 - (ky / k0) * (ky / k0));
+    const double n_pec =
+        std::sqrt(1.0 - (std::numbers::pi / h / k0) * (std::numbers::pi / h / k0));
+    const double n_eff =
+        SolveLondonSlabMode(50.0, h, d, lambda, false, true, freq_ghz, n_exact, 3, 32);
+    CAPTURE(n_exact, n_pec, n_eff);
+    CHECK_THAT(n_eff - n_pec, WithinRel(n_exact - n_pec, 1.0e-5));
+  }
+}
+
+TEST_CASE("BoundaryModeOperator interior PEC on a nonconforming mesh",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A PEC line through the interior of the cross-section at x = 4, and an interior
+  // boundary without boundary condition at y = 2 for x > 4, with the elements of the
+  // quadrant x > 4, y > 2 refined. The edges of both lines on the unrefined side are
+  // master edges without boundary elements: those of the PEC line must be essential, and
+  // those of the other line not.
+  const auto type = GENERATE(mfem::Element::TRIANGLE, mfem::Element::QUADRILATERAL);
+  const int order = GENERATE(1, 2);
+  MPI_Comm comm = Mpi::World();
+  constexpr double width = 8.0, height = 4.0, x_pec = 4.0, y_other = 2.0, eps = 1.0e-9;
+  constexpr int pec_attr = 5, other_attr = 6;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(8, 4, type, false, width, height));
+  {
+    auto &smesh = *serial_mesh;
+    mfem::Array<int> v;
+    for (int f = 0; f < smesh.GetNumFaces(); f++)
+    {
+      int e1, e2;
+      smesh.GetFaceElements(f, &e1, &e2);
+      if (e1 < 0 || e2 < 0)
+      {
+        continue;
+      }
+      smesh.GetFaceVertices(f, v);
+      const double *a = smesh.GetVertex(v[0]), *b = smesh.GetVertex(v[1]);
+      if (std::abs(a[0] - x_pec) < eps && std::abs(b[0] - x_pec) < eps)
+      {
+        smesh.AddBdrSegment(v[0], v[1], pec_attr);
+      }
+      else if (std::abs(a[1] - y_other) < eps && std::abs(b[1] - y_other) < eps &&
+               std::min(a[0], b[0]) > x_pec - eps)
+      {
+        smesh.AddBdrSegment(v[0], v[1], other_attr);
+      }
+    }
+    smesh.FinalizeTopology();
+    smesh.Finalize(true, true);
+    smesh.EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      smesh.GetElementCenter(e, c);
+      if (c(0) > x_pec && c(1) > y_other)
+      {
+        marked.Append(e);
+      }
+    }
+    smesh.GeneralRefinement(marked, 1, 0);
+  }
+
+  Units units(1.0, 1.0);
+  IoData iodata(units);
+  iodata.model.Lc = 1.0;
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  material.epsilon_r.s = {1.0, 1.0, 1.0};
+  iodata.boundaries.pec.attributes = {pec_attr};
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = 1.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.NondimensionalizeInputs(serial_mesh);
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  iodata.CheckConfiguration();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::move(par_mesh)));
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+
+  auto CheckDbcTDofs = [&](const FiniteElementSpace &fespace,
+                           const mfem::Array<int> &dbc_tdof_list, bool edge_dofs)
+  {
+    const auto &fes = fespace.Get();
+    const auto &pmesh = *fes.GetParMesh();
+    std::vector<bool> is_dbc(fes.GetTrueVSize(), false);
+    for (auto t : dbc_tdof_list)
+    {
+      is_dbc[t] = true;
+    }
+    // Numbers of checked true DOFs on the PEC line, on the other line, and on the master
+    // edges of the PEC line (which have DOFs if the space has edge DOFs).
+    int counts[3] = {0, 0, 0};
+    auto Check = [&](const mfem::Array<int> &dofs, bool pec, bool master)
+    {
+      for (auto d : dofs)
+      {
+        const int t = fes.GetLocalTDofNumber((d >= 0) ? d : -1 - d);
+        if (t < 0)
+        {
+          continue;
+        }
+        CHECK(is_dbc[t] == pec);
+        counts[pec ? 0 : 1]++;
+        counts[2] += (pec && master);
+      }
+    };
+    auto OnPEC = [&](const double *x) { return std::abs(x[0] - x_pec) < eps; };
+    auto OnOther = [&](const double *x)
+    { return std::abs(x[1] - y_other) < eps && x[0] > x_pec + eps && x[0] < width - eps; };
+    const auto &edge_list = pmesh.ncmesh->GetEdgeList();
+    mfem::Array<int> v, dofs;
+    for (int e = 0; e < pmesh.GetNEdges(); e++)
+    {
+      pmesh.GetEdgeVertices(e, v);
+      const double *a = pmesh.GetVertex(v[0]), *b = pmesh.GetVertex(v[1]);
+      const bool pec = OnPEC(a) && OnPEC(b);
+      const bool other = std::abs(a[1] - y_other) < eps && std::abs(b[1] - y_other) < eps &&
+                         std::min(a[0], b[0]) > x_pec - eps;
+      if (pec || other)
+      {
+        fes.GetEdgeInteriorDofs(e, dofs);
+        Check(dofs, pec,
+              edge_list.GetMeshIdAndType(e).type ==
+                  mfem::NCMesh::NCList::MeshIdType::MASTER);
+      }
+    }
+    for (int i = 0; i < pmesh.GetNV(); i++)
+    {
+      const double *x = pmesh.GetVertex(i);
+      if (OnPEC(x) || OnOther(x))
+      {
+        fes.GetVertexDofs(i, dofs);
+        Check(dofs, OnPEC(x), false);
+      }
+    }
+    Mpi::GlobalSum(3, counts, comm);
+    CHECK(counts[0] > 0);
+    CHECK(counts[1] > 0);
+    CHECK((counts[2] > 0) == edge_dofs);
+  };
+  CheckDbcTDofs(mode_op.GetNDSpace(), mode_op.GetNDDbcTDofLists().back(), true);
+  CheckDbcTDofs(mode_op.GetH1Space(), mode_op.GetH1DbcTDofLists().back(), order > 1);
+}
+
+// BoundaryMode cross-section extracted from a nonconforming 3D mesh: the wave port of
+// cpw_wave_2dmode on the uncracked mesh, with the elements next to the port refined on
+// one side of the traces (as an adapted mesh can be). The 2D mesh must keep its boundary
+// elements through partitioning and uniform refinement, and the DoFs on the PEC edges
+// (master edges included) must be essential, and no others.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "BoundaryMode cross-section of a nonconforming 3D mesh",
+                 "[boundarymodeoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  const auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
+  auto buffer = PreprocessFile((cpw_dir / "cpw_wave_2dmode.json").string().c_str());
+  auto setup = nlohmann::json::parse(buffer);
+  setup["Model"]["Mesh"] = (cpw_dir / setup["Model"]["Mesh"].get<std::string>()).string();
+  setup["Model"]["CrackInternalBoundaryElements"] = false;
+  setup["Model"]["Refinement"] = {{"UniformLevels", 1}};
+  setup["Problem"]["Output"] = temp_dir.string();
+  IoData iodata(setup, /*print=*/false);
+  const std::vector<int> pec = iodata.boundaries.pec.attributes;
+
+  auto smesh = mesh::Load(iodata, comm);
+  if (smesh)
+  {
+    // Refine the elements next to the cross-section on one side of the traces, the
+    // interior PEC boundary elements.
+    double z_trace = mfem::infinity();
+    for (int be = 0; be < smesh->GetNBE(); be++)
+    {
+      int e1, e2;
+      smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+      if (e2 >= 0 &&
+          std::find(pec.begin(), pec.end(), smesh->GetBdrAttribute(be)) != pec.end())
+      {
+        mfem::Array<int> v;
+        smesh->GetBdrElementVertices(be, v);
+        z_trace = std::min(z_trace, smesh->GetVertex(v[0])[2]);
+      }
+    }
+    REQUIRE(z_trace < mfem::infinity());
+    const auto &attrs = iodata.solver.boundary_mode.attributes;
+    smesh->EnsureNCMesh(true);
+    mfem::Array<int> marked;
+    mfem::Vector c;
+    for (int be = 0; be < smesh->GetNBE(); be++)
+    {
+      if (std::find(attrs.begin(), attrs.end(), smesh->GetBdrAttribute(be)) == attrs.end())
+      {
+        continue;
+      }
+      int e1, e2;
+      smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+      smesh->GetElementCenter(e1, c);
+      if (c(2) > z_trace)
+      {
+        marked.Append(e1);
+      }
+    }
+    marked.Sort();
+    marked.Unique();
+    REQUIRE(marked.Size() > 0);
+    smesh->GeneralRefinement(marked, 1, 0);
+  }
+  BoundaryModeSolver solver(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
+  solver.Preprocess(iodata, smesh, comm);
+  std::vector<std::unique_ptr<mfem::ParMesh>> mfem_mesh;
+  mfem_mesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
+
+  // Segments of the PEC boundary elements of the 2D mesh before its uniform refinement,
+  // gathered from all ranks (the other wave ports are relabelled as PEC), and the numbers
+  // of PEC boundary elements and of those in the interior.
+  auto CountPEC = [&](const mfem::ParMesh &pmesh, std::vector<double> *segs)
+  {
+    std::array<int, 2> n = {0, 0};
+    for (int be = 0; be < pmesh.GetNBE(); be++)
+    {
+      if (std::find(pec.begin(), pec.end(), pmesh.GetBdrAttribute(be)) == pec.end())
+      {
+        continue;
+      }
+      n[0]++;
+      n[1] += pmesh.FaceIsInterior(pmesh.GetBdrElementFaceIndex(be));
+      mfem::Array<int> v;
+      pmesh.GetBdrElementVertices(be, v);
+      for (int i : v)
+      {
+        double x[2];
+        pmesh.GetNode(i, x);
+        if (segs)
+        {
+          segs->insert(segs->end(), x, x + 2);
+        }
+      }
+    }
+    Mpi::GlobalSum(2, n.data(), comm);
+    return n;
+  };
+  std::vector<double> segs;
+  const auto ne = mfem_mesh.back()->GetGlobalNE();
+  const auto nbe_pec = CountPEC(*mfem_mesh.back(), &segs);
+  CHECK(nbe_pec[0] > 0);
+  CHECK(nbe_pec[1] > 0);
+  mesh::RefineMesh(iodata, mfem_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  for (auto &m : mfem_mesh)
+  {
+    mesh.push_back(std::make_unique<Mesh>(std::move(m)));
+  }
+  const auto &pmesh = mesh.back()->Get();
+  REQUIRE(pmesh.Nonconforming());
+  REQUIRE(pmesh.GetGlobalNE() == 4 * ne);
+  CHECK(CountPEC(pmesh, nullptr) == std::array<int, 2>{2 * nbe_pec[0], 2 * nbe_pec[1]});
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+
+  int nloc = static_cast<int>(segs.size()), nproc = Mpi::Size(comm);
+  std::vector<int> sizes(nproc), displs(nproc, 0);
+  MPI_Allgather(&nloc, 1, MPI_INT, sizes.data(), 1, MPI_INT, comm);
+  for (int r = 1; r < nproc; r++)
+  {
+    displs[r] = displs[r - 1] + sizes[r - 1];
+  }
+  std::vector<double> all_segs(displs.back() + sizes.back());
+  MPI_Allgatherv(segs.data(), nloc, MPI_DOUBLE, all_segs.data(), sizes.data(),
+                 displs.data(), MPI_DOUBLE, comm);
+  auto OnPEC = [&](const double *x)
+  {
+    for (std::size_t k = 0; k < all_segs.size(); k += 4)
+    {
+      const double *a = &all_segs[k], *b = &all_segs[k + 2];
+      const double ab2 = (b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]);
+      const double ax_ab = (x[0] - a[0]) * (b[0] - a[0]) + (x[1] - a[1]) * (b[1] - a[1]);
+      const double ax2 = (x[0] - a[0]) * (x[0] - a[0]) + (x[1] - a[1]) * (x[1] - a[1]);
+      const double t = ax_ab / ab2;
+      if (t > -1.0e-9 && t < 1.0 + 1.0e-9 && ax2 - t * t * ab2 < 1.0e-12 * ab2)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Numbers of checked true DoFs on the PEC edges and off them, and on master edges.
+  int counts[3] = {0, 0, 0};
+  auto CheckDbcTDofs =
+      [&](const FiniteElementSpace &fespace, const mfem::Array<int> &dbc_tdof_list)
+  {
+    const auto &fes = fespace.Get();
+    std::vector<bool> is_dbc(fes.GetTrueVSize(), false);
+    for (auto t : dbc_tdof_list)
+    {
+      is_dbc[t] = true;
+    }
+    auto Check = [&](const mfem::Array<int> &dofs, bool on_pec, bool master)
+    {
+      for (auto d : dofs)
+      {
+        const int t = fes.GetLocalTDofNumber((d >= 0) ? d : -1 - d);
+        if (t < 0)
+        {
+          continue;
+        }
+        CHECK(is_dbc[t] == on_pec);
+        counts[on_pec ? 0 : 1]++;
+        counts[2] += (on_pec && master);
+      }
+    };
+    const auto &edge_list = pmesh.ncmesh->GetEdgeList();
+    mfem::Array<int> v, dofs;
+    for (int e = 0; e < pmesh.GetNEdges(); e++)
+    {
+      double x0[2], x1[2];
+      pmesh.GetEdgeVertices(e, v);
+      pmesh.GetNode(v[0], x0);
+      pmesh.GetNode(v[1], x1);
+      const double mid[2] = {0.5 * (x0[0] + x1[0]), 0.5 * (x0[1] + x1[1])};
+      fes.GetEdgeInteriorDofs(e, dofs);
+      Check(dofs, OnPEC(mid),
+            edge_list.GetMeshIdAndType(e).type == mfem::NCMesh::NCList::MeshIdType::MASTER);
+    }
+    for (int i = 0; i < pmesh.GetNV(); i++)
+    {
+      double x[2];
+      pmesh.GetNode(i, x);
+      fes.GetVertexDofs(i, dofs);
+      Check(dofs, OnPEC(x), false);
+    }
+  };
+  CheckDbcTDofs(mode_op.GetNDSpace(), mode_op.GetNDDbcTDofLists().back());
+  CheckDbcTDofs(mode_op.GetH1Space(), mode_op.GetH1DbcTDofLists().back());
+  Mpi::GlobalSum(3, counts, comm);
+  CHECK(counts[0] > 0);
+  CHECK(counts[1] > 0);
+  CHECK(counts[2] > 0);
 }
 
 }  // namespace palace

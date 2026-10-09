@@ -4,14 +4,15 @@
 #include "output_functionals.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
-#include <cstring>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <numeric>
 #include <sstream>
+#include <tuple>
 #include "fem/boundary_physical_trace.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/face_sampling_plan.hpp"
@@ -55,28 +56,20 @@ using FaceConfigKey = std::vector<long long>;
 constexpr CeedSize FarFieldMaxBatchStorage = 64LL * 1024LL * 1024LL;
 constexpr int FarFieldMaxDirectionsPerBatch = 256;
 
-long long EncodePointRuleDouble(double x)
-{
-  // Point rules are immutable fixed tabulations. Preserve every IEEE-754 bit, including
-  // signed zero, so the registry can never reuse a rule whose supplied point data differ.
-  static_assert(sizeof(long long) == sizeof(double));
-  long long bits;
-  std::memcpy(&bits, &x, sizeof(bits));
-  return bits;
-}
-
 void AppendPointRuleSignature(FaceConfigKey &key,
                               const std::vector<mfem::IntegrationPoint> &pts)
 {
   // Coordinate and weight bits are ordered by quadrature point and component. This is
   // part of the process-lifetime registry identity, not merely a collision guard.
+  // Every IEEE-754 bit, including signed zero, is kept so the registry never reuses a
+  // rule whose supplied point data differ.
   key.push_back(static_cast<long long>(pts.size()));
   for (const auto &ip : pts)
   {
-    key.push_back(EncodePointRuleDouble(ip.x));
-    key.push_back(EncodePointRuleDouble(ip.y));
-    key.push_back(EncodePointRuleDouble(ip.z));
-    key.push_back(EncodePointRuleDouble(ip.weight));
+    key.push_back(std::bit_cast<long long>(ip.x));
+    key.push_back(std::bit_cast<long long>(ip.y));
+    key.push_back(std::bit_cast<long long>(ip.z));
+    key.push_back(std::bit_cast<long long>(ip.weight));
   }
 }
 
@@ -132,19 +125,7 @@ void NormalizeReferencePoint(mfem::IntegrationPoint &ip)
 
 bool CanonicalPointLess(const mfem::IntegrationPoint &a, const mfem::IntegrationPoint &b)
 {
-  if (a.x != b.x)
-  {
-    return a.x < b.x;
-  }
-  if (a.y != b.y)
-  {
-    return a.y < b.y;
-  }
-  if (a.z != b.z)
-  {
-    return a.z < b.z;
-  }
-  return a.weight < b.weight;
+  return std::tie(a.x, a.y, a.z, a.weight) < std::tie(b.x, b.y, b.z, b.weight);
 }
 
 CanonicalMappedRule
@@ -159,15 +140,17 @@ CanonicalizeSymmetricMappedRule(const std::vector<mfem::IntegrationPoint> &origi
                     std::isfinite(ip.weight),
                 "Non-finite mapped reference point cannot be canonically routed!");
   }
-  std::stable_sort(rule.canonical_to_original.begin(), rule.canonical_to_original.end(),
-                   [&](int i, int j)
-                   {
-                     mfem::IntegrationPoint a = original[static_cast<std::size_t>(i)];
-                     mfem::IntegrationPoint b = original[static_cast<std::size_t>(j)];
-                     NormalizeReferencePoint(a);
-                     NormalizeReferencePoint(b);
-                     return CanonicalPointLess(a, b);
-                   });
+  std::ranges::stable_sort(rule.canonical_to_original,
+                           [&](int i, int j)
+                           {
+                             mfem::IntegrationPoint a =
+                                 original[static_cast<std::size_t>(i)];
+                             mfem::IntegrationPoint b =
+                                 original[static_cast<std::size_t>(j)];
+                             NormalizeReferencePoint(a);
+                             NormalizeReferencePoint(b);
+                             return CanonicalPointLess(a, b);
+                           });
   rule.pts.resize(original.size());
   std::vector<bool> seen(original.size(), false);
   for (std::size_t q = 0; q < rule.canonical_to_original.size(); q++)
@@ -441,8 +424,8 @@ SurfaceFunctional::SurfaceFunctional(
     PointFieldKind kind, const Mesh &mesh, const mfem::Array<int> &bdr_attr_marker,
     const mfem::ParFiniteElementSpace &fespace, const MaterialOperator &mat_op, int lod,
     double scaling, std::shared_ptr<const FaceSamplingPlan> sampling_plan_,
-    std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache_)
-  : kind(ToKernelKind(kind)),
+    std::shared_ptr<BoundaryPhysicalTraceCache> trace_cache_, bool imag_permittivity)
+  : kind(ToKernelKind(kind)), flux_imag_permittivity(imag_permittivity),
     nd_fespace((kind == PointFieldKind::FLUX_Q || kind == PointFieldKind::ENERGY_E)
                    ? &fespace
                    : nullptr),
@@ -455,6 +438,8 @@ SurfaceFunctional::SurfaceFunctional(
   MFEM_VERIFY(kind == PointFieldKind::FLUX_Q || kind == PointFieldKind::CURRENT_J ||
                   kind == PointFieldKind::ENERGY_E || kind == PointFieldKind::ENERGY_M,
               "Invalid SurfaceFunctional point-field backend constructor!");
+  MFEM_VERIFY(!imag_permittivity || kind == PointFieldKind::FLUX_Q,
+              "Imaginary permittivity is only meaningful for the surface charge kernel!");
   Assemble(mesh, bdr_attr_marker);
   WarmUpBufferOperators();
 }
@@ -491,14 +476,18 @@ SurfaceFunctional::SurfaceFunctional(const Mesh &mesh,
                                      const mfem::ParFiniteElementSpace *nd_fespace,
                                      const mfem::ParFiniteElementSpace *rt_fespace,
                                      const MaterialOperator &mat_op, SurfaceFlux type,
-                                     bool two_sided, const mfem::Vector &x0)
-  : kind(KernelKind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided), flux_x0(x0),
-    nd_fespace(nd_fespace), rt_fespace(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
+                                     bool two_sided, const mfem::Vector &x0,
+                                     bool imag_permittivity)
+  : kind(KernelKind::SURFACE_FLUX), flux_type(type), flux_two_sided(two_sided),
+    flux_imag_permittivity(imag_permittivity), flux_x0(x0), nd_fespace(nd_fespace),
+    rt_fespace(rt_fespace), mat_op(&mat_op), comm(mesh.GetComm())
 {
   MFEM_VERIFY(
       (nd_fespace || (type != SurfaceFlux::ELECTRIC && type != SurfaceFlux::POWER)) &&
           (rt_fespace || (type != SurfaceFlux::MAGNETIC && type != SurfaceFlux::POWER)),
       "Missing finite element space for surface flux functional!");
+  MFEM_VERIFY(!imag_permittivity || type == SurfaceFlux::ELECTRIC,
+              "Imaginary permittivity is only meaningful for the electric surface flux!");
   Assemble(mesh, bdr_attr_marker);
 }
 
@@ -639,7 +628,9 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
     if (flux_type == SurfaceFlux::ELECTRIC)
     {
       MaterialPropertyCoefficient epsilon_func(mat_op->GetAttributeToMaterial(),
-                                               mat_op->GetPermittivityReal());
+                                               flux_imag_permittivity
+                                                   ? mat_op->GetPermittivityImag()
+                                                   : mat_op->GetPermittivityReal());
       auto mat_ctx = ceed::PopulateCoefficientContext(3, &epsilon_func);
       base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
     }
@@ -659,7 +650,9 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
     const bool magnetic = (kind == KernelKind::BDR_CURRENT_J);
     MaterialPropertyCoefficient coeff_func(mat_op->GetAttributeToMaterial(),
                                            magnetic ? mat_op->GetCurlCurlInvPermeability()
-                                                    : mat_op->GetPermittivityReal());
+                                           : flux_imag_permittivity
+                                               ? mat_op->GetPermittivityImag()
+                                               : mat_op->GetPermittivityReal());
     auto mat_ctx =
         ceed::PopulateCoefficientContext(magnetic && is_2d ? 1 : dim, &coeff_func);
     base_ctx.insert(base_ctx.end(), mat_ctx.begin(), mat_ctx.end());
@@ -1793,10 +1786,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
         }
       }
       CeedElemRestriction ident_restr;
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(num_elem), num_pts, geom_comp,
-                               num_pts, (CeedSize)geom_comp * num_pts, CEED_MEM_HOST,
-                               CEED_COPY_VALUES, ident_offsets.data(), &ident_restr));
+      PalaceCeedCall(ceed,
+                     CeedElemRestrictionCreate(
+                         ceed, static_cast<CeedInt>(num_elem), num_pts, geom_comp, num_pts,
+                         static_cast<CeedSize>(geom_comp) * num_pts, CEED_MEM_HOST,
+                         CEED_COPY_VALUES, ident_offsets.data(), &ident_restr));
       CeedVector ident_vec;
       ceed::InitCeedVector(ident, ceed, &ident_vec);
       inputs.push_back(
@@ -1909,8 +1903,8 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       CeedElemRestriction restr;
       PalaceCeedCall(ceed, CeedElemRestrictionCreate(
                                ceed, static_cast<CeedInt>(num_elem), nq, num_comp, 1,
-                               (CeedSize)face_nbr_exchange->ImportSize(), CEED_MEM_HOST,
-                               CEED_COPY_VALUES, offsets.data(), &restr));
+                               static_cast<CeedSize>(face_nbr_exchange->ImportSize()),
+                               CEED_MEM_HOST, CEED_COPY_VALUES, offsets.data(), &restr));
       CeedVector vec;
       ceed::InitCeedVector(face_nbr_exchange->Imported(), ceed, &vec);
       inputs.push_back({name, vec, restr, nullptr, ceed::EvalMode::None});
@@ -2109,10 +2103,11 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
       }
       // Keep the output as an EVAL_NONE restriction so fixed-rule point routing and
       // scatter into the visualization buffer stay on the device.
-      PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                               ceed, static_cast<CeedInt>(num_elem), nq, nc,
-                               component_stride, (CeedSize)buffer_size, CEED_MEM_HOST,
-                               CEED_COPY_VALUES, offsets.data(), &out_restr));
+      PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, static_cast<CeedInt>(num_elem),
+                                                     nq, nc, component_stride,
+                                                     static_cast<CeedSize>(buffer_size),
+                                                     CEED_MEM_HOST, CEED_COPY_VALUES,
+                                                     offsets.data(), &out_restr));
     }
     else
     {

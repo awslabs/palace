@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <complex>
+#include <numbers>
 #include <unordered_set>
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
@@ -134,7 +135,7 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
     {
       for (auto a : data.attributes)
       {
-        if (std::find(bm.attributes.begin(), bm.attributes.end(), a) != bm.attributes.end())
+        if (std::ranges::find(bm.attributes, a) != bm.attributes.end())
         {
           continue;
         }
@@ -153,8 +154,7 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
                   "BoundaryMode submesh extraction found other-waveport edges on the "
                   "cross-section. Define at least one PEC boundary attribute to "
                   "relabel them to.");
-      const int pec_attr =
-          *std::min_element(bdr.pec.attributes.begin(), bdr.pec.attributes.end());
+      const int pec_attr = *std::ranges::min_element(bdr.pec.attributes);
       int relabelled = 0;
       for (int sbe = 0; sbe < extracted->GetNBE(); sbe++)
       {
@@ -169,6 +169,14 @@ void BoundaryModeSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> 
         Mpi::Print(" Relabelled {:d} other-waveport boundary edge(s) as PEC (attr {:d})\n",
                    relabelled, pec_attr);
       }
+    }
+
+    // The boundary elements of the submesh of a nonconforming mesh, including those added
+    // or relabelled above, are not in its mfem::NCMesh, and would be lost when the mesh is
+    // distributed.
+    if (extracted->Nonconforming())
+    {
+      extracted = mesh::RebuildNonconformingMesh(*extracted);
     }
 
     smesh = std::move(extracted);
@@ -209,7 +217,8 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   const int num_modes = bm.n;
   const double freq_GHz = bm.freq;
   const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_GHz);
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_GHz);
 
   Mpi::Print("\nConfiguring 2D waveguide mode analysis at f = {:.3e} GHz "
              "(omega = {:.6e})\n",

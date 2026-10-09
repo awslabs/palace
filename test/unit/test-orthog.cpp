@@ -3,6 +3,7 @@
 
 #include <complex>
 #include <memory>
+#include <numbers>
 #include <type_traits>
 #include <vector>
 #include <catch2/catch_template_test_macros.hpp>
@@ -319,7 +320,7 @@ TEST_CASE("OrthogonalizeColumn Parameterized - Complex 1", "[orthog][Serial][Par
   }
 
   // Rank-wise orthogonal basis vectors
-  auto theta = (2. * M_PI * mpi_rank) / mpi_size;
+  auto theta = (2. * std::numbers::pi * mpi_rank) / mpi_size;
   V.at(mpi_rank).Real()[mpi_rank] = std::cos(theta);
   V.at(mpi_rank).Imag()[mpi_rank] = std::sin(theta);
 
@@ -363,8 +364,8 @@ TEST_CASE("OrthogonalizeColumn Weighted - Real 1", "[orthog][Serial]")
     v.SetSize(3);
     v = 0.0;
   }
-  V[0][0] = 1.0 / std::sqrt(2);  // Normalized w.r.t W
-  V[1][2] = 1.0 / std::sqrt(2);
+  V[0][0] = 1.0 / std::numbers::sqrt2;  // Normalized w.r.t W
+  V[1][2] = 1.0 / std::numbers::sqrt2;
 
   Vector w(3);
   w.UseDevice(true);
@@ -409,8 +410,8 @@ TEST_CASE("OrthogonalizeColumn Weighted - Complex 1", "[orthog][Serial]")
     v.SetSize(3);
     v = 0.0;
   }
-  V[0].Real()[0] = 1.0 / std::sqrt(2);
-  V[1].Imag()[2] = 1.0 / std::sqrt(2);
+  V[0].Real()[0] = 1.0 / std::numbers::sqrt2;
+  V[1].Imag()[2] = 1.0 / std::numbers::sqrt2;
 
   ComplexVector w(3);
   w.UseDevice(true);

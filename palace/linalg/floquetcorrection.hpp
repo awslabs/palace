@@ -32,11 +32,10 @@ class MaterialOperator;
 template <typename VecType>
 class FloquetCorrSolver
 {
-  using OperType = typename std::conditional<std::is_same<VecType, ComplexVector>::value,
-                                             ComplexOperator, Operator>::type;
-  using ScalarType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                std::complex<double>, double>::type;
+  using OperType =
+      std::conditional_t<std::is_same_v<VecType, ComplexVector>, ComplexOperator, Operator>;
+  using ScalarType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                        std::complex<double>, double>;
 
 private:
   // Operators for the floquet correction.

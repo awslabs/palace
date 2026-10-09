@@ -18,16 +18,12 @@ namespace palace
 //
 
 // Abstract base class for real-valued or complex-valued solvers.
-template <typename OperType>
+template <OperatorType OperType>
 class Solver : public OperType
 {
-  static_assert(std::is_same<OperType, Operator>::value ||
-                    std::is_same<OperType, ComplexOperator>::value,
-                "Solver can only be defined for OperType = Operator or ComplexOperator!");
-
 protected:
-  using VecType = typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                            ComplexVector, Vector>::type;
+  using VecType =
+      std::conditional_t<std::is_same_v<OperType, ComplexOperator>, ComplexVector, Vector>;
 
   // Whether or not to use the second argument of Mult() as an initial guess.
   bool initial_guess;
@@ -67,7 +63,7 @@ public:
 // This solver wraps a real-valued mfem::Solver for application to complex-valued problems
 // as a preconditioner inside of a Solver<OperType> or for assembling the matrix-free
 // preconditioner operator as an mfem::HypreParMatrix.
-template <typename OperType>
+template <OperatorType OperType>
 class MfemWrapperSolver : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;

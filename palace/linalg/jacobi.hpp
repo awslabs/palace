@@ -15,7 +15,7 @@ namespace palace
 // Simple Jacobi smoother using the diagonal vector from OperType::AssembleDiagonal(),
 // which allows for (approximate) diagonal construction for matrix-free operators.
 //
-template <typename OperType>
+template <OperatorType OperType>
 class JacobiSmoother : public Solver<OperType>
 {
   using VecType = typename Solver<OperType>::VecType;

@@ -350,7 +350,7 @@ jobs:
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           # Configure environment
           if [[ "${{ matrix.compiler }}" == 'intel' ]] || \
@@ -365,6 +365,14 @@ jobs:
           fi
           if [[ "${{ matrix.math-libs }}" == 'armpl' ]]; then
             export LD_LIBRARY_PATH="$ARMPL_DIR/lib:$LD_LIBRARY_PATH"
+          fi
+
+          # Disable Open MPI's CPU binding (as in spack-macos.yml): with two ranks, each is
+          # bound to one core, shared by its OpenMP threads.
+          if [[ "${{ matrix.mpi }}" == 'openmpi' ]] && \
+             [[ "${{ matrix.with-openmp }}" == 'openmp' ]]; then
+            export OMPI_MCA_hwloc_base_binding_policy=none
+            export PRTE_MCA_hwloc_default_binding_policy=none
           fi
 
           # Configure sanitizer options

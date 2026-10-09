@@ -66,7 +66,7 @@ jobs:
       - uses: ./.github/actions/palace-ci
         with:
           toolchain: gcc
-          variant: +cuda
+          variant: +cuda+cudss
           run-regression-tests: 'false'
 
   build-x64-gcc-openmp:
@@ -79,18 +79,6 @@ jobs:
         with:
           toolchain: gcc
           variant: "+openmp+int64"
-          run-regression-tests: 'false'
-
-  build-x64-gcc-cxx20:
-    needs: filter
-    if: needs.filter.outputs.test == 'true'
-    runs-on: [self-hosted, x64]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/palace-ci
-        with:
-          toolchain: gcc
-          variant: " cxxstd=20"
           run-regression-tests: 'false'
 
   build-test-x64-llvm:
@@ -160,7 +148,6 @@ jobs:
       - build-x64-gcc
       - build-gpu-gcc
       - build-x64-gcc-openmp
-      - build-x64-gcc-cxx20
       - build-test-x64-llvm
       - build-test-x64-intel
       - build-test-arm64-gcc
@@ -181,6 +168,8 @@ jobs:
     # out of the index. The workflow-level group is keyed on github.ref and so
     # does not serialize across branches/PRs; this group deliberately omits it.
     # cancel-in-progress: false queues the newer writer instead of clobbering.
+    # ghcr-cleanup.yml joins this group (as `<package>-buildcache-index`) so it
+    # never deletes versions mid-refresh; keep the name and settings in sync.
     concurrency:
       group: palace-1.2-buildcache-index
       cancel-in-progress: false
@@ -223,13 +212,14 @@ jobs:
           - solver: SuperLU
           - solver: STRUMPACK
           - solver: Default
+          - solver: cuDSS
     runs-on: [self-hosted, gpu-4xlarge]
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/run-regression-tests
         with:
           toolchain: gcc
-          variant: +cuda
+          variant: +cuda+cudss
           linear-solver: ${{ matrix.solver }}
 
   test-x64-gcc-openmp:

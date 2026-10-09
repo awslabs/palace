@@ -99,7 +99,7 @@ inline void GeneratePlaneRotation(const T dx, const T dy, T &cs, T &sn)
   }
   else
   {
-    T u = std::min(safmax, std::max(safmin, std::max(dx1, dy1)));
+    T u = std::clamp(std::max(dx1, dy1), safmin, safmax);
     T dxs = dx / u;
     T dys = dy / u;
     T d = std::sqrt(dxs * dxs + dys * dys);
@@ -146,7 +146,7 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
       }
       else
       {
-        T u = std::min(safmax, std::max(safmin, dy1));
+        T u = std::clamp(dy1, safmin, safmax);
         std::complex<T> dys = dy / u;
         sn = std::conj(dys) / std::sqrt(dys.real() * dys.real() + dys.imag() * dys.imag());
       }
@@ -183,12 +183,12 @@ inline void GeneratePlaneRotation(const std::complex<T> dx, const std::complex<T
   }
   else
   {
-    T u = std::min(safmax, std::max(safmin, std::max(dx1, dy1))), w;
+    T u = std::clamp(std::max(dx1, dy1), safmin, safmax), w;
     std::complex<T> dys = dy / u, dxs;
     T dy2 = dys.real() * dys.real() + dys.imag() * dys.imag(), dx2, dz2;
     if (dx1 / u < root_min)
     {
-      T v = std::min(safmax, std::max(safmin, dx1));
+      T v = std::clamp(dx1, safmin, safmax);
       w = v / u;
       dxs = dx / v;
       dx2 = dxs.real() * dxs.real() + dxs.imag() * dxs.imag();
@@ -306,7 +306,7 @@ inline void ApplyBA(PreconditionerSide side, const OperType *A, const Solver<Ope
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   : Solver<OperType>(), comm(comm), A(nullptr), B(nullptr)
 {
@@ -337,7 +337,7 @@ IterativeSolver<OperType>::IterativeSolver(MPI_Comm comm, int print)
   use_timer = false;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -385,7 +385,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     }
     else
     {
-      beta_rhs = linalg::Norml2(comm, b);
+      beta_rhs = linalg::Dot(comm, b, b);
     }
     CheckDot(beta_rhs, "PCG preconditioner is not positive definite: (Bb, b) = ");
     initial_res = std::sqrt(std::abs(beta_rhs));
@@ -395,7 +395,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     initial_res = res;
   }
   eps = std::max(rel_tol * initial_res, abs_tol);
-  converged = (res < eps);
+  converged = (res <= eps);
 
   // Begin iterations.
   int it = 0;
@@ -423,6 +423,8 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     A->Mult(p, z);
     denom = linalg::Dot(comm, z, p);
     CheckDot(denom, "PCG operator is not positive definite: (Ap, p) = ");
+    MFEM_VERIFY(denom != 0.0,
+                "PCG operator is not positive definite: (Ap, p) = " << denom << "!");
     alpha = beta / denom;
 
     x.Add(alpha, p);
@@ -440,7 +442,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     beta = linalg::Dot(comm, z, r);
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
-    converged = (res < eps);
+    converged = (res <= eps);
   }
   if (print_opts.iterations)
   {
@@ -465,7 +467,7 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
   final_it = it;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GmresSolver<OperType>::Initialize() const
 {
   if (!V.empty())
@@ -495,7 +497,7 @@ void GmresSolver<OperType>::Initialize() const
   H.resize(static_cast<std::size_t>(max_dim + 1) * std::min(init_size, max_dim));
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GmresSolver<OperType>::Update(int j) const
 {
   // Add storage for basis vectors, Hessenberg columns, and rotations in increments.
@@ -520,7 +522,7 @@ void GmresSolver<OperType>::Update(int j) const
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -580,7 +582,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
           std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
-    if (beta < eps)
+    if (beta <= eps)
     {
       converged = true;
       break;
@@ -588,7 +590,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
     V[0] = 0.0;
     V[0].Add(1.0 / beta, r);
-    std::fill(s.begin(), s.end(), 0.0);
+    std::ranges::fill(s, 0.0);
     s[0] = beta;
 
     int j = 0;
@@ -621,7 +623,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "GMRES residual norm is not valid: beta = ");
-      converged = (beta < eps);
+      converged = (beta <= eps);
       if (converged || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;
@@ -684,7 +686,7 @@ void GmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
   final_it = it;
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void FgmresSolver<OperType>::Initialize() const
 {
   GmresSolver<OperType>::Initialize();
@@ -697,7 +699,7 @@ void FgmresSolver<OperType>::Initialize() const
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void FgmresSolver<OperType>::Update(int j) const
 {
   // Add storage for basis vectors in increments.
@@ -710,7 +712,7 @@ void FgmresSolver<OperType>::Update(int j) const
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 {
   // Set up workspace.
@@ -740,7 +742,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
       if (this->initial_guess)
       {
         auto beta_rhs = linalg::Norml2(comm, b);
-        CheckDot(beta_rhs, "GMRES residual norm is not valid: beta_rhs = ");
+        CheckDot(beta_rhs, "FGMRES residual norm is not valid: beta_rhs = ");
         initial_res = beta_rhs;
       }
       else
@@ -759,7 +761,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
           std::string(tab_width, ' '), true_beta, beta, initial_res);
     }
     beta = true_beta;
-    if (beta < eps)
+    if (beta <= eps)
     {
       converged = true;
       break;
@@ -767,7 +769,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
     V[0] = 0.0;
     V[0].Add(1.0 / beta, Z[0]);
-    std::fill(s.begin(), s.end(), 0.0);
+    std::ranges::fill(s, 0.0);
     s[0] = beta;
 
     int j = 0;
@@ -800,7 +802,7 @@ void FgmresSolver<OperType>::Mult(const VecType &b, VecType &x) const
 
       beta = std::abs(s[j + 1]);
       CheckDot(beta, "FGMRES residual norm is not valid: beta = ");
-      converged = (beta < eps);
+      converged = (beta <= eps);
       if (converged || j + 1 == max_dim || it + 1 == max_it)
       {
         it++;

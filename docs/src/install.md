@@ -27,13 +27,20 @@ source](#Build-from-source) instead.
 ## Build using Spack
 
 *Palace* is a registered package in the built-in Spack package repository. To
-install the solver, follow the [instructions for setting up Spack on your
-system](https://spack.readthedocs.io/en/latest/getting_started.html). Note that
-Spack requires basic system utilities that may not be installed by default on
-certain systems (such as Ubuntu for Windows Subsystem for Linux). Consult the
-[Spack Prerequisites
-page](https://spack.readthedocs.io/en/latest/installing_prerequisites.html) to
-ensure all required utilities are installed.
+install the solver, clone the Spack release series that *Palace* is tested with and
+set up its shell environment:
+
+```bash
+git clone --depth=2 --branch releases/v1.2 https://github.com/spack/spack.git
+. spack/share/spack/setup-env.sh
+```
+
+The [Spack instructions](https://spack.readthedocs.io/en/v1.2.0/getting_started.html)
+cover other shells. Note that Spack requires basic system utilities that may not be
+installed by default on certain systems (such as Ubuntu for Windows Subsystem for
+Linux). Consult the [Spack Prerequisites
+page](https://spack.readthedocs.io/en/v1.2.0/installing_prerequisites.html) to ensure
+all required utilities are installed.
 
 Once you have installed Spack, check that the version of *Palace* you want to
 install is available
@@ -117,12 +124,12 @@ spec (e.g., compiling with other solvers or with GPU support).
 
 A build from source requires the following prerequisites installed on your system:
 
-  - [CMake](https://cmake.org/download) version 3.24 or later
-  - C++17 compatible C++ compiler
+  - [CMake](https://cmake.org/download) version 3.24 or later (3.25.2 or later for CUDA)
+  - C++20 compatible C++ compiler
   - C and Fortran (optional) compilers for dependency builds
   - MPI distribution
   - BLAS, LAPACK libraries (described below in [Math libraries](#Math-libraries))
-  - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) or
+  - [CUDA Toolkit](https://developer.nvidia.com/cuda-toolkit) 12.0 or later, or
     [ROCm](https://rocm.docs.amd.com/en/latest/) installation (optional, for GPU support
     only)
 
@@ -206,6 +213,9 @@ Additional build options are (with default values in brackets):
   - `PALACE_WITH_GSLIB [ON]` :  Build with GSLIB library for high-order field interpolation
   - `PALACE_WITH_SUNDIALS [ON]` : Build with SUNDIALS ODE solver library
   - `PALACE_BUILD_WITH_SANITIZERS [OFF]` :  Build with AddressSanitizer and UndefinedBehaviorSanitizer
+  - `PALACE_GIT_COMMIT_ID []` :  Version string to embed (reported as `GitTag` in
+    `palace.json`), for builds from a source tree without Git metadata. When empty, the
+    `PALACE_GIT_COMMIT_ID` environment variable is used if set, otherwise `git describe`
 
 The build step is invoked by running (for example with 4 `make` threads)
 

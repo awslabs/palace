@@ -12,7 +12,7 @@
 namespace palace
 {
 
-template <typename OperType>
+template <OperatorType OperType>
 GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
@@ -62,12 +62,11 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 {
-  using ParOperType =
-      typename std::conditional<std::is_same<OperType, ComplexOperator>::value,
-                                ComplexParOperator, ParOperator>::type;
+  using ParOperType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
+                                         ComplexParOperator, ParOperator>;
 
   const auto *mg_op = dynamic_cast<const BaseMultigridOperator<OperType> *>(&op);
   MFEM_VERIFY(mg_op, "GeometricMultigridSolver requires a MultigridOperator or "
@@ -122,7 +121,7 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
   this->width = op.Width();
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void GeometricMultigridSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   // Initialize.
@@ -168,7 +167,7 @@ inline void RealMultTranspose(const Operator &op, const ComplexVector &x, Comple
 
 }  // namespace
 
-template <typename OperType>
+template <OperatorType OperType>
 void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
 {
   // Pre-smooth, with zero initial guess (Y = 0 set inside). This is the coarse solve at

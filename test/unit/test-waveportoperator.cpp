@@ -1,9 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#include <algorithm>
 #include <complex>
 #include <fstream>
 #include <memory>
+#include <numbers>
 #include <vector>
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
@@ -120,7 +122,7 @@ TEST_CASE("WavePortOperator-BoundaryMassFactorisation",
   omega_nd.reserve(omega_GHz.size());
   for (double f_GHz : omega_GHz)
   {
-    omega_nd.push_back(2.0 * M_PI *
+    omega_nd.push_back(2.0 * std::numbers::pi *
                        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f_GHz));
   }
 
@@ -196,8 +198,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionMatchedMode",
   auto &wp_op = space_op.GetWavePortOp();
   REQUIRE(wp_op.Size() > 0);
 
-  const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
 
   // The full applied wave-port operator: sparse local mass i·k_n·M plus the modal
   // correction (no Floquet ports here). This also triggers the per-port mode/reaction solve
@@ -293,8 +295,8 @@ TEST_CASE("WavePortOperator-ModalCorrectionComplexAttenuation",
   REQUIRE(wp_op.Size() > 0);
   auto &nd_fespace = space_op.GetNDSpace();
   const int n = nd_fespace.GetTrueVSize();
-  const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
 
   // Real-ω operator (triggers Initialize(ω0=omega)), then the complex-ω operator reusing
   // the frozen reference; same (empty) essential-dof list so any difference is purely the
@@ -380,8 +382,8 @@ TEST_CASE("WavePortOperator-InactiveBoundaryMassForSynthesis",
     REQUIRE(Mp);
   }
 
-  const double omega =
-      2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
+  const double omega = 2.0 * std::numbers::pi *
+                       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(7.0);
   auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
   CHECK_FALSE(A2);
   auto A2_complex = space_op.GetExtraSystemMatrix(std::complex<double>(omega, 1.0e-3),
@@ -411,7 +413,7 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
   // Sample from just above the mode cutoff (~6.3 GHz), where the hybrid shape redistributes
   // fastest between slab and air, up through well-separated, to expose the rotation.
   const double f_lo = 6.5, f_hi = 13.0;
-  const double w_ref = 2.0 * M_PI * nd(0.5 * (f_lo + f_hi));
+  const double w_ref = 2.0 * std::numbers::pi * nd(0.5 * (f_lo + f_hi));
 
   auto ports = space_op.GetModalCorrectionSynthesisPorts(w_ref);
   REQUIRE(!ports.empty());
@@ -428,7 +430,7 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
     {
       const double fi = f_lo + (f_hi - f_lo) * i / (msamp - 1);
       auto smp = space_op.SampleModalCorrectionVectors(
-          port_idx, std::complex<double>(2.0 * M_PI * nd(fi), 0.0));
+          port_idx, std::complex<double>(2.0 * std::numbers::pi * nd(fi), 0.0));
       if (!smp.active)
       {
         continue;
@@ -484,4 +486,352 @@ TEST_CASE("WavePortOperator-ModalCorrectionRotationSubspace",
     CHECK(max_resid > 0.1);  // freezing the shape at band center is inadequate
   }
   REQUIRE(checked_any);  // the slab hybrid port mode must be active and tracked
+}
+
+// Wave ports on a parallel plate guide along z (width w, gap h in um) with a London slab of
+// thickness d above the gap, compared to the exact TM0 mode index from the dispersion
+// relation p tanh(p h) = -(q/eps) coth(q d) with a free back face (tanh(q d) for a PEC back
+// face), where p^2 = k0^2 (n^2 - 1), q^2 = 1/lambda^2 + p^2, and eps = 1 - 1/(k0 lambda)^2.
+// The gap keeps n_eff below the spectral shift of the port mode solve.
+TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  constexpr double lambda = 0.1, w = 1.0, h = 5.0, d = 0.1, l = 2.0, freq_ghz = 500.0;
+  for (bool pec_back : {false, true})
+  {
+    json setup = {
+        {"Problem", {{"Type", "Driven"}, {"Output", ""}}},
+        {"Model", {{"Mesh", "london_slab.mesh"}, {"L0", 1.0e-6}}},
+        {"Domains",
+         {{"Materials", json::array({{{"Attributes", {1}}},
+                                     {{"Attributes", {2}}, {"LondonDepth", lambda}}})}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", pec_back ? json({1, 2}) : json({1})}}},
+          {"WavePort",
+           json::array({{{"Index", 1}, {"Attributes", {4}}, {"Excitation", true}},
+                        {{"Index", 2}, {"Attributes", {5}}}})}}},
+        {"Solver",
+         {{"Order", 2},
+          {"Driven",
+           {{"Samples", json::array({{{"Type", "Point"}, {"Freq", {freq_ghz}}}})}}}}}};
+    IoData iodata(setup, /*print=*/false);
+
+    // Hexahedra: attribute 1 for the gap and 2 for the slab; boundary attributes 1 (y = 0),
+    // 2 (y = h + d), 3 (x = 0, w), 4 (z = 0), and 5 (z = l).
+    constexpr int nx = 2, ny_gap = 8, ny_slab = 8, nz = 2, ny = ny_gap + ny_slab;
+    auto smesh = std::make_unique<mfem::Mesh>(
+        3, (nx + 1) * (ny + 1) * (nz + 1), nx * ny * nz, 2 * (nx * nz + ny * nz + nx * ny));
+    for (int k = 0; k <= nz; k++)
+    {
+      for (int j = 0; j <= ny; j++)
+      {
+        const double y = (j <= ny_gap) ? h * j / ny_gap : h + d * (j - ny_gap) / ny_slab;
+        for (int i = 0; i <= nx; i++)
+        {
+          smesh->AddVertex(w * i / nx, y, l * k / nz);
+        }
+      }
+    }
+    auto v = [&](int i, int j, int k) { return i + (nx + 1) * (j + (ny + 1) * k); };
+    for (int k = 0; k < nz; k++)
+    {
+      for (int j = 0; j < ny; j++)
+      {
+        for (int i = 0; i < nx; i++)
+        {
+          smesh->AddHex(v(i, j, k), v(i + 1, j, k), v(i + 1, j + 1, k), v(i, j + 1, k),
+                        v(i, j, k + 1), v(i + 1, j, k + 1), v(i + 1, j + 1, k + 1),
+                        v(i, j + 1, k + 1), (j < ny_gap) ? 1 : 2);
+        }
+      }
+    }
+    for (int k = 0; k < nz; k++)
+    {
+      for (int i = 0; i < nx; i++)
+      {
+        smesh->AddBdrQuad(v(i, 0, k), v(i, 0, k + 1), v(i + 1, 0, k + 1), v(i + 1, 0, k),
+                          1);
+        smesh->AddBdrQuad(v(i, ny, k), v(i + 1, ny, k), v(i + 1, ny, k + 1),
+                          v(i, ny, k + 1), 2);
+      }
+      for (int j = 0; j < ny; j++)
+      {
+        smesh->AddBdrQuad(v(0, j, k), v(0, j + 1, k), v(0, j + 1, k + 1), v(0, j, k + 1),
+                          3);
+        smesh->AddBdrQuad(v(nx, j, k), v(nx, j, k + 1), v(nx, j + 1, k + 1),
+                          v(nx, j + 1, k), 3);
+      }
+    }
+    for (int j = 0; j < ny; j++)
+    {
+      for (int i = 0; i < nx; i++)
+      {
+        smesh->AddBdrQuad(v(i, j, 0), v(i, j + 1, 0), v(i + 1, j + 1, 0), v(i + 1, j, 0),
+                          4);
+        smesh->AddBdrQuad(v(i, j, nz), v(i + 1, j, nz), v(i + 1, j + 1, nz),
+                          v(i, j + 1, nz), 5);
+      }
+    }
+    smesh->FinalizeHexMesh(1, 1, true);
+    iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+    iodata.NondimensionalizeInputs(smesh);
+    std::vector<std::unique_ptr<Mesh>> mesh_vec;
+    mesh_vec.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
+    SpaceOperator space_op(iodata, mesh_vec);
+
+    auto &wp_op = space_op.GetWavePortOp();
+    REQUIRE(wp_op.Size() == 2);
+    const double omega =
+        2.0 * std::numbers::pi *
+        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+    wp_op.InitializeModalReference(omega);
+    const double k0 =
+        2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_ * 1.0e-6;
+    const double eps = 1.0 - 1.0 / (k0 * k0 * lambda * lambda);
+    auto F = [&](double n)
+    {
+      const double p = k0 * std::sqrt(n * n - 1.0);
+      const double q = std::sqrt(1.0 / (lambda * lambda) + p * p);
+      const double g = pec_back ? std::tanh(q * d) : 1.0 / std::tanh(q * d);
+      return p * std::tanh(p * h) + q * g / eps;
+    };
+    double lo = 1.0 + 1.0e-12, hi = 10.0;
+    for (int it = 0; it < 200; it++)
+    {
+      const double mid = 0.5 * (lo + hi);
+      ((F(mid) < 0.0) ? lo : hi) = mid;
+    }
+    const double n_exact = 0.5 * (lo + hi);
+    for (const auto &[idx, data] : wp_op)
+    {
+      const double n_eff = data.kn0.real() / omega;
+      CAPTURE(pec_back, idx, n_exact, n_eff, data.kn0.imag() / omega);
+      CHECK(std::abs(data.kn0.imag()) < 1.0e-6 * std::abs(data.kn0.real()));
+      CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-7));
+    }
+  }
+}
+
+// The traces of cpw_wave_uniform are interior PEC sheets crossing the wave ports when the
+// mesh is not cracked. Refining the elements next to the ports on one side of the trace
+// plane makes the port submeshes nonconforming, with master edges on the unrefined side of
+// the trace lines which have no boundary elements: the port DoFs on the PEC segments must
+// be essential (masters included), and no others.
+TEST_CASE("WavePortOperator-InteriorPECOnNonconformingPorts",
+          "[waveportoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  json setup = LoadCpwWaveConfig();
+  setup["Model"]["CrackInternalBoundaryElements"] = false;
+  IoData iodata(setup, /*print=*/false);
+
+  std::vector<std::unique_ptr<Mesh>> mesh_io;
+  {
+    auto smesh = mesh::Load(iodata, comm);
+    if (smesh)
+    {
+      // Plane of the interior PEC boundary elements (coordinate axis and value).
+      const auto &pec = iodata.boundaries.pec.attributes;
+      mfem::Vector lo(3), hi(3);
+      lo = mfem::infinity();
+      hi = -mfem::infinity();
+      for (int be = 0; be < smesh->GetNBE(); be++)
+      {
+        int e1, e2;
+        smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+        if (e2 < 0 ||
+            std::find(pec.begin(), pec.end(), smesh->GetBdrAttribute(be)) == pec.end())
+        {
+          continue;
+        }
+        mfem::Array<int> v;
+        smesh->GetBdrElementVertices(be, v);
+        for (int i : v)
+        {
+          for (int d = 0; d < 3; d++)
+          {
+            lo(d) = std::min(lo(d), smesh->GetVertex(i)[d]);
+            hi(d) = std::max(hi(d), smesh->GetVertex(i)[d]);
+          }
+        }
+      }
+      int axis = -1;
+      for (int d = 0; d < 3; d++)
+      {
+        if (hi(d) - lo(d) < 1.0e-9 * (1.0 + std::abs(lo(d))))
+        {
+          axis = d;
+        }
+      }
+      REQUIRE(axis >= 0);
+
+      // Refine the elements next to the wave ports on one side of the trace plane.
+      std::vector<int> port_attrs;
+      for (const auto &[idx, data] : iodata.boundaries.waveport)
+      {
+        port_attrs.insert(port_attrs.end(), data.attributes.begin(), data.attributes.end());
+      }
+      smesh->EnsureNCMesh(true);
+      mfem::Array<int> marked;
+      mfem::Vector c(3);
+      for (int be = 0; be < smesh->GetNBE(); be++)
+      {
+        if (std::find(port_attrs.begin(), port_attrs.end(), smesh->GetBdrAttribute(be)) ==
+            port_attrs.end())
+        {
+          continue;
+        }
+        int e1, e2;
+        smesh->GetFaceElements(smesh->GetBdrElementFaceIndex(be), &e1, &e2);
+        smesh->GetElementCenter(e1, c);
+        if (c(axis) > lo(axis))
+        {
+          marked.Append(e1);
+        }
+      }
+      marked.Sort();
+      marked.Unique();
+      smesh->GeneralRefinement(marked, 1, 0);
+    }
+    if (iodata.model.Lc <= 0.0)
+    {
+      iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+    }
+    iodata.NondimensionalizeInputs(smesh);
+    mesh_io.push_back(
+        std::make_unique<Mesh>(mesh::Partition(iodata, std::move(smesh), comm)));
+  }
+  SpaceOperator space_op(iodata, mesh_io);
+  const auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() > 0);
+
+  // Numbers of checked true DoFs on the Dirichlet segments and off them, and on master
+  // edges.
+  int counts[3] = {0, 0, 0};
+  for (const auto &[idx, data] : wp_op)
+  {
+    const auto &nd_fes = data.GetNDSpace().Get();
+    const auto &h1_fes = data.GetH1Space().Get();
+    const auto &port_mesh = *nd_fes.GetParMesh();
+    REQUIRE(port_mesh.Nonconforming());
+    const int nd_size = nd_fes.GetTrueVSize();
+    std::vector<bool> nd_dbc(nd_size, false), h1_dbc(h1_fes.GetTrueVSize(), false);
+    for (auto t : data.GetDbcTDofList())
+    {
+      if (t < nd_size)
+      {
+        nd_dbc[t] = true;
+      }
+      else
+      {
+        h1_dbc[t - nd_size] = true;
+      }
+    }
+
+    // Segments of the Dirichlet boundary elements of the port submesh (PEC, AuxPEC and the
+    // other wave ports, as in the WavePortOperator constructor), gathered from all ranks.
+    // Coordinates are taken from the mesh nodes: the vertex coordinates of nonconforming
+    // submeshes do not follow their vertex numbering.
+    std::vector<int> dbc(iodata.boundaries.pec.attributes.begin(),
+                         iodata.boundaries.pec.attributes.end());
+    dbc.insert(dbc.end(), iodata.boundaries.auxpec.attributes.begin(),
+               iodata.boundaries.auxpec.attributes.end());
+    for (const auto &[other_idx, other_data] : iodata.boundaries.waveport)
+    {
+      if (other_idx != idx && other_data.active)
+      {
+        dbc.insert(dbc.end(), other_data.attributes.begin(), other_data.attributes.end());
+      }
+    }
+    const int sdim = port_mesh.SpaceDimension();
+    std::vector<double> segs;
+    for (int be = 0; be < port_mesh.GetNBE(); be++)
+    {
+      if (std::find(dbc.begin(), dbc.end(), port_mesh.GetBdrAttribute(be)) == dbc.end())
+      {
+        continue;
+      }
+      mfem::Array<int> v;
+      port_mesh.GetBdrElementVertices(be, v);
+      for (int i : v)
+      {
+        double x[3];
+        port_mesh.GetNode(i, x);
+        segs.insert(segs.end(), x, x + sdim);
+      }
+    }
+    int nloc = static_cast<int>(segs.size()), nproc = Mpi::Size(comm);
+    std::vector<int> sizes(nproc), displs(nproc, 0);
+    MPI_Allgather(&nloc, 1, MPI_INT, sizes.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nproc; r++)
+    {
+      displs[r] = displs[r - 1] + sizes[r - 1];
+    }
+    std::vector<double> all_segs(displs.back() + sizes.back());
+    MPI_Allgatherv(segs.data(), nloc, MPI_DOUBLE, all_segs.data(), sizes.data(),
+                   displs.data(), MPI_DOUBLE, comm);
+    auto OnDbc = [&](const double *x)
+    {
+      for (std::size_t k = 0; k < all_segs.size(); k += 2 * sdim)
+      {
+        const double *a = &all_segs[k], *b = &all_segs[k + sdim];
+        double ab2 = 0.0, ax_ab = 0.0, ax2 = 0.0;
+        for (int d = 0; d < sdim; d++)
+        {
+          ab2 += (b[d] - a[d]) * (b[d] - a[d]);
+          ax_ab += (x[d] - a[d]) * (b[d] - a[d]);
+          ax2 += (x[d] - a[d]) * (x[d] - a[d]);
+        }
+        const double t = ax_ab / ab2;
+        if (t > -1.0e-9 && t < 1.0 + 1.0e-9 && ax2 - t * t * ab2 < 1.0e-12 * ab2)
+        {
+          return true;
+        }
+      }
+      return false;
+    };
+    auto Check = [&](const mfem::ParFiniteElementSpace &fes, const std::vector<bool> &ess,
+                     const mfem::Array<int> &dofs, bool on_dbc, bool master)
+    {
+      for (auto d : dofs)
+      {
+        const int t = fes.GetLocalTDofNumber((d >= 0) ? d : -1 - d);
+        if (t < 0)
+        {
+          continue;
+        }
+        CHECK(ess[t] == on_dbc);
+        counts[on_dbc ? 0 : 1]++;
+        counts[2] += (on_dbc && master);
+      }
+    };
+    const auto &edge_list = port_mesh.ncmesh->GetEdgeList();
+    mfem::Array<int> v, dofs;
+    mfem::Vector mid(sdim), x0(sdim), x1(sdim);
+    for (int e = 0; e < port_mesh.GetNEdges(); e++)
+    {
+      port_mesh.GetEdgeVertices(e, v);
+      port_mesh.GetNode(v[0], x0.GetData());
+      port_mesh.GetNode(v[1], x1.GetData());
+      add(0.5, x0, 0.5, x1, mid);
+      const bool on_dbc = OnDbc(mid.GetData());
+      const bool master =
+          edge_list.GetMeshIdAndType(e).type == mfem::NCMesh::NCList::MeshIdType::MASTER;
+      nd_fes.GetEdgeInteriorDofs(e, dofs);
+      Check(nd_fes, nd_dbc, dofs, on_dbc, master);
+      h1_fes.GetEdgeInteriorDofs(e, dofs);
+      Check(h1_fes, h1_dbc, dofs, on_dbc, master);
+    }
+    for (int i = 0; i < port_mesh.GetNV(); i++)
+    {
+      h1_fes.GetVertexDofs(i, dofs);
+      port_mesh.GetNode(i, x0.GetData());
+      Check(h1_fes, h1_dbc, dofs, OnDbc(x0.GetData()), false);
+    }
+  }
+  Mpi::GlobalSum(3, counts, comm);
+  CHECK(counts[0] > 0);
+  CHECK(counts[1] > 0);
+  CHECK(counts[2] > 0);
 }

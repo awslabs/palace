@@ -305,6 +305,14 @@ void AddSubMeshInternalBoundaryElements(SubMeshT &submesh,
 mfem::Vector ProjectSubmeshTo2D(mfem::Mesh &submesh, mfem::Vector &centroid,
                                 mfem::Vector &e1, mfem::Vector &e2);
 
+// Copy a serial 2D nonconforming mesh to a new mesh with the same elements, boundary
+// elements and hanging vertices, whose nonconforming structure is rebuilt from them (the
+// leaf elements become the root elements). MFEM keeps the boundary of a nonconforming mesh
+// in its mfem::NCMesh, which is used to print or distribute it, and does not update it for
+// boundary elements added to the mfem::Mesh or for their attributes. The nonconforming
+// mesh of a SubMesh of a nonconforming mesh has no boundary at all.
+std::unique_ptr<mfem::Mesh> RebuildNonconformingMesh(const mfem::Mesh &mesh);
+
 // Project a 3D point to 2D local coordinates using a previously computed tangent frame.
 inline mfem::Vector Project3Dto2D(const mfem::Vector &p3d, const mfem::Vector &centroid,
                                   const mfem::Vector &e1, const mfem::Vector &e2)
@@ -377,20 +385,6 @@ void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts);
 
 // Helper for creating a hexahedral mesh from a tetrahedral mesh.
 mfem::Mesh MeshTetToHex(const mfem::Mesh &orig_mesh);
-
-// Helper function for matching boundary edges between parent mesh and submesh in parallel.
-void MatchBoundaryEdges(
-    const mfem::ParMesh &mesh, const mfem::ParSubMesh &boundary_submesh,
-    const mfem::Array<int> &submesh_boundary_edge_ids,
-    const std::unordered_map<int, int> &submesh_to_parent_bdr_edge_map,
-    const std::vector<std::unordered_map<int, int>> &hole_dof_to_edge_maps,
-    std::vector<mfem::Array<int>> &hole_boundary_edges);
-
-// Helper function for computing edge orientations on submesh boundaries.
-void ComputeSubmeshBoundaryEdgeOrientations(
-    const mfem::ParSubMesh &submesh, const mfem::Array<int> &inner_boundary_edges,
-    const mfem::Vector &loop_normal, std::unordered_map<int, double> &edge_oriented_lengths,
-    int order);
 
 }  // namespace mesh
 

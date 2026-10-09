@@ -33,7 +33,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
 
     # Note: 'cuda' and 'cuda_arch' variants are added by the CudaPackage
     # Note: 'rocm' and 'amdgpu_target' variants are added by the ROCmPackage
-    variant("cxxstd", default="17", values=("17", "20"), description="C++ standard", when="@0.16:")
+    variant(
+        "cxxstd", default="17", values=("17", "20"), description="C++ standard", when="@0.16:0.18"
+    )
+    variant("cxxstd", default="20", values=("20",), description="C++ standard", when="@0.19:")
     variant("shared", default=True, description="Build shared libraries")
     variant("int64", default=False, description="Use 64 bit integers")
     variant("openmp", default=False, description="Use OpenMP for shared-memory parallelism")
@@ -94,6 +97,9 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("cmake@3.18.1:", type="build", when="@0.11")
     depends_on("cmake@3.21:", type="build", when="@0.12:0.14")
     depends_on("cmake@3.24:", type="build", when="@0.15:")
+    # C++20 device code: CMake knows nvcc's -std=c++20 from 3.25.2, and nvcc has it from 12.0
+    depends_on("cmake@3.25.2:", type="build", when="@0.19: +cuda")
+    depends_on("cuda@12:", when="@0.19: +cuda")
     depends_on("pkgconfig", type="build")
     depends_on("mpi")
     depends_on("blas")
@@ -313,6 +319,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="52ccf3332f87aaf7ebc84674448226201c04343a3e298006bea5fd8be8e92533",
                 when="@4.10:",
             ),
+            # https://github.com/mfem/mfem/pull/5531 (narrow to @4.10.0 once
+            # merged upstream and Lookahead flags it)
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "641e56439e63a1774f43bc2ba904797694a047ad.diff",
+                sha256="2da8792e74465c9c0767c4c21961bb5af11fa9b4cd57aa06e8ce0db6479641fe",
+                when="@4.10:",
+            ),
         ],
     )
 
@@ -403,9 +417,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
         depends_on("magma~shared", when="~shared")
         depends_on("libceed+magma", when="@0.14:")
 
-    # Umpire 2026.07 requires C++20, while Palace's GPU dependencies use C++17.
-    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +cuda")
-    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16: +rocm")
+    # Palace 0.16 to 0.18 build their GPU stack as C++17, and Umpire 2026.07 requires C++20.
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +cuda")
+    depends_on("umpire@:2025.12 cxxstd=17", when="@0.16:0.18 +rocm")
+    # From 0.19 Umpire can be C++20. MFEM compiles Umpire's C++ headers, so it has to match;
+    # hypre only uses Umpire's C interface.
+    depends_on("mfem cxxstd=20", when="@0.19: +cuda")
+    depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
         # GPU-aware MPI
@@ -485,6 +503,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             ),
             self.define("PALACE_TESTS_OMP_THREADS", 2 if self.spec.satisfies("+openmp") else 1),
         ]
+
+        # Spack sources carry no usable git metadata for `git describe` (commit
+        # fetches have no tags, mirror archives drop .git), so embed the version
+        # from the spec's resolved commit. Develop specs without one fall back to
+        # `git describe` on the working tree.
+        if "commit" in self.spec.variants:
+            commit = self.spec.variants["commit"].value
+            if commit == self.versions.get(self.spec.version, {}).get("commit"):
+                commit = f"v{self.spec.version}"
+            args.append(self.define("PALACE_GIT_COMMIT_ID", commit))
 
         if self.spec.satisfies("@0.16:"):
             args.append(self.define("MFEM_DIR", self.spec["mfem"].prefix))

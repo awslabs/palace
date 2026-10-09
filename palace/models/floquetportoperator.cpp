@@ -4,6 +4,7 @@
 #include "floquetportoperator.hpp"
 
 #include <cmath>
+#include <numbers>
 #include <fmt/core.h>
 #include <mfem.hpp>
 #include "fem/integrator.hpp"
@@ -80,7 +81,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     port_normal(3), comm(nd_fespace.GetComm())
 {
   // Set incident polarization coefficients: E_inc = α_TE ê_TE + α_TM ê_TM.
-  const double inv_sqrt2 = 1.0 / std::sqrt(2.0);
+  const double inv_sqrt2 = 1.0 / std::numbers::sqrt2;
   if (data.inc_polarization == "TE")
   {
     inc_alpha_te = 1.0;
@@ -108,11 +109,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
   }
 
   // Store boundary attributes.
-  attr_list.SetSize(static_cast<int>(data.attributes.size()));
-  for (int i = 0; i < attr_list.Size(); i++)
-  {
-    attr_list[i] = data.attributes[i];
-  }
+  attr_list.Append(data.attributes.data(), static_cast<int>(data.attributes.size()));
 
   // Floquet ports require periodic boundary conditions in the transverse directions.
   // The periodic mesh provides DOF identification on opposite faces, and the Floquet
@@ -217,16 +214,7 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     for (int be = 0; be < mesh.GetNBE(); be++)
     {
       int battr = mesh.GetBdrAttribute(be);
-      bool on_port = false;
-      for (int i = 0; i < attr_list.Size(); i++)
-      {
-        if (battr == attr_list[i])
-        {
-          on_port = true;
-          break;
-        }
-      }
-      if (!on_port)
+      if (attr_list.Find(battr) < 0)
       {
         continue;
       }
@@ -297,10 +285,10 @@ FloquetPortData::FloquetPortData(const config::FloquetPortData &data,
     if (h_max > 0.0)
     {
       int p = nd_fespace.GetMaxElementOrder();
-      int nyquist_m =
-          std::max(1, static_cast<int>(std::floor(p * M_PI / (b1.Norml2() * h_max))));
-      int nyquist_n =
-          std::max(1, static_cast<int>(std::floor(p * M_PI / (b2.Norml2() * h_max))));
+      int nyquist_m = std::max(
+          1, static_cast<int>(std::floor(p * std::numbers::pi / (b1.Norml2() * h_max))));
+      int nyquist_n = std::max(
+          1, static_cast<int>(std::floor(p * std::numbers::pi / (b2.Norml2() * h_max))));
       if (max_order_m > nyquist_m || max_order_n > nyquist_n)
       {
         Mpi::Print(" Floquet port: capping MaxOrder from ({:d}, {:d}) to ({:d}, {:d}) "
@@ -354,13 +342,13 @@ void FloquetPortData::ComputeReciprocalLattice(const mfem::Vector &a1,
   b2.SetSize(3);
   for (int i = 0; i < 3; i++)
   {
-    b1(i) = 2.0 * M_PI * a2xn(i) / vol_sq;
-    b2(i) = 2.0 * M_PI * nxa1(i) / vol_sq;
+    b1(i) = 2.0 * std::numbers::pi * a2xn(i) / vol_sq;
+    b2(i) = 2.0 * std::numbers::pi * nxa1(i) / vol_sq;
   }
 
   // Verify: a_i . b_j = 2*pi * delta_ij.
-  MFEM_VERIFY(std::abs(a1 * b1 - 2.0 * M_PI) < 1e-10 &&
-                  std::abs(a2 * b2 - 2.0 * M_PI) < 1e-10,
+  MFEM_VERIFY(std::abs(a1 * b1 - 2.0 * std::numbers::pi) < 1e-10 &&
+                  std::abs(a2 * b2 - 2.0 * std::numbers::pi) < 1e-10,
               "Reciprocal lattice computation failed: diagonal check!");
   MFEM_VERIFY(std::abs(a1 * b2) < 1e-10 && std::abs(a2 * b1) < 1e-10,
               "Reciprocal lattice computation failed: off-diagonal check!");

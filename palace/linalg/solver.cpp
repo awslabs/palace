@@ -176,7 +176,7 @@ void MfemWrapperSolver<ComplexOperator>::Mult(const ComplexVector &x,
   }
 }
 
-template <typename OperType>
+template <OperatorType OperType>
 void MfemWrapperSolver<OperType>::DropSmallEntries()
 {
   const auto nnz_before = A->NNZ();
@@ -203,7 +203,7 @@ void MfemWrapperSolver<OperType>::DropSmallEntries()
   num_dropped_entries = nnz_before - nnz_after;
   Mpi::Print(" Dropping {} small entries in sparse matrix out of {} ({:.1f}%)\n",
              num_dropped_entries, nnz_before,
-             (double)(num_dropped_entries) / nnz_before * 100.0);
+             static_cast<double>(num_dropped_entries) / nnz_before * 100.0);
 }
 
 }  // namespace palace

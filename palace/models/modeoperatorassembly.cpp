@@ -177,16 +177,18 @@ ModeOperatorModel::ModeOperatorModel(
     }
     BilinearForm ann(h1_fespace);
     ann.AddDomainIntegrator<DiffusionIntegrator>(neg_muinv);
+    // The H1 block is assembled with the opposite sign (negative diffusion), so the London
+    // mass, like the surface inductance, enters with a negative coefficient.
     MaterialPropertyCoefficient london_n(n_attr);
     if (mat_op.HasLondonDepth())
     {
       if (!normal)
       {
-        london_n.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepthScalar());
+        london_n.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepthScalar(), -1.0);
       }
       else
       {
-        london_n.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepth());
+        london_n.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepth(), -1.0);
         london_n.NormalProjectedCoefficient(*normal);
       }
       ann.AddDomainIntegrator<MassIntegrator>(london_n);
