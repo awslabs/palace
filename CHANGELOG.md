@@ -86,7 +86,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     level of p-multigrid: the interpolation matrices that hypre builds from the vertex
     coordinates were never freed, so memory grew at every operator update, such as each
     frequency of a driven sweep (about 1.9 GiB per frequency for 3.9M unknowns on GPU).
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1038](https://github.com/awslabs/palace/pull/1038).
 
 #### Performance Improvements
 
