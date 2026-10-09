@@ -565,6 +565,16 @@ class ReuseRecords(unittest.TestCase):
             for given in (key, key[:12]):
                 with self.assertRaises((transplant.TransplantError, OSError)):
                     reuse.reuse_requirement(requirement_key=given, requirement_key_text=key_text, **common)
+            # a refusal record (an uncalibrated structure key) carries the KeyText verification too: FeatureKey = sha256(KeyText), KeyPath KeyText
+            uncalibrated = {**signature, "Portions": signature["Portions"][:1]}
+            uncal_text = json.dumps(uncalibrated, separators=(",", ":"), sort_keys=True)
+            uncal_key = hashlib.sha256(uncal_text.encode()).hexdigest()
+            refused = reuse.reuse_requirement(requirement_key=uncal_key, requirement_key_text=uncal_text,
+                                              **{**common, "exact_signature": uncalibrated,
+                                                 "exact_model_entry": {**FIXTURE["Exact"], "Signature": uncalibrated}})
+            self.assertFalse(refused["Reused"])
+            self.assertIn("StructureKeyNotCalibrated", refused["Refused"]["Reason"])
+            self.assertEqual((refused["FeatureKey"], refused["KeyCheck"]["KeyPath"], refused["KeyCheck"]["Equal"]), (uncal_key, "KeyText", True))
             # inconsistent KeyText fails closed by name: wrong digest; parse-equal float text; another signature's text
             for bad_key, bad_text, message in ((float_hash, key_text, "sha256(KeyText)"), (key, float_text, "sha256(KeyText)"),
                                                (hashlib.sha256(key_text.replace("90.0", "91.0", 1).encode()).hexdigest(),

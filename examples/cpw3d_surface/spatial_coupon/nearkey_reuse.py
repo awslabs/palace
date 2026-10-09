@@ -270,7 +270,8 @@ def reuse_requirement(*, exact_signature, exact_basis_dir, exact_model_entry, li
                          "KeyPath LegacyFloatHash (no KeyText on the record): signature_hash(Signature) == key"}
     records = detection.candidate_donors(exact_signature, library, rule=rule, exact_interfaces=exact_interfaces,
                                          exact_boundary_condition=exact_boundary_condition)
-    record = {"Requirement": exact_name, "FeatureKey": key_hash, "Mode": mode, "RuleVersion": rule["RuleVersion"],
+    # the 438 (3) key check is recorded on the reuse record itself too (a refusal record otherwise states no comparison)
+    record = {"Requirement": exact_name, "FeatureKey": key_hash, "KeyCheck": key_check, "Mode": mode, "RuleVersion": rule["RuleVersion"],
               "RuleFileSHA256": rule["_sha256"],
               "Candidates": [], "Reused": False, "Model": None, "Refused": None}
     if "*" in records:
