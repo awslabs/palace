@@ -251,8 +251,8 @@ schema version bump in that same PR. This means the repository will accumulate m
 
  1. Determine the bump size. Classify your schema change using the table above:
 
-      + MODEL: removing/renaming a field, tightening validation, changing defaults or
-        semantics (breaking).
+      + MODEL: removing/renaming a field, tightening validation so a previously-working
+        config is rejected, changing defaults or semantics (breaking).
       + REVISION: new optional field, new enum value, relaxing a constraint
         (backward-compatible extension).
       + ADDITION: updating a `description`, `title`, or other annotation (no effect on

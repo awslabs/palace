@@ -2533,7 +2533,6 @@
         "FreqStep": {
           "type": "number",
           "description": "Frequency step size for the frequency sweep, GHz. Deprecated: use [`Linear Samples`](@ref config-solver-driven-samples-linear) interface instead.",
-          "exclusiveMinimum": 0.0,
           "x-palace-deprecated": true
         },
         "SaveStep": {
@@ -2618,24 +2617,18 @@
       "allOf": [
         {
           "if": {
-            "properties": {
-              "AdaptiveCircuitSynthesis": {
-                "const": true
-              }
-            },
             "required": [
-              "AdaptiveCircuitSynthesis"
+              "MinFreq",
+              "MaxFreq",
+              "FreqStep"
             ]
           },
           "then": {
             "properties": {
-              "AdaptiveTol": {
+              "FreqStep": {
                 "exclusiveMinimum": 0.0
               }
-            },
-            "required": [
-              "AdaptiveTol"
-            ]
+            }
           }
         }
       ]
@@ -2703,7 +2696,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples. Mutually exclusive with `\"FreqStep\"`.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`). Mutually exclusive with `\"FreqStep\"`.",
           "minimum": 0
         },
         "SaveStep": {
@@ -2746,7 +2739,7 @@
         },
         "NSample": {
           "type": "integer",
-          "description": "Number of samples.",
+          "description": "Number of samples, the first at `\"MinFreq\"` (a single sample is `\"MinFreq\"`).",
           "minimum": 1
         },
         "SaveStep": {
@@ -3169,7 +3162,31 @@
           "Solver": {
             "required": [
               "Driven"
-            ]
+            ],
+            "properties": {
+              "Driven": {
+                "if": {
+                  "properties": {
+                    "AdaptiveCircuitSynthesis": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "AdaptiveCircuitSynthesis"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "AdaptiveTol": {
+                      "exclusiveMinimum": 0.0
+                    }
+                  },
+                  "required": [
+                    "AdaptiveTol"
+                  ]
+                }
+              }
+            }
           }
         }
       }

@@ -774,27 +774,50 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     json negative_step = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", -0.5}};
     CHECK_THROWS(config::DrivenSolverData(negative_step));
 
-    // Adaptive sweep with circuit synthesis and fewer than two distinct samples (the
-    // synthesis path has no uniform-sweep fallback)
+    // "MaxFreq" below "MinFreq" with a step would sample only "MinFreq".
+    json reversed_step = {{"MinFreq", 2.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}};
+    CHECK_THROWS_WITH(config::DrivenSolverData(reversed_step),
+                      ContainsSubstring("must not be less than \"MinFreq\""));
+    json reversed_linear = {
+        {"Samples", {{{"MinFreq", 2.0}, {"MaxFreq", 1.0}, {"FreqStep", 0.5}}}}};
+    CHECK_THROWS_WITH(config::DrivenSolverData(reversed_linear),
+                      ContainsSubstring("must not be less than \"MinFreq\""));
+
+    // A step too small for the number of steps to fit in an int.
+    json tiny_step = {{"MinFreq", 1.0}, {"MaxFreq", 10.0}, {"FreqStep", 1.0e-9}};
+    CHECK_THROWS_WITH(config::DrivenSolverData(tiny_step), ContainsSubstring("too small"));
+
+    // Circuit synthesis needs a positive "AdaptiveTol" and two distinct samples, but only
+    // for a Driven problem, so the parser accepts both.
+    json synthesis_no_tol = {{"Samples", {{{"Freq", {1.0, 2.0}}}}},
+                             {"AdaptiveCircuitSynthesis", true}};
+    CHECK_NOTHROW(config::DrivenSolverData(synthesis_no_tol));
     json synthesis_single = {{"Samples", {{{"Freq", {3.0}}}}},
                              {"AdaptiveTol", 1e-3},
                              {"AdaptiveCircuitSynthesis", true}};
-    CHECK_THROWS(config::DrivenSolverData(synthesis_single));
+    CHECK_NOTHROW(config::DrivenSolverData(synthesis_single));
+  }
 
-    // Circuit synthesis without an adaptive sweep (silently ignored before)
-    json synthesis_no_tol = {{"Samples", {{{"Freq", {1.0, 2.0}}}}},
-                             {"AdaptiveCircuitSynthesis", true}};
-    CHECK_THROWS(config::DrivenSolverData(synthesis_no_tol));
-    json synthesis_zero_tol = {{"Samples", {{{"Freq", {1.0, 2.0}}}}},
-                               {"AdaptiveTol", 0.0},
-                               {"AdaptiveCircuitSynthesis", true}};
-    CHECK_THROWS(config::DrivenSolverData(synthesis_zero_tol));
-
-    // ... and the valid combination parses
-    json synthesis_ok = {{"Samples", {{{"Freq", {1.0, 2.0}}}}},
-                         {"AdaptiveTol", 1e-3},
-                         {"AdaptiveCircuitSynthesis", true}};
-    CHECK_NOTHROW(config::DrivenSolverData(synthesis_ok));
+  SECTION("Circuit synthesis requires two distinct samples")
+  {
+    auto Check = [](ProblemType type, const json &driven)
+    {
+      IoData iodata{Units(1.0, 1.0)};
+      iodata.problem.type = type;
+      iodata.solver.driven = config::DrivenSolverData(driven);
+      iodata.CheckConfiguration();
+    };
+    json synthesis = {{"AdaptiveTol", 1e-3}, {"AdaptiveCircuitSynthesis", true}};
+    json single = synthesis, near_duplicate = synthesis;
+    single["Samples"] = {{{"Freq", {3.0}}}};
+    // Within the sample deduplication tolerance, so a single distinct sample.
+    near_duplicate["Samples"] = {{{"Freq", {3.0, 3.0 + 1.0e-10}}}};
+    CHECK_THROWS_WITH(Check(ProblemType::DRIVEN, single),
+                      ContainsSubstring("two distinct"));
+    CHECK_THROWS_WITH(Check(ProblemType::DRIVEN, near_duplicate),
+                      ContainsSubstring("two distinct"));
+    // An unused "Driven" block of another problem type is not checked.
+    CHECK_NOTHROW(Check(ProblemType::EIGENMODE, single));
   }
 
   SECTION("Single sample ranges")
