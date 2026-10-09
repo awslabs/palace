@@ -177,7 +177,9 @@ def mirror_formed_placeholder_edges(requirement, matching_radius):
     `MirrorFormed` record (device_coupons.mirror_formed_entry). Returns (edges, record)."""
     contract = device_coupons.validate_mirror_formed_contract(requirement)
     edges = cluster_signature_geometry.model_edges(requirement, matching_radius)
-    portions = cluster_signature_geometry.portions_from_signature(requirement["Signature"], matching_radius)
+    portions = cluster_signature_geometry.portions_from_signature(
+        requirement["Signature"], matching_radius
+    )
     if len(portions) != len(edges):
         raise ValueError(
             f"requirement {requirement['Hash'][:12]}: {len(edges)} model edges for "
