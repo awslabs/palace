@@ -122,6 +122,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     mode instead of the intended propagating mode. Exact and reduced (adaptive sweep) mode
     solves now rank modes by the complex distance of the propagation constant from the target.
     [PR 1019](https://github.com/awslabs/palace/pull/1019).
+  - Fixed crashes in the libCEED setup on nonconforming domain submeshes and in the flux error
+    estimators on processes without elements of a submesh.
+    [PR 1022](https://github.com/awslabs/palace/pull/1022).
 
 #### Performance Improvements
 
