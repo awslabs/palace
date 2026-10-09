@@ -39,6 +39,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
     must be updated. SchemaVer 2-0-0.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Solver.Eigenmode.NonlinearMaxIts` (default 100), the maximum number of
+    quasi-Newton iterations of each attempt to converge an eigenpair in the hybrid nonlinear
+    eigenvalue solver. `Solver.Eigenmode.MaxIts` no longer limits these iterations, and
+    only applies to the linear or quadratic eigenvalue solver computing the initial guesses
+    of the hybrid solver. SchemaVer 2-2-0
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
 
 #### Bug Fixes
 
@@ -54,6 +60,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     every estimate after the first (and the imaginary part of complex fields) reused stale
     field data for all geometry types but the first.
     [PR 962](https://github.com/awslabs/palace/pull/962).
+    <<<<<<< HEAD
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
+    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
+    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
+    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
   - Fixed `GitTag` in `palace.json` reporting `"UNKNOWN"` for builds without usable Git
     metadata. The version can now be supplied with the `PALACE_GIT_COMMIT_ID` CMake option;
     the Spack package sets it from the resolved commit (`v<version>` for releases, from the
@@ -92,6 +106,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 953](https://github.com/awslabs/palace/pull/953).
   - Fixed a heap overflow in 2D surface flux postprocessing with an explicit `"Center"`.
     [PR 953](https://github.com/awslabs/palace/pull/953).
+  - Fixed BoundaryMode simulations with p-multigrid preconditioning (`"MGMaxLevels"` > 1)
+    aborting in the Chebyshev smoother setup. The Chebyshev and Jacobi smoother spectral
+    estimates now accept any finite, nonzero diagonal, scaling by its absolute value
+    (unchanged for positive diagonals). [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
+    in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
+    properties. [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
+    quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
+    error since fewer eigenmodes than requested were found
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
   - Fixed numeric wave-port and boundary-mode mode ordering on lossy cross-sections (e.g. with
     absorbing or finite-conductivity boundaries) that could select a strongly evanescent
     mode instead of the intended propagating mode. Exact and reduced (adaptive sweep) mode

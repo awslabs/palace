@@ -889,7 +889,8 @@ public:
   // Eigenvalue solver relative tolerance.
   double tol = 1.0e-6;
 
-  // Maximum iterations for eigenvalue solver.
+  // Maximum iterations for eigenvalue solver (for nonlinear problems, the linear or
+  // quadratic eigenvalue solver of the hybrid approach, or the SLP solver).
   int max_it = -1;
 
   // Eigenvalue solver subspace dimension or maximum dimension before restart.
@@ -943,6 +944,10 @@ public:
   // Maximum number of failed attempts with a given initial guess in the quasi-Newton
   // nonlinear eigenvalue solver.
   int max_restart = 2;
+
+  // Maximum number of iterations of each attempt to converge an eigenpair in the
+  // quasi-Newton nonlinear eigenvalue solver.
+  int nonlinear_max_it = 100;
 
   EigenSolverData() = default;
   EigenSolverData(const json &eigenmode);
