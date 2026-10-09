@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "fixtures.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -5344,6 +5345,184 @@ TEST_CASE("SurfaceResponseIdentificationArcAwarePerimeterDistance",
              WithinAbs(0.2, 1.0e-12));
   CHECK_THAT(SegmentDistance({0.5, 0.2, 0.0}, a, b), WithinAbs(0.2, 1.0e-12));
   CHECK_THAT(SegmentDistance({1.5, 0.0, 0.0}, a, b), WithinAbs(0.5, 1.0e-12));
+}
+
+TEST_CASE("SurfaceResponseIdentificationProbeChordSnap",
+          "[surfaceresponseidentification][surfaceresponseoperator][conductorconsistency]"
+          "[Serial]")
+{
+  // Decision 611 (2) (the R1 conductor diagnosis section 6): a conductor-consistency probe
+  // whose nearest device segment is a chord of a fitted arc, within the arc's recorded
+  // sagitta (+ the arc-fit tolerance) of the chord, is snapped onto the chord in the arc's
+  // plane; a probe nearest to a straight edge, a probe farther than the bound (coupon metal
+  // the device polyline does not have) and a probe already on the chord are not moved. The
+  // scene of the arc-aware distance: a 10 x 6 island with 1-um fillets (R = 2: 4 chords of
+  // 22.5 deg per fillet, sagitta 9.6e-3 R, above the 1e-3 R tolerance), the 32b0 geometry
+  // in miniature (its 201-um context arc: 1.1-deg chords of sagitta 5.1e-3 R).
+  const double R = 2.0;
+  const auto input = MakeInput({{RoundedRectangle(5.0, 3.0, 1.0, 4), 0, 1.0}}, R);
+  const auto result = IdentifyMetalPerimeter(input);
+  REQUIRE(result.arcs.size() == 4);
+  REQUIRE(result.real_segments == 0);
+  const std::array<double, 3> center = {4.0, 2.0, 0.0};
+  const double rho = 1.0;
+  const double sagitta = rho * (1.0 - std::cos(0.5 * 22.5 * std::acos(-1.0) / 180.0));
+  auto Circle = [&](double degrees, double radius, double z = 0.0)
+  {
+    const double t = degrees * std::acos(-1.0) / 180.0;
+    return std::array<double, 3>{center[0] + radius * std::cos(t),
+                                 center[1] + radius * std::sin(t), z};
+  };
+  // The fillet's first chord (0 to 22.5 deg about (4, 2)) and its arc.
+  int chord = -1;
+  for (std::size_t i = 0; i < result.segments.size(); i++)
+  {
+    const auto &segment = result.segments[i];
+    if (segment.arc >= 0 &&
+        SegmentDistance(Circle(0.0, rho), segment.key[0], segment.key[1]) < 1.0e-9 &&
+        SegmentDistance(Circle(22.5, rho), segment.key[0], segment.key[1]) < 1.0e-9)
+    {
+      chord = static_cast<int>(i);
+    }
+  }
+  REQUIRE(chord >= 0);
+  const auto &chord_segment = result.segments[chord];
+  const auto &arc = result.arcs[chord_segment.arc];
+  CHECK_THAT(arc.max_sagitta_over_R * R, WithinRel(sagitta, 1.0e-9));
+  const double bound = (arc.max_sagitta_over_R + kArcFitToleranceOverRadius) * R;
+  auto Moved = [](const std::array<double, 3> &p, const std::array<double, 3> &d)
+  { return std::array<double, 3>{p[0] + d[0], p[1] + d[1], p[2] + d[2]}; };
+
+  // 1. A knot ON the fitted circle at the chord's middle (the arc face-end knot of a coupon
+  //    built on the circle): snapped radially inward by the sagitta onto the chord.
+  {
+    const auto q = Circle(11.25, rho);
+    const auto snap = SnapProbeToDeviceChord(result, q);
+    REQUIRE(snap.has_value());
+    CHECK(snap->segment == chord);
+    CHECK(snap->arc == chord_segment.arc);
+    CHECK_THAT(snap->distance, WithinAbs(sagitta, 1.0e-12));
+    CHECK_THAT(
+        std::hypot(snap->displacement[0], snap->displacement[1], snap->displacement[2]),
+        WithinAbs(snap->distance, 1.0e-15));
+    CHECK(snap->displacement[2] == 0.0);
+    const auto foot = Moved(q, snap->displacement);
+    CHECK(SegmentDistance(foot, chord_segment.key[0], chord_segment.key[1]) < 1.0e-12);
+    // Radially inward (toward the centre): the gap-side knot moves onto the metal edge.
+    CHECK(std::hypot(foot[0] - center[0], foot[1] - center[1]) < rho);
+    // The same knot out of plane (an off-plane metal-top knot): the in-plane snap, the
+    // out-of-plane offset kept.
+    const auto lifted = SnapProbeToDeviceChord(result, Circle(11.25, rho, 0.03));
+    REQUIRE(lifted.has_value());
+    CHECK_THAT(lifted->distance, WithinAbs(sagitta, 1.0e-12));
+    CHECK(lifted->displacement[2] == 0.0);
+    CHECK_THAT(lifted->displacement[0], WithinAbs(snap->displacement[0], 1.0e-12));
+    CHECK_THAT(lifted->displacement[1], WithinAbs(snap->displacement[1], 1.0e-12));
+  }
+  // 2. The bound: sagitta + the arc-fit tolerance (the device vertices lie on the fitted
+  //    circle within it), inclusive to roundoff; a knot 10 sagittas outside the circle
+  //    claims metal the device does not have and is read where it is.
+  {
+    const auto inside = SnapProbeToDeviceChord(
+        result, Circle(11.25, rho + kArcFitToleranceOverRadius * R * (1.0 - 1.0e-6)));
+    REQUIRE(inside.has_value());
+    CHECK(inside->distance <= bound);
+    CHECK_THAT(
+        inside->distance,
+        WithinAbs(sagitta + kArcFitToleranceOverRadius * R * (1.0 - 1.0e-6), 1.0e-12));
+    CHECK_FALSE(
+        SnapProbeToDeviceChord(
+            result, Circle(11.25, rho + kArcFitToleranceOverRadius * R * (1.0 + 1.0e-6)))
+            .has_value());
+    CHECK_FALSE(
+        SnapProbeToDeviceChord(result, Circle(11.25, rho + 10.0 * sagitta)).has_value());
+  }
+  // 3. A knot at a device joint (on the chord at the signature's resolution): not moved.
+  CHECK_FALSE(SnapProbeToDeviceChord(result, Circle(22.5, rho)).has_value());
+  CHECK_FALSE(SnapProbeToDeviceChord(
+                  result, Moved(Circle(22.5, rho),
+                                {0.5 * kSignatureLengthQuantumOverRadius * R, 0.0, 0.0}))
+                  .has_value());
+  // 4. Straight edges never move a knot: the island's top edge y = 3, a knot on it or a
+  //    sagitta into the gap.
+  CHECK_FALSE(SnapProbeToDeviceChord(result, {0.0, 3.0, 0.0}).has_value());
+  CHECK_FALSE(SnapProbeToDeviceChord(result, {0.0, 3.0 + sagitta, 0.0}).has_value());
+  // 5. The chords-only reading (every segment stripped of its arc): straight, no snap.
+  IdentificationResult chords_only = result;
+  for (auto &segment : chords_only.segments)
+  {
+    segment.arc = -1;
+  }
+  CHECK_FALSE(SnapProbeToDeviceChord(chords_only, Circle(11.25, rho)).has_value());
+  // 6. A mirror band's image segments are not the device: with the chord and every segment
+  //    after it flagged image, a knot on the fillet finds no real chord within the bound.
+  if (chord > 0)
+  {
+    IdentificationResult imaged = result;
+    imaged.real_segments = static_cast<std::size_t>(chord);
+    CHECK_FALSE(SnapProbeToDeviceChord(imaged, Circle(11.25, rho)).has_value());
+  }
+  // 7. The geometry cache round trip of the record (version 18).
+  {
+    config::ElectrostaticSolverData::ResponseCorrectionData data;
+    data.matching_radius = R;
+    auto &model = data.models.emplace_back();
+    model.idx = 1;
+    model.name = "probe-snap";
+    auto &patch = data.patches.emplace_back();
+    patch.model = 1;
+    const auto snap = SnapProbeToDeviceChord(result, Circle(11.25, rho));
+    REQUIRE(snap.has_value());
+    patch.provenance.probe_snaps.push_back(
+        {297, snap->segment, snap->arc, snap->displacement, snap->distance});
+    const test::PerRankTempDir temp;
+    const auto &dir = temp.temp_dir;
+    const auto path = dir / "geometry.json";
+    WriteResponseGeometryCache(path, data);
+    const auto reloaded = ReadResponseGeometryCache(path, data);
+    REQUIRE(reloaded.patches.size() == 1);
+    REQUIRE(reloaded.patches[0].provenance.probe_snaps.size() == 1);
+    const auto &record = reloaded.patches[0].provenance.probe_snaps[0];
+    CHECK(record.vertex == 297);
+    CHECK(record.segment == snap->segment);
+    CHECK(record.arc == snap->arc);
+    CHECK(record.displacement == snap->displacement);
+    CHECK(record.distance == snap->distance);
+    std::ifstream input(path);
+    nlohmann::json cache = nlohmann::json::parse(input);
+    input.close();
+    CHECK(cache["Version"] == 18);
+    CHECK(cache["Patches"][0]["ProbeSnaps"].size() == 1);
+    CHECK(cache["Patches"][0]["ProbeSnapsComputed"] == true);
+    CHECK(reloaded.patches[0].provenance.probe_snaps_computed);
+    // A version-18 cache written before decision 632 (no ProbeSnapsComputed) is refused by
+    // name, never read as computed.
+    nlohmann::json uncomputed = cache;
+    uncomputed["Patches"][0].erase("ProbeSnapsComputed");
+    const auto uncomputed_path = dir / "geometry-v18-no-computed.json";
+    {
+      std::ofstream output(uncomputed_path);
+      output << uncomputed.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(uncomputed_path, data),
+                      ContainsSubstring("ProbeSnapsComputed"));
+    // A version-17 cache (main before this lane: no ProbeSnaps on the patches) is refused
+    // by the version message (decision 527), never misread for its missing records.
+    nlohmann::json seventeen = cache;
+    seventeen["Version"] = 17;
+    for (auto &entry : seventeen["Patches"])
+    {
+      entry.erase("ProbeSnaps");
+    }
+    const auto seventeen_path = dir / "geometry-v17.json";
+    {
+      std::ofstream output(seventeen_path);
+      output << seventeen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
+                      ContainsSubstring("cache version 17") &&
+                          ContainsSubstring("version 18"));
+  }
 }
 
 // Boundary-cut DESIGN 2.2 (decisions 442 / 454 / 455; F-DB-c): the mirror-band extension of

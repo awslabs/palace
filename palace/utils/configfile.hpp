@@ -1166,6 +1166,33 @@ public:
       int mirror_formed_topology = -1;
       double mirror_reach = 0.0;
       std::vector<double> mirror_edge_weights;
+      // The conductor-consistency probe snaps of a spatial cluster patch (decision 611 (2),
+      // the R1 conductor diagnosis section 6): a conductor vertex of the model's trace mesh
+      // whose placed position lies, in the plane of a fitted device arc, within that arc's
+      // recorded chord sagitta (MaxChordSagittaOverR x R, plus the arc-fit tolerance
+      // kArcFitToleranceOverRadius x R the device vertices sit on the circle within) of
+      // the nearest device perimeter segment, that segment being a chord of the arc. The
+      // probe is read at its position plus `displacement` (patch length units; the
+      // in-plane foot on the chord, the out-of-plane offset unchanged): the gate then
+      // tests the knot against the device the solve actually has (the chord polyline),
+      // not against the fitted circle the coupon was built on. A probe nearest to a
+      // straight segment is never moved. Empty for every other patch.
+      struct ProbeSnap
+      {
+        int vertex = -1;   // trace-mesh vertex (0-based)
+        int segment = -1;  // the device segment (chord) snapped onto
+        int arc = -1;      // its fitted arc (IdentificationResult::arcs)
+        std::array<double, 3> displacement{};
+        double distance = 0.0;  // |displacement|
+      };
+      std::vector<ProbeSnap> probe_snaps;
+      // Whether the snaps above were computed: true when the model's trace data (its
+      // TraceMesh files, BasisPoints file or constructed basis) was readable at the
+      // placement; false for a placed spatial model without it - a discovery PLACEHOLDER
+      // (its BasisPoints name a file that does not exist; the geometry-only preflight
+      // places it and never solves it). A solve refuses a spatial patch with false: the
+      // gate never runs on un-snapped probes silently. True for every other patch.
+      bool probe_snaps_computed = true;
     };
     Provenance provenance;
   };

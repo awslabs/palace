@@ -1824,7 +1824,7 @@ TEST_CASE_METHOD(
       std::ifstream cache_input(cache_path);
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
-      CHECK(cache["Version"] == 17);
+      CHECK(cache["Version"] == 18);
       REQUIRE(cache["Models"].size() == 2);
       for (auto &model : cache["Models"])
       {
@@ -3114,7 +3114,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator cap-interi
       REQUIRE(cache_input);
       json cache = json::parse(cache_input);
       cache_input.close();
-      CHECK(cache["Version"] == 17);
+      CHECK(cache["Version"] == 18);
       int cap_hat_models = 0;
       for (auto &model : cache["Models"])
       {
@@ -7867,7 +7867,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     std::ifstream input(cache_path);
     nlohmann::json stale = nlohmann::json::parse(input);
     input.close();
-    CHECK(stale["Version"] == 17);
+    CHECK(stale["Version"] == 18);
     stale["Version"] = 6;
     const auto stale_path = temp.temp_dir / "response-geometry-ownership-stale.json";
     {
@@ -7889,7 +7889,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(thirteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 13") &&
-                          Catch::Matchers::ContainsSubstring("version 17"));
+                          Catch::Matchers::ContainsSubstring("version 18"));
     // Two version-14 caches existed before the fillet merge (decision 552 (3), the 527
     // rule): main's (the decision-537 own-cell pre-image WITHOUT the corner-arm extension
     // records) and the fillet lane's (the extension records WITHOUT the own-cell
@@ -7916,7 +7916,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fourteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 14") &&
-                            Catch::Matchers::ContainsSubstring("version 17"));
+                            Catch::Matchers::ContainsSubstring("version 18"));
     }
     // Two version-15 caches existed before the foreign-context merge (decision 559 (3), the
     // 527 rule): main's (the stacks + fillet additions of decision 552 (3) WITHOUT the
@@ -7944,7 +7944,7 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
       }
       CHECK_THROWS_WITH(ReadResponseGeometryCache(fifteen_path, data),
                         Catch::Matchers::ContainsSubstring("cache version 15") &&
-                            Catch::Matchers::ContainsSubstring("version 17"));
+                            Catch::Matchers::ContainsSubstring("version 18"));
     }
     // A version-16 cache (main before the mirror-formed contract merge: no
     // MirrorFormedTopology / MirrorReach / MirrorEdgeWeights on the patches, decision 557
@@ -7964,7 +7964,24 @@ TEST_CASE("SurfaceResponseOperatorContinuationOwnership",
     }
     CHECK_THROWS_WITH(ReadResponseGeometryCache(sixteen_path, data),
                       Catch::Matchers::ContainsSubstring("cache version 16") &&
-                          Catch::Matchers::ContainsSubstring("version 17"));
+                          Catch::Matchers::ContainsSubstring("version 18"));
+    // A version-17 cache (main before the probe-snap lane: no ProbeSnaps on the patches,
+    // decision 611 (2)) is refused by the version message, never misread for its missing
+    // records.
+    nlohmann::json seventeen = stale;
+    seventeen["Version"] = 17;
+    for (auto &patch : seventeen["Patches"])
+    {
+      patch.erase("ProbeSnaps");
+    }
+    const auto seventeen_path = temp.temp_dir / "response-geometry-ownership-v17.json";
+    {
+      std::ofstream output(seventeen_path);
+      output << seventeen.dump(2) << "\n";
+    }
+    CHECK_THROWS_WITH(ReadResponseGeometryCache(seventeen_path, data),
+                      Catch::Matchers::ContainsSubstring("cache version 17") &&
+                          Catch::Matchers::ContainsSubstring("version 18"));
   }
   SECTION("vertex ownership (rule B4): a corner patch on a chain piece end inside a "
           "contract-3 box is owned once; interior chain points, other planes, other boxes "
