@@ -18559,19 +18559,26 @@ std::vector<SpatialSupportBounds> CollectSpatialSupports(
     // A contract-3 placeholder without basis points (a signature-only library, the
     // preflight of a Missing key): the box is the Signature's support box placed by the
     // patch frame, R above and below the plane (the coupon's cap and substrate reach at
-    // least R), so that the ownership records of the dry run are complete.
+    // least R), so that the ownership records of the dry run are complete. The corners
+    // are built in MESH units, the units of a basis-points file, because the loop below
+    // divides every local point by coordinate_scale: `config.matching_radius` is already
+    // nondimensional (MatchingRadius / coordinate_scale at the library read), so the
+    // corners are scaled back by coordinate_scale first (decision 627 (2): without it the
+    // placeholder's support was 1 / Lc too small, 1 / 1055 on the ctx003-C3 window, and
+    // the continuation ownership read a cell through the frame origin as strictly
+    // containing the box).
     std::vector<std::array<double, 3>> box_corners;
     if (!points && support.has_support_box)
     {
       const auto &b = support.support_box;
+      const double R_mesh = config.matching_radius * coordinate_scale;
       for (const double x : {b[0], b[2]})
       {
         for (const double y : {b[1], b[3]})
         {
           for (const double z : {-1.0, 1.0})
           {
-            box_corners.push_back({x * config.matching_radius, y * config.matching_radius,
-                                   z * config.matching_radius});
+            box_corners.push_back({x * R_mesh, y * R_mesh, z * R_mesh});
           }
         }
       }
