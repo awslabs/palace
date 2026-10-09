@@ -171,6 +171,19 @@ public:
     double cell_length =
         0.0;  // the longitudinal cell (nondimensional; 0 for a spatial patch)
     bool excluded = false;
+    // The patch's conductor probes read on the device chord polyline (decision 611 (2),
+    // ResponseCorrectionPatchData::Provenance::ProbeSnap): the snapped knots in the order
+    // of the placed patch's record; max_probe_snap = the largest displacement
+    // (nondimensional; the record multiplies by the mesh coordinate scale).
+    struct ProbeSnap
+    {
+      int vertex = -1;
+      int segment = -1;
+      int arc = -1;
+      double displacement = 0.0;
+    };
+    std::vector<ProbeSnap> probe_snaps;
+    double max_probe_snap = 0.0;
   };
   // The dimensionless tolerance of the gate: max_ratio above it excludes the patch (weight
   // 0, like a DomainBoundary cell). Calibrated (conductor-consistency-20261003/gate): the
@@ -356,6 +369,10 @@ private:
     // and the patch's provenance for the record.
     int probe_point_count = 0;
     std::vector<std::array<double, 3>> probe_points;
+    // The probes read on the device arc chords (decision 611 (2)): the placed patch's
+    // ProbeSnaps applied to probe_points, for the record.
+    std::vector<ConductorConsistencyRecord::ProbeSnap> probe_snaps;
+    double max_probe_snap = 0.0;
     int feature = -1;
     double claim_length = 0.0;
     double cell_length = 0.0;
@@ -756,6 +773,31 @@ double ArcChordDistance(const std::array<double, 3> &q, const std::array<double,
 // placed context piece end (tolerance kSignatureParameterToleranceOverRadius x R).
 double DevicePerimeterDistance(const IdentificationResult &identification,
                                const std::array<double, 3> &q);
+
+// The conductor-consistency probe snap (decision 611 (2); the R1 conductor diagnosis
+// section 6): the nearest REAL device perimeter segment to q (every segment read as the
+// straight chord of its key, the image segments of a mirror band excluded). When that
+// segment is a chord of a fitted arc (Segments[].Arc) and q's in-plane distance to the
+// chord - in the arc's plane, the out-of-plane offset set aside - lies within the arc's
+// recorded largest chord sagitta (MaxChordSagittaOverR x R) plus the arc-fit tolerance
+// (kArcFitToleranceOverRadius x R, the band the device vertices lie on the fitted circle
+// within), the result is the displacement from q to its in-plane foot on the chord (the
+// out-of-plane offset unchanged) with the segment and arc; otherwise (a straight segment
+// nearest, an arc chord farther than its sagitta - coupon metal the device polyline does
+// not have - or a probe already on the chord at the signature's resolution,
+// kSignatureLengthQuantumOverRadius x R) nullopt - the probe is not moved. A coupon knot
+// built ON the fitted circle lies within that bound of the device's chord by construction,
+// a knot claiming metal farther away is read where it is.
+struct ProbeChordSnap
+{
+  int segment = -1;
+  int arc = -1;
+  std::array<double, 3> displacement{};
+  double distance = 0.0;
+};
+std::optional<ProbeChordSnap>
+SnapProbeToDeviceChord(const IdentificationResult &identification,
+                       const std::array<double, 3> &q);
 
 void WriteResponseGeometryCache(
     const std::filesystem::path &path,

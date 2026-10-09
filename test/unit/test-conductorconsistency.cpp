@@ -53,13 +53,23 @@ namespace
 // closed). The NO-CONDUCTOR variant declares every plane ring point free (a coupon without
 // metal cross-sections at a fixed potential, like a finite-impedance coupon or a ring-path
 // model without ZeroTraceIndices: nothing to probe, recorded untestable under
-// UnprobedModels and warned, not gated; decision 279 MINOR-2).
+// UnprobedModels and warned, not gated; decision 279 MINOR-2). The CHORD-OFFSET variant
+// (decision 611 (2)) moves the two conductor-1 metal-edge knots on the faces u = -+0.2 by
+// kChordOffset into the gap (v = -0.125 + 0.02: device x = 0.895, 0.02 off island 1's edge
+// at x = 0.875): the 32b0 pattern of a coupon arc face end built on the fitted circle up to
+// the chord sagitta outside the device's chord polyline, which reads the gap potential next
+// to the edge (fail-before: excluded). The CHORD-OFFSET-SNAPPED variant is the same coupon
+// whose placed patch carries the probe snaps of those two knots (displacement -0.02 along
+// AxisV = -x, as BuildFeaturePatches records them for an arc chord): the probes are read
+// on the device edge, the reading is the Dirichlet value, the snaps are recorded.
 enum class CouponVariant
 {
   CONSISTENT,
   INCONSISTENT,
   CONDUCTOR_OFF_PLANE,
-  NO_CONDUCTOR
+  NO_CONDUCTOR,
+  CHORD_OFFSET,
+  CHORD_OFFSET_SNAPPED
 };
 
 struct CouponFiles
@@ -67,16 +77,22 @@ struct CouponFiles
   fs::path basis_points, trace_vertices, trace_triangles, fabricated, thin, cache;
   int contour_size = 0;
   std::vector<std::array<double, 3>> perimeter;  // (u, v) of the ten ring points
+  std::vector<int> offset_vertices;              // the chord-offset knots (0-based)
 };
 
 constexpr double kHalfU = 0.2, kHalfV = 0.25, kHalfW = 0.2, kMetalEdgeV = 0.125;
+constexpr double kChordOffset = 0.02;
 
 CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
 {
   const std::string tag = variant == CouponVariant::CONSISTENT            ? "consistent"
                           : variant == CouponVariant::INCONSISTENT        ? "inconsistent"
                           : variant == CouponVariant::CONDUCTOR_OFF_PLANE ? "off-plane"
-                                                                          : "no-conductor";
+                          : variant == CouponVariant::NO_CONDUCTOR        ? "no-conductor"
+                          : variant == CouponVariant::CHORD_OFFSET        ? "chord-offset"
+                                                                          : "chord-snapped";
+  const bool chord_offset = variant == CouponVariant::CHORD_OFFSET ||
+                            variant == CouponVariant::CHORD_OFFSET_SNAPPED;
   CouponFiles files;
   files.basis_points = dir / ("conductor-consistency-" + tag + "-basis-points.csv");
   files.trace_vertices = dir / ("conductor-consistency-" + tag + "-trace-vertices.csv");
@@ -129,7 +145,13 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     }
     else if (v <= -kMetalEdgeV + 1.0e-12)
     {
-      plane[i] = AddConductor({u, v, 0.0}, 1);
+      // The chord-offset knots: the metal-edge corners of the two faces, into the gap.
+      const bool offset = chord_offset && std::abs(v + kMetalEdgeV) <= 1.0e-12;
+      plane[i] = AddConductor({u, offset ? v + kChordOffset : v, 0.0}, 1);
+      if (offset)
+      {
+        files.offset_vertices.push_back(plane[i] - 1);
+      }
     }
     else if (v >= kMetalEdgeV - 1.0e-12)
     {
@@ -236,6 +258,16 @@ CouponFiles WriteCoupon(const fs::path &dir, CouponVariant variant)
     // Two claimed portions of 0.4 along the islands' facing edges (z in [0.8, 1.2]).
     patch.provenance.claims = {{3, {0.875, 0.5, 0.8}, {0.875, 0.5, 1.2}},
                                {5, {1.125, 0.5, 0.8}, {1.125, 0.5, 1.2}}};
+    if (variant == CouponVariant::CHORD_OFFSET_SNAPPED)
+    {
+      // The placement's record for a knot kChordOffset off a device arc chord (segment 3
+      // of arc 0): back onto the edge along -x (AxisV points +x).
+      for (const int vertex : files.offset_vertices)
+      {
+        patch.provenance.probe_snaps.push_back(
+            {vertex, 3, 0, {-kChordOffset, 0.0, 0.0}, kChordOffset});
+      }
+    }
     WriteResponseGeometryCache(files.cache, data);
   }
   Mpi::Barrier(Mpi::World());
@@ -497,6 +529,123 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK_THAT(later.front().max_ratio, WithinRel(unit_ratio, 1.0e-9));
       CHECK(later.front().excluded);
       CHECK(response.GetElectrostaticResponse(V[0]).domain_correction == 0.0);
+    }
+  }
+
+  SECTION("a metal-edge knot off the device chord reads the gap; snapped onto the chord it "
+          "reads the conductor (decision 611)")
+  {
+    // Fail-before (the gate as on main): the two conductor-1 face knots 0.02 into the gap
+    // read the device potential 0.02 from island 1's edge - the near-edge gap potential,
+    // far above the tolerance - so the coupon is excluded; no snap is recorded.
+    double offset_ratio = 0.0;
+    {
+      const auto files = WriteCoupon(temp.temp_dir, CouponVariant::CHORD_OFFSET);
+      REQUIRE(files.offset_vertices.size() == 2);
+      test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
+      SurfaceResponseOperator response(iodata, laplace);
+      REQUIRE(response.GetPatchCount() == 1);
+      const auto records = response.ApplyConductorConsistencyGate(V[0], 1);
+      REQUIRE(records.size() == 1);
+      const auto &record = records.front();
+      CHECK(record.plane_knots == 8);
+      CHECK(record.worst_conductor == 1);
+      CHECK(std::find(files.offset_vertices.begin(), files.offset_vertices.end(),
+                      record.worst_vertex) != files.offset_vertices.end());
+      CHECK_THAT(record.worst_point[0], WithinAbs(0.875 + kChordOffset, 1.0e-9));
+      CHECK_THAT(record.worst_point[1], WithinAbs(0.5, 1.0e-9));
+      CHECK(record.max_ratio > tolerance);
+      CHECK(record.max_ratio < 1.0);
+      CHECK(record.excluded);
+      CHECK(record.probe_snaps.empty());
+      CHECK(record.max_probe_snap == 0.0);
+      offset_ratio = Replicated(record.max_ratio);
+      const auto statistics = response.GetStatistics();
+      const auto &entry = statistics["Diagnostics"]["ConductorConsistency"]["Records"][0];
+      CHECK(entry["ProbeSnaps"]["Count"].get<int>() == 0);
+      CHECK(entry["ProbeSnaps"]["MaxDisplacement"].get<double>() == 0.0);
+      CHECK(entry["ProbeSnaps"]["Knots"].empty());
+      CHECK(response.GetElectrostaticResponse(V[0]).domain_correction == 0.0);
+    }
+    // The fix: the same coupon with the placement's probe snaps - the two knots are read
+    // on the device edge (their mapped position plus the recorded displacement), the
+    // reading is the Dirichlet value to roundoff, the patch stays applied, and the record
+    // carries the snaps (count, largest displacement, the knots).
+    {
+      const auto files = WriteCoupon(temp.temp_dir, CouponVariant::CHORD_OFFSET_SNAPPED);
+      REQUIRE(files.offset_vertices.size() == 2);
+      test::GeometryCacheEnvGuard cache_env(files.cache.string(), false);
+      SurfaceResponseOperator response(iodata, laplace);
+      REQUIRE(response.GetPatchCount() == 1);
+      for (int source = 1; source <= 2; source++)
+      {
+        const auto records = response.ApplyConductorConsistencyGate(V[source - 1], source);
+        REQUIRE(records.size() == 1);
+        const auto &record = records.front();
+        CHECK(record.plane_knots == 8);
+        CHECK(record.max_deviation < 1.0e-10);
+        CHECK(record.max_ratio < 1.0e-10);
+        CHECK(record.max_ratio < 1.0e-6 * offset_ratio);
+        CHECK_FALSE(record.excluded);
+        REQUIRE(record.probe_snaps.size() == 2);
+        CHECK_THAT(record.max_probe_snap, WithinAbs(kChordOffset, 1.0e-15));
+        for (const auto &snap : record.probe_snaps)
+        {
+          CHECK(std::find(files.offset_vertices.begin(), files.offset_vertices.end(),
+                          snap.vertex) != files.offset_vertices.end());
+          CHECK(snap.segment == 3);
+          CHECK(snap.arc == 0);
+          CHECK_THAT(snap.displacement, WithinAbs(kChordOffset, 1.0e-15));
+        }
+        CHECK_THAT(Replicated(record.max_ratio), WithinAbs(record.max_ratio, 0.0));
+        CHECK_THAT(Replicated(record.max_probe_snap), WithinAbs(kChordOffset, 1.0e-15));
+      }
+      CHECK(response.GetElectrostaticResponse(V[0]).domain_correction != 0.0);
+      const auto statistics = response.GetStatistics();
+      const auto &diagnostics = statistics["Diagnostics"]["ConductorConsistency"];
+      CHECK(diagnostics["Count"].get<int>() == 0);
+      REQUIRE(diagnostics["Records"].size() == 2);
+      CHECK_THAT(diagnostics["Rule"].get<std::string>(), ContainsSubstring("ProbeSnaps"));
+      for (const auto &entry : diagnostics["Records"])
+      {
+        const auto &snaps = entry["ProbeSnaps"];
+        CHECK(snaps["Count"].get<int>() == 2);
+        CHECK_THAT(snaps["MaxDisplacement"].get<double>(),
+                   WithinAbs(kChordOffset, 1.0e-15));
+        REQUIRE(snaps["Knots"].size() == 2);
+        std::vector<int> knots;
+        for (const auto &knot : snaps["Knots"])
+        {
+          knots.push_back(knot["Knot"].get<int>());
+          CHECK(knot["Segment"].get<int>() == 3);
+          CHECK(knot["Arc"].get<int>() == 0);
+          CHECK_THAT(knot["Displacement"].get<double>(), WithinAbs(kChordOffset, 1.0e-15));
+        }
+        std::sort(knots.begin(), knots.end());
+        auto expected = files.offset_vertices;
+        std::sort(expected.begin(), expected.end());
+        CHECK(knots == expected);
+      }
+      CHECK(statistics["ModelCatalog"][0]["PatchWeight"].get<double>() == 1.0);
+    }
+    // A snap record naming a knot that is not a conductor vertex of the trace mesh (a
+    // stale cache or another library) fails closed by the model's name.
+    {
+      const auto files = WriteCoupon(temp.temp_dir, CouponVariant::CHORD_OFFSET_SNAPPED);
+      auto data = ReadResponseGeometryCache(
+          files.cache, *iodata.solver.electrostatic.response_correction);
+      REQUIRE(data.patches.size() == 1);
+      data.patches[0].provenance.probe_snaps.push_back({0, 3, 0, {0.0, 0.0, 0.0}, 0.0});
+      const auto stale = temp.temp_dir / "conductor-consistency-chord-stale.json";
+      if (Mpi::Root(Mpi::World()))
+      {
+        WriteResponseGeometryCache(stale, data);
+      }
+      Mpi::Barrier(Mpi::World());
+      test::GeometryCacheEnvGuard cache_env(stale.string(), false);
+      CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
+                        ContainsSubstring("conductor probe snaps") &&
+                            ContainsSubstring("gap-junction-chord-snapped"));
     }
   }
 
