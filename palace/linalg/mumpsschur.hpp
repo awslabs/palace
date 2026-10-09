@@ -92,8 +92,10 @@ public:
   // Factor the entries in Values() with the sparsity pattern of the analysis (collective).
   void Refactor();
 
-  // Dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric).
+  // Dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric), or its
+  // buffer handed over (until the next factorization).
   const std::vector<T> &Schur() const { return schur; }
+  std::vector<T> ReleaseSchur();
 
   // Internal solves for a batch of parent true-DOF vectors (collective): y_k solves A_11 on
   // the internal (non-Schur) variables, with 0 on the Schur variables. y_k may alias x_k.

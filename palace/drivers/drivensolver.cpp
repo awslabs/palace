@@ -193,6 +193,47 @@ ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx,
   return l;
 }
 
+// The full S_E (n x n, column-major) of a record's lower triangle (by columns), mapped to
+// the current interface as M^-T S_E M^-1 with map (rows[g]: row g of M^-T), on one
+// triangle.
+std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
+                                            const SignatureMap *map)
+{
+  auto at = [&](int a, int b)
+  {
+    if (a < b)
+    {
+      std::swap(a, b);
+    }
+    return lower[static_cast<std::size_t>(b) * n -
+                 static_cast<std::size_t>(b) * (b - 1) / 2 + (a - b)];
+  };
+  std::vector<std::complex<double>> S(static_cast<std::size_t>(n) * n);
+  for (int j = 0; j < n; j++)
+  {
+    for (int i = j; i < n; i++)
+    {
+      std::complex<double> v = 0.0;
+      if (map)
+      {
+        for (const auto &[a, ca] : map->rows[i])
+        {
+          for (const auto &[b, cb] : map->rows[j])
+          {
+            v += ca * cb * at(a, b);
+          }
+        }
+      }
+      else
+      {
+        v = at(i, j);
+      }
+      S[static_cast<std::size_t>(j) * n + i] = S[static_cast<std::size_t>(i) * n + j] = v;
+    }
+  }
+  return S;
+}
+
 // The index of each value of x in y (relative tolerance tol), -1 if none.
 int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10)
 {
@@ -483,7 +524,7 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
     Mpi::GlobalSum(static_cast<int>(lu.size()), lu.data(), comm);
     if (root)
     {
-      rec.S = ds->Schur();
+      rec.S = ds->TakeSchur();
       const auto &gl = ds->EnvironmentSourceCondensation();
       const auto &uG = ds->InterfaceSolution();
       for (int e = 0; e < ne; e++)
@@ -669,18 +710,17 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
   // sources g of the excitations (|Γ| x n), and the environment ports' h and c.
   auto model_record = [&](double omega, std::size_t omega_i)
   {
-    DrivenSubstructureModel::Record rec, out;
+    std::vector<std::complex<double>> x;  // the record, flat (S_E by its lower triangle)
     if (adaptive)
     {
-      auto x = fit.Evaluate(omega);
+      x = fit.Evaluate(omega);
       scale_record(x, true);
-      rec = model.Unflatten(x);
     }
     else if (!model.weights.empty())
     {
       const auto a =
           BarycentricInterpolant::Coefficients(model.omega, model.weights, omega);
-      std::vector<std::complex<double>> x(records[0].size(), 0.0);
+      x.assign(records[0].size(), 0.0);
       for (std::size_t j = 0; j < records.size(); j++)
       {
         for (std::size_t q = 0; q < x.size(); q++)
@@ -688,34 +728,36 @@ ErrorIndicator DrivenSolver::SweepSubstructured(SpaceOperator &space_op,
           x[q] += a[j] * records[j][q];
         }
       }
-      rec = model.Unflatten(x);
     }
     else
     {
-      rec = model.ReadRecord(model_path, record[omega_i]);
+      x = model.ReadFlatRecord(model_path, record[omega_i]);
     }
-    auto dual = [&](const std::complex<double> *x)
+    const auto sz = model.PartSizes();
+    DrivenSubstructureModel::Record out;
+    out.S = FullSchur(x.data(), nG, online ? &gamma_map : nullptr);
+    const auto *g = x.data() + sz[0], *h = g + sz[1], *c = h + sz[2];
+    auto dual = [&](const std::complex<double> *y)
     {
-      std::vector<std::complex<double>> y(x, x + nG);
-      return online ? gamma_map.DualRows(y, 1) : y;
+      std::vector<std::complex<double>> z(y, y + nG);
+      return online ? gamma_map.DualRows(z, 1) : z;
     };
-    out.S = online ? gamma_map.DualMatrix(rec.S) : std::move(rec.S);
     out.g.assign(static_cast<std::size_t>(nG) * n, 0.0);
     for (int k = 0; k < n; k++)
     {
       if (ex_col[k] >= 0)
       {
-        const auto gk = dual(rec.g.data() + static_cast<std::size_t>(ex_col[k]) * nG);
+        const auto gk = dual(g + static_cast<std::size_t>(ex_col[k]) * nG);
         std::copy(gk.begin(), gk.end(),
                   out.g.begin() + static_cast<std::ptrdiff_t>(k) * nG);
       }
     }
     for (int j = 0; j < np; j++)
     {
-      const auto hj = dual(rec.h.data() + static_cast<std::size_t>(j) * nG);
+      const auto hj = dual(h + static_cast<std::size_t>(j) * nG);
       out.h.insert(out.h.end(), hj.begin(), hj.end());
     }
-    out.c = std::move(rec.c);
+    out.c.assign(c, c + sz[3]);
     return out;
   };
 

@@ -361,12 +361,17 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
   if (rank == 0 && n_schur > 0)
   {
     id.schur_lld = std::max<MUMPS_INT>(1, id.schur_mloc);
-    schur.assign(static_cast<std::size_t>(id.schur_lld) *
-                     std::max<MUMPS_INT>(1, id.schur_nloc),
-                 T(0.0));
-    id.schur = Entries(schur.data());
   }
   Factor();
+}
+
+template <typename T>
+std::vector<T> MumpsSchurSolverT<T>::ReleaseSchur()
+{
+  std::vector<T> S;
+  S.swap(schur);
+  S.resize(static_cast<std::size_t>(n_schur) * n_schur);
+  return S;
 }
 
 template <typename T>
@@ -390,6 +395,14 @@ void MumpsSchurSolverT<T>::Factor()
   // -20) raise the relaxation and retry, as the MUMPS user guide recommends. The missing
   // workspace (INFOG(2)) shrinks linearly with the relaxation ICNTL(14), whose base can be
   // small next to the Schur root, so the relaxation is extrapolated from two attempts.
+  if (rank == 0 && n_schur > 0 && schur.empty())
+  {
+    // (Again after ReleaseSchur.)
+    schur.assign(static_cast<std::size_t>(id.schur_lld) *
+                     std::max<MUMPS_INT>(1, id.schur_nloc),
+                 T(0.0));
+    id.schur = Entries(schur.data());
+  }
   int r_prev = -1, m_prev = 0;
   for (int attempt = 0; active; attempt++)
   {

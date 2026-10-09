@@ -186,8 +186,9 @@ public:
   const std::vector<std::complex<double>> &InterfaceSolution() const { return u_last; }
 
   // S_E(ω) of the last condensation on rank 0 (|Γ| x |Γ|, column-major, complex
-  // symmetric), in interface order.
+  // symmetric), in interface order (offline), or handed over.
   const std::vector<std::complex<double>> &Schur() const { return S; }
+  std::vector<std::complex<double>> TakeSchur() { return std::move(S); }
 
   // Global true DOFs of the interface in interface order (replicated), and its size.
   const std::vector<HYPRE_BigInt> &InterfaceTrueDofs() const { return gamma_tdofs; }

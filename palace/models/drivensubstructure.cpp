@@ -580,12 +580,15 @@ void DrivenSubstructure::Condense(double omega)
     Setup(env, omega);
     Setup(region, omega);
   }
+  // The dense interface matrices on rank 0 move between MUMPS's Schur buffers, S and T,
+  // without copies (the buffers are allocated again at the next factorization).
+  Release(S);
+  Release(T);
   Factor(env, omega);
   Factor(region, omega);
   if (Mpi::Root(space_op.GetComm()))
   {
-    S = env.schur->Schur();
-    S.resize(static_cast<std::size_t>(InterfaceSize()) * InterfaceSize());
+    S = env.schur->ReleaseSchur();
   }
   FactorInterface();
 #endif
@@ -601,6 +604,7 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
   {
     Setup(region, omega);
   }
+  Release(T);
   Factor(region, omega);
   if (Mpi::Root(space_op.GetComm()))
   {
@@ -609,6 +613,7 @@ void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>
     S = std::move(S_env);
   }
   FactorInterface();
+  Release(S);  // (only the factored interface system is needed online)
 #endif
 }
 
@@ -619,8 +624,7 @@ void DrivenSubstructure::FactorInterface()
   if (Mpi::Root(space_op.GetComm()))
   {
     const int nG = InterfaceSize();
-    T = region.schur->Schur();
-    T.resize(static_cast<std::size_t>(nG) * nG);
+    T = region.schur->ReleaseSchur();
     for (std::size_t k = 0; k < T.size(); k++)
     {
       T[k] += S[k];
