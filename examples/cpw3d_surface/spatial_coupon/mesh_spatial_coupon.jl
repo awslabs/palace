@@ -1718,8 +1718,8 @@ const CORNER_RECONNECTION_ROUNDS = 4
 # moved) - is a bridging sliver wherever it lies and takes the better of its 2-3 flip and
 # edge removal, every new cell clearing BOTH gates (the floor max(the cell's recorded floor,
 # MinimumScaledJacobian), the ceiling min(the cell's recorded ceiling,
-# MaximumJacobianCondition)) and improving on the cell's kappa_reg, under the same positivity
-# / same-entity / no-surface-face constraints. It runs at BOTH gate sites: inside
+# MaximumJacobianCondition)), under the same positivity / same-entity / no-surface-face
+# constraints (no kappa_reg improvement is demanded: the gates are the criteria). It runs at BOTH gate sites: inside
 # optimize_required_region! after the descent and before its gates (the seed-region site;
 # 0c94's stop) and over the whole mesh before gate_mixed_volume_quality (the global site;
 # c08b's stop). A cell with a FREE (interior) vertex is never touched (recorded as
@@ -1733,8 +1733,9 @@ const ENVELOPE_SLIVER_RECONNECTION_RULE =
     "pyramid node) is a bridging sliver wherever it lies; it is replaced by the better of its " *
     "2-3 flip and its edge removal (CORNER_RECONNECTION_RULE's operations and constraints) " *
     "whose every new cell has scaled Jacobian >= max(the cell's floor, MinimumScaledJacobian) " *
-    "and Jacobian condition <= min(the cell's ceiling, MaximumJacobianCondition) and whose " *
-    "maximum kappa_reg improves on the cell's; at BOTH gate sites (the seed required region " *
+    "and Jacobian condition <= min(the cell's ceiling, MaximumJacobianCondition) (the better = " *
+    "the smaller maximum kappa_reg of the new cells; no kappa_reg improvement over the sliver is " *
+    "demanded); at BOTH gate sites (the seed required region " *
     "before its gates, the whole mesh before the mixed-element gates); a below-gate cell with a " *
     "free vertex is not touched (UnconfinedBelowGate); an unrepaired cell still fails the gate " *
     "(supervisor decisions 605 / 606, round-4 F-3)"
@@ -1750,8 +1751,9 @@ function confined_vertices(point_count, triangles, fixed)
 end
 
 # The best gate-clearing reconnection of a confined sliver cell k (ENVELOPE_SLIVER_RECONNECTION_RULE):
-# (kind, replaced cells, new cells, quality, element) or nothing; `excluded(j)` tells a cell the
-# operations may not replace (a collapse-remapped cell).
+# (kind, replaced cells, new cells, quality = the new cells' maximum kappa_reg, the cell's kappa_reg
+# before, element) or nothing; `excluded(j)` tells a cell the operations may not replace (a
+# collapse-remapped cell).
 function best_sliver_reconnection(points, tetrahedra, incident, surface_faces, surface_edges,
                                   cell_entity, k, scaled_floor, condition_ceiling, excluded)
     before = tetrahedron_regular_condition([points[:, i] for i in tetrahedra[k]])
@@ -1762,9 +1764,12 @@ function best_sliver_reconnection(points, tetrahedra, incident, surface_faces, s
     flip !== nothing && excluded(flip.neighbour) && (flip = nothing)
     removal !== nothing && any(excluded(j) for j in removal.ring) && (removal = nothing)
     flip === nothing && removal === nothing && return nothing
+    # The gate-clearing floor / ceiling are the criteria (the rule of record); unlike the F5-B
+    # corner trigger no kappa_reg improvement is demanded: a sliver's kappa_reg is small when its
+    # frame is merely flat, and the first 0c94 / c08b diagnostic runs showed gate-clearing fans
+    # refused by that clause (1 of 8, 2 of 10 printed).
     use_removal = removal !== nothing && (flip === nothing || removal.quality <= flip.quality)
     quality = use_removal ? removal.quality : flip.quality
-    quality < before || return nothing
     return use_removal ?
            (kind="edge-removal", replaced=collect(removal.ring), cells=removal.cells, quality=quality,
             before=before, element=collect(removal.edge)) :

@@ -1281,7 +1281,7 @@ end
     @test length(row["Reconnections"]) == 1
     @test row["Reconnections"][1]["Kind"] == "2-3"
     @test row["Reconnections"][1]["ScaledJacobian"] < 0.01
-    @test row["Reconnections"][1]["After"] < row["Reconnections"][1]["Before"]
+    @test row["Reconnections"][1]["After"] < row["Reconnections"][1]["Before"]   # recorded; not a condition of the pass
     @test 0.06 < row["Reconnections"][1]["CornerDistance"] < 0.07
     @test row["Reconnections"][1]["ReplacedCells"] == 2 && row["Reconnections"][1]["AddedCells"] == 3
     # The pair is gone, three gate-clearing cells of the same entity took its place; the
