@@ -671,6 +671,189 @@ function build_arc_coupon(
     return parse_json(read(census, String)), mesh, inputs
 end
 
+# Round 4 F-3 redesign, T-F3R-2 (decision 629; DESIGN.md 5 / 8.4): the LONG-ARC fixture at the
+# production sizes - a metal block whose bottom edge (-3, 0) -> (0, 0) joins SMOOTHLY a convex arc of
+# radius `rho` (190 um: 0c94's R 197 class) about (0, rho) sweeping `sweep_degrees` (3.016 degrees =
+# 10 um of arc) in chords of `chord_degrees` (0.12 degrees = 0.40 um, the 0c94 / c08b chord class),
+# ending at a KINKED corner of `kink_degrees` (4: the 0c94 corner class) into a straight edge that
+# leaves through the x1 box face (a straight face end). (a) one arc part; (b) `split_chords` = [n - 3]:
+# the same circle serialised as two tagged runs with a same-circle smooth joint three chords (1.15 um)
+# before the corner - the SHORT PART next to the corner of the F-3 cause (DESIGN 3.2). The metal lies
+# to the left of the counterclockwise loop; the x0 / y1 / x1 sides are box continuations.
+function write_long_arc_inputs(
+    directory;
+    rho=190.0,
+    sweep_degrees=rad2deg(10.0 / 190.0),
+    chord_degrees=0.12,
+    kink_degrees=4.0,
+    split_chords=Int[],
+    plane=0.0,
+    radius=2.0
+)
+    centre = (0.0, rho)
+    n = ceil(Int, sweep_degrees / chord_degrees - 1.0e-9)
+    rows = NamedTuple[]
+    function straight!(a, b, gap_sign)
+        d = (b[1] - a[1], b[2] - a[2])
+        L = hypot(d...)
+        t = (d[1] / L, d[2] / L)
+        return push!(
+            rows,
+            (
+                point=(0.5 * (a[1] + b[1]), 0.5 * (a[2] + b[2]), plane),
+                tangent=(t[1], t[2], 0.0),
+                gap=(gap_sign * t[2], -gap_sign * t[1], 0.0),
+                interval=(-0.5 * L, 0.5 * L),
+                normal_sign=1.0,
+                vertex_arm=false,
+                slot=0,
+                conductor=1
+            )
+        )
+    end
+    chord_points = [
+        (
+            centre[1] + rho * cosd(-90.0 + sweep_degrees * k / n),
+            centre[2] + rho * sind(-90.0 + sweep_degrees * k / n)
+        ) for k = 0:n
+    ]
+    # The arc's end tangent (counterclockwise) rotated clockwise by the kink: the kinked edge runs
+    # to the right, towards the x1 face, 3 (um) long before the box rule extends it.
+    phi = -90.0 + sweep_degrees + 90.0 - kink_degrees
+    kinked = (cosd(phi), sind(phi))
+    arc_end = chord_points[end]
+    straight!((-3.0, 0.0), (0.0, 0.0), 1.0)
+    for k = 1:n
+        straight!(chord_points[k], chord_points[k + 1], 1.0)
+    end
+    straight!(arc_end, (arc_end[1] + 3.0 * kinked[1], arc_end[2] + 3.0 * kinked[2]), 1.0)
+    lower, upper = row_coupon_bounds(rows, radius, 0.1, 0.05)
+    # The kinked edge meets the x1 face at the tilt kink_degrees - sweep (the face normal is +x).
+    exit_point = (upper[1], arc_end[2] + (upper[1] - arc_end[1]) * kinked[2] / kinked[1])
+    polygon = Tuple{Float64, Float64}[(lower[1], 0.0)]
+    append!(polygon, chord_points)
+    push!(polygon, exit_point)
+    push!(polygon, (upper[1], upper[2]))
+    push!(polygon, (lower[1], upper[2]))
+    m = length(polygon)
+    on_face(p, q) = any(
+        (abs(p[d] - lower[d]) <= 1.0e-9 && abs(q[d] - lower[d]) <= 1.0e-9) ||
+            (abs(p[d] - upper[d]) <= 1.0e-9 && abs(q[d] - upper[d]) <= 1.0e-9) for
+        d = 1:2
+    )
+    classes =
+        [on_face(polygon[i], polygon[i % m + 1]) ? "Continuation" : "Physical" for i = 1:m]
+    all(1 <= k < n for k in split_chords) || error("split_chords must lie inside the arc")
+    members = length(split_chords) + 1
+    ids = collect(1:members)
+    arcs = Vector{Any}(nothing, m)
+    for i = 2:(n + 1)
+        member = 1 + count(k -> i - 1 > k, split_chords)
+        arcs[i] = (ids[member], centre[1], centre[2], rho, 1)
+    end
+    joints = Vector{Any}(nothing, m)
+    joints[2] = (0.0, 1)
+    for k in split_chords
+        joints[k + 2] = (0.0, 1)
+    end
+    joints[n + 2] = (deg2rad(kink_degrees), 0)
+    corners = [(lower[1], 0.0, plane), (arc_end[1], arc_end[2], plane)]
+    open(joinpath(directory, "signature.csv"), "w") do io
+        println(io, "Index,Slot,Conductor,Px,Py,Pz,Gx,Gy,Gz,Tx,Ty,Tz,Nz,S0,S1,VertexArm")
+        for (i, row) in enumerate(rows)
+            println(io, join([i, 0, 1, row.point..., row.gap..., row.tangent..., 1, row.interval..., 0], ","))
+        end
+    end
+    open(joinpath(directory, "boundary.csv"), "w") do io
+        println(
+            io,
+            "Loop,Vertex,Conductor,Plane,Hole,Class,X,Y,ArcId,ArcCx,ArcCy,ArcR,ArcSign,JointTurn,JointSmooth"
+        )
+        for (i, point) in enumerate(polygon)
+            arc = arcs[i] === nothing ? ["", "", "", "", ""] : collect(arcs[i])
+            joint = joints[i] === nothing ? ["", ""] : collect(joints[i])
+            println(io, join(vcat([1, i, 1, plane, 0, classes[i], point[1], point[2]], arc, joint), ","))
+        end
+    end
+    open(joinpath(directory, "mask.csv"), "w") do io
+        println(io, "Facet,Conductor,Plane,X,Y")
+        for point in polygon
+            println(io, join([1, 1, plane, point[1], point[2]], ","))
+        end
+    end
+    contract = Dict{String, Any}(
+        "Version" => 1,
+        "SemanticCorners" => [[c[1], c[2], c[3]] for c in corners],
+        "Derivation" => Dict{String, Any}(
+            "InvariantCorners" => Dict{String, Any}(
+                "Rule" => "test fixture: the kinked arc / line joint",
+                "Points" => [[arc_end[1], arc_end[2], plane]]
+            )
+        )
+    )
+    open(joinpath(directory, "semantic.json"), "w") do io
+        return write_json(io, contract)
+    end
+    return (
+        signature=joinpath(directory, "signature.csv"),
+        boundary=joinpath(directory, "boundary.csv"),
+        mask=joinpath(directory, "mask.csv"),
+        semantic=joinpath(directory, "semantic.json"),
+        polygon=polygon,
+        classes=classes,
+        corners=corners,
+        chords=n,
+        lower=lower,
+        upper=upper,
+        centre=centre,
+        rho=rho,
+        arc_end=arc_end
+    )
+end
+
+# The PRODUCTION-size fabricated build of a fixture (the geometry-independence-suite recipe:
+# Radius 2, EdgeSize 0.25 nm, ratio 2, NormalSize 0.025, TangentialSize 0.05, FarSize 0.16,
+# CornerIsotropyRadius 0.1, the production gates) - T-F3R-2's builds.
+function build_production_coupon(directory, writer; stem="production", max_elements=6_000_000,
+                                 labels_only=false, writer_options...)
+    inputs = writer(directory; writer_options...)
+    mesh = joinpath(directory, "coupon-$stem.msh")
+    census = joinpath(directory, "census-$stem.json")
+    generate_spatial_coupon(;
+        signature=inputs.signature,
+        mask=inputs.mask,
+        boundary=inputs.boundary,
+        fabricated=true,
+        filename=mesh,
+        radius=2.0,
+        metal_thickness=0.1,
+        overetch=0.05,
+        sidewall_angle=90.0,
+        top_rounding=0.0,
+        trench_rounding=0.0,
+        lc_fine=0.025,
+        lc_tangent=0.05,
+        lc_far=0.16,
+        max_nodes=max_elements,
+        max_elements=max_elements,
+        semantic_contract=inputs.semantic,
+        corner_isotropy_radius=0.1,
+        corner_census=census,
+        edge_size=0.00025,
+        edge_growth_ratio=2.0,
+        corner_size=0.00025,
+        prism_tubes=true,
+        far_growth=0.5,
+        maximum_corner_aspect=4.0,
+        minimum_scaled_jacobian=0.01,
+        maximum_jacobian_condition=1000.0,
+        quality_displacement_over_normal=0.75,
+        corner_shape_gate=5.0,
+        labels_only=labels_only ? census : nothing
+    )
+    return parse_json(read(census, String)), mesh, inputs
+end
+
 # Round 3 class (1) (decisions 491 / 510; DESIGN-part-G G.1.6): the CORNER-FREE synthetics.
 # S-G1-a: a metal band of width 0.5 (R 0.5) entering through the x0 face and leaving through
 # the y1 face with ONE exactly tangent 90-degree bend: its outer edge a convex arc of radius
@@ -1957,17 +2140,24 @@ end
         # (ARC_FACE_END_BUILT_CASES: tilt >= 70 and margin <= the fixture's) - rho 3.5 (5.3 envelopes)
         # is not (the floor is fe75p5r13p3's 10.66 fabricated / fe70r13p3's 10.28 thin), rho 8 (12.1
         # envelopes at the test-size envelope 0.04; slope 1.05 tan theta) is.
-        for (theta, chord, rho) in (
-                (0.1, 0.025, nothing),
-                (0.5, 0.125, nothing),
-                (2.1, 0.5, nothing),
-                (8.0, 2.0, nothing),
-                (15.0, 2.5, nothing),
-                (45.0, 5.0, nothing),
-                (70.0, 5.0, 8.0)
+        # Round 4 F-3 redesign (decisions 629 / 630 (4) (i)): a FABRICATED arc tube carries the BOUND
+        # RING and its envelope is the farthest bound node (0.05 / sin 60 = 0.05774 at the test sizes,
+        # 1.44 x the plain 0.04), read by the crossing slope, the node-circle margin and the end block
+        # alike; the margin of the rho-8 fixture reads 8.4 bound envelopes, under the 10.66 floor, so
+        # the fabricated 70-degree fixture takes rho 12 (12.5 bound envelopes); the thin fixture (no
+        # bound ring) keeps rho 8 bitwise.
+        for (theta, chord, rho_of_kind) in (
+                (0.1, 0.025, (fabricated=nothing, thin=nothing)),
+                (0.5, 0.125, (fabricated=nothing, thin=nothing)),
+                (2.1, 0.5, (fabricated=nothing, thin=nothing)),
+                (8.0, 2.0, (fabricated=nothing, thin=nothing)),
+                (15.0, 2.5, (fabricated=nothing, thin=nothing)),
+                (45.0, 5.0, (fabricated=nothing, thin=nothing)),
+                (70.0, 5.0, (fabricated=12.0, thin=8.0))
             ),
             fabricated in (true, false)
 
+            rho = fabricated ? rho_of_kind.fabricated : rho_of_kind.thin
             census, mesh, inputs = build_arc_coupon(
                 mkpath(joinpath(directory, "fe$theta-$fabricated")),
                 write_arc_face_end_inputs;
@@ -1981,33 +2171,42 @@ end
             arc_rows = [row for row in tubes["Tubes"] if haskey(row, "Arc")]
             @test length(arc_rows) == (fabricated ? 2 : 1) &&
                   all(haskey(row, "FaceEnds") for row in arc_rows)
+            plain_envelope = tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"]
             for row in arc_rows
                 record = only(row["FaceEnds"])
                 @test record["Face"] == "x1" &&
                       isapprox(record["ThetaDegrees"], theta; atol=1.0e-9)
                 @test record["Regime"] == "I"
+                # The row's node envelope: the bound ring's farthest node on a fabricated arc tube
+                # (Tubes[].BoundRing.EnvelopeRadius = 0.05 / sin 60 at the test sizes), the plain
+                # Radius + PyramidHeight on a thin one (no BoundRing key).
+                @test haskey(row, "BoundRing") == fabricated
+                envelope = fabricated ? row["BoundRing"]["EnvelopeRadius"] : plain_envelope
+                fabricated && @test isapprox(envelope, 0.05 / sind(60.0); atol=1.0e-12) &&
+                      envelope == row["BoundRing"]["MaximumRadius"] &&
+                      row["StationLaw"] == "SideShared(bottom axis)"
                 # 9H: the recorded crossing slope is the arc's (rho, envelope, face distance), above
                 # tan theta by the concave side's excess (5.9 % on the default fixture at 45, 5.3 % at
                 # 70 / rho 8, within 1.5 % below 15 degrees), and the block's apex / shear read it.
                 slope = arc_crossing_slope(
                     row["Arc"]["Radius"],
-                    tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"],
+                    envelope,
                     abs(inputs.upper[1] - row["Arc"]["Centre"][1])
                 )
                 @test record["CrossingSlope"] == slope &&
                       tand(theta) * (1.0 - 1.0e-12) <= slope <= 1.13 * tand(theta)
-                theta <= 15.0 && @test slope <= 1.015 * tand(theta)
+                # (the bound envelope 0.05774 puts the inner node circle closer to the face: 2.1 %
+                # at 15 degrees on the fabricated default fixture, 1.45 % with the plain 0.04)
+                theta <= 15.0 && @test slope <= (fabricated ? 1.025 : 1.015) * tand(theta)
                 # (decision 579: the node-circle margin is recorded and dominated by a built case)
                 margin = (row["Arc"]["Radius"] - abs(inputs.upper[1] - row["Arc"]["Centre"][1])) /
-                         (tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"])
+                         envelope
                 @test record["NodeCircleMargin"] == margin &&
                       arc_face_end_dominating_case(fabricated, deg2rad(theta), margin) !== nothing
                 # (8A, decision 563: at or below 70 degrees the block's pyramid height is the regular one)
                 @test record["PyramidHeight"] == tubes["Section"]["PyramidHeight"] &&
                       record["ApexThickness"] == 2.0 * record["PyramidHeight"] * slope &&
-                      record["EnvelopeShear"] ==
-                      (tubes["Section"]["Radius"] + tubes["Section"]["PyramidHeight"]) *
-                      slope
+                      record["EnvelopeShear"] == envelope * slope
                 # The arc tube travels against the loop here (orientation -sigma Nz): the face
                 # end is the tube's START station; its axis point lies on the face.
                 face_point = record["End"] == "end" ? row["EndPoint"] : row["StartPoint"]
@@ -2154,7 +2353,11 @@ end
                   occursin("decision 579", message) &&
                   occursin("FAILED fe70 fabricated 70.0 / 2.4218", message)
             margin_text = match(r"margin rho \(1 - sin theta\) / envelope of ([0-9.e+-]+) envelopes", message)
-            @test margin_text !== nothing && 2.3 < parse(Float64, margin_text[1]) < 2.5
+            # (round 4 F-3, decision 630 (4) (i): the FABRICATED arc tube's envelope is its bound reach
+            # 0.05 / sin 60 = 0.05774 at the test sizes, 1.443 x the plain 0.04: 2.42 -> 1.68 envelopes)
+            @test margin_text !== nothing &&
+                  (fabricated ? 1.6 < parse(Float64, margin_text[1]) < 1.8 :
+                                2.3 < parse(Float64, margin_text[1]) < 2.5)
             census, _, _ = build_arc_coupon(
                 mkpath(joinpath(directory, "fe70-rho13p3-$fabricated")),
                 write_arc_face_end_inputs;
@@ -2166,8 +2369,11 @@ end
                 rho=13.3
             )
             records = [f for t in census["PrismTubeFaceEnds"]["Tubes"] for f in t["FaceEnds"]]
+            # (20.2 plain envelopes = 14.0 bound envelopes on the fabricated kind, still above the
+            # fe75p5r13p3 floor 10.66)
             @test length(records) == (fabricated ? 2 : 1) &&
-                  all(19.0 < f["NodeCircleMargin"] < 21.0 && f["ThetaDegrees"] == 70.0 for f in records)
+                  all((fabricated ? 13.5 < f["NodeCircleMargin"] < 14.5 : 19.0 < f["NodeCircleMargin"] < 21.0) &&
+                      f["ThetaDegrees"] == 70.0 for f in records)
         end
     end
 end

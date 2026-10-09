@@ -7261,6 +7261,26 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
              envelope_radius=tube_radius(top) + TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * outer)
         end
     end
+    # The BOUND-RING sections of a fabricated ARC-side component (round 4 F-3 redesign, decision 629
+    # DESIGN.md 4 / 8.2; decision 630): the bottom tube's rays reach the trench floor / pedestal
+    # plane w = -Overetch and the mid-thickness plane w = +T / 2, the top tube's the mid-thickness
+    # plane w = -T / 2 (both tubes' frames carry b = Nz, w towards the metal top). The envelope of
+    # such a tube is its largest node radius, the farthest bound node (decision 630 (4) (i)). Every
+    # other side keeps sections_of(K) bitwise; the thin kind has no bound.
+    bound_section_cache = Dict{Int, NamedTuple}()
+    function bound_sections_of(K)
+        return get!(bound_section_cache, K) do
+            fabricated || error("a thin coupon carries no bound ring")
+            plain = sections_of(K)
+            top = TubeSection(edge_size, ratio, K, plain.top.angles, plain.top.materials;
+                              bound_planes=[-0.5 * metal_thickness])
+            bottom = TubeSection(edge_size, ratio, K, plain.bottom.angles, plain.bottom.materials;
+                                 bound_planes=[-overetch, 0.5 * metal_thickness])
+            (top=top, bottom=bottom, sheet=plain.sheet, rings=K, radius=plain.radius,
+             outer_ring=plain.outer_ring, pyramid_height=plain.pyramid_height,
+             envelope_radius=max(plain.envelope_radius, section_reach(top), section_reach(bottom)))
+        end
+    end
     process = sections_of(rings)
     top_section, bottom_section, sheet_section = process.top, process.bottom, process.sheet
     radius = process.radius
@@ -7362,6 +7382,7 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
     # shared with a straight neighbour; the earlier part of one arc owns the split section.
     joints = Tuple{Int, Int, Int, Int}[]
     arc_tubes = 0
+    bound_ring_tubes = 0
     shared_sections = 0
     # The untubed short sides (design A9 family 3): recorded, no tube, not in `segments`
     # (which stays in lock-step with `tubes`: TubesPerSide tubes per segment).
@@ -7461,6 +7482,20 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         # joints are resolved on the indices into `tubes` once every segment has its tubes.
         layer_tube_index = Dict{Int, Int}()
         tubed_segments = Tuple{Int, NamedTuple}[]
+        # The ARC-CONTAINING side components (decision 629, DESIGN.md 4): the sides joined by
+        # smooth joints (an arc part, the straights smoothly jointed to it, the parts of one arc)
+        # whose component holds an arc. On a FABRICATED coupon every tube of such a component
+        # carries the bound ring; a coupon without an arc has no such component (the unchanged
+        # path, bitwise), and so does every thin coupon.
+        component = collect(1:length(layer_segments))
+        root(i) = (while component[i] != i; component[i] = component[component[i]]; i = component[i]; end; i)
+        for (i, segment) in enumerate(layer_segments), joint in segment.joints
+            joint === nothing && continue
+            a, b = root(i), root(joint[1])
+            a == b || (component[a] = b)
+        end
+        arc_roots = Set(root(i) for (i, segment) in enumerate(layer_segments) if segment.kind == :arc)
+        bound_ring_side = [fabricated && root(i) in arc_roots for i in eachindex(layer_segments)]
         for (segment_index, segment) in enumerate(layer_segments)
             if segment.untubed
                 push!(untubed_edges, untubed_edge_record(segment))
@@ -7468,8 +7503,11 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
             end
             b = [0.0, 0.0, Float64(layer.sign)]
             # The side's own sections (design round 2 F6: its ring count K_side) and their
-            # envelope / pyramid height / end-spacing cap.
-            own = sections_of(segment.rings)
+            # envelope / pyramid height / end-spacing cap; the bound-ring sections on an
+            # arc-containing component (decision 629).
+            own = bound_ring_side[segment_index] ? bound_sections_of(segment.rings) :
+                  sections_of(segment.rings)
+            bound_ring_side[segment_index] && (bound_ring_tubes += fabricated ? 2 : 1)
             placements = fabricated ?
                 ((layer.plane + layer.sign * metal_thickness, own.top),
                  (layer.plane, own.bottom)) :
@@ -7795,6 +7833,22 @@ function build_edge_tubes!(occ, layers, loops, etch_loops, corners, edge_size, r
         description["ArcTubeRule"] = ARC_TUBE_RULE
         description["SmoothJointRule"] = SMOOTH_JOINT_RULE
         description["ArcCurvatureBound"] = 0.25
+        # The bound ring (round 4 F-3 redesign, decisions 629 / 630): recorded only where an
+        # arc-containing side component exists (DESIGN 8.3 MINOR-6: no key elsewhere).
+        if bound_ring_tubes > 0
+            bound_process = bound_sections_of(rings)
+            description["BoundRing"] = Dict{String, Any}(
+                "Rule" => BOUND_RING_RULE,
+                "Tubes" => bound_ring_tubes,
+                "Planes" => Dict{String, Any}("Floor" => -overetch, "Mid" => 0.5 * metal_thickness),
+                "Reach" => bound_process.bottom.bound.reach,
+                "ReachRule" => "r_K + GrowthRatio x h_K of the side's own section",
+                "EnvelopeRadius" => bound_process.envelope_radius,
+                "Bottom" => bound_ring_record(bound_process.bottom),
+                "Top" => bound_ring_record(bound_process.top),
+                "CoveredLayers" => 3,
+                "StationLaw" => "SideShared(bottom axis)")
+        end
     end
     return tools, records, tubes, segments, description, untubed_edges, joints
 end
@@ -7810,6 +7864,29 @@ const ARC_TUBE_RULE =
     "degrees) parts of equal angular fraction (the same radial planes as the metal loft and " *
     "the trench wall of polygon_wire), consecutive parts sharing one section; the guard " *
     "ScopeGuard[ArcTubeRadiusVsCurvature] requires Radius + PyramidHeight <= ArcCurvatureBound x rho"
+const BOUND_RING_RULE =
+    "round 4 F-3 redesign (decisions 629 / 630; DESIGN.md sections 4 / 8): on a FABRICATED coupon " *
+    "every tube of a side component that contains an ArcTube (the arc parts and the straight tubes " *
+    "smoothly jointed to them) carries a BOUND RING - for every ray whose process plane (the trench " *
+    "floor / pedestal plane z = -Overetch below the bottom tube, the mid-thickness plane z = T / 2 " *
+    "between the two tubes) is within reach, r_bound = |plane| / |sin theta| <= Reach = r_K + " *
+    "GrowthRatio x h_K, the section's outermost node is the BOUND NODE on the plane at r_bound (an " *
+    "additional node beyond ring K); a sector with both rays covered is COVERED (its outer quad lies " *
+    "in the plane), with one a SHOULDER (its outer face is the slant from the free ring-K node to " *
+    "the bound node), else FREE (the pyramid-closed quad of every straight tube). Beyond ring K a " *
+    "covered sector is one prism + one pyramid + one tetrahedron per layer and a shoulder one pyramid " *
+    "+ one tetrahedron (decision 630 form (A): the pyramid's base is the quad shared with the inner / " *
+    "ring-K prism, its apex the pivot ray's bound node at station i; every plane / slant / pivot-ray " *
+    "quad is split on the diagonal from that node to the opposite node at station i + 1); an " *
+    "unpaired covered sector (the middle of an odd run between two shoulders) takes form (B), " *
+    "pyramids and tetrahedra about its centroid. The top tube ADOPTS the bottom tube's stations " *
+    "(StationLaw SideShared(bottom axis): one station set per metal side from the bottom tube's " *
+    "z = 0 axis law, DESIGN 8.1) and its bound-node tags on the mid-thickness plane at every " *
+    "station, so the two tubes meet face to face on z = T / 2 with two shared triangles per layer. " *
+    "No Gmsh-meshed layer remains between the tube and the trench wall / floor / pedestal plane / " *
+    "sidewall on an arc side (L1 / L2 / L3 of the F-3 cause); the tube's EnvelopeRadius is its " *
+    "farthest bound node. A coupon without an ArcTube and every THIN coupon take the unchanged path " *
+    "(bitwise; no key recorded)"
 const SMOOTH_JOINT_RULE =
     "block (b) design A3 (1)-(2) (decision 303): a joint whose signature turn is at most " *
     "1e-4 rad (JointSmooth) is no corner - no ball, no caps, clearance 0 - and the two tubes " *
@@ -8154,7 +8231,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                            curve_meshes, timings, band_record, quality, graded_points,
                            semantic_corners, junction_curves, band_curves, footprint_polygons,
                            box, lc_fine, lc_tangent, lc_far, far_growth, trace_basis_record,
-                           max_elements, element_count, layer_records)
+                           max_elements, element_count, layer_records; station_laws=Dict{Int, String}())
     node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
     points = reshape(coordinates, 3, :)
     index = Dict(tag => i for (i, tag) in enumerate(node_tags))
@@ -8207,6 +8284,20 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
         end
         isempty(tube.joints) ||
             (tube_rows[end]["Joints"] = [joint_end_record(joint) for joint in tube.joints])
+        # The bound ring and the side-shared station law (round 4 F-3 redesign, decisions 629 /
+        # 630): recorded ONLY on the tubes of an arc-containing fabricated side component (DESIGN
+        # 8.3 MINOR-6: no key on any other row).
+        if has_bound_ring(section)
+            ring_record = bound_ring_record(section)
+            # The side's node envelope (decision 630 (4) (i)): the farthest bound node of EITHER tube
+            # of the side (the FaceEnd objects are shared by the pair), never below Radius + PyramidHeight.
+            pair_section = tubes_per_side == 2 ? tubes[isodd(k) ? k + 1 : k - 1][2] : section
+            ring_record["EnvelopeRadius"] = max(
+                tube_radius(section) + TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING * ring_sizes(section)[end],
+                section_reach(section), section_reach(pair_section))
+            tube_rows[end]["BoundRing"] = ring_record
+        end
+        haskey(station_laws, k) && (tube_rows[end]["StationLaw"] = station_laws[k])
     end
     arc_rows = count(haskey(row, "Arc") for row in tube_rows)
     # The straight tubes' joint ends (Tubes[].Joints) and the arc part splits (an arc row whose
@@ -8262,7 +8353,7 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
                 c -> minimum(span_point_distance(c, a, b) for (a, b) in junction_segments),
                 0.0, [lc_fine, 2lc_fine, 4lc_fine, 8lc_fine],
                 (c, d) -> band_law_size(d, lc_fine, lc_far, far_growth))))
-    return Dict{String, Any}(
+    record = Dict{String, Any}(
         "Rule" => "every straight metal edge (top and bottom edge of every metal segment) " *
                   "carries a prism tube on its dielectric side, except the untubed short sides " *
                   "(Scope.UntubedEdges: a tube interval below the inner ring size; their corner " *
@@ -8376,6 +8467,15 @@ function prism_tube_census(tubes, segments, description, states, volume_census, 
             "RequestedFarSize" => lc_far, "EffectiveFarSize" => lc_far, "Pressure" => 1.0,
             "Elements" => element_count, "MaximumElements" => max_elements,
             "ElementBudgetFraction" => element_count / max_elements))
+    # The bound cells' tetrahedra (decision 630): recorded only where a bound-ring volume exists.
+    bound_rows = [row for row in volume_census if haskey(row, "BoundCells")]
+    if !isempty(bound_rows)
+        record["Tetrahedra"] = sum(Int[row["Tetrahedra"] for row in bound_rows])
+        record["BoundCells"] = Dict{String, Any}(
+            name => sum(Int[row["BoundCells"][name] for row in bound_rows])
+            for name in ("Prisms", "Pyramids", "Tetrahedra"))
+    end
+    return record
 end
 
 # Straight segments (start, stop) of a curve list from the CAD endpoints.
@@ -9304,49 +9404,113 @@ function generate_spatial_coupon(;
     # the end layer is the size at the surface (decision 41: the narrow hats decay
     # from the cut surface at the trace rule's size there).
     tube_layer_records = Dict{String, Any}[]
+    # The side-shared station law of a bound-ring side (DESIGN 8.1, decision 629): the TOP tube
+    # adopts its BOTTOM tube's stations (the bottom's z = 0 axis law, where the semantic corners
+    # lie); the pairs (top k, bottom k + 1) of a fabricated coupon in `tubes` order (Edge "top" /
+    # "bottom" of the census). Every other tube keeps its own law bitwise.
+    tube_station_laws = Dict{Int, String}()
+    side_pairs = Tuple{Int, Int}[]           # (top state index, bottom state index)
     if prism_tubes
-        for (k, (tube, section)) in enumerate(tubes)
+        tubes_per_side = fabricated ? 2 : 1
+        station_order = collect(1:length(tubes))
+        for k in 1:length(tubes)
+            tubes_per_side == 2 && has_bound_ring(tubes[k][2]) && isodd(k) || continue
+            # the bottom (k + 1) before its top (k)
+            station_order[k], station_order[k + 1] = k + 1, k
+        end
+        graded_laws = Dict{Int, Tuple}()
+        tube_states_by_index = Vector{TubeMesh}(undef, length(tubes))
+        for k in station_order
+            tube, section = tubes[k]
             on_box(s) = on_outer_box(vcat(tube_point(tube, 0.0, 0.0, s), tube_point(tube, 0.0, 0.0, s)),
                                      lower, upper, outer_tolerance)
             axis_size(s) = tube_axis_size(tube_point(tube, 0.0, 0.0, s), lc_tangent, semantic_corners,
                                           corner_grading, corner_grading_slope)
-            graded = if isempty(tube.face_ends)
-                stations, axis_positions, axis_sizes = graded_tube_stations(
-                    tube.s_start, tube.s_end, axis_size, lc_tangent, edge_growth_ratio;
-                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-                tube isa ArcTube ? ArcTube(tube, stations) : EdgeTube(tube, stations)
-            elseif tube isa ArcTube
-                stations, fraction, block_end, axis_positions, axis_sizes = face_ended_tube_stations(
-                    tube, axis_size, lc_tangent, edge_growth_ratio;
-                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-                ArcTube(tube, stations; block_fraction=fraction, block_end=block_end)
+            shared = tubes_per_side == 2 && has_bound_ring(section) && isodd(k)
+            if shared
+                # The top tube of a bound-ring side: the bottom's stations, block fractions / shears
+                # (the same FaceEnd objects, the same s_start / s_end: asserted, fail closed) and law.
+                bottom = tubes[k + 1][1]
+                bottom.s_start == tube.s_start && bottom.s_end == tube.s_end &&
+                [face_end_record(f) for f in bottom.face_ends] == [face_end_record(f) for f in tube.face_ends] &&
+                (bottom isa ArcTube) == (tube isa ArcTube) ||
+                    error("the top and bottom tubes of a bound-ring side differ in interval or face ends " *
+                          "($(tube_description(tube)) vs $(tube_description(bottom))): the side-shared " *
+                          "station law needs identical tubes (DESIGN 8.1)")
+                stations, extra, axis_positions, axis_sizes = graded_laws[k + 1]
+                graded = if isempty(tube.face_ends)
+                    tube isa ArcTube ? ArcTube(tube, stations) : EdgeTube(tube, stations)
+                elseif tube isa ArcTube
+                    ArcTube(tube, stations; block_fraction=extra[1], block_end=extra[2])
+                else
+                    EdgeTube(tube, stations; shear_u=extra[1], shear_w=extra[2])
+                end
+                graded.stations == bottom.stations ||
+                    error("the top tube's stations differ from the bottom's on a bound-ring side")
+                graded_laws[k] = graded_laws[k + 1]
+                # Recorded on BOTH tubes of the side (DESIGN 8.1: the side's law is the bottom's).
+                tube_station_laws[k] = tube_station_laws[k + 1] = "SideShared(bottom axis)"
+                push!(side_pairs, (k, k + 1))
             else
-                # A face end replaces the surface layer of its end by the sheared end
-                # block (design A2); the other end keeps the surface rule.
-                stations, shear_u, shear_w, axis_positions, axis_sizes = face_ended_tube_stations(
-                    tube, axis_size, lc_tangent, edge_growth_ratio;
-                    surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
-                EdgeTube(tube, stations; shear_u=shear_u, shear_w=shear_w)
+                graded = if isempty(tube.face_ends)
+                    stations, axis_positions, axis_sizes = graded_tube_stations(
+                        tube.s_start, tube.s_end, axis_size, lc_tangent, edge_growth_ratio;
+                        surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                    graded_laws[k] = (stations, (), axis_positions, axis_sizes)
+                    tube isa ArcTube ? ArcTube(tube, stations) : EdgeTube(tube, stations)
+                elseif tube isa ArcTube
+                    stations, fraction, block_end, axis_positions, axis_sizes = face_ended_tube_stations(
+                        tube, axis_size, lc_tangent, edge_growth_ratio;
+                        surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                    graded_laws[k] = (stations, (fraction, block_end), axis_positions, axis_sizes)
+                    ArcTube(tube, stations; block_fraction=fraction, block_end=block_end)
+                else
+                    # A face end replaces the surface layer of its end by the sheared end
+                    # block (design A2); the other end keeps the surface rule.
+                    stations, shear_u, shear_w, axis_positions, axis_sizes = face_ended_tube_stations(
+                        tube, axis_size, lc_tangent, edge_growth_ratio;
+                        surface_start=on_box(tube.s_start), surface_end=on_box(tube.s_end))
+                    graded_laws[k] = (stations, (shear_u, shear_w), axis_positions, axis_sizes)
+                    EdgeTube(tube, stations; shear_u=shear_u, shear_w=shear_w)
+                end
             end
             tubes[k] = (graded, section)
-            push!(tube_layer_records, tube_layer_statistics(graded, axis_positions, axis_sizes))
             # The pyramid height of the tube's OWN section (design round 2 F6: a side bound by
             # its facing width carries fewer rings; 0.5 x its outermost ring).
-            push!(tube_states, TubeMesh(graded, section, tube_volume_groups[k];
-                                        pyramid_height=TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING *
-                                                       ring_sizes(section)[end]))
+            tube_states_by_index[k] = TubeMesh(graded, section, tube_volume_groups[k];
+                                               pyramid_height=TUBE_PYRAMID_HEIGHT_OVER_OUTER_RING *
+                                                              ring_sizes(section)[end])
+        end
+        for k in 1:length(tubes)
+            push!(tube_layer_records, tube_layer_statistics(tubes[k][1], graded_laws[k][3], graded_laws[k][4]))
+            push!(tube_states, tube_states_by_index[k])
         end
         for (adopting, own_end, owning, owner_end) in tube_joints
             register_joint!(tube_states[adopting], own_end, tube_states[owning], owner_end)
         end
+        # The side pairs (DESIGN 8.1; decision 630 (4) (ii)): the top tube adopts the bottom's
+        # bound nodes on the mid-thickness plane at every station - the top's covered rays on
+        # w = -T / 2 are the bottom's on w = +T / 2 at the same (u, z): matched by their (u, w_z).
+        for (top_index, bottom_index) in side_pairs
+            top_state, bottom_state = tube_states[top_index], tube_states[bottom_index]
+            node_map = bound_side_pair_map(top_state.section, bottom_state.section, metal_thickness)
+            register_side_pair!(top_state, bottom_state, node_map)
+        end
     end
     # Installation order (design A3 (2)): the owner of every shared section before the tube
-    # adopting it - the arc tubes (parts in arc order) before the straight tubes.
-    tube_install_order = vcat([i for (i, state) in enumerate(tube_states) if state.tube isa ArcTube],
-                              [i for (i, state) in enumerate(tube_states) if !(state.tube isa ArcTube)])
+    # adopting it - the arc tubes (parts in arc order) before the straight tubes; on a bound-ring
+    # side the bottom tube before its top (decision 630 (4) (ii)).
+    side_owner = Dict(top => bottom for (top, bottom) in side_pairs)
+    install_key(i) = haskey(side_owner, i) ? (i + 1, 1) : (i, 0)
+    tube_install_order = vcat(sort([i for (i, state) in enumerate(tube_states) if state.tube isa ArcTube]; by=install_key),
+                              sort([i for (i, state) in enumerate(tube_states) if !(state.tube isa ArcTube)]; by=install_key))
     for (adopting, _, owning, _) in tube_joints
         findfirst(==(owning), tube_install_order) < findfirst(==(adopting), tube_install_order) ||
             error("a tube adopts a shared section from a tube installed after it")
+    end
+    for (top_index, bottom_index) in side_pairs
+        findfirst(==(bottom_index), tube_install_order) < findfirst(==(top_index), tube_install_order) ||
+            error("a top tube adopts its side pair's bound nodes from a bottom tube installed after it")
     end
     tube_meshed_curves = Set{Int32}()
     tube_meshed_faces = Set{Int32}()
@@ -9886,7 +10050,7 @@ function generate_spatial_coupon(;
                           band_curves, footprint_polygons, (lower, upper, outer_tolerance),
                           lc_fine, lc_tangent, lc_far, far_growth,
                           trace_basis_record, max_elements, element_count_after_generation,
-                          tube_layer_records) :
+                          tube_layer_records; station_laws=tube_station_laws) :
         nothing
     if transform != IDENTITY_RIGID_TRANSFORM
         connectivity = gmsh.model.mesh.getElements()
