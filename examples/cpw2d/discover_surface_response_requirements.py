@@ -24,6 +24,12 @@ if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
 import signature_library  # noqa: E402
 
+SPATIAL_COUPON_TOOLS = Path(__file__).resolve().parent.parent / "cpw3d_surface" / "spatial_coupon"
+if str(SPATIAL_COUPON_TOOLS) not in sys.path:
+    sys.path.insert(0, str(SPATIAL_COUPON_TOOLS))
+import cluster_signature_geometry  # noqa: E402
+import device_coupons  # noqa: E402
+
 
 def load_json(path):
     return json.loads(path.read_text())
@@ -159,6 +165,34 @@ def spatial_support_points(geometry, matching_radius, fabrication):
     return support.tolist()
 
 
+def mirror_formed_placeholder_edges(requirement, matching_radius):
+    """The Signature-keyed Edges and the ENTRY `MirrorFormed` record of the discovery placeholder
+    of a SpatialEdgeCluster requirement carrying a MirrorFormedContract (decision 599): the
+    operator places a mirror-formed configuration on its real half only through a model whose
+    Edges carry the contract's per-Edge Weight (surfaceresponseoperator.cpp fails closed on a
+    signature-only model, decision 557 (4)), so the placeholder is built as the generator's
+    stamp builds the real coupon's entry (device_coupons.stamp_signature_model): the contract
+    validated field by field (fail closed by name), the Edges from the signature's chorded
+    portions (cluster_signature_geometry.model_edges), Weight 1.0 real / 0.0 image and the
+    `MirrorFormed` record (device_coupons.mirror_formed_entry). Returns (edges, record)."""
+    contract = device_coupons.validate_mirror_formed_contract(requirement)
+    edges = cluster_signature_geometry.model_edges(requirement, matching_radius)
+    portions = cluster_signature_geometry.portions_from_signature(
+        requirement["Signature"], matching_radius
+    )
+    if len(portions) != len(edges):
+        raise ValueError(
+            f"requirement {requirement['Hash'][:12]}: {len(edges)} model edges for "
+            f"{len(portions)} chorded portions"
+        )
+    record, weights = device_coupons.mirror_formed_entry(
+        contract, [portion["Portion"] for portion in portions], matching_radius
+    )
+    for edge, weight in zip(edges, weights):
+        edge["Weight"] = weight
+    return edges, record
+
+
 def placeholder_model(requirement, matching_radius, fabrication=None):
     if "Signature" in requirement:
         # A version-2 record (SURFACE-RESPONSE-IDENTIFICATION.md (d)): the model is keyed by
@@ -174,7 +208,23 @@ def placeholder_model(requirement, matching_radius, fabrication=None):
             "Calibration": "GeometryDiscoveryOnly",
             "FrequencyUniversal": False,
         }
-        if requirement["Topology"] != "SpatialEdgeCluster":
+        if (
+            requirement["Topology"] == "SpatialEdgeCluster"
+            and "MirrorFormedContract" in requirement
+        ):
+            # A mirror-formed cluster requirement (impl-B5 CONTRACT.md; routed on the
+            # CONTRACT, never on the MirrorFormed flag, decision 562): the operator applies a
+            # model to the configuration's real half only when the model carries Signature-
+            # keyed Edges with the contract's weights, so the placeholder carries them (and
+            # the interface mappings its Edges' InterfaceSlots bind) like the real coupon's
+            # entry; a signature-only placeholder would leave the key Missing on every pass.
+            edges, record = mirror_formed_placeholder_edges(requirement, float(matching_radius))
+            model["Edges"] = edges
+            model["MirrorFormed"] = record
+            model["FabricatedSurfaceMatrix"] = "__preflight_dummy_fabricated_surface.csv"
+            model["ThinSurfaceMatrix"] = "__preflight_dummy_thin_surface.csv"
+            model["Interfaces"] = unique_interfaces(requirement)
+        elif requirement["Topology"] != "SpatialEdgeCluster":
             # The library reader binds a spatial model's interface mappings (and with them
             # its surface matrices) to the InterfaceSlot of its stored Edges; a signature-only
             # placeholder has none (the matching key is the Signature, whose portions carry

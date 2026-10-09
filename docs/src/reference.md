@@ -1889,9 +1889,15 @@ python3 examples/cpw2d/discover_surface_response_requirements.py config.json \
 
 The helper adds in-memory/on-disk virtual model descriptors and repeats only the cheap
 geometry preflight until the canonical partition is stable. It performs no coupon mesh or
-field solve. The final `surface-response-requirements.json` is relabeled against the
-original source library, so model availability changes `Exact`/`Interpolated`/`Missing`
-status but does not hide nested geometry requirements. `closure-history.json` records the
+field solve. The virtual descriptor of a missing `SpatialEdgeCluster` requirement that
+carries a `MirrorFormedContract` (a mirror-formed cluster configuration) carries the
+Signature-keyed `Edges` of the real coupon's library entry with the contract's per-edge
+`Weight` (1 real / 0 image) and its `MirrorFormed` record, because the placement applies a
+model to such a configuration's real half only through those edges; a descriptor without
+them would leave the key missing on every pass. The final
+`surface-response-requirements.json` is relabeled against the original source library, so
+model availability changes `Exact`/`Interpolated`/`Missing` status but does not hide nested
+geometry requirements. `closure-history.json` records the
 internal passes. The final generated library should still receive one direct preflight as
 a verification gate.
 
