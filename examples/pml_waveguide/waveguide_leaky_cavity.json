@@ -3,7 +3,9 @@
   // the standing waves leak into the PML at +z (with PEC in place of the PML, these are the
   // TE_10p modes of the closed 0.1 m × 0.05 m × 0.4 m box at f = 1.545, 1.676, 1.874, ...
   // GHz). The eigenvalues are complex, with Q ~ 25 for the first mode.
-  // Static stretch at 1.7 GHz: the eigenvalue problem is linear.
+  // Static stretch at 1.7 GHz: the eigenvalue problem is linear. The shift-and-invert linear
+  // systems are solved with geometric multigrid preconditioning and a sparse direct solve on
+  // the PML subdomain.
   "Problem": {
     "Type": "Eigenmode",
     "Verbose": 2,
@@ -65,8 +67,7 @@
       "KSPType": "GMRES",
       "Tol": 1e-10,
       "MaxIts": 100,
-      "MGMaxLevels": 1,
-      "ComplexCoarseSolve": true
+      "PMLSubdomainSolver": "Direct"
     }
   }
 }

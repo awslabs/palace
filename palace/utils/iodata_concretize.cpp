@@ -83,6 +83,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"PCMatShifted", static_cast<bool>(linear.pc_mat_shifted)},
                 {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
+                {"PMLSubdomainSolver", ToString(linear.pml_subdomain_solver)},
                 {"ReorderingReuse", linear.reorder_reuse},
                 {"PCSide", ToString(linear.pc_side)},
                 {"ColumnOrdering", ToString(linear.sym_factorization)},
