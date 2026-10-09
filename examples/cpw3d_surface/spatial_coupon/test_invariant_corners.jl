@@ -436,8 +436,17 @@ end
     @test record["InvariantCorners"] == 1 && record["CornerShapeGate"] == 5.0
     @test record["InvariantCornerTarget"] == 3.8
     @test occursin("regular tetrahedron", record["InvariantCornerRule"])
-    # A gate below the achieved value fails closed with the invariant message.
+    # A gate below the achieved value fails closed with the invariant message (the typed
+    # SeedGateFailure of decision 639 whose text is the message).
     if invariant["After"] > 1.5
-        @test_throws ErrorException run([:invariant]; gate=1.5)
+        @test_throws SeedGateFailure run([:invariant]; gate=1.5)
+        failure = try
+            run([:invariant]; gate=1.5)
+        catch caught
+            caught
+        end
+        @test startswith(sprint(showerror, failure),
+                         "Seed invariant semantic-corner kappa_reg exceeds CornerShapeGate after optimization:")
+        @test length(failure.invariant_failed) == 1 && failure.invariant_failed[1]["Kind"] == "Invariant"
     end
 end

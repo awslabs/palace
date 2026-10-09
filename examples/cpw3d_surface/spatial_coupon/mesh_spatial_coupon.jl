@@ -2092,6 +2092,350 @@ function vertex_supports(point_count, triangles, triangle_entities, lines, line_
     return supports
 end
 
+# ---------------------------------------------------------------------------
+# R2 "AcuteCornerRetry" (supervisor decisions 636 (3) / 638 / 639 / 641; the design of record
+# round4/corner-surface/DESIGN.md section 11). The fail-closed point of the seed gates
+# throws this typed exception (the SAME text as the former error(join(failures, "; ")) in
+# every log and BuildFailed reason) so the generator wrapper can tell a CornerShapeGate
+# failure in the LOCKED CLASS of acute fabricated tips from every other failure.
+struct SeedGateFailure <: Exception
+    failures::Vector{String}
+    invariant_failed::Vector{Dict{String, Any}}
+end
+Base.showerror(io::IO, failure::SeedGateFailure) = print(io, join(failure.failures, "; "))
+
+const ACUTE_CORNER_RETRY_RULE =
+    "When CornerShapeGate fails ONLY at invariant corners of a fabricated coupon in the locked " *
+    "class 2 sin(phi / 2) < SEED_COLLAPSE_SIZE_FRACTION (phi the convex metal opening between " *
+    "the two walls), the coupon is re-meshed once: after the 2-D pass, at each such corner, the " *
+    "surface nodes of the pedestal wedge - a node of a CAD line or face incident to the corner " *
+    "point, not the corner point and not a node of the vertical corner line (r_xy > tolerance), " *
+    "with r_xy < r_min(phi) = floor / (2 sin(phi / 2)) where floor = SEED_COLLAPSE_SIZE_FRACTION x " *
+    "min(EdgeSize, CornerSize) (the collapse size of record), z in [-Overetch - tolerance, " *
+    "+tolerance], and inside the closed metal sector (signed distance >= -SIDEWALL_PLANE_TOLERANCE " *
+    "to both wall half-planes, the inward normals oriented by the metal direction) - are each " *
+    "mapped onto the CORNER-LINE node nearest in z (the corner point for the z = 0 ring; the " *
+    "corner line's first, second, ... node below for the wall nodes at depth). The map is applied " *
+    "SIMULTANEOUSLY to every line and triangle of the affected entities: elements with a repeated " *
+    "vertex vanish, the others are rewritten; the result is valid iff no surviving rewritten " *
+    "triangle is degenerate (area < 1e-9 of its original) or reversed (normal sign), no two " *
+    "surviving triangles coincide, and no non-simplex (tube) element references a mapped node; " *
+    "else the retry fails closed naming the corner. The volume mesh is then generated on the " *
+    "cleaned surface and every gate runs as today (supervisor decisions 34 / 363 / 365 / 636 (3) / " *
+    "639: decision 363 governs the post-3-D reconnection and is not excepted; decision 34's floor " *
+    "and collapse are untouched - the surface is made to satisfy the floor)"
+
+# The geometric DIHEDRAL FLOOR f(phi) of kappa_reg at a tip of opening phi (radians): the
+# minimum of tetrahedron_regular_condition over the cells with one edge on the corner line
+# and one vertex on each wall (the dihedral angle phi at that edge). Scale-invariant and
+# attained at the symmetric cell (both wall vertices at mid-height of the corner-line
+# edge, equal wall radii), so a golden-section search over the wall radius / edge length
+# ratio suffices (design table: 15 -> 5.371, 18.75 -> 4.283, 22.5 -> 3.555, 90 -> 1.414).
+# A tip whose f(phi) exceeds CornerShapeGate cannot pass it by geometry (the named open
+# item R2-G, decision 639 (6)).
+function kappa_reg_dihedral_floor(phi)
+    0.0 < phi < pi || error("The dihedral floor needs an opening in (0, pi)")
+    origin = [0.0, 0.0, 0.0]; apex = [0.0, 0.0, 1.0]
+    value(u) = tetrahedron_regular_condition([origin, apex, [exp(u), 0.0, 0.5],
+                                              [exp(u) * cos(phi), exp(u) * sin(phi), 0.5]])
+    golden = (sqrt(5.0) - 1.0) / 2.0
+    a, b = log(1.0e-3), log(1.0e3)
+    x1 = b - golden * (b - a); x2 = a + golden * (b - a); f1 = value(x1); f2 = value(x2)
+    for _ in 1:200
+        if f1 < f2
+            b, x2, f2 = x2, x1, f1; x1 = b - golden * (b - a); f1 = value(x1)
+        else
+            a, x1, f1 = x1, x2, f2; x2 = a + golden * (b - a); f2 = value(x2)
+        end
+    end
+    return min(f1, f2)
+end
+
+# One-line JSON (write_json's text with its line breaks and indentation collapsed) for the
+# fail-closed messages that carry a record.
+compact_json(value) = replace(sprint(write_json, value), r"\n\s*" => " ")
+
+# The convex metal opening phi (radians) of a corner from its two unit wall directions, and
+# whether the metal fills the CONVEX sector between them (the metal direction on the side
+# of their bisector); a reflex metal sector is not the locked class. Dot products only
+# (robust to the 360-degree wrap of angle arithmetic).
+function corner_metal_opening(sides)
+    wall_1, wall_2 = sides.walls
+    phi = acos(clamp(dot(wall_1, wall_2), -1.0, 1.0))
+    bisector = wall_1 .+ wall_2
+    convex = norm(bisector) > 1.0e-9 && dot(bisector, sides.metal) > 0.0
+    return phi, convex
+end
+
+# The LOCKED CLASS predicate on a CornerMeasures row (decision 639 (1) (b)): a fabricated
+# coupon, Kind Invariant, the metal in the convex sector, 2 sin(phi / 2) below the collapse
+# fraction (the first ring then violates the sub-size edge floor by geometry).
+function acute_corner_locked_class(row, fabricated::Bool)
+    fabricated || return false
+    row["Kind"] == "Invariant" || return false
+    sides_record = row["Sides"]
+    sides_record === nothing && return false
+    sides = (walls=[Vector{Float64}(w) for w in sides_record["Walls"]],
+             metal=Vector{Float64}(sides_record["Metal"]))
+    phi, convex = corner_metal_opening(sides)
+    return convex && 2.0 * sin(phi / 2.0) < SEED_COLLAPSE_SIZE_FRACTION
+end
+
+# The (R-a) remap of one acute corner on plain arrays (ACUTE_CORNER_RETRY_RULE): `points`
+# 3 x n, `candidate_allowed[i]` true for a node of a CAD line or face (never a CAD point or a
+# tube node), `non_simplex[i]` true for a node of a non-simplex surface element, the linear
+# triangles / lines with their entity tags. Returns the map, the candidate list, the
+# rewritten elements (index => new tuple; a vanished element maps to `nothing`), the
+# validity findings (empty iff valid; judged on the FINAL configuration) and the record.
+function acute_corner_ring_remap(points, corner, sides, edge_floor, corner_size, overetch, tolerance,
+                                 candidate_allowed, non_simplex, triangles, triangle_entities,
+                                 lines, line_entities)
+    phi, convex = corner_metal_opening(sides)
+    convex || error("Acute-corner remap at $(collect(corner)): the metal sector is the reflex one")
+    ratio = 2.0 * sin(phi / 2.0)
+    ratio < SEED_COLLAPSE_SIZE_FRACTION ||
+        error("Acute-corner remap at $(collect(corner)): 2 sin(phi / 2) = $(ratio) is not below " *
+              "$(SEED_COLLAPSE_SIZE_FRACTION)")
+    edge_floor > 0.0 || error("Acute-corner remap at $(collect(corner)): the collapse floor is not positive")
+    r_min = edge_floor / ratio
+    normals = Vector{Float64}[]
+    for wall in sides.walls
+        normal = [-wall[2], wall[1]]
+        dot(normal, sides.metal) < 0.0 && (normal = -normal)
+        push!(normals, normal)
+    end
+    n = size(points, 2)
+    dx(i) = points[1, i] - corner[1]; dy(i) = points[2, i] - corner[2]; dz(i) = points[3, i] - corner[3]
+    r_xy(i) = hypot(dx(i), dy(i))
+    in_depth(i) = -overetch - tolerance <= dz(i) <= tolerance
+    in_sector(i) = all(normals[k][1] * dx(i) + normals[k][2] * dy(i) >= -SIDEWALL_PLANE_TOLERANCE
+                       for k in eachindex(normals))
+    corner_line = [i for i in 1:n if r_xy(i) <= tolerance && in_depth(i)]
+    any(i -> abs(dz(i)) <= tolerance, corner_line) ||
+        error("Acute-corner remap at $(collect(corner)): no node at the corner point")
+    candidates = [i for i in 1:n if candidate_allowed[i] && tolerance < r_xy(i) < r_min &&
+                  in_depth(i) && in_sector(i)]
+    node_map = Dict{Int, Int}()
+    for v in candidates
+        node_map[v] = corner_line[argmin([abs(dz(c) - dz(v)) for c in corner_line])]
+    end
+    remap(i) = get(node_map, i, i)
+    findings = String[]
+    triangle_changes = Dict{Int, Union{Nothing, NTuple{3, Int}}}()
+    line_changes = Dict{Int, Union{Nothing, NTuple{2, Int}}}()
+    rewritten_keys = Dict{NTuple{3, Int}, Int}()
+    for (k, triangle) in enumerate(triangles)
+        new = (remap(triangle[1]), remap(triangle[2]), remap(triangle[3]))
+        new == triangle && continue
+        if new[1] == new[2] || new[1] == new[3] || new[2] == new[3]
+            triangle_changes[k] = nothing
+            continue
+        end
+        triangle_changes[k] = new
+        normal_old = cross(points[:, triangle[2]] .- points[:, triangle[1]],
+                           points[:, triangle[3]] .- points[:, triangle[1]])
+        normal_new = cross(points[:, new[2]] .- points[:, new[1]],
+                           points[:, new[3]] .- points[:, new[1]])
+        if norm(normal_new) <= 1.0e-9 * norm(normal_old)
+            push!(findings, "degenerate triangle $(k) $(collect(triangle)) -> $(collect(new)) " *
+                            "(entity $(triangle_entities[k]))")
+        elseif dot(normal_old, normal_new) < 0.0
+            push!(findings, "reversed triangle $(k) $(collect(triangle)) -> $(collect(new)) " *
+                            "(entity $(triangle_entities[k]))")
+        end
+        key = Tuple(sort!(collect(new)))
+        if haskey(rewritten_keys, key)
+            push!(findings, "duplicate triangles $(rewritten_keys[key]) and $(k) -> $(collect(new))")
+        else
+            rewritten_keys[key] = k
+        end
+    end
+    if !isempty(rewritten_keys)
+        for (k, triangle) in enumerate(triangles)
+            haskey(triangle_changes, k) && continue
+            key = Tuple(sort!(collect(triangle)))
+            haskey(rewritten_keys, key) &&
+                push!(findings, "duplicate triangles $(rewritten_keys[key]) -> $(collect(triangle)) and " *
+                                "the surviving $(k) (entity $(triangle_entities[k]))")
+        end
+    end
+    for (k, line) in enumerate(lines)
+        new = (remap(line[1]), remap(line[2]))
+        new == line && continue
+        line_changes[k] = new[1] == new[2] ? nothing : new
+    end
+    for v in candidates
+        non_simplex[v] && push!(findings, "non-simplex element references the mapped node $(v)")
+    end
+    # The per-entity rows (the metal sidewalls above z = 0 named) and the totals.
+    entity_rows = Dict{Tuple{Int, Int}, Dict{String, Any}}()
+    function entity_row!(dimension, entity, element, vanished)
+        row = get!(entity_rows, (dimension, Int(entity))) do
+            Dict{String, Any}("Dimension" => dimension, "Entity" => Int(entity),
+                              "TrianglesRewritten" => 0, "TrianglesRemoved" => 0,
+                              "LinesRewritten" => 0, "LinesRemoved" => 0, "MaximumZ" => -Inf,
+                              "MinimumZ" => Inf)
+        end
+        name = (dimension == 2 ? "Triangles" : "Lines") * (vanished ? "Removed" : "Rewritten")
+        row[name] += 1
+        row["MaximumZ"] = max(row["MaximumZ"], maximum(dz(i) for i in element))
+        row["MinimumZ"] = min(row["MinimumZ"], minimum(dz(i) for i in element))
+    end
+    for (k, new) in triangle_changes
+        entity_row!(2, triangle_entities[k], triangles[k], new === nothing)
+    end
+    for (k, new) in line_changes
+        entity_row!(1, line_entities[k], lines[k], new === nothing)
+    end
+    for row in values(entity_rows)
+        row["Kind"] = row["MaximumZ"] > tolerance ? "MetalSidewall" :
+                      row["MinimumZ"] >= -tolerance ? "ZeroPlane" : "PedestalWedge"
+    end
+    # The floor guarantee on the cleaned surface: the surviving candidate-class nodes of the
+    # wedge within 4 r_min of the corner, their shortest pair and shortest cross-wedge pair
+    # (two nodes strictly on different walls).
+    wall_of(i) = (d = [abs(normals[k][1] * dx(i) + normals[k][2] * dy(i)) for k in eachindex(normals)];
+                  d[1] <= SIDEWALL_PLANE_TOLERANCE ? 1 : d[2] <= SIDEWALL_PLANE_TOLERANCE ? 2 : 0)
+    survivors = [i for i in 1:n if candidate_allowed[i] && !haskey(node_map, i) && r_xy(i) > tolerance &&
+                 hypot(r_xy(i), dz(i)) <= 4.0 * r_min && in_depth(i) && in_sector(i)]
+    shortest = Inf; shortest_cross = Inf
+    for a in eachindex(survivors), b in (a + 1):length(survivors)
+        i, j = survivors[a], survivors[b]
+        distance = norm(points[:, i] .- points[:, j])
+        shortest = min(shortest, distance)
+        wall_of(i) != wall_of(j) && wall_of(i) > 0 && wall_of(j) > 0 &&
+            (shortest_cross = min(shortest_cross, distance))
+    end
+    record = Dict{String, Any}(
+        "Rule" => ACUTE_CORNER_RETRY_RULE,
+        "Point" => collect(corner),
+        "OpeningDegrees" => rad2deg(phi),
+        "CrossWedgeFirstRing" => 2.0 * corner_size * sin(phi / 2.0),
+        "Floor" => edge_floor,
+        "FirstRingRadius" => r_min,
+        "DihedralFloor" => kappa_reg_dihedral_floor(phi),
+        "Candidates" => [Dict{String, Any}("Position" => points[:, v], "Radius" => r_xy(v),
+                                           "TargetZ" => points[3, node_map[v]], "Target" => points[:, node_map[v]])
+                         for v in sort(candidates; by=v -> -dz(v))],
+        "CornerLineNodes" => length(corner_line),
+        "Entities" => [Dict{String, Any}(name => row[name] for name in
+                                         ("Dimension", "Entity", "Kind", "TrianglesRewritten",
+                                          "TrianglesRemoved", "LinesRewritten", "LinesRemoved"))
+                       for row in sort(collect(values(entity_rows));
+                                       by=row -> (row["Dimension"], row["Entity"]))],
+        "TrianglesRewritten" => count(new -> new !== nothing, values(triangle_changes)),
+        "TrianglesRemoved" => count(new -> new === nothing, values(triangle_changes)),
+        "LinesRewritten" => count(new -> new !== nothing, values(line_changes)),
+        "LinesRemoved" => count(new -> new === nothing, values(line_changes)),
+        "CleanedWedge" => Dict{String, Any}("Nodes" => length(survivors),
+                                            "ShortestPair" => isfinite(shortest) ? shortest : nothing,
+                                            "ShortestCrossWedgePair" =>
+                                                isfinite(shortest_cross) ? shortest_cross : nothing),
+        "InvalidRemaps" => length(findings))
+    return (map=node_map, candidates=candidates, corner_line=corner_line, triangles=triangle_changes,
+            lines=line_changes, findings=findings, record=record)
+end
+
+# The Gmsh glue of the retry (decision 639 (1)): runs between the surface pass (the tube
+# faces installed) and generate(3); `entries` are the wrapper's retry records ("Point",
+# "FirstAttemptAfter"), each filled in place with the remap record. The affected entities'
+# meshes are REPLACED (clear, addNodes of their own nodes minus the mapped ones with their
+# tags, addElementsByType of every element block rewritten - the explicit-face path of
+# install_tube_faces!). Fails closed (naming the corner, the element and the first attempt's
+# After value) on any validity finding.
+function acute_corner_ring_cleanup!(entries, corners, corner_kinds, corner_sides, corner_size,
+                                    collapse_size, overetch, tolerance)
+    isempty(entries) && return entries
+    edge_floor = SEED_COLLAPSE_SIZE_FRACTION * collapse_size
+    node_tags, coordinates, _ = gmsh.model.mesh.getNodes()
+    points = reshape(copy(coordinates), 3, :)
+    index = Dict(tag => i for (i, tag) in enumerate(node_tags))
+    n = size(points, 2)
+    owner = fill((-1, 0), n)
+    for dimension in 0:2, (_, entity) in gmsh.model.getEntities(dimension)
+        tags, _, _ = gmsh.model.mesh.getNodes(dimension, entity)
+        for tag in tags
+            owner[index[tag]] = (dimension, Int(entity))
+        end
+    end
+    candidate_allowed = [owner[i][1] in (1, 2) for i in 1:n]
+    non_simplex = falses(n)
+    for (_, entity) in gmsh.model.getEntities(2)
+        types, _, blocks = gmsh.model.mesh.getElements(2, entity)
+        for (type, block) in zip(types, blocks)
+            Int(type) == GMSH_LINEAR_ELEMENT_TYPE[2] && continue
+            for tag in block
+                non_simplex[index[tag]] = true
+            end
+        end
+    end
+    triangles, _, triangle_entities = gmsh_entity_cells(index, 2, Val(3))
+    lines, _, line_entities = gmsh_entity_cells(index, 1, Val(2))
+    full_map = Dict{Int, Int}()
+    affected = Set{Tuple{Int, Int}}()
+    for entry in entries
+        point = Vector{Float64}(entry["Point"])
+        matches = [k for (k, corner) in enumerate(corners) if norm(collect(corner) .- point) <= tolerance]
+        length(matches) == 1 ||
+            error("Acute-corner retry at $(point): $(length(matches)) semantic corners match")
+        k = matches[1]
+        corner_kinds[k] === :invariant && corner_sides[k] !== nothing ||
+            error("Acute-corner retry at $(point): not an invariant corner with sides")
+        result = acute_corner_ring_remap(points, corners[k], corner_sides[k], edge_floor, corner_size,
+                                         overetch, tolerance, candidate_allowed, non_simplex,
+                                         triangles, triangle_entities, lines, line_entities)
+        merge!(entry, result.record)
+        isempty(result.findings) ||
+            error("Acute-corner retry (decision 639) at $(point) fails closed: invalid remap " *
+                  "($(length(result.findings))): $(join(result.findings, "; ")); first attempt " *
+                  "kappa_reg $(get(entry, "FirstAttemptAfter", nothing)); record $(compact_json(entry))")
+        for (v, target) in result.map
+            haskey(full_map, v) && full_map[v] != target &&
+                error("Acute-corner retry at $(point): node $(v) mapped by two corners")
+            full_map[v] = target
+            push!(affected, owner[v])
+        end
+        for k in keys(result.triangles)
+            push!(affected, (2, Int(triangle_entities[k])))
+        end
+        for k in keys(result.lines)
+            push!(affected, (1, Int(line_entities[k])))
+        end
+        println("Acute-corner retry (decision 639) cleanup at $(point): opening " *
+                "$(entry["OpeningDegrees"]) degrees, r_min $(entry["FirstRingRadius"]), " *
+                "$(length(result.candidates)) candidates, triangles rewritten " *
+                "$(entry["TrianglesRewritten"]) removed $(entry["TrianglesRemoved"]), lines rewritten " *
+                "$(entry["LinesRewritten"]) removed $(entry["LinesRemoved"]), dihedral floor " *
+                "$(entry["DihedralFloor"]), shortest cross-wedge pair after " *
+                "$(entry["CleanedWedge"]["ShortestCrossWedgePair"]) (floor $(edge_floor))")
+    end
+    all(owner[v][1] in (1, 2) for v in keys(full_map)) ||
+        error("Acute-corner retry: a mapped node is not owned by a CAD line or face")
+    for (dimension, entity) in sort!(collect(affected))
+        own = [tag for (i, tag) in enumerate(node_tags) if owner[i] == (dimension, entity)]
+        keep = [tag for tag in own if !haskey(full_map, index[tag])]
+        types, _, blocks = gmsh.model.mesh.getElements(dimension, entity)
+        gmsh.model.mesh.clear([(dimension, entity)])
+        isempty(keep) || gmsh.model.mesh.addNodes(dimension, entity, keep,
+                                                  reduce(vcat, (points[:, index[tag]] for tag in keep)))
+        for (type, block) in zip(types, blocks)
+            isempty(block) && continue
+            properties = gmsh.model.mesh.getElementProperties(type)
+            width = Int(properties[4])
+            connectivity = Int[]
+            for start in 1:width:length(block)
+                element = [Int(node_tags[get(full_map, index[block[start + j - 1]], index[block[start + j - 1]])])
+                           for j in 1:width]
+                length(unique(element)) == width || continue
+                append!(connectivity, element)
+            end
+            isempty(connectivity) ||
+                gmsh.model.mesh.addElementsByType(entity, type, Int[], connectivity)
+        end
+    end
+    return entries
+end
+
 # Optimize the required region of a linear tetrahedral mesh in place and gate it.
 # The required set is the metric stage's rule evaluated on the FINAL vertex
 # positions: the moves can carry vertices across the corner-ball radius or the
@@ -2701,7 +3045,7 @@ function optimize_required_region!(points, tetrahedra, triangles, corners, radiu
                         "Jacobian condition gate $(maximum_jacobian_condition) after " *
                         "optimization (maximum $(condition_after))")
     end
-    isempty(failures) || error(join(failures, "; "))
+    isempty(failures) || throw(SeedGateFailure(failures, invariant_failed))
     if layer_rule
         println("Seed edge-layer quality rule: $(length(layer_cells)) layer cells, " *
                 "maximum edge aspect $(aspect_before_collapse) -> $(layer_aspect_before) -> " *
@@ -8512,7 +8856,7 @@ function curve_segments(curves; subdivide=false, sagitta=nothing)
     return segments
 end
 
-function generate_spatial_coupon(;
+function generate_spatial_coupon_once(;
     signature::String,
     mask::Union{Nothing, String}=nothing,
     boundary::Union{Nothing, String}=nothing,
@@ -8565,7 +8909,8 @@ function generate_spatial_coupon(;
     corner_shape_gate::Float64=0.0,
     minimum_qualified_rings::Int=0,
     maximum_rings::Int=0,
-    filename::String
+    filename::String,
+    acute_corner_retry::Vector{Dict{String, Any}}=Dict{String, Any}[]
 )
     matching_trace_mode in ("all","sides","levels","none") ||
         error("Unknown matching trace constraint mode")
@@ -9860,6 +10205,13 @@ function generate_spatial_coupon(;
     if geometry_only
         return gmsh.finalize()
     end
+    # The collapse size of record (optimize_required_region!: the smallest prescribed size,
+    # EdgeSize inside a seeded layer or CornerSize inside a graded ball), read here for the
+    # R2 retry's floor (design 11.5 MINOR-1).
+    acute_corner_collapse_sizes = filter(>(0.0), [isempty(edge_layer_curves) ? 0.0 : edge_size,
+                                                 corner_grading.corner_size])
+    acute_corner_collapse_size = isempty(acute_corner_collapse_sizes) ? 0.0 :
+                                 minimum(acute_corner_collapse_sizes)
     tube_timings = Dict{String, Float64}()
     tube_face_meshes = Dict{String, Any}[]
     tube_volume_census = Dict{String, Any}[]
@@ -9891,6 +10243,13 @@ function generate_spatial_coupon(;
                                                           meshed=tube_meshed_faces)
             end
         end
+        # R2 retry (decision 639): only on the wrapper's second attempt, the acute-corner
+        # cleanup of the final surface mesh at the retried corners (every other build takes
+        # today's path verbatim).
+        isempty(acute_corner_retry) ||
+            acute_corner_ring_cleanup!(acute_corner_retry, semantic_corners, corner_kinds,
+                                       corner_sides, corner_grading.corner_size,
+                                       acute_corner_collapse_size, overetch, tolerance)
         remove_tube_volumes!(tube_states)
         # The 3D pass repeats the surface pass for the faces it finds pending (the explicitly
         # meshed periodic faces among them), so the arc coupon's tube faces stay hidden
@@ -9910,7 +10269,14 @@ function generate_spatial_coupon(;
                                             get(tube_discrete, 1, Int32[])), 1, "substrate")
         gmsh.model.addPhysicalGroup(3, vcat(setdiff(vacuum_tags, tube_volumes),
                                             get(tube_discrete, 2, Int32[])), 2, "vacuum")
+    elseif isempty(acute_corner_retry)
+        gmsh.model.mesh.generate(3)
     else
+        # R2 retry (decision 639) without tubes: the surface pass, the cleanup, the volume pass.
+        gmsh.model.mesh.generate(2)
+        acute_corner_ring_cleanup!(acute_corner_retry, semantic_corners, corner_kinds, corner_sides,
+                                   corner_grading.corner_size, acute_corner_collapse_size, overetch,
+                                   tolerance)
         gmsh.model.mesh.generate(3)
     end
     (trace_basis_record === nothing && tube_band_record === nothing) ||
@@ -9936,6 +10302,24 @@ function generate_spatial_coupon(;
             corner_kinds=corner_kinds, corner_sides=corner_sides,
             corner_shape_gate=corner_shape_gate) :
         nothing
+    # R2 retry (decision 639 (3)): the census keys exist ONLY on a retried build - the
+    # retried corner's CornerMeasures row carries AcuteCornerRetry (the remap record and the
+    # first attempt's After value), the optimization record AcuteCornerRetries.
+    if !isempty(acute_corner_retry)
+        seed_quality === nothing && error("Acute-corner retry needs the seed quality gates")
+        for entry in acute_corner_retry
+            point = Vector{Float64}(entry["Point"])
+            rows = [row for row in seed_quality["CornerMeasures"]
+                    if norm(Vector{Float64}(row["Point"]) .- point) <= tolerance]
+            length(rows) == 1 || error("Acute-corner retry at $(point): $(length(rows)) corner rows match")
+            rows[1]["AcuteCornerRetry"] = entry
+            println("Acute-corner retry (decision 639) at $(point): first attempt kappa_reg " *
+                    "$(entry["FirstAttemptAfter"]) -> $(rows[1]["After"]) (gate $(rows[1]["Gate"]), " *
+                    "dihedral floor $(entry["DihedralFloor"]), passed $(rows[1]["Passed"]))")
+        end
+        seed_quality["AcuteCornerRetryRule"] = ACUTE_CORNER_RETRY_RULE
+        seed_quality["AcuteCornerRetries"] = [entry["Point"] for entry in acute_corner_retry]
+    end
     # Per-type quality of the mixed mesh, gated after the corner-ball optimization
     # (fail closed): positive orientation and Jacobian condition for every type,
     # scaled Jacobian for the tetrahedra.
@@ -10350,6 +10734,74 @@ function generate_spatial_coupon(;
         "layers=$(length(layers)), file=$filename"
     )
     return gmsh.finalize()
+end
+
+# R2 "AcuteCornerRetry" RETRY-ON-FAIL wrapper (supervisor decisions 639 (1) / 641): the build
+# runs EXACTLY as today (generate_spatial_coupon_once); only a SeedGateFailure whose failures
+# hold ONLY the CornerShapeGate failure, at corners all in the locked class (fabricated,
+# Invariant, convex metal sector, 2 sin(phi / 2) < SEED_COLLAPSE_SIZE_FRACTION), on the first
+# attempt, re-meshes the coupon once from scratch with the acute-corner cleanup at THOSE
+# corners (acute_corner_ring_cleanup!, between the surface and the volume pass); every other
+# failure is re-thrown unchanged, and a passing build never enters the catch (byte-identical
+# mesh and census by construction). A second SeedGateFailure fails closed with the retry's
+# record, the dihedral floor f(phi) and, when f(phi) exceeds the gate, the statement that the
+# gate is unattainable at this tip by geometry (the named open item R2-G, decision 639 (6)).
+# The wrapper's trigger (decision 639 (1) (a)-(c)): the retry entries ("Point",
+# "FirstAttemptAfter" per failed corner) when the failure holds ONLY the CornerShapeGate
+# failure and every failed row is in the locked class; `nothing` otherwise.
+function acute_corner_retry_entries(failure::SeedGateFailure, fabricated::Bool)
+    length(failure.failures) == 1 && !isempty(failure.invariant_failed) || return nothing
+    all(row -> acute_corner_locked_class(row, fabricated), failure.invariant_failed) || return nothing
+    return [Dict{String, Any}("Point" => Vector{Float64}(row["Point"]),
+                              "FirstAttemptAfter" => row["After"])
+            for row in failure.invariant_failed]
+end
+
+# The fail-closed text of a retry that fails the seed gates again: the gate failure of
+# record, then per retried corner the first attempt's and the retry's After values, the
+# dihedral floor f(phi) and - when f(phi) exceeds the gate - the statement that the gate is
+# unattainable at this tip by geometry (decision 639 (6), open item R2-G), then the records.
+function acute_corner_retry_failure_message(again::SeedGateFailure, entries)
+    statements = String[]
+    for entry in entries
+        point = Vector{Float64}(entry["Point"])
+        rows = [row for row in again.invariant_failed
+                if norm(Vector{Float64}(row["Point"]) .- point) <= 1.0e-9 * (1.0 + norm(point))]
+        after = isempty(rows) ? nothing : rows[1]["After"]
+        gate = isempty(rows) ? nothing : rows[1]["Gate"]
+        dihedral = get(entry, "DihedralFloor", nothing)
+        statement = "at $(point): first attempt $(entry["FirstAttemptAfter"]), retry $(after)"
+        if dihedral !== nothing
+            statement *= ", dihedral floor f($(entry["OpeningDegrees"]) deg) = $(dihedral)"
+            gate !== nothing && dihedral > gate &&
+                (statement *= " > CornerShapeGate $(gate): the gate is unattainable at this tip by " *
+                              "geometry (decision 639 (6), open item R2-G)")
+        end
+        push!(statements, statement)
+    end
+    return join(again.failures, "; ") * "; acute-corner retry (decision 639) failed again " *
+           join(statements, "; ") * "; AcuteCornerRetry records $(compact_json(entries))"
+end
+
+function generate_spatial_coupon(; kwargs...)
+    haskey(kwargs, :acute_corner_retry) &&
+        error("acute_corner_retry is the retry wrapper's own keyword")
+    try
+        return generate_spatial_coupon_once(; kwargs...)
+    catch failure
+        failure isa SeedGateFailure || rethrow()
+        entries = acute_corner_retry_entries(failure, Bool(kwargs[:fabricated]))
+        entries === nothing && rethrow()
+        gmsh.isInitialized() == 1 && gmsh.finalize()
+        println("Acute-corner retry (decision 639) at $([entry["Point"] for entry in entries]): " *
+                "first attempt $([entry["FirstAttemptAfter"] for entry in entries])")
+        try
+            return generate_spatial_coupon_once(; kwargs..., acute_corner_retry=entries)
+        catch again
+            again isa SeedGateFailure || rethrow()
+            error(acute_corner_retry_failure_message(again, entries))
+        end
+    end
 end
 
 function parse_options(args)
