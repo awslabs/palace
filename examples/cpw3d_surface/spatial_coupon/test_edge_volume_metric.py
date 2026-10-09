@@ -377,6 +377,69 @@ class EdgeVolumeMetricTest(unittest.TestCase):
         self.assertEqual(match_equivalent_planes(np.zeros((0,8)),np.zeros((0,8))),[])
         self.assertEqual(COPLANAR_TOLERANCE,1e-6)
 
+    def test_plane_matching_uses_the_clustering_three_vertex_deviation(self):
+        """Decisions 605 / 606 F-2 (56e7d233c0a7 / d7c875318447): two sub-nm facets of one label on
+        an arc's cylinder wall near an arc-joint corner - a 0.24-nm representative A and a 1.7-nm
+        representative B whose first vertex is 0.9e-6 x its diameter off A's plane and whose far
+        vertex, tilted by the facet turn 7.76e-7, is 1.5e-6 off - are SEPARATED by the clustering
+        (the three-vertex deviation 1.46e-6 > 1e-6) yet called equivalent by a first-vertex
+        matching (mutual deviation 0.9e-6 <= 1e-6), so a mesh failed to match ITSELF.  With the
+        representatives' vertices the matching reads the clustering deviation: the self-match is
+        the identity, and a mesh whose planes are far from the tolerance matches as before."""
+        tilt=7.76e-7
+        a=np.array([[0.,0.,0.],[0.,2.4e-4,0.],[0.,0.,2.4e-4]])
+        lz=1.7e-3
+        def facet(o0):
+            b0=np.array([o0,1.0e-3,0.])
+            return np.stack([b0,b0+np.array([lz*np.tan(tilt),0.,lz]),b0+np.array([0.,0.3e-3,0.])])
+        d_b=max(np.linalg.norm(facet(0.)[i]-facet(0.)[j]) for i,j in ((0,1),(1,2),(2,0)))
+        self.assertGreater(d_b,1.7e-3);self.assertLess(d_b,1.8e-3)
+        o0=0.9e-6*d_b
+        b=facet(o0)
+        xyz=np.stack([a,b]);n=np.cross(xyz[:,1]-xyz[:,0],xyz[:,2]-xyz[:,0]);n/=np.linalg.norm(n,axis=1)[:,None]
+        n*=np.sign(n[np.arange(2),np.argmax(abs(n),axis=1)])[:,None]
+        self.assertAlmostEqual(np.linalg.norm(np.cross(n[0],n[1])),tilt,places=10)
+        labels=np.array([3100,3100])
+        representatives,patch,vertices=cluster_coplanar_triangles(labels,n,xyz,with_vertices=True)
+        self.assertEqual(len(representatives),2);np.testing.assert_array_equal(patch,[0,1])
+        np.testing.assert_array_equal(vertices,xyz)
+        np.testing.assert_array_equal(representatives[:,4:7],xyz[:,0])
+        # The table: first-vertex deviations <= 1e-6 both ways, three-vertex deviation > 1e-6.
+        forward=plane_deviation(representatives[0,1:4],representatives[0,4:7],representatives[0,7],
+                                representatives[None,1,1:4],representatives[None,1,4:7],representatives[1,7])[0]
+        backward=plane_deviation(representatives[1,1:4],representatives[1,4:7],representatives[1,7],
+                                 representatives[None,0,1:4],representatives[None,0,4:7],representatives[0,7])[0]
+        three=plane_deviation(representatives[0,1:4],representatives[0,4:7],representatives[0,7],
+                              n[None,1],xyz[None,1],representatives[1,7])[0]
+        self.assertLessEqual(max(forward,backward),COPLANAR_TOLERANCE)
+        self.assertGreater(three,COPLANAR_TOLERANCE)
+        self.assertAlmostEqual(three,1.46e-6,delta=0.05e-6)
+        # main's predicate (no vertices): B is equivalent to both rows -> no bijection -> None.
+        self.assertIsNone(match_equivalent_planes(representatives,representatives))
+        # The clustering predicate: the self-match is the identity.
+        self.assertEqual(match_equivalent_planes(representatives,representatives,reference_vertices=vertices,
+                                                 candidate_vertices=vertices),[0,1])
+        # Both sides or neither; one triangle per row with the row's first vertex.
+        with self.assertRaises(ValueError):
+            match_equivalent_planes(representatives,representatives,reference_vertices=vertices)
+        with self.assertRaises(ValueError):
+            match_equivalent_planes(representatives,representatives,reference_vertices=vertices,
+                                    candidate_vertices=vertices[::-1])
+        # Far from the tolerance the two predicates agree: the noisy matching planes of the
+        # rotation test pair the same way with and without the vertices, in any order.
+        noisy,m=self._noisy_matching_plane()
+        groups=np.array([1,1,1,1,2,2,2])
+        reference,_,reference_vertices=cluster_coplanar_triangles(groups,m,noisy,with_vertices=True)
+        shuffled=np.array([6,4,5,3,0,2,1])
+        candidate,_,candidate_vertices=cluster_coplanar_triangles(groups[shuffled],m[shuffled],noisy[shuffled],with_vertices=True)
+        self.assertEqual(match_equivalent_planes(reference,candidate,reference_vertices=reference_vertices,
+                                                 candidate_vertices=candidate_vertices),
+                         match_equivalent_planes(reference,candidate))
+        self.assertIsNone(match_equivalent_planes(reference,candidate[:-1],reference_vertices=reference_vertices,
+                                                  candidate_vertices=candidate_vertices[:-1]))
+        self.assertEqual(match_equivalent_planes(np.zeros((0,8)),np.zeros((0,8)),reference_vertices=np.zeros((0,3,3)),
+                                                 candidate_vertices=np.zeros((0,3,3))),[])
+
     def test_edge_layer_law_is_geometric_growth_from_edge_size_then_the_band_law(self):
         # hn along the normal of a layer span: EdgeSize + (q - 1) r up to the reach
         # where it equals NormalSize, then the band law (RadialGrowth to the

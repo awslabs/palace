@@ -24,6 +24,7 @@ usage: dense_twin_plan.py plan --dense-dir DIR --run NAME ... --entity-counts JS
            --remote-root ROOT --job-dir REMOTE_DIR --out LOCAL_DIR [--nodes N] [--cost-model PATH]
            [--dense-twin-model PATH] [--cluster-profile PATH] [--walltime-seconds S]
            [--qualify-record library-qualification.json] [--library-order 4]
+           [--binary-path PATH] [--mpiexec-path PATH]   (BINARY_OF_RECORD_RULE, decision 605 F-5)
        dense_twin_plan.py calibrate --log NAME=palace.log ... --executable SHA --pbs-jobs IDS --out dense-twin-model.json
 
 The identity twin (the fabricated run at the library order, the (F) matrix identity's left side)
@@ -152,15 +153,54 @@ def estimate_run(model, dense_model, counts, order, traces, *, profile):
     return stage
 
 
+BINARY_OF_RECORD_RULE = (
+    "decision 605 F-5: the plan names the executable of record by its path - --binary-path PATH (the binary of record, hashed "
+    "where the planner runs = the root's host, the digest required to equal --binary-sha256) and --mpiexec-path PATH; without "
+    "them the cluster profile's BinaryPattern / MPIExecWrapper under --remote-root stand (byte-identical plans) and the planner "
+    "fails closed BEFORE writing the plan when that path does not exist or its digest differs: seed <root>/<BinaryPattern> "
+    "for the digest (a symlink to the binary of record) and <root>/<MPIExecWrapper>, or pass the paths; run_stages verifies "
+    "the digest on the node as before")
+
+
+def executables_of_record(profile, remote_root, binary_sha256, *, binary_path=None, mpiexec_path=None, exists=None, digest=None):
+    """(binary, mpiexec) the plan names (BINARY_OF_RECORD_RULE), verified where the planner runs:
+    the binary exists at `binary_sha256` and the wrapper exists; RuntimeError with the seeding
+    message otherwise.  `exists` / `digest` default to the local filesystem (the planner runs on
+    the cluster beside the root)."""
+    exists = exists or (lambda path: Path(path).is_file())
+    digest = digest or sha256
+    binary = binary_path or f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
+    mpiexec = mpiexec_path or f"{remote_root}/{profile['MPIExecWrapper']}"
+    pattern = f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
+    if not exists(binary):
+        raise RuntimeError(f"the plan would name the frozen binary {binary}, which does not exist: seed {pattern} (a symlink to the "
+                           f"binary of record, digest {binary_sha256}) or pass --binary-path PATH; no plan written ({BINARY_OF_RECORD_RULE})")
+    actual = digest(binary)
+    if actual != binary_sha256:
+        raise RuntimeError(f"the frozen binary {binary} has digest {actual}, the plan pins {binary_sha256}: seed {pattern} for the binary "
+                           f"of record or pass --binary-path PATH; no plan written ({BINARY_OF_RECORD_RULE})")
+    if not exists(mpiexec):
+        raise RuntimeError(f"the plan would name the MPI wrapper {mpiexec}, which does not exist: seed {remote_root}/{profile['MPIExecWrapper']} "
+                           f"or pass --mpiexec-path PATH; no plan written ({BINARY_OF_RECORD_RULE})")
+    return binary, mpiexec
+
+
 def plan_dense_twins(*, dense_dir, runs, counts, binary_sha256, remote_root, job_dir, model, dense_model, profile,
-                     nodes=None, walltime_seconds=None, case_id=None, reducer_partition=None, library_order=4):
+                     nodes=None, walltime_seconds=None, case_id=None, reducer_partition=None, library_order=4,
+                     binary=None, mpiexec=None):
     """The run_stages plan and job script of the dense-twin runs `runs` of `dense_dir` (its
     dense-traces.json names the configs): one ordinary stage per run in order, the node
     count = the largest NodesRequired over the runs (or `nodes`), the instance by the largest
     per-node figure, every config / mesh / trace pinned.  A job that holds the identity twin
     (the fabricated run at `library_order`) takes `reducer_partition` (reducer_partition_of)
     exactly: its Nodes, with the ranks checked against the profile (IDENTITY_PARTITION_RULE;
-    fail closed without the partition, above it, or with a differing `nodes`)."""
+    fail closed without the partition, above it, or with a differing `nodes`).  `binary` /
+    `mpiexec` are the verified executable paths of executables_of_record (BINARY_OF_RECORD_RULE);
+    None keeps the profile's pattern under the remote root."""
+    if binary is None:
+        binary = f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}"
+    if mpiexec is None:
+        mpiexec = f"{remote_root}/{profile['MPIExecWrapper']}"
     dense_dir = Path(dense_dir)
     traces_record = json.loads((dense_dir / "dense-traces.json").read_text())
     factors = [f"{factor:.1f}" for factor in model["PCGFactors"]]
@@ -233,8 +273,8 @@ def plan_dense_twins(*, dense_dir, runs, counts, binary_sha256, remote_root, job
             "Ranks": profile["Ranks"], "DeadlineSeconds": min(profile["DeadlineSeconds"], walltime - (profile["WalltimeSeconds"] - profile["DeadlineSeconds"])),
             "DeadlineMarginSeconds": profile["DeadlineMarginSeconds"],
             "Instance": instance, "MinimumMemAvailableBytes": instance["MinimumMemAvailableBytes"],
-            "Binary": f"{remote_root}/{profile['BinaryPattern'].format(sha256=binary_sha256)}", "BinarySHA256": binary_sha256,
-            "MPIExec": f"{remote_root}/{profile['MPIExecWrapper']}", "PinnedSHA256": pinned, "Stages": stages,
+            "Binary": binary, "BinarySHA256": binary_sha256,
+            "MPIExec": mpiexec, "PinnedSHA256": pinned, "Stages": stages,
             "DenseTwinModel": {"Path": str(DENSE_TWIN_MODEL), "Executable": dense_model["Executable"]},
             "Estimate": {"Runs": scaled, "Nodes": job_nodes, "NodesRequired": required, "PerNodeUsedGiB": per_node,
                          "JobSecondsEstimateByPCGFactor": total,
@@ -271,6 +311,13 @@ def main(argv=None):
     pl.add_argument("--entity-counts", type=Path, required=True)
     pl.add_argument("--binary-sha256", required=True)
     pl.add_argument("--remote-root", required=True)
+    pl.add_argument("--binary-path", default=None, metavar="PATH",
+                    help="the frozen Palace executable's path (the binary of record), named by the plan and hashed here against "
+                         "--binary-sha256; default: the cluster profile's BinaryPattern under --remote-root, which must then exist "
+                         "(BINARY_OF_RECORD_RULE, decision 605 F-5)")
+    pl.add_argument("--mpiexec-path", default=None, metavar="PATH",
+                    help="the bounded MPI wrapper's path named by the plan; default: the cluster profile's MPIExecWrapper under "
+                         "--remote-root, which must then exist")
     pl.add_argument("--job-dir", required=True, help="the remote directory the plan runs in (plan.json, job.pbs, run_stages.py copied there)")
     pl.add_argument("--out", type=Path, required=True)
     pl.add_argument("--nodes", type=int)
@@ -293,11 +340,17 @@ def main(argv=None):
     model = estimate_stages.load_cost_model(args.cost_model)
     profile = json.loads(args.cluster_profile.read_text())
     reducer_partition = (reducer_partition_of(args.qualify_record, args.case, profile=profile) if args.qualify_record is not None else None)
+    try:
+        binary, mpiexec = executables_of_record(profile, args.remote_root, args.binary_sha256, binary_path=args.binary_path,
+                                                mpiexec_path=args.mpiexec_path)
+    except RuntimeError as error:
+        print(f"STOP: {error}", file=sys.stderr, flush=True)
+        return 3
     plan, script = plan_dense_twins(dense_dir=args.dense_dir, runs=args.run, counts=json.loads(args.entity_counts.read_text()),
                                     binary_sha256=args.binary_sha256, remote_root=args.remote_root, job_dir=args.job_dir, model=model,
                                     dense_model=json.loads(args.dense_twin_model.read_text()), profile=profile, nodes=args.nodes,
                                     walltime_seconds=args.walltime_seconds, case_id=args.case, reducer_partition=reducer_partition,
-                                    library_order=args.library_order)
+                                    library_order=args.library_order, binary=binary, mpiexec=mpiexec)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     (args.out / "job.pbs").write_text(script)

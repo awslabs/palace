@@ -105,7 +105,7 @@ def analyze(mesh,contract,require_material_names=False):
     # Planar patches are equivalence classes of (label, plane) under the shared
     # tolerance rule, never rounded coordinates: roundoff-level normal noise on
     # one CAD plane must not fragment it into several keys.
-    representatives,patch=cluster_coplanar_triangles(labels,normals,xyz)
+    representatives,patch,vertices=cluster_coplanar_triangles(labels,normals,xyz,with_vertices=True)
     plane_areas=np.bincount(patch,weights=twice/2,minlength=len(representatives))
     return {'Tetrahedra':len(t),'SurfaceTriangles':len(b),'MaterialVolumes':volume,
             'PhysicalVolumeNames':names,'BoundaryAdjacency':actual_adjacency,
@@ -114,7 +114,7 @@ def analyze(mesh,contract,require_material_names=False):
                 b,labels,metric_surface_attributes(contract)),
             'PlanarPatchEquivalence':'edge_volume_metric.cluster_coplanar_triangles',
             'PlanarPatchAreas':{planar_patch_key(row):float(a)
-                                for row,a in zip(representatives,plane_areas)}},(representatives,patch)
+                                for row,a in zip(representatives,plane_areas)}},(representatives,patch,vertices)
 
 
 def planar_patch_key(representative):
@@ -126,13 +126,15 @@ def planar_patch_key(representative):
 
 
 def matched_planar_patch_areas(before,after):
-    """Pair the planar patches of two analyses of one geometry by plane equivalence.
+    """Pair the planar patches of two analyses of one geometry by plane equivalence
+    (match_equivalent_planes with the representatives' three vertices: the clustering
+    predicate).
 
     Returns [(reference key, reference area, candidate area)] or None when the
     patch sets do not correspond one to one.
     """
-    (left,_),(right,_)=before[1],after[1]
-    mapping=match_equivalent_planes(left,right)
+    (left,_,left_vertices),(right,_,right_vertices)=before[1],after[1]
+    mapping=match_equivalent_planes(left,right,reference_vertices=left_vertices,candidate_vertices=right_vertices)
     if mapping is None:return None
     return [(planar_patch_key(row),before[0]['PlanarPatchAreas'][planar_patch_key(row)],
              after[0]['PlanarPatchAreas'][planar_patch_key(right[j])])
