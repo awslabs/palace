@@ -282,24 +282,21 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   // Mode analysis data: inverse of the conversion in Dimensionalize.
   measurement_cache.mode_data = dim_measurement_cache.mode_data;
   {
-    const double kc = 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
-    measurement_cache.mode_data.kn /= kc;  // 1/m → nondim
-
-    const double V_scale = units.Dimensionalize<Units::ValueType::VOLTAGE>(1.0);
-    for (auto &[idx, vr] : measurement_cache.mode_data.voltage)
+    auto &mode_data = measurement_cache.mode_data;
+    mode_data.kn *= units.GetScaleFactor<Units::ValueType::LENGTH>();  // 1/m → nondim
+    for (auto &[idx, vr] : mode_data.voltage)
     {
-      vr.V /= V_scale;  // V → nondim
+      vr.V = units.Nondimensionalize<Units::ValueType::VOLTAGE>(vr.V);
     }
-
-    for (auto &[idx, result] : measurement_cache.mode_data.impedance)
+    for (auto &[idx, result] : mode_data.impedance)
     {
       if (result.has_impedance)
       {
-        result.Z0 /= electromagnetics::Z0_;  // Ohm → nondim
+        result.Z0 = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(result.Z0);
       }
       if (result.has_vi_impedance)
       {
-        result.Z_VI /= electromagnetics::Z0_;  // Ohm → nondim
+        result.Z_VI = units.Nondimensionalize<Units::ValueType::IMPEDANCE>(result.Z_VI);
       }
     }
   }
