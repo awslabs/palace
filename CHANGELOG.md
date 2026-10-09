@@ -39,6 +39,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     accepts arrays for `HoleAttributes`/`FluxAmounts`). Existing `FluxLoop` configurations
     must be updated. SchemaVer 2-0-0.
     [PR 929](https://github.com/awslabs/palace/pull/929).
+  - Added `Solver.Eigenmode.NonlinearMaxIts` (default 100), the maximum number of
+    quasi-Newton iterations of each attempt to converge an eigenpair in the hybrid nonlinear
+    eigenvalue solver. `Solver.Eigenmode.MaxIts` no longer limits these iterations, and
+    only applies to the linear or quadratic eigenvalue solver computing the initial guesses
+    of the hybrid solver. SchemaVer 2-2-0
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
 
 #### Bug Fixes
 
@@ -107,6 +113,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed a bug with first-order absorbing boundary condition on the out-of-plane field component
     in BoundaryMode and wave port mode solves, which sometimes used incorrect boundary material
     properties. [PR 977](https://github.com/awslabs/palace/pull/977).
+  - Fixed a segmentation fault of the hybrid nonlinear eigenvalue solver when the
+    quasi-Newton refinement converges none of the eigenpairs, which is now reported as an
+    error since fewer eigenmodes than requested were found
+    [PR 1036](https://github.com/awslabs/palace/pull/1036).
 
 #### Performance Improvements
 
