@@ -82,6 +82,23 @@ permittivity and permeability, possibly anisotropic, and loss tangent) define th
 medium matched by the layer. The waves are attenuated before they reach the outer boundary
 of the layer, which can be left as a PEC or natural (PMC) boundary.
 
+In most cases, the default parameters are appropriate, and it is sufficient to mesh the layer
+as a shell of a few elements around a box-shaped physical domain and to add an empty
+`"PML"` object to the material of each of its domains:
+
+```json
+"Materials":
+[
+  { "Attributes": [1], "Permittivity": 1.0 },
+  { "Attributes": [2], "Permittivity": 1.0, "PML": {} }
+]
+```
+
+All materials crossing the layer, for example a substrate and the vacuum above it, must be
+PML materials with the same stretch parameters (which is checked), each with its own
+background material properties: the PML is only reflectionless if the coordinate stretch is
+the same function of position in the whole layer.
+
 The uniaxial PML terminates an axis-aligned, box-shaped physical domain by stretching the
 coordinate normal to each face of the box with the complex factor
 ``s = \kappa + \sigma / (\varepsilon_0 (\alpha + i\omega))``, where ``\kappa``,
@@ -90,25 +107,23 @@ the physical domain (1, 0, and 0) to `"KappaMax"`, `"SigmaMax"`, and ``2\pi`` `"
 at the outer edge of the layer. Layers on several faces, including the edge and corner
 regions of the box, are supported by one or several materials. By default, the faces and
 thicknesses of the layer are detected by comparing the bounding boxes of the physical
-(non-PML) region and of the whole mesh, and `"SigmaMax"` is computed from a target
-reflection coefficient. Alternatively, they can be specified using `"Direction"`,
-`"Thickness"`, and `"SigmaMax"`.
+(non-PML) region and of the whole mesh, and `"SigmaMax"` is computed from the target
+reflection coefficient at normal incidence `"ReflectionTarget"`, for the smallest
+refractive index among the PML materials of each face. Alternatively, they can be specified
+using `"Direction"`, `"Thickness"`, and `"SigmaMax"`. A real stretch `"KappaMax"` > 1
+improves the absorption of evanescent waves, when near fields reach the layer, but reduces
+the accuracy for propagating waves on a given mesh.
 
-The PML is only reflectionless if the coordinate stretch is the same function of position in
-the whole layer. All materials crossing the layer, for example a substrate and the vacuum
-above it, must therefore be PML materials with the same stretch parameters (which is checked),
-each with its own background material properties. The default `"SigmaMax"` of a face is
-computed for the smallest refractive index among the PML materials on the face, so that all
-of them meet the reflection target.
-
-By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"` (the center
-of the frequency range for driven simulations, or the target frequency for eigenmode
-simulations). This static PML keeps the system matrices independent of frequency, and so
-eigenmode problems remain linear, while the attenuation in the layer scales with frequency.
-With `"FrequencyDependent": true`, the stretch factors are instead evaluated at the solve
-frequency, for an attenuation independent of frequency. For eigenmode simulations, this is
-the complex eigenfrequency, and the resulting nonlinear eigenvalue problem is solved with
-the nonlinear eigenvalue solver as for other frequency-dependent boundary conditions. For
+By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
+frequency for driven simulations, or the target frequency for eigenmode simulations. This
+static PML keeps the system matrices independent of frequency, and so eigenmode problems
+remain linear, while the absorption in the layer grows with frequency, so that the
+reflection target is met at all frequencies. With `"FrequencyDependent": true`, the stretch
+factors are instead evaluated at the solve frequency, for an absorption independent of
+frequency, and a complex frequency shift `"AlphaMax"` can be added (CFS-PML), which reduces
+the absorption below this frequency. For eigenmode simulations, the solve frequency is the
+complex eigenfrequency, and the resulting nonlinear eigenvalue problem is solved with the
+nonlinear eigenvalue solver as for other frequency-dependent boundary conditions. For
 adaptive frequency sweeps, the frequency-dependent PML terms of the reduced-order model are
 evaluated from a rational fit on the frequency band, and for circuit synthesis they are
 approximated by a quadratic polynomial in frequency and, if required by the tolerance, poles
@@ -118,16 +133,14 @@ circuit.
 The PML equations are difficult for the iterative solvers of *Palace*. In a strongly absorbing
 layer, where the conductivity exceeds about ``\omega \varepsilon_0``, the anisotropic PML
 tensors have components with complex phases of opposite signs, for which the polynomial
-smoothers of the geometric multigrid preconditioner do not converge: the number of linear
-solver iterations then grows quickly with the conductivity and with the mesh resolution in the
-layer. With
-[`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)
-set to `"Direct"`, the multigrid preconditioner is complemented by a sparse direct solve of the
+smoothers of the geometric multigrid preconditioner do not converge. By default
+([`config["Solver"]["Linear"]["PMLSubdomainSolver"]`](../config/reference.md#config-solver-linear-pmlsubdomainsolver)),
+the multigrid preconditioner is therefore complemented by a sparse direct solve of the
 equations of the unknowns of the PML elements, which restores the convergence of the
 multigrid preconditioner without PML. This is affordable when the PML regions hold a small
 fraction of the unknowns, as is typical when the mesh is coarse in the layer compared to the
-physical region. Otherwise, a sparse direct solve of the whole system (`"MGMaxLevels": 1`) can
-be more efficient.
+physical region. Otherwise, a sparse direct solve of the whole system (`"MGMaxLevels": 1`
+and `"ComplexCoarseSolve": true`) costs about as much.
 
 Sample configurations are provided in the
 [`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide),

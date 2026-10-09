@@ -241,8 +241,7 @@ void ConcretizePML(const config::PMLData &pml, json &j_pml)
   // recorded as null when it applies to all axes.
   const bool auto_sigma_max =
       std::ranges::all_of(pml.sigma_max, [](double s) { return s < 0.0; });
-  ApplyEntries(j_pml, {{"CoordinateType", ToString(pml.coordinate_type)},
-                       {"Order", pml.order},
+  ApplyEntries(j_pml, {{"Order", pml.order},
                        {"SigmaMax", auto_sigma_max ? json(nullptr) : json(pml.sigma_max)},
                        {"KappaMax", pml.kappa_max},
                        {"AlphaMax", pml.alpha_max},

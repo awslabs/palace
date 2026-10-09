@@ -3,6 +3,7 @@
 
 #include "iodata.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <fstream>
 #include <iostream>
@@ -498,8 +499,9 @@ void IoData::CheckConfiguration()
       MFEM_VERIFY(!solver.driven.sample_f.empty(),
                   "Static PML default ReferenceFrequency requires at least one driven "
                   "sample frequency!");
-      reference_frequency =
-          0.5 * (solver.driven.sample_f.front() + solver.driven.sample_f.back());
+      // The absorption of a static PML grows with frequency: use the lowest frequency so
+      // that the reflection target is met at all frequencies.
+      reference_frequency = *std::ranges::min_element(solver.driven.sample_f);
     }
     else if (problem.type == ProblemType::EIGENMODE)
     {
@@ -712,7 +714,25 @@ void IoData::CheckConfiguration()
   // their resolved values and no runtime resolution is needed here.
 
   // The PML subdomain correction is part of the geometric multigrid preconditioner, and
-  // uses a sparse direct solver.
+  // uses a sparse direct solver. By default, it is used for frequency domain problems with
+  // PML regions, since the multigrid smoothers do not converge on the PML equations of
+  // strongly absorbing layers.
+  if (solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DEFAULT)
+  {
+#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
+    constexpr bool has_direct = true;
+#else
+    constexpr bool has_direct = false;
+#endif
+    const bool has_pml = std::ranges::any_of(domains.materials, [](const auto &m)
+                                             { return m.pml.has_value(); });
+    const bool frequency_domain =
+        (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE);
+    solver.linear.pml_subdomain_solver =
+        (has_direct && has_pml && frequency_domain && solver.linear.mg_max_levels > 1)
+            ? PMLSubdomainSolver::DIRECT
+            : PMLSubdomainSolver::NONE;
+  }
   if (solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE &&
       solver.linear.mg_max_levels == 1)
   {

@@ -16,6 +16,7 @@
 #include "embedded_schema.hpp"
 #include "linalg/ksp.hpp"
 #include "utils/configfile.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
 
@@ -772,13 +773,54 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
 TEST_CASE("Config Linear PML subdomain solver", "[config][Serial]")
 {
   CHECK(config::LinearSolverData(json::object()).pml_subdomain_solver ==
-        PMLSubdomainSolver::NONE);
+        PMLSubdomainSolver::DEFAULT);
   CHECK(config::LinearSolverData(json{{"PMLSubdomainSolver", "Direct"}})
             .pml_subdomain_solver == PMLSubdomainSolver::DIRECT);
   CHECK(
       config::LinearSolverData(json{{"PMLSubdomainSolver", "None"}}).pml_subdomain_solver ==
       PMLSubdomainSolver::NONE);
   CHECK_THROWS(config::LinearSolverData(json{{"PMLSubdomainSolver", "Iterative"}}));
+
+  // The default is resolved for the problem: direct when there are PML regions and
+  // geometric multigrid is enabled.
+  auto Resolve = [](bool pml, json linear)
+  {
+    json material = {{"Attributes", {1}}};
+    if (pml)
+    {
+      material["PML"] = json::object();
+    }
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {material}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}},
+                     {"Linear", linear}}}};
+    IoData iodata(config, false);
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Solver"]["Linear"]["PMLSubdomainSolver"].get<std::string>() ==
+          ToString(iodata.solver.linear.pml_subdomain_solver));
+    return iodata.solver.linear.pml_subdomain_solver;
+  };
+#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
+  CHECK(Resolve(true, json::object()) == PMLSubdomainSolver::DIRECT);
+#else
+  CHECK(Resolve(true, json::object()) == PMLSubdomainSolver::NONE);
+#endif
+  CHECK(Resolve(false, json::object()) == PMLSubdomainSolver::NONE);
+  CHECK(Resolve(true, json{{"MGMaxLevels", 1}}) == PMLSubdomainSolver::NONE);
+  CHECK(Resolve(true, json{{"PMLSubdomainSolver", "None"}}) == PMLSubdomainSolver::NONE);
+}
+
+TEST_CASE("Config PML complex frequency shift", "[config][Serial]")
+{
+  // For a static PML, the complex frequency shift is equivalent to a different real stretch
+  // and conductivity, and is rejected.
+  CHECK_THROWS(config::PMLData(json{{"AlphaMax", 0.5}}));
+  CHECK_THROWS(config::PMLData(json{{"AlphaMax", {0.0, 0.0, 0.5}}}));
+  CHECK_NOTHROW(config::PMLData(json{{"AlphaMax", 0.5}, {"FrequencyDependent", true}}));
+  CHECK_NOTHROW(config::PMLData(json{{"AlphaMax", 0.0}}));
 }
 
 TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
@@ -1822,7 +1864,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(mat_gaps.empty());
   }
 
-  SECTION("Static PML ReferenceFrequency defaults to driven sweep center")
+  SECTION("Static PML ReferenceFrequency defaults to the lowest driven frequency")
   {
     json config = {
         {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
@@ -1833,7 +1875,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
     IoData iodata1(config, false);
     REQUIRE(iodata1.domains.materials[0].pml);
-    CHECK(iodata1.domains.materials[0].pml->reference_frequency == 2.0);
+    CHECK(iodata1.domains.materials[0].pml->reference_frequency == 1.0);
 
     config = IoData::ConcretizeDefaults(iodata1, config);
     std::string err = ValidateConfig(config);
@@ -1841,7 +1883,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(err.empty());
 
     auto &j_pml = config["Domains"]["Materials"][0]["PML"];
-    CHECK(j_pml["ReferenceFrequency"].get<double>() == 2.0);
+    CHECK(j_pml["ReferenceFrequency"].get<double>() == 1.0);
     CHECK(j_pml["FrequencyDependent"].get<bool>() == false);
     CHECK(j_pml["AllowRefinement"].get<bool>() == false);
     CHECK(j_pml["SigmaMax"].is_null());
