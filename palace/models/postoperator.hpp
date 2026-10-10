@@ -455,6 +455,8 @@ public:
     return surface_response_op.get();
   }
 
+  const SurfacePostOperator &GetSurfacePostOp() const { return surf_post_op; }
+
   // Supply a response-corrected Maxwell field for participation postprocessing while the
   // ordinary MeasureAndPrintAll field and CSV output remain the raw thin-metal result.
   template <ProblemType U = solver_t>

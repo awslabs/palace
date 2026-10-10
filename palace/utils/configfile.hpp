@@ -727,6 +727,15 @@ public:
   // the smallest matching radius.
   double edge_exclude_segment_tolerance = 0.0;
 
+  // Chord sagittas of EdgeExcludeSegments [mesh length units], parallel to the list (empty:
+  // every listed segment straight, sagitta 0). A listed segment that is a CHORD of an arc
+  // the coupon mesh builds as the true arc (a Chain: false context arc; decision 656 (3))
+  // carries its chord's sagitta: a perimeter point on the arc lies up to the sagitta off
+  // the chord, so the coincidence test of a perimeter segment against that listed segment
+  // uses EdgeExcludeSegmentTolerance + its sagitta (the decision-611 rule, one tolerance
+  // form for straight and curved foreign edges; decision 657 (a)).
+  std::vector<double> edge_exclude_segment_sagittas = {};
+
   // Matching radii for edge-distance postprocessing [m].
   std::vector<double> edge_distances = {};
 

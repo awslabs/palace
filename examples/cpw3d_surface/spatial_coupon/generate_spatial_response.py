@@ -1299,6 +1299,7 @@ def dielectric(
     edge_attributes,
     edge_exclude_attributes=(1,),
     edge_exclude_segments=None,
+    edge_exclude_segment_sagittas=None,
 ):
     result = {
         "Index": index,
@@ -1318,10 +1319,21 @@ def dielectric(
     if edge_exclude_segments:
         # A device-plan coupon's FOREIGN edges (decision 282 rule B5): out of the
         # within-R edge-distance perimeter, so that the model's energy covers its own
-        # edges only; the tolerance is Palace's default (1e-3 R).
+        # edges only; the tolerance is Palace's default (1e-3 R) plus, per listed segment,
+        # its chord sagitta (EdgeExcludeSegmentSagittas, decision 657 (a): a foreign ARC is
+        # built as the true arc while the list holds its chords; 0 for a straight piece).
         result["EdgeExcludeSegments"] = [
             [float(value) for value in segment] for segment in edge_exclude_segments
         ]
+        if edge_exclude_segment_sagittas is not None:
+            if len(edge_exclude_segment_sagittas) != len(edge_exclude_segments):
+                raise ValueError(
+                    f"{len(edge_exclude_segment_sagittas)} EdgeExcludeSegmentSagittas for "
+                    f"{len(edge_exclude_segments)} EdgeExcludeSegments"
+                )
+            result["EdgeExcludeSegmentSagittas"] = [
+                float(value) for value in edge_exclude_segment_sagittas
+            ]
     return result
 
 
@@ -1496,6 +1508,7 @@ def make_config(
     slot_partitioned=False,
     terminal_traces=None,
     edge_exclude_segments=None,
+    edge_exclude_segment_sagittas=None,
 ):
     validate_metal_slot_partitioning(
         edges, fabricated, available_attributes, slot_partitioned
@@ -1589,6 +1602,7 @@ def make_config(
                 ),
                 edge_exclude_attributes,
                 edge_exclude_segments,
+                edge_exclude_segment_sagittas,
             )
         )
     conductor_count = max(edge["Conductor"] for edge in edges)

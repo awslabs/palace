@@ -26,6 +26,7 @@ class IoData;
 class Mesh;
 class Timer;
 class PortExcitations;
+class SurfacePostOperator;
 class SurfaceResponseOperator;
 
 namespace config
@@ -76,6 +77,12 @@ public:
   void SaveMetadata(const memory_reporting::MemoryStats &peak_memory) const;
   void SaveMetadata(const PortExcitations &excitation_helper) const;
   void SaveMetadata(const SurfaceResponseOperator &response) const;
+  // Root only: palace.json SurfaceResponse.Diagnostics.EdgeExclusion.<interface index> =
+  // the EdgeExcludeSegments coverage record of every interface dielectric carrying the
+  // list (decision 657 (b): ExcludeSegmentsLength, ExcludedPerimeterLength and their ratio
+  // Coverage, mesh length units; the qualification's EXCLUSION-COVERAGE gate reads it).
+  // Nothing is written when no interface lists EdgeExcludeSegments.
+  void SaveMetadata(const SurfacePostOperator &surf_post_op) const;
   void SaveSurfaceResponseSolverMetadata(MPI_Comm comm, const std::string &name,
                                          long long int solves,
                                          long long int iterations) const;

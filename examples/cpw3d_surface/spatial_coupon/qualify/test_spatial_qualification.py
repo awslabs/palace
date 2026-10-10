@@ -127,6 +127,145 @@ class CriteriaTest(unittest.TestCase):
         self.assertFalse(sq.reference_box_closure(1.08, 1.0, 0.0, True)["Passed"])
         self.assertTrue(sq.reference_box_closure(1.08, 1.0, 0.0, False)["Passed"])  # new class: 0.10
 
+    def test_exclusion_coverage_gate(self):
+        """Decision 657 (b): the EXCLUSION-COVERAGE gate on the palace.json record of a coupon run. The
+        32b0 shape (its 23 foreign segments, coverage ~0.74 under the 1.9-nm rule) FAILS by name; the
+        fixed shape (>= 0.99) passes; a missing record, a missing interface and an over-exclusion
+        (> 1.01) fail closed; a config without EdgeExcludeSegments is NotApplicable and passes.
+        Decision 665: the 0.99 floor is also met by the end-allowance coverage (Excluded + Straddling)
+        / Listed - a short, many-ended straight-foreign model with a CORRECT exclusion (raw 0.918, 14
+        ends inside ~50-nm perimeter segments) passes, the census's 0.9929 (7d88) and 1.0000 (448693)
+        pass, 32b0 on main's rule (raw 0.7764; decision 667 (1): its chain's 2 ends lie on the box, 0
+        straddlers, 21 removed runs on 1 chain -> 0.7764; 665's run-neighbour form read ~0.84) still
+        fails, the upper bound stays on the raw coverage, a record without StraddlingPerimeterLength (a
+        binary before decision 665) is read on the raw coverage alone, and the 7 patterns of the 667
+        pre-registration (REPORT 12.1) read as pre-registered on the record's lengths."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            segments = [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]] * 23
+            config = {"Boundaries": {"Postprocessing": {"Dielectric": [
+                {"Index": 1, "Type": "SA", "EdgeExcludeSegments": segments},
+                {"Index": 2, "Type": "MS", "EdgeExcludeSegments": segments},
+                {"Index": 3, "Type": "MA"}]}}}
+
+            def write(run, coverages, listed=32.852, straddling=None, runs=None, chains=None):
+                postpro = tmp / run
+                postpro.mkdir(exist_ok=True)
+                entries = {str(index): {"Coverage": value, "ExcludeSegmentsLength": listed, "ExcludedPerimeterLength": listed * value,
+                                        "ExcludeSegmentsCount": 23, "ExcludedPerimeterCount": 400, "Tolerance": 1.9e-3,
+                                        "MaxSagitta": 4.24e-3} for index, value in coverages.items()}
+                if straddling is not None:
+                    for entry in entries.values():
+                        entry["StraddlingPerimeterLength"] = straddling
+                        entry["EndAllowanceCoverage"] = (entry["ExcludedPerimeterLength"] + straddling) / listed
+                        if runs is not None:
+                            entry["RemovedRuns"] = runs
+                            entry["ListedChains"] = chains
+                (postpro / "palace.json").write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"EdgeExclusion": {
+                    "Interfaces": entries, "Rule": "r"}}}}))
+                return postpro
+
+            defective = sq.exclusion_coverage_run("fabricated-p4", config, write("fabricated-p4", {"1": 0.737, "2": 0.737}))
+            self.assertFalse(defective["Passed"])
+            self.assertEqual(defective["Required"], [1, 2])
+            self.assertIn("EXCLUSION-COVERAGE FAIL", defective["Reason"])
+            self.assertAlmostEqual(defective["MinCoverage"], 0.737)
+            self.assertAlmostEqual(defective["MinEndAllowanceCoverage"], 0.737)  # no straddling field: the raw coverage
+            fixed = sq.exclusion_coverage_run("thin-p4", config, write("thin-p4", {"1": 0.9995, "2": 1.0003}))
+            self.assertTrue(fixed["Passed"])
+            self.assertIsNone(fixed["Reason"])
+            self.assertEqual(sorted(fixed["Interfaces"]), ["1", "2"])
+            over = sq.exclusion_coverage_run("fabricated-p5", config, write("fabricated-p5", {"1": 1.0, "2": 1.02}))
+            self.assertFalse(over["Passed"])
+            incomplete = sq.exclusion_coverage_run("thin-p5", config, write("thin-p5", {"1": 1.0}))
+            self.assertFalse(incomplete["Passed"])
+            self.assertIn("incomplete", incomplete["Reason"])
+            (tmp / "legacy").mkdir()
+            (tmp / "legacy" / "palace.json").write_text(json.dumps({"Problem": {"MeshElements": 1}}))
+            missing = sq.exclusion_coverage_run("fabricated-matrices", config, tmp / "legacy")
+            self.assertFalse(missing["Passed"])
+            self.assertIn("record missing", missing["Reason"])
+            not_applicable = sq.exclusion_coverage_run("thin-matrices", {"Boundaries": {"Postprocessing": {"Dielectric": [
+                {"Index": 1, "Type": "SA"}]}}}, tmp / "legacy")
+            self.assertTrue(not_applicable["Passed"])
+            self.assertEqual(not_applicable["Required"], [])
+            gate = sq.exclusion_coverage_gate([defective, fixed, over, incomplete, missing, not_applicable])
+            self.assertFalse(gate["Passed"])
+            self.assertTrue(gate["Applicable"])
+            self.assertEqual(sorted(gate["Failures"]), ["fabricated-matrices", "fabricated-p4", "fabricated-p5", "thin-p5"])
+            self.assertAlmostEqual(gate["MinCoverage"], 0.737)
+            self.assertAlmostEqual(gate["MaxCoverage"], 1.02)
+            self.assertEqual(gate["Rule"], sq.EXCLUSION_COVERAGE_RULE)
+            passing = sq.exclusion_coverage_gate([fixed, not_applicable])
+            self.assertTrue(passing["Passed"] and passing["Applicable"])
+            empty = sq.exclusion_coverage_gate([not_applicable])
+            self.assertTrue(empty["Passed"])
+            self.assertFalse(empty["Applicable"])
+            # Decision 665, the end allowance. A short, many-ended straight-foreign model: 7 pieces of
+            # 6.0 um in total, 14 ends each keeping a ~50-nm perimeter segment with ~35 nm of deficit:
+            # raw 0.918 (< 0.99 with a CORRECT exclusion), straddling 0.7 um -> 1.035: PASS.
+            short = sq.exclusion_coverage_run("short-p4", config, write("short-p4", {"1": 0.918, "2": 0.918}, listed=6.0,
+                                                                        straddling=0.7))
+            self.assertTrue(short["Passed"])
+            self.assertAlmostEqual(short["MinCoverage"], 0.918)
+            self.assertAlmostEqual(short["MinEndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+            self.assertAlmostEqual(short["Interfaces"]["1"]["EndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+            self.assertEqual(short["Interfaces"]["1"]["StraddlingPerimeterLength"], 0.7)
+            # The census readings: 7d88 thin (0.9929, 14 ends) and 448693 (1.0000) pass.
+            census_min = sq.exclusion_coverage_run("7d88-thin-p4", config, write("7d88-thin-p4", {"1": 0.9929, "2": 0.9929}, listed=12.376,
+                                                                                straddling=0.7))
+            self.assertTrue(census_min["Passed"])
+            arc_foreign = sq.exclusion_coverage_run("448693-p4", config, write("448693-p4", {"1": 1.0, "2": 1.0}, listed=17.855,
+                                                                              straddling=0.1))
+            self.assertTrue(arc_foreign["Passed"])
+            # 32b0 on main's rule (decision 667 (1)): raw 0.7764, the chain's 2 ends on the box -> 0 straddlers,
+            # 21 removed runs on 1 listed chain (information, carried): 0.7764, FAIL.
+            main_32b0 = sq.exclusion_coverage_run("32b0-main-p4", config, write("32b0-main-p4", {"1": 0.7764, "2": 0.7764},
+                                                                                straddling=0.0, runs=21, chains=1))
+            self.assertFalse(main_32b0["Passed"])
+            self.assertAlmostEqual(main_32b0["MinEndAllowanceCoverage"], 0.7764, places=6)
+            self.assertEqual(main_32b0["Interfaces"]["1"]["RemovedRuns"], 21)
+            self.assertEqual(main_32b0["Interfaces"]["1"]["ListedChains"], 1)
+            self.assertIn("end-allowance coverage min 0.7764", main_32b0["Reason"])
+            self.assertIsNone(short["Interfaces"]["1"]["RemovedRuns"])  # a 665-era record: no runs / chains
+            # 665's run-neighbour reading of the same defect (straddlers ~2.1 um -> ~0.84) also fails.
+            main_32b0_665 = sq.exclusion_coverage_run("32b0-main-665-p4", config, write("32b0-main-665-p4", {"1": 0.7764, "2": 0.7764},
+                                                                                        straddling=2.1))
+            self.assertFalse(main_32b0_665["Passed"])
+            self.assertAlmostEqual(main_32b0_665["MinEndAllowanceCoverage"], (32.852 * 0.7764 + 2.1) / 32.852, places=6)
+            self.assertIn("end-allowance coverage min 0.84", main_32b0_665["Reason"])
+            # The 7 patterns of decision 667 (1) (REPORT 12.1; the C++ / census-v3 tests read the same values from the
+            # masks): the perimeter of 20 segments of 0.05, the piece listed over all of them (listed 1.0).
+            patterns = {"correct": (1.0, 0.0, 1, True), "alternating": (0.5, 0.05, 10, False), "holes1": (0.8, 0.0, 5, False),
+                        "holes2": (0.7, 0.0, 4, False), "holes3": (0.7, 0.0, 3, False), "hole4": (0.8, 0.0, 2, False),
+                        "like32b0": (0.3, 0.0, 3, False)}
+            for name, (raw, straddling, runs, expected) in patterns.items():
+                reading = sq.exclusion_coverage_run(name, config, write(name, {"1": raw, "2": raw}, listed=1.0,
+                                                                       straddling=straddling, runs=runs, chains=1))
+                self.assertEqual(reading["Passed"], expected, name)
+                self.assertAlmostEqual(reading["MinEndAllowanceCoverage"], raw + straddling, msg=name)
+                self.assertEqual(reading["Interfaces"]["1"]["RemovedRuns"], runs)
+            self.assertAlmostEqual(sq.exclusion_coverage_run("alternating", config, tmp / "alternating")["MinEndAllowanceCoverage"], 0.55)
+            # The upper bound stays on the raw coverage: an over-exclusion is not excused by the allowance.
+            over_allowed = sq.exclusion_coverage_run("over-p4", config, write("over-p4", {"1": 1.02, "2": 1.0}, straddling=0.1))
+            self.assertFalse(over_allowed["Passed"])
+            # A record without StraddlingPerimeterLength (a binary before decision 665): the raw coverage alone.
+            legacy_short = sq.exclusion_coverage_run("legacy-short-p4", config, write("legacy-short-p4", {"1": 0.918, "2": 0.918}, listed=6.0))
+            self.assertFalse(legacy_short["Passed"])
+            self.assertAlmostEqual(legacy_short["MinEndAllowanceCoverage"], 0.918)
+            allowance_gate = sq.exclusion_coverage_gate([short, census_min, arc_foreign, fixed])
+            self.assertTrue(allowance_gate["Passed"])
+            self.assertAlmostEqual(allowance_gate["MinCoverage"], 0.918)
+            self.assertAlmostEqual(allowance_gate["MinEndAllowanceCoverage"], 0.9995)
+            self.assertAlmostEqual(sq.end_allowance_coverage({"Coverage": 0.5, "ExcludeSegmentsLength": 2.0,
+                                                              "ExcludedPerimeterLength": 1.0, "StraddlingPerimeterLength": 0.5}),
+                                   0.75)
+        # The status: a failing exclusion coverage is Failed whatever the other criteria read.
+        self.assertEqual(sq.qualification_status(sq.STATUS_PENDING, dense_passed=True, identity_passed=True, gate_passed=True,
+                                                 exclusion_passed=False), sq.STATUS_FAILED)
+        self.assertEqual(sq.qualification_status(sq.STATUS_PENDING, dense_passed=True, identity_passed=True, gate_passed=True,
+                                                 exclusion_passed=True), sq.STATUS_QUALIFIED)
+
     def test_status_transitions(self):
         self.assertEqual(sq.qualification_status(sq.STATUS_PENDING, dense_passed=True, identity_passed=True, gate_passed=True),
                          sq.STATUS_QUALIFIED)
@@ -495,6 +634,82 @@ class CommandEvaluateTest(unittest.TestCase):
         self.assertEqual(self.run_evaluate("--dry-run"), 0)
         self.assertIsNone(json.loads(self.record.read_text())["ControlVerdict"])
 
+    def test_exclusion_coverage_gate_reads_every_run_of_both_twins(self):
+        """Decision 657 (b): with EdgeExcludeSegments in the configs the evaluate command reads the
+        EdgeExclusion record of the four dense runs AND the two basis-matrix runs; the 32b0 reading
+        (0.737 on both twins) is Failed by name, the fixed reading Qualified, a run without the record
+        (a binary before the decision) Failed by name."""
+        segments = [[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]] * 23
+        for name in ("fabricated-p4", "thin-p4", "fabricated-p5", "thin-p5"):
+            path = self.tmp / name / "config.json"
+            config = json.loads(path.read_text())
+            config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeExcludeSegments"] = segments
+            path.write_text(json.dumps(config))
+
+        def write_records(coverage, skip=(), listed=32.852, straddling=None):
+            for name in ("fabricated-p4", "thin-p4", "fabricated-p5", "thin-p5", "fab-matrices", "thin-matrices"):
+                postpro = self.tmp / name / ("postpro" if name.endswith("p4") or name.endswith("p5") else "")
+                target = postpro / "palace.json"
+                if name in skip:
+                    target.write_text(json.dumps({"Problem": {"MeshElements": 1}}))
+                    continue
+                entry = {"Coverage": coverage, "ExcludeSegmentsLength": listed, "ExcludedPerimeterLength": listed * coverage,
+                         "ExcludeSegmentsCount": 23, "ExcludedPerimeterCount": 400, "Tolerance": 1.9e-3, "MaxSagitta": 4.24e-3}
+                if straddling is not None:
+                    entry["StraddlingPerimeterLength"] = straddling
+                    entry["EndAllowanceCoverage"] = (entry["ExcludedPerimeterLength"] + straddling) / listed
+                target.write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"EdgeExclusion": {"Rule": "r", "Interfaces": {
+                    "1": entry}}}}}))
+        qualification = {"Verdict": "PendingQualification", "Record": "q.json", "ReferenceAnchor": None, "Order": 4, "UnjudgedTypes": []}
+        # The 32b0 reading on main's rule: Failed, the gate named with its runs.
+        write_records(0.737)
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 1)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_FAILED)
+        self.assertFalse(record["ExclusionCoveragePassed"])
+        self.assertTrue(record["DensePassed"] and record["IdentityPassed"] and record["GatePassed"])
+        self.assertEqual(sorted(record["ExclusionCoverage"]["Failures"]),
+                         ["fabricated-matrices", "fabricated-p4", "fabricated-p5", "thin-matrices", "thin-p4", "thin-p5"])
+        self.assertAlmostEqual(record["ExclusionCoverage"]["MinCoverage"], 0.737)
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertEqual((model["QualificationStatus"], model["LibraryQualified"]), (sq.STATUS_FAILED, False))
+        self.assertEqual(model["SpatialQualification"]["ExclusionCoverage"]["Passed"], False)
+        # The fixed reading: Qualified, six runs recorded.
+        write_records(0.9998)
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        self.assertEqual(len(record["ExclusionCoverage"]["Runs"]), 6)
+        self.assertTrue(all(run["Passed"] and run["Required"] == [1] for run in record["ExclusionCoverage"]["Runs"]))
+        # One run without the record (the matrices reduced by an older binary): Failed by name.
+        write_records(0.9998, skip=("fab-matrices",))
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 1)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_FAILED)
+        self.assertEqual(list(record["ExclusionCoverage"]["Failures"]), ["fabricated-matrices"])
+        self.assertIn("record missing", record["ExclusionCoverage"]["Failures"]["fabricated-matrices"])
+        # Decision 665: a short, many-ended straight-foreign model with a correct exclusion (raw 0.918 of
+        # 6.0 um, straddlers 0.7 um -> 1.035) is Qualified on the end allowance; 32b0 on main's rule
+        # (decision 667 (1): 0 straddlers, its chain's ends on the box -> 0.7764) stays Failed.
+        write_records(0.918, listed=6.0, straddling=0.7)
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 0)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
+        self.assertAlmostEqual(record["ExclusionCoverage"]["MinCoverage"], 0.918)
+        self.assertAlmostEqual(record["ExclusionCoverage"]["MinEndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+        model = json.loads(self.library.read_text())["Models"][0]
+        self.assertAlmostEqual(model["SpatialQualification"]["ExclusionCoverage"]["MinEndAllowanceCoverage"], (6.0 * 0.918 + 0.7) / 6.0)
+        write_records(0.7764, straddling=0.0)
+        self.write_library({"Qualification": qualification})
+        self.assertEqual(self.run_evaluate(), 1)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["Status"], sq.STATUS_FAILED)
+        self.assertAlmostEqual(record["ExclusionCoverage"]["MinEndAllowanceCoverage"], 0.7764)
+
     def test_identity_partition_is_recorded_and_mandatory_for_a_multi_node_reducer(self):
         """Decisions 482 / 487 (d): the loop end's 4-node reducer against a 1-node identity twin read
         MS 1.6-5.3e-6 (> 1e-6); the identity twin now takes the reducer's partition and the (F) record
@@ -623,6 +838,8 @@ class EvaluationTest(unittest.TestCase):
         self.thin_p5 = {"SA": self.thin_p4["SA"] * 1.06, "Domain": self.thin_p4["Domain"] * 1.004}
         self.gate = {"Passed": True, "Probed": 2, "Count": 0, "MaxRatio": 7.7e-8, "Orders": [4, 5],
                      "ProductionOrdersMissing": []}
+        # A coupon without EdgeExcludeSegments: the EXCLUSION-COVERAGE gate is not applicable and passes.
+        self.coverage = sq.exclusion_coverage_gate([])
 
     def test_consistent_trace_qualifies(self):
         trace = sq.evaluate_trace("state-2", "T2", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
@@ -632,24 +849,37 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(trace["MatrixIdentity"]["SA"]["Residual"], 0.0)
         self.assertEqual(sorted(trace["TwinConsistency"]), ["Domain"])
         self.assertAlmostEqual(trace["ThinSurfacePSteps"]["SA"]["RelativeToThin"], 0.06 / 1.06)
-        record = sq.evaluate([trace], gate=self.gate)
+        record = sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate)
         self.assertEqual(record["Status"], sq.STATUS_QUALIFIED)
         self.assertTrue(record["TwinConsistencyPassed"] and record["ClosurePassed"])
         self.assertEqual(record["Tolerances"]["GateMaxRatio"], 1e-4)
         self.assertEqual(record["Families"], ["T2"])
         window = [sq.reference_box_closure(1.02, 1.0, 0.0, True) | {"Class": "SA", "Window": "S1p"}]
-        self.assertEqual(sq.evaluate([trace], gate=self.gate, reference_boxes=window)["Status"], sq.STATUS_WINDOW_VALIDATED)
+        self.assertEqual(sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate, reference_boxes=window)["Status"], sq.STATUS_WINDOW_VALIDATED)
         off_marker = [sq.reference_box_closure(1.2, 1.0, 0.0, True)]
-        self.assertEqual(sq.evaluate([trace], gate=self.gate, reference_boxes=off_marker)["Status"], sq.STATUS_QUALIFIED)
-        self.assertEqual(sq.evaluate([trace], gate={"Passed": False, "Probed": 0})["Status"], sq.STATUS_FAILED)
+        self.assertEqual(sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate, reference_boxes=off_marker)["Status"], sq.STATUS_QUALIFIED)
+        self.assertEqual(sq.evaluate([trace], exclusion_coverage=self.coverage, gate={"Passed": False, "Probed": 0})["Status"], sq.STATUS_FAILED)
         # The model's Qualification.UnjudgedTypes (decisions 474 / 477 (1)) refuses the lift with the reason recorded.
-        unjudged = sq.evaluate([trace], gate=self.gate, reference_boxes=window, unjudged_types=["p_SA"])
+        unjudged = sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate, reference_boxes=window, unjudged_types=["p_SA"])
         self.assertEqual(unjudged["Status"], sq.STATUS_PENDING)
         self.assertEqual(unjudged["UnjudgedTypes"], ["p_SA"])
         self.assertEqual(unjudged["UnjudgedTypesRule"], sq.UNJUDGED_TYPES_RULE)
         self.assertTrue(unjudged["DensePassed"] and unjudged["GatePassed"])
         self.assertIsNone(record["UnjudgedTypesRule"])
         self.assertEqual(record["UnjudgedTypes"], [])
+        # The EXCLUSION-COVERAGE gate (decision 657 (b)) is recorded and drives the status; it is required.
+        self.assertTrue(record["ExclusionCoveragePassed"])
+        self.assertFalse(record["ExclusionCoverage"]["Applicable"])
+        self.assertEqual(record["Tolerances"]["ExclusionCoverageMin"], 0.99)
+        failing = sq.exclusion_coverage_gate([{"Run": "fabricated-p4", "Required": [1], "Passed": False, "MinCoverage": 0.737,
+                                               "MaxCoverage": 0.737, "Reason": "EXCLUSION-COVERAGE FAIL", "Interfaces": {}}])
+        failed = sq.evaluate([trace], exclusion_coverage=failing, gate=self.gate)
+        self.assertEqual(failed["Status"], sq.STATUS_FAILED)
+        self.assertFalse(failed["ExclusionCoveragePassed"])
+        self.assertTrue(failed["DensePassed"] and failed["GatePassed"])
+        self.assertEqual(failed["ExclusionCoverage"]["Failures"], {"fabricated-p4": "EXCLUSION-COVERAGE FAIL"})
+        with self.assertRaisesRegex(sq.SpatialQualificationError, "EXCLUSION-COVERAGE"):
+            sq.evaluate([trace], exclusion_coverage=None, gate=self.gate)
 
     def test_failed_control_verdict_is_never_lifted(self):
         """Decisions 485 / 487 (a): the b-batch1 interim libraries of S3p / S2p read Qualification.Verdict
@@ -659,19 +889,19 @@ class EvaluationTest(unittest.TestCase):
         trace = sq.evaluate_trace("device-patch-9", "T1", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
                                   thin_p5=self.thin_p5, q_fab=self.q_fab, q_thin=self.q_thin)
         window = [sq.reference_box_closure(1.02, 1.0, 0.0, True) | {"Class": "SA", "Window": "S3p"}]
-        failed = sq.evaluate([trace], gate=self.gate, reference_boxes=window, control_verdict="Failed")
+        failed = sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate, reference_boxes=window, control_verdict="Failed")
         self.assertEqual(failed["Status"], sq.STATUS_FAILED)
         self.assertTrue(failed["DensePassed"] and failed["IdentityPassed"] and failed["GatePassed"])
         self.assertEqual(failed["ControlVerdict"], "Failed")
         self.assertEqual(failed["ControlVerdictRule"], sq.CONTROL_VERDICT_RULE)
         for verdict, status in (("PendingQualification", sq.STATUS_WINDOW_VALIDATED), ("Passed", sq.STATUS_WINDOW_VALIDATED),
                                 (None, sq.STATUS_WINDOW_VALIDATED)):
-            record = sq.evaluate([trace], gate=self.gate, reference_boxes=window, control_verdict=verdict)
+            record = sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate, reference_boxes=window, control_verdict=verdict)
             self.assertEqual(record["Status"], status, verdict)
             self.assertEqual(record["ControlVerdict"], verdict)
             self.assertIsNone(record["ControlVerdictRule"])
         with self.assertRaisesRegex(sq.SpatialQualificationError, "unknown control verdict"):
-            sq.evaluate([trace], gate=self.gate, control_verdict="Qualified")
+            sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate, control_verdict="Qualified")
         # A current status of Qualified (a stamped library) is no shield either.
         self.assertEqual(sq.qualification_status(sq.STATUS_QUALIFIED, dense_passed=True, identity_passed=True, gate_passed=True,
                                                  control_verdict="Failed"), sq.STATUS_FAILED)
@@ -699,25 +929,25 @@ class EvaluationTest(unittest.TestCase):
         self.assertFalse(trace["Passed"])
         good = sq.evaluate_trace("state-2", "T2", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
                                  thin_p5=self.thin_p5, q_fab=self.q_fab, q_thin=self.q_thin)
-        record = sq.evaluate([good, trace], gate=self.gate)
+        record = sq.evaluate([good, trace], exclusion_coverage=self.coverage, gate=self.gate)
         self.assertFalse(record["DensePassed"])
         self.assertEqual(record["Status"], sq.STATUS_FAILED)
         identity_defect = sq.evaluate_trace("state-2", "T2", self.t, fab_p4={cls: v * (1 + 1e-5) for cls, v in self.fab_p4.items()},
                                             thin_p4=self.thin_p4, fab_p5=self.fab_p5, thin_p5=self.thin_p5,
                                             q_fab=self.q_fab, q_thin=self.q_thin)
         self.assertFalse(identity_defect["MatrixIdentity"]["SA"]["Passed"])
-        self.assertEqual(sq.evaluate([identity_defect], gate=self.gate)["Status"], sq.STATUS_FAILED)
+        self.assertEqual(sq.evaluate([identity_defect], exclusion_coverage=self.coverage, gate=self.gate)["Status"], sq.STATUS_FAILED)
         # The thin twin's domain step of 3 % (a p-unstable domain defect) fails the twin-consistency.
         unstable_thin_p5 = {"SA": self.thin_p5["SA"], "Domain": self.thin_p4["Domain"] * 0.97}
         unstable = sq.evaluate_trace("state-2", "T2", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
                                      thin_p5=unstable_thin_p5, q_fab=self.q_fab, q_thin=self.q_thin)
         self.assertFalse(unstable["TwinConsistency"]["Domain"]["Passed"])
         self.assertTrue(all(v["Passed"] for v in unstable["Closure"].values()))
-        record = sq.evaluate([unstable], gate=self.gate)
+        record = sq.evaluate([unstable], exclusion_coverage=self.coverage, gate=self.gate)
         self.assertFalse(record["TwinConsistencyPassed"])
         self.assertEqual(record["Status"], sq.STATUS_FAILED)
         with self.assertRaises(sq.SpatialQualificationError):
-            sq.evaluate([], gate=self.gate)
+            sq.evaluate([], exclusion_coverage=self.coverage, gate=self.gate)
 
     def test_stamp_library_status(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -725,7 +955,7 @@ class EvaluationTest(unittest.TestCase):
             path.write_text(json.dumps({"Models": [{"Name": "m", "LibraryQualified": False}]}))
             trace = sq.evaluate_trace("state-2", "T2", self.t, fab_p4=self.fab_p4, thin_p4=self.thin_p4, fab_p5=self.fab_p5,
                                       thin_p5=self.thin_p5, q_fab=self.q_fab, q_thin=self.q_thin)
-            record = sq.evaluate([trace], gate=self.gate)
+            record = sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate)
             library = sq.stamp_library_status(path, "m", record)
             model = library["Models"][0]
             self.assertEqual(model["QualificationStatus"], sq.STATUS_QUALIFIED)
@@ -734,10 +964,12 @@ class EvaluationTest(unittest.TestCase):
             self.assertTrue(model["SpatialQualification"]["TwinConsistencyPassed"])
             self.assertEqual(model["SpatialQualification"]["Gate"]["Orders"], [4, 5])
             self.assertEqual(model["SpatialQualification"]["Traces"][0]["Name"], "state-2")
+            self.assertEqual(model["SpatialQualification"]["ExclusionCoverage"]["Passed"], True)
+            self.assertEqual(model["SpatialQualification"]["ExclusionCoverage"]["Applicable"], False)
             with self.assertRaises(sq.SpatialQualificationError):
                 sq.stamp_library_status(path, "other", record)
             # An unjudged Type stamps PendingQualification, LibraryQualified stays False (decision 477 (1)).
-            unjudged = sq.evaluate([trace], gate=self.gate, unjudged_types=["p_MS"])
+            unjudged = sq.evaluate([trace], exclusion_coverage=self.coverage, gate=self.gate, unjudged_types=["p_MS"])
             model = sq.stamp_library_status(path, "m", unjudged)["Models"][0]
             self.assertEqual(model["QualificationStatus"], sq.STATUS_PENDING)
             self.assertFalse(model["LibraryQualified"])

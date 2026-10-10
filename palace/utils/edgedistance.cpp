@@ -8,6 +8,7 @@
 #include <map>
 #include <numeric>
 #include <queue>
+#include <set>
 #include <tuple>
 #include "utils/configfile.hpp"
 #include "utils/diagnostic.hpp"
@@ -277,11 +278,39 @@ std::array<double, 6> GetPolarizedEdgeEnergyDensity(
 namespace
 {
 
+// The coincidence test of a perimeter segment with an exclusion polyline: its two ends and
+// its midpoint each lie within the tolerance of one listed segment. With `sagittas` (one
+// per listed segment, the sagitta-aware rule B5 of decision 657 (a)) the tolerance against
+// listed segment i is sqrt(distance_tolerance_squared) + sagittas[i] (a point ON the true
+// arc of a listed chord lies up to the chord's sagitta off it; a listed segment of sagitta
+// 0 keeps the squared comparison of the plain rule bitwise). The nearest listed segment
+// decides first; a point farther than the widest band from it is coincident with none; a
+// point inside the widest band but outside its nearest segment's own band is tested against
+// the listed segments of larger sagitta one by one (near the joint of a straight piece and
+// an arc chord the nearest segment can be the straight piece while the point is on the
+// arc).
 bool IsCoincidentWithExcludedBoundary(const mesh::BoundaryEdgeSegment &segment,
                                       const EdgeDistanceTree &excluded_tree,
                                       int space_dimension,
-                                      double distance_tolerance_squared)
+                                      double distance_tolerance_squared,
+                                      const std::vector<double> &sagittas = {},
+                                      double max_sagitta = 0.0)
 {
+  MFEM_ASSERT(sagittas.empty() || sagittas.size() == excluded_tree.Size(),
+              "Exclusion segment sagittas must parallel the exclusion segments!");
+  const double tolerance = std::sqrt(distance_tolerance_squared);
+  auto BoundSquared = [&](std::size_t index)
+  {
+    if (sagittas.empty() || sagittas[index] == 0.0)
+    {
+      return distance_tolerance_squared;
+    }
+    const double bound = tolerance + sagittas[index];
+    return bound * bound;
+  };
+  const double widest = tolerance + max_sagitta;
+  const double widest_squared =
+      sagittas.empty() ? distance_tolerance_squared : widest * widest;
   mfem::Vector point(space_dimension);
   for (const double t : {0.0, 0.5, 1.0})
   {
@@ -289,12 +318,187 @@ bool IsCoincidentWithExcludedBoundary(const mesh::BoundaryEdgeSegment &segment,
     {
       point[d] = (1.0 - t) * segment.p0[d] + t * segment.p1[d];
     }
-    if (excluded_tree.DistanceSquared(point) > distance_tolerance_squared)
+    const auto nearest = excluded_tree.Nearest(point);
+    if (nearest.distance_squared <= BoundSquared(nearest.segment))
+    {
+      continue;
+    }
+    if (nearest.distance_squared > widest_squared)
+    {
+      return false;
+    }
+    bool coincident = false;
+    for (std::size_t i = 0; i < sagittas.size() && !coincident; i++)
+    {
+      coincident = sagittas[i] > sagittas[nearest.segment] &&
+                   excluded_tree.DistanceSquaredToSegment(point, i) <= BoundSquared(i);
+    }
+    if (!coincident)
     {
       return false;
     }
   }
   return true;
+}
+
+double SegmentLength(const mesh::BoundaryEdgeSegment &segment)
+{
+  double length_squared = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    const double delta = segment.p1[d] - segment.p0[d];
+    length_squared += delta * delta;
+  }
+  return std::sqrt(length_squared);
+}
+
+// The exclusion list's record before the test (the listed segments, their total length,
+// the tolerance, the largest sagitta); the callers complete it with the perimeter's count /
+// length, the removed count / length (the coincidence test) and RecordEdgeExclusionEnds.
+EdgeExclusionRecord
+BeginEdgeExclusionRecord(const std::vector<mesh::BoundaryEdgeSegment> &exclusion_segments,
+                         const std::vector<double> &sagittas, double tolerance)
+{
+  EdgeExclusionRecord record;
+  record.exclude_segments_count = exclusion_segments.size();
+  for (const auto &segment : exclusion_segments)
+  {
+    record.exclude_segments_length += SegmentLength(segment);
+  }
+  record.tolerance = tolerance;
+  record.max_sagitta =
+      sagittas.empty() ? 0.0 : *std::max_element(sagittas.begin(), sagittas.end());
+  return record;
+}
+
+double PointSegmentDistanceSquared(const std::array<double, 3> &point,
+                                   const mesh::BoundaryEdgeSegment &segment)
+{
+  double direction[3], offset[3];
+  double length_squared = 0.0;
+  double projection = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    direction[d] = segment.p1[d] - segment.p0[d];
+    offset[d] = point[d] - segment.p0[d];
+    length_squared += direction[d] * direction[d];
+    projection += offset[d] * direction[d];
+  }
+  const double t =
+      (length_squared > 0.0) ? std::clamp(projection / length_squared, 0.0, 1.0) : 0.0;
+  double distance_squared = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    const double delta = offset[d] - t * direction[d];
+    distance_squared += delta * delta;
+  }
+  return distance_squared;
+}
+
+// The number of connected components of a graph on `count` nodes given its edges.
+std::size_t CountComponents(std::size_t count,
+                            const std::vector<std::pair<std::size_t, std::size_t>> &edges)
+{
+  std::vector<std::size_t> parent(count);
+  std::iota(parent.begin(), parent.end(), 0);
+  auto Find = [&](std::size_t a)
+  {
+    while (parent[a] != a)
+    {
+      parent[a] = parent[parent[a]];
+      a = parent[a];
+    }
+    return a;
+  };
+  std::size_t components = count;
+  for (const auto &[a, b] : edges)
+  {
+    const std::size_t ra = Find(a), rb = Find(b);
+    if (ra != rb)
+    {
+      parent[ra] = rb;
+      components--;
+    }
+  }
+  return components;
+}
+
+// The listed segments' END points (decision 667 (1)): the endpoints no other listed
+// segment's endpoint meets within the tolerance; also the number of listed chains (the
+// listed segments joined end to end within the tolerance).
+std::vector<std::array<double, 3>>
+ListedChainEnds(const std::vector<mesh::BoundaryEdgeSegment> &exclusion_segments,
+                double tolerance, std::size_t &listed_chains)
+{
+  std::vector<std::array<double, 3>> endpoints;
+  endpoints.reserve(2 * exclusion_segments.size());
+  for (const auto &segment : exclusion_segments)
+  {
+    endpoints.push_back(segment.p0);
+    endpoints.push_back(segment.p1);
+  }
+  const double tolerance_squared = tolerance * tolerance;
+  auto Meets = [&](std::size_t i, std::size_t j)
+  {
+    double distance_squared = 0.0;
+    for (int d = 0; d < 3; d++)
+    {
+      const double delta = endpoints[i][d] - endpoints[j][d];
+      distance_squared += delta * delta;
+    }
+    return distance_squared <= tolerance_squared;
+  };
+  std::vector<bool> joined(endpoints.size(), false);
+  std::vector<std::pair<std::size_t, std::size_t>> joints;
+  for (std::size_t i = 0; i < endpoints.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < endpoints.size(); j++)
+    {
+      if (i / 2 != j / 2 && Meets(i, j))
+      {
+        joined[i] = joined[j] = true;
+        joints.emplace_back(i / 2, j / 2);
+      }
+    }
+  }
+  listed_chains = CountComponents(exclusion_segments.size(), joints);
+  std::vector<std::array<double, 3>> ends;
+  for (std::size_t i = 0; i < endpoints.size(); i++)
+  {
+    if (!joined[i])
+    {
+      ends.push_back(endpoints[i]);
+    }
+  }
+  return ends;
+}
+
+// The maximal runs of removed perimeter segments chained by shared vertices. Vertices are
+// compared exactly, as the perimeter's coordinates come from the mesh vertices
+// (GetVertexCoordinates) and two segments at one vertex carry identical copies.
+std::size_t CountRemovedRuns(const std::vector<mesh::BoundaryEdgeSegment> &segments,
+                             const std::vector<bool> &excluded)
+{
+  std::map<std::array<double, 3>, std::size_t> first_at_vertex;
+  std::vector<std::pair<std::size_t, std::size_t>> shared;
+  std::size_t removed = 0;
+  for (std::size_t i = 0; i < segments.size(); i++)
+  {
+    if (!excluded[i])
+    {
+      continue;
+    }
+    for (const auto &vertex : {segments[i].p0, segments[i].p1})
+    {
+      auto [it, inserted] = first_at_vertex.emplace(vertex, removed);
+      if (!inserted)
+      {
+        shared.emplace_back(it->second, removed);
+      }
+    }
+    removed++;
+  }
+  return CountComponents(removed, shared);
 }
 
 struct ElementBounds
@@ -377,9 +581,55 @@ ExclusionSegments(const std::vector<std::array<double, 6>> &exclude_segments)
 
 }  // namespace
 
+void RecordEdgeExclusionEnds(const std::vector<mesh::BoundaryEdgeSegment> &segments,
+                             const std::vector<bool> &excluded,
+                             const std::vector<std::array<double, 6>> &exclude_segments,
+                             double tolerance, EdgeExclusionRecord &record)
+{
+  MFEM_VERIFY(excluded.size() == segments.size(),
+              "The exclusion flags must parallel the perimeter segments!");
+  const auto exclusion_segments = ExclusionSegments(exclude_segments);
+  const auto ends = ListedChainEnds(exclusion_segments, tolerance, record.listed_chains);
+  record.removed_runs = CountRemovedRuns(segments, excluded);
+  // Decision 667 (1): per listed end, the ONE kept perimeter segment containing it (the
+  // nearest within the tolerance; a tie keeps the first in perimeter order); a kept segment
+  // containing two ends is credited once.
+  const double tolerance_squared = tolerance * tolerance;
+  std::set<std::size_t> straddling;
+  for (const auto &end : ends)
+  {
+    std::size_t nearest = segments.size();
+    double nearest_squared = 0.0;
+    for (std::size_t i = 0; i < segments.size(); i++)
+    {
+      if (excluded[i])
+      {
+        continue;
+      }
+      const double distance_squared = PointSegmentDistanceSquared(end, segments[i]);
+      if (distance_squared <= tolerance_squared &&
+          (nearest == segments.size() || distance_squared < nearest_squared))
+      {
+        nearest = i;
+        nearest_squared = distance_squared;
+      }
+    }
+    if (nearest < segments.size())
+    {
+      straddling.insert(nearest);
+    }
+  }
+  record.straddling_perimeter_length = 0.0;
+  for (const std::size_t i : straddling)
+  {
+    record.straddling_perimeter_length += SegmentLength(segments[i]);
+  }
+}
+
 void ExcludeCoincidentEdgeSegments(
-    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
-    int space_dimension, std::vector<mesh::BoundaryEdgeSegment> &edge_segments)
+    const std::vector<std::array<double, 6>> &exclude_segments,
+    const std::vector<double> &sagittas, double tolerance, int space_dimension,
+    std::vector<mesh::BoundaryEdgeSegment> &edge_segments, EdgeExclusionRecord *record)
 {
   if (exclude_segments.empty())
   {
@@ -387,24 +637,54 @@ void ExcludeCoincidentEdgeSegments(
   }
   MFEM_VERIFY(tolerance > 0.0,
               "Interface dielectric \"EdgeExcludeSegments\" need a positive tolerance!");
-  const EdgeDistanceTree excluded_tree(ExclusionSegments(exclude_segments));
+  MFEM_VERIFY(sagittas.empty() || sagittas.size() == exclude_segments.size(),
+              "Interface dielectric \"EdgeExcludeSegmentSagittas\" must list one sagitta "
+              "per \"EdgeExcludeSegments\" entry!");
+  auto exclusion_segments = ExclusionSegments(exclude_segments);
+  EdgeExclusionRecord local_record =
+      BeginEdgeExclusionRecord(exclusion_segments, sagittas, tolerance);
+  const EdgeDistanceTree excluded_tree(std::move(exclusion_segments));
   const double tolerance_squared = tolerance * tolerance;
-  edge_segments.erase(std::remove_if(edge_segments.begin(), edge_segments.end(),
-                                     [&](const auto &segment)
-                                     {
-                                       return IsCoincidentWithExcludedBoundary(
-                                           segment, excluded_tree, space_dimension,
-                                           tolerance_squared);
-                                     }),
-                      edge_segments.end());
+  std::vector<bool> excluded(edge_segments.size(), false);
+  for (std::size_t i = 0; i < edge_segments.size(); i++)
+  {
+    const auto &segment = edge_segments[i];
+    local_record.perimeter_count++;
+    local_record.perimeter_length += SegmentLength(segment);
+    excluded[i] = IsCoincidentWithExcludedBoundary(segment, excluded_tree, space_dimension,
+                                                   tolerance_squared, sagittas,
+                                                   local_record.max_sagitta);
+    if (excluded[i])
+    {
+      local_record.excluded_perimeter_count++;
+      local_record.excluded_perimeter_length += SegmentLength(segment);
+    }
+  }
+  RecordEdgeExclusionEnds(edge_segments, excluded, exclude_segments, tolerance,
+                          local_record);
+  // The retained perimeter keeps its order (the within-radius tree is a function of it).
+  std::size_t kept = 0;
+  for (std::size_t i = 0; i < edge_segments.size(); i++)
+  {
+    if (!excluded[i])
+    {
+      edge_segments[kept++] = edge_segments[i];
+    }
+  }
+  edge_segments.resize(kept);
   MFEM_VERIFY(!edge_segments.empty(),
               "Interface dielectric \"EdgeExcludeSegments\" removed the entire perimeter!");
+  if (record)
+  {
+    *record = local_record;
+  }
 }
 
 void ExcludeCoincidentMetalEdgeSegmentIndices(
     const MetalEdgeGeometry &geometry,
-    const std::vector<std::array<double, 6>> &exclude_segments, double tolerance,
-    int space_dimension, std::vector<std::size_t> &segment_indices)
+    const std::vector<std::array<double, 6>> &exclude_segments,
+    const std::vector<double> &sagittas, double tolerance, int space_dimension,
+    std::vector<std::size_t> &segment_indices, EdgeExclusionRecord *record)
 {
   if (exclude_segments.empty())
   {
@@ -412,26 +692,57 @@ void ExcludeCoincidentMetalEdgeSegmentIndices(
   }
   MFEM_VERIFY(tolerance > 0.0,
               "Interface dielectric \"EdgeExcludeSegments\" need a positive tolerance!");
-  const EdgeDistanceTree excluded_tree(ExclusionSegments(exclude_segments));
+  MFEM_VERIFY(sagittas.empty() || sagittas.size() == exclude_segments.size(),
+              "Interface dielectric \"EdgeExcludeSegmentSagittas\" must list one sagitta "
+              "per \"EdgeExcludeSegments\" entry!");
+  auto exclusion_segments = ExclusionSegments(exclude_segments);
+  EdgeExclusionRecord local_record =
+      BeginEdgeExclusionRecord(exclusion_segments, sagittas, tolerance);
+  const EdgeDistanceTree excluded_tree(std::move(exclusion_segments));
   const double tolerance_squared = tolerance * tolerance;
-  segment_indices.erase(
-      std::remove_if(segment_indices.begin(), segment_indices.end(),
-                     [&](std::size_t index)
-                     {
-                       MFEM_VERIFY(index < geometry.segments.size(),
-                                   "Invalid automatically extracted metal edge segment "
-                                   "index!");
-                       const auto &source = geometry.segments[index];
-                       const mesh::BoundaryEdgeSegment segment{
-                           geometry.vertices[source.vertices[0]].coordinate,
-                           geometry.vertices[source.vertices[1]].coordinate};
-                       return IsCoincidentWithExcludedBoundary(
-                           segment, excluded_tree, space_dimension, tolerance_squared);
-                     }),
-      segment_indices.end());
+  auto SegmentOf = [&](std::size_t index)
+  {
+    MFEM_VERIFY(index < geometry.segments.size(),
+                "Invalid automatically extracted metal edge segment index!");
+    const auto &source = geometry.segments[index];
+    return mesh::BoundaryEdgeSegment{geometry.vertices[source.vertices[0]].coordinate,
+                                     geometry.vertices[source.vertices[1]].coordinate};
+  };
+  std::vector<mesh::BoundaryEdgeSegment> segments;
+  segments.reserve(segment_indices.size());
+  std::vector<bool> excluded(segment_indices.size(), false);
+  for (std::size_t i = 0; i < segment_indices.size(); i++)
+  {
+    segments.push_back(SegmentOf(segment_indices[i]));
+    const auto &segment = segments.back();
+    local_record.perimeter_count++;
+    local_record.perimeter_length += SegmentLength(segment);
+    excluded[i] = IsCoincidentWithExcludedBoundary(segment, excluded_tree, space_dimension,
+                                                   tolerance_squared, sagittas,
+                                                   local_record.max_sagitta);
+    if (excluded[i])
+    {
+      local_record.excluded_perimeter_count++;
+      local_record.excluded_perimeter_length += SegmentLength(segment);
+    }
+  }
+  RecordEdgeExclusionEnds(segments, excluded, exclude_segments, tolerance, local_record);
+  std::size_t kept = 0;
+  for (std::size_t i = 0; i < segment_indices.size(); i++)
+  {
+    if (!excluded[i])
+    {
+      segment_indices[kept++] = segment_indices[i];
+    }
+  }
+  segment_indices.resize(kept);
   MFEM_VERIFY(!segment_indices.empty(),
               "Interface dielectric \"EdgeExcludeSegments\" removed the entire "
               "automatically extracted perimeter!");
+  if (record)
+  {
+    *record = local_record;
+  }
 }
 
 std::shared_ptr<const EdgeDistanceTree>
@@ -439,7 +750,9 @@ BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_at
                       const std::vector<int> &edge_exclude_attributes,
                       const std::optional<std::array<double, 3>> &process_normal,
                       const std::vector<std::array<double, 6>> &edge_exclude_segments,
-                      double edge_exclude_segment_tolerance)
+                      double edge_exclude_segment_tolerance,
+                      const std::vector<double> &edge_exclude_segment_sagittas,
+                      EdgeExclusionRecord *record)
 {
   auto edge_marker = mesh::BdrAttrToMarker(mesh, edge_attributes, true);
   auto edge_segments = mesh::GetBoundaryEdgeSegments(mesh, edge_marker);
@@ -474,8 +787,9 @@ BuildEdgeDistanceTree(const mfem::ParMesh &mesh, const std::vector<int> &edge_at
     MFEM_VERIFY(!edge_segments.empty(),
                 "Interface dielectric edge exclusion removed the entire perimeter!");
   }
-  ExcludeCoincidentEdgeSegments(edge_exclude_segments, edge_exclude_segment_tolerance,
-                                mesh.SpaceDimension(), edge_segments);
+  ExcludeCoincidentEdgeSegments(edge_exclude_segments, edge_exclude_segment_sagittas,
+                                edge_exclude_segment_tolerance, mesh.SpaceDimension(),
+                                edge_segments, record);
   if (process_normal && mesh.SpaceDimension() == 3)
   {
     const double normal_squared = std::inner_product(
@@ -674,8 +988,9 @@ std::vector<EdgeRefinementContext>
 BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
                             const config::BoundaryData &boundaries)
 {
-  using TreeKey = std::tuple<bool, std::vector<int>, std::vector<int>,
-                             std::vector<std::size_t>, std::vector<std::array<double, 6>>>;
+  using TreeKey =
+      std::tuple<bool, std::vector<int>, std::vector<int>, std::vector<std::size_t>,
+                 std::vector<std::array<double, 6>>, std::vector<double>>;
   using ContextKey = std::tuple<TreeKey, double, int, double, double>;
   std::map<TreeKey, std::shared_ptr<const EdgeDistanceTree>> trees;
   std::map<ContextKey, EdgeRefinementContext> contexts;
@@ -705,12 +1020,14 @@ BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
                                      segment_indices);
       ExcludeCoincidentMetalEdgeSegmentIndices(metal_edges,
                                                dielectric.edge_exclude_segments,
+                                               dielectric.edge_exclude_segment_sagittas,
                                                dielectric.edge_exclude_segment_tolerance,
                                                mesh.SpaceDimension(), segment_indices);
     }
-    const TreeKey tree_key{dielectric.automatic_edges, dielectric.edge_attributes,
-                           dielectric.edge_exclude_attributes, segment_indices,
-                           dielectric.edge_exclude_segments};
+    const TreeKey tree_key{
+        dielectric.automatic_edges,         dielectric.edge_attributes,
+        dielectric.edge_exclude_attributes, segment_indices,
+        dielectric.edge_exclude_segments,   dielectric.edge_exclude_segment_sagittas};
     auto tree = trees.find(tree_key);
     if (tree == trees.end())
     {
@@ -720,7 +1037,8 @@ BuildEdgeRefinementContexts(const mfem::ParMesh &mesh,
               : BuildEdgeDistanceTree(mesh, dielectric.edge_attributes,
                                       dielectric.edge_exclude_attributes, std::nullopt,
                                       dielectric.edge_exclude_segments,
-                                      dielectric.edge_exclude_segment_tolerance);
+                                      dielectric.edge_exclude_segment_tolerance,
+                                      dielectric.edge_exclude_segment_sagittas);
       tree = trees.try_emplace(tree_key, std::move(distance_tree)).first;
     }
     const ContextKey context_key{

@@ -575,12 +575,16 @@ SurfacePostOperator::SurfacePostOperator(
               "magnetostatic problems!");
   using EdgeDistanceTreeKey =
       std::tuple<std::vector<int>, std::vector<int>, std::optional<std::array<double, 3>>,
-                 std::vector<std::array<double, 6>>>;
-  std::map<EdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
-      edge_distance_trees;
+                 std::vector<std::array<double, 6>>, std::vector<double>>;
+  struct EdgeDistanceTreeEntry
+  {
+    std::shared_ptr<const EdgeDistanceTree> tree;
+    std::optional<EdgeExclusionRecord> edge_exclusion;
+  };
+  std::map<EdgeDistanceTreeKey, EdgeDistanceTreeEntry> edge_distance_trees;
   using AutomaticEdgeDistanceTreeKey =
       std::tuple<std::vector<std::size_t>, std::optional<std::array<double, 3>>,
-                 std::vector<std::array<double, 6>>>;
+                 std::vector<std::array<double, 6>>, std::vector<double>>;
   std::map<AutomaticEdgeDistanceTreeKey, std::shared_ptr<const EdgeDistanceTree>>
       automatic_edge_distance_trees;
   const SurfacePostGeometry *cached_automatic_geometry =
@@ -683,11 +687,18 @@ SurfacePostOperator::SurfacePostOperator(
           GetInterfaceMetalEdgeSegmentIndices(metal_edges, idx, data.type);
       ExcludeMetalEdgeSegmentIndices(mesh, metal_edges, data.edge_exclude_attributes,
                                      segment_indices);
-      ExcludeCoincidentMetalEdgeSegmentIndices(metal_edges, data.edge_exclude_segments,
-                                               data.edge_exclude_segment_tolerance,
-                                               mesh.SpaceDimension(), segment_indices);
+      EdgeExclusionRecord exclusion_record;
+      ExcludeCoincidentMetalEdgeSegmentIndices(
+          metal_edges, data.edge_exclude_segments, data.edge_exclude_segment_sagittas,
+          data.edge_exclude_segment_tolerance, mesh.SpaceDimension(), segment_indices,
+          &exclusion_record);
+      if (!data.edge_exclude_segments.empty())
+      {
+        it->second.edge_exclusion = exclusion_record;
+      }
       const AutomaticEdgeDistanceTreeKey tree_key{segment_indices, data.edge_frame_normal,
-                                                  data.edge_exclude_segments};
+                                                  data.edge_exclude_segments,
+                                                  data.edge_exclude_segment_sagittas};
       auto tree_it = automatic_edge_distance_trees.find(tree_key);
       if (tree_it == automatic_edge_distance_trees.end())
       {
@@ -713,21 +724,26 @@ SurfacePostOperator::SurfacePostOperator(
     else
     {
       const EdgeDistanceTreeKey tree_key{data.edge_attributes, data.edge_exclude_attributes,
-                                         data.edge_frame_normal,
-                                         data.edge_exclude_segments};
+                                         data.edge_frame_normal, data.edge_exclude_segments,
+                                         data.edge_exclude_segment_sagittas};
       auto tree_it = edge_distance_trees.find(tree_key);
       if (tree_it == edge_distance_trees.end())
       {
-        tree_it =
-            edge_distance_trees
-                .try_emplace(tree_key,
-                             BuildEdgeDistanceTree(
-                                 mesh, data.edge_attributes, data.edge_exclude_attributes,
-                                 data.edge_frame_normal, data.edge_exclude_segments,
-                                 data.edge_exclude_segment_tolerance))
-                .first;
+        EdgeDistanceTreeEntry entry;
+        EdgeExclusionRecord exclusion_record;
+        entry.tree =
+            BuildEdgeDistanceTree(mesh, data.edge_attributes, data.edge_exclude_attributes,
+                                  data.edge_frame_normal, data.edge_exclude_segments,
+                                  data.edge_exclude_segment_tolerance,
+                                  data.edge_exclude_segment_sagittas, &exclusion_record);
+        if (!data.edge_exclude_segments.empty())
+        {
+          entry.edge_exclusion = exclusion_record;
+        }
+        tree_it = edge_distance_trees.try_emplace(tree_key, std::move(entry)).first;
       }
-      it->second.edge_distance_tree = tree_it->second;
+      it->second.edge_distance_tree = tree_it->second.tree;
+      it->second.edge_exclusion = tree_it->second.edge_exclusion;
     }
   }
   for (const auto &[key, coverage] : ownership_coverage)

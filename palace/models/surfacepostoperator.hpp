@@ -7,12 +7,14 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_set>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
+#include "utils/edgedistance.hpp"
 
 namespace palace
 {
@@ -20,7 +22,6 @@ namespace palace
 class GridFunction;
 class IoData;
 class MaterialOperator;
-class EdgeDistanceTree;
 class InterfaceOwnershipPartition;
 class InterfaceRegion;
 class OwnershipQuadrature;
@@ -112,6 +113,10 @@ private:
     // The optional quadrature-level spatial filter (decision 352 follow-up (2)).
     std::shared_ptr<const InterfaceRegion> region;
     std::shared_ptr<const EdgeDistanceTree> edge_distance_tree;
+    // The EdgeExcludeSegments exclusion's coverage record of this entry's perimeter
+    // (decision 657 (b): the listed length and the perimeter length the coincidence test
+    // removed); nullopt for an entry without EdgeExcludeSegments.
+    std::optional<EdgeExclusionRecord> edge_exclusion;
 
     InterfaceDielectricData(const config::InterfaceDielectricData &data,
                             const mfem::Array<int> &bdr_attr_marker);

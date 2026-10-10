@@ -3,7 +3,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <memory>
+#include <numeric>
 #include <sstream>
 #include <utility>
 #include <vector>
@@ -833,6 +835,332 @@ TEST_CASE("Explicit edge segment exclusion (EdgeExcludeSegments)", "[geodata][Se
                                                   {0.0, 1.0, 0.0, 1.0, 1.0, 0.0}};
   CHECK_THROWS(BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, all, 1.0e-3));
   CHECK_THROWS(BuildEdgeDistanceTree(mesh, {bottom}, {}, std::nullopt, exclude, 0.0));
+}
+
+TEST_CASE("Sagitta-aware edge segment exclusion (EdgeExcludeSegmentSagittas)",
+          "[geodata][Serial]")
+{
+  // Decision 657 (a) (the 32b0 device-validity diagnosis, decision 656 (3)): a coupon mesh
+  // builds a Chain: false context ARC as the true arc while EdgeExcludeSegments list the
+  // device's CHORDS, so the plain rule B5 (ends + midpoint within 1e-3 R of the nearest
+  // listed segment) leaves most of the arc's perimeter in the within-R tree. With the
+  // chords' sagitta listed per segment (EdgeExcludeSegmentSagittas) the tolerance against
+  // a chord is tolerance + sagitta and the whole arc is removed; a listed segment of
+  // sagitta 0 keeps the plain rule bitwise (the straight-foreign models unchanged).
+  // Geometry: a quarter circle of radius 1 followed by a straight piece along its tangent.
+  constexpr double pi = 3.14159265358979323846;
+  const double half_angle = pi / 8.0;  // two 45-degree chords
+  const double sagitta = 1.0 - std::cos(half_angle);
+  const double tolerance = 1.0e-3;
+  auto ArcPoint = [](double angle)
+  { return std::array<double, 3>{std::cos(angle), std::sin(angle), 0.0}; };
+  // The perimeter: 40 segments on the true arc (0 -> 90 degrees) + 10 on the straight
+  // piece x = 1, y in [-1, 0] (the tangent continuation at the arc's start) + 4 of another
+  // conductor's edge far away (never excluded).
+  std::vector<mesh::BoundaryEdgeSegment> perimeter;
+  constexpr int arc_segments = 40;
+  for (int i = 0; i < arc_segments; i++)
+  {
+    perimeter.push_back({ArcPoint(0.5 * pi * i / arc_segments),
+                         ArcPoint(0.5 * pi * (i + 1) / arc_segments)});
+  }
+  for (int i = 0; i < 10; i++)
+  {
+    perimeter.push_back({{1.0, -0.1 * i, 0.0}, {1.0, -0.1 * (i + 1), 0.0}});
+  }
+  for (int i = 0; i < 4; i++)
+  {
+    perimeter.push_back({{3.0, 0.25 * i, 0.0}, {3.0, 0.25 * (i + 1), 0.0}});
+  }
+  const std::size_t total = perimeter.size();
+  auto ArcLength = [&]()
+  {
+    double length = 0.0;
+    for (int i = 0; i < arc_segments; i++)
+    {
+      length += 2.0 * std::sin(0.25 * pi / arc_segments);
+    }
+    return length;
+  };
+  // The exclusion list: the two chords of the arc (sagitta s each) + the straight piece.
+  const auto a = ArcPoint(0.0), m = ArcPoint(0.25 * pi), b = ArcPoint(0.5 * pi);
+  const std::vector<std::array<double, 6>> exclude = {{a[0], a[1], 0.0, m[0], m[1], 0.0},
+                                                      {m[0], m[1], 0.0, b[0], b[1], 0.0},
+                                                      {1.0, 0.0, 0.0, 1.0, -1.0, 0.0}};
+  const double chords_length = 2.0 * 2.0 * std::sin(half_angle) + 1.0;
+
+  SECTION("the plain rule keeps the arc (the 32b0 defect reproduced)")
+  {
+    auto segments = perimeter;
+    EdgeExclusionRecord record;
+    ExcludeCoincidentEdgeSegments(exclude, {}, tolerance, 3, segments, &record);
+    // The straight piece is removed exactly; no arc segment has all three points within
+    // 1e-3 of a chord (the first off-vertex node already deviates ~0.015).
+    CHECK(segments.size() == total - 10);
+    CHECK(record.exclude_segments_count == 3);
+    CHECK_THAT(record.exclude_segments_length, WithinRel(chords_length, 1.0e-12));
+    CHECK(record.perimeter_count == total);
+    CHECK(record.excluded_perimeter_count == 10);
+    CHECK_THAT(record.excluded_perimeter_length, WithinRel(1.0, 1.0e-12));
+    CHECK(record.max_sagitta == 0.0);
+    CHECK(record.tolerance == tolerance);
+    CHECK(record.excluded_perimeter_length / record.exclude_segments_length < 0.5);
+    // The three listed pieces form one chain (1, -1) -> (1, 0) -> arc -> (0, 1); (1, 0) is
+    // a joint, not an end, so the first arc segment (adjacent to the removed piece) is NOT
+    // credited; the end (0, 1) is contained by the kept last arc segment (the same length),
+    // the end (1, -1) by nothing kept. The straight piece is one run.
+    CHECK_THAT(record.straddling_perimeter_length,
+               WithinRel(2.0 * std::sin(0.25 * pi / arc_segments), 1.0e-12));
+    CHECK(record.removed_runs == 1);
+    CHECK(record.listed_chains == 1);
+    // Explicit zero sagittas are the plain rule.
+    auto zero = perimeter;
+    ExcludeCoincidentEdgeSegments(exclude, {0.0, 0.0, 0.0}, tolerance, 3, zero);
+    REQUIRE(zero.size() == segments.size());
+    for (std::size_t i = 0; i < zero.size(); i++)
+    {
+      CHECK(zero[i].p0 == segments[i].p0);
+      CHECK(zero[i].p1 == segments[i].p1);
+    }
+  }
+
+  SECTION("the sagitta-aware rule removes the whole arc and nothing else")
+  {
+    auto segments = perimeter;
+    EdgeExclusionRecord record;
+    ExcludeCoincidentEdgeSegments(exclude, {sagitta, sagitta, 0.0}, tolerance, 3, segments,
+                                  &record);
+    // Every arc segment (its ends on the circle within the sagitta of its chord, its
+    // midpoint inside) and the straight piece are removed; the far edge stays. The first
+    // arc segment is nearest to the STRAIGHT piece at its midpoint and far end (beyond
+    // 1e-3 of it) and is found on the chord by the per-segment test.
+    CHECK(segments.size() == 4);
+    for (const auto &segment : segments)
+    {
+      CHECK(segment.p0[0] == 3.0);
+      CHECK(segment.p1[0] == 3.0);
+    }
+    CHECK(record.excluded_perimeter_count == arc_segments + 10);
+    CHECK_THAT(record.excluded_perimeter_length, WithinRel(ArcLength() + 1.0, 1.0e-12));
+    CHECK_THAT(record.max_sagitta, WithinRel(sagitta, 1.0e-12));
+    // Coverage = (arc length + 1) / (chords + 1) >= 1: the arc is longer than its chords.
+    const double coverage =
+        record.excluded_perimeter_length / record.exclude_segments_length;
+    CHECK(coverage >= 1.0);
+    CHECK(coverage < 1.03);
+    // Nothing kept contains the chain's ends ((1, -1) and (0, 1)); one run of arc + piece.
+    CHECK(record.straddling_perimeter_length == 0.0);
+    CHECK(record.removed_runs == 1);
+    CHECK(record.listed_chains == 1);
+  }
+
+  SECTION("the end allowance: a listed end inside a perimeter segment keeps it whole")
+  {
+    // Decision 665: a straight piece listed from y = 0.02 to y = 0.98 along a perimeter of
+    // 20 segments of length 0.05 on x = 1 (y in [0, 1]). The two end segments have one
+    // point 0.02 beyond the listed end (> 1e-3) and are kept whole; the 18 inside are
+    // removed: the raw coverage reads 0.9 / 0.96 = 0.9375 (< 0.99 with a CORRECT
+    // exclusion, the census's absolute deficit per listed end), the kept segments sharing
+    // a vertex with a removed one are exactly the two straddlers (0.1), and the end
+    // allowance coverage reads 1.0 / 0.96 >= 0.99.
+    std::vector<mesh::BoundaryEdgeSegment> segments;
+    for (int i = 0; i < 20; i++)
+    {
+      segments.push_back({{1.0, 0.05 * i, 0.0}, {1.0, 0.05 * (i + 1), 0.0}});
+    }
+    segments.push_back({{3.0, 0.0, 0.0}, {3.0, 1.0, 0.0}});
+    const std::vector<std::array<double, 6>> piece = {{1.0, 0.02, 0.0, 1.0, 0.98, 0.0}};
+    EdgeExclusionRecord record;
+    ExcludeCoincidentEdgeSegments(piece, {0.0}, tolerance, 3, segments, &record);
+    CHECK(segments.size() == 3);
+    CHECK(record.excluded_perimeter_count == 18);
+    CHECK_THAT(record.excluded_perimeter_length, WithinRel(0.9, 1.0e-12));
+    CHECK_THAT(record.straddling_perimeter_length, WithinRel(0.1, 1.0e-12));
+    CHECK(record.removed_runs == 1);
+    CHECK(record.listed_chains == 1);
+    CHECK(record.excluded_perimeter_length / record.exclude_segments_length < 0.99);
+    CHECK((record.excluded_perimeter_length + record.straddling_perimeter_length) /
+              record.exclude_segments_length >=
+          0.99);
+    // The same piece listed through the automatic-edge path records the same lengths.
+    MetalEdgeGeometry geometry;
+    for (int i = 0; i <= 20; i++)
+    {
+      MetalEdgeVertex vertex;
+      vertex.coordinate = {1.0, 0.05 * i, 0.0};
+      geometry.vertices.push_back(vertex);
+    }
+    std::vector<std::size_t> indices;
+    for (int i = 0; i < 20; i++)
+    {
+      MetalEdgeSegment segment;
+      segment.vertices = {static_cast<std::size_t>(i), static_cast<std::size_t>(i + 1)};
+      geometry.segments.push_back(segment);
+      indices.push_back(i);
+    }
+    EdgeExclusionRecord automatic;
+    ExcludeCoincidentMetalEdgeSegmentIndices(geometry, piece, {0.0}, tolerance, 3, indices,
+                                             &automatic);
+    CHECK(indices == std::vector<std::size_t>{0, 19});
+    CHECK_THAT(automatic.excluded_perimeter_length, WithinRel(0.9, 1.0e-12));
+    CHECK_THAT(automatic.straddling_perimeter_length, WithinRel(0.1, 1.0e-12));
+    CHECK(automatic.removed_runs == 1);
+    CHECK(automatic.listed_chains == 1);
+  }
+
+  SECTION("the end allowance credits one kept segment per listed end only")
+  {
+    // Decision 667 (1): a kept segment is credited only when it CONTAINS a listed chain's
+    // end point (within the tolerance), at most one per listed end, so a fragmented
+    // exclusion (holes of kept perimeter inside the listed piece) gains nothing from its
+    // runs' neighbours. The confirmation's 7 patterns on a perimeter of 20 segments of 0.05
+    // on x = 1 (y in [0, 1]) with the piece listed over all of them: the same masks and
+    // values as the census-v3 tool's test (test_exclusion_coverage_census_v3.py).
+    std::vector<mesh::BoundaryEdgeSegment> line;
+    for (int i = 0; i < 20; i++)
+    {
+      line.push_back({{1.0, 0.05 * i, 0.0}, {1.0, 0.05 * (i + 1), 0.0}});
+    }
+    const std::vector<std::array<double, 6>> whole = {{1.0, 0.0, 0.0, 1.0, 1.0, 0.0}};
+    const std::vector<std::array<double, 6>> halves = {{1.0, 0.0, 0.0, 1.0, 0.5, 0.0},
+                                                       {1.0, 0.5, 0.0, 1.0, 1.0, 0.0}};
+    auto Read = [&](const std::vector<int> &kept_indices,
+                    const std::vector<std::array<double, 6>> &listed)
+    {
+      std::vector<bool> excluded(line.size(), true);
+      for (const int i : kept_indices)
+      {
+        excluded[i] = false;
+      }
+      EdgeExclusionRecord record;
+      for (const auto &s : listed)
+      {
+        record.exclude_segments_length += std::abs(s[4] - s[1]);
+      }
+      for (std::size_t i = 0; i < line.size(); i++)
+      {
+        record.excluded_perimeter_length += excluded[i] ? 0.05 : 0.0;
+      }
+      RecordEdgeExclusionEnds(line, excluded, listed, tolerance, record);
+      return record;
+    };
+    auto Allowance = [](const EdgeExclusionRecord &r)
+    {
+      return (r.excluded_perimeter_length + r.straddling_perimeter_length) /
+             r.exclude_segments_length;
+    };
+    auto Passes = [&](const EdgeExclusionRecord &r)
+    {
+      const double raw = r.excluded_perimeter_length / r.exclude_segments_length;
+      return raw <= 1.01 && std::max(raw, Allowance(r)) >= 0.99;
+    };
+    // correct: all 20 removed.
+    auto correct = Read({}, whole);
+    CHECK(correct.straddling_perimeter_length == 0.0);
+    CHECK(correct.removed_runs == 1);
+    CHECK(correct.listed_chains == 1);
+    CHECK_THAT(Allowance(correct), WithinRel(1.0, 1.0e-12));
+    CHECK(Passes(correct));
+    // alternating: 0, 2, ..., 18 removed; the kept segment 19 contains the end y = 1.
+    auto alternating = Read({1, 3, 5, 7, 9, 11, 13, 15, 17, 19}, whole);
+    CHECK_THAT(alternating.straddling_perimeter_length, WithinRel(0.05, 1.0e-12));
+    CHECK(alternating.removed_runs == 10);
+    CHECK(alternating.listed_chains == 1);
+    CHECK_THAT(Allowance(alternating), WithinRel(0.55, 1.0e-12));
+    CHECK_FALSE(Passes(alternating));
+    // 1-segment holes at 3, 7, 11, 15.
+    auto holes1 = Read({3, 7, 11, 15}, whole);
+    CHECK(holes1.straddling_perimeter_length == 0.0);
+    CHECK(holes1.removed_runs == 5);
+    CHECK_THAT(Allowance(holes1), WithinRel(0.8, 1.0e-12));
+    CHECK_FALSE(Passes(holes1));
+    // three 2-segment holes.
+    auto holes2 = Read({3, 4, 9, 10, 15, 16}, whole);
+    CHECK(holes2.straddling_perimeter_length == 0.0);
+    CHECK(holes2.removed_runs == 4);
+    CHECK_THAT(Allowance(holes2), WithinRel(0.7, 1.0e-12));
+    CHECK_FALSE(Passes(holes2));
+    // two 3-segment holes.
+    auto holes3 = Read({4, 5, 6, 13, 14, 15}, whole);
+    CHECK(holes3.straddling_perimeter_length == 0.0);
+    CHECK(holes3.removed_runs == 3);
+    CHECK_THAT(Allowance(holes3), WithinRel(0.7, 1.0e-12));
+    CHECK_FALSE(Passes(holes3));
+    // one 4-segment hole.
+    auto hole4 = Read({8, 9, 10, 11}, whole);
+    CHECK(hole4.straddling_perimeter_length == 0.0);
+    CHECK(hole4.removed_runs == 2);
+    CHECK_THAT(Allowance(hole4), WithinRel(0.8, 1.0e-12));
+    CHECK_FALSE(Passes(hole4));
+    // 32b0-like: 2 segments at each chord vertex of two listed halves (one chain).
+    std::vector<int> kept_32b0;
+    for (int i = 2; i < 18; i++)
+    {
+      if (i != 9 && i != 10)
+      {
+        kept_32b0.push_back(i);
+      }
+    }
+    auto like_32b0 = Read(kept_32b0, halves);
+    CHECK(like_32b0.straddling_perimeter_length == 0.0);
+    CHECK(like_32b0.removed_runs == 3);
+    CHECK(like_32b0.listed_chains == 1);
+    CHECK_THAT(Allowance(like_32b0), WithinRel(0.3, 1.0e-12));
+    CHECK_FALSE(Passes(like_32b0));
+    // One kept segment per listed end: the piece (1, 0.5) -> (1, 1) with segments 9 AND 10
+    // kept (both contain the end y = 0.5) credits one segment.
+    const std::vector<std::array<double, 6>> upper = {{1.0, 0.5, 0.0, 1.0, 1.0, 0.0}};
+    std::vector<int> kept_two_at_end = {9, 10};
+    for (int i = 0; i < 9; i++)
+    {
+      kept_two_at_end.push_back(i);
+    }
+    auto two_at_end = Read(kept_two_at_end, upper);
+    CHECK_THAT(two_at_end.straddling_perimeter_length, WithinRel(0.05, 1.0e-12));
+    CHECK(two_at_end.removed_runs == 1);
+    // A kept segment credited once: the piece (1, 0.51) -> (1, 0.54) lies inside segment
+    // 10, nothing is removed, both ends are in that one segment.
+    const std::vector<std::array<double, 6>> inside = {{1.0, 0.51, 0.0, 1.0, 0.54, 0.0}};
+    std::vector<int> all_kept(20);
+    std::iota(all_kept.begin(), all_kept.end(), 0);
+    auto once = Read(all_kept, inside);
+    CHECK_THAT(once.straddling_perimeter_length, WithinRel(0.05, 1.0e-12));
+    CHECK(once.removed_runs == 0);
+    CHECK(once.listed_chains == 1);
+    // The chain count joins listed ends within the tolerance: the two halves offset by
+    // 5e-4 at their joint are still one chain with 2 ends; offset by 2e-3, two chains.
+    const std::vector<std::array<double, 6>> nearly = {{1.0, 0.0, 0.0, 1.0, 0.5, 0.0},
+                                                       {1.0, 0.5005, 0.0, 1.0, 1.0, 0.0}};
+    CHECK(Read({}, nearly).listed_chains == 1);
+    const std::vector<std::array<double, 6>> apart = {{1.0, 0.0, 0.0, 1.0, 0.5, 0.0},
+                                                      {1.0, 0.502, 0.0, 1.0, 1.0, 0.0}};
+    CHECK(Read({}, apart).listed_chains == 2);
+  }
+
+  SECTION("a sagitta widens the band of ITS segment only")
+  {
+    // A straight perimeter 2e-3 off the straight listed piece is kept whatever the arc
+    // chords' sagitta: the straight segment's own band stays 1e-3.
+    std::vector<mesh::BoundaryEdgeSegment> segments = {
+        {{1.002, -0.2, 0.0}, {1.002, -0.6, 0.0}},
+        {{1.002, -0.6, 0.0}, {1.002, -1.0, 0.0}},
+        {{3.0, 0.0, 0.0}, {3.0, 1.0, 0.0}}};
+    auto kept = segments;
+    ExcludeCoincidentEdgeSegments(exclude, {sagitta, sagitta, 0.0}, tolerance, 3, kept);
+    CHECK(kept.size() == 3);
+    // Listed with a sagitta of its own, the straight piece's band widens and the offset
+    // perimeter is removed.
+    auto widened = segments;
+    ExcludeCoincidentEdgeSegments(exclude, {sagitta, sagitta, 0.005}, tolerance, 3,
+                                  widened);
+    CHECK(widened.size() == 1);
+  }
+
+  SECTION("a sagitta list of the wrong length fails closed")
+  {
+    auto segments = perimeter;
+    CHECK_THROWS(ExcludeCoincidentEdgeSegments(exclude, {sagitta}, tolerance, 3, segments));
+  }
 }
 
 TEST_CASE("Boundary edge exclusion", "[geodata][Serial]")

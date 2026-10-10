@@ -1889,6 +1889,14 @@
           "description": "Coincidence tolerance of `EdgeExcludeSegments` in mesh length units (default: 1e-3 of the smallest `EdgeDistances` radius).",
           "exclusiveMinimum": 0
         },
+        "EdgeExcludeSegmentSagittas": {
+          "type": "array",
+          "description": "Chord sagittas of the `EdgeExcludeSegments` entries, in mesh length units, one per listed segment (default: 0 for every entry). A listed segment that is a chord of an arc the mesh resolves as the true arc carries its chord's sagitta; the coincidence test against that segment then uses `EdgeExcludeSegmentTolerance` plus the sagitta.",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
         "EdgeDistances": {
           "type": "array",
           "description": "Matching radii, in mesh length units, used for edge-distance diagnostics. For every radius R, Palace integrates the interface energy outside R and in the annulus R <= d < 2R. This is opt-in and requires exactly one of `EdgeAttributes` or `AutomaticEdges`.",
@@ -2096,6 +2104,9 @@
           "EdgeDistances"
         ],
         "EdgeExcludeSegmentTolerance": [
+          "EdgeExcludeSegments"
+        ],
+        "EdgeExcludeSegmentSagittas": [
           "EdgeExcludeSegments"
         ],
         "EdgeDistanceSmoothing": [
