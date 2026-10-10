@@ -392,8 +392,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
 
   // Fail closed, new: a single Reference with a plan of two conductors (one reference for
-  // two canonical conductors; before this fix the count passed and the model would have
-  // been read as a one-conductor coupon).
+  // two canonical conductors; before this fix the count check passed and the model was
+  // refused later, by a different message: the basis-size mismatch of the fixture matrices'
+  // one conductor state against conductor_state_count 0 of the Reference branch, or
+  // "ConductorReferences must contain at least two points" -- the count message now names
+  // the defect at the library read).
   {
     auto single_reference_library = library;
     single_reference_library["Name"] =
