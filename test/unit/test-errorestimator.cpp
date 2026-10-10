@@ -220,7 +220,7 @@ TEST_CASE("Flux error estimators use the background material in PML regions",
   pml.attributes = {2};
   pml.reference_frequency = 2.0;
   config::PeriodicBoundaryData periodic;
-  MaterialOperator mat_op_pml(materials, periodic, ProblemType::DRIVEN, mesh, &pml);
+  MaterialOperator mat_op_pml(materials, periodic, ProblemType::DRIVEN, mesh, {pml});
   MaterialOperator mat_op_ref(materials, periodic, ProblemType::DRIVEN, mesh);
   REQUIRE(mat_op_pml.HasPML());
   REQUIRE(!mat_op_ref.HasPML());

@@ -2859,9 +2859,13 @@ std::vector<std::complex<double>> RomOperator::GetPMLPoles(int num_poles) const
   // frequency shift) and pₖ = iτₖ, k ≥ 1, with τₖ geometrically spaced in
   // [ω_min / 2, τ_max].
   double tau_max = 0.0;
-  if (space_op.GetMaterialOp().HasFrequencyDependentPML())
+  for (const auto &layer : space_op.GetMaterialOp().GetPMLLayers())
   {
-    const auto &p = space_op.GetMaterialOp().GetPML().GetStretch();
+    if (!layer.IsFrequencyDependent())
+    {
+      continue;
+    }
+    const auto &p = layer.GetStretch();
     for (int a = 0; a < 3; a++)
     {
       const double sigma_max = std::max(p.sigma_max[2 * a], p.sigma_max[2 * a + 1]);

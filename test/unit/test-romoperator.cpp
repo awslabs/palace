@@ -1309,10 +1309,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-FrequencyDependentPML
       {"Materials",
        json::array({json::object({{"Attributes", {1}}, {"Permittivity", 2.0}}),
                     json::object({{"Attributes", {2}}, {"Permittivity", 1.0}})})},
-      {"PML", json::object({{"Attributes", {2}},
-                            {"Direction", {"+Z"}},
-                            {"Thickness", 0.5},
-                            {"FrequencyDependent", true}})}};
+      {"PML", json::array({json::object({{"Attributes", {2}},
+                                         {"Direction", {"+Z"}},
+                                         {"Thickness", 0.5},
+                                         {"FrequencyDependent", true}})})}};
   setup_json["Boundaries"] = {
       {"PEC", json::object({{"Attributes", {2, 3, 4, 5, 6}}})},
       {"LumpedPort", json::array({json::object({{"Index", 1},

@@ -386,8 +386,8 @@ public:
   std::map<int, CurrentDipoleData> current_dipole = {};
   DomainPostData postpro = {};
 
-  // Optional PML regions.
-  std::optional<PMLData> pml;
+  // Optional PML regions, in blocks with their own stretch (with disjoint attributes).
+  std::vector<PMLData> pml = {};
 
   DomainData() = default;
   DomainData(const json &domains);

@@ -59,8 +59,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
         solver.linear.mg_max_levels, mesh, h1_fecs, &dbc_attr, &h1_dbc_tdof_lists)),
     rt_fespaces(fem::ConstructFiniteElementSpaceHierarchy<mfem::RT_FECollection>(
         solver.linear.estimator_mg ? solver.linear.mg_max_levels : 1, mesh, rt_fecs)),
-    mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back(),
-           domains.pml ? &*domains.pml : nullptr),
+    mat_op(domains.materials, boundaries.periodic, problem_type, *mesh.back(), domains.pml),
     current_dipole_op(domains.current_dipole, units, *mesh.back()),
     farfield_op(boundaries.farfield, problem_type, mat_op, *mesh.back()),
     surf_sigma_op(boundaries.conductivity, problem_type, units, mat_op, *mesh.back()),
@@ -83,7 +82,7 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   MFEM_VERIFY(
       (problem_type != ProblemType::DRIVEN && problem_type != ProblemType::EIGENMODE) ||
           (mesh.back()->Dimension() == 3 && mesh.back()->SpaceDimension() == 3) ||
-          !domains.pml,
+          domains.pml.empty(),
       "PML regions are only supported for 3D simulations!");
 
   // In 2D, curl maps H(curl) → L2 (scalar), so we need an L2 FE space for B = curl E.
@@ -118,8 +117,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
 
     // Boundary conditions other than PEC on the boundaries of the PML regions are not
     // transformed by the PML stretch.
-    const std::set<int> pml_attr(mat_op.GetPML().GetAttributes().begin(),
-                                 mat_op.GetPML().GetAttributes().end());
+    const auto pml_attributes = mat_op.GetPMLAttributes();
+    const std::set<int> pml_attr(pml_attributes.begin(), pml_attributes.end());
     const mfem::ParMesh &pmesh = GetMesh();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
     Mpi::GlobalMax(1, &bdr_attr_max, GetComm());
@@ -175,26 +174,29 @@ void SpaceOperator::PrintPML(const Units &units) const
 {
   constexpr std::array<const char *, 6> face_name = {"-x", "+x", "-y", "+y", "-z", "+z"};
   const double length_scale = units.GetMeshLengthRelativeScale();
-  const auto &p = mat_op.GetPML().GetStretch();
-  Mpi::Print("\nConfiguring PML regions at attributes:\n");
-  utils::PrettyPrint(mat_op.GetPML().GetAttributes());
-  if (p.frequency_dependent)
+  for (const auto &layer : mat_op.GetPMLLayers())
   {
-    Mpi::Print(" Frequency-dependent stretch\n");
-  }
-  else
-  {
-    Mpi::Print(" Static stretch at f₀ = {:.3e} GHz\n",
-               units.Dimensionalize<Units::ValueType::FREQUENCY>(p.reference_frequency /
-                                                                 (2.0 * std::numbers::pi)));
-  }
-  for (int f = 0; f < 6; f++)
-  {
-    if (p.geometry.thickness[f] > 0.0)
+    const auto &p = layer.GetStretch();
+    Mpi::Print("\nConfiguring PML regions at attributes:\n");
+    utils::PrettyPrint(layer.GetAttributes());
+    if (p.frequency_dependent)
     {
-      Mpi::Print("  {}: thickness = {:.3e}, σ_max = {:.3e} S/m\n", face_name[f],
-                 p.geometry.thickness[f] * length_scale,
-                 units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(p.sigma_max[f]));
+      Mpi::Print(" Frequency-dependent stretch\n");
+    }
+    else
+    {
+      Mpi::Print(" Static stretch at f₀ = {:.3e} GHz\n",
+                 units.Dimensionalize<Units::ValueType::FREQUENCY>(
+                     p.reference_frequency / (2.0 * std::numbers::pi)));
+    }
+    for (int f = 0; f < 6; f++)
+    {
+      if (p.geometry.thickness[f] > 0.0)
+      {
+        Mpi::Print("  {}: thickness = {:.3e}, σ_max = {:.3e} S/m\n", face_name[f],
+                   p.geometry.thickness[f] * length_scale,
+                   units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(p.sigma_max[f]));
+      }
     }
   }
 }
@@ -631,11 +633,11 @@ enum class PMLFilter : char
 };
 
 // Append the PML integrator(s) for the complex terms c_muinv μ̃⁻¹ and/or c_eps ε̃ of the
-// given kind (the prefactor not used by the kind is ignored), if the stretch is selected by
-// filter, with a frequency-dependent stretch evaluated at omega. The real
-// part is appended to re and the imaginary part to im. For a real-valued operator (null
-// im), re_part selects the part assembled into re. Nothing is appended if the terms are
-// identically zero.
+// given kind (the prefactor not used by the kind is ignored), for each PML block whose
+// stretch is selected by filter, with a frequency-dependent stretch evaluated at omega. The
+// real part is appended to re and the imaginary part to im. For a real-valued operator
+// (null im), re_part selects the part assembled into re. Nothing is appended if the terms
+// are identically zero.
 void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
                const MaterialOperator &mat_op, PMLIntegKind kind,
                std::complex<double> c_muinv, std::complex<double> c_eps, PMLFilter filter,
@@ -645,8 +647,7 @@ void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
   const bool floquet =
       (kind == PMLIntegKind::FLOQUET_MASS || kind == PMLIntegKind::FLOQUET_CROSS ||
        kind == PMLIntegKind::FLOQUET_DIFFUSION);
-  if (!mat_op.HasPML() || (floquet && !mat_op.HasWaveVector()) ||
-      (filter == PMLFilter::FREQUENCY_DEPENDENT) != mat_op.HasFrequencyDependentPML())
+  if (!mat_op.HasPML() || (floquet && !mat_op.HasWaveVector()))
   {
     return;
   }
@@ -675,18 +676,25 @@ void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
                 "Floquet PML terms require a 3D Floquet wave vector!");
     std::copy_n(kx.Data(), 9, header.wave_vector_cross.begin());
   }
-  for (auto [dst, part] : {std::pair{&re, im ? pml::TensorPart::REAL : re_part},
-                           std::pair{im, pml::TensorPart::IMAG}})
+  for (const auto &layer : mat_op.GetPMLLayers())
   {
-    if (!dst)
+    if ((filter == PMLFilter::FREQUENCY_DEPENDENT) != layer.IsFrequencyDependent())
     {
       continue;
     }
-    header.part = part;
-    auto ctx = mat_op.GetPML().PackContext(header);
-    if (!ctx.empty())
+    for (auto [dst, part] : {std::pair{&re, im ? pml::TensorPart::REAL : re_part},
+                             std::pair{im, pml::TensorPart::IMAG}})
     {
-      dst->push_back({std::move(ctx), kind, mat_op.GetPML().GetAttributes()});
+      if (!dst)
+      {
+        continue;
+      }
+      header.part = part;
+      auto ctx = layer.PackContext(header);
+      if (!ctx.empty())
+      {
+        dst->push_back({std::move(ctx), kind, layer.GetAttributes()});
+      }
     }
   }
 }
@@ -1779,7 +1787,6 @@ std::vector<int> GetPMLTrueDofs(const FiniteElementSpace &fespace,
   const auto &pfes = fespace.Get();
   const auto &mesh = fespace.GetMesh();
   const auto &loc_attr = mesh.GetCeedAttributes();
-  const auto &pml = mat_op.GetPML();
   auto MarkTrueDofs = [&](bool in_pml)
   {
     mfem::Array<int> ldof_marker(pfes.GetVSize()), marker(pfes.GetTrueVSize());
@@ -1788,7 +1795,7 @@ std::vector<int> GetPMLTrueDofs(const FiniteElementSpace &fespace,
     for (int e = 0; e < mesh.Get().GetNE(); e++)
     {
       const auto it = loc_attr.find(mesh.Get().GetAttribute(e));
-      if ((it != loc_attr.end() && pml.IsPMLCeedAttribute(it->second)) != in_pml)
+      if ((it != loc_attr.end() && mat_op.IsPMLCeedAttribute(it->second)) != in_pml)
       {
         continue;
       }
