@@ -41,7 +41,7 @@ void AssemblePMLOperator(CeedQFunctionUser apply_qf, const char *apply_qf_loc,
                   << space_dim << ", " << dim << "))!");
   MFEM_VERIFY(CeedGeometryDataHasCoordinates(geom_data_restr, dim),
               "PML integrators require the quadrature point coordinates in the geometry "
-              "factor data (see Mesh::SetCeedQuadratureCoordinates)!");
+              "factor data (see BilinearForm::AddDomainIntegratorOnAttributes)!");
   CeedQFunctionInfo info;
   info.assemble_q_data = assemble_q_data && build_qf;
   info.apply_qf = info.assemble_q_data ? build_qf : apply_qf;
