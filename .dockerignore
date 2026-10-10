@@ -1,6 +1,9 @@
 # Spack checkout
 spack
 
+# Host link to the builtin MFEM recipe (spack/spack#51505); the image creates its own
+spack_repo/local/packages/mfem
+
 # Build artifacts
 build*
 

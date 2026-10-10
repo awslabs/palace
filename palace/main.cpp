@@ -21,6 +21,7 @@
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
+#include "utils/versions.hpp"
 
 #if defined(MFEM_USE_STRUMPACK)
 #include <StrumpackConfig.hpp>
@@ -36,6 +37,20 @@ static const char *GetPalaceGitTag()
   static const char *commit = "UNKNOWN";
 #endif
   return commit;
+}
+
+static void PrintPalaceVersion(MPI_Comm comm)
+{
+  Mpi::Print(comm, "Palace version: {}\nSchema version: {}\n", GetPalaceGitTag(),
+             GetSchemaVersion());
+#if defined(PALACE_BUILD_ID)
+  Mpi::Print(comm, "Build: {}\n", PALACE_BUILD_ID);
+#endif
+  Mpi::Print(comm, "\nDependencies:\n");
+  for (const auto &[name, version] : GetDependencyVersions())
+  {
+    Mpi::Print(comm, "  {}: {}\n", name, version);
+  }
 }
 
 static const char *GetPalaceCeedJitSourceDir()
@@ -185,8 +200,7 @@ int main(int argc, char *argv[])
     }
     if (argv_i == "--version")
     {
-      Mpi::Print(world_comm, "Palace version: {}\nSchema version: {}\n", GetPalaceGitTag(),
-                 GetSchemaVersion());
+      PrintPalaceVersion(world_comm);
       return 0;
     }
     if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
