@@ -2341,7 +2341,56 @@ def tag_arc_boundary_loops(loops, coupon, frame, radius, arcs=None):
                 if loop["Joints"][i] is not None and turn is not None and loop["Joints"][i][0] is not None:
                     turn = min(turn, loop["Joints"][i][0])
                 loop["Joints"][i] = (turn, turn is not None and abs(turn) <= JUNCTION_TANGENT_ANGLE)
+    assert_built_joint_classes(loops)
     return sum(not arc.get("Demoted") for arc in arcs)
+
+
+def assert_built_joint_classes(loops):
+    """round4/collarunion ArcJointTilt (decision 673; cluster_signature_geometry.JOINT_CLASS_RULE): on the
+    tagged boundary the mesher receives, every joint of an arc side with a STRAIGHT side must read, by the
+    mesher's own arithmetic (arc_end_guards: the tagged circle's tangent at the vertex against the side's
+    direction, atan of the cross and dot products), the class its JointSmooth tag says and a turn inside one
+    of the two built ranges; else the generator fails closed by name here, never a mesher ScopeGuard later.
+    The boundary differs from the signature only by the loop builder's vertex quantisation (<= 3.2e-7 rad on
+    the registrations of record), so the rule acts only where rebuilt_arcs' classification sat within that of
+    a bound. Arc-arc joints (two tagged sides) are the mesher's ArcArcJoint rules, not checked here."""
+    import cluster_signature_geometry as csg  # noqa: E402  (imports this module; resolved at call time)
+    for loop_index, loop in enumerate(loops):
+        arcs, joints, points = loop.get("Arcs"), loop.get("Joints"), loop["Points"]
+        if not arcs or not joints:
+            continue
+        n = len(points)
+        for i, joint in enumerate(joints):
+            if joint is None or joint[0] is None:
+                continue
+            incoming, outgoing = arcs[(i - 1) % n], arcs[i]
+            if (incoming is None) == (outgoing is None):
+                continue          # arc-arc, or a joint record without an adjacent arc side
+            tag = incoming if incoming is not None else outgoing
+            straight_end = points[(i + 1) % n] if incoming is not None else points[(i - 1) % n]
+            p = points[i]
+            radial = (float(p[0]) - tag["ArcCx"], float(p[1]) - tag["ArcCy"])
+            radial_norm = math.sqrt(radial[0] * radial[0] + radial[1] * radial[1])
+            tangent = (-radial[1] / radial_norm, radial[0] / radial_norm)
+            side = (float(straight_end[0]) - float(p[0]), float(straight_end[1]) - float(p[1]))
+            side_norm = math.sqrt(side[0] * side[0] + side[1] * side[1])
+            direction = (side[0] / side_norm, side[1] / side_norm)
+            built = deterministic_math.atan2(abs(tangent[0] * direction[1] - tangent[1] * direction[0]),
+                                             abs(tangent[0] * direction[0] + tangent[1] * direction[1]))
+            smooth = built <= JUNCTION_TANGENT_ANGLE
+            where = (f"plan-view boundary loop {loop_index + 1} vertex {i + 1} ({p[0]}, {p[1]}; arc {tag['ArcId']}) turns by "
+                     f"{built:.6e} rad on the built boundary (tagged JointTurn {joint[0]:.6e}, JointSmooth {int(joint[1])})")
+            if smooth != bool(joint[1]):
+                raise ValueError(f"JointClassDrift: {where}: the mesher reads the other class (round4/collarunion "
+                                 f"ArcJointTilt, decision 673)")
+            if smooth and not built < csg.ARC_SMOOTH_JOINT_TURN_BOUND * (1.0 - 1.0e-12):
+                raise ValueError(f"JointTurnGap: {where}: a smooth joint above ARC_SMOOTH_JOINT_TURN_BOUND "
+                                 f"{csg.ARC_SMOOTH_JOINT_TURN_BOUND:g} rad lies in neither built range of the mesher "
+                                 f"(round4/collarunion ArcJointTilt, decision 673)")
+            if not smooth and not built > csg.ARC_CORNER_JOINT_TURN_FLOOR * (1.0 + 1.0e-12):
+                raise ValueError(f"JointTurnGap: {where}: a corner joint below ARC_CORNER_JOINT_TURN_FLOOR "
+                                 f"{csg.ARC_CORNER_JOINT_TURN_FLOOR:g} rad lies in neither built range of the mesher "
+                                 f"(round4/collarunion ArcJointTilt, decision 673)")
 
 
 def write_plan_view_boundary(path, loops):
