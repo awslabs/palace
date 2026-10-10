@@ -78,6 +78,8 @@ jobs:
           fi
 
           cp docs/src/developer/spack/spack.yaml spack.yaml
+          sed -i '' 's/^\(  - palace@develop.*\)$/\1~shared/' spack.yaml
+          grep -q 'palace@develop.*~shared' spack.yaml
           docs/src/developer/spack/setup-macos.sh
 
       - name: Patch Spack package.py files for known problems
