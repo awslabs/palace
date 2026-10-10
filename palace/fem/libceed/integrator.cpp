@@ -326,13 +326,11 @@ int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedI
     PalaceCeedCallBackend(CeedElemRestrictionGetCeed(geom_data_restr, &ceed));
     PalaceCeedCall(ceed,
                    CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-    // Layout is {attr, w |J|, adj(J)ᵀ / |J|} with 2 + space_dim * dim entries, followed by
-    // the quadrature point coordinates for 3D domain elements if requested (see
-    // CeedGeometryDataHasCoordinates).
-    *space_dim =
-        (dim == 3 && geom_data_size == 2 + 3 * 3 + 3) ? 3 : (geom_data_size - 2) / dim;
-    MFEM_ASSERT(2 + (*space_dim) * dim == geom_data_size ||
-                    (dim == 3 && geom_data_size == 2 + 3 * 3 + 3),
+    // See CeedGeometryDataSize. The size with coordinates (only for 3D domain elements)
+    // does not match any size without them.
+    const bool coords = (dim == 3 && geom_data_size == CeedGeometryDataSize(3, 3, true));
+    *space_dim = coords ? 3 : (geom_data_size - 2) / dim;
+    MFEM_ASSERT(geom_data_size == CeedGeometryDataSize(*space_dim, dim, coords),
                 "Invalid size for geometry quadrature data!");
   }
   return CEED_ERROR_SUCCESS;
@@ -345,7 +343,7 @@ bool CeedGeometryDataHasCoordinates(CeedElemRestriction geom_data_restr, CeedInt
   PalaceCeedCallBackend(CeedElemRestrictionGetCeed(geom_data_restr, &ceed));
   PalaceCeedCall(ceed,
                  CeedElemRestrictionGetNumComponents(geom_data_restr, &geom_data_size));
-  return (dim == 3 && geom_data_size == 2 + 3 * 3 + 3);
+  return (dim == 3 && geom_data_size == CeedGeometryDataSize(3, 3, true));
 }
 
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,

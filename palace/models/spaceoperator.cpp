@@ -390,13 +390,13 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 // built, so it only needs to outlive the call to BilinearForm::Assemble.
 enum class PMLIntegKind : char
 {
-  CurlCurl,         // c μ̃⁻¹ (curl u, curl v)
-  Mass,             // c ε̃ (u, v)
-  CurlCurlMass,     // c_μ μ̃⁻¹ (curl u, curl v) + c_ε ε̃ (u, v)
-  FloquetMass,      // c [k ×]ᵀ μ̃⁻¹ [k ×] (u, v)
-  FloquetCross,     // c ([k ×]ᵀ μ̃⁻¹ curl u, v) - c (μ̃⁻¹ [k ×] u, curl v)
-  Diffusion,        // c ε̃ (∇u, ∇v), auxiliary space
-  FloquetDiffusion  // c [k ×]ᵀ μ̃⁻¹ [k ×] (∇u, ∇v), auxiliary space
+  CURL_CURL,         // c μ̃⁻¹ (curl u, curl v)
+  MASS,              // c ε̃ (u, v)
+  CURL_CURL_MASS,    // c_μ μ̃⁻¹ (curl u, curl v) + c_ε ε̃ (u, v)
+  FLOQUET_MASS,      // c [k ×]ᵀ μ̃⁻¹ [k ×] (u, v)
+  FLOQUET_CROSS,     // c ([k ×]ᵀ μ̃⁻¹ curl u, v) - c (μ̃⁻¹ [k ×] u, curl v)
+  DIFFUSION,         // c ε̃ (∇u, ∇v), auxiliary space
+  FLOQUET_DIFFUSION  // c [k ×]ᵀ μ̃⁻¹ [k ×] (∇u, ∇v), auxiliary space
 };
 struct PMLIntegrator
 {
@@ -414,31 +414,31 @@ void AddPMLIntegrators(BilinearForm &a, const std::vector<PMLIntegrator> *pml, b
   {
     const void *ctx = p.ctx.data();
     const std::size_t bytes = p.ctx.size() * sizeof(CeedIntScalar);
-    MFEM_ASSERT(aux == (p.kind == PMLIntegKind::Diffusion ||
-                        p.kind == PMLIntegKind::FloquetDiffusion),
+    MFEM_ASSERT(aux == (p.kind == PMLIntegKind::DIFFUSION ||
+                        p.kind == PMLIntegKind::FLOQUET_DIFFUSION),
                 "Invalid PML integrator for the " << (aux ? "auxiliary" : "primary")
                                                   << " space operator!");
     switch (p.kind)
     {
-      case PMLIntegKind::CurlCurl:
+      case PMLIntegKind::CURL_CURL:
         a.AddDomainIntegrator<CurlCurlPMLIntegrator>(ctx, bytes);
         break;
-      case PMLIntegKind::Mass:
+      case PMLIntegKind::MASS:
         a.AddDomainIntegrator<VectorFEMassPMLIntegrator>(ctx, bytes);
         break;
-      case PMLIntegKind::CurlCurlMass:
+      case PMLIntegKind::CURL_CURL_MASS:
         a.AddDomainIntegrator<CurlCurlMassPMLIntegrator>(ctx, bytes);
         break;
-      case PMLIntegKind::FloquetMass:
+      case PMLIntegKind::FLOQUET_MASS:
         a.AddDomainIntegrator<FloquetMassPMLIntegrator>(ctx, bytes);
         break;
-      case PMLIntegKind::FloquetCross:
+      case PMLIntegKind::FLOQUET_CROSS:
         a.AddDomainIntegrator<FloquetCrossPMLIntegrator>(ctx, bytes);
         break;
-      case PMLIntegKind::Diffusion:
+      case PMLIntegKind::DIFFUSION:
         a.AddDomainIntegrator<DiffusionPMLIntegrator>(ctx, bytes);
         break;
-      case PMLIntegKind::FloquetDiffusion:
+      case PMLIntegKind::FLOQUET_DIFFUSION:
         a.AddDomainIntegrator<FloquetDiffusionPMLIntegrator>(ctx, bytes);
         break;
     }
@@ -650,22 +650,22 @@ void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
                pml::TensorPart re_part = pml::TensorPart::REAL)
 {
   const bool floquet =
-      (kind == PMLIntegKind::FloquetMass || kind == PMLIntegKind::FloquetCross ||
-       kind == PMLIntegKind::FloquetDiffusion);
+      (kind == PMLIntegKind::FLOQUET_MASS || kind == PMLIntegKind::FLOQUET_CROSS ||
+       kind == PMLIntegKind::FLOQUET_DIFFUSION);
   if (!mat_op.HasPML() || (floquet && !mat_op.HasWaveVector()) ||
       (filter == PMLFilter::FREQUENCY_DEPENDENT && !mat_op.HasFrequencyDependentPML()))
   {
     return;
   }
-  if (kind == PMLIntegKind::CurlCurlMass && c_muinv == 0.0)
+  if (kind == PMLIntegKind::CURL_CURL_MASS && c_muinv == 0.0)
   {
-    kind = PMLIntegKind::Mass;
+    kind = PMLIntegKind::MASS;
   }
-  else if (kind == PMLIntegKind::CurlCurlMass && c_eps == 0.0)
+  else if (kind == PMLIntegKind::CURL_CURL_MASS && c_eps == 0.0)
   {
-    kind = PMLIntegKind::CurlCurl;
+    kind = PMLIntegKind::CURL_CURL;
   }
-  const bool eps_only = (kind == PMLIntegKind::Mass || kind == PMLIntegKind::Diffusion);
+  const bool eps_only = (kind == PMLIntegKind::MASS || kind == PMLIntegKind::DIFFUSION);
   if ((eps_only ? c_eps : c_muinv) == 0.0)
   {
     return;
@@ -673,7 +673,7 @@ void AppendPML(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> *im,
 
   pml::ContextHeader header;
   header.c_muinv = eps_only ? 0.0 : c_muinv;
-  header.c_eps = (eps_only || kind == PMLIntegKind::CurlCurlMass) ? c_eps : 0.0;
+  header.c_eps = (eps_only || kind == PMLIntegKind::CURL_CURL_MASS) ? c_eps : 0.0;
   header.omega = omega;
   if (floquet)
   {
@@ -736,25 +736,26 @@ void AppendPMLPencil(std::vector<PMLIntegrator> &re, std::vector<PMLIntegrator> 
                      std::complex<double> omega, const PMLPencil &c,
                      pml::TensorPart re_part = pml::TensorPart::REAL)
 {
-  AppendPML(re, im, mat_op, PMLIntegKind::CurlCurlMass, c.a0, c.a2, filter, omega, re_part);
+  AppendPML(re, im, mat_op, PMLIntegKind::CURL_CURL_MASS, c.a0, c.a2, filter, omega,
+            re_part);
   if (aux_re)
   {
-    AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::Diffusion, 0.0, c.a2, filter, omega,
+    AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::DIFFUSION, 0.0, c.a2, filter, omega,
               re_part);
   }
   if (mat_op.HasWaveVector())
   {
     const bool scaled = mat_op.HasFloquetFrequencyScaling();
     const auto c_mass = scaled ? -c.a2_floquet : c.a0, c_cross = scaled ? c.a1 : 1i * c.a0;
-    AppendPML(re, im, mat_op, PMLIntegKind::FloquetMass, c_mass, 0.0, filter, omega,
+    AppendPML(re, im, mat_op, PMLIntegKind::FLOQUET_MASS, c_mass, 0.0, filter, omega,
               re_part);
     if (im)
     {
-      AppendPML(re, im, mat_op, PMLIntegKind::FloquetCross, c_cross, 0.0, filter, omega);
+      AppendPML(re, im, mat_op, PMLIntegKind::FLOQUET_CROSS, c_cross, 0.0, filter, omega);
     }
     if (aux_re)
     {
-      AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::FloquetDiffusion, c_mass, 0.0,
+      AppendPML(*aux_re, aux_im, mat_op, PMLIntegKind::FLOQUET_DIFFUSION, c_mass, 0.0,
                 filter, omega, re_part);
     }
   }
@@ -1996,6 +1997,14 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(std::complex<double> omega,
   surf_sigma_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   surf_rz_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
   wave_port_op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+}
+
+bool SpaceOperator::HasExtraSystemBdrTerms() const
+{
+  // See AddExtraSystemBdrCoefficients.
+  return (farfield_op.GetOrder() > 1 && farfield_op.GetAttrList().Size() > 0) ||
+         surf_sigma_op.Size() > 0 || surf_rz_op.GetAttrList().Size() > 0 ||
+         wave_port_op.Size() > 0;
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,

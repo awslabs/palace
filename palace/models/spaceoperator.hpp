@@ -288,6 +288,10 @@ public:
   std::unique_ptr<ComplexOperator>
   GetExtraSystemPMLMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
 
+  // Whether A2(ω) has frequency-dependent boundary terms (excluding the frequency-dependent
+  // PML terms), without assembling them.
+  bool HasExtraSystemBdrTerms() const;
+
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
   // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with

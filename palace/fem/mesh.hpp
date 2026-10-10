@@ -173,7 +173,6 @@ public:
   // of 3D domain elements, for QFunctions with spatially varying coefficients (such as the
   // PML material tensors). This resets any previously constructed geometry factor data.
   void SetCeedQuadratureCoordinates(bool coords);
-  bool HasCeedQuadratureCoordinates() const { return ceed_quadrature_coordinates; }
 
   void Update();
 
