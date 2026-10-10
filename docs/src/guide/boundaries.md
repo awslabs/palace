@@ -163,7 +163,7 @@ directories: a rectangular waveguide terminated by a PML (driven simulations, an
 sweep with circuit synthesis, and eigenmode simulations of a cavity coupled to the waveguide
 through an iris), a layered substrate and vacuum parallel-plate waveguide whose material
 interface crosses the PML, and a periodic cell with a Floquet port for plane-wave absorption
-at oblique incidence.
+at oblique incidence (at a single frequency and with an adaptive sweep).
 
 ## Finite conductivity boundary
 
