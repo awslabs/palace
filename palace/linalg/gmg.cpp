@@ -151,19 +151,11 @@ void GeometricMultigridSolver<OperType>::SetUpPMLSubdomain(
       return;
     }
 
-    // Assemble the finest level operator (the multigrid hierarchy only uses its partially
-    // assembled form, so ownership of the assembled matrices can be taken here).
-    auto Assemble = [](const Operator *op) -> std::unique_ptr<mfem::HypreParMatrix>
-    {
-      if (!op)
-      {
-        return nullptr;
-      }
-      const auto *PtAP = dynamic_cast<const ParOperator *>(op);
-      MFEM_VERIFY(PtAP, "PML subdomain correction requires ParOperator operators!");
-      return PtAP->StealParallelAssemble();
-    };
-    auto hAr = Assemble(A_fine->Real()), hAi = Assemble(A_fine->Imag());
+    // Assembled operator at the finest level whose restriction to the PML true DOFs is the
+    // PML subdomain matrix (only assembled on the PML and boundary elements, see
+    // SpaceOperator::GetPreconditionerMatrix).
+    auto [hAr, hAi] = mg_op.TakePMLMatrices();
+    MFEM_VERIFY(hAr || hAi, "Missing operator for the PML subdomain correction!");
     const mfem::HypreParMatrix &hA = hAr ? *hAr : *hAi;
 
     // Selection operator S: the columns of the identity of the PML true DOFs. The PML

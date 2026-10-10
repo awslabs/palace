@@ -131,13 +131,18 @@ private:
   // overload (eigenmode nonlinear solve: exact analytic continuation, including the
   // wave-port attenuation -Im(k_n)·M on the real slot even at real ω). Frequency-dependent
   // PML terms are analytic in ω and evaluated at a3 in both cases.
+  // For the complex-valued preconditioner, pml_block optionally returns the operator of the
+  // PML subdomain correction at the finest level: the PML and boundary terms only, which
+  // are the terms of the rows and columns of the PML true DOFs not shared with elements
+  // outside of the PML regions (see GetPMLTrueDofs).
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
-                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec,
+                              std::unique_ptr<ComplexOperator> *pml_block = nullptr);
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,

@@ -1578,7 +1578,8 @@ void SpaceOperator::AssemblePreconditioner(
     std::vector<std::unique_ptr<Operator>> &br_vec,
     std::vector<std::unique_ptr<Operator>> &br_aux_vec,
     std::vector<std::unique_ptr<Operator>> &bi_vec,
-    std::vector<std::unique_ptr<Operator>> &bi_aux_vec)
+    std::vector<std::unique_ptr<Operator>> &bi_aux_vec,
+    std::unique_ptr<ComplexOperator> *pml_block)
 {
   constexpr bool skip_zeros = false;
   // Cache geometry/material tensors for repeated CPU smoother applications. Only the
@@ -1653,6 +1654,25 @@ void SpaceOperator::AssemblePreconditioner(
                                assemble_q_data, &pml_im);
     bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, skip_zeros, assemble_q_data,
                                       &aux_pml_im);
+  }
+  if (pml_block)
+  {
+    // The PML integrators are only assembled on the elements of the PML regions.
+    const auto &fespace = GetNDSpace();
+    std::unique_ptr<Operator> ar, ai;
+    if (!empty[0])
+    {
+      ar = AssembleOperator(fespace, nullptr, nullptr, &dfbr, &fbr, nullptr, skip_zeros,
+                            false, &pml_re);
+    }
+    if (!empty[1])
+    {
+      ai = AssembleOperator(fespace, nullptr, nullptr, &dfbi, &fbi, nullptr, skip_zeros,
+                            false, &pml_im);
+    }
+    auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), fespace);
+    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
+    *pml_block = std::move(A);
   }
 }
 
@@ -1746,10 +1766,12 @@ void SpaceOperator::AssemblePreconditioner(
 namespace
 {
 
-// Local true DOFs of the elements of the PML regions, sorted and unique. The DOFs of the
-// local PML elements are mapped to true DOFs on all processes, since a true DOF of a PML
-// element may be owned by a process which has no PML element containing it (and, for
-// nonconforming meshes, the DOFs of a PML element may be constrained by true DOFs of other
+// Local true DOFs of the elements of the PML regions which are not shared with elements
+// outside of the PML regions, sorted and unique. The rows and columns of the system matrix
+// for these DOFs only have contributions from the PML elements and the boundary elements.
+// The DOFs of the local elements are mapped to true DOFs on all processes, since a true DOF
+// of an element may be owned by a process which has no element containing it (and, for
+// nonconforming meshes, the DOFs of an element may be constrained by true DOFs of other
 // elements).
 std::vector<int> GetPMLTrueDofs(const FiniteElementSpace &fespace,
                                 const MaterialOperator &mat_op)
@@ -1758,28 +1780,33 @@ std::vector<int> GetPMLTrueDofs(const FiniteElementSpace &fespace,
   const auto &mesh = fespace.GetMesh();
   const auto &loc_attr = mesh.GetCeedAttributes();
   const auto &pml = mat_op.GetPML();
-  mfem::Array<int> ldof_marker(pfes.GetVSize()), marker(pfes.GetTrueVSize());
-  ldof_marker = 0;
-  mfem::Array<int> vdofs;
-  for (int e = 0; e < mesh.Get().GetNE(); e++)
+  auto MarkTrueDofs = [&](bool in_pml)
   {
-    const auto it = loc_attr.find(mesh.Get().GetAttribute(e));
-    if (it == loc_attr.end() || !pml.IsPMLCeedAttribute(it->second))
+    mfem::Array<int> ldof_marker(pfes.GetVSize()), marker(pfes.GetTrueVSize());
+    ldof_marker = 0;
+    mfem::Array<int> vdofs;
+    for (int e = 0; e < mesh.Get().GetNE(); e++)
     {
-      continue;
+      const auto it = loc_attr.find(mesh.Get().GetAttribute(e));
+      if ((it != loc_attr.end() && pml.IsPMLCeedAttribute(it->second)) != in_pml)
+      {
+        continue;
+      }
+      pfes.GetElementVDofs(e, vdofs);
+      for (const int vdof : vdofs)
+      {
+        ldof_marker[(vdof >= 0) ? vdof : -1 - vdof] = 1;
+      }
     }
-    pfes.GetElementVDofs(e, vdofs);
-    for (const int vdof : vdofs)
-    {
-      ldof_marker[(vdof >= 0) ? vdof : -1 - vdof] = 1;
-    }
-  }
-  pfes.Dof_TrueDof_Matrix()->BooleanMultTranspose(1, ldof_marker.HostRead(), 0,
-                                                  marker.HostWrite());
+    pfes.Dof_TrueDof_Matrix()->BooleanMultTranspose(1, ldof_marker.HostRead(), 0,
+                                                    marker.HostWrite());
+    return marker;
+  };
+  const auto pml_marker = MarkTrueDofs(true), physical_marker = MarkTrueDofs(false);
   std::vector<int> tdofs;
-  for (int i = 0; i < marker.Size(); i++)
+  for (int i = 0; i < pml_marker.Size(); i++)
   {
-    if (marker[i])
+    if (pml_marker[i] && !physical_marker[i])
     {
       tdofs.push_back(i);
     }
@@ -1808,9 +1835,11 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   const auto n_levels = GetNDSpaces().GetNumLevels();
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
+  std::unique_ptr<ComplexOperator> pml_block;
   if (std::is_same_v<OperType, ComplexOperator> && !pc_mat_real)
   {
-    AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec);
+    AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec,
+                           (pml_subdomain && mat_op.HasPML()) ? &pml_block : nullptr);
   }
   else
   {
@@ -1863,9 +1892,17 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
-    if (pml_subdomain && mat_op.HasPML())
+    if (pml_block)
     {
-      B->SetPMLTrueDofs(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op));
+      const auto *A = dynamic_cast<const ComplexParOperator *>(pml_block.get());
+      MFEM_VERIFY(A, "Unexpected operator type for the PML subdomain correction!");
+      auto Assemble = [](const Operator *op) -> std::unique_ptr<mfem::HypreParMatrix>
+      {
+        return op ? dynamic_cast<const ParOperator &>(*op).StealParallelAssemble()
+                  : nullptr;
+      };
+      B->SetPMLSubdomain(GetPMLTrueDofs(GetNDSpaces().GetFinestFESpace(), mat_op),
+                         Assemble(A->Real()), Assemble(A->Imag()));
     }
   }
 
