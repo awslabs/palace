@@ -419,9 +419,9 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   using namespace std::complex_literals;
 
   // Box [0, 1] x [0, 1] x [0, 2] with a PML layer z > 1.5 (attribute 2), with the PML
-  // elements on the last process and the others on the remaining processes, so that the
-  // true DOFs on the interface with the PML layer are owned by a process without PML
-  // elements.
+  // elements on the first or last process and the others on the remaining processes, so
+  // that the true DOFs on the interface with the PML layer are owned by a process with
+  // only PML elements or only physical elements.
   MPI_Comm comm = Mpi::World();
   const int np = Mpi::Size(comm);
   constexpr int order = 2, nz = 8;
@@ -429,6 +429,7 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
   {
     SKIP("Test requires at most " << nz - 1 << " processes");
   }
+  const bool pml_first = GENERATE(false, true);
   mfem::Mesh serial_mesh =
       mfem::Mesh::MakeCartesian3D(2, 2, nz, mfem::Element::HEXAHEDRON, 1.0, 1.0, 2.0);
   std::vector<int> partitioning(serial_mesh.GetNE());
@@ -439,27 +440,28 @@ TEST_CASE("SpaceOperator PML subdomain true DOFs are independent of the partitio
     const bool is_pml = (center(2) > 1.5);
     serial_mesh.SetAttribute(i, is_pml ? 2 : 1);
     const int layer = static_cast<int>(center(2) / (2.0 / nz));
-    partitioning[i] = (np == 1) ? 0 : (is_pml ? np - 1 : (layer * (np - 1)) / (nz - 2));
+    const int pml_rank = pml_first ? 0 : np - 1;
+    const int physical_rank = (layer * (np - 1)) / (nz - 2) + (pml_first ? 1 : 0);
+    partitioning[i] = (np == 1) ? 0 : (is_pml ? pml_rank : physical_rank);
   }
   serial_mesh.SetAttributes();
 
-  // Expected number of PML subdomain unknowns: the DOFs of the PML elements.
+  // Expected number of PML subdomain unknowns: the DOFs of the PML elements which are not
+  // DOFs of physical elements.
   mfem::ND_FECollection fec(order, serial_mesh.Dimension());
   mfem::FiniteElementSpace serial_fespace(&serial_mesh, &fec);
   std::vector<char> marker(serial_fespace.GetVSize(), 0);
   mfem::Array<int> vdofs;
   for (int i = 0; i < serial_mesh.GetNE(); i++)
   {
-    if (serial_mesh.GetAttribute(i) == 2)
+    serial_fespace.GetElementVDofs(i, vdofs);
+    for (const int vdof : vdofs)
     {
-      serial_fespace.GetElementVDofs(i, vdofs);
-      for (const int vdof : vdofs)
-      {
-        marker[(vdof >= 0) ? vdof : -1 - vdof] = 1;
-      }
+      marker[(vdof >= 0) ? vdof : -1 - vdof] |= (serial_mesh.GetAttribute(i) == 2) ? 1 : 2;
     }
   }
   const auto n_pml_expected = std::ranges::count(marker, 1);
+  REQUIRE(n_pml_expected > 0);
 
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh, partitioning.data()));
