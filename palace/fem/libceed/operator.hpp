@@ -39,6 +39,8 @@ protected:
 
 public:
   Operator(int h, int w);
+  Operator(const Operator &) = delete;
+  Operator &operator=(const Operator &) = delete;
   ~Operator() override;
 
   CeedOperator operator[](std::size_t i) const { return op[i]; }

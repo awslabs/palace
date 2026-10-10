@@ -32,6 +32,8 @@ private:
 public:
   HypreVector(hypre_Vector *vec = nullptr);
   HypreVector(const Vector &x);
+  HypreVector(const HypreVector &) = delete;
+  HypreVector &operator=(const HypreVector &) = delete;
   ~HypreVector();
 
   auto Size() const { return hypre_VectorSize(vec); }
@@ -56,6 +58,8 @@ public:
   HypreCSRMatrix(int h, int w, int nnz);
   HypreCSRMatrix(hypre_CSRMatrix *mat);
   HypreCSRMatrix(const mfem::SparseMatrix &m);
+  HypreCSRMatrix(const HypreCSRMatrix &) = delete;
+  HypreCSRMatrix &operator=(const HypreCSRMatrix &) = delete;
   ~HypreCSRMatrix();
 
   auto NNZ() const { return hypre_CSRMatrixNumNonzeros(mat); }

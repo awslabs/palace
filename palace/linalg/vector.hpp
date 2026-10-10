@@ -181,16 +181,64 @@ private:
   double buff[N];
 
 public:
-  StaticVector() : Vector() { SetDataAndSize(buff, N); }
+  StaticVector() : Vector() { Vector::SetDataAndSize(buff, N); }
+
+  // The implicit copy constructor would heap-allocate instead of using buff.
+  StaticVector(const StaticVector &other) : StaticVector() { Vector::operator=(other); }
+  StaticVector &operator=(const StaticVector &other)
+  {
+    Vector::operator=(other);
+    return *this;
+  }
+
+  // Assignment from a Vector goes through Vector::operator=, which calls SetSize first:
+  // a larger source reallocates, a smaller one just changes Size(). Either way the
+  // invariant is gone. The move version swaps data pointers.
+  StaticVector &operator=(const Vector &) = delete;
+  StaticVector &operator=(Vector &&) = delete;
+
+  // Every inherited member that can replace or resize the data pointer, directly or
+  // through the Memory object, has the same problem. Delete them so misuse fails to
+  // compile.
+  void SetData(double *) = delete;
+  void SetDataAndSize(double *, int) = delete;
+  void NewDataAndSize(double *, int) = delete;
+  void NewMemoryAndSize(const mfem::Memory<double> &, int, bool) = delete;
+  void MakeRef(Vector &, int, int) = delete;
+  void MakeRef(Vector &, int) = delete;
+  void MakeDataOwner() const = delete;
+  double *StealData() = delete;
+  void StealData(double **) = delete;
+  void Swap(Vector &) = delete;
+  void Destroy() = delete;
+  void SetSize(int) = delete;
+  void SetSize(int, mfem::MemoryType) = delete;
+  void SetSize(int, const Vector &) = delete;
+  void Reserve(int) = delete;
+  void DeleteAt(const mfem::Array<int> &) = delete;
+  void Load(std::istream **, int, int *) = delete;
+  void Load(std::istream &, int) = delete;
+  void Load(std::istream &) = delete;
+  mfem::Memory<double> &GetMemory() = delete;
+  const mfem::Memory<double> &GetMemory() const = delete;
+  mfem::MemoryView<mfem::Array<double>> GetArrayView() = delete;
+  mfem::MemoryView<const mfem::Array<double>> GetArrayView() const = delete;
+  void SyncMemory(const Vector &) const = delete;
+  void SyncAliasMemory(const Vector &) const = delete;
 
   ~StaticVector()
   {
     MFEM_ASSERT(GetData() == buff,
                 "Buffer of StaticVector changed. This indicates a possible bug.");
-    MFEM_ASSERT(Size() == N, "Size of StaticVector changed. This indicates a possible bug.")
+    MFEM_ASSERT(Size() == N,
+                "Size of StaticVector changed. This indicates a possible bug.");
+    // MakeDataOwner on a Vector& would pass the checks above and make ~Vector delete[]
+    // the stack buffer.
+    MFEM_ASSERT(!OwnsData(),
+                "StaticVector cannot own its data. This indicates a possible bug.");
   }
 
-  using Vector::operator=;  // Extend the implicitly defined assignment operators
+  using Vector::operator=;  // Inherits only the scalar and raw-array assignment operators
 };
 
 namespace linalg

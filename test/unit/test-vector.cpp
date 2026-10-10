@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <complex>
+#include <type_traits>
 
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
@@ -150,6 +151,43 @@ TEST_CASE("StaticVectorElementAccess", "[Vector][Serial]")
   CHECK_THAT(vec[0], WithinRel(1.0));
   CHECK_THAT(vec[1], WithinRel(2.0));
   CHECK_THAT(vec[2], WithinRel(3.0));
+}
+
+TEST_CASE("StaticVectorCopy", "[Vector][Serial]")
+{
+  // Copies and moves between StaticVectors stay available and copy the values, while
+  // assignment from a Vector would detach the target from its buffer.
+  static_assert(std::is_copy_constructible_v<StaticVector<3>>);
+  static_assert(std::is_copy_assignable_v<StaticVector<3>>);
+  static_assert(std::is_move_assignable_v<StaticVector<3>>);
+  static_assert(std::is_assignable_v<StaticVector<3>, double>);
+  static_assert(std::is_assignable_v<StaticVector<3>, const double *>);
+  static_assert(!std::is_assignable_v<StaticVector<3>, Vector>);
+  static_assert(!std::is_assignable_v<StaticVector<3>, Vector &&>);
+
+  auto InOwnBuffer = [](const auto &v)
+  {
+    const auto *begin = reinterpret_cast<const char *>(&v);
+    const auto *data = reinterpret_cast<const char *>(v.GetData());
+    return data >= begin && data < begin + sizeof(v);
+  };
+
+  StaticVector<3> vec;
+  vec[0] = 1.0;
+  vec[1] = 2.0;
+  vec[2] = 3.0;
+
+  StaticVector<3> copy(vec);
+  CHECK(InOwnBuffer(copy));
+  CHECK_THAT(copy[2], WithinRel(3.0));
+
+  StaticVector<3> assigned;
+  assigned = vec;
+  CHECK(InOwnBuffer(assigned));
+  CHECK_THAT(assigned[1], WithinRel(2.0));
+
+  copy[0] = -1.0;
+  CHECK_THAT(vec[0], WithinRel(1.0));
 }
 
 TEST_CASE("StaticVectorInterface", "[Vector][Serial]")
